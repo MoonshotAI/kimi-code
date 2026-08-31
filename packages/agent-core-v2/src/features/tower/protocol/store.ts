@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 
 import picomatch from 'picomatch';
 
+import { listBaseDirtyEntries, snapshotBaseWip } from './baseWip';
 import { parseFrontmatter, renderFrontmatter } from './frontmatter';
 import {
   branchExists,
@@ -11,6 +12,7 @@ import {
   currentBranch,
   diffNameOnly,
   hasAnyCommit,
+  isAncestor,
   isInsideRepo,
   isWorktreeDirty,
   mergeNoFf,
@@ -110,6 +112,12 @@ export interface TowerMissionPatch {
   readonly taskDone?: string;
   readonly owner?: string;
   readonly scope?: readonly string[];
+  readonly spawnBase?: string;
+}
+
+export interface TowerAddWorktreeResult {
+  readonly rel: string;
+  readonly spawnBase?: string;
 }
 
 const FINDING_TYPES: readonly TowerFindingType[] = ['bug', 'improve', 'vuln', 'idea'];
@@ -428,8 +436,18 @@ export class TowerStore {
       patch.clearBlockers === undefined &&
       patch.taskDone === undefined &&
       patch.owner === undefined &&
-      patch.scope === undefined;
+      patch.scope === undefined &&
+      patch.spawnBase === undefined;
     if (isNoOp) return mission;
+
+    if (patch.spawnBase !== undefined) {
+      if (callerName !== TOWER_NAME) {
+        throw new TowerProtocolError(
+          `agent "${callerName}" cannot record a mission spawn base — only the tower does`,
+        );
+      }
+      mission.spawnBase = patch.spawnBase;
+    }
 
     if (patch.owner !== undefined) {
       if (callerName !== TOWER_NAME) {
@@ -485,7 +503,8 @@ export class TowerStore {
       patch.blocker === undefined &&
       patch.clearBlockers === undefined &&
       patch.owner === undefined &&
-      patch.scope === undefined;
+      patch.scope === undefined &&
+      patch.spawnBase === undefined;
     if (!taskTickOnly && options.silent !== true) {
       await this.appendLog(callerName, 'mission.update', {
         id,
@@ -494,6 +513,7 @@ export class TowerStore {
         blocker: patch.blocker !== undefined ? 'added' : undefined,
         owner: patch.owner,
         scope: patch.scope?.join(','),
+        spawn_base: patch.spawnBase,
       });
     }
     return mission;
@@ -757,7 +777,7 @@ export class TowerStore {
     }
 
     if (mission.kind === 'survey') {
-      const changed = await diffNameOnly(this.repoRoot, state.base, branch);
+      const changed = await diffNameOnly(this.repoRoot, await this.diffBase(state, mission), branch);
       if (changed.length > 0) {
         throw await block(
           'read-only-survey',
@@ -794,7 +814,7 @@ export class TowerStore {
       );
     }
 
-    const changed = await diffNameOnly(this.repoRoot, state.base, branch);
+    const changed = await diffNameOnly(this.repoRoot, await this.diffBase(state, mission), branch);
     const outOfScope = changed.filter(
       (file) => !mission.scope.some((glob) => picomatch.isMatch(file, glob)),
     );
@@ -821,6 +841,18 @@ export class TowerStore {
       );
     }
 
+    const touched = await diffNameOnly(this.repoRoot, 'HEAD', branch);
+    if (touched.length > 0) {
+      const dirty = new Set((await listBaseDirtyEntries(this.repoRoot)).map((entry) => entry.path));
+      const blocked = touched.filter((file) => dirty.has(file));
+      if (blocked.length > 0) {
+        throw await block(
+          'base-dirty',
+          `merge blocked: the main checkout has uncommitted changes in file(s) this merge would overwrite: ${blocked.slice(0, 5).join(', ')} — commit or stash them first, then retry; nothing was merged`,
+        );
+      }
+    }
+
     const mergeCommit = await mergeNoFf(this.repoRoot, branch);
     mission.status = 'merged';
 
@@ -829,7 +861,7 @@ export class TowerStore {
     for (const other of state.missions) {
       if (other.branch === branch || !isOpenMission(other)) continue;
       if (!(await branchExists(this.repoRoot, other.branch))) continue;
-      const otherChanged = await diffNameOnly(this.repoRoot, state.base, other.branch);
+      const otherChanged = await diffNameOnly(this.repoRoot, await this.diffBase(state, other), other.branch);
       const overlap = otherChanged.filter((file) => changedSet.has(file));
       if (overlap.length > 0) {
         conflictsWith.push({ branch: other.branch, files: overlap });
@@ -843,11 +875,52 @@ export class TowerStore {
     return { mergeCommit, conflictsWith };
   }
 
-  async addWorktree(worktree: string, branch: string, base: string): Promise<string> {
+  async diffBase(state: TowerState, mission: TowerMission): Promise<string> {
+    if (
+      mission.spawnBase !== undefined &&
+      (await isAncestor(this.repoRoot, mission.spawnBase, mission.branch))
+    ) {
+      return mission.spawnBase;
+    }
+    return state.base;
+  }
+
+  async addWorktree(worktree: string, branch: string, base: string): Promise<TowerAddWorktreeResult> {
     const rel = join(WORKTREES_DIR, worktree);
-    await worktreeAdd(this.repoRoot, this.abs(rel), branch, base);
-    await this.appendLog(TOWER_NAME, 'worktree.add', { worktree, branch, base });
-    return rel;
+    let spawnBase: string | undefined;
+    if (!(await branchExists(this.repoRoot, branch))) {
+      const dirty = await listBaseDirtyEntries(this.repoRoot);
+      if (dirty.some((entry) => entry.unmerged)) {
+        throw new TowerProtocolError(
+          'the base checkout has unmerged paths (an in-progress merge, rebase, or cherry-pick) — finish or abort it before spawning workers',
+        );
+      }
+      if (dirty.length > 0) {
+        let checkout: string;
+        try {
+          checkout = await currentBranch(this.repoRoot);
+        } catch {
+          throw new TowerProtocolError(
+            `the main checkout is in a detached HEAD state with uncommitted changes, and the recorded base is "${base}" — a WIP snapshot would carry detached-HEAD content into the mission branch; check out "${base}" (\`git checkout ${base}\`) or commit/stash the changes before spawning workers`,
+          );
+        }
+        if (checkout !== base) {
+          throw new TowerProtocolError(
+            `the main checkout is on "${checkout}" with uncommitted changes, not the recorded base "${base}" — a WIP snapshot would carry "${checkout}" content into the mission branch; switch back to "${base}" (\`git checkout ${base}\`) or commit/stash the changes before spawning workers`,
+          );
+        }
+      }
+      spawnBase =
+        (await snapshotBaseWip(
+          this.repoRoot,
+          base,
+          dirty.map((entry) => entry.path),
+          `tower: snapshot of uncommitted base checkout changes (worktree ${worktree})`,
+        )) ?? undefined;
+    }
+    await worktreeAdd(this.repoRoot, this.abs(rel), branch, spawnBase ?? base);
+    await this.appendLog(TOWER_NAME, 'worktree.add', { worktree, branch, base, spawn_base: spawnBase });
+    return { rel, spawnBase };
   }
 
   async teardown(options: { readonly force?: boolean } = {}): Promise<readonly string[]> {

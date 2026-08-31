@@ -611,6 +611,20 @@ export interface ConfigChangedEvent {
   readonly config: ConfigResponse;
 }
 
+export interface ConfigWarningItem {
+  readonly domain?: string;
+  readonly message: string;
+}
+
+/**
+ * Pushed when the daemon's config validation produces warnings (deprecated
+ * keys, unknown fields). Bare global fan-out alongside `event.config.changed`.
+ */
+export interface ConfigWarningEvent {
+  readonly type: 'event.config.warning';
+  readonly warnings: readonly ConfigWarningItem[];
+}
+
 /**
  * Pushed when the daemon refreshes provider model metadata (manual or
  * scheduled) and the effective catalog changed. Carries the per-provider
@@ -1026,6 +1040,7 @@ export type AgentEvent =
   | SessionWorkChangedEvent
   | SessionStatusChangedEvent
   | ConfigChangedEvent
+  | ConfigWarningEvent
   | ModelCatalogChangedEvent
   | PluginChangedEvent
   | CapabilityChangedEvent
@@ -1612,6 +1627,16 @@ export const configChangedEventSchema = z.object({
   config: configResponseSchema,
 }) satisfies z.ZodType<ConfigChangedEvent>;
 
+export const configWarningEventSchema = z.object({
+  type: z.literal('event.config.warning'),
+  warnings: z.array(
+    z.object({
+      domain: z.string().optional(),
+      message: z.string(),
+    }),
+  ),
+}) satisfies z.ZodType<ConfigWarningEvent>;
+
 export const modelCatalogChangedEventSchema = z.object({
   type: z.literal('event.model_catalog.changed'),
   changed: z.array(providerRefreshChangeSchema),
@@ -1976,6 +2001,8 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   workspaceDeletedEventSchema,
   sessionWorkChangedEventSchema,
   sessionStatusChangedEventSchema,
+  configChangedEventSchema,
+  configWarningEventSchema,
   modelCatalogChangedEventSchema,
   pluginChangedEventSchema,
   capabilityChangedEventSchema,

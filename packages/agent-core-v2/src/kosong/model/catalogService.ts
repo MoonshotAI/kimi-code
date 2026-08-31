@@ -9,7 +9,6 @@ import type { ProviderRequestAuth } from '#/kosong/contract/provider';
 import type { TokenUsage } from '#/kosong/contract/usage';
 import {
   IProtocolAdapterRegistry,
-  ProtocolSchema,
   type Protocol,
   type ProtocolProviderOptions,
 } from '#/kosong/protocol/protocol';
@@ -25,7 +24,6 @@ import {
   type ProviderConfig,
 } from '../provider/provider';
 import {
-  explainProviderEndpoint,
   getProviderDefinition,
   resolveProviderEndpoint,
 } from '../provider/providerDefinition';
@@ -59,7 +57,9 @@ import {
   deriveProviderId,
   effectiveModelConfig,
   nonEmpty,
+  resolveEndpointBaseUrl,
   resolveModelAuthMaterial,
+  resolveModelProtocol,
 } from './modelAuth';
 import { IModelOAuthTokens } from './modelOAuth';
 import type { ResolvedModelAuthMaterial } from './model.types';
@@ -400,38 +400,11 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
           `Provider "${providerId}" referenced by model "${id}" is not configured.`,
         );
       }
-      const fromModel = nonEmpty(model.baseUrl);
-      const fromProvider = nonEmpty(providerConfig.baseUrl);
-      let baseUrl: string | undefined;
-      if (fromModel !== undefined) {
-        baseUrl = fromModel;
-        trace.record('resolved.baseUrl', { kind: 'config', detail: 'model.baseUrl' });
-      } else if (fromProvider !== undefined) {
-        baseUrl = fromProvider;
-        trace.record('resolved.baseUrl', {
-          kind: 'config',
-          detail: `provider '${providerId}' baseUrl`,
-        });
-      } else {
-        const endpointType = providerConfig.type ?? model.protocol;
-        const endpoint =
-          endpointType === undefined
-            ? {}
-            : explainProviderEndpoint(endpointType, providerConfig.env ?? {});
-        baseUrl = nonEmpty(endpoint.baseUrl);
-        if (endpoint.baseUrlEnvName !== undefined) {
-          trace.record('resolved.baseUrl', {
-            kind: 'env',
-            detail: `${endpoint.baseUrlEnvName} (provider '${providerId}' env bag)`,
-          });
-        } else if (endpoint.baseUrlIsDefault === true) {
-          trace.record('resolved.baseUrl', {
-            kind: 'builtin',
-            detail: `provider definition '${endpointType}' defaultBaseUrl`,
-          });
-        }
+      const endpoint = resolveEndpointBaseUrl(model, providerConfig, providerId);
+      if (endpoint.source !== undefined) {
+        trace.record('resolved.baseUrl', endpoint.source);
       }
-      return { providerConfig, providerName: providerId, resolvedBaseUrl: baseUrl };
+      return { providerConfig, providerName: providerId, resolvedBaseUrl: endpoint.baseUrl };
     }
 
     const modelBaseUrl = nonEmpty(model.baseUrl);
@@ -461,33 +434,15 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     provider: ProviderConfig | undefined,
     trace: ResolutionTraceCollector,
   ): Protocol {
-    if (model.protocol !== undefined) {
-      trace.record('resolved.protocol', { kind: 'config', detail: 'model.protocol' });
-      return model.protocol;
+    const resolution = resolveModelProtocol(model, provider);
+    if (resolution === undefined) {
+      throw new Error2(
+        CONFIG_INVALID_ERROR_CODE,
+        `Model "${id}" must declare a wire protocol (config: models.<id>.protocol).`,
+      );
     }
-    const providerType = provider?.type;
-    if (providerType !== undefined) {
-      const asProtocol = ProtocolSchema.safeParse(providerType);
-      if (asProtocol.success) {
-        trace.record('resolved.protocol', {
-          kind: 'config',
-          detail: `provider type '${providerType}' is itself a wire protocol`,
-        });
-        return asProtocol.data;
-      }
-      const definition = getProviderDefinition(providerType);
-      if (definition !== undefined) {
-        trace.record('resolved.protocol', {
-          kind: 'builtin',
-          detail: `vendor '${providerType}' declared baseProtocol`,
-        });
-        return definition.baseProtocol;
-      }
-    }
-    throw new Error2(
-      CONFIG_INVALID_ERROR_CODE,
-      `Model "${id}" must declare a wire protocol (config: models.<id>.protocol).`,
-    );
+    trace.record('resolved.protocol', resolution.source);
+    return resolution.protocol;
   }
 
   private buildAuthProvider(providerName: string, auth: ResolvedModelAuthMaterial): AuthProvider {

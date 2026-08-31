@@ -316,7 +316,7 @@ describe('contract schemas', () => {
       {
         op: 'turn.upsert',
         turn: {
-          kind: 'turn', turnId: 't1', ordinal: 1, state: 'failed', origin: { kind: 'user' },
+          kind: 'turn', turnId: 't1', triggerPromptId: 'prompt-1', ordinal: 1, state: 'failed', origin: { kind: 'user' },
           usage: { inputTokens: 12, outputTokens: 5, cachedTokens: 3 },
           durationMs: 1500,
           error: 'boom',
@@ -370,6 +370,34 @@ describe('contract schemas', () => {
     for (const op of ops) {
       expect(transcriptOperationSchema.parse(op)).toEqual(op);
     }
+  });
+
+  it('accepts provenance only on user text frames', () => {
+    const base = {
+      op: 'frame.upsert',
+      turnId: 't1',
+      stepId: 't1.1',
+    } as const;
+    expect(transcriptOperationSchema.safeParse({
+      ...base,
+      frame: {
+        kind: 'text',
+        frameId: 't1.1.f1',
+        role: 'user',
+        text: 'steered in',
+        origin: { kind: 'user', skillActivations: [{ skillName: 'review', skillArgs: 'strict' }] },
+      },
+    }).success).toBe(true);
+    expect(transcriptOperationSchema.safeParse({
+      ...base,
+      frame: {
+        kind: 'text',
+        frameId: 't1.1.f2',
+        role: 'assistant',
+        text: 'reply',
+        origin: { kind: 'user' },
+      },
+    }).success).toBe(false);
   });
 
   it('rejects mutually exclusive cursors and bad grades', () => {
@@ -506,7 +534,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         { role: 'user', content: [{ type: 'text', text: 'steered in' }], toolCalls: [], origin: { kind: 'user' } },
         { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] },
       ],
-      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), 1]]) },
+      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), new Map([['user', 1]])]]) },
     );
 
     expect(snapshot.items.map((i) => i.kind)).toEqual(['turn']);
@@ -527,7 +555,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
         { role: 'user', content: [{ type: 'text', text: 'steered in' }], toolCalls: [], origin: { kind: 'user' } },
       ],
-      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), 1]]) },
+      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), new Map([['user', 1]])]]) },
     );
 
     expect(snapshot.items.map((i) => i.kind)).toEqual(['turn']);
@@ -550,7 +578,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         { role: 'user', content: [{ type: 'text', text: 'next question' }], toolCalls: [], origin: { kind: 'user' } },
         { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] },
       ],
-      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), 1]]) },
+      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), new Map([['user', 1]])]]) },
     );
 
     const turns = snapshot.items.filter((i) => i.kind === 'turn');
@@ -574,7 +602,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
         { role: 'user', content: [{ type: 'text', text: 'plain follow-up' }], toolCalls: [], origin: { kind: 'user' } },
       ],
-      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), 1]]) },
+      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), new Map([['user', 1]])]]) },
     );
 
     expect(snapshot.items.map((i) => i.kind)).toEqual(['turn', 'turn']);
@@ -1097,6 +1125,139 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(slashTurn.origin.kind).toBe('other');
     expect(slashTurn.prompt).toBe('skill body');
     expect(slashTurn.steps).toHaveLength(2);
+  });
+
+  it('keeps model-tool skill activations as markers even when their content matches a steer record', () => {
+    const skillContent = [{ type: 'text', text: 'skill body' }];
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] },
+        {
+          role: 'user',
+          content: skillContent,
+          toolCalls: [],
+          origin: { kind: 'skill_activation', trigger: 'model-tool', skillName: 'write-tui' } as {
+            kind: string;
+          },
+        },
+        { role: 'assistant', content: [{ type: 'text', text: 'used the skill' }], toolCalls: [] },
+      ],
+      { steeredContents: new Map([[JSON.stringify(skillContent), new Map([['skill_activation', 1]])]]) },
+    );
+
+    expect(snapshot.items.map((item) => item.kind)).toEqual(['turn', 'marker']);
+    const marker = snapshot.items[1];
+    if (marker?.kind !== 'marker') throw new Error('expected marker');
+    expect(marker.marker).toBe('skill');
+  });
+
+  it('still folds cron-origin steers into the running turn by content match', () => {
+    const cronContent = [{ type: 'text', text: 'cron tick' }];
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
+        {
+          role: 'user',
+          content: cronContent,
+          toolCalls: [],
+          origin: { kind: 'cron_job', jobId: 'job1' } as { kind: string },
+        },
+        { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] },
+      ],
+      { steeredContents: new Map([[JSON.stringify(cronContent), new Map([['cron_job', 1]])]]) },
+    );
+
+    expect(snapshot.items.map((item) => item.kind)).toEqual(['turn']);
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.steps).toHaveLength(2);
+    expect(turn.steps[1]?.frames[0]).toMatchObject({
+      kind: 'text',
+      role: 'user',
+      text: 'cron tick',
+    });
+  });
+
+  it('still folds user-slash skill activations into the running turn by content match', () => {
+    const slashContent = [{ type: 'text', text: 'slash skill body' }];
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
+        {
+          role: 'user',
+          content: slashContent,
+          toolCalls: [],
+          origin: { kind: 'skill_activation', trigger: 'user-slash', skillName: 'gen-docs' } as {
+            kind: string;
+          },
+        },
+        { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] },
+      ],
+      { steeredContents: new Map([[JSON.stringify(slashContent), new Map([['skill_activation', 1]])]]) },
+    );
+
+    expect(snapshot.items.map((item) => item.kind)).toEqual(['turn']);
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.steps).toHaveLength(2);
+    expect(turn.steps[1]?.frames[0]).toMatchObject({
+      kind: 'text',
+      role: 'user',
+      text: 'slash skill body',
+    });
+  });
+
+  it('consumes the steer count for marker-only activations so a later identical prompt opens its own turn', () => {
+    const shared = [{ type: 'text', text: 'same text' }];
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
+        {
+          role: 'user',
+          content: shared,
+          toolCalls: [],
+          origin: { kind: 'skill_activation', trigger: 'model-tool', skillName: 'x' } as {
+            kind: string;
+          },
+        },
+        { role: 'user', content: shared, toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] },
+      ],
+      { steeredContents: new Map([[JSON.stringify(shared), new Map([['skill_activation', 1]])]]) },
+    );
+
+    expect(snapshot.items.map((item) => item.kind)).toEqual(['turn', 'marker', 'turn']);
+  });
+
+  it('does not consume a user steer count for a compaction summary with identical content', () => {
+    const shared = [{ type: 'text', text: 'same text' }];
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
+        {
+          role: 'user',
+          content: shared,
+          toolCalls: [],
+          origin: { kind: 'compaction_summary' } as { kind: string },
+        },
+        { role: 'user', content: shared, toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] },
+      ],
+      { steeredContents: new Map([[JSON.stringify(shared), new Map([['user', 1]])]]) },
+    );
+
+    expect(snapshot.items.map((item) => item.kind)).toEqual(['turn', 'marker']);
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    const steered = turn.steps
+      .flatMap((step) => step.frames)
+      .filter((frame) => frame.kind === 'text' && frame.role === 'user');
+    expect(steered).toHaveLength(1);
   });
 
   it('starts a promptless turn for turn-opening system triggers (goal continuation)', () => {
@@ -1686,20 +1847,152 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(folded.items).toHaveLength(base.items.length);
   });
 
+  it('matches durable turns by prompt identity after a context-only blocked prompt', () => {
+    const base = groupMessagesIntoSnapshot([
+      { id: 'prompt-blocked', role: 'user', content: [{ type: 'text', text: 'blocked' }], toolCalls: [], origin: { kind: 'user' } },
+      { id: 'prompt-live', role: 'user', content: [{ type: 'text', text: 'run' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'failed later' }], toolCalls: [] },
+    ]);
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'run' }], origin: { kind: 'user' }, promptId: 'prompt-live', time: 1 },
+        { type: 'turn.ended', turnId: 0, reason: 'failed', error: { message: 'later failure' }, time: 2 },
+      ],
+      base,
+    );
+    const blocked = folded.items[0];
+    const live = folded.items[1];
+    if (blocked?.kind !== 'turn' || live?.kind !== 'turn') throw new Error('expected turns');
+    expect(blocked.triggerPromptId).toBe('prompt-blocked');
+    expect(blocked.error).toBeUndefined();
+    expect(live.triggerPromptId).toBe('prompt-live');
+    expect(live.state).toBe('failed');
+    expect(live.error).toBe('later failure');
+  });
+
+  it('recovers legacy boundary identity past a context-only blocked prompt', () => {
+    const base = groupMessagesIntoSnapshot([
+      { id: 'prompt-blocked', role: 'user', content: [{ type: 'text', text: 'blocked' }], toolCalls: [], origin: { kind: 'user' } },
+      { id: 'prompt-real', role: 'user', content: [{ type: 'text', text: 'run' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'failed later' }], toolCalls: [] },
+    ]);
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'context.append_message', message: { id: 'prompt-blocked', role: 'user', origin: { kind: 'user' } }, time: 1 },
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'run' }], origin: { kind: 'user' }, time: 2 },
+        { type: 'context.append_message', message: { id: 'prompt-real', role: 'user', origin: { kind: 'user' } }, time: 3 },
+        { type: 'turn.ended', turnId: 0, reason: 'failed', error: { message: 'legacy failure' }, time: 4 },
+      ],
+      base,
+    );
+    const blocked = folded.items[0];
+    const real = folded.items[1];
+    if (blocked?.kind !== 'turn' || real?.kind !== 'turn') throw new Error('expected turns');
+    expect(blocked.error).toBeUndefined();
+    expect(real.triggerPromptId).toBe('prompt-real');
+    expect(real.state).toBe('failed');
+    expect(real.error).toBe('legacy failure');
+  });
+
+  it('retires an unmatched legacy empty boundary before a later blocked prompt', () => {
+    const base = groupMessagesIntoSnapshot([
+      { role: 'assistant', content: [{ type: 'text', text: 'partial' }], toolCalls: [] },
+      { id: 'prompt-blocked', role: 'user', content: [{ type: 'text', text: 'blocked' }], toolCalls: [], origin: { kind: 'user' } },
+    ]);
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', input: [], origin: { kind: 'user' }, time: 1 },
+        { type: 'turn.ended', turnId: 0, reason: 'failed', error: { message: 'empty failure' }, time: 2 },
+        { type: 'context.append_message', message: { id: 'prompt-blocked', role: 'user', origin: { kind: 'user' } }, time: 3 },
+      ],
+      base,
+    );
+    const empty = folded.items[0];
+    const blocked = folded.items[1];
+    if (empty?.kind !== 'turn' || blocked?.kind !== 'turn') throw new Error('expected turns');
+    expect(empty.state).toBe('failed');
+    expect(empty.error).toBe('empty failure');
+    expect(blocked.triggerPromptId).toBe('prompt-blocked');
+    expect(blocked.error).toBeUndefined();
+  });
+
+  it('folds terminal facts for an empty prompt turn without a context identity', () => {
+    const base = groupMessagesIntoSnapshot([
+      { role: 'assistant', content: [{ type: 'text', text: 'partial' }], toolCalls: [] },
+    ]);
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', input: [], origin: { kind: 'user' }, promptId: 'prompt-empty', time: 1 },
+        { type: 'turn.ended', turnId: 0, reason: 'failed', error: { message: 'empty failure' }, time: 2 },
+      ],
+      base,
+    );
+    const turn = folded.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.triggerPromptId).toBeUndefined();
+    expect(turn.state).toBe('failed');
+    expect(turn.error).toBe('empty failure');
+  });
+
+  it('does not let an empty prompt claim a later system continuation turn', () => {
+    const base = groupMessagesIntoSnapshot([
+      { id: 'internal-prompt', role: 'user', content: [{ type: 'text', text: 'continue' }], toolCalls: [], origin: { kind: 'system_trigger', name: 'goal_continuation' } as { kind: string } },
+      { role: 'assistant', content: [{ type: 'text', text: 'stopped' }], toolCalls: [] },
+    ]);
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', input: [], origin: { kind: 'user' }, promptId: 'prompt-empty', time: 1 },
+        { type: 'turn.ended', turnId: 0, reason: 'failed', error: { message: 'empty failure' }, time: 2 },
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'continue' }], origin: { kind: 'system_trigger', name: 'goal_continuation' }, promptId: 'internal-prompt', time: 3 },
+        { type: 'turn.ended', turnId: 1, reason: 'cancelled', durationMs: 10, time: 4 },
+      ],
+      base,
+    );
+    const system = folded.items[0];
+    if (system?.kind !== 'turn') throw new Error('expected turn');
+    expect(system.triggerPromptId).toBeUndefined();
+    expect(system.state).toBe('cancelled');
+    expect(system.durationMs).toBe(10);
+    expect(system.error).toBeUndefined();
+  });
+
+  it('matches a system turn with internal prompt identity past a context-only blocked prompt', () => {
+    const base = groupMessagesIntoSnapshot([
+      { id: 'prompt-blocked', role: 'user', content: [{ type: 'text', text: 'blocked' }], toolCalls: [], origin: { kind: 'user' } },
+      { id: 'internal-prompt', role: 'user', content: [{ type: 'text', text: 'continue' }], toolCalls: [], origin: { kind: 'system_trigger', name: 'goal_continuation' } as { kind: string } },
+      { role: 'assistant', content: [{ type: 'text', text: 'continuation failed' }], toolCalls: [] },
+    ]);
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'continue' }], origin: { kind: 'system_trigger', name: 'goal_continuation' }, promptId: 'internal-prompt', time: 1 },
+        { type: 'turn.ended', turnId: 0, reason: 'failed', error: { message: 'system failure' }, time: 2 },
+      ],
+      base,
+    );
+    const blocked = folded.items[0];
+    const system = folded.items[1];
+    if (blocked?.kind !== 'turn' || system?.kind !== 'turn') throw new Error('expected turns');
+    expect(blocked.triggerPromptId).toBe('prompt-blocked');
+    expect(blocked.error).toBeUndefined();
+    expect(system.triggerPromptId).toBeUndefined();
+    expect(system.state).toBe('failed');
+    expect(system.error).toBe('system failure');
+  });
+
   it('maps turn.ended around hidden retry turns replayed from the turn-clock records', () => {
     const base = groupMessagesIntoSnapshot([
-      { role: 'user', content: [{ type: 'text', text: 'one' }], toolCalls: [], origin: { kind: 'user' } },
+      { id: 'prompt-1', role: 'user', content: [{ type: 'text', text: 'one' }], toolCalls: [], origin: { kind: 'user' } },
       { role: 'assistant', content: [{ type: 'text', text: 'a1' }], toolCalls: [] },
-      { role: 'user', content: [{ type: 'text', text: 'two' }], toolCalls: [], origin: { kind: 'user' } },
+      { id: 'prompt-2', role: 'user', content: [{ type: 'text', text: 'two' }], toolCalls: [], origin: { kind: 'user' } },
       { role: 'assistant', content: [{ type: 'text', text: 'a2' }], toolCalls: [] },
     ]);
     const folded = foldWireRecordFacts(
       [
-        { type: 'turn.prompt', input: [{ type: 'text', text: 'one' }], origin: { kind: 'user' }, time: 1 },
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'one' }], origin: { kind: 'user' }, promptId: 'prompt-1', time: 1 },
         { type: 'turn.ended', turnId: 0, reason: 'completed', time: 2 },
         { type: 'turn.prompt', input: [], origin: { kind: 'retry' }, time: 3 },
         { type: 'turn.ended', turnId: 1, reason: 'failed', error: { message: 'retry boom' }, time: 4 },
-        { type: 'turn.prompt', input: [{ type: 'text', text: 'two' }], origin: { kind: 'user' }, time: 5 },
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'two' }], origin: { kind: 'user' }, promptId: 'prompt-2', time: 5 },
         { type: 'turn.ended', turnId: 2, reason: 'cancelled', durationMs: 20, time: 6 },
       ],
       base,
@@ -1707,18 +2000,20 @@ describe('foldWireRecordFacts (cold facts)', () => {
     const first = folded.items[0];
     if (first?.kind !== 'turn') throw new Error('expected turn');
     expect(first.state).toBe('completed');
+    expect(first.triggerPromptId).toBe('prompt-1');
     const second = folded.items[1];
     if (second?.kind !== 'turn') throw new Error('expected turn');
     expect(second.state).toBe('cancelled');
+    expect(second.triggerPromptId).toBe('prompt-2');
     expect(second.error).toBeUndefined();
     expect(second.durationMs).toBe(20);
   });
 
   it('maps turn.ended across queued-then-cancelled turn reservations', () => {
     const base = groupMessagesIntoSnapshot([
-      { role: 'user', content: [{ type: 'text', text: 'one' }], toolCalls: [], origin: { kind: 'user' } },
+      { id: 'prompt-1', role: 'user', content: [{ type: 'text', text: 'one' }], toolCalls: [], origin: { kind: 'user' } },
       { role: 'assistant', content: [{ type: 'text', text: 'a1' }], toolCalls: [] },
-      { role: 'user', content: [{ type: 'text', text: 'two' }], toolCalls: [], origin: { kind: 'user' } },
+      { id: 'prompt-2', role: 'user', content: [{ type: 'text', text: 'two' }], toolCalls: [], origin: { kind: 'user' } },
       { role: 'assistant', content: [{ type: 'text', text: 'a2' }], toolCalls: [] },
     ]);
     const folded = foldWireRecordFacts(
@@ -1726,7 +2021,7 @@ describe('foldWireRecordFacts (cold facts)', () => {
         { type: 'turn.prompt', input: [{ type: 'text', text: 'one' }], origin: { kind: 'user' }, time: 1 },
         { type: 'turn.ended', turnId: 0, reason: 'completed', time: 2 },
         { type: 'turn.cancel', turnId: 1, target: 'queued', time: 3 },
-        { type: 'turn.prompt', input: [{ type: 'text', text: 'two' }], origin: { kind: 'user' }, time: 4 },
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'two' }], origin: { kind: 'user' }, promptId: 'prompt-2', time: 4 },
         { type: 'turn.ended', turnId: 2, reason: 'failed', error: { message: 'boom' }, time: 5 },
       ],
       base,
@@ -1735,5 +2030,79 @@ describe('foldWireRecordFacts (cold facts)', () => {
     if (second?.kind !== 'turn') throw new Error('expected turn');
     expect(second.state).toBe('failed');
     expect(second.error).toBe('boom');
+    expect(second.triggerPromptId).toBe('prompt-2');
+  });
+
+  it('skips undone turn boundaries when mapping prompt ids and turn endings', () => {
+    const base = groupMessagesIntoSnapshot([
+      { id: 'prompt-1', role: 'user', content: [{ type: 'text', text: 'one' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'a1' }], toolCalls: [] },
+      { id: 'prompt-3', role: 'user', content: [{ type: 'text', text: 'replacement' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'a3' }], toolCalls: [] },
+    ]);
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'one' }], origin: { kind: 'user' }, promptId: 'prompt-1', time: 1 },
+        { type: 'context.append_message', message: { id: 'prompt-1', role: 'user', origin: { kind: 'user' } }, time: 1.5 },
+        { type: 'turn.ended', turnId: 0, reason: 'completed', time: 2 },
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'undone' }], origin: { kind: 'user' }, promptId: 'prompt-2', time: 3 },
+        { type: 'context.append_message', message: { id: 'prompt-2', role: 'user', origin: { kind: 'user' } }, time: 3.5 },
+        { type: 'turn.ended', turnId: 1, reason: 'completed', time: 4 },
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'continue' }], origin: { kind: 'system_trigger', name: 'goal_continuation' }, time: 5 },
+        { type: 'turn.ended', turnId: 2, reason: 'completed', time: 6 },
+        { type: 'context.undo', count: 1, time: 7 },
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'replacement' }], origin: { kind: 'user' }, promptId: 'prompt-3', time: 8 },
+        { type: 'turn.ended', turnId: 3, reason: 'failed', error: { message: 'replacement failed' }, time: 9 },
+      ],
+      base,
+    );
+    const replacement = folded.items[1];
+    if (replacement?.kind !== 'turn') throw new Error('expected turn');
+    expect(replacement.triggerPromptId).toBe('prompt-3');
+    expect(replacement.state).toBe('failed');
+    expect(replacement.error).toBe('replacement failed');
+  });
+
+  it('counts context-only blocked prompts as undo anchors', () => {
+    const base = groupMessagesIntoSnapshot([
+      { id: 'prompt-real', role: 'user', content: [{ type: 'text', text: 'real' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'failed' }], toolCalls: [] },
+    ]);
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'real' }], origin: { kind: 'user' }, promptId: 'prompt-real', time: 1 },
+        { type: 'context.append_message', message: { id: 'prompt-real', role: 'user', origin: { kind: 'user' } }, time: 2 },
+        { type: 'turn.ended', turnId: 0, reason: 'failed', error: { message: 'real failure' }, time: 3 },
+        { type: 'context.append_message', message: { id: 'prompt-blocked', role: 'user', origin: { kind: 'user' } }, time: 4 },
+        { type: 'context.undo', count: 1, time: 5 },
+      ],
+      base,
+    );
+    const real = folded.items[0];
+    if (real?.kind !== 'turn') throw new Error('expected turn');
+    expect(real.triggerPromptId).toBe('prompt-real');
+    expect(real.state).toBe('failed');
+    expect(real.error).toBe('real failure');
+  });
+
+  it('does not consume a pending identity boundary for a different context-only anchor', () => {
+    const base = groupMessagesIntoSnapshot([
+      { id: 'prompt-real', role: 'user', content: [{ type: 'text', text: 'real' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'failed' }], toolCalls: [] },
+    ]);
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'real' }], origin: { kind: 'user' }, promptId: 'prompt-real', time: 1 },
+        { type: 'context.append_message', message: { id: 'prompt-blocked', role: 'user', origin: { kind: 'user' } }, time: 2 },
+        { type: 'context.undo', count: 1, time: 3 },
+        { type: 'context.append_message', message: { id: 'prompt-real', role: 'user', origin: { kind: 'user' } }, time: 4 },
+        { type: 'turn.ended', turnId: 0, reason: 'failed', error: { message: 'real failure' }, time: 5 },
+      ],
+      base,
+    );
+    const real = folded.items[0];
+    if (real?.kind !== 'turn') throw new Error('expected turn');
+    expect(real.state).toBe('failed');
+    expect(real.error).toBe('real failure');
   });
 });

@@ -1,6 +1,7 @@
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { toDisposable } from '#/_base/di/lifecycle';
 import type { ServiceRegistration, TestInstantiationService } from '#/_base/di/test';
+import { Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
@@ -36,6 +37,7 @@ interface TestAgentWireDependencies {
 
 const noopLog: IAppendLogStore = {
   _serviceBrand: undefined,
+  onDidWrite: Event.None as IAppendLogStore['onDidWrite'],
   append: () => {},
   read: async function* () {},
   rewrite: async () => {},
@@ -234,6 +236,7 @@ export function recordingWireLog(
 ): IAppendLogStore {
   return {
     _serviceBrand: undefined,
+    onDidWrite: Event.None as IAppendLogStore['onDidWrite'],
     append: (_scope, _key, record) => {
       records.push(record as WireRecord);
       onAppend?.(record as WireRecord);

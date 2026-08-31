@@ -67,6 +67,10 @@ import {
   THINKING_SECTION,
 } from '#/app/kosongConfig/configSection';
 import '#/app/kosongConfig/envOverlay';
+import '#/kosong/provider/providers/kimi/kimi.contrib';
+import { IOAuthService } from '#/app/auth/auth';
+import { IAuthLegacyService } from '#/app/authLegacy/authLegacy';
+import { AuthLegacyService } from '#/app/authLegacy/authLegacyService';
 import { type ThinkingConfig } from '#/kosong/model/thinking';
 import {
   KEEP_ALIVE_ON_EXIT_ENV,
@@ -79,7 +83,7 @@ import { applyPrintModeConfigDefaults } from '#/agent/task/printDefaults';
 import '#/session/subagent/configSection';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
-  resolveSubagentBinding,
+  resolveSubagentBinding as resolveSubagentBindingWithFlags,
   resolveSubagentModelPool,
   resolveSubagentTimeoutMs,
   SECONDARY_MODEL_SECTION,
@@ -124,6 +128,14 @@ import { stubFlag } from '../flag/stubs';
 
 function secondaryModelFlags(enabled = true) {
   return stubFlag((id) => enabled && id === SECONDARY_MODEL_FLAG_ID);
+}
+
+function resolveSubagentBinding(
+  config: IConfigService,
+  own: { modelAlias: string; thinkingLevel: string },
+  requested?: string,
+) {
+  return resolveSubagentBindingWithFlags(config, secondaryModelFlags(), own, requested);
 }
 
 const TEST_OS_ENV = {
@@ -219,7 +231,7 @@ describe('Agent config', () => {
     });
 
     expect(ctx.newEvents()).toMatchInlineSnapshot(`
-      [wire] config.update            { "agentId": "main", "profileName": "test-profile", "systemPrompt": "Profile system prompt.", "environmentDisclosure": { "cwd": "<cwd>", "date": { "disclosed": false } }, "agentsMdPaths": [], "disallowedTools": [], "time": "<time>" }
+      [wire] config.update            { "agentId": "main", "profileName": "test-profile", "systemPrompt": "Profile system prompt.", "environmentDisclosure": { "cwd": "<cwd>" }, "agentsMdPaths": [], "disallowedTools": [], "time": "<time>" }
       [emit] agent.status.updated     { "time": "<time>", "agentId": "main", "model": "mock-model", "maxContextTokens": 1000000 }
       [wire] tools.set_active_tools   { "agentId": "main", "names": [ "Read" ], "time": "<time>" }
     `);
@@ -322,8 +334,8 @@ describe('Agent config', () => {
       [wire] prompt.accepted                 { "agentId": "main", "promptId": "<msg-1>", "content": [ { "type": "text", "text": "Look up before config changes" } ], "time": "<time>" }
       [emit] prompt.accepted                 { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "content": [ { "type": "text", "text": "Look up before config changes" } ] }
       [emit] prompt.submitted                { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Look up before config changes" } ], "createdAt": "<time>" }
-      [wire] turn.prompt                     { "agentId": "main", "input": [ { "type": "text", "text": "Look up before config changes" } ], "origin": { "kind": "user" }, "time": "<time>" }
-      [emit] turn.started                    { "time": "<time>", "agentId": "main", "turnId": 0, "origin": { "kind": "user" }, "prompt": "Look up before config changes" }
+      [wire] turn.prompt                     { "agentId": "main", "input": [ { "type": "text", "text": "Look up before config changes" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "time": "<time>" }
+      [emit] turn.started                    { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "prompt": "Look up before config changes" }
       [emit] agent.activity.updated          { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
       [emit] context.spliced                 { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Look up before config changes" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" } ] }
       [emit] prompt.started                  { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
@@ -414,12 +426,13 @@ describe('Agent config', () => {
       [wire] token_counting.turn_recorded   { "agentId": "main", "turnId": 0, "length": 5, "tokens": 102, "time": "<time>" }
       [emit] agent.activity.updated         { "time": "<time>", "lifecycle": "ready", "lastTurn": { "turnId": 0, "reason": "completed", "at": "<time>" }, "background": [], "agentId": "main" }
       [emit] agent.status.updated           { "time": "<time>", "agentId": "main", "contextTokens": 102 }
+      [wire] prompt.completed               { "agentId": "main", "promptId": "<msg-1>", "finishedAt": "<time>", "reason": "completed", "time": "<time>" }
       [emit] prompt.completed               { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "finishedAt": "<time>", "reason": "completed" }
       [wire] prompt.accepted                { "agentId": "main", "promptId": "<msg-2>", "content": [ { "type": "text", "text": "Start a fresh turn" } ], "time": "<time>" }
       [emit] prompt.accepted                { "time": "<time>", "agentId": "main", "promptId": "<msg-2>", "content": [ { "type": "text", "text": "Start a fresh turn" } ] }
       [emit] prompt.submitted               { "time": "<time>", "agentId": "main", "promptId": "<msg-2>", "userMessageId": "<msg-2>", "status": "running", "content": [ { "type": "text", "text": "Start a fresh turn" } ], "createdAt": "<time>" }
-      [wire] turn.prompt                    { "agentId": "main", "input": [ { "type": "text", "text": "Start a fresh turn" } ], "origin": { "kind": "user" }, "time": "<time>" }
-      [emit] turn.started                   { "time": "<time>", "agentId": "main", "turnId": 1, "origin": { "kind": "user" }, "prompt": "Start a fresh turn" }
+      [wire] turn.prompt                    { "agentId": "main", "input": [ { "type": "text", "text": "Start a fresh turn" } ], "origin": { "kind": "user" }, "promptId": "<msg-2>", "time": "<time>" }
+      [emit] turn.started                   { "time": "<time>", "agentId": "main", "turnId": 1, "promptId": "<msg-2>", "origin": { "kind": "user" }, "prompt": "Start a fresh turn" }
       [emit] agent.activity.updated         { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 1, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
       [emit] context.spliced                { "time": "<time>", "agentId": "main", "start": 5, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Start a fresh turn" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-2>" } ] }
       [emit] prompt.started                 { "time": "<time>", "agentId": "main", "promptId": "<msg-2>" }
@@ -587,6 +600,30 @@ describe('ConfigService env overlay (live)', () => {
 
     await config.replace('defaultModel', undefined);
     expect(config.get<string>('defaultModel')).toBeUndefined();
+
+    disposables.dispose();
+  });
+
+  it('marks the env-injected flat model ready in the auth legacy summary', async () => {
+    const env: Record<string, string> = { KIMI_MODEL_NAME: 'kimi-for-coding' };
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.stub(IOAuthService, { status: vi.fn() } as unknown as IOAuthService);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    ix.set(IAuthLegacyService, new SyncDescriptor(AuthLegacyService));
+
+    const summary = await ix.get(IAuthLegacyService).get();
+
+    expect(summary).toEqual({
+      models_ready: true,
+      providers_count: 1,
+      managed_provider: null,
+    });
 
     disposables.dispose();
   });
@@ -1843,13 +1880,15 @@ describe('subagent config section', () => {
     const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
 
     const noPool = await createConfig({});
-    expect(resolveSubagentBinding(noPool.config, secondaryModelFlags(), own)).toEqual({
+    expect(resolveSubagentBinding(noPool.config, own)).toEqual({
       model: 'provider/main',
       thinking: 'medium',
+      modelSource: 'inherited',
     });
-    expect(resolveSubagentBinding(noPool.config, secondaryModelFlags(), own, 'primary')).toEqual({
+    expect(resolveSubagentBinding(noPool.config, own, 'primary')).toEqual({
       model: 'provider/main',
       thinking: 'medium',
+      modelSource: 'primary_override',
     });
     noPool.disposables.dispose();
 
@@ -1857,34 +1896,38 @@ describe('subagent config section', () => {
       {},
       '[secondary_model]\ndefault_model = "provider/fast"\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n"provider/smart" = "hard tasks"\n',
     );
-    expect(resolveSubagentBinding(pool.config, secondaryModelFlags(), own)).toEqual({
+    expect(resolveSubagentBinding(pool.config, own)).toEqual({
       model: 'provider/fast',
       thinking: undefined,
+      modelSource: 'secondary_pool',
     });
-    expect(resolveSubagentBinding(pool.config, secondaryModelFlags(), own, 'provider/smart')).toEqual({
+    expect(resolveSubagentBinding(pool.config, own, 'provider/smart')).toEqual({
       model: 'provider/smart',
       thinking: undefined,
+      modelSource: 'secondary_pool',
     });
-    expect(resolveSubagentBinding(pool.config, secondaryModelFlags(), own, 'primary')).toEqual({
+    expect(resolveSubagentBinding(pool.config, own, 'primary')).toEqual({
       model: 'provider/main',
       thinking: 'medium',
+      modelSource: 'primary_override',
     });
     pool.disposables.dispose();
   });
 
-  it('keeps the pool inert while the secondary-model experiment is off', async () => {
+  it('keeps the configured pool inert when secondary-model is disabled', async () => {
     const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
     const { config, disposables } = await createConfig(
       {},
       '[secondary_model]\ndefault_model = "provider/fast"\nforce = true\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n',
     );
 
-    expect(resolveSubagentBinding(config, secondaryModelFlags(false), own)).toEqual({
+    expect(resolveSubagentBindingWithFlags(config, secondaryModelFlags(false), own)).toEqual({
       model: 'provider/main',
       thinking: 'medium',
+      modelSource: 'inherited',
     });
     expect(() =>
-      resolveSubagentBinding(config, secondaryModelFlags(false), own, 'provider/fast'),
+      resolveSubagentBindingWithFlags(config, secondaryModelFlags(false), own, 'provider/fast'),
     ).toThrow(/no \[secondary_model\.models\] pool is configured/);
 
     disposables.dispose();
@@ -1897,15 +1940,17 @@ describe('subagent config section', () => {
       '[secondary_model]\ndefault_model = "provider/fast"\n',
     );
 
-    expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
+    expect(resolveSubagentBinding(config, own)).toEqual({
       model: 'provider/fast',
       thinking: undefined,
+      modelSource: 'secondary_pool',
     });
-    expect(resolveSubagentBinding(config, secondaryModelFlags(), own, 'primary')).toEqual({
+    expect(resolveSubagentBinding(config, own, 'primary')).toEqual({
       model: 'provider/main',
       thinking: 'medium',
+      modelSource: 'primary_override',
     });
-    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'provider/smart')).toThrow(
+    expect(() => resolveSubagentBinding(config, own, 'provider/smart')).toThrow(
       /Invalid model "provider\/smart"\. Available models: provider\/fast, primary\./,
     );
 
@@ -1927,11 +1972,12 @@ describe('subagent config section', () => {
       defaultModel: 'provider/fast',
       models: { 'provider/fast': '' },
     });
-    expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
+    expect(resolveSubagentBinding(config, own)).toEqual({
       model: 'provider/fast',
       thinking: 'low',
+      modelSource: 'secondary_pool',
     });
-    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'provider/smart')).toThrow(
+    expect(() => resolveSubagentBinding(config, own, 'provider/smart')).toThrow(
       /Invalid model "provider\/smart"\. Available models: provider\/fast, primary\./,
     );
 
@@ -1945,9 +1991,10 @@ describe('subagent config section', () => {
       '[secondary_model]\nmodel = "provider/slow"\ndefault_model = "provider/fast"\n',
     );
 
-    expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
+    expect(resolveSubagentBinding(config, own)).toEqual({
       model: 'provider/fast',
       thinking: undefined,
+      modelSource: 'secondary_pool',
     });
 
     disposables.dispose();
@@ -1960,7 +2007,7 @@ describe('subagent config section', () => {
       '[secondary_model]\nmodel = "provider/fast"\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n',
     );
 
-    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own)).toThrow(
+    expect(() => resolveSubagentBinding(config, own)).toThrow(
       '[secondary_model].default_model is required when [secondary_model.models] is configured',
     );
 
@@ -1974,11 +2021,12 @@ describe('subagent config section', () => {
       '[secondary_model]\nmodel = "provider/fast"\nforce = true\n',
     );
 
-    expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
+    expect(resolveSubagentBinding(config, own)).toEqual({
       model: 'provider/fast',
       thinking: undefined,
+      modelSource: 'forced',
     });
-    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'primary')).toThrow(
+    expect(() => resolveSubagentBinding(config, own, 'primary')).toThrow(
       /Invalid model "primary": \[secondary_model\]\.force is set/,
     );
 
@@ -2016,13 +2064,15 @@ describe('subagent config section', () => {
       '[secondary_model]\ndefault_model = "provider/fast"\ndefault_effort = "max"\n',
     );
 
-    expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
+    expect(resolveSubagentBinding(config, own)).toEqual({
       model: 'provider/fast',
       thinking: 'max',
+      modelSource: 'secondary_pool',
     });
-    expect(resolveSubagentBinding(config, secondaryModelFlags(), own, 'primary')).toEqual({
+    expect(resolveSubagentBinding(config, own, 'primary')).toEqual({
       model: 'provider/main',
       thinking: 'medium',
+      modelSource: 'primary_override',
     });
 
     disposables.dispose();
@@ -2039,11 +2089,12 @@ describe('subagent config section', () => {
       defaultModel: 'provider/fast',
       force: true,
     });
-    expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
+    expect(resolveSubagentBinding(config, own)).toEqual({
       model: 'provider/fast',
       thinking: undefined,
+      modelSource: 'forced',
     });
-    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'primary')).toThrow(
+    expect(() => resolveSubagentBinding(config, own, 'primary')).toThrow(
       /Invalid model "primary": \[secondary_model\]\.force is set/,
     );
 
@@ -2057,7 +2108,7 @@ describe('subagent config section', () => {
       '[secondary_model]\ndefault_model = "provider/fast"\nforce = true\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n',
     );
 
-    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own)).toThrow(
+    expect(() => resolveSubagentBinding(config, own)).toThrow(
       /\[secondary_model\]\.force cannot be combined with \[secondary_model\.models\]/,
     );
 
@@ -2073,7 +2124,7 @@ describe('subagent config section', () => {
 
     let caught: unknown;
     try {
-      resolveSubagentBinding(config, secondaryModelFlags(), own, 'provider/typo');
+      resolveSubagentBinding(config, own, 'provider/typo');
     } catch (error) {
       caught = error;
     }
@@ -2090,7 +2141,7 @@ describe('subagent config section', () => {
     const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
     const { config, disposables } = await createConfig({});
 
-    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'provider/fast')).toThrow(
+    expect(() => resolveSubagentBinding(config, own, 'provider/fast')).toThrow(
       /Invalid model "provider\/fast": no \[secondary_model\.models\] pool is configured/,
     );
 
@@ -2613,6 +2664,7 @@ describe('ConfigService replaceSections', () => {
   it('applies every domain in one transition with a single disk write, clearing undefined domains', async () => {
     const { config, disposables, store } = await createSectionsConfig();
     const setSpy = vi.spyOn(store, 'set');
+    const setTextSpy = vi.spyOn(store, 'setText');
 
     await config.replaceSections({
       [PROVIDERS_SECTION]: { acme: { type: 'openai', apiKey: 'sk-acme-2' } },
@@ -2621,7 +2673,7 @@ describe('ConfigService replaceSections', () => {
       [THINKING_SECTION]: undefined,
     });
 
-    expect(setSpy).toHaveBeenCalledTimes(1);
+    expect(setSpy.mock.calls.length + setTextSpy.mock.calls.length).toBe(1);
     expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({
       acme: { type: 'openai', apiKey: 'sk-acme-2' },
     });
@@ -2639,13 +2691,14 @@ describe('ConfigService replaceSections', () => {
   it('treats null as clear — the wire encoding JSON transports use for undefined', async () => {
     const { config, disposables, store } = await createSectionsConfig();
     const setSpy = vi.spyOn(store, 'set');
+    const setTextSpy = vi.spyOn(store, 'setText');
 
     await config.replaceSections({
       [DEFAULT_MODEL_SECTION]: null,
       [PROVIDERS_SECTION]: { acme: { type: 'openai', apiKey: 'sk-acme-2' } },
     });
 
-    expect(setSpy).toHaveBeenCalledTimes(1);
+    expect(setSpy.mock.calls.length + setTextSpy.mock.calls.length).toBe(1);
     expect(config.get(DEFAULT_MODEL_SECTION)).toBeUndefined();
     expect(config.inspect(DEFAULT_MODEL_SECTION).userValue).toBeUndefined();
     expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({

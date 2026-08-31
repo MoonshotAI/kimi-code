@@ -16,6 +16,7 @@ import { ILogService } from '#/_base/log/log';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
+import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import {
   ISessionIndex,
   ISessionIndexMirror,
@@ -90,6 +91,7 @@ describe('FileSessionIndex (legacy)', () => {
       stubPair(IQueryStore, stubQueryStore()),
       stubPair(ISessionIndexMirror, stubSessionIndexMirror()),
       stubPair(IFlagService, stubFlag(false)),
+      stubPair(ITelemetryService, noopTelemetryService),
       stubPair(ILogService, stubLog()),
     ]);
     disposeHost = () => {
@@ -351,6 +353,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IFlagService, stubFlag(true)),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -741,6 +744,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IFlagService, stubFlag(true)),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -813,6 +817,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IFlagService, stubFlag(true)),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -869,6 +874,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IFlagService, stubFlag(true)),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -957,6 +963,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IFlagService, stubFlag(true)),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -1016,6 +1023,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IFlagService, stubFlag(true)),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -1074,6 +1082,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IFlagService, stubFlag(true)),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -1149,6 +1158,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IFlagService, stubFlag(true)),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -1216,6 +1226,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IFlagService, stubFlag(true)),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -1281,6 +1292,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IFlagService, stubFlag(true)),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -1317,6 +1329,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IFlagService, stubFlag(true)),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
