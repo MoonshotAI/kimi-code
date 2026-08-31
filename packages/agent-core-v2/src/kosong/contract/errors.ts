@@ -432,6 +432,21 @@ export function isRecoverableRequestStructureError(error: unknown): boolean {
   return STRUCTURAL_REQUEST_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
 }
 
+const CONTENT_TYPE_INVALID_MESSAGE_PATTERNS = [
+  /messages\.content\.type is invalid/,
+  /content\[\d*\]\.type .*invalid/,
+  /allowed values.*\['?text'?\]/,
+] as const;
+
+export function isUnsupportedContentTypeError(error: unknown): boolean {
+  if (!(error instanceof APIStatusError)) return false;
+  if (error instanceof APIContextOverflowError) return false;
+  if (error instanceof APIRequestTooLargeError) return false;
+  if (error.statusCode !== 400) return false;
+  const lowerMessage = error.message.toLowerCase();
+  return CONTENT_TYPE_INVALID_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
+}
+
 export function isProviderRateLimitError(error: unknown): boolean {
   if (error instanceof APIProviderQuotaExhaustedError) return false;
   if (error instanceof APIProviderRateLimitError) return true;
