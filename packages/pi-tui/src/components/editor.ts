@@ -1132,6 +1132,51 @@ export class Editor implements Component, Focusable {
 		return this.expandPasteMarkers(this.state.lines.join("\n"));
 	}
 
+	/**
+	 * Expand the paste marker under the cursor, replacing it with its stored
+	 * content. The paste registry is preserved so undo restores both the marker
+	 * text and its entry. Returns false when the cursor is not on a live marker.
+	 */
+	expandPasteMarkerAtCursor(): boolean {
+		const currentLine = this.state.lines[this.state.cursorLine] || "";
+		PASTE_MARKER_REGEX.lastIndex = 0;
+		for (const match of currentLine.matchAll(PASTE_MARKER_REGEX)) {
+			const start = match.index;
+			const end = start + match[0].length;
+			if (this.state.cursorCol < start || this.state.cursorCol > end) continue;
+
+			const pasteId = Number(match[1]);
+			const content = this.pastes.get(pasteId);
+			if (content === undefined) return false;
+
+			const text = this.getText();
+			const offset =
+				this.state.lines.slice(0, this.state.cursorLine).reduce((sum, l) => sum + l.length + 1, 0) +
+				start;
+			const newText = text.slice(0, offset) + content + text.slice(offset + match[0].length);
+			this.setText(newText, { preservePasteRegistry: true });
+			return true;
+		}
+		return false;
+	}
+
+	/**
+	 * Second-paste gesture: pasting content identical to what the marker under
+	 * the cursor holds expands that marker instead of inserting a duplicate.
+	 */
+	private expandMarkerForIdenticalPaste(filteredText: string): boolean {
+		const currentLine = this.state.lines[this.state.cursorLine] || "";
+		PASTE_MARKER_REGEX.lastIndex = 0;
+		for (const match of currentLine.matchAll(PASTE_MARKER_REGEX)) {
+			const start = match.index;
+			const end = start + match[0].length;
+			if (this.state.cursorCol < start || this.state.cursorCol > end) continue;
+			if (this.pastes.get(Number(match[1])) !== filteredText) return false;
+			return this.expandPasteMarkerAtCursor();
+		}
+		return false;
+	}
+
 	getLines(): string[] {
 		return [...this.state.lines];
 	}
@@ -1302,8 +1347,6 @@ export class Editor implements Component, Focusable {
 		this.exitHistoryBrowsing();
 		this.lastAction = null;
 
-		this.pushUndoSnapshot();
-
 		// Some terminals (e.g. tmux popups with extended-keys-format=csi-u) re-encode
 		// control bytes inside bracketed paste as CSI-u Ctrl+<letter> sequences
 		// (ESC [ <codepoint> ; 5 u). Decode those back to their literal byte so the
@@ -1334,6 +1377,12 @@ export class Editor implements Component, Focusable {
 				filteredText = ` ${filteredText}`;
 			}
 		}
+
+		// Re-pasting a marker's exact stored content onto it expands the marker
+		// (second-paste gesture) instead of inserting a duplicate.
+		if (this.expandMarkerForIdenticalPaste(filteredText)) return;
+
+		this.pushUndoSnapshot();
 
 		// Split into lines to check for large paste
 		const pastedLines = filteredText.split("\n");

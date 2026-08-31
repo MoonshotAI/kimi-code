@@ -4053,6 +4053,84 @@ describe("Editor component", () => {
 			assert.match(text, /\[paste #\d+ \+\d+ lines\]/);
 		});
 
+		it("expands the marker when the identical content is pasted onto it again", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const paste = bigPaste("alpha");
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			assert.match(editor.getText(), /\[paste #1 \+12 lines\]/);
+
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			assert.strictEqual(editor.getText(), paste);
+		});
+
+		it("pastes different content normally even when the cursor is on a marker", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.handleInput(`\x1b[200~${bigPaste("alpha")}\x1b[201~`);
+			assert.match(editor.getText(), /\[paste #1/);
+
+			editor.handleInput(`\x1b[200~different\x1b[201~`);
+			const text = editor.getText();
+			assert.ok(text.includes("[paste #1"));
+			assert.ok(text.includes("different"));
+		});
+
+		it("creates a second marker for the identical content when the cursor is not on the first marker", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const paste = bigPaste("alpha");
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			editor.handleInput("x");
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			const text = editor.getText();
+			assert.ok(text.includes("[paste #1"));
+			assert.ok(text.includes("[paste #2"));
+		});
+
+		it("expands the marker when the identical paste arrives split across chunks", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const paste = bigPaste("alpha");
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+
+			const splitAt = Math.floor(paste.length / 2);
+			editor.handleInput(`\x1b[200~${paste.slice(0, splitAt)}`);
+			editor.handleInput(`${paste.slice(splitAt)}\x1b[201~`);
+			assert.strictEqual(editor.getText(), paste);
+		});
+
+		it("expandPasteMarkerAtCursor replaces the marker with its stored content", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const paste = bigPaste("alpha");
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			assert.match(editor.getText(), /\[paste #1/);
+
+			assert.strictEqual(editor.expandPasteMarkerAtCursor(), true);
+			assert.strictEqual(editor.getText(), paste);
+		});
+
+		it("expandPasteMarkerAtCursor returns false when the cursor is not on a marker", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.setText("plain");
+			assert.strictEqual(editor.expandPasteMarkerAtCursor(), false);
+			assert.strictEqual(editor.getText(), "plain");
+		});
+
+		it("undo after a second-paste expansion restores the marker and its registry entry", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			let submitted = "";
+			editor.onSubmit = (t) => {
+				submitted = t;
+			};
+
+			const paste = bigPaste("alpha");
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			assert.strictEqual(editor.getText(), paste);
+
+			editor.handleInput("\x1b[45;5u"); // undo: restores marker text
+			assert.ok(editor.getText().includes("[paste #1"));
+			editor.handleInput("\r");
+			assert.strictEqual(submitted, paste);
+		});
+
 		it("treats paste marker as single unit for right arrow", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 			editor.handleInput("A");

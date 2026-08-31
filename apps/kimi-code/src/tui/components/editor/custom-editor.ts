@@ -24,10 +24,6 @@ import { WrappingSelectList } from './wrapping-select-list';
 // oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match ANSI SGR escape sequences
 const ANSI_SGR = /\u001B\[[0-9;]*m/g;
 
-const PASTE_MARKER_RE = /\[paste #(\d+)(?: (?:\+\d+ lines|\d+ chars))?\]/g;
-const BRACKET_PASTE_START = '\u001B[200~';
-const BRACKET_PASTE_END = '\u001B[201~';
-
 // Kitty keyboard protocol CSI-u sequence: ESC [ keycode ; modifier[:eventType] u.
 // We intentionally match only the simple two-field form — enough to rewrite
 // `ctrl+<LETTER>` with caps_lock into `ctrl+<letter>` without caps_lock.
@@ -160,8 +156,6 @@ export class CustomEditor extends Editor {
    */
   public onPasteImage?: () => Promise<boolean>;
 
-  private consumingPaste = false;
-  private consumeBuffer = '';
   /** Serialize paste callbacks so Enter/typing cannot overtake an image paste. */
   private pasteInFlight = false;
   private readonly pasteInputQueue: string[] = [];
@@ -228,32 +222,6 @@ export class CustomEditor extends Editor {
     if (this.inputMode === mode) return;
     this.inputMode = mode;
     this.onInputModeChange?.(mode);
-  }
-
-  private expandPasteMarkerAtCursor(): boolean {
-    const { line, col } = this.getCursor();
-    const lines = this.getLines();
-    const currentLine = lines[line] ?? '';
-
-    for (const match of currentLine.matchAll(PASTE_MARKER_RE)) {
-      const start = match.index;
-      const end = start + match[0].length;
-      if (col < start || col > end) continue;
-
-      const pasteId = Number(match[1]);
-      const pastes = (this as unknown as { pastes: Map<number, string> }).pastes;
-      const content = pastes.get(pasteId);
-      if (content === undefined) return false;
-
-      const text = this.getText();
-      const offset = lines.slice(0, line).reduce((sum, l) => sum + l.length + 1, 0) + start;
-      const newText = text.slice(0, offset) + content + text.slice(offset + match[0].length);
-      // Keep the paste registry intact: the text still holds other live markers
-      // whose entries a plain setText would drop (upstream resets the registry).
-      this.setText(newText, { preservePasteRegistry: true });
-      return true;
-    }
-    return false;
   }
 
   private hasAutocompleteActivity(): boolean {
@@ -380,26 +348,6 @@ export class CustomEditor extends Editor {
     // so the shortcut only fires for two consecutive Escape presses.
     if (!matchesKey(normalized, Key.escape)) {
       this.onNonEscapeInput?.();
-    }
-
-    // When a paste marker was just expanded, discard the trailing bracketed
-    // paste data that the terminal sends alongside the Ctrl-V keystroke.
-    if (this.consumingPaste) {
-      this.consumeBuffer += normalized;
-      if (this.consumeBuffer.includes(BRACKET_PASTE_END)) {
-        this.consumingPaste = false;
-        this.consumeBuffer = '';
-      }
-      return;
-    }
-
-    // If a bracketed paste arrives while the cursor sits on an existing
-    // paste marker, expand that marker instead of pasting new content.
-    if (normalized.includes(BRACKET_PASTE_START) && this.expandPasteMarkerAtCursor()) {
-      if (!normalized.includes(BRACKET_PASTE_END)) {
-        this.consumingPaste = true;
-      }
-      return;
     }
 
     // Paste image binding — platform-aware:

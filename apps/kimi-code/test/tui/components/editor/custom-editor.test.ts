@@ -474,7 +474,20 @@ describe('CustomEditor paste marker expansion', () => {
     editor.handleInput(`${PASTE_START}${content}${PASTE_END}`);
   }
 
-  it('expands paste marker when bracketed paste arrives while cursor is on marker', () => {
+  it('expands the marker when the identical content is pasted onto it again', () => {
+    const editor = makeEditor();
+    const longText = 'line\n'.repeat(15).trimEnd();
+    simulateLargePaste(editor, longText);
+
+    expect(editor.getText()).toMatch(/\[paste #1 \+15 lines\]/);
+
+    simulateLargePaste(editor, longText);
+
+    expect(editor.getText()).not.toContain('[paste #');
+    expect(editor.getText()).toContain(longText);
+  });
+
+  it('pastes different content normally even when the cursor is on a marker', () => {
     const editor = makeEditor();
     const longText = 'line\n'.repeat(15).trimEnd();
     simulateLargePaste(editor, longText);
@@ -483,8 +496,8 @@ describe('CustomEditor paste marker expansion', () => {
 
     simulateLargePaste(editor, 'anything');
 
-    expect(editor.getText()).not.toContain('[paste #');
-    expect(editor.getText()).toContain(longText);
+    expect(editor.getText()).toContain('[paste #1');
+    expect(editor.getText()).toContain('anything');
   });
 
   it('does not expand when cursor is not on a paste marker', () => {
@@ -516,7 +529,7 @@ describe('CustomEditor paste marker expansion', () => {
     expect(editor.getText()).toContain('[paste #1');
     expect(editor.getText()).toContain('[paste #2');
 
-    simulateLargePaste(editor, 'anything');
+    simulateLargePaste(editor, text2);
 
     expect(editor.getText()).toContain('[paste #1');
     expect(editor.getText()).not.toContain('[paste #2');
@@ -545,28 +558,28 @@ describe('CustomEditor paste marker expansion', () => {
     const markerText = editor.getText();
     expect(markerText).toMatch(/\[paste #1/);
 
-    simulateLargePaste(editor, 'anything');
+    simulateLargePaste(editor, longText);
     expect(editor.getText()).toContain(longText);
 
     // Undo (Ctrl+-) restores both the marker text and its paste-registry entry.
     editor.handleInput('\x1b[45;5u');
     expect(editor.getText()).toContain('[paste #1');
 
-    simulateLargePaste(editor, 'anything');
+    simulateLargePaste(editor, longText);
     expect(editor.getText()).not.toContain('[paste #');
     expect(editor.getText()).toContain(longText);
   });
 
-  it('suppresses multi-chunk bracketed paste data after marker expansion', () => {
+  it('expands the marker when the identical paste arrives split across chunks', () => {
     const editor = makeEditor();
     const longText = 'line\n'.repeat(15).trimEnd();
     simulateLargePaste(editor, longText);
 
-    editor.handleInput(`${PASTE_START}chunk1`);
-    editor.handleInput(`chunk2${PASTE_END}`);
+    const splitAt = Math.floor(longText.length / 2);
+    editor.handleInput(`${PASTE_START}${longText.slice(0, splitAt)}`);
+    editor.handleInput(`${longText.slice(splitAt)}${PASTE_END}`);
 
-    expect(editor.getText()).not.toContain('chunk1');
-    expect(editor.getText()).not.toContain('chunk2');
+    expect(editor.getText()).not.toContain('[paste #');
     expect(editor.getText()).toContain(longText);
   });
 
@@ -580,8 +593,8 @@ describe('CustomEditor paste marker expansion', () => {
     editor.handleInput('\u001B[20');
     editor.handleInput('1~');
 
-    expect(editor.getText()).toContain(longText);
-    expect(editor.getText()).not.toContain('data');
+    expect(editor.getText()).toContain('[paste #1');
+    expect(editor.getText()).toContain('data');
 
     // Verify editor is not stuck — next keystrokes should work normally
     editor.handleInput('x');
