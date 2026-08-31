@@ -372,7 +372,7 @@ export * from '#/features/goal/tools/update-goal/update-goal';
 import '#/features/goal/tools/update-goal/updateGoalTool';
 export * from '#/features/goal/goalDeadlineScheduler';
 export * from '#/features/goal/goal';
-export * from '#/features/goal/goalAgentRuntime';
+export * from '#/features/goal/goalService';
 export * from '#/features/goal/goalOps';
 export * from '#/features/goal/types';
 import '#/features/goal/goalFeature';

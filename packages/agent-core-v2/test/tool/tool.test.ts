@@ -100,7 +100,7 @@ import { executeTool } from '../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../agent/agentContext/stubs';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { ManagedAgent } from '#/session/agentLifecycle/managedAgent';
-import { AgentGoal, goalAgentRuntimeProvider } from '#/features/goal/goalAgentRuntime';
+import { TestAgentRuntime, testAgentRuntimeProvider } from '../wire/stubs';
 
 const signal = new AbortController().signal;
 
@@ -438,8 +438,8 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
       handles.set(adoptedHandle.id, adoptedHandle);
       adoptedManaged = new ManagedAgent(agentContextOf(adoptedHandle), adoptedHandle, [
         {
-          definition: AgentGoal,
-          provider: goalAgentRuntimeProvider,
+          definition: TestAgentRuntime,
+          provider: testAgentRuntimeProvider,
           generation: 1,
           active: true,
         },

@@ -60,7 +60,7 @@ import { ICronCreateTool } from '#/features/cron/tools/cron-create/cron-create';
 import { ICronDeleteTool } from '#/features/cron/tools/cron-delete/cron-delete';
 import { ICronListTool } from '#/features/cron/tools/cron-list/cron-list';
 import { CRON_SECTION } from '#/features/cron/configSection';
-import { AgentGoal, goalAgentRuntimeProvider } from '#/features/goal/goalAgentRuntime';
+import { TestAgentRuntime, testAgentRuntimeProvider } from '../../wire/stubs';
 import { Ledger } from '#/_base/lifecycle/ledger';
 import { BugIndicatingError } from '#/_base/errors/errors';
 import { AgentRuntimeContributionPoint } from '#/agent/runtime/agentRuntime';
@@ -506,12 +506,12 @@ describe('AgentLifecycleService', () => {
     );
   }
 
-  function contributeGoal(): () => void {
+  function contributeTestRuntime(): () => void {
     return ix.fiberHost.addCollectionRecord(
       AgentRuntimeContributionPoint,
       'test',
       new Ledger('test'),
-      goalAgentRuntimeProvider,
+      testAgentRuntimeProvider,
     );
   }
 
@@ -1317,7 +1317,7 @@ describe('AgentLifecycleService', () => {
   });
 
   it('rejects a stale context after the same agent id is recreated', async () => {
-    contributeGoal();
+    contributeTestRuntime();
     contributeTodoService();
     const svc = ix.get(IAgentLifecycleService);
     const first = await svc.create({ agentId: 'agent-1' });
@@ -1325,15 +1325,15 @@ describe('AgentLifecycleService', () => {
     await svc.remove(first);
     const second = await svc.create({ agentId: 'agent-1' });
 
-    expect(() => svc.resolve(first, AgentGoal)).toThrow('is not a lifecycle-issued context');
+    expect(() => svc.resolve(first, TestAgentRuntime)).toThrow('is not a lifecycle-issued context');
     expect(() => svc.inspect(first)).toThrow('is not a lifecycle-issued context');
     expect(() => firstHandle.accessor.get(IAgentTodoService)).toThrow('has been disposed');
-    expect(svc.resolve(second, AgentGoal)).toBeDefined();
+    expect(svc.resolve(second, TestAgentRuntime)).toBeDefined();
     expect(svc.handleOf('agent-1')!.accessor.get(IAgentTodoService).get()).toEqual([]);
   });
 
   it('rejects a forged context that the manager never issued', async () => {
-    contributeGoal();
+    contributeTestRuntime();
     const svc = ix.get(IAgentLifecycleService);
     const main = await svc.create({ agentId: 'main' });
     const forged: AgentContext = {
@@ -1342,11 +1342,11 @@ describe('AgentLifecycleService', () => {
       space: main.space,
     };
 
-    expect(() => svc.resolve(forged, AgentGoal)).toThrow('is not a lifecycle-issued context');
+    expect(() => svc.resolve(forged, TestAgentRuntime)).toThrow('is not a lifecycle-issued context');
     expect(() => svc.inspect(forged)).toThrow('is not a lifecycle-issued context');
 
     await svc.remove(main);
-    expect(() => svc.resolve(main, AgentGoal)).toThrow('is not a lifecycle-issued context');
+    expect(() => svc.resolve(main, TestAgentRuntime)).toThrow('is not a lifecycle-issued context');
   });
 
   it('retires agent runtimes before disposing the agent scope on remove', async () => {
@@ -1389,16 +1389,16 @@ describe('AgentLifecycleService', () => {
   });
 
   it('retires a withdrawn runtime definition and rejects new resolves', async () => {
-    const withdraw = contributeGoal();
+    const withdraw = contributeTestRuntime();
     const svc = ix.get(IAgentLifecycleService);
     const main = await svc.create({ agentId: 'agent-1' });
-    svc.resolve(main, AgentGoal);
+    svc.resolve(main, TestAgentRuntime);
 
     withdraw();
 
-    expect(() => svc.resolve(main, AgentGoal)).toThrow('unavailable');
-    expect(svc.inspect(main).contributions.find((entry) => entry.id === 'goal')).toMatchObject({
-      id: 'goal',
+    expect(() => svc.resolve(main, TestAgentRuntime)).toThrow('unavailable');
+    expect(svc.inspect(main).contributions.find((entry) => entry.id === 'testAgentRuntime')).toMatchObject({
+      id: 'testAgentRuntime',
       status: 'retired',
     });
   });

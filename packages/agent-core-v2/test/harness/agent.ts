@@ -30,7 +30,7 @@ import { BUILTIN_REPLAYABLE_STATE_KEYS } from '../state/builtinReplayableKeys';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentCronService } from '#/features/cron/cronService';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
-import { AgentGoal } from '#/features/goal/goalAgentRuntime';
+import { IAgentGoalService } from '#/features/goal/goalService';
 import { IGoalDeadlineScheduler } from '#/features/goal/goalDeadlineScheduler';
 import { GoalDeadlineSchedulerService } from '#/features/goal/goalDeadlineSchedulerService';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
@@ -2223,11 +2223,11 @@ export class AgentTestContext {
       },
       detachTask: (payload) => this.get(IAgentTaskService).detach(payload.taskId),
       clearContext: () => this.get(IAgentPromptService).clear(),
-      createGoal: (payload) => this.resolve(AgentGoal).createGoal(payload),
-      getGoal: () => this.resolve(AgentGoal).getGoal(),
-      pauseGoal: () => this.resolve(AgentGoal).pauseGoal(),
-      resumeGoal: () => this.resolve(AgentGoal).resumeGoal(),
-      cancelGoal: () => this.resolve(AgentGoal).cancelGoal(),
+      createGoal: (payload) => this.get(IAgentGoalService).createGoal(payload),
+      getGoal: () => this.get(IAgentGoalService).getGoal(),
+      pauseGoal: () => this.get(IAgentGoalService).pauseGoal(),
+      resumeGoal: () => this.get(IAgentGoalService).resumeGoal(),
+      cancelGoal: () => this.get(IAgentGoalService).cancelGoal(),
       getTaskOutput: (payload) =>
         this.get(IAgentTaskService).readOutput(payload.taskId, payload.tail),
       getConfig: () => this.get(IAgentProfileService).data(),

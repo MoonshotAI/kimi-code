@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  AgentGoal,
   IAgentCronService,
+  IAgentGoalService,
   IAgentLifecycleService,
   IAgentPermissionModeService,
   IAgentProfileService,
@@ -128,6 +128,7 @@ function makeFakeHarness() {
   const eventListeners = new Set<(event: Event2<any>) => void>();
   const profileState: { profileName: string | undefined } = { profileName: undefined };
 
+  const goal = { createGoal: vi.fn(), getGoal: vi.fn() };
   const agentServices = new Map<unknown, unknown>([
     [
       IAgentProfileService,
@@ -168,12 +169,12 @@ function makeFakeHarness() {
     ],
     [IAgentTaskService, { list: vi.fn(() => []) }],
     [IAgentCronService, { getNextFireTime: vi.fn(() => null) }],
+    [IAgentGoalService, goal],
     [
       IAgentScopeContext,
       makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }),
     ],
   ]);
-  const goal = { createGoal: vi.fn(), getGoal: vi.fn() };
   const agent = fakeScope('main', agentServices);
 
   const sessionServices = new Map<unknown, unknown>([
@@ -183,10 +184,6 @@ function makeFakeHarness() {
       {
         list: vi.fn(() => []),
         handleOf: vi.fn(() => agent),
-        resolve: vi.fn((_context: unknown, capability: unknown) => {
-          if (capability === AgentGoal) return goal;
-          throw new Error('unexpected capability');
-        }),
       },
     ],
   ]);

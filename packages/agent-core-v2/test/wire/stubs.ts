@@ -4,7 +4,7 @@ import type { ServiceRegistration, TestInstantiationService } from '#/_base/di/t
 import { Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
-import { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
+import { defineAgentRuntimeContract, defineAgentRuntimeProvider } from '#/agent/runtime/agentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentScopeContext, makeAgentScopeContext, type IAgentScopeContext as AgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -16,7 +16,7 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { AgentTodoService, IAgentTodoService } from '#/features/todo/todoService';
-import { AgentGoal, goalAgentRuntimeProvider } from '#/features/goal/goalAgentRuntime';
+import { AgentGoalService, IAgentGoalService } from '#/features/goal/goalService';
 import {
   IWireService,
   type IWireService as AgentWire,
@@ -135,21 +135,17 @@ export function attachTodoService(ix: TestInstantiationService): AgentTodoServic
   return ix.get(IAgentTodoService) as AgentTodoService;
 }
 
-export function attachGoalRuntime(
-  ix: TestInstantiationService,
-  dispatcher: IEventDispatcher,
-): AgentRuntimeSet {
-  const agent = ix.get(IAgentScopeContext).agentContext;
-  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) });
-  runtimes.apply({
-    definition: AgentGoal,
-    provider: goalAgentRuntimeProvider,
-    generation: 1,
-    active: true,
-  });
-  runtimes.attachDurable(dispatcher);
-  return runtimes;
+export function attachGoalService(ix: TestInstantiationService): AgentGoalService {
+  ix.set(IAgentGoalService, new SyncDescriptor(AgentGoalService));
+  return ix.get(IAgentGoalService) as AgentGoalService;
 }
+
+export const TestAgentRuntime = defineAgentRuntimeContract<object>('testAgentRuntime');
+
+export const testAgentRuntimeProvider = defineAgentRuntimeProvider(TestAgentRuntime, {
+  id: 'testAgentRuntime',
+  createApi: () => ({}),
+});
 
 export async function restoreTestEventDispatcher(
   dispatcher: IEventDispatcher,
