@@ -6,10 +6,7 @@ import { Emitter, type Event } from '#/_base/event';
 import { BugIndicatingError, Error2, ErrorCodes, onUnexpectedError } from '#/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ILogService } from '#/_base/log/log';
-import {
-  IAtomicTomlDocumentStore,
-  type IAtomicDocumentStore,
-} from '#/persistence/interface/atomicDocumentStore';
+import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 
 import {
   type AnyEnvBindings,
@@ -48,6 +45,7 @@ import {
   TomlError,
   transformTomlData,
 } from './toml';
+import { planConfigWriteback } from './tomlWriteback';
 
 const CONFIG_SCOPE = '';
 
@@ -315,7 +313,7 @@ export class ConfigService extends Disposable implements IConfigService {
     @IConfigRegistry private readonly registry: IConfigRegistry,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ILogService private readonly log: ILogService,
-    @IAtomicTomlDocumentStore private readonly documentStore: IAtomicDocumentStore,
+    @IAtomicTomlDocumentStore private readonly documentStore: IAtomicTomlDocumentStore,
   ) {
     super();
     this.configKey = this.bootstrap.configKey;
@@ -789,13 +787,43 @@ export class ConfigService extends Disposable implements IConfigService {
         { cause: error },
       );
     }
+    let onDiskText: string | undefined;
+    try {
+      onDiskText = await this.documentStore.getText(CONFIG_SCOPE, this.configKey);
+    } catch {
+      onDiskText = undefined;
+    }
     const stagedRawSnake = cloneRecord(onDisk);
     const stagedRaw = transformTomlData(onDisk, this.registry);
+    const previousSnake: ResolvedConfig = {};
+    for (const domain of domains) {
+      const snakeKey = camelToSnake(domain);
+      previousSnake[snakeKey] = stagedRawSnake[snakeKey];
+    }
     rebase(stagedRaw, stagedRawSnake);
     for (const domain of domains) {
       applySectionToToml(stagedRawSnake, domain, stagedRaw[domain], this.registry);
     }
-    await this.documentStore.set(CONFIG_SCOPE, this.configKey, stagedRawSnake);
+    const plannedText =
+      onDiskText === undefined
+        ? undefined
+        : planConfigWriteback(
+            onDiskText,
+            domains.map((domain) => {
+              const snakeKey = camelToSnake(domain);
+              return {
+                snakeKey,
+                previousValue: previousSnake[snakeKey],
+                nextValue: stagedRawSnake[snakeKey],
+              };
+            }),
+            stagedRawSnake,
+          );
+    if (plannedText === undefined) {
+      await this.documentStore.set(CONFIG_SCOPE, this.configKey, stagedRawSnake);
+    } else if (plannedText !== onDiskText) {
+      await this.documentStore.setText(CONFIG_SCOPE, this.configKey, plannedText);
+    }
     this.rawSnake = stagedRawSnake;
     this.raw = stagedRaw;
   }

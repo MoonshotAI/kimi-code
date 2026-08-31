@@ -62,9 +62,9 @@ Approvals are not triggered for regular tool calls in YOLO mode, nor for writes 
 
 ### YOLO / Auto mode
 
-**YOLO mode** (`/yolo`) auto-approves regular tool calls, making it suitable for batch tasks you know are safe. It still asks before sensitive actions — accessing sensitive files such as `.env` or SSH keys, or exiting Plan mode — and the agent can still ask you questions.
+**YOLO mode** (`/yolo`) auto-approves regular tool calls, making it suitable for batch tasks you know are safe. It still asks before sensitive actions — accessing sensitive files such as `.env` or SSH keys, running dangerous commands such as `shutdown` or `rm -rf`, or exiting Plan mode — and the agent can still ask you questions.
 
-**Auto mode** (`/auto`) is the fully unattended mode: every tool approval is handled automatically, including sensitive files and plan exits, and the agent never asks you questions — it decides everything on its own.
+**Auto mode** (`/auto`) is the fully unattended mode: every tool approval is handled automatically, including sensitive files and plan exits, and the agent never asks you questions — it decides everything on its own. The only exception is the built-in dangerous-command guard: commands such as `shutdown`, `reboot`, or `rm -rf` are always blocked in Auto mode, and always require your confirmation in Manual and YOLO mode.
 
 
 ## Mode switching

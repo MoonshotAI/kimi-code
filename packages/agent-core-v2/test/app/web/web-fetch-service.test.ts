@@ -12,6 +12,7 @@ import {
 } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
+import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IProviderService, type ProviderConfig } from '#/kosong/provider/provider';
 import { LocalFetchURLProvider } from '#/app/web/providers/local-fetch-url';
 import { MoonshotFetchURLProvider } from '#/app/web/providers/moonshot-fetch-url';
@@ -72,6 +73,7 @@ describe('WebFetchService', () => {
             return undefined;
           }) as IConfigService['get'],
         });
+        reg.defineInstance(ITelemetryService, noopTelemetryService);
         reg.define(IWebFetchService, WebFetchService);
       },
     });

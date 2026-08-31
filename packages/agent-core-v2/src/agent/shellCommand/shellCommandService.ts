@@ -12,6 +12,7 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import type { ToolUpdate } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentEvent2 } from '#/app/event/event2';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { Error2, ErrorCodes } from '#/errors';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
@@ -77,6 +78,7 @@ export class AgentShellCommandService implements IAgentShellCommandService {
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     this.states.contributeState(shellCommandTasksKey);
   }
@@ -95,6 +97,9 @@ export class AgentShellCommandService implements IAgentShellCommandService {
 
     let stdout = '';
     let stderr = '';
+    const startedAt = Date.now();
+    let isError = false;
+    let backgrounded = false;
     try {
       const bash = this.ensureBashTool();
       const execution = await bash.resolveExecution({
@@ -104,6 +109,7 @@ export class AgentShellCommandService implements IAgentShellCommandService {
       if (execution.isError === true) {
         const output = typeof execution.output === 'string' ? execution.output : 'Command failed.';
         this.appendShellOutput('', output);
+        isError = true;
         return { stdout: '', stderr: output, isError: true };
       }
 
@@ -140,9 +146,10 @@ export class AgentShellCommandService implements IAgentShellCommandService {
         },
       });
 
-      const isError = result.isError === true;
+      isError = result.isError === true;
       if (typeof result.output === 'string' && result.output.startsWith('task_id: ')) {
         this.notifyBackgrounded(result.output);
+        backgrounded = true;
         return { stdout: result.output, stderr: '', isError: false, backgrounded: true };
       }
       if (isError && stdout.length === 0 && stderr.length === 0) {
@@ -173,6 +180,7 @@ export class AgentShellCommandService implements IAgentShellCommandService {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       stderr += message;
+      isError = true;
       if (input.commandId !== undefined) {
         if (message.length > 0) {
           void this.dispatcher.dispatch(
@@ -200,6 +208,11 @@ export class AgentShellCommandService implements IAgentShellCommandService {
         this.shellCommandControllers.delete(input.commandId);
         this.shellCommandTasks.delete(input.commandId);
       }
+      this.telemetry.track2('shell_command_finished', {
+        duration_ms: Date.now() - startedAt,
+        is_error: isError,
+        backgrounded,
+      });
     }
   }
 
