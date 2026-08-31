@@ -142,3 +142,12 @@ zread generate --stdio
   - Agent working notes or handoff/summary documents (e.g. `HANDOVER-*.md`, `HANDOFF-*.md`, `handoff.md`).
   - Throwaway UI/UX prototypes or design mockups (e.g. `*-designs.html`, `*-mockup.html`, `*-demo(s).html`) at the repo root or under a `design/` folder. The only tracked `.html` files should be Vite `index.html` entrypoints.
   Before committing or opening a PR, run `git status` and `git diff --staged --stat` and remove anything matching these patterns. Put scratch work under `.tmp/` (gitignored) instead of the repo root or the source tree.
+
+## Fork Upstream Sync Policy (MANDATORY)
+
+This repo (`arrrrny/kimi-code-sync`) is a **fork** of `MoonshotAI/kimi-code`. `master` carries fork-owned features that upstream will never accept (squeeze-model + secondary cascade, substitute-model on rate limit, compaction-model display, OpenAI-compatible context preservation, `/refresh-catalog`, model favorites, subscription-disable, free-models-only, etc.). The daily upstream sync (`.github/workflows/sync-upstream.yml`) MUST preserve them.
+
+- **Never auto-resolve conflicts in favor of upstream.** The sync workflow aborts the merge on any conflict, opens a `sync`-labeled GitHub issue listing the conflicted files, and FAILS. A human resolves conflicts on a `sync/fork-sync-resolution` branch and merges manually. (An earlier version used `git checkout --theirs` on every conflict and silently dropped the compaction-model indicator — that must not return.)
+- **Secondary guardrail:** after a clean merge, `sync-upstream.yml` checks a `FORK_OWNED_FILES` marker list. If a clean merge silently dropped a fork marker from an owned file, the sync fails and opens an issue. **When you add or change a fork-owned file, append it (with its survival marker) to that guard list** so future syncs cannot overwrite it unnoticed.
+- **Do not run blind `git merge -X theirs` or `-s ours` against upstream** in any script, CI, or manual step. Conflicts are data the fork must keep — resolve them by hand.
+- The `feat/daily-sync-ci` branch's `sync-and-release.yml` (uses `-X theirs` + a hardcoded owned-file list) is **deprecated and must not be enabled**; `sync-upstream.yml` on `master` is the source of truth.
