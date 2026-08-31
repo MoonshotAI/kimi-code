@@ -245,10 +245,18 @@ export class CustomEditor extends Editor {
     this.pendingExpandedContent = undefined;
     if (expected === undefined) return;
     const start = payload.indexOf(BRACKET_PASTE_START) + BRACKET_PASTE_START.length;
-    const end = payload.lastIndexOf(BRACKET_PASTE_END);
-    const content = end > start ? payload.slice(start, end) : '';
-    if (this.canonicalizePastedText(content) === expected) return;
-    super.handleInput.call(this, payload);
+    const end = payload.indexOf(BRACKET_PASTE_END, start);
+    const content = end === -1 ? payload.slice(start) : payload.slice(start, end);
+    const suffix = end === -1 ? '' : payload.slice(end + BRACKET_PASTE_END.length);
+    if (this.canonicalizePastedText(content) !== expected) {
+      super.handleInput.call(this, payload);
+      return;
+    }
+    // The payload itself is swallowed, but bytes the terminal batched after it
+    // are real input and must not be dropped with it.
+    if (suffix.length > 0) {
+      super.handleInput.call(this, suffix);
+    }
   }
 
   private hasAutocompleteActivity(): boolean {
@@ -416,6 +424,9 @@ export class CustomEditor extends Editor {
     //   normal paste path so text from the clipboard still works.
     const pasteKey = process.platform === 'win32' ? 'alt+v' : Key.ctrl('v');
     if (matchesKey(normalized, pasteKey)) {
+      // A new paste gesture invalidates any unconsumed pending payload from
+      // the previous one, so it cannot swallow this gesture's real payload.
+      this.pendingExpandedContent = undefined;
       const expanded = this.expandPasteMarkerAtCursor();
       if (expanded !== undefined) {
         // Terminals that also forward the clipboard as bracketed paste will

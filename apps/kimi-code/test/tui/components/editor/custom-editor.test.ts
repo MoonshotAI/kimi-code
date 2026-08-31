@@ -697,6 +697,36 @@ describe('CustomEditor paste marker expansion', () => {
     expect(editor.getText()).toBe(`word ${paste}`);
   });
 
+  it('forwards input bytes batched after the swallowed payload', () => {
+    const editor = makeEditor();
+    const longText = 'line\n'.repeat(15).trimEnd();
+    simulateLargePaste(editor, longText);
+
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+    expect(editor.getText()).toBe(longText);
+
+    // The terminal batches the echoed payload and a subsequent keystroke into
+    // one chunk — the payload is swallowed but the keystroke must survive.
+    editor.handleInput(`${PASTE_START}${longText}${PASTE_END}x`);
+    expect(editor.getText()).toBe(`${longText}x`);
+  });
+
+  it('does not swallow a payload that follows a new paste gesture', () => {
+    const editor = makeEditor();
+    const longText = 'line\n'.repeat(15).trimEnd();
+    simulateLargePaste(editor, longText);
+
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+    expect(editor.getText()).toBe(longText);
+
+    // A second paste-key press (no marker under the cursor now) starts a new
+    // gesture and invalidates the first gesture's pending suppression, so this
+    // payload is pasted instead of being mistaken for the first echo.
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+    simulateLargePaste(editor, longText);
+    expect(editor.getText()).toContain('[paste #2');
+  });
+
   it('falls back to the text paste path when the image paste handler rejects', async () => {
     const editor = makeEditor();
     const onTextPaste = vi.fn();
