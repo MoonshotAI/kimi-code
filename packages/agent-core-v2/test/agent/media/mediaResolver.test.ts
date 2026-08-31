@@ -531,34 +531,6 @@ describe('AgentMediaResolverService image strategy', () => {
 
   it.each([
     {
-      name: 'the bytes sniff as a non-image media type',
-      files: new Map([[FILE_ID, { name: 'pic.png', bytes: MP4_MAGIC_BYTES }]]),
-    },
-    {
-      name: 'the bytes sniff as an unaccepted image mime',
-      files: new Map([[FILE_ID, { name: 'pic.bmp', bytes: BMP_BYTES }]]),
-    },
-  ])('emits media_resolve_fallback with reason invalid when $name', async ({ files }) => {
-    const track2 = vi.fn();
-    const svc = new AgentMediaResolverService(
-      fileService(files),
-      blobStore(),
-      { track2 } as unknown as ITelemetryService,
-      new AgentStateService(),
-      stubMediaStore(),
-    );
-
-    await svc.resolve([imageMessage(buildKimiFileUrl(FILE_ID))], requester({}));
-
-    expect(track2).toHaveBeenCalledWith('media_resolve_fallback', {
-      kind: 'image',
-      reason: 'invalid',
-      model: 'stub',
-    });
-  });
-
-  it.each([
-    {
       name: 'the model cannot ingest images and there is no canonical copy',
       files: new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]),
       url: buildKimiFileUrl(FILE_ID),

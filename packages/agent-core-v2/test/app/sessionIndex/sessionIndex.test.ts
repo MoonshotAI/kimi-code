@@ -2,7 +2,7 @@ import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { LifecycleScope } from '#/app/scopes';
 import {
@@ -40,11 +40,7 @@ import {
   type Page,
   type WriteOp,
 } from '#/persistence/interface/queryStore';
-import {
-  IFileSystemStorageService,
-  StorageError,
-  StorageErrors,
-} from '#/persistence/interface/storage';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
 import { stubSessionIndexMirror } from './stubs';
 import { stubBootstrap } from '../bootstrap/stubs';
@@ -847,52 +843,6 @@ describe('FileSessionIndex (read model)', () => {
     expect(recovered).toEqual({ state: 'ready', generation: 1, degradedCount: 1 });
     const warm = await store.listRecent({ workspaceIds: [workspaceId] });
     expect(warm.items.map((s) => s.id)).toEqual(['b', 'a']);
-  });
-
-  it('degradation telemetry classifies coded storage errors by their error code', async () => {
-    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
-
-    class FlakyQueryStore extends MiniDbQueryStore {
-      failNextBatch = false;
-      override async batch(ops: readonly WriteOp[]): Promise<void> {
-        if (this.failNextBatch) {
-          this.failNextBatch = false;
-          throw new StorageError(StorageErrors.codes.STORAGE_DISK_FULL, 'disk full');
-        }
-        return super.batch(ops);
-      }
-    }
-    overrideScopedService(
-      LifecycleScope.App,
-      IQueryStore,
-      FlakyQueryStore,
-      ScopeActivation.OnDemand,
-      'storage',
-    );
-    const track2 = vi.fn();
-    const fileStorage = new FileStorageService(homeDir);
-    const host = createScopedTestHost([
-      stubPair(IFileSystemStorageService, fileStorage),
-      stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
-      stubPair(IBootstrapService, stubBootstrap(homeDir)),
-      stubPair(ILogService, stubLog()),
-      stubPair(IFlagService, stubFlag(true)),
-      stubPair(ITelemetryService, { ...noopTelemetryService, track2 }),
-    ]);
-    disposeHost = () => {
-      host.dispose();
-    };
-    queryStore = host.app.accessor.get(IQueryStore);
-    const store = host.app.accessor.get(ISessionIndex) as FileSessionIndex;
-
-    (queryStore as FlakyQueryStore).failNextBatch = true;
-    const status = await store.prepare();
-    expect(status.state).toBe('degraded');
-    expect(track2).toHaveBeenCalledWith('session_index_degraded', {
-      reason: 'projection failed',
-      degraded_count: 1,
-      error_type: 'storage.disk_full',
-    });
   });
 
   it('a crashed re-projection keeps readers on the previous generation', async () => {

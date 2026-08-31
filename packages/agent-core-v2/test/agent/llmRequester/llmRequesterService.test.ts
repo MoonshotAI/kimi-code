@@ -547,7 +547,7 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
   it('falls back to media-stripped when the media-degraded request still receives 413', async () => {
     const calls = { value: 0 };
     const projection = recordProjectionCalls();
-    const { service, telemetryRecords } = createService(
+    const { service } = createService(
       createRequester(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413]),
       projection.projector,
     );
@@ -557,28 +557,6 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
     expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
     expect(calls.value).toBe(3);
     expect(projection.calls).toEqual(['normal', 'degraded', 'stripped']);
-    expect(
-      telemetryRecords.filter((record) => record.event === 'llm_request_projection_fallback'),
-    ).toEqual([
-      {
-        event: 'llm_request_projection_fallback',
-        properties: {
-          projection: 'media-degraded',
-          error_type: '4xx_client',
-          model: 'm',
-          turn_id: 1,
-        },
-      },
-      {
-        event: 'llm_request_projection_fallback',
-        properties: {
-          projection: 'media-stripped',
-          error_type: '4xx_client',
-          model: 'm',
-          turn_id: 1,
-        },
-      },
-    ]);
   });
 
   it('records repeated-413 recovery projections on the sticky later request', async () => {

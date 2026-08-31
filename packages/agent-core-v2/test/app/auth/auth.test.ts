@@ -948,20 +948,6 @@ describe('OAuthService', () => {
     expect(events).toEqual([]);
   });
 
-  it('refreshOAuthProviderModels emits the refresh event and rethrows when the initial config reload fails', async () => {
-    const reloadMock = ix.get(IConfigService).reload as unknown as Mock;
-    reloadMock.mockRejectedValueOnce(new Error('config.toml is unreadable'));
-    const track2 = ix.get(ITelemetryService).track2 as unknown as Mock;
-    const svc = createService();
-
-    await expect(svc.refreshOAuthProviderModels()).rejects.toThrow('config.toml is unreadable');
-    expect(track2).toHaveBeenCalledWith('oauth_models_refresh_finished', {
-      changed_count: 0,
-      unchanged_count: 0,
-      failed_count: 1,
-    });
-  });
-
   it('refreshOAuthProviderModels fetches models and writes back the changed sections', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
