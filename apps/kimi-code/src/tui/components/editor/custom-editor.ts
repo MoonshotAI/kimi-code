@@ -15,6 +15,7 @@ import {
 
 import { currentTheme } from '#/tui/theme';
 import { createEditorTheme } from '#/tui/theme/pi-tui-theme';
+import { BRACKET_PASTE_END, BRACKET_PASTE_START, PASTE_PAYLOAD_SUPPRESS_MS } from '#/tui/constant/paste';
 import { printableChar } from '#/tui/utils/printable-key';
 
 import { extractAtPrefix } from './file-mention-provider';
@@ -23,11 +24,6 @@ import { WrappingSelectList } from './wrapping-select-list';
 
 // oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match ANSI SGR escape sequences
 const ANSI_SGR = /\u001B\[[0-9;]*m/g;
-
-const BRACKET_PASTE_START = '\u001B[200~';
-const BRACKET_PASTE_END = '\u001B[201~';
-/** Window after a paste-key expansion during which exactly one trailing payload is swallowed. */
-const PASTE_PAYLOAD_SUPPRESS_MS = 1000;
 
 // Kitty keyboard protocol CSI-u sequence: ESC [ keycode ; modifier[:eventType] u.
 // We intentionally match only the simple two-field form — enough to rewrite
@@ -249,13 +245,14 @@ export class CustomEditor extends Editor {
     const content = end === -1 ? payload.slice(start) : payload.slice(start, end);
     const suffix = end === -1 ? '' : payload.slice(end + BRACKET_PASTE_END.length);
     if (this.canonicalizePastedText(content) !== expected) {
-      super.handleInput.call(this, payload);
+      this.handleInput(payload);
       return;
     }
     // The payload itself is swallowed, but bytes the terminal batched after it
-    // are real input and must not be dropped with it.
+    // are real input and must go through the normal pipeline (pending state is
+    // already cleared, so this cannot re-enter the suppression path).
     if (suffix.length > 0) {
-      super.handleInput.call(this, suffix);
+      this.handleInput(suffix);
     }
   }
 
@@ -415,6 +412,11 @@ export class CustomEditor extends Editor {
       this.handleTrailingPayload(normalized);
       return;
     }
+
+    // Any intervening input proves a later payload is no longer the immediate
+    // echo of the expansion — disarm the pending suppression. The paste-key
+    // branch below re-arms it on a successful expansion.
+    this.pendingExpandedContent = undefined;
 
     // Paste image binding — platform-aware:
     //   Windows terminals reserve Ctrl-V for their own paste handling

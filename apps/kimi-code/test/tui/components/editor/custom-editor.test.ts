@@ -727,6 +727,21 @@ describe('CustomEditor paste marker expansion', () => {
     expect(editor.getText()).toContain('[paste #2');
   });
 
+  it('does not swallow a same-content paste after intervening input', () => {
+    const editor = makeEditor();
+    const longText = 'line\n'.repeat(15).trimEnd();
+    simulateLargePaste(editor, longText);
+
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+    expect(editor.getText()).toBe(longText);
+
+    // Intervening input proves a later payload is not the immediate echo of
+    // the expansion, so it pastes normally instead of being swallowed.
+    editor.handleInput('y');
+    simulateLargePaste(editor, longText);
+    expect(editor.getText()).toContain('[paste #2');
+  });
+
   it('falls back to the text paste path when the image paste handler rejects', async () => {
     const editor = makeEditor();
     const onTextPaste = vi.fn();
