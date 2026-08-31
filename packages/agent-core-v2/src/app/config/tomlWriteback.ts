@@ -66,8 +66,8 @@ interface HeaderMatch {
   readonly isArray: boolean;
 }
 
-const HEADER_LINE_PATTERN = /^\s*(\[\[?)\s*([A-Za-z0-9_-]+)((?:\.[A-Za-z0-9_-]+)*)\s*(\]\]?)\s*(?:#.*)?$/;
 const KEY_VALUE_LINE_PATTERN = /^(\s*)([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)(\s*=\s*)([\s\S]*)$/;
+const BARE_KEY_CHAR_PATTERN = /[A-Za-z0-9_-]/;
 
 function splitLinesKeepEnds(text: string): string[] {
   const lines: string[] = [];
@@ -194,15 +194,133 @@ function scanValueEnd(text: string, offset: number): number | undefined {
   return i === offset ? undefined : i;
 }
 
+function decodeBasicEscape(body: string, offset: number): { char: string; end: number } | undefined {
+  const code = body.charAt(offset + 1);
+  switch (code) {
+    case 'b':
+      return { char: '\b', end: offset + 2 };
+    case 't':
+      return { char: '\t', end: offset + 2 };
+    case 'n':
+      return { char: '\n', end: offset + 2 };
+    case 'f':
+      return { char: '\f', end: offset + 2 };
+    case 'r':
+      return { char: '\r', end: offset + 2 };
+    case '"':
+      return { char: '"', end: offset + 2 };
+    case '\\':
+      return { char: '\\', end: offset + 2 };
+    case 'u':
+      return decodeUnicodeEscape(body, offset, 4);
+    case 'U':
+      return decodeUnicodeEscape(body, offset, 8);
+    default:
+      return undefined;
+  }
+}
+
+function decodeUnicodeEscape(
+  body: string,
+  offset: number,
+  digits: number,
+): { char: string; end: number } | undefined {
+  const hex = body.slice(offset + 2, offset + 2 + digits);
+  if (hex.length !== digits || !/^[0-9a-fA-F]+$/.test(hex)) return undefined;
+  const codePoint = Number.parseInt(hex, 16);
+  if (codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)) return undefined;
+  return { char: String.fromCodePoint(codePoint), end: offset + 2 + digits };
+}
+
+function skipInlineWhitespace(body: string, offset: number): number {
+  let i = offset;
+  while (i < body.length) {
+    const ch = body.charAt(i);
+    if (ch !== ' ' && ch !== '\t') break;
+    i++;
+  }
+  return i;
+}
+
+interface HeaderSegment {
+  readonly value: string;
+  readonly end: number;
+}
+
+function scanBasicHeaderSegment(body: string, offset: number): HeaderSegment | undefined {
+  let i = offset + 1;
+  let value = '';
+  while (i < body.length) {
+    const ch = body.charAt(i);
+    if (ch === '"') {
+      if (value.length === 0) return undefined;
+      return { value, end: i + 1 };
+    }
+    if (ch === '\\') {
+      const escape = decodeBasicEscape(body, i);
+      if (escape === undefined) return undefined;
+      value += escape.char;
+      i = escape.end;
+      continue;
+    }
+    value += ch;
+    i++;
+  }
+  return undefined;
+}
+
+function scanLiteralHeaderSegment(body: string, offset: number): HeaderSegment | undefined {
+  const close = body.indexOf("'", offset + 1);
+  if (close === -1) return undefined;
+  const value = body.slice(offset + 1, close);
+  if (value.length === 0) return undefined;
+  return { value, end: close + 1 };
+}
+
+function scanHeaderSegment(body: string, offset: number): HeaderSegment | undefined {
+  const start = skipInlineWhitespace(body, offset);
+  const ch = body.charAt(start);
+  if (ch === '"') return scanBasicHeaderSegment(body, start);
+  if (ch === "'") return scanLiteralHeaderSegment(body, start);
+  let i = start;
+  while (i < body.length && BARE_KEY_CHAR_PATTERN.test(body.charAt(i))) i++;
+  if (i === start) return undefined;
+  return { value: body.slice(start, i), end: i };
+}
+
 function matchHeader(body: string): HeaderMatch | undefined {
-  const match = HEADER_LINE_PATTERN.exec(body);
-  if (match === null) return undefined;
-  const open = match[1]!;
-  const close = match[4]!;
-  if ((open === '[[') !== (close === ']]')) return undefined;
-  const rootKey = match[2]!;
-  const path = [rootKey, ...match[3]!.split('.').filter((segment) => segment.length > 0)];
-  return { rootKey, path, isArray: open === '[[' };
+  const start = skipInlineWhitespace(body, 0);
+  let isArray = false;
+  let i: number;
+  if (body.startsWith('[[', start)) {
+    isArray = true;
+    i = start + 2;
+  } else if (body.charAt(start) === '[') {
+    i = start + 1;
+  } else {
+    return undefined;
+  }
+  const path: string[] = [];
+  for (;;) {
+    const segment = scanHeaderSegment(body, i);
+    if (segment === undefined) return undefined;
+    path.push(segment.value);
+    i = skipInlineWhitespace(body, segment.end);
+    const ch = body.charAt(i);
+    if (ch === ']') {
+      i++;
+      break;
+    }
+    if (ch !== '.') return undefined;
+    i = skipInlineWhitespace(body, i + 1);
+  }
+  if (isArray) {
+    if (body.charAt(i) !== ']') return undefined;
+    i++;
+  }
+  const rest = skipInlineWhitespace(body, i);
+  if (rest < body.length && body.charAt(rest) !== '#') return undefined;
+  return { rootKey: path[0]!, path, isArray };
 }
 
 function matchKeyValue(body: string): KeyValueMatch | undefined {

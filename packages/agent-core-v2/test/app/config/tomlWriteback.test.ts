@@ -234,6 +234,82 @@ describe('planConfigWriteback', () => {
     const text = '[image]\nmax_edge_px = 1500\n';
     expect(edit(text, 'image', undefined, { max_edge_px: 2000 }, { image: { max_edge_px: 2000 } })).toBeUndefined();
   });
+
+  it('preserves a quoted sub-table header and its comments on an unrelated write', () => {
+    const text = '[models."acme/m1"]\n# model note\nname = "m1"\n\n[image]\nmax_edge_px = 1500\n';
+    const result = edit(text, 'image', { max_edge_px: 1500 }, { max_edge_px: 2000 }, {
+      models: { 'acme/m1': { name: 'm1' } },
+      image: { max_edge_px: 2000 },
+    });
+    expect(result).toBe('[models."acme/m1"]\n# model note\nname = "m1"\n\n[image]\nmax_edge_px = 2000\n');
+  });
+
+  it('preserves a literal-quoted sub-table header on an unrelated write', () => {
+    const text = "[models.'acme/m1']\nname = \"m1\"\n\n[image]\nmax_edge_px = 1500\n";
+    const result = edit(text, 'image', { max_edge_px: 1500 }, { max_edge_px: 2000 }, {
+      models: { 'acme/m1': { name: 'm1' } },
+      image: { max_edge_px: 2000 },
+    });
+    expect(result).toBe("[models.'acme/m1']\nname = \"m1\"\n\n[image]\nmax_edge_px = 2000\n");
+  });
+
+  it('preserves a whitespace-padded quoted header and a quoted root key holding a dot', () => {
+    const text = '[ models . "acme/m1" ]\nname = "m1"\n\n["x.y"]\nv = 1\n\n[image]\nmax_edge_px = 1500\n';
+    const result = edit(text, 'image', { max_edge_px: 1500 }, { max_edge_px: 2000 }, {
+      models: { 'acme/m1': { name: 'm1' } },
+      'x.y': { v: 1 },
+      image: { max_edge_px: 2000 },
+    });
+    expect(result).toBe('[ models . "acme/m1" ]\nname = "m1"\n\n["x.y"]\nv = 1\n\n[image]\nmax_edge_px = 2000\n');
+  });
+
+  it('edits inside a quoted sub-table region at key level', () => {
+    const text = '[models."acme/m1"]\n# keep\nname = "m1"\nmax_context_size = 1000\n';
+    const result = edit(
+      text,
+      'models',
+      { 'acme/m1': { name: 'm1', max_context_size: 1000 } },
+      { 'acme/m1': { name: 'm1x', max_context_size: 1000 } },
+      { models: { 'acme/m1': { name: 'm1x', max_context_size: 1000 } } },
+    );
+    expect(result).toBe('[models."acme/m1"]\n# keep\nname = "m1x"\nmax_context_size = 1000\n');
+  });
+
+  it('removes one quoted model entry and appends another with a quoted header', () => {
+    const text = '[models."acme/m1"]\nname = "m1"\n';
+    const result = edit(text, 'models', { 'acme/m1': { name: 'm1' } }, { 'beta/m2': { name: 'm2' } }, {
+      models: { 'beta/m2': { name: 'm2' } },
+    });
+    expect(result).toBe('[models."beta/m2"]\nname = "m2"\n');
+  });
+
+  it('handles escaped quotes inside quoted header segments', () => {
+    const text = '[models."a\\"b"]\nname = "m1"\n\n[image]\nmax_edge_px = 1500\n';
+    const preserved = edit(text, 'image', { max_edge_px: 1500 }, { max_edge_px: 2000 }, {
+      models: { 'a"b': { name: 'm1' } },
+      image: { max_edge_px: 2000 },
+    });
+    expect(preserved).toBe('[models."a\\"b"]\nname = "m1"\n\n[image]\nmax_edge_px = 2000\n');
+    const result = edit(
+      '[models."a\\"b"]\nname = "m1"\n',
+      'models',
+      { 'a"b': { name: 'm1' } },
+      { 'a"b': { name: 'm2' } },
+      { models: { 'a"b': { name: 'm2' } } },
+    );
+    expect(result).toBe('[models."a\\"b"]\nname = "m2"\n');
+  });
+
+  it('declines to plan on malformed quoted headers', () => {
+    const expected = { image: { max_edge_px: 2000 } };
+    expect(edit('[""]\nv = 1\n', 'image', { max_edge_px: 1500 }, { max_edge_px: 2000 }, expected)).toBeUndefined();
+    expect(
+      edit('[models."unterminated]\nname = "m1"\n', 'image', { max_edge_px: 1500 }, { max_edge_px: 2000 }, expected),
+    ).toBeUndefined();
+    expect(
+      edit('[models."a\\qb"]\nname = "m1"\n', 'image', { max_edge_px: 1500 }, { max_edge_px: 2000 }, expected),
+    ).toBeUndefined();
+  });
 });
 
 describe('replaceThinkingEffortMax', () => {
