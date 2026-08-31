@@ -7,6 +7,7 @@ import {
 import {
   applyManagedApiKeyProviderModels,
   applyManagedKimiCodeConfig,
+  applyOpenAiCompatibleCatalog,
   fetchManagedKimiCodeModels,
   KIMI_CODE_PLATFORM_ID,
   KIMI_CODE_PROVIDER_NAME,
@@ -801,12 +802,51 @@ export async function refreshProviderModels(
   // ---------------------------------------------------------------------------
   // 3.5. OpenAI-compatible providers (type: 'openai' / 'openai_responses')
   // ---------------------------------------------------------------------------
-  // Plain OpenAI-compatible gateways (e.g. opencode, kilo) carry a `baseUrl`
-  // and API key but no custom-registry `source`, so branches 1–3 skip them and
-  // they previously vanished from the refresh loop entirely. Refresh them from
-  // their own `{baseUrl}/models` endpoint so failures surface as "skipped"
-  // entries instead of being silently ignored.
+  // Intentionally removed from the automatic startup refresh. OpenAI-compatible
+  // gateways (e.g. opencode, kilo, z.ai) expose an inconsistent `/models`
+  // schema — many omit context length or display names — so an unattended
+  // refresh would clobber curated `maxContextSize` values (e.g. a 1M window
+  // imported from models.dev). Use `/refresh-catalog` (refreshProviderCatalog)
+  // instead: it is on-demand, preserves context like OpenRouter, and enriches
+  // names/capabilities from the models.dev catalog.
+
+  return { changed, unchanged, failed };
+}
+
+export interface RefreshCatalogResult {
+  readonly changed: readonly ProviderChange[];
+  readonly unchanged: readonly string[];
+  readonly failed: ReadonlyArray<{ provider: string; reason: string }>;
+}
+
+/**
+ * On-demand catalog refresh for OpenAI-compatible providers (type 'openai' /
+ * 'openai_responses'), triggered by the `/refresh-catalog` slash command.
+ *
+ * Unlike the startup refresh, this path:
+ *  - fetches each provider's `{baseUrl}/models` endpoint and **preserves the
+ *    provider-reported context length** (OpenRouter-style) instead of
+ *    substituting a default, so a curated `maxContextSize` is never clobbered;
+ *  - **enriches** every model from the models.dev catalog — display name and
+ *    capabilities — so names render correctly; the provider's own display name
+ *    (when present) takes priority over the catalog;
+ *  - adds newly-discovered models and drops ones the endpoint no longer lists,
+ *    while keeping any hand-written alias extras.
+ *
+ * Pass `providerId` to scope the refresh to a single provider.
+ */
+export async function refreshProviderCatalog(
+  host: RefreshProviderHost,
+  options: { providerId?: string; userAgent?: string } = {},
+): Promise<RefreshCatalogResult> {
+  const changed: ProviderChange[] = [];
+  const unchanged: string[] = [];
+  const failed: Array<{ provider: string; reason: string }> = [];
+  const targetId = options.providerId;
+
+  let config = await host.getConfig();
   const openAiCompatibleTypes = new Set(['openai', 'openai_responses']);
+
   for (const providerId of Object.keys(config.providers)) {
     if (providerId === KIMI_CODE_PROVIDER_NAME) continue;
     if (isOpenPlatformId(providerId)) continue;
@@ -814,8 +854,6 @@ export async function refreshProviderModels(
     const provider = readProvider(config, providerId);
     if (provider === undefined) continue;
     if (!openAiCompatibleTypes.has(provider.type ?? '')) continue;
-    // Custom-registry providers (branch 3) and managed-api-key providers
-    // (branch 2.5) own this id already; don't double-refresh.
     if (readCustomRegistrySource(provider) !== undefined) continue;
     if (provider.baseUrl === undefined || provider.baseUrl.length === 0) continue;
     const apiKey = resolveProviderApiKey(provider);
@@ -823,14 +861,14 @@ export async function refreshProviderModels(
 
     try {
       const models = await fetchOpenAIProviderModels(provider.baseUrl, apiKey, {
-        userAgent: host.userAgent,
+        userAgent: options.userAgent ?? host.userAgent,
       });
       if (models.length === 0) continue;
 
       config = await rebaseSelectionAfterFetch(host, config);
       const aliasPrefix = `${providerId}/`;
       const next = structuredClone(config);
-      applyManagedApiKeyProviderModels(next, providerId, models, aliasPrefix);
+      applyOpenAiCompatibleCatalog(next, providerId, models, aliasPrefix);
       const refreshedAliasKeys = providerRefreshAliasKeys(config, next, providerId, aliasPrefix);
       restoreProviderAliases(
         next,
@@ -855,12 +893,7 @@ export async function refreshProviderModels(
           thinking: next.thinking,
           defaultProvider: next['defaultProvider'],
         });
-        changed.push({
-          providerId,
-          providerName: providerId,
-          added,
-          removed,
-        });
+        changed.push({ providerId, providerName: providerId, added, removed });
       }
     } catch (error) {
       failed.push({
