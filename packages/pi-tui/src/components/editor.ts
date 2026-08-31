@@ -1171,7 +1171,12 @@ export class Editor implements Component, Focusable {
 			const start = match.index;
 			const end = start + match[0].length;
 			if (this.state.cursorCol < start || this.state.cursorCol > end) continue;
-			if (this.pastes.get(Number(match[1])) !== filteredText) return false;
+			const stored = this.pastes.get(Number(match[1]));
+			// The path-spacing rule may have prepended a synthetic space to either
+			// side (first paste after a word character vs. re-paste after "]"), so
+			// the identity check ignores at most one leading space.
+			if (stored === undefined || stored.replace(/^ /, "") !== filteredText.replace(/^ /, ""))
+				return false;
 			return this.expandPasteMarkerAtCursor();
 		}
 		return false;

@@ -4131,6 +4131,21 @@ describe("Editor component", () => {
 			assert.strictEqual(submitted, paste);
 		});
 
+		it("expands the marker on re-paste when the stored content carries a synthetic leading space", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.setText("word");
+			// First paste starts with "/" and follows a word character, so the
+			// path-spacing rule prepends a synthetic space to the stored content.
+			const paste = "/p\n".repeat(12).trimEnd();
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			assert.match(editor.getText(), /\[paste #1 \+12 lines\]/);
+
+			// The re-paste lands after "]", gets no synthetic space, and must
+			// still be recognized as identical.
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			assert.strictEqual(editor.getText(), `word ${paste}`);
+		});
+
 		it("treats paste marker as single unit for right arrow", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 			editor.handleInput("A");
