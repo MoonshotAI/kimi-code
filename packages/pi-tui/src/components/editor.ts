@@ -229,6 +229,7 @@ interface EditorSnapshot {
 	state: EditorState;
 	pastes: Map<number, string>;
 	pasteCounter: number;
+	pasteSyntheticSpacing: Set<number>;
 }
 
 interface LayoutLine {
@@ -328,6 +329,8 @@ export class Editor implements Component, Focusable {
 	// Paste tracking for large pastes
 	private pastes: Map<number, string> = new Map();
 	private pasteCounter: number = 0;
+	/** Paste ids whose stored content carries a synthetic leading space added by the path-spacing rule. */
+	private pasteSyntheticSpacing: Set<number> = new Set();
 
 	// Bracketed paste mode buffering
 	private pasteBuffer: string = "";
@@ -1164,30 +1167,32 @@ export class Editor implements Component, Focusable {
 	 * Second-paste gesture: pasting content identical to what the marker under
 	 * the cursor holds expands that marker instead of inserting a duplicate.
 	 */
-	private expandMarkerForIdenticalPaste(filteredText: string): boolean {
+	private expandMarkerForIdenticalPaste(filteredText: string, hadSyntheticSpace: boolean): boolean {
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 		PASTE_MARKER_REGEX.lastIndex = 0;
 		for (const match of currentLine.matchAll(PASTE_MARKER_REGEX)) {
 			const start = match.index;
 			const end = start + match[0].length;
 			if (this.state.cursorCol < start || this.state.cursorCol > end) continue;
-			if (!this.isSamePasteContent(this.pastes.get(Number(match[1])), filteredText)) return false;
+			if (!this.isSamePasteContent(Number(match[1]), filteredText, hadSyntheticSpace)) return false;
 			return this.expandPasteMarkerAtCursor();
 		}
 		return false;
 	}
 
 	/**
-	 * Identity for the second-paste gesture: exact match, or one side carries a
-	 * single leading space the path-spacing rule could have synthesized — the
-	 * unspaced side must start with a path character, so pastes that genuinely
-	 * differ by a leading space never count as identical.
+	 * Identity for the second-paste gesture. Only spacing the path-spacing rule
+	 * actually synthesized may differ between the two sides — recorded per paste
+	 * id at store time for the stored side, known locally for the incoming
+	 * paste — so pastes that genuinely differ by a leading space never match.
 	 */
-	private isSamePasteContent(stored: string | undefined, pasted: string): boolean {
+	private isSamePasteContent(pasteId: number, pasted: string, pastedHadSyntheticSpace: boolean): boolean {
+		const stored = this.pastes.get(pasteId);
 		if (stored === undefined) return false;
 		if (stored === pasted) return true;
-		const [spaced, plain] = stored.startsWith(" ") ? [stored, pasted] : [pasted, stored];
-		return spaced === ` ${plain}` && /^[/~.]/.test(plain);
+		if (this.pasteSyntheticSpacing.has(pasteId) && stored.slice(1) === pasted) return true;
+		if (pastedHadSyntheticSpace && stored === pasted.slice(1)) return true;
+		return false;
 	}
 
 	getLines(): string[] {
@@ -1210,6 +1215,7 @@ export class Editor implements Component, Focusable {
 		if (!options?.preservePasteRegistry) {
 			this.pastes.clear();
 			this.pasteCounter = 0;
+			this.pasteSyntheticSpacing.clear();
 		}
 		this.setTextInternal(normalized);
 	}
@@ -1383,17 +1389,19 @@ export class Editor implements Component, Focusable {
 
 		// If pasting a file path (starts with /, ~, or .) and the character before
 		// the cursor is a word character, prepend a space for better readability
+		let hadSyntheticSpace = false;
 		if (/^[/~.]/.test(filteredText)) {
 			const currentLine = this.state.lines[this.state.cursorLine] || "";
 			const charBeforeCursor = this.state.cursorCol > 0 ? currentLine[this.state.cursorCol - 1] : "";
 			if (charBeforeCursor && /\w/.test(charBeforeCursor)) {
 				filteredText = ` ${filteredText}`;
+				hadSyntheticSpace = true;
 			}
 		}
 
 		// Re-pasting a marker's exact stored content onto it expands the marker
 		// (second-paste gesture) instead of inserting a duplicate.
-		if (this.expandMarkerForIdenticalPaste(filteredText)) return;
+		if (this.expandMarkerForIdenticalPaste(filteredText, hadSyntheticSpace)) return;
 
 		this.pushUndoSnapshot();
 
@@ -1407,6 +1415,7 @@ export class Editor implements Component, Focusable {
 			this.pasteCounter++;
 			const pasteId = this.pasteCounter;
 			this.pastes.set(pasteId, filteredText);
+			if (hadSyntheticSpace) this.pasteSyntheticSpacing.add(pasteId);
 
 			// Insert marker like "[paste #1 +123 lines]" or "[paste #1 1234 chars]"
 			const marker =
@@ -1470,6 +1479,7 @@ export class Editor implements Component, Focusable {
 		this.state = { lines: [""], cursorLine: 0, cursorCol: 0 };
 		this.pastes.clear();
 		this.pasteCounter = 0;
+		this.pasteSyntheticSpacing.clear();
 		this.exitHistoryBrowsing();
 		this.scrollOffset = 0;
 		this.undoStack.clear();
@@ -1500,6 +1510,7 @@ export class Editor implements Component, Focusable {
 				// This contains the id part e.g 4 from [paste #4 +123 lines]
 				const targetId = Number(isPastedSegmented[1]);
 				this.pastes.delete(targetId);
+				this.pasteSyntheticSpacing.delete(targetId);
 				this.pasteCounter--;
 
 				// Shift registry entries down in ascending id order, independent
@@ -1509,6 +1520,7 @@ export class Editor implements Component, Focusable {
 				for (const id of higherIds) {
 					this.pastes.set(id - 1, this.pastes.get(id)!);
 					this.pastes.delete(id);
+					if (this.pasteSyntheticSpacing.delete(id)) this.pasteSyntheticSpacing.add(id - 1);
 				}
 
 				// Renumber markers with ids greater than the removed one.
@@ -2216,7 +2228,12 @@ export class Editor implements Component, Focusable {
 	}
 
 	private pushUndoSnapshot(): void {
-		this.undoStack.push({ state: this.state, pastes: this.pastes, pasteCounter: this.pasteCounter });
+		this.undoStack.push({
+			state: this.state,
+			pastes: this.pastes,
+			pasteCounter: this.pasteCounter,
+			pasteSyntheticSpacing: this.pasteSyntheticSpacing,
+		});
 	}
 
 	private undo(): void {
@@ -2226,6 +2243,7 @@ export class Editor implements Component, Focusable {
 		Object.assign(this.state, snapshot.state);
 		this.pastes = snapshot.pastes;
 		this.pasteCounter = snapshot.pasteCounter;
+		this.pasteSyntheticSpacing = snapshot.pasteSyntheticSpacing;
 		this.lastAction = null;
 		this.preferredVisualCol = null;
 		if (this.onChange) {

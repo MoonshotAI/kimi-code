@@ -4160,6 +4160,36 @@ describe("Editor component", () => {
 			assert.ok(text.includes("[paste #2"));
 		});
 
+		it("does not expand when a leading space is genuine on the re-paste of path-starting content", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			// Pasted into the empty editor: no word character before the cursor,
+			// so the stored content carries no synthetic space.
+			const paste = "/p\n".repeat(12).trimEnd();
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			assert.match(editor.getText(), /\[paste #1/);
+
+			// A genuine leading space makes this different content, even though
+			// the unspaced side starts with a path character.
+			editor.handleInput(`\x1b[200~ ${paste}\x1b[201~`);
+			const text = editor.getText();
+			assert.ok(text.includes("[paste #1"));
+			assert.ok(text.includes("[paste #2"));
+		});
+
+		it("expands the marker when the re-paste receives the synthetic leading space", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const paste = "/p\n".repeat(12).trimEnd();
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+
+			// Typing before the marker puts a word character right in front of
+			// it, so this re-paste gets the synthetic space and must still be
+			// recognized as identical.
+			editor.handleInput("\x01");
+			editor.handleInput("word");
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			assert.strictEqual(editor.getText(), `word${paste}`);
+		});
+
 		it("treats paste marker as single unit for right arrow", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 			editor.handleInput("A");
