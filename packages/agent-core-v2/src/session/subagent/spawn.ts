@@ -1,4 +1,4 @@
-import { PRIMARY_SUBAGENT_MODEL_CHOICE } from './configSection';
+import { PRIMARY_SUBAGENT_MODEL_CHOICE, type SubagentModelSource } from './configSection';
 
 export const DEFAULT_PROFILE_NAME = 'coder';
 
@@ -54,6 +54,7 @@ export interface SubagentSpawnPlanInput {
 export interface SubagentSpawnPlan {
   readonly profileName: string;
   readonly model: string;
+  readonly modelSource?: SubagentModelSource;
   readonly thinking?: string;
   readonly fork: boolean;
 }
@@ -69,5 +70,6 @@ export interface SpawnedSubagent {
   readonly agentId: string;
   readonly profileName: string;
   readonly model: string;
+  readonly modelSource?: SubagentModelSource;
   readonly promptText: string;
 }

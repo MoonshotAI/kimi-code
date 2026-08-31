@@ -160,9 +160,7 @@ describe('server-v2 /api/v1/config', () => {
   });
 
   it('session create with a broken subagent model pool fails with VALIDATION_FAILED', async () => {
-    await boot(
-      '[experimental]\n"secondary-model" = true\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n',
-    );
+    await boot('[secondary_model.models]\n"provider/fast" = "fast and cheap"\n');
     const res = await authedFetch(server as RunningServer, base, '/api/v1/sessions', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -171,17 +169,6 @@ describe('server-v2 /api/v1/config', () => {
     const body = (await res.json()) as Envelope<null>;
     expect(body.code).toBe(ErrorCode.VALIDATION_FAILED);
     expect(body.msg).toContain('[secondary_model].default_model is required');
-  });
-
-  it('session create with a broken subagent model pool succeeds while the experiment is off', async () => {
-    await boot('[secondary_model.models]\n"provider/fast" = "fast and cheap"\n');
-    const res = await authedFetch(server as RunningServer, base, '/api/v1/sessions', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ metadata: { cwd: home as string } }),
-    });
-    const body = (await res.json()) as Envelope<{ id: string }>;
-    expect(body.code).toBe(0);
   });
 });
 

@@ -62,15 +62,29 @@ export const stepRetrySchema = z.object({
 export const turnStateSchema = z.enum(['queued', 'running', 'completed', 'failed', 'cancelled']);
 export const stepStateSchema = z.enum(['running', 'completed', 'interrupted', 'failed']);
 
-export const textFrameSchema = z.object({
+export const transcriptSkillActivationSchema = z.object({
+  skillName: z.string(),
+  skillArgs: z.string().optional(),
+});
+
+export const transcriptUserOriginSchema = z.object({
+  kind: z.literal('user'),
+  skillActivations: z.array(transcriptSkillActivationSchema).optional(),
+});
+
+const textFrameShape = {
   kind: z.literal('text'),
   frameId: frameIdSchema,
-  role: z.enum(['assistant', 'user']),
   text: z.string(),
   attachmentIds: z.array(z.string()).optional(),
   taskId: taskIdSchema.optional(),
   promptIds: z.array(z.string()).optional(),
-});
+};
+
+export const textFrameSchema = z.discriminatedUnion('role', [
+  z.object({ ...textFrameShape, role: z.literal('assistant'), origin: z.never().optional() }),
+  z.object({ ...textFrameShape, role: z.literal('user'), origin: transcriptUserOriginSchema.optional() }),
+]);
 
 export const thinkingFrameSchema = z.object({
   kind: z.literal('thinking'),
@@ -155,6 +169,7 @@ export const transcriptStepSchema = z.object({
 export const transcriptTurnSchema = z.object({
   kind: z.literal('turn'),
   turnId: turnIdSchema,
+  triggerPromptId: z.string().min(1).optional(),
   ordinal: z.number().int(),
   state: turnStateSchema,
   origin: turnOriginSchema,

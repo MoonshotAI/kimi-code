@@ -1,5 +1,11 @@
 import { z } from 'zod';
 
+import {
+  type EnvBindings,
+  envBindings,
+  stripEnvBoundFields,
+  type IConfigService,
+} from '#/app/config/config';
 import { registerConfigSection } from '#/app/config/configSectionContributions';
 import {
   cloneRecord,
@@ -31,9 +37,36 @@ export const PermissionRuleSchema = z.object({
 
 export const PermissionConfigSchema = z.object({
   rules: z.array(PermissionRuleSchema).optional(),
+  dangerousCommandGuard: z.boolean().optional(),
 });
 
 export type PermissionConfig = z.infer<typeof PermissionConfigSchema>;
+
+export const DANGEROUS_COMMAND_GUARD_ENV = 'KIMI_CODE_DANGEROUS_COMMAND_GUARD';
+
+function parseDangerousCommandGuardEnv(raw: string): boolean | undefined {
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  return undefined;
+}
+
+export const permissionEnvBindings: EnvBindings<PermissionConfig> = envBindings(
+  PermissionConfigSchema,
+  {
+    dangerousCommandGuard: {
+      env: DANGEROUS_COMMAND_GUARD_ENV,
+      parse: parseDangerousCommandGuardEnv,
+    },
+  },
+);
+
+export const stripPermissionEnv = stripEnvBoundFields(permissionEnvBindings);
+
+export function isDangerousCommandGuardEnabled(config: IConfigService): boolean {
+  return (
+    config.get<PermissionConfig | undefined>(PERMISSION_SECTION)?.dangerousCommandGuard ?? true
+  );
+}
 
 function isValidPermissionPattern(pattern: string): boolean {
   try {
@@ -52,7 +85,12 @@ export const permissionFromToml = (rawSnake: unknown): unknown => {
   appendPermissionRules(rules, raw['deny'], 'deny');
   appendPermissionRules(rules, raw['allow'], 'allow');
   appendPermissionRules(rules, raw['ask'], 'ask');
-  return rules.length > 0 ? { rules } : {};
+  const out: Record<string, unknown> = {};
+  if (rules.length > 0) out['rules'] = rules;
+  if (raw['dangerousCommandGuard'] !== undefined) {
+    out['dangerousCommandGuard'] = raw['dangerousCommandGuard'];
+  }
+  return out;
 };
 
 function appendPermissionRules(
@@ -107,4 +145,6 @@ export const permissionToToml = (value: unknown, rawSnake: unknown): unknown => 
 registerConfigSection(PERMISSION_SECTION, PermissionConfigSchema, {
   fromToml: permissionFromToml,
   toToml: permissionToToml,
+  env: permissionEnvBindings,
+  stripEnv: stripPermissionEnv,
 });
