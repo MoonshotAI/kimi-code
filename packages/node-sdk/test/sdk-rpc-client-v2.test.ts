@@ -1100,6 +1100,32 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  it('rejects setTowerMode on a non-main interactive agent with a main-agent diagnostic', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOWER', '1');
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await client.createSession({ id: 'ses_tower_child', workDir });
+      const childId = await client.startBtw({ sessionId: 'ses_tower_child' });
+
+      await expect(
+        client.withInteractiveAgent(childId, () =>
+          client.setTowerMode({ sessionId: 'ses_tower_child', enabled: true }),
+        ),
+      ).rejects.toMatchObject({
+        code: 'session.tower_mode_invalid',
+        message: expect.stringContaining('main agent'),
+      });
+      expect((await client.getStatus({ sessionId: 'ses_tower_child' })).towerMode).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+      await client.close();
+    }
+  });
+
   it('exposes Session.setTowerMode and getStatus().towerMode on the v2 harness', async () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOWER', '1');
     const { harness } = await makeHarness();

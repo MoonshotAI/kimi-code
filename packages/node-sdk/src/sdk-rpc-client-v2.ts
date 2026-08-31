@@ -2078,6 +2078,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const agent = await this.agentScope(input.sessionId);
     const tower = agent.accessor.get(IAgentTowerService);
     if (input.enabled) {
+      if (this.interactiveAgentId !== MAIN_AGENT_ID) {
+        throw new V2Error2(
+          V2ErrorCodes.SESSION_TOWER_MODE_INVALID,
+          'tower mode is only supported on the main agent',
+        );
+      }
       await tower.enter();
       if (!tower.isActive) {
         throw new V2Error2(
