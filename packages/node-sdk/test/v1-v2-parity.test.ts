@@ -39,6 +39,7 @@ import {
   type BackgroundTaskInfo,
   type ConfigDiagnostics,
   type Event,
+  type ExperimentalFeatureState,
   type ExportSessionResult,
   type GoalSnapshot,
   type GoalToolResult,
@@ -97,7 +98,8 @@ async function makeTempDir(prefix: string): Promise<string> {
  * defaultPlanMode/extraSkillDirs/mergeAllAvailableSkills — see the v2
  * `configSection.ts` registrations) and the env-binding pass, which
  * materializes `{}` for every section that declares env bindings
- * (thinking/services/loopControl/background/mcp) even with no env set.
+ * (thinking/services/loopControl/background/mcp/permission) even with no
+ * env set.
  */
 const V2_INJECTED_SECTION_DEFAULTS: Record<string, unknown> = {
   models: {},
@@ -107,6 +109,7 @@ const V2_INJECTED_SECTION_DEFAULTS: Record<string, unknown> = {
   loopControl: {},
   background: {},
   mcp: {},
+  permission: {},
   defaultPlanMode: false,
   mergeAllAvailableSkills: true,
   extraSkillDirs: [],
@@ -189,13 +192,20 @@ const KNOWN_DIFFS = {
   // v2's flag registry is per-domain and already carries flags v1 does not
   // have (minidb backend, subagent); v1-only flags would be the symmetric
   // case. Parity is enforced on the intersection of ids until the registries
-  // are unified.
+  // are unified. The secondary-model flag is intentionally default-on only
+  // in v2, so its resolved and default state are projected away.
   getExperimentalFeatures: (
-    features: readonly { id: string }[],
-    other: readonly { id: string }[],
-  ): readonly { id: string }[] => {
+    features: readonly ExperimentalFeatureState[],
+    other: readonly ExperimentalFeatureState[],
+  ): readonly unknown[] => {
     const otherIds = new Set(other.map((feature) => feature.id));
-    return features.filter((feature) => otherIds.has(feature.id));
+    return features.filter((feature) => otherIds.has(feature.id)).map((feature) => {
+      if (feature.id !== 'secondary-model') return feature;
+      const projected: Record<string, unknown> = { ...feature };
+      delete projected['defaultEnabled'];
+      delete projected['enabled'];
+      return projected;
+    });
   },
   // `raw`: the v1 write path carries a passthrough clone of the original
   // TOML document inside the returned config; the v2 engine keeps the same

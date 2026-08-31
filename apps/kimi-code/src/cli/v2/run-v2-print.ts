@@ -148,6 +148,7 @@ export async function runV2Print(
       clientIdentity: identity,
       args: {
         requestHeaders: hostHeaders,
+        nonInteractive: true,
         // `--skillsDir` (v1 print parity): explicit skill dirs replace default
         // user / project discovery for this process.
         skillDirs: opts.skillsDirs,

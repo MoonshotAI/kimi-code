@@ -155,7 +155,7 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'auto',
     aliases: [],
-    description: 'Toggle Auto mode: fully autonomous, agent decides everything without asking.',
+    description: 'Toggle Auto mode: fully autonomous, but dangerous commands are blocked.',
     priority: 99,
     availability: 'always',
   },

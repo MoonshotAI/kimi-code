@@ -223,6 +223,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     let managed: ManagedAgent | undefined;
     let didCreate = false;
     let finalizerArmed = false;
+    let stage = 'scope';
     try {
       const handle = createScopedChildHandle(
         this.instantiation,
@@ -255,8 +256,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         },
       ) as IAgentScopeHandle;
       managed!.active = true;
+      stage = 'seal';
       await handle.accessor.get(IWireService).seal();
       managed!.attachDurableRuntimes();
+      stage = 'register';
       await this.sessionMetadata.registerAgent(agentId, {
         homedir: agentHomedir,
         type: agentId === 'main' ? 'main' : 'sub',
@@ -267,12 +270,20 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       this.onDidCreateEmitter.fire(agent);
       didCreate = true;
       this.onDidCreateScopeEmitter.fire({ context: agent, handle });
+      stage = 'restore';
       await handle.accessor.get(IEventDispatcher).restore();
       await managed!.runtimeSet.restore();
+      stage = 'bootstrap';
       await this.bindBootstrap(handle, opts);
+      stage = 'toolActivation';
       await handle.accessor.get(IAgentToolActivationService).activate();
       return agent;
     } catch (error) {
+      this.telemetry.track2('agent_create_failed', {
+        agent_id: agentId,
+        stage,
+        error_type: error instanceof Error ? error.name : 'Unknown',
+      });
       if (managed !== undefined) {
         managed.closing = true;
         if (this.roster.get(agentId) === managed) this.roster.delete(agentId);

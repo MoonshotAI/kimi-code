@@ -31,6 +31,7 @@ export type TurnPromptAttachment =
 export interface TurnStartedPayload {
   readonly agentId: string;
   readonly turnId: number;
+  readonly promptId?: string;
   readonly origin: PromptOrigin;
   readonly prompt?: string;
   readonly promptAttachments?: readonly TurnPromptAttachment[];

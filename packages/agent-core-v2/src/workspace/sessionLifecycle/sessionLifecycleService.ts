@@ -398,6 +398,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     void handle.dispose();
     await drainLogCloses();
     this._onDidCloseSession.fire({ sessionId });
+    this.telemetry.withContext({ sessionId }).track2('session_ended', { reason: 'exit' });
   }
 
   async archive(sessionId: string): Promise<void> {
@@ -419,6 +420,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     void handle.dispose();
     await drainLogCloses();
     this._onDidArchiveSession.fire({ sessionId });
+    this.telemetry.withContext({ sessionId }).track2('session_ended', { reason: 'archive' });
   }
 
   async restore(

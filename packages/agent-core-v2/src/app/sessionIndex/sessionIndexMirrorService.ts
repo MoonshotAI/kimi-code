@@ -4,6 +4,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { IntervalTimer } from '#/_base/utils/timer';
 import { IFlagService } from '#/app/flag/flag';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IQueryStore } from '#/persistence/interface/queryStore';
 
 import { ISessionIndexMirror, type SessionSummary } from './sessionIndex';
@@ -42,6 +43,7 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
   constructor(
     @IQueryStore private readonly queryStore: IQueryStore,
     @IFlagService private readonly flags: IFlagService,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
     @ILogService private readonly log: ILogService,
   ) {
     super();
@@ -177,6 +179,10 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
       if (this.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
         this.log.warn('session index mirror giving up until the next record; reconciliation will heal', {
           pending: this.pendingMap.size,
+        });
+        this.telemetry.track2('session_index_mirror_give_up', {
+          pending_count: this.pendingMap.size,
+          consecutive_failures: this.consecutiveFailures,
         });
       }
     }
