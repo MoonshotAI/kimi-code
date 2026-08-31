@@ -170,6 +170,6 @@ npm uninstall -g @moonshot-ai/kimi-code
 
 ## 下一步
 
-- [交互与输入](./interaction.md) — 输入框操作、审批流程、Plan 模式和 YOLO 模式详解
+- [交互与输入](./interaction.md) — 输入框操作、审批流程、Plan 模式和必要时询问模式详解
 - [会话与上下文](./sessions.md) — 恢复会话、上下文压缩、导出会话
 - [常见使用案例](./use-cases.md) — 典型任务的 prompt 示例
