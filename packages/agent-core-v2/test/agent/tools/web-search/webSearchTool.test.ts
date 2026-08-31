@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { IConfigService } from '#/app/config/config';
 import { SUBSCRIPTION_SECTION } from '#/app/subscription/configSection';
 import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
+import type { RunnableToolExecution } from '#/tool/toolContract';
 import type { WebSearchProvider } from '#/agent/tools/web-search/web-search';
 import { WebSearchTool } from '#/agent/tools/web-search/webSearchTool';
 
@@ -35,7 +36,7 @@ describe('WebSearchTool', () => {
     const search = vi.fn(async () => []) as unknown as WebSearchProvider['search'];
     const tool = new WebSearchTool(makeProvider(search), makeConfig({ web_search: false }));
 
-    const result = await tool.resolveExecution({ query: 'q' }).execute(ctx());
+    const result = await (tool.resolveExecution({ query: 'q' }) as RunnableToolExecution).execute(ctx());
 
     expect(result.isError).toBe(true);
     expect(result.output).toBe(DISABLED_MESSAGE);
@@ -51,7 +52,7 @@ describe('WebSearchTool', () => {
     } as unknown as IWebSearchProviderService;
     const tool = new WebSearchTool(availableProvider, makeConfig({ web_search: false }));
 
-    const result = await tool.resolveExecution({ query: 'q' }).execute(ctx());
+    const result = await (tool.resolveExecution({ query: 'q' }) as RunnableToolExecution).execute(ctx());
 
     expect(result.isError).toBe(true);
     expect(result.output).toBe(DISABLED_MESSAGE);
@@ -64,7 +65,7 @@ describe('WebSearchTool', () => {
     ]) as unknown as WebSearchProvider['search'];
     const tool = new WebSearchTool(makeProvider(search), makeConfig(undefined));
 
-    const result = await tool.resolveExecution({ query: 'q' }).execute(ctx());
+    const result = await (tool.resolveExecution({ query: 'q' }) as RunnableToolExecution).execute(ctx());
 
     expect(result.isError).toBe(false);
     expect(result.output).toContain('https://example.com');

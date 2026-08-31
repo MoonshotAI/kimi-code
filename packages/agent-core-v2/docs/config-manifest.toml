@@ -352,6 +352,7 @@ merge_all_available_skills = true
     # oauth_host: string
   # env: record<string, string>
   # source: record<string, any>
+  # free_models_only: boolean
 
 # ##########################################################################
 # secondaryModel (config.toml: secondary_model)
