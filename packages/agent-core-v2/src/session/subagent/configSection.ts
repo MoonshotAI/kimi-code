@@ -187,12 +187,14 @@ export function assertValidSubagentModelConfig(
   if (pool !== undefined) assertValidSubagentModelPool(pool, modelCatalog);
 }
 
+export type SubagentModelSource = 'forced' | 'primary_override' | 'inherited' | 'secondary_pool';
+
 export function resolveSubagentBinding(
   config: IConfigService,
   flags: IFlagService,
   own: { modelAlias: string; thinkingLevel: string },
   requested?: string,
-): { model: string; thinking?: string } {
+): { model: string; thinking?: string; modelSource: SubagentModelSource } {
   const section = config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
   const enabled = flags.enabled(SECONDARY_MODEL_FLAG_ID);
   if (enabled && section?.force === true) {
@@ -214,10 +216,10 @@ export function resolveSubagentBinding(
         { details: { model: requested } },
       );
     }
-    return { model: forcedModel, thinking: section.defaultEffort };
+    return { model: forcedModel, thinking: section.defaultEffort, modelSource: 'forced' };
   }
   if (requested === PRIMARY_SUBAGENT_MODEL_CHOICE) {
-    return { model: own.modelAlias, thinking: own.thinkingLevel };
+    return { model: own.modelAlias, thinking: own.thinkingLevel, modelSource: 'primary_override' };
   }
   const pool = enabled ? resolveSubagentModelPool(config) : undefined;
   if (pool === undefined) {
@@ -228,7 +230,7 @@ export function resolveSubagentBinding(
         { details: { model: requested } },
       );
     }
-    return { model: own.modelAlias, thinking: own.thinkingLevel };
+    return { model: own.modelAlias, thinking: own.thinkingLevel, modelSource: 'inherited' };
   }
   if (Object.hasOwn(pool.models, PRIMARY_SUBAGENT_MODEL_CHOICE)) {
     throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_PRIMARY_MODEL_RESERVED_MESSAGE, {
@@ -253,7 +255,7 @@ export function resolveSubagentBinding(
       { details: { model: choice, availableModels: available } },
     );
   }
-  return { model: choice, thinking: section?.defaultEffort };
+  return { model: choice, thinking: section?.defaultEffort, modelSource: 'secondary_pool' };
 }
 
 export function resolveSubagentThinking(

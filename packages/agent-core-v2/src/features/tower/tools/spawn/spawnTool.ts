@@ -163,7 +163,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
           own.modelAlias === undefined
             ? undefined
             : args.kind === 'reviewer'
-              ? { model: own.modelAlias, thinking: own.thinkingLevel }
+              ? { model: own.modelAlias, thinking: own.thinkingLevel, modelSource: 'inherited' as const }
               : resolveSubagentBinding(
                   this.config,
                   this.flags,
@@ -304,6 +304,8 @@ export class TowerSpawnTool implements ITowerSpawnTool {
       parentToolCallId: toolCallId,
       description,
       runInBackground: true,
+      model: binding?.model,
+      modelSource: binding?.modelSource,
     });
 
     const run = await this.subagents.run(

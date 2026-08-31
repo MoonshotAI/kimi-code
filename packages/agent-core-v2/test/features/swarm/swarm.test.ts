@@ -766,7 +766,7 @@ describe('AgentSwarmTool', () => {
         runInBackground: false,
         signal,
         timeout: DEFAULT_SWARM_TIMEOUT_MS,
-        plan: { profileName: 'explore', model: 'provider/fast', thinking: undefined, fork: false },
+        plan: { profileName: 'explore', model: 'provider/fast', modelSource: 'secondary_pool', thinking: undefined, fork: false },
       },
       {
         kind: 'spawn',
@@ -785,7 +785,7 @@ describe('AgentSwarmTool', () => {
         runInBackground: false,
         signal,
         timeout: DEFAULT_SWARM_TIMEOUT_MS,
-        plan: { profileName: 'explore', model: 'provider/fast', thinking: undefined, fork: false },
+        plan: { profileName: 'explore', model: 'provider/fast', modelSource: 'secondary_pool', thinking: undefined, fork: false },
       },
     ] }));
     expect(result.output).toBe(
@@ -1025,7 +1025,7 @@ describe('AgentSwarmTool', () => {
         runInBackground: false,
         signal,
         timeout: DEFAULT_SWARM_TIMEOUT_MS,
-        plan: { profileName: 'explore', model: 'mock-model', thinking: 'off', fork: false },
+        plan: { profileName: 'explore', model: 'mock-model', modelSource: 'inherited', thinking: 'off', fork: false },
       },
     ] }));
     expect(result.output).toBe(
@@ -1213,10 +1213,10 @@ describe('AgentSwarmTool', () => {
       expect.objectContaining({
         tasks: [
           expect.objectContaining({
-            plan: { profileName: 'coder', model: 'provider/fast', thinking: undefined, fork: false },
+            plan: { profileName: 'coder', model: 'provider/fast', modelSource: 'secondary_pool', thinking: undefined, fork: false },
           }),
           expect.objectContaining({
-            plan: { profileName: 'coder', model: 'provider/fast', thinking: undefined, fork: false },
+            plan: { profileName: 'coder', model: 'provider/fast', modelSource: 'secondary_pool', thinking: undefined, fork: false },
           }),
         ],
       }),
@@ -1241,10 +1241,10 @@ describe('AgentSwarmTool', () => {
       expect.objectContaining({
         tasks: [
           expect.objectContaining({
-            plan: { profileName: 'coder', model: 'main-model', thinking: 'high', fork: false },
+            plan: { profileName: 'coder', model: 'main-model', modelSource: 'primary_override', thinking: 'high', fork: false },
           }),
           expect.objectContaining({
-            plan: { profileName: 'coder', model: 'main-model', thinking: 'high', fork: false },
+            plan: { profileName: 'coder', model: 'main-model', modelSource: 'primary_override', thinking: 'high', fork: false },
           }),
         ],
       }),
@@ -1451,10 +1451,10 @@ describe('AgentSwarmTool', () => {
       expect.objectContaining({
         tasks: [
           expect.objectContaining({
-            plan: { profileName: 'orchestrator', model: 'main-model', thinking: 'high', fork: true },
+            plan: { profileName: 'orchestrator', model: 'main-model', modelSource: 'inherited', thinking: 'high', fork: true },
           }),
           expect.objectContaining({
-            plan: { profileName: 'orchestrator', model: 'main-model', thinking: 'high', fork: true },
+            plan: { profileName: 'orchestrator', model: 'main-model', modelSource: 'inherited', thinking: 'high', fork: true },
           }),
         ],
       }),

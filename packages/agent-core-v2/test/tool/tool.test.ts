@@ -1633,7 +1633,7 @@ describe('Agent tool execution contract', () => {
     const created = telemetryRecords.filter((record) => record.event === 'subagent_created');
     expect(created.length).toBeGreaterThan(0);
     for (const record of created) {
-      expect(record.properties).toMatchObject({ fork: true });
+      expect(record.properties).toMatchObject({ fork: true, model_source: 'inherited' });
     }
   });
 
@@ -2023,6 +2023,7 @@ describe('Agent tool execution contract', () => {
       parentToolCallId: 'call_agent',
       runInBackground: false,
       model: 'provider/secondary',
+      modelSource: 'secondary_pool',
     });
     await mirrorAgentRun(
       requester,
@@ -2052,6 +2053,7 @@ describe('Agent tool execution contract', () => {
         fork: false,
         agent_id: 'agent-child',
         model: 'provider/secondary',
+        model_source: 'secondary_pool',
         parent_agent_id: 'main',
         parent_tool_call_id: 'call_agent',
       },
@@ -2956,7 +2958,7 @@ describe('AgentSwarm tool execution contract', () => {
           runInBackground: false,
           signal,
           timeout: DEFAULT_SUBAGENT_TIMEOUT_MS,
-          plan: { profileName: 'explore', model: 'mock-model', thinking: 'off', fork: false },
+          plan: { profileName: 'explore', model: 'mock-model', modelSource: 'inherited', thinking: 'off', fork: false },
         },
         {
           kind: 'spawn',
@@ -2970,7 +2972,7 @@ describe('AgentSwarm tool execution contract', () => {
           runInBackground: false,
           signal,
           timeout: DEFAULT_SUBAGENT_TIMEOUT_MS,
-          plan: { profileName: 'explore', model: 'mock-model', thinking: 'off', fork: false },
+          plan: { profileName: 'explore', model: 'mock-model', modelSource: 'inherited', thinking: 'off', fork: false },
         },
       ],
     });
@@ -3033,11 +3035,11 @@ describe('AgentSwarm tool execution contract', () => {
         tasks: [
           expect.objectContaining({
             kind: 'spawn',
-            plan: { profileName: 'explore', model: 'provider/fast', thinking: undefined, fork: false },
+            plan: { profileName: 'explore', model: 'provider/fast', modelSource: 'secondary_pool', thinking: undefined, fork: false },
           }),
           expect.objectContaining({
             kind: 'spawn',
-            plan: { profileName: 'explore', model: 'provider/fast', thinking: undefined, fork: false },
+            plan: { profileName: 'explore', model: 'provider/fast', modelSource: 'secondary_pool', thinking: undefined, fork: false },
           }),
         ],
       }),
@@ -3094,11 +3096,11 @@ describe('AgentSwarm tool execution contract', () => {
         tasks: [
           expect.objectContaining({
             kind: 'spawn',
-            plan: { profileName: 'explore', model: 'mock-model', thinking: 'off', fork: false },
+            plan: { profileName: 'explore', model: 'mock-model', modelSource: 'primary_override', thinking: 'off', fork: false },
           }),
           expect.objectContaining({
             kind: 'spawn',
-            plan: { profileName: 'explore', model: 'mock-model', thinking: 'off', fork: false },
+            plan: { profileName: 'explore', model: 'mock-model', modelSource: 'primary_override', thinking: 'off', fork: false },
           }),
         ],
       }),
@@ -3217,7 +3219,7 @@ describe('AgentSwarm tool execution contract', () => {
           runInBackground: false,
           signal,
           timeout: DEFAULT_SUBAGENT_TIMEOUT_MS,
-          plan: { profileName: 'explore', model: 'mock-model', thinking: 'off', fork: false },
+          plan: { profileName: 'explore', model: 'mock-model', modelSource: 'inherited', thinking: 'off', fork: false },
         },
       ],
     });

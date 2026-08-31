@@ -1882,10 +1882,12 @@ describe('subagent config section', () => {
     expect(resolveSubagentBinding(noPool.config, own)).toEqual({
       model: 'provider/main',
       thinking: 'medium',
+      modelSource: 'inherited',
     });
     expect(resolveSubagentBinding(noPool.config, own, 'primary')).toEqual({
       model: 'provider/main',
       thinking: 'medium',
+      modelSource: 'primary_override',
     });
     noPool.disposables.dispose();
 
@@ -1896,14 +1898,17 @@ describe('subagent config section', () => {
     expect(resolveSubagentBinding(pool.config, own)).toEqual({
       model: 'provider/fast',
       thinking: undefined,
+      modelSource: 'secondary_pool',
     });
     expect(resolveSubagentBinding(pool.config, own, 'provider/smart')).toEqual({
       model: 'provider/smart',
       thinking: undefined,
+      modelSource: 'secondary_pool',
     });
     expect(resolveSubagentBinding(pool.config, own, 'primary')).toEqual({
       model: 'provider/main',
       thinking: 'medium',
+      modelSource: 'primary_override',
     });
     pool.disposables.dispose();
   });
@@ -1918,6 +1923,7 @@ describe('subagent config section', () => {
     expect(resolveSubagentBindingWithFlags(config, secondaryModelFlags(false), own)).toEqual({
       model: 'provider/main',
       thinking: 'medium',
+      modelSource: 'inherited',
     });
     expect(() =>
       resolveSubagentBindingWithFlags(config, secondaryModelFlags(false), own, 'provider/fast'),
@@ -1936,10 +1942,12 @@ describe('subagent config section', () => {
     expect(resolveSubagentBinding(config, own)).toEqual({
       model: 'provider/fast',
       thinking: undefined,
+      modelSource: 'secondary_pool',
     });
     expect(resolveSubagentBinding(config, own, 'primary')).toEqual({
       model: 'provider/main',
       thinking: 'medium',
+      modelSource: 'primary_override',
     });
     expect(() => resolveSubagentBinding(config, own, 'provider/smart')).toThrow(
       /Invalid model "provider\/smart"\. Available models: provider\/fast, primary\./,
@@ -1966,6 +1974,7 @@ describe('subagent config section', () => {
     expect(resolveSubagentBinding(config, own)).toEqual({
       model: 'provider/fast',
       thinking: 'low',
+      modelSource: 'secondary_pool',
     });
     expect(() => resolveSubagentBinding(config, own, 'provider/smart')).toThrow(
       /Invalid model "provider\/smart"\. Available models: provider\/fast, primary\./,
@@ -1984,6 +1993,7 @@ describe('subagent config section', () => {
     expect(resolveSubagentBinding(config, own)).toEqual({
       model: 'provider/fast',
       thinking: undefined,
+      modelSource: 'secondary_pool',
     });
 
     disposables.dispose();
@@ -2013,6 +2023,7 @@ describe('subagent config section', () => {
     expect(resolveSubagentBinding(config, own)).toEqual({
       model: 'provider/fast',
       thinking: undefined,
+      modelSource: 'forced',
     });
     expect(() => resolveSubagentBinding(config, own, 'primary')).toThrow(
       /Invalid model "primary": \[secondary_model\]\.force is set/,
@@ -2055,10 +2066,12 @@ describe('subagent config section', () => {
     expect(resolveSubagentBinding(config, own)).toEqual({
       model: 'provider/fast',
       thinking: 'max',
+      modelSource: 'secondary_pool',
     });
     expect(resolveSubagentBinding(config, own, 'primary')).toEqual({
       model: 'provider/main',
       thinking: 'medium',
+      modelSource: 'primary_override',
     });
 
     disposables.dispose();
@@ -2078,6 +2091,7 @@ describe('subagent config section', () => {
     expect(resolveSubagentBinding(config, own)).toEqual({
       model: 'provider/fast',
       thinking: undefined,
+      modelSource: 'forced',
     });
     expect(() => resolveSubagentBinding(config, own, 'primary')).toThrow(
       /Invalid model "primary": \[secondary_model\]\.force is set/,

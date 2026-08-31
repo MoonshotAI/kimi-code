@@ -251,7 +251,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   function spawnNonForkChild(svc: ISessionSubagentService): Promise<SpawnedSubagent> {
     return svc.spawn({
       callerAgentId: CALLER_ID,
-      plan: { profileName: 'coder', model: 'provider/fast', thinking: 'low', fork: false },
+      plan: { profileName: 'coder', model: 'provider/fast', modelSource: 'secondary_pool', thinking: 'low', fork: false },
       labels: { parentAgentId: 'main' },
       prompt: 'Review the file',
     });
@@ -260,7 +260,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   function spawnForkChild(svc: ISessionSubagentService): Promise<SpawnedSubagent> {
     return svc.spawn({
       callerAgentId: CALLER_ID,
-      plan: { profileName: 'orchestrator', model: 'main-model', thinking: 'high', fork: true },
+      plan: { profileName: 'orchestrator', model: 'main-model', modelSource: 'inherited', thinking: 'high', fork: true },
       labels: { parentAgentId: 'main' },
       prompt: 'Continue the analysis',
     });
@@ -332,6 +332,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     expect(plan).toEqual({
       profileName: 'coder',
       model: 'provider/fast',
+      modelSource: 'secondary_pool',
       thinking: 'max',
       fork: false,
     });
@@ -440,6 +441,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     expect(plan).toEqual({
       profileName: 'coder',
       model: 'provider/fast',
+      modelSource: 'forced',
       thinking: 'max',
       fork: false,
     });
@@ -453,6 +455,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     expect(plan).toEqual({
       profileName: 'coder',
       model: 'main-model',
+      modelSource: 'inherited',
       thinking: 'high',
       fork: false,
     });
@@ -484,6 +487,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     expect(plan).toEqual({
       profileName: 'orchestrator',
       model: 'main-model',
+      modelSource: 'inherited',
       thinking: 'high',
       fork: true,
     });
@@ -546,6 +550,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       agentId: 'agent-child',
       profileName: 'coder',
       model: 'provider/fast',
+      modelSource: 'secondary_pool',
       promptText: 'FIXED-PREFIX\n\nReview the file',
     });
   });
@@ -591,6 +596,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       agentId: 'agent-fork',
       profileName: 'orchestrator',
       model: 'main-model',
+      modelSource: 'inherited',
       promptText: `${FORK_CONTEXT_NOTICE}\n\nContinue the analysis`,
     });
   });
@@ -622,7 +628,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
 
     const error = await spawnError(svc, {
       callerAgentId: CALLER_ID,
-      plan: { profileName: 'coder', model: 'provider/bad', thinking: 'low', fork: false },
+      plan: { profileName: 'coder', model: 'provider/bad', modelSource: 'secondary_pool', thinking: 'low', fork: false },
       prompt: 'Review the file',
     });
 
