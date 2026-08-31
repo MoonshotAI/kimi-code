@@ -4190,6 +4190,22 @@ describe("Editor component", () => {
 			assert.strictEqual(editor.getText(), `word${paste}`);
 		});
 
+		it("does not expand when the re-paste genuinely carries the space the stored paste synthesized", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.setText("word");
+			// Stored as " /p..." with the synthetic-space flag set.
+			const paste = "/p\n".repeat(12).trimEnd();
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			assert.match(editor.getText(), /\[paste #1/);
+
+			// The new clipboard genuinely starts with " /p..." — different
+			// clipboard content even though the editor text would look equal.
+			editor.handleInput(`\x1b[200~ ${paste}\x1b[201~`);
+			const text = editor.getText();
+			assert.ok(text.includes("[paste #1"));
+			assert.ok(text.includes("[paste #2"));
+		});
+
 		it("treats paste marker as single unit for right arrow", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 			editor.handleInput("A");

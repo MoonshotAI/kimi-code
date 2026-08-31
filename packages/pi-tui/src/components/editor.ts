@@ -1181,18 +1181,18 @@ export class Editor implements Component, Focusable {
 	}
 
 	/**
-	 * Identity for the second-paste gesture. Only spacing the path-spacing rule
-	 * actually synthesized may differ between the two sides — recorded per paste
-	 * id at store time for the stored side, known locally for the incoming
-	 * paste — so pastes that genuinely differ by a leading space never match.
+	 * Identity for the second-paste gesture, compared on the genuine clipboard
+	 * text of both sides: a leading space is stripped only when the synthetic
+	 * flag says the path-spacing rule produced it (recorded per paste id at
+	 * store time, known locally for the incoming paste), so a paste that
+	 * genuinely carries that space never counts as identical.
 	 */
 	private isSamePasteContent(pasteId: number, pasted: string, pastedHadSyntheticSpace: boolean): boolean {
 		const stored = this.pastes.get(pasteId);
 		if (stored === undefined) return false;
-		if (stored === pasted) return true;
-		if (this.pasteSyntheticSpacing.has(pasteId) && stored.slice(1) === pasted) return true;
-		if (pastedHadSyntheticSpace && stored === pasted.slice(1)) return true;
-		return false;
+		const storedCanonical = this.pasteSyntheticSpacing.has(pasteId) ? stored.slice(1) : stored;
+		const pastedCanonical = pastedHadSyntheticSpace ? pasted.slice(1) : pasted;
+		return storedCanonical === pastedCanonical;
 	}
 
 	getLines(): string[] {
