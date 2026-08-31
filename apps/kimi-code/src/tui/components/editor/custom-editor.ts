@@ -24,6 +24,11 @@ import { WrappingSelectList } from './wrapping-select-list';
 // oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match ANSI SGR escape sequences
 const ANSI_SGR = /\u001B\[[0-9;]*m/g;
 
+const BRACKET_PASTE_START = '\u001B[200~';
+const BRACKET_PASTE_END = '\u001B[201~';
+/** Window after a paste-key expansion during which exactly one trailing payload is swallowed. */
+const PASTE_PAYLOAD_SUPPRESS_MS = 1000;
+
 // Kitty keyboard protocol CSI-u sequence: ESC [ keycode ; modifier[:eventType] u.
 // We intentionally match only the simple two-field form — enough to rewrite
 // `ctrl+<LETTER>` with caps_lock into `ctrl+<letter>` without caps_lock.
@@ -156,6 +161,9 @@ export class CustomEditor extends Editor {
    */
   public onPasteImage?: () => Promise<boolean>;
 
+  private consumingPaste = false;
+  private consumeBuffer = '';
+  private suppressPastePayloadUntil = 0;
   /** Serialize paste callbacks so Enter/typing cannot overtake an image paste. */
   private pasteInFlight = false;
   private readonly pasteInputQueue: string[] = [];
@@ -350,6 +358,28 @@ export class CustomEditor extends Editor {
       this.onNonEscapeInput?.();
     }
 
+    // Some terminals deliver the Ctrl-V keystroke and the clipboard's
+    // bracketed-paste payload together. After a paste-key expansion the
+    // payload must be swallowed once (it would otherwise re-paste what the
+    // expansion just restored), while standalone pastes keep flowing to
+    // pi-tui's identical-content check.
+    if (this.consumingPaste) {
+      this.consumeBuffer += normalized;
+      if (this.consumeBuffer.includes(BRACKET_PASTE_END)) {
+        this.consumingPaste = false;
+        this.consumeBuffer = '';
+      }
+      return;
+    }
+    if (normalized.includes(BRACKET_PASTE_START) && Date.now() < this.suppressPastePayloadUntil) {
+      this.suppressPastePayloadUntil = 0;
+      if (!normalized.includes(BRACKET_PASTE_END)) {
+        this.consumingPaste = true;
+        this.consumeBuffer = normalized;
+      }
+      return;
+    }
+
     // Paste image binding — platform-aware:
     //   Windows terminals reserve Ctrl-V for their own paste handling
     //   (e.g. Windows Terminal's Ctrl+V shortcut), so we listen for
@@ -359,6 +389,9 @@ export class CustomEditor extends Editor {
     const pasteKey = process.platform === 'win32' ? 'alt+v' : Key.ctrl('v');
     if (matchesKey(normalized, pasteKey)) {
       if (this.expandPasteMarkerAtCursor()) {
+        // Terminals that also forward the clipboard as bracketed paste will
+        // deliver that payload next — swallow exactly one.
+        this.suppressPastePayloadUntil = Date.now() + PASTE_PAYLOAD_SUPPRESS_MS;
         return;
       }
       if (this.onPasteImage !== undefined) {

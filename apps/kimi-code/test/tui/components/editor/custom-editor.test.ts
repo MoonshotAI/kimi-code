@@ -601,6 +601,56 @@ describe('CustomEditor paste marker expansion', () => {
     expect(editor.getText()).toContain('x');
   });
 
+  it('swallows the bracketed-paste payload that trails a paste-key expansion', () => {
+    const editor = makeEditor();
+    const longText = 'line\n'.repeat(15).trimEnd();
+    simulateLargePaste(editor, longText);
+
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+    expect(editor.getText()).toBe(longText);
+
+    // Terminals that forward the clipboard as bracketed paste alongside the
+    // keystroke deliver this payload next — it must not re-paste.
+    editor.handleInput(`${PASTE_START}${longText}${PASTE_END}`);
+    expect(editor.getText()).toBe(longText);
+  });
+
+  it('swallows a trailing payload that arrives split across chunks', () => {
+    const editor = makeEditor();
+    const longText = 'line\n'.repeat(15).trimEnd();
+    simulateLargePaste(editor, longText);
+
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+    expect(editor.getText()).toBe(longText);
+
+    const splitAt = Math.floor(longText.length / 2);
+    editor.handleInput(`${PASTE_START}${longText.slice(0, splitAt)}`);
+    editor.handleInput(`${longText.slice(splitAt)}${PASTE_END}`);
+    expect(editor.getText()).toBe(longText);
+
+    // Verify editor is not stuck — next keystrokes should work normally
+    editor.handleInput('x');
+    expect(editor.getText()).toContain('x');
+  });
+
+  it('lets a standalone paste through after the suppression window expires', () => {
+    vi.useFakeTimers();
+    try {
+      const editor = makeEditor();
+      const longText = 'line\n'.repeat(15).trimEnd();
+      simulateLargePaste(editor, longText);
+
+      editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+      expect(editor.getText()).toBe(longText);
+
+      vi.setSystemTime(Date.now() + 1500);
+      simulateLargePaste(editor, longText);
+      expect(editor.getText()).toContain('[paste #2');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('falls back to the text paste path when the image paste handler rejects', async () => {
     const editor = makeEditor();
     const onTextPaste = vi.fn();
