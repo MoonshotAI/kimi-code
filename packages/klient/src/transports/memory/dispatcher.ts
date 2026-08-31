@@ -32,7 +32,7 @@ import type {
   PromptWithSkillsInput,
   SkillActivationInput,
 } from '@moonshot-ai/agent-core-v2/features/skill/skill';
-import { AgentSkill } from '@moonshot-ai/agent-core-v2/features/skill/skillAgentRuntime';
+import { IAgentSkillService } from '@moonshot-ai/agent-core-v2/features/skill/skillService';
 import {
   enqueueSessionInteraction,
   isSessionInteractionRecentlyResolved,
@@ -99,17 +99,16 @@ function interactionServiceView(session: ScopeLike): Record<string, unknown> {
 
 /**
  * `agentSkillService` stays on the wire after the engine moved the skill
- * kernel into a per-agent runtime: the view forwards to the agent's resolved
- * `AgentSkill` facade through the session's agent lifecycle.
+ * kernel into a per-agent DI service: the view forwards to the agent's
+ * `IAgentSkillService` resolved straight from the agent scope handle.
  */
 function agentSkillServiceView(agent: IAgentScopeHandle): Record<string, unknown> {
-  const manager = agent.accessor.get(IAgentLifecycleService);
-  const skill = () => manager.resolve(agentContextOf(agent), AgentSkill);
+  const skill = agent.accessor.get(IAgentSkillService);
   return {
-    activate: (input: SkillActivationInput) => skill().activate(input),
-    promptWithSkills: (input: PromptWithSkillsInput) => skill().promptWithSkills(input),
+    activate: (input: SkillActivationInput) => skill.activate(input),
+    promptWithSkills: (input: PromptWithSkillsInput) => skill.promptWithSkills(input),
     recordModelToolActivation: (origin: SkillActivationOrigin) => {
-      skill().recordModelToolActivation(origin);
+      skill.recordModelToolActivation(origin);
     },
   };
 }

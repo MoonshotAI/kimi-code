@@ -274,7 +274,7 @@ export * from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoaderS
 export type { SkillSource } from '#/features/skill/catalog/types';
 export * from '#/features/skill/tools/skill';
 export * from '#/features/skill/skill';
-export * from '#/features/skill/skillAgentRuntime';
+export * from '#/features/skill/skillService';
 import '#/features/skill/skillFeature';
 export * from '#/features/skill/catalog/types';
 export * from '#/features/skill/catalog/configSection';

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import { createDecorator } from '#/_base/di/instantiation';
 import type {
   BundledSkillActivation,
   ContextMessage,
@@ -8,11 +9,7 @@ import type {
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
 import { IAgentPromptService, reservePrompt, type PromptLaunchResult } from '#/agent/prompt/prompt';
 import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
-import {
-  defineAgentRuntimeContract,
-  defineAgentRuntimeProvider,
-  type AgentRuntimeContext,
-} from '#/agent/runtime/agentRuntime';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventService } from '#/app/event/event';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2 } from '#/errors';
@@ -21,6 +18,7 @@ import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { applyPromptMetadataUpdate } from '#/session/sessionMetadata/promptMetadata';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { isUserActivatableSkillType, type SkillDefinition } from './catalog/types';
 import { promptMetadataTextFromSkill, renderUserSlashSkillPrompt } from './prompt';
@@ -33,11 +31,32 @@ import type {
 } from './skill';
 import { SkillActivated } from './skillOps';
 
-export class SkillRuntime {
-  constructor(private readonly context: AgentRuntimeContext<null>) {}
+export interface IAgentSkillService {
+  readonly _serviceBrand: undefined;
+  activate(input: SkillActivationInput): Promise<PromptLaunchResult>;
+  promptWithSkills(input: PromptWithSkillsInput): Promise<PromptWithSkillsResult>;
+  recordModelToolActivation(origin: SkillActivationOrigin): void;
+}
+
+export const IAgentSkillService = createDecorator<IAgentSkillService>('agentSkillService');
+
+export class AgentSkillService implements IAgentSkillService {
+  declare readonly _serviceBrand: undefined;
+
+  constructor(
+    @ISessionSkillCatalog private readonly catalog: ISessionSkillCatalog,
+    @IAgentPromptService private readonly prompt: IAgentPromptService,
+    @IAgentLoopService private readonly loop: IAgentLoopService,
+    @ISessionMetadata private readonly metadata: ISessionMetadata,
+    @IEventService private readonly eventService: IEventService,
+    @ISessionContext private readonly sessionContext: ISessionContext,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+  ) {}
 
   async activate(input: SkillActivationInput): Promise<PromptLaunchResult> {
-    const catalog = this.context.get(ISessionSkillCatalog);
+    const catalog = this.catalog;
     await catalog.ready;
     const skill = catalog.catalog.getSkill(input.name);
     if (skill === undefined) {
@@ -86,12 +105,12 @@ export class SkillRuntime {
         'Cannot activate skill while another turn is active',
       );
     }
-    if (this.context.agent.agentId === MAIN_AGENT_ID) {
+    if (this.scopeContext.agentContext.agentId === MAIN_AGENT_ID) {
       await applyPromptMetadataUpdate(
         {
-          metadata: this.context.get(ISessionMetadata),
-          eventService: this.context.get(IEventService),
-          sessionId: this.context.get(ISessionContext).sessionId,
+          metadata: this.metadata,
+          eventService: this.eventService,
+          sessionId: this.sessionContext.sessionId,
         },
         promptMetadataTextFromSkill(input),
       );
@@ -109,15 +128,15 @@ export class SkillRuntime {
         'promptWithSkills requires at least one skill',
       );
     }
-    const catalog = this.context.get(ISessionSkillCatalog);
+    const catalog = this.catalog;
     await catalog.ready;
     const prepared = input.skills.map((skill) => this.prepareBundled(skill));
-    if (this.context.agent.agentId === MAIN_AGENT_ID) {
+    if (this.scopeContext.agentContext.agentId === MAIN_AGENT_ID) {
       await applyPromptMetadataUpdate(
         {
-          metadata: this.context.get(ISessionMetadata),
-          eventService: this.context.get(IEventService),
-          sessionId: this.context.get(ISessionContext).sessionId,
+          metadata: this.metadata,
+          eventService: this.eventService,
+          sessionId: this.sessionContext.sessionId,
         },
         promptMetadataTextFromContentParts(input.input),
       );
@@ -125,8 +144,7 @@ export class SkillRuntime {
     for (const activation of prepared) {
       void this.recordActivation(activation.origin);
     }
-    const prompt = this.context.get(IAgentPromptService);
-    const reservation = reservePrompt(prompt);
+    const reservation = reservePrompt(this.prompt);
     try {
       const handle = await reservation.submit({
         role: 'user',
@@ -165,7 +183,7 @@ export class SkillRuntime {
     readonly part: ContentPart;
     readonly entry: BundledSkillActivation;
   } {
-    const catalog = this.context.get(ISessionSkillCatalog);
+    const catalog = this.catalog;
     const skill = catalog.catalog.getSkill(input.name);
     if (skill === undefined) {
       throw new Error2(ErrorCodes.SKILL_NOT_FOUND, `Skill "${input.name}" was not found`);
@@ -216,9 +234,9 @@ export class SkillRuntime {
     origin: SkillActivationOrigin,
     input?: readonly ContentPart[],
   ): Promise<Turn | undefined> {
-    await this.context.dispatch(
+    await this.dispatcher.dispatch(
       new SkillActivated({
-        agentId: this.context.agent.agentId,
+        agentId: this.scopeContext.agentContext.agentId,
         activationId: origin.activationId,
         skillName: origin.skillName,
         trigger: origin.trigger,
@@ -236,36 +254,27 @@ export class SkillRuntime {
       toolCalls: [],
       origin,
     };
-    const prompt = this.context.get(IAgentPromptService);
-    if (this.context.get(IAgentLoopService).status().state === 'running') {
-      return prompt.inject(message);
+    if (this.loop.status().state === 'running') {
+      return this.prompt.inject(message);
     }
-    return (await prompt.enqueue({ message })).launched;
+    return (await this.prompt.enqueue({ message })).launched;
   }
 
   private renderSkillPrompt(skill: SkillDefinition, rawArgs: string): string {
-    return this.context.get(ISessionSkillCatalog).catalog.renderSkillPrompt(skill, rawArgs, {
-      sessionId: this.context.get(ISessionContext).sessionId,
+    return this.catalog.catalog.renderSkillPrompt(skill, rawArgs, {
+      sessionId: this.sessionContext.sessionId,
     });
   }
 
   private publishActivation(origin: SkillActivationOrigin): void {
-    const telemetry = this.context.get(ITelemetryService);
-    telemetry.track2('skill_invoked', {
+    this.telemetry.track2('skill_invoked', {
       skill_name: origin.skillName,
       trigger: origin.trigger,
     });
     if (origin.skillType === 'flow') {
-      telemetry.track2('flow_invoked', {
+      this.telemetry.track2('flow_invoked', {
         flow_name: origin.skillName,
       });
     }
   }
 }
-
-export const AgentSkill = defineAgentRuntimeContract<SkillRuntime>('skill');
-
-export const skillAgentRuntimeProvider = defineAgentRuntimeProvider<null, SkillRuntime>(AgentSkill, {
-  id: 'skill',
-  createApi: (context) => new SkillRuntime(context),
-});
