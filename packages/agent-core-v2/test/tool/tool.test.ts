@@ -3951,6 +3951,7 @@ describe('Agent tools', () => {
         [emit] agent.activity.updated         { "time": "<time>", "lifecycle": "ready", "lastTurn": { "turnId": 0, "reason": "completed", "at": "<time>" }, "background": [], "agentId": "main" }
         [emit] agent.status.updated           { "time": "<time>", "agentId": "main", "contextTokens": 176 }
         [wire] tools.unregister_user_tool     { "agentId": "main", "name": "Lookup", "time": "<time>" }
+        [wire] prompt.completed               { "agentId": "main", "promptId": "<msg-1>", "finishedAt": "<time>", "reason": "completed", "time": "<time>" }
         [emit] prompt.completed               { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "finishedAt": "<time>", "reason": "completed" }
         [wire] prompt.accepted                { "agentId": "main", "promptId": "<msg-2>", "content": [ { "type": "text", "text": "Can you still use Lookup?" } ], "time": "<time>" }
         [emit] prompt.accepted                { "time": "<time>", "agentId": "main", "promptId": "<msg-2>", "content": [ { "type": "text", "text": "Can you still use Lookup?" } ] }

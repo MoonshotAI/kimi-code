@@ -132,7 +132,14 @@ export class TowerSpawnTool implements ITowerSpawnTool {
           };
         }
         try {
-          await store.addWorktree(mission.worktree, mission.branch, state.base);
+          const added = await store.addWorktree(mission.worktree, mission.branch, state.base);
+          if (added.spawnBase !== undefined) {
+            await store.updateMission(TOWER_NAME, mission.id, { spawnBase: added.spawnBase }, { silent: true });
+            mission = { ...mission, spawnBase: added.spawnBase };
+            notes.push(
+              `base snapshot: ${added.spawnBase.slice(0, 7)} — the base checkout had uncommitted changes; they are committed as the branch's first commit (the checkout itself was left untouched)`,
+            );
+          }
         } catch (error) {
           notes.push(
             `worktree setup warning (continuing): ${error instanceof Error ? error.message : String(error)}`,
@@ -346,6 +353,9 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         `# Your workplace\n` +
         `- Your private git worktree: ${worktreeAbs}\n` +
         `- Your branch: ${mission.branch} (base: ${state.base})\n` +
+        (mission.spawnBase !== undefined
+          ? `- Your branch starts from snapshot commit ${mission.spawnBase.slice(0, 7)}: the base checkout's uncommitted changes (WIP), captured at spawn so you can build on them. That commit is your foundation — never revert, amend, or claim it as your own work; your own commits go on top of it.\n`
+          : '') +
         `- Your working directory is the main checkout, NOT your worktree — address the worktree explicitly: every Read/Write/Edit/Grep/Glob path must be absolute and under ${worktreeAbs}, and every Bash command must \`cd ${worktreeAbs}\` first. A permission guard hard-denies any Write/Edit outside it. Never touch the main checkout (${store.repoRoot}) or another agent's worktree slot.\n` +
         (mission.kind === 'survey'
           ? `- Scope — what you investigate (read-only; reserves nothing): ${mission.scope.join(', ')}\n\n`
@@ -386,12 +396,15 @@ export class TowerSpawnTool implements ITowerSpawnTool {
       );
     }
     const target = reviewTarget ?? '';
-    const author = state.missions.find((m) => m.branch === target)?.owner;
+    const targetMission = state.missions.find((m) => m.branch === target);
+    const author = targetMission?.owner;
+    const reviewBase =
+      targetMission !== undefined ? await store.diffBase(state, targetMission) : state.base;
     return (
       `You are "${args.name}", a tower reviewer agent in a multi-agent workspace.\n\n` +
       `# Your assignment\n` +
-      `Review branch "${target}" against base "${state.base}".\n` +
-      `- Work read-only in the main checkout (${store.repoRoot}): \`git diff ${state.base}...${target}\`, \`git log ${state.base}..${target}\`, and read files as needed.\n` +
+      `Review branch "${target}" against base "${reviewBase}".\n` +
+      `- Work read-only in the main checkout (${store.repoRoot}): \`git diff ${reviewBase}...${target}\`, \`git log ${reviewBase}..${target}\`, and read files as needed.\n` +
       '- Do NOT modify any code, and never create or edit files under `.tower/` by hand — protocol artifacts go through the tower tools.\n\n' +
       `# Review checklist (in priority order)\n` +
       '1. Security\n2. Data integrity\n3. Performance\n4. Error handling\n5. Code quality\n\n' +

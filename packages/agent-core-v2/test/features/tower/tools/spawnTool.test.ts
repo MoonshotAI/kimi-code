@@ -446,4 +446,60 @@ describe('TowerSpawnTool', () => {
     expect(result.output).toContain('Agent(resume="agent-old"');
     expect(createAgent).not.toHaveBeenCalled();
   });
+
+  it('snapshots base WIP into the worker branch and records the spawn base', async () => {
+    await writeFile(join(repo, 'wip.ts'), 'export const wip = 1;\n');
+
+    const result = await execute(WORKER_ARGS);
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toContain('base snapshot:');
+    const worktreeAbs = join(repo, '.tower/worktrees/wt-1');
+    expect(await readFile(join(worktreeAbs, 'wip.ts'), 'utf8')).toBe('export const wip = 1;\n');
+    expect(runAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: 'agent-7' }),
+      { kind: 'prompt', prompt: expect.stringContaining('snapshot commit') },
+      { signal: expect.any(AbortSignal) },
+    );
+    const mission = (await store.load()).missions.find((m) => m.id === 'M1');
+    expect(mission?.spawnBase).toBeDefined();
+  });
+
+  it('bases the reviewer prompt on the base branch once a rebase drops the snapshot', async () => {
+    await writeFile(join(repo, 'wip.ts'), 'export const wip = 1;\n');
+    const workerResult = await execute(WORKER_ARGS);
+    expect(workerResult.isError).toBeUndefined();
+    const snapshot = (await store.load()).missions.find((m) => m.id === 'M1')?.spawnBase;
+    expect(snapshot).toBeDefined();
+    const worktreeAbs = join(repo, '.tower/worktrees/wt-1');
+
+    await git(repo, 'add', 'wip.ts');
+    await git(repo, 'commit', '-m', 'commit my wip');
+    await git(worktreeAbs, 'rebase', 'main');
+    await expect(
+      git(worktreeAbs, 'merge-base', '--is-ancestor', snapshot!, 'feat/build-gemm'),
+    ).rejects.toThrow();
+
+    const result = await execute({
+      name: 'reviewer-a',
+      kind: 'reviewer',
+      review_target: 'feat/build-gemm',
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(runAgent).toHaveBeenLastCalledWith(
+      expect.objectContaining({ agentId: 'agent-7' }),
+      { kind: 'prompt', prompt: expect.stringContaining('against base "main"') },
+      { signal: expect.any(AbortSignal) },
+    );
+  });
+
+  it('records no spawn base when the base checkout is clean', async () => {
+    const result = await execute(WORKER_ARGS);
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).not.toContain('base snapshot:');
+    const mission = (await store.load()).missions.find((m) => m.id === 'M1');
+    expect(mission?.spawnBase).toBeUndefined();
+  });
 });
