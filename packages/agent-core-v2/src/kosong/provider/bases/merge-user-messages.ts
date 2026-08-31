@@ -1,11 +1,3 @@
-/**
- * `kosong/provider` domain — consecutive same-role history merging.
- *
- * Shared mechanics for bases whose wire format requires alternating roles:
- * folds consecutive user messages into one, never merging a tool-result-only
- * message into a following plain user message.
- */
-
 export function mergeConsecutiveUserMessages<T>(
   messages: readonly T[],
   mergePolicy: {

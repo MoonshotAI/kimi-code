@@ -45,7 +45,7 @@ A Service method is directly exposable iff **all** hold:
 3. Errors are `KimiError` (coded).
 4. It is a command/query, not a factory, stream, byte-store, or sink.
 
-If any fail → wrap in a **facade** (a Service that takes ids, returns data, throws `KimiError`) and expose the facade. The repo already ships a wire-shaped facade in `rpc/core-api.ts` (`CoreAPI` / `SessionAPI` / `AgentAPI`) behind `IAgentRPCService` / `ISessionRPCService` — prefer building the HTTP edge on top of it rather than re-deriving a new one.
+If any fail → add a wire-safe orchestration method to the owning domain Service (e.g. `IAgentPromptService.submit` settles `{turn_id}` instead of returning the live `PromptHandle`) or compose several domain Services at the edge — kap-server's `routes/prompts.ts` is the reference for edge-side composition.
 
 ## 3. Per-scope `resource:action` map
 

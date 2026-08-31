@@ -1,31 +1,3 @@
-/**
- * `profile` domain — system-prompt context assembly.
- *
- * Loads the AGENTS.md instruction hierarchy (user-level brand + generic files,
- * then project-level files from the project root down to the cwd — the root
- * discovered through a git work-tree probe) and assembles
- * the {@link SystemPromptContext} bag.
- * `agentsMdWatchRoots` exposes the watch plan for the probed file set, and
- * `prepareSystemPromptContext` accepts a `preloadedAgentsMd` snapshot so the
- * caller can inject an already-read snapshot instead of re-reading the files.
- *
- * Runs on top of the os `IHostFileSystem` (for `readText` / `stat` / `readdir`)
- * plus the host's `homeDir` — supplied together as a small `ProfileContextDeps`
- * bag threaded through the helpers.
- *
- * The combined AGENTS.md content is injected in full; when it exceeds the
- * soft {@link AGENTS_MD_RECOMMENDED_MAX_BYTES} budget a visible
- * `agentsMdWarning` is produced instead of silently truncating.
- *
- * The discovered-file list is returned alongside the content as `paths`
- * (surfaced as `agentsMdPaths`), and the per-directory candidate rules
- * (`AGENTS_MD_PLAIN_NAMES` / `dotKimiAgentsMdPath` / `findAgentsMdInDir`)
- * plus the root→leaf chain helpers (`findProjectRoot` / `dirsRootToLeaf`)
- * are exported so discovery probes and injection never drift apart. Legacy
- * restored prompts can recover their exact injected paths from the same
- * rendered source annotations.
- */
-
 import { basename, dirname, join, normalize } from 'pathe';
 
 import { findGitWorkTree } from '#/app/git/workTree';
@@ -371,7 +343,6 @@ function dedupeDirs(dirs: readonly string[]): string[] {
   }
   return result;
 }
-
 
 interface ListDirectoryOptions {
   readonly collapseHiddenDirs?: boolean;

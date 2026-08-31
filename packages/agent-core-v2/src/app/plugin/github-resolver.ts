@@ -1,10 +1,3 @@
-/**
- * `plugin` domain — resolves GitHub plugin sources without the REST API.
- *
- * Selects release or ref tarballs and resolves movable refs to commit SHAs
- * through GitHub's Atom feed so installs and update checks use exact content.
- */
-
 import { Error2, ErrorCodes } from '#/errors';
 
 import type { GithubRef } from './source';

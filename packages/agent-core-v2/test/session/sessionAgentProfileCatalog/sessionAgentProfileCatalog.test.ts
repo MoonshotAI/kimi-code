@@ -1,18 +1,3 @@
-/**
- * Scenario: the Session-scope agent-profile catalog projection over the
- * App-scope `IAgentProfileRegistry` fold.
- *
- * Exercises `SessionAgentProfileCatalogService` directly: the registry fold
- * is fed through real containers (contributor units on the same
- * `this.provide` path the production loaders take) while the catalog itself
- * is hand-constructed — the suite verifies the projection rules:
- * relevant-entry filtering by the seeded workspace key, priority-ordered
- * name dedup, the builtin-override rule, change-event fan-out, and the read
- * surface (`get` / `list` / `getDefault` / `inspect`). Run:
- * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog.test.ts`.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { createDecorator } from '#/_base/di/instantiation';
@@ -53,10 +38,14 @@ class Contributor extends Service implements IContributor {
   }
 }
 
-function profile(name: string, options?: { readonly override?: boolean }): AgentProfile {
+function profile(
+  name: string,
+  options?: { readonly override?: boolean; readonly subagents?: readonly string[] },
+): AgentProfile {
   return normalizeAgentProfile({
     name,
     override: options?.override,
+    subagents: options?.subagents,
     systemPrompt: () => `prompt:${name}`,
   });
 }
@@ -208,6 +197,43 @@ describe('SessionAgentProfileCatalogService (registry projection)', () => {
       priority: AGENT_PROFILE_SOURCE_PRIORITY.workspace,
       suppressed: [],
     });
+    catalog.dispose();
+    container.dispose();
+  });
+
+  it('inherits the replaced builtin subagent allowlist when the override declares none', () => {
+    const { container, catalog, contribute } = makeCatalog();
+    const builtinProfile = profile(DEFAULT_AGENT_PROFILE_NAME, {
+      subagents: ['coder', 'explore', 'plan'],
+    });
+    const overrideProfile = profile(DEFAULT_AGENT_PROFILE_NAME, { override: true });
+    contribute(BUILTIN_AGENT_PROFILE_SOURCE_ID, [builtinProfile]);
+    contribute('workspace', [overrideProfile], {
+      priority: AGENT_PROFILE_SOURCE_PRIORITY.workspace,
+      workspaceKey: 'wd_a',
+    });
+
+    expect(catalog.get(DEFAULT_AGENT_PROFILE_NAME)?.subagents).toEqual(['coder', 'explore', 'plan']);
+    catalog.dispose();
+    container.dispose();
+  });
+
+  it('honors an override allowlist explicitly declared on the default profile', () => {
+    const { container, catalog, contribute } = makeCatalog();
+    const builtinProfile = profile(DEFAULT_AGENT_PROFILE_NAME, {
+      subagents: ['coder', 'explore', 'plan'],
+    });
+    const overrideProfile = profile(DEFAULT_AGENT_PROFILE_NAME, {
+      override: true,
+      subagents: ['*'],
+    });
+    contribute(BUILTIN_AGENT_PROFILE_SOURCE_ID, [builtinProfile]);
+    contribute('workspace', [overrideProfile], {
+      priority: AGENT_PROFILE_SOURCE_PRIORITY.workspace,
+      workspaceKey: 'wd_a',
+    });
+
+    expect(catalog.get(DEFAULT_AGENT_PROFILE_NAME)?.subagents).toEqual(['*']);
     catalog.dispose();
     container.dispose();
   });

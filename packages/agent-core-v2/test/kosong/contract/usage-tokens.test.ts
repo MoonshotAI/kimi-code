@@ -1,11 +1,3 @@
-/**
- * `kosong/contract` usage + tokens — usage aggregation and token estimation.
- *
- * `TokenUsage` aggregates cache-aware input/output counters; the
- * `estimateTokens*` family sizes messages, tools, and content parts with the
- * ASCII/non-ASCII heuristic and the flat media estimate.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import type { Message } from '#/kosong/contract/message';

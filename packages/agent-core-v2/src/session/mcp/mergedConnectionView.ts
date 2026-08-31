@@ -1,17 +1,3 @@
-/**
- * `mcp` domain — merged workspace + session MCP connection view.
- *
- * `MergedMcpConnectionView` presents one `McpConnectionView` over the
- * workspace handler's shared manager (the base) and a session-owned overlay
- * manager holding the session's ephemeral servers. The overlay owns the
- * names it was created with: reads (`list` / `get` / `resolved` /
- * `getRemoteServerUrl`) and mutations (`reconnect` / `reconnectAndJoin`)
- * route overlay names to the overlay manager — an ephemeral server shadows a
- * workspace server of the same name for this session — and base status
- * events for shadowed names are filtered out so consumers see exactly one
- * entry per name. Readiness and startup duration aggregate both managers.
- */
-
 import type {
   McpConnectionManager,
   McpConnectionView,

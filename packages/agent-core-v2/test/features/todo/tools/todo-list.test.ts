@@ -1,0 +1,155 @@
+import { describe, expect, it } from 'vitest';
+
+import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { TodoRuntime } from '#/features/todo/todoAgentRuntime';
+import { TODO_LIST_TOOL_NAME, type TodoItem } from '#/features/todo/todoItem';
+import { TodoListInputSchema } from '#/features/todo/tools/todo-list/todo-list';
+import { TodoListTool } from '#/features/todo/tools/todo-list/todoListTool';
+import { executeTool } from '../../../tools/fixtures/execute-tool';
+
+const signal = new AbortController().signal;
+const scope = makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' });
+type TodoApi = Pick<TodoRuntime, 'get' | 'replace' | 'clear' | 'onDidChange'>;
+
+function makeTodo(initial: readonly TodoItem[] = []): {
+  readonly runtime: TodoApi;
+  readonly getTodos: () => readonly TodoItem[];
+} {
+  let todos = [...initial];
+  return {
+    runtime: {
+      get: () => todos,
+      replace: async (next) => {
+        todos = next.map((todo) => ({ title: todo.title, status: todo.status }));
+      },
+      clear: async () => { todos = []; },
+      onDidChange: () => ({ dispose: () => {} }),
+    },
+    getTodos: () => todos,
+  };
+}
+
+function makeTool(initial: readonly TodoItem[] = []): {
+  readonly tool: TodoListTool;
+  readonly getTodos: () => readonly TodoItem[];
+} {
+  const { runtime, getTodos } = makeTodo(initial);
+  const manager = { resolve: () => runtime } as unknown as IAgentLifecycleService;
+  return { tool: new TodoListTool(manager, scope), getTodos };
+}
+
+describe('TodoListTool', () => {
+  it('has name, description, and parameters from the current schema', () => {
+    const { tool } = makeTool();
+
+    expect(TODO_LIST_TOOL_NAME).toBe('TodoList');
+    expect(tool.name).toBe(TODO_LIST_TOOL_NAME);
+    expect(tool.description.length).toBeGreaterThan(0);
+    expect(TodoListInputSchema.safeParse({}).success).toBe(true);
+    expect(
+      TodoListInputSchema.safeParse({ todos: [{ title: 'x', status: 'wip' }] }).success,
+    ).toBe(false);
+    expect(tool.parameters).toMatchObject({
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        todos: { type: 'array' },
+      },
+    });
+  });
+
+  it('query mode renders the current list without mutating it', async () => {
+    const { tool, getTodos } = makeTool([{ title: 'existing', status: 'in_progress' }]);
+
+    const result = await executeTool(tool, {
+      turnId: 1,
+      toolCallId: 'call_1',
+      args: {},
+      signal,
+    });
+
+    expect(result).toMatchObject({ isError: false });
+    expect(result.output).toContain('Current todo list');
+    expect(result.output).toContain('[in_progress] existing');
+    expect(getTodos()).toEqual([{ title: 'existing', status: 'in_progress' }]);
+  });
+
+  it('write mode replaces the list and defensively copies todos into the runtime', async () => {
+    const { tool, getTodos } = makeTool();
+    const todos: TodoItem[] = [
+      { title: 'first', status: 'pending' },
+      { title: 'second', status: 'in_progress' },
+    ];
+
+    const result = await executeTool(tool, {
+      turnId: 1,
+      toolCallId: 'call_1',
+      args: { todos },
+      signal,
+    });
+    todos[0] = { title: 'leaked', status: 'done' };
+
+    expect(result).toMatchObject({ isError: false });
+    expect(result.output).toContain('Todo list updated');
+    expect(result.output).toContain('[pending] first');
+    expect(result.output).toContain('[in_progress] second');
+    expect(result.output).toContain(
+      'Ensure that you continue to use the todo list to track progress.',
+    );
+    expect(result.output).toContain('exactly one task in_progress');
+    expect(getTodos()).toEqual([
+      { title: 'first', status: 'pending' },
+      { title: 'second', status: 'in_progress' },
+    ]);
+  });
+
+  it('renders a done todo with a marker matching the status enum value', async () => {
+    const { tool } = makeTool([{ title: 'shipped', status: 'done' }]);
+
+    const result = await executeTool(tool, {
+      turnId: 1,
+      toolCallId: 'call_1',
+      args: {},
+      signal,
+    });
+
+    expect(result).toMatchObject({ isError: false });
+    expect(result.output).toContain('[done] shipped');
+    expect(result.output).not.toContain('[completed]');
+  });
+
+  it('clear mode empties the list without adding the progress-tracking reminder', async () => {
+    const { tool, getTodos } = makeTool([{ title: 'x', status: 'pending' }]);
+
+    const result = await executeTool(tool, {
+      turnId: 1,
+      toolCallId: 'call_1',
+      args: { todos: [] },
+      signal,
+    });
+
+    expect(result).toMatchObject({ isError: false, output: 'Todo list cleared.' });
+    expect(getTodos()).toEqual([]);
+  });
+
+  it('resolveExecution description reflects the mode', () => {
+    const { tool } = makeTool();
+    const readExecution = tool.resolveExecution({});
+    const clearExecution = tool.resolveExecution({ todos: [] });
+    const updateExecution = tool.resolveExecution({
+      todos: [{ title: 'x', status: 'pending' }],
+    });
+
+    if (
+      readExecution.isError === true ||
+      clearExecution.isError === true ||
+      updateExecution.isError === true
+    ) {
+      throw new TypeError('expected runnable executions');
+    }
+    expect(readExecution.description).toBe('Reading todo list');
+    expect(clearExecution.description).toBe('Clearing todo list');
+    expect(updateExecution.description).toBe('Updating todo list');
+  });
+});

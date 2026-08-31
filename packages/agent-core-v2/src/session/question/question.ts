@@ -1,20 +1,3 @@
-/**
- * `question` domain — ask-user request broker.
- *
- * Defines the public contract of asking the user: the rich in-process
- * `QuestionRequest` model (mirrors the `agent-core` SDK shape — a batch of
- * `QuestionItem`s, each with its own options) and the `ISessionQuestionService` used
- * to post a request, supply its answer, dismiss it, and list pending requests.
- *
- * The model is the **in-process** representation (camelCase, options carry no
- * ids). The protocol wire shape (snake_case, synthesized item/option ids,
- * 5-kind answer union) is produced at the edge. Session-scoped — one
- * instance per session.
- * `request` accepts the owning `agentId` so question events and transcript
- * frames route to the asking agent's surfaces instead of falling back to
- * 'main' (a subagent's question must not land there).
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 export interface QuestionOption {

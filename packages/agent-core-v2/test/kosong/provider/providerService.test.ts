@@ -1,16 +1,3 @@
-/**
- * `kosong/provider` config-surface tests — the providers config contract and
- * `IProviderService`:
- *
- *  - `ProviderTypeSchema` is free-form text: unregistered vendor names parse
- *    (validation happens at resolve time, not parse time);
- *  - the section TOML transforms round-trip snake_case ↔ camelCase;
- *  - `ProviderService` is an in-memory registry: `loadAll` hydrates and
- *    resolves `ready`, CRUD diffs state changes into `onDidChangeProviders`
- *    (added/changed/removed), equal writes stay silent, and deleting the
- *    default provider clears the `defaultProvider` pointer.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import {

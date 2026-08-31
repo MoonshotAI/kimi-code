@@ -1,14 +1,3 @@
-/**
- * `task` domain — Agent-scope task manager contract.
- *
- * Defines the Agent-scoped task manager surface used for both foreground and
- * detached work. Task execution adapters implement the generic `AgentTask`
- * contract; this service owns registration,
- * output retention, persistence, detach/stop/wait, terminal notifications,
- * and session-close task teardown with a `keepAliveOnExit` opt-out.
- * Bound at Agent scope.
- */
-
 import { createDecorator } from '#/_base/di/instantiation';
 import type { ITaskHandle } from '#/app/task/task';
 import type {
@@ -68,12 +57,18 @@ export interface IAgentTaskEntry {
 }
 
 export interface AgentTaskNotificationContext {
+  readonly agentId: string;
   readonly notificationType: string;
   readonly title: string;
   readonly body: string;
   readonly severity: 'info' | 'warning';
   readonly sourceKind: string;
   readonly sourceId: string;
+}
+
+export interface AgentTaskWaitDelivery {
+  readonly taskId: string;
+  readonly status: AgentTaskStatus;
 }
 
 export interface IAgentTaskService {
@@ -90,6 +85,7 @@ export interface IAgentTaskService {
   ): Promise<AgentTaskOutputSnapshot>;
   readOutput(taskId: string, tail?: number): Promise<string>;
   suppressTerminalNotification(taskId: string): Promise<void>;
+  markTasksDeliveredViaWait(tasks: readonly AgentTaskWaitDelivery[]): void;
   detach(taskId: string): AgentTaskInfo | undefined;
   stop(taskId: string, reason?: string): Promise<AgentTaskInfo | undefined>;
   stopByUser(taskId: string): Promise<AgentTaskInfo | undefined>;

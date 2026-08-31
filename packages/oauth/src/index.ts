@@ -1,6 +1,7 @@
 export {
   DeviceCodeExpiredError,
   DeviceCodeTimeoutError,
+  OAuthAccessDeniedError,
   OAuthConnectionError,
   OAuthError,
   OAuthUnauthorizedError,
@@ -41,6 +42,17 @@ export {
 export type { KimiHostIdentity, KimiIdentityOptions } from './identity';
 
 export { KIMI_CODE_FLOW_CONFIG } from './constants';
+
+export {
+  KIMI_REGION_MARKER_FILENAME,
+  KIMI_REGION_PROFILES,
+  kimiCdnContentUrl,
+  kimiRegionLoginHosts,
+  kimiRegionProfile,
+  kimiRegionSchema,
+  resolveKimiRegion,
+} from './region';
+export type { KimiRegion, KimiRegionProfile, ResolveKimiRegionOptions } from './region';
 
 export {
   applyManagedApiKeyProviderModels,
@@ -110,6 +122,13 @@ export type {
   UsageRow,
   UsageWindow,
 } from './managed-usage';
+
+export { fetchChatTitle, kimiCodeToolsUrl } from './managed-tools';
+export type {
+  FetchChatTitleError,
+  FetchChatTitleOk,
+  FetchChatTitleResult,
+} from './managed-tools';
 
 export { fetchSubmitFeedback, kimiCodeFeedbackUrl } from './managed-feedback';
 export type {
@@ -190,3 +209,6 @@ export type {
   RefreshProviderScope,
   RefreshResult,
 } from './refreshProviderModels';
+
+export type { OAuthTokenTransactionOptions } from './oauth-token-transaction';
+export { OAuthTokenTransaction } from './oauth-token-transaction';

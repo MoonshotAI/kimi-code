@@ -1,12 +1,54 @@
-/**
- * `_base/utils/paths` (cross-cutting) — pure path-filter predicates.
- *
- * Constrains filesystem watches to selected subtrees and scanner-visible
- * entries.
- */
+import nodePath from 'node:path';
+
+import { isAbsolute, normalize, resolve } from 'pathe';
+
+import { workspaceRootKey } from './workdir-slug';
 
 function normalizeSlashes(p: string): string {
   return p.replaceAll('\\', '/');
+}
+
+export function isWindowsAbsolutePath(value: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(value) || /^[\\/]{2}[^\\/]+[\\/][^\\/]+/.test(value);
+}
+
+export function resolvePath(base: string, value: string): string {
+  if (isWindowsAbsolutePath(base)) {
+    return nodePath.win32.resolve(base, value).replaceAll('\\', '/');
+  }
+  if (isWindowsAbsolutePath(value)) {
+    return nodePath.win32.resolve(value).replaceAll('\\', '/');
+  }
+  return isAbsolute(value) ? normalize(value) : resolve(base, value);
+}
+
+export function canonicalWorkspaceRoot(cwd: string): string {
+  const resolved = isWindowsAbsolutePath(cwd)
+    ? nodePath.win32.resolve(cwd).replaceAll('\\', '/')
+    : resolve(cwd);
+  return workspaceRootKey(resolved) || resolved;
+}
+
+export interface UpwardRootPathApi {
+  resolve(dir: string): string;
+  dirname(dir: string): string;
+  join(...segments: string[]): string;
+}
+
+export async function findUpwardRoot(
+  workDir: string,
+  markerName: string,
+  hasMarker: (markerPath: string) => Promise<boolean>,
+  pathApi: UpwardRootPathApi = nodePath,
+): Promise<string> {
+  const start = pathApi.resolve(workDir);
+  let current = start;
+  while (true) {
+    if (await hasMarker(pathApi.join(current, markerName))) return normalizeSlashes(current);
+    const parent = pathApi.dirname(current);
+    if (parent === current) return normalizeSlashes(start);
+    current = parent;
+  }
 }
 
 export interface SubtreeWatchFilterOptions {

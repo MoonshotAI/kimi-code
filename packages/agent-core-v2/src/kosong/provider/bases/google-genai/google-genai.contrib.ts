@@ -1,16 +1,3 @@
-/**
- * `kosong/provider` domain — side-effect module: registers the Google
- * GenAI base (`id: 'google-genai'`).
- *
- * The Gemini base carries no hook surface, so the factory only aggregates the
- * construction-time declarations. Vertex AI is a mode of this base — not a
- * protocol of its own — enabled through the adapter config's
- * `providerOptions` (`vertexai` / `project` / `location`), which the factory
- * forwards to the SDK client options. The `apiKey ?? ''` guard ensures that
- * once a trait declared an endpoint, the base's `GOOGLE_API_KEY` environment
- * fallback is suppressed.
- */
-
 import { registerProtocolBase } from '#/kosong/protocol/protocolBase';
 import { traitDefaultHeaders } from '#/kosong/protocol/protocolTrait';
 

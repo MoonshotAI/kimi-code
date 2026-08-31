@@ -552,8 +552,8 @@ export class AcpSession {
   }
 
   /**
-   * Activate a skill through the engine (`IAgentSkillService.activate` behind
-   * the klient facade): the engine renders the skill prompt (content + args)
+   * Activate a skill through the engine (the agent's `AgentSkill` runtime
+   * behind the klient facade): the engine renders the skill prompt (content + args)
    * and drives it as a normal turn, so the turn events stream and settle
    * exactly like a plain prompt. Empty args go over as `undefined`, matching
    * the other consumers.

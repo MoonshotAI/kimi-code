@@ -22,17 +22,17 @@ Kimi Code CLI 为全交互式 TUI 应用，推荐在支持真彩色与连字的�
 
 ### 脚本安装（推荐）
 
-- **macOS / Linux**：
+::: code-group
 
-```sh
+```sh [macOS / Linux]
 curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash
 ```
 
-- **Windows（PowerShell）**：
-
-```powershell
+```powershell [Windows (PowerShell)]
 irm https://code.kimi.com/kimi-code/install.ps1 | iex
 ```
+
+:::
 
 > Windows 用户首次启动前还需要安装 [Git for Windows](https://gitforwindows.org/)，Kimi Code CLI 会使用其中的 Git Bash 作为 Shell 环境。如果 Git Bash 安装在非标准路径，请把 `KIMI_SHELL_PATH` 设为 `bash.exe` 的绝对路径。
 
@@ -44,34 +44,19 @@ irm https://code.kimi.com/kimi-code/install.ps1 | iex
 
 ```sh
 node --version
+```
+
+::: code-group
+
+```sh [npm]
 npm install -g @moonshot-ai/kimi-code
 ```
 
-或用 pnpm：
-
-```sh
+```sh [pnpm]
 pnpm add -g @moonshot-ai/kimi-code
 ```
 
-## 升级与卸载
-
-安装完成后，验证可执行文件是否就绪：
-
-```sh
-kimi --version
-```
-
-**升级**：运行 `kimi upgrade`，CLI 会检查最新版本并展示更新选项。选择 `Install update now` 后根据当前安装来源执行升级；也可以直接用包管理器：
-
-```sh
-npm install -g @moonshot-ai/kimi-code@latest
-```
-
-**卸载**：脚本安装的用户删除 `kimi` 可执行文件即可；npm 安装的用户：
-
-```sh
-npm uninstall -g @moonshot-ai/kimi-code
-```
+:::
 
 ## 第一次启动
 
@@ -162,6 +147,26 @@ Kimi Code CLI 会规划步骤、修改代码、运行测试，并在每一步告
 ## 数据存放在哪里
 
 Kimi Code CLI 的本地数据默认保存在 `~/.kimi-code/` 下，包含配置文件、会话记录、日志和更新缓存。如需迁移到别处，通过 `KIMI_CODE_HOME` 环境变量指定新路径。完整说明见[数据路径](../configuration/data-locations.md)和[环境变量](../configuration/env-vars.md)。
+
+## 升级与卸载
+
+安装完成后，验证可执行文件是否就绪：
+
+```sh
+kimi --version
+```
+
+**升级**：运行 `kimi upgrade`，CLI 会检查最新版本并展示更新选项。选择 `Install update now` 后根据当前安装来源执行升级；也可以直接用包管理器：
+
+```sh
+npm install -g @moonshot-ai/kimi-code@latest
+```
+
+**卸载**：脚本安装的用户删除 `kimi` 可执行文件即可；npm 安装的用户：
+
+```sh
+npm uninstall -g @moonshot-ai/kimi-code
+```
 
 ## 下一步
 

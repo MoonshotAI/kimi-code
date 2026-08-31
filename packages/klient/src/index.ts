@@ -7,6 +7,7 @@
  */
 
 export type {
+  CallOptions,
   EventSourceRef,
   IDisposable,
   KlientChannel,
@@ -26,12 +27,15 @@ export type { Caller, ScopedCaller, ScopedStreamCaller } from './core/facade/glo
 
 export type {
   ConfigTargetLiteral,
+  FileDownload,
   GlobalAuthFacade,
   GlobalConfigFacade,
   GlobalFacade,
+  GlobalFilesFacade,
   GlobalFlagsFacade,
   GlobalHostFsFacade,
   GlobalKosongFacade,
+  GlobalMcpFacade,
   GlobalPluginsFacade,
   GlobalSessionsFacade,
   GlobalWorkspacesFacade,
@@ -73,6 +77,8 @@ export type {
   McpServerEntry,
   PlanData,
   PromptLaunchResult,
+  PromptWithSkillsInput,
+  PromptWithSkillsResult,
   SetModelResult,
   ShellCommandResult,
   ThinkingLevel,
@@ -111,6 +117,7 @@ export type {
   FsBrowseResponse,
   FsHomeResponse,
 } from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
+export type { FileMeta } from '@moonshot-ai/agent-core-v2/app/file/fileService';
 export type {
   PluginCommandDef,
   PluginInfo,
@@ -134,7 +141,18 @@ export type {
 export type {
   Interaction,
   InteractionKind,
-} from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
-export type { SkillSummary } from '@moonshot-ai/agent-core-v2/app/skillCatalog/types';
+} from '@moonshot-ai/agent-core-v2/features/interaction/interaction';
+export type { SkillSummary } from '@moonshot-ai/agent-core-v2/features/skill/catalog/types';
+export type {
+  GlobalMcpServerConfig,
+  McpManagedServer,
+  McpServerAuthBeginResult,
+  McpServerAuthState,
+  McpServerAuthStatus,
+  McpServerInspection,
+  McpServerLocator,
+  McpServerTestResult,
+  McpServerTestTarget,
+} from '@moonshot-ai/agent-core-v2/app/mcpManagement/mcpManagement';
 export type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
 export type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';

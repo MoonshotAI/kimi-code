@@ -1,37 +1,26 @@
-/**
- * `agentLifecycle` domain — flat registry of the session's agents.
- *
- * Owns agent *existence* — the creation pipeline (`create` / `fork`), the
- * registry (`get` / `list` / `remove`), and the lifecycle events — plus the
- * session-wide fan-outs only the live registry can reach
- * (`broadcastPermissionMode`). Session-scoped — one instance per session.
- *
- * Invariants:
- * - The registry is flat: agents have no nesting. There is no parent/child or
- *   caller/callee relationship here; when a business domain needs such a
- *   relationship (e.g. the `Agent` tool's display events), that domain
- *   maintains it itself.
- * - No agent id is special: the main agent is an ordinary agent whose only
- *   distinction is the conventional `MAIN_AGENT_ID`, and nothing in this
- *   domain branches on it.
- * - Creation is single-flight per explicit agent id (concurrent creations
- *   join), an already-created agent is returned as-is, and a failed bootstrap
- *   drops the incomplete handle.
- * - `forkedFrom` is provenance only (a recorded value); business logic must
- *   not branch on it.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import type { Event } from '#/_base/event';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
+import type {
+  AgentRuntimeDefinition,
+  AgentRuntimeSnapshot,
+  RuntimeOf,
+} from '#/agent/runtime/agentRuntime';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import type { BindAgentInput } from '#/agent/profile/profile';
+
+export interface AgentScopeCreatedEvent {
+  readonly context: AgentContext;
+  readonly handle: IAgentScopeHandle;
+}
 
 export const MAIN_AGENT_ID = 'main';
 
 export interface CreateAgentOptions {
   readonly agentId?: string;
   readonly binding?: BindAgentInput;
+  readonly runtimeId?: string;
   readonly forkedFrom?: string;
   readonly labels?: Readonly<Record<string, string>>;
 }
@@ -39,6 +28,7 @@ export interface CreateAgentOptions {
 export interface ForkAgentOptions {
   readonly agentId?: string;
   readonly binding?: Partial<BindAgentInput>;
+  readonly labels?: Readonly<Record<string, string>>;
 }
 
 export interface AgentListFilter {
@@ -48,17 +38,30 @@ export interface AgentListFilter {
 export interface IAgentLifecycleService {
   readonly _serviceBrand: undefined;
 
-  readonly onDidCreate: Event<IAgentScopeHandle>;
-  readonly onDidDispose: Event<string>;
+  readonly onDidCreate: Event<AgentContext>;
+  readonly onDidCreateScope: Event<AgentScopeCreatedEvent>;
+  readonly onWillClose: Event<AgentContext>;
+  readonly onDidClose: Event<AgentContext>;
 
-  create(opts?: CreateAgentOptions): Promise<IAgentScopeHandle>;
+  create(opts?: CreateAgentOptions): Promise<AgentContext>;
 
-  fork(sourceAgentId: string, opts?: ForkAgentOptions): Promise<IAgentScopeHandle>;
+  fork(source: AgentContext, opts?: ForkAgentOptions): Promise<AgentContext>;
 
-  get(agentId: string): IAgentScopeHandle | undefined;
-  list(filter?: AgentListFilter): readonly IAgentScopeHandle[];
+  get(agentId: string): AgentContext | undefined;
+  list(filter?: AgentListFilter): readonly AgentContext[];
+  resolve<Definition extends AgentRuntimeDefinition<any, any>>(
+    agent: AgentContext,
+    definition: Definition,
+  ): RuntimeOf<Definition>;
+  inspect(agent: AgentContext): AgentRuntimeSnapshot;
   broadcastPermissionMode(mode: PermissionMode): void;
-  remove(agentId: string): Promise<void>;
+  remove(agent: AgentContext): Promise<void>;
+
+  handleOf(agentId: string): IAgentScopeHandle | undefined;
+
+  adopt(handle: IAgentScopeHandle): AgentContext;
+
+  attachRuntimes(agent: AgentContext): void;
 }
 
 export const IAgentLifecycleService: ServiceIdentifier<IAgentLifecycleService> =

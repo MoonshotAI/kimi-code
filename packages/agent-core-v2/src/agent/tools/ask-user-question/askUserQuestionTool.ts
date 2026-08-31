@@ -1,32 +1,10 @@
-/**
- * `tools` domain — `AskUserQuestionTool` implementation (the
- * `AskUserQuestion` tool).
- *
- * The LLM calls this tool when it needs structured input from the user
- * (multiple-choice, preference selection, disambiguation). The tool delegates
- * to `ISessionQuestionService` (the Session-scoped question service backed by
- * the `interaction` kernel), which owns the actual UI interaction. Requests
- * record the owning agent (`IAgentScopeContext.agentId`) on the interaction
- * origin, so question events and transcript frames route to the asking
- * agent's surfaces instead of falling back to 'main' (a subagent's question
- * must not land there). Answers and dismissals are tracked through
- * `ITelemetryService`; `background: true` registers a
- * `QuestionBackgroundTask` on
- * `IAgentTaskService` so the call returns immediately with a `task_id`.
- *
- * Registered via the module-level `registerAgentToolService(IAskUserQuestionTool,
- * AskUserQuestionTool)` at the bottom of this file — the same "import =
- * register" pattern used by every agent tool. Bound at Agent scope.
- */
-
-import { z } from 'zod';
-
 import { CoreErrors } from '#/_base/errors/codes';
 import { Error2 } from '#/_base/errors/errors';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { isAbortError } from '#/_base/utils/abort';
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { QuestionAnsweredEvent, QuestionDismissedEvent } from '#/app/telemetry/events';
 import type {
@@ -44,6 +22,7 @@ import type {
   QuestionResult,
 } from '#/session/question/question';
 import {
+  AskUserQuestionInputSchema,
   AskUserQuestionInputSchemaWithBackground,
   IAskUserQuestionTool,
   questionUniquenessError,
@@ -52,27 +31,38 @@ import {
 import DESCRIPTION from './ask-user.md?raw';
 import { QuestionBackgroundTask } from './question-background-task';
 
-
 const QUESTION_DISMISSED_MESSAGE = 'User dismissed the question without answering.';
 
 const QUESTION_UNSUPPORTED_FAILURE_MESSAGE =
   'The connected client does not support interactive questions. Do NOT call this tool again. Ask the user directly in your text response instead.';
 
+const BACKGROUND_DESCRIPTION =
+  '- Set background=true when you can keep working without the answer. This starts a background question task and returns a task_id immediately. The answer arrives automatically in a later turn — you do not need to poll, sleep, or check on it. Continue with other work; never fabricate or predict the answer.';
+
+const BACKGROUND_UNAVAILABLE_MESSAGE =
+  'Background questions are not available for this agent because TaskList, TaskOutput, and TaskStop are not enabled.';
+
+const PARAMETERS_WITH_BACKGROUND = toInputJsonSchema(AskUserQuestionInputSchemaWithBackground);
+const PARAMETERS_FOREGROUND_ONLY = toInputJsonSchema(AskUserQuestionInputSchema);
 
 export class AskUserQuestionTool implements IAskUserQuestionTool {
   declare readonly _serviceBrand: undefined;
   readonly name = 'AskUserQuestion' as const;
-  readonly description: string;
-  readonly parameters: Record<string, unknown>;
 
   constructor(
     @ISessionQuestionService private readonly question: ISessionQuestionService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-  ) {
-    this.description = `${DESCRIPTION}- Set background=true when you can keep working without the answer. This starts a background question task and returns a task_id immediately. The answer arrives automatically in a later turn — you do not need to poll, sleep, or check on it. Continue with other work; never fabricate or predict the answer.`;
-    this.parameters = toInputJsonSchema(this.inputSchema());
+    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
+  ) {}
+
+  get description(): string {
+    return `${DESCRIPTION}${this.allowBackground() ? BACKGROUND_DESCRIPTION : ''}`;
+  }
+
+  get parameters(): Record<string, unknown> {
+    return this.allowBackground() ? PARAMETERS_WITH_BACKGROUND : PARAMETERS_FOREGROUND_ONLY;
   }
 
   resolveExecution(args: AskUserQuestionInput): ToolExecution {
@@ -90,6 +80,10 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
     args: AskUserQuestionInput,
     { toolCallId, signal, turnId, trace }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
+    if (args.background === true && !this.allowBackground()) {
+      return { isError: true, output: BACKGROUND_UNAVAILABLE_MESSAGE };
+    }
+
     const uniquenessError = questionUniquenessError(args.questions);
     if (uniquenessError !== null) {
       return { isError: true, output: uniquenessError };
@@ -102,8 +96,12 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
     return this.executeQuestion(args, { toolCallId, turnId, signal, trace });
   }
 
-  private inputSchema(): z.ZodType<AskUserQuestionInput> {
-    return AskUserQuestionInputSchemaWithBackground;
+  private allowBackground(): boolean {
+    return (
+      this.toolPolicy.isToolActive('TaskList') &&
+      this.toolPolicy.isToolActive('TaskOutput') &&
+      this.toolPolicy.isToolActive('TaskStop')
+    );
   }
 
   private executeInBackground(
@@ -148,7 +146,7 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
         'next_step: Continue your current work; the answer will arrive automatically when the user responds.\n' +
         'next_step: Use TaskOutput with this task_id for a non-blocking status/answer snapshot.\n' +
         'next_step: Use TaskStop only if the question should be cancelled.\n' +
-        'human_shell_hint: The pending question is also visible in /tasks.',
+        'human_shell_hint: The pending question is also visible in the client UI.',
     };
   }
 

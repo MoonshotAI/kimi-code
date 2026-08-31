@@ -1,33 +1,16 @@
-/**
- * `toolDedupe` domain — per-turn tool-call deduplication.
- *
- * A self-wiring plugin: it participates in `turn` step boundaries and
- * `IAgentToolExecutorService`'s will/did hooks to suppress same-step duplicates and inject
- * cross-step repeat reminders. No other service injects it — the container
- * constructs it eagerly at Agent scope so its constructor registers the hooks.
- * Agent-scoped — one instance per agent.
- */
-
 import type { ContentPart } from '#/kosong/contract/message';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { ExecutableToolErrorResult, ExecutableToolSuccessResult } from '#/tool/toolContract';
 
 export type ToolDedupeOutput = string | ContentPart[];
 
-export interface ToolDedupeSuccessResult {
-  readonly output: ToolDedupeOutput;
-  readonly isError?: false | undefined;
-  readonly stopTurn?: boolean | undefined;
+export interface ToolDedupeSuccessResult extends ExecutableToolSuccessResult {
   readonly message?: string | undefined;
-  readonly truncated?: boolean | undefined;
 }
 
-export interface ToolDedupeErrorResult {
-  readonly output: ToolDedupeOutput;
-  readonly isError: true;
-  readonly stopTurn?: boolean | undefined;
+export interface ToolDedupeErrorResult extends ExecutableToolErrorResult {
   readonly message?: string | undefined;
-  readonly truncated?: boolean | undefined;
 }
 
 export type ToolDedupeResult = ToolDedupeSuccessResult | ToolDedupeErrorResult;

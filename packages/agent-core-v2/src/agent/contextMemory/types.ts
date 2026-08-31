@@ -4,11 +4,29 @@ import type { AgentTaskStatus } from '#/agent/task/task';
 
 export type SkillSource = 'project' | 'user' | 'extra' | 'builtin';
 
+export interface PromptFileAttachment {
+  readonly name: string;
+  readonly mediaType: string;
+  readonly size: number;
+  readonly path: string;
+}
+
 export interface UserPromptOrigin {
   readonly kind: 'user';
+  readonly skillActivations?: readonly BundledSkillActivation[];
+  readonly attachments?: readonly PromptFileAttachment[];
 }
 
 export const USER_PROMPT_ORIGIN: UserPromptOrigin = { kind: 'user' };
+
+export interface BundledSkillActivation {
+  readonly activationId: string;
+  readonly skillName: string;
+  readonly skillArgs?: string;
+  readonly skillType?: string;
+  readonly skillPath?: string;
+  readonly skillSource?: SkillSource;
+}
 
 export interface SkillActivationOrigin {
   readonly kind: 'skill_activation';
@@ -19,6 +37,7 @@ export interface SkillActivationOrigin {
   readonly skillType?: string | undefined;
   readonly skillPath?: string | undefined;
   readonly skillSource?: SkillSource | undefined;
+  readonly attachments?: readonly PromptFileAttachment[];
 }
 
 export interface PluginCommandOrigin {
@@ -34,15 +53,8 @@ export interface InjectionOrigin {
   readonly kind: 'injection';
   readonly variant: string;
   readonly ownerPromptId?: string;
-  readonly disclosure?: ContextInjectionDisclosure;
+  readonly disclosure?: unknown;
 }
-
-export type ContextInjectionDisclosure = {
-  readonly kind: 'date';
-  readonly renderGeneration: number;
-  readonly localDate: string;
-  readonly timeZone: string;
-};
 
 export interface ShellCommandOrigin {
   readonly kind: 'shell_command';
