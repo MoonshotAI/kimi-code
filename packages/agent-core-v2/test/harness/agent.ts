@@ -221,10 +221,7 @@ import {
 } from '#/kosong/provider/provider';
 import type { ApprovalResponse } from '#/session/approval/approval';
 import type { InteractionRequest } from '#/features/interaction/interaction';
-import {
-  AgentInteraction,
-  type InteractionRuntime,
-} from '#/features/interaction/interactionAgentRuntime';
+import { IAgentInteractionService } from '#/features/interaction/interactionService';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import type { EnvironmentDisclosureSnapshot } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionQuestionService, type QuestionResult } from '#/session/question/question';
@@ -1542,7 +1539,7 @@ export class AgentTestContext {
   }
 
   private installInteractionBridge(agent: AgentContext): void {
-    const interaction = this.session.accessor.get(IAgentLifecycleService).resolve(agent, AgentInteraction);
+    const interaction = this.session.accessor.get(IAgentLifecycleService).handleOf(agent.agentId)!.accessor.get(IAgentInteractionService);
     const request = interaction.request.bind(interaction);
     interaction.request = (<TPayload, TResponse>(req: InteractionRequest<TPayload>) => {
       if (req.kind !== 'user_tool') return request<TPayload, TResponse>(req);
@@ -1564,7 +1561,7 @@ export class AgentTestContext {
         response,
       );
       return pending;
-    }) as InteractionRuntime['request'];
+    }) as IAgentInteractionService['request'];
   }
 
   private initializeRestorableServices(): void {

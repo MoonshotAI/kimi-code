@@ -22,7 +22,7 @@ import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManage
 import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/mainAgent';
 import { agentContextOf } from '@moonshot-ai/agent-core-v2/agent/scopeContext/scopeContext';
-import { AgentInteraction } from '@moonshot-ai/agent-core-v2/features/interaction/interactionAgentRuntime';
+import { IAgentInteractionService } from '@moonshot-ai/agent-core-v2/features/interaction/interactionService';
 import type {
   InteractionKind,
   InteractionRequest,
@@ -72,8 +72,9 @@ export function wireClone<T>(value: T): T {
 
 /**
  * `sessionInteractionService` stays on the wire after the engine moved the
- * interaction kernel into per-agent runtimes: the view aggregates the live
- * agents' `AgentInteraction` facades through the session's agent lifecycle.
+ * interaction kernel into per-agent services: the view aggregates the live
+ * agents' `IAgentInteractionService` facades through the session's agent
+ * lifecycle.
  */
 function interactionServiceView(session: ScopeLike): Record<string, unknown> {
   const manager = session.accessor.get(IAgentLifecycleService);
@@ -87,7 +88,10 @@ function interactionServiceView(session: ScopeLike): Record<string, unknown> {
     isRecentlyResolved: (id: string) => isSessionInteractionRecentlyResolved(manager, id),
     cancelPendingForTurn: (turnId: number) => {
       for (const context of manager.list()) {
-        manager.resolve(context, AgentInteraction).cancelPendingForTurn(turnId);
+        manager
+          .handleOf(context.agentId)
+          ?.accessor.get(IAgentInteractionService)
+          .cancelPendingForTurn(turnId);
       }
     },
     onDidChangePending: (listener: (event: unknown) => void) =>

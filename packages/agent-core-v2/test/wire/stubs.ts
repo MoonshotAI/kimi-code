@@ -18,7 +18,6 @@ import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { AgentTodoService, IAgentTodoService } from '#/features/todo/todoService';
 import { AgentCron, cronAgentRuntimeProvider } from '#/features/cron/cronAgentRuntime';
 import { AgentGoal, goalAgentRuntimeProvider } from '#/features/goal/goalAgentRuntime';
-import { AgentInteraction, interactionAgentRuntimeProvider } from '#/features/interaction/interactionAgentRuntime';
 import {
   IWireService,
   type IWireService as AgentWire,
@@ -162,22 +161,6 @@ export function attachGoalRuntime(
   runtimes.apply({
     definition: AgentGoal,
     provider: goalAgentRuntimeProvider,
-    generation: 1,
-    active: true,
-  });
-  runtimes.attachDurable(dispatcher);
-  return runtimes;
-}
-
-export function attachInteractionRuntime(
-  ix: TestInstantiationService,
-  dispatcher: IEventDispatcher,
-): AgentRuntimeSet {
-  const agent = ix.get(IAgentScopeContext).agentContext;
-  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) });
-  runtimes.apply({
-    definition: AgentInteraction,
-    provider: interactionAgentRuntimeProvider,
     generation: 1,
     active: true,
   });

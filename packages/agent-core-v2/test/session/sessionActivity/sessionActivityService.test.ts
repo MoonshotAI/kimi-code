@@ -26,7 +26,7 @@ import {
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import { AgentInteraction } from '#/features/interaction/interactionAgentRuntime';
+import { IAgentInteractionService } from '#/features/interaction/interactionService';
 import {
   type Interaction,
   type InteractionKind,
@@ -137,6 +137,7 @@ class FakeAgentHandle {
         if (token === IEventBus) return this.bus;
         if (token === IAgentActivityView) return this.view;
         if (token === IAgentStateService) return this.state;
+        if (token === IAgentInteractionService) return this.interactions;
         return undefined;
       },
     };
@@ -203,10 +204,9 @@ class FakeAgentLifecycle implements IAgentLifecycleService {
     agent: AgentContext,
     definition: Definition,
   ): RuntimeOf<Definition> {
-    if (definition !== AgentInteraction) throw new Error('not implemented');
-    const handle = this.handles.find((h) => h.context === agent);
-    if (handle === undefined) throw new Error(`unknown agent ${agent.agentId}`);
-    return handle.interactions as RuntimeOf<Definition>;
+    void agent;
+    void definition;
+    throw new Error('not implemented');
   }
   inspect(): never {
     throw new Error('not implemented');
