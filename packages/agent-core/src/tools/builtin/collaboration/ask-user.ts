@@ -233,7 +233,7 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
         this.agent.telemetry.track('question_dismissed', {
           trace_id: traceId,
         });
-        return dismissedQuestionResult();
+        return dismissedQuestionResult(normalized?.note);
       }
 
       const properties: Record<string, TelemetryPropertyValue> = {
@@ -244,7 +244,7 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
       this.agent.telemetry.track('question_answered', properties);
       return {
         isError: false,
-        output: JSON.stringify({ answers: normalized.answers }),
+        output: JSON.stringify({ answers: normalized.answers, note: normalized.note }),
       };
     } catch (error) {
       if (isAbortError(error) || signal.aborted) throw error;
@@ -312,12 +312,12 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
   }
 }
 
-function dismissedQuestionResult(): ExecutableToolResult {
+function dismissedQuestionResult(note = QUESTION_DISMISSED_MESSAGE): ExecutableToolResult {
   return {
     isError: false,
     output: JSON.stringify({
       answers: {},
-      note: QUESTION_DISMISSED_MESSAGE,
+      note,
     }),
   };
 }
@@ -337,12 +337,17 @@ function questionDescription(questions: AskUserQuestionInput['questions']): stri
 
 function normalizeQuestionResult(
   result: QuestionResult,
-): { readonly answers: QuestionAnswers; readonly method?: QuestionAnswerMethod | undefined } | null {
+): {
+  readonly answers: QuestionAnswers;
+  readonly method?: QuestionAnswerMethod | undefined;
+  readonly note?: string | undefined;
+} | null {
   if (result === null) return null;
   if (isQuestionResponse(result)) {
     return {
       answers: result.answers,
       method: result.method,
+      note: result.note,
     };
   }
   return { answers: result };

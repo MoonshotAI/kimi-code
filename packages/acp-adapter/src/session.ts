@@ -21,7 +21,9 @@ import {
   type McpServerInfo,
   type PromptPart,
   type QuestionAnswers,
+  type QuestionItem,
   type QuestionRequest,
+  type QuestionResult,
   type Session,
   type SessionStatus,
   type SessionUsage,
@@ -56,7 +58,10 @@ import {
   turnEndReasonToStopReason,
 } from './events-map';
 import { acpModeToToggles, DEFAULT_MODE_ID, isAcpModeId, type AcpModeId } from './modes';
-import { outcomeToQuestionAnswer, questionItemToPermissionOptions } from './question';
+import {
+  permissionResponseToQuestionOutcome,
+  questionItemToPermissionOptions,
+} from './question';
 import { detectSlashIntent } from './slash';
 
 /**
@@ -70,6 +75,10 @@ export type TelemetryTrackFn = (
   event: string,
   properties?: Record<string, unknown>,
 ) => void;
+
+function formatQuestionCount(count: number): string {
+  return `${String(count)} ${count === 1 ? 'question' : 'questions'}`;
+}
 
 /**
  * Adapter-side wrapper around a {@link Session} from the Kimi node SDK.
@@ -1347,86 +1356,138 @@ export class AcpSession {
     }
   }
 
-  /**
-   * Bridge an SDK {@link QuestionRequest} (the AskUserQuestion tool's
-   * reverse-RPC) through the same ACP
-   * `session/request_permission` surface used by approvals.
-   *
-   * ACP currently has no dedicated `session/request_question` method, so
-   * the adapter re-uses `requestPermission` and tags the options with a
-   * `q{n}_*` namespace so the round-trip is unambiguous.
-   *
-   * Degradation rules:
-   *  - `req.questions.length > 1` → only the first question is asked;
-   *    telemetry records the dropped count so we can observe how often
-   *    multi-question prompts land in the wild.
-   *  - `q.multiSelect === true` → still asked as single-select; the
-   *    SDK's ask-user tool tolerates a single-key answer for a multi-
-   *    select prompt so this is a graceful narrow rather than a hard
-   *    fail.
-   *
-   * Error policy mirrors {@link handleApproval}: any RPC failure logs
-   * a warning and returns `null` so the SDK resolves the tool with the
-   * canonical "user dismissed" branch (`rpc.ts:567`). Returning `null`
-   * is strictly safer than fabricating an answer the user did not give.
-   */
-  private async handleQuestion(req: QuestionRequest): Promise<QuestionAnswers | null> {
+  private async handleQuestion(req: QuestionRequest): Promise<QuestionResult> {
     const questions = req.questions;
     if (questions.length === 0) {
-      // Pathological input — log and dismiss. No telemetry: the SDK
-      // would never emit an empty `questions` payload in practice.
       log.warn('acp: handleQuestion received empty questions array', {
         sessionId: this.id,
       });
       return null;
     }
-    if (questions.length > 1) {
-      log.warn('acp: handleQuestion degrading to first question only', {
-        sessionId: this.id,
-        dropped: questions.length - 1,
-      });
-      this.emitTelemetry('question_degraded', {
-        reason: 'multi_question',
-        dropped: questions.length - 1,
-      });
-    }
-    const q = questions[0]!;
-    if (q.multiSelect === true) {
-      this.emitTelemetry('question_degraded', { reason: 'multi_select' });
-    }
-    const options = questionItemToPermissionOptions(q, 0);
     const rawToolCallId = req.toolCallId ?? 'ask-user';
     const toolCallId =
       this.currentTurnId !== undefined
         ? acpToolCallId(this.currentTurnId, rawToolCallId)
         : rawToolCallId;
+    const answers: QuestionAnswers = {};
+    const skippedQuestions: string[] = [];
+    const clientUnansweredQuestions: string[] = [];
+    let questionIndex = 0;
     try {
+      for (; questionIndex < questions.length; questionIndex++) {
+        const question = questions[questionIndex]!;
+        const result = await this.handleQuestionItem(
+          question,
+          questionIndex,
+          questions.length,
+          toolCallId,
+        );
+        if (result.answer !== undefined) {
+          answers[question.question] = result.answer;
+        } else {
+          skippedQuestions.push(question.question);
+        }
+        if (result.cancelRemaining) {
+          skippedQuestions.push(
+            ...questions.slice(questionIndex + 1).map((item) => item.question),
+          );
+          break;
+        }
+      }
+    } catch (error) {
+      clientUnansweredQuestions.push(
+        ...questions.slice(questionIndex).map((item) => item.question),
+      );
+      log.warn('acp: requestPermission (question) failed; dismissing remaining questions', {
+        sessionId: this.id,
+        toolCallId: req.toolCallId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    const answered = Object.keys(answers).length;
+    if (answered === 0) {
+      this.emitTelemetry('question_dismissed');
+    } else {
+      this.emitTelemetry('question_answered', { answered });
+    }
+    const noteParts: string[] = [];
+    if (skippedQuestions.length > 0) {
+      noteParts.push(
+        `User skipped ${formatQuestionCount(skippedQuestions.length)}: ${skippedQuestions.map((question) => JSON.stringify(question)).join(', ')}.`,
+      );
+    }
+    if (clientUnansweredQuestions.length > 0) {
+      noteParts.push(
+        `The client stopped before ${formatQuestionCount(clientUnansweredQuestions.length)} could be answered.`,
+      );
+    }
+    if (noteParts.length === 0) return answers;
+    return {
+      answers,
+      note: noteParts.join(' '),
+    };
+  }
+
+  private async handleQuestionItem(
+    question: QuestionItem,
+    questionIndex: number,
+    questionCount: number,
+    toolCallId: string,
+  ): Promise<{ readonly answer?: string; readonly cancelRemaining: boolean }> {
+    const selectedOptions = new Set<number>();
+    while (true) {
+      const options = questionItemToPermissionOptions(
+        question,
+        questionIndex,
+        selectedOptions,
+      );
       const response = await this.conn.requestPermission({
         sessionId: this.id,
         options: [...options],
         toolCall: {
           toolCallId,
-          title: 'AskUserQuestion',
-          content: [{ type: 'content', content: { type: 'text', text: q.question } }],
+          title:
+            questionCount === 1
+              ? 'AskUserQuestion'
+              : `AskUserQuestion (${String(questionIndex + 1)}/${String(questionCount)})`,
+          content: [
+            { type: 'content', content: { type: 'text', text: question.question } },
+          ],
         },
       });
-      const answer = outcomeToQuestionAnswer(q, response);
-      if (answer === null) {
-        // Dismissed via skip / cancel / unknown optionId — telemetry
-        // matches the ask-user tool's existing `question_dismissed`
-        // event so dashboards stay coherent.
-        this.emitTelemetry('question_dismissed');
-      } else {
-        this.emitTelemetry('question_answered', { answered: Object.keys(answer).length });
+      const outcome = permissionResponseToQuestionOutcome(
+        question,
+        questionIndex,
+        response,
+      );
+      if (outcome.kind === 'cancelled') {
+        return { cancelRemaining: true };
       }
-      return answer;
-    } catch (err) {
-      log.warn('acp: requestPermission (question) failed; dismissing', {
-        sessionId: this.id,
-        toolCallId: req.toolCallId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return null;
+      if (outcome.kind === 'skip') {
+        return { cancelRemaining: false };
+      }
+      if (outcome.kind === 'done') {
+        if (selectedOptions.size === 0) {
+          return { cancelRemaining: true };
+        }
+        const answer = question.options
+          .filter((_option, optionIndex) => selectedOptions.has(optionIndex))
+          .map((option) => option.label)
+          .join(', ');
+        return { answer, cancelRemaining: false };
+      }
+      if (question.multiSelect !== true) {
+        return {
+          answer: question.options[outcome.optionIndex]!.label,
+          cancelRemaining: false,
+        };
+      }
+      if (selectedOptions.has(outcome.optionIndex)) {
+        selectedOptions.delete(outcome.optionIndex);
+      } else {
+        selectedOptions.add(outcome.optionIndex);
+      }
     }
   }
 

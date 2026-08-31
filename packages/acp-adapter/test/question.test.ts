@@ -5,7 +5,11 @@ import type {
 import type { QuestionItem } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it } from 'vitest';
 
-import { outcomeToQuestionAnswer, questionItemToPermissionOptions } from '../src/question';
+import {
+  outcomeToQuestionAnswer,
+  permissionResponseToQuestionOutcome,
+  questionItemToPermissionOptions,
+} from '../src/question';
 
 const sampleQuestion: QuestionItem = {
   question: 'Pick a flavour',
@@ -62,6 +66,18 @@ describe('questionItemToPermissionOptions', () => {
       kind: 'reject_once',
     });
   });
+
+  it('marks selected multi-select options and exposes Done after the first choice', () => {
+    const multi: QuestionItem = { ...sampleQuestion, multiSelect: true };
+    const opts = questionItemToPermissionOptions(multi, 2, new Set([0, 2]));
+    expect(opts.map((option) => [option.optionId, option.name])).toEqual([
+      ['q2_opt_0', '✓ Vanilla'],
+      ['q2_opt_1', 'Chocolate'],
+      ['q2_opt_2', '✓ Mint chip'],
+      ['q2_done', 'Done'],
+      ['q2_skip', 'Skip'],
+    ]);
+  });
 });
 
 describe('outcomeToQuestionAnswer', () => {
@@ -97,5 +113,24 @@ describe('outcomeToQuestionAnswer', () => {
 
   it('defensively maps an out-of-bounds index to null', () => {
     expect(outcomeToQuestionAnswer(sampleQuestion, selected('q0_opt_99'))).toBeNull();
+  });
+
+  it('parses question-indexed options, Done, Skip, and cancellation', () => {
+    const multi: QuestionItem = { ...sampleQuestion, multiSelect: true };
+    expect(permissionResponseToQuestionOutcome(multi, 2, selected('q2_opt_1'))).toEqual({
+      kind: 'option',
+      optionIndex: 1,
+    });
+    expect(permissionResponseToQuestionOutcome(multi, 2, selected('q2_done'))).toEqual({
+      kind: 'done',
+    });
+    expect(permissionResponseToQuestionOutcome(multi, 2, selected('q2_skip'))).toEqual({
+      kind: 'skip',
+    });
+    expect(
+      permissionResponseToQuestionOutcome(multi, 2, {
+        outcome: { outcome: 'cancelled' },
+      }),
+    ).toEqual({ kind: 'cancelled' });
   });
 });
