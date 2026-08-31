@@ -48,6 +48,7 @@ Business events go through `ITelemetryService.track2` — never the low-level `t
 - **Naming**: event names and property keys are snake_case (`tool_call`, `duration_ms`). Durations, counts, and sizes carry a unit suffix (`_ms` / `_count` / `_bytes`). Use specific names (`error_type`, not `error`).
 - **Privacy**: never register user content, prompts, or file paths as properties. `CloudAppender` redacts URLs, emails, tokens, and absolute paths from string values before events leave the process, but that is a safety net, not a license.
 - **Stability**: registered event names and property keys are wire data consumed by dashboards — treat renames as breaking changes.
+- **Coverage**: every event declares its owning `domain` — a `src/` directory path (`agent/loop`, `wire`) or the pseudo-domain `host` for events the host app emits. `src/app/telemetry/coverage.ts` records the domains that intentionally emit nothing (`telemetryDomainExemptions`, with reasons) and the domains whose gaps are known and tracked (`telemetryDomainKnownGaps`, with the planned events). `events.test.ts` walks `src/` and fails unless every domain owns an event, is exempted, or is a known gap — adding a domain without a telemetry decision breaks the test, so make the decision explicit.
 - The registry is the single source of truth; `test/app/telemetry/events.test.ts` enforces the naming conventions.
 
 ## Persistence
