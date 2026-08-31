@@ -97,7 +97,8 @@ async function makeTempDir(prefix: string): Promise<string> {
  * defaultPlanMode/extraSkillDirs/mergeAllAvailableSkills — see the v2
  * `configSection.ts` registrations) and the env-binding pass, which
  * materializes `{}` for every section that declares env bindings
- * (thinking/services/loopControl/background/mcp) even with no env set.
+ * (thinking/services/loopControl/background/mcp/permission) even with no
+ * env set.
  */
 const V2_INJECTED_SECTION_DEFAULTS: Record<string, unknown> = {
   models: {},
@@ -107,6 +108,7 @@ const V2_INJECTED_SECTION_DEFAULTS: Record<string, unknown> = {
   loopControl: {},
   background: {},
   mcp: {},
+  permission: {},
   defaultPlanMode: false,
   mergeAllAvailableSkills: true,
   extraSkillDirs: [],
