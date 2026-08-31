@@ -1896,7 +1896,7 @@ describe('Agent tool execution contract', () => {
     );
   });
 
-  it('rejects a pool that gained the reserved "primary" key through a runtime config edit', async () => {
+  it('inherits the caller model when a runtime config edit leaves only the reserved "primary" key', async () => {
     const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
     const context = createAgentToolContext(lifecycle, secondaryModelFlags(), {
       initialConfig: {
@@ -1916,9 +1916,12 @@ describe('Agent tool execution contract', () => {
       description: 'Find cause',
     });
 
-    expect(result.isError).toBe(true);
-    expect(result.output).toContain('[secondary_model.models] key "primary" is reserved');
-    expect(lifecycle.create).not.toHaveBeenCalled();
+    expect(result.isError).toBeUndefined();
+    expect(lifecycle.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: expect.objectContaining({ model: 'mock-model' }),
+      }),
+    );
   });
 
   it('points at the [secondary_model.models] config when the bound alias stops resolving', async () => {

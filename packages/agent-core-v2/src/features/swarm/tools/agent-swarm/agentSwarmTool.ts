@@ -8,6 +8,7 @@ import { Error2, ErrorCodes } from '#/errors';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
+import { IModelCatalog } from '#/kosong/model/catalog';
 import { ISessionSwarmService, type SessionSwarmTask } from '#/features/swarm/session/sessionSwarm';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -73,7 +74,7 @@ export class AgentSwarmTool implements IAgentSwarmTool {
   readonly name = 'AgentSwarm' as const;
 
   get parameters(): Record<string, unknown> {
-    const parameters = exposesSubagentModelChoice(this.config, this.flags)
+    const parameters = exposesSubagentModelChoice(this.config, this.flags, this.modelCatalog)
       ? AGENT_SWARM_PARAMETERS
       : AGENT_SWARM_PARAMETERS_NO_MODEL;
     return this.flags.enabled(SUBAGENT_FORK_FLAG_ID)
@@ -89,6 +90,7 @@ export class AgentSwarmTool implements IAgentSwarmTool {
     @IAgentSwarmService private readonly swarmMode: IAgentSwarmService,
     @IConfigService private readonly config: IConfigService,
     @IFlagService private readonly flags: IFlagService,
+    @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
   ) {
@@ -104,6 +106,7 @@ export class AgentSwarmTool implements IAgentSwarmTool {
       this.config,
       this.flags,
       this.profile.data().modelAlias,
+      this.modelCatalog,
     );
     return modelLines === undefined ? description : `${description}\n\n${modelLines}`;
   }

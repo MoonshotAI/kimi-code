@@ -11,7 +11,6 @@ import {
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { configResponseSchema, type ConfigResponse } from '../src/protocol/rest-config';
-import { ErrorCode } from '../src/protocol/error-codes';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 
@@ -159,7 +158,7 @@ describe('server-v2 /api/v1/config', () => {
     });
   });
 
-  it('session create with a broken subagent model pool fails with VALIDATION_FAILED', async () => {
+  it('session create with a broken subagent model pool succeeds and reports a startup warning', async () => {
     await boot(
       '[experimental]\n"secondary-model" = true\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n',
     );
@@ -168,9 +167,27 @@ describe('server-v2 /api/v1/config', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ metadata: { cwd: home as string } }),
     });
-    const body = (await res.json()) as Envelope<null>;
-    expect(body.code).toBe(ErrorCode.VALIDATION_FAILED);
-    expect(body.msg).toContain('[secondary_model].default_model is required');
+    const body = (await res.json()) as Envelope<{ id: string }>;
+    expect(body.code).toBe(0);
+
+    const warningsRes = await authedFetch(
+      server as RunningServer,
+      base,
+      `/api/v1/sessions/${body.data!.id}/warnings`,
+    );
+    const warningsBody = (await warningsRes.json()) as Envelope<{
+      warnings: { code: string; message: string }[];
+    }>;
+    const secondary = warningsBody.data!.warnings.filter(
+      (warning) => warning.code === 'secondary-model-invalid',
+    );
+    expect(secondary).toHaveLength(2);
+    expect(secondary[0]!.message).toContain(
+      '[secondary_model.models] entry "provider/fast" could not be resolved',
+    );
+    expect(secondary[1]!.message).toContain(
+      '[secondary_model].default_model is required when [secondary_model.models] is configured',
+    );
   });
 
   it('session create with a broken subagent model pool succeeds while the experiment is off', async () => {

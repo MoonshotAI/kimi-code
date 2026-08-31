@@ -14,7 +14,10 @@ import {
   ISessionMetadata,
   ISessionLegacyService,
   ISessionTitleService,
+  IConfigService,
   IEventService,
+  IFlagService,
+  IModelCatalog,
   SessionCreated,
   IWorkspaceAliases,
   ISessionManager,
@@ -32,6 +35,7 @@ import {
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
+import { resolveEffectiveSubagentModelPool } from '@moonshot-ai/agent-core-v2/session/subagent/configSection';
 import { ErrorCode } from '../protocol/error-codes';
 import { pageResponseSchema } from '../protocol/pagination';
 import { toProtocolMessage } from '../services/messages/messageProjection';
@@ -806,7 +810,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
       },
-      description: 'Get session-level warnings (e.g. oversized AGENTS.md)',
+      description: 'Get session-level warnings (e.g. oversized AGENTS.md, broken secondary-model pool entries)',
       tags: ['sessions'],
     },
     async (req, reply) => {
@@ -831,6 +835,18 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
                   severity: 'warning' as const,
                 },
               ];
+        const { issues } = resolveEffectiveSubagentModelPool(
+          core.accessor.get(IConfigService),
+          core.accessor.get(IFlagService),
+          core.accessor.get(IModelCatalog),
+        );
+        for (const issue of issues) {
+          warnings.push({
+            code: 'secondary-model-invalid',
+            message: issue,
+            severity: 'warning' as const,
+          });
+        }
         reply.send(okEnvelope({ warnings }, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);

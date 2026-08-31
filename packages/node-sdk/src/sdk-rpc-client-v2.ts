@@ -151,6 +151,7 @@ import {
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { McpConnectionManager } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
 import { loadMcpServers } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
+import { resolveEffectiveSubagentModelPool } from '@moonshot-ai/agent-core-v2/session/subagent/configSection';
 import { IAppendLogStore } from '@moonshot-ai/agent-core-v2/persistence/interface/appendLogStore';
 import type { McpServerConfig as WorkspaceMcpServerConfig } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
 import {
@@ -186,10 +187,12 @@ import {
   IBootstrapService,
   IConfigService,
   IEventService,
+  IFlagService,
   IHostEnvironment,
   IHostFileSystem,
   IMcpManagementService,
   IMcpOAuthService,
+  IModelCatalog,
   IModelService,
   IProviderService,
   ISessionBtwService,
@@ -2006,7 +2009,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * cache is empty — v1 recomputes on demand whenever no warning is cached,
    * so an AGENTS.md that outgrows the budget mid-session surfaces on both
    * engines. The single warning shape (`agents-md-oversized`, severity
-   * `warning`) mirrors v1's assembly.
+   * `warning`) mirrors v1's assembly. The `secondary-model-invalid` entries
+   * mirror v1's `computeSecondaryModelWarnings`: pool problems never block
+   * session startup, they surface here and the effective pool skips the
+   * broken entries until the config is fixed.
    */
   override async getSessionWarnings(input: SessionIdRpcInput) {
     const agent = await this.agentScope(input.sessionId);
@@ -2024,9 +2030,23 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       );
       warning = prepared.agentsMdWarning;
     }
-    return warning === undefined
-      ? []
-      : [{ code: 'agents-md-oversized', message: warning, severity: 'warning' as const }];
+    const warnings =
+      warning === undefined
+        ? []
+        : [{ code: 'agents-md-oversized', message: warning, severity: 'warning' as const }];
+    const { issues } = resolveEffectiveSubagentModelPool(
+      this.engineAccessor.get(IConfigService),
+      this.engineAccessor.get(IFlagService),
+      this.engineAccessor.get(IModelCatalog),
+    );
+    for (const issue of issues) {
+      warnings.push({
+        code: 'secondary-model-invalid',
+        message: issue,
+        severity: 'warning' as const,
+      });
+    }
+    return warnings;
   }
 
   /**
