@@ -182,7 +182,7 @@ describe('CompactionComponent', () => {
     try {
       const text = component.render(120).map(strip).join('\n');
 
-      expect(text).toContain('Compacting context using kimi-k2...');
+      expect(text).toContain('Compacting context using kimi-k2…');
     } finally {
       component.dispose();
     }
@@ -194,7 +194,7 @@ describe('CompactionComponent', () => {
     try {
       const text = component.render(120).map(strip).join('\n');
 
-      expect(text).toContain('Compacting context...');
+      expect(text).toContain('Compacting context…');
       expect(text).not.toContain('using ');
     } finally {
       component.dispose();
