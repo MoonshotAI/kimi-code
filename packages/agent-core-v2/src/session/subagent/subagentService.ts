@@ -130,7 +130,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       });
     }
     const binding = fork
-      ? { model: own.modelAlias, thinking: own.thinkingLevel }
+      ? { model: own.modelAlias, thinking: own.thinkingLevel, modelSource: 'inherited' as const }
       : resolveSubagentBinding(
           this.configService,
           this.flags,
@@ -146,6 +146,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     return {
       profileName: profile?.name ?? requestedProfileName,
       model: binding.model,
+      modelSource: binding.modelSource,
       thinking: resolveSubagentThinking(this.configService, model, binding.thinking),
       fork,
     };
@@ -202,6 +203,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
         agentId: created.id,
         profileName: plan.profileName,
         model: plan.model,
+        modelSource: plan.modelSource,
         promptText,
       };
     } finally {

@@ -5,6 +5,9 @@ import { ILogService } from '#/_base/log/log';
 import { IntervalTimer } from '#/_base/utils/timer';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { SessionIndexDegradedEvent } from '#/app/telemetry/events';
+import { isError2 } from '#/errors';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import {
   IQueryStore,
@@ -87,6 +90,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     @IQueryStore private readonly queryStore: IQueryStore,
     @IFlagService private readonly flags: IFlagService,
     @ISessionIndexMirror private readonly mirror: ISessionIndexMirror,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
     @ILogService private readonly log: ILogService,
   ) {
     super();
@@ -162,12 +166,18 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   }
 
   private async runProjection(): Promise<void> {
+    const startedAt = Date.now();
     try {
       const manifest = await this.queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
       const next = (manifest?.seq ?? 0) + 1;
       const result = await this.projector.project(next);
       this.generation = result.generation;
       this.markReady();
+      this.telemetry.track2('session_index_projected', {
+        duration_ms: Date.now() - startedAt,
+        session_count: result.sessions,
+        generation: result.generation,
+      });
     } catch (error) {
       const published = await this.queryStore
         .getCheckpoint(SESSION_INDEX_MANIFEST)
@@ -242,6 +252,18 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       ...(detail !== undefined ? { error: detail } : {}),
       degradedCount: this.degradedCount,
     });
+    const properties: SessionIndexDegradedEvent = {
+      reason,
+      degraded_count: this.degradedCount,
+    };
+    if (error !== undefined) {
+      properties.error_type = isError2(error)
+        ? error.code
+        : error instanceof Error
+          ? error.name
+          : 'Unknown';
+    }
+    this.telemetry.track2('session_index_degraded', properties);
   }
 
   private async ensureSchema(generation: number): Promise<void> {

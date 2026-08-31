@@ -80,12 +80,15 @@ const TERMINAL_RETENTION_MS = 5 * 60 * 1000;
 const DEFAULT_DEVICE_EXPIRES_IN_SEC = 15 * 60;
 const SERVICES_SECTION = 'services';
 
+type TerminalOAuthFlowStatus = Exclude<OAuthFlowStatus, 'pending'>;
+
 interface FlowState {
   readonly flowId: string;
   readonly provider: string;
   readonly controller: AbortController;
   readonly oauthRef: OAuthRef | undefined;
   readonly loginBaseUrl: string | undefined;
+  readonly startedAt: number;
   device: DeviceAuthorization | undefined;
   status: OAuthFlowStatus;
   tokenGranted: boolean;
@@ -136,6 +139,7 @@ export class OAuthService extends Disposable implements IOAuthService {
       controller: new AbortController(),
       oauthRef: loginAuth.oauthRef,
       loginBaseUrl: loginAuth.baseUrl,
+      startedAt: Date.now(),
       device: undefined,
       status: 'pending',
       tokenGranted: false,
@@ -303,12 +307,29 @@ export class OAuthService extends Disposable implements IOAuthService {
     const changed: RefreshOAuthProviderModelsResponse['changed'] = [];
     const unchanged: string[] = [];
     const failed: RefreshOAuthProviderModelsResponse['failed'] = [];
+    const finish = (): RefreshOAuthProviderModelsResponse => {
+      this.telemetry.track2('oauth_models_refresh_finished', {
+        changed_count: changed.length,
+        unchanged_count: unchanged.length,
+        failed_count: failed.length,
+      });
+      return { changed, unchanged, failed };
+    };
 
-    await this.config.reload();
+    try {
+      await this.config.reload();
+    } catch (error) {
+      failed.push({
+        provider: KIMI_CODE_PROVIDER_NAME,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      finish();
+      throw error;
+    }
     const current = this.readUserConfigShape();
     const provider = current.providers[KIMI_CODE_PROVIDER_NAME];
     if (!isOAuthCatalogProvider(provider)) {
-      return { changed, unchanged, failed };
+      return finish();
     }
 
     try {
@@ -328,14 +349,14 @@ export class OAuthService extends Disposable implements IOAuthService {
         baseUrl: auth.baseUrl,
       });
       if (models.length === 0) {
-        return { changed, unchanged, failed };
+        return finish();
       }
 
       await this.config.reload();
       const fresh = this.readUserConfigShape();
       const freshProvider = fresh.providers[KIMI_CODE_PROVIDER_NAME];
       if (!isOAuthCatalogProvider(freshProvider)) {
-        return { changed, unchanged, failed };
+        return finish();
       }
       if (
         freshProvider.baseUrl !== provider.baseUrl ||
@@ -343,7 +364,7 @@ export class OAuthService extends Disposable implements IOAuthService {
         freshProvider.oauth.key !== provider.oauth.key ||
         freshProvider.oauth.oauthHost !== provider.oauth.oauthHost
       ) {
-        return { changed, unchanged, failed };
+        return finish();
       }
 
       const next = structuredClone(fresh);
@@ -392,7 +413,7 @@ export class OAuthService extends Disposable implements IOAuthService {
       });
     }
 
-    const result = { changed, unchanged, failed };
+    const result = finish();
     if (result.changed.length > 0) {
       this.events.publish(new ModelCatalogChanged({ payload: result }));
     }
@@ -588,9 +609,14 @@ export class OAuthService extends Disposable implements IOAuthService {
     this.setTerminal(state, classifyFailure(err));
   }
 
-  private setTerminal(state: FlowState, status: OAuthFlowStatus): void {
+  private setTerminal(state: FlowState, status: TerminalOAuthFlowStatus): void {
     state.status = status;
     state.resolvedAt = new Date().toISOString();
+    this.telemetry.track2('oauth_login_finished', {
+      provider: state.provider,
+      status,
+      duration_ms: Date.now() - state.startedAt,
+    });
     const timer = setTimeout(() => {
       if (this.flows.get(state.provider) === state) {
         this.flows.delete(state.provider);
@@ -633,6 +659,7 @@ export class AuthSummaryService implements IAuthSummaryService {
     @IModelService private readonly modelService: IModelService,
     @IConfigService private readonly config: IConfigService,
     @IOAuthService private readonly oauth: IOAuthService,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
     @ILogService private readonly log: ILogService,
   ) {}
 
@@ -660,38 +687,46 @@ export class AuthSummaryService implements IAuthSummaryService {
   }
 
   async ensureReady(modelOverride?: string): Promise<void> {
-    await this.config.reload();
-    const providers = this.providerService.list();
-    const models = this.modelService.list();
-    const modelId = modelOverride ?? this.modelService.getDefaultModel();
-    const configured = modelId === undefined || modelId === '' ? undefined : models[modelId];
-    if (Object.keys(providers).length === 0 && !isProviderlessModel(configured)) {
-      throw new AuthProvisioningRequiredError();
-    }
-    const resolution = resolveModelForReady(modelId, models, providers, this.providerService.getDefaultProvider());
-    if (!resolution.resolved) {
-      throw unresolvedModelError(modelId, resolution.reason, configured);
-    }
+    try {
+      await this.config.reload();
+      const providers = this.providerService.list();
+      const models = this.modelService.list();
+      const modelId = modelOverride ?? this.modelService.getDefaultModel();
+      const configured = modelId === undefined || modelId === '' ? undefined : models[modelId];
+      if (Object.keys(providers).length === 0 && !isProviderlessModel(configured)) {
+        throw new AuthProvisioningRequiredError();
+      }
+      const resolution = resolveModelForReady(modelId, models, providers, this.providerService.getDefaultProvider());
+      if (!resolution.resolved) {
+        throw unresolvedModelError(modelId, resolution.reason, configured);
+      }
 
-    const model = effectiveModelConfig(configured as ModelRecord);
-    const providerId = model.providerId ?? model.provider ?? this.providerService.getDefaultProvider();
-    const provider = providerId === undefined ? undefined : this.providerService.get(providerId);
-    const providerName = (providerId ?? providerNameFromFlatModel(model)) as string;
+      const model = effectiveModelConfig(configured as ModelRecord);
+      const providerId = model.providerId ?? model.provider ?? this.providerService.getDefaultProvider();
+      const provider = providerId === undefined ? undefined : this.providerService.get(providerId);
+      const providerName = (providerId ?? providerNameFromFlatModel(model)) as string;
 
-    const auth = resolveModelAuthMaterial({
-      modelId: modelId as string,
-      model,
-      provider,
-      providerName,
-    });
-    if (auth.apiKey !== undefined) return;
-    if (auth.oauth !== undefined) {
-      const providerKey = auth.oauthProviderKey ?? providerName;
-      const token = await this.oauth.getCachedAccessToken(providerKey, auth.oauth);
-      if (nonEmpty(token) !== undefined) return;
-      throw new AuthTokenMissingError(providerKey);
+      const auth = resolveModelAuthMaterial({
+        modelId: modelId as string,
+        model,
+        provider,
+        providerName,
+      });
+      if (auth.apiKey !== undefined) return;
+      if (auth.oauth !== undefined) {
+        const providerKey = auth.oauthProviderKey ?? providerName;
+        const token = await this.oauth.getCachedAccessToken(providerKey, auth.oauth);
+        if (nonEmpty(token) !== undefined) return;
+        throw new AuthTokenMissingError(providerKey);
+      }
+      throw new AuthTokenMissingError(providerName);
+    } catch (error) {
+      this.telemetry.track2('auth_ensure_ready_failed', {
+        reason: ensureReadyFailureReason(error) ?? 'unexpected',
+        has_model_override: modelOverride !== undefined,
+      });
+      throw error;
     }
-    throw new AuthTokenMissingError(providerName);
   }
 }
 
@@ -710,7 +745,16 @@ function unresolvedModelError(
   return new AuthModelNotResolvedError(modelId);
 }
 
-function classifyFailure(err: unknown): OAuthFlowStatus {
+function ensureReadyFailureReason(
+  error: unknown,
+): 'provisioning_required' | 'model_not_resolved' | 'token_missing' | undefined {
+  if (error instanceof AuthProvisioningRequiredError) return 'provisioning_required';
+  if (error instanceof AuthModelNotResolvedError) return 'model_not_resolved';
+  if (error instanceof AuthTokenMissingError) return 'token_missing';
+  return undefined;
+}
+
+function classifyFailure(err: unknown): TerminalOAuthFlowStatus {
   if (err instanceof DeviceCodeTimeoutError) return 'expired';
   if (err instanceof OAuthError) {
     return err.message.toLowerCase().includes('aborted') ? 'cancelled' : 'denied';

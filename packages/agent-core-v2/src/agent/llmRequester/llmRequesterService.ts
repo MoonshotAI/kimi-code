@@ -44,7 +44,10 @@ import { completionBudgetParams, resolveCompletionBudget } from '#/kosong/model/
 import { resolveThinkingKeep, type ThinkingConfig } from '#/kosong/model/thinking';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import type { Protocol } from '#/kosong/protocol/protocol';
-import type { ApiErrorEvent } from '#/app/telemetry/events';
+import type {
+  ApiErrorEvent,
+  LlmRequestProjectionFallbackEvent,
+} from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -500,6 +503,8 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     if (signal?.aborted === true) return undefined;
     const raw = unwrapErrorCause(error);
     const media = policy?.media;
+    let projection: LlmRequestProjectionFallbackEvent['projection'];
+    let nextPolicy: ProjectionPolicy;
     if (
       raw instanceof APIRequestTooLargeError &&
       (media === undefined || media === 'degraded')
@@ -511,18 +516,20 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           ...request.logFields,
         });
         this.markRecoveryTurn(this.mediaDegradedTurns, request.source);
-        return { ...policy, media: 'degraded' };
+        projection = 'media-degraded';
+        nextPolicy = { ...policy, media: 'degraded' };
+      } else {
+        this.log.warn(
+          'provider rejected degraded-media request as too large; resending with rejected media stripped',
+          {
+            model: request.model.name,
+            ...request.logFields,
+          },
+        );
+        projection = 'media-stripped';
+        nextPolicy = { ...policy, media: captureMediaStripPolicy() };
       }
-      this.log.warn(
-        'provider rejected degraded-media request as too large; resending with rejected media stripped',
-        {
-          model: request.model.name,
-          ...request.logFields,
-        },
-      );
-      return { ...policy, media: captureMediaStripPolicy() };
-    }
-    if (typeof media !== 'object' && isImageFormatError(raw)) {
+    } else if (typeof media !== 'object' && isImageFormatError(raw)) {
       signal?.throwIfAborted();
       this.log.warn(
         'provider rejected an image in the request; resending with rejected media stripped',
@@ -531,17 +538,27 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           ...request.logFields,
         },
       );
-      return { ...policy, media: captureMediaStripPolicy() };
-    }
-    if (policy?.structure === undefined && isRecoverableRequestStructureError(raw)) {
+      projection = 'media-stripped';
+      nextPolicy = { ...policy, media: captureMediaStripPolicy() };
+    } else if (policy?.structure === undefined && isRecoverableRequestStructureError(raw)) {
       signal?.throwIfAborted();
       this.log.warn('provider rejected request structure; resending with strict projection', {
         model: request.model.name,
         ...request.logFields,
       });
-      return { ...policy, structure: 'strict' };
+      projection = 'strict';
+      nextPolicy = { ...policy, structure: 'strict' };
+    } else {
+      return undefined;
     }
-    return undefined;
+    const properties: LlmRequestProjectionFallbackEvent = {
+      projection,
+      error_type: classifyApiError(raw).kind,
+      model: request.model.id,
+      turn_id: request.source?.turnId,
+    };
+    this.telemetry.track2('llm_request_projection_fallback', properties);
+    return nextPolicy;
   }
 
   private normalizeStreamPart(
