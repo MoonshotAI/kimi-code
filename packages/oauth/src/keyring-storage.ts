@@ -497,8 +497,9 @@ export function probeKeyringBackend(keyring: KeyringApi): boolean {
   // avoids).
   const account = `probe-${process.pid}-${randomBytes(8).toString('hex')}`;
   const sentinel = `probe-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const entry = keyring.createEntry(KEYRING_PROBE_SERVICE, account);
+  let entry: KeyringEntry | undefined;
   try {
+    entry = keyring.createEntry(KEYRING_PROBE_SERVICE, account);
     entry.setPassword(sentinel);
     if (entry.getPassword() !== sentinel) return false;
     entry.deleteCredential();
@@ -517,7 +518,7 @@ export function probeKeyringBackend(keyring: KeyringApi): boolean {
     // idempotent no-op on the success path: never leave a sentinel behind,
     // and never let cleanup mask the probe result.
     try {
-      entry.deleteCredential();
+      entry?.deleteCredential();
     } catch {
       /* best-effort */
     }

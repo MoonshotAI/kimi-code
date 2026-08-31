@@ -108,6 +108,17 @@ class ThrowingKeyring implements KeyringApi {
   }
 }
 
+/** A KeyringApi whose native entry constructor fails before any operation. */
+class ConstructorThrowingKeyring implements KeyringApi {
+  createEntry(): KeyringEntry {
+    throw new Error('keychain entry initialization failed');
+  }
+
+  findAccounts(): string[] {
+    return [];
+  }
+}
+
 /**
  * Records every account `createEntry` is asked for, per service, so the probe's
  * account-uniqueness can be asserted. Functionally identical to FakeKeyring.
@@ -1136,6 +1147,18 @@ describe('resolveTokenStorage', () => {
       optedIn: true,
     });
     expect(storage).toBeInstanceOf(FileTokenStorage);
+    expect(observer.selected).toEqual([{ backend: 'file', reason: 'probe-failed' }]);
+  });
+
+  it('falls back to FileTokenStorage when creating a keyring entry throws', () => {
+    const observer = new FakeObserver();
+    const storage = resolveTokenStorage(dir, {
+      loadKeyring: () => new ConstructorThrowingKeyring(),
+      observer,
+      optedIn: true,
+    });
+    expect(storage).toBeInstanceOf(FileTokenStorage);
+    expect(storage).not.toBeInstanceOf(KeyringTokenStorage);
     expect(observer.selected).toEqual([{ backend: 'file', reason: 'probe-failed' }]);
   });
 
