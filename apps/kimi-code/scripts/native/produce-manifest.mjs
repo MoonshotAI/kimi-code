@@ -7,6 +7,8 @@
  *
  * Input dir must contain files matching: kimi-code-<target>.zip.sha256
  * (produced by package.mjs across the 6 native-build matrix runners).
+ * A matching kimi-code-<target>.zst.sha256 adds an optional `compressed`
+ * pointer to that platform's entry.
  *
  * Output:
  *   <input-dir>/manifest.json   ← consumed by install.sh / install.ps1
@@ -45,6 +47,20 @@ for (const sumFile of sumFiles.sort()) {
   // kimi-code-darwin-arm64.zip → darwin-arm64
   const target = filename.replace(/^kimi-code-/, '').replace(/\.zip$/, '');
   platforms[target] = { filename, checksum };
+
+  const compressedSumFile = `kimi-code-${target}.zst.sha256`;
+  if (entries.includes(compressedSumFile)) {
+    const compressedText = await readFile(resolve(inputDir, compressedSumFile), 'utf-8');
+    const [compressedChecksum] = compressedText.trim().split(/\s+/, 1);
+    if (!compressedChecksum || !/^[a-f0-9]{64}$/.test(compressedChecksum)) {
+      console.error(`Invalid checksum in ${compressedSumFile}: ${compressedChecksum}`);
+      process.exit(1);
+    }
+    platforms[target].compressed = {
+      filename: `kimi-code-${target}.zst`,
+      checksum: compressedChecksum,
+    };
+  }
 }
 
 const manifest = { version, tag, platforms };

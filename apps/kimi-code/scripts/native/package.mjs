@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, stat, writeFile } from 'node:fs/promises';
-import { basename, resolve } from 'node:path';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { basename, dirname, resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
+import { constants, zstdCompressSync } from 'node:zlib';
 
 import { ZipFile } from 'yazl';
 
+import { run } from './exec.mjs';
 import { executableName, nativeArtifactsDir, nativeBinPath, targetTriple } from './paths.mjs';
 
 const target = targetTriple();
@@ -17,6 +19,12 @@ const artifactsDir = nativeArtifactsDir();
 const artifactName = `kimi-code-${target}.zip`;
 const artifactPath = resolve(artifactsDir, artifactName);
 const checksumPath = `${artifactPath}.sha256`;
+
+const compressedPath = resolve(artifactsDir, `kimi-code-${target}.zst`);
+const compressedChecksumPath = `${compressedPath}.sha256`;
+
+const tarballPath = resolve(artifactsDir, `kimi-code-${target}.tar.gz`);
+const tarballChecksumPath = `${tarballPath}.sha256`;
 
 function fail(message) {
   console.error(message);
@@ -49,5 +57,20 @@ await pipeline(zip.outputStream, createWriteStream(artifactPath));
 const digest = await sha256(artifactPath);
 await writeFile(checksumPath, `${digest}  ${basename(artifactPath)}\n`);
 
+const compressed = zstdCompressSync(await readFile(sourceBinary), {
+  params: { [constants.ZSTD_c_compressionLevel]: 19 },
+});
+await writeFile(compressedPath, compressed);
+const compressedDigest = await sha256(compressedPath);
+await writeFile(compressedChecksumPath, `${compressedDigest}  ${basename(compressedPath)}\n`);
+
+await run('tar', ['-C', dirname(sourceBinary), '-czf', tarballPath, execName]);
+const tarballDigest = await sha256(tarballPath);
+await writeFile(tarballChecksumPath, `${tarballDigest}  ${basename(tarballPath)}\n`);
+
 console.log(`Wrote native artifact: ${artifactPath}`);
 console.log(`Wrote artifact checksum: ${checksumPath}`);
+console.log(`Wrote compressed artifact: ${compressedPath}`);
+console.log(`Wrote artifact checksum: ${compressedChecksumPath}`);
+console.log(`Wrote tarball artifact: ${tarballPath}`);
+console.log(`Wrote artifact checksum: ${tarballChecksumPath}`);
