@@ -526,3 +526,39 @@ describe('ensureRgPath Windows download branch', () => {
     ).rejects.toThrow(/HTTP 502 Bad Gateway/);
   });
 });
+
+
+describe('ensureRgPath on openharmony', () => {
+  let fakeShare: string;
+  let savedPath: string | undefined;
+  let savedArch: string;
+  let savedPlatform: string;
+  beforeEach(() => {
+    fakeShare = join(
+      tmpdir(),
+      `kimi-rg-ohos-${String(Date.now())}-${String(Math.random()).slice(2)}`,
+    );
+    savedPath = process.env['PATH'];
+    process.env['PATH'] = '';
+    savedArch = process.arch;
+    savedPlatform = process.platform;
+    Object.defineProperty(process, 'arch', { value: 'arm64' });
+    Object.defineProperty(process, 'platform', { value: 'openharmony' });
+  });
+  afterEach(() => {
+    rmSync(fakeShare, { recursive: true, force: true });
+    if (savedPath === undefined) {
+      delete process.env['PATH'];
+    } else {
+      process.env['PATH'] = savedPath;
+    }
+    Object.defineProperty(process, 'arch', { value: savedArch });
+    Object.defineProperty(process, 'platform', { value: savedPlatform });
+  });
+
+  it('rejects with a Harmonybrew install hint instead of a bare unsupported error', async () => {
+    await expect(
+      ensureRgPath(noRgProbe(), { shareDir: fakeShare, allowCachedFallback: true }),
+    ).rejects.toThrow(/Harmonybrew/);
+  });
+});

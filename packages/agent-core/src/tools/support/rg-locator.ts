@@ -180,12 +180,19 @@ export function detectTarget(): string | undefined {
   return undefined;
 }
 
+function unsupportedTargetMessage(): string {
+  const platform: string = process.platform;
+  const base = `Unsupported platform/arch for ripgrep download: ${platform}/${process.arch}.`;
+  if (platform === 'openharmony') {
+    return `${base} Install ripgrep via Harmonybrew (\`brew install ripgrep\`) and make sure \`rg\` is on PATH.`;
+  }
+  return base;
+}
+
 async function downloadAndInstallRg(shareDir: string): Promise<string> {
   const target = detectTarget();
   if (target === undefined) {
-    throw new Error(
-      `Unsupported platform/arch for ripgrep download: ${process.platform}/${process.arch}`,
-    );
+    throw new Error(unsupportedTargetMessage());
   }
 
   // Windows ripgrep releases ship as `.zip`; macOS / Linux as `.tar.gz`.
