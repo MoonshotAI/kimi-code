@@ -1289,6 +1289,17 @@ describe('AgentLifecycleService', () => {
     expect(closed).toEqual([a.agentId]);
   });
 
+  it('registers agent metadata before firing onDidCreate', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const order: string[] = [];
+    registerAgent.mockImplementation(async () => { order.push('register'); });
+    disposables.add(svc.onDidCreate(() => { order.push('create'); }));
+    disposables.add(svc.onDidCreateScope(() => { order.push('createScope'); }));
+
+    await svc.create({ agentId: 'main' });
+    expect(order).toEqual(['register', 'create', 'createScope']);
+  });
+
   it('assigns a new lifecycle generation when recreating the same agent id', async () => {
     const svc = ix.get(IAgentLifecycleService);
     const first = await svc.create({ agentId: 'main' });

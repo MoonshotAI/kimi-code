@@ -1,8 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { KeyedResourceLeasePool } from '#/_base/lifecycle/keyedResource';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IFeatureManager } from '#/app/feature/featureManager';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
+import { TodoFeature } from '#/features/todo/todoFeature';
 import { IAgentTodoService } from '#/features/todo/todoService';
 import type { TodoItem } from '#/features/todo/todoItem';
 import { TODO_LIST_REMINDER_VARIANT } from '#/features/todo/todoListReminder';
@@ -129,6 +131,29 @@ describe('AgentTodoService', () => {
     } finally {
       await restarted.dispose();
     }
+  });
+
+  it('restores todos and resumes operations when the feature is re-provided after restore', async () => {
+    await ctx.get(IAgentTodoService).replace([{ title: 'kept', status: 'in_progress' }]);
+
+    await ctx.get(IFeatureManager).unprovideUnit('todo');
+    expect(() => ctx.get(IAgentTodoService)).toThrow("unknown service 'agentTodoService'");
+
+    ctx.get(IFeatureManager).provideUnit(TodoFeature);
+
+    const revived = await vi.waitFor(() => {
+      const service = ctx.get(IAgentTodoService);
+      expect(service.get()).toEqual([{ title: 'kept', status: 'in_progress' }]);
+      return service;
+    });
+    await revived.replace([
+      { title: 'kept', status: 'done' },
+      { title: 'added', status: 'pending' },
+    ]);
+    expect(revived.get()).toEqual([
+      { title: 'kept', status: 'done' },
+      { title: 'added', status: 'pending' },
+    ]);
   });
 
   it('filters malformed persisted values during replay', async () => {

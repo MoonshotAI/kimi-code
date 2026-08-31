@@ -9,6 +9,8 @@ export type EventDispatcherHooks = {
   readonly onDidRestore: Record<string, never>;
 };
 
+export type RestorePhase = 'new' | 'restoring' | 'ready' | 'failed';
+
 export interface DurableAgentRuntimeParticipant<State = any> {
   readonly id: string;
   readonly events: readonly Event2Class<any, any>[];
@@ -32,7 +34,10 @@ export interface IEventDispatcher extends DurableRuntimeParticipantHost {
 
   readonly hooks: Hooks<EventDispatcherHooks>;
 
+  readonly restorePhase: RestorePhase;
+
   dispatch(event: Event2<any>): Promise<void>;
+  attachLate(participant: DurableAgentRuntimeParticipant): Promise<IDisposable>;
   history<S>(key: ReplayableStateKey<S>): readonly PatchEntry[];
   checkpointDepth(key: ReplayableStateKey<any>): number;
   modelCheckpointDepths(): readonly ModelCheckpointDepth[];

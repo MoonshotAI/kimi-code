@@ -1,10 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { contextMemoryKey } from '#/agent/contextMemory/contextOps';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { ReminderFeature } from '#/features/reminder/reminderFeature';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IEventBus } from '#/app/event/eventBus';
 import { IFeatureManager } from '#/app/feature/featureManager';
@@ -467,5 +468,24 @@ describe('AgentReminderService', () => {
 
     expect(calls).toBe(1);
     expect(() => ctx.get(IAgentReminderService)).toThrow("unknown service 'agentReminderService'");
+  });
+
+  it('resumes injection when the feature is re-provided after restore', async () => {
+    await ctx.get(IFeatureManager).unprovideUnit('reminder');
+    expect(() => ctx.get(IAgentReminderService)).toThrow("unknown service 'agentReminderService'");
+
+    ctx.get(IFeatureManager).provideUnit(ReminderFeature);
+
+    let calls = 0;
+    const revived = await vi.waitFor(() => ctx.get(IAgentReminderService));
+    revived.register('reprovide_test', () => {
+      calls += 1;
+      return undefined;
+    });
+    loop = ctx.get(IAgentLoopService) as StubLoop;
+    await vi.waitFor(async () => {
+      await runInjectionStep();
+      expect(calls).toBeGreaterThan(0);
+    });
   });
 });

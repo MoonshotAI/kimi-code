@@ -1,6 +1,7 @@
 import { createActor, type ActorLogic, type AnyActorRef, type Snapshot } from 'xstate';
 
 import { BugIndicatingError } from '#/_base/errors/errors';
+import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { IInstantiationService, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import type { Event } from '#/_base/event';
@@ -89,33 +90,62 @@ export abstract class AgentActorService<State> extends Disposable {
     actor.start();
     previous = durable?.read(actor.getSnapshot());
     let attachment: IDisposable | undefined;
-    if (durable !== undefined) {
-      const participant: DurableAgentRuntimeParticipant<State> = {
-        id: options.id,
-        events: durable.events,
-        undoable: durable.undoable,
-        transition: durable.transition,
-        getState: () => durable.read(actor.getSnapshot()),
-        commit: (state) => { durable.commit(actor, state); },
+    const participant: DurableAgentRuntimeParticipant<State> | undefined =
+      durable === undefined
+        ? undefined
+        : {
+            id: options.id,
+            events: durable.events,
+            undoable: durable.undoable,
+            transition: durable.transition,
+            getState: () => durable.read(actor.getSnapshot()),
+            commit: (state) => { durable.commit(actor, state); },
+          };
+    let disposed = false;
+    const sendRestore = async (): Promise<void> => {
+      const readiness: Promise<unknown>[] = [];
+      const event: AgentActorRestoreEvent = {
+        type: 'runtime.restore',
+        waitUntil: (work) => { readiness.push(work); },
       };
-      attachment = this.dispatcher.attach(participant);
+      actor.send(event);
+      await Promise.all(readiness);
+    };
+    let restoreHook: IDisposable | undefined;
+    if (this.dispatcher.restorePhase === 'ready') {
+      queueMicrotask(() => {
+        void (async () => {
+          try {
+            if (participant !== undefined) {
+              const late = await this.dispatcher.attachLate(participant);
+              if (disposed) {
+                late.dispose();
+                return;
+              }
+              attachment = late;
+            }
+            if (!disposed) await sendRestore();
+          } catch (error) {
+            onUnexpectedError(error);
+          }
+        })();
+      });
+    } else {
+      if (participant !== undefined) {
+        attachment = this.dispatcher.attach(participant);
+      }
+      restoreHook = this.dispatcher.hooks.onDidRestore.register(
+        options.id,
+        async (_ctx, next) => {
+          await sendRestore();
+          await next();
+        },
+      );
     }
-    const restoreHook = this.dispatcher.hooks.onDidRestore.register(
-      options.id,
-      async (_ctx, next) => {
-        const readiness: Promise<unknown>[] = [];
-        const event: AgentActorRestoreEvent = {
-          type: 'runtime.restore',
-          waitUntil: (work) => { readiness.push(work); },
-        };
-        actor.send(event);
-        await Promise.all(readiness);
-        await next();
-      },
-    );
     this._register(toDisposable(() => {
+      disposed = true;
       attachment?.dispose();
-      restoreHook.dispose();
+      restoreHook?.dispose();
       subscription.unsubscribe();
       actor.stop();
     }));

@@ -167,7 +167,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       ) as IAgentScopeHandle;
       createdHandle = handle;
       const container = containerRef!;
-      this.adopt({
+      this.rosterAdopt({
         id: agentId,
         kind: LifecycleScope.Agent,
         accessor: {
@@ -176,7 +176,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         dispose: () => container.disposeAsync(),
       });
       managed = this.roster.get(agentId);
-      didCreate = true;
       stage = 'seal';
       await handle.accessor.get(IWireService).seal();
       stage = 'register';
@@ -187,6 +186,9 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         forkedFrom: opts.forkedFrom,
         labels: opts.labels,
       });
+      this.onDidCreateEmitter.fire(agent);
+      didCreate = true;
+      this.onDidCreateScopeEmitter.fire({ context: agent, handle });
       stage = 'restore';
       await handle.accessor.get(IEventDispatcher).restore();
       stage = 'bootstrap';
@@ -317,6 +319,13 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   }
 
   adopt(handle: IAgentScopeHandle): AgentContext {
+    const agent = this.rosterAdopt(handle);
+    this.onDidCreateEmitter.fire(agent);
+    this.onDidCreateScopeEmitter.fire({ context: agent, handle });
+    return agent;
+  }
+
+  private rosterAdopt(handle: IAgentScopeHandle): AgentContext {
     const agent = agentContextOf(handle);
     const existing = this.roster.get(agent.agentId);
     if (existing !== undefined) {
@@ -328,8 +337,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const managed = new ManagedAgent(agent, handle);
     managed.active = true;
     this.roster.set(agent.agentId, managed);
-    this.onDidCreateEmitter.fire(agent);
-    this.onDidCreateScopeEmitter.fire({ context: agent, handle });
     return agent;
   }
 
