@@ -170,6 +170,6 @@ npm uninstall -g @moonshot-ai/kimi-code
 
 ## Next steps
 
-- [Interaction and input](./interaction.md) — input box operations, approval flow, Plan mode, and YOLO mode explained
+- [Interaction and input](./interaction.md) — input box operations, approval flow, Plan mode, and Ask When Needed mode explained
 - [Sessions and context](./sessions.md) — resuming sessions, compressing context, exporting sessions
 - [Common use cases](./use-cases.md) — prompt examples for typical tasks

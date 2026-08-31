@@ -25,9 +25,8 @@ import {
 } from '#/agent/profile/context';
 import { profileKey } from '#/agent/profile/profileOps';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { AgentReminder, type ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -60,7 +59,7 @@ export class AgentAgentsMdReminderService
 
   constructor(
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
-    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+    @IAgentReminderService private readonly reminder: IAgentReminderService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
     @ISessionContext private readonly sessionContext: ISessionContext,
@@ -114,7 +113,7 @@ export class AgentAgentsMdReminderService
     }
     if (entries.size === 0) return;
     const list = [...entries.values()];
-    this.reminder().notify(changeReminderText(list), {
+    this.reminder.notify(changeReminderText(list), {
       variant: 'agents_md_change',
     });
     this.publishKnown(
@@ -172,17 +171,13 @@ export class AgentAgentsMdReminderService
         trace_id: ctx.trace?.traceId,
       };
       this.telemetry.track2('agents_md_reminder_shown', properties);
-      this.reminder().notify(reminderText(discovered), {
+      this.reminder.notify(reminderText(discovered), {
         variant: 'agents_md',
       });
       this.publishKnown([...selfKnown, ...discovered]);
     } catch {} finally {
       for (const path of discovered) this.claimed.delete(path);
     }
-  }
-
-  private reminder(): ReminderRuntime {
-    return this.agentLifecycle.resolve(this.scopeContext.agentContext, AgentReminder);
   }
 
   private publishKnown(paths: readonly string[]): void {

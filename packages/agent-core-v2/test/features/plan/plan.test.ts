@@ -95,7 +95,6 @@ describe('Plan service', () => {
     plan = ctx.get(IAgentPlanService);
     profile = ctx.get(IAgentProfileService);
     await ctx.restorePersisted();
-    await ctx.restoreRuntimes();
   });
 
   afterEach(async () => {

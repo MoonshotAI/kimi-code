@@ -1,12 +1,11 @@
 import {
   builtinProductSkillsEnabled,
   visibleBuiltinSkills,
-  AgentSkill,
   Error2,
   ErrorCodes,
   EXTRA_SKILL_DIRS_SECTION,
-  IAgentLifecycleService,
   IAgentRuntimeBindingService,
+  IAgentSkillService,
   IBootstrapService,
   IConfigService,
   IFileService,
@@ -26,7 +25,6 @@ import {
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
   SKILL_SOURCE_PRIORITY,
   configuredRoots,
-  ensureMainAgent,
   projectRoots,
   sessionMediaOriginalsDir,
   userRoots,
@@ -268,20 +266,17 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
           );
           attachmentParts.push(...contentToCoreParts(preparedMedia.content));
         }
-        const context = await ensureMainAgent(resolved.handle);
+        const mainAgent = await ensureMainAgentHandle(resolved.handle);
         const promptAttachments =
           preparedMedia !== undefined && preparedMedia.attachments.length > 0
             ? preparedMedia.attachments
             : undefined;
-        await resolved.handle.accessor
-          .get(IAgentLifecycleService)
-          .resolve(context, AgentSkill)
-          .activate({
-            name: parsed.id,
-            args: req.body.args,
-            content: attachmentParts,
-            attachments: promptAttachments,
-          });
+        await mainAgent.accessor.get(IAgentSkillService).activate({
+          name: parsed.id,
+          args: req.body.args,
+          content: attachmentParts,
+          attachments: promptAttachments,
+        });
         await preparedMedia?.discard();
         preparedMedia = undefined;
         requestLog(req)?.info({ session_id, skill_name: parsed.id }, 'skill activated');

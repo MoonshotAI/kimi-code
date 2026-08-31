@@ -3,7 +3,7 @@ import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { Error2, ErrorCodes } from '#/errors';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 
-import { AgentInteraction, type InteractionRuntime } from './interactionAgentRuntime';
+import { IAgentInteractionService } from './interactionService';
 import {
   type Interaction,
   type InteractionKind,
@@ -13,15 +13,19 @@ import {
   type InteractionResolution,
 } from './interaction';
 
-function runtimeFor(manager: IAgentLifecycleService, origin: InteractionOrigin | undefined): InteractionRuntime {
+function serviceFor(manager: IAgentLifecycleService, agentId: string): IAgentInteractionService | undefined {
+  return manager.handleOf(agentId)?.accessor.get(IAgentInteractionService);
+}
+
+function runtimeFor(manager: IAgentLifecycleService, origin: InteractionOrigin | undefined): IAgentInteractionService {
   const agentId = origin?.agentId ?? MAIN_AGENT_ID;
-  const context = manager.get(agentId);
-  if (context === undefined) {
+  const service = serviceFor(manager, agentId);
+  if (service === undefined) {
     throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent "${agentId}" does not exist`, {
       details: { agentId },
     });
   }
-  return manager.resolve(context, AgentInteraction);
+  return service;
 }
 
 export function requestSessionInteraction<TPayload, TResponse>(
@@ -53,7 +57,7 @@ export function respondSessionInteraction(
   response: unknown,
 ): void {
   for (const context of manager.list()) {
-    if (manager.resolve(context, AgentInteraction).respond(id, response)) return;
+    if (serviceFor(manager, context.agentId)?.respond(id, response)) return;
   }
 }
 
@@ -63,12 +67,12 @@ export function listSessionPendingInteractions(
 ): readonly Interaction[] {
   return manager
     .list()
-    .flatMap((context) => manager.resolve(context, AgentInteraction).listPending(kind));
+    .flatMap((context) => serviceFor(manager, context.agentId)?.listPending(kind) ?? []);
 }
 
 export function isSessionInteractionRecentlyResolved(manager: IAgentLifecycleService, id: string): boolean {
   for (const context of manager.list()) {
-    if (manager.resolve(context, AgentInteraction).isRecentlyResolved(id)) return true;
+    if (serviceFor(manager, context.agentId)?.isRecentlyResolved(id)) return true;
   }
   return false;
 }
@@ -80,7 +84,9 @@ export function onSessionInteractionDidChangePending(
   const store = new DisposableStore();
   const subscriptions = new Map<string, IDisposable>();
   const attach = (context: AgentContext): void => {
-    const subscription = manager.resolve(context, AgentInteraction).onDidChangePending(listener);
+    const service = serviceFor(manager, context.agentId);
+    if (service === undefined) return;
+    const subscription = service.onDidChangePending(listener);
     subscriptions.set(context.agentId, subscription);
     store.add(subscription);
   };
@@ -101,7 +107,9 @@ export function onSessionInteractionDidResolve(
   const store = new DisposableStore();
   const subscriptions = new Map<string, IDisposable>();
   const attach = (context: AgentContext): void => {
-    const subscription = manager.resolve(context, AgentInteraction).onDidResolve(listener);
+    const service = serviceFor(manager, context.agentId);
+    if (service === undefined) return;
+    const subscription = service.onDidResolve(listener);
     subscriptions.set(context.agentId, subscription);
     store.add(subscription);
   };

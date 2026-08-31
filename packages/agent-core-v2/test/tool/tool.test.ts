@@ -14,7 +14,6 @@ import type { TokenUsage } from '#/kosong/contract/usage';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { reminderAgentRuntimeProvider, AgentReminder } from '#/features/reminder/reminderAgentRuntime';
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
@@ -99,12 +98,6 @@ import {
 import { executeTool } from '../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../agent/agentContext/stubs';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
-import { ManagedAgent } from '#/session/agentLifecycle/managedAgent';
-import { AgentTodo, todoAgentRuntimeProvider } from '#/features/todo/todoAgentRuntime';
-import { AgentInteraction, interactionAgentRuntimeProvider } from '#/features/interaction/interactionAgentRuntime';
-import { AgentCron, cronAgentRuntimeProvider } from '#/features/cron/cronAgentRuntime';
-import { AgentGoal, goalAgentRuntimeProvider } from '#/features/goal/goalAgentRuntime';
-import { AgentSkill, skillAgentRuntimeProvider } from '#/features/skill/skillAgentRuntime';
 
 const signal = new AbortController().signal;
 
@@ -229,7 +222,6 @@ interface AgentLifecycleStub extends IAgentLifecycleService, ISessionSubagentSer
   readonly run: ReturnType<typeof vi.fn<ISessionSubagentService['run']>>;
   readonly get: ReturnType<typeof vi.fn<IAgentLifecycleService['get']>>;
   readonly publishedEvents: Event2[];
-  restoreRuntimes(agent: AgentContext): Promise<void>;
   addHandle(
     agentId: string,
     profileName: string,
@@ -246,7 +238,6 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
   const handles = new Map<string, IAgentScopeHandle>();
   const servicesByAgentId = new Map(options.handleServices);
   const contextsByAgentId = new Map<string, AgentContext>();
-  let adoptedManaged: ManagedAgent | undefined;
   const publishedEvents: Event2[] = [];
   const contextFor = (agentId: string): AgentContext => {
     let context = contextsByAgentId.get(agentId);
@@ -422,71 +413,10 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
     get: vi.fn((agentId: string) => contextsByAgentId.get(agentId)),
     handleOf: vi.fn((agentId: string) => handles.get(agentId)),
     list: vi.fn(() => [...handles.keys()].map((agentId) => contextFor(agentId))),
-    resolve: vi.fn(((agent, definition) => {
-      if (adoptedManaged !== undefined && adoptedManaged.context.agentId === agent.agentId) {
-        return adoptedManaged.runtimeSet.resolve(definition);
-      }
-      throw new Error('unexpected resolve');
-    }) as IAgentLifecycleService['resolve']),
-    inspect: vi.fn((agent) => {
-      if (adoptedManaged !== undefined && adoptedManaged.context.agentId === agent.agentId) {
-        return {
-          identity: { agentId: agent.agentId, generation: agent.generation },
-          contributions: adoptedManaged.runtimeSet.inspect(),
-        };
-      }
-      throw new Error('unexpected inspect');
-    }),
     adopt: vi.fn((adopted) => {
       const adoptedHandle = adopted as IAgentScopeHandle;
       handles.set(adoptedHandle.id, adoptedHandle);
-      adoptedManaged = new ManagedAgent(agentContextOf(adoptedHandle), adoptedHandle, [
-        {
-          definition: AgentReminder,
-          provider: reminderAgentRuntimeProvider,
-          generation: 1,
-          active: true,
-        },
-        {
-          definition: AgentTodo,
-          provider: todoAgentRuntimeProvider,
-          generation: 1,
-          active: true,
-        },
-        {
-          definition: AgentInteraction,
-          provider: interactionAgentRuntimeProvider,
-          generation: 1,
-          active: true,
-        },
-        {
-          definition: AgentCron,
-          provider: cronAgentRuntimeProvider,
-          generation: 1,
-          active: true,
-        },
-        {
-          definition: AgentGoal,
-          provider: goalAgentRuntimeProvider,
-          generation: 1,
-          active: true,
-        },
-        {
-          definition: AgentSkill,
-          provider: skillAgentRuntimeProvider,
-          generation: 1,
-          active: true,
-        },
-      ]);
-      return adoptedManaged.context;
-    }),
-    attachRuntimes: vi.fn(() => {
-      adoptedManaged?.attachDurableRuntimes();
-    }),
-    restoreRuntimes: vi.fn(async (agent) => {
-      const managed = adoptedManaged;
-      if (managed === undefined || managed.context.agentId !== agent.agentId) return;
-      await managed.runtimeSet.restore();
+      return agentContextOf(adoptedHandle);
     }),
     broadcastPermissionMode: vi.fn(),
     remove: vi.fn(async (agent) => {
@@ -3848,7 +3778,7 @@ describe('Agent tools', () => {
     });
 
     it('routes registered user tools through tool.call request/response', async () => {
-      await ctx.restoreRuntimes();
+      await ctx.restorePersisted();
       ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, lookupCall);
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Look up moon' }] });
       expect(
