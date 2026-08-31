@@ -236,6 +236,21 @@ describe('createKeyringMcpOAuthStore', () => {
     expect(fallback.calls).toEqual([{ op: 'remove', key: 'srv-tokens.json' }]);
   });
 
+  it('does not delete a newly written credential when the service is the default service', async () => {
+    const keyring = new FakeKeyring();
+    const fallback = createFallback();
+    const store = createKeyringMcpOAuthStore(
+      keyring,
+      fallback.store,
+      undefined,
+      KEYRING_MCP_OAUTH_SERVICE,
+    );
+
+    await store.write('srv-tokens.json', { token: 'new' });
+
+    expect(keyringValue(keyring, 'srv-tokens.json')).toBe(JSON.stringify({ token: 'new' }));
+  });
+
   it('removes from both stores', async () => {
     const keyring = new FakeKeyring();
     keyring.store.set(`${KEYRING_MCP_OAUTH_SERVICE} srv-tokens.json`, JSON.stringify({ token: 'x' }));

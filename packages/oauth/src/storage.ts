@@ -12,7 +12,7 @@
  * undefined (never throws). Callers treat undefined as "no token stored".
  */
 
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import {
   chmodSync,
   closeSync,
@@ -44,7 +44,12 @@ export interface FileTokenAccess {
   load(): Promise<TokenInfo | undefined>;
   save(token: TokenInfo): Promise<void>;
   remove(): Promise<void>;
+  removeFile(): Promise<void>;
   removeIfMatches(expected: string): Promise<boolean>;
+  isRemovalMarked(): boolean;
+  isFileChangedSinceRemoval(): boolean;
+  markRemoved(): void;
+  clearRemoval(): void;
 }
 
 export async function withFileLock<T>(target: string, fn: () => Promise<T>): Promise<T> {
@@ -109,7 +114,17 @@ export class FileTokenStorage implements TokenStorage {
     return join(this.dir, `${name}.lock-target`);
   }
 
+  private removalMarkerFor(name: string): string {
+    assertValidTokenName(name);
+    return join(this.dir, `${name}.removed`);
+  }
+
   protected loadUnlocked(name: string): TokenInfo | undefined {
+    const removalMarker = this.readRemovalMarkerUnlocked(name);
+    if (removalMarker !== undefined) {
+      if (!this.isFileChangedSinceRemovalUnlocked(name, removalMarker)) return undefined;
+      this.clearRemovalUnlocked(name);
+    }
     const file = this.pathFor(name);
     let raw: string;
     try {
@@ -153,15 +168,112 @@ export class FileTokenStorage implements TokenStorage {
       }
       throw error;
     }
+    try {
+      this.clearRemovalUnlocked(name);
+    } catch (error) {
+      try {
+        unlinkSync(target);
+      } catch {
+        /* ignore */
+      }
+      throw error;
+    }
   }
 
   protected removeUnlocked(name: string): void {
+    this.markRemovedUnlocked(name);
+    this.removeFileUnlocked(name);
+  }
+
+  protected removeFileUnlocked(name: string): void {
     try {
       unlinkSync(this.pathFor(name));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
         throw error;
       }
+    }
+  }
+
+  private isRemovalMarkedUnlocked(name: string): boolean {
+    return this.readRemovalMarkerUnlocked(name) !== undefined;
+  }
+
+  private readRemovalMarkerUnlocked(name: string): { readonly fileDigest: string | null } | undefined {
+    try {
+      const raw = readFileSync(this.removalMarkerFor(name), 'utf-8');
+      if (raw.length === 0) return { fileDigest: null };
+      const parsed: unknown = JSON.parse(raw);
+      if (
+        typeof parsed !== 'object' ||
+        parsed === null ||
+        (parsed as { version?: unknown }).version !== 1 ||
+        !('file_digest' in parsed) ||
+        (parsed as { file_digest?: unknown }).file_digest !== null &&
+          typeof (parsed as { file_digest?: unknown }).file_digest !== 'string'
+      ) {
+        throw new Error(`Invalid removal marker for token "${name}"`);
+      }
+      return { fileDigest: (parsed as { file_digest: string | null }).file_digest };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      if (error instanceof SyntaxError) {
+        throw new TypeError(`Invalid removal marker for token "${name}"`, { cause: error });
+      }
+      throw error;
+    }
+  }
+
+  private isFileChangedSinceRemovalUnlocked(
+    name: string,
+    marker: { readonly fileDigest: string | null },
+  ): boolean {
+    let raw: string;
+    try {
+      raw = readFileSync(this.pathFor(name), 'utf-8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      throw error;
+    }
+    if (marker.fileDigest === null) return true;
+    return createHash('sha256').update(raw).digest('hex') !== marker.fileDigest;
+  }
+
+  private markRemovedUnlocked(name: string): void {
+    this.ensureDir();
+    let fileDigest: string | null = null;
+    try {
+      fileDigest = createHash('sha256').update(readFileSync(this.pathFor(name))).digest('hex');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    const marker = this.removalMarkerFor(name);
+    const tmp = `${marker}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
+    try {
+      const fd = openSync(tmp, 'w', 0o600);
+      try {
+        const data = Buffer.from(JSON.stringify({ version: 1, file_digest: fileDigest }) + '\n');
+        writeSync(fd, data, 0, data.length);
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+      renameSync(tmp, marker);
+    } catch (error) {
+      try {
+        unlinkSync(tmp);
+      } catch {
+        /* ignore */
+      }
+      throw error;
+    }
+  }
+
+  private clearRemovalUnlocked(name: string): void {
+    try {
+      unlinkSync(this.removalMarkerFor(name));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
   }
 
@@ -220,7 +332,17 @@ export class FileTokenStorage implements TokenStorage {
         remove: async () => {
           this.removeUnlocked(name);
         },
+        removeFile: async () => {
+          this.removeFileUnlocked(name);
+        },
         removeIfMatches: async (expected) => this.removeIfMatchesUnlocked(name, expected),
+        isRemovalMarked: () => this.isRemovalMarkedUnlocked(name),
+        isFileChangedSinceRemoval: () => {
+          const marker = this.readRemovalMarkerUnlocked(name);
+          return marker !== undefined && this.isFileChangedSinceRemovalUnlocked(name, marker);
+        },
+        markRemoved: () => this.markRemovedUnlocked(name),
+        clearRemoval: () => this.clearRemovalUnlocked(name),
       }),
     );
   }
@@ -251,6 +373,12 @@ export class FileTokenStorage implements TokenStorage {
     } catch {
       return [];
     }
-    return entries.filter((e) => e.endsWith('.json')).map((e) => e.slice(0, -'.json'.length));
+    return entries
+      .filter((e) => e.endsWith('.json'))
+      .map((e) => e.slice(0, -'.json'.length))
+      .filter((name) => {
+        const marker = this.readRemovalMarkerUnlocked(name);
+        return marker === undefined || this.isFileChangedSinceRemovalUnlocked(name, marker);
+      });
   }
 }

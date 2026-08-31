@@ -9,7 +9,7 @@
  * after every test.
  */
 
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -737,6 +737,28 @@ describe('KeyringTokenStorage', () => {
     await storage.remove('kimi-code');
     expect(keyring.store.size).toBe(0);
     expect(existsSync(join(dir, 'kimi-code.json'))).toBe(false);
+  });
+
+  it('does not resurrect a keyring credential after a file-side removal marker', async () => {
+    const token = sampleToken();
+    await storage.save('kimi-code', token);
+    await new FileTokenStorage(dir).remove('kimi-code');
+
+    await expect(storage.load('kimi-code')).resolves.toBeUndefined();
+    expect(keyring.findAccounts(KEYRING_SERVICE)).not.toContain('kimi-code');
+  });
+
+  it('save() clears a removal marker and prunes a file recreated by a file-only process', async () => {
+    const token = sampleToken({ accessToken: 'stale-file' });
+    await storage.remove('kimi-code');
+    writeFileSync(join(dir, 'kimi-code.json'), JSON.stringify(tokenToWire(token)));
+
+    const restored = sampleToken({ accessToken: 'restored-keyring' });
+    await storage.save('kimi-code', restored);
+
+    expect(await storage.load('kimi-code')).toEqual(restored);
+    expect(existsSync(join(dir, 'kimi-code.json'))).toBe(false);
+    expect(existsSync(join(dir, 'kimi-code.removed'))).toBe(false);
   });
 
   it('remove() does not throw when nothing exists', async () => {

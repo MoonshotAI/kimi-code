@@ -5,8 +5,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import {
   createKimiDeviceId,
-  FileTokenStorage,
   KIMI_CODE_PROVIDER_NAME,
+  resolveTokenStorage,
   resolveKimiTokenStorageName,
 } from '@moonshot-ai/kimi-code-oauth';
 import { WebSocket, type RawData } from 'ws';
@@ -293,7 +293,7 @@ export async function startRemoteControl(
   if (options.localServerToken.length === 0) {
     throw new Error('Remote Control requires local server authentication.');
   }
-  const storage = new FileTokenStorage(join(options.homeDir, 'credentials'));
+  const storage = resolveTokenStorage(join(options.homeDir, 'credentials'));
   const token = await storage.load(
     resolveKimiTokenStorageName({ providerName: KIMI_CODE_PROVIDER_NAME }),
   );

@@ -30,7 +30,8 @@ export function createKeyringMcpOAuthStore(
   lockTarget?: (key: string) => string,
   legacyService?: string,
 ): McpOAuthStore {
-  const previousService = legacyService ??
+  const previousService =
+    legacyService ??
     (service === KEYRING_MCP_OAUTH_SERVICE ? undefined : KEYRING_MCP_OAUTH_SERVICE);
   let degraded = false;
   let degradationError: unknown;
@@ -136,7 +137,7 @@ export function createKeyringMcpOAuthStore(
             await fallback.write(key, data);
             return;
           }
-          if (previousService !== undefined) {
+          if (previousService !== undefined && previousService !== service) {
             try {
               removeKeyringEntry(api, previousService, key);
             } catch (error) {
@@ -156,7 +157,9 @@ export function createKeyringMcpOAuthStore(
         let keyringError: unknown;
         try {
           removeKeyringEntry(api, service, key);
-          if (previousService !== undefined) removeKeyringEntry(api, previousService, key);
+          if (previousService !== undefined && previousService !== service) {
+            removeKeyringEntry(api, previousService, key);
+          }
         } catch (error) {
           keyringError = error;
           degrade('remove', error);

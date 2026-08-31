@@ -60,7 +60,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { assertValidTokenName, FileTokenStorage } from './storage';
-import type { TokenStorage } from './storage';
+import type { FileTokenAccess, TokenStorage } from './storage';
 import { OAuthStorageUnavailableError } from './errors';
 import { classifyToken } from './token-state';
 import type { TokenInfo, TokenInfoWire } from './types';
@@ -227,40 +227,46 @@ export class KeyringTokenStorage implements TokenStorage {
 
   async load(name: string): Promise<TokenInfo | undefined> {
     assertValidTokenName(name);
-    if (keyringDegraded) {
-      const fallback = await this.legacy.load(name);
-      if (fallback !== undefined) return fallback;
-      throw new OAuthStorageUnavailableError(`keyring unavailable while loading credential "${name}"`, {
-        cause: keyringDegradationError,
-      });
-    }
-
-    const read = this.tryKeyring('load', () =>
-      this.keyring.createEntry(this.service, name).getPassword(),
-    );
-    // Degraded: read the file as-is, WITHOUT migrating it.
-    if (!read.ok) {
-      const fallback = await this.legacy.load(name);
-      if (fallback !== undefined) return fallback;
-      throw new OAuthStorageUnavailableError(`keyring unavailable while loading credential "${name}"`, {
-        cause: read.error,
-      });
-    }
-    const raw = read.value;
-    if (raw !== null) {
-      return this.reconcileOnHit(name, raw);
-    }
-
-    // Not in the keychain — migrate any plaintext token written by an older
-    // file-only build, then drop the cleartext copy under the file backend's
-    // per-token lock.
-    //
-    // Compare-and-delete guards against a concurrent cooperating file-backend
-    // writer saving a NEWER token between our copy-in and our remove. We never
-    // unlink a file whose serialized value differs from the one we just made
-    // authoritative in the keychain — only a token we actually migrated is
-    // deleted.
     return this.legacy.withTokenLock(name, async (access) => {
+      if (keyringDegraded) {
+        const fallback = await access.load();
+        if (fallback !== undefined) return fallback;
+        throw new OAuthStorageUnavailableError(`keyring unavailable while loading credential "${name}"`, {
+          cause: keyringDegradationError,
+        });
+      }
+      if (access.isRemovalMarked()) {
+        if (access.isFileChangedSinceRemoval()) {
+          access.clearRemoval();
+        } else {
+          const survived = new Error(`failed to delete keyring credential "${name}"`);
+          const removed = this.tryKeyring('remove', () => {
+            const deleted = this.keyring.createEntry(this.service, name).deleteCredential();
+            if (!deleted && this.keyring.findAccounts(this.service).includes(name)) {
+              throw survived;
+            }
+          });
+          if (!removed.ok) {
+            throw new OAuthStorageUnavailableError(`keyring unavailable while loading credential "${name}"`, {
+              cause: removed.error,
+            });
+          }
+          return undefined;
+        }
+      }
+      const read = this.tryKeyring('load', () =>
+        this.keyring.createEntry(this.service, name).getPassword(),
+      );
+      if (!read.ok) {
+        const fallback = await access.load();
+        if (fallback !== undefined) return fallback;
+        throw new OAuthStorageUnavailableError(`keyring unavailable while loading credential "${name}"`, {
+          cause: read.error,
+        });
+      }
+      const raw = read.value;
+      if (raw !== null) return this.reconcileOnHitUnlocked(name, raw, access);
+
       const first = await access.load();
       if (first === undefined) return undefined;
       let serialized = this.serialize(first);
@@ -324,62 +330,50 @@ export class KeyringTokenStorage implements TokenStorage {
    * authoritative (strict `>`). Deliberate — it avoids any breaking change to
    * the on-disk + keychain wire format.
    */
-  private async reconcileOnHit(name: string, raw: string): Promise<TokenInfo | undefined> {
+  private async reconcileOnHitUnlocked(
+    name: string,
+    raw: string,
+    access: FileTokenAccess,
+  ): Promise<TokenInfo | undefined> {
     const keyringToken = this.deserialize(raw);
-    return this.legacy.withTokenLock(name, async (access) => {
-      const fileToken = await access.load();
+    const fileToken = await access.load();
 
-      if (fileToken === undefined) {
-        return keyringToken;
-      }
-
-      if (keyringToken === undefined) {
-        const fileSerialized = this.serialize(fileToken);
-        const write = this.tryKeyring('load', () => {
-          this.keyring.createEntry(this.service, name).setPassword(fileSerialized);
-        });
-        if (!write.ok) return fileToken;
-        if (await access.removeIfMatches(fileSerialized)) this.observer?.onMigrated?.(name);
-        return fileToken;
-      }
-
-      // Adopt the file token ONLY when both are valid (not tombstones) and the
-      // file was ISSUED strictly later: the flip-flop repair — make the newer
-      // token keychain-authoritative now.
-      if (
-        classifyToken(keyringToken).kind === 'valid' &&
-        classifyToken(fileToken).kind === 'valid' &&
-        issuedAt(fileToken) > issuedAt(keyringToken)
-      ) {
-        const fileSerialized = this.serialize(fileToken);
-        const write = this.tryKeyring('load', () => {
-          this.keyring.createEntry(this.service, name).setPassword(fileSerialized);
-        });
-        if (!write.ok) {
-          // Degraded mid-reconcile: the file token is authoritative for this
-          // load, and the plaintext copy is now the working store's — leave it.
-          return fileToken;
-        }
-        // Compare-and-delete: re-read and unlink ONLY if the on-disk bytes still
-        // equal what we just made authoritative — never delete a token whose
-        // bytes changed under a concurrent writer.
-        if (await access.removeIfMatches(fileSerialized)) {
-          this.observer?.onMigrated?.(name);
-        }
-        return fileToken;
-      }
-
-      // Keychain stays authoritative (keyring newer/equal, or EITHER side is a
-      // tombstone — the no-un-revoke invariant; symmetrically, a file-side
-      // tombstone never force-revokes a valid keychain token). Prune the
-      // plaintext ONLY when it equals the authoritative keychain value after
-      // canonical re-serialization (a redundant duplicate); a differing file is
-      // left in place — we never delete a token we did not make authoritative.
-      if (this.serialize(fileToken) === raw) {
-        await access.removeIfMatches(raw);
-      }
+    if (fileToken === undefined) {
       return keyringToken;
-    });
+    }
+
+    if (keyringToken === undefined) {
+      const fileSerialized = this.serialize(fileToken);
+      const write = this.tryKeyring('load', () => {
+        this.keyring.createEntry(this.service, name).setPassword(fileSerialized);
+      });
+      if (!write.ok) return fileToken;
+      if (await access.removeIfMatches(fileSerialized)) this.observer?.onMigrated?.(name);
+      return fileToken;
+    }
+
+    if (
+      classifyToken(keyringToken).kind === 'valid' &&
+      classifyToken(fileToken).kind === 'valid' &&
+      issuedAt(fileToken) > issuedAt(keyringToken)
+    ) {
+      const fileSerialized = this.serialize(fileToken);
+      const write = this.tryKeyring('load', () => {
+        this.keyring.createEntry(this.service, name).setPassword(fileSerialized);
+      });
+      if (!write.ok) {
+        return fileToken;
+      }
+      if (await access.removeIfMatches(fileSerialized)) {
+        this.observer?.onMigrated?.(name);
+      }
+      return fileToken;
+    }
+
+    if (this.serialize(fileToken) === raw) {
+      await access.removeIfMatches(raw);
+    }
+    return keyringToken;
   }
 
   async save(name: string, token: TokenInfo): Promise<void> {
@@ -388,17 +382,16 @@ export class KeyringTokenStorage implements TokenStorage {
     // orphan a credential under an invalid account before the legacy name
     // check threw.
     assertValidTokenName(name);
-    if (keyringDegraded) {
-      if (classifyToken(token).kind === 'revoked') {
-        throw new OAuthStorageUnavailableError(`keyring unavailable while saving revoked credential "${name}"`, {
-          cause: keyringDegradationError,
-        });
-      }
-      await this.legacy.save(name, token);
-      return;
-    }
     await this.legacy.withTokenLock(name, async (access) => {
-      const legacyBefore = await access.load();
+      if (keyringDegraded) {
+        if (classifyToken(token).kind === 'revoked') {
+          throw new OAuthStorageUnavailableError(`keyring unavailable while saving revoked credential "${name}"`, {
+            cause: keyringDegradationError,
+          });
+        }
+        await access.save(token);
+        return;
+      }
       const write = this.tryKeyring('save', () => {
         this.keyring.createEntry(this.service, name).setPassword(this.serialize(token));
       });
@@ -411,8 +404,25 @@ export class KeyringTokenStorage implements TokenStorage {
         await access.save(token);
         return;
       }
-      if (legacyBefore !== undefined) {
-        await access.removeIfMatches(this.serialize(legacyBefore));
+      try {
+        await access.removeFile();
+        access.clearRemoval();
+      } catch (error) {
+        const rollback = this.tryKeyring('remove', () => {
+          const deleted = this.keyring.createEntry(this.service, name).deleteCredential();
+          if (!deleted && this.keyring.findAccounts(this.service).includes(name)) {
+            throw new Error(`failed to roll back keyring credential "${name}"`, { cause: error });
+          }
+        });
+        if (!rollback.ok) {
+          const rollbackMessage =
+            rollback.error instanceof Error ? rollback.error.message : String(rollback.error);
+          throw new Error(
+            `failed to finalize keyring credential "${name}": ${rollbackMessage}`,
+            { cause: error },
+          );
+        }
+        throw new Error(`failed to finalize credential "${name}"`, { cause: error });
       }
     });
   }
@@ -423,6 +433,7 @@ export class KeyringTokenStorage implements TokenStorage {
     // (e.g. logout before the token was ever migrated). Missing credentials
     // are a no-op, not an error.
     const gone = await this.legacy.withTokenLock(name, async (access) => {
+      access.markRemoved();
       const result = this.tryKeyring('remove', () => {
         const deleted = this.keyring.createEntry(this.service, name).deleteCredential();
         if (deleted) return true;
