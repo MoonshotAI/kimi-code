@@ -83,6 +83,8 @@ interface ProviderView {
   readonly oauth?: ManagedKimiOAuthRef;
   readonly source?: unknown;
   readonly env?: unknown;
+  /** When true, the OpenAI-compatible catalog refresh keeps only free models. */
+  readonly freeModelsOnly?: boolean;
 }
 
 function getActiveProviderApiKey(provider: ProviderView): string | undefined {
@@ -122,7 +124,10 @@ function readProvider(
 ): ProviderView | undefined {
   const provider = config.providers[providerId];
   if (provider === undefined) return undefined;
-  return provider as ProviderView;
+  const view = provider as ProviderView;
+  const rawFree = (provider as Record<string, unknown>)['free_models_only'];
+  const freeModelsOnly = typeof rawFree === 'boolean' ? rawFree : undefined;
+  return { ...view, freeModelsOnly };
 }
 
 function readModel(
@@ -865,10 +870,23 @@ export async function refreshProviderCatalog(
       });
       if (models.length === 0) continue;
 
+      // Per-provider opt-in: when `free_models_only` is set, keep only models
+      // whose id contains "free" (case-insensitive — matches `:free` on
+      // OpenRouter/kilo and `-free` on opencode). The filter runs before
+      // enrichment so dropped (paid) models are never looked up or written.
+      const filteredModels = provider.freeModelsOnly
+        ? models.filter((m) => m.id.toLowerCase().includes('free'))
+        : models;
+      if (filteredModels.length === 0) {
+        // No free models returned: nothing to add. Skip so an existing catalog
+        // is left untouched (toggle the flag off to restore paid models).
+        continue;
+      }
+
       config = await rebaseSelectionAfterFetch(host, config);
       const aliasPrefix = `${providerId}/`;
       const next = structuredClone(config);
-      applyOpenAiCompatibleCatalog(next, providerId, models, aliasPrefix);
+      applyOpenAiCompatibleCatalog(next, providerId, filteredModels, aliasPrefix);
       const refreshedAliasKeys = providerRefreshAliasKeys(config, next, providerId, aliasPrefix);
       restoreProviderAliases(
         next,

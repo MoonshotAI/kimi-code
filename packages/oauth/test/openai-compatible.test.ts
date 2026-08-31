@@ -408,3 +408,274 @@ describe('refreshProviderCatalog — OpenAI-compatible on-demand', () => {
     expect(result.changed.map((c) => c.providerId)).toEqual(['opencode']);
   });
 });
+
+describe('refreshProviderCatalog — free_models_only filter', () => {
+  const baseUrl = 'https://openrouter.ai/api/v1';
+
+  it('keeps a model id containing :free (case-insensitive) when free_models_only is true', async () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        openrouter: { type: 'openai', baseUrl, apiKey: 'sk-or', free_models_only: true },
+      },
+      telemetry: true,
+    };
+    const host = makeRefreshHost(config);
+    const fetchMock = vi.fn<FetchMock>(async () =>
+      new Response(
+        JSON.stringify({ data: [{ id: 'anthropic/claude-3.5-sonnet:free' }, { id: 'gpt-4o' }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await refreshProviderCatalog(host, {});
+
+    expect(result.failed).toEqual([]);
+    const models = (await host.getConfig()).models ?? {};
+    // Only the free model is kept; gpt-4o (no "free") is dropped.
+    expect(Object.keys(models)).toEqual(['openrouter/anthropic/claude-3.5-sonnet:free']);
+  });
+
+  it('drops a model id without free when free_models_only is true', async () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        openrouter: { type: 'openai', baseUrl, apiKey: 'sk-or', free_models_only: true },
+      },
+      telemetry: true,
+    };
+    const host = makeRefreshHost(config);
+    const fetchMock = vi.fn<FetchMock>(async () =>
+      new Response(
+        JSON.stringify({ data: [{ id: 'gpt-4o' }, { id: 'gpt-4o-mini' }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await refreshProviderCatalog(host, {});
+
+    expect(result.changed).toEqual([]);
+    expect(result.unchanged).toEqual([]);
+    expect(Object.keys((await host.getConfig()).models ?? {})).toEqual([]);
+  });
+
+  it('keeps every fetched model when free_models_only is unset', async () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        openrouter: { type: 'openai', baseUrl, apiKey: 'sk-or' },
+      },
+      telemetry: true,
+    };
+    const host = makeRefreshHost(config);
+    const fetchMock = vi.fn<FetchMock>(async () =>
+      new Response(
+        JSON.stringify({ data: [{ id: 'gpt-4o' }, { id: 'anthropic/claude-3.5-sonnet:free' }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await refreshProviderCatalog(host, {});
+
+    expect(result.failed).toEqual([]);
+    const ids = Object.keys((await host.getConfig()).models ?? {});
+    expect(ids).toEqual([
+      'openrouter/gpt-4o',
+      'openrouter/anthropic/claude-3.5-sonnet:free',
+    ]);
+  });
+
+  it('keeps every fetched model when free_models_only is false', async () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        openrouter: { type: 'openai', baseUrl, apiKey: 'sk-or', free_models_only: false },
+      },
+      telemetry: true,
+    };
+    const host = makeRefreshHost(config);
+    const fetchMock = vi.fn<FetchMock>(async () =>
+      new Response(
+        JSON.stringify({ data: [{ id: 'gpt-4o' }, { id: 'anthropic/claude-3.5-sonnet:free' }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await refreshProviderCatalog(host, {});
+
+    expect(result.failed).toEqual([]);
+    const ids = Object.keys((await host.getConfig()).models ?? {});
+    expect(ids).toEqual([
+      'openrouter/gpt-4o',
+      'openrouter/anthropic/claude-3.5-sonnet:free',
+    ]);
+  });
+
+  it('filters only the provider with the flag; a sibling without it keeps its full catalog', async () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        openrouter: { type: 'openai', baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'sk-or', free_models_only: true },
+        kilo: { type: 'openai', baseUrl: 'https://api.kilo.ai/api/gateway', apiKey: 'sk-kilo' },
+      },
+      telemetry: true,
+    };
+    const host = makeRefreshHost(config);
+    const fetchMock = vi.fn<FetchMock>(async (input) => {
+      const url = fetchInputUrl(input);
+      if (url.includes('openrouter.ai')) {
+        return new Response(
+          JSON.stringify({ data: [{ id: 'anthropic/claude-3.5-sonnet:free' }, { id: 'gpt-4o' }] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response(
+        JSON.stringify({ data: [{ id: 'kilo-model' }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await refreshProviderCatalog(host, {});
+
+    expect(result.failed).toEqual([]);
+    const orModels = Object.keys((await host.getConfig()).models ?? {}).filter((k) => k.startsWith('openrouter/'));
+    const kiloModels = Object.keys((await host.getConfig()).models ?? {}).filter((k) => k.startsWith('kilo/'));
+    expect(orModels).toEqual(['openrouter/anthropic/claude-3.5-sonnet:free']);
+    expect(kiloModels).toEqual(['kilo/kilo-model']);
+  });
+
+  it('scoped refresh honors free_models_only identically', async () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        openrouter: { type: 'openai', baseUrl, apiKey: 'sk-or', free_models_only: true },
+      },
+      telemetry: true,
+    };
+    const host = makeRefreshHost(config);
+    const fetchMock = vi.fn<FetchMock>(async () =>
+      new Response(
+        JSON.stringify({ data: [{ id: 'anthropic/claude-3.5-sonnet:free' }, { id: 'gpt-4o' }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await refreshProviderCatalog(host, { providerId: 'openrouter' });
+
+    expect(result.failed).toEqual([]);
+    const ids = Object.keys((await host.getConfig()).models ?? {});
+    expect(ids).toEqual(['openrouter/anthropic/claude-3.5-sonnet:free']);
+  });
+
+  it('enriches only the retained free models (no enrichment attempted on dropped ones)', async () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        openrouter: { type: 'openai', baseUrl, apiKey: 'sk-or', free_models_only: true },
+      },
+      telemetry: true,
+    };
+    const host = makeRefreshHost(config);
+
+    // Warm models.dev with the base (free-stripped) id so we can confirm the
+    // retained model is enriched and the dropped one is not.
+    const catalog = {
+      openrouter: {
+        models: {
+          'anthropic/claude-3.5-sonnet': {
+            id: 'anthropic/claude-3.5-sonnet',
+            name: 'Claude 3.5 Sonnet',
+            limit: { context: 200000 },
+            tool_call: true,
+            reasoning: false,
+            modalities: { input: ['text'], output: ['text'] },
+          },
+        },
+      },
+    };
+    const catalogFetch = vi.fn<FetchMock>(async () =>
+      new Response(JSON.stringify(catalog), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', catalogFetch);
+    const { refreshModelsDevCatalog } = await import('../src/modelsDevCatalog');
+    await refreshModelsDevCatalog();
+
+    const endpointFetch = vi.fn<FetchMock>(async () =>
+      new Response(
+        JSON.stringify({
+          data: [
+            { id: 'anthropic/claude-3.5-sonnet:free' },
+            { id: 'gpt-4o' },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    vi.stubGlobal('fetch', endpointFetch);
+
+    const result = await refreshProviderCatalog(host, {});
+    expect(result.failed).toEqual([]);
+
+    const models = (await host.getConfig()).models ?? {};
+    const retained = models['openrouter/anthropic/claude-3.5-sonnet:free'];
+    expect(retained).toBeDefined();
+    expect(retained?.displayName).toBe('Claude 3.5 Sonnet'); // enriched from catalog
+    expect(models['openrouter/gpt-4o']).toBeUndefined(); // dropped, never enriched
+  });
+
+  it('keeps a free model absent from models.dev (fallback to base id, else provider name/id)', async () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        openrouter: { type: 'openai', baseUrl, apiKey: 'sk-or', free_models_only: true },
+      },
+      telemetry: true,
+    };
+    const host = makeRefreshHost(config);
+    // No catalog match (tencent/hy3 not in models.dev) — must still be kept.
+    const catalogFetch = vi.fn<FetchMock>(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', catalogFetch);
+    const { refreshModelsDevCatalog } = await import('../src/modelsDevCatalog');
+    await refreshModelsDevCatalog();
+
+    const endpointFetch = vi.fn<FetchMock>(async () =>
+      new Response(
+        JSON.stringify({ data: [{ id: 'tencent/hy3:free', name: 'Tencent HY3 Free' }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    vi.stubGlobal('fetch', endpointFetch);
+
+    const result = await refreshProviderCatalog(host, {});
+    expect(result.failed).toEqual([]);
+
+    const models = (await host.getConfig()).models ?? {};
+    const kept = models['openrouter/tencent/hy3:free'];
+    expect(kept).toBeDefined();
+    // Provider-reported name wins; never dropped by enrichment.
+    expect(kept?.displayName).toBe('Tencent HY3 Free');
+  });
+
+  it('free model with -free suffix (opencode style) is kept when flag is true', async () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        opencode: { type: 'openai', baseUrl: 'https://opencode.ai/zen/v1', apiKey: 'sk-oc', free_models_only: true },
+      },
+      telemetry: true,
+    };
+    const host = makeRefreshHost(config);
+    const fetchMock = vi.fn<FetchMock>(async () =>
+      new Response(
+        JSON.stringify({ data: [{ id: 'anthropic/claude-3.5-sonnet-free' }, { id: 'gpt-4o' }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await refreshProviderCatalog(host, {});
+    expect(result.failed).toEqual([]);
+    const ids = Object.keys((await host.getConfig()).models ?? {});
+    expect(ids).toEqual(['opencode/anthropic/claude-3.5-sonnet-free']);
+  });
+});
