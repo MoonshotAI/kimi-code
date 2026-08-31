@@ -11,6 +11,7 @@ import { createServices } from '#/_base/di/test';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import {
@@ -61,6 +62,7 @@ describe('WorkspaceTrustService', () => {
           IAtomicDocumentStore,
           new JsonAtomicDocumentStore(new FileStorageService(homeDir)),
         );
+        reg.defineInstance(ITelemetryService, noopTelemetryService);
         reg.define(IWorkspaceTrust, WorkspaceTrustService);
       },
     });

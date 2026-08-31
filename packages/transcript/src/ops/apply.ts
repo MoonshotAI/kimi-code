@@ -176,6 +176,7 @@ function applyTurnUpsert(state: AgentState, header: TurnHeader): ApplyResult {
 function turnEquals(turn: TranscriptTurn, header: TurnHeader): boolean {
   return (
     turn.ordinal === header.ordinal &&
+    turn.triggerPromptId === header.triggerPromptId &&
     turn.state === header.state &&
     turn.prompt === header.prompt &&
     turn.attachmentIds === header.attachmentIds &&

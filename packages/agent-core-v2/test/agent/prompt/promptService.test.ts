@@ -13,7 +13,7 @@ import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompacti
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { TurnSteer } from '#/agent/loop/turnOps';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
-import { AgentPromptService, PromptQueued, PromptStarted, PromptSteered, PromptSubmitted } from '#/agent/prompt/promptService';
+import { AgentPromptService, PromptAborted, PromptCompleted, PromptQueued, PromptStarted, PromptSteered, PromptSubmitted } from '#/agent/prompt/promptService';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -193,13 +193,18 @@ describe('AgentPromptService', () => {
   });
 
   it('steers selected prompts in FIFO order', async () => {
-    const { prompt, context, loop } = harness();
+    const { prompt, context, loop, eventBus } = harness();
+    const steered: PromptSteered[] = [];
+    eventBus.subscribe(PromptSteered, (event) => steered.push(event));
     const active = await prompt.enqueue({ message: message('active') });
     await active.launched;
     const one = await prompt.enqueue({ message: message('one') });
     const two = await prompt.enqueue({ message: message('two') });
     const handles = await prompt.steer([two.id, one.id]);
     expect(handles.map((item) => item.id)).toEqual([one.id, two.id]);
+    expect(steered.map((event) => [event.activePromptId, event.promptIds])).toEqual([
+      [active.id, [one.id, two.id]],
+    ]);
     loop.drainNextBatch(context);
   });
 
@@ -226,12 +231,15 @@ describe('AgentPromptService', () => {
   });
 
   it('aborts pending prompts and settles completion', async () => {
-    const { prompt } = harness();
+    const { prompt, eventBus } = harness();
+    const aborted: PromptAborted[] = [];
+    eventBus.subscribe(PromptAborted, (event) => aborted.push(event));
     await prompt.enqueue({ message: message('active') });
     const handle = await prompt.enqueue({ message: message('queued') });
     expect(prompt.abort(handle.id)).toBe(true);
     await expect(handle.completion).resolves.toMatchObject({ state: 'cancelled' });
     expect(prompt.list().pending).toEqual([]);
+    expect(aborted.map((event) => event.promptId)).toEqual([handle.id]);
   });
 
   it('keeps injections outside the prompt queue', async () => {
@@ -241,10 +249,13 @@ describe('AgentPromptService', () => {
   });
 
   it('settles blocked prompts', async () => {
-    const { prompt } = harness();
+    const { prompt, eventBus } = harness();
+    const completed: PromptCompleted[] = [];
+    eventBus.subscribe(PromptCompleted, (event) => completed.push(event));
     prompt.hooks.onBeforeSubmitPrompt.register('block', async (ctx, next) => { ctx.block = true; await next(); });
     const handle = await prompt.enqueue({ message: message('blocked') });
     await expect(handle.completion).resolves.toMatchObject({ state: 'blocked' });
+    expect(completed.map((event) => [event.promptId, event.reason])).toEqual([[handle.id, 'blocked']]);
   });
 
   it('delivers a blocked prompt’s compression captions right after their host message', async () => {
