@@ -871,10 +871,13 @@ describe('Session secondary-model live config', () => {
     }
   });
 
-  it('rejects when the complete config has no persisted secondary recipe', async () => {
-    const session = await makeSession(SECONDARY_BASE_CONFIG);
+  it('clears the snapshot when the complete config has no persisted secondary recipe', async () => {
+    const session = await makeSession(SECONDARY_POINTER_CONFIG);
     try {
-      expect(() => session.setSecondaryModelConfig(SECONDARY_BASE_CONFIG)).toThrow(/persist/);
+      session.setSecondaryModelConfig(SECONDARY_POINTER_CONFIG);
+      expect(session.kimiConfig?.secondaryModel).toEqual({ model: MOCK_PROVIDER.model });
+      session.setSecondaryModelConfig(SECONDARY_BASE_CONFIG);
+      expect(session.kimiConfig?.secondaryModel).toBeUndefined();
     } finally {
       await session.close();
     }
