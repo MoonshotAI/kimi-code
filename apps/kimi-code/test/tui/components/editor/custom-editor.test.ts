@@ -665,6 +665,38 @@ describe('CustomEditor paste marker expansion', () => {
     expect(editor.getText()).toContain('anything');
   });
 
+  it('swallows a trailing payload whose raw form differs only by normalization', () => {
+    const editor = makeEditor();
+    const raw = Array.from({ length: 12 }, () => 'a\tb').join('\r\n');
+    simulateLargePaste(editor, raw);
+    const normalized = raw.replace(/\r\n/g, '\n').replace(/\t/g, '    ');
+    expect(editor.getText()).toMatch(/\[paste #1/);
+
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+    expect(editor.getText()).toBe(normalized);
+
+    // The terminal echoes the raw clipboard (CRLF + tabs), not the normalized
+    // stored form — it is still the same payload and must be swallowed.
+    simulateLargePaste(editor, raw);
+    expect(editor.getText()).toBe(normalized);
+  });
+
+  it('swallows the trailing payload when the expansion carried a synthetic leading space', () => {
+    const editor = makeEditor();
+    editor.handleInput('word');
+    const paste = '/p\n'.repeat(12).trimEnd();
+    simulateLargePaste(editor, paste);
+    expect(editor.getText()).toMatch(/\[paste #1/);
+
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+    expect(editor.getText()).toBe(`word ${paste}`);
+
+    // The stored form gained a synthetic leading space at store time; the
+    // echoed raw payload has none and must still be recognized as the echo.
+    simulateLargePaste(editor, paste);
+    expect(editor.getText()).toBe(`word ${paste}`);
+  });
+
   it('falls back to the text paste path when the image paste handler rejects', async () => {
     const editor = makeEditor();
     const onTextPaste = vi.fn();

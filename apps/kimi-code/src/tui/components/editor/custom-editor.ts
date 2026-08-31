@@ -247,7 +247,7 @@ export class CustomEditor extends Editor {
     const start = payload.indexOf(BRACKET_PASTE_START) + BRACKET_PASTE_START.length;
     const end = payload.lastIndexOf(BRACKET_PASTE_END);
     const content = end > start ? payload.slice(start, end) : '';
-    if (content === expected) return;
+    if (this.canonicalizePastedText(content) === expected) return;
     super.handleInput.call(this, payload);
   }
 

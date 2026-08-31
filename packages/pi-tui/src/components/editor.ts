@@ -1137,9 +1137,11 @@ export class Editor implements Component, Focusable {
 
 	/**
 	 * Expand the paste marker under the cursor, replacing it with its stored
-	 * content and returning that content. The paste registry is preserved so
-	 * undo restores both the marker text and its entry. Returns undefined when
-	 * the cursor is not on a live marker.
+	 * content, and return the canonical clipboard text that produced it (any
+	 * synthetic leading space the path-spacing rule added is stripped — that is
+	 * the value a trailing paste payload should be compared against). The paste
+	 * registry is preserved so undo restores both the marker text and its
+	 * entry. Returns undefined when the cursor is not on a live marker.
 	 */
 	expandPasteMarkerAtCursor(): string | undefined {
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
@@ -1159,7 +1161,7 @@ export class Editor implements Component, Focusable {
 				start;
 			const newText = text.slice(0, offset) + content + text.slice(offset + match[0].length);
 			this.setText(newText, { preservePasteRegistry: true });
-			return content;
+			return this.pasteSyntheticSpacing.has(pasteId) ? content.slice(1) : content;
 		}
 		return undefined;
 	}
@@ -1242,6 +1244,27 @@ export class Editor implements Component, Focusable {
 	 */
 	private normalizeText(text: string): string {
 		return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\t/g, "    ");
+	}
+
+	/**
+	 * Normalize raw bracketed-paste text the way handlePaste stores it:
+	 * CSI-u Ctrl+<letter> sequences decoded (tmux popups re-encode control
+	 * bytes that way), line endings normalized, tabs expanded, non-printable
+	 * characters filtered. The context-dependent path-spacing adjustment is
+	 * deliberately not part of this.
+	 */
+	canonicalizePastedText(pastedText: string): string {
+		const decodedText = pastedText.replace(/\x1b\[(\d+);5u/g, (match, code) => {
+			const cp = Number(code);
+			if (cp >= 97 && cp <= 122) return String.fromCharCode(cp - 96);
+			if (cp >= 65 && cp <= 90) return String.fromCharCode(cp - 64);
+			return match;
+		});
+		const cleanText = this.normalizeText(decodedText);
+		return cleanText
+			.split("")
+			.filter((char) => char === "\n" || char.charCodeAt(0) >= 32)
+			.join("");
 	}
 
 	/**
@@ -1367,26 +1390,9 @@ export class Editor implements Component, Focusable {
 		this.exitHistoryBrowsing();
 		this.lastAction = null;
 
-		// Some terminals (e.g. tmux popups with extended-keys-format=csi-u) re-encode
-		// control bytes inside bracketed paste as CSI-u Ctrl+<letter> sequences
-		// (ESC [ <codepoint> ; 5 u). Decode those back to their literal byte so the
-		// per-char filter below preserves newlines instead of stripping ESC and
-		// leaking the printable tail (e.g. "[106;5u") into the editor.
-		const decodedText = pastedText.replace(/\x1b\[(\d+);5u/g, (match, code) => {
-			const cp = Number(code);
-			if (cp >= 97 && cp <= 122) return String.fromCharCode(cp - 96);
-			if (cp >= 65 && cp <= 90) return String.fromCharCode(cp - 64);
-			return match;
-		});
-
-		// Clean the pasted text: normalize line endings, expand tabs
-		const cleanText = this.normalizeText(decodedText);
-
-		// Filter out non-printable characters except newlines
-		let filteredText = cleanText
-			.split("")
-			.filter((char) => char === "\n" || char.charCodeAt(0) >= 32)
-			.join("");
+		// Normalize the raw payload (CSI-u decode, line endings, tabs,
+		// non-printables) the same way stored pastes are stored.
+		let filteredText = this.canonicalizePastedText(pastedText);
 
 		// If pasting a file path (starts with /, ~, or .) and the character before
 		// the cursor is a word character, prepend a space for better readability
