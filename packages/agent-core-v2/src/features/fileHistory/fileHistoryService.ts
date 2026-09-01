@@ -74,8 +74,6 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
       eventBus.subscribe(TurnStarted, (event) => {
         if (event.agentId !== this.agentCtx.agentId) return;
         this.activeTurnId = event.turnId;
-        if (!this.enabled()) return;
-        void this.enqueue(() => this.checkpoint(event.turnId, 'start'));
       }),
     );
     this._register(
@@ -83,7 +81,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
         if (event.agentId !== this.agentCtx.agentId) return;
         if (this.activeTurnId === event.turnId) this.activeTurnId = undefined;
         if (!this.enabled()) return;
-        void this.enqueue(() => this.checkpoint(event.turnId, 'end'));
+        void this.enqueue(() => this.endCheckpoint(event.turnId));
       }),
     );
     this.effect(() => () => this.queue, 'fileHistory:drain');
@@ -121,16 +119,14 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
       this.activeTurnId === turnId;
     if (end === undefined && !live) return [];
 
-    const paths = new Set<string>();
-    if (end !== undefined) for (const path of Object.keys(end.entries)) paths.add(path);
-    else for (const path of state.tracked) paths.add(path);
-    const endIndex = end === undefined ? -1 : state.checkpoints.indexOf(end);
+    const start = state.checkpoints[index]!;
+    const paths = Object.keys(end !== undefined ? end.entries : start.entries);
 
     const changes: FileHistoryChange[] = [];
     const lcsBudget = { remaining: LCS_AGGREGATE_CELL_BUDGET };
-    for (const path of [...paths].toSorted()) {
-      const before = entryAt(state.checkpoints, index, path);
-      const after = end !== undefined ? entryAt(state.checkpoints, endIndex, path) : undefined;
+    for (const path of paths.toSorted()) {
+      const before = Object.hasOwn(start.entries, path) ? start.entries[path] : undefined;
+      const after = end !== undefined ? end.entries[path] : undefined;
       if (end !== undefined && before?.version === after?.version) continue;
       if (before?.oversize === true && after?.oversize === true) {
         if (before.version !== after.version) {
@@ -196,7 +192,9 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
       (c) => c.turnId === turnId && checkpointPhaseOf(c) === phase,
     );
     if (index < 0) return undefined;
-    const entry = entryAt(state.checkpoints, index, this.pathKey(path));
+    const record = state.checkpoints[index]!;
+    const pathKey = this.pathKey(path);
+    const entry = Object.hasOwn(record.entries, pathKey) ? record.entries[pathKey] : undefined;
     if (entry === undefined || entry.oversize === true) return undefined;
     if (entry.key === null) return { version: entry.version };
     const bytes = await this.blobs.get(this.agentCtx.scope(), entry.key);
@@ -286,32 +284,34 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     );
   }
 
-  private async checkpoint(turnId: number, phase: FileHistoryCheckpointPhase): Promise<void> {
+  private async endCheckpoint(turnId: number): Promise<void> {
     const state = this.history();
-    if (state.checkpoints.some((c) => c.turnId === turnId && checkpointPhaseOf(c) === phase)) {
+    if (state.checkpoints.some((c) => c.turnId === turnId && checkpointPhaseOf(c) === 'end')) {
       return;
     }
+    const start = state.checkpoints.find(
+      (c) => c.turnId === turnId && checkpointPhaseOf(c) === 'start',
+    );
 
     const entries: Record<string, FileBackupEntry> = Object.create(null) as Record<
       string,
       FileBackupEntry
     >;
-    for (const pathKey of state.tracked) {
-      const latest = latestEntry(state.checkpoints, pathKey);
+    for (const [pathKey, before] of Object.entries(start?.entries ?? {})) {
       const nextVersion = maxVersion(state.checkpoints, pathKey) + 1;
       const current = await this.readCurrent(pathKey);
       if (current === 'unreadable') continue;
       if (current === 'missing') {
-        if (latest === undefined || latest.key !== null || latest.oversize === true) {
+        if (before.key !== null || before.oversize === true) {
           entries[pathKey] = { key: null, version: nextVersion };
         }
         continue;
       }
       if (!(current instanceof Uint8Array)) {
         if (
-          latest?.oversize !== true ||
-          latest.size !== current.oversizeBytes ||
-          latest.mtimeMs !== current.mtimeMs
+          before.oversize !== true ||
+          before.size !== current.oversizeBytes ||
+          before.mtimeMs !== current.mtimeMs
         ) {
           entries[pathKey] = {
             key: null,
@@ -324,13 +324,13 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
         continue;
       }
       const contentHash = sha256(current);
-      if (latest !== undefined && latest.contentHash === contentHash) continue;
+      if (before.contentHash === contentHash) continue;
       entries[pathKey] = await this.backup(pathKey, nextVersion, current, contentHash);
     }
 
     const evictable = evictableCheckpoints(state.checkpoints, turnId);
     await this.dispatcher.dispatch(
-      new FileHistoryCheckpointed({ agentId: this.agentCtx.agentId, turnId, phase, entries }),
+      new FileHistoryCheckpointed({ agentId: this.agentCtx.agentId, turnId, phase: 'end', entries }),
     );
     await this.evictBlobs(evictable, this.history().checkpoints);
   }
@@ -445,23 +445,15 @@ function editTargetPath(display: ToolInputDisplay | undefined): string | undefin
   return display.path;
 }
 
-function entryAt(
-  checkpoints: readonly FileHistoryCheckpointRecord[],
-  index: number,
-  path: string,
-): FileBackupEntry | undefined {
-  for (let i = index; i >= 0; i -= 1) {
-    const record = checkpoints[i]!.entries;
-    if (Object.hasOwn(record, path)) return record[path];
-  }
-  return undefined;
-}
-
 function latestEntry(
   checkpoints: readonly FileHistoryCheckpointRecord[],
   path: string,
 ): FileBackupEntry | undefined {
-  return entryAt(checkpoints, checkpoints.length - 1, path);
+  for (let i = checkpoints.length - 1; i >= 0; i -= 1) {
+    const record = checkpoints[i]!.entries;
+    if (Object.hasOwn(record, path)) return record[path];
+  }
+  return undefined;
 }
 
 function maxVersion(
