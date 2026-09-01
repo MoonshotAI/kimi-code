@@ -368,6 +368,29 @@ registerConfigSection(COMPACTION_MODEL_SECTION, CompactionModelConfigSchema, {
 });
 
 
+export const FALLBACK_MODEL_SECTION = 'fallbackModel';
+
+export const FALLBACK_MODEL_ENV = 'KIMI_FALLBACK_MODEL';
+export const FALLBACK_SECONDARY_MODEL_ENV = 'KIMI_FALLBACK_SECONDARY_MODEL';
+
+export const FallbackModelConfigSchema = ModelOverrideSchema.extend({
+  model: z.string().min(1).optional(),
+  secondaryModel: z.string().min(1).optional(),
+});
+
+export type FallbackModelConfig = z.infer<typeof FallbackModelConfigSchema>;
+
+export const fallbackModelEnvBindings = envBindings(FallbackModelConfigSchema, {
+  model: { env: FALLBACK_MODEL_ENV, parse: parseNonEmptyEnv },
+  secondaryModel: { env: FALLBACK_SECONDARY_MODEL_ENV, parse: parseNonEmptyEnv },
+});
+
+registerConfigSection(FALLBACK_MODEL_SECTION, FallbackModelConfigSchema, {
+  env: fallbackModelEnvBindings,
+  stripEnv: stripEnvBoundFields(fallbackModelEnvBindings),
+});
+
+
 export const MODEL_CATALOG_SECTION = 'modelCatalog';
 
 export const ModelCatalogConfigSchema = z.object({

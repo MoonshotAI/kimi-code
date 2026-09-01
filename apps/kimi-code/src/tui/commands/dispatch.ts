@@ -41,6 +41,8 @@ import {
   handleVisualModelCommand,
   handleSqueezeModelCommand,
   handleSqueezeModelSecondaryCommand,
+  handleFallbackModelCommand,
+  handleFallbackModelSecondaryCommand,
   handleThemeCommand,
   handleYoloCommand,
   showExperimentsPanel,
@@ -101,6 +103,8 @@ export {
   handleVisualModelCommand,
   handleSqueezeModelCommand,
   handleSqueezeModelSecondaryCommand,
+  handleFallbackModelCommand,
+  handleFallbackModelSecondaryCommand,
   handleThemeCommand,
   handleYoloCommand,
   showModelPicker,
@@ -561,6 +565,12 @@ async function handleBuiltInSlashCommand(
       return;
     case 'squeeze-model-secondary':
       await handleSqueezeModelSecondaryCommand(host, args);
+      return;
+    case 'fallback-model':
+      await handleFallbackModelCommand(host, args);
+      return;
+    case 'fallback-model-secondary':
+      await handleFallbackModelSecondaryCommand(host, args);
       return;
     case 'substitute-model':
       await handleSubstituteModelCommand(host, args);

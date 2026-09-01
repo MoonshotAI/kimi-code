@@ -42,6 +42,7 @@ const KIMI_CONFIG_DOMAINS = [
   'substituteModel',
   'visualModel',
   'compactionModel',
+  'fallbackModel',
   'mcp',
   'image',
   'modelCatalog',
@@ -54,6 +55,7 @@ const EMPTY_DEFAULT_SECTIONS: ReadonlySet<string> = new Set([
   'visualModel',
   'substituteModel',
   'compactionModel',
+  'fallbackModel',
 ]);
 
 /**

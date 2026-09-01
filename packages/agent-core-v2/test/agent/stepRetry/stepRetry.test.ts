@@ -7,6 +7,7 @@ import {
   APIStatusError,
 } from '#/kosong/contract/errors';
 import { SUBSTITUTE_MODEL_FLAG_ENV } from '#/session/substitute/flag';
+import { FALLBACK_MODEL_FLAG_ENV } from '#/session/fallback/flag';
 import { emptyUsage } from '#/kosong/contract/usage';
 import { IEventBus } from '#/app/event/eventBus';
 import { retryBackoffDelays } from '#/_base/utils/retry';
@@ -632,5 +633,165 @@ describe('retryBackoffDelays', () => {
     expect(delays[6]).toBeLessThanOrEqual(40_000);
     expect(delays[8]).toBeGreaterThanOrEqual(32_000);
     expect(delays[8]).toBeLessThanOrEqual(40_000);
+  });
+});
+
+describe('fallback model cascade', () => {
+  let ctx: TestAgentContext;
+
+  afterEach(async () => {
+    vi.useRealTimers();
+    try {
+      await ctx.expectResumeMatches();
+    } finally {
+      await ctx.dispose();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  const FALLBACK_CONFIG = {
+    models: {
+      'kimi/fallback': {
+        provider: 'test-provider',
+        model: 'fallback-model',
+        maxContextSize: 256_000,
+        capabilities: ['thinking', 'tool_use'],
+      },
+      'kimi/fallback-secondary': {
+        provider: 'test-provider',
+        model: 'fallback-model-secondary',
+        maxContextSize: 256_000,
+        capabilities: ['thinking', 'tool_use'],
+      },
+    },
+    fallbackModel: { model: 'kimi/fallback', secondaryModel: 'kimi/fallback-secondary' },
+  };
+
+  function okResponse(id: string, text: string) {
+    return {
+      id,
+      message: {
+        role: 'assistant' as const,
+        content: [{ type: 'text' as const, text }],
+        toolCalls: [],
+      },
+      usage: emptyUsage(),
+      finishReason: 'completed' as const,
+      rawFinishReason: 'stop',
+    };
+  }
+
+  function rpcEvents(name: string) {
+    return ctx.allEvents.filter((event) => event.type === '[rpc]' && event.event === name);
+  }
+
+  async function runTurn(turnId: number) {
+    void ctx.dispatcher.dispatch(new TurnStarted({ agentId: 'main', turnId, origin: { kind: 'user' } }));
+    const loop = ctx.get(IAgentLoopService);
+    loop.enqueue(new ContinuationStepRequest());
+    const resultPromise = loop.run({ turnId });
+    let settled = false;
+    void resultPromise.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    for (let i = 0; i < 200; i += 1) {
+      if (settled) break;
+      await vi.runAllTimersAsync();
+      if (!settled) {
+        await new Promise((resolve) => realSetTimeout(resolve, 1));
+      }
+    }
+    return resultPromise;
+  }
+
+  it('U1: retries on the fallback model after the primary exhausts its retry budget', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv(FALLBACK_MODEL_FLAG_ENV, 'true');
+    const modelsSeen: string[] = [];
+    ctx = createTestAgent(
+      llmGenerateServices(async (chat) => {
+        modelsSeen.push(chat.modelName);
+        if (chat.modelName === 'mock-model') {
+          throw new APIConnectionError('primary down');
+        }
+        return okResponse('fallback-response', 'answered by fallback');
+      }),
+      { initialConfig: FALLBACK_CONFIG },
+    );
+
+    const result = await runTurn(1);
+
+    expect(result.type).toBe('completed');
+    expect(modelsSeen.filter((name) => name === 'mock-model')).toHaveLength(10);
+    expect(modelsSeen).toContain('fallback-model');
+    expect(rpcEvents('warning')).toEqual([
+      expect.objectContaining({
+        args: expect.objectContaining({
+          code: 'fallback-model',
+          message: expect.stringContaining('fallback model kimi/fallback'),
+        }),
+      }),
+    ]);
+  });
+
+  it('U2: advances to the secondary fallback after both prior tiers exhaust retries', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv(FALLBACK_MODEL_FLAG_ENV, 'true');
+    const modelsSeen: string[] = [];
+    ctx = createTestAgent(
+      llmGenerateServices(async (chat) => {
+        modelsSeen.push(chat.modelName);
+        if (chat.modelName !== 'fallback-model-secondary') {
+          throw new APIConnectionError('down');
+        }
+        return okResponse('secondary-fallback-response', 'answered by secondary fallback');
+      }),
+      { initialConfig: FALLBACK_CONFIG },
+    );
+
+    const result = await runTurn(1);
+
+    expect(result.type).toBe('completed');
+    expect(modelsSeen.filter((name) => name === 'mock-model')).toHaveLength(10);
+    expect(modelsSeen.filter((name) => name === 'fallback-model')).toHaveLength(10);
+    expect(modelsSeen).toContain('fallback-model-secondary');
+    expect(rpcEvents('warning')).toEqual([
+      expect.objectContaining({
+        args: expect.objectContaining({
+          code: 'fallback-model',
+          message: expect.stringContaining('tier: primary'),
+        }),
+      }),
+      expect.objectContaining({
+        args: expect.objectContaining({
+          code: 'fallback-model',
+          message: expect.stringContaining('tier: secondary'),
+        }),
+      }),
+    ]);
+  });
+
+  it('U3: does not activate the cascade when no fallback is configured', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv(FALLBACK_MODEL_FLAG_ENV, 'true');
+    const modelsSeen: string[] = [];
+    ctx = createTestAgent(
+      llmGenerateServices(async (chat) => {
+        modelsSeen.push(chat.modelName);
+        throw new APIConnectionError('primary down');
+      }),
+      { initialConfig: { models: FALLBACK_CONFIG.models } },
+    );
+
+    const result = await runTurn(1);
+
+    expect(result.type).toBe('failed');
+    expect(modelsSeen).toEqual(['mock-model', 'mock-model', 'mock-model', 'mock-model', 'mock-model', 'mock-model', 'mock-model', 'mock-model', 'mock-model', 'mock-model']);
+    expect(rpcEvents('warning')).toEqual([]);
   });
 });
