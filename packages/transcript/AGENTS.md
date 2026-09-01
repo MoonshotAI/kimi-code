@@ -8,7 +8,7 @@ No comments — no file headers, no section banners, no statement-level narratio
 
 ## Contract documentation
 
-`docs/sdk.md` is the readable form of the package's external contract (data model, ops, WS/REST surface, derived selectors, event sources) plus the versioning rule: any contract change (entity fields, op types, frame shapes, REST responses, grade semantics) must ship with a numbered migration doc under `docs/migrations/NNNN-<title>.md`; pure additions need only a changeset. The doc currently describes the target contract of the state-model unification — until that refactor lands, `src/contract/` remains the authority.
+`docs/sdk.md` is the readable form of the package's external contract as currently implemented (data model, ops, WS/REST surface, event sources) plus the versioning rule: any contract change (entity fields, op types, frame shapes, REST responses, grade semantics) must ship with a numbered migration doc under `docs/migrations/NNNN-<title>.md`; pure additions need only a changeset. `src/contract/` remains the authority — when the two diverge, fix the doc.
 
 ## Cold rebuild
 
