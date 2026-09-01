@@ -2877,6 +2877,71 @@ describe('AgentTranscriptProjector', () => {
     }
   });
 
+  it('readColdSnapshot keeps user steer ids when a marker-folded steer lands in between', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-steer-marker-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const skillOrigin = { kind: 'skill_activation', trigger: 'model-tool', skillName: 'deploy' };
+      const records = [
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } }, time: 1000 },
+        { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] }, time: 1500 },
+        { type: 'prompt.steered', activePromptId: 'msg_active', promptIds: ['msg_u'], content: [{ type: 'text', text: 'user steer' }], steeredAt: '2026-09-01T10:00:00.000Z', time: 2000 },
+        { type: 'turn.steer', input: [{ type: 'text', text: '/deploy' }], origin: skillOrigin, time: 2500 },
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: '/deploy' }], toolCalls: [], origin: skillOrigin }, time: 2501 },
+        { type: 'turn.steer', input: [{ type: 'text', text: 'user steer' }], origin: { kind: 'user' }, time: 3000 },
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'user steer' }], toolCalls: [], origin: { kind: 'user' } }, time: 3001 },
+        { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] }, time: 4000 },
+      ];
+      await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+
+      const snapshot = await coldTranscriptService(home).readColdSnapshot('s1', 'main');
+      const turn = snapshot!.items.find((item) => item.kind === 'turn');
+      if (turn?.kind !== 'turn') throw new Error('expected turn');
+      const steerFrames = turn.steps.flatMap((step) =>
+        step.frames.filter((frame) => frame.kind === 'text' && frame.role === 'user'),
+      );
+      expect(steerFrames).toHaveLength(1);
+      expect(steerFrames[0]).toMatchObject({ text: 'user steer', promptIds: ['msg_u'] });
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('readColdSnapshot preserves pre-clear steer ids when undo drops the first post-clear prompt', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-steer-clear-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const records = [
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'one' }], toolCalls: [], origin: { kind: 'user' } }, time: 1000 },
+        { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] }, time: 1500 },
+        { type: 'prompt.steered', activePromptId: 'msg_active', promptIds: ['msg_s'], content: [{ type: 'text', text: 'same' }], steeredAt: '2026-09-01T10:00:00.000Z', time: 2000 },
+        { type: 'turn.steer', input: [{ type: 'text', text: 'same' }], origin: { kind: 'user' }, time: 2500 },
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'same' }], toolCalls: [], origin: { kind: 'user' } }, time: 3001 },
+        { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] }, time: 3500 },
+        { type: 'context.clear', time: 4000 },
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'two' }], toolCalls: [], origin: { kind: 'user' } }, time: 5000 },
+        { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'working2' }], toolCalls: [] }, time: 5500 },
+        { type: 'context.undo', count: 1, time: 6000 },
+      ];
+      await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+
+      const snapshot = await coldTranscriptService(home).readColdSnapshot('s1', 'main');
+      const turns = snapshot!.items.filter((item) => item.kind === 'turn');
+      expect(turns).toHaveLength(1);
+      const turn = turns[0];
+      if (turn?.kind !== 'turn') throw new Error('expected turn');
+      const steerFrames = turn.steps.flatMap((step) =>
+        step.frames.filter((frame) => frame.kind === 'text' && frame.role === 'user'),
+      );
+      expect(steerFrames).toHaveLength(1);
+      expect(steerFrames[0]).toMatchObject({ text: 'same', promptIds: ['msg_s'] });
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('readColdSnapshot preserves safe bundled skill provenance before the first step', async () => {
     const home = await mkdtemp(join(tmpdir(), 'transcript-cold-bundled-steer-'));
     try {

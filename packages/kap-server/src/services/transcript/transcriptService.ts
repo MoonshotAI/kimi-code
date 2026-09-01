@@ -479,6 +479,13 @@ export class TranscriptService {
       steeredIdsCount: number;
     }[] = [];
     let anchorFloor = 0;
+    let floorSteerState:
+      | {
+          steeredSnapshot: Map<string, Map<string, number>>;
+          pendingSteerCount: number;
+          steeredIdsCount: number;
+        }
+      | undefined;
     let sawTurnPrompt = false;
     for (const record of records) {
       if (record.type === 'context.undo') {
@@ -493,16 +500,25 @@ export class TranscriptService {
         if (poppedAny) {
           const top =
             anchorStack.length > anchorFloor ? anchorStack[anchorStack.length - 1] : undefined;
-          pendingSteerPromptIds.length = top?.pendingSteerCount ?? 0;
-          steeredPromptIds.length = top?.steeredIdsCount ?? 0;
+          pendingSteerPromptIds.length = top?.pendingSteerCount ?? floorSteerState?.pendingSteerCount ?? 0;
+          steeredPromptIds.length = top?.steeredIdsCount ?? floorSteerState?.steeredIdsCount ?? 0;
           steeredContents = new Map(
-            [...(top?.steeredSnapshot ?? [])].map(([key, byKind]) => [key, new Map(byKind)]),
+            [...(top?.steeredSnapshot ?? floorSteerState?.steeredSnapshot ?? [])].map(
+              ([key, byKind]) => [key, new Map(byKind)],
+            ),
           );
         }
         continue;
       }
       if (record.type === 'context.clear') {
         anchorFloor = anchorStack.length;
+        floorSteerState = {
+          steeredSnapshot: new Map(
+            [...steeredContents].map(([key, byKind]) => [key, new Map(byKind)]),
+          ),
+          pendingSteerCount: pendingSteerPromptIds.length,
+          steeredIdsCount: steeredPromptIds.length,
+        };
         continue;
       }
       if (record.type === 'context.append_message') {
