@@ -254,6 +254,22 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'fallback-model',
+    aliases: [],
+    description:
+      'Configure the fallback model (tried after the primary model exhausts its retry budget)',
+    priority: 91,
+    availability: 'always',
+  },
+  {
+    name: 'fallback-model-secondary',
+    aliases: [],
+    description:
+      'Configure the secondary fallback model (tried after the first fallback model also exhausts retries)',
+    priority: 91,
+    availability: 'always',
+  },
+  {
     name: 'substitute-model',
     aliases: [],
     description: 'Configure the substitute model for rate-limit fallback',
@@ -402,9 +418,16 @@ export const BUILTIN_SLASH_COMMANDS = [
   },
   {
     name: 'fork',
-    aliases: [],
+    aliases: ['fork-session'],
     description: 'Fork the current session into a copy without switching to it',
     priority: 80,
+  },
+  {
+    name: 'fork-and-switch',
+    aliases: [],
+    description: 'Fork the current session and switch into the fork immediately',
+    priority: 80,
+    availability: 'idle-only',
   },
   {
     name: 'title',

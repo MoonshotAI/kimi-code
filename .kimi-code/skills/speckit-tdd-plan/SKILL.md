@@ -1,0 +1,1 @@
+../../../.specify/extensions/tdd/.specify-dev/agent-commands/kimi/speckit-tdd-plan/SKILL.md

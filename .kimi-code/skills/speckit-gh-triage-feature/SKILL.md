@@ -1,0 +1,1 @@
+../../../.specify/extensions/gh-triage/.specify-dev/agent-commands/kimi/speckit-gh-triage-feature/SKILL.md

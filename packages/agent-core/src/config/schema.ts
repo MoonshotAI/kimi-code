@@ -150,6 +150,15 @@ export const CompactionModelConfigSchema = ModelAliasOverrideSchema.extend({
 
 export type CompactionModelConfig = z.infer<typeof CompactionModelConfigSchema>;
 
+export const FallbackModelConfigSchema = ModelAliasOverrideSchema.extend({
+  model: z.string().min(1).optional(),
+  // Second tier of the fallback cascade (`/fallback-model-secondary`):
+  // tried when the first-tier fallback also exhausts its retry budget.
+  secondaryModel: z.string().min(1).optional(),
+});
+
+export type FallbackModelConfig = z.infer<typeof FallbackModelConfigSchema>;
+
 export const ThinkingConfigSchema = z.object({
   enabled: z.boolean().optional(),
   effort: z.string().optional(),
@@ -403,6 +412,7 @@ export const KimiConfigSchema = z.object({
   substituteModel: SubstituteModelConfigSchema.optional(),
   visualModel: VisualModelConfigSchema.optional(),
   compactionModel: CompactionModelConfigSchema.optional(),
+  fallbackModel: FallbackModelConfigSchema.optional(),
   mcp: McpConfigSchema.optional(),
   image: ImageConfigSchema.optional(),
   modelCatalog: ModelCatalogConfigSchema.optional(),
@@ -422,6 +432,7 @@ const BackgroundConfigPatchSchema = BackgroundConfigSchema.partial();
 const SubagentConfigPatchSchema = SubagentConfigSchema.partial();
 const SecondaryModelConfigPatchSchema = SecondaryModelConfigSchema.partial();
 const SubstituteModelConfigPatchSchema = SubstituteModelConfigSchema.partial();
+const FallbackModelConfigPatchSchema = FallbackModelConfigSchema.partial();
 const McpConfigPatchSchema = McpConfigSchema.partial();
 const ImageConfigPatchSchema = ImageConfigSchema.partial();
 const ModelCatalogConfigPatchSchema = ModelCatalogConfigSchema.partial();
@@ -456,6 +467,7 @@ export const KimiConfigPatchSchema = z
     substituteModel: SubstituteModelConfigPatchSchema.optional(),
     visualModel: VisualModelConfigSchema.optional(),
     compactionModel: CompactionModelConfigSchema.optional(),
+    fallbackModel: FallbackModelConfigPatchSchema.optional(),
     mcp: McpConfigPatchSchema.optional(),
     image: ImageConfigPatchSchema.optional(),
     modelCatalog: ModelCatalogConfigPatchSchema.optional(),

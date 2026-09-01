@@ -1,0 +1,1 @@
+../../../.specify/extensions/chore/.specify-dev/agent-commands/kimi/speckit-chore-pr/SKILL.md

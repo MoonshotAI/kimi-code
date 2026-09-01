@@ -25,8 +25,8 @@ function makeConfig(value: Record<string, boolean> | undefined): IConfigService 
   } as unknown as IConfigService;
 }
 
-function ctx(): { toolCallId: string; signal: AbortSignal } {
-  return { toolCallId: 't1', signal: new AbortController().signal };
+function ctx(): { turnId: number; toolCallId: string; signal: AbortSignal } {
+  return { turnId: 1, toolCallId: 't1', signal: new AbortController().signal };
 }
 
 const DISABLED_MESSAGE = 'Web search is disabled by configuration.';

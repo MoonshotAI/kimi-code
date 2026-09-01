@@ -26,6 +26,8 @@ import {
   resolveSubstituteModelAlias,
 } from '#/session/substitute/configSection';
 import { substituteModelActiveKey } from '#/session/substitute/state';
+import { resolveFallbackBinding } from '#/session/fallback/configSection';
+import { fallbackModelActiveKey, type ActiveFallbackModel } from '#/session/fallback/state';
 import { IEventBus } from '#/app/event/eventBus';
 import { AgentEvent2, registerEvent2Class } from '#/app/event/event2';
 import { unwrapErrorCause } from '#/errors';
@@ -103,6 +105,7 @@ export class AgentStepRetryService extends Disposable implements IAgentStepRetry
     this.states.contributeState(stepRetryLastFailedDriverIdKey);
     this.states.contributeState(stepRetryFailedAttemptsKey);
     this.states.contributeState(substituteModelActiveKey);
+    this.states.contributeState(fallbackModelActiveKey);
     this._register(
       this.loopService.registerLoopErrorHandler({
         id: 'step-retry',
@@ -173,6 +176,9 @@ export class AgentStepRetryService extends Disposable implements IAgentStepRetry
       return false;
     }
     if (this.failedAttempts >= maxAttempts) {
+      if (await this.activateFallback(driver, context)) {
+        return true;
+      }
       this.resetAttempts();
       return false;
     }
@@ -234,6 +240,40 @@ export class AgentStepRetryService extends Disposable implements IAgentStepRetry
         message: `Model ${primaryAlias} is unavailable, switching to substitute model ${alias} for ${formatCooldown(cooldownMs)}`,
       }),
     );
+    return true;
+  }
+
+  private async activateFallback(
+    driver: NonNullable<LoopErrorContext['failedDriver']>,
+    context: LoopErrorContext,
+  ): Promise<boolean> {
+    const currentActive = this.states.get(fallbackModelActiveKey);
+    const lastTriedAlias =
+      currentActive !== undefined ? currentActive.alias : this.profile.data().modelAlias;
+    const own = {
+      modelAlias: lastTriedAlias ?? '',
+      thinkingLevel: this.profile.getEffectiveThinkingLevel(),
+    };
+    const binding = resolveFallbackBinding(this.config, this.flags, own, lastTriedAlias);
+    if (binding === undefined) return false;
+    try {
+      this.profile.resolveModelContextFor(binding.model);
+    } catch {
+      return false;
+    }
+    const tier: ActiveFallbackModel['tier'] = currentActive === undefined ? 'primary' : 'secondary';
+    this.states.set(fallbackModelActiveKey, { alias: binding.model, tier });
+    this.lastFailedDriverId = driver.id;
+    this.failedAttempts = 0;
+    void this.dispatcher.dispatch(
+      new WarningIssued({
+        agentId: this.scopeContext.agentId,
+        code: 'fallback-model',
+        message: `Model ${lastTriedAlias} exhausted its retry budget, switching to fallback model ${binding.model} (tier: ${tier})`,
+      }),
+    );
+    if (context.currentStep?.signal.aborted === true) return false;
+    context.retry(driver, { at: 'head' });
     return true;
   }
 }

@@ -858,8 +858,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
               const chunk = JSON.parse(data) as OpenAI.Chat.ChatCompletionChunk;
               yield chunk;
             } catch (e) {
-              // Ignore parse errors for malformed chunks
-              console.warn('[OpenAILegacyChatProvider] Failed to parse SSE chunk:', data);
+              console.warn('[OpenAILegacyChatProvider] Ignoring malformed SSE chunk:', data);
             }
           }
         }

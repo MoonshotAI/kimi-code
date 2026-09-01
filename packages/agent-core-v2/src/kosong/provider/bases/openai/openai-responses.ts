@@ -1259,8 +1259,7 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
               const chunk = JSON.parse(data) as RawObject;
               yield chunk;
             } catch (e) {
-              // Ignore parse errors for malformed chunks
-              console.warn('[OpenAIResponsesChatProvider] Failed to parse SSE chunk:', data);
+              console.warn('[OpenAIResponsesChatProvider] Ignoring malformed SSE chunk:', data);
             }
           }
         }

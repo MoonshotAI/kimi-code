@@ -821,6 +821,131 @@ export async function handleSqueezeModelSecondaryCommand(
 }
 
 // ---------------------------------------------------------------------------
+// Fallback model (`/fallback-model`) — persists `[fallback_model] model` and
+// enables the `fallback-model` experiment flag. After the primary model
+// exhausts its retry budget, the agent loop transparently retries on this
+// alias. Mirrors the `squeeze-model` UX (model picker + persistent save).
+// ---------------------------------------------------------------------------
+
+function showFallbackModelPicker(
+  host: SlashCommandHost,
+  models: Record<string, ModelAlias>,
+  currentValue: string,
+  secondary: boolean,
+  selectedValue?: string,
+): void {
+  host.mountEditorReplacement(
+    new TabbedModelSelectorComponent({
+      models,
+      currentValue,
+      selectedValue,
+      currentThinkingEffort: 'off',
+      thinkingControl: false,
+      title: secondary
+        ? ' Select a secondary fallback model (tried after the first fallback)'
+        : ' Select a fallback model (used after the primary model fails)',
+      onSelect: ({ alias }) => {
+        host.restoreEditor();
+        void (secondary
+          ? performFallbackModelSecondarySave(host, alias)
+          : performFallbackModelSave(host, alias));
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+async function performFallbackModelSave(host: SlashCommandHost, alias: string): Promise<void> {
+  const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
+  try {
+    await host.harness.setConfig({
+      fallbackModel: { model: alias },
+      experimental: { 'fallback-model': true },
+    });
+  } catch (error) {
+    host.showError(`Failed to save fallback model: ${formatErrorMessage(error)}`);
+    return;
+  }
+  host.showStatus(
+    `Fallback model set to ${displayName}. After the primary model exhausts its retry budget, the agent will use it.`,
+    'success',
+  );
+}
+
+/**
+ * `/fallback-model-secondary`: the second tier of the fallback cascade. The
+ * agent tries the primary model first, then the fallback model, then this
+ * secondary alias, before surfacing a terminal error.
+ */
+async function performFallbackModelSecondarySave(
+  host: SlashCommandHost,
+  alias: string,
+): Promise<void> {
+  const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
+  try {
+    await host.harness.setConfig({
+      fallbackModel: { secondaryModel: alias },
+      experimental: { 'fallback-model': true },
+    });
+  } catch (error) {
+    host.showError(`Failed to save secondary fallback model: ${formatErrorMessage(error)}`);
+    return;
+  }
+  host.showStatus(
+    `Secondary fallback model set to ${displayName}. After the primary and first fallback model both fail, the agent will use it.`,
+    'success',
+  );
+}
+
+export async function handleFallbackModelCommand(
+  host: SlashCommandHost,
+  args: string,
+): Promise<void> {
+  const alias = args.trim();
+  await refreshModelsForPicker(host);
+  const models = pickerModelsForHost(host);
+  if (Object.keys(models).length === 0) {
+    host.showNotice(
+      'No models configured',
+      'Run /login to sign in to Kimi, or /provider to add another provider from a model catalog.',
+    );
+    return;
+  }
+  if (alias.length > 0 && models[alias] === undefined) {
+    host.showError(`Unknown model alias: ${alias}`);
+    return;
+  }
+  const fallback = (await host.harness.getConfig()).fallbackModel;
+  const current = fallback?.model ?? '';
+  showFallbackModelPicker(host, models, current, false, alias.length > 0 ? alias : undefined);
+}
+
+export async function handleFallbackModelSecondaryCommand(
+  host: SlashCommandHost,
+  args: string,
+): Promise<void> {
+  const alias = args.trim();
+  await refreshModelsForPicker(host);
+  const models = pickerModelsForHost(host);
+  if (Object.keys(models).length === 0) {
+    host.showNotice(
+      'No models configured',
+      'Run /login to sign in to Kimi, or /provider to add another provider from a model catalog.',
+    );
+    return;
+  }
+  if (alias.length > 0 && models[alias] === undefined) {
+    host.showError(`Unknown model alias: ${alias}`);
+    return;
+  }
+  const fallback = (await host.harness.getConfig()).fallbackModel;
+  const current = fallback?.secondaryModel ?? '';
+  showFallbackModelPicker(host, models, current, true, alias.length > 0 ? alias : undefined);
+}
+
+// ---------------------------------------------------------------------------
 // Substitute model (`/substitute-model`) — persists `[substitute_model] default_model`
 // ---------------------------------------------------------------------------
 

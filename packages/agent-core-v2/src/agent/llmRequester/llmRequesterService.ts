@@ -86,6 +86,7 @@ import {
 } from '#/_base/utils/retry';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { substituteModelActiveKey } from '#/session/substitute/state';
+import { fallbackModelActiveKey } from '#/session/fallback/state';
 
 const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
   type: 'object',
@@ -639,14 +640,19 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
 
   private resolveRequest(overrides: AgentLLMRequestOverrides): ResolvedLLMRequest {
     const turnConfig = this.resolveTurnConfig(overrides.source);
+    const fallbackAlias = overrides.model === undefined ? this.activeFallbackAlias() : undefined;
     const substituteAlias =
-      overrides.model === undefined ? this.activeSubstituteAlias() : undefined;
+      overrides.model === undefined && fallbackAlias === undefined
+        ? this.activeSubstituteAlias()
+        : undefined;
     const resolved =
       overrides.model !== undefined
         ? this.profile.resolveModelContextFor(overrides.model)
-        : substituteAlias !== undefined
-          ? this.profile.resolveModelContextFor(substituteAlias)
-          : turnConfig?.resolved ?? this.profile.resolveModelContext();
+        : fallbackAlias !== undefined
+          ? this.profile.resolveModelContextFor(fallbackAlias)
+          : substituteAlias !== undefined
+            ? this.profile.resolveModelContextFor(substituteAlias)
+            : turnConfig?.resolved ?? this.profile.resolveModelContext();
     const baseParams = turnConfig?.params ?? this.profile.resolveRequestParams();
     const budgetParams = completionBudgetParams({
       budget: resolveCompletionBudget({
@@ -693,6 +699,18 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       );
       return undefined;
     }
+    try {
+      this.profile.resolveModelContextFor(active.alias);
+    } catch {
+      return undefined;
+    }
+    return active.alias;
+  }
+
+  private activeFallbackAlias(): string | undefined {
+    if (!this.states.has(fallbackModelActiveKey)) return undefined;
+    const active = this.states.get(fallbackModelActiveKey);
+    if (active === undefined) return undefined;
     try {
       this.profile.resolveModelContextFor(active.alias);
     } catch {
