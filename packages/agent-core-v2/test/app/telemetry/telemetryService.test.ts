@@ -454,6 +454,27 @@ describe('TelemetryService (layered ambient)', () => {
       reason: 'exit',
     });
   });
+
+  it('a stale disposer cannot delete a replacement fragment registered under the same key', () => {
+    const appender = new CapturingAppender();
+    const root = serviceWithAppenders(appender);
+    const first = root.createScopeBinding('sessions/s1', { session_id: 's1' });
+    const second = root.createScopeBinding('sessions/s1', {
+      session_id: 's1',
+      model: 'resumed-model',
+    });
+    first.dispose();
+    second.telemetry.track2('session_started', { resumed: true, experimental_flags: '' });
+    expect(appender.records[0]?.properties).toEqual({
+      sessionId: 's1',
+      model: 'resumed-model',
+      resumed: true,
+      experimental_flags: '',
+    });
+    second.dispose();
+    second.telemetry.track2('session_started', { resumed: true, experimental_flags: '' });
+    expect(appender.records[1]?.properties).toEqual({ resumed: true, experimental_flags: '' });
+  });
 });
 
 describe('ITelemetryService (scoped)', () => {

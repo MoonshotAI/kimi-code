@@ -162,7 +162,9 @@ export class TelemetryService implements ITelemetryService, ITelemetryScopeBindi
     applyPatch(fragment, seed);
     this.fragments.set(key, fragment);
     return () => {
-      this.fragments.delete(key);
+      if (this.fragments.get(key) === fragment) {
+        this.fragments.delete(key);
+      }
     };
   }
 
