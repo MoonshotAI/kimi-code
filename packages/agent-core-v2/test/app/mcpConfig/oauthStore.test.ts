@@ -152,21 +152,44 @@ describe('createKeyringMcpOAuthStore', () => {
     ).toBe(KEYRING_MCP_OAUTH_SERVICE);
   });
 
-  it('migrates grants from the pre-namespace service', async () => {
+  it('migrates grants from an explicitly supplied legacy service', async () => {
     const keyring = new FakeKeyring();
     const service = keyringMcpOAuthServiceForCredentialsDir('/tmp/kimi-profile-a/credentials');
+    const legacyService = 'kimi-code-mcp-legacy-v1';
     keyring.store.set(
-      `${KEYRING_MCP_OAUTH_SERVICE} srv-client.json`,
+      `${legacyService} srv-client.json`,
       JSON.stringify({ client_id: 'legacy' }),
     );
     const fallback = createFallback();
-    const store = createKeyringMcpOAuthStore(keyring, fallback.store, undefined, service);
+    const store = createKeyringMcpOAuthStore(
+      keyring,
+      fallback.store,
+      undefined,
+      service,
+      undefined,
+      legacyService,
+    );
 
     await expect(store.read('srv-client.json')).resolves.toEqual({ client_id: 'legacy' });
     expect(keyring.store.get(`${service} srv-client.json`)).toBe(
       JSON.stringify({ client_id: 'legacy' }),
     );
-    expect(keyring.store.has(`${KEYRING_MCP_OAUTH_SERVICE} srv-client.json`)).toBe(false);
+    expect(keyring.store.has(`${legacyService} srv-client.json`)).toBe(false);
+  });
+
+  it('does not treat the standard service as legacy for a custom profile', async () => {
+    const keyring = new FakeKeyring();
+    const service = keyringMcpOAuthServiceForCredentialsDir('/tmp/kimi-profile-a/credentials');
+    keyring.store.set(
+      `${KEYRING_MCP_OAUTH_SERVICE} srv-client.json`,
+      JSON.stringify({ client_id: 'default-profile' }),
+    );
+    const fallback = createFallback();
+    const store = createKeyringMcpOAuthStore(keyring, fallback.store, undefined, service);
+
+    await expect(store.read('srv-client.json')).resolves.toBeUndefined();
+    expect(keyring.store.has(`${service} srv-client.json`)).toBe(false);
+    expect(keyring.store.has(`${KEYRING_MCP_OAUTH_SERVICE} srv-client.json`)).toBe(true);
   });
 
   it('serves reads from the keyring on a hit without touching the fallback', async () => {
@@ -373,6 +396,110 @@ describe('createKeyringMcpOAuthStore', () => {
     expect(fallback.data.has('srv-client.json')).toBe(true);
   });
 
+  it('coexist read repairs a stale fallback copy on a keyring hit', async () => {
+    const keyring = new FakeKeyring();
+    keyring.store.set(
+      `${KEYRING_MCP_OAUTH_SERVICE} srv-client.json`,
+      JSON.stringify({ client_id: 'fresh' }),
+    );
+    const fallback = createFallback({ 'srv-client.json': { client_id: 'stale' } });
+    const store = createKeyringMcpOAuthStore(
+      keyring,
+      fallback.store,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true,
+    );
+
+    await expect(store.read('srv-client.json')).resolves.toEqual({ client_id: 'fresh' });
+    expect(fallback.data.get('srv-client.json')).toEqual({ client_id: 'fresh' });
+  });
+
+  it('coexist read restores a missing fallback copy on a keyring hit', async () => {
+    const keyring = new FakeKeyring();
+    keyring.store.set(
+      `${KEYRING_MCP_OAUTH_SERVICE} srv-client.json`,
+      JSON.stringify({ client_id: 'fresh' }),
+    );
+    const fallback = createFallback();
+    const store = createKeyringMcpOAuthStore(
+      keyring,
+      fallback.store,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true,
+    );
+
+    await expect(store.read('srv-client.json')).resolves.toEqual({ client_id: 'fresh' });
+    expect(fallback.data.get('srv-client.json')).toEqual({ client_id: 'fresh' });
+  });
+
+  it('coexist read does not overwrite a valid fallback with a keyring tombstone', async () => {
+    const keyring = new FakeKeyring();
+    keyring.store.set(
+      `${KEYRING_MCP_OAUTH_SERVICE} srv-tokens.json`,
+      JSON.stringify({ access_token: '', refresh_token: '', expires_in: 0 }),
+    );
+    const fallback = createFallback({
+      'srv-tokens.json': { access_token: 'valid', refresh_token: 'refresh', expires_in: 3600 },
+    });
+    const store = createKeyringMcpOAuthStore(
+      keyring,
+      fallback.store,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true,
+    );
+
+    await expect(store.read('srv-tokens.json')).resolves.toEqual({
+      access_token: '',
+      refresh_token: '',
+      expires_in: 0,
+    });
+    expect(fallback.data.get('srv-tokens.json')).toEqual({
+      access_token: 'valid',
+      refresh_token: 'refresh',
+      expires_in: 3600,
+    });
+  });
+
+  it('coexist read does not overwrite a tombstone fallback with a valid keyring token', async () => {
+    const keyring = new FakeKeyring();
+    keyring.store.set(
+      `${KEYRING_MCP_OAUTH_SERVICE} srv-tokens.json`,
+      JSON.stringify({ access_token: 'valid', refresh_token: 'refresh', expires_in: 3600 }),
+    );
+    const fallback = createFallback({
+      'srv-tokens.json': { access_token: '', refresh_token: '', expires_in: 0 },
+    });
+    const store = createKeyringMcpOAuthStore(
+      keyring,
+      fallback.store,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true,
+    );
+
+    await expect(store.read('srv-tokens.json')).resolves.toEqual({
+      access_token: 'valid',
+      refresh_token: 'refresh',
+      expires_in: 3600,
+    });
+    expect(fallback.data.get('srv-tokens.json')).toEqual({
+      access_token: '',
+      refresh_token: '',
+      expires_in: 0,
+    });
+  });
+
   it('coexist read adopts a newer fallback token without pruning it', async () => {
     const keyring = new FakeKeyring();
     keyring.store.set(
@@ -469,6 +596,7 @@ describe('McpOAuthStoreAdapter', () => {
     ix.stub(ILogService, { warn: vi.fn() } as unknown as ILogService);
     ix.stub(IBootstrapService, {
       homeDir,
+      configPath: join(homeDir, 'config.toml'),
     } as unknown as IBootstrapService);
     return ix.createInstance(McpOAuthStoreAdapter);
   }

@@ -60,7 +60,7 @@ export class McpOAuthStoreAdapter implements IMcpOAuthStore {
     @IBootstrapService bootstrap: IBootstrapService,
   ) {
     const credentialsDir = join(bootstrap.homeDir, 'credentials');
-    const mode = resolveCredentialsStoreMode(credentialsDir);
+    const mode = resolveCredentialsStoreMode(credentialsDir, { configPath: bootstrap.configPath });
     const backend = getRegisteredKeyringBackend();
     this.delegate =
       mode !== 'file' && backend !== undefined && probeKeyringBackend(backend.api)

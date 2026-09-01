@@ -113,6 +113,7 @@ export class KimiAuthFacade {
   constructor(private readonly options: KimiAuthFacadeOptions) {
     this.toolkit = new KimiOAuthToolkit<SDKManagedConfig>({
       homeDir: options.homeDir,
+      configPath: options.configPath,
       identity: options.identity,
       onRefresh: options.onRefresh,
       configAdapter: {

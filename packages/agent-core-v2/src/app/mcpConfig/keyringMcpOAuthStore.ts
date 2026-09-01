@@ -31,9 +31,7 @@ export function createKeyringMcpOAuthStore(
   legacyService?: string,
   coexist = false,
 ): McpOAuthStore {
-  const previousService =
-    legacyService ??
-    (service === KEYRING_MCP_OAUTH_SERVICE ? undefined : KEYRING_MCP_OAUTH_SERVICE);
+  const previousService = legacyService;
   let degraded = false;
   let degradationError: unknown;
   const queues = new Map<string, Promise<void>>();
@@ -86,8 +84,13 @@ export function createKeyringMcpOAuthStore(
             const parsed = raw === null ? undefined : parse(raw);
             if (parsed !== undefined) {
               let value = parsed as T;
+              const fallbackValue =
+                coexist ||
+                (key.endsWith('-tokens.json') &&
+                  (isStoredToken(parsed) || isOAuthTokenRecord(parsed)))
+                  ? await fallback.read<T>(key)
+                  : undefined;
               if (key.endsWith('-tokens.json') && isStoredToken(parsed)) {
-                const fallbackValue = await fallback.read<T>(key);
                 const newer = newerTokenGrant(parsed, fallbackValue);
                 if (newer !== undefined) {
                   api.createEntry(service, key).setPassword(JSON.stringify(newer));
@@ -101,6 +104,15 @@ export function createKeyringMcpOAuthStore(
                   removeKeyringEntry(api, sourceService, key);
                 } catch (error) {
                   log?.warn(`MCP OAuth legacy keyring cleanup failed for ${key}`, {
+                    error: error instanceof Error ? error.message : String(error),
+                  });
+                }
+              }
+              if (coexist && !hasTombstoneConflict(parsed, fallbackValue)) {
+                try {
+                  await fallback.write(key, value);
+                } catch (error) {
+                  log?.warn(`MCP OAuth fallback repair failed for ${key}`, {
                     error: error instanceof Error ? error.message : String(error),
                   });
                 }
@@ -222,7 +234,39 @@ function removeKeyringEntry(api: KeyringApi, service: string, key: string): void
 
 function newerTokenGrant<T>(keyringValue: unknown, fallbackValue: T | undefined): T | undefined {
   if (!isStoredToken(keyringValue) || !isStoredToken(fallbackValue)) return undefined;
+  if (
+    (isOAuthTokenRecord(keyringValue) || isOAuthTokenRecord(fallbackValue)) &&
+    (!isValidStoredToken(keyringValue) || !isValidStoredToken(fallbackValue))
+  ) return undefined;
   return fallbackValue.obtained_at > keyringValue.obtained_at ? fallbackValue : undefined;
+}
+
+function isOAuthTokenRecord(value: unknown): value is { readonly access_token: string } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { access_token?: unknown }).access_token === 'string'
+  );
+}
+
+function isValidStoredToken(value: unknown): value is { readonly access_token: string } {
+  return isOAuthTokenRecord(value) && value.access_token.length > 0;
+}
+
+function storedTokenKind(value: unknown): 'valid' | 'revoked' | 'other' {
+  if (isValidStoredToken(value)) return 'valid';
+  if (isOAuthTokenRecord(value)) return 'revoked';
+  return 'other';
+}
+
+function hasTombstoneConflict(keyringValue: unknown, fallbackValue: unknown): boolean {
+  if (!isOAuthTokenRecord(keyringValue) || !isOAuthTokenRecord(fallbackValue)) return false;
+  const keyringKind = storedTokenKind(keyringValue);
+  const fallbackKind = storedTokenKind(fallbackValue);
+  return (
+    (keyringKind === 'revoked' && fallbackKind === 'valid') ||
+    (keyringKind === 'valid' && fallbackKind === 'revoked')
+  );
 }
 
 function isStoredToken(value: unknown): value is { readonly obtained_at: number } {

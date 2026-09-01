@@ -62,6 +62,7 @@ export interface AuthStatus {
 export interface KimiOAuthToolkitOptions<TConfig = unknown> {
   readonly identity?: KimiHostIdentity | undefined;
   readonly homeDir?: string | undefined;
+  readonly configPath?: string;
   readonly credentialsDir?: string | undefined;
   readonly storage?: TokenStorage | undefined;
   readonly flowConfig?: OAuthFlowConfig | undefined;
@@ -127,7 +128,8 @@ export class KimiOAuthToolkit<TConfig = unknown> {
       options.identity === undefined ? undefined : assertKimiHostIdentity(options.identity);
     this.homeDir = options.homeDir ?? defaultKimiHome();
     const credentialsDir = options.credentialsDir ?? join(this.homeDir, 'credentials');
-    this.storage = options.storage ?? resolveTokenStorage(credentialsDir);
+    this.storage =
+      options.storage ?? resolveTokenStorage(credentialsDir, { configPath: options.configPath });
     this.flowConfig = options.flowConfig ?? KIMI_CODE_FLOW_CONFIG;
     this.configAdapter = options.configAdapter;
     this.fetchImpl = options.fetchImpl;

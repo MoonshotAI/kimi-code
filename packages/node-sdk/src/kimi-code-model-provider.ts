@@ -27,6 +27,7 @@ import { mapOAuthTokenError } from '#/oauth-error';
 
 export interface KimiForCodingProviderOptions extends KimiHostIdentity {
   readonly homeDir?: string;
+  readonly configPath?: string;
   readonly model?: string;
   readonly baseUrl?: string;
   readonly promptCacheKey?: string;
@@ -61,6 +62,7 @@ export class KimiForCodingProvider implements ModelProvider {
     });
     this.toolkit = new KimiOAuthToolkit({
       homeDir: this.homeDir,
+      configPath: options.configPath,
       identity: this.identity,
     });
   }

@@ -18,7 +18,7 @@
  *     app sets up.
  */
 
-import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -398,6 +398,29 @@ describe('KimiOAuthToolkit default storage goes through resolveTokenStorage', ()
     await expect(toolkit.tokenProvider().getAccessToken()).resolves.toBe('keyring-access');
     // The default mode is 'auto' (coexistence): the keychain is read first,
     // and the plaintext bridge is repaired from it on load.
+    expect(plaintextTokenFiles(credentialsDir)).toEqual(['kimi-code.json']);
+  });
+
+  it('uses the explicit configPath when selecting default storage', async () => {
+    const configPath = join(dir, 'custom-config.toml');
+    writeFileSync(configPath, 'credentials_store = "file"\n');
+    const keyring = new FakeKeyring();
+    registerKeyringBackend(keyring);
+    await new FileTokenStorage(credentialsDir).save(
+      'kimi-code',
+      token({ accessToken: 'file-only-access' }),
+    );
+
+    const toolkit = new KimiOAuthToolkit({
+      homeDir: dir,
+      configPath,
+      identity: TEST_IDENTITY,
+      now: () => 100,
+      flowConfig: FLOW_CONFIG,
+    });
+
+    await expect(toolkit.tokenProvider().getAccessToken()).resolves.toBe('file-only-access');
+    expect(keyring.store).toEqual(new Map());
     expect(plaintextTokenFiles(credentialsDir)).toEqual(['kimi-code.json']);
   });
 });
