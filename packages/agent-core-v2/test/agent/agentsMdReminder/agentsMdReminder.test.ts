@@ -562,6 +562,23 @@ describe('agentsMdReminder re-injection after context loss', () => {
     expect(reminderText(h)).toContain(subAgentsMd);
   });
 
+  it('drops a pending path when the file is deleted, so it is not re-reminded', async () => {
+    const h = createHarness();
+    const subDir = join(workDir, 'packages', 'kap-server');
+    const subAgentsMd = await writeAgentsMd(subDir);
+    h.reminder.seedInjected([], workDir);
+
+    await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
+    expect(agentsMdMessages(h)).toHaveLength(1);
+
+    await rm(subAgentsMd);
+    h.instructionsChange.fire([{ path: subAgentsMd, action: 'deleted', kind: 'file' }]);
+    compact(h);
+
+    await fire(h, didCtx('Read', { path: join(subDir, 'other.ts') }));
+    expect(agentsMdMessages(h)).toHaveLength(0);
+  });
+
   it('re-reminds a pending path after an undo removes the reminder', async () => {
     const h = createHarness();
     const subDir = join(workDir, 'packages', 'kap-server');

@@ -138,6 +138,9 @@ export class AgentAgentsMdReminderService
     this.markPending(
       list.filter((change) => change.action === 'created').map((change) => change.path),
     );
+    this.markDeleted(
+      list.filter((change) => change.action === 'deleted').map((change) => change.path),
+    );
   }
 
   private readonly claimed = new Set<string>();
@@ -236,6 +239,18 @@ export class AgentAgentsMdReminderService
     for (const path of paths) {
       if (!known.has(path)) pending.add(path);
     }
+    this.states.set(agentsMdReminderPendingKey, pending);
+  }
+
+  private markDeleted(paths: readonly string[]): void {
+    if (paths.length === 0) return;
+    const known = new Set(this.known);
+    const pending = new Set(this.pending);
+    for (const path of paths) {
+      known.delete(path);
+      pending.delete(path);
+    }
+    this.states.set(agentsMdReminderKnownKey, known);
     this.states.set(agentsMdReminderPendingKey, pending);
   }
 
