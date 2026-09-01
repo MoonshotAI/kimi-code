@@ -471,6 +471,36 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(marker?.kind === 'marker' && marker.marker).toBe('compaction');
   });
 
+  it('coalesces assistant text fragments split by empty think parts into one frame', () => {
+    const snapshot = groupMessagesIntoSnapshot([
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'think', think: 'plan' },
+          { type: 'text', text: 'Why do programmers' },
+          { type: 'think', think: '' },
+          { type: 'text', text: ' prefer dark mode?' },
+          { type: 'think', think: '' },
+          { type: 'text', text: ' Because light attracts bugs.' },
+        ],
+        toolCalls: [],
+      },
+    ]);
+
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.steps).toHaveLength(1);
+    expect(turn.steps[0]?.frames).toEqual([
+      expect.objectContaining({ kind: 'thinking', text: 'plan' }),
+      expect.objectContaining({
+        kind: 'text',
+        role: 'assistant',
+        text: 'Why do programmers prefer dark mode? Because light attracts bugs.',
+      }),
+    ]);
+  });
+
   it('folds task-notification user messages into the current turn instead of opening their own', () => {
     const snapshot = groupMessagesIntoSnapshot(
       [

@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Fix duplicated text lines in assistant messages shown in the web transcript after a turn ends.
+Fix assistant messages in the web transcript showing duplicated or fragmented text lines.
