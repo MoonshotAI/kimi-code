@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { migrateMcpStep } from '../../src/steps/mcp.js';
@@ -52,6 +52,14 @@ describe('migrateMcpStep', () => {
   it('no source mcp.json: nothing happens', async () => {
     const r = await migrateMcpStep({ sourceHome: src, targetHome: tgt });
     expect(r.mergedServers).toEqual([]);
+    expect(r.sourceUnreadable).toBe(false);
+  });
+
+  it('reports sourceUnreadable for an unparseable source mcp.json', async () => {
+    await writeFile(join(src, 'mcp.json'), 'not json {{{');
+    const r = await migrateMcpStep({ sourceHome: src, targetHome: tgt });
+    expect(r.mergedServers).toEqual([]);
+    expect(r.sourceUnreadable).toBe(true);
   });
 
   it('drops MCP server entries kimi-code\'s schema rejects', async () => {
@@ -87,5 +95,18 @@ describe('migrateMcpStep', () => {
       await readFile(join(tgt, 'mcp.migrated-from-kimi-cli.json'), 'utf-8'),
     );
     expect(sibling.mcpServers.foo.command).toBe('foo');
+  });
+});
+
+describe('migrateMcpStep read-failure classification', () => {
+  it('reports sourceUnreadable when mcp.json exists but cannot be read', async () => {
+    await mkdir(join(src, 'mcp.json'), { recursive: true });
+    const r = await migrateMcpStep({ sourceHome: src, targetHome: tgt });
+    expect(r.sourceUnreadable).toBe(true);
+  });
+
+  it('reports no unreadable flag when mcp.json is simply absent', async () => {
+    const r = await migrateMcpStep({ sourceHome: src, targetHome: tgt });
+    expect(r.sourceUnreadable).toBe(false);
   });
 });

@@ -2,42 +2,62 @@ import { existsSync } from 'node:fs';
 import { readFile, mkdir, rm, stat, utimes } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { OldSessionStateSchema, type OldSessionState } from '../kimi-cli-schema.js';
+import type { OldSessionState } from '../kimi-cli-schema.js';
+import { readTodoItems } from '@moonshot-ai/agent-core-v2/features/todo/todoItem';
 import { targetSessionsDir } from '../paths.js';
 import { computeWorkdirBucket } from './workdir-bucket.js';
 import { closeDanglingToolCalls } from './close-tool-calls.js';
 import {
   analyzeContextContent,
+  extractLastUsageTokenCount,
   translateContextLines,
   type NormalizedMessage,
 } from './translator.js';
+import { readMergedSessionState, type LegacySessionRef } from './source.js';
 import { writeMainAgentWire } from './wire-writer.js';
 import { writeSessionState } from './state-writer.js';
 import { extractToolCallDisplays } from './tool-call-display.js';
+import { repairImportedSessionWire } from './repair-imported.js';
+import { buildSubagentTaskRecords, migrateLegacySubagents } from './subagents.js';
+import { IMPORT_FORMAT_VERSION } from './turn-structure.js';
 
 export type MigrateOneResult =
   | { readonly outcome: 'migrated'; readonly targetDir: string }
   | { readonly outcome: 'already-migrated'; readonly targetDir: string }
+  | { readonly outcome: 'repaired'; readonly targetDir: string }
   | { readonly outcome: 'conflict'; readonly targetDir: string }
   | { readonly outcome: 'empty' }
   | { readonly outcome: 'failed'; readonly reason: string };
 
 export interface MigrateOneInput {
-  readonly sourceSessionDir: string;
-  readonly oldSessionUuid: string;
+  readonly source: LegacySessionRef;
   readonly workdirPath: string;
   readonly targetHome: string;
 }
 
 export async function migrateOneSession(input: MigrateOneInput): Promise<MigrateOneResult> {
   const bucket = computeWorkdirBucket(input.workdirPath);
-  const targetDir = join(targetSessionsDir(input.targetHome), bucket, `ses_${input.oldSessionUuid}`);
+  const targetDir = join(targetSessionsDir(input.targetHome), bucket, `ses_${input.source.uuid}`);
 
   if (existsSync(targetDir)) {
     const cls = await classifyExistingTarget(targetDir);
-    // A dir we wrote ourselves on a previous run — idempotent re-run.
+    // A dir we wrote ourselves on a previous run — idempotent re-run. Sessions
+    // imported before the current import format existed get repaired in place;
+    // a repair that cannot be applied is a real failure, not a silent skip:
+    // reporting success would leave the session permanently needing repair
+    // while every run misleadingly completes.
     if (cls === 'imported') {
-      return { outcome: 'already-migrated', targetDir };
+      const formatVersion = await readImportFormatVersion(targetDir);
+      if (formatVersion >= IMPORT_FORMAT_VERSION) {
+        return { outcome: 'already-migrated', targetDir };
+      }
+      const repaired = await repairImportedSessionWire(targetDir).catch(() => false);
+      if (repaired) return { outcome: 'repaired', targetDir };
+      return {
+        outcome: 'failed',
+        reason:
+          'imported session needs repair but its wire could not be repaired (missing, corrupt, or unwritable)',
+      };
     }
     // A real, unrelated kimi-code session occupies the path — a true conflict.
     if (cls === 'foreign') {
@@ -49,26 +69,25 @@ export async function migrateOneSession(input: MigrateOneInput): Promise<Migrate
     await rm(targetDir, { recursive: true, force: true });
   }
 
-  let oldState: Partial<OldSessionState> = {};
-  try {
-    const stateText = await readFile(join(input.sourceSessionDir, 'state.json'), 'utf-8');
-    oldState = OldSessionStateSchema.parse(JSON.parse(stateText));
-  } catch {
-    // missing or corrupt state — proceed with defaults
-  }
+  const oldState: Partial<OldSessionState> = await readMergedSessionState(input.source.sessionDir);
 
   let messages: NormalizedMessage[] = [];
   let lastUserPrompt = '';
   let contextLines: readonly string[] = [];
   let oldWireText: string | undefined;
   try {
-    const contextText = await readFile(join(input.sourceSessionDir, 'context.jsonl'), 'utf-8');
+    if (input.source.contextPath === undefined) {
+      return { outcome: 'failed', reason: 'cannot read context.jsonl' };
+    }
+    const contextText = await readFile(input.source.contextPath, 'utf-8');
     contextLines = contextText.split(/\r?\n/);
-    try {
-      oldWireText = await readFile(join(input.sourceSessionDir, 'wire.jsonl'), 'utf-8');
-    } catch {
-      // A missing/corrupt wire must not prevent the model-facing context from
-      // migrating; it only means UI display enrichment is unavailable.
+    if (input.source.sessionDir !== undefined) {
+      try {
+        oldWireText = await readFile(join(input.source.sessionDir, 'wire.jsonl'), 'utf-8');
+      } catch {
+        // A missing/corrupt wire must not prevent the model-facing context from
+        // migrating; it only means UI display enrichment is unavailable.
+      }
     }
     const toolCallDisplays =
       oldWireText === undefined ? undefined : extractToolCallDisplays(oldWireText);
@@ -80,12 +99,15 @@ export async function migrateOneSession(input: MigrateOneInput): Promise<Migrate
     return { outcome: 'failed', reason: 'cannot read context.jsonl' };
   }
 
-  if (messages.length === 0) {
+  const customTitle = oldState.custom_title;
+  const hasCustomTitle = typeof customTitle === 'string' && customTitle.length > 0;
+
+  if (messages.length === 0 && !hasCustomTitle) {
     // No `user`/`assistant`/`tool` rows survived translation. Re-analyze the
     // raw lines to tell a genuinely empty/cleared session apart from one
     // whose every line failed to parse — the latter is a real data problem
     // and must show up in `migration-errors.log`, not get silently lumped in
-    // with skipped-empty. `classifySessionDir` normally catches both ahead
+    // with skipped-empty. `classifyLegacySession` normally catches both ahead
     // of time; this stays as a defense-in-depth safety net.
     if (analyzeContextContent(contextLines) === 'corrupt') {
       return {
@@ -101,18 +123,12 @@ export async function migrateOneSession(input: MigrateOneInput): Promise<Migrate
   if (wireMtimeS !== null && wireMtimeS !== undefined) {
     createdAtMs = Math.floor(wireMtimeS * 1000);
   } else {
-    // No recorded `wire_mtime`: fall back to the source `wire.jsonl` mtime —
-    // the SAME signal `migrateSessionsStep`/detection rank recency by — so
-    // post-migration `SessionStore.list()` ordering matches the detected
-    // "most recent" order. `Date.now()` would stamp every such session with
-    // the migration time and break resume ordering.
-    try {
-      createdAtMs = Math.floor(
-        (await stat(join(input.sourceSessionDir, 'wire.jsonl'))).mtimeMs,
-      );
-    } catch {
-      createdAtMs = Date.now();
-    }
+    // No recorded `wire_mtime`: fall back to the source files' mtime — the
+    // SAME signal detection ranks recency by — so post-migration
+    // `SessionStore.list()` ordering matches the detected "most recent" order.
+    // `Date.now()` would stamp every such session with the migration time and
+    // break resume ordering.
+    createdAtMs = await readSourceMtime(input.source) ?? Date.now();
   }
 
   let wireProtocolFromOld: string | null = null;
@@ -137,14 +153,28 @@ export async function migrateOneSession(input: MigrateOneInput): Promise<Migrate
 
   try {
     await mkdir(targetDir, { recursive: true, mode: 0o700 });
-    await writeMainAgentWire(targetDir, { createdAtMs, messages });
+    const subagents =
+      input.source.sessionDir === undefined
+        ? []
+        : await migrateLegacySubagents(input.source.sessionDir, targetDir);
+    await writeMainAgentWire(targetDir, {
+      createdAtMs,
+      messages,
+      lastUsageTokenCount: extractLastUsageTokenCount(contextLines),
+      todoItems: readTodoItems(oldState.todos),
+      subagentTasks: subagents.map(buildSubagentTaskRecords),
+    });
     await writeSessionState(targetDir, {
       oldState,
+      sessionId: `ses_${input.source.uuid}`,
+      workdirPath: input.workdirPath,
       lastUserPrompt,
-      sourcePath: input.sourceSessionDir,
-      oldSessionUuid: input.oldSessionUuid,
+      lastTurnReason: messages.some((m) => m.role === 'assistant') ? 'completed' : undefined,
+      sourcePath: input.source.sessionDir ?? input.source.contextPath ?? '',
+      oldSessionUuid: input.source.uuid,
       wireProtocolFromOld,
       createdAtMs,
+      subagentIds: subagents.map((s) => s.agentId),
     });
   } catch (error) {
     // A partially-written targetDir would trip the conflict guard on re-run
@@ -167,6 +197,24 @@ export async function migrateOneSession(input: MigrateOneInput): Promise<Migrate
   return { outcome: 'migrated', targetDir };
 }
 
+async function readSourceMtime(source: LegacySessionRef): Promise<number | undefined> {
+  if (source.sessionDir !== undefined) {
+    try {
+      return Math.floor((await stat(join(source.sessionDir, 'wire.jsonl'))).mtimeMs);
+    } catch {
+      // fall through to the context payload's mtime
+    }
+  }
+  if (source.contextPath !== undefined) {
+    try {
+      return Math.floor((await stat(source.contextPath)).mtimeMs);
+    } catch {
+      // fall through
+    }
+  }
+  return undefined;
+}
+
 /**
  * Set the filesystem mtime of the migrated session artifacts to the session's
  * original timestamp. The session directory is stamped LAST, since writing
@@ -180,6 +228,19 @@ async function applyOriginalMtime(targetDir: string, createdAtMs: number): Promi
     await utimes(targetDir, stamp, stamp);
   } catch {
     // Non-fatal: ordering may be slightly off, but the migration succeeded.
+  }
+}
+
+async function readImportFormatVersion(targetDir: string): Promise<number> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(join(targetDir, 'state.json'), 'utf-8'));
+    if (typeof parsed !== 'object' || parsed === null) return 0;
+    const custom = (parsed as { custom?: unknown }).custom;
+    if (typeof custom !== 'object' || custom === null) return 0;
+    const version = (custom as Record<string, unknown>)['import_format_version'];
+    return typeof version === 'number' ? version : 0;
+  } catch {
+    return 0;
   }
 }
 
