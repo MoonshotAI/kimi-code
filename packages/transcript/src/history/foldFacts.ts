@@ -667,23 +667,43 @@ export function foldWireRecordFacts(
           const record = endedByOrdinal.get(item.ordinal);
           const interrupted = interruptedByOrdinal.get(item.ordinal);
           if (record === undefined && interrupted === undefined) return item;
-          const steps =
-            interrupted === undefined
-              ? item.steps
-              : item.steps.map((step) => {
-                  const hit = interrupted.get(step.ordinal);
-                  if (hit === undefined) return step;
-                  const stepPayload = hit as TurnStepInterruptedPayload;
-                  if (typeof stepPayload.reason !== 'string') return step;
-                  return {
-                    ...step,
-                    state: 'interrupted' as const,
-                    endedAt: recordTimeIso(hit) ?? step.endedAt,
-                    endReason: stepPayload.reason,
-                    endMessage:
-                      typeof stepPayload.message === 'string' ? stepPayload.message : undefined,
-                  };
-                });
+          const steps = ((): TranscriptTurn['steps'] => {
+            if (interrupted === undefined) return item.steps;
+            const hitOrdinals = new Set<number>();
+            const patched = item.steps.map((step) => {
+              const hit = interrupted.get(step.ordinal);
+              if (hit === undefined) return step;
+              const stepPayload = hit as TurnStepInterruptedPayload;
+              if (typeof stepPayload.reason !== 'string') return step;
+              hitOrdinals.add(step.ordinal);
+              return {
+                ...step,
+                state: 'interrupted' as const,
+                endedAt: recordTimeIso(hit) ?? step.endedAt,
+                endReason: stepPayload.reason,
+                endMessage:
+                  typeof stepPayload.message === 'string' ? stepPayload.message : undefined,
+              };
+            });
+            for (const [stepOrdinal, hit] of interrupted) {
+              if (hitOrdinals.has(stepOrdinal)) continue;
+              const stepPayload = hit as TurnStepInterruptedPayload;
+              if (typeof stepPayload.reason !== 'string') continue;
+              patched.push({
+                kind: 'step',
+                stepId: `${item.turnId}.${stepOrdinal}`,
+                turnId: item.turnId,
+                ordinal: stepOrdinal,
+                state: 'interrupted',
+                frames: [],
+                endedAt: recordTimeIso(hit),
+                endReason: stepPayload.reason,
+                endMessage:
+                  typeof stepPayload.message === 'string' ? stepPayload.message : undefined,
+              });
+            }
+            return patched.toSorted((a, b) => a.ordinal - b.ordinal);
+          })();
           if (record === undefined) return { ...item, steps };
           const payload = record as TurnEndedPayload;
           return {

@@ -1946,12 +1946,11 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(turn.steps[1]?.state).toBe('completed');
   });
 
-  it('skips turn.step.interrupted records with unknown turn ids or out-of-range steps', () => {
+  it('skips turn.step.interrupted records with unknown turn ids or missing reason', () => {
     const base = baseWithSteps();
     const folded = foldWireRecordFacts(
       [
         { type: 'turn.step.interrupted', turnId: 9, step: 1, reason: 'error', time: 1000 },
-        { type: 'turn.step.interrupted', turnId: 0, step: 5, reason: 'error', time: 2000 },
         { type: 'turn.step.interrupted', turnId: 0, step: 1, time: 3000 },
       ],
       base,
@@ -1960,6 +1959,62 @@ describe('foldWireRecordFacts (cold facts)', () => {
     if (turn?.kind !== 'turn') throw new Error('expected turn');
     expect(turn.steps.map((step) => step.state)).toEqual(['completed', 'completed']);
     expect(turn.steps.every((step) => step.endReason === undefined)).toBe(true);
+  });
+
+  it('creates the interrupted step when the cold tree has no step with that ordinal', () => {
+    const base = baseWithSteps();
+    const folded = foldWireRecordFacts(
+      [
+        {
+          type: 'turn.step.interrupted',
+          turnId: 0,
+          step: 3,
+          reason: 'error',
+          message: 'all retries exhausted',
+          time: 2000,
+        },
+        { type: 'turn.ended', turnId: 0, reason: 'failed', time: 3000 },
+      ],
+      base,
+    );
+    const turn = folded.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.steps.map((step) => step.ordinal)).toEqual([1, 2, 3]);
+    expect(turn.steps[2]).toEqual({
+      kind: 'step',
+      stepId: 't0.3',
+      turnId: 't0',
+      ordinal: 3,
+      state: 'interrupted',
+      frames: [],
+      endedAt: new Date(2000).toISOString(),
+      endReason: 'error',
+      endMessage: 'all retries exhausted',
+    });
+  });
+
+  it('creates the interrupted step for a turn that produced no steps at all', () => {
+    const base = groupMessagesIntoSnapshot([
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },
+    ]);
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.step.interrupted', turnId: 0, step: 1, reason: 'user_cancelled', time: 1000 },
+        { type: 'turn.ended', turnId: 0, reason: 'cancelled', time: 2000 },
+      ],
+      base,
+    );
+    const turn = folded.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.steps).toHaveLength(1);
+    expect(turn.steps[0]).toMatchObject({
+      stepId: 't0.1',
+      ordinal: 1,
+      state: 'interrupted',
+      endReason: 'user_cancelled',
+      endedAt: new Date(1000).toISOString(),
+    });
+    expect(turn.steps[0]?.endMessage).toBeUndefined();
   });
 
   it('ignores turn.step.retrying records in the cold fold', () => {
