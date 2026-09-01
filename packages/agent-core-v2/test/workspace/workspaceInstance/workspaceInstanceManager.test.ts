@@ -139,7 +139,7 @@ function manager(
     { scope: () => 'sessions' },
     workspaces,
     { ready },
-    ...Array.from({ length: 21 }, () => undefined),
+    ...Array.from({ length: 22 }, () => undefined),
     new TestRuntimeUnitHostFactory(),
   ];
   args[18] = { entries: () => [] };

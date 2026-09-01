@@ -10,6 +10,9 @@ export interface TowerRosterEntry {
   readonly worktree?: string;
   readonly branch?: string;
   readonly spawnedAt: string;
+  readonly diedAt?: string;
+  readonly deathStatus?: string;
+  readonly deathReason?: string;
 }
 
 export interface TowerRoster {

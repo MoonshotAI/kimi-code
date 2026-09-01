@@ -21,6 +21,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
+import { IFlagService } from '#/app/flag/flag';
 import {
   CHILD_SESSION_KIND,
   CHILD_SESSION_KIND_KEY,
@@ -156,6 +157,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IEventService private readonly event: IEventService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IFlagService private readonly flags: IFlagService,
     @IWorkspaceAgentProfileLoader
     private readonly workspaceAgentProfileLoader: IWorkspaceAgentProfileLoader,
     @IExtraAgentProfileLoader
@@ -303,9 +305,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
   private async announceCreated(event: SessionCreatedEvent): Promise<void> {
     await this._onDidCreateSession.fireAsync(event, NO_ABORT);
-    event.handle.accessor
-      .get(ITelemetryService)
-      .track2('session_started', { resumed: event.source === 'resume' });
+    event.handle.accessor.get(ITelemetryService).track2('session_started', {
+      resumed: event.source === 'resume',
+      experimental_flags: this.flags.exposedIds().toSorted().join(','),
+    });
   }
 
   get(sessionId: string): ISessionScopeHandle | undefined {

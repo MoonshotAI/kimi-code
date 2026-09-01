@@ -8,6 +8,7 @@ import { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileReg
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
+import { IFlagService } from '#/app/flag/flag';
 import { IGitService } from '#/app/git/git';
 import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
@@ -71,6 +72,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     @IBuiltinAgentProfileLoader private readonly builtinAgentProfiles: IBuiltinAgentProfileLoader,
     @IBuiltinSkillSource private readonly builtinSkills: IBuiltinSkillSource,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IFlagService private readonly flags: IFlagService,
     @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
@@ -228,6 +230,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
           input.fs,
           this.event,
           this.telemetry,
+          this.flags,
           input.workspaceAgentProfiles,
           input.extraAgentProfiles,
           input.explicitAgentProfiles,

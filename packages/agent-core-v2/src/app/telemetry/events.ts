@@ -456,6 +456,7 @@ export interface VideoUploadEvent {
 
 export interface SessionStartedEvent {
   resumed: boolean;
+  experimental_flags: string;
 }
 
 export interface SessionLoadFailedEvent {
@@ -942,10 +943,10 @@ export const telemetryEventDefinitions = {
   }),
   agents_md_reminder_shown: defineAgentTelemetryEvent<AgentsMdReminderShownEvent>({
     owner: 'kimi-code',
-    comment: 'An AGENTS.md discovery reminder is appended to a tool result.',
+    comment: 'An AGENTS.md discovery reminder is queued for context injection after a tool call.',
     properties: {
       turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session',
-      tool_name: 'Registered tool name whose result carried the reminder',
+      tool_name: 'Registered tool name whose execution discovered the file',
       reminded_count: 'Number of AGENTS.md paths listed in the reminder',
       trace_id:
         'Trace id of the LLM request that produced the tool call; absent for non-Kimi protocols',
@@ -1089,7 +1090,11 @@ export const telemetryEventDefinitions = {
   session_started: defineTelemetryEvent<SessionStartedEvent>({
     owner: 'kimi-code',
     comment: 'A session becomes active (created, forked, or resumed).',
-    properties: { resumed: 'Whether the session was resumed from disk' },
+    properties: {
+      resumed: 'Whether the session was resumed from disk',
+      experimental_flags:
+        'Sorted comma-separated ids of enabled experimental flags, empty when none are enabled',
+    },
   }),
   session_load_failed: defineTelemetryEvent<SessionLoadFailedEvent>({
     owner: 'kimi-code',

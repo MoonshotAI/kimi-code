@@ -814,7 +814,14 @@ export async function applyExperimentalFeatureChanges(
       // them; only the mode machinery (enter/injection/guards) reacts live.
       host.showNotice('Tower mode takes effect after restarting Kimi Code.');
     }
-    host.track('experimental_features_apply', { changed: changes.length });
+    host.track('experimental_features_apply', {
+      changed: changes.length,
+      flags: features
+        .filter((feature) => feature.enabled)
+        .map((feature) => feature.id)
+        .toSorted()
+        .join(','),
+    });
   } catch (error) {
     host.showError(`Failed to update experimental features: ${formatErrorMessage(error)}`);
   }

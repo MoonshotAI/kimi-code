@@ -1314,6 +1314,35 @@ describe('SDKRpcClientV2 engine telemetry', () => {
       await harness.close();
     }
   });
+
+  it('reports the same enabled experimental flags on every session_started row', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-tel-flags-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-tel-flags-work-'));
+    tempDirs.push(workDir);
+    await writeFile(join(homeDir, 'config.toml'), '[experimental]\nsubagent_fork = true\n', 'utf-8');
+    const records: TelemetryRecord[] = [];
+    const harness = createKimiHarnessV2({
+      homeDir,
+      identity: TEST_IDENTITY,
+      telemetry: recordingTelemetry(records),
+    });
+    try {
+      const session = await harness.createSession({ workDir });
+      const started = records.filter((record) => record.event === 'session_started');
+      expect(started.length).toBeGreaterThanOrEqual(2);
+      for (const record of started) {
+        const flags = String(record.properties?.['experimental_flags'] ?? '').split(',');
+        expect(flags).toContain('subagent_fork');
+        expect(flags).toContain('wait_for');
+      }
+      const distinct = new Set(started.map((record) => record.properties?.['experimental_flags']));
+      expect(distinct.size).toBe(1);
+      await session.close();
+    } finally {
+      await harness.close();
+    }
+  });
 });
 
 describe('removeProviderFromConfig', () => {
