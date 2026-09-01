@@ -469,7 +469,8 @@ export class TranscriptService {
     }
     const messages = [...reduceContextTranscript(records).entries];
     const taskOriginTurnTaskIds = new Set<string>();
-    const steeredContents = new Map<string, Map<string, number>>();
+    const steeredContents = new Map<string, Map<string, (readonly string[] | undefined)[]>>();
+    const steeredPromptIdQueues = new Map<string, (readonly string[])[]>();
     const anchorStack: { taskIdsSnapshot: Set<string> }[] = [];
     let anchorFloor = 0;
     let sawTurnPrompt = false;
@@ -494,14 +495,35 @@ export class TranscriptService {
         }
         continue;
       }
+      if (record.type === 'prompt.steered') {
+        const content = record['content'];
+        const promptIds = record['promptIds'];
+        if (
+          Array.isArray(content) &&
+          Array.isArray(promptIds) &&
+          promptIds.every((id) => typeof id === 'string')
+        ) {
+          const key = JSON.stringify(content);
+          const queue = steeredPromptIdQueues.get(key) ?? [];
+          queue.push(promptIds as readonly string[]);
+          steeredPromptIdQueues.set(key, queue);
+        }
+        continue;
+      }
       if (record.type === 'turn.steer') {
         const input = record['input'];
         if (Array.isArray(input)) {
           const key = JSON.stringify(input);
           const steerOrigin = (record as { origin?: { kind?: unknown } }).origin?.kind;
           const kind = typeof steerOrigin === 'string' ? steerOrigin : 'user';
-          const byKind = steeredContents.get(key) ?? new Map<string, number>();
-          byKind.set(kind, (byKind.get(kind) ?? 0) + 1);
+          const idQueue = steeredPromptIdQueues.get(key);
+          const promptIds =
+            idQueue !== undefined && idQueue.length > 0 ? idQueue.shift() : undefined;
+          const byKind =
+            steeredContents.get(key) ?? new Map<string, (readonly string[] | undefined)[]>();
+          const queue = byKind.get(kind) ?? [];
+          queue.push(promptIds);
+          byKind.set(kind, queue);
           steeredContents.set(key, byKind);
         }
         continue;

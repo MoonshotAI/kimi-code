@@ -2105,6 +2105,41 @@ describe('AgentTranscriptProjector', () => {
     });
   });
 
+  it('flushes queued steers and task notifications at step start in arrival order', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    feed(ev({ type: 'turn.started', turnId: 4, origin: { kind: 'user' }, prompt: 'active' }));
+    feed(ev({ type: 'turn.step.started', turnId: 4, step: 1 }));
+    feed(ev({ type: 'turn.step.completed', turnId: 4, step: 1 }));
+    feed(
+      ev({
+        type: 'turn.steer',
+        input: [{ type: 'text', text: 'steered in' }],
+        origin: { kind: 'user' },
+      }),
+    );
+    feed(
+      ev({
+        type: 'task.notified',
+        notificationType: 'task.completed',
+        title: 'Background agent completed',
+        body: 'inspect done.',
+        severity: 'info',
+        sourceKind: 'background_task',
+        sourceId: 'task_1',
+      }),
+    );
+
+    feed(ev({ type: 'turn.step.started', turnId: 4, step: 2 }));
+    const frames = turnOps('t4', tx.getItems()).steps[1]!.frames;
+    expect(frames.map((f) => f.kind === 'text' && 'text' in f && f.text)).toEqual([
+      'steered in',
+      'Background agent completed\ninspect done.',
+    ]);
+  });
+
   it('projects turn.steer into the running step immediately, with daemon media as attachments', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
@@ -2674,6 +2709,35 @@ describe('AgentTranscriptProjector', () => {
         role: 'user',
         text: 'steered in',
         origin: { kind: 'user' },
+      });
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('readColdSnapshot stamps the steered frame with promptIds paired from prompt.steered', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-steer-ids-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const records = [
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } }, time: 1000 },
+        { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] }, time: 2000 },
+        { type: 'prompt.steered', activePromptId: 'msg_active', promptIds: ['msg_steered'], content: [{ type: 'text', text: 'steered in' }], steeredAt: '2026-09-01T10:00:00.000Z', time: 2500 },
+        { type: 'turn.steer', input: [{ type: 'text', text: 'steered in' }], origin: { kind: 'user' }, time: 3000 },
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'steered in' }], toolCalls: [], origin: { kind: 'user' } }, time: 3001 },
+        { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] }, time: 4000 },
+      ];
+      await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+
+      const snapshot = await coldTranscriptService(home).readColdSnapshot('s1', 'main');
+      const turn = snapshot!.items.find((item) => item.kind === 'turn');
+      if (turn?.kind !== 'turn') throw new Error('expected turn');
+      expect(turn.steps[1]?.frames[0]).toMatchObject({
+        kind: 'text',
+        role: 'user',
+        text: 'steered in',
+        promptIds: ['msg_steered'],
       });
     } finally {
       await rm(home, { recursive: true, force: true });

@@ -70,7 +70,10 @@ export function groupMessagesIntoSnapshot(
   messages: readonly HistoryMessage[],
   options?: {
     readonly taskOriginTurnTaskIds?: ReadonlySet<string>;
-    readonly steeredContents?: ReadonlyMap<string, ReadonlyMap<string, number>>;
+    readonly steeredContents?: ReadonlyMap<
+      string,
+      ReadonlyMap<string, readonly (readonly string[] | undefined)[]>
+    >;
   },
 ): AgentTranscriptSnapshot {
   const items: TranscriptItem[] = [];
@@ -243,9 +246,10 @@ export function groupMessagesIntoSnapshot(
       const contentKey = JSON.stringify(message.content ?? []);
       const steerKind = originKind ?? 'user';
       const steeredByKind = steeredContents.get(contentKey);
-      const steeredRemaining = steeredByKind?.get(steerKind) ?? 0;
-      if (steeredByKind !== undefined && steeredRemaining > 0) {
-        steeredByKind.set(steerKind, steeredRemaining - 1);
+      const steeredQueue = steeredByKind?.get(steerKind);
+      if (steeredByKind !== undefined && steeredQueue !== undefined && steeredQueue.length > 0) {
+        const promptIds = steeredQueue[0];
+        steeredByKind.set(steerKind, steeredQueue.slice(1));
         const bundled = bundledSkillActivations(message);
         const parts = message.content ?? [];
         bundled.forEach((activation, index) => {
@@ -260,6 +264,7 @@ export function groupMessagesIntoSnapshot(
           text: opening.text,
           taskId: undefined,
           attachmentIds: opening.attachmentIds,
+          promptIds,
           origin: projectTranscriptUserOrigin(message.origin),
           steered: true,
         });

@@ -534,7 +534,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         { role: 'user', content: [{ type: 'text', text: 'steered in' }], toolCalls: [], origin: { kind: 'user' } },
         { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] },
       ],
-      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), new Map([['user', 1]])]]) },
+      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), new Map([['user', [undefined]]])]]) },
     );
 
     expect(snapshot.items.map((i) => i.kind)).toEqual(['turn']);
@@ -548,6 +548,51 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     });
   });
 
+  it('stamps the folded steer frame with the prompt ids from the steer queue', () => {
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: 'steered in' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] },
+      ],
+      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), new Map([['user', [['prompt_a']]]])]]) },
+    );
+
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.steps[1]?.frames[0]).toMatchObject({
+      kind: 'text',
+      role: 'user',
+      text: 'steered in',
+      promptIds: ['prompt_a'],
+    });
+  });
+
+  it('pairs repeated steers of identical content with their prompt ids in order', () => {
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: 'same' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: 'same' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'noted again' }], toolCalls: [] },
+      ],
+      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'same' }]), new Map([['user', [['prompt_a'], ['prompt_b']]]])]]) },
+    );
+
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    const steerFrames = turn.steps.flatMap((step) =>
+      step.frames.filter((frame) => frame.kind === 'text' && frame.role === 'user'),
+    );
+    expect(steerFrames.map((frame) => frame.kind === 'text' && frame.role === 'user' ? frame.promptIds : undefined)).toEqual([
+      ['prompt_a'],
+      ['prompt_b'],
+    ]);
+  });
+
   it('keeps a trailing steered message visible by appending it to the last step', () => {
     const snapshot = groupMessagesIntoSnapshot(
       [
@@ -555,7 +600,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
         { role: 'user', content: [{ type: 'text', text: 'steered in' }], toolCalls: [], origin: { kind: 'user' } },
       ],
-      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), new Map([['user', 1]])]]) },
+      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), new Map([['user', [undefined]]])]]) },
     );
 
     expect(snapshot.items.map((i) => i.kind)).toEqual(['turn']);
@@ -578,7 +623,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         { role: 'user', content: [{ type: 'text', text: 'next question' }], toolCalls: [], origin: { kind: 'user' } },
         { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] },
       ],
-      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), new Map([['user', 1]])]]) },
+      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), new Map([['user', [undefined]]])]]) },
     );
 
     const turns = snapshot.items.filter((i) => i.kind === 'turn');
@@ -602,7 +647,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
         { role: 'user', content: [{ type: 'text', text: 'plain follow-up' }], toolCalls: [], origin: { kind: 'user' } },
       ],
-      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), new Map([['user', 1]])]]) },
+      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), new Map([['user', [undefined]]])]]) },
     );
 
     expect(snapshot.items.map((i) => i.kind)).toEqual(['turn', 'turn']);
@@ -1143,7 +1188,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         },
         { role: 'assistant', content: [{ type: 'text', text: 'used the skill' }], toolCalls: [] },
       ],
-      { steeredContents: new Map([[JSON.stringify(skillContent), new Map([['skill_activation', 1]])]]) },
+      { steeredContents: new Map([[JSON.stringify(skillContent), new Map([['skill_activation', [undefined]]])]]) },
     );
 
     expect(snapshot.items.map((item) => item.kind)).toEqual(['turn', 'marker']);
@@ -1166,7 +1211,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         },
         { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] },
       ],
-      { steeredContents: new Map([[JSON.stringify(cronContent), new Map([['cron_job', 1]])]]) },
+      { steeredContents: new Map([[JSON.stringify(cronContent), new Map([['cron_job', [undefined]]])]]) },
     );
 
     expect(snapshot.items.map((item) => item.kind)).toEqual(['turn']);
@@ -1196,7 +1241,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         },
         { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] },
       ],
-      { steeredContents: new Map([[JSON.stringify(slashContent), new Map([['skill_activation', 1]])]]) },
+      { steeredContents: new Map([[JSON.stringify(slashContent), new Map([['skill_activation', [undefined]]])]]) },
     );
 
     expect(snapshot.items.map((item) => item.kind)).toEqual(['turn']);
@@ -1227,7 +1272,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         { role: 'user', content: shared, toolCalls: [], origin: { kind: 'user' } },
         { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] },
       ],
-      { steeredContents: new Map([[JSON.stringify(shared), new Map([['skill_activation', 1]])]]) },
+      { steeredContents: new Map([[JSON.stringify(shared), new Map([['skill_activation', [undefined]]])]]) },
     );
 
     expect(snapshot.items.map((item) => item.kind)).toEqual(['turn', 'marker', 'turn']);
@@ -1248,7 +1293,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         { role: 'user', content: shared, toolCalls: [], origin: { kind: 'user' } },
         { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] },
       ],
-      { steeredContents: new Map([[JSON.stringify(shared), new Map([['user', 1]])]]) },
+      { steeredContents: new Map([[JSON.stringify(shared), new Map([['user', [undefined]]])]]) },
     );
 
     expect(snapshot.items.map((item) => item.kind)).toEqual(['turn', 'marker']);

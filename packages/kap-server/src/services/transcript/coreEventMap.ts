@@ -193,12 +193,15 @@ export interface ToolFrameRecord {
 export class AgentTranscriptProjector {
   private currentTurn: TurnHeader | undefined;
   private currentStep: StepHeader | undefined;
-  private pendingTaskNotifications: { text: string; taskId: string | undefined }[] = [];
-  private pendingSteers: {
-    input: readonly ContentPart[];
-    promptIds: readonly string[] | undefined;
-    origin: TranscriptUserOrigin;
-  }[] = [];
+  private pendingUserFrames: (
+    | { kind: 'notification'; text: string; taskId: string | undefined }
+    | {
+        kind: 'steer';
+        input: readonly ContentPart[];
+        promptIds: readonly string[] | undefined;
+        origin: TranscriptUserOrigin;
+      }
+  )[] = [];
   private unpairedSteerPromptIds: string[][] = [];
   private readonly stepOrdinals = new Map<string, number>();
   private frameOrdinal = 0;
@@ -403,8 +406,7 @@ export class AgentTranscriptProjector {
       startedAt: nowIso(),
     };
     this.currentStep = undefined;
-    this.pendingTaskNotifications = [];
-    this.pendingSteers = [];
+    this.pendingUserFrames = [];
     this.openText = undefined;
     this.openThinking = undefined;
     ops.push({ op: 'turn.upsert', turn: this.currentTurn });
@@ -428,7 +430,8 @@ export class AgentTranscriptProjector {
       this.currentStep = step;
       ops.push({ op: 'step.upsert', turnId: step.turnId, step });
     }
-    if (this.currentStep === undefined && this.pendingSteers.length > 0) {
+    const pendingSteers = this.pendingUserFrames.filter((pending) => pending.kind === 'steer');
+    if (this.currentStep === undefined && pendingSteers.length > 0) {
       const ordinal = (this.stepOrdinals.get(turnId) ?? this.lookups?.stepOrdinal?.(turnId) ?? 0) + 1;
       const step: StepHeader = {
         kind: 'step',
@@ -443,7 +446,7 @@ export class AgentTranscriptProjector {
       ops.push({ op: 'step.upsert', turnId, step });
     }
     if (this.currentStep !== undefined) {
-      for (const pending of this.pendingSteers) {
+      for (const pending of pendingSteers) {
         this.steerUserFrame(
           ops,
           turnId,
@@ -454,7 +457,7 @@ export class AgentTranscriptProjector {
         );
       }
     }
-    this.pendingSteers = [];
+    this.pendingUserFrames = [];
     const prev =
       this.currentTurn?.turnId === turnId ? this.currentTurn : this.lookups?.turn?.(turnId);
     const state = mapTurnEndState(event.reason);
@@ -476,7 +479,6 @@ export class AgentTranscriptProjector {
     ops.push({ op: 'turn.upsert', turn: this.currentTurn });
     ops.push({ op: 'meta.merge', meta: { activity: 'idle' } });
     this.currentStep = undefined;
-    this.pendingTaskNotifications = [];
     if (event.reason === 'cancelled' && event.interruptReason === 'user_cancelled') {
       ops.push(
         this.markerOp('interruption', { turnId: event.turnId, reason: event.interruptReason }),
@@ -523,25 +525,25 @@ export class AgentTranscriptProjector {
     this.openText = undefined;
     this.openThinking = undefined;
     const ops: TranscriptOperation[] = [{ op: 'step.upsert', turnId, step: this.currentStep }];
-    for (const pending of this.pendingTaskNotifications) {
-      ops.push({
-        op: 'frame.upsert',
-        turnId,
-        stepId,
-        frame: {
-          kind: 'text',
-          frameId: `${stepId}.f${++this.frameOrdinal}`,
-          role: 'user',
-          text: pending.text,
-          taskId: pending.taskId,
-        },
-      });
-    }
-    this.pendingTaskNotifications = [];
-    for (const pending of this.pendingSteers) {
+    for (const pending of this.pendingUserFrames) {
+      if (pending.kind === 'notification') {
+        ops.push({
+          op: 'frame.upsert',
+          turnId,
+          stepId,
+          frame: {
+            kind: 'text',
+            frameId: `${stepId}.f${++this.frameOrdinal}`,
+            role: 'user',
+            text: pending.text,
+            taskId: pending.taskId,
+          },
+        });
+        continue;
+      }
       this.steerUserFrame(ops, turnId, stepId, pending.input, pending.promptIds, pending.origin);
     }
-    this.pendingSteers = [];
+    this.pendingUserFrames = [];
     return ops;
   }
 
@@ -892,7 +894,7 @@ export class AgentTranscriptProjector {
       return [{ op: 'frame.upsert', turnId: turn.turnId, stepId: step.stepId, frame }];
     }
     if (turn.origin?.kind === 'task' && (turn.origin.taskId === undefined || turn.origin.taskId === event.sourceId)) return [];
-    this.pendingTaskNotifications.push({ text, taskId: event.sourceId });
+    this.pendingUserFrames.push({ kind: 'notification', text, taskId: event.sourceId });
     return [];
   }
 
@@ -1458,7 +1460,8 @@ export class AgentTranscriptProjector {
       );
       return ops;
     }
-    this.pendingSteers.push({
+    this.pendingUserFrames.push({
+      kind: 'steer',
       input,
       promptIds: this.unpairedSteerPromptIds.shift(),
       origin: frameOrigin,
