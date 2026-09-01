@@ -20,6 +20,7 @@ import { BufferedReadable, decodeTextWithErrors, globPatternToRegex } from './in
 import type { Kaos } from './kaos';
 import { applyLoginShellPathFromNode } from './login-shell-path';
 import type { KaosProcess } from './process';
+import { applySystemBinPathFromNode } from './system-bin-path';
 import type { StatResult } from './types';
 
 const isWindows: boolean = process.platform === 'win32';
@@ -215,9 +216,15 @@ export class LocalKaos implements Kaos {
   static async create(): Promise<LocalKaos> {
     // Enrich process.env.PATH from the user's login shell so spawned
     // commands find user-installed tools (e.g. Homebrew's gh) even when
-    // kimi-code itself was launched without the full profile PATH. Both
-    // probes are memoised, independent, and run concurrently.
-    const [osEnv] = await Promise.all([detectEnvironmentFromNode(), applyLoginShellPathFromNode()]);
+    // kimi-code itself was launched without the full profile PATH; the
+    // system-bin fallback then guarantees the OS tool dirs on platforms
+    // like OpenHarmony whose inherited PATH skips /system/bin entirely.
+    // All probes are memoised, independent, and run concurrently.
+    const [osEnv] = await Promise.all([
+      detectEnvironmentFromNode(),
+      applyLoginShellPathFromNode(),
+      applySystemBinPathFromNode(),
+    ]);
     return new LocalKaos(osEnv);
   }
 

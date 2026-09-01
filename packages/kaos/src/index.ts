@@ -21,6 +21,12 @@ export {
   KaosShellNotFoundError,
 } from './errors';
 export { LocalKaos } from './local';
+export type { SystemBinPathDeps } from './system-bin-path';
+export {
+  applySystemBinPath,
+  applySystemBinPathFromNode,
+  probeSystemBinPath,
+} from './system-bin-path';
 export {
   chdir,
   exec,
