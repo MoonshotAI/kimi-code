@@ -35,12 +35,12 @@ import {
   type SubagentToolInput,
 } from '#/agent/tools/agent/agent';
 import {
-  FORK_CONTEXT_NOTICE,
   FORK_EXPERIMENTAL_UNAVAILABLE,
   FORK_WITH_MODEL_UNAVAILABLE,
   FORK_WITH_RESUME_UNAVAILABLE,
   FORK_WITH_TYPE_UNAVAILABLE,
 } from '#/session/subagent/spawn';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { DEFAULT_SUBAGENT_TIMEOUT_MS, SECONDARY_MODEL_SECTION, SUBAGENT_SECTION } from '#/session/subagent/configSection';
 import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
 import { Error2, ErrorCodes } from '#/errors';
@@ -308,6 +308,14 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
             inheritUserTools: () => {},
             register: () => {},
             unregister: () => {},
+          } as never;
+        }
+        if (serviceId === IAgentReminderService) {
+          return {
+            _serviceBrand: undefined,
+            register: () => noopDisposable(),
+            notify: () => {},
+            reconcileWhenIdle: () => Promise.resolve(),
           } as never;
         }
         if (serviceId === IEventBus) {
@@ -1488,8 +1496,7 @@ describe('Agent tool execution contract', () => {
     const [runAgent, runRequest] = lifecycle.run.mock.calls[0]!;
     expect(runAgent).toMatchObject({ agentId: 'agent-child' });
     const runPrompt = runRequest.kind === 'prompt' ? runRequest.prompt : '';
-    expect(runPrompt).toContain(FORK_CONTEXT_NOTICE);
-    expect(runPrompt).toContain('Continue the analysis');
+    expect(runPrompt).toBe('Continue the analysis');
   });
 
   it('forks without requiring the caller profile in the catalog', async () => {
