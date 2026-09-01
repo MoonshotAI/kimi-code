@@ -6,6 +6,10 @@ The isomorphic transcript rendering data layer — agent-granular L1 store, idem
 
 No comments — no file headers, no section banners, no statement-level narration, no JSDoc (not even on exported symbols); the code is the source of truth. Lint-suppression directives (`oxlint-disable` / `eslint-disable`) are the only exception, allowed where they suppress an active rule for a deliberate pattern; other tooling directives (`@ts-expect-error`, `@ts-ignore`, …) stay banned — fix the underlying type problem instead. Enforced by `scripts/check-no-comments.mjs` (part of `pnpm lint`).
 
+## Contract documentation
+
+`docs/sdk.md` is the readable form of the package's external contract (data model, ops, WS/REST surface, derived selectors, event sources) plus the versioning rule: any contract change (entity fields, op types, frame shapes, REST responses, grade semantics) must ship with a numbered migration doc under `docs/migrations/NNNN-<title>.md`; pure additions need only a changeset. The doc currently describes the target contract of the state-model unification — until that refactor lands, `src/contract/` remains the authority.
+
 ## Cold rebuild
 
 The cold rebuild is a two-level fold over `wire.jsonl` as the single source of truth: `history/groupTurns.ts` (context messages → turn tree) plus `history/foldFacts.ts` (non-context records → tasks, interactions, todos, goal/plan/swarm meta, and end-appended markers/taskrefs; interactions left pending at shutdown fold to `cancelled`).
