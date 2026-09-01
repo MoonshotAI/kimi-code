@@ -96,12 +96,24 @@ export const fileHistoryKey = defineState(
     s.checkpoints.push({ turnId: e.turnId, phase, entries: cloneEntries(e.entries) });
     const minTurnId = e.turnId - (FILE_HISTORY_TURN_WINDOW - 1);
     if (s.checkpoints.some((c) => c.turnId < minTurnId)) {
+      const removed = s.checkpoints.filter((c) => c.turnId < minTurnId);
       s.checkpoints = s.checkpoints.filter((c) => c.turnId >= minTurnId);
       const kept = new Set<string>();
       for (const checkpoint of s.checkpoints) {
         for (const path of Object.keys(checkpoint.entries)) kept.add(path);
       }
       s.tracked = s.tracked.filter((path) => kept.has(path));
+      const head = s.checkpoints[0];
+      if (head !== undefined) {
+        const folded = cloneEntries({});
+        for (const record of removed) {
+          for (const [path, entry] of Object.entries(record.entries)) {
+            if (kept.has(path)) folded[path] = entry;
+          }
+        }
+        for (const [path, entry] of Object.entries(head.entries)) folded[path] = entry;
+        head.entries = folded;
+      }
     }
   })
   .on(FileHistoryTracked, (s, e) => {

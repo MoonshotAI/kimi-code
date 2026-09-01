@@ -246,21 +246,40 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
   private async capture(path: string, turnId: number): Promise<void> {
     const pathKey = this.pathKey(path);
     const state = this.history();
-    if (state.tracked.includes(pathKey)) return;
+    const startCheckpoint = state.checkpoints.find(
+      (c) => c.turnId === turnId && checkpointPhaseOf(c) === 'start',
+    );
+    if (startCheckpoint !== undefined && Object.hasOwn(startCheckpoint.entries, pathKey)) return;
 
     const current = await this.readCurrent(pathKey);
     if (current === 'unreadable') return;
+    const latest = latestEntry(state.checkpoints, pathKey);
+    const nextVersion = maxVersion(state.checkpoints, pathKey) + 1;
     let entry: FileBackupEntry;
-    if (current === 'missing') entry = { key: null, version: 1 };
-    else if (current instanceof Uint8Array) entry = await this.backup(pathKey, 1, current);
-    else {
-      entry = {
-        key: null,
-        version: 1,
-        oversize: true,
-        size: current.oversizeBytes,
-        mtimeMs: current.mtimeMs,
-      };
+    if (current === 'missing') {
+      entry =
+        latest !== undefined && latest.key === null && latest.oversize !== true
+          ? { ...latest }
+          : { key: null, version: nextVersion };
+    } else if (current instanceof Uint8Array) {
+      const contentHash = sha256(current);
+      entry =
+        latest !== undefined && latest.contentHash === contentHash
+          ? { ...latest }
+          : await this.backup(pathKey, nextVersion, current, contentHash);
+    } else {
+      entry =
+        latest?.oversize === true &&
+        latest.size === current.oversizeBytes &&
+        latest.mtimeMs === current.mtimeMs
+          ? { ...latest }
+          : {
+              key: null,
+              version: nextVersion,
+              oversize: true,
+              size: current.oversizeBytes,
+              mtimeMs: current.mtimeMs,
+            };
     }
     await this.dispatcher.dispatch(
       new FileHistoryTracked({ agentId: this.agentCtx.agentId, turnId, path: pathKey, entry }),
