@@ -400,7 +400,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
         return { oversizeBytes: info.size, mtimeMs: info.mtimeMs };
       }
       try {
-        const bytes = await fs.readBytes(absolute, FILE_HISTORY_MAX_FILE_BYTES + 1);
+        const bytes = await fs.readBytes(absolute, info.size + 1);
         if (bytes.byteLength > FILE_HISTORY_MAX_FILE_BYTES) {
           const grown = await fs.stat(absolute).catch(() => undefined);
           return {
