@@ -7,7 +7,10 @@
       "command": "pnpm",
       "args": ["run", "dev:prepare"],
       "options": {
-        "cwd": "${workspaceFolder}"
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "/Users/restver/.nvm/versions/node/v24.16.0/bin:${env:PATH}"
+        }
       },
       "problemMatcher": []
     },
@@ -17,7 +20,10 @@
       "command": "pnpm",
       "args": ["run", "dev:extension"],
       "options": {
-        "cwd": "${workspaceFolder}"
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "/Users/restver/.nvm/versions/node/v24.16.0/bin:${env:PATH}"
+        }
       },
       "isBackground": true,
       "problemMatcher": {
@@ -43,7 +49,10 @@
       "command": "pnpm",
       "args": ["run", "dev:webview"],
       "options": {
-        "cwd": "${workspaceFolder}"
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "/Users/restver/.nvm/versions/node/v24.16.0/bin:${env:PATH}"
+        }
       },
       "isBackground": true,
       "problemMatcher": {

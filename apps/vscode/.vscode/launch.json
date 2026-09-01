@@ -13,12 +13,16 @@
         "--disable-workspace-trust",
         "--skip-welcome",
         "--skip-release-notes",
-        "${workspaceFolder}/../../.tmp/vscode-extension-dev/workspace"
+        "${workspaceFolder}/../../.tmp/vscode-extension-dev/workspace",
+        "--disable-extensions" // ← 这就是关键禁用已安装的插件
       ],
       "env": {
         "KIMI_CODE_HOME": "${workspaceFolder}/../../.tmp/vscode-extension-dev/kimi-home"
       },
-      "outFiles": ["${workspaceFolder}/dist/**/*.js", "${workspaceFolder}/dist/**/*.mjs"],
+      "outFiles": [
+        "${workspaceFolder}/dist/**/*.js",
+        "${workspaceFolder}/dist/**/*.mjs"
+      ],
       "sourceMaps": true,
       "resolveSourceMapLocations": [
         "${workspaceFolder}/**",
