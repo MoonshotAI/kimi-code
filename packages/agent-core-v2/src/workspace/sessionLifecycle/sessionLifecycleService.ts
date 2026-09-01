@@ -15,6 +15,10 @@ import { drainLogCloses } from '#/_base/log/logService';
 import { DEFAULT_PLAN_MODE_SECTION } from '#/features/plan/configSection';
 import { IAgentFileHistoryService } from '#/features/fileHistory/fileHistory';
 import { FILE_HISTORY_BLOB_PREFIX } from '#/features/fileHistory/fileHistoryService';
+import {
+  dropFileHistorySession,
+  touchForkedFileHistory,
+} from '#/features/fileHistory/fileHistoryRetention';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { LifecycleScope } from '#/app/scopes';
@@ -445,6 +449,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     }
     await this.hostFs.remove(sessionDirOf(this.bootstrap.homeDir, this.handlerScope, sessionId));
     await this.index.remove(sessionId);
+    await dropFileHistorySession({ docs: this.docs, workspaceId: this.workspaceId, sessionId });
     this.appendLogStore.append('', 'session_index.jsonl', { sessionId, deleted: true });
     await this.appendLogStore.flush();
   }
@@ -581,6 +586,14 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
       if (turnSlice !== undefined) {
         await this.pruneTruncatedForkFiles(targetSessionDir, agentIds, retainedAgentIds);
+      } else {
+        await touchForkedFileHistory({
+          docs: this.docs,
+          hostFs: this.hostFs,
+          workspaceId: this.workspaceId,
+          sessionDir: targetSessionDir,
+          sessionId: targetCtx.sessionId,
+        });
       }
 
       const title = opts.title ?? `Fork: ${sourceMeta?.title || sourceId}`;
