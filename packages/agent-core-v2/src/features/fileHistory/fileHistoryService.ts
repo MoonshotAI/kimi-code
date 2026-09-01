@@ -472,8 +472,11 @@ function evictableCheckpoints(
   checkpoints: readonly FileHistoryCheckpointRecord[],
   nextTurnId: number,
 ): readonly FileHistoryCheckpointRecord[] {
-  const minTurnId = nextTurnId - (FILE_HISTORY_TURN_WINDOW - 1);
-  return checkpoints.filter((checkpoint) => checkpoint.turnId < minTurnId);
+  const turnIds = [...new Set([...checkpoints.map((c) => c.turnId), nextTurnId])].sort(
+    (a, b) => b - a,
+  );
+  const keep = new Set(turnIds.slice(0, FILE_HISTORY_TURN_WINDOW));
+  return checkpoints.filter((checkpoint) => !keep.has(checkpoint.turnId));
 }
 
 function blobKey(pathKey: string, version: number): string {
