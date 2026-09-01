@@ -29,7 +29,7 @@ import {
   type FileHistoryState,
 } from './fileHistory';
 import {
-  FILE_HISTORY_CHECKPOINT_CAP,
+  FILE_HISTORY_TURN_WINDOW,
   FileHistoryCheckpointed,
   FileHistoryTracked,
   checkpointPhaseOf,
@@ -309,7 +309,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
       entries[pathKey] = await this.backup(pathKey, nextVersion, current, contentHash);
     }
 
-    const evictable = evictableCheckpoints(state.checkpoints);
+    const evictable = evictableCheckpoints(state.checkpoints, turnId);
     await this.dispatcher.dispatch(
       new FileHistoryCheckpointed({ agentId: this.agentCtx.agentId, turnId, phase, entries }),
     );
@@ -341,7 +341,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     }
     for (const checkpoint of evicted) {
       for (const entry of Object.values(checkpoint.entries)) {
-        if (entry.key === null || entry.version === 1 || retainedKeys.has(entry.key)) continue;
+        if (entry.key === null || retainedKeys.has(entry.key)) continue;
         try {
           await this.blobs.delete(this.agentCtx.scope(), entry.key);
         } catch (error) {
@@ -459,9 +459,10 @@ function maxVersion(
 
 function evictableCheckpoints(
   checkpoints: readonly FileHistoryCheckpointRecord[],
+  nextTurnId: number,
 ): readonly FileHistoryCheckpointRecord[] {
-  const overflow = checkpoints.length + 1 - FILE_HISTORY_CHECKPOINT_CAP;
-  return overflow > 0 ? checkpoints.slice(0, overflow) : [];
+  const minTurnId = nextTurnId - (FILE_HISTORY_TURN_WINDOW - 1);
+  return checkpoints.filter((checkpoint) => checkpoint.turnId < minTurnId);
 }
 
 function blobKey(pathKey: string, version: number): string {

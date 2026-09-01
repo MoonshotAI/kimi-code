@@ -10,7 +10,7 @@ import type {
   FileHistoryState,
 } from './fileHistory';
 
-export const FILE_HISTORY_CHECKPOINT_CAP = 400;
+export const FILE_HISTORY_TURN_WINDOW = 5;
 export const FILE_HISTORY_RECORD_PREFIX = 'file_history.';
 
 const backupEntrySchema = z.object({
@@ -94,15 +94,14 @@ export const fileHistoryKey = defineState(
       return;
     }
     s.checkpoints.push({ turnId: e.turnId, phase, entries: cloneEntries(e.entries) });
-    if (s.checkpoints.length > FILE_HISTORY_CHECKPOINT_CAP) {
-      const removed = s.checkpoints.splice(0, s.checkpoints.length - FILE_HISTORY_CHECKPOINT_CAP);
-      const head = s.checkpoints[0]!;
-      const folded = cloneEntries({});
-      for (const record of removed) {
-        for (const [path, entry] of Object.entries(record.entries)) folded[path] = entry;
+    const minTurnId = e.turnId - (FILE_HISTORY_TURN_WINDOW - 1);
+    if (s.checkpoints.some((c) => c.turnId < minTurnId)) {
+      s.checkpoints = s.checkpoints.filter((c) => c.turnId >= minTurnId);
+      const kept = new Set<string>();
+      for (const checkpoint of s.checkpoints) {
+        for (const path of Object.keys(checkpoint.entries)) kept.add(path);
       }
-      for (const [path, entry] of Object.entries(head.entries)) folded[path] = entry;
-      head.entries = folded;
+      s.tracked = s.tracked.filter((path) => kept.has(path));
     }
   })
   .on(FileHistoryTracked, (s, e) => {
