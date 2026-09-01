@@ -84,6 +84,8 @@
 //   turn.ended                         turn                                                  src/agent/loop/turnOps.ts
 //   turn.prompt                        turn                                                  src/agent/loop/turnOps.ts
 //   turn.steer                         turn                                                  src/agent/loop/turnOps.ts
+//   turn.step.interrupted              (none)                                                src/agent/loop/turnEvents.ts
+//   turn.step.retrying                 (none)                                                src/agent/stepRetry/stepRetryService.ts
 //   usage.record                       (none)                                                src/agent/usage/usageOps.ts
 
 /**
@@ -500,7 +502,7 @@ interface PlanRevisionPayload {
   agentId: string;
   id: string;
   version: number;
-  path: string;
+  key: string;
   sha256: string;
   bytes: number;
 }
@@ -881,6 +883,39 @@ interface TurnSteerPayload {
 
 /**
  * states: (none)
+ * owner: src/agent/loop/turnEvents.ts
+ */
+interface TurnStepInterruptedPayload {
+  _name: 'turn.step.interrupted';
+  agentId: string;
+  turnId: number;
+  step: number;
+  stepId?: string;
+  reason: string;
+  message?: string;
+}
+
+/**
+ * states: (none)
+ * owner: src/agent/stepRetry/stepRetryService.ts
+ */
+interface TurnStepRetryingPayload {
+  _name: 'turn.step.retrying';
+  agentId: string;
+  turnId: number;
+  step: number;
+  stepId?: string;
+  failedAttempt: number;
+  nextAttempt: number;
+  maxAttempts: number;
+  delayMs: number;
+  errorName: string;
+  errorMessage: string;
+  statusCode?: number;
+}
+
+/**
+ * states: (none)
  * owner: src/agent/usage/usageOps.ts
  */
 interface UsageRecordPayload {
@@ -959,5 +994,7 @@ interface WirePayloadMap {
   "turn.ended": TurnEndedPayload;
   "turn.prompt": TurnPromptPayload;
   "turn.steer": TurnSteerPayload;
+  "turn.step.interrupted": TurnStepInterruptedPayload;
+  "turn.step.retrying": TurnStepRetryingPayload;
   "usage.record": UsageRecordPayload;
 }

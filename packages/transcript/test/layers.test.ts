@@ -1545,7 +1545,7 @@ describe('foldWireRecordFacts (cold facts)', () => {
       type: 'plan.revision',
       id: 'plan-1',
       version: 2,
-      path: 'agents/main/plan/plan-1/v2.md',
+      key: 'plan/plan-1/v2.md',
       sha256: 'deadbeef',
       bytes: 512,
       time: 2000,
@@ -1553,9 +1553,10 @@ describe('foldWireRecordFacts (cold facts)', () => {
     const folded = foldWireRecordFacts(
       [{ type: 'plan_mode.enter', id: 'plan-1', time: 1000 }, revision],
       base,
+      { resolvePlanRevisionKey: (key) => `sessions/w/s/agents/main/${key}` },
     );
     expect(folded.meta.modes).toEqual({
-      plan: { reviewPath: 'agents/main/plan/plan-1/v2.md', version: 2 },
+      plan: { reviewPath: 'sessions/w/s/agents/main/plan/plan-1/v2.md', version: 2 },
     });
     const revisionMarkers = folded.items.filter(
       (item) => item.kind === 'marker' && item.marker === 'plan.revision',
@@ -1568,7 +1569,7 @@ describe('foldWireRecordFacts (cold facts)', () => {
         payload: {
           id: 'plan-1',
           version: 2,
-          path: 'agents/main/plan/plan-1/v2.md',
+          path: 'sessions/w/s/agents/main/plan/plan-1/v2.md',
           sha256: 'deadbeef',
           bytes: 512,
         },
@@ -1599,6 +1600,44 @@ describe('foldWireRecordFacts (cold facts)', () => {
       base,
     );
     expect(reentered.meta.modes).toEqual({ plan: {} });
+  });
+
+  it('folds legacy plan.revision path records without a key', () => {
+    const base = baseWithMarker();
+    const legacy = {
+      type: 'plan.revision',
+      id: 'plan-1',
+      version: 1,
+      path: 'sessions/w/s/agents/main/plan/plan-1/v1.md',
+      sha256: 'deadbeef',
+      bytes: 256,
+      time: 2000,
+    };
+    const folded = foldWireRecordFacts(
+      [{ type: 'plan_mode.enter', id: 'plan-1', time: 1000 }, legacy],
+      base,
+    );
+    expect(folded.meta.modes).toEqual({
+      plan: { reviewPath: 'sessions/w/s/agents/main/plan/plan-1/v1.md', version: 1 },
+    });
+    const revisionMarkers = folded.items.filter(
+      (item) => item.kind === 'marker' && item.marker === 'plan.revision',
+    );
+    expect(revisionMarkers).toEqual([
+      {
+        kind: 'marker',
+        markerId: 'm3',
+        marker: 'plan.revision',
+        payload: {
+          id: 'plan-1',
+          version: 1,
+          path: 'sessions/w/s/agents/main/plan/plan-1/v1.md',
+          sha256: 'deadbeef',
+          bytes: 256,
+        },
+        at: new Date(2000).toISOString(),
+      },
+    ]);
   });
 
   it('folds task records into task entities and timeline taskrefs', () => {
@@ -1845,6 +1884,161 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(turn.state).toBe('completed');
     expect(turn.endedAt).toBe(new Date(3000).toISOString());
     expect(folded.items).toHaveLength(base.items.length);
+  });
+
+  const baseWithSteps = (): AgentTranscriptSnapshot =>
+    groupMessagesIntoSnapshot([
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'first' }], toolCalls: [] },
+      { role: 'assistant', content: [{ type: 'text', text: 'second' }], toolCalls: [] },
+    ]);
+
+  it('folds turn.step.interrupted records into the matching step of the matching turn', () => {
+    const base = baseWithSteps();
+    const folded = foldWireRecordFacts(
+      [
+        {
+          type: 'turn.step.interrupted',
+          turnId: 0,
+          step: 2,
+          reason: 'user_cancelled',
+          message: 'stopped by user',
+          time: 4000,
+        },
+        { type: 'turn.ended', turnId: 0, reason: 'cancelled', time: 5000 },
+      ],
+      base,
+    );
+    const turn = folded.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.steps).toHaveLength(2);
+    expect(turn.steps[0]).toMatchObject({ ordinal: 1, state: 'completed' });
+    expect(turn.steps[0]?.endReason).toBeUndefined();
+    expect(turn.steps[1]).toMatchObject({
+      ordinal: 2,
+      state: 'interrupted',
+      endReason: 'user_cancelled',
+      endMessage: 'stopped by user',
+      endedAt: new Date(4000).toISOString(),
+    });
+    expect(turn.state).toBe('cancelled');
+    expect(folded.items).toHaveLength(base.items.length);
+  });
+
+  it('applies turn.step.interrupted last-wins per step and tolerates a missing message', () => {
+    const base = baseWithSteps();
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.step.interrupted', turnId: 0, step: 1, reason: 'aborted', message: 'first', time: 1000 },
+        { type: 'turn.step.interrupted', turnId: 0, step: 1, reason: 'max_steps', time: 2000 },
+      ],
+      base,
+    );
+    const turn = folded.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.steps[0]).toMatchObject({
+      ordinal: 1,
+      state: 'interrupted',
+      endReason: 'max_steps',
+      endedAt: new Date(2000).toISOString(),
+    });
+    expect(turn.steps[0]?.endMessage).toBeUndefined();
+    expect(turn.steps[1]?.state).toBe('completed');
+  });
+
+  it('skips turn.step.interrupted records with unknown turn ids or missing reason', () => {
+    const base = baseWithSteps();
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.step.interrupted', turnId: 9, step: 1, reason: 'error', time: 1000 },
+        { type: 'turn.step.interrupted', turnId: 0, step: 1, time: 3000 },
+      ],
+      base,
+    );
+    const turn = folded.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.steps.map((step) => step.state)).toEqual(['completed', 'completed']);
+    expect(turn.steps.every((step) => step.endReason === undefined)).toBe(true);
+  });
+
+  it('creates the interrupted step when the cold tree has no step with that ordinal', () => {
+    const base = baseWithSteps();
+    const folded = foldWireRecordFacts(
+      [
+        {
+          type: 'turn.step.interrupted',
+          turnId: 0,
+          step: 3,
+          reason: 'error',
+          message: 'all retries exhausted',
+          time: 2000,
+        },
+        { type: 'turn.ended', turnId: 0, reason: 'failed', time: 3000 },
+      ],
+      base,
+    );
+    const turn = folded.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.steps.map((step) => step.ordinal)).toEqual([1, 2, 3]);
+    expect(turn.steps[2]).toEqual({
+      kind: 'step',
+      stepId: 't0.3',
+      turnId: 't0',
+      ordinal: 3,
+      state: 'interrupted',
+      frames: [],
+      endedAt: new Date(2000).toISOString(),
+      endReason: 'error',
+      endMessage: 'all retries exhausted',
+    });
+  });
+
+  it('creates the interrupted step for a turn that produced no steps at all', () => {
+    const base = groupMessagesIntoSnapshot([
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },
+    ]);
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.step.interrupted', turnId: 0, step: 1, reason: 'user_cancelled', time: 1000 },
+        { type: 'turn.ended', turnId: 0, reason: 'cancelled', time: 2000 },
+      ],
+      base,
+    );
+    const turn = folded.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.steps).toHaveLength(1);
+    expect(turn.steps[0]).toMatchObject({
+      stepId: 't0.1',
+      ordinal: 1,
+      state: 'interrupted',
+      endReason: 'user_cancelled',
+      endedAt: new Date(1000).toISOString(),
+    });
+    expect(turn.steps[0]?.endMessage).toBeUndefined();
+  });
+
+  it('ignores turn.step.retrying records in the cold fold', () => {
+    const base = baseWithSteps();
+    const folded = foldWireRecordFacts(
+      [
+        {
+          type: 'turn.step.retrying',
+          turnId: 0,
+          step: 1,
+          failedAttempt: 1,
+          nextAttempt: 2,
+          maxAttempts: 10,
+          delayMs: 500,
+          errorName: 'APIStatusError',
+          errorMessage: 'Overloaded',
+          statusCode: 429,
+          time: 1000,
+        },
+      ],
+      base,
+    );
+    expect(folded).toEqual(base);
+    expect(folded.items).toBe(base.items);
   });
 
   it('matches durable turns by prompt identity after a context-only blocked prompt', () => {

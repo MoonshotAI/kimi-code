@@ -5,6 +5,7 @@ import { ScopeActivation, registerScopedService, type ISessionScopeHandle } from
 import { LifecycleScope } from '#/app/scopes';
 import { Error2, ErrorCodes } from '#/errors';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
+import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import {
   type CreateChildSessionOptions,
   type ForkSessionOptions,
@@ -172,7 +173,7 @@ export class SessionManager implements ISessionManager {
     });
   }
 
-  async fork(options: ForkSessionOptions): Promise<ISessionScopeHandle> {
+  async fork(options: ForkSessionOptions): Promise<SessionMeta> {
     return this.serializeLifecycleForKeys(
       this.lifecycleKeys(options.sourceSessionId, options.newSessionId),
       async () => {
@@ -188,7 +189,7 @@ export class SessionManager implements ISessionManager {
     );
   }
 
-  async createChild(options: CreateChildSessionOptions): Promise<ISessionScopeHandle> {
+  async createChild(options: CreateChildSessionOptions): Promise<SessionMeta> {
     return this.serializeLifecycleForKeys(
       this.lifecycleKeys(options.sourceSessionId, options.newSessionId),
       async () => {

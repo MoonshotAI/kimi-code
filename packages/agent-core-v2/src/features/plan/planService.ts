@@ -213,7 +213,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
         agentId: this.agentCtx.agentId,
         id,
         version,
-        path: `${scope}/${key}`,
+        key,
         sha256: createHash('sha256').update(bytes).digest('hex'),
         bytes: bytes.byteLength,
       }),

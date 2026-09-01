@@ -711,16 +711,14 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         if (childHandler === undefined) {
           throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${session_id} does not exist`);
         }
-        const handle = await core.accessor.get(ISessionManager).createChild({
+        const meta = await core.accessor.get(ISessionManager).createChild({
           sourceSessionId: session_id,
           title: req.body.title,
           metadata: req.body.metadata,
         });
-        const meta = await handle.accessor.get(ISessionMetadata).read();
-        const ctx = handle.accessor.get(ISessionContext);
         const session = toWireSession(
-          { ...meta, workspaceId: ctx.workspaceId },
-          ctx.cwd,
+          { ...meta, workspaceId: childHandler.workspaceId },
+          meta.cwd ?? '',
           resolveSessionFacts(core, meta.id),
         );
         core.accessor.get(IEventService).publish(
@@ -875,16 +873,14 @@ async function forkSessionAction(
   if (forkHandler === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
   }
-  const handle = await core.accessor.get(ISessionManager).fork({
+  const meta = await core.accessor.get(ISessionManager).fork({
     sourceSessionId: id,
     title: body.title,
     metadata: body.metadata,
   });
-  const meta = await handle.accessor.get(ISessionMetadata).read();
-  const sessionCtx = handle.accessor.get(ISessionContext);
   const session = toWireSession(
-    { ...meta, workspaceId: sessionCtx.workspaceId },
-    sessionCtx.cwd,
+    { ...meta, workspaceId: forkHandler.workspaceId },
+    meta.cwd ?? '',
     resolveSessionFacts(core, meta.id),
   );
   core.accessor

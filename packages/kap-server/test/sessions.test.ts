@@ -1031,20 +1031,19 @@ describe('server-v2 /api/v1/sessions', () => {
 
     const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {});
     expect(forked.body.code).toBe(0);
+    const forkedId = forked.body.data.id;
 
-    const forkedSession = getLiveSessionById(
-      (server as RunningServer).core.accessor,
-      forked.body.data.id,
-    );
-    expect(forkedSession).toBeDefined();
-    const forkedManager = forkedSession!.accessor.get(IAgentLifecycleService);
-    const forkedCron = forkedManager.handleOf(MAIN_AGENT_ID)!.accessor.get(IAgentCronService);
+    expect(getLiveSessionById((server as RunningServer).core.accessor, forkedId)).toBeUndefined();
+
+    const resumed = await resumeSessionById((server as RunningServer).core.accessor, forkedId);
+    expect(resumed).toBeDefined();
+    const forkedCron = resumed!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!.accessor.get(IAgentCronService);
     expect(forkedCron.list().map((t) => ({ id: t.id, prompt: t.prompt }))).toEqual([
       { id: task.id, prompt: 'fork me' },
     ]);
   });
 
-  it('fork heals a corrupted source wire through the shared repair path', async () => {
+  it('fork copies a corrupted source wire without healing it; the fork heals on resume', async () => {
     const cwd = home as string;
     const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const parentId = parent.body.data.id;
@@ -1069,21 +1068,152 @@ describe('server-v2 /api/v1/sessions', () => {
 
     const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {});
     expect(forked.body.code).toBe(0);
-
-    expect(await readFile(wirePath, 'utf8')).toBe(`${originalLines.join('\n')}\n`);
-    expect(await readFile(`${wirePath}.bak`, 'utf8')).toBe(corrupted);
-
     const forkedId = forked.body.data.id;
-    const forkedLive = getLiveSessionById((server as RunningServer).core.accessor, forkedId);
-    expect(forkedLive).toBeDefined();
-    const forkedManager = forkedLive!.accessor.get(IAgentLifecycleService);
-    const forkedCron = forkedManager.handleOf(MAIN_AGENT_ID)!.accessor.get(IAgentCronService);
+
+    expect(await readFile(wirePath, 'utf8')).toBe(corrupted);
+
+    const resumed = await resumeSessionById((server as RunningServer).core.accessor, forkedId);
+    expect(resumed).toBeDefined();
+    const forkedCron = resumed!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!.accessor.get(IAgentCronService);
     expect(forkedCron.list().map((t) => ({ id: t.id, prompt: t.prompt }))).toEqual([
       { id: task.id, prompt: 'survives corruption' },
     ]);
+  });
 
-    const fetched = await getJson<SessionWire>(`/api/v1/sessions/${forkedId}`);
-    expect(fetched.body.code).toBe(0);
+  it('cold-forks a session with hundreds of agents without materializing it', async () => {
+    const cwd = home as string;
+    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const parentId = parent.body.data.id;
+    const parentWire = parent.body.data;
+    await closeSessionById((server as RunningServer).core.accessor, parentId);
+
+    const sessionDir = join(home as string, 'sessions', parentWire.workspace_id, parentId);
+    const statePath = join(sessionDir, 'state.json');
+    const state = JSON.parse(await readFile(statePath, 'utf8'));
+
+    const subagentCount = 300;
+    const metadataLine = JSON.stringify({ type: 'metadata', protocol_version: '1.5', created_at: 1 });
+    const recordLine = (n: number) =>
+      JSON.stringify({
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: `hello ${n}` }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+        time: n,
+      });
+    const planRevisionLine = JSON.stringify({
+      type: 'plan.revision',
+      id: 'plan-1',
+      version: 2,
+      key: 'plan/plan-1/v2.md',
+      sha256: 'deadbeef',
+      bytes: 128,
+      time: 5,
+    });
+
+    const agents: Record<string, { homedir: string; type: string; parentAgentId: string | null; labels: Record<string, string> }> = {
+      main: {
+        homedir: join(sessionDir, 'agents', 'main'),
+        type: 'main',
+        parentAgentId: null,
+        labels: { kind: 'main' },
+      },
+    };
+    await mkdir(join(sessionDir, 'agents', 'main'), { recursive: true });
+    await writeFile(
+      join(sessionDir, 'agents', 'main', 'wire.jsonl'),
+      `${metadataLine}\n${recordLine(2)}\n${planRevisionLine}\n`,
+    );
+    for (let i = 0; i < subagentCount; i++) {
+      const agentId = `agent-${i}`;
+      agents[agentId] = {
+        homedir: join(sessionDir, 'agents', agentId),
+        type: 'sub',
+        parentAgentId: 'main',
+        labels: { swarm: 'test' },
+      };
+      const agentDir = join(sessionDir, 'agents', agentId);
+      await mkdir(agentDir, { recursive: true });
+      if (i === 0) continue;
+      await writeFile(
+        join(agentDir, 'wire.jsonl'),
+        `${metadataLine}\n${recordLine(i)}\n${recordLine(i + 1000)}\n`,
+      );
+    }
+    state.agents = agents;
+    state.custom = { origin: 'large-test' };
+    await writeFile(statePath, JSON.stringify(state));
+
+    const startedAt = Date.now();
+    const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {});
+    const elapsedMs = Date.now() - startedAt;
+    expect(forked.body.code).toBe(0);
+    const forkedId = forked.body.data.id;
+    process.stdout.write(`fork of ${subagentCount + 1}-agent session completed in ${elapsedMs}ms\n`);
+
+    expect(getLiveSessionById((server as RunningServer).core.accessor, forkedId)).toBeUndefined();
+
+    const forkedDir = join(home as string, 'sessions', parentWire.workspace_id, forkedId);
+    const forkedState = JSON.parse(await readFile(join(forkedDir, 'state.json'), 'utf8'));
+    expect(forkedState.title).toBe(`Fork: ${parentWire.title || parentId}`);
+    expect(forkedState.forkedFrom).toBe(parentId);
+    expect(forkedState.custom).toEqual({ origin: 'large-test' });
+    expect(Object.keys(forkedState.agents)).toHaveLength(subagentCount + 1);
+    for (const agentId of ['main', 'agent-0', 'agent-150', `agent-${subagentCount - 1}`]) {
+      const entry = forkedState.agents[agentId];
+      const source = agents[agentId]!;
+      expect(entry.homedir).toBe(join(forkedDir, 'agents', agentId));
+      expect(entry.type).toBe(source.type);
+      expect(entry.parentAgentId ?? null).toBe(source.parentAgentId);
+      expect(entry.labels).toEqual(
+        agentId === 'main' ? source.labels : { ...source.labels, parentAgentId: 'main' },
+      );
+    }
+
+    const mainWire = (await readFile(join(forkedDir, 'agents', 'main', 'wire.jsonl'), 'utf8'))
+      .trim()
+      .split('\n');
+    expect(mainWire.map((line) => JSON.parse(line).type)).toEqual([
+      'metadata',
+      'context.append_message',
+      'plan.revision',
+      'forked',
+    ]);
+    expect(JSON.parse(mainWire[2]!)).toMatchObject({ key: 'plan/plan-1/v2.md' });
+
+    const emptyWire = (await readFile(join(forkedDir, 'agents', 'agent-0', 'wire.jsonl'), 'utf8'))
+      .trim()
+      .split('\n');
+    expect(emptyWire.map((line) => JSON.parse(line).type)).toEqual(['metadata', 'forked']);
+
+    const sampledWire = (await readFile(join(forkedDir, 'agents', 'agent-150', 'wire.jsonl'), 'utf8'))
+      .trim()
+      .split('\n');
+    expect(sampledWire.map((line) => JSON.parse(line).type)).toEqual([
+      'metadata',
+      'context.append_message',
+      'context.append_message',
+      'forked',
+    ]);
+
+    const listed = await getJson<SessionWire>(`/api/v1/sessions/${forkedId}`);
+    expect(listed.body.code).toBe(0);
+
+    const transcript = await getJson<{
+      items: { kind: string; marker?: string; payload?: { path?: string } }[];
+    }>(`/api/v1/sessions/${forkedId}/transcript?agent_id=main`);
+    expect(transcript.body.code).toBe(0);
+    const revisionMarker = transcript.body.data.items.find(
+      (item) => item.kind === 'marker' && item.marker === 'plan.revision',
+    );
+    expect(revisionMarker?.payload?.path).toContain(forkedId);
+
+    const resumed = await resumeSessionById((server as RunningServer).core.accessor, forkedId);
+    expect(resumed).toBeDefined();
+    expect(resumed!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)).toBeDefined();
   });
 
   it('keeps cron tasks across a server restart through the wire', async () => {
