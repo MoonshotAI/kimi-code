@@ -456,6 +456,7 @@ export interface VideoUploadEvent {
 
 export interface SessionStartedEvent {
   resumed: boolean;
+  experimental_flags: string;
 }
 
 export interface SessionLoadFailedEvent {
@@ -1089,7 +1090,11 @@ export const telemetryEventDefinitions = {
   session_started: defineTelemetryEvent<SessionStartedEvent>({
     owner: 'kimi-code',
     comment: 'A session becomes active (created, forked, or resumed).',
-    properties: { resumed: 'Whether the session was resumed from disk' },
+    properties: {
+      resumed: 'Whether the session was resumed from disk',
+      experimental_flags:
+        'Sorted comma-separated ids of enabled experimental flags, empty when none are enabled',
+    },
   }),
   session_load_failed: defineTelemetryEvent<SessionLoadFailedEvent>({
     owner: 'kimi-code',
