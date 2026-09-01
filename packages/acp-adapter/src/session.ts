@@ -53,8 +53,10 @@ import {
   toolCallStartToSessionUpdate,
   toolProgressToSessionUpdate,
   toolResultToSessionUpdate,
+  sessionUsageToAcpUsage,
   turnEndReasonToStopReason,
 } from './events-map';
+import type { AcpStopReason } from './types';
 import { acpModeToToggles, DEFAULT_MODE_ID, isAcpModeId, type AcpModeId } from './modes';
 import { outcomeToQuestionAnswer, questionItemToPermissionOptions } from './question';
 import { detectSlashIntent } from './slash';
@@ -853,6 +855,35 @@ export class AcpSession {
     return this.runTurnBody(sessionId, conn, () => this.session.prompt(parts));
   }
 
+  /**
+   * Build a `PromptResponse` for the given `stopReason`, attaching
+   * cumulative token usage read best-effort from the SDK.
+   *
+   * Reading usage must never turn a finished prompt into a hung or
+   * rejected one, so any failure (or an unset total, or a session stub
+   * without `getUsage`) resolves with `stopReason` alone. The
+   * `Promise.resolve().then(...)` wrapper also converts a synchronous
+   * throw into a caught rejection rather than an unhandled one.
+   *
+   * Used by every terminal prompt path — the model turn in
+   * `runTurnBody` and the token-consuming built-ins (e.g. `/compact`) in
+   * `runBuiltInCommand` — so ACP clients see usage regardless of which
+   * path handled the prompt.
+   */
+  private promptResponseWithUsage(stopReason: AcpStopReason): Promise<PromptResponse> {
+    const sessionId = this.id;
+    return Promise.resolve()
+      .then(() => this.session.getUsage())
+      .then((usage) => ({ stopReason, usage: sessionUsageToAcpUsage(usage) }))
+      .catch((err) => {
+        log.warn('acp: failed to read session usage for prompt response', {
+          sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return { stopReason };
+      });
+  }
+
   private async runBuiltInCommand(
     name: AcpBuiltinSlashCommandName,
     args: string,
@@ -885,7 +916,11 @@ export class AcpSession {
     } catch (error) {
       await this.emitLocalCommandMessage(`/${name} failed: ${errorMessage(error)}`);
     }
-    return { stopReason: 'end_turn' };
+    // `/compact` runs a model compaction that consumes tokens, so this
+    // return path must report usage too (not just the model-turn path in
+    // runTurnBody). The other built-ins are local and consume none, but
+    // the read is best-effort and harmless for them.
+    return this.promptResponseWithUsage('end_turn');
   }
 
   private async runUnknownSlashCommand(name: string): Promise<PromptResponse> {
@@ -1269,7 +1304,13 @@ export class AcpSession {
             this.currentTurnId = undefined;
             unsub();
           }
-          resolve({ stopReason: turnEndReasonToStopReason(event.reason, event.error) });
+          // Attach cumulative token usage to the ACP `PromptResponse` so
+          // clients (and orchestration platforms driving kimi over ACP)
+          // can read per-turn cost. Best-effort via the shared helper:
+          // reading usage never turns a finished turn into a hung or
+          // rejected prompt.
+          const stopReason = turnEndReasonToStopReason(event.reason, event.error);
+          void this.promptResponseWithUsage(stopReason).then(resolve);
         }
       });
 
