@@ -81,6 +81,7 @@ describe('FlagService', () => {
     ix.get(IFlagRegistry).register(exampleFlag);
     return {
       registry: ix.get(IConfigRegistry),
+      flagRegistry: ix.get(IFlagRegistry),
       config: ix.get(IConfigService),
       flags: ix.get(IFlagService),
     };
@@ -164,6 +165,22 @@ describe('FlagService', () => {
     expect(flags.snapshot()).toEqual({ example_flag: true });
     expect(flags.enabledIds()).toEqual(['example_flag']);
     expect(flags.explainAll().map((s) => s.id)).toEqual(['example_flag']);
+  });
+
+  it('filters enabled flags out of exposedIds when their isExposed predicate fails', () => {
+    const { flagRegistry, flags } = makeFlags();
+    flagRegistry.register({
+      id: 'assembled_only',
+      title: 'Assembled-only flag',
+      description: 'Enabled but only exposed once its feature is assembled.',
+      env: 'KIMI_CODE_EXPERIMENTAL_ASSEMBLED_ONLY',
+      default: true,
+      surface: 'core',
+      isExposed: () => false,
+    });
+
+    expect(flags.enabledIds().toSorted()).toEqual(['assembled_only', 'example_flag']);
+    expect(flags.exposedIds()).toEqual(['example_flag']);
   });
 
   it('treats truthy env values case-insensitively', () => {

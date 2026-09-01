@@ -14,8 +14,6 @@ import { ILogService } from '#/_base/log/log';
 import { drainLogCloses } from '#/_base/log/logService';
 import { DEFAULT_PLAN_MODE_SECTION } from '#/features/plan/configSection';
 import { IAgentPlanService } from '#/features/plan/plan';
-import { TOWER_FLAG_ID } from '#/features/tower/tower';
-import { isTowerFeatureAssembled } from '#/features/tower/towerFeature';
 import { LifecycleScope } from '#/app/scopes';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -306,11 +304,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this._onDidCreateSession.fireAsync(event, NO_ABORT);
     event.handle.accessor.get(ITelemetryService).track2('session_started', {
       resumed: event.source === 'resume',
-      experimental_flags: this.flags
-        .enabledIds()
-        .filter((id) => id !== TOWER_FLAG_ID || isTowerFeatureAssembled(this.flags))
-        .toSorted()
-        .join(','),
+      experimental_flags: this.flags.exposedIds().toSorted().join(','),
     });
   }
 
