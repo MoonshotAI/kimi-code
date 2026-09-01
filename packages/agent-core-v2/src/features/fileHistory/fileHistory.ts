@@ -56,3 +56,5 @@ export interface IAgentFileHistoryService {
 
 export const IAgentFileHistoryService: ServiceIdentifier<IAgentFileHistoryService> =
   createDecorator<IAgentFileHistoryService>('agentFileHistoryService');
+
+export const FILE_HISTORY_BLOB_PREFIX = 'file-history';

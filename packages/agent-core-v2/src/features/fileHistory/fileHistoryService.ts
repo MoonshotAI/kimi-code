@@ -10,6 +10,9 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { WillExecuteToolEvent } from '#/agent/toolExecutor/toolHooks';
 import { TurnStarted } from '#/agent/loop/turnEvents';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
@@ -21,6 +24,7 @@ import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import {
   IAgentFileHistoryService,
+  FILE_HISTORY_BLOB_PREFIX,
   type FileBackupEntry,
   type FileHistoryChange,
   type FileHistoryCheckpointPhase,
@@ -35,10 +39,11 @@ import {
   checkpointPhaseOf,
   fileHistoryKey,
 } from './fileHistoryOps';
+import { touchFileHistorySession } from './fileHistoryRetention';
 import { FILE_HISTORY_FLAG_ID } from './flag';
 
 export const FILE_HISTORY_MAX_FILE_BYTES = 4 * 1024 * 1024;
-export const FILE_HISTORY_BLOB_PREFIX = 'file-history';
+export { FILE_HISTORY_BLOB_PREFIX } from './fileHistory';
 
 export class AgentFileHistoryService extends Service implements IAgentFileHistoryService {
   declare readonly _serviceBrand: undefined;
@@ -57,6 +62,9 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @IBlobStore private readonly blobs: IBlobStore,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
+    @ISessionContext private readonly sessionCtx: ISessionContext,
+    @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
+    @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
   ) {
     super();
@@ -287,6 +295,13 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
 
   private async endCheckpoint(turnId: number): Promise<void> {
     await this.sweepOrphanBlobs();
+    void touchFileHistorySession({
+      docs: this.docs,
+      hostFs: this.hostFs,
+      sessionScope: this.sessionCtx.scope(),
+      sessionDir: this.sessionCtx.sessionDir,
+      sessionId: this.sessionCtx.sessionId,
+    });
     const state = this.history();
     if (state.checkpoints.some((c) => c.turnId === turnId && checkpointPhaseOf(c) === 'end')) {
       return;
