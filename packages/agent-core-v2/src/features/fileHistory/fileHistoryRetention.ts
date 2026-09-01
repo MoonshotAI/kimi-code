@@ -44,11 +44,11 @@ async function applyTouch(input: FileHistoryRetentionInput): Promise<void> {
   sessions.push({ id: input.sessionId, touchedAt: Date.now() });
   sessions.sort((a, b) => a.touchedAt - b.touchedAt);
   const evicted = sessions.splice(0, Math.max(0, sessions.length - FILE_HISTORY_SESSION_WINDOW));
-  await input.docs.set(RETENTION_DOC_SCOPE, input.workspaceId, { sessions });
   const sessionsDir = dirname(input.sessionDir);
   for (const victim of evicted) {
     await removeSessionBlobs(input.hostFs, join(sessionsDir, victim.id, 'agents'));
   }
+  await input.docs.set(RETENTION_DOC_SCOPE, input.workspaceId, { sessions });
 }
 
 async function removeSessionBlobs(hostFs: IHostFileSystem, agentsDir: string): Promise<void> {

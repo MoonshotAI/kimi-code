@@ -464,6 +464,12 @@ describe('AgentFileHistoryService', () => {
     expect(await service.turnRecorded(3)).toBe(true);
     expect(await service.turnRecorded(1)).toBe(false);
     expect(await service.turnRecorded(2)).toBe(false);
+
+    const keyed = Object.values(
+      service.history().checkpoints.find((c) => c.turnId === 3 && c.phase === 'end')!.entries,
+    ).find((entry) => entry.key !== null);
+    await blobs.delete(scopeCtx.scope(), keyed!.key!);
+    expect(await service.turnRecorded(3)).toBe(false);
   });
 
   it('keeps a shared baseline blob alive until its last window reference leaves', async () => {

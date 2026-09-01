@@ -115,18 +115,24 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
 
   turnRecorded(turnId: number): Promise<boolean> {
     if (!this.enabled()) return Promise.resolve(false);
-    return this.enqueueValue(() => {
+    return this.enqueueValue(async () => {
       const state = this.history();
       const index = state.checkpoints.findIndex(
         (c) => c.turnId === turnId && checkpointPhaseOf(c) === 'start',
       );
-      if (index < 0) return Promise.resolve(false);
-      const end = state.checkpoints.some(
+      if (index < 0) return false;
+      const end = state.checkpoints.find(
         (c) => c.turnId === turnId && checkpointPhaseOf(c) === 'end',
       );
       const live =
-        !end && index === state.checkpoints.length - 1 && this.activeTurnId === turnId;
-      return Promise.resolve(end || live);
+        end === undefined &&
+        index === state.checkpoints.length - 1 &&
+        this.activeTurnId === turnId;
+      if (end === undefined && !live) return false;
+      const entries = { ...state.checkpoints[index]!.entries, ...(end?.entries ?? {}) };
+      const keyed = Object.values(entries).find((entry) => entry.key !== null);
+      if (keyed?.key == null) return true;
+      return this.blobs.has(this.agentCtx.scope(), keyed.key);
     });
   }
 
@@ -229,7 +235,16 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     if (index < 0) return undefined;
     const record = state.checkpoints[index]!;
     const pathKey = this.pathKey(path);
-    const entry = Object.hasOwn(record.entries, pathKey) ? record.entries[pathKey] : undefined;
+    let entry = Object.hasOwn(record.entries, pathKey) ? record.entries[pathKey] : undefined;
+    if (entry === undefined && phase === 'end') {
+      const start = state.checkpoints.find(
+        (c) => c.turnId === turnId && checkpointPhaseOf(c) === 'start',
+      );
+      entry =
+        start !== undefined && Object.hasOwn(start.entries, pathKey)
+          ? start.entries[pathKey]
+          : undefined;
+    }
     if (entry === undefined || entry.oversize === true) return undefined;
     if (entry.key === null) return { version: entry.version };
     const bytes = await this.blobs.get(this.agentCtx.scope(), entry.key);
