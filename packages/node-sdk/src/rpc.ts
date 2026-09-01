@@ -257,7 +257,11 @@ export abstract class SDKRpcClientBase {
 
   async listSessions(input: ListSessionsOptions = {}): Promise<readonly SessionSummary[]> {
     const rpc = await this.getRpc();
-    return rpc.listSessions(input);
+    return rpc.listSessions({
+      workDir: input.workDir,
+      sessionId: input.sessionId,
+      includeArchive: input.includeArchived,
+    });
   }
 
   /**

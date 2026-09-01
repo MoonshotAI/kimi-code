@@ -9,6 +9,7 @@ import { registerExportCommand } from './sub/export';
 import { registerForkCommand } from './sub/fork';
 import { registerLoginCommand } from './sub/login';
 import { registerProviderCommand } from './sub/provider';
+import { registerSessionCommand } from './sub/session';
 import { registerVisCommand } from './sub/vis';
 import { registerWebCommand } from './sub/web';
 
@@ -119,6 +120,7 @@ export function createProgram(
   registerExportCommand(program);
   registerForkCommand(program);
   registerProviderCommand(program);
+  registerSessionCommand(program);
   registerAcpCommand(program);
   registerWebCommand(program);
   registerLoginCommand(program);
