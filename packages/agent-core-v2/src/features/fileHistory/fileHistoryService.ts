@@ -113,6 +113,23 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     return this.enqueueValue(() => this.readChanges(turnId));
   }
 
+  turnRecorded(turnId: number): Promise<boolean> {
+    if (!this.enabled()) return Promise.resolve(false);
+    return this.enqueueValue(() => {
+      const state = this.history();
+      const index = state.checkpoints.findIndex(
+        (c) => c.turnId === turnId && checkpointPhaseOf(c) === 'start',
+      );
+      if (index < 0) return Promise.resolve(false);
+      const end = state.checkpoints.some(
+        (c) => c.turnId === turnId && checkpointPhaseOf(c) === 'end',
+      );
+      const live =
+        !end && index === state.checkpoints.length - 1 && this.activeTurnId === turnId;
+      return Promise.resolve(end || live);
+    });
+  }
+
   private async readChanges(turnId: number): Promise<FileHistoryChange[]> {
     const state = this.history();
     const index = state.checkpoints.findIndex(

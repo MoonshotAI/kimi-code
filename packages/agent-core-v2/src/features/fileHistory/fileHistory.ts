@@ -47,6 +47,7 @@ export interface IAgentFileHistoryService {
   settled(): Promise<void>;
   captureForActiveTurn(path: string): Promise<void>;
   changes(turnId: number): Promise<FileHistoryChange[]>;
+  turnRecorded(turnId: number): Promise<boolean>;
   contentAt(
     turnId: number,
     path: string,

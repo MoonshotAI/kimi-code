@@ -461,6 +461,9 @@ describe('AgentFileHistoryService', () => {
       { path: 'e.txt', status: 'modified', additions: 1, deletions: 1 },
     ]);
     expect((await service.contentAt(3, 'e.txt'))?.content).toBe('two\n');
+    expect(await service.turnRecorded(3)).toBe(true);
+    expect(await service.turnRecorded(1)).toBe(false);
+    expect(await service.turnRecorded(2)).toBe(false);
   });
 
   it('keeps a shared baseline blob alive until its last window reference leaves', async () => {

@@ -93,6 +93,7 @@ describe('file history routes', () => {
     expect((changes.json() as Envelope<{ changes: unknown[] }>).data).toEqual({
       changes: [],
       enabled: false,
+      recorded: false,
     });
 
     const content = await appOf(r).inject({

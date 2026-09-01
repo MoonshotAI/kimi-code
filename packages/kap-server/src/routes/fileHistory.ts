@@ -58,7 +58,11 @@ export function registerFileHistoryRoutes(app: FileHistoryRouteHost, core: Scope
       const history = agent.accessor.get(IAgentFileHistoryService);
       reply.send(
         okEnvelope(
-          { changes: await history.changes(req.query.turn_id), enabled: history.enabled() },
+          {
+            changes: await history.changes(req.query.turn_id),
+            enabled: history.enabled(),
+            recorded: await history.turnRecorded(req.query.turn_id),
+          },
           req.id,
         ),
       );
