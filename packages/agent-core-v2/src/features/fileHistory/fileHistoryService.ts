@@ -45,6 +45,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
 
   private queue: Promise<void> = Promise.resolve();
   private activeTurnId: number | undefined;
+  private orphanSweepDone = false;
 
   constructor(
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
@@ -285,6 +286,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
   }
 
   private async endCheckpoint(turnId: number): Promise<void> {
+    await this.sweepOrphanBlobs();
     const state = this.history();
     if (state.checkpoints.some((c) => c.turnId === turnId && checkpointPhaseOf(c) === 'end')) {
       return;
@@ -348,6 +350,33 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     const key = blobKey(pathKey, version);
     await this.blobs.put(this.agentCtx.scope(), key, content);
     return { key, version, contentHash: hash, size: content.byteLength };
+  }
+
+  private async sweepOrphanBlobs(): Promise<void> {
+    if (this.orphanSweepDone) return;
+    this.orphanSweepDone = true;
+    const referenced = new Set<string>();
+    for (const checkpoint of this.history().checkpoints) {
+      for (const entry of Object.values(checkpoint.entries)) {
+        if (entry.key !== null) referenced.add(entry.key);
+      }
+    }
+    let names: readonly string[];
+    try {
+      names = await this.blobs.list(`${this.agentCtx.scope()}/${FILE_HISTORY_BLOB_PREFIX}`);
+    } catch (error) {
+      onUnexpectedError(error);
+      return;
+    }
+    for (const name of names) {
+      const key = `${FILE_HISTORY_BLOB_PREFIX}/${name}`;
+      if (referenced.has(key)) continue;
+      try {
+        await this.blobs.delete(this.agentCtx.scope(), key);
+      } catch (error) {
+        onUnexpectedError(error);
+      }
+    }
   }
 
   private async evictBlobs(
