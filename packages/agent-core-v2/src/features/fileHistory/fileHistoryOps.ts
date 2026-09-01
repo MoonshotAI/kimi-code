@@ -94,10 +94,16 @@ export const fileHistoryKey = defineState(
       return;
     }
     s.checkpoints.push({ turnId: e.turnId, phase, entries: cloneEntries(e.entries) });
-    const turnIds = [...new Set(s.checkpoints.map((c) => c.turnId))].sort((a, b) => b - a);
-    if (turnIds.length > FILE_HISTORY_TURN_WINDOW) {
-      const keep = new Set(turnIds.slice(0, FILE_HISTORY_TURN_WINDOW));
-      s.checkpoints = s.checkpoints.filter((c) => keep.has(c.turnId));
+    const completedIds = [
+      ...new Set(
+        s.checkpoints.filter((c) => checkpointPhaseOf(c) === 'end').map((c) => c.turnId),
+      ),
+    ].sort((a, b) => b - a);
+    if (completedIds.length > FILE_HISTORY_TURN_WINDOW) {
+      const keep = new Set(completedIds.slice(0, FILE_HISTORY_TURN_WINDOW));
+      s.checkpoints = s.checkpoints.filter(
+        (c) => keep.has(c.turnId) || c.turnId > completedIds[0]!,
+      );
       const kept = new Set<string>();
       for (const checkpoint of s.checkpoints) {
         for (const path of Object.keys(checkpoint.entries)) kept.add(path);

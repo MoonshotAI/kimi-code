@@ -7,7 +7,7 @@ export const fileHistoryFlag: FlagDefinitionInput = {
   id: FILE_HISTORY_FLAG_ID,
   title: 'Turn-level file history',
   description:
-    'Back up the original content of every file the session edits and version all tracked files at each turn boundary, so per-turn file diffs come from real whole-file snapshots instead of tool-argument reconstruction.',
+    'Record each turn\'s edited files — their content from before the first edit and after the turn ends, kept for the last five turns — so per-turn file diffs come from real whole-file snapshots instead of tool-argument reconstruction.',
   env: FILE_HISTORY_FLAG_ENV,
   default: false,
   surface: 'core',
