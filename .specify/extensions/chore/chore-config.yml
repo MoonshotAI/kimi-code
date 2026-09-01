@@ -1,0 +1,17 @@
+# Chore Workflow Extension Configuration
+# Copied to .specify/extensions/chore/chore-config.yml on install
+
+# Auto-create a GitHub issue immediately after `speckit.chore.assess` writes the
+# assessment (the "report" phase). When false (the default), assess only SUGGESTS
+# the issue step; pass `--issue` to assess to trigger it for a single run.
+# Keep this false when driving chores through gh-triage: gh-triage loads issues
+# that already exist on GitHub via `chore.fetch`, so an extra issue would be a
+# duplicate.
+auto_create_issue: true
+
+# Branch prefix used by `speckit.chore.implement --branch` / `--worktree`.
+# The chore branch is named `<branch_prefix>/<slug>` (e.g. `chore/logo-swap`).
+branch_prefix: "chore"
+
+# Default Git host used when creating issues/PRs. Only "github" is supported today.
+default_host: github

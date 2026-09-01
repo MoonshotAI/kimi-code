@@ -1,0 +1,47 @@
+schema_version: "1.0"
+
+extension:
+  id: chore
+  name: "Chore Workflow"
+  version: "1.0.0"
+  description: "Scope, track, and implement maintenance chores (non-feature, non-bug work) through the Spec Kit workflow, constitution-aware and recorded under .specify/chores/<slug>/"
+  author: arrrrny
+  repository: https://github.com/arrrrny/speckit-extensions
+  homepage: https://github.com/arrrrny/speckit-extensions
+  license: MIT
+
+requires:
+  speckit_version: ">=0.9.0"
+  tools:
+    - name: gh
+      required: false
+
+provides:
+  commands:
+    - name: speckit.chore.assess
+      file: commands/speckit.chore.assess.md
+      description: "Scope a maintenance chore against the codebase and the project constitution, and write an assessment"
+    - name: speckit.chore.issue
+      file: commands/speckit.chore.issue.md
+      description: "File a GitHub issue from a chore assessment (the 'report' phase) and record the issue link"
+    - name: speckit.chore.fetch
+      file: commands/speckit.chore.fetch.md
+      description: "Load an existing GitHub issue into the chore workflow and seed a triage draft"
+    - name: speckit.chore.implement
+      file: commands/speckit.chore.implement.md
+      description: "Implement the scoped chore (the actual maintenance work) and record what changed"
+    - name: speckit.chore.pr
+      file: commands/speckit.chore.pr.md
+      description: "Open a pull request for the implemented chore, linking the tracked issue"
+
+  config:
+    - name: "chore-config.yml"
+      template: "config-template.yml"
+      description: "Chore workflow configuration (issue auto-creation, branch prefix)"
+      required: false
+
+tags:
+  - "chore"
+  - "triage"
+  - "workflow"
+  - "maintenance"

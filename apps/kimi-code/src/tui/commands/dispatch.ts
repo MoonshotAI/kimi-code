@@ -72,6 +72,7 @@ import {
 import {
   handleExportDebugZipCommand,
   handleExportMdCommand,
+  handleForkAndSwitchCommand,
   handleForkCommand,
   handleInitCommand,
   handleTitleCommand,
@@ -118,13 +119,6 @@ export { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } fr
 export { handlePluginsCommand } from './plugins';
 export { handleReloadCommand, handleReloadTuiCommand } from './reload';
 export { handleGoalCommand } from './goal';
-export {
-  handleExportDebugZipCommand,
-  handleExportMdCommand,
-  handleForkCommand,
-  handleInitCommand,
-  handleTitleCommand,
-} from './session';
 export { handleUndoCommand } from './undo';
 export { handleRemoteControlCommand, handleWebCommand } from './web';
 
@@ -441,6 +435,7 @@ const SESSION_REQUIRING_COMMANDS: ReadonlySet<BuiltinSlashCommandName> = new Set
   'export-debug-zip',
   'export-md',
   'fork',
+  'fork-and-switch',
   'goal',
   'init',
   'plan',
@@ -636,6 +631,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'fork':
       await handleForkCommand(host, args);
+      return;
+    case 'fork-and-switch':
+      await handleForkAndSwitchCommand(host, args);
       return;
     case 'export-md':
       await handleExportMdCommand(host, args);
