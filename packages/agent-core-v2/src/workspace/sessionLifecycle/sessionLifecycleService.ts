@@ -57,6 +57,8 @@ import {
   type WireRecord,
 } from '#/wire/record';
 import { repairWireJournal } from '#/wire/repair';
+import { IModelService } from '#/kosong/model/model';
+import { IProviderService } from '#/kosong/provider/provider';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
@@ -165,6 +167,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IWorkspaceSkillCatalog private readonly workspaceSkillCatalog: IWorkspaceSkillCatalog,
     @IWorkspaceInstructionsService private readonly workspaceInstructions: IWorkspaceInstructionsService,
     @IWorkspaceMcpService private readonly workspaceMcp: IWorkspaceMcpService,
+    @IModelService private readonly models: IModelService,
+    @IProviderService private readonly providers: IProviderService,
     onDispose?: () => void,
   ) {
     super();
@@ -220,6 +224,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const sessionScope = sessionScopeOf(this.handlerScope, opts.sessionId);
     const sessionDir = sessionDirOf(this.bootstrap.homeDir, this.handlerScope, opts.sessionId);
     const metaScope = sessionScope;
+    await Promise.all([this.config.ready, this.models.ready, this.providers.ready]);
     await this.workspaceDirs.ready;
     await this.workspaceDirs.mergeAdditionalDirs(opts.workDir, opts.additionalDirs ?? []);
     const ctx: ISessionContext = {
