@@ -21,6 +21,7 @@ import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
 import { SubagentTask } from '#/agent/tools/agent/subagent-task';
 import { ITowerSpawnTool, type TowerSpawnToolInput } from '#/features/tower/tools/spawn/spawn';
 import { TowerSpawnTool } from '#/features/tower/tools/spawn/spawnTool';
+import { TOWER_MODE_USER_ENABLED_ONLY } from '#/features/tower/tools/support';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
@@ -37,6 +38,7 @@ import {
   ISessionSubagentService,
   type AgentRunHandle,
 } from '#/session/subagent/subagent';
+import type { AgentTaskInfo } from '#/agent/task/types';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 
 import { executeTool } from '../../../tools/fixtures/execute-tool';
@@ -74,6 +76,7 @@ describe('TowerSpawnTool', () => {
   let createAgent: Mock<IAgentLifecycleService['create']>;
   let runAgent: Mock<ISessionSubagentService['run']>;
   let registerTask: Mock<IAgentTaskService['registerTask']>;
+  let taskInfoLookup: (taskId: string) => AgentTaskInfo | undefined;
   let completion: Deferred<{ readonly summary: string }>;
   let secondaryModel:
     | { readonly model: string; readonly defaultEffort?: string; readonly force?: boolean }
@@ -116,6 +119,7 @@ describe('TowerSpawnTool', () => {
         }) as unknown as AgentRunHandle,
     );
     registerTask = vi.fn(() => 'task-1');
+    taskInfoLookup = () => undefined;
 
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
@@ -124,6 +128,9 @@ describe('TowerSpawnTool', () => {
     ix.stub(IAgentTowerService, {
       get isActive() {
         return towerActive;
+      },
+      get requestedBase() {
+        return undefined;
       },
       enter: () => {},
       exit: () => {},
@@ -171,7 +178,7 @@ describe('TowerSpawnTool', () => {
       create: createAgent,
     } as unknown as IAgentLifecycleService);
     ix.stub(ISessionSubagentService, { run: runAgent } as unknown as ISessionSubagentService);
-    ix.stub(IAgentTaskService, { registerTask } as unknown as IAgentTaskService);
+    ix.stub(IAgentTaskService, { registerTask, getTask: (taskId: string) => taskInfoLookup(taskId) } as unknown as IAgentTaskService);
     ix.stub(IAgentProfileService, {
       data: () => ({ profileName: 'agent', modelAlias: 'kimi-code', thinkingLevel: 'off' }),
     } as unknown as IAgentProfileService);
@@ -215,10 +222,32 @@ describe('TowerSpawnTool', () => {
     const result = await execute(WORKER_ARGS);
 
     expect(result).toEqual({
-      output: 'tower mode is not active — run TowerInit first',
+      output: TOWER_MODE_USER_ENABLED_ONLY,
       isError: true,
     });
     expect(createAgent).not.toHaveBeenCalled();
+  });
+
+  it('records the death of a worker whose task settled before roster registration finished', async () => {
+    taskInfoLookup = () => ({
+      taskId: 'task-1',
+      kind: 'agent',
+      description: 'tower worker agent-build: Build gemm',
+      status: 'failed',
+      stopReason: 'provider blew up',
+      startedAt: 1,
+      endedAt: 2,
+      agentId: 'agent-7',
+      subagentType: 'tower-worker',
+    });
+
+    const result = await execute(WORKER_ARGS);
+
+    expect(result.isError).toBeFalsy();
+    const state = await store.load();
+    const entry = state.roster.agents.find((agent) => agent.agentId === 'agent-7');
+    expect(entry?.deathStatus).toBe('failed');
+    expect(entry?.deathReason).toBe('provider blew up');
   });
 
   it('rejects non-main callers with the main-agent-only error before any work', async () => {

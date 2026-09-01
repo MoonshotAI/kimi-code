@@ -192,16 +192,25 @@ describe('tower flag — resolution', () => {
     });
   });
 
-  it('lets the master env override the dedicated env and config', async () => {
-    const { config, flags } = makeFlags({
-      [TOWER_FLAG_ENV]: 'false',
-      [MASTER_ENV]: 'true',
-    });
-    await config.set(EXPERIMENTAL_SECTION, { [TOWER_FLAG_ID]: false });
-    expect(flags.explain(TOWER_FLAG_ID)).toMatchObject({
+  it('lets the master env turn the flag on only when env and config are unset', async () => {
+    const masterOnly = makeFlags({ [MASTER_ENV]: 'true' });
+    expect(masterOnly.flags.explain(TOWER_FLAG_ID)).toMatchObject({
       enabled: true,
       source: 'master-env',
+    });
+
+    const configured = makeFlags({ [MASTER_ENV]: 'true' });
+    await configured.config.set(EXPERIMENTAL_SECTION, { [TOWER_FLAG_ID]: false });
+    expect(configured.flags.explain(TOWER_FLAG_ID)).toMatchObject({
+      enabled: false,
+      source: 'config',
       configValue: false,
+    });
+
+    const overridden = makeFlags({ [TOWER_FLAG_ENV]: 'false', [MASTER_ENV]: 'true' });
+    expect(overridden.flags.explain(TOWER_FLAG_ID)).toMatchObject({
+      enabled: false,
+      source: 'env',
     });
   });
 });

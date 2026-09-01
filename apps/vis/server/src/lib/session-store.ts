@@ -12,7 +12,7 @@ const AGENT_ID_RE = /^[A-Za-z0-9._-]+$/;
 
 /** Reject agent ids that could escape the session directory via path
  *  joins. Defence-in-depth: the on-disk source of these ids is
- *  agent-core (which only generates main / agent-N), but a corrupted
+ *  the engine (which only generates main / agent-N), but a corrupted
  *  or hand-edited `state.json.agents` key could otherwise turn vis
  *  into a local-file-read primitive when exposed beyond loopback. */
 export function isSafeAgentId(id: string): boolean {
@@ -28,7 +28,17 @@ interface StateJson {
   // Agent metadata comes from an untrusted state.json (a corrupt or imported
   // bundle may hold non-object entries like `{ "main": null }`), so the value
   // type allows null and inventoryAgents skips anything that isn't an object.
-  agents?: Record<string, { type: 'main' | 'sub' | 'independent'; parentAgentId?: string | null; swarmItem?: string } | null>;
+  //
+  // v2 writes the REAL parent / swarm-item label under `labels` (its
+  // top-level `parentAgentId` is a fixed 'main' placeholder for sub agents);
+  // v1 wrote them top-level. Read labels first, top-level as fallback —
+  // the same order the engine itself uses.
+  agents?: Record<string, {
+    type: 'main' | 'sub' | 'independent';
+    parentAgentId?: string | null;
+    swarmItem?: string;
+    labels?: { parentAgentId?: string; swarmItem?: string };
+  } | null>;
   custom?: Record<string, unknown>;
 }
 
@@ -280,21 +290,31 @@ async function inventoryAgents(sessionDir: string, state: StateJson): Promise<Ag
     result.push({
       agentId: id,
       type: meta.type,
-      parentAgentId: meta.parentAgentId ?? null,
+      parentAgentId: meta.labels?.parentAgentId ?? meta.parentAgentId ?? null,
       homedir: join(sessionDir, 'agents', id),
       wireExists: readable,
       wireRecordCount: info.count,
       wireProtocolVersion: info.protocolVersion,
-      swarmItem: meta.swarmItem ?? null,
+      swarmItem: meta.labels?.swarmItem ?? meta.swarmItem ?? null,
     });
   }
   return result.sort((a, b) => compareAgentIds(a.agentId, b.agentId));
 }
 
 async function readState(sessionDir: string): Promise<StateJson | null> {
-  try {
-    return JSON.parse(await readFile(join(sessionDir, 'state.json'), 'utf8')) as StateJson;
-  } catch { return null; }
+  // `<sessionDir>/state.json` is the canonical path; older v2 sessions may
+  // only carry the legacy `<sessionDir>/session-meta/state.json` layout (the
+  // engine itself reads with this fallback), so try both before declaring
+  // the state broken.
+  for (const candidate of [
+    join(sessionDir, 'state.json'),
+    join(sessionDir, 'session-meta', 'state.json'),
+  ]) {
+    try {
+      return JSON.parse(await readFile(candidate, 'utf8')) as StateJson;
+    } catch { /* try the next candidate */ }
+  }
+  return null;
 }
 
 async function findSessionDir(home: string, sessionId: string): Promise<string | null> {

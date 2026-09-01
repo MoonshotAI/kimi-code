@@ -36,6 +36,7 @@ import {
   type SubagentSpawnPlan,
   type SubagentSpawnPlanInput,
 } from '#/session/subagent/spawn';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 
 import { stubLog } from '../../_base/log/stubs';
 import { stubFlag } from '../../app/flag/stubs';
@@ -60,6 +61,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   let createdPermissionMode: { mode: string; setMode: ReturnType<typeof vi.fn> };
   let callerUserTools: IAgentUserToolService;
   let createdUserTools: IAgentUserToolService;
+  let createdReminder: { notify: ReturnType<typeof vi.fn> };
   let lease: RuntimeLease;
 
   function userToolsStub(): IAgentUserToolService {
@@ -91,6 +93,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
           }
           if (serviceId === IAgentPermissionModeService) return createdPermissionMode;
           if (serviceId === IAgentUserToolService) return createdUserTools;
+          if (serviceId === IAgentReminderService) return createdReminder;
           return undefined;
         },
       } as IAgentScopeHandle['accessor'],
@@ -127,6 +130,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     createdPermissionMode = { mode: 'manual', setMode: vi.fn() };
     callerUserTools = userToolsStub();
     createdUserTools = userToolsStub();
+    createdReminder = { notify: vi.fn() };
     lease = {
       runtime: new FakeRuntime({ workspaceId: 'w1', runtimeId: 'acp:s1', generation: 'g1' }),
       track: (resource) => resource,
@@ -587,7 +591,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     ]);
   });
 
-  it('prefixes the prompt with the fork notice when the plan is a fork', async () => {
+  it('delivers the fork notice as a reminder injection when the plan is a fork', async () => {
     const svc = service();
 
     const spawned = await spawnForkChild(svc);
@@ -597,7 +601,10 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       profileName: 'orchestrator',
       model: 'main-model',
       modelSource: 'inherited',
-      promptText: `${FORK_CONTEXT_NOTICE}\n\nContinue the analysis`,
+      promptText: 'Continue the analysis',
+    });
+    expect(createdReminder.notify).toHaveBeenCalledWith(FORK_CONTEXT_NOTICE, {
+      variant: 'fork_context',
     });
   });
 

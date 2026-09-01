@@ -24,6 +24,7 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import { IFlagService } from '#/app/flag/flag';
 import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
 import { FORK_CONTEXT_NOTICE } from '#/session/subagent/spawn';
+import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import {
   IRuntimeResolver,
@@ -189,14 +190,17 @@ describe('fork subagent first-request parity', () => {
     expect(prefix).toEqual(parentReq.history);
 
     const tail = childReq.history.slice(parentReq.history.length);
-    expect(tail.map((message) => message.role)).toEqual(['assistant', 'tool', 'user']);
+    expect(tail.map((message) => message.role)).toEqual(['assistant', 'tool', 'user', 'user']);
     expect(tail[0]?.toolCalls.map((call) => call.name)).toEqual(['Agent']);
     expect(tail[0]?.partial).toBeUndefined();
     expect(tail[1]?.toolCallId).toBe('call_fork');
     expect(tail[1]?.content).toEqual([{ type: 'text', text: INHERITED_IN_FLIGHT_TOOL_OUTPUT }]);
     const notice = tail[2]?.content[0];
     expect(notice?.type).toBe('text');
-    expect(notice?.type === 'text' && notice.text.startsWith(FORK_CONTEXT_NOTICE)).toBe(true);
+    expect(notice?.type === 'text' && notice.text).toBe(wrapSystemReminder(FORK_CONTEXT_NOTICE));
+    const prompt = tail[3]?.content[0];
+    expect(prompt?.type).toBe('text');
+    expect(prompt?.type === 'text' && prompt.text).toBe('finish the inherited task');
 
     expect(parentFollowup.history.slice(0, parentReq.history.length)).toEqual(parentReq.history);
     expect(parentFollowup.history[parentReq.history.length]).toEqual(tail[0]);

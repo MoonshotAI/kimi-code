@@ -1,78 +1,213 @@
 // apps/vis/server/src/lib/agent-record-types.ts
-// Single source of truth: everything below comes from agent-core directly.
-// Do NOT add local interfaces that duplicate upstream shapes.
+// Single source of truth: engine shapes come from agent-core-v2 directly.
+// Do NOT add local interfaces that duplicate upstream shapes — the only
+// exceptions are the legacy records below, which v2 never writes but old
+// (v1-written / pre-migration) wires still contain on disk.
 
 export type {
-  AgentRecordEvents,
-  AgentConfigUpdateData,
-  CompactionBeginData,
-  CompactionResult,
-  PermissionApprovalResultRecord,
-  PermissionMode,
-  UsageRecordScope,
-  ToolStoreUpdate,
-  LoopRecordedEvent,
   ContextMessage,
+  LoopRecordedEvent,
+  Message,
+  ContentPart,
+  ToolCall,
+  TokenUsage,
+  PermissionMode,
   PromptOrigin,
-  // Background-task shapes are part of agent-core's public surface, so the
-  // visualizer tracks them directly instead of duplicating the union.
-  BackgroundTaskInfo,
-  BackgroundTaskStatus,
-  ProcessBackgroundTaskInfo,
-  AgentBackgroundTaskInfo,
-  QuestionBackgroundTaskInfo,
-} from '@moonshot-ai/agent-core';
-export { AGENT_WIRE_PROTOCOL_VERSION } from '@moonshot-ai/agent-core';
-export type { Message, ContentPart, ToolCall, TokenUsage } from '@moonshot-ai/kosong';
+  CronTask,
+} from '@moonshot-ai/agent-core-v2';
+export { WIRE_PROTOCOL_VERSION } from '@moonshot-ai/agent-core-v2/wire/migration/migration';
+export type {
+  AgentTaskInfo as BackgroundTaskInfo,
+  AgentTaskStatus as BackgroundTaskStatus,
+} from '@moonshot-ai/agent-core-v2';
+export type { SubagentTaskInfo as AgentBackgroundTaskInfo } from '@moonshot-ai/agent-core-v2';
+export type { ProcessTaskInfo as ProcessBackgroundTaskInfo } from '@moonshot-ai/agent-core-v2/agent/tools/os/bash/process-task';
+export type { QuestionTaskInfo as QuestionBackgroundTaskInfo } from '@moonshot-ai/agent-core-v2/agent/tools/ask-user-question/question-background-task';
 
-// Local bindings for the upstream types referenced by the vis-only DTOs
-// below. The `export type { … }` re-export above forwards the names to
-// consumers but does NOT bring them into this module's scope.
 import type {
-  AgentRecord as UpstreamAgentRecord,
-  BackgroundTaskInfo,
-} from '@moonshot-ai/agent-core';
+  AgentTaskInfo as BackgroundTaskInfo,
+  CronAddPayload,
+  CronCursorPayload,
+  CronDeletePayload,
+  CronTask,
+  FullCompactionBegin,
+  FullCompactionCancel,
+  FullCompactionComplete,
+  GoalClear,
+  GoalCreate,
+  GoalForked,
+  GoalUpdate,
+  InteractionRequestEvent,
+  InteractionResolvedEvent,
+  InterruptionReminderRecorded,
+  LlmRequest,
+  LlmToolsSnapshot,
+  McpToolsDiscovered,
+  PlanModeCancel,
+  PlanModeEnter,
+  PlanModeExit,
+  PlanRevision,
+  PluginSessionStartEvent,
+  PromptAborted,
+  PromptAccepted,
+  PromptCompleted,
+  PromptSteered,
+  TaskStarted,
+  TaskTerminated,
+  TaskWaitDelivered,
+  TokenCountingMeasured,
+  TokenCountingRebased,
+  TokenCountingTruncated,
+  TokenCountingTurnRecorded,
+  ToolsRegisterUserTool,
+  ToolsUnregisterUserTool,
+} from '@moonshot-ai/agent-core-v2';
+import type {
+  ContextAppendLoopEvent,
+  ContextAppendMessage,
+  ContextApplyCompactionPayload,
+  ContextClear,
+  ContextUndo,
+} from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
+import type { TurnCancel, TurnEnded, TurnPrompt, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import type { TurnStepInterrupted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
+import type { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/agent/stepRetry/stepRetryService';
+import type { UsageRecord } from '@moonshot-ai/agent-core-v2/agent/usage/usageOps';
+import type {
+  ConfigUpdate,
+  ProfileBind,
+  ToolsResetActiveTools,
+  ToolsSetActiveTools,
+} from '@moonshot-ai/agent-core-v2/agent/profile/profileOps';
+import type { PermissionSetMode } from '@moonshot-ai/agent-core-v2/agent/permissionMode/permissionModeOps';
+import type { PermissionRecordApprovalResult } from '@moonshot-ai/agent-core-v2/agent/permissionRules/permissionRulesOps';
+import type { RuntimeSetBinding } from '@moonshot-ai/agent-core-v2/agent/runtimeBinding/runtimeBindingOps';
+import type { SwarmModeEnter, SwarmModeExit } from '@moonshot-ai/agent-core-v2/features/swarm/swarmOps';
+import type { TowerModeEnter, TowerModeExit } from '@moonshot-ai/agent-core-v2/features/tower/towerOps';
+import type {
+  StaleGuardCleared,
+  StaleGuardRecorded,
+} from '@moonshot-ai/agent-core-v2/features/staleGuard/staleGuardOps';
+import type { ToolsUpdateStore } from '@moonshot-ai/agent-core-v2/features/todo/todoOps';
+
+/** A wire record with v2's literal `type` discriminant restored. v2 declares
+ *  records as Event2 class + payload interface mergings whose `type` field is
+ *  the widened `string`; intersecting with the literal keeps the union below
+ *  discriminated. `time` stays optional because pre-1.5 wires may lack it. */
+type WireRecordOf<T extends string, E> = E extends unknown
+  ? Omit<E, 'type' | 'time' | 'serialize'> & { readonly type: T; readonly time?: number }
+  : never;
+
+/** v1-only durable record: dropped from v2 (`token_counting.*` carries the
+ *  context-window fill now), but old wires still contain it. */
+export interface ContextUpdateTokenCountRecord {
+  readonly type: 'context.update_token_count';
+  readonly tokenCount: number;
+  readonly time?: number;
+}
+
+/** v1-only durable record: v2 has no micro-compaction, but old wires still
+ *  contain it. */
+export interface MicroCompactionApplyRecord {
+  readonly type: 'micro_compaction.apply';
+  readonly cutoff: number;
+  readonly time?: number;
+}
+
+/** The wire file header record. Declared locally (rather than via v2's
+ *  `WireMetadataRecord`) so the union member keeps concrete field types —
+ *  the upstream interface carries an index signature that would widen
+ *  `protocol_version` / `created_at` to `unknown`. */
+export interface WireMetadataHeader {
+  readonly type: 'metadata';
+  readonly protocol_version: string;
+  readonly created_at: number;
+  readonly time?: number;
+}
 
 /**
- * The wire record union vis projects, widened with the v2-engine tower-mode
- * records (`tower_mode.enter` / `tower_mode.exit`, empty payloads). The
- * upstream v1 union is frozen ahead of its deprecation and does not carry
- * them; the local widening keeps the context projector's exhaustiveness
- * check covering tower session wires.
+ * The wire record union vis projects: every durable record kind v2 can write
+ * (the wire-manifest inventory) plus the v1-only legacy kinds above, which
+ * survive in old wires unchanged (the migration chain never drops records).
+ * The union keeps the context projector's exhaustiveness check covering every
+ * record a wire file can hold.
  */
 export type AgentRecord =
-  | UpstreamAgentRecord
-  | { readonly type: 'tower_mode.enter'; readonly time?: number }
-  | { readonly type: 'tower_mode.exit'; readonly time?: number };
+  | WireMetadataHeader
+  | WireRecordOf<'config.update', ConfigUpdate>
+  | WireRecordOf<'context.append_loop_event', ContextAppendLoopEvent>
+  | WireRecordOf<'context.append_message', ContextAppendMessage>
+  | WireRecordOf<'context.apply_compaction', ContextApplyCompactionPayload>
+  | WireRecordOf<'context.clear', ContextClear>
+  | WireRecordOf<'context.undo', ContextUndo>
+  | WireRecordOf<'cron.add', CronAddPayload>
+  | WireRecordOf<'cron.cursor', CronCursorPayload>
+  | WireRecordOf<'cron.delete', CronDeletePayload>
+  | WireRecordOf<'forked', GoalForked>
+  | WireRecordOf<'full_compaction.begin', FullCompactionBegin>
+  | WireRecordOf<'full_compaction.cancel', FullCompactionCancel>
+  | WireRecordOf<'full_compaction.complete', FullCompactionComplete>
+  | WireRecordOf<'goal.clear', GoalClear>
+  | WireRecordOf<'goal.create', GoalCreate>
+  | WireRecordOf<'goal.update', GoalUpdate>
+  | WireRecordOf<'interaction.request', InteractionRequestEvent>
+  | WireRecordOf<'interaction.resolved', InteractionResolvedEvent>
+  | WireRecordOf<'interruptionReminder.recorded', InterruptionReminderRecorded>
+  | WireRecordOf<'llm.request', LlmRequest>
+  | WireRecordOf<'llm.tools_snapshot', LlmToolsSnapshot>
+  | WireRecordOf<'mcp.tools_discovered', McpToolsDiscovered>
+  | WireRecordOf<'permission.record_approval_result', PermissionRecordApprovalResult>
+  | WireRecordOf<'permission.set_mode', PermissionSetMode>
+  | WireRecordOf<'plan_mode.cancel', PlanModeCancel>
+  | WireRecordOf<'plan_mode.enter', PlanModeEnter>
+  | WireRecordOf<'plan_mode.exit', PlanModeExit>
+  | WireRecordOf<'plan.revision', PlanRevision>
+  | WireRecordOf<'plugin.session_start', PluginSessionStartEvent>
+  | WireRecordOf<'profile.bind', ProfileBind>
+  | WireRecordOf<'prompt.aborted', PromptAborted>
+  | WireRecordOf<'prompt.accepted', PromptAccepted>
+  | WireRecordOf<'prompt.completed', PromptCompleted>
+  | WireRecordOf<'prompt.steered', PromptSteered>
+  | WireRecordOf<'runtime.set_binding', RuntimeSetBinding>
+  | WireRecordOf<'staleGuard.cleared', StaleGuardCleared>
+  | WireRecordOf<'staleGuard.recorded', StaleGuardRecorded>
+  | WireRecordOf<'swarm_mode.enter', SwarmModeEnter>
+  | WireRecordOf<'swarm_mode.exit', SwarmModeExit>
+  | WireRecordOf<'task.started', TaskStarted>
+  | WireRecordOf<'task.terminated', TaskTerminated>
+  | WireRecordOf<'task.waitDelivered', TaskWaitDelivered>
+  | WireRecordOf<'token_counting.measured', TokenCountingMeasured>
+  | WireRecordOf<'token_counting.rebased', TokenCountingRebased>
+  | WireRecordOf<'token_counting.truncated', TokenCountingTruncated>
+  | WireRecordOf<'token_counting.turn_recorded', TokenCountingTurnRecorded>
+  | WireRecordOf<'tools.register_user_tool', ToolsRegisterUserTool>
+  | WireRecordOf<'tools.reset_active_tools', ToolsResetActiveTools>
+  | WireRecordOf<'tools.set_active_tools', ToolsSetActiveTools>
+  | WireRecordOf<'tools.unregister_user_tool', ToolsUnregisterUserTool>
+  | WireRecordOf<'tools.update_store', ToolsUpdateStore>
+  | WireRecordOf<'tower_mode.enter', TowerModeEnter>
+  | WireRecordOf<'tower_mode.exit', TowerModeExit>
+  | WireRecordOf<'turn.cancel', TurnCancel>
+  | WireRecordOf<'turn.ended', TurnEnded>
+  | WireRecordOf<'turn.prompt', TurnPrompt>
+  | WireRecordOf<'turn.steer', TurnSteer>
+  | WireRecordOf<'turn.step.interrupted', TurnStepInterrupted>
+  | WireRecordOf<'turn.step.retrying', TurnStepRetrying>
+  | WireRecordOf<'usage.record', UsageRecord>
+  | ContextUpdateTokenCountRecord
+  | MicroCompactionApplyRecord;
 
-/** Extract one record kind from the (locally widened) union. */
+/** Extract one record kind from the union. */
 export type AgentRecordOf<K extends AgentRecord['type']> = Extract<
   AgentRecord,
   { readonly type: K }
 >;
 
 /**
- * Persistent representation of a cron task.
- *
- * Structural mirror of agent-core's `CronTask` (`tools/cron/types.ts`),
- * which is NOT re-exported from the package entry point. The shape is
- * tiny and frozen; `cron-store.test.ts` reads a fixture written in the
- * real on-disk format so the mirror cannot silently drift from disk.
- */
-export interface CronTask {
-  readonly id: string;
-  readonly cron: string;
-  readonly prompt: string;
-  readonly createdAt: number;
-  readonly recurring?: boolean;
-  readonly lastFiredAt?: number;
-}
-
-/**
  * `manifest.json` shape inside a `/export-debug-zip` bundle. Structural
- * mirror of agent-core's `ExportSessionManifest` (`rpc/core-api.ts`), which
- * is not re-exported from the package entry. All fields optional-tolerant
- * because the manifest comes from another machine / kimi-code version.
+ * mirror of the engine's `ExportSessionManifest`, which is not re-exported
+ * from the package entry. All fields optional-tolerant because the manifest
+ * comes from another machine / kimi-code version.
  */
 export interface ImportManifest {
   sessionId?: string;
@@ -151,10 +286,11 @@ export interface AgentInfo {
   wireExists: boolean;
   wireRecordCount: number;
   wireProtocolVersion: string | null;
-  /** Per-item swarm work label persisted by agent-core for swarm-spawned
-   *  sub-agents (`AgentMeta.swarmItem`). `null` when the agent is not a
-   *  swarm item or when the value cannot be recovered (e.g. disk-only
-   *  inventory of a session with a corrupt `state.json`). */
+  /** Per-item swarm work label persisted by the engine for swarm-spawned
+   *  sub-agents (`AgentMeta.swarmItem`, or `AgentMeta.labels.swarmItem` on
+   *  v2-written sessions). `null` when the agent is not a swarm item or when
+   *  the value cannot be recovered (e.g. disk-only inventory of a session
+   *  with a corrupt `state.json`). */
   swarmItem: string | null;
 }
 
@@ -213,7 +349,7 @@ export interface AgentTreeResponse {
 // ── background tasks & cron ─────────────────────────────────────────────────
 
 /** A persisted background task plus vis-derived `output.log` metadata.
- *  `task` is the normalized agent-core shape; the size/exists fields let the
+ *  `task` is the normalized engine shape; the size/exists fields let the
  *  UI badge how much output a task produced and offer a "view log" affordance
  *  without first fetching the (potentially large) log body. */
 export interface BackgroundTaskEntry {

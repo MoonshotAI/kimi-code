@@ -3,6 +3,7 @@ import type { ISessionScopeHandle } from '#/_base/di/scope';
 import { type Event, type IWaitUntil } from '#/_base/event';
 import type { BindAgentInput } from '#/agent/profile/profile';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
+import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 
 export type SessionCreateSource = 'startup' | 'resume' | 'fork';
 
@@ -59,7 +60,6 @@ export interface SessionArchivedEvent {
 export interface SessionForkedEvent {
   readonly sourceSessionId: string;
   readonly sessionId: string;
-  readonly handle: ISessionScopeHandle;
 }
 
 export interface SessionWillCreateEvent {
@@ -86,8 +86,8 @@ export interface ISessionLifecycleService {
   archive(sessionId: string): Promise<void>;
   restore(sessionId: string, opts?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined>;
   delete(sessionId: string): Promise<void>;
-  fork(opts: ForkSessionOptions): Promise<ISessionScopeHandle>;
-  createChild(opts: CreateChildSessionOptions): Promise<ISessionScopeHandle>;
+  fork(opts: ForkSessionOptions): Promise<SessionMeta>;
+  createChild(opts: CreateChildSessionOptions): Promise<SessionMeta>;
 }
 
 export const ISessionLifecycleService: ServiceIdentifier<ISessionLifecycleService> =

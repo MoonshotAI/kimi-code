@@ -44,6 +44,7 @@ import {
   listSessionIds,
   listWorkspaceIds,
   readSessionSummary,
+  scanSessionsMaxMtime,
   summaryMatchesChildOf,
 } from './sessionIndexSource';
 
@@ -131,7 +132,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     this.state = 'preparing';
     try {
       const manifest = await this.queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
-      if (manifest === undefined) {
+      if (manifest === undefined || !(await this.manifestFresh(manifest))) {
         const projection = this.ensureProjection();
         if (deadlineMs === undefined) {
           await projection;
@@ -156,6 +157,19 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       this.markDegraded('prepare failed', error);
     }
     return this.status();
+  }
+
+  private async manifestFresh(manifest: Checkpoint): Promise<boolean> {
+    const published = manifest.sourceMaxMtimeMs;
+    if (published === undefined) return false;
+    try {
+      return (await scanSessionsMaxMtime(this.storage, this.sessionsScope)) <= published;
+    } catch (error) {
+      this.log.warn('session index freshness check failed; re-projecting', {
+        error: String(error),
+      });
+      return false;
+    }
   }
 
   private ensureProjection(): Promise<void> {

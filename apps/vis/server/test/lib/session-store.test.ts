@@ -298,4 +298,48 @@ describe('session-store', () => {
     const main = d!.agents.find((a) => a.agentId === 'main')!;
     expect(main.swarmItem).toBeNull();
   });
+
+  it('prefers v2 labels for parentAgentId / swarmItem, top-level as fallback', async () => {
+    const { home, sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
+    cleanup = c;
+    const { readFile, writeFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const statePath = join(sessionDir, 'state.json');
+    const state = JSON.parse(await readFile(statePath, 'utf8'));
+    // v2 writes a fixed top-level `parentAgentId: 'main'` for every sub agent
+    // and puts the real parent / swarm label under `labels`.
+    state.agents['agent-1'] = {
+      type: 'sub',
+      parentAgentId: 'main',
+      labels: { parentAgentId: 'agent-0', swarmItem: 'batch item' },
+    };
+    await writeFile(statePath, JSON.stringify(state));
+
+    const d = await readSessionDetail(home, 'session_fixture');
+
+    const nested = d!.agents.find((a) => a.agentId === 'agent-1')!;
+    expect(nested.parentAgentId).toBe('agent-0');
+    expect(nested.swarmItem).toBe('batch item');
+    // agent-0 has no labels — the top-level v1 fields still apply.
+    const flat = d!.agents.find((a) => a.agentId === 'agent-0')!;
+    expect(flat.parentAgentId).toBe('main');
+  });
+
+  it('reads the legacy session-meta/state.json path when state.json is missing', async () => {
+    const { home, sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
+    cleanup = c;
+    const { mkdir, rename } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    await mkdir(join(sessionDir, 'session-meta'), { recursive: true });
+    await rename(
+      join(sessionDir, 'state.json'),
+      join(sessionDir, 'session-meta', 'state.json'),
+    );
+
+    const sessions = await listSessions(home);
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]!.health).toBe('ok');
+    expect(sessions[0]!.title).toBe('fixture: hello world');
+  });
 });

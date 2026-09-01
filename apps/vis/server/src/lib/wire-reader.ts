@@ -5,7 +5,7 @@ import {
   migrateWireRecord,
   resolveWireMigrations,
   type WireMigration,
-} from '@moonshot-ai/agent-core/agent/records/migration/index';
+} from '@moonshot-ai/agent-core-v2/wire/migration/migration';
 
 import type { AgentRecord, WireEntry } from './agent-record-types';
 
@@ -19,7 +19,7 @@ export interface WireReadResult {
  *  below the known migration chain (below 1.0, or otherwise unrecognized-low):
  *  `resolveWireMigrations` threw for it. We retry from the oldest known version
  *  (1.0) and warn the caller; if even that fails we pass records through
- *  unchanged. (Versions at/above the current 1.4 never reach here — they
+ *  unchanged. (Versions at/above the current 1.5 never reach here — they
  *  resolve to an empty chain and are passed through directly.) */
 function bestEffortMigrations(): readonly WireMigration[] {
   try {
@@ -37,7 +37,7 @@ function bestEffortMigrations(): readonly WireMigration[] {
  *    - below-1.0 (or otherwise unrecognized-low) — `resolveWireMigrations`
  *      throws, so records run through the 1.0-onwards best-effort chain and a
  *      warning is added to `warnings[]` so the UI can surface the caveat;
- *    - at/above the current 1.4 (including future versions) — resolves to an
+ *    - at/above the current 1.5 (including future versions) — resolves to an
  *      empty chain, so records are passed through unchanged, with no migration
  *      and no warning. */
 export async function readAgentWire(path: string): Promise<WireReadResult> {

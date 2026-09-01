@@ -24,9 +24,9 @@ Gates not-yet-public features behind `IFlagService.enabled(id)`, per the reposit
 
 Highest wins; env is read live on every call (nothing cached):
 
-1. L1 master env `KIMI_CODE_EXPERIMENTAL_FLAG` truthy → every flag on.
-2. L2 per-feature `def.env` (e.g. `KIMI_CODE_EXPERIMENTAL_MY_FEATURE`) → forces on/off.
-3. L3 `[experimental]` config section per-flag override.
+1. L1 per-feature `def.env` (e.g. `KIMI_CODE_EXPERIMENTAL_MY_FEATURE`) → forces on/off.
+2. L2 `[experimental]` config section per-flag override.
+3. L3 master env `KIMI_CODE_EXPERIMENTAL_FLAG` truthy → every flag on.
 4. L4 registry `default`.
 
 `explain(id)` returns the winning `source` (`master-env` | `env` | `config` | `default`) plus the effective `configValue`. `explain(id)` returns `undefined` (and `enabled(id)` returns `false`) for an id that no domain has registered.

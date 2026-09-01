@@ -1,3 +1,4 @@
+import { SESSION_INDEX_KEY, SESSION_INDEX_SCOPE } from '#/app/workspace/workspaceAlias';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
@@ -5,6 +6,7 @@ import { CHILD_SESSION_KIND, CHILD_SESSION_KIND_KEY, type SessionSummary } from 
 
 const META_SCOPE = 'session-meta';
 const META_KEY = 'state.json';
+const MTIME_SCAN_CONCURRENCY = 16;
 
 export function parseTime(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -167,4 +169,33 @@ export async function mapBounded<T, R>(
   });
   await Promise.all(workers);
   return out;
+}
+
+export async function sessionStateMaxMtime(
+  storage: IFileSystemStorageService,
+  sessionsScope: string,
+  workspaceId: string,
+  sessionId: string,
+): Promise<number> {
+  const base = `${sessionsScope}/${workspaceId}/${sessionId}`;
+  const direct = await storage.mtime(base, META_KEY);
+  const nested = await storage.mtime(`${base}/${META_SCOPE}`, META_KEY);
+  return Math.max(direct ?? 0, nested ?? 0);
+}
+
+export async function scanSessionsMaxMtime(
+  storage: IFileSystemStorageService,
+  sessionsScope: string,
+): Promise<number> {
+  let max = (await storage.mtime(SESSION_INDEX_SCOPE, SESSION_INDEX_KEY)) ?? 0;
+  for (const workspaceId of await listWorkspaceIds(storage, sessionsScope)) {
+    const sessionIds = await listSessionIds(storage, sessionsScope, workspaceId);
+    const mtimes = await mapBounded(sessionIds, MTIME_SCAN_CONCURRENCY, (sessionId) =>
+      sessionStateMaxMtime(storage, sessionsScope, workspaceId, sessionId),
+    );
+    for (const mtime of mtimes) {
+      if (mtime > max) max = mtime;
+    }
+  }
+  return max;
 }

@@ -100,7 +100,7 @@ When connecting to external MCP servers, be aware of:
 - Keep manual approval for high-risk tools (file writes, command execution, etc.); avoid using `mcp__*` wildcards to allow all tools at once
 
 ::: warning Note
-In YOLO mode, MCP tool calls are automatically approved. Only use this mode when you fully trust the MCP servers you have connected.
+In Ask When Needed mode, MCP tool calls are automatically approved. Only use this mode when you fully trust the MCP servers you have connected.
 :::
 
 ## Next steps

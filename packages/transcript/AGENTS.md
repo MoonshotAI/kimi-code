@@ -6,13 +6,17 @@ The isomorphic transcript rendering data layer — agent-granular L1 store, idem
 
 No comments — no file headers, no section banners, no statement-level narration, no JSDoc (not even on exported symbols); the code is the source of truth. Lint-suppression directives (`oxlint-disable` / `eslint-disable`) are the only exception, allowed where they suppress an active rule for a deliberate pattern; other tooling directives (`@ts-expect-error`, `@ts-ignore`, …) stay banned — fix the underlying type problem instead. Enforced by `scripts/check-no-comments.mjs` (part of `pnpm lint`).
 
+## Contract documentation
+
+`docs/sdk.md` is the readable form of the package's external contract as currently implemented (data model, ops, WS/REST surface, event sources) plus the versioning rule: any contract change (entity fields, op types, frame shapes, REST responses, grade semantics) must ship with a numbered migration doc under `docs/migrations/NNNN-<title>.md`; pure additions need only a changeset. `src/contract/` remains the authority — when the two diverge, fix the doc.
+
 ## Cold rebuild
 
 The cold rebuild is a two-level fold over `wire.jsonl` as the single source of truth: `history/groupTurns.ts` (context messages → turn tree) plus `history/foldFacts.ts` (non-context records → tasks, interactions, todos, goal/plan/swarm meta, and end-appended markers/taskrefs; interactions left pending at shutdown fold to `cancelled`).
 
 ## Plan content
 
-Plan content is a recorded fact too: each ExitPlanMode review submission offloads the document to `agents/<agentId>/plan/<planId>/v<N>.md` and persists a reference-only `plan.revision` record (`{id, version, path, sha256, bytes}`), which projects — live and cold — to a `plan.revision` marker and the `modes.plan` badge (`{reviewPath, version}`).
+Plan content is a recorded fact too: each ExitPlanMode review submission offloads the document to `agents/<agentId>/plan/<planId>/v<N>.md` and persists a reference-only `plan.revision` record (`{id, version, key, sha256, bytes}`), where `key` is relative to the current Agent scope and never contains session identity. It projects — live and cold — to a `plan.revision` marker and the `modes.plan` badge (`{reviewPath, version}`).
 
 ## Op-batch sequencing contract
 
@@ -20,4 +24,4 @@ Owned here (`transcriptSeqSchema` in `contract/schema.ts`): a per-(session, agen
 
 ## Wire-level detail
 
-Beyond the timeline, the model carries wire-equivalent detail: steps carry `usage` / `finishReason` / `timing` (LLM latencies) / `retry` / interrupt reason, turns carry `durationMs` / `error` / `usage`, tool frames carry the streamed `inputText` and the latest `progress`, tasks carry subagent `resultSummary` / `error` / `stateReason` / `usage`, `meta.agent` mirrors the agent status slices (model / usage / context / permission / phase), a global `prompts` entity (op `prompt.upsert`) tracks the prompt queue, and `hook.result` lands as a `'hook'` marker. These live-projected fields are NOT backfilled by the cold rebuild (known limitation).
+Beyond the timeline, the model carries wire-equivalent detail: steps carry `usage` / `finishReason` / `timing` (LLM latencies) / `retry` / interrupt reason, turns carry `durationMs` / `error` / `usage`, tool frames carry the streamed `inputText` and the latest `progress`, tasks carry subagent `resultSummary` / `error` / `stateReason` / `usage`, `meta.agent` mirrors the agent status slices (model / usage / context / permission / phase), a global `prompts` entity (op `prompt.upsert`) tracks the prompt queue, and `hook.result` lands as a `'hook'` marker. Step interrupt reason (`state: 'interrupted'` + `endReason` / `endMessage` / `endedAt`) IS backfilled by the cold rebuild from the durable `turn.step.interrupted` records, synthesizing the step when the context tree has none for that ordinal; the remaining live-projected fields (including `retry`, which is transient by design) are NOT backfilled (known limitation).

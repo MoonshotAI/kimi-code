@@ -17,7 +17,7 @@ Kimi Code CLI 可以使用内置配色，也可以使用自定义 JSON 主题文
 | `border` | `#5A5A5A` | `#737373` | 面板与编辑器的普通边框、Markdown 分隔线 |
 | `borderFocus` | `#E8A838` | `#92660A` | 聚焦/注意边框，目前仅审批面板使用 |
 | `success` | `#4EC87E` | `#0E7A38` | 成功态。`✓`、已启用、完成 |
-| `warning` | `#E8A838` | `#92660A` | 警告态。auto/yolo 徽章、过期标记、Plan 模式提示 |
+| `warning` | `#E8A838` | `#92660A` | 警告态。「必要时询问」/「完全自动」徽章、过期标记、Plan 模式提示 |
 | `error` | `#E85454` | `#B91C1C` | 错误态。错误信息、失败的工具输出 |
 | `diffAdded` | `#4EC87E` | `#0E7A38` | diff 新增行 |
 | `diffRemoved` | `#E85454` | `#B91C1C` | diff 删除行 |

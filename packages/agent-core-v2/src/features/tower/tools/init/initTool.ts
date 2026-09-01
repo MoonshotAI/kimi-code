@@ -7,7 +7,12 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
 
-import { newTowerStore, runTowerTool, TOWER_MAIN_AGENT_ONLY } from '../support';
+import {
+  newTowerStore,
+  runTowerTool,
+  TOWER_MAIN_AGENT_ONLY,
+  TOWER_MODE_USER_ENABLED_ONLY,
+} from '../support';
 import DESCRIPTION from './init.md?raw';
 import { ITowerInitTool, TowerInitToolInputSchema, type TowerInitToolInput } from './init';
 
@@ -31,6 +36,12 @@ export class TowerInitTool implements ITowerInitTool {
         output: TOWER_MAIN_AGENT_ONLY,
       };
     }
+    if (!this.tower.isActive) {
+      return {
+        isError: true,
+        output: TOWER_MODE_USER_ENABLED_ONLY,
+      };
+    }
     return {
       description: 'Initializing tower workspace',
       approvalRule: this.name,
@@ -50,8 +61,10 @@ export class TowerInitTool implements ITowerInitTool {
               `tower workspace is owned by a live session (${priorOwner}) — adopting it would retire that session's roster. Use the tower from that session, or close it first.`,
             );
           }
-          const result = await store.init(this.sessionContext.sessionId, args.base);
-          await this.tower.enter();
+          const result = await store.init(
+            this.sessionContext.sessionId,
+            args.base ?? this.tower.requestedBase,
+          );
           return {
             output: [
               result.created

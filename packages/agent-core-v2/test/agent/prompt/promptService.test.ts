@@ -16,8 +16,8 @@ import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { AgentPromptService, PromptAborted, PromptCompleted, PromptQueued, PromptStarted, PromptSteered, PromptSubmitted } from '#/agent/prompt/promptService';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { createReminderStub, lifecycleWithReminder } from '../../features/reminder/stubs';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
+import { createReminderStub } from '../../features/reminder/stubs';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
@@ -106,7 +106,7 @@ function harness(loopOptions: StubLoopOptions = { pendingTurnResult: true }) {
       reg.definePartialInstance(IAgentToolPolicyService, { setSessionDisabledTools: async () => {} });
       reg.defineInstance(IAgentFullCompactionService, fullCompaction);
       reg.define(IEventBus, EventBusService);
-      reg.defineInstance(IAgentLifecycleService, lifecycleWithReminder(reminder));
+      reg.defineInstance(IAgentReminderService, reminder);
       reg.define(IAgentPromptService, AgentPromptService);
       reg.definePartialInstance(ITelemetryService, { track: () => {}, track2: () => {} });
       reg.definePartialInstance(ISessionMetadata, {

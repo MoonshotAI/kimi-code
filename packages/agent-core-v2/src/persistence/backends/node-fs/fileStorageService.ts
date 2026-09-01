@@ -170,6 +170,16 @@ export class FileStorageService implements IFileSystemStorageService {
     }
   }
 
+  async mtime(scope: string, key: string): Promise<number | undefined> {
+    const filePath = this.pathFor(scope, key);
+    try {
+      return (await stat(filePath)).mtimeMs;
+    } catch (error) {
+      if (isEnoent(error)) return undefined;
+      throw toStorageIoError(error, { path: filePath, op: 'stat' });
+    }
+  }
+
   watch(scope: string, key: string): Event<void> {
     const target = this.pathFor(scope, key);
     const dir = dirname(target);

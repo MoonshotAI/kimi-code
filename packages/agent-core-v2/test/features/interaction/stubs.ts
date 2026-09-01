@@ -1,27 +1,28 @@
+import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
+import { type IAgentScopeHandle } from '#/_base/di/scope';
 import { Event } from '#/_base/event';
 import { TestInstantiationService } from '#/_base/di/test';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import type {
-  AgentRuntimeDefinition,
-  RuntimeOf,
-} from '#/agent/runtime/agentRuntime';
-import { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { LifecycleScope } from '#/app/scopes';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IEventBus } from '#/app/event/eventBus';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import {
-  AgentInteraction,
-  interactionAgentRuntimeProvider,
-  type InteractionRuntime,
-} from '#/features/interaction/interactionAgentRuntime';
-import { IEventDispatcher } from '#/state/eventDispatcher';
+  AgentInteractionService,
+  IAgentInteractionService,
+} from '#/features/interaction/interactionService';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+
+import {
+  registerTestAgentWire,
+  registerTestEventDispatcher,
+  testWireScope,
+} from '../../wire/stubs';
 
 export interface InteractionManagerStub {
   readonly manager: IAgentLifecycleService;
-  runtimeOf(agentId: string): InteractionRuntime;
-  dispatchedOf(agentId: string): readonly { type: string }[];
+  serviceOf(agentId: string): IAgentInteractionService;
   readonly disposables: DisposableStore;
 }
 
@@ -29,7 +30,7 @@ export function stubInteractionManagerFor(agentIds: readonly string[]): Interact
   const disposables = new DisposableStore();
   const agents = new Map<
     string,
-    { context: AgentContext; runtimes: AgentRuntimeSet; dispatched: { type: string }[] }
+    { context: AgentContext; handle: IAgentScopeHandle; service: IAgentInteractionService }
   >();
   for (const agentId of agentIds) {
     const ix = disposables.add(new TestInstantiationService());
@@ -37,44 +38,33 @@ export function stubInteractionManagerFor(agentIds: readonly string[]): Interact
     const context = scope.agentContext;
     const eventBus = disposables.add(new EventBusService());
     eventBus.activateAgent(context);
-    const dispatched: { type: string }[] = [];
+    registerTestAgentWire(ix, testWireScope('interaction-stub', agentId));
     ix.stub(IAgentScopeContext, scope);
     ix.stub(IEventBus, eventBus);
-    ix.stub(IEventDispatcher, {
-      _serviceBrand: undefined,
-      dispatch: (event: { type: string }) => {
-        dispatched.push({ type: event.type });
-        return Promise.resolve();
+    registerTestEventDispatcher(ix);
+    ix.set(IAgentInteractionService, new SyncDescriptor(AgentInteractionService));
+    const service = ix.get(IAgentInteractionService);
+    const handle = {
+      id: agentId,
+      kind: LifecycleScope.Agent,
+      accessor: {
+        get: (token: unknown) => (token === IAgentInteractionService ? service : undefined),
       },
-    } as unknown as IEventDispatcher);
-    const runtimes = new AgentRuntimeSet(context, { get: (id) => ix.get(id) });
-    runtimes.apply({
-      definition: AgentInteraction,
-      provider: interactionAgentRuntimeProvider,
-      generation: 1,
-      active: true,
-    });
-    agents.set(agentId, { context, runtimes, dispatched });
+      dispose: () => {},
+    } as unknown as IAgentScopeHandle;
+    agents.set(agentId, { context, handle, service });
   }
   const manager = {
     _serviceBrand: undefined,
     onDidCreate: Event.None,
+    onDidClose: Event.None,
     get: (id: string) => agents.get(id)?.context,
     list: () => [...agents.values()].map((agent) => agent.context),
-    resolve: <Definition extends AgentRuntimeDefinition<any, any>>(
-      agent: AgentContext,
-      definition: Definition,
-    ): RuntimeOf<Definition> => {
-      for (const candidate of agents.values()) {
-        if (candidate.context === agent) return candidate.runtimes.resolve(definition);
-      }
-      throw new Error(`unknown agent ${agent.agentId}`);
-    },
+    handleOf: (id: string) => agents.get(id)?.handle,
   } as unknown as IAgentLifecycleService;
   return {
     manager,
-    runtimeOf: (agentId) => agents.get(agentId)!.runtimes.resolve(AgentInteraction),
-    dispatchedOf: (agentId) => agents.get(agentId)!.dispatched,
+    serviceOf: (agentId) => agents.get(agentId)!.service,
     disposables,
   };
 }
