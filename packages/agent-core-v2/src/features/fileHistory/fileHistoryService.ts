@@ -33,7 +33,7 @@ import {
   type FileHistoryState,
 } from './fileHistory';
 import {
-  FILE_HISTORY_TURN_WINDOW,
+  displacedCheckpoints,
   FileHistoryCheckpointed,
   FileHistoryTracked,
   checkpointPhaseOf,
@@ -176,6 +176,15 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
         continue;
       }
       const beforeBytes = await this.entryBytes(before);
+      const beforeLost =
+        before !== undefined && before.key !== null && beforeBytes === undefined;
+      const afterLost =
+        end !== undefined && after !== undefined && after.key !== null && afterBytes === undefined;
+      if (beforeLost || afterLost) {
+        const status = beforeMissing ? 'added' : afterMissing ? 'deleted' : 'modified';
+        changes.push({ path, status, additions: 0, deletions: 0, binary: true });
+        continue;
+      }
       const change = diffChange(path, beforeBytes, afterBytes, lcsBudget);
       if (change !== undefined) changes.push(change);
     }
@@ -294,6 +303,14 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
   }
 
   private async endCheckpoint(turnId: number): Promise<void> {
+    const state = this.history();
+    if (state.checkpoints.some((c) => c.turnId === turnId && checkpointPhaseOf(c) === 'end')) {
+      return;
+    }
+    const start = state.checkpoints.find(
+      (c) => c.turnId === turnId && checkpointPhaseOf(c) === 'start',
+    );
+    if (start === undefined) return;
     await this.sweepOrphanBlobs();
     void touchFileHistorySession({
       docs: this.docs,
@@ -302,19 +319,12 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
       sessionDir: this.sessionCtx.sessionDir,
       sessionId: this.sessionCtx.sessionId,
     });
-    const state = this.history();
-    if (state.checkpoints.some((c) => c.turnId === turnId && checkpointPhaseOf(c) === 'end')) {
-      return;
-    }
-    const start = state.checkpoints.find(
-      (c) => c.turnId === turnId && checkpointPhaseOf(c) === 'start',
-    );
 
     const entries: Record<string, FileBackupEntry> = Object.create(null) as Record<
       string,
       FileBackupEntry
     >;
-    for (const [pathKey, before] of Object.entries(start?.entries ?? {})) {
+    for (const [pathKey, before] of Object.entries(start.entries)) {
       const nextVersion = maxVersion(state.checkpoints, pathKey) + 1;
       const current = await this.readCurrent(pathKey);
       if (current === 'unreadable') continue;
@@ -345,7 +355,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
       entries[pathKey] = await this.backup(pathKey, nextVersion, current, contentHash);
     }
 
-    const evictable = evictableCheckpoints(state.checkpoints, turnId);
+    const evictable = displacedCheckpoints(state.checkpoints, turnId);
     await this.dispatcher.dispatch(
       new FileHistoryCheckpointed({ agentId: this.agentCtx.agentId, turnId, phase: 'end', entries }),
     );
@@ -515,24 +525,8 @@ function maxVersion(
   return max;
 }
 
-function evictableCheckpoints(
-  checkpoints: readonly FileHistoryCheckpointRecord[],
-  nextTurnId: number,
-): readonly FileHistoryCheckpointRecord[] {
-  const completedIds = [
-    ...new Set([
-      ...checkpoints.filter((c) => checkpointPhaseOf(c) === 'end').map((c) => c.turnId),
-      nextTurnId,
-    ]),
-  ].sort((a, b) => b - a);
-  const keep = new Set(completedIds.slice(0, FILE_HISTORY_TURN_WINDOW));
-  return checkpoints.filter(
-    (checkpoint) => !keep.has(checkpoint.turnId) && checkpoint.turnId <= completedIds[0]!,
-  );
-}
-
 function blobKey(pathKey: string, version: number): string {
-  const hash = createHash('sha256').update(pathKey, 'utf8').digest('hex').slice(0, 16);
+  const hash = createHash('sha256').update(pathKey, 'utf8').digest('hex');
   return `${FILE_HISTORY_BLOB_PREFIX}/${hash}@v${String(version)}`;
 }
 
@@ -649,8 +643,6 @@ interface LcsCellBudget {
 
 const LCS_CELL_BUDGET = 4_000_000;
 const LCS_AGGREGATE_CELL_BUDGET = 16_000_000;
-
-
 
 function lcsLength(a: readonly string[], b: readonly string[]): number {
   if (a.length === 0 || b.length === 0) return 0;

@@ -501,7 +501,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           if (hold === undefined) {
             throw new Error2(
               ErrorCodes.SESSION_FORK_ACTIVE_TURN,
-              `Session "${sourceId}" cannot be forked while a turn is running or queued`,
+              `Session "${sourceId}" cannot be forked while a turn is running or queued, or while another fork is copying it`,
               { details: { sessionId: sourceId, agentId: agent.agentId } },
             );
           }

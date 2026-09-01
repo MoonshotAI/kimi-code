@@ -68,6 +68,20 @@ export function checkpointPhaseOf(record: {
   return record.phase ?? 'start';
 }
 
+export function displacedCheckpoints<
+  T extends { readonly turnId: number; readonly phase?: FileHistoryCheckpointPhase },
+>(checkpoints: readonly T[], completingTurnId?: number): readonly T[] {
+  const completedIds = [
+    ...new Set([
+      ...checkpoints.filter((c) => checkpointPhaseOf(c) === 'end').map((c) => c.turnId),
+      ...(completingTurnId === undefined ? [] : [completingTurnId]),
+    ]),
+  ].sort((a, b) => b - a);
+  if (completedIds.length <= FILE_HISTORY_TURN_WINDOW) return [];
+  const keep = new Set(completedIds.slice(0, FILE_HISTORY_TURN_WINDOW));
+  return checkpoints.filter((c) => !keep.has(c.turnId) && c.turnId <= completedIds[0]!);
+}
+
 function cloneEntries(
   entries: Readonly<Record<string, FileBackupEntry>>,
 ): Record<string, FileBackupEntry> {
@@ -94,16 +108,9 @@ export const fileHistoryKey = defineState(
       return;
     }
     s.checkpoints.push({ turnId: e.turnId, phase, entries: cloneEntries(e.entries) });
-    const completedIds = [
-      ...new Set(
-        s.checkpoints.filter((c) => checkpointPhaseOf(c) === 'end').map((c) => c.turnId),
-      ),
-    ].sort((a, b) => b - a);
-    if (completedIds.length > FILE_HISTORY_TURN_WINDOW) {
-      const keep = new Set(completedIds.slice(0, FILE_HISTORY_TURN_WINDOW));
-      s.checkpoints = s.checkpoints.filter(
-        (c) => keep.has(c.turnId) || c.turnId > completedIds[0]!,
-      );
+    const displaced = new Set(displacedCheckpoints(s.checkpoints));
+    if (displaced.size > 0) {
+      s.checkpoints = s.checkpoints.filter((c) => !displaced.has(c));
       const kept = new Set<string>();
       for (const checkpoint of s.checkpoints) {
         for (const path of Object.keys(checkpoint.entries)) kept.add(path);
