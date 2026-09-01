@@ -2,7 +2,7 @@
  * Footer/status bar — multi-line status display at the bottom of the TUI.
  *
  * Layout:
- *   Line 1: [yolo] [plan] <model> <cwd>  <git-badge>  <shortcut hints>
+ *   Line 1: [ask-when-needed] [plan] <model> <cwd>  <git-badge>  <shortcut hints>
  *   Line 2: context: N% (tokens/max)
  */
 
@@ -16,6 +16,7 @@ import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/danc
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
 import type { AppState } from '#/tui/types';
+import { PERMISSION_MODE_DISPLAY_NAMES } from '#/tui/utils/permission-mode';
 import {
   StatusLineCommandRunner,
   type StatusLinePayload,
@@ -387,8 +388,8 @@ export class FooterComponent implements Component {
     }
 
     const modes: string[] = [];
-    if (state.permissionMode === 'auto') modes.push(chalk.hex(colors.warning).bold('auto'));
-    if (state.permissionMode === 'yolo') modes.push(chalk.hex(colors.warning).bold('yolo'));
+    if (state.permissionMode === 'auto') modes.push(chalk.hex(colors.warning).bold(PERMISSION_MODE_DISPLAY_NAMES.auto));
+    if (state.permissionMode === 'yolo') modes.push(chalk.hex(colors.warning).bold(PERMISSION_MODE_DISPLAY_NAMES.yolo));
     if (state.planMode) modes.push(chalk.hex(colors.primary).bold('plan'));
     if (state.swarmMode) modes.push(chalk.hex(colors.accent).bold('swarm'));
     if (state.towerMode) modes.push(chalk.hex(colors.accent).bold('tower'));

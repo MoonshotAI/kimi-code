@@ -1,13 +1,13 @@
 import { Feature } from '#/features/feature';
 import { registerFeature } from '#/features/featureRegistry';
-import { interactionAgentRuntimeProvider } from '#/features/interaction/interactionAgentRuntime';
+import { AgentInteractionService, IAgentInteractionService } from '#/features/interaction/interactionService';
 
 export class InteractionFeature extends Feature {
   static override readonly name = 'interaction';
 
   constructor() {
     super();
-    this.contributeAgentRuntime(interactionAgentRuntimeProvider);
+    this.contributeAgentService(IAgentInteractionService, AgentInteractionService);
   }
 }
 

@@ -13,8 +13,8 @@ import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { UndoCut } from '#/agent/contextMemory/contextOps';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { createReminderHarness, lifecycleWithReminder } from '../../features/reminder/stubs';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
+import { createReminderHarness } from '../../features/reminder/stubs';
 import { CompactionCompleted } from '#/agent/fullCompaction/compactionOps';
 import {
   IAgentLoopService,
@@ -333,8 +333,8 @@ function registerSharedServices(
     },
   } as unknown as IEventDispatcher);
   reg.defineInstance(
-    IAgentLifecycleService,
-    lifecycleWithReminder(createReminderHarness(loop, contextMemory, eventBus)),
+    IAgentReminderService,
+    createReminderHarness(loop, contextMemory, eventBus),
   );
   reg.define(IAgentToolRegistryService, AgentToolRegistryService);
   reg.define(IAgentToolSelectService, AgentToolSelectService);

@@ -74,6 +74,23 @@ export async function branchExists(cwd: string, branch: string): Promise<boolean
   );
 }
 
+const ADD_PATHS_CHUNK = 100;
+
+export async function checkoutNewLocalBranch(cwd: string, branch: string): Promise<void> {
+  await git(cwd, ['checkout', '-b', branch]);
+}
+
+export async function commitPaths(
+  cwd: string,
+  paths: readonly string[],
+  message: string,
+): Promise<void> {
+  for (let i = 0; i < paths.length; i += ADD_PATHS_CHUNK) {
+    await git(cwd, ['add', '-A', '--', ...paths.slice(i, i + ADD_PATHS_CHUNK)]);
+  }
+  await git(cwd, ['commit', '-m', message]);
+}
+
 export async function isAncestor(cwd: string, ancestor: string, ref: string): Promise<boolean> {
   return (await tryGit(cwd, ['merge-base', '--is-ancestor', ancestor, ref])) !== null;
 }

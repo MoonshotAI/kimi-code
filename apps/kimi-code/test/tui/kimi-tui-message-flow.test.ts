@@ -2613,7 +2613,7 @@ command = "vim"
     expect(driver.state.appState).toMatchObject({
       permissionMode: 'yolo',
     });
-    expect(harness.track).toHaveBeenCalledWith('input_command', { command: 'yolo' });
+    expect(harness.track).toHaveBeenCalledWith('input_command', { command: 'ask-when-needed' });
     expect(harness.track).not.toHaveBeenCalledWith('yolo_toggle', expect.anything());
   });
 
@@ -2835,7 +2835,7 @@ command = "vim"
     driver.handleUserInput('/auto on');
 
     await vi.waitFor(() => {
-      expect(stripSgr(renderTranscript(driver))).toContain('Auto mode: ON');
+      expect(stripSgr(renderTranscript(driver))).toContain('Never Ask mode: ON');
     });
 
     driver.handleUserInput('/undo 10');
@@ -2855,7 +2855,7 @@ command = "vim"
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).not.toContain('hello');
     expect(transcript).not.toContain('Cannot undo 10 prompts');
-    expect(transcript).toContain('Auto mode: ON');
+    expect(transcript).toContain('Never Ask mode: ON');
     expect(driver.state.appState.permissionMode).toBe('auto');
   });
 
@@ -6778,7 +6778,7 @@ command = "vim"
       expect(output).toContain('>_ Kimi Code');
       expect(output).toContain('Model');
       expect(output).toContain('thinking high');
-      expect(output).toContain('Permissions  auto');
+      expect(output).toContain('Permissions  Never Ask');
       expect(output).toContain('Plan mode    on');
       expect(output).toContain('Context window');
       expect(output).toContain('25%');

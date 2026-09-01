@@ -14,10 +14,6 @@ import { Emitter } from '#/_base/event';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2, Event2Class } from '#/app/event/event2';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import type {
-  AgentRuntimeDefinition,
-  RuntimeOf,
-} from '#/agent/runtime/agentRuntime';
 import {
   AgentActivityUpdated,
   IAgentActivityView,
@@ -26,7 +22,7 @@ import {
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import { AgentInteraction } from '#/features/interaction/interactionAgentRuntime';
+import { IAgentInteractionService } from '#/features/interaction/interactionService';
 import {
   type Interaction,
   type InteractionKind,
@@ -137,6 +133,7 @@ class FakeAgentHandle {
         if (token === IEventBus) return this.bus;
         if (token === IAgentActivityView) return this.view;
         if (token === IAgentStateService) return this.state;
+        if (token === IAgentInteractionService) return this.interactions;
         return undefined;
       },
     };
@@ -199,18 +196,6 @@ class FakeAgentLifecycle implements IAgentLifecycleService {
   fork(): Promise<AgentContext> {
     throw new Error('not implemented');
   }
-  resolve<Definition extends AgentRuntimeDefinition<any, any>>(
-    agent: AgentContext,
-    definition: Definition,
-  ): RuntimeOf<Definition> {
-    if (definition !== AgentInteraction) throw new Error('not implemented');
-    const handle = this.handles.find((h) => h.context === agent);
-    if (handle === undefined) throw new Error(`unknown agent ${agent.agentId}`);
-    return handle.interactions as RuntimeOf<Definition>;
-  }
-  inspect(): never {
-    throw new Error('not implemented');
-  }
   remove(): Promise<void> {
     throw new Error('not implemented');
   }
@@ -218,9 +203,6 @@ class FakeAgentLifecycle implements IAgentLifecycleService {
     throw new Error('not implemented');
   }
   adopt(): AgentContext {
-    throw new Error('not implemented');
-  }
-  attachRuntimes(): void {
     throw new Error('not implemented');
   }
 }

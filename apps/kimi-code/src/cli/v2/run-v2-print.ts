@@ -19,8 +19,8 @@
 import { readFile } from 'node:fs/promises';
 
 import {
-  AgentCron,
-  AgentGoal,
+  IAgentCronService,
+  IAgentGoalService,
   IAgentLifecycleService,
   IAgentPermissionModeService,
   IAgentProfileService,
@@ -36,7 +36,6 @@ import {
   ITelemetryService,
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
-  agentContextOf,
   applyPrintModeConfigDefaults,
   bootstrap,
   createCloudAppender,
@@ -470,12 +469,8 @@ async function runNativeTurn(
     if (result.type === 'completed') {
       const configService = app.accessor.get(IConfigService);
       const taskConfig = resolveAgentTaskConfig(configService);
-      const goalService = session.accessor
-        .get(IAgentLifecycleService)
-        .resolve(agentContextOf(agent), AgentGoal);
-      const cronService = session.accessor
-        .get(IAgentLifecycleService)
-        .resolve(agentContextOf(agent), AgentCron);
+      const goalService = agent.accessor.get(IAgentGoalService);
+      const cronService = agent.accessor.get(IAgentCronService);
       try {
         await applyPrintBackgroundPolicy({
           mode: resolvePrintBackgroundMode(configService),
@@ -528,9 +523,7 @@ async function runNativeGoal(
   stderr: PromptOutput,
 ): Promise<void> {
   requireConfiguredModel(model);
-  const goalService = session.accessor
-    .get(IAgentLifecycleService)
-    .resolve(agentContextOf(agent), AgentGoal);
+  const goalService = agent.accessor.get(IAgentGoalService);
   await goalService.createGoal({
     objective: goal.objective,
     replace: goal.replace,

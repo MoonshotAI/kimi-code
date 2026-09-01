@@ -13,7 +13,7 @@ import {
   type ServicesAccessor,
 } from '#/_base/di/instantiation';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
-import { AgentGoal } from '#/features/goal/goalAgentRuntime';
+import { IAgentGoalService } from '#/features/goal/goalService';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -115,10 +115,7 @@ export class SessionLegacyService implements ISessionLegacyService {
 
   async goal(sessionId: string): Promise<GoalSnapshot | null> {
     const agent = await this.resolveMainAgent(sessionId);
-    return agent.accessor
-      .get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentGoal)
-      .getGoal().goal;
+    return agent.accessor.get(IAgentGoalService).getGoal().goal;
   }
 }
 

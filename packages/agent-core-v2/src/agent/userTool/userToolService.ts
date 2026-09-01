@@ -13,11 +13,7 @@ import type {
 } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import {
-  AgentInteraction,
-  type InteractionRuntime,
-} from '#/features/interaction/interactionAgentRuntime';
+import { IAgentInteractionService } from '#/features/interaction/interactionService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
@@ -39,18 +35,16 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
   declare readonly _serviceBrand: undefined;
 
   private readonly registrations = new Map<string, IDisposable>();
-  private readonly interaction: InteractionRuntime;
 
   constructor(
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
-    @IAgentLifecycleService manager: IAgentLifecycleService,
+    @IAgentInteractionService private readonly interaction: IAgentInteractionService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentStateService private readonly agentState: IAgentStateService,
   ) {
     super();
-    this.interaction = manager.resolve(scopeContext.agentContext, AgentInteraction);
     this.agentState.contributeState(userToolKey);
     this._register(
       this.dispatcher.hooks.onDidRestore.register('user-tool', async (_ctx, next) => {

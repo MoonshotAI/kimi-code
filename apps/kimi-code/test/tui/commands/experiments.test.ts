@@ -96,11 +96,28 @@ describe('experimental feature command handlers', () => {
     expect(host.mountEditorReplacement).not.toHaveBeenCalled();
     expect(host.track).toHaveBeenCalledWith('experimental_features_apply', {
       changed: 1,
+      flags: '',
     });
     expect(host.showStatus).not.toHaveBeenCalledWith(
       'Experimental features updated.',
       darkColors.success,
     );
+  });
+
+  it('reports the post-apply enabled flag set in telemetry', async () => {
+    const host = makeHost();
+    host.harness.getExperimentalFeatures.mockResolvedValue([
+      feature({ id: 'wait_for', enabled: true }),
+      feature({ id: 'subagent_fork', enabled: true }),
+      feature({ id: 'tower', enabled: false }),
+    ]);
+
+    await applyExperimentalFeatureChanges(host, [{ id: 'subagent_fork', enabled: true }]);
+
+    expect(host.track).toHaveBeenCalledWith('experimental_features_apply', {
+      changed: 1,
+      flags: 'subagent_fork,wait_for',
+    });
   });
 
   it('does not write config when there are no drafted changes', async () => {

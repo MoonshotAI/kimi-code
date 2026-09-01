@@ -565,10 +565,10 @@ async function handleBuiltInSlashCommand(
     case 'title':
       await handleTitleCommand(host, args);
       return;
-    case 'yolo':
+    case 'ask-when-needed':
       await handleYoloCommand(host, args);
       return;
-    case 'auto':
+    case 'never-ask':
       await handleAutoCommand(host, args);
       return;
     case 'plan':

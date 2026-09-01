@@ -2,12 +2,10 @@ import { randomUUID } from 'node:crypto';
 
 import type { SkillActivationOrigin } from '#/agent/contextMemory/types';
 import { renderModelToolSkillPrompt } from '#/features/skill/prompt';
-import { AgentSkill, type SkillRuntime } from '#/features/skill/skillAgentRuntime';
+import { IAgentSkillService } from '#/features/skill/skillService';
 import type { ExecutableToolResult, ToolDeliveryMessage, ToolExecution } from '#/tool/toolContract';
 import { isInlineSkillType } from '#/features/skill/catalog/types';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { renderPrompt } from '#/_base/utils/render-prompt';
 import { toInputJsonSchema } from '#/tool/input-schema';
@@ -32,16 +30,11 @@ export class SkillTool implements ISkillTool {
 
   private queryDepth: number = 0;
 
-  private readonly skill: SkillRuntime;
-
   constructor(
     @ISessionSkillCatalog private readonly catalog: ISessionSkillCatalog,
-    @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
-    @IAgentScopeContext private readonly scope: IAgentScopeContext,
+    @IAgentSkillService private readonly skill: IAgentSkillService,
     @ISessionContext private readonly sessionContext: ISessionContext,
-  ) {
-    this.skill = manager.resolve(scope.agentContext, AgentSkill);
-  }
+  ) {}
 
   resolveExecution(args: SkillToolInput): ToolExecution {
     return {
@@ -54,7 +47,7 @@ export class SkillTool implements ISkillTool {
   }
 
   withInitialQueryDepth(initialQueryDepth: number): SkillTool {
-    const clone = new SkillTool(this.catalog, this.manager, this.scope, this.sessionContext);
+    const clone = new SkillTool(this.catalog, this.skill, this.sessionContext);
     clone.queryDepth = initialQueryDepth;
     return clone;
   }
@@ -72,7 +65,7 @@ export class SkillTool implements ISkillTool {
 
 export async function executeModelSkill(
   catalog: ISessionSkillCatalog,
-  skillService: SkillRuntime,
+  skillService: IAgentSkillService,
   args: SkillToolInput,
   queryDepth: number,
   sessionId: string,

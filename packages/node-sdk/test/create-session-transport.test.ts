@@ -331,6 +331,45 @@ describe('KimiHarness.createSession transport link', () => {
     }
   });
 
+  it('evaluates sessionStartedDynamicProperties at every session_started emission', async () => {
+    const records: TelemetryRecord[] = [];
+    const rpc = new StubRpc();
+    let flags = 'tower';
+    const harness = new KimiHarness(rpc, {
+      homeDir: '/tmp/home',
+      configPath: '/tmp/config.toml',
+      auth: { status: async () => ({ providers: [] }) } as never,
+      telemetry: recordingTelemetry(records),
+      ensureConfigFile: async () => undefined,
+      onClose: () => undefined,
+      sessionStartedDynamicProperties: () => ({ experimental_flags: flags }),
+    });
+
+    await harness.createSession({ id: 'ses_dynamic_one', workDir: '/tmp/work' });
+    flags = 'tower,wait_for';
+    await harness.createSession({ id: 'ses_dynamic_two', workDir: '/tmp/work' });
+    await harness.createSession({
+      id: 'ses_dynamic_three',
+      workDir: '/tmp/work',
+      sessionStartedProperties: { experimental_flags: 'caller_supplied' },
+    });
+
+    const started = records.filter((record) => record.event === 'session_started');
+    expect(started).toHaveLength(3);
+    expect(started[0]).toMatchObject({
+      sessionId: 'ses_dynamic_one',
+      properties: { experimental_flags: 'tower' },
+    });
+    expect(started[1]).toMatchObject({
+      sessionId: 'ses_dynamic_two',
+      properties: { experimental_flags: 'tower,wait_for' },
+    });
+    expect(started[2]).toMatchObject({
+      sessionId: 'ses_dynamic_three',
+      properties: { experimental_flags: 'tower,wait_for' },
+    });
+  });
+
   it('emits session_fork with the forked session context', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
