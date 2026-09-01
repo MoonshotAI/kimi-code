@@ -124,4 +124,26 @@ describe('cron-store', () => {
     // No wire.jsonl at all — legacy sessions still list their files.
     expect((await listCronTasks(sessionDir)).map((t) => t.id)).toEqual(['a1b2c3d4']);
   });
+
+  it('ignores malformed cron.delete / cron.cursor payloads instead of throwing', async () => {
+    const { sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
+    cleanup = c;
+    const lines = [
+      JSON.stringify({ type: 'metadata', protocol_version: '1.5', created_at: 1 }),
+      JSON.stringify({
+        type: 'cron.add',
+        agentId: 'main',
+        task: { id: '01ARZ3NDEKTSV4RRFFQ69G5FAV', cron: '* * * * *', prompt: 'p', createdAt: 1 },
+        time: 2,
+      }),
+      // Hand-edited / corrupted payloads: ids is not an array; cursor fields
+      // have the wrong types. The fold must skip them, not reject the read.
+      '{"type":"cron.delete","agentId":"main","ids":"not-an-array","time":3}',
+      '{"type":"cron.cursor","agentId":"main","id":42,"lastFiredAt":"soon","time":4}',
+    ];
+    await writeFile(join(sessionDir, 'wire.jsonl'), lines.join('\n') + '\n');
+
+    const cron = await listCronTasks(sessionDir);
+    expect(cron.map((t) => t.id)).toEqual(['01ARZ3NDEKTSV4RRFFQ69G5FAV']);
+  });
 });

@@ -7,6 +7,7 @@ import {
   selectCompactionUserMessages,
   selectRecentUserMessages,
 } from '@moonshot-ai/agent-core-v2/agent/contextMemory/compactionHandoff';
+import { estimateTokensForMessages } from '@moonshot-ai/agent-core-v2/kosong/contract/tokens';
 import { renderToolResultForModel } from '@moonshot-ai/agent-core-v2/agent/contextMemory/toolResultRender';
 import type {
   ContentPart,
@@ -307,12 +308,15 @@ export function projectContext(
               };
         if (mode === 'model') {
           // Rebuild the model's-eye view. New records carry `keptUserMessageCount`
-          // and use the kept-user selection below; legacy records fall back to the
-          // old verbatim-tail shape (handled first).
+          // and use the kept-user selection below; legacy-tail records fall back
+          // to the old verbatim-tail shape. The legacy rule is the same one the
+          // engine's `readContextCompactionShapeInput` applies — an explicit
+          // `legacyTail: true`, or any record without `keptUserMessageCount` —
+          // unconditionally on how `compactedCount` compares to the current
+          // history length.
           const historyEntries = messages.filter(isHistoryEntry);
-          if (rec.keptUserMessageCount === undefined && compactedCount < historyEntries.length) {
-            // Legacy (pre-rework) record: it has no `keptUserMessageCount`, so
-            // the engine's context-memory restore reproduces the old
+          if (rec.legacyTail === true || rec.keptUserMessageCount === undefined) {
+            // Legacy-tail record: the engine's restore reproduces the old
             // `[summary, ...history.slice(compactedCount)]` semantics — a verbatim
             // recent tail (assistant/tool included), not the new kept-user
             // selection. Mirror that exact shape so opening an older compacted
@@ -397,11 +401,22 @@ export function projectContext(
         // index-based cutoff no longer points at the same messages. (In full
         // mode the blanking pass does not run, so this is a no-op there.)
         microCutoff = 0;
-        // Mirror applyCompaction() → _tokenCount = result.tokensAfter:
-        // the live context-window fill is now the post-compaction count. Derived
-        // state, so it is mode-INDEPENDENT. `tokensAfter` is optional in the v2
-        // payload (absent on legacy variants) — keep the prior count then.
-        if (rec.tokensAfter !== undefined) contextTokens = rec.tokensAfter;
+        // Mirror the engine's `buildContextCompactionShape`: when the record
+        // omits `tokensAfter` (legacy variants), derive the post-compaction
+        // fill as an estimate over the RECONSTRUCTED shape instead of keeping
+        // the stale pre-compaction count — and reflect the derived value on
+        // the summary bubble, like the engine does. (In full mode the
+        // projected list is vis's own debug view, not the model's shape, so
+        // the fallback keeps the prior count instead of estimating over the
+        // wrong message set.)
+        if (rec.tokensAfter !== undefined) {
+          contextTokens = rec.tokensAfter;
+        } else if (mode === 'model') {
+          contextTokens = estimateTokensForMessages(messages.map((pm) => pm.message));
+          if (modelSummaryBubble.compaction !== undefined) {
+            modelSummaryBubble.compaction.tokensAfter = contextTokens;
+          }
+        }
         break;
       }
       case 'usage.record': {

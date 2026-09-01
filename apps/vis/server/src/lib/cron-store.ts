@@ -86,12 +86,22 @@ async function foldCronWireInto(agentDir: string, byId: Map<string, CronTask>): 
       case 'cron.add':
         if (isCronTask(rec.task)) byId.set(rec.task.id, rec.task);
         break;
-      case 'cron.delete':
-        for (const id of rec.ids) byId.delete(id);
+      case 'cron.delete': {
+        // Tolerate hand-edited / partially corrupted wires: the reader only
+        // validates the record's `type`, so guard the payload shape before
+        // iterating, the same way `cron.add` goes through `isCronTask`.
+        const ids: unknown = rec.ids;
+        if (Array.isArray(ids)) {
+          for (const id of ids) if (typeof id === 'string') byId.delete(id);
+        }
         break;
+      }
       case 'cron.cursor': {
-        const task = byId.get(rec.id);
-        if (task !== undefined) byId.set(rec.id, { ...task, lastFiredAt: rec.lastFiredAt });
+        const id: unknown = rec.id;
+        const lastFiredAt: unknown = rec.lastFiredAt;
+        if (typeof id !== 'string' || typeof lastFiredAt !== 'number') break;
+        const task = byId.get(id);
+        if (task !== undefined) byId.set(id, { ...task, lastFiredAt });
         break;
       }
       default:

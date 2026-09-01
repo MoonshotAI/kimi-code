@@ -1,5 +1,6 @@
 // apps/vis/server/test/lib/context-projector.test.ts
 import { describe, it, expect, afterEach } from 'vitest';
+import { estimateTokensForMessages } from '@moonshot-ai/agent-core-v2/kosong/contract/tokens';
 import { buildSessionFixture } from '../fixtures/build';
 import { projectContext } from '../../src/lib/context-projector';
 import { readAgentWire } from '../../src/lib/wire-reader';
@@ -277,17 +278,18 @@ describe('context-projector', () => {
       { lineNo: 4, data: { type: 'context.append_message' as const, message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'new' }], toolCalls: [] } }, raw: {} },
     ];
     const proj = projectContext(entries as any);
-    // Model view: the kept user prompt + user-role summary + the new prompt.
+    // Model view: a legacy record (no keptUserMessageCount) rebuilds the
+    // history as `[summary, ...history.slice(compactedCount)]` — 'old' is
+    // compacted away — then the new prompt is appended.
     expect(proj.messages.map((m) => m.source)).toEqual([
-      'append_message', 'compaction_summary', 'append_message',
+      'compaction_summary', 'append_message',
     ]);
-    expect(proj.messages[0]!.message.content[0]).toMatchObject({ text: 'old' });
     // The compaction summary is a user message (the engine's own
     // representation), not a synthetic system message.
-    expect(proj.messages[1]!.message.role).toBe('user');
-    expect(proj.messages[1]!.message.origin).toEqual({ kind: 'compaction_summary' });
-    expect(proj.messages[1]!.message.content[0]).toMatchObject({ text: 'old stuff' });
-    expect(proj.messages[2]!.message.content[0]).toMatchObject({ text: 'new' });
+    expect(proj.messages[0]!.message.role).toBe('user');
+    expect(proj.messages[0]!.message.origin).toEqual({ kind: 'compaction_summary' });
+    expect(proj.messages[0]!.message.content[0]).toMatchObject({ text: 'old stuff' });
+    expect(proj.messages[1]!.message.content[0]).toMatchObject({ text: 'new' });
   });
 
   it('uses contextSummary only for the model view and raw summary for full history', () => {
@@ -299,8 +301,9 @@ describe('context-projector', () => {
     ];
 
     const model = projectContext(entries as any);
+    // Legacy record (no keptUserMessageCount): the pre-compaction prompt is
+    // compacted away, the model sees only the prefixed summary.
     expect(model.messages.map((m) => m.message.content[0])).toMatchObject([
-      { text: 'old' },
       { text: 'prefixed summary' },
     ]);
 
@@ -320,7 +323,8 @@ describe('context-projector', () => {
       { lineNo: 3, data: { type: 'context.append_message' as const,
           message: { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'm2 (dropped)' }], toolCalls: [] } }, raw: {} },
       { lineNo: 4, data: { type: 'context.apply_compaction' as const,
-          summary: 'sum', compactedCount: 3, tokensBefore: 100, tokensAfter: 10 }, raw: {} },
+          summary: 'sum', compactedCount: 3, tokensBefore: 100, tokensAfter: 10,
+          keptUserMessageCount: 2 }, raw: {} },
     ];
     const proj = projectContext(entries as any);
     // [m0, m1, summary] — real user prompts are kept verbatim, the assistant
@@ -418,7 +422,8 @@ describe('context-projector', () => {
       { lineNo: 5, data: { type: 'context.append_message' as const,
           message: { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'assistant reply' }], toolCalls: [] } }, raw: {} },
       { lineNo: 6, data: { type: 'context.apply_compaction' as const,
-          summary: 'sum', compactedCount: 5, tokensBefore: 100, tokensAfter: 10 }, raw: {} },
+          summary: 'sum', compactedCount: 5, tokensBefore: 100, tokensAfter: 10,
+          keptUserMessageCount: 1 }, raw: {} },
       { lineNo: 7, data: { type: 'context.append_message' as const,
           message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'new' }], toolCalls: [], origin: { kind: 'user' as const } } }, raw: {} },
     ];
@@ -469,7 +474,8 @@ describe('context-projector', () => {
       { lineNo: 4, data: { type: 'context.append_message' as const, message: userMsg('u3') }, raw: {} },
       { lineNo: 5, data: { type: 'context.append_message' as const, message: userMsg('u4') }, raw: {} },
       { lineNo: 6, data: { type: 'context.apply_compaction' as const,
-          summary: 'sum', compactedCount: 3, tokensBefore: 100, tokensAfter: 10 }, raw: {} },
+          summary: 'sum', compactedCount: 3, tokensBefore: 100, tokensAfter: 10,
+          keptUserMessageCount: 3 }, raw: {} },
     ];
     const proj = projectContext(entries as any);
     // Correct: [u1, u3, u4, summary]. The marker is gone, all real prompts kept.
@@ -844,7 +850,8 @@ describe('context-projector', () => {
       { lineNo: 2, data: { type: 'context.append_message' as const,
           message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'm1' }], toolCalls: [] } }, raw: {} },
       { lineNo: 3, data: { type: 'context.apply_compaction' as const,
-          summary: 'sum', compactedCount: 2, tokensBefore: 100, tokensAfter: 10 }, raw: {} },
+          summary: 'sum', compactedCount: 2, tokensBefore: 100, tokensAfter: 10,
+          keptUserMessageCount: 2 }, raw: {} },
     ];
     // No 2nd arg → 'model' default: the real user prompts are kept verbatim and
     // the summary is appended after them.
@@ -981,7 +988,7 @@ describe('context-projector', () => {
     expect(proj.config.thinkingEffort).toBe('medium');
   });
 
-  it('projects the legacy compaction variant (ContextMessage summary, count) without tokens', () => {
+  it('derives the fill from the reconstructed shape when the legacy compaction omits tokens', () => {
     const summaryMessage = {
       role: 'user' as const,
       content: [{ type: 'text' as const, text: 'compacted so far' }],
@@ -996,11 +1003,50 @@ describe('context-projector', () => {
     const bubble = proj.messages.at(-1)!;
     expect(bubble.source).toBe('compaction_summary');
     expect(bubble.message.content[0]).toMatchObject({ text: 'compacted so far' });
+    // No tokensAfter on the record → the engine's fallback: an estimate over
+    // the reconstructed shape (here just the summary bubble), NOT the stale
+    // pre-compaction 7777.
+    const expected = estimateTokensForMessages([bubble.message]);
+    expect(proj.contextTokens).toBe(expected);
+    expect(proj.contextTokens).not.toBe(7777);
     expect(bubble.compaction).toEqual({
-      compactedCount: 2, tokensBefore: undefined, tokensAfter: undefined,
+      compactedCount: 2, tokensBefore: undefined, tokensAfter: expected,
     });
-    // No tokensAfter on the record → the prior fill is kept.
-    expect(proj.contextTokens).toBe(7777);
+  });
+
+  it('apply_compaction replays a legacy tail even when compactedCount covers the whole history', () => {
+    // Legacy-tail rule (no keptUserMessageCount) is unconditional on how
+    // compactedCount compares to the current history length — the engine's
+    // restore is always `[summary, ...history.slice(compactedCount)]`.
+    const entries = [
+      { lineNo: 1, data: { type: 'context.append_message' as const,
+          message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'u1' }], toolCalls: [], origin: { kind: 'user' as const } } }, raw: {} },
+      { lineNo: 2, data: { type: 'context.append_message' as const,
+          message: { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'a1' }], toolCalls: [] } }, raw: {} },
+      { lineNo: 3, data: { type: 'context.apply_compaction' as const,
+          summary: 'sum', compactedCount: 99, tokensAfter: 50 }, raw: {} },
+    ];
+    const proj = projectContext(entries as any);
+    expect(proj.messages.map((m) => m.source)).toEqual(['compaction_summary']);
+    expect(proj.messages[0]!.message.content[0]).toMatchObject({ text: 'sum' });
+    expect(proj.contextTokens).toBe(50);
+  });
+
+  it('honors an explicit legacyTail flag even when keptUserMessageCount is present', () => {
+    const entries = [
+      { lineNo: 1, data: { type: 'context.append_message' as const,
+          message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'u1' }], toolCalls: [], origin: { kind: 'user' as const } } }, raw: {} },
+      { lineNo: 2, data: { type: 'context.append_message' as const,
+          message: { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'a2 (tail)' }], toolCalls: [] } }, raw: {} },
+      { lineNo: 3, data: { type: 'context.apply_compaction' as const,
+          summary: 'sum', compactedCount: 1, tokensAfter: 5,
+          keptUserMessageCount: 1, legacyTail: true }, raw: {} },
+    ];
+    const proj = projectContext(entries as any);
+    // Verbatim tail [summary, a2], not the kept-user selection.
+    expect(proj.messages.map((m) => m.source)).toEqual(['compaction_summary', 'append_message']);
+    expect(proj.messages[1]!.message.content[0]).toMatchObject({ text: 'a2 (tail)' });
+    expect(proj.contextTokens).toBe(5);
   });
 
   it('normalizes the legacy background_task origin to task', () => {
