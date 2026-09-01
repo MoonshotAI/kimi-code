@@ -19,13 +19,13 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
 import { IFlagService } from '#/app/flag/flag';
-import {
-  CHILD_SESSION_KIND,
+import { CHILD_SESSION_KIND,
   CHILD_SESSION_KIND_KEY,
   ISessionIndex,
   ISessionIndexMirror,
   PARENT_SESSION_ID_KEY,
 } from '#/app/sessionIndex/sessionIndex';
+import { buildSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2, isError2 } from '#/errors';
 import { IHostFileSystem, type HostDirEntry } from '#/os/interface/hostFileSystem';
@@ -44,12 +44,21 @@ import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
 import { sessionEphemeralMcpServersSeed } from '#/session/mcp/ephemeralMcpServers';
 import { sessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
-import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
+import {
+  ISessionMetadata,
+  SESSION_META_VERSION,
+  type AgentMeta,
+  type SessionMeta,
+} from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionSkillCatalogData } from '#/features/skill/session/skillCatalogData';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
-import { drainSessionMetadataWrites, toEpochMs } from '#/session/sessionMetadata/sessionMetadataService';
+import {
+  drainSessionMetadataWrites,
+  encodeSessionMeta,
+  toEpochMs,
+} from '#/session/sessionMetadata/sessionMetadataService';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
@@ -457,7 +466,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     }
   }
 
-  async fork(opts: ForkSessionOptions): Promise<ISessionScopeHandle> {
+  async fork(opts: ForkSessionOptions): Promise<SessionMeta> {
     const sourceId = opts.sourceSessionId;
 
     const sourceHandle = this.sessions.get(sourceId);
@@ -480,12 +489,13 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             { details: { sessionId: sourceId } },
           );
         }
+        await agentHandle.accessor.get(IEventDispatcher).flush();
       }
+      await this.appendLogStore.flush();
     }
     assertForkTurnIndex(opts.turnIndex);
 
     let targetId: string | undefined;
-    let target: ISessionScopeHandle | undefined;
     let targetSessionDir: string | undefined;
     try {
       await drainSessionMetadataWrites();
@@ -515,21 +525,16 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       await this.copySessionFiles(
         sessionDirOf(this.bootstrap.homeDir, this.handlerScope, sourceId),
         targetSessionDir,
+        turnSlice !== undefined,
       );
-
-      target = await this.materializeSession({
-        sessionId: targetId,
-        workDir: this.workspaceContext.cwd,
-      });
-      const targetCtx = target.accessor.get(ISessionContext);
-      const targetMeta = target.accessor.get(ISessionMetadata);
 
       const sourceAgents = sourceMeta?.agents ?? {};
       const agentIds = Object.keys(sourceAgents);
-      const retainedAgentIds: string[] = [];
-      for (const agentId of agentIds) {
-        let slicedRecords: readonly WireRecord[] | undefined;
-        if (turnSlice !== undefined) {
+      let retainedAgentIds: readonly string[] = agentIds;
+      if (turnSlice !== undefined) {
+        const retained: string[] = [];
+        for (const agentId of agentIds) {
+          let slicedRecords: readonly WireRecord[] | undefined;
           if (agentId === MAIN_AGENT_ID) {
             slicedRecords = turnSlice.records;
           } else {
@@ -540,61 +545,76 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             if (subagentRecords.length === 0) continue;
             slicedRecords = subagentRecords;
           }
+          await this.copyAgentWire({
+            sourceHandle,
+            sourceSessionId: sourceId,
+            agentId,
+            targetSessionId: targetId,
+            records: slicedRecords,
+          });
+          retained.push(agentId);
         }
-        await this.copyAgentWire({
-          sourceHandle,
-          sourceSessionId: sourceId,
-          agentId,
-          targetSessionId: targetCtx.sessionId,
-          records: slicedRecords,
-        });
-        retainedAgentIds.push(agentId);
-      }
-
-      if (turnSlice !== undefined) {
+        retainedAgentIds = retained;
         await this.pruneTruncatedForkFiles(targetSessionDir, agentIds, retainedAgentIds);
+      } else {
+        await Promise.all(agentIds.map((agentId) => this.appendForkedMarker(targetId!, agentId)));
+        await this.appendLogStore.flush();
       }
 
       const title = opts.title ?? `Fork: ${sourceMeta?.title || sourceId}`;
-
+      const now = Date.now();
+      const agents: Record<string, AgentMeta> = {};
       for (const agentId of retainedAgentIds) {
         const sourceAgent = sourceAgents[agentId]!;
-        await target.accessor.get(IAgentLifecycleService).create({
-          agentId,
+        agents[agentId] = {
+          homedir: join(
+            this.bootstrap.homeDir,
+            agentScopeOf(sessionScopeOf(this.handlerScope, targetId), agentId),
+          ),
+          type: agentId === MAIN_AGENT_ID ? 'main' : 'sub',
+          parentAgentId: agentId === MAIN_AGENT_ID ? undefined : MAIN_AGENT_ID,
           forkedFrom: sourceAgent.forkedFrom,
           labels: labelsFromAgentMeta(sourceAgent),
-        });
+        };
       }
-
-      await targetMeta.update({
+      const meta: SessionMeta = {
+        id: targetId,
+        version: SESSION_META_VERSION,
+        cwd: this.workspaceContext.cwd,
+        createdAt: now,
+        updatedAt: toEpochMs(sourceMeta?.updatedAt) || now,
+        archived: false,
         title,
         titleKind: opts.title !== undefined ? 'custom' : 'replaceable',
         forkedFrom: sourceId,
-        archived: false,
-        updatedAt: toEpochMs(sourceMeta?.updatedAt) || Date.now(),
+        agents,
+        custom: forkCustomMetadata(sourceMeta?.custom, opts.metadata),
         lastPrompt: turnSlice === undefined ? sourceMeta?.lastPrompt : turnSlice.lastPrompt,
         lastTurnReason: sourceMeta?.lastTurnReason,
-        custom: forkCustomMetadata(sourceMeta?.custom, opts.metadata),
-      });
-
+      };
+      await this.docs.set(
+        sessionScopeOf(this.handlerScope, targetId),
+        'state.json',
+        encodeSessionMeta(meta),
+      );
+      this.indexMirror.record(
+        buildSessionSummary({
+          id: targetId,
+          workspaceId: this.workspaceId,
+          cwd: this.workspaceContext.cwd,
+          title,
+          lastPrompt: meta.lastPrompt,
+          createdAt: now,
+          updatedAt: meta.updatedAt,
+          archived: false,
+          custom: meta.custom,
+          lastTurnReason: meta.lastTurnReason,
+        }),
+      );
       await this.appendSessionIndexEntry(targetId, this.workspaceContext.cwd);
-      this._onDidForkSession.fire({
-        sourceSessionId: sourceId,
-        sessionId: targetId,
-        handle: target,
-      });
-      await this.announceCreated({ sessionId: targetId, handle: target, source: 'fork' });
-      return target;
+      this._onDidForkSession.fire({ sourceSessionId: sourceId, sessionId: targetId });
+      return meta;
     } catch (error) {
-      if (targetId !== undefined) {
-        this.sessions.delete(targetId);
-      }
-      if (target !== undefined) {
-        try {
-          void target.dispose();
-        } catch {
-        }
-      }
       if (targetSessionDir !== undefined) {
         await this.hostFs.remove(targetSessionDir).catch(() => {});
       }
@@ -602,7 +622,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     }
   }
 
-  async createChild(opts: CreateChildSessionOptions): Promise<ISessionScopeHandle> {
+  async createChild(opts: CreateChildSessionOptions): Promise<SessionMeta> {
     const title =
       opts.title ??
       `Child: ${(await this.resolveSourceTitle(opts.sourceSessionId)) ?? opts.sourceSessionId}`;
@@ -650,6 +670,39 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       AGENT_WIRE_RECORD_KEY,
       records,
     );
+  }
+
+  private async appendForkedMarker(targetSessionId: string, agentId: string): Promise<void> {
+    const scope = agentScopeOf(sessionScopeOf(this.handlerScope, targetSessionId), agentId);
+    const tolerate = { onTruncate: () => {} };
+    let first: WireRecord | undefined;
+    for await (const record of this.appendLogStore.read<WireRecord>(
+      scope,
+      AGENT_WIRE_RECORD_KEY,
+      tolerate,
+    )) {
+      first = record;
+      break;
+    }
+    if (first === undefined) {
+      this.appendLogStore.append(scope, AGENT_WIRE_RECORD_KEY, createWireMetadataRecord());
+      this.appendLogStore.append(scope, AGENT_WIRE_RECORD_KEY, forkedRecord(agentId));
+      return;
+    }
+    if (first.type === 'metadata') {
+      this.appendLogStore.append(scope, AGENT_WIRE_RECORD_KEY, forkedRecord(agentId));
+      return;
+    }
+    const records: WireRecord[] = [createWireMetadataRecord()];
+    for await (const record of this.appendLogStore.read<WireRecord>(
+      scope,
+      AGENT_WIRE_RECORD_KEY,
+      tolerate,
+    )) {
+      records.push(record);
+    }
+    records.push(forkedRecord(agentId));
+    await this.appendLogStore.rewrite(scope, AGENT_WIRE_RECORD_KEY, records);
   }
 
   private async readSourceWireRecords(
@@ -710,7 +763,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await Promise.all(removals);
   }
 
-  private async copySessionFiles(sourceDir: string, targetDir: string): Promise<void> {
+  private async copySessionFiles(
+    sourceDir: string,
+    targetDir: string,
+    excludeWire: boolean,
+  ): Promise<void> {
     let entries: readonly HostDirEntry[];
     try {
       entries = await this.hostFs.readdir(sourceDir);
@@ -718,7 +775,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       if (isMissingFileError(error)) return;
       throw error;
     }
-    await this.copySessionDirEntries(sourceDir, targetDir, entries, '');
+    await this.copySessionDirEntries(sourceDir, targetDir, entries, '', excludeWire);
   }
 
   private async copySessionDirEntries(
@@ -726,12 +783,15 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     targetDir: string,
     entries: readonly HostDirEntry[],
     relBase: string,
+    excludeWire: boolean,
   ): Promise<void> {
+    const fileWrites: Promise<void>[] = [];
     for (const entry of entries) {
       const rel = relBase === '' ? entry.name : `${relBase}/${entry.name}`;
-      if (rel === 'state.json' || rel === 'logs' || rel === 'upcoming-goals.json' || entry.name === AGENT_WIRE_RECORD_KEY) {
+      if (rel === 'state.json' || rel === 'logs' || rel === 'upcoming-goals.json') {
         continue;
       }
+      if (excludeWire && entry.name === AGENT_WIRE_RECORD_KEY) continue;
       if (entry.isSymbolicLink === true) continue;
       const sourcePath = join(sourceDir, entry.name);
       const targetPath = join(targetDir, entry.name);
@@ -744,13 +804,18 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           throw error;
         }
         await this.hostFs.mkdir(targetPath, { recursive: true });
-        await this.copySessionDirEntries(sourcePath, targetPath, children, rel);
+        await this.copySessionDirEntries(sourcePath, targetPath, children, rel, excludeWire);
       } else if (entry.isFile) {
-        const data = await this.hostFs.readBytes(sourcePath);
-        await this.hostFs.mkdir(targetDir, { recursive: true });
-        await this.hostFs.writeBytes(targetPath, data);
+        fileWrites.push(
+          (async () => {
+            const data = await this.hostFs.readBytes(sourcePath);
+            await this.hostFs.mkdir(targetDir, { recursive: true });
+            await this.hostFs.writeBytes(targetPath, data);
+          })(),
+        );
       }
     }
+    await Promise.all(fileWrites);
   }
 
   private async readMetaFromDisk(sessionId: string): Promise<SessionMeta | undefined> {

@@ -283,6 +283,13 @@ export class AcpServer {
       }
       throw error;
     }
+    const restored = await this.klient.session(forkedId).restore();
+    if (!restored) {
+      throw RequestError.invalidParams(
+        { sessionId: forkedId },
+        `Unknown sessionId: ${forkedId}`,
+      );
+    }
     return { sessionId: forkedId, ...(await this.activateSession(forkedId)) };
   }
 

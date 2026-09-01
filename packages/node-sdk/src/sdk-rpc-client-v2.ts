@@ -1355,13 +1355,15 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       async () => {
         const program = await programForSession(this.engineAccessor, input.id);
         if (program === undefined) throw SDKRpcClientV2.sessionNotFound(input.id);
-        const handle = await this.engineAccessor.get(ISessionManager).fork({
+        const meta = await this.engineAccessor.get(ISessionManager).fork({
           sourceSessionId: input.id,
           newSessionId: input.forkId,
           title: input.title,
           metadata: input.metadata,
           turnIndex: input.turnIndex,
         });
+        const handle = await resumeSessionById(this.engineAccessor, meta.id);
+        if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(meta.id);
         this.wireSession(handle);
         return this.resumedSessionSummary(handle);
       },
