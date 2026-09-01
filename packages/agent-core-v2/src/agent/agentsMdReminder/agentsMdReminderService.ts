@@ -129,11 +129,14 @@ export class AgentAgentsMdReminderService
     }
     if (entries.size === 0) return;
     const list = [...entries.values()];
+    const pending = this.pending;
     this.reminder.notify(changeReminderText(list), {
       variant: 'agents_md_change',
     });
     this.markKnown(
-      list.filter((change) => change.action === 'modified').map((change) => change.path),
+      list
+        .filter((change) => change.action === 'modified' && !pending.has(change.path))
+        .map((change) => change.path),
     );
     this.markPending(
       list.filter((change) => change.action === 'created').map((change) => change.path),

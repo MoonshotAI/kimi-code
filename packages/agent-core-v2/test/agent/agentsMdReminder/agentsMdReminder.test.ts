@@ -579,6 +579,23 @@ describe('agentsMdReminder re-injection after context loss', () => {
     expect(agentsMdMessages(h)).toHaveLength(0);
   });
 
+  it('keeps a modified pending file eligible for re-injection', async () => {
+    const h = createHarness();
+    const rootAgentsMd = await writeAgentsMd(workDir, 'root instructions');
+    h.reminder.seedInjected([], workDir);
+
+    h.instructionsChange.fire([{ path: rootAgentsMd, action: 'created', kind: 'file' }]);
+    await h.step();
+    expect(agentsMdMessages(h)).toHaveLength(1);
+
+    h.instructionsChange.fire([{ path: rootAgentsMd, action: 'modified', kind: 'file' }]);
+    compact(h);
+
+    await h.step();
+    expect(agentsMdMessages(h)).toHaveLength(1);
+    expect(reminderText(h)).toContain(rootAgentsMd);
+  });
+
   it('re-reminds a pending path after an undo removes the reminder', async () => {
     const h = createHarness();
     const subDir = join(workDir, 'packages', 'kap-server');
