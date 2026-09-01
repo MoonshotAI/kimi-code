@@ -332,7 +332,10 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     await this.dispatcher.dispatch(
       new FileHistoryCheckpointed({ agentId: this.agentCtx.agentId, turnId, phase: 'end', entries }),
     );
-    await this.evictBlobs(evictable, this.history().checkpoints);
+    if (evictable.length > 0) {
+      await this.dispatcher.flush();
+      await this.evictBlobs(evictable, this.history().checkpoints);
+    }
   }
 
   private async backup(
