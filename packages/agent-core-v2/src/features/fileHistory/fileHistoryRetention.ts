@@ -8,7 +8,7 @@ import { FILE_HISTORY_BLOB_PREFIX } from './fileHistory';
 
 export const FILE_HISTORY_SESSION_WINDOW = 30;
 
-const RETENTION_DOC_KEY = 'file-history-retention';
+const RETENTION_DOC_SCOPE = 'file-history';
 
 interface RetentionEntry {
   readonly id: string;
@@ -22,7 +22,7 @@ interface RetentionDoc {
 export interface FileHistoryRetentionInput {
   readonly docs: IAtomicDocumentStore;
   readonly hostFs: IHostFileSystem;
-  readonly sessionScope: string;
+  readonly workspaceId: string;
   readonly sessionDir: string;
   readonly sessionId: string;
 }
@@ -30,24 +30,21 @@ export interface FileHistoryRetentionInput {
 const touchQueues = new Map<string, Promise<void>>();
 
 export function touchFileHistorySession(input: FileHistoryRetentionInput): Promise<void> {
-  const workspaceScope = dirname(input.sessionScope);
-  const previous = touchQueues.get(workspaceScope) ?? Promise.resolve();
-  const run = previous.then(() => applyTouch(workspaceScope, input)).catch(onUnexpectedError);
-  touchQueues.set(workspaceScope, run);
+  const previous = touchQueues.get(input.workspaceId) ?? Promise.resolve();
+  const run = previous.then(() => applyTouch(input)).catch(onUnexpectedError);
+  touchQueues.set(input.workspaceId, run);
   return run;
 }
 
-async function applyTouch(
-  workspaceScope: string,
-  input: FileHistoryRetentionInput,
-): Promise<void> {
+async function applyTouch(input: FileHistoryRetentionInput): Promise<void> {
   const doc =
-    (await input.docs.get<RetentionDoc>(workspaceScope, RETENTION_DOC_KEY)) ?? { sessions: [] };
+    (await input.docs.get<RetentionDoc>(RETENTION_DOC_SCOPE, input.workspaceId)) ??
+    { sessions: [] };
   const sessions = doc.sessions.filter((entry) => entry.id !== input.sessionId);
   sessions.push({ id: input.sessionId, touchedAt: Date.now() });
   sessions.sort((a, b) => a.touchedAt - b.touchedAt);
   const evicted = sessions.splice(0, Math.max(0, sessions.length - FILE_HISTORY_SESSION_WINDOW));
-  await input.docs.set(workspaceScope, RETENTION_DOC_KEY, { sessions });
+  await input.docs.set(RETENTION_DOC_SCOPE, input.workspaceId, { sessions });
   const sessionsDir = dirname(input.sessionDir);
   for (const victim of evicted) {
     await removeSessionBlobs(input.hostFs, join(sessionsDir, victim.id, 'agents'));

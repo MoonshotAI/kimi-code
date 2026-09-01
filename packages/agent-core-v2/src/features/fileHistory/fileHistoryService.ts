@@ -298,7 +298,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     void touchFileHistorySession({
       docs: this.docs,
       hostFs: this.hostFs,
-      sessionScope: this.sessionCtx.scope(),
+      workspaceId: this.sessionCtx.workspaceId,
       sessionDir: this.sessionCtx.sessionDir,
       sessionId: this.sessionCtx.sessionId,
     });
