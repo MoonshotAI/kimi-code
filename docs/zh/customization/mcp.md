@@ -100,7 +100,7 @@ pattern = "mcp__filesystem__write_file"
 - 对高风险工具（写文件、执行命令等）维持手动审批，避免用 `mcp__*` 通配放行全部工具
 
 ::: warning 注意
-在 YOLO 模式下，MCP 工具调用会被自动批准。仅在完全信任所接入的 MCP server 时使用此模式。
+在「必要时询问」模式下，MCP 工具调用会被自动批准。仅在完全信任所接入的 MCP server 时使用此模式。
 :::
 
 ## 下一步

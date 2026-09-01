@@ -142,6 +142,7 @@ export type SetSessionSwarmModeRpcInput =
 
 export interface SetSessionTowerModeRpcInput extends SessionIdRpcInput {
   readonly enabled: boolean;
+  readonly base?: string;
 }
 
 export interface ActivateSkillRpcInput extends SessionIdRpcInput {

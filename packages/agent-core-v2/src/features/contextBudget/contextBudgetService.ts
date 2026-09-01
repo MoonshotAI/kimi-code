@@ -1,17 +1,18 @@
 import { fromCallback, setup } from 'xstate';
 
-import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
+import { createDecorator, IInstantiationService } from '#/_base/di/instantiation';
 import {
-  defineAgentRuntimeContract,
-  defineAgentRuntimeProvider,
-  type AgentRuntimeContext,
-  type AgentRuntimeRestoreEvent,
-} from '#/agent/runtime/agentRuntime';
+  AgentActorService,
+  type AgentActorContext,
+  type AgentActorRestoreEvent,
+} from '#/agent/actorService/agentActorService';
+import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IFlagService } from '#/app/flag/flag';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { AgentReminder } from '#/features/reminder/reminderAgentRuntime';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 import type { ContextInjectionResult } from '#/features/reminder/types';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import {
   COMPACTION_AHEAD_REMINDER_VARIANT,
@@ -26,20 +27,18 @@ import {
 import { CONTEXT_BUDGET_REMINDERS_FLAG_ID } from './flag';
 
 interface ContextBudgetActorContext {
-  readonly runtime: AgentRuntimeContext<null>;
+  readonly runtime: AgentActorContext<null>;
 }
 
 const contextBudgetReminders = fromCallback(({
   input,
 }: {
   input: {
-    readonly runtime: AgentRuntimeContext<null>;
+    readonly runtime: AgentActorContext<null>;
   };
 }) => {
   const runtime = input.runtime;
-  const reminder = runtime
-    .get(IAgentLifecycleService)
-    .resolve(runtime.agent, AgentReminder);
+  const reminder = runtime.get(IAgentReminderService);
   const flags = runtime.get(IFlagService);
   const compaction = runtime.get(IAgentFullCompactionService);
   const telemetry = runtime.get(ITelemetryService);
@@ -87,8 +86,8 @@ const contextBudgetReminders = fromCallback(({
 const contextBudgetActorLogic = setup({
   types: {} as {
     context: ContextBudgetActorContext;
-    input: AgentRuntimeContext<null>;
-    events: AgentRuntimeRestoreEvent;
+    input: AgentActorContext<null>;
+    events: AgentActorRestoreEvent;
   },
   actors: { contextBudgetReminders },
 }).createMachine({
@@ -107,22 +106,26 @@ const contextBudgetActorLogic = setup({
   },
 });
 
-export class ContextBudgetRuntime {
-  constructor(private readonly context: AgentRuntimeContext<null>) {}
-
-  get agentId(): string {
-    return this.context.agent.agentId;
-  }
+export interface IAgentContextBudgetService {
+  readonly _serviceBrand: undefined;
 }
 
-export const AgentContextBudget = defineAgentRuntimeContract<ContextBudgetRuntime>('contextBudget');
-
-export const contextBudgetAgentRuntimeProvider = defineAgentRuntimeProvider<null, ContextBudgetRuntime>(
-  AgentContextBudget,
-  {
-    id: 'contextBudget',
-    logic: contextBudgetActorLogic,
-    eager: true,
-    createApi: (context) => new ContextBudgetRuntime(context),
-  },
+export const IAgentContextBudgetService = createDecorator<IAgentContextBudgetService>(
+  'agentContextBudgetService',
 );
+
+export class AgentContextBudgetService
+  extends AgentActorService<null>
+  implements IAgentContextBudgetService
+{
+  declare readonly _serviceBrand: undefined;
+
+  constructor(
+    @IEventDispatcher dispatcher: IEventDispatcher,
+    @IAgentScopeContext scopeContext: IAgentScopeContext,
+    @IInstantiationService instantiation: IInstantiationService,
+  ) {
+    super(dispatcher, scopeContext, instantiation);
+    this.attachActor(contextBudgetActorLogic, { id: 'contextBudget' });
+  }
+}

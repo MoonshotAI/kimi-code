@@ -1,8 +1,7 @@
 import { type ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { AgentCron, type CronRuntime } from '#/features/cron/cronAgentRuntime';
+import { IAgentCronService } from '#/features/cron/cronService';
 
 import { CRON_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '#/agent/tools/mainAgentOnly';
 import { ICronDeleteTool, CronDeleteInputSchema, type CronDeleteInput } from './cron-delete';
@@ -20,13 +19,9 @@ export class CronDeleteTool implements ICronDeleteTool {
   );
 
   constructor(
-    @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
+    @IAgentCronService private readonly cron: IAgentCronService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {}
-
-  private get cron(): CronRuntime {
-    return this.manager.resolve(this.scopeContext.agentContext, AgentCron);
-  }
 
   resolveExecution(args: CronDeleteInput): ToolExecution {
     const denied = mainAgentOnlyExecution(this.scopeContext, CRON_MAIN_AGENT_ONLY);

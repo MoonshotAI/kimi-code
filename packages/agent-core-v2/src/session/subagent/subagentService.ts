@@ -31,6 +31,7 @@ import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { createHooks } from '#/hooks';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 
 import {
   type AgentRunHandle,
@@ -166,6 +167,9 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
             labels: opts.labels,
           });
           created = this.agentLifecycle.handleOf(forked.agentId)!;
+          created.accessor
+            .get(IAgentReminderService)
+            .notify(FORK_CONTEXT_NOTICE, { variant: 'fork_context' });
         } else {
           const createdContext = await this.agentLifecycle.create({
             binding: {
@@ -197,7 +201,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
         createdUserTools.inheritUserTools(callerUserTools);
       }
       const promptText = plan.fork
-        ? `${FORK_CONTEXT_NOTICE}\n\n${opts.prompt}`
+        ? opts.prompt
         : await this.applyPromptPrefix(plan.profileName, opts.prompt, lease!.runtime);
       return {
         agentId: created.id,

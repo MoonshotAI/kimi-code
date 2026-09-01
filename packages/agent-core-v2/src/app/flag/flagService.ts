@@ -77,6 +77,14 @@ export class FlagService extends Disposable implements IFlagService {
       .map((def) => def.id);
   }
 
+  exposedIds(): readonly FlagId[] {
+    return this.registry
+      .list()
+      .filter((def) => this.enabled(def.id))
+      .filter((def) => def.isExposed?.(this) ?? true)
+      .map((def) => def.id);
+  }
+
   explainAll(): readonly ExperimentalFeatureState[] {
     return this.registry
       .list()

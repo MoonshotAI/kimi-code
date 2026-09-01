@@ -2,10 +2,16 @@ import { randomUUID } from 'node:crypto';
 
 import { assign, fromCallback, sendTo, setup, type Snapshot } from 'xstate';
 
+import { createDecorator, IInstantiationService } from '#/_base/di/instantiation';
 import { MutableDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { abortError } from '#/_base/utils/abort';
 import { isPlainRecord } from '#/_base/utils/canonical-args';
-import { AgentReminder } from '#/features/reminder/reminderAgentRuntime';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
+import {
+  AgentActorService,
+  type AgentActorContext,
+  type AgentActorRestoreEvent,
+} from '#/agent/actorService/agentActorService';
 import { ContextAppendMessage } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { GoalInjection, GOAL_WAIT_FOR_GUIDANCE } from '#/features/goal/injection/goalInjection';
@@ -22,12 +28,7 @@ import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
-import {
-  defineAgentRuntimeContract,
-  defineAgentRuntimeProvider,
-  type AgentRuntimeContext,
-  type AgentRuntimeRestoreEvent,
-} from '#/agent/runtime/agentRuntime';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { BeforeToolExecuteEvent } from '#/agent/toolExecutor/toolHooks';
@@ -37,6 +38,7 @@ import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
 import { type UsageRecordedContext } from '#/agent/usage/usage';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
+import { registerEvent2Class } from '#/app/event/event2';
 import { IFlagService } from '#/app/flag/flag';
 import type { GoalBudgetProperties } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -46,8 +48,9 @@ import {
   toKimiErrorPayload,
   type KimiErrorPayload,
 } from '#/errors';
-import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 
 import type { GoalReasonInput, ResumeGoalInput } from './goal';
@@ -72,6 +75,11 @@ import type {
   GoalStatus,
   GoalToolResult,
 } from './types';
+
+registerEvent2Class(GoalCreate);
+registerEvent2Class(GoalUpdate);
+registerEvent2Class(GoalClear);
+registerEvent2Class(GoalForked);
 
 const MAX_GOAL_OBJECTIVE_LENGTH = 4000;
 
@@ -198,7 +206,7 @@ interface GoalEffectState {
 interface GoalActorContext {
   readonly durable: GoalRuntimeState;
   readonly effects: GoalEffectState;
-  readonly runtime: AgentRuntimeContext<GoalRuntimeState>;
+  readonly runtime: AgentActorContext<GoalRuntimeState>;
 }
 
 interface GoalCommitEvent {
@@ -215,7 +223,7 @@ interface GoalDeadlineClearEvent {
 }
 
 type GoalEffectEvent = GoalDeadlineRefreshEvent | GoalDeadlineClearEvent;
-type GoalActorEvent = GoalCommitEvent | AgentRuntimeRestoreEvent | GoalEffectEvent;
+type GoalActorEvent = GoalCommitEvent | AgentActorRestoreEvent | GoalEffectEvent;
 type GoalActorSnapshot = Snapshot<unknown> & { readonly context: GoalActorContext; };
 
 function isGoalForkClearedReminder(message: ContextMessage | undefined): boolean {
@@ -229,77 +237,16 @@ function isGoalContinuationOrigin(origin: TurnStarted['origin']): boolean {
 }
 
 interface GoalOperationContext {
-  readonly runtime: AgentRuntimeContext<GoalRuntimeState>;
+  readonly runtime: AgentActorContext<GoalRuntimeState>;
   readonly effects: GoalEffectState;
 }
 
-function goalOperationContext(runtime: AgentRuntimeContext<GoalRuntimeState>): GoalOperationContext {
+function goalOperationContext(runtime: AgentActorContext<GoalRuntimeState>): GoalOperationContext {
   return { runtime, effects: runtime.getLogicState<GoalActorContext>().effects };
 }
 
-function reminderOf(runtime: AgentRuntimeContext<GoalRuntimeState>) {
-  return runtime.get(IAgentLifecycleService).resolve(runtime.agent, AgentReminder);
-}
-
-export class GoalRuntime {
-  constructor(private readonly runtime: AgentRuntimeContext<GoalRuntimeState>) {}
-
-  getGoal(): GoalToolResult {
-    return getGoal(goalOperationContext(this.runtime));
-  }
-
-  isGoalToolTarget(turnId: number, goalId: string): boolean {
-    return isGoalToolTarget(goalOperationContext(this.runtime), turnId, goalId);
-  }
-
-  async createGoal(input: CreateGoalInput, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
-    return createGoal(goalOperationContext(this.runtime), input, actor);
-  }
-
-  async pauseGoal(input: GoalReasonInput = {}, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
-    return pauseGoal(goalOperationContext(this.runtime), input, actor);
-  }
-
-  async resumeGoal(input: ResumeGoalInput = {}, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
-    return resumeGoal(goalOperationContext(this.runtime), input, actor);
-  }
-
-  async setBudgetLimits(
-    input: { readonly budgetLimits: GoalBudgetLimits },
-    actor: GoalActor = 'user',
-  ): Promise<GoalSnapshot> {
-    return setBudgetLimits(goalOperationContext(this.runtime), input, actor);
-  }
-
-  async cancelGoal(_input: GoalReasonInput = {}, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
-    return cancelGoal(goalOperationContext(this.runtime), _input, actor);
-  }
-
-  async markBlocked(
-    input: GoalReasonInput = {},
-    actor: GoalActor = 'runtime',
-  ): Promise<GoalSnapshot | null> {
-    return markBlocked(goalOperationContext(this.runtime), input, actor);
-  }
-
-  async markComplete(
-    input: GoalReasonInput = {},
-    actor: GoalActor = 'model',
-  ): Promise<GoalSnapshot | null> {
-    return markComplete(goalOperationContext(this.runtime), input, actor);
-  }
-
-  async pauseOnInterrupt(input: GoalReasonInput = {}): Promise<GoalSnapshot | null> {
-    return pauseOnInterrupt(goalOperationContext(this.runtime), input);
-  }
-
-  async recordTokenUsage(tokenDelta: number): Promise<GoalSnapshot | null> {
-    return recordTokenUsage(goalOperationContext(this.runtime), tokenDelta);
-  }
-
-  async incrementTurn(): Promise<GoalSnapshot | null> {
-    return incrementTurn(goalOperationContext(this.runtime));
-  }
+function reminderOf(runtime: AgentActorContext<GoalRuntimeState>) {
+  return runtime.get(IAgentReminderService);
 }
 
 function assertSupportedAgent(context: GoalOperationContext): void {
@@ -1162,7 +1109,7 @@ function pauseReasonWithMessage(prefix: string, message: string | undefined): st
   return trimmed === undefined || trimmed.length === 0 ? prefix : `${prefix}: ${trimmed}`;
 }
 
-function createGoalEffectHandlers(runtime: AgentRuntimeContext<GoalRuntimeState>) {
+function createGoalEffectHandlers(runtime: AgentActorContext<GoalRuntimeState>) {
   const context = goalOperationContext(runtime);
   return {
     deadlineDelay: () => wallClockDeadlineDelay(context),
@@ -1229,8 +1176,8 @@ const goalEffects = fromCallback(({
   receive,
 }: {
   input: {
-    readonly runtime: AgentRuntimeContext<GoalRuntimeState>;
-    readonly restore: AgentRuntimeRestoreEvent;
+    readonly runtime: AgentActorContext<GoalRuntimeState>;
+    readonly restore: AgentActorRestoreEvent;
   };
   receive: (listener: (event: GoalEffectEvent) => void) => void;
 }) => {
@@ -1283,7 +1230,7 @@ const goalEffects = fromCallback(({
 const goalActorLogic = setup({
   types: {} as {
     context: GoalActorContext;
-    input: AgentRuntimeContext<GoalRuntimeState>;
+    input: AgentActorContext<GoalRuntimeState>;
     events: GoalActorEvent;
   },
   actors: { goalEffects },
@@ -1317,7 +1264,7 @@ const goalActorLogic = setup({
         src: 'goalEffects',
         input: ({ context, event }) => ({
           runtime: context.runtime,
-          restore: event as AgentRuntimeRestoreEvent,
+          restore: event as AgentActorRestoreEvent,
         }),
       },
       on: {
@@ -1333,96 +1280,168 @@ const goalActorLogic = setup({
   },
 });
 
-export const AgentGoal = defineAgentRuntimeContract<GoalRuntime>('goal');
+export interface IAgentGoalService {
+  readonly _serviceBrand: undefined;
+  getGoal(): GoalToolResult;
+  isGoalToolTarget(turnId: number, goalId: string): boolean;
+  createGoal(input: CreateGoalInput, actor?: GoalActor): Promise<GoalSnapshot>;
+  pauseGoal(input?: GoalReasonInput, actor?: GoalActor): Promise<GoalSnapshot>;
+  resumeGoal(input?: ResumeGoalInput, actor?: GoalActor): Promise<GoalSnapshot>;
+  setBudgetLimits(
+    input: { readonly budgetLimits: GoalBudgetLimits },
+    actor?: GoalActor,
+  ): Promise<GoalSnapshot>;
+  cancelGoal(input?: GoalReasonInput, actor?: GoalActor): Promise<GoalSnapshot>;
+  markBlocked(input?: GoalReasonInput, actor?: GoalActor): Promise<GoalSnapshot | null>;
+  markComplete(input?: GoalReasonInput, actor?: GoalActor): Promise<GoalSnapshot | null>;
+  pauseOnInterrupt(input?: GoalReasonInput): Promise<GoalSnapshot | null>;
+  recordTokenUsage(tokenDelta: number): Promise<GoalSnapshot | null>;
+  incrementTurn(): Promise<GoalSnapshot | null>;
+}
 
-export const goalAgentRuntimeProvider = defineAgentRuntimeProvider<GoalRuntimeState, GoalRuntime>(AgentGoal, {
-  id: 'goal',
-  logic: goalActorLogic,
-  eager: true,
-  durable: {
-    events: [GoalCreate, GoalUpdate, GoalClear, GoalForked, ContextAppendMessage],
-    undoable: false,
-    transition: (state, event) => {
-      if (event instanceof GoalCreate) {
-        state.goal = {
-          goalId: event.goalId,
-          objective: event.objective,
-          completionCriterion: event.completionCriterion,
-          status: 'active',
-          turnsUsed: 0,
-          tokensUsed: 0,
-          wallClockMs: 0,
-          wallClockResumedAt: event.wallClockResumedAt,
-          budgetLimits: {},
-        };
-        state.forkNotice.goalPresent = true;
-        return;
-      }
-      if (event instanceof GoalUpdate) {
-        const s = state.goal;
-        if (s !== null) {
-          if (event.status !== undefined && event.status !== s.status) {
-            s.status = event.status;
-            s.terminalReason = event.status === 'active' ? undefined : event.reason;
-            s.wallClockResumedAt = event.status === 'active' ? event.wallClockResumedAt : undefined;
+export const IAgentGoalService = createDecorator<IAgentGoalService>('agentGoalService');
+
+export class AgentGoalService extends AgentActorService<GoalRuntimeState> implements IAgentGoalService {
+  declare readonly _serviceBrand: undefined;
+
+  private readonly actor: AgentActorContext<GoalRuntimeState>;
+
+  constructor(
+    @IEventDispatcher dispatcher: IEventDispatcher,
+    @IAgentScopeContext scopeContext: IAgentScopeContext,
+    @IInstantiationService instantiation: IInstantiationService,
+  ) {
+    super(dispatcher, scopeContext, instantiation);
+    this.actor = this.attachActor(goalActorLogic, {
+      id: 'goal',
+      durable: {
+        events: [GoalCreate, GoalUpdate, GoalClear, GoalForked, ContextAppendMessage],
+        undoable: false,
+        transition: (state, event) => {
+          if (event instanceof GoalCreate) {
+            state.goal = {
+              goalId: event.goalId,
+              objective: event.objective,
+              completionCriterion: event.completionCriterion,
+              status: 'active',
+              turnsUsed: 0,
+              tokensUsed: 0,
+              wallClockMs: 0,
+              wallClockResumedAt: event.wallClockResumedAt,
+              budgetLimits: {},
+            };
+            state.forkNotice.goalPresent = true;
+            return;
           }
-          if (event.turnsUsed !== undefined && event.turnsUsed !== s.turnsUsed) {
-            s.turnsUsed = event.turnsUsed;
+          if (event instanceof GoalUpdate) {
+            const s = state.goal;
+            if (s !== null) {
+              if (event.status !== undefined && event.status !== s.status) {
+                s.status = event.status;
+                s.terminalReason = event.status === 'active' ? undefined : event.reason;
+                s.wallClockResumedAt = event.status === 'active' ? event.wallClockResumedAt : undefined;
+              }
+              if (event.turnsUsed !== undefined && event.turnsUsed !== s.turnsUsed) {
+                s.turnsUsed = event.turnsUsed;
+              }
+              if (event.tokensUsed !== undefined && event.tokensUsed !== s.tokensUsed) {
+                s.tokensUsed = event.tokensUsed;
+              }
+              if (event.wallClockMs !== undefined && event.wallClockMs !== s.wallClockMs) {
+                s.wallClockMs = event.wallClockMs;
+              }
+              if (
+                event.wallClockResumedAt !== undefined &&
+                (event.status ?? s.status) === 'active' &&
+                event.wallClockResumedAt !== s.wallClockResumedAt
+              ) {
+                s.wallClockResumedAt = event.wallClockResumedAt;
+              }
+              if (event.budgetLimits !== undefined && event.budgetLimits !== s.budgetLimits) {
+                s.budgetLimits = event.budgetLimits;
+              }
+            }
+            return;
           }
-          if (event.tokensUsed !== undefined && event.tokensUsed !== s.tokensUsed) {
-            s.tokensUsed = event.tokensUsed;
+          if (event instanceof GoalClear) {
+            state.goal = null;
+            state.forkNotice.goalPresent = false;
+            return;
           }
-          if (event.wallClockMs !== undefined && event.wallClockMs !== s.wallClockMs) {
-            s.wallClockMs = event.wallClockMs;
+          if (event instanceof GoalForked) {
+            state.goal = null;
+            state.forkNotice.reminderPending =
+              state.forkNotice.goalPresent || state.forkNotice.reminderPending;
+            state.forkNotice.goalPresent = false;
+            return;
           }
-          if (
-            event.wallClockResumedAt !== undefined &&
-            (event.status ?? s.status) === 'active' &&
-            event.wallClockResumedAt !== s.wallClockResumedAt
-          ) {
-            s.wallClockResumedAt = event.wallClockResumedAt;
+          if (event instanceof ContextAppendMessage) {
+            if (state.forkNotice.reminderPending && isGoalForkClearedReminder(event.message)) {
+              state.forkNotice.reminderPending = false;
+            }
           }
-          if (event.budgetLimits !== undefined && event.budgetLimits !== s.budgetLimits) {
-            s.budgetLimits = event.budgetLimits;
-          }
-        }
-        return;
-      }
-      if (event instanceof GoalClear) {
-        state.goal = null;
-        state.forkNotice.goalPresent = false;
-        return;
-      }
-      if (event instanceof GoalForked) {
-        state.goal = null;
-        state.forkNotice.reminderPending =
-          state.forkNotice.goalPresent || state.forkNotice.reminderPending;
-        state.forkNotice.goalPresent = false;
-        return;
-      }
-      if (event instanceof ContextAppendMessage) {
-        if (state.forkNotice.reminderPending && isGoalForkClearedReminder(event.message)) {
-          state.forkNotice.reminderPending = false;
-        }
-      }
-    },
-    read: (snapshot) => (snapshot as GoalActorSnapshot).context.durable,
-    commit: (actor, durable) => { actor.send({ type: 'goal.commit', durable }); },
-  },
-  createApi: (context) => new GoalRuntime(context),
-  inspect: (snapshot) => {
-    const goal = (snapshot as GoalActorSnapshot).context.durable.goal;
-    if (goal === null) return null;
-    return {
-      goalId: goal.goalId,
-      objective: goal.objective,
-      status: goal.status,
-      turnsUsed: goal.turnsUsed,
-      tokensUsed: goal.tokensUsed,
-      wallClockMs: goal.wallClockMs,
-      budgetLimits: goal.budgetLimits,
-      terminalReason: goal.terminalReason,
-    };
-  },
-});
+        },
+        read: (snapshot) => (snapshot as GoalActorSnapshot).context.durable,
+        commit: (actor, durable) => { actor.send({ type: 'goal.commit', durable }); },
+      },
+    });
+  }
+
+  getGoal(): GoalToolResult {
+    return getGoal(goalOperationContext(this.actor));
+  }
+
+  isGoalToolTarget(turnId: number, goalId: string): boolean {
+    return isGoalToolTarget(goalOperationContext(this.actor), turnId, goalId);
+  }
+
+  async createGoal(input: CreateGoalInput, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
+    return createGoal(goalOperationContext(this.actor), input, actor);
+  }
+
+  async pauseGoal(input: GoalReasonInput = {}, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
+    return pauseGoal(goalOperationContext(this.actor), input, actor);
+  }
+
+  async resumeGoal(input: ResumeGoalInput = {}, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
+    return resumeGoal(goalOperationContext(this.actor), input, actor);
+  }
+
+  async setBudgetLimits(
+    input: { readonly budgetLimits: GoalBudgetLimits },
+    actor: GoalActor = 'user',
+  ): Promise<GoalSnapshot> {
+    return setBudgetLimits(goalOperationContext(this.actor), input, actor);
+  }
+
+  async cancelGoal(_input: GoalReasonInput = {}, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
+    return cancelGoal(goalOperationContext(this.actor), _input, actor);
+  }
+
+  async markBlocked(
+    input: GoalReasonInput = {},
+    actor: GoalActor = 'runtime',
+  ): Promise<GoalSnapshot | null> {
+    return markBlocked(goalOperationContext(this.actor), input, actor);
+  }
+
+  async markComplete(
+    input: GoalReasonInput = {},
+    actor: GoalActor = 'model',
+  ): Promise<GoalSnapshot | null> {
+    return markComplete(goalOperationContext(this.actor), input, actor);
+  }
+
+  async pauseOnInterrupt(input: GoalReasonInput = {}): Promise<GoalSnapshot | null> {
+    return pauseOnInterrupt(goalOperationContext(this.actor), input);
+  }
+
+  async recordTokenUsage(tokenDelta: number): Promise<GoalSnapshot | null> {
+    return recordTokenUsage(goalOperationContext(this.actor), tokenDelta);
+  }
+
+  async incrementTurn(): Promise<GoalSnapshot | null> {
+    return incrementTurn(goalOperationContext(this.actor));
+  }
+}
 

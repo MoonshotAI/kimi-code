@@ -1,22 +1,25 @@
 import type { PermissionMode } from '@moonshot-ai/kimi-code-sdk';
 
+import { PERMISSION_MODE_DISPLAY_NAMES } from '#/tui/utils/permission-mode';
+
 import { ChoicePickerComponent, type ChoiceOption } from './choice-picker';
 
 const PERMISSION_OPTIONS: readonly ChoiceOption[] = [
   {
     value: 'manual',
-    label: 'Manual',
-    description: 'Approve every action yourself.',
+    label: PERMISSION_MODE_DISPLAY_NAMES.manual,
+    description: 'Auto-read only; everything else needs your approval first.',
   },
   {
     value: 'yolo',
-    label: 'YOLO',
-    description: 'Auto-approve tool actions, but the agent may still ask questions.',
+    label: PERMISSION_MODE_DISPLAY_NAMES.yolo,
+    description:
+      'Routine edits and commands run automatically; risky actions, questions, and plans still ask.',
   },
   {
     value: 'auto',
-    label: 'Auto',
-    description: 'Fully autonomous, but dangerous commands are blocked.',
+    label: PERMISSION_MODE_DISPLAY_NAMES.auto,
+    description: 'Never interrupts you; everything runs and is decided automatically.',
   },
 ];
 

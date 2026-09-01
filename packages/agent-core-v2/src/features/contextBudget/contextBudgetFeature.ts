@@ -1,14 +1,14 @@
 import { Feature } from '#/features/feature';
 import { registerFeature } from '#/features/featureRegistry';
 
-import { contextBudgetAgentRuntimeProvider } from './contextBudgetAgentRuntime';
+import { AgentContextBudgetService, IAgentContextBudgetService } from './contextBudgetService';
 
 export class ContextBudgetFeature extends Feature {
   static override readonly name = 'contextBudget';
 
   constructor() {
     super();
-    this.contributeAgentRuntime(contextBudgetAgentRuntimeProvider);
+    this.contributeAgentService(IAgentContextBudgetService, AgentContextBudgetService);
   }
 }
 

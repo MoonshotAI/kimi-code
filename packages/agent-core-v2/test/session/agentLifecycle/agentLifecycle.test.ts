@@ -25,9 +25,8 @@ import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBindi
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { reminderAgentRuntimeProvider } from '#/features/reminder/reminderAgentRuntime';
+import { AgentReminderService, IAgentReminderService } from '#/features/reminder/reminderService';
 import '#/agent/contextMemory/contextMemoryService';
 import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/agent/contextMemory/openToolExchange';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -55,16 +54,14 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import '#/wire/wireService';
 import '#/state/eventDispatcherService';
 import { IAgentTaskService } from '#/agent/task/task';
-import { AgentCron, cronAgentRuntimeProvider } from '#/features/cron/cronAgentRuntime';
+import { AgentCronService, IAgentCronService } from '#/features/cron/cronService';
 import { ICronCreateTool } from '#/features/cron/tools/cron-create/cron-create';
 import { ICronDeleteTool } from '#/features/cron/tools/cron-delete/cron-delete';
 import { ICronListTool } from '#/features/cron/tools/cron-list/cron-list';
 import { CRON_SECTION } from '#/features/cron/configSection';
-import { interactionAgentRuntimeProvider } from '#/features/interaction/interactionAgentRuntime';
 import { Ledger } from '#/_base/lifecycle/ledger';
 import { BugIndicatingError } from '#/_base/errors/errors';
-import { AgentRuntimeContributionPoint } from '#/agent/runtime/agentRuntime';
-import { AgentTodo, todoAgentRuntimeProvider } from '#/features/todo/todoAgentRuntime';
+import { AgentTodoService, IAgentTodoService } from '#/features/todo/todoService';
 import '#/agent/toolDedupe/toolDedupeService';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -101,7 +98,7 @@ import '#/agent/toolActivation/toolActivationService';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
-import { ScopeUnits } from '#/_base/di/fiber';
+import { ScopeUnits, type Fiber } from '#/_base/di/fiber';
 import {
   IRuntimeResolver,
   IWorkspaceInstanceManager,
@@ -461,10 +458,15 @@ describe('AgentLifecycleService', () => {
       compacting: null,
     } as unknown as IAgentFullCompactionService);
     ix.fiberHost.addCollectionRecord(
-      AgentRuntimeContributionPoint,
+      ScopeUnits(LifecycleScope.Agent),
       'test-reminder',
       new Ledger('test-reminder'),
-      reminderAgentRuntimeProvider,
+      {
+        name: 'test:agentReminderService',
+        apply(fiber: Fiber): void {
+          fiber.provide(IAgentReminderService, AgentReminderService);
+        },
+      },
     );
     ix.set(IAgentLifecycleService, new SyncDescriptor(AgentLifecycleService));
   });
@@ -473,30 +475,31 @@ describe('AgentLifecycleService', () => {
     vi.restoreAllMocks();
   });
 
-  function contributeTodo(): () => void {
-    return ix.fiberHost.addCollectionRecord(
-      AgentRuntimeContributionPoint,
+  function contributeTodoService(): void {
+    ix.fiberHost.addCollectionRecord(
+      ScopeUnits(LifecycleScope.Agent),
       'test',
       new Ledger('test'),
-      todoAgentRuntimeProvider,
+      {
+        name: 'test:agentTodoService',
+        apply(fiber: Fiber): void {
+          fiber.provide(IAgentTodoService, AgentTodoService);
+        },
+      },
     );
   }
 
-  function contributeCron(): () => void {
-    return ix.fiberHost.addCollectionRecord(
-      AgentRuntimeContributionPoint,
+  function contributeCronService(): void {
+    ix.fiberHost.addCollectionRecord(
+      ScopeUnits(LifecycleScope.Agent),
       'test',
       new Ledger('test'),
-      cronAgentRuntimeProvider,
-    );
-  }
-
-  function contributeInteraction(): () => void {
-    return ix.fiberHost.addCollectionRecord(
-      AgentRuntimeContributionPoint,
-      'test',
-      new Ledger('test'),
-      interactionAgentRuntimeProvider,
+      {
+        name: 'test:agentCronService',
+        apply(fiber: Fiber): void {
+          fiber.provide(IAgentCronService, AgentCronService);
+        },
+      },
     );
   }
 
@@ -948,7 +951,6 @@ describe('AgentLifecycleService', () => {
         value: [{ title: 'bridged', status: 'pending' }],
         time: 2,
       },
-      { type: 'interaction.request', id: 'i1', kind: 'question', request: { q: 1 }, time: 3 },
       {
         type: 'cron.add',
         task: { id: 'cron-1', cron: '0 9 * * *', prompt: 'ping', createdAt: 1, recurring: true },
@@ -968,22 +970,17 @@ describe('AgentLifecycleService', () => {
     ix.stub(ICronCreateTool, { _serviceBrand: undefined });
     ix.stub(ICronListTool, { _serviceBrand: undefined });
     ix.stub(ICronDeleteTool, { _serviceBrand: undefined });
-    contributeTodo();
-    contributeCron();
-    contributeInteraction();
+    contributeTodoService();
+    contributeCronService();
 
     const svc = ix.get(IAgentLifecycleService);
     const main = await svc.create({ agentId: 'main' });
 
-    const contributions = svc.inspect(main).contributions;
-    expect(contributions.find((line) => line.id === 'todo')?.state).toEqual([
+    expect(svc.handleOf('main')!.accessor.get(IAgentTodoService).get()).toEqual([
       { title: 'bridged', status: 'pending' },
     ]);
-    expect(contributions.find((line) => line.id === 'interaction')?.state).toEqual([
-      { id: 'i1', kind: 'question', resolved: false },
-    ]);
-    expect(contributions.find((line) => line.id === 'cron')?.state).toEqual([
-      { id: 'cron-1', cron: '0 9 * * *', recurring: true, createdAt: 1, lastFiredAt: undefined },
+    expect(svc.handleOf('main')!.accessor.get(IAgentCronService).list()).toEqual([
+      { id: 'cron-1', cron: '0 9 * * *', prompt: 'ping', recurring: true, createdAt: 1, lastFiredAt: undefined },
     ]);
   });
 
@@ -997,7 +994,7 @@ describe('AgentLifecycleService', () => {
         : undefined) as IConfigService['get'],
       onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
     } as unknown as IConfigService);
-    contributeCron();
+    contributeCronService();
     const svc = ix.get(IAgentLifecycleService);
     let created = false;
 
@@ -1010,10 +1007,10 @@ describe('AgentLifecycleService', () => {
     expect(created).toBe(false);
 
     releaseConfig();
-    const agent = await creation;
+    await creation;
 
     expect(created).toBe(true);
-    expect(svc.resolve(agent, AgentCron).isDisabled()).toBe(false);
+    expect(svc.handleOf('main')!.accessor.get(IAgentCronService).isDisabled()).toBe(false);
   });
 
   it('broadcastPermissionMode sets the mode on every live agent', async () => {
@@ -1292,6 +1289,17 @@ describe('AgentLifecycleService', () => {
     expect(closed).toEqual([a.agentId]);
   });
 
+  it('registers agent metadata before firing onDidCreate', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const order: string[] = [];
+    registerAgent.mockImplementation(async () => { order.push('register'); });
+    disposables.add(svc.onDidCreate(() => { order.push('create'); }));
+    disposables.add(svc.onDidCreateScope(() => { order.push('createScope'); }));
+
+    await svc.create({ agentId: 'main' });
+    expect(order).toEqual(['register', 'create', 'createScope']);
+  });
+
   it('assigns a new lifecycle generation when recreating the same agent id', async () => {
     const svc = ix.get(IAgentLifecycleService);
     const first = await svc.create({ agentId: 'main' });
@@ -1308,37 +1316,21 @@ describe('AgentLifecycleService', () => {
   });
 
   it('rejects a stale context after the same agent id is recreated', async () => {
-    contributeTodo();
+    contributeTodoService();
     const svc = ix.get(IAgentLifecycleService);
-    const first = await svc.create({ agentId: 'main' });
+    const first = await svc.create({ agentId: 'agent-1' });
+    const firstHandle = svc.handleOf('agent-1')!;
     await svc.remove(first);
-    const second = await svc.create({ agentId: 'main' });
+    const second = await svc.create({ agentId: 'agent-1' });
 
-    expect(() => svc.resolve(first, AgentTodo)).toThrow('is not a lifecycle-issued context');
-    expect(() => svc.inspect(first)).toThrow('is not a lifecycle-issued context');
-    expect(svc.resolve(second, AgentTodo).get()).toEqual([]);
+    expect(svc.get('agent-1')).toBe(second);
+    expect(() => firstHandle.accessor.get(IAgentTodoService)).toThrow('has been disposed');
+    expect(svc.handleOf('agent-1')!.accessor.get(IAgentTodoService).get()).toEqual([]);
   });
 
-  it('rejects a forged context that the manager never issued', async () => {
-    contributeTodo();
-    const svc = ix.get(IAgentLifecycleService);
-    const main = await svc.create({ agentId: 'main' });
-    const forged: AgentContext = {
-      agentId: main.agentId,
-      generation: main.generation,
-      space: main.space,
-    };
-
-    expect(() => svc.resolve(forged, AgentTodo)).toThrow('is not a lifecycle-issued context');
-    expect(() => svc.inspect(forged)).toThrow('is not a lifecycle-issued context');
-
-    await svc.remove(main);
-    expect(() => svc.resolve(main, AgentTodo)).toThrow('is not a lifecycle-issued context');
-  });
-
-  it('retires agent runtimes before disposing the agent scope on remove', async () => {
+  it('disposes the agent scope on remove', async () => {
     const order: string[] = [];
-    contributeTodo();
+    contributeTodoService();
     const svc = ix.get(IAgentLifecycleService);
     const willClose: string[] = [];
     disposables.add(svc.onWillClose((agent) => willClose.push(agent.agentId)));
@@ -1349,7 +1341,7 @@ describe('AgentLifecycleService', () => {
       order.push('scope-disposed');
       return originalDispose();
     };
-    svc.resolve(main, AgentTodo).get();
+    handle.accessor.get(IAgentTodoService).get();
 
     await svc.remove(main);
 
@@ -1373,21 +1365,6 @@ describe('AgentLifecycleService', () => {
         commit: () => {},
       }),
     ).toThrow(BugIndicatingError);
-  });
-
-  it('retires a withdrawn runtime definition and rejects new resolves', async () => {
-    const withdraw = contributeTodo();
-    const svc = ix.get(IAgentLifecycleService);
-    const main = await svc.create({ agentId: 'main' });
-    svc.resolve(main, AgentTodo).get();
-
-    withdraw();
-
-    expect(() => svc.resolve(main, AgentTodo)).toThrow('unavailable');
-    expect(svc.inspect(main).contributions.find((entry) => entry.id === 'todo')).toMatchObject({
-      id: 'todo',
-      status: 'retired',
-    });
   });
 
   it('de-dupes concurrent create calls for the same agent id', async () => {

@@ -11,8 +11,8 @@ import type {
   ContextInjectionContext,
   ContextInjectionProvider,
 } from '#/features/reminder/types';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { createReminderStub, lifecycleWithReminder } from '../../features/reminder/stubs';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
+import { createReminderStub } from '../../features/reminder/stubs';
 import {
   IAgentTaskService,
   type AgentTask,
@@ -116,15 +116,15 @@ describe('AgentTaskService', () => {
     });
     ix.stub(IWireService, stubWireService());
     ix.stub(
-      IAgentLifecycleService,
-      lifecycleWithReminder(createReminderStub({
+      IAgentReminderService,
+      createReminderStub({
         register: (name, provider) => {
           injectionProviders.set(name, provider as ContextInjectionProvider);
           return toDisposable(() => {
             injectionProviders.delete(name);
           });
         },
-      })),
+      }),
     );
     ix.stub(ITaskService, {
       run: () => {
@@ -703,10 +703,7 @@ describe('AgentTaskService', () => {
       list: () => [],
     });
     ix.stub(IWireService, stubWireService());
-    ix.stub(
-      IAgentLifecycleService,
-      lifecycleWithReminder(createReminderStub()),
-    );
+    ix.stub(IAgentReminderService, createReminderStub());
     ix.stub(ITaskService, {
       run: () => {
         throw new Error('ITaskService.run is not used by this test');
@@ -760,10 +757,7 @@ describe('AgentTaskService', () => {
       register: () => toDisposable(() => {}),
       list: () => [],
     });
-    ix.stub(
-      IAgentLifecycleService,
-      lifecycleWithReminder(createReminderStub()),
-    );
+    ix.stub(IAgentReminderService, createReminderStub());
     ix.stub(ITaskService, {
       run: () => {
         throw new Error('ITaskService.run is not used by this test');

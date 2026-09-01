@@ -18,6 +18,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
+import { IFlagService } from '#/app/flag/flag';
 import {
   CHILD_SESSION_KIND,
   CHILD_SESSION_KIND_KEY,
@@ -57,11 +58,8 @@ import {
   type WireRecord,
 } from '#/wire/record';
 import { repairWireJournal } from '#/wire/repair';
-import { IModelCatalog } from '#/kosong/model/catalog';
 import { IModelService } from '#/kosong/model/model';
 import { IProviderService } from '#/kosong/provider/provider';
-import { IFlagService } from '#/app/flag/flag';
-import { assertValidSubagentModelConfig } from '#/session/subagent/configSection';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
@@ -156,6 +154,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IEventService private readonly event: IEventService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IFlagService private readonly flags: IFlagService,
     @IWorkspaceAgentProfileLoader
     private readonly workspaceAgentProfileLoader: IWorkspaceAgentProfileLoader,
     @IExtraAgentProfileLoader
@@ -170,10 +169,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IWorkspaceSkillCatalog private readonly workspaceSkillCatalog: IWorkspaceSkillCatalog,
     @IWorkspaceInstructionsService private readonly workspaceInstructions: IWorkspaceInstructionsService,
     @IWorkspaceMcpService private readonly workspaceMcp: IWorkspaceMcpService,
-    @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IModelService private readonly models: IModelService,
     @IProviderService private readonly providers: IProviderService,
-    @IFlagService private readonly flags: IFlagService,
     onDispose?: () => void,
   ) {
     super();
@@ -224,17 +221,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return handle;
   }
 
-  private async assertSubagentModelPoolPreFlight(): Promise<void> {
-    await Promise.all([this.config.ready, this.models.ready, this.providers.ready]);
-    assertValidSubagentModelConfig(this.config, this.flags, this.modelCatalog);
-  }
-
   private async materializeSession(opts: MaterializeSessionOptions): Promise<ISessionScopeHandle> {
     const workspaceId = this.workspaceId;
     const sessionScope = sessionScopeOf(this.handlerScope, opts.sessionId);
     const sessionDir = sessionDirOf(this.bootstrap.homeDir, this.handlerScope, opts.sessionId);
     const metaScope = sessionScope;
-    await this.assertSubagentModelPoolPreFlight();
+    await Promise.all([this.config.ready, this.models.ready, this.providers.ready]);
     await this.workspaceDirs.ready;
     await this.workspaceDirs.mergeAdditionalDirs(opts.workDir, opts.additionalDirs ?? []);
     const ctx: ISessionContext = {
@@ -310,9 +302,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
   private async announceCreated(event: SessionCreatedEvent): Promise<void> {
     await this._onDidCreateSession.fireAsync(event, NO_ABORT);
-    event.handle.accessor
-      .get(ITelemetryService)
-      .track2('session_started', { resumed: event.source === 'resume' });
+    event.handle.accessor.get(ITelemetryService).track2('session_started', {
+      resumed: event.source === 'resume',
+      experimental_flags: this.flags.exposedIds().toSorted().join(','),
+    });
   }
 
   get(sessionId: string): ISessionScopeHandle | undefined {
@@ -495,7 +488,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     let target: ISessionScopeHandle | undefined;
     let targetSessionDir: string | undefined;
     try {
-      await this.assertSubagentModelPoolPreFlight();
       await drainSessionMetadataWrites();
       const sourceMeta =
         sourceHandle !== undefined

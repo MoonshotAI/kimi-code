@@ -115,7 +115,6 @@ describe('context budget reminders in the agent', () => {
     context = ctx.get(IAgentContextMemoryService);
     loop = ctx.get(IAgentLoopService) as StubLoop;
     await ctx.restorePersisted();
-    await ctx.restoreRuntimes();
   });
 
   afterEach(async () => {

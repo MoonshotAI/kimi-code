@@ -20,6 +20,7 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInitService } from '#/features/sessionInit/sessionInit';
 import { SessionInitService } from '#/features/sessionInit/sessionInitService';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
 
@@ -60,7 +61,6 @@ describe('SessionInitService', () => {
       },
       notifyAgentTaskStopped: vi.fn(),
       handleOf: vi.fn((agentId: string) => handles[agentId]),
-      resolve: vi.fn(() => ({ notify: appendReminder })),
       create: vi.fn(async () => stubAgentContext('agent-0', 1)),
       run: vi.fn(async (agent: AgentContext) => ({
         agentId: agent.agentId,
@@ -90,6 +90,7 @@ describe('SessionInitService', () => {
           if (id === IAgentProfileService) return profile;
           if (id === IAgentPermissionModeService) return permissionMode;
           if (id === IAgentAgentsMdReminderService) return { seedInjected };
+          if (id === IAgentReminderService) return { notify: appendReminder };
           if (id === IEventDispatcher) {
             return {
               flush,

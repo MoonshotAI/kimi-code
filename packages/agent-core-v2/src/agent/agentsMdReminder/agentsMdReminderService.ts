@@ -25,9 +25,12 @@ import {
 } from '#/agent/profile/context';
 import { profileKey } from '#/agent/profile/profileOps';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { AgentReminder, type ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
+import type {
+  ContextInjectionContext,
+  ContextInjectionResult,
+} from '#/features/reminder/types';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -41,6 +44,10 @@ const BASH_PARSE_OPTIONS = { timeoutMs: 20, maxNodes: 10_000 } as const;
 
 export const agentsMdReminderKnownKey = defineState<Set<string>>(
   'agentsMdReminder.known',
+  () => new Set(),
+);
+export const agentsMdReminderPendingKey = defineState<Set<string>>(
+  'agentsMdReminder.pending',
   () => new Set(),
 );
 export const agentsMdReminderCwdKey = defineState<string | undefined>(
@@ -60,7 +67,7 @@ export class AgentAgentsMdReminderService
 
   constructor(
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
-    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+    @IAgentReminderService private readonly reminder: IAgentReminderService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
     @ISessionContext private readonly sessionContext: ISessionContext,
@@ -69,13 +76,18 @@ export class AgentAgentsMdReminderService
     @IBashParserService private readonly bashParser: IBashParserService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-      @IAgentStateService private readonly agentState: IAgentStateService,
     @ISessionInstructionsProvider private readonly instructions: ISessionInstructionsProvider,
   ) {
     super();
     this.states.contributeState(agentsMdReminderKnownKey);
+    this.states.contributeState(agentsMdReminderPendingKey);
     this.states.contributeState(agentsMdReminderCwdKey);
     this.states.contributeState(agentsMdReminderSeededKey);
+    this._register(
+      this.reminder.register<readonly string[]>('agents_md', (context) =>
+        this.injectReminder(context),
+      ),
+    );
     this._register(
       this.instructions.onDidChange((changes) => {
         this.announceChanged(changes);
@@ -83,7 +95,7 @@ export class AgentAgentsMdReminderService
     );
     this._register(
       this.dispatcher.hooks.onDidRestore.register('agentsMdReminder', async (_ctx, next) => {
-        const profile = this.agentState.get(profileKey);
+        const profile = this.states.get(profileKey);
         const paths =
           profile.agentsMdPaths ?? extractAgentsMdPathsFromSystemPrompt(profile.systemPrompt);
         this.seedInjected(paths, this.sessionContext.cwd);
@@ -98,9 +110,12 @@ export class AgentAgentsMdReminderService
   }
 
   seedInjected(paths: readonly string[], cwd: string): void {
-    const known = this.states.get(agentsMdReminderKnownKey);
+    const known = new Set(this.known);
     for (const path of paths) known.add(normalize(path));
-    this.states.set(agentsMdReminderKnownKey, new Set(known));
+    this.states.set(agentsMdReminderKnownKey, known);
+    const pending = new Set(this.pending);
+    for (const path of paths) pending.delete(normalize(path));
+    this.states.set(agentsMdReminderPendingKey, pending);
     this.states.set(agentsMdReminderCwdKey, cwd);
     this.states.set(agentsMdReminderSeededKey, true);
   }
@@ -114,11 +129,17 @@ export class AgentAgentsMdReminderService
     }
     if (entries.size === 0) return;
     const list = [...entries.values()];
-    this.reminder().notify(changeReminderText(list), {
+    this.reminder.notify(changeReminderText(list), {
       variant: 'agents_md_change',
     });
-    this.publishKnown(
-      list.filter((change) => change.action !== 'deleted').map((change) => change.path),
+    this.markKnown(
+      list.filter((change) => change.action === 'modified').map((change) => change.path),
+    );
+    this.markPending(
+      list.filter((change) => change.action === 'created').map((change) => change.path),
+    );
+    this.markDeleted(
+      list.filter((change) => change.action === 'deleted').map((change) => change.path),
     );
   }
 
@@ -128,8 +149,28 @@ export class AgentAgentsMdReminderService
     return this.states.get(agentsMdReminderKnownKey);
   }
 
+  private get pending(): Set<string> {
+    return this.states.get(agentsMdReminderPendingKey);
+  }
+
   private get agentCwd(): string {
     return this.states.get(agentsMdReminderCwdKey) ?? this.sessionContext.cwd;
+  }
+
+  private hasPath(path: string): boolean {
+    return this.known.has(path) || this.pending.has(path);
+  }
+
+  private injectReminder(
+    context: ContextInjectionContext<readonly string[]>,
+  ): ContextInjectionResult<readonly string[]> | undefined {
+    const known = this.known;
+    const pending = [...this.pending].filter((path) => !known.has(path));
+    if (pending.length === 0) return undefined;
+    const covered = context.lastDisclosure ?? [];
+    const fresh = pending.filter((path) => !covered.includes(path));
+    if (fresh.length === 0) return undefined;
+    return { content: reminderText(fresh), disclosure: pending };
   }
 
   private async ensureSeeded(): Promise<void> {
@@ -156,13 +197,13 @@ export class AgentAgentsMdReminderService
       const selfKnownSet = new Set(selfKnown);
       for (const dir of dirs) {
         for (const path of await this.probeDir(dir)) {
-          if (this.known.has(path) || this.claimed.has(path) || selfKnownSet.has(path)) continue;
+          if (this.hasPath(path) || this.claimed.has(path) || selfKnownSet.has(path)) continue;
           this.claimed.add(path);
           discovered.push(path);
         }
       }
       if (discovered.length === 0) {
-        this.publishKnown(selfKnown);
+        this.markKnown(selfKnown);
         return;
       }
       const properties: AgentsMdReminderShownEvent = {
@@ -172,24 +213,45 @@ export class AgentAgentsMdReminderService
         trace_id: ctx.trace?.traceId,
       };
       this.telemetry.track2('agents_md_reminder_shown', properties);
-      this.reminder().notify(reminderText(discovered), {
-        variant: 'agents_md',
-      });
-      this.publishKnown([...selfKnown, ...discovered]);
+      this.markKnown(selfKnown);
+      this.markPending(discovered);
     } catch {} finally {
       for (const path of discovered) this.claimed.delete(path);
     }
   }
 
-  private reminder(): ReminderRuntime {
-    return this.agentLifecycle.resolve(this.scopeContext.agentContext, AgentReminder);
+  private markKnown(paths: readonly string[]): void {
+    if (paths.length === 0) return;
+    const known = new Set(this.known);
+    const pending = new Set(this.pending);
+    for (const path of paths) {
+      known.add(path);
+      pending.delete(path);
+    }
+    this.states.set(agentsMdReminderKnownKey, known);
+    this.states.set(agentsMdReminderPendingKey, pending);
   }
 
-  private publishKnown(paths: readonly string[]): void {
+  private markPending(paths: readonly string[]): void {
     if (paths.length === 0) return;
-    const merged = new Set(this.known);
-    for (const path of paths) merged.add(path);
-    this.states.set(agentsMdReminderKnownKey, merged);
+    const known = this.known;
+    const pending = new Set(this.pending);
+    for (const path of paths) {
+      if (!known.has(path)) pending.add(path);
+    }
+    this.states.set(agentsMdReminderPendingKey, pending);
+  }
+
+  private markDeleted(paths: readonly string[]): void {
+    if (paths.length === 0) return;
+    const known = new Set(this.known);
+    const pending = new Set(this.pending);
+    for (const path of paths) {
+      known.delete(path);
+      pending.delete(path);
+    }
+    this.states.set(agentsMdReminderKnownKey, known);
+    this.states.set(agentsMdReminderPendingKey, pending);
   }
 
   private targetDirs(ctx: ToolDidExecuteContext): { dirs: string[]; selfKnown: string[] } {
@@ -277,7 +339,7 @@ export class AgentAgentsMdReminderService
       const found: string[] = [];
       for (const chainDir of chain) {
         const candidates = agentsMdCandidatePaths(chainDir);
-        if (candidates.every((candidate) => this.known.has(normalize(candidate)))) continue;
+        if (candidates.every((candidate) => this.hasPath(normalize(candidate)))) continue;
         for (const path of await findAgentsMdInDir(deps, chainDir)) {
           found.push(normalize(path));
         }
@@ -312,9 +374,9 @@ function stringArg(args: unknown, key: string): string | undefined {
 
 function reminderText(paths: readonly string[]): string {
   return (
-    'The path(s) touched by a recent tool call are covered by AGENTS.md instruction file(s) that were not part of the injected instructions:\n' +
+    'The following AGENTS.md file(s) apply to paths accessed by your recent tool call, but were not included in your system prompt:\n' +
     paths.map((path) => `- ${path}`).join('\n') +
-    '\nRead them before making changes in those directories. Each file is suggested at most once per agent.'
+    '\nRead them before making changes in those directories.'
   );
 }
 

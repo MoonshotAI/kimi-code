@@ -358,7 +358,7 @@ describe('handleGoalCommand', () => {
     expect(s.createGoal).not.toHaveBeenCalled();
     expect(manualHost.sendNormalUserInput).not.toHaveBeenCalled();
     const text = stripAnsi(mountedPicker(manualHost).render(80).join('\n'));
-    expect(text).toContain('Manual mode is not suitable for unattended goal work');
+    expect(text).toContain('Always Ask mode is not suitable for unattended goal work');
     expect(text).toContain('Return to the input box with your goal command');
   });
 
@@ -466,9 +466,9 @@ describe('handleGoalCommand', () => {
     expect(s.createGoal).not.toHaveBeenCalled();
     expect(yoloHost.sendNormalUserInput).not.toHaveBeenCalled();
     const text = stripAnsi(mountedPicker(yoloHost).render(80).join('\n'));
-    expect(text).toContain('YOLO mode can still stop for questions');
-    expect(text).toContain('Keep YOLO and start');
-    expect(text).not.toContain('Start in Manual');
+    expect(text).toContain('Ask When Needed mode can still stop for questions');
+    expect(text).toContain('Keep Ask When Needed and start');
+    expect(text).not.toContain('Start in Always Ask');
   });
 
   it('defaults to Auto when confirming a YOLO-mode goal start', async () => {
