@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { KaosFileExistsError } from '#/errors';
-import { LocalKaos } from '#/local';
+import { cycleKey, LocalKaos } from '#/local';
 import { afterEach, beforeEach, describe, expect, it, test } from 'vitest';
 
 // LocalKaos normalizes every path to forward slashes (pathe). Mirror that in
@@ -680,6 +680,24 @@ describe('LocalKaos', () => {
       expect(matches.some((p) => p.endsWith(`b/shared.txt`) || p.endsWith(`b\\shared.txt`))).toBe(
         true,
       );
+    });
+  });
+
+  describe('glob cycleKey filesystem identity', () => {
+    it('returns "<dev>:<ino>" for normal stats', () => {
+      expect(cycleKey({ dev: 517, ino: 1299139 })).toBe('517:1299139');
+    });
+
+    it('returns null when ino is 0 (FAT/exFAT, some network mounts)', () => {
+      expect(cycleKey({ dev: 517, ino: 0 })).toBeNull();
+    });
+
+    it('returns null when dev is 0 (hmdfs tree-wide synthetic ino)', () => {
+      // OpenHarmony's hmdfs reports dev=0 and hands every entry of a tree
+      // the same synthetic ino. Keyed tracking would collide each
+      // subdirectory onto the root's key and stop the walk from
+      // descending at all, so the identity must be treated as unreliable.
+      expect(cycleKey({ dev: 0, ino: 123456789 })).toBeNull();
     });
   });
 

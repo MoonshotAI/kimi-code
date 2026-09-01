@@ -45,13 +45,16 @@ interface TextFileScan {
  * Build the `(dev, ino)` cycle-detection key used by `_globWalk`'s
  * visited set. Returns `null` when `ino` is 0, which Node returns on
  * filesystems that don't carry inodes (Windows FAT/exFAT, some SMB/NFS
- * mounts). A null key signals "no reliable identity for this dir" so
- * the caller skips visited tracking for that descent — cycle safety
- * is weakened on those filesystems, but normal walking works instead
- * of every directory colliding on the shared key `"<dev>:0"`.
+ * mounts), or when `dev` is 0, which OpenHarmony's hmdfs reports while
+ * handing out the same synthetic `ino` for every entry of a tree — a
+ * non-zero but non-unique identity that would collide the whole walk
+ * onto the root's key. A null key signals "no reliable identity for
+ * this dir" so the caller skips visited tracking for that descent —
+ * cycle safety is weakened on those filesystems, but normal walking
+ * works instead of every directory colliding on the shared key.
  */
-function cycleKey(s: { dev: number; ino: number }): string | null {
-  if (s.ino === 0) return null;
+export function cycleKey(s: { dev: number; ino: number }): string | null {
+  if (s.ino === 0 || s.dev === 0) return null;
   return `${String(s.dev)}:${String(s.ino)}`;
 }
 
@@ -344,10 +347,11 @@ export class LocalKaos implements Kaos {
   // that don't support inodes (FAT/exFAT, some SMB/NFS mounts). If we
   // keyed on `ino=0`, every directory on such a drive would share the
   // key `"<dev>:0"` and the first would "visit" all others. The
-  // module-level `cycleKey` helper returns `null` in that case, which
-  // causes the call sites to skip visited tracking for that descent
-  // — cycle safety is lost on those filesystems, but normal walking
-  // works.
+  // module-level `cycleKey` helper returns `null` for such unreliable
+  // identities (`ino === 0`, or hmdfs's `dev === 0` with a synthetic
+  // tree-wide `ino`), which causes the call sites to skip visited
+  // tracking for that descent — cycle safety is lost on those
+  // filesystems, but normal walking works.
   private async *_globWalk(
     basePath: string,
     patternParts: string[],
