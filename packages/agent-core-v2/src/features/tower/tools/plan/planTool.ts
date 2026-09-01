@@ -5,7 +5,12 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
 
-import { newTowerStore, runTowerTool, TOWER_MAIN_AGENT_ONLY } from '../support';
+import {
+  newTowerStore,
+  runTowerTool,
+  TOWER_MAIN_AGENT_ONLY,
+  TOWER_MODE_USER_ENABLED_ONLY,
+} from '../support';
 import DESCRIPTION from './plan.md?raw';
 import { ITowerPlanTool, TowerPlanToolInputSchema, type TowerPlanToolInput } from './plan';
 
@@ -35,7 +40,7 @@ export class TowerPlanTool implements ITowerPlanTool {
         runTowerTool(async () => {
           if (!this.tower.isActive) {
             return {
-              output: 'tower mode is not active — run TowerInit first',
+              output: TOWER_MODE_USER_ENABLED_ONLY,
               isError: true,
             };
           }

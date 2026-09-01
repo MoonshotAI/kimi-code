@@ -9,6 +9,8 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
+import type { AgentTaskInfo } from '#/agent/task/types';
+import { TaskTerminatedNotice } from '#/agent/task/taskOps';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
@@ -23,11 +25,18 @@ import { ISessionActivityView } from '#/session/sessionActivity/sessionActivity'
 import { isWithinDirectory } from '#/tool/path-access';
 import type { ToolFileAccess } from '#/tool/toolContract';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { SubagentStarted } from '#/session/subagent/mirrorAgentRun';
 import { TowerModeInjection } from './injection/towerModeInjection';
 import {
   TowerStore,
   WORKTREES_DIR,
+  assertLocalBaseBranch,
+  branchExists,
+  checkoutNewLocalBranch,
+  commitPaths,
+  listBaseDirtyEntries,
   resolveTowerRepoRoot,
+  TowerProtocolError,
 } from './protocol/index';
 import {
   IAgentTowerService,
@@ -36,7 +45,7 @@ import {
   TOWER_WORKER_PROFILE,
 } from './tower';
 import { isTowerFeatureAssembled } from './towerFeature';
-import { TowerModeEnter, TowerModeExit, towerKey, towerOwnerKey } from './towerOps';
+import { TowerModeEnter, TowerModeExit, towerBaseKey, towerKey, towerOwnerKey } from './towerOps';
 
 export const TOWER_MODE_TOOLS: readonly string[] = ['TowerInit', ...TOWER_TOOL_NAMES];
 
@@ -62,6 +71,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     super();
     this.agentState.contributeState(towerKey);
     this.agentState.contributeState(towerOwnerKey);
+    this.agentState.contributeState(towerBaseKey);
     this._register(
       this.dispatcher.hooks.onDidRestore.register('tower', async (_ctx, next) => {
         await this.exitForeignTower();
@@ -98,6 +108,18 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       }),
     );
     this._register(new TowerModeInjection(reminder, this, context, this.flags));
+    this._register(
+      eventBus.subscribe(TaskTerminatedNotice, (event) => {
+        if (this.agentCtx.agentId !== 'main') return;
+        void this.recordTowerAgentDeath(event.info);
+      }),
+    );
+    this._register(
+      eventBus.subscribe(SubagentStarted, (event) => {
+        if (this.agentCtx.agentId !== 'main') return;
+        void this.clearTowerAgentDeath(event.subagentId);
+      }),
+    );
     this._register(
       toolExecutor.onBeforeExecuteTool((event) => {
         if (this.flags.enabled(TOWER_FLAG_ID)) return;
@@ -164,11 +186,19 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     );
   }
 
-  async enter(): Promise<void> {
+  async enter(base?: string): Promise<void> {
     if (this.agentCtx.agentId !== 'main') return;
     if (!this.flags.enabled(TOWER_FLAG_ID)) return;
     if (!isTowerFeatureAssembled(this.flags)) return;
-    if (this.isActive) return;
+    if (base !== undefined) {
+      await this.prepareUserBase(base);
+    }
+    if (this.isActive) {
+      if (base !== undefined && base !== this.agentState.get(towerBaseKey)) {
+        this.dispatchEnter(base);
+      }
+      return;
+    }
     const owner = await this.resolveTowerOwner();
     if (owner !== undefined && owner !== this.sessionCtx.sessionId) {
       const ownerHandle = this.sessions.get(owner);
@@ -184,8 +214,74 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     }
     for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
     this.lastPublished = true;
+    this.dispatchEnter(base);
+  }
+
+  get requestedBase(): string | undefined {
+    return this.agentState.get(towerBaseKey) ?? undefined;
+  }
+
+  private async prepareUserBase(base: string): Promise<void> {
+    const repoRoot = resolveTowerRepoRoot(this.sessionCtx.cwd);
+    const store = new TowerStore(repoRoot);
+    if (await store.isInitialized()) {
+      const state = await store.load();
+      if (state.base === base) {
+        await assertLocalBaseBranch(repoRoot, base);
+        return;
+      }
+      const open = state.missions.filter(
+        (mission) => mission.status !== 'merged' && mission.status !== 'abandoned',
+      );
+      if (open.length > 0) {
+        throw new TowerProtocolError(
+          `tower workspace already records base "${state.base}" with ${String(open.length)} open mission(s) (${open.map((mission) => mission.id).join(', ')}) — merge or abandon them (or /tower teardown) before switching the tower to base "${base}"`,
+        );
+      }
+      if (!(await branchExists(repoRoot, base))) {
+        await this.createBaseBranch(repoRoot, base);
+      }
+      await store.rebase(base);
+      return;
+    }
+    if (await branchExists(repoRoot, base)) {
+      await store.init(this.sessionCtx.sessionId, base);
+      return;
+    }
+    await this.createBaseBranch(repoRoot, base);
+    await store.init(this.sessionCtx.sessionId, base);
+  }
+
+  private async createBaseBranch(repoRoot: string, base: string): Promise<void> {
+    const dirty = await listBaseDirtyEntries(repoRoot);
+    if (dirty.some((entry) => entry.unmerged)) {
+      throw new TowerProtocolError(
+        'the checkout has unmerged paths (an in-progress merge, rebase, or cherry-pick) — finish or abort it before starting a tower on a new base',
+      );
+    }
+    await checkoutNewLocalBranch(repoRoot, base);
+    if (dirty.length === 0) return;
+    try {
+      await commitPaths(
+        repoRoot,
+        dirty.map((entry) => entry.path),
+        `tower: snapshot of uncommitted base checkout changes (base ${base})`,
+      );
+    } catch (error) {
+      throw new TowerProtocolError(
+        `created and switched to "${base}", but committing the checkout's uncommitted changes onto it failed: ${error instanceof Error ? error.message : String(error)}. ` +
+          `The changes are still uncommitted on "${base}" — commit or move them, then re-run /tower ${base}.`,
+      );
+    }
+  }
+
+  private dispatchEnter(base: string | undefined): void {
     void this.dispatcher.dispatch(
-      new TowerModeEnter({ agentId: this.agentCtx.agentId, sessionId: this.sessionCtx.sessionId }),
+      new TowerModeEnter({
+        agentId: this.agentCtx.agentId,
+        sessionId: this.sessionCtx.sessionId,
+        base,
+      }),
     );
   }
 
@@ -220,6 +316,25 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       () => undefined,
     );
     return storeOwner ?? this.agentState.get(towerOwnerKey);
+  }
+
+  private async recordTowerAgentDeath(info: AgentTaskInfo): Promise<void> {
+    if (info.kind !== 'agent') return;
+    if (info.agentId === undefined) return;
+    if (info.status === 'completed') return;
+    const store = new TowerStore(resolveTowerRepoRoot(this.sessionCtx.cwd));
+    await store.markAgentDied(info.agentId, info.status, info.stopReason).then(
+      () => undefined,
+      () => undefined,
+    );
+  }
+
+  private async clearTowerAgentDeath(agentId: string): Promise<void> {
+    const store = new TowerStore(resolveTowerRepoRoot(this.sessionCtx.cwd));
+    await store.clearAgentDied(agentId).then(
+      () => undefined,
+      () => undefined,
+    );
   }
 
   private restoreTowerTools(): void {

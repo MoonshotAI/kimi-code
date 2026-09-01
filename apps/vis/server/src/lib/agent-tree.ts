@@ -40,7 +40,7 @@ function sortAgents(a: AgentNode, b: AgentNode): number {
  * numeric suffix (so `agent-2` precedes `agent-10`), with a lexicographic
  * fallback for any id that does not match the `agent-N` shape.
  *
- * In practice a sibling set is `main` plus `agent-N` ids (agent-core's id
+ * In practice a sibling set is `main` plus `agent-N` ids (the engine's id
  * generator only emits those). The `na`/`nb`-only branches below exist solely
  * to keep a stable TOTAL order when foreign/hand-edited ids (reachable via
  * `state.json` keys or `discoverAgentsFromDisk` directory names) are mixed in:

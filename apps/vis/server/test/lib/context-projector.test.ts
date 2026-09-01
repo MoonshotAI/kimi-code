@@ -1,5 +1,6 @@
 // apps/vis/server/test/lib/context-projector.test.ts
 import { describe, it, expect, afterEach } from 'vitest';
+import { estimateTokensForMessages } from '@moonshot-ai/agent-core-v2/kosong/contract/tokens';
 import { buildSessionFixture } from '../fixtures/build';
 import { projectContext } from '../../src/lib/context-projector';
 import { readAgentWire } from '../../src/lib/wire-reader';
@@ -18,7 +19,7 @@ describe('context-projector', () => {
     expect(proj.messages).toHaveLength(2);
     expect(proj.messages[0]!.message.role).toBe('user');
     // The assistant message is reconstructed from step.begin/content.part/step.end,
-    // not from a separate `context.append_message` (agent-core never emits one).
+    // not from a separate `context.append_message` (the engine never emits one).
     expect(proj.messages[1]!.message.role).toBe('assistant');
     expect(proj.messages[1]!.message.content).toEqual([{ type: 'text', text: 'hello' }]);
 
@@ -141,10 +142,10 @@ describe('context-projector', () => {
   });
 
   // ---- Fix G: tool.result content must match what the model saw ---------------
-  // agent-core's `ContextMemory.appendLoopEvent` (`tool.result` case) stores
+  // The engine's `ContextMemory.appendLoopEvent` (`tool.result` case) stores
   // `createToolMessage(toolCallId, toolResultOutputForModel(event.result))`, NOT
   // the raw `event.result.output`. `toolResultOutputForModel`
-  // (`packages/agent-core/src/agent/context/index.ts` ~line 350) normalizes
+  // (`packages/agent-core-v2/src/agent/contextMemory/`) normalizes
   // error / empty outputs with sentinel strings. The projector must replicate
   // that normalization so the model-view shows the content the model actually
   // received for failed / empty tool calls.
@@ -277,17 +278,18 @@ describe('context-projector', () => {
       { lineNo: 4, data: { type: 'context.append_message' as const, message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'new' }], toolCalls: [] } }, raw: {} },
     ];
     const proj = projectContext(entries as any);
-    // Model view: the kept user prompt + user-role summary + the new prompt.
+    // Model view: a legacy record (no keptUserMessageCount) rebuilds the
+    // history as `[summary, ...history.slice(compactedCount)]` — 'old' is
+    // compacted away — then the new prompt is appended.
     expect(proj.messages.map((m) => m.source)).toEqual([
-      'append_message', 'compaction_summary', 'append_message',
+      'compaction_summary', 'append_message',
     ]);
-    expect(proj.messages[0]!.message.content[0]).toMatchObject({ text: 'old' });
-    // The compaction summary is a user message (agent-core's own
+    // The compaction summary is a user message (the engine's own
     // representation), not a synthetic system message.
-    expect(proj.messages[1]!.message.role).toBe('user');
-    expect(proj.messages[1]!.message.origin).toEqual({ kind: 'compaction_summary' });
-    expect(proj.messages[1]!.message.content[0]).toMatchObject({ text: 'old stuff' });
-    expect(proj.messages[2]!.message.content[0]).toMatchObject({ text: 'new' });
+    expect(proj.messages[0]!.message.role).toBe('user');
+    expect(proj.messages[0]!.message.origin).toEqual({ kind: 'compaction_summary' });
+    expect(proj.messages[0]!.message.content[0]).toMatchObject({ text: 'old stuff' });
+    expect(proj.messages[1]!.message.content[0]).toMatchObject({ text: 'new' });
   });
 
   it('uses contextSummary only for the model view and raw summary for full history', () => {
@@ -299,8 +301,9 @@ describe('context-projector', () => {
     ];
 
     const model = projectContext(entries as any);
+    // Legacy record (no keptUserMessageCount): the pre-compaction prompt is
+    // compacted away, the model sees only the prefixed summary.
     expect(model.messages.map((m) => m.message.content[0])).toMatchObject([
-      { text: 'old' },
       { text: 'prefixed summary' },
     ]);
 
@@ -320,7 +323,8 @@ describe('context-projector', () => {
       { lineNo: 3, data: { type: 'context.append_message' as const,
           message: { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'm2 (dropped)' }], toolCalls: [] } }, raw: {} },
       { lineNo: 4, data: { type: 'context.apply_compaction' as const,
-          summary: 'sum', compactedCount: 3, tokensBefore: 100, tokensAfter: 10 }, raw: {} },
+          summary: 'sum', compactedCount: 3, tokensBefore: 100, tokensAfter: 10,
+          keptUserMessageCount: 2 }, raw: {} },
     ];
     const proj = projectContext(entries as any);
     // [m0, m1, summary] — real user prompts are kept verbatim, the assistant
@@ -336,7 +340,7 @@ describe('context-projector', () => {
   });
 
   it('apply_compaction mirrors the legacy verbatim tail for records without keptUserMessageCount (model)', () => {
-    // A pre-rework record has no keptUserMessageCount. agent-core's restore keeps
+    // A pre-rework record has no keptUserMessageCount. the engine's restore keeps
     // the old `[summary, ...history.slice(compactedCount)]` tail (assistant/tool
     // included), so the model view must do the same instead of applying the new
     // kept-user selection — otherwise it would hide the assistant tail the resumed
@@ -383,7 +387,7 @@ describe('context-projector', () => {
 
     const proj = projectContext(entries as any);
     // [FIRST, head slice of middle, marker, tail slice of middle, LAST, summary]
-    // — mirrors agent-core's selectCompactionUserMessages + elision marker.
+    // — mirrors the engine's selectCompactionUserMessages + elision marker.
     expect(proj.messages).toHaveLength(6);
     const texts = proj.messages.map((m) =>
       m.message.content.map((p: any) => (p.type === 'text' ? p.text : '')).join(''),
@@ -418,7 +422,8 @@ describe('context-projector', () => {
       { lineNo: 5, data: { type: 'context.append_message' as const,
           message: { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'assistant reply' }], toolCalls: [] } }, raw: {} },
       { lineNo: 6, data: { type: 'context.apply_compaction' as const,
-          summary: 'sum', compactedCount: 5, tokensBefore: 100, tokensAfter: 10 }, raw: {} },
+          summary: 'sum', compactedCount: 5, tokensBefore: 100, tokensAfter: 10,
+          keptUserMessageCount: 1 }, raw: {} },
       { lineNo: 7, data: { type: 'context.append_message' as const,
           message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'new' }], toolCalls: [], origin: { kind: 'user' as const } } }, raw: {} },
     ];
@@ -443,8 +448,8 @@ describe('context-projector', () => {
     ]);
   });
 
-  // ---- Fix ④: UI-only markers must not offset agent-core history indices ------
-  // agent-core computes compactedCount (and the micro-compaction cutoff) as
+  // ---- Fix ④: UI-only markers must not offset the engine history indices ------
+  // the engine computes compactedCount (and the micro-compaction cutoff) as
   // indices into _history, which NEVER contains the synthetic 'undo'/'clear'
   // markers we push into our messages array. So index-based ops must count ONLY
   // real history entries (append_message + compaction_summary), skipping
@@ -457,7 +462,7 @@ describe('context-projector', () => {
     });
     // Step 1: append u1, u2 then undo(1) → removes u2, leaves [u1, <undo marker>].
     // Step 2: append u3, u4 → array is [u1, <undo marker>, u3, u4].
-    // History entries (agent-core _history, which has NO marker) are the three
+    // History entries (the engine _history, which has NO marker) are the three
     // real user prompts [u1, u3, u4]. Compaction keeps all of them (they fit the
     // budget) and appends the summary, dropping only the synthetic undo marker.
     // This pins that the marker does not offset the kept-user selection — a naive
@@ -469,7 +474,8 @@ describe('context-projector', () => {
       { lineNo: 4, data: { type: 'context.append_message' as const, message: userMsg('u3') }, raw: {} },
       { lineNo: 5, data: { type: 'context.append_message' as const, message: userMsg('u4') }, raw: {} },
       { lineNo: 6, data: { type: 'context.apply_compaction' as const,
-          summary: 'sum', compactedCount: 3, tokensBefore: 100, tokensAfter: 10 }, raw: {} },
+          summary: 'sum', compactedCount: 3, tokensBefore: 100, tokensAfter: 10,
+          keptUserMessageCount: 3 }, raw: {} },
     ];
     const proj = projectContext(entries as any);
     // Correct: [u1, u3, u4, summary]. The marker is gone, all real prompts kept.
@@ -592,7 +598,7 @@ describe('context-projector', () => {
 
   it('micro_compaction.apply counts think parts toward the min-content gate', () => {
     // A tool result dominated by a large `think` part (tiny text) must clear the
-    // min-content gate and be blanked — mirroring agent-core's token estimator,
+    // min-content gate and be blanked — mirroring the engine's token estimator,
     // which counts both text and think parts.
     const entries = [
       { lineNo: 1, data: { type: 'context.append_message' as const, message: {
@@ -610,9 +616,9 @@ describe('context-projector', () => {
 
   it('micro_compaction.apply weights non-ASCII (CJK) chars as full tokens', () => {
     // ~150 CJK chars. Under a naive chars/4 estimate this is ~38 tokens (< 100
-    // gate → NOT blanked, the bug). agent-core counts each non-ASCII char as a
+    // gate → NOT blanked, the bug). the engine counts each non-ASCII char as a
     // full token → ~150 tokens (>= gate → blanked). Assert it IS blanked, so a
-    // Chinese-heavy tool result diverges from agent-core no longer.
+    // Chinese-heavy tool result diverges from the engine no longer.
     const cjk = '中'.repeat(150);
     const entries = [
       { lineNo: 1, data: { type: 'context.append_message' as const, message: {
@@ -707,7 +713,7 @@ describe('context-projector', () => {
       origin: { kind: 'user' as const },
     });
     // A PRIOR undo must leave a surviving marker so that, at a LATER undo's clamp,
-    // the array length exceeds the history-entry count by that marker. agent-core
+    // the array length exceeds the history-entry count by that marker. the engine
     // clamps against `_history.length` (NO markers); clamping against
     // `messages.length` here would be one too high and wrongly blank a later
     // tool result.
@@ -796,7 +802,7 @@ describe('context-projector', () => {
   });
 
   // ---- Fix ②: contextTokens updates on clear / compaction lifecycle events ---
-  // agent-core ContextMemory sets _tokenCount on clear() (→ 0) and
+  // the engine ContextMemory sets _tokenCount on clear() (→ 0) and
   // applyCompaction(result) (→ result.tokensAfter), not only on step.end. These
   // are derived state, so they apply identically in both projection modes.
 
@@ -844,7 +850,8 @@ describe('context-projector', () => {
       { lineNo: 2, data: { type: 'context.append_message' as const,
           message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'm1' }], toolCalls: [] } }, raw: {} },
       { lineNo: 3, data: { type: 'context.apply_compaction' as const,
-          summary: 'sum', compactedCount: 2, tokensBefore: 100, tokensAfter: 10 }, raw: {} },
+          summary: 'sum', compactedCount: 2, tokensBefore: 100, tokensAfter: 10,
+          keptUserMessageCount: 2 }, raw: {} },
     ];
     // No 2nd arg → 'model' default: the real user prompts are kept verbatim and
     // the summary is appended after them.
@@ -938,5 +945,139 @@ describe('context-projector', () => {
     // content is preserved.
     expect(proj.messages[0]!.message.content[0]).toMatchObject({ text: bigText });
     expect(proj.messages[1]!.message.content[0]).toMatchObject({ text: bigText });
+  });
+
+  it('folds v2 token_counting records into the context-window fill', () => {
+    const entries = [
+      { lineNo: 1, data: { type: 'token_counting.measured' as const, agentId: 'main', length: 10, tokens: 12345 }, raw: {} },
+      { lineNo: 2, data: { type: 'token_counting.turn_recorded' as const, agentId: 'main', turnId: 1, length: 12, tokens: 13000 }, raw: {} },
+    ];
+    const proj = projectContext(entries as any);
+    expect(proj.contextTokens).toBe(13000);
+  });
+
+  it('resets the context-window fill on context.clear after token_counting', () => {
+    const entries = [
+      { lineNo: 1, data: { type: 'token_counting.rebased' as const, agentId: 'main', length: 3, tokens: 5000, measured: true }, raw: {} },
+      { lineNo: 2, data: { type: 'context.clear' as const, agentId: 'main' }, raw: {} },
+    ];
+    const proj = projectContext(entries as any);
+    expect(proj.contextTokens).toBe(0);
+  });
+
+  it('reads the config snapshot from v2 profile.bind', () => {
+    const entries = [
+      { lineNo: 1, data: { type: 'profile.bind' as const, agentId: 'main',
+          modelAlias: 'k2', profileName: 'agent', thinkingEffort: 'high', systemPrompt: 'You are Kimi.',
+          environmentDisclosure: { cwd: '/repo' }, disallowedTools: [] }, raw: {} },
+    ];
+    const proj = projectContext(entries as any);
+    expect(proj.config).toEqual({
+      cwd: '/repo', modelAlias: 'k2', profileName: 'agent',
+      thinkingEffort: 'high', systemPrompt: 'You are Kimi.',
+    });
+  });
+
+  it('accepts v2 config.update with environmentDisclosure cwd and thinkingLevel', () => {
+    const entries = [
+      { lineNo: 1, data: { type: 'config.update' as const, agentId: 'main',
+          environmentDisclosure: { cwd: '/other' }, thinkingLevel: 'medium' }, raw: {} },
+    ];
+    const proj = projectContext(entries as any);
+    expect(proj.config.cwd).toBe('/other');
+    expect(proj.config.thinkingEffort).toBe('medium');
+  });
+
+  it('derives the fill from the reconstructed shape when the legacy compaction omits tokens', () => {
+    const summaryMessage = {
+      role: 'user' as const,
+      content: [{ type: 'text' as const, text: 'compacted so far' }],
+      toolCalls: [],
+    };
+    const entries = [
+      { lineNo: 1, data: { type: 'token_counting.measured' as const, agentId: 'main', length: 5, tokens: 7777 }, raw: {} },
+      { lineNo: 2, data: { type: 'context.apply_compaction' as const, agentId: 'main',
+          summary: summaryMessage, count: 2 }, raw: {} },
+    ];
+    const proj = projectContext(entries as any);
+    const bubble = proj.messages.at(-1)!;
+    expect(bubble.source).toBe('compaction_summary');
+    expect(bubble.message.content[0]).toMatchObject({ text: 'compacted so far' });
+    // No tokensAfter on the record → the engine's fallback: an estimate over
+    // the reconstructed shape (here just the summary bubble), NOT the stale
+    // pre-compaction 7777.
+    const expected = estimateTokensForMessages([bubble.message]);
+    expect(proj.contextTokens).toBe(expected);
+    expect(proj.contextTokens).not.toBe(7777);
+    expect(bubble.compaction).toEqual({
+      compactedCount: 2, tokensBefore: undefined, tokensAfter: expected,
+    });
+  });
+
+  it('apply_compaction replays a legacy tail even when compactedCount covers the whole history', () => {
+    // Legacy-tail rule (no keptUserMessageCount) is unconditional on how
+    // compactedCount compares to the current history length — the engine's
+    // restore is always `[summary, ...history.slice(compactedCount)]`.
+    const entries = [
+      { lineNo: 1, data: { type: 'context.append_message' as const,
+          message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'u1' }], toolCalls: [], origin: { kind: 'user' as const } } }, raw: {} },
+      { lineNo: 2, data: { type: 'context.append_message' as const,
+          message: { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'a1' }], toolCalls: [] } }, raw: {} },
+      { lineNo: 3, data: { type: 'context.apply_compaction' as const,
+          summary: 'sum', compactedCount: 99, tokensAfter: 50 }, raw: {} },
+    ];
+    const proj = projectContext(entries as any);
+    expect(proj.messages.map((m) => m.source)).toEqual(['compaction_summary']);
+    expect(proj.messages[0]!.message.content[0]).toMatchObject({ text: 'sum' });
+    expect(proj.contextTokens).toBe(50);
+  });
+
+  it('honors an explicit legacyTail flag even when keptUserMessageCount is present', () => {
+    const entries = [
+      { lineNo: 1, data: { type: 'context.append_message' as const,
+          message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'u1' }], toolCalls: [], origin: { kind: 'user' as const } } }, raw: {} },
+      { lineNo: 2, data: { type: 'context.append_message' as const,
+          message: { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'a2 (tail)' }], toolCalls: [] } }, raw: {} },
+      { lineNo: 3, data: { type: 'context.apply_compaction' as const,
+          summary: 'sum', compactedCount: 1, tokensAfter: 5,
+          keptUserMessageCount: 1, legacyTail: true }, raw: {} },
+    ];
+    const proj = projectContext(entries as any);
+    // Verbatim tail [summary, a2], not the kept-user selection.
+    expect(proj.messages.map((m) => m.source)).toEqual(['compaction_summary', 'append_message']);
+    expect(proj.messages[1]!.message.content[0]).toMatchObject({ text: 'a2 (tail)' });
+    expect(proj.contextTokens).toBe(5);
+  });
+
+  it('normalizes the legacy background_task origin to task', () => {
+    const entries = [
+      { lineNo: 1, data: { type: 'context.append_message' as const, agentId: 'main',
+          message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'bg done' }], toolCalls: [],
+            origin: { kind: 'background_task', status: 'completed' } } }, raw: {} },
+    ];
+    const proj = projectContext(entries as any);
+    expect(proj.messages[0]!.message.origin).toMatchObject({ kind: 'task', status: 'completed' });
+  });
+
+  it('ignores v2 lifecycle/task bookkeeping records for context state', () => {
+    const entries = [
+      { lineNo: 1, data: { type: 'turn.prompt' as const, agentId: 'main', input: [{ type: 'text' as const, text: 'hi' }], origin: { kind: 'user' as const } }, raw: {} },
+      { lineNo: 2, data: { type: 'turn.ended' as const, agentId: 'main', turnId: 1, reason: 'completed' as const }, raw: {} },
+      { lineNo: 3, data: { type: 'prompt.completed' as const, agentId: 'main', promptId: 'p1', finishedAt: '2026-09-01T00:00:00Z', reason: 'completed' as const }, raw: {} },
+      { lineNo: 4, data: { type: 'interaction.request' as const, agentId: 'main', id: 'i1', kind: 'approval' as const, request: {} }, raw: {} },
+      { lineNo: 5, data: { type: 'task.started' as const, agentId: 'main', info: { taskId: 'bash-abc12345', description: 'x', status: 'running' as const, startedAt: 1, endedAt: null } }, raw: {} },
+      { lineNo: 6, data: { type: 'cron.add' as const, agentId: 'main', task: { id: '01ARZ3NDEKTSV4RRFFQ69G5FAV', cron: '* * * * *', prompt: 'p', createdAt: 1 } }, raw: {} },
+      { lineNo: 7, data: { type: 'plan.revision' as const, agentId: 'main', id: 'plan1', version: 2, key: 'k', sha256: 's', bytes: 10 }, raw: {} },
+      { lineNo: 8, data: { type: 'runtime.set_binding' as const, agentId: 'main', workspaceId: 'w', runtimeId: 'r' }, raw: {} },
+      { lineNo: 9, data: { type: 'staleGuard.recorded' as const, path: '/x', mtimeMs: 1 }, raw: {} },
+      { lineNo: 10, data: { type: 'interruptionReminder.recorded' as const, agentId: 'main', turnId: 1 }, raw: {} },
+    ];
+    const proj = projectContext(entries as any);
+    // None of these append messages or move derived context state.
+    expect(proj.messages).toEqual([]);
+    expect(proj.contextTokens).toBe(0);
+    expect(proj.usage.byScope.session).toEqual({
+      inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0,
+    });
   });
 });

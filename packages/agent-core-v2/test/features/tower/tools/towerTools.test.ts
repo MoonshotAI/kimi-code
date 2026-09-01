@@ -43,6 +43,7 @@ import { TowerStatusTool } from '#/features/tower/tools/status/statusTool';
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../../../agent/agentContext/stubs';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
+import { TOWER_MODE_USER_ENABLED_ONLY } from '#/features/tower/tools/support';
 
 const execFileAsync = promisify(execFile);
 const signal = new AbortController().signal;
@@ -69,6 +70,7 @@ let repo: string;
 let disposables: DisposableStore;
 let ix: TestInstantiationService;
 let towerActive: boolean;
+let towerRequestedBase: string | undefined;
 let currentAgentId: string;
 let currentSessionId: string;
 let liveSessionIds: string[];
@@ -82,6 +84,7 @@ beforeEach(async () => {
   await commitFile(repo, 'README.md', '# fixture\n', 'initial');
 
   towerActive = false;
+  towerRequestedBase = undefined;
   currentAgentId = 'main';
   liveSessionIds = [];
   currentSessionId = 'session-test';
@@ -122,6 +125,9 @@ beforeEach(async () => {
         get isActive() {
           return towerActive;
         },
+        get requestedBase() {
+          return towerRequestedBase;
+        },
         enter: () => {
           towerActive = true;
         },
@@ -159,13 +165,25 @@ async function run<Input>(tool: ExecutableTool<Input>, args: Input) {
 }
 
 async function initViaTool() {
+  towerActive = true;
   const result = await run(ix.get(ITowerInitTool), {});
   expect(result.isError).toBeFalsy();
   return result;
 }
 
 describe('TowerInitTool', () => {
-  it('creates .tower and enters tower mode', async () => {
+  it('refuses when tower mode is inactive — only the user can enable it', async () => {
+    const result = await run(ix.get(ITowerInitTool), {});
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toBe(TOWER_MODE_USER_ENABLED_ONLY);
+    expect(towerActive).toBe(false);
+    expect((await stat(join(repo, '.tower')).catch(() => undefined))).toBeUndefined();
+  });
+
+  it('creates .tower when tower mode is active', async () => {
+    towerActive = true;
+
     const result = await run(ix.get(ITowerInitTool), {});
 
     expect(result.isError).toBeFalsy();
@@ -177,12 +195,38 @@ describe('TowerInitTool', () => {
 
   it('accepts an explicit base branch and notes the checkout mismatch', async () => {
     await git(repo, 'branch', 'develop');
+    towerActive = true;
 
     const result = await run(ix.get(ITowerInitTool), { base: 'develop' });
 
     expect(result.isError).toBeFalsy();
     expect(result.output).toContain('base branch: develop');
     expect(result.output).toContain('the main checkout is on "main", not base "develop"');
+    const state = await new TowerStore(repo).load();
+    expect(state.base).toBe('develop');
+  });
+
+  it('falls back to the base requested when tower mode was enabled', async () => {
+    await git(repo, 'branch', 'develop');
+    towerActive = true;
+    towerRequestedBase = 'develop';
+
+    const result = await run(ix.get(ITowerInitTool), {});
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('base branch: develop');
+    const state = await new TowerStore(repo).load();
+    expect(state.base).toBe('develop');
+  });
+
+  it('prefers an explicit base over the requested one', async () => {
+    await git(repo, 'branch', 'develop');
+    towerActive = true;
+    towerRequestedBase = 'main';
+
+    const result = await run(ix.get(ITowerInitTool), { base: 'develop' });
+
+    expect(result.isError).toBeFalsy();
     const state = await new TowerStore(repo).load();
     expect(state.base).toBe('develop');
   });
@@ -200,6 +244,8 @@ describe('TowerInitTool', () => {
   });
 
   it('rejects a base that is not a local branch', async () => {
+    towerActive = true;
+
     const result = await run(ix.get(ITowerInitTool), { base: 'origin/main' });
 
     expect(result.isError).toBe(true);
@@ -261,7 +307,7 @@ describe('TowerPlanTool', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toBe('tower mode is not active — run TowerInit first');
+    expect(result.output).toBe(TOWER_MODE_USER_ENABLED_ONLY);
   });
 
   it('plans missions on a real repo once tower mode is active', async () => {
@@ -371,6 +417,32 @@ describe('TowerStatusTool', () => {
     expect(result.output).toContain('# Tower status — base: main (mode: branch), you are: tower');
     expect(result.output).toContain('(no missions planned — use TowerPlan)');
     expect(result.output).toContain('budget: 2 agent(s) · inflight: 0 · spawns open');
+  });
+
+  it('marks dead roster agents and warns about the missions they own', async () => {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'engine', scope: ['src/engine/**'] }],
+    });
+    const store = new TowerStore(repo);
+    await store.registerAgent({
+      name: 'w1',
+      kind: 'worker',
+      agentId: 'agent-w1',
+      missionId: 'M1',
+      spawnedAt: new Date().toISOString(),
+    });
+    await store.updateMission('tower', 'M1', { status: 'active', owner: 'w1' }, { silent: true });
+    await store.markAgentDied('agent-w1', 'failed', 'provider blew up');
+
+    const result = await run(ix.get(ITowerStatusTool), {});
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('w1 (worker) — agent agent-w1, mission M1');
+    expect(result.output).toContain('💀 failed');
+    expect(result.output).toContain('## Dead workers');
+    expect(result.output).toContain('M1 owner w1 died (failed)');
+    expect(result.output).toContain('Agent(resume="agent-w1"');
   });
 });
 

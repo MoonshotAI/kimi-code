@@ -264,6 +264,10 @@ export interface ListSessionsOptions {
   readonly workDir?: string;
   readonly sessionId?: string;
   /**
+   * Include archived sessions in the listing. Defaults to non-archived only.
+   */
+  readonly includeArchived?: boolean;
+  /**
    * Maximum number of summaries in one page. Only consulted by
    * `listSessionsPage`; plain `listSessions` always returns the whole
    * filtered set.

@@ -192,13 +192,13 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'tower',
     aliases: [],
-    description: 'Report tower status, toggle tower mode, or set the tower objective',
+    description: 'Report tower status, toggle tower mode, or turn it on with a base branch',
     priority: 100,
-    argumentHint: '[status|teardown|on|off] | <objective>',
+    argumentHint: '[status|teardown|on|off] | <base-branch>',
     completeArgs: towerArgumentCompletions,
-    // Every form stays available while busy: objectives steer into the
-    // running coordinator turn (see sendMessage in kimi-tui.ts), so /tower
-    // commands never wait for the previous one to finish.
+    // Every form stays available while busy: base selections apply to the next
+    // TowerInit of the running coordinator turn, so /tower commands never wait
+    // for the previous one to finish.
     availability: 'always',
     experimentalFlag: 'tower',
     requiresEngineV2: true,

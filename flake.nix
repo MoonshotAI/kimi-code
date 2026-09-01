@@ -62,7 +62,6 @@
       # pnpmConfigHook (dependencies for that workspace won't be fetched).
       # -------------------------------------------------------------------
       workspacePaths = [
-        ./packages/acp-adapter
         ./packages/acp-server
         ./packages/agent-core
         ./packages/agent-core-v2
@@ -89,7 +88,6 @@
       ];
 
       workspaceNames = [
-        "@moonshot-ai/acp-adapter"
         "@moonshot-ai/acp-server"
         "@moonshot-ai/agent-core"
         "@moonshot-ai/agent-core-v2"
@@ -162,7 +160,11 @@
               inherit (finalAttrs) pname version src pnpmWorkspaces;
               inherit pnpm;
               fetcherVersion = 3;
-              hash = "sha256-EiB7Kim6/abXVZ7Q4Bk2FR9UdwEfbgn3LHAkdK8tkto=";
+<<<<<<< HEAD
+              hash = "sha256-h5vaRjPdBRQqBVl/vFAl1GexSMH0VVR92JEMu61+2U4=";
+=======
+              hash = "sha256-h5vaRjPdBRQqBVl/vFAl1GexSMH0VVR92JEMu61+2U4=";
+>>>>>>> upstream/main
             };
 
             nativeBuildInputs = [

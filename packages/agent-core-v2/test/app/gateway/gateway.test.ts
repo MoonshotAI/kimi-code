@@ -16,6 +16,7 @@ import { ILogService } from '#/_base/log/log';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
+import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { createHooks } from '#/hooks';
 import { stubLog } from '../../_base/log/stubs';
@@ -99,6 +100,12 @@ describe('RestGateway', () => {
       dispose: () => {},
     };
 
+    const sessionMeta: SessionMeta = {
+      id: 's1',
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+    };
     const sessionLifecycle: ISessionLifecycleService = {
       _serviceBrand: undefined,
       onWillCreateSession: () => ({ dispose: () => {} }),
@@ -115,8 +122,8 @@ describe('RestGateway', () => {
       archive: () => Promise.resolve(),
       restore: () => Promise.resolve(sessionHandle),
       delete: () => Promise.resolve(),
-      fork: () => Promise.resolve(sessionHandle),
-      createChild: () => Promise.resolve(sessionHandle),
+      fork: () => Promise.resolve(sessionMeta),
+      createChild: () => Promise.resolve(sessionMeta),
     };
     const handlerHandle = {
       id: 'wd_stub',
@@ -134,7 +141,7 @@ describe('RestGateway', () => {
       archive: () => Promise.resolve(),
       restore: () => Promise.resolve(sessionHandle),
       delete: () => Promise.resolve(),
-      fork: () => Promise.resolve(sessionHandle),
+      fork: () => Promise.resolve(sessionMeta),
     });
     ix.stub(ILogService, stubLog());
     ix.set(IRestGateway, new SyncDescriptor(RestGateway));

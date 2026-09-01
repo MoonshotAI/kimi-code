@@ -1,7 +1,7 @@
 // The single wire-renderer registry. Co-locates tone + label + headline +
 // detail for every record kind. Because `WIRE_RENDERERS` is typed as a mapped
 // type over the FULL `RecordType` union, TypeScript REQUIRES an entry for each
-// kind: adding a kind upstream in agent-core fails
+// kind: adding a kind upstream in agent-core-v2 fails
 // `pnpm --filter @moonshot-ai/vis-web typecheck` here until a renderer is
 // added. This is the anti-rot guarantee that keeps vis from silently falling
 // behind the wire protocol.
@@ -42,6 +42,16 @@ export interface WireRenderer<K extends RecordType> {
  *  over the full `RecordType` union, so TypeScript forces an entry per kind. */
 type RendererMap = { [K in RecordType]: WireRenderer<K> };
 
+/** Render the summary of a `context.apply_compaction` record across its v2
+ *  payload variants: a plain string on current records, a ContextMessage on
+ *  the legacy variant; fall back to `contextSummary` when neither holds. */
+function compactionSummaryText(r: AgentRecordOf<'context.apply_compaction'>): string {
+  const summary = r.summary;
+  if (typeof summary === 'string') return summary;
+  if (summary !== undefined) return firstText(summary.content);
+  return ('contextSummary' in r ? r.contextSummary : undefined) ?? '';
+}
+
 export const WIRE_RENDERERS: RendererMap = {
   metadata: {
     tone: 'meta',
@@ -67,11 +77,13 @@ export const WIRE_RENDERERS: RendererMap = {
     tone: 'config',
     label: 'config',
     headline: (r) => {
+      const cwd = r.environmentDisclosure?.cwd;
+      const effort = r.thinkingEffort ?? r.thinkingLevel;
       const parts: string[] = [];
       if (r.profileName !== undefined) parts.push(`profile=${r.profileName}`);
       if (r.modelAlias !== undefined) parts.push(`model=${r.modelAlias}`);
-      if (r.cwd !== undefined) parts.push(`cwd=${r.cwd}`);
-      if (r.thinkingEffort !== undefined) parts.push(`thinking=${r.thinkingEffort}`);
+      if (cwd !== undefined) parts.push(`cwd=${cwd}`);
+      if (effort !== undefined) parts.push(`thinking=${effort}`);
       if (r.systemPrompt !== undefined) parts.push(`system(${r.systemPrompt.length}b)`);
       return {
         main: (
@@ -255,37 +267,48 @@ export const WIRE_RENDERERS: RendererMap = {
   'context.apply_compaction': {
     tone: 'compaction',
     label: 'compacted',
-    headline: (r) => ({
-      main: (
-        <span className="flex items-center gap-2 min-w-0">
-          <Pill tone="compaction" variant="soft">
-            compacted
-          </Pill>
-          <Dim>
-            summary {r.summary.length}b · {r.tokensBefore}→{r.tokensAfter} tok · {r.compactedCount}{' '}
-            msgs
-          </Dim>
-        </span>
-      ),
-    }),
-    detail: (r) => (
-      <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
-        <FieldRow label="summary" wide>
-          <SizePreview label="summary" sizeBytes={r.summary.length} preview={r.summary}>
-            <pre className="whitespace-pre-wrap break-words text-fg-1">{r.summary}</pre>
-          </SizePreview>
-        </FieldRow>
-        <FieldRow label="compactedCount">
-          <span className="text-[var(--color-sev-info)]">{r.compactedCount}</span>
-        </FieldRow>
-        <FieldRow label="tokensBefore">
-          <span className="text-[var(--color-sev-info)]">{r.tokensBefore}</span>
-        </FieldRow>
-        <FieldRow label="tokensAfter">
-          <span className="text-[var(--color-sev-info)]">{r.tokensAfter}</span>
-        </FieldRow>
-      </div>
-    ),
+    headline: (r) => {
+      // v2 payload variants: `summary` is a string on current records, a
+      // ContextMessage on the legacy variant (which uses `count` instead of
+      // `compactedCount`); `tokensBefore`/`tokensAfter` are optional.
+      const summaryText = compactionSummaryText(r);
+      const compactedCount = r.compactedCount ?? ('count' in r ? r.count : 0);
+      return {
+        main: (
+          <span className="flex items-center gap-2 min-w-0">
+            <Pill tone="compaction" variant="soft">
+              compacted
+            </Pill>
+            <Dim>
+              summary {summaryText.length}b · {r.tokensBefore ?? '?'}→{r.tokensAfter ?? '?'} tok ·{' '}
+              {compactedCount} msgs
+            </Dim>
+          </span>
+        ),
+      };
+    },
+    detail: (r) => {
+      const summaryText = compactionSummaryText(r);
+      const compactedCount = r.compactedCount ?? ('count' in r ? r.count : 0);
+      return (
+        <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
+          <FieldRow label="summary" wide>
+            <SizePreview label="summary" sizeBytes={summaryText.length} preview={summaryText}>
+              <pre className="whitespace-pre-wrap break-words text-fg-1">{summaryText}</pre>
+            </SizePreview>
+          </FieldRow>
+          <FieldRow label="compactedCount">
+            <span className="text-[var(--color-sev-info)]">{compactedCount}</span>
+          </FieldRow>
+          <FieldRow label="tokensBefore">
+            <span className="text-[var(--color-sev-info)]">{r.tokensBefore ?? '(n/a)'}</span>
+          </FieldRow>
+          <FieldRow label="tokensAfter">
+            <span className="text-[var(--color-sev-info)]">{r.tokensAfter ?? '(n/a)'}</span>
+          </FieldRow>
+        </div>
+      );
+    },
   },
 
   'context.undo': {
@@ -642,7 +665,7 @@ export const WIRE_RENDERERS: RendererMap = {
     headline: () => ({ main: <Dim>goal cleared</Dim> }),
   },
 
-  // Observability records — the request trace (see agent-core records/types.ts).
+  // Observability records — the request trace (see the v2 wire manifest).
 
   'llm.tools_snapshot': {
     tone: 'tools',
@@ -787,6 +810,270 @@ export const WIRE_RENDERERS: RendererMap = {
           <Mono>#{r.hash.slice(0, 8)}</Mono>
         ),
     }),
+  },
+
+  'turn.ended': {
+    tone: 'turn',
+    label: 'turn✓',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>turn {r.turnId}</Mono>
+          <Pill tone={r.reason === 'completed' ? 'success' : 'warning'} variant="soft">
+            {r.reason}
+          </Pill>
+          {r.durationMs !== undefined ? <Dim>{r.durationMs}ms</Dim> : null}
+        </span>
+      ),
+    }),
+  },
+
+  'turn.step.interrupted': {
+    tone: 'warning',
+    label: 'step×',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>
+            turn {r.turnId} · step {r.step}
+          </Mono>
+          <Dim className="truncate">{r.reason}</Dim>
+        </span>
+      ),
+    }),
+  },
+
+  'turn.step.retrying': {
+    tone: 'warning',
+    label: 'retry↻',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>
+            turn {r.turnId} · step {r.step}
+          </Mono>
+          <Pill tone="warning" variant="soft">
+            attempt {r.nextAttempt}/{r.maxAttempts}
+          </Pill>
+          <Dim className="truncate">
+            {r.errorName}: {truncate(r.errorMessage, 60)}
+          </Dim>
+        </span>
+      ),
+    }),
+  },
+
+  'prompt.accepted': {
+    tone: 'turn',
+    label: 'prompt+',
+    headline: (r) => ({ main: <Mono>{r.promptId}</Mono> }),
+  },
+
+  'prompt.aborted': {
+    tone: 'warning',
+    label: 'prompt×',
+    headline: (r) => ({ main: <Mono>{r.promptId}</Mono> }),
+  },
+
+  'prompt.completed': {
+    tone: 'turn',
+    label: 'prompt✓',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2">
+          <Mono>{r.promptId}</Mono>
+          <Pill tone={r.reason === 'completed' ? 'success' : 'warning'} variant="soft">
+            {r.reason}
+          </Pill>
+        </span>
+      ),
+    }),
+  },
+
+  'prompt.steered': {
+    tone: 'turn',
+    label: 'steer→',
+    headline: (r) => ({
+      main: <span className="truncate text-fg-1">→ {truncate(firstText(r.content), 80)}</span>,
+    }),
+  },
+
+  'interaction.request': {
+    tone: 'approval',
+    label: 'ask→',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2">
+          <Pill tone="approval" variant="soft">
+            {r.kind}
+          </Pill>
+          <Mono>{r.id}</Mono>
+        </span>
+      ),
+    }),
+  },
+
+  'interaction.resolved': {
+    tone: 'approval',
+    label: 'ask✓',
+    headline: (r) => ({ main: <Mono>{r.id}</Mono> }),
+  },
+
+  'task.started': {
+    tone: 'subagent',
+    label: 'task↻',
+    headline: (r) => ({ main: <Mono>{r.info.taskId}</Mono> }),
+  },
+
+  'task.terminated': {
+    tone: 'subagent',
+    label: 'task✓',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2">
+          <Mono>{r.info.taskId}</Mono>
+          <Dim>{r.info.status}</Dim>
+        </span>
+      ),
+    }),
+  },
+
+  'task.waitDelivered': {
+    tone: 'subagent',
+    label: 'task⇢',
+    headline: (r) => ({
+      main: (
+        <Dim>
+          wait delivered · {r.keys.length} task{r.keys.length === 1 ? '' : 's'}
+        </Dim>
+      ),
+    }),
+  },
+
+  'token_counting.measured': {
+    tone: 'meta',
+    label: 'tokens',
+    headline: (r) => ({ main: <Dim>context {r.tokens} tok (measured)</Dim> }),
+  },
+
+  'token_counting.truncated': {
+    tone: 'meta',
+    label: 'tokens',
+    headline: (r) => ({ main: <Dim>context {r.tokens} tok (truncated @ {r.length})</Dim> }),
+  },
+
+  'token_counting.rebased': {
+    tone: 'meta',
+    label: 'tokens',
+    headline: (r) => ({
+      main: (
+        <Dim>
+          context {r.tokens} tok (rebased{r.measured ? ', measured' : ''})
+        </Dim>
+      ),
+    }),
+  },
+
+  'token_counting.turn_recorded': {
+    tone: 'meta',
+    label: 'tokens',
+    headline: (r) => ({ main: <Dim>context {r.tokens} tok (turn {r.turnId})</Dim> }),
+  },
+
+  'cron.add': {
+    tone: 'lifecycle',
+    label: 'cron+',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>{r.task.cron}</Mono>
+          <Dim className="truncate">{truncate(r.task.prompt, 60)}</Dim>
+        </span>
+      ),
+    }),
+  },
+
+  'cron.delete': {
+    tone: 'warning',
+    label: 'cron−',
+    headline: (r) => ({
+      main: (
+        <Dim>
+          {r.ids.length} task{r.ids.length === 1 ? '' : 's'} deleted
+        </Dim>
+      ),
+    }),
+  },
+
+  'cron.cursor': {
+    tone: 'lifecycle',
+    label: 'cron·fired',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>{r.id}</Mono>
+          <Dim>fired {new Date(r.lastFiredAt).toLocaleString()}</Dim>
+        </span>
+      ),
+    }),
+  },
+
+  'plan.revision': {
+    tone: 'lifecycle',
+    label: 'plan·rev',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>
+            plan {r.id} · v{r.version}
+          </Mono>
+          <Dim>{r.bytes}b</Dim>
+        </span>
+      ),
+    }),
+  },
+
+  'plugin.session_start': {
+    tone: 'meta',
+    label: 'plugin',
+    headline: (r) => ({
+      main: (
+        <Dim className="truncate">
+          session start{r.content !== null ? `: ${truncate(r.content, 60)}` : ''}
+        </Dim>
+      ),
+    }),
+  },
+
+  'runtime.set_binding': {
+    tone: 'meta',
+    label: 'runtime',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>{r.runtimeId}</Mono>
+          <Dim className="truncate">workspace {r.workspaceId}</Dim>
+        </span>
+      ),
+    }),
+  },
+
+  'staleGuard.recorded': {
+    tone: 'meta',
+    label: 'stale',
+    headline: (r) => ({ main: <Dim className="truncate">{r.path}</Dim> }),
+  },
+
+  'staleGuard.cleared': {
+    tone: 'meta',
+    label: 'stale✓',
+    headline: () => ({ main: <Dim>stale guard cleared</Dim> }),
+  },
+
+  'interruptionReminder.recorded': {
+    tone: 'meta',
+    label: 'interrupted',
+    headline: (r) => ({ main: <Dim>interruption reminder · turn {r.turnId}</Dim> }),
   },
 };
 
