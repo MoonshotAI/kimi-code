@@ -897,7 +897,11 @@ function managedModel(
 class OAuthToolkitService extends KimiOAuthToolkit implements IOAuthToolkit {
   declare readonly _serviceBrand: undefined;
   constructor(@IBootstrapService bootstrap: IBootstrapService) {
-    super({ homeDir: bootstrap.homeDir, identity: bootstrap.clientIdentity });
+    super({
+      homeDir: bootstrap.homeDir,
+      configPath: bootstrap.configPath,
+      identity: bootstrap.clientIdentity,
+    });
   }
 }
 

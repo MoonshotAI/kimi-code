@@ -5,12 +5,21 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import {
   clearManagedKimiCodeConfig,
+  registerKeyringBackend,
   resolveKimiCodeOAuthKey,
   resolveKimiCodeRuntimeAuth,
+  unregisterKeyringBackend,
 } from '@moonshot-ai/kimi-code-oauth';
+import type { KeyringApi, KeyringEntry } from '@moonshot-ai/kimi-code-oauth';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { createServices, type TestInstantiationService } from '#/_base/di/test';
+import {
+  createScopedTestHost,
+  createServices,
+  stubPair,
+  type ScopedTestHost,
+  type TestInstantiationService,
+} from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
 import { IAuthSummaryService, IOAuthService, IOAuthToolkit } from '#/app/auth/auth';
 import { AuthSummaryService, OAuthService } from '#/app/auth/authService';
@@ -32,13 +41,14 @@ import type { Event2 } from '#/app/event/event2';
 import { ILogService } from '#/_base/log/log';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { noopTelemetryService, ITelemetryService } from '#/app/telemetry/telemetry';
 import { IModelService, type ModelRecord } from '#/kosong/model/model';
 import { MODELS_SECTION } from '#/app/kosongConfig/configSection';
 import { IProviderService, type ProviderConfig, type ProvidersChangedEvent } from '#/kosong/provider/provider';
 
 import '#/kosong/provider/providers/kimi/kimi.contrib';
 
-import { registerBootstrapServices } from '../bootstrap/stubs';
+import { registerBootstrapServices, stubBootstrap } from '../bootstrap/stubs';
 import { registerTelemetryServices } from '../telemetry/stubs';
 import { stubAgentIdentity } from '../../app/agentIdentity/stubs';
 
@@ -1915,5 +1925,71 @@ describe('AuthLegacyService', () => {
     defaultModel = 'k2';
     await expect(svc.get()).resolves.toMatchObject({ models_ready: true });
     expect(configReload).not.toHaveBeenCalled();
+  });
+});
+
+describe('OAuthToolkitService bootstrap wiring', () => {
+  let host: ScopedTestHost | undefined;
+  let tempDir: string;
+  let providerChangedEmitter: Emitter<ProvidersChangedEvent>;
+  let createEntry: ReturnType<typeof vi.fn<(service: string, account: string) => KeyringEntry>>;
+  let findAccounts: ReturnType<typeof vi.fn<(service: string) => string[]>>;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'kimi-v2-auth-toolkit-'));
+    const homeDir = join(tempDir, 'home');
+    await mkdir(homeDir, { recursive: true });
+    const configPath = join(tempDir, 'custom-config.toml');
+    await writeFile(configPath, 'credentials_store = "file"\n', 'utf8');
+
+    createEntry = vi.fn((_service: string, _account: string) => ({
+      getPassword: vi.fn(() => null),
+      setPassword: vi.fn((_password: string) => {}),
+      deleteCredential: vi.fn(() => true),
+    } satisfies KeyringEntry));
+    findAccounts = vi.fn((_service: string) => []);
+    registerKeyringBackend({ createEntry, findAccounts } satisfies KeyringApi);
+
+    providerChangedEmitter = new Emitter<ProvidersChangedEvent>();
+    host = createScopedTestHost([
+      stubPair(IBootstrapService, { ...stubBootstrap(homeDir), configPath }),
+      stubPair(IProviderService, {
+        _serviceBrand: undefined,
+        onDidChangeProviders: providerChangedEmitter.event,
+        get: () => undefined,
+      } as unknown as IProviderService),
+      stubPair(IConfigService, { _serviceBrand: undefined } as unknown as IConfigService),
+      stubPair(ITelemetryService, noopTelemetryService),
+      stubPair(ILogService, {
+        _serviceBrand: undefined,
+        level: 'off',
+        setLevel: () => {},
+        error: () => {},
+        warn: () => {},
+        info: () => {},
+        debug: () => {},
+        child: () => ({}) as ILogService,
+        flush: async () => {},
+      } as unknown as ILogService),
+      stubPair(IEventService, { _serviceBrand: undefined } as unknown as IEventService),
+      stubPair(IModelService, { _serviceBrand: undefined } as unknown as IModelService),
+      stubPair(IAgentIdentity, { _serviceBrand: undefined } as unknown as IAgentIdentity),
+    ]);
+  });
+
+  afterEach(async () => {
+    host?.dispose();
+    host = undefined;
+    providerChangedEmitter.dispose();
+    unregisterKeyringBackend();
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it('uses the bootstrap configPath when selecting credential storage', async () => {
+    const oauth = host!.app.accessor.get(IOAuthService);
+
+    await expect(oauth.status()).resolves.toEqual({ loggedIn: false });
+    expect(createEntry).not.toHaveBeenCalled();
+    expect(findAccounts).not.toHaveBeenCalled();
   });
 });
