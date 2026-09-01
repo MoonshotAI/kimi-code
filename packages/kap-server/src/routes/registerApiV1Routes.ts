@@ -118,6 +118,7 @@ export async function registerApiV1Routes(
       registerSessionsRoutes(
         apiV1 as unknown as Parameters<typeof registerSessionsRoutes>[0],
         core,
+        { sessionEventCursor: (sessionId) => opts.broadcaster.getCursor(sessionId) },
       );
       registerRuntimeRoutes(apiV1 as unknown as Parameters<typeof registerRuntimeRoutes>[0], core);
       registerSessionExportRoute(
