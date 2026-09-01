@@ -752,6 +752,7 @@ describe('v1↔v2 return-value parity', () => {
         thinking: { effort: 'low' },
         experimental: { 'new-flag': false },
         yolo: true,
+        credentialsStore: 'keyring' as const,
       };
       const [v1Config, v2Config] = await Promise.all([
         v1.setConfig(patch),

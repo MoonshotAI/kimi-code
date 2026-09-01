@@ -45,6 +45,13 @@ export class OAuthConnectionError extends OAuthError {
   }
 }
 
+export class OAuthStorageUnavailableError extends OAuthError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'OAuthStorageUnavailableError';
+  }
+}
+
 export class DeviceCodeExpiredError extends OAuthError {
   constructor(message = 'Device code expired.') {
     super(message);

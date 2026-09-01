@@ -152,6 +152,7 @@ kimi
 | `KIMI_CODE_TUI_FULL_SCREEN` | 启用实验性的 fullscreen alternate-screen 界面：可滚动的 transcript 视口、鼠标选择文本、可点击链接、Ctrl-Shift-F 搜索 | `1` 开启；其他值保持常规内联界面 |
 | `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL` | [subagent 模型池](./config-files.md#subagent-模型池) 默认启用，在包括交互式 TUI 在内的所有启动方式下生效；设为假值可禁用；master `KIMI_CODE_EXPERIMENTAL_FLAG=1` 会强制启用本功能 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK` | 在 `Agent` 和 `AgentSwarm` 工具上启用实验性的 `fork` 参数，让模型可以以调用方 Agent 对话历史的快照而不是空上下文启动 subagent；master `KIMI_CODE_EXPERIMENTAL_FLAG=1` 也会启用本功能 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
+| `KIMI_DISABLE_KEYRING` | 强制 OAuth 凭据（供应商登录和 MCP server 授权）回退到明文文件存储，即使操作系统钥匙串可用；优先级高于 `config.toml` 的 `credentials_store`——适用于钥匙串访问会卡住或弹窗的环境（容器、headless SSH） | `1` 禁用钥匙串；其他值由 `credentials_store` 决定 |
 | `KIMI_MCP_STARTUP_TIMEOUT_MS` | 所有 MCP server 的全局默认连接超时（毫秒）；优先级高于 `config.toml` 的 `[mcp] startup_timeout_ms`，但低于 `mcp.json` 中单个 server 的 `startupTimeoutMs`（默认 `30000`） | `1` 到 `2147483647` 的整数；非法值被忽略 |
 | `KIMI_MCP_TOOL_TIMEOUT_MS` | 所有 MCP server 的全局默认单次工具调用超时（毫秒）；优先级高于 `config.toml` 的 `[mcp] tool_timeout_ms`，但低于 `mcp.json` 中单个 server 的 `toolTimeoutMs`（默认 `60000`） | `1` 到 `2147483647` 的整数；非法值被忽略 |
 | `KIMI_LOOP_MAX_STEPS_PER_TURN` | Agent 单轮最大步数；优先级高于 `config.toml` 的 `[loop_control] max_steps_per_turn`（不设或 `0` 表示无上限） | 非负整数；非法值被忽略 |

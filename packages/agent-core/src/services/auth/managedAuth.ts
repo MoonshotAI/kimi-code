@@ -55,6 +55,7 @@ class ServicesManagedAuthFacade implements ServicesAuthFacade {
   ) {
     this.toolkit = new KimiOAuthToolkit<ServicesManagedConfig>({
       homeDir: options.homeDir,
+      configPath: options.configPath,
       identity,
       configAdapter: {
         configPath: options.configPath,

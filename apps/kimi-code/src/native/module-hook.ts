@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 
 import { getNativePackageRoot } from './native-assets';
+import { loadNativePackage } from './native-require';
 
 type ModuleLoad = (request: string, parent: unknown, isMain: boolean) => unknown;
 
@@ -11,7 +12,17 @@ interface ModuleWithLoad {
 }
 
 const nodeRequire = createRequire(import.meta.url);
+
+// Bare-specifier native packages that ship as SEA native assets. In a SEA
+// binary there is no node_modules next to the executable, so redirect the
+// require to the extracted native-asset cache; loadNativePackage returns null
+// outside SEA and the normal resolution below takes over. The reentrancy
+// guard lets the cache-root require inside loadNativePackage fall through to
+// the original loader.
+const NATIVE_ASSET_PACKAGES = new Set(['@napi-rs/keyring']);
+
 let installed = false;
+let loadingNativePackage = false;
 
 // pi-tui loads its platform-specific native helpers via an absolute-path
 // require() computed from import.meta.url / process.execPath
@@ -37,6 +48,15 @@ export function installNativeModuleHook(): void {
     parent: unknown,
     isMain: boolean,
   ): unknown {
+    if (NATIVE_ASSET_PACKAGES.has(request) && !loadingNativePackage) {
+      loadingNativePackage = true;
+      try {
+        const pkg = loadNativePackage<unknown>(request);
+        if (pkg !== null) return pkg;
+      } finally {
+        loadingNativePackage = false;
+      }
+    }
     if (
       typeof request === 'string' &&
       PI_TUI_NATIVE_PATTERN.test(request) &&

@@ -17,7 +17,13 @@ import { dirname } from 'node:path';
 
 import lockfile from 'proper-lockfile';
 
-import { DeviceCodeTimeoutError, OAuthAccessDeniedError, OAuthError, OAuthUnauthorizedError } from './errors';
+import {
+  DeviceCodeTimeoutError,
+  OAuthAccessDeniedError,
+  OAuthError,
+  OAuthStorageUnavailableError,
+  OAuthUnauthorizedError,
+} from './errors';
 import { pollDeviceToken, refreshAccessToken, requestDeviceAuthorization } from './oauth';
 import type { DevicePollResult, RefreshOptions } from './oauth';
 import type { TokenStorage } from './storage';
@@ -385,7 +391,11 @@ export class OAuthManager {
           // a fresh process (with no in-memory state) won't re-attempt the
           // same dead refresh_token. The file stays present so peers see
           // "previously logged in, now rejected" instead of "never logged in".
-          await this.storage.save(this.config.name, revokedTombstone(activeToken));
+          try {
+            await this.storage.save(this.config.name, revokedTombstone(activeToken));
+          } catch (tombstoneError) {
+            if (!(tombstoneError instanceof OAuthStorageUnavailableError)) throw tombstoneError;
+          }
           this.notifyRefresh({ success: false, reason: 'unauthorized' });
         } else {
           this.notifyRefresh({ success: false, reason: 'network_or_other' });

@@ -5,6 +5,7 @@ export {
   OAuthConnectionError,
   OAuthError,
   OAuthUnauthorizedError,
+  OAuthStorageUnavailableError,
   RetryableRefreshError,
 } from './errors';
 
@@ -19,7 +20,32 @@ export type {
 export { tokenFromWire, tokenToWire } from './types';
 
 export type { TokenStorage } from './storage';
-export { FileTokenStorage } from './storage';
+export { assertValidTokenName, FileTokenStorage, withFileLock } from './storage';
+
+export type {
+  CredentialsStoreMode,
+  KeyringApi,
+  KeyringEntry,
+  KeyringOperation,
+  KeyringStorageObserver,
+  RegisteredKeyringBackend,
+  ResolveCredentialsStoreModeDeps,
+  ResolveTokenStorageDeps,
+} from './keyring-storage';
+export {
+  CREDENTIALS_STORE_CONFIG_KEY,
+  getRegisteredKeyringBackend,
+  isKeyringDisabledByEnv,
+  KEYRING_PROBE_SERVICE,
+  KEYRING_SERVICE,
+  KeyringTokenStorage,
+  keyringServiceForCredentialsDir,
+  probeKeyringBackend,
+  registerKeyringBackend,
+  resolveCredentialsStoreMode,
+  resolveTokenStorage,
+  unregisterKeyringBackend,
+} from './keyring-storage';
 
 export type { DevicePollResult, RefreshOptions } from './oauth';
 export { pollDeviceToken, refreshAccessToken, requestDeviceAuthorization } from './oauth';

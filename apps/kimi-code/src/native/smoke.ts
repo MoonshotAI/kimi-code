@@ -13,7 +13,7 @@ import {
   getNativePackageRoot,
 } from './native-assets';
 
-const smokePackages = ['@mariozechner/clipboard', '@moonshot-ai/pi-tui'];
+const smokePackages = ['@mariozechner/clipboard', '@moonshot-ai/pi-tui', '@napi-rs/keyring'];
 
 function smokePiTuiNativeLoad(): void {
   const platform = process.platform;

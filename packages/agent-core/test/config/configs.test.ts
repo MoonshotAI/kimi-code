@@ -228,6 +228,22 @@ describe('harness config TOML loader', () => {
     expect(config.raw?.['notifications']).toEqual({ claim_stale_after_ms: 15000 });
   });
 
+  it('parses credentials_store into the typed config', () => {
+    const config = parseConfigString('credentials_store = "keyring"\n', 'config.toml');
+    expect(config.credentialsStore).toBe('keyring');
+  });
+
+  it('round-trips credentials_store', async () => {
+    const configPath = join(makeTempDir(), 'config.toml');
+    const config = parseConfigString('credentials_store = "keyring"\n', configPath);
+
+    await writeConfigFile(configPath, config);
+
+    expect(parseConfigString(await readFile(configPath, 'utf-8'), configPath).credentialsStore).toBe(
+      'keyring',
+    );
+  });
+
   it('round-trips the [image] section', async () => {
     const dir = makeTempDir();
     const configPath = join(dir, 'image-round-trip.toml');

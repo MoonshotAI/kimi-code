@@ -105,6 +105,7 @@ timeout = 5
 | `extra_agent_dirs` | `array<string>` | — | 额外自定义 Agent 搜索目录，叠加到默认目录之上 |
 | `builtin_product_skills` | `boolean` | `true` | 是否向模型提供介绍 Kimi Code 自身的内置 Skills：`update-config`、`custom-theme`、`mcp-config`、`check-kimi-code-docs`、`import-from-cc-codex`。关闭后它们的名称和描述不再进入系统提示词，代价是失去这些任务的引导流程。默认的 `agent-core-v2` 引擎会读取本字段；设置 `KIMI_CODE_LEGACY_FLAG=1` 选择旧版引擎时会忽略 |
 | `telemetry` | `boolean` | `true` | 是否启用匿名遥测；显式设为 `false` 时关闭 |
+| `credentials_store` | `string` | `auto` | 操作系统钥匙串可用时 OAuth 凭据的存储方式：`auto`（优先使用钥匙串，并同步更新明文文件，以保持兼容）、`keyring`（以钥匙串为准，迁移后删除明文副本）、`file`（仅明文文件）；详见 [数据位置](./data-locations.md) |
 | `providers` | `table` | `{}` | API 供应商表 → [`providers`](#providers) |
 | `models` | `table` | — | 模型别名表 → [`models`](#models) |
 | `thinking` | `table` | — | Thinking 模式默认参数 → [`thinking`](#thinking) |

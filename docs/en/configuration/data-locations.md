@@ -66,7 +66,7 @@ Each top-level file under the data root serves a specific purpose; most are mana
 - **`mcp.json`**: user-level MCP server declarations, merged with the project-local `.kimi-code/mcp.json` on startup. See [MCP](../customization/mcp.md).
 - **`skills/`**: Kimi-specific user-level Skills. This directory moves with `KIMI_CODE_HOME`; generic cross-tool Skills can still live under `~/.agents/skills/`. See [Agent Skills](../customization/skills.md).
 - **`plugins/installed.json`**: records installed plugins, each plugin's enabled state, and MCP server capability state changes made via `/plugins` or `/plugins mcp disable|enable`. Files installed from local paths or zip URLs are copied to `plugins/managed/<id>/`. See [Plugins](../customization/plugins.md).
-- **`credentials/`**: OAuth credential directory, with permissions `0o700` (directory) / `0o600` (files), readable and writable only by the current user. Managed provider credentials are stored as `credentials/<name>.json`; MCP server credentials are stored under `credentials/mcp/`. Credentials are written using an atomic flow (tmp → fsync → rename) to prevent corruption.
+- **`credentials/`**: OAuth credential directory, with permissions `0o700` (directory) / `0o600` (files), readable and writable only by the current user. In file-storage mode, managed provider credentials are stored as `credentials/<name>.json` and MCP server credentials under `credentials/mcp/`; credentials are written using an atomic flow (tmp → fsync → rename) to prevent corruption. When the operating system keychain is available (macOS Keychain, Windows Credential Manager, or Linux Secret Service), OAuth credentials are stored in the keychain and the plaintext files are kept in sync as a compatibility bridge, so older builds and tools that only read the files keep working; this is controlled by the `credentials_store` key in `config.toml` — `auto` (the default) keeps both stores in sync, `keyring` makes the keychain authoritative and removes plaintext copies after migration, and `file` disables the keychain entirely; `KIMI_DISABLE_KEYRING=1` overrides the config and forces the file store (see [Environment variables](./env-vars.md#runtime-switches)). The keychain is separate from this directory, so deleting these files does not remove keychain credentials; when the keychain is unavailable the plaintext files remain the fallback, and keychain-only credentials stay unavailable until the keychain recovers or you sign in again.
 
 ## Session data
 
@@ -113,8 +113,8 @@ Deleting the data root directory (`~/.kimi-code/` or the path set by `KIMI_CODE_
 | Clear input history | Delete `~/.kimi-code/user-history/` |
 | Reset update state | Delete `~/.kimi-code/updates/latest.json` |
 | Force re-download of managed `rg` and `fd` | Delete `~/.kimi-code/bin/` |
-| Clear provider OAuth login state | Run `/logout`, or delete the corresponding `credentials/<name>.json` |
-| Clear MCP server OAuth login state | Delete `credentials/mcp/` (`/logout` does not clear MCP credentials) |
+| Clear provider OAuth login state | Run `/logout`; deleting `credentials/<name>.json` only applies when file storage is active |
+| Clear MCP server OAuth login state | Use the MCP server's auth reset/logout action; deleting `credentials/mcp/` only applies when file storage is active (`/logout` does not clear MCP credentials) |
 | Remove user-level MCP declarations | Delete `$KIMI_CODE_HOME/mcp.json` (default `~/.kimi-code/mcp.json`) |
 | Clear global Kimi-specific agent instructions | Delete `$KIMI_CODE_HOME/AGENTS.md` (default `~/.kimi-code/AGENTS.md`) |
 | Clear plugin install records | Delete `$KIMI_CODE_HOME/plugins/` (local plugin source directories are not affected) |

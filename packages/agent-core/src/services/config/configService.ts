@@ -68,6 +68,7 @@ function toConfigResponse(config: KimiConfig): ConfigResponse {
     background: config.background,
     experimental: config.experimental,
     telemetry: config.telemetry,
+    credentials_store: config.credentialsStore,
     raw: config.raw,
   };
 }

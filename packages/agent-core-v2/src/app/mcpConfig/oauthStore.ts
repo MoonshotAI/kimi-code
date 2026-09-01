@@ -1,7 +1,22 @@
+import {
+  getRegisteredKeyringBackend,
+  isKeyringDisabledByEnv,
+  probeKeyringBackend,
+  resolveCredentialsStoreMode,
+} from '@moonshot-ai/kimi-code-oauth';
+import { join } from 'pathe';
+
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import { ILogService } from '#/_base/log/log';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
+import {
+  createKeyringMcpOAuthStore,
+  keyringMcpOAuthLockTarget,
+  keyringMcpOAuthServiceForCredentialsDir,
+} from '#/app/mcpConfig/keyringMcpOAuthStore';
 import type { McpOAuthStore } from '#/mcpCore/oauth/store';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 
@@ -40,8 +55,29 @@ export class McpOAuthStoreAdapter implements IMcpOAuthStore {
 
   private readonly delegate: McpOAuthStore;
 
-  constructor(@IAtomicDocumentStore docs: IAtomicDocumentStore) {
-    this.delegate = createMcpOAuthStore(docs);
+  constructor(
+    @IAtomicDocumentStore docs: IAtomicDocumentStore,
+    @ILogService log: ILogService,
+    @IBootstrapService bootstrap: IBootstrapService,
+  ) {
+    const credentialsDir = join(bootstrap.homeDir, 'credentials');
+    const mode = resolveCredentialsStoreMode(credentialsDir, { configPath: bootstrap.configPath });
+    const backend = getRegisteredKeyringBackend();
+    this.delegate =
+      mode !== 'file' &&
+      !isKeyringDisabledByEnv() &&
+      backend !== undefined &&
+      probeKeyringBackend(backend.api)
+        ? createKeyringMcpOAuthStore(
+            backend.api,
+            createMcpOAuthStore(docs),
+            log,
+            keyringMcpOAuthServiceForCredentialsDir(credentialsDir),
+            (key) => keyringMcpOAuthLockTarget(credentialsDir, key),
+            undefined,
+            mode === 'auto',
+          )
+        : createMcpOAuthStore(docs);
   }
 
   read<T>(key: string): Promise<T | undefined> {

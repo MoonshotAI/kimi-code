@@ -1,3 +1,9 @@
+/**
+ * Remote Control CLI integration: flags, links, tunnel auth/lifecycle, and process locking.
+ * Public entry points use local HTTP/WebSocket relays; the OS keyring boundary is faked.
+ * Run: pnpm --filter @moonshot-ai/kimi-code exec vitest run test/cli/web/remote-control.test.ts
+ */
+
 import { createServer, type IncomingMessage } from 'node:http';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -8,8 +14,14 @@ import { join } from 'node:path';
 import {
   FileTokenStorage,
   KIMI_CODE_PROVIDER_NAME,
+  keyringServiceForCredentialsDir,
+  registerKeyringBackend,
   resolveKimiTokenStorageName,
+  resolveTokenStorage,
   type TokenInfo,
+  type KeyringApi,
+  type KeyringEntry,
+  unregisterKeyringBackend,
 } from '@moonshot-ai/kimi-code-oauth';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
@@ -41,8 +53,31 @@ const cleanups: Array<() => Promise<void> | void> = [];
 
 afterEach(async () => {
   vi.unstubAllEnvs();
+  unregisterKeyringBackend();
   while (cleanups.length > 0) await cleanups.pop()!();
 });
+
+class FakeKeyring implements KeyringApi {
+  private readonly store = new Map<string, string>();
+
+  createEntry(service: string, account: string): KeyringEntry {
+    const key = `${service}\u0000${account}`;
+    return {
+      getPassword: () => this.store.get(key) ?? null,
+      setPassword: (password) => {
+        this.store.set(key, password);
+      },
+      deleteCredential: () => this.store.delete(key),
+    };
+  }
+
+  findAccounts(service: string): string[] {
+    const prefix = `${service}\u0000`;
+    return [...this.store.keys()]
+      .filter((key) => key.startsWith(prefix))
+      .map((key) => key.slice(prefix.length));
+  }
+}
 
 describe('Remote Control experimental flag', () => {
   it('is off unless the per-feature env or the master switch is truthy', () => {
@@ -202,6 +237,44 @@ describe('Remote Control HTTP forwarding', () => {
 });
 
 describe('Remote Control tunnel', () => {
+  it('authenticates the relay when the Kimi login exists only in the keychain', async () => {
+    // The suite-level KIMI_DISABLE_KEYRING=1 (vitest.config.ts) would force the
+    // file store; this test exercises the keychain path specifically.
+    vi.stubEnv('KIMI_DISABLE_KEYRING', '0');
+    const homeDir = mkdtempSync(join(tmpdir(), 'kimi-rc-keyring-'));
+    cleanups.push(() => rmSync(homeDir, { recursive: true, force: true }));
+    const keyring = new FakeKeyring();
+    registerKeyringBackend(keyring);
+    const credentialsDir = join(homeDir, 'credentials');
+    const storage = resolveTokenStorage(credentialsDir);
+    await storage.save(
+      resolveKimiTokenStorageName({ providerName: KIMI_CODE_PROVIDER_NAME }),
+      TOKEN,
+    );
+    expect(keyring.findAccounts(keyringServiceForCredentialsDir(credentialsDir))).toContain(
+      resolveKimiTokenStorageName({ providerName: KIMI_CODE_PROVIDER_NAME }),
+    );
+
+    const relay = await startAuthRelay();
+    let handle: RemoteControlHandle | undefined;
+    cleanups.push(async () => handle?.close());
+    handle = await startRemoteControl({
+      homeDir,
+      localOrigin: 'http://127.0.0.1:1',
+      localServerToken: 'local-server-token',
+      relayOrigin: `http://127.0.0.1:${relay.port}/coding-relay`,
+      stderr: { write: () => true },
+    });
+
+    expect(
+      relay.requests.some(
+        (request) =>
+          request.authorization === 'Bearer refresh-token' ||
+          request.protocol === 'kimi-code.bearer.refresh-token',
+      ),
+    ).toBe(true);
+  });
+
   it('surfaces register_nak details', async () => {
     const homeDir = mkdtempSync(join(tmpdir(), 'kimi-rc-nak-'));
     cleanups.push(() => rmSync(homeDir, { recursive: true, force: true }));

@@ -5,14 +5,22 @@
  * 0600 is enforced; corrupted files return undefined rather than throwing.
  */
 
-import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { FileTokenStorage } from '../src/storage';
-import type { TokenInfo } from '../src/types';
+import { tokenToWire, type TokenInfo } from '../src/types';
 
 function makeTmpDir(): string {
   const dir = join(
@@ -52,6 +60,17 @@ describe('FileTokenStorage', () => {
     expect(await storage.load('kimi-code')).toBeUndefined();
   });
 
+  it('load() still works on a read-only credentials directory (no lock target can be created)', async () => {
+    const token = sampleToken();
+    writeFileSync(join(dir, 'kimi-code.json'), `${JSON.stringify(tokenToWire(token), null, 2)}\n`);
+    chmodSync(dir, 0o555);
+    try {
+      expect(await storage.load('kimi-code')).toEqual(token);
+    } finally {
+      chmodSync(dir, 0o755);
+    }
+  });
+
   it('round-trips a token via save/load', async () => {
     const token = sampleToken();
     await storage.save('kimi-code', token);
@@ -83,10 +102,22 @@ describe('FileTokenStorage', () => {
     await storage.save('kimi-code', sampleToken());
     await storage.remove('kimi-code');
     expect(await storage.load('kimi-code')).toBeUndefined();
+    expect(existsSync(join(dir, 'kimi-code.removed'))).toBe(true);
   });
 
   it('remove() is idempotent when file is absent', async () => {
     await expect(storage.remove('never-existed')).resolves.toBeUndefined();
+  });
+
+  it('locks first save and remove even when the credential file is absent', async () => {
+    const target = join(dir, 'fresh.json');
+    expect(() => statSync(target)).toThrow();
+
+    await storage.save('fresh', sampleToken());
+    expect(await storage.load('fresh')).toEqual(sampleToken());
+
+    await storage.remove('fresh');
+    expect(await storage.load('fresh')).toBeUndefined();
   });
 
   it('save() overwrites an existing token atomically', async () => {
@@ -94,6 +125,60 @@ describe('FileTokenStorage', () => {
     await storage.save('kimi-code', sampleToken({ accessToken: 'second' }));
     const loaded = await storage.load('kimi-code');
     expect(loaded?.accessToken).toBe('second');
+  });
+
+  it('save() clears a prior removal marker before making the token visible', async () => {
+    await storage.remove('kimi-code');
+    expect(await storage.load('kimi-code')).toBeUndefined();
+
+    await storage.save('kimi-code', sampleToken({ accessToken: 'restored' }));
+
+    expect(await storage.load('kimi-code')).toMatchObject({ accessToken: 'restored' });
+    expect(existsSync(join(dir, 'kimi-code.removed'))).toBe(false);
+  });
+
+  it('save() keeps a removal marker when writing the token fails', async () => {
+    await storage.remove('kimi-code');
+    class FailingStorage extends FileTokenStorage {
+      override saveUnlocked(): void {
+        throw new Error('write failed');
+      }
+    }
+    const failing = new FailingStorage(dir);
+
+    await expect(failing.save('kimi-code', sampleToken())).rejects.toThrow('write failed');
+    expect(existsSync(join(dir, 'kimi-code.removed'))).toBe(true);
+    expect(await storage.load('kimi-code')).toBeUndefined();
+  });
+
+  it('fails closed when the removal marker cannot be read', async () => {
+    await storage.save('kimi-code', sampleToken());
+    mkdirSync(join(dir, 'kimi-code.removed'));
+
+    await expect(storage.load('kimi-code')).rejects.toThrow();
+  });
+
+  it('loads a file written by an older process after the removal marker', async () => {
+    await storage.remove('kimi-code');
+    writeFileSync(
+      join(dir, 'kimi-code.json'),
+      JSON.stringify(tokenToWire(sampleToken({ accessToken: 'newer' }))),
+    );
+
+    expect(await storage.load('kimi-code')).toMatchObject({ accessToken: 'newer' });
+    expect(existsSync(join(dir, 'kimi-code.removed'))).toBe(false);
+  });
+
+  it('continues hiding the exact file content that was removed', async () => {
+    const token = sampleToken({ accessToken: 'removed' });
+    await storage.save('kimi-code', token);
+    await storage.remove('kimi-code');
+    writeFileSync(
+      join(dir, 'kimi-code.json'),
+      `${JSON.stringify(tokenToWire(token), null, 2)}\n`,
+    );
+
+    expect(await storage.load('kimi-code')).toBeUndefined();
   });
 
   it('load() returns undefined on corrupt JSON (does not throw)', async () => {

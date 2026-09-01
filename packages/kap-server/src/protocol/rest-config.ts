@@ -30,6 +30,7 @@ export const configResponseSchema = z
     secondary_model: z.unknown().optional(),
     experimental: z.record(z.string(), z.boolean()).optional(),
     telemetry: z.boolean().optional(),
+    credentials_store: z.enum(['file', 'keyring', 'auto']).optional(),
     raw: z.record(z.string(), z.unknown()).optional(),
   })
   .passthrough();
@@ -56,5 +57,6 @@ export const patchConfigRequestSchema = z.object({
   secondary_model: z.unknown().optional(),
   experimental: z.record(z.string(), z.boolean()).optional(),
   telemetry: z.boolean().optional(),
+  credentials_store: z.enum(['file', 'keyring', 'auto']).optional(),
 });
 export type PatchConfigRequest = z.infer<typeof patchConfigRequestSchema>;

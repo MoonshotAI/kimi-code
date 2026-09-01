@@ -2,12 +2,13 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { KIMI_CODE_FLOW_CONFIG } from './constants';
-import { OAuthUnauthorizedError } from './errors';
+import { OAuthStorageUnavailableError, OAuthUnauthorizedError } from './errors';
 import {
   assertKimiHostIdentity,
   createKimiDefaultHeaders,
   type KimiHostIdentity,
 } from './identity';
+import { resolveTokenStorage } from './keyring-storage';
 import {
   fetchSubmitFeedback,
   kimiCodeFeedbackUrl,
@@ -42,7 +43,7 @@ import {
   type ParsedManagedUsage,
 } from './managed-usage';
 import { OAuthManager, type LoginOptions, type OAuthManagerOptions } from './oauth-manager';
-import { FileTokenStorage, type TokenStorage } from './storage';
+import type { TokenStorage } from './storage';
 import type { OAuthFlowConfig } from './types';
 
 export interface BearerTokenProvider {
@@ -61,6 +62,7 @@ export interface AuthStatus {
 export interface KimiOAuthToolkitOptions<TConfig = unknown> {
   readonly identity?: KimiHostIdentity | undefined;
   readonly homeDir?: string | undefined;
+  readonly configPath?: string;
   readonly credentialsDir?: string | undefined;
   readonly storage?: TokenStorage | undefined;
   readonly flowConfig?: OAuthFlowConfig | undefined;
@@ -126,7 +128,8 @@ export class KimiOAuthToolkit<TConfig = unknown> {
       options.identity === undefined ? undefined : assertKimiHostIdentity(options.identity);
     this.homeDir = options.homeDir ?? defaultKimiHome();
     const credentialsDir = options.credentialsDir ?? join(this.homeDir, 'credentials');
-    this.storage = options.storage ?? new FileTokenStorage(credentialsDir);
+    this.storage =
+      options.storage ?? resolveTokenStorage(credentialsDir, { configPath: options.configPath });
     this.flowConfig = options.flowConfig ?? KIMI_CODE_FLOW_CONFIG;
     this.configAdapter = options.configAdapter;
     this.fetchImpl = options.fetchImpl;
@@ -164,7 +167,12 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     const oauthHost = this.oauthHostFor(options.oauthRef, options.oauthHost);
     const oauthKey = options.oauthRef?.key ?? this.defaultOAuthKey(options.baseUrl, oauthHost);
     const manager = this.managerFor(name, oauthKey, oauthHost);
-    const hadToken = await manager.hasToken();
+    let hadToken = false;
+    try {
+      hadToken = await manager.hasToken();
+    } catch (error) {
+      if (!(error instanceof OAuthStorageUnavailableError)) throw error;
+    }
     let usedDeviceLogin = false;
     const loginWithDevice = async (): Promise<string> => {
       usedDeviceLogin = true;

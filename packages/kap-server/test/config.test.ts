@@ -110,6 +110,15 @@ describe('server-v2 /api/v1/config', () => {
     expect(after.yolo).toBe(false);
   });
 
+  it('POST { credentials_store } persists and GET echoes the storage mode', async () => {
+    await boot();
+    const cfg = await patchConfig({ credentials_store: 'keyring' });
+    expect(cfg.credentials_store).toBe('keyring');
+
+    const after = await getConfig();
+    expect(after.credentials_store).toBe('keyring');
+  });
+
   it('POST { secondary_model } persists the subagent model pool and GET echoes it', async () => {
     await boot();
     const cfg = await patchConfig({
