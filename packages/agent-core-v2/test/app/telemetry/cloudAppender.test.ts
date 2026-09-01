@@ -271,7 +271,7 @@ describe('CloudAppender', () => {
     expect(requests[0]?.body.events[0]?.['context_model']).toBe('ambient-model');
   });
 
-  it('prefers the constructor model over the ambient model in the envelope context', async () => {
+  it('prefers the ambient model over the constructor model in the envelope context', async () => {
     const requests: CapturedRequest[] = [];
     const appender = new CloudAppender(
       baseOptions({
@@ -287,7 +287,7 @@ describe('CloudAppender', () => {
     appender.track({ event: 'turn_started', context: { model: 'ambient-model' }, properties: {} });
     await appender.flush();
 
-    expect(requests[0]?.body.events[0]?.['context_model']).toBe('constructor-model');
+    expect(requests[0]?.body.events[0]?.['context_model']).toBe('ambient-model');
   });
 
   it('sends Authorization header when a token is provided', async () => {
