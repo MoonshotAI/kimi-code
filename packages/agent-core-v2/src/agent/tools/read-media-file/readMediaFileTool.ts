@@ -3,7 +3,6 @@ import type { ContentPart } from '#/kosong/contract/message';
 import { VideoUploadUnsupportedError } from '#/kosong/contract/errors';
 import { inlineVideoPart, isVideoUploadAuthError } from '#/agent/media/videoUpload';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
-import { Readable } from 'node:stream';
 
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
@@ -240,6 +239,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     if (deps === undefined) return undefined;
     const name = safePath.split(/[\\/]/).at(-1) ?? 'video';
     const fileId = newFileId();
+    const { Readable } = await import('node:stream');
     try {
       await deps.mediaStore.materialize({
         fileId,
