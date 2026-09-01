@@ -7,6 +7,7 @@ import {
   ProbeShellNotFoundError,
 } from '#/_base/execEnv/environmentProbe';
 import { applyLoginShellPathFromNode } from '#/_base/execEnv/loginShellPath';
+import { applySystemBinPathFromNode } from '#/_base/execEnv/systemBinPath';
 
 import {
   type HostEnvironmentInfo,
@@ -30,6 +31,7 @@ export class HostEnvironmentService implements IHostEnvironment {
         this._info = info;
       }),
       applyLoginShellPathFromNode(),
+      applySystemBinPathFromNode(),
     ])
       .then(() => {})
       .catch((error: unknown) => {
