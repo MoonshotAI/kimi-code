@@ -29,6 +29,7 @@ export function createKeyringMcpOAuthStore(
   service = KEYRING_MCP_OAUTH_SERVICE,
   lockTarget?: (key: string) => string,
   legacyService?: string,
+  coexist = false,
 ): McpOAuthStore {
   const previousService =
     legacyService ??
@@ -90,7 +91,7 @@ export function createKeyringMcpOAuthStore(
                 const newer = newerTokenGrant(parsed, fallbackValue);
                 if (newer !== undefined) {
                   api.createEntry(service, key).setPassword(JSON.stringify(newer));
-                  await fallback.remove(key);
+                  if (!coexist) await fallback.remove(key);
                   value = newer;
                 }
               }
@@ -123,12 +124,33 @@ export function createKeyringMcpOAuthStore(
           degrade('write', error);
           return value;
         }
-        await fallback.remove(key);
+        if (!coexist) await fallback.remove(key);
         return value;
       });
     },
     async write(key: string, data: unknown): Promise<void> {
       await exclusive(key, async () => {
+        if (coexist) {
+          await fallback.write(key, data);
+          if (!degraded) {
+            try {
+              api.createEntry(service, key).setPassword(JSON.stringify(data));
+            } catch (error) {
+              degrade('write', error);
+              return;
+            }
+            if (previousService !== undefined && previousService !== service) {
+              try {
+                removeKeyringEntry(api, previousService, key);
+              } catch (error) {
+                log?.warn(`MCP OAuth legacy keyring cleanup failed for ${key}`, {
+                  error: error instanceof Error ? error.message : String(error),
+                });
+              }
+            }
+          }
+          return;
+        }
         if (!degraded) {
           try {
             api.createEntry(service, key).setPassword(JSON.stringify(data));

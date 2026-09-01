@@ -9,19 +9,21 @@
  * after every test.
  */
 
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  CREDENTIALS_STORE_CONFIG_KEY,
   getRegisteredKeyringBackend,
   KEYRING_PROBE_SERVICE,
   KEYRING_SERVICE,
   KeyringTokenStorage,
   keyringServiceForCredentialsDir,
   registerKeyringBackend,
+  resolveCredentialsStoreMode,
   resolveTokenStorage,
   unregisterKeyringBackend,
 } from '../src/keyring-storage';
@@ -1059,14 +1061,15 @@ describe('resolveTokenStorage', () => {
     registerKeyringBackend(keyring, observer);
 
     // The full production path: no deps seam, everything comes from the
-    // registration slot.
+    // registration slot. The default mode is 'auto' (coexistence).
     const storage = resolveTokenStorage(dir);
     expect(storage).toBeInstanceOf(KeyringTokenStorage);
-    expect(observer.selected).toEqual([{ backend: 'keyring', reason: undefined }]);
+    expect(observer.selected).toEqual([{ backend: 'keyring', reason: 'auto' }]);
 
     await storage.save('kimi-code', sampleToken());
     expect(keyring.store.get(`${keyringServiceForCredentialsDir(dir)}\u0000kimi-code`)).toBeDefined();
-    expect(existsSync(join(dir, 'kimi-code.json'))).toBe(false);
+    // 'auto' dual-writes: the plaintext bridge file is kept.
+    expect(existsSync(join(dir, 'kimi-code.json'))).toBe(true);
   });
 
   it('re-registering replaces the backend (and the observer)', async () => {
@@ -1078,7 +1081,7 @@ describe('resolveTokenStorage', () => {
 
     const storage = resolveTokenStorage(dir);
     expect(storage).toBeInstanceOf(KeyringTokenStorage);
-    expect(secondObserver.selected).toEqual([{ backend: 'keyring', reason: undefined }]);
+    expect(secondObserver.selected).toEqual([{ backend: 'keyring', reason: 'auto' }]);
 
     await storage.save('kimi-code', sampleToken());
     expect(second.store.size).toBe(1);
@@ -1121,10 +1124,10 @@ describe('resolveTokenStorage', () => {
     const storage = resolveTokenStorage(dir, { loadKeyring: () => keyring });
     expect(storage).toBeInstanceOf(KeyringTokenStorage);
 
-    // A save lands in the fake keyring, not on disk.
+    // A save lands in the fake keyring AND dual-writes the plaintext bridge.
     await storage.save('kimi-code', sampleToken());
     expect(keyring.store.get(`${keyringServiceForCredentialsDir(dir)}\u0000kimi-code`)).toBeDefined();
-    expect(existsSync(join(dir, 'kimi-code.json'))).toBe(false);
+    expect(existsSync(join(dir, 'kimi-code.json'))).toBe(true);
   });
 
   it('the probe sentinel never leaks into the real service list', async () => {
@@ -1360,5 +1363,253 @@ describe('getRegisteredKeyringBackend', () => {
     expect(getRegisteredKeyringBackend()?.observer).toBeUndefined();
     unregisterKeyringBackend();
     expect(getRegisteredKeyringBackend()).toBeUndefined();
+  });
+});
+
+describe('resolveCredentialsStoreMode', () => {
+  let home: string;
+  let credentialsDir: string;
+  let configPath: string;
+
+  beforeEach(() => {
+    home = makeTmpDir();
+    credentialsDir = join(home, 'credentials');
+    configPath = join(home, 'config.toml');
+  });
+
+  afterEach(() => {
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it("defaults to 'auto' when config.toml is missing", () => {
+    expect(resolveCredentialsStoreMode(credentialsDir)).toBe('auto');
+  });
+
+  it("defaults to 'auto' when the key is absent", () => {
+    writeFileSync(configPath, 'default_model = "kimi-code"\n');
+    expect(resolveCredentialsStoreMode(credentialsDir)).toBe('auto');
+  });
+
+  it.each(['file', 'keyring', 'auto'] as const)('reads %s from config.toml', (mode) => {
+    writeFileSync(configPath, `${CREDENTIALS_STORE_CONFIG_KEY} = "${mode}"\n`);
+    expect(resolveCredentialsStoreMode(credentialsDir)).toBe(mode);
+  });
+
+  it("falls back to 'auto' on an unrecognized value", () => {
+    writeFileSync(configPath, 'credentials_store = "vault"\n');
+    expect(resolveCredentialsStoreMode(credentialsDir)).toBe('auto');
+  });
+
+  it("falls back to 'auto' on malformed TOML", () => {
+    writeFileSync(configPath, 'credentials_store = \n');
+    expect(resolveCredentialsStoreMode(credentialsDir)).toBe('auto');
+  });
+
+  it('deps.mode wins over the config file', () => {
+    writeFileSync(configPath, 'credentials_store = "file"\n');
+    expect(resolveCredentialsStoreMode(credentialsDir, { mode: 'keyring' })).toBe('keyring');
+  });
+
+  it('deps.configPath overrides the default location', () => {
+    const elsewhere = join(home, 'elsewhere.toml');
+    writeFileSync(elsewhere, 'credentials_store = "keyring"\n');
+    expect(resolveCredentialsStoreMode(credentialsDir, { configPath: elsewhere })).toBe('keyring');
+  });
+});
+
+describe('resolveTokenStorage mode selection', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = makeTmpDir();
+  });
+
+  afterEach(() => {
+    unregisterKeyringBackend();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("mode 'file' stays on the file store even with a healthy backend", () => {
+    const observer = new FakeObserver();
+    const storage = resolveTokenStorage(dir, {
+      loadKeyring: () => new FakeKeyring(),
+      observer,
+      mode: 'file',
+    });
+    expect(storage).toBeInstanceOf(FileTokenStorage);
+    expect(storage).not.toBeInstanceOf(KeyringTokenStorage);
+    expect(observer.selected).toEqual([{ backend: 'file', reason: 'mode-file' }]);
+  });
+
+  it("credentials_store = 'file' in <home>/config.toml selects the file store", () => {
+    const home = makeTmpDir();
+    try {
+      const credentialsDir = join(home, 'credentials');
+      writeFileSync(join(home, 'config.toml'), 'credentials_store = "file"\n');
+      const observer = new FakeObserver();
+      const storage = resolveTokenStorage(credentialsDir, {
+        loadKeyring: () => new FakeKeyring(),
+        observer,
+      });
+      expect(storage).toBeInstanceOf(FileTokenStorage);
+      expect(observer.selected).toEqual([{ backend: 'file', reason: 'mode-file' }]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("mode 'keyring' selects the strict store: save prunes the plaintext file", async () => {
+    const keyring = new FakeKeyring();
+    const storage = resolveTokenStorage(dir, { loadKeyring: () => keyring, mode: 'keyring' });
+    expect(storage).toBeInstanceOf(KeyringTokenStorage);
+
+    await new FileTokenStorage(dir).save('kimi-code', sampleToken({ accessToken: 'stale' }));
+    await storage.save('kimi-code', sampleToken());
+    expect(
+      keyring.createEntry(keyringServiceForCredentialsDir(dir), 'kimi-code').getPassword(),
+    ).not.toBeNull();
+    expect(existsSync(join(dir, 'kimi-code.json'))).toBe(false);
+  });
+
+  it("mode 'auto' selects the coexistence store: save dual-writes", async () => {
+    const keyring = new FakeKeyring();
+    const storage = resolveTokenStorage(dir, { loadKeyring: () => keyring, mode: 'auto' });
+    expect(storage).toBeInstanceOf(KeyringTokenStorage);
+
+    await storage.save('kimi-code', sampleToken());
+    expect(
+      keyring.createEntry(keyringServiceForCredentialsDir(dir), 'kimi-code').getPassword(),
+    ).not.toBeNull();
+    expect(existsSync(join(dir, 'kimi-code.json'))).toBe(true);
+  });
+});
+
+describe('KeyringTokenStorage coexist (auto mode)', () => {
+  let dir: string;
+  let keyring: FakeKeyring;
+  let service: string;
+  let storage: KeyringTokenStorage;
+
+  const seedKeychain = (name: string, token: TokenInfo): void => {
+    keyring.createEntry(service, name).setPassword(JSON.stringify(tokenToWire(token)));
+  };
+  const keychainRaw = (name: string): string | null =>
+    keyring.createEntry(service, name).getPassword();
+  const fileWire = (name: string): Record<string, unknown> =>
+    JSON.parse(readFileSync(join(dir, `${name}.json`), 'utf-8')) as Record<string, unknown>;
+
+  function makeStorage(k: FakeKeyring, observer?: FakeObserver): KeyringTokenStorage {
+    return new KeyringTokenStorage({
+      keyring: k,
+      legacy: new FileTokenStorage(dir),
+      service,
+      observer,
+      coexist: true,
+    });
+  }
+
+  beforeEach(() => {
+    dir = makeTmpDir();
+    keyring = new FakeKeyring();
+    service = keyringServiceForCredentialsDir(dir);
+    storage = makeStorage(keyring);
+  });
+
+  afterEach(() => {
+    unregisterKeyringBackend();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('save() dual-writes the keychain and the plaintext bridge', async () => {
+    const token = sampleToken();
+    await storage.save('kimi-code', token);
+    const expected = JSON.stringify(tokenToWire(token));
+    expect(keychainRaw('kimi-code')).toBe(expected);
+    expect(fileWire('kimi-code')['access_token']).toBe(token.accessToken);
+  });
+
+  it('save() still lands on disk when the keychain write throws', async () => {
+    const flaky = new FlakyKeyring();
+    const observer = new FakeObserver();
+    const s = makeStorage(flaky, observer);
+    flaky.throwOnSet = true;
+    await s.save('kimi-code', sampleToken());
+    expect(fileWire('kimi-code')['access_token']).toBe('at-abc');
+    expect(observer.degraded.map((d) => d.operation)).toContain('save');
+  });
+
+  it('load() repairs a missing plaintext bridge from the keychain', async () => {
+    seedKeychain('kimi-code', sampleToken());
+    const loaded = await storage.load('kimi-code');
+    expect(loaded?.accessToken).toBe('at-abc');
+    expect(fileWire('kimi-code')['access_token']).toBe('at-abc');
+  });
+
+  it('load() repairs a stale plaintext bridge when the keychain is newer', async () => {
+    seedKeychain('kimi-code', sampleToken());
+    await new FileTokenStorage(dir).save(
+      'kimi-code',
+      sampleToken({ accessToken: 'stale', expiresAt: 1_000_000_000 }),
+    );
+    const loaded = await storage.load('kimi-code');
+    expect(loaded?.accessToken).toBe('at-abc');
+    expect(fileWire('kimi-code')['access_token']).toBe('at-abc');
+  });
+
+  it('load() adopts a fresher plaintext token into the keychain and keeps the bridge', async () => {
+    seedKeychain('kimi-code', sampleToken());
+    await new FileTokenStorage(dir).save(
+      'kimi-code',
+      sampleToken({ accessToken: 'at-fresh', expiresAt: 1_700_000_000 + 7200 }),
+    );
+    const loaded = await storage.load('kimi-code');
+    expect(loaded?.accessToken).toBe('at-fresh');
+    expect(JSON.parse(keychainRaw('kimi-code') as string)['access_token']).toBe('at-fresh');
+    expect(existsSync(join(dir, 'kimi-code.json'))).toBe(true);
+  });
+
+  it('load() migrates a disk-only token into the keychain and keeps the bridge', async () => {
+    const observer = new FakeObserver();
+    const s = makeStorage(keyring, observer);
+    await new FileTokenStorage(dir).save('kimi-code', sampleToken());
+    const loaded = await s.load('kimi-code');
+    expect(loaded?.accessToken).toBe('at-abc');
+    expect(JSON.parse(keychainRaw('kimi-code') as string)['access_token']).toBe('at-abc');
+    expect(existsSync(join(dir, 'kimi-code.json'))).toBe(true);
+    expect(observer.migrated).toEqual(['kimi-code']);
+  });
+
+  it('a removed token is not resurrected by bridge repair', async () => {
+    seedKeychain('kimi-code', sampleToken());
+    await storage.remove('kimi-code');
+    // A stale keychain entry survives (written by another process after the
+    // removal): the removal marker must block bridge repair AND the load must
+    // re-delete the keychain entry.
+    seedKeychain('kimi-code', sampleToken());
+    expect(await storage.load('kimi-code')).toBeUndefined();
+    expect(existsSync(join(dir, 'kimi-code.json'))).toBe(false);
+    expect(keychainRaw('kimi-code')).toBeNull();
+  });
+
+  it('a keychain tombstone outranks a valid plaintext token and leaves the bridge untouched', async () => {
+    seedKeychain('kimi-code', revokedTombstone(sampleToken()));
+    await new FileTokenStorage(dir).save('kimi-code', sampleToken());
+    const loaded = await storage.load('kimi-code');
+    expect(loaded?.accessToken).toBe('');
+    // The valid file login is NOT wiped: it may be genuinely newer, and the
+    // next refresh's dual-write heals the asymmetry.
+    expect(fileWire('kimi-code')['access_token']).toBe('at-abc');
+  });
+
+  it('load() after a keychain failure reads the file without migrating', async () => {
+    const flaky = new FlakyKeyring();
+    const observer = new FakeObserver();
+    const s = makeStorage(flaky, observer);
+    await new FileTokenStorage(dir).save('kimi-code', sampleToken());
+    flaky.throwOnGet = true;
+    const loaded = await s.load('kimi-code');
+    expect(loaded?.accessToken).toBe('at-abc');
+    expect(existsSync(join(dir, 'kimi-code.json'))).toBe(true);
+    expect(observer.degraded.map((d) => d.operation)).toContain('load');
   });
 });

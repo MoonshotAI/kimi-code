@@ -23,14 +23,17 @@ export type { TokenStorage } from './storage';
 export { assertValidTokenName, FileTokenStorage, withFileLock } from './storage';
 
 export type {
+  CredentialsStoreMode,
   KeyringApi,
   KeyringEntry,
   KeyringOperation,
   KeyringStorageObserver,
   RegisteredKeyringBackend,
+  ResolveCredentialsStoreModeDeps,
   ResolveTokenStorageDeps,
 } from './keyring-storage';
 export {
+  CREDENTIALS_STORE_CONFIG_KEY,
   getRegisteredKeyringBackend,
   KEYRING_PROBE_SERVICE,
   KEYRING_SERVICE,
@@ -38,6 +41,7 @@ export {
   keyringServiceForCredentialsDir,
   probeKeyringBackend,
   registerKeyringBackend,
+  resolveCredentialsStoreMode,
   resolveTokenStorage,
   unregisterKeyringBackend,
 } from './keyring-storage';

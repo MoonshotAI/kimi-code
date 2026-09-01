@@ -1,4 +1,8 @@
-import { getRegisteredKeyringBackend, probeKeyringBackend } from '@moonshot-ai/kimi-code-oauth';
+import {
+  getRegisteredKeyringBackend,
+  probeKeyringBackend,
+  resolveCredentialsStoreMode,
+} from '@moonshot-ai/kimi-code-oauth';
 import { join } from 'pathe';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -55,15 +59,19 @@ export class McpOAuthStoreAdapter implements IMcpOAuthStore {
     @ILogService log: ILogService,
     @IBootstrapService bootstrap: IBootstrapService,
   ) {
+    const credentialsDir = join(bootstrap.homeDir, 'credentials');
+    const mode = resolveCredentialsStoreMode(credentialsDir);
     const backend = getRegisteredKeyringBackend();
     this.delegate =
-      backend !== undefined && probeKeyringBackend(backend.api)
+      mode !== 'file' && backend !== undefined && probeKeyringBackend(backend.api)
         ? createKeyringMcpOAuthStore(
             backend.api,
             createMcpOAuthStore(docs),
             log,
-            keyringMcpOAuthServiceForCredentialsDir(join(bootstrap.homeDir, 'credentials')),
-            (key) => keyringMcpOAuthLockTarget(join(bootstrap.homeDir, 'credentials'), key),
+            keyringMcpOAuthServiceForCredentialsDir(credentialsDir),
+            (key) => keyringMcpOAuthLockTarget(credentialsDir, key),
+            undefined,
+            mode === 'auto',
           )
         : createMcpOAuthStore(docs);
   }

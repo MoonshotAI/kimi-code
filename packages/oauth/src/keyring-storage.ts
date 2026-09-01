@@ -1,5 +1,5 @@
 /**
- * Keychain-backed OAuth token storage with plaintext-file fallback.
+ * Keychain-backed OAuth token storage with plaintext-file coexistence.
  *
  * Backend: the OS keychain (macOS Keychain, Windows Credential Manager,
  * Linux Secret Service). This package stays pure TypeScript — the host
@@ -12,13 +12,24 @@
  * `name` and whose *password* is the snake_case wire JSON — the exact same
  * payload `FileTokenStorage` writes to disk.
  *
- * Selection (`resolveTokenStorage`), in order:
- *   1. No backend registered → file ('no-backend').
- *   2. Capability probe failed → file ('probe-failed'). A set/get/delete
- *      round-trip under a SEPARATE sentinel service catches a binding that
- *      loads but has no live OS backend at runtime (e.g. headless Linux with
- *      no Secret Service): entry operations only throw at CALL time.
- *   3. Otherwise the keychain is authoritative.
+ * Mode selection (`resolveTokenStorage` → `resolveCredentialsStoreMode`):
+ * the `credentials_store` key in `<home>/config.toml` picks the mode;
+ * 'auto' is the default (missing file / missing key / invalid value).
+ *   - 'file'    → plaintext file store only.
+ *   - 'keyring' → strict keychain: the keychain is authoritative and
+ *                 plaintext copies are pruned on save/migrate/reconcile.
+ *   - 'auto'    → keychain preferred, plaintext kept as a live bridge:
+ *                 save dual-writes both stores, load reconciles to the
+ *                 freshest value and repairs the stale side, nothing is
+ *                 pruned outside `remove`. File-only peers (older builds,
+ *                 SDK hosts without a registered backend) keep working
+ *                 against the same home during the rollout.
+ * In 'keyring'/'auto' the keychain is used only when a backend is
+ * registered AND the capability probe passes; otherwise the file store
+ * ('no-backend' / 'probe-failed'). A set/get/delete round-trip under a
+ * SEPARATE sentinel service catches a binding that loads but has no live
+ * OS backend at runtime (e.g. headless Linux with no Secret Service):
+ * entry operations only throw at CALL time.
  *
  * Degradation: any keyring call that THROWS marks the backend degraded
  * process-wide (sticky until re-registration), reports
@@ -28,33 +39,34 @@
  * instead of being mistaken for a logged-out account.
  *
  * Migration: when the keychain is selected but a token is still only on disk
- * (written by an older file-only build), `load` migrates it — copy into the
- * keychain, then compare-and-delete the plaintext file (only unlink a file
- * that still matches the value made keychain-authoritative) — so secrets stop
- * living in the clear without ever dropping a newer token a concurrent
- * file-backend writer may have just landed. Migration holds the same
- * per-token file lock as `FileTokenStorage`. `remove` and `list` also reconcile against the
- * legacy file store so pre-migration plaintext can never linger or go
- * missing. `save` prunes any legacy plaintext copy after the keychain write
- * so a later file-backend run can't resurrect a superseded token.
+ * (written by an older file-only build), `load` copies it into the keychain.
+ * Strict mode then compare-and-deletes the plaintext (only unlink a file
+ * that still matches the value made keychain-authoritative) so secrets stop
+ * living in the clear; 'auto' keeps the file so file-only peers never lose
+ * the token mid-rollout. Migration holds the same per-token file lock as
+ * `FileTokenStorage`. `remove` and `list` also reconcile against the legacy
+ * file store so pre-migration plaintext can never linger or go missing.
  *
- * Reconcile-on-hit (flip-flop repair): `resolveTokenStorage` can pick a
- * DIFFERENT backend per run for one credentialsDir (keychain locked,
- * headless/SSH, no registered backend, probe fails). A sequential
- * flip-flop then splits state — the keychain may hold an OLDER token
- * while a fallback run wrote a NEWER one to the plaintext file.
- * So `load` reconciles against the legacy file even on a keychain HIT,
- * adopting the file token ONLY when BOTH sides are valid (neither a
- * tombstone) AND the file was issued strictly later (mint second
+ * Reconcile-on-hit (flip-flop repair): the backend can differ per run for
+ * one credentialsDir (keychain locked, headless/SSH, no registered backend,
+ * probe fails, mode changed). A sequential flip-flop then splits state — the
+ * keychain may hold an OLDER token while a fallback run wrote a NEWER one to
+ * the plaintext file. So `load` reconciles against the legacy file even on a
+ * keychain HIT, adopting the file token ONLY when BOTH sides are valid
+ * (neither a tombstone) AND the file was issued strictly later (mint second
  * `expiresAt - expiresIn`, not the expiration time `expiresAt`). It NEVER
- * un-revokes a deliberate tombstone from stale plaintext, and only prunes a
- * plaintext copy it made authoritative or one equal to the keychain value
- * after canonical re-serialization. See `reconcileOnHit`.
+ * un-revokes a deliberate tombstone from stale plaintext. Strict mode prunes
+ * the adopted/equal plaintext; 'auto' keeps it and additionally repairs the
+ * file from the keychain when the keychain holds the fresher value.
+ * See `reconcileOnHitUnlocked` / `reconcileOnHitCoexist`.
  */
 
 import { createHash, randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+
+import { parse as parseToml } from 'smol-toml';
 
 import { assertValidTokenName, FileTokenStorage } from './storage';
 import type { FileTokenAccess, TokenStorage } from './storage';
@@ -99,8 +111,8 @@ export type KeyringOperation = 'load' | 'save' | 'remove' | 'list';
 export interface KeyringStorageObserver {
   /**
    * Fired once per `resolveTokenStorage` call. `reason` for `'file'` is one of
-   * `'no-backend' | 'probe-failed'`; the `'keyring'` selection carries no
-   * reason.
+   * `'mode-file' | 'no-backend' | 'probe-failed'`; the `'keyring'` selection
+   * carries the storage mode (`'keyring' | 'auto'`).
    */
   onBackendSelected?(backend: 'keyring' | 'file', reason?: string): void;
   /** Fired when a keyring call throws and the backend degrades to the file store. */
@@ -159,6 +171,13 @@ interface KeyringTokenStorageOptions {
   readonly legacy: FileTokenStorage;
   readonly service?: string;
   readonly observer?: KeyringStorageObserver;
+  /**
+   * 'auto'-mode semantics: keep the plaintext file as a live bridge for
+   * file-only peers — save dual-writes, load repairs the stale side, and
+   * nothing is pruned outside `remove`. Default false (strict 'keyring'
+   * mode): the keychain is authoritative and plaintext copies are pruned.
+   */
+  readonly coexist?: boolean;
 }
 
 export class KeyringTokenStorage implements TokenStorage {
@@ -166,12 +185,14 @@ export class KeyringTokenStorage implements TokenStorage {
   private readonly legacy: FileTokenStorage;
   private readonly service: string;
   private readonly observer: KeyringStorageObserver | undefined;
+  private readonly coexist: boolean;
 
   constructor(opts: KeyringTokenStorageOptions) {
     this.keyring = opts.keyring;
     this.legacy = opts.legacy;
     this.service = opts.service ?? KEYRING_SERVICE;
     this.observer = opts.observer;
+    this.coexist = opts.coexist ?? false;
   }
 
   private serialize(token: TokenInfo): string {
@@ -251,10 +272,26 @@ export class KeyringTokenStorage implements TokenStorage {
         });
       }
       const raw = read.value;
-      if (raw !== null) return this.reconcileOnHitUnlocked(name, raw, access);
+      if (raw !== null) {
+        return this.coexist
+          ? this.reconcileOnHitCoexist(name, raw, access)
+          : this.reconcileOnHitUnlocked(name, raw, access);
+      }
 
       const first = await access.load();
       if (first === undefined) return undefined;
+      if (this.coexist) {
+        // Migrate by copying into the keychain; the plaintext file stays as
+        // the bridge for file-only peers.
+        if (
+          this.tryKeyring('save', () => {
+            this.keyring.createEntry(this.service, name).setPassword(this.serialize(first));
+          }).ok
+        ) {
+          this.observer?.onMigrated?.(name);
+        }
+        return first;
+      }
       let serialized = this.serialize(first);
       let latest = first;
       if (
@@ -362,6 +399,60 @@ export class KeyringTokenStorage implements TokenStorage {
     return keyringToken;
   }
 
+  /**
+   * 'auto'-mode reconcile: converge BOTH stores to the freshest value and
+   * never delete. The keychain is preferred; the plaintext file is a live
+   * bridge for file-only peers, so a fresher file is adopted into the
+   * keychain and a fresher keychain is written back to the file. Tombstone
+   * asymmetry is left untouched on purpose: a keychain tombstone must not
+   * wipe a newer valid file login, and a file tombstone must not resurrect
+   * into the keychain — both heal through the next refresh's dual-write.
+   */
+  private async reconcileOnHitCoexist(
+    name: string,
+    raw: string,
+    access: FileTokenAccess,
+  ): Promise<TokenInfo | undefined> {
+    const keyringToken = this.deserialize(raw);
+    const fileToken = await access.load();
+
+    if (keyringToken === undefined) {
+      if (fileToken === undefined) return undefined;
+      const fileSerialized = this.serialize(fileToken);
+      this.tryKeyring('load', () => {
+        this.keyring.createEntry(this.service, name).setPassword(fileSerialized);
+      });
+      return fileToken;
+    }
+
+    if (
+      classifyToken(keyringToken).kind === 'valid' &&
+      fileToken !== undefined &&
+      classifyToken(fileToken).kind === 'valid' &&
+      issuedAt(fileToken) > issuedAt(keyringToken)
+    ) {
+      const fileSerialized = this.serialize(fileToken);
+      this.tryKeyring('load', () => {
+        this.keyring.createEntry(this.service, name).setPassword(fileSerialized);
+      });
+      return fileToken;
+    }
+
+    const stale =
+      fileToken === undefined ||
+      (classifyToken(keyringToken).kind === 'valid' &&
+        classifyToken(fileToken).kind === 'valid' &&
+        this.serialize(fileToken) !== raw);
+    if (stale) {
+      try {
+        await access.save(keyringToken);
+      } catch {
+        // Best-effort bridge repair: the load already has its value.
+      }
+    }
+    return keyringToken;
+  }
+
   async save(name: string, token: TokenInfo): Promise<void> {
     // Reject invalid names BEFORE the keychain write to preserve the file
     // backend's fail-before-write contract — otherwise setPassword would
@@ -369,6 +460,20 @@ export class KeyringTokenStorage implements TokenStorage {
     // check threw.
     assertValidTokenName(name);
     await this.legacy.withTokenLock(name, async (access) => {
+      if (this.coexist) {
+        // Dual-write, file FIRST: at every instant the plaintext bridge holds
+        // a value at least as new as the keychain, so a keychain failure just
+        // degrades to the already-written file and the two stores can never
+        // diverge in the keychain's favor. `access.save` also clears any
+        // removal marker, re-publishing the token on both stores.
+        await access.save(token);
+        if (!keyringDegraded) {
+          this.tryKeyring('save', () => {
+            this.keyring.createEntry(this.service, name).setPassword(this.serialize(token));
+          });
+        }
+        return;
+      }
       if (keyringDegraded) {
         if (classifyToken(token).kind === 'revoked') {
           throw new OAuthStorageUnavailableError(`keyring unavailable while saving revoked credential "${name}"`, {
@@ -532,18 +637,73 @@ export function keyringServiceForCredentialsDir(credentialsDir: string): string 
   return `kimi-code-${createHash('sha256').update(resolved).digest('hex').slice(0, 16)}`;
 }
 
+/** Where the credential storage mode lives in `<home>/config.toml`. */
+export const CREDENTIALS_STORE_CONFIG_KEY = 'credentials_store';
+
+/**
+ * Credential storage mode: 'file' keeps the plaintext file store; 'keyring'
+ * makes the OS keychain authoritative and prunes plaintext; 'auto' prefers
+ * the keychain but keeps the plaintext file as a live bridge for file-only
+ * peers (dual-write, no pruning outside `remove`).
+ */
+export type CredentialsStoreMode = 'file' | 'keyring' | 'auto';
+
+const CREDENTIALS_STORE_MODES: readonly CredentialsStoreMode[] = ['file', 'keyring', 'auto'];
+
+export interface ResolveCredentialsStoreModeDeps {
+  /** Explicit mode, skipping the config file. */
+  mode?: CredentialsStoreMode;
+  /** Overrides the config file location (defaults to `<credentialsDir>/../config.toml`). */
+  configPath?: string;
+}
+
+/**
+ * Resolve the credential storage mode for a credentials directory from
+ * `<home>/config.toml`'s `credentials_store` key. 'auto' on any uncertainty:
+ * missing/unreadable/invalid file, missing key, unrecognized value — the
+ * mode is a home-level preference, never a hard error.
+ */
+export function resolveCredentialsStoreMode(
+  credentialsDir: string,
+  deps: ResolveCredentialsStoreModeDeps = {},
+): CredentialsStoreMode {
+  if (deps.mode !== undefined) return deps.mode;
+  const configPath = deps.configPath ?? join(dirname(resolve(credentialsDir)), 'config.toml');
+  let text: string;
+  try {
+    text = readFileSync(configPath, 'utf-8');
+  } catch {
+    return 'auto';
+  }
+  try {
+    const parsed: unknown = parseToml(text);
+    const raw = isRecord(parsed) ? parsed[CREDENTIALS_STORE_CONFIG_KEY] : undefined;
+    return typeof raw === 'string' && (CREDENTIALS_STORE_MODES as readonly string[]).includes(raw)
+      ? (raw as CredentialsStoreMode)
+      : 'auto';
+  } catch {
+    return 'auto';
+  }
+}
+
 /** Test seam for `resolveTokenStorage`; production passes nothing. */
 export interface ResolveTokenStorageDeps {
   /** Overrides the registered-backend lookup; undefined return = no backend. */
   loadKeyring?: () => KeyringApi | undefined;
   /** Overrides the registered observer. */
   observer?: KeyringStorageObserver;
+  /** Explicit storage mode, skipping `<home>/config.toml` resolution. */
+  mode?: CredentialsStoreMode;
+  /** Overrides the config file location used for mode resolution. */
+  configPath?: string;
 }
 
 /**
- * Pick the token backend for `credentialsDir`: the keychain when usable,
- * otherwise the plaintext file store (which also seeds migration). The `deps`
- * seam is for tests only; production uses the registered backend.
+ * Pick the token backend for `credentialsDir`: 'file' mode stays on the
+ * plaintext file store; 'keyring'/'auto' use the keychain when a backend is
+ * registered and the probe passes ('auto' keeps the file as a coexistence
+ * bridge), otherwise they fall back to the file store. The remaining `deps`
+ * seams are for tests only; production uses the registered backend.
  */
 export function resolveTokenStorage(
   credentialsDir: string,
@@ -551,6 +711,12 @@ export function resolveTokenStorage(
 ): TokenStorage {
   const legacy = new FileTokenStorage(credentialsDir);
   const observer = deps.observer ?? registeredBackend?.observer;
+
+  const mode = resolveCredentialsStoreMode(credentialsDir, deps);
+  if (mode === 'file') {
+    observer?.onBackendSelected?.('file', 'mode-file');
+    return legacy;
+  }
 
   const loadKeyring = deps.loadKeyring ?? (() => registeredBackend?.api);
   const keyring = loadKeyring();
@@ -570,6 +736,6 @@ export function resolveTokenStorage(
   // the SAME credentialsDir, so a file at `<credentialsDir>/<name>.json`
   // migrates into the matching namespaced service.
   const service = keyringServiceForCredentialsDir(credentialsDir);
-  observer?.onBackendSelected?.('keyring');
-  return new KeyringTokenStorage({ keyring, legacy, service, observer });
+  observer?.onBackendSelected?.('keyring', mode);
+  return new KeyringTokenStorage({ keyring, legacy, service, observer, coexist: mode === 'auto' });
 }

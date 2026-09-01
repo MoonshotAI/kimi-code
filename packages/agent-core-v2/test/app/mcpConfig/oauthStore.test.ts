@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { homedir, tmpdir } from 'node:os';
-import { mkdirSync, rmSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'pathe';
 
 import {
@@ -335,6 +335,94 @@ describe('createKeyringMcpOAuthStore', () => {
     await expect(store.list()).resolves.toEqual(['srv-tokens.json', 'other.json', 'srv-client.json']);
     await expect(store.list('srv-')).resolves.toEqual(['srv-tokens.json', 'srv-client.json']);
   });
+
+  it('coexist write dual-writes the keychain and the fallback', async () => {
+    const keyring = new FakeKeyring();
+    const fallback = createFallback();
+    const store = createKeyringMcpOAuthStore(
+      keyring,
+      fallback.store,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true,
+    );
+
+    await store.write('srv-tokens.json', { token: 'abc' });
+
+    expect(keyringValue(keyring, 'srv-tokens.json')).toBe(JSON.stringify({ token: 'abc' }));
+    expect(fallback.data.get('srv-tokens.json')).toEqual({ token: 'abc' });
+  });
+
+  it('coexist read keeps the fallback copy after migrating it into the keychain', async () => {
+    const keyring = new FakeKeyring();
+    const fallback = createFallback({ 'srv-client.json': { client_id: 'c1' } });
+    const store = createKeyringMcpOAuthStore(
+      keyring,
+      fallback.store,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true,
+    );
+
+    await expect(store.read('srv-client.json')).resolves.toEqual({ client_id: 'c1' });
+    expect(keyringValue(keyring, 'srv-client.json')).toBe(JSON.stringify({ client_id: 'c1' }));
+    expect(fallback.data.has('srv-client.json')).toBe(true);
+  });
+
+  it('coexist read adopts a newer fallback token without pruning it', async () => {
+    const keyring = new FakeKeyring();
+    keyring.store.set(
+      `${KEYRING_MCP_OAUTH_SERVICE} srv-tokens.json`,
+      JSON.stringify({ access_token: 'old', obtained_at: 10 }),
+    );
+    const fallback = createFallback({
+      'srv-tokens.json': { access_token: 'new', obtained_at: 20 },
+    });
+    const store = createKeyringMcpOAuthStore(
+      keyring,
+      fallback.store,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true,
+    );
+
+    await expect(store.read('srv-tokens.json')).resolves.toEqual({
+      access_token: 'new',
+      obtained_at: 20,
+    });
+    expect(keyringValue(keyring, 'srv-tokens.json')).toBe(
+      JSON.stringify({ access_token: 'new', obtained_at: 20 }),
+    );
+    expect(fallback.data.has('srv-tokens.json')).toBe(true);
+  });
+
+  it('coexist write degrades to the already-written fallback when the keychain write fails', async () => {
+    const keyring = new FakeKeyring();
+    keyring.throwOnSet = true;
+    const fallback = createFallback();
+    const { log, warn } = fakeLog();
+    const store = createKeyringMcpOAuthStore(
+      keyring,
+      fallback.store,
+      log,
+      undefined,
+      undefined,
+      undefined,
+      true,
+    );
+
+    await store.write('srv-tokens.json', { token: 'abc' });
+
+    expect(fallback.data.get('srv-tokens.json')).toEqual({ token: 'abc' });
+    expect(keyring.store.size).toBe(0);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('McpOAuthStoreAdapter', () => {
@@ -393,7 +481,31 @@ describe('McpOAuthStoreAdapter', () => {
     await createAdapter(docs.impl).write('srv-tokens.json', { token: 'abc' });
 
     expect(keyringValue(keyring, 'srv-tokens.json')).toBe(JSON.stringify({ token: 'abc' }));
+    expect(docs.calls).toEqual([{ op: 'set', key: 'srv-tokens.json', value: { token: 'abc' } }]);
+  });
+
+  it("prunes the document store when credentials_store = 'keyring'", async () => {
+    writeFileSync(join(homeDir, 'config.toml'), 'credentials_store = "keyring"\n');
+    const keyring = new FakeKeyring();
+    registerKeyringBackend(keyring);
+    const docs = createDocsStub();
+
+    await createAdapter(docs.impl).write('srv-tokens.json', { token: 'abc' });
+
+    expect(keyringValue(keyring, 'srv-tokens.json')).toBe(JSON.stringify({ token: 'abc' }));
     expect(docs.calls).toEqual([{ op: 'delete', key: 'srv-tokens.json' }]);
+  });
+
+  it("stays on the document store when credentials_store = 'file'", async () => {
+    writeFileSync(join(homeDir, 'config.toml'), 'credentials_store = "file"\n');
+    const keyring = new FakeKeyring();
+    registerKeyringBackend(keyring);
+    const docs = createDocsStub();
+
+    await createAdapter(docs.impl).write('srv-tokens.json', { token: 'abc' });
+
+    expect(keyring.store.size).toBe(0);
+    expect(docs.calls).toEqual([{ op: 'set', key: 'srv-tokens.json', value: { token: 'abc' } }]);
   });
 
   it('stays on the document store when no backend is registered', async () => {

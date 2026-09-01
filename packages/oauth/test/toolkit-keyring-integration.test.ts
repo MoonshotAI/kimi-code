@@ -140,10 +140,12 @@ describe('KimiOAuthToolkit with a keyring-backed store (hermetic)', () => {
     dir = makeTmpDir();
     service = keyringServiceForCredentialsDir(dir);
     keyring = new FakeKeyring();
-    // Build the store through the REAL factory + the test seam. The probe
-    // round-trips against the fake, so this returns a KeyringTokenStorage.
+    // Build the store through the REAL factory + the test seam, in strict
+    // 'keyring' mode: the probe round-trips against the fake, so this returns
+    // a KeyringTokenStorage that prunes plaintext copies.
     const resolved = resolveTokenStorage(dir, {
       loadKeyring: () => keyring,
+      mode: 'keyring',
     });
     storage = resolved as KeyringTokenStorage;
   });
@@ -394,7 +396,8 @@ describe('KimiOAuthToolkit default storage goes through resolveTokenStorage', ()
       providers: [{ providerName: 'managed:kimi-code', hasToken: true }],
     });
     await expect(toolkit.tokenProvider().getAccessToken()).resolves.toBe('keyring-access');
-    // Proof the keychain backend is what was selected: nothing on disk.
-    expect(plaintextTokenFiles(credentialsDir)).toEqual([]);
+    // The default mode is 'auto' (coexistence): the keychain is read first,
+    // and the plaintext bridge is repaired from it on load.
+    expect(plaintextTokenFiles(credentialsDir)).toEqual(['kimi-code.json']);
   });
 });
