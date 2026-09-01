@@ -50,12 +50,12 @@ provider 在 `extension.ts` 里出现两次，干的是两件不同的事：
 deactivate()（extension.ts:144-146，先 await provider.shutdown()）
 → BridgeHandler.dispose()（bridge-handler.ts:292-295）
    ├─ fileManager.dispose()（file.manager.ts:201-207）→ 注销全工作区 FileSystemWatcher
-   └─ runtime.dispose()（kimi-runtime.ts:224-231）
-      ├─ 逐个 SessionRuntime.close()（session-runtime.ts:395-418）→ 取消进行中回合、退订引擎事件、关闭 SDK 会话
+   └─ runtime.dispose()（kimi-runtime.ts:260-267）
+      ├─ 逐个 SessionRuntime.close()（session-runtime.ts:396-419）→ 取消进行中回合、退订引擎事件、关闭 SDK 会话
       └─ harness.close() → 关掉整个引擎
 ```
 
-（`shutdown()`（`KimiWebviewProvider.ts:43-45`）和 `dispose()` 调的是同一个 `bridgeHandler.dispose()`，区别只是前者 await、后者 fire-and-forget；`deactivate` 显式 await 的是 `shutdown`，subscriptions 里的 `dispose` 是兜底。重复触发无害——`KimiRuntime.dispose` 有 `closed` 守卫，`kimi-runtime.ts:225`。）
+（`shutdown()`（`KimiWebviewProvider.ts:43-45`）和 `dispose()` 调的是同一个 `bridgeHandler.dispose()`，区别只是前者 await、后者 fire-and-forget；`deactivate` 显式 await 的是 `shutdown`，subscriptions 里的 `dispose` 是兜底。重复触发无害——`KimiRuntime.dispose` 有 `closed` 守卫，`kimi-runtime.ts:261`。）
 
 **能 push 任意东西吗：看"形状"，不看"出身"**
 
@@ -134,7 +134,7 @@ shutdown(): Promise<void> {
    上面那张树状图清理链（用 `├─` 字符拼的纯文本图）里 "runtime.dispose()" 那两行的真身（括号注里说的 `closed` 守卫也在这里）：
 
    ```ts
-   // src/runtime/kimi-runtime.ts:224-231
+   // src/runtime/kimi-runtime.ts:260-267
    async dispose(): Promise<void> {
      if (this.closed) return;         // ← 括号注里说的 closed 守卫就是它
      this.closed = true;
@@ -171,7 +171,7 @@ export async function deactivate(): Promise<void> {
 }
 ```
 
-4. 换句话说：**走 subscriptions 的 dispose 是"尽力而为的兜底"（万一 deactivate 没被调到，比如异常路径），走 deactivate 的 `await shutdown()` 才是"主退场"**。两个门都会被触发、都会调到同一个 `bridgeHandler.dispose()`，重复无害——`KimiRuntime.dispose` 有 `closed` 守卫（`kimi-runtime.ts:225`），第二次调用直接返回。
+4. 换句话说：**走 subscriptions 的 dispose 是"尽力而为的兜底"（万一 deactivate 没被调到，比如异常路径），走 deactivate 的 `await shutdown()` 才是"主退场"**。两个门都会被触发、都会调到同一个 `bridgeHandler.dispose()`，重复无害——`KimiRuntime.dispose` 有 `closed` 守卫（`kimi-runtime.ts:261`），第二次调用直接返回。
 
 **为什么不能合成一个门**：只留 `dispose()` 的话，deactivate 没法等——subscriptions 的 dispose VS Code 不等，直接调 `provider.dispose()` 也拿不到 Promise（它返回 void）；只留 `shutdown()` 的话，subscriptions 清单里就没有形状合格的 `dispose()` 方法，push 不进去（形状要求见上面"能 push 任意东西吗"）。所以必须成对。
 
@@ -568,7 +568,7 @@ if (baseUri) {
 
 3. **workDir 路由器**：`customWorkDirs` Map（`:29`）记住"哪个 webview 用哪个工作目录"——一个窗口里侧边栏和面板可以各在不同目录。
 
-构造 KimiRuntime 失败时**不静默回退**（`:51-61`）：直接抛错并附上回滚提示（"可开 `kimi.useAgentCoreV1` 设置换回 v1 引擎再 Reload"）——宁可让插件激活失败并告诉你为什么，也不偷偷降级。v1/v2 引擎选择在 `kimi-runtime.ts:65`（`createKimiHarness` vs `createKimiHarnessV2`，来自 `packages/node-sdk`）。
+构造 KimiRuntime 失败时**不静默回退**（`:51-61`）：直接抛错并附上回滚提示（"可开 `kimi.useAgentCoreV1` 设置换回 v1 引擎再 Reload"）——宁可让插件激活失败并告诉你为什么，也不偷偷降级。v1/v2 引擎选择在 `kimi-runtime.ts:66`（`createKimiHarness` vs `createKimiHarnessV2`，来自 `packages/node-sdk`）。
 
 > **broadcast 这根线已拆分到独立一篇**：`dive-chain-broadcast链条详解.md`（同目录）——一个函数引用从 provider 出发、经 BridgeHandler 分三路、穿过四层、20 处调用点全部点名、最终变成 webview 里一次事件分发的完整旅程。本节只留 BridgeHandler 的地图。
 
@@ -751,7 +751,7 @@ webview 输入框回车 → `chat.store.sendMessage` → `bridge.streamChat(...)
 
 ### 8.1 什么时候保存快照
 
-链路：引擎发 `tool.call.started` 且工具为 `Write`/`Edit` → `SessionRuntime.captureFileBaseline`（`session-runtime.ts:497-513`）→ `BridgeHandler.captureFileBaseline`（`bridge-handler.ts:244-290`，校验文件在会话目录内）→ `baselineManager.capture`。
+链路：引擎发 `tool.call.started` 且工具为 `Write`/`Edit` → `SessionRuntime.captureFileBaseline`（`session-runtime.ts:498-514`）→ `BridgeHandler.captureFileBaseline`（`bridge-handler.ts:244-290`，校验文件在会话目录内）→ `baselineManager.capture`。
 
 **时序关键点**（`baseline.manager.ts:79-83` 原注释）：`capture` 里读原文件用的是**同步 IO**（`captureOriginal`，`:717-738`，`statSync`+`readFileSync`）——在把控制权还给调用方**之前**就读完原内容，确保抢在工具写入之前；持久化（写快照、更新清单）才异步串行化。
 

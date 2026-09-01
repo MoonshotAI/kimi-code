@@ -5,7 +5,7 @@
 
 ## 全局认知
 
-- **定位**：`apps/vscode/src/runtime/session-runtime.ts`，655 行。一个会话（SDK `Session`）的**运行时伴侣**——类上的 JSDoc（`session-runtime.ts:65-69`）说清了它存在的理由："拥有这个会话唯一的事件订阅和逆流 RPC handler；**任意多个 webview 订阅，不会互相顶掉审批 handler、不会重复收流式事件**"。
+- **定位**：`apps/vscode/src/runtime/session-runtime.ts`，656 行（2026-09-01 拉取后；#3098 在 announceStatus 补传了 context_usage，:163 起行号整体 +1）。一个会话（SDK `Session`）的**运行时伴侣**——类上的 JSDoc（`session-runtime.ts:65-69`）说清了它存在的理由："拥有这个会话唯一的事件订阅和逆流 RPC handler；**任意多个 webview 订阅，不会互相顶掉审批 handler、不会重复收流式事件**"。
 
 - **构成**：6 个接口＋1 个常量＋20 个字段＋39 个成员（构造器＋6 个 getter＋32 个方法）＋2 个文件级函数（1 个导出）。
 
@@ -48,47 +48,47 @@
 
 | 分组 | 成员 | 行号 | 可见性 | 主要调用方（源码原文） |
 |---|---|---|---|---|
-| 构造 | `constructor` | `session-runtime.ts:93-108` | 公开 | kimi-runtime.ts:234（全类唯一 new 的地方，[03-KimiRuntime方法详解.md](03-KimiRuntime方法详解.md) 第七节）：`const runtime = new SessionRuntime({` |
+| 构造 | `constructor` | `session-runtime.ts:93-108` | 公开 | kimi-runtime.ts:270（全类唯一 new 的地方，[03-KimiRuntime方法详解.md](03-KimiRuntime方法详解.md) 第七节）：`const runtime = new SessionRuntime({` |
 | 只读 | `id` | `session-runtime.ts:110-112` | getter | chat.handler.ts:123：`emitCaughtError(ctx, error, "preflight", runtime.id);`；bridge-handler.ts:330-333：`id: runtime.id,`（拼 BaselineSession）等 |
 | | `summary` | `session-runtime.ts:114-116` | getter | bridge-handler.ts:298：`const active = this.runtime.getSession(sessionId)?.summary;`；slash-command.ts:177：`const dirs = runtime.session.summary?.additionalDirs ?? [];` |
-| | `subscribers` | `session-runtime.ts:118-120` | getter | kimi-runtime.ts:194：`if (runtime.subscribers.length === 0) {`；session.handler.ts:184：`const affectedViews = ctx.runtime.getSession(params.sessionId)?.subscribers ?? [];` |
+| | `subscribers` | `session-runtime.ts:118-120` | getter | kimi-runtime.ts:213：`if (runtime.subscribers.length === 0) {`；session.handler.ts:184：`const affectedViews = ctx.runtime.getSession(params.sessionId)?.subscribers ?? [];` |
 | | `isBusy` | `session-runtime.ts:122-124` | getter | chat.handler.ts:174：`if (runtime === undefined \|\| !runtime.isBusy) return { ok: false };`（Steer 的门） |
-| | `legacyApprovalFlags` | `session-runtime.ts:126-128` | getter | kimi-runtime.ts:98：`await applySessionSettings(current.session, options, current.legacyApprovalFlags);`（kimi-runtime.ts:106 同款） |
-| 订阅 | `subscribe` | `session-runtime.ts:141-144` | 公开 | kimi-runtime.ts:140：`runtime.subscribe(options.webviewId);`（kimi-runtime.ts:153 `existing.subscribe(webviewId);`、kimi-runtime.ts:181 `runtime.subscribe(webviewId);`——收尾三步第一步） |
-| | `announceStatus` | `session-runtime.ts:151-168` | 公开 | kimi-runtime.ts:99：`await current.announceStatus(options.webviewId);`（kimi-runtime.ts:142/:154/:183 同款——收尾第三步） |
-| | `unsubscribeView` | `session-runtime.ts:170-172` | 公开 | kimi-runtime.ts:193（唯一）：`runtime.unsubscribeView(webviewId);` |
+| | `legacyApprovalFlags` | `session-runtime.ts:126-128` | getter | kimi-runtime.ts:103：`await applySessionSettings(current.session, options, current.legacyApprovalFlags);`（kimi-runtime.ts:111 同款） |
+| 订阅 | `subscribe` | `session-runtime.ts:141-144` | 公开 | kimi-runtime.ts:145：`runtime.subscribe(options.webviewId);`（kimi-runtime.ts:168 `existing.subscribe(webviewId);`、kimi-runtime.ts:196 `runtime.subscribe(webviewId);`——收尾三步第一步） |
+| | `announceStatus` | `session-runtime.ts:151-169` | 公开 | kimi-runtime.ts:104：`await current.announceStatus(options.webviewId);`（kimi-runtime.ts:147/:169/:198 同款——收尾第三步） |
+| | `unsubscribeView` | `session-runtime.ts:171-173` | 公开 | kimi-runtime.ts:212（唯一）：`runtime.unsubscribeView(webviewId);` |
 | 审批标志 | `toggleLegacyApproval` | `session-runtime.ts:130-134` | 公开 | slash-command.ts:121：`const flags = await runtime.toggleLegacyApproval(kind);`（/yolo、/auto） |
-| | `setLegacyYoloMode` | `session-runtime.ts:136-139` | 公开 | kimi-runtime.ts:220：`[...this.sessions.values()].map((session) => session.setLegacyYoloMode(enabled)),`（全局设置变化） |
-| | `applyLegacyApproval` | `session-runtime.ts:420-437` | 私有 | 上面两个的公共出口（正文第四节） |
-| 模型回合 | `prompt` | `session-runtime.ts:174-176` | 公开 | chat.handler.ts:139（唯一）：`const result = await runtime.prompt(prependSystemContext(params.content, systemContext));` |
-| | `runTurnAction` | `session-runtime.ts:178-223` | 公开 | prompt `session-runtime.ts:175`（`return this.runTurnAction(input, () => this.session.prompt(toSdkPromptInput(input)));`）、slash-command.ts:54：`const result = await runtime.runTurnAction(command.raw, () =>` |
-| 宿主假回合 | `beginHostAction` | `session-runtime.ts:225-244` | 公开 | slash-command.ts:59（唯一）：`const actionId = runtime.beginHostAction(command.raw, command.name === "import");` |
-| | `emitHostText` | `session-runtime.ts:246-253` | 公开 | slash-command.ts:60：`const emit = (text: string): void => runtime.emitHostText(text, actionId);` |
-| | `announceSessionStart` | `session-runtime.ts:255-262` | 公开 | chat.handler.ts:121（唯一）：`runtime.announceSessionStart(model);` |
-| | `completeHostAction` | `session-runtime.ts:264-277` | 公开 | slash-command.ts:105：`runtime.completeHostAction("finished", actionId);`；类内 cancel session-runtime.ts:340 |
-| | `failHostAction` | `session-runtime.ts:279-284` | 公开 | slash-command.ts:109（唯一）：`runtime.failHostAction(actionId);` |
-| | `wasHostActionCancelled` | `session-runtime.ts:286-288` | 公开 | slash-command.ts:104/:108：`if (runtime.wasHostActionCancelled(actionId)) return false;` |
-| | `releaseHostAction` | `session-runtime.ts:290-292` | 公开 | slash-command.ts:112（finally 里）：`runtime.releaseHostAction(actionId);` |
-| | `compactHostAction` | `session-runtime.ts:294-327` | 公开 | slash-command.ts:77（/compact，唯一）：`await runtime.compactHostAction(actionId, command.args \|\| undefined);` |
-| 取消/独占 | `cancel` | `session-runtime.ts:329-352` | 公开 | chat.handler.ts:152（Stop 按钮）：`await runtime.cancel();`；类内 runExclusiveAfterCancelling session-runtime.ts:368、close session-runtime.ts:406 |
-| | `runExclusiveAfterCancelling` | `session-runtime.ts:354-375` | 公开 | session.handler.ts:251（ForkKimiSession，唯一）：`: active.runExclusiveAfterCancelling(forkSettledSession);` |
-| 逆流/转向 | `steer` | `session-runtime.ts:377-385` | 公开 | chat.handler.ts:175（唯一）：`await runtime.steer(params.content);` |
-| | `respondApproval` | `session-runtime.ts:387-389` | 公开 | chat.handler.ts:157（唯一）：`return { ok: ctx.getSession()?.respondApproval(params.requestId, params.response) ?? false };` |
-| | `respondQuestion` | `session-runtime.ts:391-393` | 公开 | chat.handler.ts:162（唯一）：`return { ok: ctx.getSession()?.respondQuestion(id, params.answers) ?? false };` |
-| 生命 | `close` | `session-runtime.ts:395-418` | 公开 | kimi-runtime.ts:196/:210（`await runtime.close();`）、kimi-runtime.ts:227（`session.close()`，dispose 并发关）；slash-command.ts:276：`if (activeSource === undefined) await sourceSession.close();`；session.handler.ts:213/:228：`await fork.close();` |
-| 事件管线 | `onSdkEvent` | `session-runtime.ts:439-495` | 私有 | 构造器 onEvent 回调 :107（唯一）：`this.unsubscribe = this.session.onEvent((event) => this.onSdkEvent(event));` |
-| | `captureFileBaseline` | `session-runtime.ts:497-513` | 私有 | onSdkEvent :455：`this.captureFileBaseline(event);`（tool.call.started 时） |
-| | `emitTerminal` | `session-runtime.ts:515-557` | 私有 | onSdkEvent :477：`this.emitTerminal(adapted.terminal);` |
-| | `consumeSuppressedError` | `session-runtime.ts:559-564` | 私有 | onSdkEvent :465：`if (event.type === "error" && this.consumeSuppressedError(event.code, event.message)) {` |
-| | `emitError` | `session-runtime.ts:566-579` | 私有 | runTurnAction :190/:217（正文第五节代码块内） |
-| | `emitStreamEvent` | `session-runtime.ts:581-585` | 私有 | 全类事件总出口（11 处调用，见 broadcast 链条篇） |
-| 结算 | `settlePrompt` | `session-runtime.ts:587-594` | 私有 | emitTerminal :525/:536/:556、onSdkEvent :492、runTurnAction :218、close :410（正文各节代码块内） |
-| | `hasActiveWork` | `session-runtime.ts:596-598` | 私有 getter | isBusy session-runtime.ts:123：`return this.hasActiveWork \|\| this.exclusiveActionActive;`；session-runtime.ts:601/:608 |
-| | `waitForActiveWorkToSettle` | `session-runtime.ts:600-605` | 私有 | runExclusiveAfterCancelling :367：`const settled = this.waitForActiveWorkToSettle();` |
-| | `notifyActiveWorkSettled` | `session-runtime.ts:607-611` | 私有 | settlePrompt :593、completeHostAction :276、failHostAction :283、close :413（正文代码块内） |
-| | `ensureOpen` | `session-runtime.ts:613-615` | 私有 | 8 处调用点对应 7 个方法（第二节全表） |
+| | `setLegacyYoloMode` | `session-runtime.ts:136-139` | 公开 | kimi-runtime.ts:256：`[...this.sessions.values()].map((session) => session.setLegacyYoloMode(enabled)),`（全局设置变化） |
+| | `applyLegacyApproval` | `session-runtime.ts:421-438` | 私有 | 上面两个的公共出口（正文第四节） |
+| 模型回合 | `prompt` | `session-runtime.ts:175-177` | 公开 | chat.handler.ts:139（唯一）：`const result = await runtime.prompt(prependSystemContext(params.content, systemContext));` |
+| | `runTurnAction` | `session-runtime.ts:179-224` | 公开 | prompt `session-runtime.ts:176`（`return this.runTurnAction(input, () => this.session.prompt(toSdkPromptInput(input)));`）、slash-command.ts:54：`const result = await runtime.runTurnAction(command.raw, () =>` |
+| 宿主假回合 | `beginHostAction` | `session-runtime.ts:226-245` | 公开 | slash-command.ts:59（唯一）：`const actionId = runtime.beginHostAction(command.raw, command.name === "import");` |
+| | `emitHostText` | `session-runtime.ts:247-254` | 公开 | slash-command.ts:60：`const emit = (text: string): void => runtime.emitHostText(text, actionId);` |
+| | `announceSessionStart` | `session-runtime.ts:256-263` | 公开 | chat.handler.ts:121（唯一）：`runtime.announceSessionStart(model);` |
+| | `completeHostAction` | `session-runtime.ts:265-278` | 公开 | slash-command.ts:105：`runtime.completeHostAction("finished", actionId);`；类内 cancel session-runtime.ts:341 |
+| | `failHostAction` | `session-runtime.ts:280-285` | 公开 | slash-command.ts:109（唯一）：`runtime.failHostAction(actionId);` |
+| | `wasHostActionCancelled` | `session-runtime.ts:287-289` | 公开 | slash-command.ts:104/:108：`if (runtime.wasHostActionCancelled(actionId)) return false;` |
+| | `releaseHostAction` | `session-runtime.ts:291-293` | 公开 | slash-command.ts:112（finally 里）：`runtime.releaseHostAction(actionId);` |
+| | `compactHostAction` | `session-runtime.ts:295-328` | 公开 | slash-command.ts:77（/compact，唯一）：`await runtime.compactHostAction(actionId, command.args \|\| undefined);` |
+| 取消/独占 | `cancel` | `session-runtime.ts:330-353` | 公开 | chat.handler.ts:152（Stop 按钮）：`await runtime.cancel();`；类内 runExclusiveAfterCancelling session-runtime.ts:369、close session-runtime.ts:407 |
+| | `runExclusiveAfterCancelling` | `session-runtime.ts:355-376` | 公开 | session.handler.ts:251（ForkKimiSession，唯一）：`: active.runExclusiveAfterCancelling(forkSettledSession);` |
+| 逆流/转向 | `steer` | `session-runtime.ts:378-386` | 公开 | chat.handler.ts:175（唯一）：`await runtime.steer(params.content);` |
+| | `respondApproval` | `session-runtime.ts:388-390` | 公开 | chat.handler.ts:157（唯一）：`return { ok: ctx.getSession()?.respondApproval(params.requestId, params.response) ?? false };` |
+| | `respondQuestion` | `session-runtime.ts:392-394` | 公开 | chat.handler.ts:162（唯一）：`return { ok: ctx.getSession()?.respondQuestion(id, params.answers) ?? false };` |
+| 生命 | `close` | `session-runtime.ts:396-419` | 公开 | kimi-runtime.ts:215/:246（`await runtime.close();`）、kimi-runtime.ts:263（`session.close()`，dispose 并发关）；slash-command.ts:276：`if (activeSource === undefined) await sourceSession.close();`；session.handler.ts:213/:228：`await fork.close();` |
+| 事件管线 | `onSdkEvent` | `session-runtime.ts:440-496` | 私有 | 构造器 onEvent 回调 :107（唯一）：`this.unsubscribe = this.session.onEvent((event) => this.onSdkEvent(event));` |
+| | `captureFileBaseline` | `session-runtime.ts:498-514` | 私有 | onSdkEvent :455：`this.captureFileBaseline(event);`（tool.call.started 时） |
+| | `emitTerminal` | `session-runtime.ts:516-558` | 私有 | onSdkEvent :477：`this.emitTerminal(adapted.terminal);` |
+| | `consumeSuppressedError` | `session-runtime.ts:560-565` | 私有 | onSdkEvent :465：`if (event.type === "error" && this.consumeSuppressedError(event.code, event.message)) {` |
+| | `emitError` | `session-runtime.ts:567-580` | 私有 | runTurnAction :191/:218（正文第五节代码块内） |
+| | `emitStreamEvent` | `session-runtime.ts:582-586` | 私有 | 全类事件总出口（11 处调用，见 broadcast 链条篇） |
+| 结算 | `settlePrompt` | `session-runtime.ts:588-595` | 私有 | emitTerminal :526/:537/:557、onSdkEvent :493、runTurnAction :219、close :411（正文各节代码块内） |
+| | `hasActiveWork` | `session-runtime.ts:597-599` | 私有 getter | isBusy session-runtime.ts:123：`return this.hasActiveWork \|\| this.exclusiveActionActive;`；session-runtime.ts:603/:609 |
+| | `waitForActiveWorkToSettle` | `session-runtime.ts:601-606` | 私有 | runExclusiveAfterCancelling :367：`const settled = this.waitForActiveWorkToSettle();` |
+| | `notifyActiveWorkSettled` | `session-runtime.ts:608-612` | 私有 | settlePrompt :593、completeHostAction :276、failHostAction :283、close :413（正文代码块内） |
+| | `ensureOpen` | `session-runtime.ts:614-616` | 私有 | 8 处调用点对应 7 个方法（第二节全表） |
 
-**2 个文件级函数**：`toSdkPromptInput`（`session-runtime.ts:618-651`，导出，类内 `session-runtime.ts:175/:379` 两处用）、`isRecord`（`session-runtime.ts:653-655`，`session-runtime.ts:499` 一处用：`if (!isRecord(event.args)) return;`）。
+**2 个文件级函数**：`toSdkPromptInput`（`session-runtime.ts:619-652`，导出，类内 `session-runtime.ts:177/:380` 两处用）、`isRecord`（`session-runtime.ts:654-656`，`session-runtime.ts:500` 一处用：`if (!isRecord(event.args)) return;`）。
 
 ## 一、constructor：三根一次性接线
 
@@ -109,7 +109,7 @@ constructor(options: SessionRuntimeOptions) {
 }
 ```
 
-**实参谁递的**：kimi-runtime wrapSession（kimi-runtime.ts:233-243——new SessionRuntime 并立即放进 sessions 表，全类唯一 new 的地方，[03-KimiRuntime方法详解.md](03-KimiRuntime方法详解.md) 第七节有完整代码）——Session 是 harness 造的，三个回调是从 BridgeHandler 一路转手来的。
+**实参谁递的**：kimi-runtime wrapSession（kimi-runtime.ts:269-279——new SessionRuntime 并立即放进 sessions 表，全类唯一 new 的地方，[03-KimiRuntime方法详解.md](03-KimiRuntime方法详解.md) 第七节有完整代码）——Session 是 harness 造的，三个回调是从 BridgeHandler 一路转手来的。
 
 三根接线各是一次、且各自指向唯一的下家：
 
@@ -134,16 +134,16 @@ get legacyApprovalFlags(): LegacyApprovalFlags { return this.legacyApproval; }
 
 前两个是对 SDK Session 的**只读透出**（不改写、不缓存）。`subscribers` 每次现场拷贝成数组——调用方拿到的是快照，改它不影响内部 Set（kimi-runtime 的 detachView 靠 `subscribers.length === 0` 做引用计数判定，[03-KimiRuntime方法详解.md](03-KimiRuntime方法详解.md) 第五节）。`isBusy` 是互斥总闸：**模型回合（activePrompt）或假回合（hostActionActive）在跑，或独占操作（fork）在进行**，三者任一为真就是忙。
 
-`ensureOpen`（`session-runtime.ts:613-615`）就一行：
+`ensureOpen`（`session-runtime.ts:614-616`）就一行：
 
 ```ts
-// session-runtime.ts:613-615
+// session-runtime.ts:614-616
 private ensureOpen(): void {
   if (this.closed) throw new Error("Session is closed.");
 }
 ```
 
-它是 7 个方法的第一道门（8 处调用点）：subscribe `session-runtime.ts:142`、announceStatus `session-runtime.ts:152`、runTurnAction `session-runtime.ts:182`、beginHostAction `session-runtime.ts:226`、runExclusiveAfterCancelling `session-runtime.ts:360`＋`session-runtime.ts:370`、steer `session-runtime.ts:378`、applyLegacyApproval `session-runtime.ts:421`（每处都是同一行 `this.ensureOpen();`）——关掉的会话不接受新工作。
+它是 7 个方法的第一道门（8 处调用点）：subscribe `session-runtime.ts:142`、announceStatus `session-runtime.ts:152`、runTurnAction `session-runtime.ts:183`、beginHostAction `session-runtime.ts:227`、runExclusiveAfterCancelling `session-runtime.ts:361`＋`session-runtime.ts:371`、steer `session-runtime.ts:379`、applyLegacyApproval `session-runtime.ts:422`（每处都是同一行 `this.ensureOpen();`）——关掉的会话不接受新工作。
 
 ## 三、订阅三件：subscribe / unsubscribeView / announceStatus
 
@@ -159,14 +159,16 @@ unsubscribeView(webviewId: string): void {
 ```
 
 ```ts
-// session-runtime.ts:151-168（节选，JSDoc :146-150）
+// session-runtime.ts:151-169（节选，JSDoc :146-150）
 async announceStatus(webviewId: string): Promise<void> {
   this.ensureOpen();
   const status = await this.session.getStatus();
   if (this.closed || !this.webviewIds.has(webviewId)) return;   // :154 await 后重验——竞态守卫
   this.broadcast(
     Events.StreamEvent,
-    { type: "StatusUpdate", payload: { model: status.model, thinking_effort: status.thinkingEffort, plan_mode: status.planMode }, _sessionId: this.id },
+    { type: "StatusUpdate", payload: { model: status.model, thinking_effort: status.thinkingEffort, plan_mode: status.planMode,
+        context_usage: status.contextUsage },                   // :163 #3098 补传——v2 引擎的实时上下文占用
+    _sessionId: this.id },
     webviewId,                                                   // 定向：只发这一个视图
   );
 }
@@ -177,7 +179,7 @@ JSDoc 原话："视图打开或重进会话时把当前状态推过去，让显�
 ## 四、审批标志三件：toggleLegacyApproval / setLegacyYoloMode / applyLegacyApproval
 
 ```ts
-// session-runtime.ts:420-437（applyLegacyApproval，两个公开方法的公共出口）
+// session-runtime.ts:421-438（applyLegacyApproval，两个公开方法的公共出口）
 private async applyLegacyApproval(flags: LegacyApprovalFlags): Promise<void> {
   this.ensureOpen();
   const permission = corePermissionForLegacyApproval(flags);
@@ -203,7 +205,7 @@ private async applyLegacyApproval(flags: LegacyApprovalFlags): Promise<void> {
 ## 五、模型回合：prompt / runTurnAction / settlePrompt 一族
 
 ```ts
-// session-runtime.ts:174-176
+// session-runtime.ts:175-177
 async prompt(input: string | LegacyContentPart[]): Promise<PromptResult> {
   return this.runTurnAction(input, () => this.session.prompt(toSdkPromptInput(input)));
 }
@@ -220,7 +222,7 @@ if (command.name.startsWith("skill:")) {
 ```
 
 ```ts
-// session-runtime.ts:178-223（节选）
+// session-runtime.ts:179-224（节选）
 async runTurnAction(input, action): Promise<PromptResult> {
   this.ensureOpen();
   if (this.isBusy) {
@@ -250,16 +252,16 @@ async runTurnAction(input, action): Promise<PromptResult> {
 }
 ```
 
-这里藏着本类最核心的一个设计：**`await action()` 返回≠回合结束**。`session.prompt` 的 Promise 只表示"引擎接受了请求"，真正的终态来自事件流（`turn.ended` → onSdkEvent → emitTerminal → `settlePrompt`）。所以方法返回的是 `completion`——一个由 `active.resolve` 控制的 Promise，**谁看到 turn.ended 谁来 resolve 它**。`session-runtime.ts:184-189` 原注释解释 `session-runtime.ts:193` 的两态：重入请求失败时，若正在跑的是回合类工作，它的终态事件会解锁视图，发**非终态**警告就够；若正在跑的是独占操作（fork），没有终态事件会来，必须发**终态**错误让输入框解锁，否则挂到握手超时。
+这里藏着本类最核心的一个设计：**`await action()` 返回≠回合结束**。`session.prompt` 的 Promise 只表示"引擎接受了请求"，真正的终态来自事件流（`turn.ended` → onSdkEvent → emitTerminal → `settlePrompt`）。所以方法返回的是 `completion`——一个由 `active.resolve` 控制的 Promise，**谁看到 turn.ended 谁来 resolve 它**。`session-runtime.ts:185-190` 原注释解释 `session-runtime.ts:194` 的两态：重入请求失败时，若正在跑的是回合类工作，它的终态事件会解锁视图，发**非终态**警告就够；若正在跑的是独占操作（fork），没有终态事件会来，必须发**终态**错误让输入框解锁，否则挂到握手超时。
 
-`settlePrompt`（`session-runtime.ts:587-594`）：`settled` 标志防重复结算，resolve 后调 `notifyActiveWorkSettled`。`hasActiveWork`（`session-runtime.ts:596-598`）＝ activePrompt 或 hostActionActive（`return this.activePrompt !== undefined || this.hostActionActive;`）；`waitForActiveWorkToSettle`（`session-runtime.ts:600-605`）把 resolve 收进 `activeWorkSettledWaiters`；`notifyActiveWorkSettled`（`session-runtime.ts:607-611`）在活干完时全部放行并清空——**fork 的"等落定"机制**（第七节）靠这三个方法。
+`settlePrompt`（`session-runtime.ts:588-595`）：`settled` 标志防重复结算，resolve 后调 `notifyActiveWorkSettled`。`hasActiveWork`（`session-runtime.ts:597-599`）＝ activePrompt 或 hostActionActive（`return this.activePrompt !== undefined || this.hostActionActive;`）；`waitForActiveWorkToSettle`（`session-runtime.ts:601-606`）把 resolve 收进 `activeWorkSettledWaiters`；`notifyActiveWorkSettled`（`session-runtime.ts:608-612`）在活干完时全部放行并清空——**fork 的"等落定"机制**（第七节）靠这三个方法。
 
 ## 六、宿主假回合：beginHostAction 八件套
 
 宿主斜杠命令（/init、/compact、/clear、/yolo、/export……slash-command.ts:16-28 的 HOST_COMMANDS）不进引擎，但 UI 上要显示成"一轮对话"——有开头、有文字、有结束。这套 API 就是给 slash-command.ts 造假回合用的：
 
 ```ts
-// session-runtime.ts:225-244（beginHostAction）
+// session-runtime.ts:226-245（beginHostAction）
 beginHostAction(input: string | LegacyContentPart[], forkable = false): number {
   this.ensureOpen();
   if (this.isBusy) {
@@ -278,13 +280,13 @@ beginHostAction(input: string | LegacyContentPart[], forkable = false): number {
 
 | 方法 | 行号 | 干什么 |
 |---|---|---|
-| `emitHostText` | `session-runtime.ts:246-253` | 发一条 ContentPart（命令的输出文字）；空文本直接吞 |
-| `announceSessionStart` | `session-runtime.ts:255-262` | 发 `session_start`（chat.handler 在 prompt 前调，UI 建会话上下文） |
-| `completeHostAction` | `session-runtime.ts:264-277` | 发 `stream_complete`（status: finished/cancelled）＋通知落定 |
-| `failHostAction` | `session-runtime.ts:279-284` | 静默失败：不发终态事件（调用方自己抛错走 emitCaughtError），只清状态＋通知落定 |
-| `wasHostActionCancelled` | `session-runtime.ts:286-288` | 查这个编号是否被 cancel 记进过 `cancelledHostActions` |
-| `releaseHostAction` | `session-runtime.ts:290-292` | 从取消记录里删掉这个编号（finally 里调，防 Set 无限涨） |
-| `compactHostAction` | `session-runtime.ts:294-327` | /compact 专用，见下 |
+| `emitHostText` | `session-runtime.ts:247-254` | 发一条 ContentPart（命令的输出文字）；空文本直接吞 |
+| `announceSessionStart` | `session-runtime.ts:256-263` | 发 `session_start`（chat.handler 在 prompt 前调，UI 建会话上下文） |
+| `completeHostAction` | `session-runtime.ts:265-278` | 发 `stream_complete`（status: finished/cancelled）＋通知落定 |
+| `failHostAction` | `session-runtime.ts:280-285` | 静默失败：不发终态事件（调用方自己抛错走 emitCaughtError），只清状态＋通知落定 |
+| `wasHostActionCancelled` | `session-runtime.ts:287-289` | 查这个编号是否被 cancel 记进过 `cancelledHostActions` |
+| `releaseHostAction` | `session-runtime.ts:291-293` | 从取消记录里删掉这个编号（finally 里调，防 Set 无限涨） |
+| `compactHostAction` | `session-runtime.ts:295-328` | /compact 专用，见下 |
 
 slash-command.ts:59-113 是这套 API 的标准用法（begin → try{干活＋emit} → 成功侧 `wasCancelled? complete` / 失败侧 `wasCancelled? fail` → finally `release`），关键几行：
 
@@ -305,12 +307,12 @@ const emit = (text: string): void => runtime.emitHostText(text, actionId);
   }
 ```
 
-`compactHostAction` 特殊在**它真的进引擎**（`session.compact`，`session-runtime.ts:315`）却没有 turn 事件流——引擎用 `compaction.completed`/`compaction.cancelled` 事件报结果。所以它自己造 Promise，把 resolve/reject 存进 `pendingHostCompaction`，由 onSdkEvent 的专用分支（`session-runtime.ts:442-448`）结算；cancel 路径把 `"cancelled"` 翻译成异常抛出（`session-runtime.ts:324-326`）。已有一个在途 compaction 时拒绝第二个（`session-runtime.ts:298-300`：`if (this.pendingHostCompaction !== undefined) { throw new Error("A context compaction is already running."); }`）。
+`compactHostAction` 特殊在**它真的进引擎**（`session.compact`，`session-runtime.ts:316`）却没有 turn 事件流——引擎用 `compaction.completed`/`compaction.cancelled` 事件报结果。所以它自己造 Promise，把 resolve/reject 存进 `pendingHostCompaction`，由 onSdkEvent 的专用分支（`session-runtime.ts:443-449`）结算；cancel 路径把 `"cancelled"` 翻译成异常抛出（`session-runtime.ts:325-327`）。已有一个在途 compaction 时拒绝第二个（`session-runtime.ts:299-301`：`if (this.pendingHostCompaction !== undefined) { throw new Error("A context compaction is already running."); }`）。
 
 ## 七、cancel 与 runExclusiveAfterCancelling
 
 ```ts
-// session-runtime.ts:329-352
+// session-runtime.ts:330-353
 async cancel(): Promise<void> {
   // Always reach the engine, even when the host believes nothing is active. ...
   if (this.closed) return;
@@ -331,10 +333,10 @@ async cancel(): Promise<void> {
 }
 ```
 
-**谁调用**：chat.handler.ts:152（Stop 按钮，`await runtime.cancel();`）。`session-runtime.ts:330-333` 原注释值得整段读：**即使宿主这边认为没活，也要打到引擎**——宿主记录可能在异常路径后与引擎真相不一致，`session.cancel()` 在引擎空闲时是无害空操作，但它是找回"宿主跟丢的回合"的唯一手段。两个取消面并行（allSettled：一个失败不挡另一个，最后统一抛）。
+**谁调用**：chat.handler.ts:152（Stop 按钮，`await runtime.cancel();`）。`session-runtime.ts:331-334` 原注释值得整段读：**即使宿主这边认为没活，也要打到引擎**——宿主记录可能在异常路径后与引擎真相不一致，`session.cancel()` 在引擎空闲时是无害空操作，但它是找回"宿主跟丢的回合"的唯一手段。两个取消面并行（allSettled：一个失败不挡另一个，最后统一抛）。
 
 ```ts
-// session-runtime.ts:359-375（节选）
+// session-runtime.ts:360-376（节选）
 async runExclusiveAfterCancelling<T>(action: () => Promise<T>): Promise<T> {
   this.ensureOpen();
   if (this.exclusiveActionActive) {
@@ -353,12 +355,12 @@ async runExclusiveAfterCancelling<T>(action: () => Promise<T>): Promise<T> {
 }
 ```
 
-JSDoc（`session-runtime.ts:354-358`）说清动机："停掉在途工作、等它的终态事件、再挡住新回合直到操作完成。**fork 用它读到完全落定的会话**，避免与异步的 cancel 事件赛跑"。**谁调用**：session.handler.ts:251（ForkKimiSession）——fork 要复制"到第 N 轮为止"的会话，若 cancel 的事件还在天上飞，复制品可能多一轮少一轮（`session-runtime.ts:248-251`：`const active = ctx.runtime.getSession(params.sessionId); return active === undefined ? forkSettledSession() : active.runExclusiveAfterCancelling(forkSettledSession);`）。`session-runtime.ts:367` 在 cancel **之前**挂 waiter 是顺序关键：先挂才收得到 settlePrompt 触发的放行。
+JSDoc（`session-runtime.ts:355-359`）说清动机："停掉在途工作、等它的终态事件、再挡住新回合直到操作完成。**fork 用它读到完全落定的会话**，避免与异步的 cancel 事件赛跑"。**谁调用**：session.handler.ts:251（ForkKimiSession）——fork 要复制"到第 N 轮为止"的会话，若 cancel 的事件还在天上飞，复制品可能多一轮少一轮（`session-runtime.ts:249-252`：`const active = ctx.runtime.getSession(params.sessionId); return active === undefined ? forkSettledSession() : active.runExclusiveAfterCancelling(forkSettledSession);`）。`session-runtime.ts:368` 在 cancel **之前**挂 waiter 是顺序关键：先挂才收得到 settlePrompt 触发的放行。
 
 ## 八、steer 与逆流应答
 
 ```ts
-// session-runtime.ts:377-385
+// session-runtime.ts:378-386
 async steer(input: string | LegacyContentPart[]): Promise<void> {
   this.ensureOpen();
   await this.session.steer(toSdkPromptInput(input));
@@ -375,12 +377,12 @@ if (runtime === undefined || !runtime.isBusy) return { ok: false };
 await runtime.steer(params.content);
 ```
 
-`respondApproval`（`session-runtime.ts:387-389`）/`respondQuestion`（`session-runtime.ts:391-393`）各一行——转给 `reverseRpc.respondApproval/respondQuestion`，返回布尔（false＝Map 里没这个 id：回合已被 cancelAll 收尾。逆流＝引擎→宿主→用户的反方向调用，靠"宿主把 Promise 的 resolve 存进 Map、等用户点按钮的 RPC 回来再放行"实现，[01-webview与Bridge通信.md](01-webview与Bridge通信.md) 第 6.4 节讲过整个机制）。**唯一调用方** chat.handler.ts:157/:162（调用行原文见总地图），对应 webview 侧的两个 RPC 方法调用。
+`respondApproval`（`session-runtime.ts:388-390`）/`respondQuestion`（`session-runtime.ts:392-394`）各一行——转给 `reverseRpc.respondApproval/respondQuestion`，返回布尔（false＝Map 里没这个 id：回合已被 cancelAll 收尾。逆流＝引擎→宿主→用户的反方向调用，靠"宿主把 Promise 的 resolve 存进 Map、等用户点按钮的 RPC 回来再放行"实现，[01-webview与Bridge通信.md](01-webview与Bridge通信.md) 第 6.4 节讲过整个机制）。**唯一调用方** chat.handler.ts:157/:162（调用行原文见总地图），对应 webview 侧的两个 RPC 方法调用。
 
 ## 九、close：按固定顺序收尾
 
 ```ts
-// session-runtime.ts:395-418
+// session-runtime.ts:396-419
 async close(): Promise<void> {
   if (this.closed) return;                                     // 幂等
   this.closed = true;
@@ -404,12 +406,12 @@ async close(): Promise<void> {
 }
 ```
 
-顺序本身就是文档：先置 closed（挡新工作）→ 结算在途 Promise（compaction 拒绝、prompt 以 cancelled 结算——**调用方不能永远挂着**）→ 按构造时接线的**反序**摘线（unsubscribe、两个 handler 置 undefined）→ 有活则 cancel → 关 SDK 会话。**谁调用**（6 处，调用行原文见总地图）：kimi-runtime.ts:196（末位视图 detach）、kimi-runtime.ts:210（closeSession）、kimi-runtime.ts:227（dispose）；slash-command.ts:276 与 session.handler.ts:213/:228（fork 流程关临时会话）。
+顺序本身就是文档：先置 closed（挡新工作）→ 结算在途 Promise（compaction 拒绝、prompt 以 cancelled 结算——**调用方不能永远挂着**）→ 按构造时接线的**反序**摘线（unsubscribe、两个 handler 置 undefined）→ 有活则 cancel → 关 SDK 会话。**谁调用**（6 处，调用行原文见总地图）：kimi-runtime.ts:215（末位视图 detach）、kimi-runtime.ts:246（closeSession）、kimi-runtime.ts:263（dispose）；slash-command.ts:276 与 session.handler.ts:213/:228（fork 流程关临时会话）。
 
 ## 十、事件管线：onSdkEvent 一族（引擎事件进来的地方）
 
 ```ts
-// session-runtime.ts:439-495（逐段）
+// session-runtime.ts:440-496（逐段）
 private onSdkEvent(event: Event): void {
   if (this.closed) return;                                     // :440 摘线后的迟到事件直接丢
 
@@ -455,14 +457,14 @@ private onSdkEvent(event: Event): void {
 }
 ```
 
-管线六站：**compaction 结算 → started 标记 → 保存快照 → 重试日志 → 错误抑制 → 投影分发**（投影器 event-adapter.ts 本身的拆解在 [01-webview与Bridge通信.md](01-webview与Bridge通信.md) 第 6.3 节）。`session-runtime.ts:481-489` 原注释点明 `session-runtime.ts:488` 的用意：引擎在回合仍进行时报的错误（后面不会跟 turn.ended）若被 UI 当成回合结束，输入框提前解锁、下一发 prompt 撞上还在跑的这发——所以强制 `terminal: false`。测试 kimi-runtime.test.ts:690 `it("marks a mid-turn core error as non-terminal until the turn ends", async () => {` 锁的正是这一行。
+管线六站：**compaction 结算 → started 标记 → 保存快照 → 重试日志 → 错误抑制 → 投影分发**（投影器 event-adapter.ts 本身的拆解在 [01-webview与Bridge通信.md](01-webview与Bridge通信.md) 第 6.3 节）。`session-runtime.ts:482-490` 原注释点明 `session-runtime.ts:489` 的用意：引擎在回合仍进行时报的错误（后面不会跟 turn.ended）若被 UI 当成回合结束，输入框提前解锁、下一发 prompt 撞上还在跑的这发——所以强制 `terminal: false`。测试 kimi-runtime.test.ts:780 `it("marks a mid-turn core error as non-terminal until the turn ends", async () => {` 锁的正是这一行。
 
-`emitTerminal`（`session-runtime.ts:515-557`）按 adapter 给的 reason 分三路：completed → `stream_complete`＋settlePrompt(finished)；cancelled → `reverseRpc.cancelAll`＋`stream_complete`＋settlePrompt(cancelled)；错误路 → 算 code、`getUserMessage` 转人话、发 `error` 事件、**把这条错误记进 `suppressedError`**（`session-runtime.ts:553-555`：`if (terminal.error !== undefined) { this.suppressedError = { code: terminal.error.code, message: terminal.error.message }; }`）、settlePrompt(failed)。`session-runtime.ts:516-517` 的 `terminalKeys` 是第一道防重：同一个终态键（adapter 保证键唯一）只发一次（`if (this.terminalKeys.has(terminal.key)) return; this.terminalKeys.add(terminal.key);`）。`consumeSuppressedError`（`session-runtime.ts:559-564`）是第二道：emitTerminal 刚报过的错，引擎又发一条**一模一样**的 error 事件时吞掉——记下的 code＋message 双匹配才吞，且只吞一条。
+`emitTerminal`（`session-runtime.ts:516-558`）按 adapter 给的 reason 分三路：completed → `stream_complete`＋settlePrompt(finished)；cancelled → `reverseRpc.cancelAll`＋`stream_complete`＋settlePrompt(cancelled)；错误路 → 算 code、`getUserMessage` 转人话、发 `error` 事件、**把这条错误记进 `suppressedError`**（`session-runtime.ts:554-556`：`if (terminal.error !== undefined) { this.suppressedError = { code: terminal.error.code, message: terminal.error.message }; }`）、settlePrompt(failed)。`session-runtime.ts:517-518` 的 `terminalKeys` 是第一道防重：同一个终态键（adapter 保证键唯一）只发一次（`if (this.terminalKeys.has(terminal.key)) return; this.terminalKeys.add(terminal.key);`）。`consumeSuppressedError`（`session-runtime.ts:560-565`）是第二道：emitTerminal 刚报过的错，引擎又发一条**一模一样**的 error 事件时吞掉——记下的 code＋message 双匹配才吞，且只吞一条。
 
-`emitStreamEvent`（`session-runtime.ts:581-585`）是全类事件总出口：
+`emitStreamEvent`（`session-runtime.ts:582-586`）是全类事件总出口：
 
 ```ts
-// session-runtime.ts:581-585
+// session-runtime.ts:582-586
 private emitStreamEvent(event: UIStreamEvent | { type: string; payload: unknown }): void {
   for (const webviewId of this.webviewIds) {
     this.broadcast(Events.StreamEvent, event, webviewId);
@@ -470,12 +472,12 @@ private emitStreamEvent(event: UIStreamEvent | { type: string; payload: unknown 
 }
 ```
 
-每视图定向一条（[dive-chain-broadcast链条详解.md](dive-chain-broadcast链条详解.md) 第 2-1-1 站）。`emitError`（`session-runtime.ts:566-579`）是本类**自己产生**的错误（不是引擎事件）的出口：isKimiError 取 code、`getUserMessage` 转人话、发 error 事件＋写日志。
+每视图定向一条（[dive-chain-broadcast链条详解.md](dive-chain-broadcast链条详解.md) 第 2-1-1 站）。`emitError`（`session-runtime.ts:567-580`）是本类**自己产生**的错误（不是引擎事件）的出口：isKimiError 取 code、`getUserMessage` 转人话、发 error 事件＋写日志。
 
-`captureFileBaseline`（`session-runtime.ts:497-513`）：`event.name` 是 Write 或 Edit、args 是对象、`args["path"]` 是非空字符串——三关全过才调注入的 `captureBaseline` 回调，实参是会话三字段＋文件路径＋`this.subscribers`：
+`captureFileBaseline`（`session-runtime.ts:498-514`）：`event.name` 是 Write 或 Edit、args 是对象、`args["path"]` 是非空字符串——三关全过才调注入的 `captureBaseline` 回调，实参是会话三字段＋文件路径＋`this.subscribers`：
 
 ```ts
-// session-runtime.ts:497-513
+// session-runtime.ts:498-514
 private captureFileBaseline(event: Extract<Event, { type: "tool.call.started" }>): void {
   if (event.name !== "Write" && event.name !== "Edit") return;
   if (!isRecord(event.args)) return;
@@ -496,7 +498,7 @@ private captureFileBaseline(event: Extract<Event, { type: "tool.call.started" }>
 ## 十一、文件级函数
 
 ```ts
-// session-runtime.ts:618-651（节选）
+// session-runtime.ts:619-652（节选）
 export function toSdkPromptInput(input: string | LegacyContentPart[]): string | PromptInput {
   if (typeof input === "string") return input;
   const parts: SdkContentPart[] = [];
@@ -515,7 +517,7 @@ export function toSdkPromptInput(input: string | LegacyContentPart[]): string | 
 }
 ```
 
-把 webview 协议的旧 ContentPart 形状翻译成 SDK 的 PromptInput——**兼容层**，只在新旧形状有差异时才有存在感（旧 `image_url` 蛇形键 → 新 `imageUrl` 驼峰键）。`isRecord`（`session-runtime.ts:653-655`）是 unknown 收窄的惯用一行函数（`return typeof value === "object" && value !== null && !Array.isArray(value);`）。
+把 webview 协议的旧 ContentPart 形状翻译成 SDK 的 PromptInput——**兼容层**，只在新旧形状有差异时才有存在感（旧 `image_url` 蛇形键 → 新 `imageUrl` 驼峰键）。`isRecord`（`session-runtime.ts:654-656`）是 unknown 收窄的惯用一行函数（`return typeof value === "object" && value !== null && !Array.isArray(value);`）。
 
 ## 十二、设计复盘
 

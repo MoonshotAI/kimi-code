@@ -42,7 +42,7 @@
 | `saveAllDirty` | `bridge-handler.ts:210-213` | 私有 | 保存所有脏文档（非 untitled） | `bridge-handler.ts:205` `saveAllDirty: () => this.saveAllDirty(),` → chat.handler.ts:85：`await ctx.saveAllDirty();` |
 | `disposeView` | `bridge-handler.ts:215-219` | 公开 | 一个 webview 关了：拆会话绑定＋清两张表 | provider KimiWebviewProvider.ts:56/:73/:139（3 处）：`void this.bridgeHandler.disposeView(webviewId);` |
 | `getEditorMention` | `bridge-handler.ts:221-242` | 公开 | 把当前编辑器选区拼成 `@路径:行` 引用 | provider KimiWebviewProvider.ts:88：`const mention = await this.bridgeHandler.getEditorMention(webviewId, documentUri, selection);` |
-| `captureFileBaseline` | `bridge-handler.ts:244-290` | 公开 | 保存基线快照的宿主侧关卡：三道校验＋转交＋后台刷面板 | 构造器闭包 `bridge-handler.ts:47`：`this.captureFileBaseline(session, filePath, webviewIds);` ← session-runtime.ts:504：`this.captureBaseline(`（链条见第九节） |
+| `captureFileBaseline` | `bridge-handler.ts:244-290` | 公开 | 保存基线快照的宿主侧关卡：三道校验＋转交＋后台刷面板 | 构造器闭包 `bridge-handler.ts:47`：`this.captureFileBaseline(session, filePath, webviewIds);` ← session-runtime.ts:505：`this.captureBaseline(`（链条见第九节） |
 | `dispose` | `bridge-handler.ts:292-295` | 公开 | 整个插件停用：FileManager 先关、runtime 后关 | provider KimiWebviewProvider.ts:40：`void this.bridgeHandler.dispose();`、KimiWebviewProvider.ts:44：`return this.bridgeHandler.dispose();` |
 | `getBaselineContent` | `bridge-handler.ts:297-302` | 公开 | 取某会话某文件的基线内容（diff 视图左栏用） | provider KimiWebviewProvider.ts:145：`return this.bridgeHandler.getBaselineContent(sessionId, filePath);` |
 | `trace` | `bridge-handler.ts:304-309` | 私有 | 每个 RPC 请求记一行耗时日志 | `handle` 三个出口，如 `bridge-handler.ts:78`：`this.trace(msg.id, msg.method, Date.now() - startedAt, true);` |
@@ -121,11 +121,11 @@ constructor(
    - `captureBaseline: (session, filePath, webviewIds) => { this.captureFileBaseline(session, filePath, webviewIds); }`（`bridge-handler.ts:46-48`）。KimiRuntime 不认识 BaselineManager（防止上层依赖下层），但引擎改文件前需要保存基线快照（**保存基线快照＝代码里的 `capture`：抢在工具改文件之前，把这个文件当前的内容读出来存下来，当后续比对的"基准"**；之后算 File Changes、回滚、看 diff 都是拿这份基准跟现状比——存储机制全在 [04-BaselineManager方法详解.md](04-BaselineManager方法详解.md)），于是 BridgeHandler 的构造函数把这个回调递进去。递进去之后的完整路线：
 
      ```ts
-     // kimi-runtime.ts:63（构造函数里存成字段）
+     // kimi-runtime.ts:64（构造函数里存成字段）
      this.captureBaseline = options.captureBaseline;
-     // kimi-runtime.ts:238（wrapSession 里转递给 SessionRuntime）
+     // kimi-runtime.ts:274（wrapSession 里转递给 SessionRuntime）
      captureBaseline: this.captureBaseline,
-     // session-runtime.ts:504-512（最终调用点：引擎要改文件了）
+     // session-runtime.ts:505-513（最终调用点：引擎要改文件了）
      this.captureBaseline(
        {
          id: this.session.id,
@@ -611,7 +611,7 @@ closeSession: async () => {                                          // :201-204
 
 - `resumeSession`——用户在会话列表点开一条历史会话：SessionList.tsx:134：`const events = await bridge.loadSessionHistory(session.id);` → RPC `LoadKimiSessionHistory` → `session.handler.ts:130`：`const runtime = await ctx.resumeSession(params.kimiSessionId);`（ChatMessage.tsx:166 也调同一个包装方法——fork 出的新会话加载历史时）；
 
-- `closeSession`——以"新会话"为例：用户点 New Conversation → `startNewConversation` 动作（chat.store.ts:334 起：先 :341 `await bridge.abortChat();` 停在途流，再 :344 `await bridge.resetSession();`）→ RPC `ResetSession` → resetSession 处理器（chat.handler.ts:179-185，`await ctx.closeSession();` 在 `bridge-handler.ts:182`）。其余调用：`session.handler.ts:132`/`bridge-handler.ts:144`（恢复历史会话失败时回滚）、`config.handler.ts:111`（SaveConfig 改完配置后，下次发消息强制重开会话）。
+- `closeSession`——以"新会话"为例：用户点 New Conversation → `startNewConversation` 动作（chat.store.ts:334 起：先 :341 `await bridge.abortChat();` 停在途流，再 :344 `await bridge.resetSession();`）→ RPC `ResetSession` → resetSession 处理器（chat.handler.ts:179-185，`await ctx.closeSession();` 在 `bridge-handler.ts:182`）。其余调用：`session.handler.ts:132`/`bridge-handler.ts:144`（恢复历史会话失败时回滚）、`config.handler.ts:117`（SaveConfig 改完配置后，下次发消息强制重开会话）。
 
 注意 `bridge-handler.ts:175` 那行的写法：`...(sessionId === undefined ? {} : { sessionId })`——可选参数用条件展开而不是传 `sessionId: undefined`，这是本仓库 CLAUDE.md 明文规定的风格（本篇照抄源码，读代码时别误当成多此一举）。
 
@@ -721,7 +721,7 @@ async insertEditorMention(documentUri: vscode.Uri, selection: vscode.Selection):
 这是保存基线快照的链条（引擎发 `tool.call.started` → SessionRuntime 过滤 Write/Edit → 本方法三道校验 → BaselineManager 落盘 → 面板刷新）的宿主侧中段；链条全文在 [01-webview与Bridge通信.md](01-webview与Bridge通信.md) 第 8.1 节，本篇讲方法本身。**谁调用**：构造器闭包 `bridge-handler.ts:46-48`——也就是第一节说的绕圈，SessionRuntime 在引擎发 `tool.call.started` 且工具为 Write/Edit 时调它，实参 `(会话三字段, 引擎给的文件路径, 当前订阅视图列表)`：
 
 ```ts
-// session-runtime.ts:497-501（调用前的三关过滤）
+// session-runtime.ts:498-502（调用前的三关过滤）
 private captureFileBaseline(event: Extract<Event, { type: "tool.call.started" }>): void {
   if (event.name !== "Write" && event.name !== "Edit") return;
   if (!isRecord(event.args)) return;

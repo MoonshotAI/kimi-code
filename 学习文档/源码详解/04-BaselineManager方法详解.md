@@ -151,7 +151,7 @@ async capture(session: BaselineSession, filePath: string): Promise<void> {
 }
 ```
 
-**前两行在 `await` 之前**——这是全类最重要的时序：`captureOriginal`（`baseline.manager.ts:717-738`）用 `statSync`＋`readFileSync` 同步把原文件读进内存。调用链上，SessionRuntime 在引擎发 `tool.call.started` 的瞬间调它（session-runtime.ts:504：`this.captureBaseline(`，完整调用块在 [02-BridgeHandler方法详解.md](02-BridgeHandler方法详解.md) 第九节），同步返回；等工具真正写文件时，原内容早就在内存里了。反例：若第一行就用异步 `readFile`，`await` 会让出事件循环，引擎的工具写入可能插进来先落盘——拍到的是改完后的内容，基线失真。文件不存在（Write 要新建的文件）返回 `{ content: '', existedBefore: false }`，同样是一次同步判定：
+**前两行在 `await` 之前**——这是全类最重要的时序：`captureOriginal`（`baseline.manager.ts:717-738`）用 `statSync`＋`readFileSync` 同步把原文件读进内存。调用链上，SessionRuntime 在引擎发 `tool.call.started` 的瞬间调它（session-runtime.ts:505：`this.captureBaseline(`，完整调用块在 [02-BridgeHandler方法详解.md](02-BridgeHandler方法详解.md) 第九节），同步返回；等工具真正写文件时，原内容早就在内存里了。反例：若第一行就用异步 `readFile`，`await` 会让出事件循环，引擎的工具写入可能插进来先落盘——拍到的是改完后的内容，基线失真。文件不存在（Write 要新建的文件）返回 `{ content: '', existedBefore: false }`，同样是一次同步判定：
 
 ```ts
 // baseline.manager.ts:717-738（节选）

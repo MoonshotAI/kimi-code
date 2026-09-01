@@ -14,13 +14,13 @@ provider.broadcastInternal（唯一实现，KimiWebviewProvider.ts:112-122）
    │
    ├─→ BridgeHandler 构造 KimiRuntime 时放进构造参数：
    │     new KimiRuntime({ ..., broadcast, ... })（bridge-handler.ts:45）
-   │     → KimiRuntime 构造函数存进字段 this.broadcast（kimi-runtime.ts:62）
+   │     → KimiRuntime 构造函数存进字段 this.broadcast（kimi-runtime.ts:63）
    │     → wrapSession 里 new SessionRuntime({ ..., broadcast: this.broadcast, ... })
-   │       ——把这个字段作为构造参数递给 SessionRuntime（kimi-runtime.ts:237）
+   │       ——把这个字段作为构造参数递给 SessionRuntime（kimi-runtime.ts:273）
    │           ├─★ emitStreamEvent 在这里调 this.broadcast(...)：流式事件总出口，
-   │           │    对每个订阅视图各发一条（session-runtime.ts:581-585）
+   │           │    对每个订阅视图各发一条（session-runtime.ts:582-586）
    │           ├─★ announceStatus 在这里调 this.broadcast(...)：状态播报，
-   │           │    发给刚绑定的那一个视图（session-runtime.ts:151-168）
+   │           │    发给刚绑定的那一个视图（session-runtime.ts:151-169）
    │           └─→ ReverseRpcController 构造时拿到一个 emit 回调，
    │                回调体是 (event) => this.emitStreamEvent(event)
    │                （session-runtime.ts:99）——审批/提问汇入上面同一个出口 ★
@@ -90,10 +90,10 @@ constructor(
 KimiRuntime 在自己的构造函数里把收到的参数存进字段；之后全类唯一一次读取这个字段，发生在 `wrapSession`（新建 SessionRuntime 的私有方法）里——把字段作为构造参数递给 SessionRuntime：
 
 ```ts
-// kimi-runtime.ts:62（构造函数里）
+// kimi-runtime.ts:63（构造函数里）
 this.broadcast = options.broadcast;
 
-// kimi-runtime.ts:233-237（wrapSession 里）
+// kimi-runtime.ts:269-273（wrapSession 里）
 private wrapSession(session: Session, legacyApproval: LegacyApprovalFlags): SessionRuntime {
   const runtime = new SessionRuntime({
     session,
@@ -108,7 +108,7 @@ KimiRuntime 自己也从不调用。
 字段落在 `this.broadcast`（`session-runtime.ts:95`）。全类**只有两个直接调用点**，其余全部汇入第一个：
 
 ```ts
-// session-runtime.ts:581-585 —— 调用点①：流式事件的总出口
+// session-runtime.ts:582-586 —— 调用点①：流式事件的总出口
 private emitStreamEvent(event: UIStreamEvent | { type: string; payload: unknown }): void {
   for (const webviewId of this.webviewIds) {
     this.broadcast(Events.StreamEvent, event, webviewId);   // 对每个订阅视图各定向发一条
@@ -120,7 +120,7 @@ private emitStreamEvent(event: UIStreamEvent | { type: string; payload: unknown 
 
 | 来源 | 行号 | 事件 |
 |---|---|---|
-| `onSdkEvent` 投影后的引擎事件 | `session-runtime.ts:490` | `ContentPart` / `ToolCall` / `error` 等全部 UIStreamEvent |
+| `onSdkEvent` 投影后的引擎事件 | `session-runtime.ts:491` | `ContentPart` / `ToolCall` / `error` 等全部 UIStreamEvent |
 | 宿主动作（宿主斜杠命令的"假回合"） | `:233-242`、`:248-252`、`:271-275` | `TurnBegin` / `StepBegin` / `ContentPart` / `stream_complete` |
 | `announceSessionStart` | `:255-262` | `session_start` |
 | `steer` | `:380-384` | `SteerInput` |
@@ -130,7 +130,7 @@ private emitStreamEvent(event: UIStreamEvent | { type: string; payload: unknown 
 最后一行值得单独说：`ReverseRpcController` **没有自己的广播通道**——它构造时拿到的是一个 `emit` 回调（`reverse-rpc.ts:21`），SessionRuntime 递的是 `(event) => this.emitStreamEvent(event)`（`session-runtime.ts:99`）。引擎要审批时，`requestApproval` 里的 `this.emit({...})`（`reverse-rpc.ts:27`）走的就是同一条路：**审批弹窗不是独立机制，它是 streamEvent 流里的一种事件**。
 
 ```ts
-// session-runtime.ts:151-167（节选）—— 调用点②：状态播报，直接调、定向发
+// session-runtime.ts:151-168（节选）—— 调用点②：状态播报，直接调、定向发
 async announceStatus(webviewId: string): Promise<void> {
   const status = await this.session.getStatus();
   if (this.closed || !this.webviewIds.has(webviewId)) return;
@@ -142,7 +142,7 @@ async announceStatus(webviewId: string): Promise<void> {
 }
 ```
 
-两个调用点的分工：`emitStreamEvent` 是"给**每个**订阅视图各发一条"（多视图同步的机制），`announceStatus` 是"给**刚绑定的那一个**视图发一条"（openSession 每个分支收尾那步 `announceStatus`，`kimi-runtime.ts:142`，调的就是它）。
+两个调用点的分工：`emitStreamEvent` 是"给**每个**订阅视图各发一条"（多视图同步的机制），`announceStatus` 是"给**刚绑定的那一个**视图发一条"（openSession 每个分支收尾那步 `announceStatus`，`kimi-runtime.ts:147`，调的就是它）。
 
 **第 2-2 站：FileManager——面板刷新**
 
@@ -186,7 +186,7 @@ broadcast(event: string, data: unknown): void {
 
 | 站 | 调用点 | 事件 | 定向/全体 |
 |---|---|---|---|
-| 第 2-1-1 站 | `session-runtime.ts:583`（emitStreamEvent） | `StreamEvent`（全部流式事件） | 定向 ×每个订阅视图 |
+| 第 2-1-1 站 | `session-runtime.ts:584`（emitStreamEvent） | `StreamEvent`（全部流式事件） | 定向 ×每个订阅视图 |
 | 第 2-1-1 站 | `session-runtime.ts:155`（announceStatus） | `StreamEvent`（StatusUpdate） | 定向 |
 | 第 2-2 站 | `file.manager.ts:144、148`（refreshChanges） | `FileChangesUpdated` | 定向 |
 | 第 2-3 站 | `auth.handler.ts:19` | `LoginUrl` | 定向 |

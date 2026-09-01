@@ -178,7 +178,7 @@ handlers 不直接摸 runtime 内部——`createContext`（`src/bridge-handler.
 ### 3.5 其余三件
 
 - `replay-adapter.ts`：resume/fork 时用同一套 adaptSdkEvent 重放 wire 历史，重建 UI 状态（消息列表、工具块、折叠）；
-- `legacy-approval.ts`：`yolo`/`afk` 双布尔 → 引擎 permission 的映射与 metadata 存取；`applyLegacyApproval`（`src/runtime/session-runtime.ts:420-437`）在 metadata 写失败时会回滚权限（写权限→写元数据→失败→恢复原权限）；
+- `legacy-approval.ts`：`yolo`/`afk` 双布尔 → 引擎 permission 的映射与 metadata 存取；`applyLegacyApproval`（`src/runtime/session-runtime.ts:421-438`）在 metadata 写失败时会回滚权限（写权限→写元数据→失败→恢复原权限）；
 - `tool-display.ts`：工具输入 → 聊天展示块（审批弹窗与工具渲染共用的数据源）。
 
 ## 四、chat 域与宿主斜杠命令
@@ -195,7 +195,7 @@ workDir 校验（无 workspace 则提示并返回）→ 可选 `saveAllDirty`（
 
 ## 五、diff 与 File Changes 子系统
 
-链路：`SessionRuntime.onSdkEvent` 捕获 `tool.call.started`（Write/Edit，`src/runtime/session-runtime.ts:497-513`）→ `BridgeHandler.captureFileBaseline`（`src/bridge-handler.ts:244-290`，双重路径包含校验后调 manager）→ **BaselineManager**（`src/managers/baseline.manager.ts`）：
+链路：`SessionRuntime.onSdkEvent` 捕获 `tool.call.started`（Write/Edit，`src/runtime/session-runtime.ts:498-514`）→ `BridgeHandler.captureFileBaseline`（`src/bridge-handler.ts:244-290`，双重路径包含校验后调 manager）→ **BaselineManager**（`src/managers/baseline.manager.ts`）：
 
 - 存储为 manifest（版本化）+ 内容快照（sha256 命名，`:20-21`、`writeSnapshot :369`），去重靠哈希（`removeUnreferencedSnapshots :413`）；
 - API：`capture`（`:84`，跳过已有/旧版基线）、`getChanges`（`:118`，与磁盘 diff 出 FileChange 列表）、`getContent`（`:166`，供虚拟文档）、`undo`/`undoAll`（还原）、`keep`/`keepAll`（确认变更）、`materializeToFork`（`:251`，fork 会话带走基线）；
@@ -213,9 +213,9 @@ React 19 + zustand + tailwind4 + radix。数据流是"**事件 → 归约 → �
 
 ## 七、一条消息的完整旅程（修订版，全部节点已核实）
 
-**发送**：`InputArea.tsx` → `webview-ui/src/stores/chat.store.ts:191` `sendMessage` → `webview-ui/src/services/bridge.ts:187`（RPC `streamChat`）→ 宿主 `src/bridge-handler.ts:66` 校验分发 → `src/handlers/chat.handler.ts:74` 八步前置 → `src/runtime/session-runtime.ts:174` `runTurnAction` → SDK `session.prompt` →（引擎，见 `00` 阶段 F 与 `04`）。
+**发送**：`InputArea.tsx` → `webview-ui/src/stores/chat.store.ts:191` `sendMessage` → `webview-ui/src/services/bridge.ts:187`（RPC `streamChat`）→ 宿主 `src/bridge-handler.ts:66` 校验分发 → `src/handlers/chat.handler.ts:74` 八步前置 → `src/runtime/session-runtime.ts:175` `runTurnAction` → SDK `session.prompt` →（引擎，见 `00` 阶段 F 与 `04`）。
 
-**回流**：引擎事件 → SDK `session.onEvent` → `src/runtime/session-runtime.ts:439` 七检查站管线 → `src/runtime/event-adapter.ts:83` 纯投影 → `emitStreamEvent`（`:581`，只发给订阅视图）→ postMessage `Events.StreamEvent` → `webview-ui/src/App.tsx:23` → `webview-ui/src/stores/event-handlers.ts:570` `processEvent` 归约 → zustand → React。
+**回流**：引擎事件 → SDK `session.onEvent` → `src/runtime/session-runtime.ts:440` 七检查站管线 → `src/runtime/event-adapter.ts:83` 纯投影 → `emitStreamEvent`（`:581`，只发给订阅视图）→ postMessage `Events.StreamEvent` → `webview-ui/src/App.tsx:23` → `webview-ui/src/stores/event-handlers.ts:570` `processEvent` 归约 → zustand → React。
 
 **分支**：需要审批 → `src/runtime/reverse-rpc.ts:23` 挂起 → `ApprovalDialog` → `Methods.RespondApproval` → `:54` resolve；斜杠命令 → `src/handlers/slash-command.ts:47` host-action 伪 turn；历史会话恢复 → `replay-adapter` 重放。
 
@@ -225,7 +225,7 @@ React 19 + zustand + tailwind4 + radix。数据流是"**事件 → 归约 → �
 
 练习（按难度递进）：
 
-- [ ] F5 后在 `src/handlers/chat.handler.ts:74`、`src/runtime/session-runtime.ts:439`（事件管线）、`src/runtime/event-adapter.ts:83` 三处下断点，发一条 "hi"，把三类断点的触发顺序与调用栈各抄一份；
+- [ ] F5 后在 `src/handlers/chat.handler.ts:74`、`src/runtime/session-runtime.ts:440`（事件管线）、`src/runtime/event-adapter.ts:83` 三处下断点，发一条 "hi"，把三类断点的触发顺序与调用栈各抄一份；
 - [ ] 发送 `/plan on` 再发普通消息，对照 3.2 小节的伪 turn 机制，在断点里看清两种回合的事件序列差异；
 - [ ] 走通"三处联动"：加一个无操作的 Method（协议常量 + handler + webview 调用）；
 - [ ] 让模型编辑一个文件，断点 `captureFileBaseline`，画出一张"工具调用→基线→diff 面板"的时序图；
