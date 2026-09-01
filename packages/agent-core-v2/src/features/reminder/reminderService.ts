@@ -1,19 +1,21 @@
 import { fromCallback, setup } from 'xstate';
 
+import { createDecorator, IInstantiationService } from '#/_base/di/instantiation';
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { ILogService } from '#/_base/log/log';
+import {
+  AgentActorService,
+  type AgentActorContext,
+  type AgentActorRestoreEvent,
+} from '#/agent/actorService/agentActorService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { isCompactionSummaryMessage } from '#/agent/contextMemory/compactionHandoff';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService, type BeforeStepContext } from '#/agent/loop/loop';
-import {
-  defineAgentRuntimeContract,
-  defineAgentRuntimeProvider,
-  type AgentRuntimeContext,
-  type AgentRuntimeRestoreEvent,
-} from '#/agent/runtime/agentRuntime';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventBus } from '#/app/event/eventBus';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { wrapSystemReminder } from './systemReminder';
 import type {
@@ -35,7 +37,7 @@ const REMINDER_VARIANT_PRIORITY = new Map<string, number>([['date_change', -1]])
 
 interface ReminderActorContext {
   readonly entries: Set<ReminderEntry>;
-  readonly runtime: AgentRuntimeContext<null>;
+  readonly runtime: AgentActorContext<null>;
 }
 
 interface ReminderRegisterEvent {
@@ -48,14 +50,14 @@ interface ReminderUnregisterEvent {
   readonly entry: ReminderEntry;
 }
 
-type ReminderActorEvent = AgentRuntimeRestoreEvent | ReminderRegisterEvent | ReminderUnregisterEvent;
+type ReminderActorEvent = AgentActorRestoreEvent | ReminderRegisterEvent | ReminderUnregisterEvent;
 
-function actorContext(runtime: AgentRuntimeContext<null>): ReminderActorContext {
+function actorContext(runtime: AgentActorContext<null>): ReminderActorContext {
   return runtime.getLogicState<ReminderActorContext>();
 }
 
 function appendReminder(
-  runtime: AgentRuntimeContext<null>,
+  runtime: AgentActorContext<null>,
   content: string,
   notification: ReminderNotification,
 ): void {
@@ -72,7 +74,7 @@ function appendReminder(
 }
 
 function providerContext(
-  runtime: AgentRuntimeContext<null>,
+  runtime: AgentActorContext<null>,
   entry: ReminderEntry,
   isNewTurn: boolean,
 ): ContextInjectionContext<unknown> {
@@ -93,7 +95,7 @@ function providerContext(
 }
 
 async function injectEntry(
-  runtime: AgentRuntimeContext<null>,
+  runtime: AgentActorContext<null>,
   entry: ReminderEntry,
   isNewTurn: boolean,
 ): Promise<void> {
@@ -112,7 +114,7 @@ async function injectEntry(
 }
 
 function appendResult(
-  runtime: AgentRuntimeContext<null>,
+  runtime: AgentActorContext<null>,
   entry: ReminderEntry,
   content: ContextInjectionContent | ContextInjectionResult<unknown> | undefined,
 ): void {
@@ -159,7 +161,7 @@ function appendResult(
   });
 }
 
-async function inject(runtime: AgentRuntimeContext<null>, isNewTurn: boolean): Promise<void> {
+async function inject(runtime: AgentActorContext<null>, isNewTurn: boolean): Promise<void> {
   const entries = [...actorContext(runtime).entries].sort(
     (left, right) =>
       (REMINDER_VARIANT_PRIORITY.get(left.variant) ?? 0) -
@@ -168,7 +170,7 @@ async function inject(runtime: AgentRuntimeContext<null>, isNewTurn: boolean): P
   for (const entry of entries) await injectEntry(runtime, entry, isNewTurn);
 }
 
-const reminderEffects = fromCallback(({ input }: { input: { readonly runtime: AgentRuntimeContext<null> } }) => {
+const reminderEffects = fromCallback(({ input }: { input: { readonly runtime: AgentActorContext<null> } }) => {
   let compactionRearmPending = false;
   const loop = input.runtime.get(IAgentLoopService);
   const takeCompactionRearm = (): boolean => {
@@ -206,7 +208,7 @@ const reminderEffects = fromCallback(({ input }: { input: { readonly runtime: Ag
 const reminderActorLogic = setup({
   types: {} as {
     context: ReminderActorContext;
-    input: AgentRuntimeContext<null>;
+    input: AgentActorContext<null>;
     events: ReminderActorEvent;
   },
   actors: { reminderEffects },
@@ -234,51 +236,62 @@ const reminderActorLogic = setup({
   },
 });
 
-export class ReminderRuntime {
-  constructor(private readonly runtime: AgentRuntimeContext<null>) {}
+export interface IAgentReminderService {
+  readonly _serviceBrand: undefined;
+  register<D = unknown>(variant: string, provider: ContextInjectionProvider<D>): ReminderRegistration;
+  notify(content: string, notification: ReminderNotification): void;
+  reconcileWhenIdle(variant: string): Promise<void>;
+}
+
+export const IAgentReminderService = createDecorator<IAgentReminderService>('agentReminderService');
+
+export class AgentReminderService extends AgentActorService<null> implements IAgentReminderService {
+  declare readonly _serviceBrand: undefined;
+
+  private readonly actor: AgentActorContext<null>;
+  private disposed = false;
+
+  constructor(
+    @IEventDispatcher dispatcher: IEventDispatcher,
+    @IAgentScopeContext scopeContext: IAgentScopeContext,
+    @IInstantiationService instantiation: IInstantiationService,
+  ) {
+    super(dispatcher, scopeContext, instantiation);
+    this.actor = this.attachActor(reminderActorLogic, { id: 'reminder' });
+    this._register(toDisposable(() => { this.disposed = true; }));
+  }
 
   register<D = unknown>(variant: string, provider: ContextInjectionProvider<D>): ReminderRegistration {
     const entry: ReminderEntry = {
       provider: provider as ContextInjectionProvider<unknown>,
       variant,
     };
-    this.runtime.send({ type: 'reminder.register', entry });
+    this.actor.send({ type: 'reminder.register', entry });
     return toDisposable(() => {
+      if (this.disposed) return;
       try {
-        this.runtime.send({ type: 'reminder.unregister', entry });
+        this.actor.send({ type: 'reminder.unregister', entry });
       } catch {}
     });
   }
 
   notify(content: string, notification: ReminderNotification): void {
-    appendReminder(this.runtime, content, notification);
+    appendReminder(this.actor, content, notification);
   }
 
   async reconcileWhenIdle(variant: string): Promise<void> {
-    const loop = this.runtime.get(IAgentLoopService);
+    const loop = this.actor.get(IAgentLoopService);
     const quiescence = loop.tryAcquireQuiescence();
     if (quiescence === undefined) return;
     try {
-      for (const entry of actorContext(this.runtime).entries) {
-        if (entry.variant === variant) await injectEntry(this.runtime, entry, false);
+      for (const entry of actorContext(this.actor).entries) {
+        if (entry.variant === variant) await injectEntry(this.actor, entry, false);
       }
     } finally {
       quiescence.dispose();
     }
   }
 }
-
-export const AgentReminder = defineAgentRuntimeContract<ReminderRuntime>('reminder');
-
-export const reminderAgentRuntimeProvider = defineAgentRuntimeProvider<null, ReminderRuntime>(
-  AgentReminder,
-  {
-    id: 'reminder',
-    logic: reminderActorLogic,
-    eager: true,
-    createApi: (context) => new ReminderRuntime(context),
-  },
-);
 
 function isCompactionSplice(splice: {
   readonly deleteCount: number;

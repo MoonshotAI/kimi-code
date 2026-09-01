@@ -1,10 +1,9 @@
 import { join } from 'pathe';
 
 import { IInstantiationService } from '#/_base/di/instantiation';
-import { Disposable, toDisposable } from '#/_base/di/lifecycle';
-import { type CollectionView } from '#/_base/di/collection';
+import type { InstantiationService } from '#/_base/di/instantiationService';
+import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
-import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { Error2, ErrorCodes } from '#/errors';
 import { LifecycleScope } from '#/app/scopes';
 import {
@@ -44,16 +43,6 @@ import { IWireService } from '#/wire/wire';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import {
-  AgentRuntimeContributionPoint,
-  AgentRuntimeOverrideContributionPoint,
-  type AgentRuntimeContribution,
-  type AgentRuntimeDefinition,
-  type AgentRuntimeDefinitionRecord,
-  type AgentRuntimeSnapshot,
-  getAgentRuntimeDefinitionId,
-  type RuntimeOf,
-} from '#/agent/runtime/agentRuntime';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 
 import { ManagedAgent } from './managedAgent';
@@ -72,9 +61,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   private readonly roster = new Map<string, ManagedAgent>();
   private readonly creating = new Map<string, Promise<AgentContext>>();
   private nextLifecycleGeneration = 0;
-  private readonly records = new Map<string, AgentRuntimeDefinitionRecord>();
-  private readonly recordGenerations = new Map<string, number>();
-  private readonly contributions = new Map<AgentRuntimeContribution, AgentRuntimeDefinitionRecord>();
   private readonly onDidCreateEmitter = this._register(new Emitter<AgentContext>());
   private readonly onDidCreateScopeEmitter = this._register(new Emitter<AgentScopeCreatedEvent>());
   private readonly onWillCloseEmitter = this._register(new Emitter<AgentContext>());
@@ -100,78 +86,8 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IConfigService private readonly config: IConfigService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @AgentRuntimeContributionPoint contributionView: CollectionView<AgentRuntimeContribution>,
-    @AgentRuntimeOverrideContributionPoint overrideView: CollectionView<AgentRuntimeContribution>,
   ) {
     super();
-    for (const contribution of contributionView.items) this.registerContribution(contribution, false);
-    for (const contribution of overrideView.items) this.registerContribution(contribution, true);
-    this._register(
-      contributionView.onDidChange(({ added, removed }) => {
-        for (const contribution of added) this.registerContribution(contribution, false);
-        for (const contribution of removed) this.withdrawContribution(contribution);
-      }),
-    );
-    this._register(
-      overrideView.onDidChange(({ added, removed }) => {
-        for (const contribution of added) this.registerContribution(contribution, true);
-        for (const contribution of removed) this.withdrawContribution(contribution);
-      }),
-    );
-    this._register(
-      toDisposable(() => {
-        for (const managed of this.roster.values()) {
-          void managed.runtimeSet.close().catch((error: unknown) => onUnexpectedError(error));
-        }
-        this.roster.clear();
-      }),
-    );
-  }
-
-  private registerContribution(contribution: AgentRuntimeContribution, override: boolean): void {
-    if (this.contributions.has(contribution)) return;
-    const definition = contribution.contract;
-    const id = getAgentRuntimeDefinitionId(definition);
-    const generation = (this.recordGenerations.get(id) ?? 0) + 1;
-    this.recordGenerations.set(id, generation);
-    const record: AgentRuntimeDefinitionRecord = {
-      definition,
-      provider: contribution,
-      generation,
-      providerGeneration: generation,
-      active: true,
-    };
-    this.contributions.set(contribution, record);
-    const current = this.records.get(id);
-    if (current !== undefined && !override) return;
-    this.records.set(id, record);
-    for (const managed of this.roster.values()) {
-      if (!managed.closing) managed.runtimeSet.apply(record);
-    }
-  }
-
-  private withdrawContribution(contribution: AgentRuntimeContribution): void {
-    const record = this.contributions.get(contribution);
-    if (record === undefined) return;
-    this.contributions.delete(contribution);
-    record.active = false;
-    const id = getAgentRuntimeDefinitionId(record.definition);
-    if (this.records.get(id) === record) {
-      const fallback = [...this.contributions.values()]
-        .filter((candidate) => candidate.active && getAgentRuntimeDefinitionId(candidate.definition) === id)
-        .sort((left, right) => (right.providerGeneration ?? right.generation) - (left.providerGeneration ?? left.generation))[0];
-      if (fallback !== undefined) this.records.set(id, fallback);
-      else this.records.delete(id);
-    }
-    for (const managed of this.roster.values()) {
-      managed.runtimeSet.retireDefinition(record);
-      const fallback = this.records.get(id);
-      if (fallback !== undefined && fallback !== record && !managed.closing) managed.runtimeSet.apply(fallback);
-    }
-  }
-
-  private activeRecords(): readonly AgentRuntimeDefinitionRecord[] {
-    return [...this.records.values()];
   }
 
   async create(opts: CreateAgentOptions = {}): Promise<AgentContext> {
@@ -223,6 +139,9 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     let managed: ManagedAgent | undefined;
     let didCreate = false;
     let finalizerArmed = false;
+    let stage = 'scope';
+    let containerRef: InstantiationService | undefined;
+    let createdHandle: IAgentScopeHandle | undefined;
     try {
       const handle = createScopedChildHandle(
         this.instantiation,
@@ -242,21 +161,24 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
               eventBus?.deactivateAgent(agent);
             }, 'agent-event-bus-deactivate');
             finalizerArmed = true;
-            this.adopt({
-              id: agentId,
-              kind: LifecycleScope.Agent,
-              accessor: {
-                get: (id) => container.invokeFunction((accessor) => accessor.get(id)),
-              },
-              dispose: () => container.disposeAsync(),
-            });
-            managed = this.roster.get(agentId);
+            containerRef = container;
           },
         },
       ) as IAgentScopeHandle;
-      managed!.active = true;
+      createdHandle = handle;
+      const container = containerRef!;
+      this.rosterAdopt({
+        id: agentId,
+        kind: LifecycleScope.Agent,
+        accessor: {
+          get: (id) => container.invokeFunction((accessor) => accessor.get(id)),
+        },
+        dispose: () => container.disposeAsync(),
+      });
+      managed = this.roster.get(agentId);
+      stage = 'seal';
       await handle.accessor.get(IWireService).seal();
-      managed!.attachDurableRuntimes();
+      stage = 'register';
       await this.sessionMetadata.registerAgent(agentId, {
         homedir: agentHomedir,
         type: agentId === 'main' ? 'main' : 'sub',
@@ -267,19 +189,29 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       this.onDidCreateEmitter.fire(agent);
       didCreate = true;
       this.onDidCreateScopeEmitter.fire({ context: agent, handle });
+      stage = 'restore';
       await handle.accessor.get(IEventDispatcher).restore();
-      await managed!.runtimeSet.restore();
+      stage = 'bootstrap';
       await this.bindBootstrap(handle, opts);
+      stage = 'toolActivation';
       await handle.accessor.get(IAgentToolActivationService).activate();
       return agent;
     } catch (error) {
+      this.telemetry.track2('agent_create_failed', {
+        agent_id: agentId,
+        stage,
+        error_type: error instanceof Error ? error.name : 'Unknown',
+      });
       if (managed !== undefined) {
         managed.closing = true;
         if (this.roster.get(agentId) === managed) this.roster.delete(agentId);
-        await managed.runtimeSet.close().catch(() => undefined);
         managed.killSpace();
         try {
           await managed.handle.dispose();
+        } catch { }
+      } else if (createdHandle !== undefined) {
+        try {
+          await createdHandle.dispose();
         } catch { }
       }
       if (!finalizerArmed) eventBus?.deactivateAgent(agent);
@@ -366,25 +298,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     return all.filter((context) => context.agentId.startsWith(prefix));
   }
 
-  resolve<Definition extends AgentRuntimeDefinition<any, any>>(
-    agent: AgentContext,
-    definition: Definition,
-  ): RuntimeOf<Definition> {
-    return this.requireManaged(agent).runtimeSet.resolve(definition);
-  }
-
-  restoreRuntimes(agent: AgentContext): Promise<void> {
-    return this.requireManaged(agent).runtimeSet.restore();
-  }
-
-  inspect(agent: AgentContext): AgentRuntimeSnapshot {
-    const managed = this.requireManaged(agent);
-    return {
-      identity: { agentId: agent.agentId, generation: agent.generation },
-      contributions: managed.runtimeSet.inspect(),
-    };
-  }
-
   broadcastPermissionMode(mode: PermissionMode): void {
     for (const managed of this.roster.values()) {
       if (managed.closing || !managed.active) continue;
@@ -406,6 +319,13 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   }
 
   adopt(handle: IAgentScopeHandle): AgentContext {
+    const agent = this.rosterAdopt(handle);
+    this.onDidCreateEmitter.fire(agent);
+    this.onDidCreateScopeEmitter.fire({ context: agent, handle });
+    return agent;
+  }
+
+  private rosterAdopt(handle: IAgentScopeHandle): AgentContext {
     const agent = agentContextOf(handle);
     const existing = this.roster.get(agent.agentId);
     if (existing !== undefined) {
@@ -414,19 +334,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         throw new Error(`Agent "${agent.agentId}" is already managed by a different context`);
       }
     }
-    const managed = new ManagedAgent(agent, handle, this.activeRecords());
+    const managed = new ManagedAgent(agent, handle);
+    managed.active = true;
     this.roster.set(agent.agentId, managed);
     return agent;
-  }
-
-  attachRuntimes(agent: AgentContext): void {
-    const managed = this.requireManaged(agent);
-    managed.attachDurableRuntimes();
-    if (!managed.active) {
-      managed.active = true;
-      this.onDidCreateEmitter.fire(agent);
-      this.onDidCreateScopeEmitter.fire({ context: agent, handle: managed.handle });
-    }
   }
 
   async remove(agent: AgentContext): Promise<void> {
@@ -449,7 +360,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       compaction.abortController.abort(reason);
     }
     await Promise.all([loop.settled(), compactionSettled, prompt.drain(reason)]);
-    await managed.runtimeSet.close();
     managed.killSpace();
     await handle.dispose();
     if (this.roster.get(agent.agentId) === managed) this.roster.delete(agent.agentId);

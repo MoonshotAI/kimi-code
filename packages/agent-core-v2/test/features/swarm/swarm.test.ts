@@ -15,7 +15,8 @@ import { stubFlag } from '../../app/flag/stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextInjectionProvider, ContextInjectionResult } from '#/features/reminder/types';
-import { createReminderStub, lifecycleWithReminder } from '../reminder/stubs';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
+import { createReminderStub } from '../reminder/stubs';
 import { AgentContextMemoryService } from '#/agent/contextMemory/contextMemoryService';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { DEFAULT_SWARM_TIMEOUT_MS, SWARM_SECTION } from '#/features/swarm/configSection';
@@ -305,7 +306,7 @@ describe('AgentSwarmService', () => {
         return toDisposable(() => { provider = undefined; });
       },
     });
-    ix.stub(IAgentLifecycleService, lifecycleWithReminder(reminder));
+    ix.stub(IAgentReminderService, reminder);
     loop.hooks.onWillBeginStep.register('test-reminder', async ({ firstStepOfTurn }, next) => {
       const context = ix.get(IAgentContextMemoryService);
       const history = context.get();
@@ -626,7 +627,6 @@ describe('swarm context reconciliation', () => {
     const ctx = createTestAgent();
     try {
       await ctx.restorePersisted();
-      await ctx.restoreRuntimes();
       const swarm = ctx.get(IAgentSwarmService);
       swarm.enter('manual');
       ctx.mockNextResponse({ type: 'text', text: 'first answer' });

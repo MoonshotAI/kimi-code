@@ -33,7 +33,7 @@ Type `/` to open the completion menu — it filters as you type, `Esc` closes it
 | `/undo` | Undo recent prompts |
 | `/model` | Switch the model used in the current session |
 | `/plan` | Toggle Plan mode (plan first, then execute) |
-| `/yolo` | Toggle YOLO mode (auto-approve regular tool calls) |
+| `/ask-when-needed` | Toggle Ask When Needed mode (routine edits and commands run automatically) |
 | `/goal` | Start or manage goal mode |
 | `/help` | Show all commands |
 
@@ -58,13 +58,13 @@ When the agent calls a tool that has side effects — modifying files, running c
 - **Approve for this session**: auto-approves the same kind of call for the rest of the session
 - **Permanent rules**: add allow / deny entries in [Configuration files](../configuration/config-files.md#permission)
 
-Approvals are not triggered for regular tool calls in YOLO mode, nor for writes to plan files in Plan mode.
+Approvals are not triggered for regular tool calls in Ask When Needed mode, nor for writes to plan files in Plan mode.
 
-### YOLO / Auto mode
+### Ask When Needed / Never Ask mode
 
-**YOLO mode** (`/yolo`) auto-approves regular tool calls, making it suitable for batch tasks you know are safe. It still asks before sensitive actions — accessing sensitive files such as `.env` or SSH keys, or exiting Plan mode — and the agent can still ask you questions.
+**Ask When Needed mode** (`/ask-when-needed`) auto-approves regular tool calls, making it suitable for batch tasks you know are safe. It still asks before sensitive actions — accessing sensitive files such as `.env` or SSH keys, running dangerous commands such as `shutdown` or `rm -rf`, or exiting Plan mode — and the agent can still ask you questions.
 
-**Auto mode** (`/auto`) is the fully unattended mode: every tool approval is handled automatically, including sensitive files and plan exits, and the agent never asks you questions — it decides everything on its own.
+**Never Ask mode** (`/never-ask`) is the fully unattended mode: every tool approval is handled automatically, including sensitive files and plan exits, and the agent never asks you questions — it decides everything on its own. The only exception is the built-in dangerous-command guard: commands such as `shutdown`, `reboot`, or `rm -rf` are always blocked in Never Ask mode, and always require your confirmation in Always Ask and Ask When Needed mode.
 
 
 ## Mode switching
@@ -76,7 +76,7 @@ In Plan mode the agent first outputs an action plan and waits for your approval 
 - Toggle: `Shift-Tab` or `/plan`
 - Clear the current plan: `/plan clear` (only while idle)
 
-After producing a plan the agent pauses for your review — you can approve it, reject it, or ask for revisions. Exiting Plan mode requires your confirmation even if YOLO mode is also active. Auto mode is the exception: plan exits are approved automatically and marked as "Auto-approved" in the transcript.
+After producing a plan the agent pauses for your review — you can approve it, reject it, or ask for revisions. Exiting Plan mode requires your confirmation even if Ask When Needed mode is also active. Never Ask mode is the exception: plan exits are approved automatically and marked as "Auto-approved" in the transcript.
 
 ### Shell mode
 

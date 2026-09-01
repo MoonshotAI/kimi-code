@@ -22,5 +22,10 @@ export interface IAtomicDocumentStore {
 export const IAtomicDocumentStore: ServiceIdentifier<IAtomicDocumentStore> =
   createDecorator<IAtomicDocumentStore>('atomicDocumentStore');
 
-export const IAtomicTomlDocumentStore: ServiceIdentifier<IAtomicDocumentStore> =
-  createDecorator<IAtomicDocumentStore>('atomicTomlDocumentStore');
+export interface IAtomicTomlDocumentStore extends IAtomicDocumentStore {
+  getText(scope: string, key: string): Promise<string | undefined>;
+  setText(scope: string, key: string, text: string): Promise<void>;
+}
+
+export const IAtomicTomlDocumentStore: ServiceIdentifier<IAtomicTomlDocumentStore> =
+  createDecorator<IAtomicTomlDocumentStore>('atomicTomlDocumentStore');

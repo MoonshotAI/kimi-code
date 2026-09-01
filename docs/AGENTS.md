@@ -54,7 +54,7 @@ Both groups share the same behavior: they arrive with a specific goal, scan head
 ## Wording conventions
 
 - Do not change H1 titles or nav/sidebar labels.
-- English H2+ headings use sentence case (only the first word capitalized unless it is a proper noun). Treat "Wire", "Plan mode", "YOLO mode", and "Thinking mode" as proper nouns; do not treat "agent" as a proper noun.
+- English H2+ headings use sentence case (only the first word capitalized unless it is a proper noun). Treat "Wire", "Plan mode", "Thinking mode", and the permission mode names "Always Ask", "Ask When Needed", and "Never Ask" as proper nouns; do not treat "agent" as a proper noun.
 - Chinese H2+ headings keep English words in sentence case; preserve proper nouns listed in the term table below.
 - Use `API key` in English and `API 密钥` in Chinese; keep `JSON`, `JSONL`, `OAuth`, `macOS`, `Node.js`, `npm`, `pnpm`, and `TypeScript` as-is.
 - Use straight double quotes with spaces for quoted content: `"被引内容"` (not curly quotes). Add a space before and after the quoted text when adjacent to CJK characters. Use corner brackets `「」` for special terms (e.g., `「工具」`, `「会话」`).
@@ -71,7 +71,9 @@ Term mapping (Chinese <-> English, and proper noun handling):
 | subagent | subagent | no | no |
 | Shell | shell | yes | no |
 | Plan 模式 | Plan mode | yes | yes (Plan mode) |
-| YOLO 模式 | YOLO mode | yes | yes (YOLO mode) |
+| 始终询问 | Always Ask | yes | yes |
+| 必要时询问 | Ask When Needed | yes | yes |
+| 完全自动 | Never Ask | yes | yes |
 | Thinking 模式 | Thinking mode | yes | yes (Thinking mode) |
 | MCP | MCP | yes | yes |
 | Kimi Code CLI | Kimi Code CLI | yes | yes |

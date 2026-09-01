@@ -39,7 +39,7 @@ import {
   Error2,
   getLiveSessionById,
   HostProcessError,
-  AgentTodo,
+  IAgentTodoService,
   IAgentLifecycleService,
   IAgentTowerService,
   IHostRequestHeaders,
@@ -1011,8 +1011,8 @@ key = "${titleOAuthRef.key}"
       const handle = getLiveSessionById(client.engineAccessor, 'ses_todos');
       expect(handle).toBeDefined();
       const manager = handle!.accessor.get(IAgentLifecycleService);
-      const main = await manager.create({ agentId: 'main' });
-      const todo = manager.resolve(main, AgentTodo);
+      await manager.create({ agentId: 'main' });
+      const todo = manager.handleOf('main')!.accessor.get(IAgentTodoService);
       await todo.replace([
         { title: 'write tests', status: 'in_progress' },
         { title: 'ship it', status: 'pending' },

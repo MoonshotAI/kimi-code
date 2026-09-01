@@ -152,7 +152,6 @@ describe('Agent config', () => {
 
   beforeEach(() => {
     ctx = createTestAgent();
-    void ctx.restoreRuntimes();
     profile = ctx.get(IAgentProfileService);
   });
 
@@ -304,7 +303,11 @@ describe('Agent config', () => {
   });
 
   it('keeps turn-start config for later steps and applies updates to the next turn', async () => {
-    await ctx.restoreRuntimes();
+    await ctx.dispose();
+    ctx = createTestAgent({ autoConfigure: false });
+    await ctx.restorePersisted();
+    ctx.configure();
+    profile = ctx.get(IAgentProfileService);
     const lookupCall: ToolCall = {
       type: 'function',
       id: 'call_lookup',
@@ -2664,6 +2667,7 @@ describe('ConfigService replaceSections', () => {
   it('applies every domain in one transition with a single disk write, clearing undefined domains', async () => {
     const { config, disposables, store } = await createSectionsConfig();
     const setSpy = vi.spyOn(store, 'set');
+    const setTextSpy = vi.spyOn(store, 'setText');
 
     await config.replaceSections({
       [PROVIDERS_SECTION]: { acme: { type: 'openai', apiKey: 'sk-acme-2' } },
@@ -2672,7 +2676,7 @@ describe('ConfigService replaceSections', () => {
       [THINKING_SECTION]: undefined,
     });
 
-    expect(setSpy).toHaveBeenCalledTimes(1);
+    expect(setSpy.mock.calls.length + setTextSpy.mock.calls.length).toBe(1);
     expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({
       acme: { type: 'openai', apiKey: 'sk-acme-2' },
     });
@@ -2690,13 +2694,14 @@ describe('ConfigService replaceSections', () => {
   it('treats null as clear — the wire encoding JSON transports use for undefined', async () => {
     const { config, disposables, store } = await createSectionsConfig();
     const setSpy = vi.spyOn(store, 'set');
+    const setTextSpy = vi.spyOn(store, 'setText');
 
     await config.replaceSections({
       [DEFAULT_MODEL_SECTION]: null,
       [PROVIDERS_SECTION]: { acme: { type: 'openai', apiKey: 'sk-acme-2' } },
     });
 
-    expect(setSpy).toHaveBeenCalledTimes(1);
+    expect(setSpy.mock.calls.length + setTextSpy.mock.calls.length).toBe(1);
     expect(config.get(DEFAULT_MODEL_SECTION)).toBeUndefined();
     expect(config.inspect(DEFAULT_MODEL_SECTION).userValue).toBeUndefined();
     expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({

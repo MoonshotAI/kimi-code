@@ -10,7 +10,8 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { createReminderStub, lifecycleWithReminder } from '../reminder/stubs';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
+import { createReminderStub } from '../reminder/stubs';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -208,8 +209,8 @@ describe('AgentTowerService', () => {
       },
     } as unknown as IAgentProfileService);
     ix.stub(
-      IAgentLifecycleService,
-      lifecycleWithReminder(createReminderStub()),
+      IAgentReminderService,
+      createReminderStub(),
     );
     ix.stub(IAgentContextMemoryService, {
       get: () => [],
@@ -667,8 +668,8 @@ describe('AgentTowerService', () => {
     ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
     ix2.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
     ix2.stub(
-      IAgentLifecycleService,
-      lifecycleWithReminder(createReminderStub()),
+      IAgentReminderService,
+      createReminderStub(),
     );
     ix2.stub(IAgentContextMemoryService, {
       get: () => [],
@@ -767,8 +768,8 @@ describe('AgentTowerService', () => {
     ix2.stub(IFlagService, stubFlag(() => false));
     ix2.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
     ix2.stub(
-      IAgentLifecycleService,
-      lifecycleWithReminder(createReminderStub()),
+      IAgentReminderService,
+      createReminderStub(),
     );
     ix2.stub(IAgentContextMemoryService, {
       get: () => [],
@@ -832,8 +833,8 @@ describe('AgentTowerService', () => {
     ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
     ix2.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
     ix2.stub(
-      IAgentLifecycleService,
-      lifecycleWithReminder(createReminderStub()),
+      IAgentReminderService,
+      createReminderStub(),
     );
     ix2.stub(IAgentContextMemoryService, {
       get: () => [],
@@ -910,8 +911,8 @@ describe('AgentTowerService', () => {
         sessionId: 'session-fork',
       } as unknown as ISessionContext);
       ix2.stub(
-        IAgentLifecycleService,
-        lifecycleWithReminder(createReminderStub()),
+        IAgentReminderService,
+        createReminderStub(),
       );
       ix2.stub(IAgentContextMemoryService, {
         get: () => [],
@@ -992,8 +993,8 @@ describe('AgentTowerService', () => {
         sessionId: 'session-fork',
       } as unknown as ISessionContext);
       ix2.stub(
-        IAgentLifecycleService,
-        lifecycleWithReminder(createReminderStub()),
+        IAgentReminderService,
+        createReminderStub(),
       );
       ix2.stub(IAgentContextMemoryService, {
         get: () => [],
@@ -1074,8 +1075,8 @@ describe('AgentTowerService', () => {
         sessionId: 'session-fork',
       } as unknown as ISessionContext);
       ix2.stub(
-        IAgentLifecycleService,
-        lifecycleWithReminder(createReminderStub()),
+        IAgentReminderService,
+        createReminderStub(),
       );
       ix2.stub(IAgentContextMemoryService, {
         get: () => [],
@@ -1153,8 +1154,8 @@ describe('AgentTowerService', () => {
       sessionId: 'session-fork',
     } as unknown as ISessionContext);
     ix2.stub(
-      IAgentLifecycleService,
-      lifecycleWithReminder(createReminderStub()),
+      IAgentReminderService,
+      createReminderStub(),
     );
     ix2.stub(IAgentContextMemoryService, {
       get: () => [],
@@ -1225,8 +1226,8 @@ describe('AgentTowerService', () => {
       sessionId: 'session-owner',
     } as unknown as ISessionContext);
     ix2.stub(
-      IAgentLifecycleService,
-      lifecycleWithReminder(createReminderStub()),
+      IAgentReminderService,
+      createReminderStub(),
     );
     ix2.stub(IAgentContextMemoryService, {
       get: () => [],
@@ -1278,8 +1279,8 @@ describe('AgentTowerService', () => {
     ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
     ix2.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
     ix2.stub(
-      IAgentLifecycleService,
-      lifecycleWithReminder(createReminderStub()),
+      IAgentReminderService,
+      createReminderStub(),
     );
     ix2.stub(IAgentContextMemoryService, {
       get: () => [],
@@ -1479,7 +1480,6 @@ describe('TowerModeInjection', () => {
     context = ctx.get(IAgentContextMemoryService);
     tower = ctx.get(IAgentTowerService);
     await ctx.restorePersisted();
-    await ctx.restoreRuntimes();
   });
 
   afterEach(async () => {

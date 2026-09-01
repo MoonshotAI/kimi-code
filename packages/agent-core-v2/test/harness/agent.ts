@@ -9,15 +9,10 @@ import { toDisposable } from '#/_base/di/lifecycle';
 import type { IInstantiationService } from '#/_base/di/instantiation';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import type {
-  AgentRuntimeDefinition,
-  RuntimeOf,
-} from '#/agent/runtime/agentRuntime';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { getConfigSectionContributions } from '#/app/config/configSectionContributions';
 import { Emitter, Event, type IWaitUntil } from '#/_base/event';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import type { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleService';
 import type { Promisable, PromisifyMethods } from '#/_base/utils/types';
 import type { AgentTaskInfo } from '#/agent/task/task';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
@@ -28,9 +23,9 @@ import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import '#/features/reminder/reminderFeature';
 import { BUILTIN_REPLAYABLE_STATE_KEYS } from '../state/builtinReplayableKeys';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { AgentCron } from '#/features/cron/cronAgentRuntime';
+import { IAgentCronService } from '#/features/cron/cronService';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
-import { AgentGoal } from '#/features/goal/goalAgentRuntime';
+import { IAgentGoalService } from '#/features/goal/goalService';
 import { IGoalDeadlineScheduler } from '#/features/goal/goalDeadlineScheduler';
 import { GoalDeadlineSchedulerService } from '#/features/goal/goalDeadlineSchedulerService';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
@@ -90,7 +85,7 @@ interface UndoHistoryPayload { readonly count: number }
 interface UnregisterToolPayload { readonly name: string }
 import { type UsageStatus } from '#/agent/usage/usage';
 import { type PromptWithSkillsInput, type PromptWithSkillsResult, type SkillActivationInput } from '#/features/skill/skill';
-import { AgentSkill } from '#/features/skill/skillAgentRuntime';
+import { IAgentSkillService } from '#/features/skill/skillService';
 import { IAgentRuntimeBindingSeed } from '#/agent/runtimeBinding/runtimeBinding';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { RuntimeLease } from '#/runtime/runtime';
@@ -120,7 +115,7 @@ import { type TokenUsage } from '#/kosong/contract/usage';
 import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
 import { type AgentModelDefinition } from '#/state/agentModel';
 import { type AgentModelInstanceOf } from '#/agent/agentContext/agentSpace';
-import { AgentTodo } from '#/features/todo/todoAgentRuntime';
+import { IAgentTodoService } from '#/features/todo/todoService';
 import { type TodoItem } from '#/features/todo/todoItem';
 import type { generate as kosongGenerate } from '#/kosong/contract/generate';
 import type { ChatProvider, GenerateOptions, StreamedMessage } from '#/kosong/contract/provider';
@@ -221,10 +216,7 @@ import {
 } from '#/kosong/provider/provider';
 import type { ApprovalResponse } from '#/session/approval/approval';
 import type { InteractionRequest } from '#/features/interaction/interaction';
-import {
-  AgentInteraction,
-  type InteractionRuntime,
-} from '#/features/interaction/interactionAgentRuntime';
+import { IAgentInteractionService } from '#/features/interaction/interactionService';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import type { EnvironmentDisclosureSnapshot } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionQuestionService, type QuestionResult } from '#/session/question/question';
@@ -1296,16 +1288,19 @@ export class AgentTestContext {
     });
     this.session.accessor.get(ISessionEventBus).activateAgent(agentScopeContext.agentContext);
 
+    let adoptAgent: (() => void) | undefined;
     this.agent = this.session.createChild(LifecycleScope.Agent, agentId, {
       configureContainer: (container) => {
-        this.session.accessor.get(IAgentLifecycleService).adopt({
-          id: agentId,
-          kind: LifecycleScope.Agent,
-          accessor: {
-            get: (id) => container.invokeFunction((accessor) => accessor.get(id)),
-          },
-          dispose: () => { container.dispose(); },
-        });
+        adoptAgent = () => {
+          this.session.accessor.get(IAgentLifecycleService).adopt({
+            id: agentId,
+            kind: LifecycleScope.Agent,
+            accessor: {
+              get: (id) => container.invokeFunction((accessor) => accessor.get(id)),
+            },
+            dispose: () => { container.dispose(); },
+          });
+        };
       },
       seeds: collectScopeSeed(
         [
@@ -1390,7 +1385,7 @@ export class AgentTestContext {
     this.session.accessor
       .get(ISessionEventBus)
       .activateAgent(harnessAgentContext);
-    this.session.accessor.get(IAgentLifecycleService).attachRuntimes(harnessAgentContext);
+    adoptAgent!();
     this.installInteractionBridge(harnessAgentContext);
     reassertServiceOverrides(this.serviceOverrides, 'agent', this.agent.instantiation);
 
@@ -1417,12 +1412,6 @@ export class AgentTestContext {
       throw new Error('AgentTestContext.get called with undefined service id');
     }
     return this.agent.accessor.get(id);
-  }
-
-  resolve<Definition extends AgentRuntimeDefinition<any, any>>(
-    definition: Definition,
-  ): RuntimeOf<Definition> {
-    return this.session.accessor.get(IAgentLifecycleService).resolve(this.agentContext, definition);
   }
 
   get modelResolver(): IModelCatalog {
@@ -1492,24 +1481,19 @@ export class AgentTestContext {
     return this.get(IAgentStateService);
   }
 
-  async restorePersisted(): Promise<void> {
-    await this.dispatcher.restore();
-    await this.restoreRuntimes();
-  }
+  private persistedRestored: Promise<void> | undefined;
 
-  restoreRuntimes(): Promise<void> {
-    const agent = this.get(IAgentScopeContext).agentContext;
-    return (this.session.accessor.get(IAgentLifecycleService) as AgentLifecycleService).restoreRuntimes(agent);
+  async restorePersisted(): Promise<void> {
+    this.persistedRestored ??= this.dispatcher.restore();
+    await this.persistedRestored;
   }
 
   private async restoreRecordsOnly(records: readonly WireRecord[]): Promise<void> {
     const scopeContext = this.get(IAgentScopeContext);
     const log = this.get(IAppendLogStore);
     await log.rewrite(scopeContext.scope(), AGENT_WIRE_RECORD_KEY, records);
-    await this.dispatcher.restore();
-    await (this.session.accessor.get(IAgentLifecycleService) as AgentLifecycleService).restoreRuntimes(
-      scopeContext.agentContext,
-    );
+    this.persistedRestored = this.dispatcher.restore();
+    await this.persistedRestored;
   }
 
   private async dispatchRecordsOnly(records: readonly WireRecord[]): Promise<void> {
@@ -1536,7 +1520,7 @@ export class AgentTestContext {
   }
 
   private installInteractionBridge(agent: AgentContext): void {
-    const interaction = this.session.accessor.get(IAgentLifecycleService).resolve(agent, AgentInteraction);
+    const interaction = this.session.accessor.get(IAgentLifecycleService).handleOf(agent.agentId)!.accessor.get(IAgentInteractionService);
     const request = interaction.request.bind(interaction);
     interaction.request = (<TPayload, TResponse>(req: InteractionRequest<TPayload>) => {
       if (req.kind !== 'user_tool') return request<TPayload, TResponse>(req);
@@ -1558,7 +1542,7 @@ export class AgentTestContext {
         response,
       );
       return pending;
-    }) as InteractionRuntime['request'];
+    }) as IAgentInteractionService['request'];
   }
 
   private initializeRestorableServices(): void {
@@ -1567,7 +1551,7 @@ export class AgentTestContext {
     const usage = this.usage;
     const permissionMode = this.get(IAgentPermissionModeService);
     const permissionRules = this.get(IAgentPermissionRulesService);
-    const cron = this.resolve(AgentCron);
+    const cron = this.get(IAgentCronService);
     const plan = this.get(IAgentPlanService);
     void this.get(IAgentToolActivationService).activate();
     this.get(IAgentToolDedupeService);
@@ -2171,14 +2155,14 @@ export class AgentTestContext {
   private createRpcPassthroughAdapters(): AgentRpcPassthroughAPI {
     return {
       prompt: (payload) => this.get(IAgentPromptService).submit(payload),
-      promptWithSkills: (payload) => this.resolve(AgentSkill).promptWithSkills(payload),
+      promptWithSkills: (payload) => this.get(IAgentSkillService).promptWithSkills(payload),
       steer: (payload) => this.get(IAgentPromptService).submitSteer(payload),
       cancel: (payload) => this.get(IAgentLoopService).cancelFromUser(payload.turnId),
       undoHistory: (payload) => this.get(IAgentConversationUndoService).undo(payload.count),
       setPermission: (payload) =>
         this.get(IAgentPermissionModeService).setModeAndBroadcast(payload.mode),
       cancelCompaction: () => this.get(IAgentFullCompactionService).cancel(),
-      activateSkill: (payload) => this.resolve(AgentSkill).activate(payload),
+      activateSkill: (payload) => this.get(IAgentSkillService).activate(payload),
       activatePluginCommand: (payload) =>
         this.get(IAgentPluginCommandService).activate(payload),
       listCommands: () => this.get(IAgentCommandService).list(),
@@ -2220,11 +2204,11 @@ export class AgentTestContext {
       },
       detachTask: (payload) => this.get(IAgentTaskService).detach(payload.taskId),
       clearContext: () => this.get(IAgentPromptService).clear(),
-      createGoal: (payload) => this.resolve(AgentGoal).createGoal(payload),
-      getGoal: () => this.resolve(AgentGoal).getGoal(),
-      pauseGoal: () => this.resolve(AgentGoal).pauseGoal(),
-      resumeGoal: () => this.resolve(AgentGoal).resumeGoal(),
-      cancelGoal: () => this.resolve(AgentGoal).cancelGoal(),
+      createGoal: (payload) => this.get(IAgentGoalService).createGoal(payload),
+      getGoal: () => this.get(IAgentGoalService).getGoal(),
+      pauseGoal: () => this.get(IAgentGoalService).pauseGoal(),
+      resumeGoal: () => this.get(IAgentGoalService).resumeGoal(),
+      cancelGoal: () => this.get(IAgentGoalService).cancelGoal(),
       getTaskOutput: (payload) =>
         this.get(IAgentTaskService).readOutput(payload.taskId, payload.tail),
       getConfig: () => this.get(IAgentProfileService).data(),
@@ -2385,7 +2369,7 @@ function resumeStateSnapshot(ctx: AgentTestContext): ResumeStateSnapshot {
         .filter((key) => key.replayable.undoable !== undefined)
         .map((key) => [key.name, ctx.get(IAgentStateService).get(key)]),
     ),
-    todos: ctx.resolve(AgentTodo).get(),
+    todos: ctx.get(IAgentTodoService).get(),
     permission: permissionData,
     usage: usageStatus,
   };

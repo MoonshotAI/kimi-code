@@ -40,7 +40,7 @@ compositions over the existing seams:
 |---|---|---|
 | `contribute(token, value)` | `this.provide(token, value)` | raw collection record |
 | `contributeService(scope, id, ctor, opts?)` | `ScopeUnits(scope)` function recipe | one live unit per present AND future scope of that kind; retracted everywhere when the feature dies |
-| `contributeAgentService(id, ctor, opts?)` | `contributeService(LifecycleScope.Agent, …)` | the common case |
+| `contributeAgentService(id, ctor, opts?)` | `contributeService(LifecycleScope.Agent, …)` | the common case — Agent-granular domains (todo/goal/cron/interaction/reminder/dateChange/skill) ship as Agent-scope DI services (DI token + interface + implementation) through this seam; eager by default |
 | `contributeTool(id, ctor, options)` | per-agent `OnDemand` registration + `AgentToolContribution` record | the tool ctor keeps full `@IXxx` DI; the activation fold filters by name before constructing |
 | `contributeProfiles(profiles, opts?)` | `AgentProfileContribution` record | `sourceId` defaults to `feature:<name>` |
 | `contributeConfig(domain, schema, options?)` | `ConfigSectionContribution` record | see the static-channel rule below before using |

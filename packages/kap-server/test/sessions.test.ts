@@ -13,10 +13,9 @@ import {
   IOAuthService,
   type Event2,
   type IOAuthService as IOAuthServiceType,
-  AgentCron,
-  AgentGoal,
-  agentContextOf,
+  IAgentGoalService,
   IAgentConversationUndoService,
+  IAgentCronService,
   IAgentLifecycleService,
   IEventBus,
   IEventService,
@@ -291,7 +290,7 @@ describe('server-v2 /api/v1/sessions', () => {
     const events: Event2<any>[] = [];
     const subscription = eventBus.subscribe((event) => events.push(event));
 
-    const goal = agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentGoal);
+    const goal = agent.accessor.get(IAgentGoalService);
     const snapshot =
       status === 'blocked'
         ? await goal.markBlocked({ reason: 'need credentials' })
@@ -1026,8 +1025,8 @@ describe('server-v2 /api/v1/sessions', () => {
     const parentId = parent.body.data.id;
     const session = getLiveSessionById((server as RunningServer).core.accessor, parentId);
     expect(session).toBeDefined();
-    const mainContext = await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
-    const cron = session!.accessor.get(IAgentLifecycleService).resolve(mainContext, AgentCron);
+    await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    const cron = session!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!.accessor.get(IAgentCronService);
     const task = cron.addTask({ cron: '0 9 * * *', prompt: 'fork me', recurring: true });
 
     const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {});
@@ -1039,7 +1038,7 @@ describe('server-v2 /api/v1/sessions', () => {
     );
     expect(forkedSession).toBeDefined();
     const forkedManager = forkedSession!.accessor.get(IAgentLifecycleService);
-    const forkedCron = forkedManager.resolve(forkedManager.get(MAIN_AGENT_ID)!, AgentCron);
+    const forkedCron = forkedManager.handleOf(MAIN_AGENT_ID)!.accessor.get(IAgentCronService);
     expect(forkedCron.list().map((t) => ({ id: t.id, prompt: t.prompt }))).toEqual([
       { id: task.id, prompt: 'fork me' },
     ]);
@@ -1051,8 +1050,8 @@ describe('server-v2 /api/v1/sessions', () => {
     const parentId = parent.body.data.id;
     const session = getLiveSessionById((server as RunningServer).core.accessor, parentId);
     expect(session).toBeDefined();
-    const mainContext = await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
-    const cron = session!.accessor.get(IAgentLifecycleService).resolve(mainContext, AgentCron);
+    await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    const cron = session!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!.accessor.get(IAgentCronService);
     const task = cron.addTask({ cron: '0 9 * * *', prompt: 'survives corruption', recurring: true });
     await closeSessionById((server as RunningServer).core.accessor, parentId);
 
@@ -1078,7 +1077,7 @@ describe('server-v2 /api/v1/sessions', () => {
     const forkedLive = getLiveSessionById((server as RunningServer).core.accessor, forkedId);
     expect(forkedLive).toBeDefined();
     const forkedManager = forkedLive!.accessor.get(IAgentLifecycleService);
-    const forkedCron = forkedManager.resolve(forkedManager.get(MAIN_AGENT_ID)!, AgentCron);
+    const forkedCron = forkedManager.handleOf(MAIN_AGENT_ID)!.accessor.get(IAgentCronService);
     expect(forkedCron.list().map((t) => ({ id: t.id, prompt: t.prompt }))).toEqual([
       { id: task.id, prompt: 'survives corruption' },
     ]);
@@ -1093,10 +1092,11 @@ describe('server-v2 /api/v1/sessions', () => {
     const parentId = parent.body.data.id;
     const session = getLiveSessionById((server as RunningServer).core.accessor, parentId);
     expect(session).toBeDefined();
-    const mainContext = await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
     const task = session!.accessor
       .get(IAgentLifecycleService)
-      .resolve(mainContext, AgentCron)
+      .handleOf(MAIN_AGENT_ID)!
+      .accessor.get(IAgentCronService)
       .addTask({ cron: '0 9 * * *', prompt: 'restart me', recurring: true });
 
     await (server as RunningServer).close();
@@ -1115,7 +1115,7 @@ describe('server-v2 /api/v1/sessions', () => {
       .resume(parentId);
     expect(resumed).toBeDefined();
     const resumedManager = resumed!.accessor.get(IAgentLifecycleService);
-    const cron = resumedManager.resolve(resumedManager.get(MAIN_AGENT_ID)!, AgentCron);
+    const cron = resumedManager.handleOf(MAIN_AGENT_ID)!.accessor.get(IAgentCronService);
     expect(cron.list().map((t) => ({ id: t.id, prompt: t.prompt }))).toEqual([
       { id: task.id, prompt: 'restart me' },
     ]);

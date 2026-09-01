@@ -60,11 +60,8 @@ import {
   type WireRecord,
 } from '#/wire/record';
 import { repairWireJournal } from '#/wire/repair';
-import { IModelCatalog } from '#/kosong/model/catalog';
 import { IModelService } from '#/kosong/model/model';
 import { IProviderService } from '#/kosong/provider/provider';
-import { IFlagService } from '#/app/flag/flag';
-import { assertValidSubagentModelConfig } from '#/session/subagent/configSection';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
@@ -173,10 +170,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IWorkspaceSkillCatalog private readonly workspaceSkillCatalog: IWorkspaceSkillCatalog,
     @IWorkspaceInstructionsService private readonly workspaceInstructions: IWorkspaceInstructionsService,
     @IWorkspaceMcpService private readonly workspaceMcp: IWorkspaceMcpService,
-    @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IModelService private readonly models: IModelService,
     @IProviderService private readonly providers: IProviderService,
-    @IFlagService private readonly flags: IFlagService,
     onDispose?: () => void,
   ) {
     super();
@@ -227,17 +222,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return handle;
   }
 
-  private async assertSubagentModelPoolPreFlight(): Promise<void> {
-    await Promise.all([this.config.ready, this.models.ready, this.providers.ready]);
-    assertValidSubagentModelConfig(this.config, this.flags, this.modelCatalog);
-  }
-
   private async materializeSession(opts: MaterializeSessionOptions): Promise<ISessionScopeHandle> {
     const workspaceId = this.workspaceId;
     const sessionScope = sessionScopeOf(this.handlerScope, opts.sessionId);
     const sessionDir = sessionDirOf(this.bootstrap.homeDir, this.handlerScope, opts.sessionId);
     const metaScope = sessionScope;
-    await this.assertSubagentModelPoolPreFlight();
+    await Promise.all([this.config.ready, this.models.ready, this.providers.ready]);
     await this.workspaceDirs.ready;
     await this.workspaceDirs.mergeAdditionalDirs(opts.workDir, opts.additionalDirs ?? []);
     const ctx: ISessionContext = {
@@ -401,6 +391,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     void handle.dispose();
     await drainLogCloses();
     this._onDidCloseSession.fire({ sessionId });
+    this.telemetry.withContext({ sessionId }).track2('session_ended', { reason: 'exit' });
   }
 
   async archive(sessionId: string): Promise<void> {
@@ -422,6 +413,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     void handle.dispose();
     await drainLogCloses();
     this._onDidArchiveSession.fire({ sessionId });
+    this.telemetry.withContext({ sessionId }).track2('session_ended', { reason: 'archive' });
   }
 
   async restore(
@@ -513,7 +505,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           quiescenceHolds.push(hold);
         }
       }
-      await this.assertSubagentModelPoolPreFlight();
       await drainSessionMetadataWrites();
       if (sourceHandle !== undefined) {
         const sourceAgents = sourceHandle.accessor.get(IAgentLifecycleService);

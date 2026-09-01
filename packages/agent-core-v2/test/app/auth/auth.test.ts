@@ -34,6 +34,7 @@ import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IModelService, type ModelRecord } from '#/kosong/model/model';
 import { MODELS_SECTION } from '#/app/kosongConfig/configSection';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IProviderService, type ProviderConfig, type ProvidersChangedEvent } from '#/kosong/provider/provider';
 
 import '#/kosong/provider/providers/kimi/kimi.contrib';
@@ -199,6 +200,7 @@ describe('OAuthService', () => {
           subscribe: () => ({ dispose: () => {} }),
         });
         reg.defineInstance(IOAuthToolkit, toolkit as unknown as IOAuthToolkit);
+        reg.definePartialInstance(ITelemetryService, { track2: vi.fn() });
         reg.define(IOAuthService, OAuthService);
       },
     });
@@ -1622,6 +1624,7 @@ describe('AuthSummaryService', () => {
           debug: vi.fn(),
           error: vi.fn(),
         });
+        reg.definePartialInstance(ITelemetryService, { track2: vi.fn() });
         reg.define(IAuthSummaryService, AuthSummaryService);
       },
     });
@@ -1704,6 +1707,17 @@ describe('AuthSummaryService', () => {
     expect(getCachedAccessToken).toHaveBeenCalledWith(OAUTH_PROVIDER, {
       storage: 'file',
       key: 'oauth/kimi-code',
+    });
+  });
+
+  it('ensureReady emits auth_ensure_ready_failed with reason unexpected for non-auth-classified failures', async () => {
+    getCachedAccessToken.mockRejectedValue(new Error('token store unreadable'));
+    const track2 = ix.get(ITelemetryService).track2 as unknown as Mock;
+
+    await expect(createSummary().ensureReady()).rejects.toThrow('token store unreadable');
+    expect(track2).toHaveBeenCalledWith('auth_ensure_ready_failed', {
+      reason: 'unexpected',
+      has_model_override: false,
     });
   });
 
