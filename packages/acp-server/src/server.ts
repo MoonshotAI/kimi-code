@@ -137,7 +137,7 @@ export interface AcpServerOptions {
   readonly resolveOriginalsDir?: (sessionId: string) => string | undefined;
   readonly bindSessionRuntime?: (sessionId: string) => Promise<void>;
   readonly unbindSessionRuntime?: (sessionId: string) => Promise<void>;
-  /** Static or per-session host command palette, compatible with acp-adapter. */
+  /** Static or per-session host command palette. */
   readonly slashCommands?: SlashCommandsResolver;
 }
 
@@ -597,8 +597,7 @@ export class AcpServer {
    * response (`session/new` / `/fork` / `/load` / `/resume`) has settled.
    * Clients register the session when the response lands and silently drop
    * `session/update` notifications that arrive earlier (Zed), so an eager
-   * push leaves the client's slash-command palette empty. Mirrors the legacy
-   * adapter's `scheduleAvailableCommandsUpdate` (`acp-adapter/src/server.ts`).
+   * push leaves the client's slash-command palette empty.
    */
   private scheduleAvailableCommandsUpdate(acpSession: AcpSession): void {
     setTimeout(() => {
