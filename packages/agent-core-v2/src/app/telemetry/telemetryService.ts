@@ -148,23 +148,25 @@ export class TelemetryService implements ITelemetryService, ITelemetryScopeBindi
   }
 
   createScopeBinding(segment: string, seed: TelemetryContextPatch): TelemetryScopeBinding {
-    const bound = new BoundTelemetryService(
-      this,
-      segment,
-      [segment],
-      this.registerFragment(segment, seed),
-    );
+    const { fragment, release } = this.registerFragment(segment, seed);
+    const bound = new BoundTelemetryService(this, segment, fragment, [segment], release);
     return { telemetry: bound, dispose: () => bound.dispose() };
   }
 
-  registerFragment(key: string, seed: TelemetryContextPatch): () => void {
+  registerFragment(
+    key: string,
+    seed: TelemetryContextPatch,
+  ): { readonly fragment: MutableContext; readonly release: () => void } {
     const fragment: MutableContext = {};
     applyPatch(fragment, seed);
     this.fragments.set(key, fragment);
-    return () => {
-      if (this.fragments.get(key) === fragment) {
-        this.fragments.delete(key);
-      }
+    return {
+      fragment,
+      release: () => {
+        if (this.fragments.get(key) === fragment) {
+          this.fragments.delete(key);
+        }
+      },
     };
   }
 
@@ -208,13 +210,6 @@ export class TelemetryService implements ITelemetryService, ITelemetryScopeBindi
     return merged;
   }
 
-  patchFragment(key: string, patch: TelemetryContextPatch): void {
-    const fragment = this.fragments.get(key);
-    if (fragment !== undefined) {
-      applyPatch(fragment, patch);
-    }
-  }
-
   dispatch(
     event: string,
     ambient: TelemetryProperties,
@@ -244,6 +239,7 @@ class BoundTelemetryService implements ITelemetryService, ITelemetryScopeBinding
   constructor(
     private readonly root: TelemetryService,
     private readonly key: string,
+    private readonly fragment: MutableContext,
     private readonly chain: readonly string[],
     private readonly release: () => void,
   ) {}
@@ -263,7 +259,7 @@ class BoundTelemetryService implements ITelemetryService, ITelemetryScopeBinding
   }
 
   setContext(patch: TelemetryContextPatch): void {
-    this.root.patchFragment(this.key, patch);
+    applyPatch(this.fragment, patch);
   }
 
   getContext(): Readonly<TelemetryContextPatch> {
@@ -272,11 +268,13 @@ class BoundTelemetryService implements ITelemetryService, ITelemetryScopeBinding
 
   createScopeBinding(segment: string, seed: TelemetryContextPatch): TelemetryScopeBinding {
     const key = `${this.key}/${segment}`;
+    const { fragment, release } = this.root.registerFragment(key, seed);
     const bound = new BoundTelemetryService(
       this.root,
       key,
+      fragment,
       [...this.chain, key],
-      this.root.registerFragment(key, seed),
+      release,
     );
     return { telemetry: bound, dispose: () => bound.dispose() };
   }

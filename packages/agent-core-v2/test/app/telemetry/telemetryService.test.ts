@@ -475,6 +475,21 @@ describe('TelemetryService (layered ambient)', () => {
     second.telemetry.track2('session_started', { resumed: true, experimental_flags: '' });
     expect(appender.records[1]?.properties).toEqual({ resumed: true, experimental_flags: '' });
   });
+
+  it('keeps context writes of a stale binding on its own fragment', () => {
+    const appender = new CapturingAppender();
+    const root = serviceWithAppenders(appender);
+    const first = root.createScopeBinding('agents/a1', { agent_id: 'a1', mode: 'agent' });
+    const second = root.createScopeBinding('agents/a1', { agent_id: 'a1', mode: 'plan' });
+    first.telemetry.setContext({ turn_id: 7, mode: 'agent' });
+    first.telemetry.setContext({ turn_id: undefined, mode: 'agent' });
+    second.telemetry.track2('turn_started', { turn_id: 3, mode: 'plan' });
+    expect(appender.records[0]?.properties).toEqual({
+      agent_id: 'a1',
+      turn_id: 3,
+      mode: 'plan',
+    });
+  });
 });
 
 describe('ITelemetryService (scoped)', () => {
