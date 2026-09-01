@@ -536,7 +536,9 @@ export class TranscriptService {
           byKind.set(kind, (byKind.get(kind) ?? 0) + 1);
           steeredContents.set(key, byKind);
           steeredPromptIds.push(
-            pendingSteerPromptIds.length > 0 ? pendingSteerPromptIds.shift() : undefined,
+            kind === 'user' && pendingSteerPromptIds.length > 0
+              ? pendingSteerPromptIds.shift()
+              : undefined,
           );
         }
         continue;
