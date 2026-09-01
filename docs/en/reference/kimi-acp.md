@@ -53,7 +53,7 @@ The spec divides methods into a **stable** surface and an evolving **unstable** 
 
 | Method | Implemented | Description |
 | --- | --- | --- |
-| `session/update` | Yes | Streams `agent_message_chunk` / `tool_call*` / `plan` / `config_option_update` / `available_commands_update` |
+| `session/update` | Yes | Streams turn activity for both client prompts and scheduled cron tasks, plus `config_option_update` / `available_commands_update` |
 | `session/request_permission` | Yes | Shared channel for tool approval and question elicitation |
 | `fs/read_text_file` | Yes | File reads at the kaos layer are routed to the client (advertised via `fsCapabilities`) |
 | `fs/write_text_file` | Yes | File writes at the kaos layer are routed to the client |
