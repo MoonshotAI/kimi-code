@@ -304,7 +304,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this._onDidCreateSession.fireAsync(event, NO_ABORT);
     event.handle.accessor.get(ITelemetryService).track2('session_started', {
       resumed: event.source === 'resume',
-      experimental_flags: [...this.flags.enabledIds()].sort().join(','),
+      experimental_flags: this.flags.enabledIds().toSorted().join(','),
     });
   }
 

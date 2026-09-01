@@ -819,7 +819,7 @@ export async function applyExperimentalFeatureChanges(
       flags: features
         .filter((feature) => feature.enabled)
         .map((feature) => feature.id)
-        .sort()
+        .toSorted()
         .join(','),
     });
   } catch (error) {
