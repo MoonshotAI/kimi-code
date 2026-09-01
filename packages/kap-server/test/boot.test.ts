@@ -224,7 +224,7 @@ describe('server-v2 boot', () => {
       ],
     });
     const core = server.core;
-    core.accessor.get(ITelemetryService).track('server_probe');
+    core.accessor.get(ITelemetryService).track2('session_ended', { reason: 'exit' });
 
     await server.close();
     server = undefined;

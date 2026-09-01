@@ -44,13 +44,12 @@ function recordingTelemetry(): {
   return {
     telemetry: {
       _serviceBrand: undefined,
-      track: vi.fn(),
       track2,
       withContext: () => recordingTelemetry().telemetry,
       setContext: () => {},
+      getContext: () => ({}),
       addAppender: () => ({ dispose: () => {} }),
       removeAppender: () => {},
-      setAppender: () => {},
       setEnabled: () => {},
       flush: () => Promise.resolve(),
       shutdown: () => Promise.resolve(),

@@ -24,7 +24,6 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import type {
   TurnEndedEvent as TurnEndedTelemetryEvent,
   TurnInterruptedEvent,
@@ -111,7 +110,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
@@ -492,22 +490,20 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     ready: ReturnType<typeof createControlledPromise<void>>,
   ): Promise<TurnResult> {
     const startedAt = Date.now();
-    this.telemetryContext.set({ turn_id: turn.id });
-    const telemetryContext = this.telemetryContext.get();
-    const turnTelemetry = this.telemetry.withContext(telemetryContext);
-    const { mode, provider_type, protocol } = telemetryContext;
+    this.telemetry.setContext({ turn_id: turn.id });
+    const { mode, provider_type, protocol } = this.telemetry.getContext();
     let thinkingEffort: string | undefined;
     let result: TurnResult | undefined;
     try {
       thinkingEffort = this.llmRequester.prepareTurnConfig(turn.id)?.thinkingEffort;
       const started: TurnStartedTelemetryEvent = {
         turn_id: turn.id,
-        mode,
+        mode: mode ?? 'agent',
         provider_type,
         protocol,
         thinking_effort: thinkingEffort,
       };
-      turnTelemetry.track2('turn_started', started);
+      this.telemetry.track2('turn_started', started);
       result = await this.run({
         turnId: turn.id,
         signal: turn.signal,
@@ -548,27 +544,28 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           const interrupted: TurnInterruptedEvent = {
             turn_id: turn.id,
             at_step: result.steps,
-            mode,
+            mode: mode ?? 'agent',
             interrupt_reason: interruptReason,
             provider_type,
             protocol,
             thinking_effort: thinkingEffort,
             trace_id: traceId,
           };
-          turnTelemetry.track2('turn_interrupted', interrupted);
+          this.telemetry.track2('turn_interrupted', interrupted);
         }
       }
       const ended: TurnEndedTelemetryEvent = {
         turn_id: turn.id,
         reason: result?.type ?? 'failed',
         duration_ms: Date.now() - startedAt,
-        mode,
+        mode: mode ?? 'agent',
         provider_type,
         protocol,
         thinking_effort: thinkingEffort,
         trace_id: traceId,
       };
-      turnTelemetry.track2('turn_ended', ended);
+      this.telemetry.track2('turn_ended', ended);
+      this.telemetry.setContext({ turn_id: undefined });
       this.activeRequestTrace = undefined;
       this.lastRequestTraceId = undefined;
       this.pumpTurns();

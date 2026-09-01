@@ -22,7 +22,6 @@ import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
-import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ToolCall } from '#/kosong/contract/message';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -176,7 +175,6 @@ describe('AgentPlanService plan-guard listener', () => {
         });
         reg.definePartialInstance(IAgentContextMemoryService, {});
         reg.defineInstance(IAgentReminderService, createReminderStub());
-        reg.definePartialInstance(IAgentTelemetryContextService, { set: () => {} });
         reg.defineInstance(IAgentToolExecutorService, executorEvents.executor);
         reg.defineInstance(IAgentToolApprovalService, toolApproval);
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));

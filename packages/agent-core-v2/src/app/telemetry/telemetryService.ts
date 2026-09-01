@@ -4,55 +4,166 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 
 import type {
-  StrictPropertyCheck,
-  TelemetryEventName,
-  TelemetryEventPayload,
+  TelemetryContextPatch,
+  TelemetryPrimitive,
+  TelemetryProperties,
+} from './context';
+import {
+  telemetryEventDefinitions,
+  type StrictPropertyCheck,
+  type TelemetryEventName,
+  type TelemetryEventPayload,
 } from './events';
 import {
-  ITelemetryService,
   type ITelemetryAppender,
+  ITelemetryService,
   nullTelemetryAppender,
-  type TelemetryContextPatch,
-  type TelemetryProperties,
+  type TelemetryAppenderRecord,
 } from './telemetry';
 
-export class TelemetryService implements ITelemetryService {
-  declare readonly _serviceBrand: undefined;
+type MutableContext = Record<string, TelemetryPrimitive>;
 
-  private appenders: ITelemetryAppender[] = [nullTelemetryAppender];
-  private context: TelemetryProperties = {};
-  private enabled = true;
+const ROOT_CHAIN: readonly string[] = [];
 
-  track(event: string, properties?: TelemetryProperties): void {
-    if (!this.enabled) {
-      return;
+const FILTERED_CONTEXT_KEYS = [
+  'turn_id',
+  'trace_id',
+  'thinking_effort',
+  'mode',
+  'provider_type',
+  'protocol',
+] as const;
+
+function applyPatch(target: MutableContext, patch: TelemetryContextPatch): MutableContext {
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) {
+      delete target[key];
+    } else {
+      target[key] = value;
     }
-    const merged = { ...this.context, ...properties };
-    for (const appender of this.appenders) {
-      try {
-        appender.track(event, merged);
-      } catch (err) {
-        onUnexpectedError(err);
+  }
+  return target;
+}
+
+function declaredKeysFor(event: string): readonly string[] | undefined {
+  const definition = (
+    telemetryEventDefinitions as Record<
+      string,
+      | { readonly context: string; readonly meta: { readonly properties: Readonly<Record<string, string>> } }
+      | undefined
+    >
+  )[event];
+  if (definition === undefined) {
+    return undefined;
+  }
+  const keys = Object.keys(definition.meta.properties);
+  return definition.context === 'agent' && !keys.includes('agent_id')
+    ? [...keys, 'agent_id']
+    : keys;
+}
+
+export function composeTelemetryProperties(
+  event: string,
+  ambient: TelemetryProperties,
+  explicit: TelemetryProperties | undefined,
+): TelemetryProperties {
+  const properties: MutableContext = {};
+  if (ambient['session_id'] !== undefined) {
+    properties['sessionId'] = ambient['session_id'];
+  }
+  if (ambient['agent_id'] !== undefined) {
+    properties['agent_id'] = ambient['agent_id'];
+  }
+  if (ambient['model'] !== undefined) {
+    properties['model'] = ambient['model'];
+  }
+  const declared = declaredKeysFor(event);
+  if (declared !== undefined) {
+    for (const key of declared) {
+      if (key === 'agent_id') continue;
+      const value = ambient[key];
+      if (value !== undefined) {
+        properties[key] = value;
       }
     }
   }
+  if (explicit !== undefined) {
+    Object.assign(properties, explicit);
+  }
+  if (declared !== undefined) {
+    for (const key of FILTERED_CONTEXT_KEYS) {
+      if (!declared.includes(key)) {
+        delete properties[key];
+      }
+    }
+  }
+  return properties;
+}
+
+export interface TelemetryScopeBinding extends IDisposable {
+  readonly telemetry: ITelemetryService;
+}
+
+export interface ITelemetryScopeBindingHost {
+  createScopeBinding(segment: string, seed: TelemetryContextPatch): TelemetryScopeBinding;
+}
+
+export function bindTelemetryScope(
+  parent: ITelemetryService,
+  segment: string,
+  seed: TelemetryContextPatch,
+): TelemetryScopeBinding {
+  const host = parent as ITelemetryService & Partial<ITelemetryScopeBindingHost>;
+  if (host.createScopeBinding !== undefined) {
+    return host.createScopeBinding(segment, seed);
+  }
+  return { telemetry: parent.withContext(seed), dispose: () => {} };
+}
+
+export class TelemetryService implements ITelemetryService, ITelemetryScopeBindingHost {
+  declare readonly _serviceBrand: undefined;
+
+  private appenders: ITelemetryAppender[] = [nullTelemetryAppender];
+  private readonly fragments = new Map<string, MutableContext>();
+  private context: MutableContext = {};
+  private enabled = true;
 
   track2<K extends TelemetryEventName, E extends TelemetryEventPayload<K> = never>(
     event: K,
     properties?: StrictPropertyCheck<TelemetryEventPayload<K>, E>,
   ): void {
-    this.track(event, properties as TelemetryProperties);
+    this.dispatch(event, this.ambientFor(ROOT_CHAIN), properties as TelemetryProperties | undefined);
   }
 
   withContext(patch: TelemetryContextPatch): ITelemetryService {
-    return new TelemetryContextView(this, patch);
+    return new TelemetrySnapshotView(this, applyPatch(this.ambientFor(ROOT_CHAIN), patch));
   }
 
   setContext(patch: TelemetryContextPatch): void {
-    this.context = { ...this.context, ...patch };
-    for (const appender of this.appenders) {
-      appender.setContext?.(patch);
-    }
+    applyPatch(this.context, patch);
+  }
+
+  getContext(): Readonly<TelemetryContextPatch> {
+    return this.ambientFor(ROOT_CHAIN);
+  }
+
+  createScopeBinding(segment: string, seed: TelemetryContextPatch): TelemetryScopeBinding {
+    const bound = new BoundTelemetryService(
+      this,
+      segment,
+      [segment],
+      this.registerFragment(segment, seed),
+    );
+    return { telemetry: bound, dispose: () => bound.dispose() };
+  }
+
+  registerFragment(key: string, seed: TelemetryContextPatch): () => void {
+    const fragment: MutableContext = {};
+    applyPatch(fragment, seed);
+    this.fragments.set(key, fragment);
+    return () => {
+      this.fragments.delete(key);
+    };
   }
 
   addAppender(appender: ITelemetryAppender): IDisposable {
@@ -62,10 +173,6 @@ export class TelemetryService implements ITelemetryService {
 
   removeAppender(appender: ITelemetryAppender): void {
     this.appenders = this.appenders.filter((a) => a !== appender);
-  }
-
-  setAppender(appender: ITelemetryAppender): void {
-    this.appenders = [appender];
   }
 
   setEnabled(enabled: boolean): void {
@@ -87,36 +194,89 @@ export class TelemetryService implements ITelemetryService {
       ),
     );
   }
+
+  ambientFor(chain: readonly string[]): TelemetryProperties {
+    let merged: MutableContext = { ...this.context };
+    for (const key of chain) {
+      const fragment = this.fragments.get(key);
+      if (fragment !== undefined) {
+        merged = { ...merged, ...fragment };
+      }
+    }
+    return merged;
+  }
+
+  patchFragment(key: string, patch: TelemetryContextPatch): void {
+    const fragment = this.fragments.get(key);
+    if (fragment !== undefined) {
+      applyPatch(fragment, patch);
+    }
+  }
+
+  dispatch(
+    event: string,
+    ambient: TelemetryProperties,
+    properties: TelemetryProperties | undefined,
+  ): void {
+    if (!this.enabled) {
+      return;
+    }
+    const record: TelemetryAppenderRecord = {
+      event,
+      context: { ...ambient },
+      properties: composeTelemetryProperties(event, ambient, properties),
+    };
+    for (const appender of this.appenders) {
+      try {
+        appender.track(record);
+      } catch (err) {
+        onUnexpectedError(err);
+      }
+    }
+  }
 }
 
-class TelemetryContextView implements ITelemetryService {
+class BoundTelemetryService implements ITelemetryService, ITelemetryScopeBindingHost {
   declare readonly _serviceBrand: undefined;
-  private context: TelemetryProperties;
 
   constructor(
-    private readonly root: ITelemetryService,
-    context: TelemetryProperties,
-  ) {
-    this.context = context;
-  }
-
-  track(event: string, properties?: TelemetryProperties): void {
-    this.root.track(event, { ...this.context, ...properties });
-  }
+    private readonly root: TelemetryService,
+    private readonly key: string,
+    private readonly chain: readonly string[],
+    private readonly release: () => void,
+  ) {}
 
   track2<K extends TelemetryEventName, E extends TelemetryEventPayload<K> = never>(
     event: K,
     properties?: StrictPropertyCheck<TelemetryEventPayload<K>, E>,
   ): void {
-    this.track(event, properties as TelemetryProperties);
+    this.root.dispatch(event, this.root.ambientFor(this.chain), properties as TelemetryProperties | undefined);
   }
 
   withContext(patch: TelemetryContextPatch): ITelemetryService {
-    return new TelemetryContextView(this.root, { ...this.context, ...patch });
+    return new TelemetrySnapshotView(
+      this.root,
+      applyPatch({ ...this.root.ambientFor(this.chain) }, patch),
+    );
   }
 
   setContext(patch: TelemetryContextPatch): void {
-    this.context = { ...this.context, ...patch };
+    this.root.patchFragment(this.key, patch);
+  }
+
+  getContext(): Readonly<TelemetryContextPatch> {
+    return this.root.ambientFor(this.chain);
+  }
+
+  createScopeBinding(segment: string, seed: TelemetryContextPatch): TelemetryScopeBinding {
+    const key = `${this.key}/${segment}`;
+    const bound = new BoundTelemetryService(
+      this.root,
+      key,
+      [...this.chain, key],
+      this.root.registerFragment(key, seed),
+    );
+    return { telemetry: bound, dispose: () => bound.dispose() };
   }
 
   addAppender(appender: ITelemetryAppender): IDisposable {
@@ -127,8 +287,59 @@ class TelemetryContextView implements ITelemetryService {
     this.root.removeAppender(appender);
   }
 
-  setAppender(appender: ITelemetryAppender): void {
-    this.root.setAppender(appender);
+  setEnabled(enabled: boolean): void {
+    this.root.setEnabled(enabled);
+  }
+
+  flush(): Promise<void> {
+    return this.root.flush();
+  }
+
+  shutdown(): Promise<void> {
+    return this.root.shutdown();
+  }
+
+  dispose(): void {
+    this.release();
+  }
+}
+
+class TelemetrySnapshotView implements ITelemetryService {
+  declare readonly _serviceBrand: undefined;
+  private context: MutableContext;
+
+  constructor(
+    private readonly root: TelemetryService,
+    context: TelemetryProperties,
+  ) {
+    this.context = { ...context };
+  }
+
+  track2<K extends TelemetryEventName, E extends TelemetryEventPayload<K> = never>(
+    event: K,
+    properties?: StrictPropertyCheck<TelemetryEventPayload<K>, E>,
+  ): void {
+    this.root.dispatch(event, this.context, properties as TelemetryProperties | undefined);
+  }
+
+  withContext(patch: TelemetryContextPatch): ITelemetryService {
+    return new TelemetrySnapshotView(this.root, applyPatch({ ...this.context }, patch));
+  }
+
+  setContext(patch: TelemetryContextPatch): void {
+    applyPatch(this.context, patch);
+  }
+
+  getContext(): Readonly<TelemetryContextPatch> {
+    return { ...this.context };
+  }
+
+  addAppender(appender: ITelemetryAppender): IDisposable {
+    return this.root.addAppender(appender);
+  }
+
+  removeAppender(appender: ITelemetryAppender): void {
+    this.root.removeAppender(appender);
   }
 
   setEnabled(enabled: boolean): void {

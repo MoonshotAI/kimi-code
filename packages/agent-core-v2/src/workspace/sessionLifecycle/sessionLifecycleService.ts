@@ -27,6 +27,7 @@ import { CHILD_SESSION_KIND,
 } from '#/app/sessionIndex/sessionIndex';
 import { buildSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { bindTelemetryScope } from '#/app/telemetry/telemetryService';
 import { ErrorCodes, Error2, isError2 } from '#/errors';
 import { IHostFileSystem, type HostDirEntry } from '#/os/interface/hostFileSystem';
 import {
@@ -248,38 +249,53 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       scope: (subKey?: string): string =>
         subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
     };
-    const handle = createScopedChildHandle(
-      this.instantiation,
-      LifecycleScope.Session,
-      opts.sessionId,
-      {
-        seeds: [
-          ...sessionContextSeed(ctx),
-          [ITelemetryService, this.telemetry.withContext({ sessionId: opts.sessionId })],
-          ...sessionAgentProfileCatalogSeed({
-            _serviceBrand: undefined,
-            workspaceKey: workspaceId,
-          }),
-          [ISessionSkillCatalogData, this.workspaceSkillCatalog.sessionData()],
-          [ISessionInstructionsProvider, this.workspaceInstructions.sessionProvider()],
-          [ISessionMcpHandle, this.workspaceMcp.sessionHandle()],
-          [ISessionWorkspaceInfo, this.workspaceDirs.sessionInfo()],
-          ...sessionEphemeralMcpServersSeed(opts.mcpServers ?? {}),
-        ],
-        configureContainer: (container) => {
-          this._onWillCreateSession.fire({
-            sessionId: opts.sessionId,
-            readSeed: (id) => container.invokeFunction((accessor) => accessor.get(id)),
-            contributeSeed: (id, value) => {
-              container.provide(id, value);
-            },
-            onSessionDispose: (dispose) => {
-              container.anchorKernelEntry(dispose, 'sessionLifecycle:willCreateParticipant');
-            },
-          });
+    const telemetryBinding = bindTelemetryScope(
+      this.telemetry,
+      `sessions/${opts.sessionId}`,
+      { session_id: opts.sessionId },
+    );
+    let handle: ISessionScopeHandle;
+    try {
+      handle = createScopedChildHandle(
+        this.instantiation,
+        LifecycleScope.Session,
+        opts.sessionId,
+        {
+          seeds: [
+            ...sessionContextSeed(ctx),
+            [ITelemetryService, telemetryBinding.telemetry],
+            ...sessionAgentProfileCatalogSeed({
+              _serviceBrand: undefined,
+              workspaceKey: workspaceId,
+            }),
+            [ISessionSkillCatalogData, this.workspaceSkillCatalog.sessionData()],
+            [ISessionInstructionsProvider, this.workspaceInstructions.sessionProvider()],
+            [ISessionMcpHandle, this.workspaceMcp.sessionHandle()],
+            [ISessionWorkspaceInfo, this.workspaceDirs.sessionInfo()],
+            ...sessionEphemeralMcpServersSeed(opts.mcpServers ?? {}),
+          ],
+          configureContainer: (container) => {
+            container.anchorKernelEntry(
+              () => telemetryBinding.dispose(),
+              'telemetry:session-context',
+            );
+            this._onWillCreateSession.fire({
+              sessionId: opts.sessionId,
+              readSeed: (id) => container.invokeFunction((accessor) => accessor.get(id)),
+              contributeSeed: (id, value) => {
+                container.provide(id, value);
+              },
+              onSessionDispose: (dispose) => {
+                container.anchorKernelEntry(dispose, 'sessionLifecycle:willCreateParticipant');
+              },
+            });
+          },
         },
-      },
-    ) as ISessionScopeHandle;
+      ) as ISessionScopeHandle;
+    } catch (error) {
+      telemetryBinding.dispose();
+      throw error;
+    }
     try {
       await handle.accessor.get(ISessionMetadata).ready;
       await handle.accessor.get(ISessionToolPolicy).ready;
@@ -331,7 +347,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const promise = this.doResume(sessionId, opts)
       .catch((error: unknown) => {
         this.telemetry
-          .withContext({ sessionId })
+          .withContext({ session_id: sessionId })
           .track2('session_load_failed', {
             reason: isError2(error) ? error.code : error instanceof Error ? error.name : 'unknown',
           });
@@ -400,7 +416,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     void handle.dispose();
     await drainLogCloses();
     this._onDidCloseSession.fire({ sessionId });
-    this.telemetry.withContext({ sessionId }).track2('session_ended', { reason: 'exit' });
+    this.telemetry.withContext({ session_id: sessionId }).track2('session_ended', { reason: 'exit' });
   }
 
   async archive(sessionId: string): Promise<void> {
@@ -422,7 +438,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     void handle.dispose();
     await drainLogCloses();
     this._onDidArchiveSession.fire({ sessionId });
-    this.telemetry.withContext({ sessionId }).track2('session_ended', { reason: 'archive' });
+    this.telemetry.withContext({ session_id: sessionId }).track2('session_ended', { reason: 'archive' });
   }
 
   async restore(
