@@ -137,6 +137,24 @@ describe('handleSessionList', () => {
 
     expect(captured.out).toBe('No sessions found.\n');
   });
+
+  it('strips control characters and line breaks from user-controlled fields', async () => {
+    const { deps, captured } = stubDeps([
+      summary({
+        id: 'ses_1',
+        title: 'line one\nline two \u001b[31mred\u001b[0m',
+        workDir: '/repo\nevil',
+      }),
+    ]);
+
+    await handleSessionList(deps, { all: true, archived: false, json: false });
+
+    const rows = captured.out.trimEnd().split('\n');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).not.toContain('\u001b');
+    expect(rows[0]).toContain('line one line two  [31mred [0m');
+    expect(rows[0]).toContain('/repo evil');
+  });
 });
 
 describe('registerSessionCommand', () => {

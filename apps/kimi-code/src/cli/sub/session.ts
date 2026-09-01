@@ -37,8 +37,8 @@ export interface SessionListDeps {
 export interface SessionListOptions {
   readonly all: boolean;
   readonly archived: boolean;
-  readonly cwd?: string | undefined;
-  readonly limit?: number | undefined;
+  readonly cwd?: string;
+  readonly limit?: number;
   readonly json: boolean;
 }
 
@@ -129,9 +129,13 @@ function createDefaultSessionListDeps(
 
 function formatRow(summary: SessionSummary, showWorkDir: boolean): string {
   const archived = summary.archived === true ? ' [archived]' : '';
-  const title = summary.title ?? summary.lastPrompt ?? '';
+  const title = sanitizeField(summary.title ?? summary.lastPrompt ?? '');
   const base = `${formatTimestamp(summary.updatedAt)}  ${summary.id}  ${title}${archived}`;
-  return showWorkDir ? `${base}  ${summary.workDir}` : base;
+  return showWorkDir ? `${base}  ${sanitizeField(summary.workDir)}` : base;
+}
+
+function sanitizeField(value: string): string {
+  return value.replaceAll(/[\x00-\x1f\x7f]+/g, ' ').trim();
 }
 
 function formatTimestamp(epochMs: number): string {
