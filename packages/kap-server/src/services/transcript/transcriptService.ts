@@ -514,9 +514,13 @@ export class TranscriptService {
         const input = record['input'];
         if (Array.isArray(input)) {
           const key = JSON.stringify(input);
-          const steerOrigin = (record as { origin?: { kind?: unknown } }).origin?.kind;
-          const kind = typeof steerOrigin === 'string' ? steerOrigin : 'user';
-          const idQueue = steeredPromptIdQueues.get(key);
+          const steerOrigin = (record as { origin?: { kind?: unknown; skillActivations?: unknown } }).origin;
+          const kind = typeof steerOrigin?.kind === 'string' ? steerOrigin.kind : 'user';
+          const skillBlockCount = Array.isArray(steerOrigin?.skillActivations)
+            ? steerOrigin.skillActivations.length
+            : 0;
+          const pairKey = skillBlockCount > 0 ? JSON.stringify(input.slice(skillBlockCount)) : key;
+          const idQueue = steeredPromptIdQueues.get(pairKey);
           const promptIds =
             idQueue !== undefined && idQueue.length > 0 ? idQueue.shift() : undefined;
           const byKind =

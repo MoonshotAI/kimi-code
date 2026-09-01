@@ -2744,6 +2744,36 @@ describe('AgentTranscriptProjector', () => {
     }
   });
 
+  it('readColdSnapshot pairs promptIds when the steer carries bundled skill blocks', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-steer-skill-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const activation = { activationId: 'a1', skillName: 'deploy' };
+      const records = [
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } }, time: 1000 },
+        { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] }, time: 2000 },
+        { type: 'prompt.steered', activePromptId: 'msg_active', promptIds: ['msg_steered'], content: [{ type: 'text', text: 'deploy now' }], steeredAt: '2026-09-01T10:00:00.000Z', time: 2500 },
+        { type: 'turn.steer', input: [{ type: 'text', text: '/deploy' }, { type: 'text', text: 'deploy now' }], origin: { kind: 'user', skillActivations: [activation] }, time: 3000 },
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: '/deploy' }, { type: 'text', text: 'deploy now' }], toolCalls: [], origin: { kind: 'user', skillActivations: [activation] } }, time: 3001 },
+        { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }], toolCalls: [] }, time: 4000 },
+      ];
+      await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+
+      const snapshot = await coldTranscriptService(home).readColdSnapshot('s1', 'main');
+      const turn = snapshot!.items.find((item) => item.kind === 'turn');
+      if (turn?.kind !== 'turn') throw new Error('expected turn');
+      expect(turn.steps[1]?.frames[0]).toMatchObject({
+        kind: 'text',
+        role: 'user',
+        text: 'deploy now',
+        promptIds: ['msg_steered'],
+      });
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('readColdSnapshot preserves safe bundled skill provenance before the first step', async () => {
     const home = await mkdtemp(join(tmpdir(), 'transcript-cold-bundled-steer-'));
     try {
