@@ -467,15 +467,8 @@ describe('server-v2 /api/v1/sessions', () => {
     });
     expect(renamed.body.code).toBe(0);
 
-    const deadline = Date.now() + 5000;
-    let observed = baseline;
-    while (Date.now() < deadline) {
-      const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
-      observed = got.body.data.last_seq;
-      if (observed > baseline) break;
-      await new Promise((r) => setTimeout(r, 25));
-    }
-    expect(observed).toBeGreaterThan(baseline);
+    const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
+    expect(got.body.data.last_seq).toBeGreaterThan(baseline);
   });
 
   it('supports exclude_empty when listing sessions', async () => {

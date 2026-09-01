@@ -411,6 +411,7 @@ export function registerSessionsRoutes(
     },
     async (req, reply) => {
       const { session_id } = req.params;
+      const cursor = await deps.sessionEventCursor(session_id);
       const summary = await core.accessor.get(ISessionIndex).get(session_id);
       if (summary === undefined) {
         reply.send(
@@ -430,7 +431,6 @@ export function registerSessionsRoutes(
         );
         return;
       }
-      const cursor = await deps.sessionEventCursor(session_id);
       reply.send(
         okEnvelope(
           toWireSession(summary, cwd, resolveSessionFacts(core, session_id), cursor.seq),
