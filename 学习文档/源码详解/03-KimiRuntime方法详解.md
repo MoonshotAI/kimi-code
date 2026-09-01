@@ -550,6 +550,62 @@ const sreamChat: = async (params, ctx) => {
 
 与 openSession 的分工：openSession 自己从 harness 拿 Session（create 或 resume）；attachResumedSession **收一个已经拿到的 Session 对象**再绑视图。
 
+> 什么叫收一个已经拿到的session？还有这个resumed 就是点击历史会话，调用的吗？他和this.harness.resumeSession的区别是？
+
+三个问题其实在问同一条分界线：**「把会话从磁盘复活」和「把活的会话挂到视图上」是两件事，分属两层**。答案的依据是 `bridge-handler.ts:180-200` 那个 `resumeSession` 闭包（读文件确认）。
+
+**1. 什么叫「收一个已经拿到的 Session」**——看两个方法的签名：
+
+```ts
+openSession(options: OpenSessionOptions)          // 传"我要什么"：id + model/effort...
+attachResumedSession(webviewId, session: Session) // 传"已经拿到的东西"：一个活的 Session 对象
+```
+
+`openSession` 的参数里只有 sessionId（一个字符串），Session 对象是它**自己去弄来**的（内部调 `createSession`/`resumeSession`）。而 `attachResumedSession` 的第二个参数直接就是一个 `Session` 对象——**调用它在之前就已经把会话弄到手了**（要么查活表拿到 `current.session`，要么自己调了 `harness.resumeSession`），它不管"从哪来"，只管"来了之后"：包装成 SessionRuntime（或复用表里已有的）、绑视图、恢复审批标志。"收"就是"作为参数收下、接手"。
+
+**2. resumed 是不是点历史会话调用的？——是**。链路：
+
+```
+webview 会话列表点开一个历史会话
+  → LoadKimiSessionHistory RPC（session.handler.ts:128-130）
+    → ctx.resumeSession 闭包（bridge-handler.ts:180-200）★
+      → runtime.attachResumedSession(webviewId, session, yoloMode)
+```
+
+为什么这条链不直接走 `openSession`？因为 handler 拿到 Session 后还要**自己用它干活**：读 `getResumeState()` 把历史重放成事件流发给 webview（`replaySessionToWebviewEvents`，session.handler.ts:136-142）、做基线比对。所以闭包先把 Session 弄到手（顺带做 workDir 校验，:185-192），再把**对象**递给 attachResumedSession。
+
+**3. 和 `this.harness.resumeSession` 的区别**：
+
+| | `harness.resumeSession({id})` | `runtime.attachResumedSession(webviewId, session)` |
+|---|---|---|
+| 层 | 引擎侧（SDK 门面方法） | 插件侧（KimiRuntime 的方法） |
+| 干的事 | **复活**：按 id 把磁盘上的持久化记录读出来，造出一个活的 SDK Session 对象 | **接管**：把一个已经活的 Session 包装、绑视图、恢复审批标志 |
+| 输入/输出 | 进 id，出 Session | 进 Session 对象，出 SessionRuntime |
+| 何时被调 | 会话**不在活表**里时才需要 | 只要点历史会话就调 |
+
+点历史会话这条链里**两个都会发生**，顺序是先复活、再接管（`bridge-handler.ts:180-193`）：
+
+```ts
+resumeSession: async (sessionId) => {
+  const current = this.runtime.getSession(sessionId);        // :181 先查活表
+  const session =
+    current?.session ??                                       // :183 已活着→直接用，不复活
+    (await this.runtime.harness.resumeSession({ id: sessionId, ... })); // :184 没活→引擎复活 ★
+  if (!areSameFsPath(session.workDir, ...)) {                 // :185 目录校验
+    if (current === undefined) { await session.close()...; }  // :186-190 刚复活的不合格→关掉再抛（不留孤儿）
+    throw new Error(...);
+  }
+  const runtime = await this.runtime.attachResumedSession(    // :193 ★ 接管
+    webviewId, session, VSCodeSettings.yoloMode);
+```
+
+两个细节值得记：
+
+- **:181-183 先查活表**——如果这个会话已被别的视图开着，直接拿 `current.session` 复用，`harness.resumeSession` 根本不会被调（复活只在"真死了"时发生）。这正是全局认知里那条不变量：表里的会话必有视图订阅着。
+- **:186-190 拒收即关**——刚复活出来却发现目录不符，要先 `close()` 再抛，否则引擎里留一个谁也不绑的活会话（和本篇复盘第 4 条同一个原则）。
+
+名字也就好拆了：**attach**（挂载到视图）＋ **Resumed**（已经被恢复出来的）——「把一个已经恢复好的会话挂上来」。对照记忆：openSession 分支③里那个 `this.harness.resumeSession`（`kimi-runtime.ts:124`）是"发消息"路径自己内部复活；点历史列表是 handler 层复活。同一个引擎复活方法，两个入口各自调一次。
+
 **谁调用**：bridge-handler.ts:193（context 的 `resumeSession` 闭包）——触发点 session.handler.ts:130（LoadKimiSessionHistory，用户点开历史会话）：`const runtime = await ctx.resumeSession(params.kimiSessionId);`。注意闭包里的分工（[02-BridgeHandler方法详解.md](02-BridgeHandler方法详解.md) 第五节讲过）：**workDir 校验在闭包里做过了**（bridge-handler.ts:185：`if (!areSameFsPath(session.workDir, this.requireWorkDir(webviewId))) {`，目录不符先 close 再抛），所以这里不会再遇到目录不符的路径。
 
 ```ts
