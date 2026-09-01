@@ -1886,6 +1886,106 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(folded.items).toHaveLength(base.items.length);
   });
 
+  const baseWithSteps = (): AgentTranscriptSnapshot =>
+    groupMessagesIntoSnapshot([
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'first' }], toolCalls: [] },
+      { role: 'assistant', content: [{ type: 'text', text: 'second' }], toolCalls: [] },
+    ]);
+
+  it('folds turn.step.interrupted records into the matching step of the matching turn', () => {
+    const base = baseWithSteps();
+    const folded = foldWireRecordFacts(
+      [
+        {
+          type: 'turn.step.interrupted',
+          turnId: 0,
+          step: 2,
+          reason: 'user_cancelled',
+          message: 'stopped by user',
+          time: 4000,
+        },
+        { type: 'turn.ended', turnId: 0, reason: 'cancelled', time: 5000 },
+      ],
+      base,
+    );
+    const turn = folded.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.steps).toHaveLength(2);
+    expect(turn.steps[0]).toMatchObject({ ordinal: 1, state: 'completed' });
+    expect(turn.steps[0]?.endReason).toBeUndefined();
+    expect(turn.steps[1]).toMatchObject({
+      ordinal: 2,
+      state: 'interrupted',
+      endReason: 'user_cancelled',
+      endMessage: 'stopped by user',
+      endedAt: new Date(4000).toISOString(),
+    });
+    expect(turn.state).toBe('cancelled');
+    expect(folded.items).toHaveLength(base.items.length);
+  });
+
+  it('applies turn.step.interrupted last-wins per step and tolerates a missing message', () => {
+    const base = baseWithSteps();
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.step.interrupted', turnId: 0, step: 1, reason: 'aborted', message: 'first', time: 1000 },
+        { type: 'turn.step.interrupted', turnId: 0, step: 1, reason: 'max_steps', time: 2000 },
+      ],
+      base,
+    );
+    const turn = folded.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.steps[0]).toMatchObject({
+      ordinal: 1,
+      state: 'interrupted',
+      endReason: 'max_steps',
+      endedAt: new Date(2000).toISOString(),
+    });
+    expect(turn.steps[0]?.endMessage).toBeUndefined();
+    expect(turn.steps[1]?.state).toBe('completed');
+  });
+
+  it('skips turn.step.interrupted records with unknown turn ids or out-of-range steps', () => {
+    const base = baseWithSteps();
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.step.interrupted', turnId: 9, step: 1, reason: 'error', time: 1000 },
+        { type: 'turn.step.interrupted', turnId: 0, step: 5, reason: 'error', time: 2000 },
+        { type: 'turn.step.interrupted', turnId: 0, step: 1, time: 3000 },
+      ],
+      base,
+    );
+    const turn = folded.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.steps.map((step) => step.state)).toEqual(['completed', 'completed']);
+    expect(turn.steps.every((step) => step.endReason === undefined)).toBe(true);
+  });
+
+  it('ignores turn.step.retrying records in the cold fold', () => {
+    const base = baseWithSteps();
+    const folded = foldWireRecordFacts(
+      [
+        {
+          type: 'turn.step.retrying',
+          turnId: 0,
+          step: 1,
+          failedAttempt: 1,
+          nextAttempt: 2,
+          maxAttempts: 10,
+          delayMs: 500,
+          errorName: 'APIStatusError',
+          errorMessage: 'Overloaded',
+          statusCode: 429,
+          time: 1000,
+        },
+      ],
+      base,
+    );
+    expect(folded).toEqual(base);
+    expect(folded.items).toBe(base.items);
+  });
+
   it('matches durable turns by prompt identity after a context-only blocked prompt', () => {
     const base = groupMessagesIntoSnapshot([
       { id: 'prompt-blocked', role: 'user', content: [{ type: 'text', text: 'blocked' }], toolCalls: [], origin: { kind: 'user' } },
