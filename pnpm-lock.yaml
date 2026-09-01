@@ -224,12 +224,9 @@ importers:
       '@hono/node-server':
         specifier: ^1.13.7
         version: 1.19.14(hono@4.12.14)
-      '@moonshot-ai/agent-core':
+      '@moonshot-ai/agent-core-v2':
         specifier: workspace:^
-        version: link:../../../packages/agent-core
-      '@moonshot-ai/kosong':
-        specifier: workspace:^
-        version: link:../../../packages/kosong
+        version: link:../../../packages/agent-core-v2
       hono:
         specifier: ^4.7.7
         version: 4.12.14
