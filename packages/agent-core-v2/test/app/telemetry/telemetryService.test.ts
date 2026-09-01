@@ -490,6 +490,32 @@ describe('TelemetryService (layered ambient)', () => {
       mode: 'plan',
     });
   });
+
+  it('keeps stale emissions on the fragment owned by the binding while it remains active', () => {
+    const appender = new CapturingAppender();
+    const root = serviceWithAppenders(appender);
+    const first = root.createScopeBinding('agents/a1', { agent_id: 'a1', mode: 'agent' });
+    first.telemetry.setContext({ provider_type: 'old-provider' });
+    root.createScopeBinding('agents/a1', {
+      agent_id: 'a1',
+      mode: 'plan',
+      provider_type: 'new-provider',
+    });
+    first.telemetry.track2('turn_ended', {
+      turn_id: 7,
+      reason: 'completed',
+      duration_ms: 1,
+      mode: 'agent',
+    });
+    expect(appender.records[0]?.properties).toEqual({
+      agent_id: 'a1',
+      turn_id: 7,
+      reason: 'completed',
+      duration_ms: 1,
+      mode: 'agent',
+      provider_type: 'old-provider',
+    });
+  });
 });
 
 describe('ITelemetryService (scoped)', () => {
