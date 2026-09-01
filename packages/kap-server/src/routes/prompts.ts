@@ -8,8 +8,7 @@ import {
   IAgentRuntimeBindingService,
   IAgentToolPolicyService,
   IAgentPromptService,
-  agentContextOf,
-  AgentSkill,
+  IAgentSkillService,
   IAuthSummaryService,
   IEventBus,
   IEventService,
@@ -113,7 +112,7 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
   }
   return {
     prompt: agent.accessor.get(IAgentPromptService),
-    skill: agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentSkill),
+    skill: agent.accessor.get(IAgentSkillService),
     events: agent.accessor.get(IEventBus),
     auth: agent.accessor.get(IAuthSummaryService),
     profile: agent.accessor.get(IAgentProfileService),

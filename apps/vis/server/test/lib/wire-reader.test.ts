@@ -101,6 +101,33 @@ describe('wire-reader', () => {
     );
   });
 
+  it('passes v1.5 records through unchanged with no warnings', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vis-v15-'));
+    const path = join(dir, 'wire.jsonl');
+    const records = [
+      { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+      { type: 'token_counting.measured', agentId: 'main', length: 4, tokens: 1234, time: 2 },
+      {
+        type: 'cron.add',
+        agentId: 'main',
+        task: { id: '01ARZ3NDEKTSV4RRFFQ69G5FAV', cron: '* * * * *', prompt: 'p', createdAt: 3 },
+        time: 3,
+      },
+    ];
+    await writeFile(path, records.map((r) => JSON.stringify(r)).join('\n') + '\n');
+    try {
+      const result = await readAgentWire(path);
+      expect(result.metadata.protocolVersion).toBe('1.5');
+      expect(result.warnings).toEqual([]);
+      expect(result.records).toHaveLength(2);
+      // data === raw for current-protocol records (no migration applied).
+      expect(result.records[0]!.data).toEqual(result.records[0]!.raw);
+      expect(result.records[1]!.data).toEqual(result.records[1]!.raw);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('collects warnings for malformed body lines', async () => {
     const { sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
     cleanup = c;

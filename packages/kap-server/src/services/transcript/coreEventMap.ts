@@ -167,12 +167,15 @@ export type ProjectorTurnLookup = (turnId: string) => TurnHeader | undefined;
 
 export type ProjectorItemsLookup = () => readonly TranscriptItem[] | undefined;
 
+export type ProjectorPlanRevisionKey = (key: string) => string;
+
 export interface ProjectorLookups {
   readonly stepFrames?: ProjectorFrameLookup;
   readonly toolFrame?: ProjectorToolFrameLookup;
   readonly stepOrdinal?: ProjectorStepOrdinalLookup;
   readonly turn?: ProjectorTurnLookup;
   readonly items?: ProjectorItemsLookup;
+  readonly resolvePlanRevisionKey?: ProjectorPlanRevisionKey;
 }
 
 interface OpenTextFrame {
@@ -1263,11 +1266,14 @@ export class AgentTranscriptProjector {
   }
 
   private onPlanRevision(event: PlanRevisionEvent): TranscriptOperation[] {
-    const ops: TranscriptOperation[] = [this.markerOp('plan.revision', restOf(event))];
+    const path = this.lookups?.resolvePlanRevisionKey?.(event.key) ?? event.key;
+    const { key: _key, ...rest } = restOf(event);
+    const payload = { ...rest, path };
+    const ops: TranscriptOperation[] = [this.markerOp('plan.revision', payload)];
     if (this.planModeActive) {
       ops.push({
         op: 'meta.merge',
-        meta: { modes: { plan: { reviewPath: event.path, version: event.version } } },
+        meta: { modes: { plan: { reviewPath: path, version: event.version } } },
       });
     }
     return ops;

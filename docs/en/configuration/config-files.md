@@ -98,7 +98,7 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `default_model` | `string` | — | Default model alias; must be defined in `models` |
-| `default_permission_mode` | `string` | `manual` | Default permission mode for new sessions; one of `manual` (prompt each time), `yolo` (auto-approve tool actions, but the agent may still ask questions), or `auto` (fully autonomous, but dangerous commands are always blocked) |
+| `default_permission_mode` | `string` | `manual` | Default permission mode for new sessions; one of `manual` (Always Ask: auto-read only; everything else needs your approval first), `yolo` (Ask When Needed: routine edits and commands run automatically; risky actions, questions, and plans still ask), or `auto` (Never Ask: never interrupts you; everything runs and is decided automatically, but dangerous commands are always blocked) |
 | `default_plan_mode` | `boolean` | `false` | Whether new sessions start in Plan mode (produce a plan before executing) by default |
 | `merge_all_available_skills` | `boolean` | `true` | Whether to merge Agent Skills from all available directories |
 | `extra_skill_dirs` | `array<string>` | — | Extra skill search directories, layered on top of the default directories |

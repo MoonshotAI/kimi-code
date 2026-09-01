@@ -159,6 +159,8 @@ export function createScopedChildHandle(
   const collection = buildCollection(options.seeds);
   const child = parent.createChild(collection);
   (child as InstantiationService).debugLabel = id;
+  const engine = (child as InstantiationService).cascade;
+  engine.suspendActivation();
   try {
     watchScopeUnits(child as InstantiationService, kind);
     options.configureContainer?.(child as InstantiationService);
@@ -166,6 +168,8 @@ export function createScopedChildHandle(
   } catch (error) {
     child.dispose();
     throw error;
+  } finally {
+    engine.resumeActivation();
   }
   const accessor: ServicesAccessor = {
     get: <T>(serviceId: ServiceIdentifier<T>): T =>
@@ -211,6 +215,7 @@ export class Scope implements IDisposable {
     const collection = buildCollection(options.seeds);
     const instantiation = new InstantiationService(collection, true);
     instantiation.debugLabel = options.id ?? 'app';
+    instantiation.cascade.suspendActivation();
     try {
       watchScopeUnits(instantiation, kind);
       options.configureContainer?.(instantiation);
@@ -218,6 +223,8 @@ export class Scope implements IDisposable {
     } catch (error) {
       instantiation.dispose();
       throw error;
+    } finally {
+      instantiation.cascade.resumeActivation();
     }
     return new Scope(options.id ?? 'app', kind, instantiation);
   }
@@ -245,6 +252,8 @@ export class Scope implements IDisposable {
     const collection = buildCollection(options.seeds);
     const childInstantiation = this.instantiation.createChild(collection);
     (childInstantiation as InstantiationService).debugLabel = id;
+    const engine = (childInstantiation as InstantiationService).cascade;
+    engine.suspendActivation();
     try {
       watchScopeUnits(childInstantiation as InstantiationService, kind);
       options.configureContainer?.(childInstantiation as InstantiationService);
@@ -252,6 +261,8 @@ export class Scope implements IDisposable {
     } catch (error) {
       childInstantiation.dispose();
       throw error;
+    } finally {
+      engine.resumeActivation();
     }
     const child = new Scope(id, kind, childInstantiation, this);
     this.children.set(id, child);

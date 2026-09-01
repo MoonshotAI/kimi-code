@@ -51,6 +51,7 @@ interface InteractionResolvedPayload {
 interface PlanRevisionPayload {
   readonly id?: unknown;
   readonly version?: unknown;
+  readonly key?: unknown;
   readonly path?: unknown;
   readonly sha256?: unknown;
   readonly bytes?: unknown;
@@ -61,6 +62,13 @@ interface TurnEndedPayload {
   readonly reason?: unknown;
   readonly error?: unknown;
   readonly durationMs?: unknown;
+}
+
+interface TurnStepInterruptedPayload {
+  readonly turnId?: unknown;
+  readonly step?: unknown;
+  readonly reason?: unknown;
+  readonly message?: unknown;
 }
 
 interface TurnPromptPayload {
@@ -214,10 +222,12 @@ function readTodoItems(raw: unknown): TodoItem[] {
 export function foldWireRecordFacts(
   records: Iterable<HistoryWireRecord>,
   base: AgentTranscriptSnapshot,
+  options?: { readonly resolvePlanRevisionKey?: (key: string) => string },
 ): AgentTranscriptSnapshot {
   const tasks = new Map<string, TranscriptTask>();
   const interactions = new Map<string, TranscriptInteraction>();
   const endedTurns = new Map<number, HistoryWireRecord>();
+  const interruptedSteps = new Map<number, Map<number, HistoryWireRecord>>();
   const turnPromptIds = new Map<number, string>();
   const turnOrigins = new Map<number, unknown>();
   let nextTurnId = 0;
@@ -370,12 +380,23 @@ export function foldWireRecordFacts(
       }
       case 'plan.revision': {
         const payload = record as PlanRevisionPayload;
+        const path =
+          typeof payload.key === 'string'
+            ? (options?.resolvePlanRevisionKey?.(payload.key) ?? payload.key)
+            : typeof payload.path === 'string'
+              ? payload.path
+              : undefined;
         planActive = true;
         planRevision = {
-          reviewPath: typeof payload.path === 'string' ? payload.path : undefined,
+          reviewPath: path,
           version: typeof payload.version === 'number' ? payload.version : undefined,
         };
-        pushMarker('plan.revision', record);
+        if (path === undefined) {
+          pushMarker('plan.revision', record);
+        } else {
+          const { key: _key, ...rest } = record;
+          pushMarker('plan.revision', { ...rest, path });
+        }
         break;
       }
       case 'swarm_mode.enter': {
@@ -519,6 +540,23 @@ export function foldWireRecordFacts(
         }
         break;
       }
+      case 'turn.step.interrupted': {
+        const payload = record as TurnStepInterruptedPayload;
+        if (
+          typeof payload.turnId !== 'number' ||
+          typeof payload.step !== 'number' ||
+          typeof payload.reason !== 'string'
+        ) {
+          break;
+        }
+        let steps = interruptedSteps.get(payload.turnId);
+        if (steps === undefined) {
+          steps = new Map();
+          interruptedSteps.set(payload.turnId, steps);
+        }
+        steps.set(payload.step, record);
+        break;
+      }
       case 'turn.prompt': {
         skipCancelledTurnIds();
         const turnId = nextTurnId;
@@ -561,7 +599,7 @@ export function foldWireRecordFacts(
     claimedOrdinals.add(turn.ordinal);
     return turn.ordinal;
   };
-  const lastRawTurnId = Math.max(nextTurnId - 1, ...endedTurns.keys());
+  const lastRawTurnId = Math.max(nextTurnId - 1, ...endedTurns.keys(), ...interruptedSteps.keys());
   const rawTurnIds = Array.from(
     { length: lastRawTurnId + 1 },
     (_, turnId) => turnId,
@@ -616,15 +654,61 @@ export function foldWireRecordFacts(
     if (ordinal !== undefined) endedByOrdinal.set(ordinal, record);
   }
 
+  const interruptedByOrdinal = new Map<number, Map<number, HistoryWireRecord>>();
+  for (const [turnId, steps] of interruptedSteps) {
+    const ordinal = ordinalByRawTurnId.get(turnId);
+    if (ordinal !== undefined) interruptedByOrdinal.set(ordinal, steps);
+  }
+
   const items =
-    endedByOrdinal.size > 0
+    endedByOrdinal.size > 0 || interruptedByOrdinal.size > 0
       ? base.items.map((item) => {
           if (item.kind !== 'turn') return item;
           const record = endedByOrdinal.get(item.ordinal);
-          if (record === undefined) return item;
+          const interrupted = interruptedByOrdinal.get(item.ordinal);
+          if (record === undefined && interrupted === undefined) return item;
+          const steps = ((): TranscriptTurn['steps'] => {
+            if (interrupted === undefined) return item.steps;
+            const hitOrdinals = new Set<number>();
+            const patched = item.steps.map((step) => {
+              const hit = interrupted.get(step.ordinal);
+              if (hit === undefined) return step;
+              const stepPayload = hit as TurnStepInterruptedPayload;
+              if (typeof stepPayload.reason !== 'string') return step;
+              hitOrdinals.add(step.ordinal);
+              return {
+                ...step,
+                state: 'interrupted' as const,
+                endedAt: recordTimeIso(hit) ?? step.endedAt,
+                endReason: stepPayload.reason,
+                endMessage:
+                  typeof stepPayload.message === 'string' ? stepPayload.message : undefined,
+              };
+            });
+            for (const [stepOrdinal, hit] of interrupted) {
+              if (hitOrdinals.has(stepOrdinal)) continue;
+              const stepPayload = hit as TurnStepInterruptedPayload;
+              if (typeof stepPayload.reason !== 'string') continue;
+              patched.push({
+                kind: 'step',
+                stepId: `${item.turnId}.${stepOrdinal}`,
+                turnId: item.turnId,
+                ordinal: stepOrdinal,
+                state: 'interrupted',
+                frames: [],
+                endedAt: recordTimeIso(hit),
+                endReason: stepPayload.reason,
+                endMessage:
+                  typeof stepPayload.message === 'string' ? stepPayload.message : undefined,
+              });
+            }
+            return patched.toSorted((a, b) => a.ordinal - b.ordinal);
+          })();
+          if (record === undefined) return { ...item, steps };
           const payload = record as TurnEndedPayload;
           return {
             ...item,
+            steps,
             state: mapTurnEndReason(payload.reason) ?? item.state,
             endedAt: recordTimeIso(record) ?? item.endedAt,
             durationMs:

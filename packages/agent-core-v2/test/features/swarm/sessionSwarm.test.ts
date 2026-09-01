@@ -1266,18 +1266,11 @@ function lifecycleStub(
     get: (agentId: string) => (handles.has(agentId) ? stubAgentContext(agentId, 1) : undefined),
     handleOf: (agentId: string) => handles.get(agentId),
     list: () => [...handles.keys()].map((agentId) => stubAgentContext(agentId, 1)),
-    resolve: () => {
-      throw new Error('unexpected resolve');
-    },
-    inspect: () => {
-      throw new Error('unexpected inspect');
-    },
     remove: async (context: AgentContext) => {
       handles.delete(context.agentId);
     },
     broadcastPermissionMode: () => {},
     adopt: (handle: IAgentScopeHandle) => stubAgentContext(handle.id, 1),
-    attachRuntimes: () => {},
   };
   return lifecycle as IAgentLifecycleService;
 }

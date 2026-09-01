@@ -21,6 +21,7 @@ import {
   formatRemoteControlStatus,
   isRemoteControlEnabled,
   parseRawHttpRequest,
+  resolveRemoteControlRelayOrigin,
   rewriteRemoteControlResponse,
   startRemoteControl,
   type RemoteControlHandle,
@@ -70,6 +71,21 @@ describe('Remote Control URLs', () => {
   it('builds an encoded session deep link before the query', () => {
     expect(buildRemoteControlUrl('device-1', 'session/a b')).toBe(
       'https://code-rc.kimi.com/devices/device-1/sessions/session%2Fa%20b?rc=1&from=kimi_code_cli',
+    );
+  });
+
+  it('falls back to the default relay origin when the env is unset or blank', () => {
+    expect(resolveRemoteControlRelayOrigin({})).toBe('https://code-rc.kimi.com');
+    expect(
+      resolveRemoteControlRelayOrigin({ KIMI_CODE_REMOTE_CONTROL_RELAY_URL: '  ' }),
+    ).toBe('https://code-rc.kimi.com');
+  });
+
+  it('builds device URLs from the relay origin env override', () => {
+    vi.stubEnv('KIMI_CODE_REMOTE_CONTROL_RELAY_URL', 'https://rc.example.test/coding-relay/');
+    expect(resolveRemoteControlRelayOrigin()).toBe('https://rc.example.test/coding-relay/');
+    expect(buildRemoteControlUrl('device-1')).toBe(
+      'https://rc.example.test/coding-relay/devices/device-1/?rc=1&from=kimi_code_cli',
     );
   });
 });

@@ -1,12 +1,12 @@
 // apps/vis/server/src/lib/task-store.ts
 //
-// Read-only reader for background tasks, persisted by agent-core under each
+// Read-only reader for background tasks, persisted by the engine under each
 // spawning agent's homedir at `<agentDir>/tasks/<taskId>.json`
 // (+ `tasks/<taskId>/output.log`) — NOT the session root. Callers pass the
 // agent homedir (`<session>/agents/<id>`).
 //
-// The visualizer never writes these files; it mirrors agent-core's on-disk
-// layout (background/persist.ts) for reading only:
+// The visualizer never writes these files; it mirrors the engine's on-disk
+// layout (`packages/agent-core-v2/src/agent/task/persist.ts`) for reading only:
 //   - the same `VALID_TASK_ID` guard, so a corrupt / hand-edited filename
 //     cannot turn a log path into a traversal primitive;
 //   - the same legacy snake_case → current camelCase normalization, so old
@@ -20,8 +20,8 @@ import type {
   BackgroundTaskStatus,
 } from './agent-record-types';
 
-/** Task id format: `{prefix}-{8 chars of [0-9a-z]}`. Mirror of agent-core's
- *  `VALID_TASK_ID` (background/persist.ts). Enforced before deriving any
+/** Task id format: `{prefix}-{8 chars of [0-9a-z]}`. Mirror of the engine's
+ *  `VALID_TASK_ID` (`agent/task/persist.ts`). Enforced before deriving any
  *  output path so neither `../` nor a legacy `bg_<hex>` id can escape. */
 const VALID_TASK_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*-[0-9a-z]{8}$/;
 
@@ -46,7 +46,7 @@ function taskOutputFile(agentDir: string, taskId: string): string {
  *
  * Silently skips: filenames that don't match `VALID_TASK_ID`, files that fail
  * to read/parse, and records that are neither the current nor the legacy
- * task shape — matching agent-core's tolerant `listTasks`.
+ * task shape — matching the engine's tolerant `listTasks`.
  */
 export async function listBackgroundTasks(
   agentDir: string,
@@ -116,7 +116,7 @@ export interface TaskOutputWindow {
  *
  * Reads at most `maxBytes` bytes starting at byte `offset`. A window past EOF
  * is clamped to whatever remains; an offset at/after EOF yields empty content.
- * Mirrors agent-core's `readTaskOutputBytes` so large logs page identically.
+ * Mirrors the engine's `readTaskOutputBytes` so large logs page identically.
  */
 export async function readTaskOutput(
   agentDir: string,
@@ -150,7 +150,7 @@ export async function readTaskOutput(
   }
 }
 
-// ── normalization (ported from agent-core/agent/background/persist.ts) ───────
+// ── normalization (ported from agent-core-v2/agent/task/persist.ts) ────────
 
 type LegacyBackgroundTaskStatus =
   | 'running'
