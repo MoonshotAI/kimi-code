@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 import {
-  AgentInteraction,
+  IAgentInteractionService,
   IAgentLifecycleService,
   IAgentLoopService,
   IAgentPromptService,
@@ -21,9 +21,7 @@ import {
   LifecycleScope,
   makeAgentScopeContext,
   type AgentContext,
-  type AgentRuntimeDefinition,
   type Event2,
-  type RuntimeOf,
   type Interaction,
   type InteractionKind,
   type InteractionPendingChangedEvent,
@@ -1386,14 +1384,16 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('projects plan.revision as a marker and refines the active plan badge', () => {
-    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID, {
+      resolvePlanRevisionKey: (key) => `sessions/w/s/agents/main/${key}`,
+    });
     const tx = new AgentTranscript('main');
 
     const revision = {
       type: 'plan.revision',
       id: 'plan-1',
       version: 1,
-      path: 'agents/main/plan/plan-1/v1.md',
+      key: 'plan/plan-1/v1.md',
       sha256: 'deadbeef',
       bytes: 128,
     };
@@ -1404,10 +1404,10 @@ describe('AgentTranscriptProjector', () => {
     tx.apply(projector.map(ev({ type: 'agent.status.updated', planMode: true })));
     expect(tx.getMeta().modes).toEqual({ plan: {} });
     tx.apply(
-      projector.map(ev({ ...revision, version: 2, path: 'agents/main/plan/plan-1/v2.md' })),
+      projector.map(ev({ ...revision, version: 2, key: 'plan/plan-1/v2.md' })),
     );
     expect(tx.getMeta().modes).toEqual({
-      plan: { reviewPath: 'agents/main/plan/plan-1/v2.md', version: 2 },
+      plan: { reviewPath: 'sessions/w/s/agents/main/plan/plan-1/v2.md', version: 2 },
     });
 
     const markers = tx
@@ -1421,7 +1421,7 @@ describe('AgentTranscriptProjector', () => {
       payload: {
         id: 'plan-1',
         version: 2,
-        path: 'agents/main/plan/plan-1/v2.md',
+        path: 'sessions/w/s/agents/main/plan/plan-1/v2.md',
         sha256: 'deadbeef',
         bytes: 128,
       },
@@ -3102,7 +3102,7 @@ describe('bindSessionTranscript', () => {
   class FakeInteractionHub {
     private readonly entries = new Map<
       string,
-      { context: AgentContext; kernel: FakeInteractionKernel }
+      { context: AgentContext; bus: FakeBus; kernel: FakeInteractionKernel }
     >();
     private readonly createEmitter = new Emitter<AgentContext>();
     readonly onDidCreate = this.createEmitter.event;
@@ -3116,7 +3116,7 @@ describe('bindSessionTranscript', () => {
           agentScope: `agents/${agentId}`,
           generation: 1,
         }).agentContext;
-        entry = { context, kernel: new FakeInteractionKernel() };
+        entry = { context, bus: new FakeBus(), kernel: new FakeInteractionKernel() };
         this.entries.set(agentId, entry);
       }
       return entry.kernel;
@@ -3140,19 +3140,22 @@ describe('bindSessionTranscript', () => {
       return this.entries.get(agentId)?.context;
     }
 
-    resolve<Definition extends AgentRuntimeDefinition<any, any>>(
-      context: AgentContext,
-      definition: Definition,
-    ): RuntimeOf<Definition> {
-      if (definition !== AgentInteraction) throw new Error('unsupported runtime');
-      for (const entry of this.entries.values()) {
-        if (entry.context === context) return entry.kernel as RuntimeOf<Definition>;
-      }
-      throw new Error(`unknown agent ${context.agentId}`);
-    }
-
-    handleOf(): undefined {
-      return undefined;
+    handleOf(agentId: string): FakeAgentHandle | undefined {
+      const entry = this.entries.get(agentId);
+      if (entry === undefined) return undefined;
+      return {
+        id: agentId,
+        context: entry.context,
+        bus: entry.bus,
+        kernel: entry.kernel,
+        accessor: {
+          get: (token: unknown) => {
+            if (token === IEventBus) return entry.bus;
+            if (token === IAgentInteractionService) return entry.kernel;
+            return undefined;
+          },
+        },
+      };
     }
   }
 
@@ -3168,7 +3171,7 @@ describe('bindSessionTranscript', () => {
     private readonly handles = new Map<string, FakeAgentHandle>();
     private readonly kernels = new Map<
       string,
-      { context: AgentContext; kernel: FakeInteractionKernel }
+      { context: AgentContext; bus: FakeBus; kernel: FakeInteractionKernel }
     >();
     private readonly createHandlers = new Set<(context: AgentContext) => void>();
     private readonly closeHandlers = new Set<(context: AgentContext) => void>();
@@ -3185,7 +3188,23 @@ describe('bindSessionTranscript', () => {
       return this.handles.get(agentId)?.context ?? this.kernels.get(agentId)?.context;
     }
     handleOf(agentId: string): FakeAgentHandle | undefined {
-      return this.handles.get(agentId);
+      const handle = this.handles.get(agentId);
+      if (handle !== undefined) return handle;
+      const entry = this.kernels.get(agentId);
+      if (entry === undefined) return undefined;
+      return {
+        id: agentId,
+        context: entry.context,
+        bus: entry.bus,
+        kernel: entry.kernel,
+        accessor: {
+          get: (token: unknown) => {
+            if (token === IEventBus) return entry.bus;
+            if (token === IAgentInteractionService) return entry.kernel;
+            return undefined;
+          },
+        },
+      };
     }
     byId(id: string): FakeAgentHandle | undefined {
       return this.handles.get(id);
@@ -3200,23 +3219,10 @@ describe('bindSessionTranscript', () => {
           agentScope: `agents/${id}`,
           generation: 1,
         }).agentContext;
-        entry = { context, kernel: new FakeInteractionKernel() };
+        entry = { context, bus: new FakeBus(), kernel: new FakeInteractionKernel() };
         this.kernels.set(id, entry);
       }
       return entry.kernel;
-    }
-    resolve<Definition extends AgentRuntimeDefinition<any, any>>(
-      context: AgentContext,
-      definition: Definition,
-    ): RuntimeOf<Definition> {
-      if (definition !== AgentInteraction) throw new Error('unsupported runtime');
-      for (const handle of this.handles.values()) {
-        if (handle.context === context) return handle.kernel as RuntimeOf<Definition>;
-      }
-      for (const entry of this.kernels.values()) {
-        if (entry.context === context) return entry.kernel as RuntimeOf<Definition>;
-      }
-      throw new Error(`unknown agent ${context.agentId}`);
     }
     onDidCreate(cb: (context: AgentContext) => void): { dispose: () => void } {
       this.createHandlers.add(cb);
@@ -3227,13 +3233,14 @@ describe('bindSessionTranscript', () => {
       return { dispose: () => this.closeHandlers.delete(cb) };
     }
     add(id: string, opts?: { loopStatus?: unknown; tasks?: readonly unknown[]; activePromptId?: string }): FakeAgentHandle {
-      const bus = new FakeBus();
+      const existing = this.kernels.get(id);
+      const bus = existing?.bus ?? new FakeBus();
       const scope = makeAgentScopeContext({
         agentId: id,
         agentScope: `agents/${id}`,
         generation: 1,
       });
-      const kernel = this.kernels.get(id)?.kernel ?? new FakeInteractionKernel();
+      const kernel = existing?.kernel ?? new FakeInteractionKernel();
       const handle: FakeAgentHandle = {
         id,
         context: scope.agentContext,
@@ -3243,6 +3250,7 @@ describe('bindSessionTranscript', () => {
           get: (token: unknown) => {
             if (token === IAgentScopeContext) return scope;
             if (token === IEventBus) return bus;
+            if (token === IAgentInteractionService) return kernel;
             if (token === IAgentLoopService) {
               return { status: () => opts?.loopStatus ?? { state: 'idle' } };
             }

@@ -521,7 +521,10 @@ export class TranscriptService {
       messages,
       sawTurnPrompt || steeredContents.size > 0 ? { taskOriginTurnTaskIds, steeredContents } : undefined,
     );
-    const folded = foldWireRecordFacts(projectQuestionInteractionRecords(records, sessionId), base);
+    const folded = foldWireRecordFacts(projectQuestionInteractionRecords(records, sessionId), base, {
+      resolvePlanRevisionKey: (key) =>
+        join(SESSIONS_ROOT, summary.workspaceId, sessionId, AGENTS_DIR, agentId, key),
+    });
     const status = getLiveSessionById(this.deps.core.accessor, sessionId)
       ?.accessor.get(IAgentLifecycleService)
       .handleOf(agentId)

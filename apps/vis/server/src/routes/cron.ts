@@ -13,9 +13,9 @@ export function cronRoute(home: string = KIMI_CODE_HOME): Hono {
     if (!detail) {
       return c.json({ error: 'session not found', code: 'NOT_FOUND' }, 404);
     }
-    // Cron jobs are persisted under each (non-sub) agent's homedir at
-    // `<homedir>/cron`, not the session root. Aggregate across agents; sub
-    // agents have no cron directory and simply contribute nothing.
+    // Cron state is per-agent (wire records in each agent's `wire.jsonl`,
+    // plus legacy `<homedir>/cron/*.json` files), not the session root.
+    // Aggregate across agents; sub agents simply contribute nothing.
     const cron: CronTask[] = [];
     const seen = new Set<string>();
     for (const agent of detail.agents) {

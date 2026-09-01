@@ -21,7 +21,6 @@ import { IAppStateService } from '#/app/state/appState';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { LifecycleScope } from '#/app/scopes';
 import { IWorkspaceService, type Workspace } from '#/app/workspace/workspace';
-import { IModelCatalog } from '#/kosong/model/catalog';
 import { IModelService } from '#/kosong/model/model';
 import { IProviderService } from '#/kosong/provider/provider';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -58,13 +57,11 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     @IAppStateService private readonly appState: IAppStateService,
     @IConfigService private readonly config: IConfigService,
     @IEventService private readonly event: IEventService,
-    @IFlagService private readonly flags: IFlagService,
     @ref(IGitService) private readonly git: LiveRef<IGitService>,
     @IAgentIdentity private readonly identity: IAgentIdentity,
     @ISessionIndex private readonly index: ISessionIndex,
     @ISessionIndexMirror private readonly indexMirror: ISessionIndexMirror,
     @ILogService private readonly log: ILogService,
-    @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IModelService private readonly models: IModelService,
     @IMcpOAuthService private readonly oauth: McpOAuthService,
     @IMcpConfigStore private readonly configStore: IMcpConfigStore,
@@ -75,6 +72,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     @IBuiltinAgentProfileLoader private readonly builtinAgentProfiles: IBuiltinAgentProfileLoader,
     @IBuiltinSkillSource private readonly builtinSkills: IBuiltinSkillSource,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IFlagService private readonly flags: IFlagService,
     @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
@@ -232,6 +230,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
           input.fs,
           this.event,
           this.telemetry,
+          this.flags,
           input.workspaceAgentProfiles,
           input.extraAgentProfiles,
           input.explicitAgentProfiles,
@@ -241,10 +240,8 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
           input.skills,
           input.instructions,
           input.mcp,
-          this.modelCatalog,
           this.models,
           this.modelProviders,
-          this.flags,
           input.onDispose,
         ),
       },

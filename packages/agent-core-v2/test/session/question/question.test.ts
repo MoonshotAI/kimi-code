@@ -77,7 +77,7 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
   });
 
   it('enqueue returns immediately and the answer streams over onDidResolve', () => {
-    const interaction = interactions.runtimeOf('main');
+    const interaction = interactions.serviceOf('main');
     const questions = session.accessor.get(ISessionQuestionService);
 
     const resolved: { id: string; response: unknown }[] = [];
@@ -120,14 +120,14 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
 
     const sub = questions.request(makeRequest('q-sub'), { agentId: 'sub-1' });
     expect(
-      interactions.runtimeOf('sub-1').listPending().find((i) => i.id === 'q-sub')?.origin,
+      interactions.serviceOf('sub-1').listPending().find((i) => i.id === 'q-sub')?.origin,
     ).toMatchObject({
       agentId: 'sub-1',
     });
 
     const main = questions.request(makeRequest('q-main'));
     expect(
-      interactions.runtimeOf('main').listPending().find((i) => i.id === 'q-main')?.origin.agentId,
+      interactions.serviceOf('main').listPending().find((i) => i.id === 'q-main')?.origin.agentId,
     ).toBeUndefined();
 
     questions.dismiss('q-sub');
@@ -148,7 +148,7 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
   });
 
   it('aborting a parked request dismisses it and resolves the caller with null', async () => {
-    const interaction = interactions.runtimeOf('main');
+    const interaction = interactions.serviceOf('main');
     const questions = session.accessor.get(ISessionQuestionService);
 
     const resolved: { id: string; response: unknown }[] = [];
@@ -197,7 +197,7 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
   });
 
   it('mints distinct interaction ids when the provider reuses a toolCallId', async () => {
-    const interaction = interactions.runtimeOf('main');
+    const interaction = interactions.serviceOf('main');
     const questions = session.accessor.get(ISessionQuestionService);
     const req = (): QuestionRequest => ({
       toolCallId: 'AskUserQuestion:0',

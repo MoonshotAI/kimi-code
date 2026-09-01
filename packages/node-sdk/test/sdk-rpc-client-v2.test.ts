@@ -39,7 +39,7 @@ import {
   Error2,
   getLiveSessionById,
   HostProcessError,
-  AgentTodo,
+  IAgentTodoService,
   IAgentLifecycleService,
   IAgentTowerService,
   IHostRequestHeaders,
@@ -1011,8 +1011,8 @@ key = "${titleOAuthRef.key}"
       const handle = getLiveSessionById(client.engineAccessor, 'ses_todos');
       expect(handle).toBeDefined();
       const manager = handle!.accessor.get(IAgentLifecycleService);
-      const main = await manager.create({ agentId: 'main' });
-      const todo = manager.resolve(main, AgentTodo);
+      await manager.create({ agentId: 'main' });
+      const todo = manager.handleOf('main')!.accessor.get(IAgentTodoService);
       await todo.replace([
         { title: 'write tests', status: 'in_progress' },
         { title: 'ship it', status: 'pending' },
@@ -1309,6 +1309,35 @@ describe('SDKRpcClientV2 engine telemetry', () => {
       const session = await harness.createSession({ workDir });
       await session.setPermission('yolo');
       expect(records.some((record) => record.event === 'yolo_toggle')).toBe(false);
+      await session.close();
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('reports the same enabled experimental flags on every session_started row', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-tel-flags-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-tel-flags-work-'));
+    tempDirs.push(workDir);
+    await writeFile(join(homeDir, 'config.toml'), '[experimental]\nsubagent_fork = true\n', 'utf-8');
+    const records: TelemetryRecord[] = [];
+    const harness = createKimiHarnessV2({
+      homeDir,
+      identity: TEST_IDENTITY,
+      telemetry: recordingTelemetry(records),
+    });
+    try {
+      const session = await harness.createSession({ workDir });
+      const started = records.filter((record) => record.event === 'session_started');
+      expect(started.length).toBeGreaterThanOrEqual(2);
+      for (const record of started) {
+        const flags = String(record.properties?.['experimental_flags'] ?? '').split(',');
+        expect(flags).toContain('subagent_fork');
+        expect(flags).toContain('wait_for');
+      }
+      const distinct = new Set(started.map((record) => record.properties?.['experimental_flags']));
+      expect(distinct.size).toBe(1);
       await session.close();
     } finally {
       await harness.close();

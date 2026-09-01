@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { fromTransition } from 'xstate';
 import { z } from 'zod';
 
 import {
@@ -22,11 +21,6 @@ import { ConfigSectionContribution } from '#/app/config/configSectionContributio
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { FeatureManagerService } from '#/app/feature/featureManagerService';
 import { LifecycleScope } from '#/app/scopes';
-import {
-  AgentRuntimeContributionPoint,
-  defineAgentRuntimeContract,
-  defineAgentRuntimeProvider,
-} from '#/agent/runtime/agentRuntime';
 import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
 import { Feature } from '#/features/feature';
 import { IFeatureAssemblyService } from '#/features/featureAssembly';
@@ -159,8 +153,7 @@ describe('Feature — built-in capability assembly (src/features)', () => {
     host.dispose();
   });
 
-  it('registers model and runtime definitions without materializing them', async () => {
-    let creates = 0;
+  it('registers model definitions and retracts them on unload', async () => {
     const sessionModel: SessionModelDefinition<number> = {
       id: 'test-feature.session-model',
       state: { initial: () => 0, schema: z.custom<number>() },
@@ -173,25 +166,6 @@ describe('Feature — built-in capability assembly (src/features)', () => {
       state: { initial: () => 0, schema: z.custom<number>() },
       events: [],
     });
-    const runtimeContract = defineAgentRuntimeContract<object>('test-feature.runtime');
-    const runtime = defineAgentRuntimeProvider<number, object>(runtimeContract, {
-      id: 'test-feature.runtime',
-      logic: fromTransition(
-        (_state: number, event: { readonly type: 'commit'; readonly state: number }) => event.state,
-        0,
-      ),
-      durable: {
-        events: [],
-        undoable: false,
-        transition: () => {},
-        read: (snapshot) => (snapshot as typeof snapshot & { context: number }).context,
-        commit: (actor, state) => { actor.send({ type: 'commit', state }); },
-      },
-      createApi: () => {
-        creates += 1;
-        return {};
-      },
-    });
     class DomainFeature extends Feature {
       static override readonly name = 'domain-definitions';
 
@@ -199,7 +173,6 @@ describe('Feature — built-in capability assembly (src/features)', () => {
         super();
         this.contributeSessionModel(sessionModel);
         this.contributeAgentModel(agentModel);
-        this.contributeAgentRuntime(runtime);
       }
     }
     class ReplacementFeature extends Feature {
@@ -217,14 +190,11 @@ describe('Feature — built-in capability assembly (src/features)', () => {
     const views = [
       collectionViewOf(host.app, SessionModelContribution),
       collectionViewOf(host.app, AgentModelContribution),
-      collectionViewOf(host.app, AgentRuntimeContributionPoint),
     ];
     expect(views.map((view) => view.items)).toEqual([
       [sessionModel],
       [agentModel],
-      [runtime],
     ]);
-    expect(creates).toBe(0);
     expect(() => manager.provideUnit(ReplacementFeature)).toThrow(
       "Agent model 'test-feature.agent-model' already has an active provider",
     );
@@ -233,7 +203,6 @@ describe('Feature — built-in capability assembly (src/features)', () => {
     await host.app.instantiation.cascade.whenIdle();
     expect(views.every((view) => view.items.length === 0)).toBe(true);
     expect(() => manager.provideUnit(ReplacementFeature)).not.toThrow();
-    expect(creates).toBe(0);
     host.dispose();
   });
 

@@ -124,12 +124,6 @@ class FakeAgentLifecycle implements IAgentLifecycleService {
   fork(): Promise<AgentContext> {
     throw new Error('not implemented');
   }
-  resolve(): never {
-    throw new Error('not implemented');
-  }
-  inspect(): never {
-    throw new Error('not implemented');
-  }
   remove(): Promise<void> {
     throw new Error('not implemented');
   }
@@ -137,9 +131,6 @@ class FakeAgentLifecycle implements IAgentLifecycleService {
     throw new Error('not implemented');
   }
   adopt(): AgentContext {
-    throw new Error('not implemented');
-  }
-  attachRuntimes(): void {
     throw new Error('not implemented');
   }
 }
