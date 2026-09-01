@@ -50,7 +50,7 @@ continue:
   them, and any work you can commit to now — the exact patch, query, or shape
   of the final answer you already know you will produce. Anything you settle
   here is one less thing the next turn must rediscover. Include any required
-  format for the final answer.
+  format for the final answer.${recovery_pointer_block}
 
 Your TODO list is re-attached automatically below this note from its live
 source, so do not transcribe it — copying it wastes space and can contradict the

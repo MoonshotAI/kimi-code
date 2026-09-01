@@ -9,6 +9,8 @@ export interface IWireService {
   appendRecord(record: WireRecord, dehydrate?: RecordDehydrator): void;
   readJournal(): AsyncIterable<WireRecord>;
   flush(): Promise<void>;
+  lineCount(): number;
+  journalPath(): string | undefined;
 }
 
 export const IWireService: ServiceIdentifier<IWireService> =

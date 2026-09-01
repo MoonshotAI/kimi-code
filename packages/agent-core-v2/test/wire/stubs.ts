@@ -215,6 +215,8 @@ export function stubAgentWire(
     appendRecord: () => {},
     readJournal: async function* () {},
     flush,
+    lineCount: () => 0,
+    journalPath: () => undefined,
   };
 }
 

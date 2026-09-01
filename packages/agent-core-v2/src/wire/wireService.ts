@@ -38,6 +38,7 @@ export class WireService extends Service implements IWireService {
   declare readonly _serviceBrand: undefined;
 
   private readonly wireScope: string;
+  private lines = 0;
   private persistQueue: Promise<void> | undefined;
   private pendingRepair:
     | { readonly records: WireRecord[]; readonly truncation: AppendLogTruncation }
@@ -109,9 +110,12 @@ export class WireService extends Service implements IWireService {
     let rewrittenRecords: WireRecord[] | undefined;
     let newerWireVersion = false;
     let recordIndex = 0;
+    let lineCount = 0;
     let hasRecords = false;
 
     for await (const candidate of source) {
+      lineCount++;
+      this.lines = lineCount;
       const sourceRecord: unknown = candidate;
       if (!isWireRecord(sourceRecord)) {
         this.reportSkippedRecord(undefined, recordIndex, true);
@@ -158,7 +162,16 @@ export class WireService extends Service implements IWireService {
       await this.repairJournal(truncation, rewrittenRecords);
     } else if (rewrittenRecords !== undefined) {
       await this.log.rewrite(this.wireScope, AGENT_WIRE_RECORD_KEY, rewrittenRecords);
+      this.lines = rewrittenRecords.length;
     }
+  }
+
+  lineCount(): number {
+    return this.lines;
+  }
+
+  journalPath(): string | undefined {
+    return this.storage.pathFor(this.wireScope, AGENT_WIRE_RECORD_KEY);
   }
 
   private async repairJournal(
@@ -189,6 +202,7 @@ export class WireService extends Service implements IWireService {
       truncation,
     );
     this.pendingRepair = outcome === 'failed' ? { records, truncation } : undefined;
+    if (outcome !== 'failed') this.lines = records.length;
   }
 
   private async repairPendingJournal(): Promise<void> {
@@ -238,6 +252,7 @@ export class WireService extends Service implements IWireService {
     this.log.append(this.wireScope, AGENT_WIRE_RECORD_KEY, record, {
       onError: onUnexpectedError,
     });
+    this.lines += 1;
   }
 }
 

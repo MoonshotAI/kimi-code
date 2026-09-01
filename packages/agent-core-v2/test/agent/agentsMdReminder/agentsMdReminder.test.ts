@@ -10,6 +10,7 @@ import { Emitter } from '#/_base/event';
 import { IBashParserService } from '#/app/bashParser/bashParser';
 import { BashParserService } from '#/app/bashParser/bashParserService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { IFlagService } from '#/app/flag/flag';
 import type { ToolCall } from '#/kosong/contract/message';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -58,6 +59,7 @@ import {
 } from '#/agent/agentsMdReminder/agentsMdReminderService';
 import { extractBashTargetDirs } from '#/agent/agentsMdReminder/bashTargets';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
+import { stubFlag } from '../../app/flag/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
 import { registerLogServices } from '../../_base/log/stubs';
@@ -226,6 +228,7 @@ function createHarness(
         reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
         reg.define(IAgentToolDedupeService, AgentToolDedupeService);
       }
+      reg.defineInstance(IFlagService, stubFlag());
       reg.define(IAgentAgentsMdReminderService, AgentAgentsMdReminderService);
     },
     strict: true,

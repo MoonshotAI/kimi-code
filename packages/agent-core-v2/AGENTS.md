@@ -81,6 +81,12 @@ Name-collision precedence is a deliberate, documented divergence from v1: v1 ran
 
 Two delivery paths only — never introduce a third (no deferred-delivery queues, no mid-step splice channels), both owned by the `AgentReminder` Agent Runtime and obtained only through `IAgentLifecycleService.resolve(agentContext, AgentReminder)`: reminders that restate current state (goal state, plan mode, date change, …) call `register(variant, provider)` and reconcile at every step head before the request is built, re-emitting after compaction or undo; reminders that report a one-off event (goal cancelled, AGENTS.md discovered, `/init` finished, …) call `notify(content, { variant, ownerPromptId? })` at a safe event point (a step/restore hook, an idle moment, or the loop-event fold's deferred append). The runtime owns `<system-reminder>` wrapping and stamps `{ kind: 'injection', variant }`; `kind: 'injection'` is a lifecycle classification (hidden from the UI, not an undo anchor, dropped by compaction), not a provenance claim, and prompt-owned attachments carry `ownerPromptId` so undo treats them as part of their host prompt.
 
+The `contextBudget` feature owns the two budget reminders (`context_budget`, re-emitted per bucket of the compaction trigger; `compaction_ahead`, once per window inside the lead before the trigger) and reads its numbers only from `IAgentFullCompactionService.budget()` — the same `CompactionTriggerBudget` that decides auto compaction — so the model never sees a threshold the engine does not use. Both are stripped from the summarizer input.
+
+## Compaction recovery pointer
+
+Behind `compaction_recovery_pointer`, compaction records the wire journal line range it covered (`wireLines` on `context.apply_compaction`, folded into the world-time `fullCompaction.wireRanges` key — never undoable) and appends a deterministic `## Context Recovery` footer to the model-facing `contextSummary` only (the UI-facing `summary` stays the note + TODO). The footer names the on-disk `wire.jsonl` (`IWireService.journalPath()`, `undefined` on the memory backend → footer omitted) and every earlier window's line range; there is no derived transcript file. `Read` returns `wire.jsonl` lines under the sessions directory untruncated and spill-exempt (`IAgentToolResultTruncationService.isWireJournalPath`) so a single record can be read back after `Grep` finds its line.
+
 ## Docs
 
 Per-domain references live in `docs/`.

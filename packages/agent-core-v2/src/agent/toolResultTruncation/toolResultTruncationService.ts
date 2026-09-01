@@ -8,9 +8,12 @@ import {
   type ExecutableToolResult,
 } from '#/tool/toolContract';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IFlagService } from '#/app/flag/flag';
+import { COMPACTION_RECOVERY_POINTER_FLAG_ID } from '#/agent/fullCompaction/flag';
+import { AGENT_WIRE_RECORD_KEY } from '#/wire/record';
 import type { ContentPart } from '#/kosong/contract/message';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { join, normalize } from 'pathe';
+import { basename, join, normalize } from 'pathe';
 import {
   IAgentToolResultTruncationService,
   type ToolResultTruncationInput,
@@ -38,6 +41,7 @@ export class ToolResultTruncationService implements IAgentToolResultTruncationSe
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IAgentScopeContext agent: IAgentScopeContext,
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
+    @IFlagService private readonly flags: IFlagService,
   ) {
     this.storageScope = agent.scope('tool-results');
   }
@@ -115,6 +119,13 @@ export class ToolResultTruncationService implements IAgentToolResultTruncationSe
     const dir = normalize(join(this.bootstrap.homeDir, this.storageScope));
     const normalized = normalize(path);
     return normalized === dir || normalized.startsWith(`${dir}/`);
+  }
+
+  isWireJournalPath(path: string): boolean {
+    if (!this.flags.enabled(COMPACTION_RECOVERY_POINTER_FLAG_ID)) return false;
+    const sessionsDir = normalize(join(this.bootstrap.homeDir, this.bootstrap.scope('sessions')));
+    const normalized = normalize(path);
+    return normalized.startsWith(`${sessionsDir}/`) && basename(normalized) === AGENT_WIRE_RECORD_KEY;
   }
 
   private async saveToolResult(

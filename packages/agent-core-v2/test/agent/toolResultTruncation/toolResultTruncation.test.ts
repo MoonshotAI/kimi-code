@@ -9,6 +9,7 @@ import type { ExecutableToolResult } from '#/tool/toolContract';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { ToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncationService';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IFlagService } from '#/app/flag/flag';
 import type { ContentPart } from '#/kosong/contract/message';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -20,12 +21,17 @@ describe('ToolResultTruncationService', () => {
   let disposables: DisposableStore;
   let homeDir: string;
   let truncation: IAgentToolResultTruncationService;
+  let recoveryPointerEnabled = false;
 
   beforeEach(async () => {
     homeDir = await mkdtemp(join(tmpdir(), 'tool-result-truncation-'));
     disposables = new DisposableStore();
+    recoveryPointerEnabled = false;
     const ix = disposables.add(new TestInstantiationService());
     ix.stub(IBootstrapService, stubBootstrap(homeDir));
+    ix.stub(IFlagService, {
+      enabled: (id: string) => id === 'compaction_recovery_pointer' && recoveryPointerEnabled,
+    });
     ix.stub(
       IAgentScopeContext,
       makeAgentScopeContext({
@@ -44,6 +50,28 @@ describe('ToolResultTruncationService', () => {
 
   const spillDir = () =>
     join(homeDir, 'sessions/workspace/session/agents/main/tool-results');
+
+  it('recognizes agent event logs under the sessions directory while the recovery pointer is enabled', () => {
+    recoveryPointerEnabled = true;
+
+    expect(
+      truncation.isWireJournalPath(join(homeDir, 'sessions/workspace/session/agents/main/wire.jsonl')),
+    ).toBe(true);
+    expect(
+      truncation.isWireJournalPath(join(homeDir, 'sessions/workspace/session/agents/sub-1/wire.jsonl')),
+    ).toBe(true);
+    expect(
+      truncation.isWireJournalPath(join(homeDir, 'sessions/workspace/session/agents/main/notes.jsonl')),
+    ).toBe(false);
+    expect(truncation.isWireJournalPath(join(homeDir, 'blobs/wire.jsonl'))).toBe(false);
+    expect(truncation.isWireJournalPath('/elsewhere/sessions/x/wire.jsonl')).toBe(false);
+  });
+
+  it('does not recognize agent event logs while the recovery pointer is disabled', () => {
+    expect(
+      truncation.isWireJournalPath(join(homeDir, 'sessions/workspace/session/agents/main/wire.jsonl')),
+    ).toBe(false);
+  });
 
   const bulk = (ch: string, n: number) => `${ch.repeat(99)}\n`.repeat(n);
 
