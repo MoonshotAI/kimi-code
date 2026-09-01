@@ -348,15 +348,24 @@ describe('KimiHarness.createSession transport link', () => {
     await harness.createSession({ id: 'ses_dynamic_one', workDir: '/tmp/work' });
     flags = 'tower,wait_for';
     await harness.createSession({ id: 'ses_dynamic_two', workDir: '/tmp/work' });
+    await harness.createSession({
+      id: 'ses_dynamic_three',
+      workDir: '/tmp/work',
+      sessionStartedProperties: { experimental_flags: 'caller_supplied' },
+    });
 
     const started = records.filter((record) => record.event === 'session_started');
-    expect(started).toHaveLength(2);
+    expect(started).toHaveLength(3);
     expect(started[0]).toMatchObject({
       sessionId: 'ses_dynamic_one',
       properties: { experimental_flags: 'tower' },
     });
     expect(started[1]).toMatchObject({
       sessionId: 'ses_dynamic_two',
+      properties: { experimental_flags: 'tower,wait_for' },
+    });
+    expect(started[2]).toMatchObject({
+      sessionId: 'ses_dynamic_three',
       properties: { experimental_flags: 'tower,wait_for' },
     });
   });
