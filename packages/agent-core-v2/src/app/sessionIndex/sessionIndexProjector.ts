@@ -1,4 +1,5 @@
 import { ILogService } from '#/_base/log/log';
+import { SESSION_INDEX_KEY, SESSION_INDEX_SCOPE } from '#/app/workspace/workspaceAlias';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IQueryStore, type WriteOp } from '#/persistence/interface/queryStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -18,6 +19,7 @@ import {
   listWorkspaceIds,
   mapBounded,
   readSessionSummary,
+  sessionStateMaxMtime,
   summaryEquals,
 } from './sessionIndexSource';
 
@@ -47,6 +49,7 @@ export interface ReconcileResult {
 export interface AuthoritativeScan {
   readonly summaries: SessionSummary[];
   readonly counts: Map<string, { active: number; archived: number }>;
+  readonly sourceMaxMtimeMs: number;
 }
 
 interface ScanSlot {
@@ -112,7 +115,7 @@ export class SessionIndexProjector {
       field: `custom.${PARENT_SESSION_ID_KEY}`,
     });
 
-    const { summaries, counts } = await scan;
+    const { summaries, counts, sourceMaxMtimeMs } = await scan;
     await this.batchChunks(
       summaries.map((summary) => ({
         kind: 'put' as const,
@@ -123,7 +126,10 @@ export class SessionIndexProjector {
       })),
     );
     await this.writeCounters(counters, counts);
-    await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, { seq: generation });
+    await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, {
+      seq: generation,
+      sourceMaxMtimeMs,
+    });
     log.info('session index generation published', {
       generation,
       sessions: summaries.length,
@@ -149,7 +155,7 @@ export class SessionIndexProjector {
     const { queryStore, log } = this.deps;
     const collection = sessionCollection(generation);
     const counters = sessionCountersCollection(generation);
-    const { summaries, counts } = await this.scanAuthoritative();
+    const { summaries, counts, sourceMaxMtimeMs } = await this.scanAuthoritative();
     const authoritativeIds = new Set(summaries.map((s) => s.id));
 
     const storedKeys = await queryStore.listKeys(collection);
@@ -177,6 +183,13 @@ export class SessionIndexProjector {
 
     await this.batchChunks([...upserts, ...removals]);
     await this.writeCounters(counters, counts);
+    const manifest = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
+    if (manifest?.seq === generation) {
+      await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, {
+        seq: generation,
+        sourceMaxMtimeMs: Math.max(manifest.sourceMaxMtimeMs ?? 0, sourceMaxMtimeMs),
+      });
+    }
     const result = { sessions: summaries.length, upserted: upserts.length, removed: removals.length };
     if (result.upserted > 0 || result.removed > 0) {
       log.info('session index reconciliation repaired drift', { generation, ...result });
@@ -188,11 +201,14 @@ export class SessionIndexProjector {
     const { storage, docs, sessionsScope } = this.deps;
     const summaries: SessionSummary[] = [];
     const counts = new Map<string, { active: number; archived: number }>();
+    let sourceMaxMtimeMs = (await storage.mtime(SESSION_INDEX_SCOPE, SESSION_INDEX_KEY)) ?? 0;
     for (const workspaceId of await listWorkspaceIds(storage, sessionsScope)) {
       const sessionIds = await listSessionIds(storage, sessionsScope, workspaceId);
-      const found = await mapBounded(sessionIds, SCAN_CONCURRENCY, (sessionId) =>
-        readSessionSummary(docs, sessionsScope, workspaceId, sessionId),
-      );
+      const found = await mapBounded(sessionIds, SCAN_CONCURRENCY, async (sessionId) => {
+        const mtime = await sessionStateMaxMtime(storage, sessionsScope, workspaceId, sessionId);
+        if (mtime > sourceMaxMtimeMs) sourceMaxMtimeMs = mtime;
+        return readSessionSummary(docs, sessionsScope, workspaceId, sessionId);
+      });
       const entry = counts.get(workspaceId) ?? { active: 0, archived: 0 };
       for (const summary of found) {
         summaries.push(summary);
@@ -201,7 +217,7 @@ export class SessionIndexProjector {
       }
       counts.set(workspaceId, entry);
     }
-    return { summaries, counts };
+    return { summaries, counts, sourceMaxMtimeMs };
   }
 
   private async writeCounters(
