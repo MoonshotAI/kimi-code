@@ -150,7 +150,7 @@ kimi
 | `KIMI_CODE_IDENTITY_SLUG` | 协议标识，用于发给第三方 provider 的 `User-Agent` 产品名和 MCP 客户端名，优先级高于 `[identity] slug`。未设置时由名称派生 | 任意非空字符串；会转小写并将连续非字母数字字符折叠为 `-` |
 | `KIMI_CODE_BUILTIN_PRODUCT_SKILLS` | 是否向模型提供介绍 Kimi Code 自身的内置 Skills，优先级高于 `config.toml` 的 `builtin_product_skills`（默认开启） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_TUI_FULL_SCREEN` | 启用实验性的 fullscreen alternate-screen 界面：可滚动的 transcript 视口、鼠标选择文本、可点击链接、Ctrl-Shift-F 搜索 | `1` 开启；其他值保持常规内联界面 |
-| `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL` | [subagent 模型池](./config-files.md#subagent-模型池) 默认启用，在包括交互式 TUI 在内的所有启动方式下生效；设为假值可禁用；master `KIMI_CODE_EXPERIMENTAL_FLAG=1` 会强制启用本功能 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
+| `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL` | [subagent 模型池](./config-files.md#subagent-模型池) 默认启用，在包括交互式 TUI 在内的所有启动方式下生效；设为假值可禁用；master `KIMI_CODE_EXPERIMENTAL_FLAG=1` 也会启用本功能 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK` | 在 `Agent` 和 `AgentSwarm` 工具上启用实验性的 `fork` 参数，让模型可以以调用方 Agent 对话历史的快照而不是空上下文启动 subagent；master `KIMI_CODE_EXPERIMENTAL_FLAG=1` 也会启用本功能 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_MCP_STARTUP_TIMEOUT_MS` | 所有 MCP server 的全局默认连接超时（毫秒）；优先级高于 `config.toml` 的 `[mcp] startup_timeout_ms`，但低于 `mcp.json` 中单个 server 的 `startupTimeoutMs`（默认 `30000`） | `1` 到 `2147483647` 的整数；非法值被忽略 |
 | `KIMI_MCP_TOOL_TIMEOUT_MS` | 所有 MCP server 的全局默认单次工具调用超时（毫秒）；优先级高于 `config.toml` 的 `[mcp] tool_timeout_ms`，但低于 `mcp.json` 中单个 server 的 `toolTimeoutMs`（默认 `60000`） | `1` 到 `2147483647` 的整数；非法值被忽略 |
@@ -162,7 +162,7 @@ kimi
 | `KIMI_WEB_SEARCH_API_KEY` | 网页搜索（`WebSearch`）服务的 API 密钥；设置后同时替换配置中的 API 密钥和 OAuth 凭据 | 非空字符串；空白值被忽略 |
 | `KIMI_WEB_FETCH_BASE_URL` | 网页抓取（`FetchURL`）服务的 API URL；优先级高于 `[services.moonshot_fetch] base_url`。文件中持久化的凭据和自定义 header 不会发送到环境变量指定的端点。环境变量和配置都没有指定端点时，已登录用户会先尝试 Kimi OAuth 托管抓取服务，再回退到本地直接请求 | 非空字符串；空白值被忽略 |
 | `KIMI_WEB_FETCH_API_KEY` | 网页抓取（`FetchURL`）服务的 API 密钥；设置后同时替换配置中的 API 密钥和 OAuth 凭据 | 非空字符串；空白值被忽略 |
-| `KIMI_CODE_EXPERIMENTAL_FLAG` | 在当前进程启用所有已注册的实验功能；不用于选择 Agent 引擎 | `1`、`true`、`yes`、`on` |
+| `KIMI_CODE_EXPERIMENTAL_FLAG` | 在当前进程启用所有已注册的实验功能；单个功能的 `KIMI_CODE_EXPERIMENTAL_<NAME>` 变量或 `config.toml` 的 `[experimental]` 节中的显式配置优先于它；不用于选择 Agent 引擎 | `1`、`true`、`yes`、`on` |
 | `KIMI_CODE_LEGACY_FLAG` | 让 `kimi`、`kimi -p`、`kimi doctor`、`kimi acp`、`kimi export` 和 `kimi provider` 使用旧版 `agent-core` 引擎；这些命令默认使用 `agent-core-v2` | `1`、`true`、`yes`、`on` |
 | `KIMI_SHELL_PATH` | Windows 上覆盖 Git Bash 路径（自动探测失败时使用） | 绝对路径 |
 | `KIMI_MODEL_MAX_COMPLETION_TOKENS` | 单步 LLM 请求的 `max_completion_tokens` 硬上限，仅对 `kimi` 供应商生效 | 正整数；`0` 或负数禁用 clamp |
