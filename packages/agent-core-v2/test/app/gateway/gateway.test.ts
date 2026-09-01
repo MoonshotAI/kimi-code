@@ -87,17 +87,10 @@ describe('RestGateway', () => {
       fork: () => Promise.resolve(agentContext),
       get: (agentId: string) => (agentId === 'main' ? agentContext : undefined),
       list: () => [agentContext],
-      resolve: () => {
-        throw new Error('not supported in this test');
-      },
-      inspect: () => {
-        throw new Error('not supported in this test');
-      },
       remove: () => Promise.resolve(),
       broadcastPermissionMode: () => {},
       handleOf: (agentId: string) => (agentId === 'main' ? agentHandle : undefined),
       adopt: () => agentContext,
-      attachRuntimes: () => {},
     };
     const sessionHandle: ISessionScopeHandle = {
       id: 's1',

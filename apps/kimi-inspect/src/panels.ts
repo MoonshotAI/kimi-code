@@ -158,7 +158,6 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
     }),
     actions: [
       { label: 'Set model', input: 'Model id', run: (svc, model) => call(svc, 'setModel', model) },
-      { label: 'Refresh system prompt', run: (svc) => call(svc, 'refreshSystemPrompt') },
     ],
   },
   {

@@ -48,8 +48,8 @@ export function createProgram(
     )
     .option('-c, --continue', 'Continue the previous session for the working directory.', false)
     .addOption(new Option('-C').hideHelp().default(false))
-    .option('-y, --yolo', 'Auto-approve regular tool calls; the agent may still ask questions.', false)
-    .option('--auto', 'Start in auto permission mode: fully autonomous, the agent will not ask questions.', false)
+    .option('-y, --yolo', 'Start in Ask When Needed mode: routine edits and commands run automatically; risky actions, questions, and plans still ask.', false)
+    .option('--auto', 'Start in Never Ask mode: never interrupts you; everything runs and is decided automatically.', false)
     .addOption(
       new Option(
         '-m, --model <model>',

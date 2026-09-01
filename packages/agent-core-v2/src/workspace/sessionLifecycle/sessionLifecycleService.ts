@@ -10,6 +10,7 @@ import {
 } from '#/_base/di/scope';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { AsyncEmitter, Emitter, type Event, type IWaitUntil } from '#/_base/event';
+import { ILogService } from '#/_base/log/log';
 import { drainLogCloses } from '#/_base/log/logService';
 import { DEFAULT_PLAN_MODE_SECTION } from '#/features/plan/configSection';
 import { IAgentPlanService } from '#/features/plan/plan';
@@ -27,8 +28,12 @@ import {
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2, isError2 } from '#/errors';
 import { IHostFileSystem, type HostDirEntry } from '#/os/interface/hostFileSystem';
-import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import {
+  type AppendLogTruncation,
+  IAppendLogStore,
+} from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import {
   IAgentLifecycleService,
   MAIN_AGENT_ID,
@@ -39,7 +44,7 @@ import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/se
 import { sessionEphemeralMcpServersSeed } from '#/session/mcp/ephemeralMcpServers';
 import { sessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
-import { ISessionSkillCatalogData } from '#/session/sessionSkillCatalog/skillCatalogData';
+import { ISessionSkillCatalogData } from '#/features/skill/session/skillCatalogData';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
@@ -51,11 +56,9 @@ import {
   createWireMetadataRecord,
   type WireRecord,
 } from '#/wire/record';
-import { IModelCatalog } from '#/kosong/model/catalog';
+import { repairWireJournal } from '#/wire/repair';
 import { IModelService } from '#/kosong/model/model';
 import { IProviderService } from '#/kosong/provider/provider';
-import { IFlagService } from '#/app/flag/flag';
-import { assertValidSubagentModelConfig } from '#/session/subagent/configSection';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
@@ -70,10 +73,10 @@ import {
 } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IAgentActivityView } from '#/agent/activityView/activityView';
-import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
+import { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
 import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
 import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
-import { PLUGIN_SKILL_SOURCE_ID } from '#/app/skillCatalog/skillSource';
+import { PLUGIN_SKILL_SOURCE_ID } from '#/features/skill/catalog/skillSource';
 
 import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressing';
 import { SessionArchived } from './sessionLifecycleEvents';
@@ -145,6 +148,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @ISessionIndexMirror private readonly indexMirror: ISessionIndexMirror,
     @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
+    @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
+    @ILogService private readonly log: ILogService,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IEventService private readonly event: IEventService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -162,10 +167,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IWorkspaceSkillCatalog private readonly workspaceSkillCatalog: IWorkspaceSkillCatalog,
     @IWorkspaceInstructionsService private readonly workspaceInstructions: IWorkspaceInstructionsService,
     @IWorkspaceMcpService private readonly workspaceMcp: IWorkspaceMcpService,
-    @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IModelService private readonly models: IModelService,
     @IProviderService private readonly providers: IProviderService,
-    @IFlagService private readonly flags: IFlagService,
     onDispose?: () => void,
   ) {
     super();
@@ -208,7 +211,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       const sessionDir = handle.accessor.get(ISessionContext).sessionDir;
       this.sessions.delete(sessionId);
       await this.drainAgents(handle).catch(() => {});
-      handle.dispose();
+      void handle.dispose();
       await this.hostFs.remove(sessionDir).catch(() => {});
       throw error;
     }
@@ -216,17 +219,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return handle;
   }
 
-  private async assertSubagentModelPoolPreFlight(): Promise<void> {
-    await Promise.all([this.config.ready, this.models.ready, this.providers.ready]);
-    assertValidSubagentModelConfig(this.config, this.flags, this.modelCatalog);
-  }
-
   private async materializeSession(opts: MaterializeSessionOptions): Promise<ISessionScopeHandle> {
     const workspaceId = this.workspaceId;
     const sessionScope = sessionScopeOf(this.handlerScope, opts.sessionId);
     const sessionDir = sessionDirOf(this.bootstrap.homeDir, this.handlerScope, opts.sessionId);
     const metaScope = sessionScope;
-    await this.assertSubagentModelPoolPreFlight();
+    await Promise.all([this.config.ready, this.models.ready, this.providers.ready]);
     await this.workspaceDirs.ready;
     await this.workspaceDirs.mergeAdditionalDirs(opts.workDir, opts.additionalDirs ?? []);
     const ctx: ISessionContext = {
@@ -282,7 +280,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         this.pluginAgentProfileLoader.ready,
       ]);
     } catch (error) {
-      handle.dispose();
+      void handle.dispose();
       void this.explicitAgentProfileLoader.reload().catch(() => undefined);
       throw error;
     }
@@ -364,7 +362,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       await this.announceCreated({ sessionId, handle, source: 'resume' });
     } catch (error) {
       this.sessions.delete(sessionId);
-      handle.dispose();
+      void handle.dispose();
       throw error;
     }
     return handle;
@@ -387,9 +385,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this.appendLogStore.drainRetirements();
     await drainSessionMetadataWrites();
     await this.indexMirror.drain();
-    handle.dispose();
+    void handle.dispose();
     await drainLogCloses();
     this._onDidCloseSession.fire({ sessionId });
+    this.telemetry.withContext({ sessionId }).track2('session_ended', { reason: 'exit' });
   }
 
   async archive(sessionId: string): Promise<void> {
@@ -408,9 +407,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     this.sessions.delete(sessionId);
     await drainSessionMetadataWrites();
     await this.indexMirror.drain();
-    handle.dispose();
+    void handle.dispose();
     await drainLogCloses();
     this._onDidArchiveSession.fire({ sessionId });
+    this.telemetry.withContext({ sessionId }).track2('session_ended', { reason: 'archive' });
   }
 
   async restore(
@@ -485,7 +485,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     let target: ISessionScopeHandle | undefined;
     let targetSessionDir: string | undefined;
     try {
-      await this.assertSubagentModelPoolPreFlight();
       await drainSessionMetadataWrites();
       const sourceMeta =
         sourceHandle !== undefined
@@ -589,7 +588,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       }
       if (target !== undefined) {
         try {
-          target.dispose();
+          void target.dispose();
         } catch {
         }
       }
@@ -663,12 +662,30 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         await agentHandle.accessor.get(IEventDispatcher).flush();
       }
     }
-    return collect(
-      this.appendLogStore.read<WireRecord>(
-        agentScopeOf(sessionScopeOf(this.handlerScope, sourceSessionId), agentId),
-        AGENT_WIRE_RECORD_KEY,
-      ),
+    const scope = agentScopeOf(sessionScopeOf(this.handlerScope, sourceSessionId), agentId);
+    let truncation: AppendLogTruncation | undefined;
+    const records = await collect(
+      this.appendLogStore.read<WireRecord>(scope, AGENT_WIRE_RECORD_KEY, {
+        onTruncate: (info) => {
+          truncation = info;
+        },
+      }),
     );
+    if (truncation !== undefined) {
+      await repairWireJournal(
+        {
+          appendLog: this.appendLogStore,
+          storage: this.storage,
+          log: this.log,
+          telemetry: this.telemetry,
+        },
+        scope,
+        AGENT_WIRE_RECORD_KEY,
+        records,
+        truncation,
+      );
+    }
+    return records;
   }
 
   private async pruneTruncatedForkFiles(

@@ -2,7 +2,8 @@ import { join } from 'node:path';
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -18,6 +19,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { IFlagService } from '#/app/flag/flag';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IEventDispatcher } from '#/state/eventDispatcher';
+import { ISessionActivityView } from '#/session/sessionActivity/sessionActivity';
 import { isWithinDirectory } from '#/tool/path-access';
 import type { ToolFileAccess } from '#/tool/toolContract';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -53,7 +55,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @ISessionManager private readonly sessions: ISessionManager,
     @IFeatureManager featureManager: IFeatureManager,
     @IConfigService config: IConfigService,
-    @IAgentContextInjectorService injector: IAgentContextInjectorService,
+    @IAgentReminderService reminder: IAgentReminderService,
     @IAgentContextMemoryService context: IAgentContextMemoryService,
     @IEventBus eventBus: IEventBus,
   ) {
@@ -95,7 +97,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
         );
       }),
     );
-    this._register(new TowerModeInjection(injector, this, context, this.flags));
+    this._register(new TowerModeInjection(reminder, this, context, this.flags));
     this._register(
       toolExecutor.onBeforeExecuteTool((event) => {
         if (this.flags.enabled(TOWER_FLAG_ID)) return;
@@ -168,12 +170,17 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     if (!isTowerFeatureAssembled(this.flags)) return;
     if (this.isActive) return;
     const owner = await this.resolveTowerOwner();
-    if (
-      owner !== undefined &&
-      owner !== this.sessionCtx.sessionId &&
-      this.sessions.get(owner) !== undefined
-    ) {
-      return;
+    if (owner !== undefined && owner !== this.sessionCtx.sessionId) {
+      const ownerHandle = this.sessions.get(owner);
+      if (ownerHandle !== undefined) {
+        const activity = ownerHandle.accessor.get(ISessionActivityView).state();
+        if (activity.busy || activity.pendingInteraction !== 'none') return;
+        ownerHandle.accessor
+          .get(IAgentLifecycleService)
+          .handleOf('main')
+          ?.accessor.get(IAgentTowerService)
+          .exit();
+      }
     }
     for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
     this.lastPublished = true;

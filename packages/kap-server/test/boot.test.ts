@@ -74,10 +74,10 @@ describe('server-v2 boot', () => {
     expect(auth.status).toBe(200);
     const authBody = await auth.json() as {
       code: number;
-      data: { ready: boolean; providers_count: number; default_model: string | null };
+      data: { models_ready: boolean; providers_count: number };
     };
     expect(authBody.code).toBe(0);
-    expect(typeof authBody.data.ready).toBe('boolean');
+    expect(typeof authBody.data.models_ready).toBe('boolean');
     expect(authBody.data.providers_count).toBeGreaterThanOrEqual(0);
 
     const oauthPoll = await authedFetch(server, base, '/api/v1/oauth/login');
@@ -231,6 +231,51 @@ describe('server-v2 boot', () => {
 
     expect(() => core.accessor.get(IBootstrapService)).toThrow();
     expect(await listLiveServerInstances(home)).toEqual([]);
+  });
+
+  it('installs process-level rejection handlers while running and removes them on close', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-'));
+    const rejectionBefore = process.listenerCount('unhandledRejection');
+    const exceptionBefore = process.listenerCount('uncaughtException');
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+
+    expect(process.listenerCount('unhandledRejection')).toBe(rejectionBefore + 1);
+    expect(process.listenerCount('uncaughtException')).toBe(exceptionBefore + 1);
+
+    await server.close();
+    server = undefined;
+
+    expect(process.listenerCount('unhandledRejection')).toBe(rejectionBefore);
+    expect(process.listenerCount('uncaughtException')).toBe(exceptionBefore);
+  });
+
+  it('does not leave process handlers installed when startup fails', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-'));
+    const emptyAssets = await mkdtemp(join(tmpdir(), 'kimi-server-v2-assets-'));
+    const rejectionBefore = process.listenerCount('unhandledRejection');
+    const exceptionBefore = process.listenerCount('uncaughtException');
+    try {
+      await expect(
+        startServer({
+          hostIdentity: TEST_HOST_IDENTITY,
+          host: '127.0.0.1',
+          port: 0,
+          homeDir: home,
+          logLevel: 'silent',
+          webAssetsDir: emptyAssets,
+        }),
+      ).rejects.toThrow('web assets');
+      expect(process.listenerCount('unhandledRejection')).toBe(rejectionBefore);
+      expect(process.listenerCount('uncaughtException')).toBe(exceptionBefore);
+    } finally {
+      await rm(emptyAssets, { recursive: true, force: true });
+    }
   });
 });
 

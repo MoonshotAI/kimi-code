@@ -23,8 +23,6 @@ export interface AgentProfileContext {
   readonly osKind?: string;
   readonly shellName?: string;
   readonly shellPath?: string;
-  readonly now?: string;
-  readonly timeZone?: string;
   readonly skills?: string;
   readonly skillActive?: boolean;
   readonly pluginSections?: string;
@@ -35,9 +33,6 @@ export interface AgentProfileContext {
 
 export interface EnvironmentDisclosureSnapshot {
   readonly cwd: string;
-  readonly date:
-    | { readonly disclosed: true; readonly value: { readonly localDate: string; readonly timeZone: string } }
-    | { readonly disclosed: false };
 }
 
 export interface SystemPromptRenderResult {
@@ -59,20 +54,6 @@ export interface AgentProfile {
   readonly summaryPolicy?: AgentProfileSummaryPolicy;
 }
 
-/**
- * The profile shape accepted at registration ({@link registerAgentProfile},
- * file-based profile factories): authors provide at least one render entry —
- * the structured `renderSystemPrompt`, the legacy text-only `systemPrompt`,
- * or both (the structured renderer is then authoritative). The union
- * statically requires at least one entry; {@link normalizeAgentProfile} still
- * throws on inputs that escaped the type check (plain JS, casts).
- * {@link normalizeAgentProfile} derives the other method, so a registered
- * {@link AgentProfile} always carries both and its `systemPrompt` text always
- * comes from the same render as its disclosure metadata. A text-only input
- * renders with no disclosed environment facts. Callbacks are bound to the
- * input object at runtime, so method-style definitions relying on `this`
- * keep working.
- */
 export type AgentProfileInput = Omit<AgentProfile, 'systemPrompt' | 'renderSystemPrompt'> &
   (
     | {
@@ -103,7 +84,7 @@ export function normalizeAgentProfile(input: AgentProfileInput): AgentProfile {
       systemPrompt,
       renderSystemPrompt: (context) => ({
         text: systemPrompt(context),
-        environment: { cwd: context.cwd ?? '', date: { disclosed: false } },
+        environment: { cwd: context.cwd ?? '' },
       }),
     };
   }

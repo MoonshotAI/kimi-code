@@ -1,12 +1,15 @@
-import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
+import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Emitter, type Event } from '#/_base/event';
 
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import {
   AppendLogCorruptedError,
   IAppendLogStore,
   type AppendLogOptions,
+  type AppendLogReadOptions,
+  type AppendLogWrite,
 } from '#/persistence/interface/appendLogStore';
 
 const textEncoder = new TextEncoder();
@@ -32,12 +35,16 @@ interface LogState {
   onError?: (error: unknown) => void;
 }
 
-export class AppendLogStore implements IAppendLogStore {
+export class AppendLogStore extends Disposable implements IAppendLogStore {
   declare readonly _serviceBrand: undefined;
 
   private readonly logs = new Map<string, LogState>();
+  private readonly writeEmitter = this._register(new Emitter<AppendLogWrite>());
+  readonly onDidWrite: Event<AppendLogWrite> = this.writeEmitter.event;
 
-  constructor(@IFileSystemStorageService private readonly storage: IFileSystemStorageService) {}
+  constructor(@IFileSystemStorageService private readonly storage: IFileSystemStorageService) {
+    super();
+  }
 
   append<R>(scope: string, key: string, record: R, options?: AppendLogOptions): void {
     const state = this.state(scope, key);
@@ -48,8 +55,9 @@ export class AppendLogStore implements IAppendLogStore {
     this.scheduleFlush(scope, key, state);
   }
 
-  async *read<R>(scope: string, key: string): AsyncIterable<R> {
+  async *read<R>(scope: string, key: string, options?: AppendLogReadOptions): AsyncIterable<R> {
     await this.flushLog(scope, key);
+    const onTruncate = options?.onTruncate;
     const textDecoder = new TextDecoder();
     let pending = '';
     let lineNumber = 0;
@@ -60,7 +68,14 @@ export class AppendLogStore implements IAppendLogStore {
         const raw = pending.slice(0, newlineIndex);
         pending = pending.slice(newlineIndex + 1);
         lineNumber++;
-        const record = this.parseLine<R>(raw, scope, key, lineNumber, false);
+        let record: R | undefined;
+        try {
+          record = this.parseLine<R>(raw, scope, key, lineNumber, false);
+        } catch (error) {
+          if (onTruncate === undefined) throw error;
+          onTruncate({ lineNumber, reason: 'corrupted', cause: error });
+          return;
+        }
         if (record !== undefined) yield record;
         newlineIndex = pending.indexOf('\n');
       }
@@ -69,7 +84,12 @@ export class AppendLogStore implements IAppendLogStore {
     if (pending.length > 0) {
       lineNumber++;
       const record = this.parseLine<R>(pending, scope, key, lineNumber, true);
-      if (record !== undefined) yield record;
+      if (record !== undefined) {
+        yield record;
+      } else if (onTruncate !== undefined) {
+        const line = pending.endsWith('\r') ? pending.slice(0, -1) : pending;
+        if (line.length > 0) onTruncate({ lineNumber, reason: 'truncated' });
+      }
     }
   }
 
@@ -103,12 +123,13 @@ export class AppendLogStore implements IAppendLogStore {
       try {
         await this.storage.write(scope, key, encoded, { atomic: true });
         state.storageFailure = undefined;
+        return true;
       } catch (error) {
         state.storageFailure = { error };
         throw error;
       }
     });
-    await this.ownFlush(scope, key, state, rewrite);
+    await this.ownFlush(scope, key, state, rewrite, { value: false });
   }
 
   async flush(): Promise<void> {
@@ -176,7 +197,8 @@ export class AppendLogStore implements IAppendLogStore {
   private flushState(scope: string, key: string, state: LogState): Promise<void> {
     if (state.flushPromise !== undefined) return state.flushPromise;
     if (state.storageFailure !== undefined) return Promise.reject(state.storageFailure.error);
-    return this.ownFlush(scope, key, state, this.drain(scope, key, state));
+    const wroteBox = { value: false };
+    return this.ownFlush(scope, key, state, this.drain(scope, key, state, wroteBox), wroteBox);
   }
 
   private release(scope: string, key: string, state: LogState): void {
@@ -202,10 +224,11 @@ export class AppendLogStore implements IAppendLogStore {
     scope: string,
     key: string,
     state: LogState,
-    operation: Promise<void>,
+    operation: Promise<boolean>,
+    wroteBox: { value: boolean },
   ): Promise<void> {
     let owned!: Promise<void>;
-    owned = this.finishOwnedFlush(scope, key, state, operation, () => owned);
+    owned = this.finishOwnedFlush(scope, key, state, operation, wroteBox, () => owned);
     state.flushPromise = owned;
     return owned;
   }
@@ -214,47 +237,55 @@ export class AppendLogStore implements IAppendLogStore {
     scope: string,
     key: string,
     state: LogState,
-    operation: Promise<void>,
+    operation: Promise<boolean>,
+    wroteBox: { value: boolean },
     owner: () => Promise<void>,
   ): Promise<void> {
     let failure: { readonly error: unknown } | undefined;
     try {
-      await operation;
-    } catch (error) {
-      failure = { error };
-    }
-    const owned = owner();
-    if (state.flushPromise === owned) {
-      try {
-        if (failure === undefined) {
-          while (state.flushPromise === owned && state.pending.length > 0) {
-            await this.drain(scope, key, state);
-          }
-        }
-      } finally {
-        if (state.flushPromise === owned) {
-          state.flushPromise = undefined;
+      if (await operation) wroteBox.value = true;
+      const owned = owner();
+      if (state.flushPromise === owned) {
+        while (state.flushPromise === owned && state.pending.length > 0) {
+          await this.drain(scope, key, state, wroteBox);
         }
       }
+    } catch (error) {
+      failure ??= { error };
+    } finally {
+      const owned = owner();
+      if (state.flushPromise === owned) {
+        state.flushPromise = undefined;
+      }
     }
+    if (wroteBox.value) this.writeEmitter.fire({ scope, key });
     if (failure !== undefined) throw failure.error;
   }
 
-  private async drain(scope: string, key: string, state: LogState): Promise<void> {
+  private async drain(
+    scope: string,
+    key: string,
+    state: LogState,
+    wroteBox?: { value: boolean },
+  ): Promise<boolean> {
     const cutoverEpoch = state.cutoverEpoch;
     await state.ready;
-    if (state.cutoverEpoch !== cutoverEpoch) return;
+    if (state.cutoverEpoch !== cutoverEpoch) return false;
+    let wrote = false;
     while (state.pending.length > 0) {
       const batch = state.pending.slice();
       try {
         await this.storage.append(scope, key, encodeBatch(batch), { durable: true });
+        wrote = true;
+        if (wroteBox !== undefined) wroteBox.value = true;
       } catch (error) {
         const failure = (state.storageFailure ??= { error });
         throw failure.error;
       }
-      if (state.cutoverEpoch !== cutoverEpoch) return;
+      if (state.cutoverEpoch !== cutoverEpoch) return wrote;
       state.pending.splice(0, batch.length);
     }
+    return wrote;
   }
 }
 

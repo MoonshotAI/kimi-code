@@ -70,6 +70,7 @@ export interface TurnEndedEvent {
   reason: 'completed' | 'cancelled' | 'failed';
   duration_ms: number;
   mode: 'agent' | 'plan';
+  error_type?: string;
   provider_type?: string;
   protocol?: string;
   thinking_effort?: string;
@@ -325,6 +326,16 @@ export interface ToolCallRepeatEvent {
   trace_id?: string;
 }
 
+export interface ToolCallTurnRepeatEvent {
+  turn_id?: number;
+  step_no: number;
+  tool_call_id: string;
+  tool_name: string;
+  turn_repeat_count: number;
+  args_hash: string;
+  trace_id?: string;
+}
+
 export interface AgentsMdReminderShownEvent {
   turn_id: number;
   tool_name: string;
@@ -358,6 +369,7 @@ export interface SubagentCreatedEvent {
   parent_agent_id: string;
   parent_tool_call_id: string;
   model?: string;
+  model_source?: 'forced' | 'primary_override' | 'inherited' | 'secondary_pool';
 }
 
 export interface McpConnectedEvent {
@@ -450,10 +462,93 @@ export interface SessionLoadFailedEvent {
   reason: string;
 }
 
+export interface WireRepairEvent {
+  kind: 'corrupted' | 'truncated';
+  outcome: 'repaired' | 'failed';
+  dropped_count: number;
+  backup_created: boolean;
+}
+
 export interface FirstLaunchEvent {}
 
 export interface ExitEvent {
   duration_ms: number;
+}
+
+export interface OauthLoginFinishedEvent {
+  provider: string;
+  status: 'authenticated' | 'cancelled' | 'expired' | 'denied';
+  duration_ms: number;
+}
+
+export interface OauthModelsRefreshFinishedEvent {
+  changed_count: number;
+  unchanged_count: number;
+  failed_count: number;
+}
+
+export interface AuthEnsureReadyFailedEvent {
+  reason: 'provisioning_required' | 'model_not_resolved' | 'token_missing' | 'unexpected';
+  has_model_override: boolean;
+}
+
+export interface ShellCommandFinishedEvent {
+  duration_ms: number;
+  is_error: boolean;
+  backgrounded: boolean;
+}
+
+export interface AgentCreateFailedEvent {
+  agent_id: string;
+  stage: string;
+  error_type: string;
+}
+
+export interface SessionEndedEvent {
+  reason: 'exit' | 'archive';
+}
+
+export interface WebFetchFallbackEvent {
+  error_type: string;
+  used_api_key: boolean;
+}
+
+export interface MediaResolveFallbackEvent {
+  kind: 'image' | 'video';
+  reason: 'unsupported' | 'read_failed' | 'upload_failed' | 'invalid';
+  model?: string;
+}
+
+export interface LlmRequestProjectionFallbackEvent {
+  projection: 'media-degraded' | 'media-stripped' | 'strict';
+  error_type: string;
+  model?: string;
+  turn_id?: number;
+}
+
+export interface SessionIndexDegradedEvent {
+  reason: string;
+  degraded_count: number;
+  error_type?: string;
+}
+
+export interface SessionIndexProjectedEvent {
+  duration_ms: number;
+  session_count: number;
+  generation: number;
+}
+
+export interface SessionIndexMirrorGiveUpEvent {
+  pending_count: number;
+  consecutive_failures: number;
+}
+
+export interface WorkspaceTrustChangedEvent {
+  trusted: boolean;
+}
+
+export interface WorkspaceTrustReadFailedEvent {
+  error_type: string;
 }
 
 export const telemetryEventDefinitions = {
@@ -491,6 +586,7 @@ export const telemetryEventDefinitions = {
       reason: 'How the turn ended',
       duration_ms: 'Turn wall-clock time in milliseconds',
       mode: 'Agent mode the turn ran in',
+      error_type: 'Classified error category when reason is failed',
       provider_type: 'Provider protocol type',
       protocol: 'Request protocol',
       thinking_effort: 'Effective thinking effort the turn ran with',
@@ -830,6 +926,20 @@ export const telemetryEventDefinitions = {
         'Trace id of the LLM request that produced the repeated tool call; absent for non-Kimi protocols',
     },
   }),
+  tool_call_turn_repeat: defineAgentTelemetryEvent<ToolCallTurnRepeatEvent>({
+    owner: 'kimi-code',
+    comment: 'A tool call reappears within the same turn.',
+    properties: {
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session; omitted when no turn is active',
+      step_no: 'Step index within the turn',
+      tool_call_id: 'Provider-assigned tool call id',
+      tool_name: 'Registered tool name',
+      turn_repeat_count: 'Number of prior-step tool-call reappearances counted in the turn',
+      args_hash: 'Hash of the tool call arguments',
+      trace_id:
+        'Trace id of the LLM request that produced the repeated tool call; absent for non-Kimi protocols',
+    },
+  }),
   agents_md_reminder_shown: defineAgentTelemetryEvent<AgentsMdReminderShownEvent>({
     owner: 'kimi-code',
     comment: 'An AGENTS.md discovery reminder is appended to a tool result.',
@@ -878,6 +988,8 @@ export const telemetryEventDefinitions = {
       parent_agent_id: 'Parent (caller) agent id',
       parent_tool_call_id: "Tool call id of the launching call in the parent agent; '' when not launched from a tool call",
       model: 'Model alias the subagent binds to (secondary-model choice or inherited caller model); omitted when no binding was resolved',
+      model_source:
+        "How the bound model was chosen: 'forced' = [secondary_model].force, 'primary_override' = explicit \"primary\" request, 'inherited' = caller's own model (no pool or fork), 'secondary_pool' = [secondary_model.models] pool pick; omitted when no binding resolution happened (e.g. resume)",
     },
   }),
   mcp_connected: defineTelemetryEvent<McpConnectedEvent>({
@@ -984,6 +1096,16 @@ export const telemetryEventDefinitions = {
     comment: 'A session resume fails.',
     properties: { reason: 'Error code, error name, or unknown' },
   }),
+  wire_repair: defineTelemetryEvent<WireRepairEvent>({
+    owner: 'kimi-code',
+    comment: 'A corrupted wire journal is truncated to its valid prefix and healed on disk.',
+    properties: {
+      kind: 'Corruption kind: unparseable middle line or torn final line',
+      outcome: 'Whether the on-disk repair succeeded',
+      dropped_count: 'Journal lines dropped from the corrupted tail',
+      backup_created: 'Whether a first-time .bak backup of the corrupted file was created',
+    },
+  }),
   first_launch: defineTelemetryEvent<FirstLaunchEvent>({
     owner: 'kimi-code',
     comment: 'The CLI runs for the first time on this device.',
@@ -993,6 +1115,118 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A CLI run exits.',
     properties: { duration_ms: 'Run wall-clock time in milliseconds' },
+  }),
+  oauth_login_finished: defineTelemetryEvent<OauthLoginFinishedEvent>({
+    owner: 'kimi-code',
+    comment: 'An OAuth login flow reaches a terminal status.',
+    properties: {
+      provider: 'OAuth provider name',
+      status: 'Terminal status of the login flow',
+      duration_ms: 'Login flow wall-clock time in milliseconds',
+    },
+  }),
+  oauth_models_refresh_finished: defineTelemetryEvent<OauthModelsRefreshFinishedEvent>({
+    owner: 'kimi-code',
+    comment: 'A refresh of the managed OAuth provider model catalog finishes.',
+    properties: {
+      changed_count: 'Number of models added or updated by the refresh',
+      unchanged_count: 'Number of models left unchanged',
+      failed_count: 'Number of models that failed to refresh',
+    },
+  }),
+  auth_ensure_ready_failed: defineTelemetryEvent<AuthEnsureReadyFailedEvent>({
+    owner: 'kimi-code',
+    comment: 'Auth readiness check fails before a turn can start.',
+    properties: {
+      reason: 'Why auth is not ready',
+      has_model_override: 'Whether a model override is configured',
+    },
+  }),
+  shell_command_finished: defineAgentTelemetryEvent<ShellCommandFinishedEvent>({
+    owner: 'kimi-code',
+    comment: 'A shell command execution finishes; this path bypasses the tool executor.',
+    properties: {
+      duration_ms: 'Execution wall-clock time in milliseconds',
+      is_error: 'Whether the execution ended with an error',
+      backgrounded: 'Whether the command was sent to the background',
+    },
+  }),
+  agent_create_failed: defineTelemetryEvent<AgentCreateFailedEvent>({
+    owner: 'kimi-code',
+    comment: 'Agent scope creation fails partway through.',
+    properties: {
+      agent_id: 'Id of the agent whose creation failed',
+      stage: 'Creation stage the failure occurred in',
+      error_type: 'Classified error category',
+    },
+  }),
+  session_ended: defineTelemetryEvent<SessionEndedEvent>({
+    owner: 'kimi-code',
+    comment: 'A session is closed or archived.',
+    properties: { reason: 'How the session ended' },
+  }),
+  web_fetch_fallback: defineTelemetryEvent<WebFetchFallbackEvent>({
+    owner: 'kimi-code',
+    comment: 'The managed fetch-url provider fails and the call silently falls back to the local fetcher.',
+    properties: {
+      error_type: 'Classified error category of the managed fetch failure',
+      used_api_key: 'Whether a managed access token was obtained before the failure',
+    },
+  }),
+  media_resolve_fallback: defineAgentTelemetryEvent<MediaResolveFallbackEvent>({
+    owner: 'kimi-code',
+    comment: 'A media part is silently degraded or replaced while resolving model input.',
+    properties: {
+      kind: 'Media kind being resolved',
+      reason: 'Why the media could not be resolved as-is',
+      model: 'Model the media was resolved for',
+    },
+  }),
+  llm_request_projection_fallback: defineAgentTelemetryEvent<LlmRequestProjectionFallbackEvent>({
+    owner: 'kimi-code',
+    comment: 'A rejected LLM request is retried with a degraded context projection.',
+    properties: {
+      projection: 'Projection policy the request is degraded to',
+      error_type: 'Classified error category of the rejection',
+      model: 'Model that rejected the request',
+      turn_id: 'Per-agent turn index; pair with agent_id to locate a turn within a session',
+    },
+  }),
+  session_index_degraded: defineTelemetryEvent<SessionIndexDegradedEvent>({
+    owner: 'kimi-code',
+    comment: 'The session index read model degrades to the authoritative directory scan.',
+    properties: {
+      reason: 'Why the read model degraded',
+      degraded_count: 'How many times the read model has degraded so far',
+      error_type: 'Classified error category when degradation was caused by an error',
+    },
+  }),
+  session_index_projected: defineTelemetryEvent<SessionIndexProjectedEvent>({
+    owner: 'kimi-code',
+    comment: 'The session index finishes projecting the sessions directory into the read model.',
+    properties: {
+      duration_ms: 'Projection wall-clock time in milliseconds',
+      session_count: 'Number of sessions projected',
+      generation: 'Read model generation after this projection',
+    },
+  }),
+  session_index_mirror_give_up: defineTelemetryEvent<SessionIndexMirrorGiveUpEvent>({
+    owner: 'kimi-code',
+    comment: 'The session index mirror stops retrying after consecutive write failures.',
+    properties: {
+      pending_count: 'Number of queued mirror writes left pending',
+      consecutive_failures: 'Number of consecutive write failures that triggered the give-up',
+    },
+  }),
+  workspace_trust_changed: defineTelemetryEvent<WorkspaceTrustChangedEvent>({
+    owner: 'kimi-code',
+    comment: 'A workspace is trusted or untrusted.',
+    properties: { trusted: 'Whether the workspace is now trusted' },
+  }),
+  workspace_trust_read_failed: defineTelemetryEvent<WorkspaceTrustReadFailedEvent>({
+    owner: 'kimi-code',
+    comment: 'Reading the workspace trust record fails and the workspace silently falls back to untrusted.',
+    properties: { error_type: 'Classified error category' },
   }),
 } as const;
 

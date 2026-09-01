@@ -24,13 +24,14 @@ import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { Runtime } from '#/runtime/runtime';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
-import { IModelCatalog } from '#/kosong/model/catalog';
+import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { ILogService } from '#/_base/log/log';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { createHooks } from '#/hooks';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 
 import {
   type AgentRunHandle,
@@ -41,7 +42,11 @@ import {
   type RunAgentOptions,
 } from './subagent';
 import { runAgentTurn } from './runAgentTurn';
-import { resolveSubagentBinding, wrapSubagentModelError } from './configSection';
+import {
+  resolveSubagentBinding,
+  resolveSubagentThinking,
+  wrapSubagentModelError,
+} from './configSection';
 import {
   DEFAULT_PROFILE_NAME,
   FORK_CONTEXT_NOTICE,
@@ -126,22 +131,24 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       });
     }
     const binding = fork
-      ? { model: own.modelAlias, thinking: own.thinkingLevel }
+      ? { model: own.modelAlias, thinking: own.thinkingLevel, modelSource: 'inherited' as const }
       : resolveSubagentBinding(
           this.configService,
           this.flags,
           { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
           input.model,
         );
+    let model: Model;
     try {
-      this.modelCatalog.get(binding.model);
+      model = this.modelCatalog.get(binding.model);
     } catch (error) {
       throw wrapSubagentModelError(error, binding.model, own.modelAlias);
     }
     return {
       profileName: profile?.name ?? requestedProfileName,
       model: binding.model,
-      thinking: binding.thinking,
+      modelSource: binding.modelSource,
+      thinking: resolveSubagentThinking(this.configService, model, binding.thinking),
       fork,
     };
   }
@@ -160,6 +167,9 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
             labels: opts.labels,
           });
           created = this.agentLifecycle.handleOf(forked.agentId)!;
+          created.accessor
+            .get(IAgentReminderService)
+            .notify(FORK_CONTEXT_NOTICE, { variant: 'fork_context' });
         } else {
           const createdContext = await this.agentLifecycle.create({
             binding: {
@@ -191,12 +201,13 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
         createdUserTools.inheritUserTools(callerUserTools);
       }
       const promptText = plan.fork
-        ? `${FORK_CONTEXT_NOTICE}\n\n${opts.prompt}`
+        ? opts.prompt
         : await this.applyPromptPrefix(plan.profileName, opts.prompt, lease!.runtime);
       return {
         agentId: created.id,
         profileName: plan.profileName,
         model: plan.model,
+        modelSource: plan.modelSource,
         promptText,
       };
     } finally {

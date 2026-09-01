@@ -26,6 +26,11 @@ import {
 } from '#/agent/permissionRules/permissionRules';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IConfigService } from '#/app/config/config';
+import { PERMISSION_SECTION } from '#/agent/permissionRules/configSection';
+import { IBashParserService } from '#/app/bashParser/bashParser';
+import { BashParserService } from '#/app/bashParser/bashParserService';
+import { IBootstrapService, type HostArgs } from '#/app/bootstrap/bootstrap';
 import { IGitService } from '#/app/git/git';
 import { findGitWorkTree } from '#/app/git/workTree';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -47,6 +52,8 @@ describe('AgentPermissionPolicyService chain', () => {
   let rules: PermissionRule[];
   let sessionApprovalRulePatterns: string[];
   let workspace: ReturnType<typeof workspaceStub>;
+  let hostArgs: HostArgs;
+  let dangerousCommandGuardEnabled: boolean;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -54,9 +61,23 @@ describe('AgentPermissionPolicyService chain', () => {
     rules = [];
     sessionApprovalRulePatterns = [];
     workspace = workspaceStub('/workspace');
+    hostArgs = { requestHeaders: {}, nonInteractive: false };
+    dangerousCommandGuardEnabled = true;
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
+        reg.definePartialInstance(IBootstrapService, {
+          get args() {
+            return hostArgs;
+          },
+        });
+        reg.definePartialInstance(IConfigService, {
+          get: ((section: string) =>
+            section === PERMISSION_SECTION && !dangerousCommandGuardEnabled
+              ? { dangerousCommandGuard: false }
+              : undefined) as IConfigService['get'],
+          onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
+        });
         reg.defineInstance(
           IAgentScopeContext,
           makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
@@ -98,6 +119,7 @@ describe('AgentPermissionPolicyService chain', () => {
         });
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
         reg.definePartialInstance(IGitService, { findWorkTree: async () => null });
+        reg.define(IBashParserService, BashParserService);
         reg.define(IAgentPermissionPolicyService, AgentPermissionPolicyService);
       },
       strict: true,
@@ -198,6 +220,212 @@ describe('AgentPermissionPolicyService chain', () => {
     });
   });
 
+  it.each(['manual', 'yolo'] as const)(
+    'asks for shutdown in %s mode',
+    async (currentMode) => {
+      mode = currentMode;
+
+      await expect(evaluate({
+        toolName: 'Bash',
+        args: { command: 'shutdown -h now', timeout: 60 },
+      })).resolves.toMatchObject({
+        policyName: 'dangerous-command-ask',
+        result: { kind: 'ask', reason: { dangerous_command: 'shutdown' } },
+      });
+    },
+  );
+
+  it.each([
+    ['shutdown -h now', 'shutdown'],
+    ['reboot', 'reboot'],
+    ['rm -rf /tmp/build', 'rm -rf'],
+    ['dd if=/dev/zero of=/dev/sda bs=1M', 'dd'],
+  ] as const)('denies `%s` in auto mode', async (command, matched) => {
+    mode = 'auto';
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command, timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'dangerous-command-ask',
+      result: { kind: 'deny', reason: { dangerous_command: matched } },
+    });
+  });
+
+  it.each([
+    ['sudo reboot', 'reboot'],
+    ['sudo -u root reboot', 'reboot'],
+    ['/sbin/poweroff', 'poweroff'],
+    ['echo ok && shutdown now', 'shutdown'],
+    ['if halt; then echo x; fi', 'halt'],
+    ['echo $(reboot)', 'reboot'],
+    ['init 0', 'init'],
+    ['telinit 6', 'telinit'],
+    ['mkfs.ext4 /dev/sda1', 'mkfs.ext4'],
+    ['wipefs -a /dev/sda', 'wipefs'],
+    ['dd if=/dev/zero of=/dev/sda bs=1M', 'dd'],
+    ['Restart-Computer -Force', 'restart-computer'],
+    ['Stop-Computer', 'stop-computer'],
+    ['bcdedit /set x y', 'bcdedit'],
+    ['diskpart /s script.txt', 'diskpart'],
+    ['format C:', 'format'],
+    ['SHUTDOWN /s /t 0', 'shutdown'],
+    ['shut\\down -h now', 'shutdown'],
+    ['systemctl poweroff', 'systemctl poweroff'],
+    ['systemctl --user reboot', 'systemctl reboot'],
+    ['bash -c "shutdown now"', 'shutdown'],
+    ['rm -rf /tmp/build', 'rm -rf'],
+    ['rm -fr dir', 'rm -rf'],
+    ['rm -r -f dir', 'rm -rf'],
+    ['rm -R --force dir', 'rm -rf'],
+    ['rm --recursive --force dir', 'rm -rf'],
+    ['rm -rfv dir', 'rm -rf'],
+    ['sudo rm -rf dir', 'rm -rf'],
+    ['sudo -u root rm --recursive --force dir', 'rm -rf'],
+    ['echo ok && rm -rf dir', 'rm -rf'],
+    ['env rm -rf dir', 'rm -rf'],
+    ['env FOO=bar rm -rf dir', 'rm -rf'],
+    ['env -i FOO=bar shutdown now', 'shutdown'],
+    ['nohup rm -rf dir', 'rm -rf'],
+    ['exec reboot', 'reboot'],
+    ['command reboot', 'reboot'],
+    ['builtin shutdown now', 'shutdown'],
+    ['nice -n 5 poweroff', 'poweroff'],
+    ['nice --adjustment=5 shutdown now', 'shutdown'],
+    ['busybox poweroff', 'poweroff'],
+    ['busybox rm -rf dir', 'rm -rf'],
+    ['eval "shutdown now"', 'shutdown'],
+    ['eval rm -rf dir', 'rm -rf'],
+    ['bash -lc "shutdown now"', 'shutdown'],
+    ['bash -c "env rm -rf dir"', 'rm -rf'],
+    ["bash -c 'eval \"shutdown now\"'", 'shutdown'],
+  ] as const)('asks for `%s` in yolo mode', async (command, matched) => {
+    mode = 'yolo';
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command, timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'dangerous-command-ask',
+      result: { kind: 'ask', reason: { dangerous_command: matched } },
+    });
+  });
+
+  it.each([
+    'init 3',
+    'dd if=/dev/zero of=/dev/null bs=1M count=1',
+    'echo shutdown',
+    'systemctl status sshd',
+    'bash -c "echo ok"',
+    'rm -r dir',
+    'rm -f file',
+    'rm -i file',
+    'rm --recursive dir',
+    'rm --force file',
+    'rm dir',
+    'env FOO=bar echo ok',
+    'command -v rm',
+    'command echo ok',
+    'nohup echo ok',
+    'nice echo ok',
+    'busybox --list',
+    'eval "echo ok"',
+  ])('does not flag `%s` in auto mode', async (command) => {
+    mode = 'auto';
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command, timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'auto-mode-approve',
+      result: { kind: 'approve' },
+    });
+  });
+
+  it.each(['$CMD --force', 'bash -c "echo $HOME"', 'echo "unterminated'])(
+    'asks for unanalyzable command `%s` in yolo mode',
+    async (command) => {
+      mode = 'yolo';
+
+      await expect(evaluate({
+        toolName: 'Bash',
+        args: { command, timeout: 60 },
+      })).resolves.toMatchObject({
+        policyName: 'dangerous-command-ask',
+        result: { kind: 'ask', reason: { unanalyzable_command: true } },
+      });
+    },
+  );
+
+  it.each(['$CMD --force', 'bash -c "echo $HOME"', 'env $FLAGS'])(
+    'denies unanalyzable command `%s` in auto mode',
+    async (command) => {
+      mode = 'auto';
+
+      await expect(evaluate({
+        toolName: 'Bash',
+        args: { command, timeout: 60 },
+      })).resolves.toMatchObject({
+        policyName: 'dangerous-command-ask',
+        result: { kind: 'deny', reason: { unanalyzable_command: true } },
+      });
+    },
+  );
+
+  it('does not load the dangerous command policy for non-interactive hosts', async () => {
+    hostArgs = { ...hostArgs, nonInteractive: true };
+    mode = 'auto';
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'rm -rf /tmp/build', timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'auto-mode-approve',
+      result: { kind: 'approve' },
+    });
+  });
+
+  it('does not load the dangerous command policy when disabled by config', async () => {
+    dangerousCommandGuardEnabled = false;
+    mode = 'yolo';
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'shutdown -h now', timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'yolo-mode-approve',
+      result: { kind: 'approve' },
+    });
+  });
+
+  it('does not let session approval history exempt dangerous commands', async () => {
+    sessionApprovalRulePatterns.push('Bash(shutdown -h now)');
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'shutdown -h now', timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'dangerous-command-ask',
+      result: { kind: 'ask' },
+    });
+  });
+
+  it('keeps deny rules above dangerous command ask', async () => {
+    rules.push({
+      decision: 'deny',
+      scope: 'user',
+      pattern: 'Bash(shutdown *)',
+    });
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'shutdown -h now', timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'user-configured-deny',
+      result: { kind: 'deny' },
+    });
+  });
+
   it.each(['AgentSwarm', 'EnterPlanMode', 'ExitPlanMode', 'CreateGoal'] as const)(
     'approves %s through the default tool allowlist in manual mode',
     async (toolName) => {
@@ -227,6 +455,13 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
+        reg.definePartialInstance(IBootstrapService, {
+          args: { requestHeaders: {}, nonInteractive: false },
+        });
+        reg.definePartialInstance(IConfigService, {
+          get: (() => undefined) as IConfigService['get'],
+          onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
+        });
         reg.defineInstance(
           IAgentScopeContext,
           makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
@@ -267,6 +502,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
         reg.definePartialInstance(IGitService, {
           findWorkTree: (cwd: string) => findGitWorkTree(hostFs, cwd),
         });
+        reg.define(IBashParserService, BashParserService);
         reg.define(IAgentPermissionPolicyService, AgentPermissionPolicyService);
       },
       strict: true,

@@ -7,11 +7,12 @@ import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { ILogService } from '#/_base/log/log';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
-import {
-  IAgentContextInjectorService,
-  type ContextInjectionContext,
-  type ContextInjectionProvider,
-} from '#/agent/contextInjector/contextInjector';
+import type {
+  ContextInjectionContext,
+  ContextInjectionProvider,
+} from '#/features/reminder/types';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
+import { createReminderStub } from '../../features/reminder/stubs';
 import {
   IAgentTaskService,
   type AgentTask,
@@ -112,14 +113,17 @@ describe('AgentTaskService', () => {
       list: () => [],
     });
     ix.stub(IWireService, stubWireService());
-    ix.stub(IAgentContextInjectorService, {
-      register: (name, provider) => {
-        injectionProviders.set(name, provider as ContextInjectionProvider);
-        return toDisposable(() => {
-          injectionProviders.delete(name);
-        });
-      },
-    });
+    ix.stub(
+      IAgentReminderService,
+      createReminderStub({
+        register: (name, provider) => {
+          injectionProviders.set(name, provider as ContextInjectionProvider);
+          return toDisposable(() => {
+            injectionProviders.delete(name);
+          });
+        },
+      }),
+    );
     ix.stub(ITaskService, {
       run: () => {
         throw new Error('ITaskService.run is not used by this test');
@@ -697,9 +701,7 @@ describe('AgentTaskService', () => {
       list: () => [],
     });
     ix.stub(IWireService, stubWireService());
-    ix.stub(IAgentContextInjectorService, {
-      register: () => toDisposable(() => {}),
-    });
+    ix.stub(IAgentReminderService, createReminderStub());
     ix.stub(ITaskService, {
       run: () => {
         throw new Error('ITaskService.run is not used by this test');
@@ -753,9 +755,7 @@ describe('AgentTaskService', () => {
       register: () => toDisposable(() => {}),
       list: () => [],
     });
-    ix.stub(IAgentContextInjectorService, {
-      register: () => toDisposable(() => {}),
-    });
+    ix.stub(IAgentReminderService, createReminderStub());
     ix.stub(ITaskService, {
       run: () => {
         throw new Error('ITaskService.run is not used by this test');

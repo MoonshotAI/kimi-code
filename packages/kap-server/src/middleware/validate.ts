@@ -55,10 +55,6 @@ function buildValidationEnvelope(
   };
 }
 
-/**
- * Build a Fastify `preHandler` that parses `req.body` against `schema`.
- * On success, replaces `req.body` with the parsed value.
- */
 export function validateBody<T>(schema: z.ZodType<T>): PreHandlerHook {
   return (req, reply, done) => {
     const result = schema.safeParse(req.body);
@@ -71,14 +67,6 @@ export function validateBody<T>(schema: z.ZodType<T>): PreHandlerHook {
   };
 }
 
-/**
- * Build a Fastify `preHandler` that parses `req.query` against `schema`.
- * On success, replaces `req.query` with the parsed value.
- *
- * Fastify deserializes query strings as `Record<string, string>` — so numeric
- * fields arrive as strings. The schema is responsible for coercing
- * (`z.coerce.number()` etc.) when needed; we don't pre-coerce here.
- */
 export function validateQuery<T>(schema: z.ZodType<T>): PreHandlerHook {
   return (req, reply, done) => {
     const result = schema.safeParse(req.query);
@@ -91,9 +79,6 @@ export function validateQuery<T>(schema: z.ZodType<T>): PreHandlerHook {
   };
 }
 
-/**
- * Build a Fastify `preHandler` that parses `req.params` against `schema`.
- */
 export function validateParams<T>(schema: z.ZodType<T>): PreHandlerHook {
   return (req, reply, done) => {
     const result = schema.safeParse(req.params);

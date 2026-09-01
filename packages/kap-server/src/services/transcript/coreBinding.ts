@@ -1,6 +1,8 @@
 import {
   IAgentLifecycleService,
   IAgentActivityView,
+  IAgentLoopService,
+  IAgentPromptService,
   IAgentTaskService,
   IEventBus,
   ISessionMetadata,
@@ -22,24 +24,11 @@ import {
   type ProjectorInteraction,
 } from './coreEventMap';
 
-/** Minimal warn sink (matches `JournalLogger`). */
 export interface TranscriptBindingLogger {
   warn(obj: unknown, msg: string): void;
 }
 
-/** The live binding plus its deferred seeding hook. */
 export interface TranscriptBinding extends IDisposable {
-  /**
-   * Announce interactions that were already pending at bind time.
-   * Deliberately NOT run during bind: the store (and the projector's tool
-   * map) is empty until the initial history backfill lands, so an early
-   * announce misplaces the frame into a synthetic step and loses the
-   * resolve-time `approvalId` back-link. The service calls it after the
-   * initial backfill for the main agent, and after each agent's on-demand
-   * backfill for that agent's interactions — pass `agentId` to seed only the
-   * pendings routed to that agent (a subagent's pending must not be placed
-   * before its own history is replayed).
-   */
   seedPendingInteractions(agentId?: string): void;
 }
 
@@ -78,7 +67,7 @@ export function bindSessionTranscript(
   const projectorFor = (agentId: string): AgentTranscriptProjector => {
     let projector = projectors.get(agentId);
     if (projector === undefined) {
-      projector = new AgentTranscriptProjector(agentId, {
+      projector = new AgentTranscriptProjector(agentId, store.sessionId, {
         stepFrames: (turnId, stepId) =>
           store.getAgent(agentId)?.getTurn(turnId)?.steps.find((s) => s.stepId === stepId)?.frames,
         toolFrame: (toolCallId) => {
@@ -104,6 +93,7 @@ export function bindSessionTranscript(
           return turn === undefined || `t${turn.turnId}` !== turnId ? undefined : turn.step;
         },
         turn: (turnId) => store.getAgent(agentId)?.getTurn(turnId),
+        items: () => store.getAgent(agentId)?.getItems(),
       });
       const agentHandle = agents.handleOf(agentId);
       if (agentHandle !== undefined) {
@@ -138,6 +128,11 @@ export function bindSessionTranscript(
     const busD = bus.subscribe((event) =>
       applyOps(handle.id, projector.map(event as ProjectorBusEvent)),
     );
+    const loopStatus = handle.accessor.get(IAgentLoopService)?.status();
+    if (loopStatus?.state === 'running' && loopStatus.activeTurnId !== undefined) {
+      const promptId = handle.accessor.get(IAgentPromptService)?.list().active?.id;
+      projector.seedActiveTurn({ turnId: loopStatus.activeTurnId, promptId });
+    }
     const list = agentDisposables.get(handle.id) ?? [];
     list.push(busD);
     agentDisposables.set(handle.id, list);
@@ -161,6 +156,7 @@ export function bindSessionTranscript(
       kind: interaction.kind,
       payload: interaction.payload,
       origin: interaction.origin,
+      createdAt: interaction.createdAt,
     };
     applyOps(agentId, projectorFor(agentId).mapInteractionRequested(request));
   };

@@ -26,6 +26,12 @@ export const cancelTaskResultSchema = z.object({
 });
 export type CancelTaskResult = z.infer<typeof cancelTaskResultSchema>;
 
+export const detachTaskResultSchema = z.object({
+  detached: z.boolean(),
+  status: taskStatusSchema,
+});
+export type DetachTaskResult = z.infer<typeof detachTaskResultSchema>;
+
 export const taskAlreadyFinishedDataSchema = z.object({
   cancelled: z.literal(false),
 });

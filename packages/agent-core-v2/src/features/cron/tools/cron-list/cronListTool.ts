@@ -1,8 +1,7 @@
 import type { ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { AgentCron, type CronRuntime } from '#/features/cron/cronAgentRuntime';
+import { IAgentCronService } from '#/features/cron/cronService';
 import { cronToHuman, parseCronExpression } from '#/features/cron/internal/cron-expr';
 import { type CronTask } from '#/features/cron/cronTask';
 import { formatLocalIsoWithOffset } from '#/features/cron/internal/format';
@@ -33,13 +32,9 @@ export class CronListTool implements ICronListTool {
   );
 
   constructor(
-    @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
+    @IAgentCronService private readonly cron: IAgentCronService,
     @IAgentScopeContext private readonly scope: IAgentScopeContext,
   ) {}
-
-  private get cron(): CronRuntime {
-    return this.manager.resolve(this.scope.agentContext, AgentCron);
-  }
 
   resolveExecution(_args: CronListInput): ToolExecution {
     const denied = mainAgentOnlyExecution(this.scope, CRON_MAIN_AGENT_ONLY);

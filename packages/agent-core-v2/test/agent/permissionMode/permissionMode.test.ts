@@ -3,10 +3,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
-import {
-  IAgentContextInjectorService,
-  type ContextInjectionProvider,
-} from '#/agent/contextInjector/contextInjector';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
+import type { ContextInjectionProvider } from '#/features/reminder/types';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { PermissionModeInjection } from '#/agent/permissionMode/injection/permissionModeInjection';
 import { AgentPermissionModeService } from '#/agent/permissionMode/permissionModeService';
@@ -38,9 +36,8 @@ let registeredInjection:
     }
   | undefined;
 
-const injectorStub: IAgentContextInjectorService = {
-  _serviceBrand: undefined,
-  register: (name, provider) => {
+const injectorStub: IAgentReminderService = {
+  register: (name: string, provider: ContextInjectionProvider) => {
     registeredInjection = { name, provider: provider as ContextInjectionProvider };
     return {
       dispose: () => {
@@ -48,8 +45,9 @@ const injectorStub: IAgentContextInjectorService = {
       },
     };
   },
+  notify: () => {},
   reconcileWhenIdle: async () => {},
-};
+} as unknown as IAgentReminderService;
 
 let disposables: DisposableStore;
 let ix: TestInstantiationService;
@@ -65,7 +63,7 @@ beforeEach(() => {
   ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-  ix.stub(IAgentContextInjectorService, injectorStub);
+  ix.stub(IAgentReminderService, injectorStub);
   ix.set(IAgentStateService, new AgentStateService());
   ix.set(IAgentPermissionModeService, new SyncDescriptor(AgentPermissionModeService));
   log = ix.get(IAppendLogStore);
@@ -190,16 +188,16 @@ describe('AgentPermissionModeService (wire-backed)', () => {
     svc.setMode('auto');
 
     let restoredProvider: ContextInjectionProvider | undefined;
-    const ix2 = disposables.add(new TestInstantiationService());
-    ix2.stub(IAgentContextInjectorService, {
-      _serviceBrand: undefined,
-      register: (_name, provider) => {
-        restoredProvider = provider as ContextInjectionProvider;
+    const states = new AgentStateService();
+    const reminder = {
+      register: (_name: string, provider: ContextInjectionProvider) => {
+        restoredProvider = provider;
         return { dispose: () => {} };
       },
-    });
-    ix2.set(IAgentStateService, new AgentStateService());
-    disposables.add(ix2.createInstance(PermissionModeInjection, svc));
+      notify: () => {},
+      reconcileWhenIdle: async () => {},
+    } as unknown as IAgentReminderService;
+    disposables.add(new PermissionModeInjection(svc, reminder, states));
     if (restoredProvider === undefined) throw new Error('expected restored provider');
 
     const run = () =>

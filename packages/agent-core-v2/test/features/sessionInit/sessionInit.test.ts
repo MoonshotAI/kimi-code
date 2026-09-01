@@ -12,7 +12,6 @@ import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSyste
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ErrorCodes, Error2 } from '#/errors';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
@@ -21,6 +20,7 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInitService } from '#/features/sessionInit/sessionInit';
 import { SessionInitService } from '#/features/sessionInit/sessionInitService';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
 
@@ -84,10 +84,13 @@ describe('SessionInitService', () => {
         get: (id: unknown) => {
           if (id === IAgentLifecycleService) return lifecycle;
           if (id === ISessionSubagentService) return lifecycle;
+          if (id === IAgentScopeContext) {
+            return { agentContext: stubAgentContext('main', 1) };
+          }
           if (id === IAgentProfileService) return profile;
           if (id === IAgentPermissionModeService) return permissionMode;
-          if (id === IAgentSystemReminderService) return { appendSystemReminder: appendReminder };
           if (id === IAgentAgentsMdReminderService) return { seedInjected };
+          if (id === IAgentReminderService) return { notify: appendReminder };
           if (id === IEventDispatcher) {
             return {
               flush,
@@ -168,11 +171,11 @@ describe('SessionInitService', () => {
     expect((runArgs[1] as { prompt: string }).prompt).toContain('Task requirements:');
 
     expect(appendReminder).toHaveBeenCalledTimes(1);
-    const [content, origin] = appendReminder.mock.calls[0] as [
+    const [content, notification] = appendReminder.mock.calls[0] as [
       string,
-      { kind: string; variant: string },
+      { variant: string },
     ];
-    expect(origin).toEqual({ kind: 'injection', variant: 'init' });
+    expect(notification).toEqual({ variant: 'init' });
     expect(content).toContain('The user just ran `/init` slash command.');
     expect(content).toContain('Latest AGENTS.md file content:');
     expect(content).toContain(AGENTS_MD);

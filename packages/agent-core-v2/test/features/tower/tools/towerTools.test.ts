@@ -175,6 +175,37 @@ describe('TowerInitTool', () => {
     expect(towerActive).toBe(true);
   });
 
+  it('accepts an explicit base branch and notes the checkout mismatch', async () => {
+    await git(repo, 'branch', 'develop');
+
+    const result = await run(ix.get(ITowerInitTool), { base: 'develop' });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('base branch: develop');
+    expect(result.output).toContain('the main checkout is on "main", not base "develop"');
+    const state = await new TowerStore(repo).load();
+    expect(state.base).toBe('develop');
+  });
+
+  it('reports an ignored base when re-initializing with a different one', async () => {
+    await git(repo, 'branch', 'develop');
+    await initViaTool();
+
+    const second = await run(ix.get(ITowerInitTool), { base: 'develop' });
+
+    expect(second.isError).toBeFalsy();
+    expect(second.output).toContain('requested base "develop" ignored');
+    const state = await new TowerStore(repo).load();
+    expect(state.base).toBe('main');
+  });
+
+  it('rejects a base that is not a local branch', async () => {
+    const result = await run(ix.get(ITowerInitTool), { base: 'origin/main' });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('does not exist as a local branch');
+  });
+
   it('is idempotent — a second run reports already-initialized and keeps state', async () => {
     await initViaTool();
     await run(ix.get(ITowerPlanTool), {
@@ -251,15 +282,15 @@ describe('TowerPlanTool', () => {
 });
 
 describe('TowerTeardownTool', () => {
-  it('tears down the workspace and exits tower mode', async () => {
+  it('tears down the workspace and keeps tower mode active', async () => {
     await initViaTool();
 
     const result = await run(ix.get(ITowerTeardownTool), {});
 
     expect(result.isError).toBeFalsy();
     expect(result.output).toContain('tower teardown:');
-    expect(result.output).toContain('Tower mode exited.');
-    expect(towerActive).toBe(false);
+    expect(result.output).toContain('Tower mode stays active');
+    expect(towerActive).toBe(true);
   });
 
   it('refuses to tear down while the owning session is live in this process', async () => {

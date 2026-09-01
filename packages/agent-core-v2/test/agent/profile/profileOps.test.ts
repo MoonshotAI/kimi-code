@@ -30,7 +30,7 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -233,7 +233,7 @@ function buildHost(key: string): {
     agentsMd: undefined,
     agentsMdWarning: undefined,
     agentsMdPaths: undefined,
-    onDidChange: Event.None as Event<void>,
+    onDidChange: Event.None as ISessionInstructionsProvider['onDidChange'],
   } satisfies ISessionInstructionsProvider);
   host.stub(IAgentAgentsMdReminderService, {
     _serviceBrand: undefined,
@@ -352,13 +352,7 @@ describe('AgentProfileService (wire-backed config.update)', () => {
   });
 
   it('persists the rendered prompt and disclosure snapshot in one bind record', async () => {
-    const environment: EnvironmentDisclosureSnapshot = {
-      cwd: '/work',
-      date: {
-        disclosed: true,
-        value: { localDate: '2026-07-29', timeZone: 'Asia/Shanghai' },
-      },
-    };
+    const environment: EnvironmentDisclosureSnapshot = { cwd: '/work' };
     svc.applyBindingSnapshot({
       modelAlias: 'kimi-code',
       profileName: 'agent',
@@ -397,13 +391,7 @@ describe('AgentProfileService (wire-backed config.update)', () => {
   });
 
   it('replays a legacy config.update record with an explicit renderGeneration verbatim', async () => {
-    const environment: EnvironmentDisclosureSnapshot = {
-      cwd: '/work',
-      date: {
-        disclosed: true,
-        value: { localDate: '2026-07-29', timeZone: 'Asia/Shanghai' },
-      },
-    };
+    const environment: EnvironmentDisclosureSnapshot = { cwd: '/work' };
 
     const replay = buildHost('profile-replay-legacy-generation');
     await restoreTestEventDispatcher(

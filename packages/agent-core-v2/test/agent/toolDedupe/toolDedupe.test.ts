@@ -501,6 +501,38 @@ describe('AgentToolDedupeService', () => {
       expect(final!.result.isError).toBe(true);
       expect(final!.result.output as string).toContain('<system-reminder>');
     });
+
+    it('mirrors the reminder into spill.suffix for results carrying a spill', async () => {
+      const h = createHarness();
+      const tool = new EchoTool('X', () => ({
+        output: 'truncated view',
+        truncated: true,
+        spill: { outputPath: '/tmp/log' },
+      }));
+      h.registry.register(tool);
+      for (let i = 0; i < 2; i += 1) {
+        await runStep(h, 1, i + 1, [toolCall(`p${String(i)}`, 'X', {})]);
+      }
+      const [final] = await runStep(h, 1, 3, [toolCall('final', 'X', {})]);
+      expect(final!.result.spill?.suffix).toBe(REMINDER_TEXT_1);
+    });
+
+    it('appends the reminder after an existing spill suffix', async () => {
+      const h = createHarness();
+      const tool = new EchoTool('X', () => ({
+        output: 'truncated view',
+        truncated: true,
+        spill: { outputPath: '/tmp/log', suffix: 'Command failed with exit code: 1.' },
+      }));
+      h.registry.register(tool);
+      for (let i = 0; i < 2; i += 1) {
+        await runStep(h, 1, i + 1, [toolCall(`p${String(i)}`, 'X', {})]);
+      }
+      const [final] = await runStep(h, 1, 3, [toolCall('final', 'X', {})]);
+      expect(final!.result.spill?.suffix).toBe(
+        'Command failed with exit code: 1.' + REMINDER_TEXT_1,
+      );
+    });
   });
 
   describe('key canonicalization', () => {
@@ -700,6 +732,66 @@ describe('AgentToolDedupeService', () => {
         event: 'tool_call',
         properties: expect.objectContaining({ tool_call_id: 'c2', dup_type: 'cross_step' }),
       });
+    });
+
+    it('counts interleaved tool calls across a turn without injecting a reminder', async () => {
+      const h = createHarness();
+      h.registry.register(new EchoTool('A'));
+      h.registry.register(new EchoTool('B'));
+      h.registry.register(new EchoTool('C'));
+
+      await runStep(h, 7, 1, [toolCall('a1', 'A', {})]);
+      await runStep(h, 7, 2, [toolCall('b1', 'B', {})]);
+      await runStep(h, 7, 3, [toolCall('c1', 'C', {})]);
+      await runStep(h, 7, 4, [toolCall('a2', 'A', {})]);
+      await runStep(h, 7, 5, [toolCall('b2', 'B', {})]);
+      const [last] = await runStep(h, 7, 6, [toolCall('c2', 'C', {})]);
+
+      expect(last!.result.output as string).not.toContain('<system-reminder>');
+      expect(telemetryEvents.filter((e) => e.event === 'tool_call_turn_repeat')).toEqual([
+        expect.objectContaining({
+          event: 'tool_call_turn_repeat',
+          properties: expect.objectContaining({
+            turn_id: 7,
+            step_no: 4,
+            tool_call_id: 'a2',
+            tool_name: 'A',
+            turn_repeat_count: 1,
+          }),
+        }),
+        expect.objectContaining({
+          event: 'tool_call_turn_repeat',
+          properties: expect.objectContaining({
+            turn_id: 7,
+            step_no: 5,
+            tool_call_id: 'b2',
+            tool_name: 'B',
+            turn_repeat_count: 2,
+          }),
+        }),
+        expect.objectContaining({
+          event: 'tool_call_turn_repeat',
+          properties: expect.objectContaining({
+            turn_id: 7,
+            step_no: 6,
+            tool_call_id: 'c2',
+            tool_name: 'C',
+            turn_repeat_count: 3,
+          }),
+        }),
+      ]);
+      expect(telemetryEvents.filter((e) => e.event === 'tool_call_repeat')).toHaveLength(0);
+    });
+
+    it('does not carry turn repeat telemetry across turns', async () => {
+      const h = createHarness();
+      h.registry.register(new EchoTool('Read'));
+
+      await runStep(h, 7, 1, [toolCall('first', 'Read', { path: '/a' })]);
+      telemetryEvents.length = 0;
+      await runStep(h, 8, 1, [toolCall('new-turn', 'Read', { path: '/a' })]);
+
+      expect(telemetryEvents.filter((e) => e.event === 'tool_call_turn_repeat')).toHaveLength(0);
     });
 
     it('merges the request trace id into dedupe and repeat telemetry', async () => {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   cancelTaskResultSchema,
+  detachTaskResultSchema,
   getTaskQuerySchema,
   getTaskResponseSchema,
   listTasksQuerySchema,
@@ -49,6 +50,7 @@ describe('getTaskResponseSchema', () => {
       description: 'spin up x',
       status: 'running' as const,
       created_at: '2026-06-04T10:00:00.000Z',
+      run_in_background: true,
     };
     expect(getTaskResponseSchema.parse(t).kind).toBe('subagent');
   });
@@ -58,6 +60,21 @@ describe('cancelTaskResultSchema', () => {
   it('requires cancelled: true literal', () => {
     expect(cancelTaskResultSchema.parse({ cancelled: true })).toEqual({ cancelled: true });
     expect(cancelTaskResultSchema.safeParse({ cancelled: false }).success).toBe(false);
+  });
+});
+
+describe('detachTaskResultSchema', () => {
+  it('accepts a detached result with a wire status', () => {
+    expect(detachTaskResultSchema.parse({ detached: true, status: 'running' })).toEqual({
+      detached: true,
+      status: 'running',
+    });
+  });
+  it('rejects engine-only statuses and missing flags', () => {
+    expect(detachTaskResultSchema.safeParse({ detached: false, status: 'killed' }).success).toBe(
+      false,
+    );
+    expect(detachTaskResultSchema.safeParse({ status: 'running' }).success).toBe(false);
   });
 });
 

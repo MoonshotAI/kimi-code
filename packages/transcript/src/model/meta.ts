@@ -10,18 +10,12 @@ export interface GoalMeta {
   readonly budgetLimit?: number;
 }
 
-/** Mode badges (plan mode, swarm mode, tower mode) mirrored at session level. */
 export interface ModesMeta {
   readonly plan?: { readonly reviewPath?: string; readonly version?: number };
   readonly swarm?: { readonly trigger?: string };
   readonly tower?: Record<string, never>;
 }
 
-/**
- * Contract shape of `modes` inside a `meta.merge` op: each key may be the mode
- * object (set the badge) or `null` (the mode exited — clear it). An absent
- * key keeps the prior state.
- */
 export interface ModesMetaMerge {
   readonly plan?: { readonly reviewPath?: string; readonly version?: number } | null;
   readonly swarm?: { readonly trigger?: string } | null;
@@ -30,14 +24,8 @@ export interface ModesMetaMerge {
 
 export type ActivityMeta = 'idle' | 'turn' | 'disposing' | 'unknown';
 
-/** Turn end reason inside the 'ended' phase; mirrors the wire `turnEndReasonSchema`. */
 export type TurnEndReasonMeta = 'completed' | 'cancelled' | 'failed' | 'blocked';
 
-/**
- * What the agent is doing right now. Same shape as the wire
- * `agentPhaseSchema` (kap-server `protocol/events-zod.ts`), copied through
- * opaquely — this package must not import the server.
- */
 export type AgentPhaseMeta =
   | { readonly kind: 'idle' }
   | {
@@ -101,19 +89,12 @@ export type AgentPhaseMeta =
       readonly at: number;
     };
 
-/** Token usage slices of the agent status (the wire `UsageStatus` shape, verbatim). */
 export interface AgentUsageMeta {
   readonly byModel?: Readonly<Record<string, StepUsage>>;
   readonly currentTurn?: StepUsage;
   readonly total?: StepUsage;
 }
 
-/**
- * Agent status projected from `agent.status.updated` / `agent.activity.updated`.
- * Slices arrive piecemeal, so `meta.merge` shallow-merges this key one level
- * deep (`{...old.agent, ...new.agent}`) — a whole-object replace would drop
- * fields carried by earlier slices.
- */
 export interface AgentStatusMeta {
   readonly model?: string;
   readonly thinkingEffort?: string;
@@ -132,7 +113,6 @@ export interface TranscriptMeta {
   readonly agent?: AgentStatusMeta;
 }
 
-/** Contract shape of a `meta.merge` payload — like {@link TranscriptMeta}, but mode keys and `goal` may be `null` to clear. */
 export type TranscriptMetaMerge = Omit<TranscriptMeta, 'modes' | 'goal'> & {
   readonly modes?: ModesMetaMerge;
   readonly goal?: GoalMeta | null;

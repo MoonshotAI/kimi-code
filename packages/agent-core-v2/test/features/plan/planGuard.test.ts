@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
+import { createReminderStub } from '../reminder/stubs';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type {
@@ -174,9 +175,7 @@ describe('AgentPlanService plan-guard listener', () => {
           sessionDir: SESSION_DIR,
         });
         reg.definePartialInstance(IAgentContextMemoryService, {});
-        reg.definePartialInstance(IAgentContextInjectorService, {
-          register: () => ({ dispose: () => {} }),
-        });
+        reg.defineInstance(IAgentReminderService, createReminderStub());
         reg.definePartialInstance(IAgentTelemetryContextService, { set: () => {} });
         reg.defineInstance(IAgentToolExecutorService, executorEvents.executor);
         reg.defineInstance(IAgentToolApprovalService, toolApproval);

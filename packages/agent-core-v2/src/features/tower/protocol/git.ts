@@ -12,12 +12,25 @@ export class GitError extends Error {
   }
 }
 
-export async function git(cwd: string, args: readonly string[]): Promise<string> {
+export interface GitOptions {
+  readonly env?: Readonly<Record<string, string>>;
+}
+
+export async function git(
+  cwd: string,
+  args: readonly string[],
+  options: GitOptions = {},
+): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
       'git',
       [...args],
-      { cwd, timeout: GIT_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 },
+      {
+        cwd,
+        timeout: GIT_TIMEOUT_MS,
+        maxBuffer: 16 * 1024 * 1024,
+        env: options.env === undefined ? process.env : { ...process.env, ...options.env },
+      },
       (error, stdout, stderr) => {
         if (error !== null) {
           reject(new GitError(args, stderr || error.message));
@@ -29,7 +42,6 @@ export async function git(cwd: string, args: readonly string[]): Promise<string>
   });
 }
 
-/** `git` that returns null instead of throwing when the command fails. */
 export async function tryGit(cwd: string, args: readonly string[]): Promise<string | null> {
   try {
     return await git(cwd, args);
@@ -62,6 +74,10 @@ export async function branchExists(cwd: string, branch: string): Promise<boolean
   );
 }
 
+export async function isAncestor(cwd: string, ancestor: string, ref: string): Promise<boolean> {
+  return (await tryGit(cwd, ['merge-base', '--is-ancestor', ancestor, ref])) !== null;
+}
+
 export async function worktreeAdd(
   cwd: string,
   path: string,
@@ -75,11 +91,6 @@ export async function worktreeAdd(
   await git(cwd, ['worktree', 'add', path, '-b', branch, base]);
 }
 
-/**
- * Removal is always `--force`: the caller's dirty check is the data-loss gate.
- * A plain `git worktree remove` additionally refuses clean worktrees that
- * contain initialized submodules, which must not strand a clean teardown.
- */
 export async function worktreeRemove(cwd: string, path: string): Promise<void> {
   await git(cwd, ['worktree', 'remove', '--force', path]);
 }
@@ -94,7 +105,6 @@ export async function mergeNoFf(cwd: string, branch: string): Promise<string> {
   return branchTip(cwd, 'HEAD');
 }
 
-/** Changed files of `ref` relative to `base` (three-dot, i.e. since merge-base). */
 export async function diffNameOnly(
   cwd: string,
   base: string,

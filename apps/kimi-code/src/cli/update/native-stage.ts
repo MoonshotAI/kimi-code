@@ -12,6 +12,7 @@ import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { chmod, mkdir, open, readFile, readdir, rename, rm, rmdir, stat, unlink } from 'node:fs/promises';
 import { basename, join } from 'node:path';
+import { createZstdDecompress } from 'node:zlib';
 
 import { valid } from 'semver';
 import { z } from 'zod';
@@ -186,14 +187,16 @@ export async function hashFileSha256(filePath: string): Promise<string | null> {
 /**
  * Whether a `.staging/` entry is an updater-owned artifact: a staged
  * executable (`kimi-<version>[.<pid>.<epoch-ms>.<n>][.exe]`) or a download
- * intermediate (the same plus `.part`). Ownership derives from the
- * semver/file-name contract (prerelease and build metadata included), so
- * foreign files in the directory are never matched.
+ * intermediate (the same plus `.part`, optionally with a `.zst` infix).
+ * Ownership derives from the semver/file-name contract (prerelease and
+ * build metadata included), so foreign files in the directory are never
+ * matched.
  */
 function isUpdaterOwnedStagingFile(entry: string): boolean {
   if (!entry.startsWith('kimi-')) return false;
   let name = entry.slice('kimi-'.length);
   if (name.endsWith('.part')) name = name.slice(0, -'.part'.length);
+  if (name.endsWith('.zst')) name = name.slice(0, -'.zst'.length);
   if (name.endsWith('.exe')) name = name.slice(0, -'.exe'.length);
   // Published artifacts may carry a unique per-worker infix after the
   // version (.<pid>.<epoch-ms>.<n>, or the older .<pid>.<n>) — try with and
@@ -366,6 +369,45 @@ async function downloadAndHash(
 }
 
 /**
+ * Inflate a downloaded `.zst` artifact into `destPath`, hashing the plain
+ * bytes as they stream through; **throws** when the result does not match
+ * the manifest's bare-binary checksum. Returns the decompressed size.
+ */
+async function decompressAndHash(
+  zstPath: string,
+  destPath: string,
+  expectedSha256: string,
+): Promise<number> {
+  const hash = createHash('sha256');
+  let size = 0;
+  const file = await open(destPath, 'w');
+  try {
+    for await (const chunk of createReadStream(zstPath).pipe(createZstdDecompress())) {
+      hash.update(chunk as Buffer);
+      size += (chunk as Buffer).length;
+      // Same short-write loop as downloadAndHash: FileHandle.write may
+      // persist fewer bytes than requested, so loop until the chunk is
+      // fully on disk.
+      let offset = 0;
+      while (offset < (chunk as Buffer).length) {
+        const { bytesWritten } = await file.write(chunk as Buffer, offset);
+        if (bytesWritten === 0) {
+          throw new Error('failed to write the native binary to disk (disk full?)');
+        }
+        offset += bytesWritten;
+      }
+    }
+  } finally {
+    await file.close();
+  }
+  const digest = hash.digest('hex');
+  if (digest !== expectedSha256) {
+    throw new Error(`sha256 mismatch: expected ${expectedSha256}, got ${digest}`);
+  }
+  return size;
+}
+
+/**
  * Download + verify `version` next to the running executable.
  *
  * Short-circuits with `already-staged` when the same version is ready on
@@ -446,7 +488,32 @@ export async function stageNativeUpdate(
   try {
     const manifest = await fetchNativeReleaseManifest(options.version, fetchImpl);
     const entry = selectPlatformEntry(manifest, platform, arch);
-    const size = await downloadAndHash(
+    // Prefer the zstd-compressed artifact when the manifest carries one and
+    // the runtime can inflate it (~4x smaller than the bare binary). Any
+    // failure in the compressed path falls back to the bare download below.
+    let size: number | undefined;
+    if (entry.compressed !== undefined && typeof createZstdDecompress === 'function') {
+      const zstPartPath = join(stagingDir, `${exeFileName}.zst.part`);
+      try {
+        await downloadAndHash(
+          nativeBinaryUrl(options.version, entry.compressed.filename),
+          zstPartPath,
+          entry.compressed.checksum,
+          fetchImpl,
+          options.onProgress,
+          options.idleTimeoutMs,
+        );
+        size = await decompressAndHash(zstPartPath, partPath, entry.checksum);
+        await rm(zstPartPath, { force: true });
+      } catch (error) {
+        console.warn(
+          `[update] compressed artifact unavailable, falling back to uncompressed download: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        await rm(zstPartPath, { force: true }).catch(() => {});
+        await rm(partPath, { force: true }).catch(() => {});
+      }
+    }
+    size ??= await downloadAndHash(
       nativeBinaryUrl(options.version, entry.filename),
       partPath,
       entry.checksum,

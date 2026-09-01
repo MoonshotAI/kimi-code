@@ -22,11 +22,17 @@ import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManage
 import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/mainAgent';
 import { agentContextOf } from '@moonshot-ai/agent-core-v2/agent/scopeContext/scopeContext';
-import { AgentInteraction } from '@moonshot-ai/agent-core-v2/features/interaction/interactionAgentRuntime';
+import { IAgentInteractionService } from '@moonshot-ai/agent-core-v2/features/interaction/interactionService';
 import type {
   InteractionKind,
   InteractionRequest,
 } from '@moonshot-ai/agent-core-v2/features/interaction/interaction';
+import type { SkillActivationOrigin } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
+import type {
+  PromptWithSkillsInput,
+  SkillActivationInput,
+} from '@moonshot-ai/agent-core-v2/features/skill/skill';
+import { IAgentSkillService } from '@moonshot-ai/agent-core-v2/features/skill/skillService';
 import {
   enqueueSessionInteraction,
   isSessionInteractionRecentlyResolved,
@@ -66,8 +72,9 @@ export function wireClone<T>(value: T): T {
 
 /**
  * `sessionInteractionService` stays on the wire after the engine moved the
- * interaction kernel into per-agent runtimes: the view aggregates the live
- * agents' `AgentInteraction` facades through the session's agent lifecycle.
+ * interaction kernel into per-agent services: the view aggregates the live
+ * agents' `IAgentInteractionService` facades through the session's agent
+ * lifecycle.
  */
 function interactionServiceView(session: ScopeLike): Record<string, unknown> {
   const manager = session.accessor.get(IAgentLifecycleService);
@@ -81,13 +88,32 @@ function interactionServiceView(session: ScopeLike): Record<string, unknown> {
     isRecentlyResolved: (id: string) => isSessionInteractionRecentlyResolved(manager, id),
     cancelPendingForTurn: (turnId: number) => {
       for (const context of manager.list()) {
-        manager.resolve(context, AgentInteraction).cancelPendingForTurn(turnId);
+        manager
+          .handleOf(context.agentId)
+          ?.accessor.get(IAgentInteractionService)
+          .cancelPendingForTurn(turnId);
       }
     },
     onDidChangePending: (listener: (event: unknown) => void) =>
       onSessionInteractionDidChangePending(manager, listener),
     onDidResolve: (listener: (event: unknown) => void) =>
       onSessionInteractionDidResolve(manager, listener),
+  };
+}
+
+/**
+ * `agentSkillService` stays on the wire after the engine moved the skill
+ * kernel into a per-agent DI service: the view forwards to the agent's
+ * `IAgentSkillService` resolved straight from the agent scope handle.
+ */
+function agentSkillServiceView(agent: IAgentScopeHandle): Record<string, unknown> {
+  const skill = agent.accessor.get(IAgentSkillService);
+  return {
+    activate: (input: SkillActivationInput) => skill.activate(input),
+    promptWithSkills: (input: PromptWithSkillsInput) => skill.promptWithSkills(input),
+    recordModelToolActivation: (origin: SkillActivationOrigin) => {
+      skill.recordModelToolActivation(origin);
+    },
   };
 }
 
@@ -209,6 +235,12 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
         throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
       }
       return interactionServiceView(resolved.like);
+    }
+    if (service === 'agentSkillService') {
+      if (resolved.kind !== 'agent') {
+        throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
+      }
+      return agentSkillServiceView(resolved.like as IAgentScopeHandle);
     }
     const token = serviceTokens[service];
     if (token === undefined) {

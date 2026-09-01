@@ -290,8 +290,10 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     const onDisk = await readConfigToml();
     expect(onDisk['default_model']).toBe('my-openai/gpt-4.1');
 
-    const auth = await getJson<{ ready: boolean; default_model: string | null }>('/api/v1/auth');
-    expect(auth.body.data).toMatchObject({ ready: true, default_model: 'my-openai/gpt-4.1' });
+    const config = await getJson<{ default_model: string | null }>('/api/v1/config');
+    expect(config.body.data.default_model).toBe('my-openai/gpt-4.1');
+    const auth = await getJson<{ models_ready: boolean }>('/api/v1/auth');
+    expect(auth.body.data).toMatchObject({ models_ready: true });
   });
 
   it('seeds the first model when the create body names no provider default', async () => {
@@ -446,7 +448,7 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     });
   });
 
-  it('filters secondary_model pool entries whose provider was deleted', async () => {
+  it('leaves the secondary_model pool untouched when a provider is deleted', async () => {
     await boot(POOL_TOML);
     const { status } = await deleteJson<unknown>('/api/v1/providers/openai');
     expect(status).toBe(204);
@@ -454,17 +456,20 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     const onDisk = await readConfigToml();
     expect(onDisk['secondary_model']).toEqual({
       default_model: 'k2',
-      models: { k2: 'fast' },
+      models: { k2: 'fast', gpt4o: 'smart' },
     });
   });
 
-  it('drops the secondary_model section when its default dangles after deletion', async () => {
+  it('keeps the secondary_model section even when its default dangles after deletion', async () => {
     await boot(POOL_DANGLING_DEFAULT_TOML);
     const { status } = await deleteJson<unknown>('/api/v1/providers/openai');
     expect(status).toBe(204);
 
     const onDisk = await readConfigToml();
-    expect(onDisk['secondary_model']).toBeUndefined();
+    expect(onDisk['secondary_model']).toEqual({
+      default_model: 'gpt4o',
+      models: { k2: 'fast', gpt4o: 'smart' },
+    });
   });
 
   it('round-trips a created provider: delete removes every trace from config.toml', async () => {
@@ -710,7 +715,7 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     expect(onDisk['default_model']).toBe('gpt4o');
   });
 
-  it('repoints secondary_model pool entries on provider rename', async () => {
+  it('leaves secondary_model pool entries alone on provider rename', async () => {
     await boot(POOL_TOML);
     const { status } = await putJson<unknown>('/api/v1/providers/openai', {
       type: 'openai',
@@ -722,11 +727,11 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     const onDisk = await readConfigToml();
     expect(onDisk['secondary_model']).toEqual({
       default_model: 'k2',
-      models: { k2: 'fast', 'my-openai/gpt-4o': 'smart' },
+      models: { k2: 'fast', gpt4o: 'smart' },
     });
   });
 
-  it('filters secondary_model pool entries dropped by a provider edit', async () => {
+  it('leaves secondary_model pool entries alone on provider edit', async () => {
     await boot(POOL_TOML);
     const { status } = await putJson<unknown>('/api/v1/providers/openai', REPLACE_BODY);
     expect(status).toBe(200);
@@ -734,17 +739,20 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     const onDisk = await readConfigToml();
     expect(onDisk['secondary_model']).toEqual({
       default_model: 'k2',
-      models: { k2: 'fast' },
+      models: { k2: 'fast', gpt4o: 'smart' },
     });
   });
 
-  it('drops the secondary_model section when a provider edit orphans its default', async () => {
+  it('keeps the secondary_model section even when a provider edit orphans its default', async () => {
     await boot(POOL_DANGLING_DEFAULT_TOML);
     const { status } = await putJson<unknown>('/api/v1/providers/openai', REPLACE_BODY);
     expect(status).toBe(200);
 
     const onDisk = await readConfigToml();
-    expect(onDisk['secondary_model']).toBeUndefined();
+    expect(onDisk['secondary_model']).toEqual({
+      default_model: 'gpt4o',
+      models: { k2: 'fast', gpt4o: 'smart' },
+    });
   });
 
   it('rejects a rename to an existing provider id with 40921', async () => {

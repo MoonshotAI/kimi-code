@@ -24,6 +24,7 @@ const STATUS_EMOJI: Record<TowerMission['status'], string> = {
   blocked: '🔴',
   paused: '⏸️',
   merged: '✅',
+  abandoned: '🚫',
 };
 
 const INBOX_COUNT_LIMIT = 1000;
@@ -69,13 +70,15 @@ export class TowerStatusTool implements ITowerStatusTool {
 
           if (
             state.missions.length > 0 &&
-            state.missions.every((mission) => mission.status === 'merged')
+            state.missions.every(
+              (mission) => mission.status === 'merged' || mission.status === 'abandoned',
+            )
           ) {
             sections.push(
               '',
               '## Done',
               '',
-              'All missions are merged. Free the worktree checkouts now: run TowerTeardown (branches and .tower/comms/ are kept; dirty worktrees are protected).',
+              'All missions are merged or abandoned. Free the worktree checkouts now: run TowerTeardown (branches and .tower/comms/ are kept; dirty worktrees are protected).',
             );
           }
 
@@ -101,8 +104,10 @@ export class TowerStatusTool implements ITowerStatusTool {
   }
 
   private async renderReviewGate(store: TowerStore, state: TowerState): Promise<string[]> {
-    const pending = state.missions.filter((m) => m.status !== 'merged');
-    if (pending.length === 0) return ['(all missions merged — or none planned yet)'];
+    const pending = state.missions.filter(
+      (m) => m.status !== 'merged' && m.status !== 'abandoned',
+    );
+    if (pending.length === 0) return ['(no open missions — or none planned yet)'];
     const lines: string[] = [];
     for (const mission of pending) {
       const review = await store.latestReview(mission.branch);

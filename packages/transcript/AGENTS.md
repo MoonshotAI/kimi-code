@@ -4,7 +4,7 @@ The isomorphic transcript rendering data layer — agent-granular L1 store, idem
 
 ## Comment conventions
 
-No comments — no file headers, no section banners, no statement-level narration; the code is the source of truth. The only exception is JSDoc attached to exported symbols (it flows into the generated `.d.ts` and IDE hover). Lint-suppression directives (`oxlint-disable` / `eslint-disable`) are allowed where they suppress an active rule for a deliberate pattern; other tooling directives (`@ts-expect-error`, `@ts-ignore`, …) stay banned — fix the underlying type problem instead. Enforced by `scripts/check-no-comments.mjs` (part of `pnpm lint`).
+No comments — no file headers, no section banners, no statement-level narration, no JSDoc (not even on exported symbols); the code is the source of truth. Lint-suppression directives (`oxlint-disable` / `eslint-disable`) are the only exception, allowed where they suppress an active rule for a deliberate pattern; other tooling directives (`@ts-expect-error`, `@ts-ignore`, …) stay banned — fix the underlying type problem instead. Enforced by `scripts/check-no-comments.mjs` (part of `pnpm lint`).
 
 ## Cold rebuild
 

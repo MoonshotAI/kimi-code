@@ -1,6 +1,6 @@
 # Server API
 
-The local server started by `kimi web` exposes two programmatic surfaces: a REST API (`/api/v1`, plus `/api/v2/sessions`) and a WebSocket event stream (`/api/v1/ws`). This page is the protocol reference for both. For how to start the server and its command-line options, see the [kimi command](./kimi-command.md#kimi-web) reference; for an end-to-end walkthrough, see [Local server and API](../guides/server.md).
+The local server started by `kimi web` exposes two programmatic surfaces: a REST API (`/api/v1`, plus `/api/v2/sessions` and `/api/v2/mcp`) and a WebSocket event stream (`/api/v1/ws`). This page is the protocol reference for both. For how to start the server and its command-line options, see the [kimi command](./kimi-command.md#kimi-web) reference; for an end-to-end walkthrough, see [Drive a session over the API](#drive-a-session-over-the-api) below.
 
 This page is a curated, human-readable reference: it documents every endpoint's parameters, request bodies, and response shapes below. The precise machine-readable schema of every endpoint is owned by the server's live specification documents: `GET /openapi.json` (OpenAPI) and `GET /asyncapi.json` (AsyncAPI), both generated from the same validation schemas the server enforces at runtime. Both require authentication; when this page and the live spec ever disagree, the live spec wins.
 
@@ -22,7 +22,7 @@ All `/api/*` paths (including `/openapi.json` and `/asyncapi.json`) require the 
 - `GET /api/v1/healthz` (liveness probe)
 - Static web assets (non-`/api/` paths)
 
-How to carry it: REST uses the `Authorization: Bearer <token>` header; the WebSocket upgrade accepts the same header or the subprotocol `kimi-code.bearer.<token>`. Token generation and rotation are covered in [Local server and API: Authentication](../guides/server.md#authentication).
+How to carry it: REST uses the `Authorization: Bearer <token>` header; the WebSocket upgrade accepts the same header or the subprotocol `kimi-code.bearer.<token>`. Token generation and rotation are covered in [Using Kimi Code in the browser: Getting started](../guides/web.md#getting-started).
 
 Failed authentication returns HTTP 401 with envelope code `40101`. On non-loopback binds, a source that fails authentication 10 times within 60 seconds is banned for 60 seconds, during which every request gets HTTP 429 (code `42901`).
 
@@ -79,6 +79,65 @@ List endpoints come in two styles:
 - **Cursor style**: `before_id` / `after_id` (mutually exclusive) plus `page_size` (1–100), responding with `{ items, has_more }`. Used by the session list, message list, transcript, and others.
 - **`page_token`**: an opaque token (bound to a fingerprint of the query conditions), used by `POST /api/v1/search` and `GET /api/v2/sessions`. Changing any query condition mid-pagination invalidates the token: v2 returns `40922`, search returns `40001`. `GET /api/v2/sessions` also offers a stateless `page` page-number mode as an alternative.
 
+## Drive a session over the API
+
+The minimal flow with curl: check the server → create a session → subscribe to events → submit a prompt → read history back. The examples assume the server runs at the default address and the token is stored in the shell variable `TOKEN`.
+
+1. Check server status:
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:58627/api/v1/meta
+```
+
+Every JSON response is wrapped in a uniform envelope — `{ "code": 0, "msg": "success", "data": ..., "request_id": "..." }`. The business outcome lives in `code` (`0` means success); the HTTP status only reports transport-level results.
+
+2. Create a session; `metadata.cwd` sets the working directory:
+
+```sh
+curl -s -X POST http://127.0.0.1:58627/api/v1/sessions \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"metadata": {"cwd": "/path/to/project"}}'
+```
+
+The returned `data.id` (shaped like `session_...`) is the session id used by every subsequent request.
+
+3. Connect to the WebSocket and subscribe to session events. Any WebSocket client works; below is a dependency-free Node.js script (Node.js 22+ ships a built-in `WebSocket` client):
+
+```js
+// subscribe.mjs — usage: TOKEN=... node subscribe.mjs session_...
+const ws = new WebSocket('ws://127.0.0.1:58627/api/v1/ws', [
+  `kimi-code.bearer.${process.env.TOKEN}`,
+]);
+ws.onmessage = (e) => console.log(e.data);
+ws.onopen = () =>
+  ws.send(
+    JSON.stringify({
+      type: 'subscribe',
+      id: '1',
+      payload: { session_ids: [process.argv[2]] },
+    }),
+  );
+```
+
+4. Submit a prompt:
+
+```sh
+curl -s -X POST http://127.0.0.1:58627/api/v1/sessions/<session_id>/prompts \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"content": [{"type": "text", "text": "Introduce this repository in one sentence"}]}'
+```
+
+The subscriber sees, in order: `turn.started` (turn begins) → `assistant.delta` (streaming text increments) → `tool.call.started` / `tool.result` when tool calls happen → `turn.ended` (turn finishes).
+
+5. Read history back over REST at any time:
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:58627/api/v1/sessions/<session_id>/messages?page_size=20"
+```
+
 ## REST endpoints
 
 Endpoints are grouped by resource below. A `:{action}` suffix in a path is the action convention — POST to `path:action` on a single resource for non-CRUD operations (such as `:fork` and `:archive` on a session).
@@ -128,7 +187,7 @@ These endpoints drive the managed Kimi OAuth login lifecycle and expose account-
 
 | Method and path | Description |
 | --- | --- |
-| `GET /api/v1/auth` | Auth readiness snapshot |
+| `GET /api/v1/auth` | Auth snapshot |
 | `POST /api/v1/oauth/login` | Start the OAuth device-code login flow |
 | `GET /api/v1/oauth/login` | Poll the login flow state |
 | `DELETE /api/v1/oauth/login` | Cancel a pending login flow |
@@ -139,9 +198,9 @@ These endpoints drive the managed Kimi OAuth login lifecycle and expose account-
 
 #### `GET /api/v1/auth`
 
-Auth readiness snapshot: whether the server has a usable model configuration, plus the managed provider's login state. `ready` is `true` when at least one provider is configured, a default model is set, and the managed provider (when present) is not revoked.
+Auth snapshot: whether the default model resolves to a usable provider configuration, plus the managed provider's login state. `models_ready` is `true` when the global `default_model` alias exists in the model table and resolves to a configured provider — including providerless flat models carrying their own `base_url` and models injected through `KIMI_MODEL_*` environment variables. It does not verify credentials, so a prompt can still fail afterwards with `40111` / `40112`.
 
-On success, `data` carries `ready` (boolean), `providers_count` (number of configured providers), `default_model` (the global default model alias, or `null`), and `managed_provider` (`null`, or `{ name, status }` with `status` one of `authenticated` / `expired` / `revoked` / `unauthenticated`).
+On success, `data` carries `models_ready` (boolean), `providers_count` (number of configured providers), and `managed_provider` (`null`, or `{ name, status }` with `status` one of `authenticated` / `expired` / `revoked` / `unauthenticated`). The global default model alias itself is read from `GET /api/v1/config` (`default_model`), not from this endpoint.
 
 #### `POST /api/v1/oauth/login`
 
@@ -249,7 +308,9 @@ On success, `data` is the config object; its fields mirror the top-level domains
 
 #### `POST /api/v1/config`
 
-Merge-patches the global configuration: each top-level domain in the body is deep-merged into that domain, and domains absent from the body are left untouched. Setting `yolo` to `true` is shorthand for `default_permission_mode: "yolo"`. After a successful update the server broadcasts the global `event.config.changed` event with the changed field names and the full updated config; a rejected patch (invalid value or persistence failure) returns `40001` with the underlying message.
+Merge-patches the global configuration: each top-level domain in the body is deep-merged into that domain, and domains absent from the body are left untouched. Setting `yolo` to `true` is shorthand for `default_permission_mode: "yolo"`; a rejected patch (invalid value or persistence failure) returns `40001` with the underlying message.
+
+Every config change — a successful update through this endpoint, an external edit of `config.toml`, or a server-side write such as an OAuth login refresh — is broadcast as the global `event.config.changed` event. Changes inside a short window are merged into one event carrying the affected domain names in `changedFields` (camelCase config domains, for example `defaultModel`) and the full current config projection in `config` (same shape as the `GET /api/v1/config` response).
 
 The body is a partial config object — any subset of the response domains above except `raw`, all optional:
 
@@ -1157,6 +1218,7 @@ Background tasks are the session's asynchronous units — background shells, sub
 | `GET /api/v1/sessions/{session_id}/tasks` | List background tasks |
 | `GET /api/v1/sessions/{session_id}/tasks/{task_id}` | Read a task (optional output preview) |
 | `POST /api/v1/sessions/{session_id}/tasks/{task_id}:cancel` | Cancel a task |
+| `POST /api/v1/sessions/{session_id}/tasks/{task_id}:detach` | Move a foreground task to the background |
 
 #### `GET /api/v1/sessions/{session_id}/tasks`
 
@@ -1191,7 +1253,7 @@ On success, `data` is the task object documented under `GET /api/v1/sessions/{se
 
 #### `POST /api/v1/sessions/{session_id}/tasks/{task_id}:cancel`
 
-Cancels a running task. It dispatches through `POST /api/v1/sessions/{session_id}/tasks/{tail}` with `cancel` as the only action — a bare task id or an unknown action fails `40001`.
+Cancels a running task. It dispatches through `POST /api/v1/sessions/{session_id}/tasks/{tail}` with `cancel` / `detach` as the supported actions — a bare task id or an unknown action fails `40001`.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1204,6 +1266,21 @@ On success, `data` is `{ cancelled: true }`.
 - `40401`: session not found
 - `40406`: no task with that id
 - `40904`: the task already finished; `data` carries `{ cancelled: false }` and `details.current_status` the terminal status
+
+#### `POST /api/v1/sessions/{session_id}/tasks/{task_id}:detach`
+
+Moves a running foreground task to the background without stopping it: the tool call waiting on the task returns immediately with a background-task result, the turn continues, and the task keeps running under the background task registry (its output is persisted, and its completion arrives as a task notification). Already-background or finished tasks are an idempotent no-op. It dispatches through `POST /api/v1/sessions/{session_id}/tasks/{tail}` with `cancel` / `detach` as the supported actions — a bare task id or an unknown action fails `40001`.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **Required.** Session id |
+| `task_id` | path | string | **Required.** Task id |
+
+On success, `data` is `{ detached, status }`: `detached` is `true` when the call moved a running foreground task to the background and `false` for the idempotent no-op; `status` is the task's status after the call.
+
+- `40001`: missing or unknown action suffix
+- `40401`: session not found
+- `40406`: no task with that id
 
 ### Skills, tools, and MCP
 
@@ -2039,6 +2116,7 @@ On success, `data` is `null`.
 | `GET /api/v2/sessions` | Next-generation session list, see below |
 | `POST /api/v2/sessions:archive` | Batch-archive sessions, see below |
 | `POST /api/v2/sessions:restore` | Batch-restore archived sessions, see below |
+| `/api/v2/mcp/*` | Unified MCP management plane, see below |
 | `/api/v1/debug/*` | Reflection debug RPC; mounted only with `--debug-endpoints` on loopback, not a stable protocol |
 
 #### `POST /api/v1/search`
@@ -2089,7 +2167,7 @@ A next-generation session query for list views — filtering, sorting, and field
 | `page_token` | Pagination token from the previous page |
 | `page` | Stateless 1-based page number; mutually exclusive with `page_token` (`40001` when combined) |
 
-Every response item carries the `workspace`, `meta`, and `activity` groups, plus `git` when `include=git` — or just `{ id, archived }` under `fields=id,archived`. Every page additionally carries `total`, the size of the filtered set. The page token binds the first page's query conditions (including the projection); changing them mid-pagination returns `40922`. `page` mode is a stateless alternative for jumping to arbitrary pages: every request is an independent snapshot, no token is minted, and `next_page_token` is always `null`.
+Every response item carries the `workspace`, `meta`, and `activity` groups, plus `git` when `include=git` — or just `{ id, archived }` under `fields=id,archived`. The `activity` group also reports `model`: the session's bound model alias while it is live in this process, `null` for cold (not currently loaded) sessions. Every page additionally carries `total`, the size of the filtered set. The page token binds the first page's query conditions (including the projection); changing them mid-pagination returns `40922`. `page` mode is a stateless alternative for jumping to arbitrary pages: every request is an independent snapshot, no token is minted, and `next_page_token` is always `null`.
 
 With `view=by_workspace` the same filtered, sorted set is re-projected into per-workspace groups, so an overview client replaces one polling loop per workspace with a single request:
 
@@ -2101,7 +2179,7 @@ With `view=by_workspace` the same filtered, sorted set is re-projected into per-
     "groups": [
       {
         "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" },
-        "sessions": [ { "id": "session_...", "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" }, "meta": { "title": "Fix the login page", "last_prompt": "adjust the button spacing", "created_at": 1787000000000, "updated_at": 1787000100000, "archived": false, "archived_at": null }, "activity": { "status": "idle" } } ],
+        "sessions": [ { "id": "session_...", "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" }, "meta": { "title": "Fix the login page", "last_prompt": "adjust the button spacing", "created_at": 1787000000000, "updated_at": 1787000100000, "archived": false, "archived_at": null }, "activity": { "status": "idle", "model": "kimi-for-coding" } } ],
         "total": 42
       }
     ],
@@ -2136,6 +2214,108 @@ Only a body validation failure fails the whole request (`40001`). Otherwise the 
   "request_id": "req_..."
 }
 ```
+
+### MCP management (`/api/v2/mcp`)
+
+The `/api/v2/mcp/*` routes are the server's unified MCP management plane: they manage the MCP server registry itself, independent of any session — global (user-level) CRUD with per-entry validation, connection-test probes, a locator-addressed inspection catalog, per-server auth-status listing, and the full OAuth flow lifecycle.
+
+| Method and path | Description |
+| --- | --- |
+| `GET /api/v2/mcp/servers` | List every known MCP server |
+| `GET /api/v2/mcp/servers/{name}` | Get one server by runtime name |
+| `POST /api/v2/mcp/servers` | Add a server to the user-level `mcp.json` |
+| `PUT /api/v2/mcp/servers/{name}` | Replace a user-level entry |
+| `DELETE /api/v2/mcp/servers/{name}` | Remove a user-level entry |
+| `POST /api/v2/mcp/servers:test` | Probe a real connection to one server |
+| `POST /api/v2/mcp/servers:inspect` | Locator-addressed catalog with a batched connection probe |
+| `GET /api/v2/mcp/auth-statuses` | Per-server OAuth state over the catalog |
+| `POST /api/v2/mcp/auth:begin` | Begin an interactive OAuth flow |
+| `POST /api/v2/mcp/auth:complete` | Await the browser callback and finish the code exchange |
+| `POST /api/v2/mcp/auth:cancel` | Tear down a begun OAuth flow |
+| `POST /api/v2/mcp/auth:reset` | Clear a server's stored credentials |
+
+Two addressing schemes appear on this plane. The CRUD routes and `servers:test` take a plain runtime `name`; the inspection and OAuth routes take a **locator** — `{ "source": "global", "name" }` for a file-layer entry or `{ "source": "plugin", "pluginId", "serverName" }` for a plugin-manifest entry — because a plugin entry and a file entry can share one runtime name. Inspection items additionally carry a stable `serverId` wire id: `global:<name>` or `plugin:<pluginId>:<serverName>` (URL-encoded).
+
+Most routes accept an optional `cwd` (a query parameter, or a body field on the `:`-action routes). Without it the catalog covers the user-level file and plugin manifests only; with it, the project-root and project-local layers of that directory join in — but only when the workspace is trusted, otherwise the project layers are skipped. For `servers:test` on a stdio server, `cwd` is also the child process's working directory. Connection probes and OAuth calls wait for the server's configuration to finish loading before acting.
+
+#### `GET /api/v2/mcp/servers` and `GET /api/v2/mcp/servers/{name}`
+
+Lists every MCP server the management plane knows about; the second route returns the single entry with that runtime name.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `name` | path | string | **Required (get only).** Runtime name of the server |
+| `cwd` | query | string | Include the project layers of this (trusted) directory |
+
+On success, `data` is an array of managed servers (a single object for the get route), each `{ name, config, source, origin, mutable, plugin? }`:
+
+- `source`: `global` (a config-file layer) or `plugin` (a plugin manifest)
+- `origin`: where the entry is defined — a file path or a plugin id
+- `mutable`: only user-level entries are mutable; plugin and project-layer entries are read-only
+- `config`: mutable entries carry the full config so edit UIs can prefill it; read-only entries are redacted to sorted key lists (`envKeys` / `headerKeys`) and never disclose secret values
+- `plugin`: `{ id, name }`, present on plugin entries
+
+- `40001`: validation failure
+- `40408`: no server with that name
+
+#### `POST` / `PUT` / `DELETE /api/v2/mcp/servers`
+
+Global CRUD against the user-level `mcp.json`. The add body is a full server config including `name` — `transport` (`stdio` / `http` / `sse`) discriminates the shape, and each entry is validated before it is written. The update body carries the same config without `name` (the path names the entry); delete takes no body. All three return the refreshed server list in `data`. A write whose name collides with a project-layer entry is rejected as read-only — edit the defining file instead; a same-named plugin entry does not block the write, and the new file entry shadows it.
+
+- `40001`: validation failure, or the target entry is read-only
+- `40408`: (update/delete) no server with that name
+
+#### `POST /api/v2/mcp/servers:test`
+
+Probes a real connection to one server and never persists anything. Pass either `name` to test a registry entry (plugin and trusted project layers included) or `server` (a full inline config, `name` included) to probe it as-is; passing both or neither fails `40001`.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `name` | body | string | Runtime name of a registry entry |
+| `server` | body | object | Inline server config to probe as-is |
+| `cwd` | body | string | Project layers join the resolution; also the stdio working directory |
+
+On success, `data` is `{ success, output }`: when the connection succeeds, `output` lists the server's available tools; otherwise it carries the failure text.
+
+- `40001`: both or neither target form passed, an invalid inline config, or a runtime name shared by multiple enabled servers
+- `40408`: no server with that name
+
+#### `POST /api/v2/mcp/servers:inspect`
+
+The locator-addressed catalog (redacted configs) plus a batched real-connection probe of every OAuth candidate.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `targets` | body | array | Locators narrowing the catalog; omitted inspects all servers |
+| `cwd` | body | string | Include the project layers of this (trusted) directory |
+
+On success, `data` is an array of inspections, each `{ serverId, locator, runtimeName, canonicalUrl?, origin, config, enabled, editable, authStatus, checkedAt?, error? }`: `canonicalUrl` is the credential URL of a remote server, `config` is the redacted view, and `authStatus` is one of `not-applicable` / `bearer-token` / `oauth-required` / `oauth-authorized` / `oauth-expired` / `unavailable`. A runtime name shared by multiple enabled servers cannot be probed unambiguously and reports `unavailable` with an explanatory `error`. A probe that hits an expired grant may refresh or invalidate the stored credentials.
+
+- `40001`: validation failure
+- `40408`: a `targets` locator matches nothing
+
+#### `GET /api/v2/mcp/auth-statuses`
+
+Per-server OAuth state over the registry catalog — the lightweight alternative to `servers:inspect` when only the auth dimension is needed.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `cwd` | query | string | Include the project layers of this (trusted) directory |
+| `verify` | query | string | `true` probes every OAuth candidate through a real connection; `false` is fully offline (config and stored tokens only); omitted preserves implicit OAuth detection, probing only unpinned remote servers without stored credentials |
+
+On success, `data` is an array of `{ name, authStatus }` with the same `authStatus` enum as `servers:inspect`. Verification probes may refresh or invalidate stored credentials.
+
+#### `POST /api/v2/mcp/auth:begin` / `:complete` / `:cancel` / `:reset`
+
+The OAuth flow lifecycle for remote servers. `auth:begin` takes a locator body (plus the optional `cwd` query) and answers `data` `{ status: "authorization-required", flowId, authorizationUrl }` — open the URL in a browser to grant access — or `{ status: "already-authorized" }` when a grant already exists. The target server must use a remote transport (`http` / `sse`) and must not carry a static bearer token; static headers are allowed only when the config explicitly sets `auth: "oauth"`.
+
+`auth:complete` waits for the browser callback of a begun flow and finishes the code exchange. Its body is `{ flowId, timeoutMs? }`: the wait defaults to 15 minutes (`timeoutMs` overrides it), an idle flow expires after 15 minutes regardless, and closing the HTTP connection aborts the wait. `data` is `null` on success.
+
+`auth:cancel` tears down a begun flow (`{ flowId }`) without finishing it; unknown flows are ignored. `auth:reset` takes a locator body and clears the server's stored credentials — the invalidation event reaches live sessions.
+
+- `40001`: validation failure — including an unknown `flowId` on `:complete`, or a server that cannot do OAuth (stdio transport, a static bearer token, or static headers without `auth: "oauth"`) on `:begin`
+- `40408`: (`:begin` / `:reset`) the locator matches nothing
+- `40929`: the OAuth flow itself failed
 
 ## WebSocket protocol
 
@@ -2175,7 +2355,7 @@ Clients send JSON frames `{ "type", "id"?, "payload" }`; every request frame get
 
 Event frames look like `{ "type", "seq", "epoch"?, "volatile"?, "offset"?, "session_id"?, "timestamp", "payload" }`, where `type` is the event type itself. Two delivery scopes:
 
-- **Global events**: sent to every established connection, no subscription needed — `session.meta.updated`, `event.session.created`, `event.session.archived`, `event.session.work_changed`, `event.session.status_changed`, `event.workspace.*`, `event.config.*`.
+- **Global events**: sent to every established connection, no subscription needed — `session.meta.updated`, `event.session.created`, `event.session.archived`, `event.session.work_changed`, `event.session.status_changed`, `event.workspace.*`, `event.config.*`, `event.model_catalog.*`.
 - **Session events**: sent only to connections subscribed to that session, subject to `agent_filter`. Main families:
 
 | Family | Main events |
@@ -2215,5 +2395,5 @@ Error semantics differ as well: `GET /api/v1/files/{file_id}` answers lookup and
 
 ## Next steps
 
-- [Local server and API](../guides/server.md) — startup, authentication, and the end-to-end calling flow
+- [Using Kimi Code in the browser](../guides/web.md) — start the server and use Kimi Code in a browser
 - [kimi command](./kimi-command.md#kimi-web) — all `kimi web` command-line options

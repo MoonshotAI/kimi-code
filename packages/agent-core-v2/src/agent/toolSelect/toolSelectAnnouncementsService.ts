@@ -1,7 +1,7 @@
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 
 import { LOADABLE_TOOLS_VARIANT } from './dynamicTools';
 import { IAgentToolSelectService } from './toolSelect';
@@ -12,11 +12,11 @@ export class AgentToolSelectAnnouncementsService extends Service implements IAge
 
   constructor(
     @IAgentToolSelectService toolSelect: IAgentToolSelectService,
-    @IAgentContextInjectorService injector: IAgentContextInjectorService,
+    @IAgentReminderService reminder: IAgentReminderService,
   ) {
     super();
     this._register(
-      injector.register(LOADABLE_TOOLS_VARIANT, ({ isNewTurn }) =>
+      reminder.register(LOADABLE_TOOLS_VARIANT, ({ isNewTurn }) =>
         isNewTurn ? toolSelect.loadableToolsAnnouncement() : undefined,
       ),
     );

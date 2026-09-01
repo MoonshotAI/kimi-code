@@ -5,6 +5,9 @@ import { ILogService } from '#/_base/log/log';
 import { IntervalTimer } from '#/_base/utils/timer';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { SessionIndexDegradedEvent } from '#/app/telemetry/events';
+import { isError2 } from '#/errors';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import {
   IQueryStore,
@@ -87,6 +90,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     @IQueryStore private readonly queryStore: IQueryStore,
     @IFlagService private readonly flags: IFlagService,
     @ISessionIndexMirror private readonly mirror: ISessionIndexMirror,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
     @ILogService private readonly log: ILogService,
   ) {
     super();
@@ -99,8 +103,6 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     });
   }
 
-  /** The reconcile loop runs only while the read model is in play — starting
-   *  it unconditionally would spin an interval for every flag-off host. */
   private ensureReconcileTimer(): void {
     if (!this.reconcileTimer.isSet()) {
       this.reconcileTimer.cancelAndSet(() => void this.tick(), RECONCILE_INTERVAL_MS);
@@ -164,12 +166,18 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   }
 
   private async runProjection(): Promise<void> {
+    const startedAt = Date.now();
     try {
       const manifest = await this.queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
       const next = (manifest?.seq ?? 0) + 1;
       const result = await this.projector.project(next);
       this.generation = result.generation;
       this.markReady();
+      this.telemetry.track2('session_index_projected', {
+        duration_ms: Date.now() - startedAt,
+        session_count: result.sessions,
+        generation: result.generation,
+      });
     } catch (error) {
       const published = await this.queryStore
         .getCheckpoint(SESSION_INDEX_MANIFEST)
@@ -187,7 +195,6 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     }
   }
 
-  /** Test/ops hook: reconcile the published generation against disk now. */
   async reconcileNow(): Promise<void> {
     if (!this.readModelEnabled()) return;
     const manifest = await this.queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
@@ -196,14 +203,11 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     await this.projector.reconcile(manifest.seq);
   }
 
-  /** Test/ops hook: project a fresh generation now (single-flight). */
   async reprojectNow(): Promise<void> {
     if (!this.readModelEnabled()) return;
     await this.ensureProjection();
   }
 
-  /** Test hook: stop the background reconcile loop, so measurement windows
-   *  contain only the operations under test. */
   stopReconcileLoop(): void {
     this.reconcileTimer.cancel();
   }
@@ -248,6 +252,18 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       ...(detail !== undefined ? { error: detail } : {}),
       degradedCount: this.degradedCount,
     });
+    const properties: SessionIndexDegradedEvent = {
+      reason,
+      degraded_count: this.degradedCount,
+    };
+    if (error !== undefined) {
+      properties.error_type = isError2(error)
+        ? error.code
+        : error instanceof Error
+          ? error.name
+          : 'Unknown';
+    }
+    this.telemetry.track2('session_index_degraded', properties);
   }
 
   private async ensureSchema(generation: number): Promise<void> {
@@ -279,16 +295,6 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     );
   }
 
-  /**
-   * Evict a deleted session's derived state so `get` / `listRecent` stop
-   * answering for the id immediately: the authoritative directory is deleted
-   * by the caller (`sessionLifecycle.delete`), and the next projection would
-   * drop the entry anyway — this closes the stale-read window in between. The
-   * mirror queue is evicted first (waiting out an in-flight flush): reads
-   * fold the queue in for read-your-writes, and a late flush would otherwise
-   * resurrect the entry after the store delete. With the read model off
-   * there is no derived state to evict beyond the queue.
-   */
   async remove(id: string): Promise<void> {
     await this.mirror.evict(id);
     await this.withReadModel(
@@ -299,12 +305,6 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     );
   }
 
-  /**
-   * Serve `op` from the read model when possible, else from the authoritative
-   * path: flag off, not prepared yet (kicked here single-flight), preparing,
-   * or degraded (with a throttled re-prepare). Any read-model failure demotes
-   * to `degraded` — logged and counted — and falls back immediately.
-   */
   private async withReadModel<T>(
     op: (generation: number) => Promise<T>,
     legacy: () => Promise<T>,
@@ -437,14 +437,6 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     return total;
   }
 
-  /**
-   * Canonical keyset window: fetch `limit + 1` rows under `bounds`; when the
-   * window is full, re-fetch the boundary tie group (`updatedAt` equal to the
-   * window's minimum) and merge, so a page cut inside a same-millisecond tie
-   * group never drops or duplicates an item across pages. Rows are re-sorted
-   * into the canonical (`updatedAt` desc, `id` desc) order — the engine's
-   * cross-shard tie order is deterministic but not canonical.
-   */
   private async windowedPage(
     fetch: (bounds: ColumnBounds, limit: number) => Promise<SessionSummary[]>,
     bounds: ColumnBounds,
@@ -465,12 +457,6 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     return { items: kept, nextCursor: hasMore ? kept.at(-1)!.id : undefined };
   }
 
-  /**
-   * Read-your-writes merge: pages fold in the mirror's queued summaries so a
-   * just-mutated session shows up before the flush lands. Cursor pages merge
-   * only the queued summaries that fall inside the page's canonical range
-   * (the queue is a tiny, transient window).
-   */
   private mergePending(
     page: Page<SessionSummary>,
     query: SessionListQuery,
@@ -503,13 +489,6 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     return { items: kept, nextCursor: hasMore ? kept.at(-1)!.id : undefined };
   }
 
-  /**
-   * Resolve a keyset cursor id to its column bounds plus the exact
-   * tie-exclusion filter, in canonical order: strictly older (`before`) is
-   * `(updatedAt, id)` lexicographically below the cursor, strictly newer
-   * (`after`) is above. An unknown cursor id yields `undefined` — the caller
-   * answers an empty, terminal page.
-   */
   private async resolveCursor(
     generation: number,
     query: SessionListQuery,
@@ -621,20 +600,6 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     return count;
   }
 
-  /**
-   * Collect the authoritative summaries behind a legacy read. While the read
-   * model is enabled but not yet ready, the kicked initial projection is
-   * scanning the same authoritative set, so the read joins that in-flight
-   * scan (or drives the one the projection will reuse) instead of running a
-   * second full directory scan. Flag-off hosts and the degraded fallback
-   * keep the targeted per-workspace enumeration.
-   *
-   * Either way the mirror's pending queue is folded in by id (pending
-   * entries win): every queued summary was recorded only after its
-   * `state.json` is durable, and a scan/enumeration that started before the
-   * write may legitimately have passed the directory already — the fold is
-   * what keeps read-your-writes on this path too.
-   */
   private async collectAuthoritative(
     workspaceIds: readonly string[] | undefined,
   ): Promise<SessionSummary[]> {

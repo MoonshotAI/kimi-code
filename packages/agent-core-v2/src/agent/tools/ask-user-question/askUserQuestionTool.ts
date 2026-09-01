@@ -146,7 +146,7 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
         'next_step: Continue your current work; the answer will arrive automatically when the user responds.\n' +
         'next_step: Use TaskOutput with this task_id for a non-blocking status/answer snapshot.\n' +
         'next_step: Use TaskStop only if the question should be cancelled.\n' +
-        'human_shell_hint: The pending question is also visible in /tasks.',
+        'human_shell_hint: The pending question is also visible in the client UI.',
     };
   }
 

@@ -18,7 +18,7 @@ Kimi Code CLI 内置三种 subagent，开箱即用，分别面向不同任务形
 
 subagent 由 main agent 自动调度——根据任务复杂度、上下文消耗和子任务的独立性，在适当时机派发，无需用户手动指定。
 
-每次派发都会在终端以审批请求的形式呈现（除非命中 allow 规则或处于 YOLO 模式），方便你审视任务描述。你也可以在对话中直接指示 main agent 使用特定 subagent，例如"先用 explore 把相关文件梳理一遍再动手"。
+每次派发都会在终端以审批请求的形式呈现（除非命中 allow 规则或处于「必要时询问」模式），方便你审视任务描述。你也可以在对话中直接指示 main agent 使用特定 subagent，例如"先用 explore 把相关文件梳理一遍再动手"。
 
 subagent 支持在后台运行：完成后结果自动回到 main agent，无需手动轮询。也可以唤回已有的 subagent 实例继续推进同一任务。
 
@@ -153,7 +153,6 @@ SYSTEM.md 是纯 Markdown 正文，不需要也不读取 Frontmatter。文件缺
 | `${cwd_listing}` | 工作目录的文件列表 |
 | `${os}` | 操作系统类型 |
 | `${shell}` | Shell 名称与路径，例如 `bash (\`/bin/bash\`)` |
-| `${now}` | 当前时间（ISO 格式） |
 | `${additional_dirs_info}` | 加入工作区的额外目录信息；没有时为空 |
 | `${base_prompt}` | 默认系统提示词。在 `SYSTEM.md` 中指内置默认提示词；在 Agent 文件中指有效默认提示词（内置默认，或存在时为你的 `SYSTEM.md` 覆盖） |
 | `${plugin_sections}` | 已启用 plugin 提供的完整 Plugin Instructions 块；没有已启用 plugin 提供指令时为空 |

@@ -60,7 +60,7 @@ describe('SessionApprovalService', () => {
 
   it('mints distinct interaction ids when the provider reuses a toolCallId within one step', async () => {
     const svc = ix.get(ISessionApprovalService);
-    const interaction = interactions.runtimeOf('main');
+    const interaction = interactions.serviceOf('main');
     const req = (): ApprovalRequest => ({
       toolCallId: 'Bash_0',
       toolName: 'bash',
@@ -88,7 +88,7 @@ describe('SessionApprovalService', () => {
 
   it('a toolCallId repeated across steps still gets a fresh id after the first request resolved', async () => {
     const svc = ix.get(ISessionApprovalService);
-    const interaction = interactions.runtimeOf('main');
+    const interaction = interactions.serviceOf('main');
     const req = (): ApprovalRequest => ({
       toolCallId: 'Bash_0',
       toolName: 'bash',

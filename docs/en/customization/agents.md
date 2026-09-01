@@ -18,7 +18,7 @@ A `coder` sub-agent shares most of the main Agent's tool set: it can run shell c
 
 Sub-agents are scheduled automatically by the main Agent — based on task complexity, context consumption, and sub-task independence, they are dispatched at the right moment without the user having to specify one.
 
-Each dispatch is presented in the terminal as an approval request (unless it matches an allow rule or YOLO mode is active), giving you a chance to review the task description. You can also instruct the main Agent directly in conversation to use a specific sub-agent, for example: "Use explore to map out the relevant files before making any changes."
+Each dispatch is presented in the terminal as an approval request (unless it matches an allow rule or Ask When Needed mode is active), giving you a chance to review the task description. You can also instruct the main Agent directly in conversation to use a specific sub-agent, for example: "Use explore to map out the relevant files before making any changes."
 
 Sub-agents support running in the background: results are automatically returned to the main Agent upon completion, with no manual polling needed. You can also call back an existing sub-agent instance to continue the same task.
 
@@ -153,7 +153,6 @@ Like the body of a regular agent file, SYSTEM.md is rendered as a template each 
 | `${cwd_listing}` | Listing of the working directory |
 | `${os}` | Operating system kind |
 | `${shell}` | Shell name and path, for example `bash (\`/bin/bash\`)` |
-| `${now}` | Current time in ISO format |
 | `${additional_dirs_info}` | Additional directories added to the workspace; empty when there are none |
 | `${base_prompt}` | The default system prompt. Inside `SYSTEM.md` itself this is the built-in default; inside an agent file it is the effective default — the built-in default, or your `SYSTEM.md` override when present |
 | `${plugin_sections}` | A complete Plugin Instructions block contributed by enabled plugins; empty when no enabled plugin contributes instructions |

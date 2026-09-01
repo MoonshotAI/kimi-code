@@ -58,15 +58,14 @@
  * - `prompt` / `steer` / `runShellCommand` / `cancelShellCommand` → the
  *   `klient.session(id).agent(id)` facade; `activatePluginCommand` →
  *   `IAgentPluginCommandService` through the agent scope; `activateSkill` →
- *   `IAgentSkillService` through the agent scope (the engine settles
+ *   the main agent's `IAgentSkillService` (the engine settles
  *   `{turn_id}` and applies v1's main-only metadata update itself);
  *   `generateAgentsMd` →
  *   `ISessionInitService` through the session scope; `getSessionWarnings` →
  *   rebuilt over the profile's cached AGENTS.md warning plus the engine's
  *   `prepareSystemPromptContext` (no v2 aggregate service exists).
  * - `createGoal` / `getGoal` / `pauseGoal` / `resumeGoal` / `cancelGoal` →
- *   the `AgentGoal` runtime facade resolved through the session's agent
- *   lifecycle service; `getCronTasks` →
+ *   the target agent scope's `IAgentGoalService`; `getCronTasks` →
  *   with the v1 snapshot
  *   shape restored; `listBackgroundTasks` / `getBackgroundTaskOutput` → the
  *   `klient.session(id).agent(id)` facade; `stopBackgroundTask` /
@@ -163,12 +162,11 @@ import {
   ensureMainAgent,
   agentContextOf,
   IAgentActivityView,
-  IAgentContextInjectorService,
   IAgentContextMemoryService,
-  AgentCron,
-  AgentGoal,
   IAgentConversationUndoService,
+  IAgentCronService,
   IAgentFullCompactionService,
+  IAgentGoalService,
   IAgentPluginService,
   IAgentLifecycleService,
   IAgentLoopService,
@@ -176,6 +174,7 @@ import {
   IAgentPermissionRulesService,
   IAgentPluginCommandService,
   IAgentProfileService,
+  IAgentReminderService,
   IAgentSkillService,
   IAgentSwarmService,
   IAgentTaskService,
@@ -202,7 +201,7 @@ import {
   ISessionMcpHandle,
   ISessionMetadata,
   ISessionSkillCatalog,
-  AgentTodo,
+  IAgentTodoService,
   ISessionWorkspaceContext,
   ITelemetryService,
   IWorkspaceAliases,
@@ -691,30 +690,30 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   /**
    * v1's removal cascades: the provider entry, every model pointing at it,
-   * the default pointers when they dangle, and the `[secondary_model]`
-   * subagent pool entries (the section itself when its default dangles).
-   * The engine's own `kosong.removeProvider` only clears the
-   * default-provider pointer, so the full v1 cascade is computed from the
-   * user-layer values (see `planProviderRemoval`) and persisted as ONE
-   * atomic multi-section replace — the same single-write shape as v1's
-   * `removeKimiProvider`, so a process exit can never leave the file in a
-   * halfway-cascaded state.
+   * and the default pointers when they dangle. The engine's own
+   * `kosong.removeProvider` only clears the default-provider pointer, so the
+   * full v1 cascade is computed from the user-layer values (see
+   * `planProviderRemoval`) and persisted as ONE atomic multi-section
+   * replace — the same single-write shape as v1's `removeKimiProvider`, so a
+   * process exit can never leave the file in a halfway-cascaded state. The
+   * `[secondary_model]` section is left alone on purpose: an entry whose
+   * model no longer resolves fails pool validation on the next session
+   * create, surfacing a named error instead of silently rewriting the
+   * user's configuration.
    */
   override async removeProvider(providerId: string): Promise<KimiConfig> {
     await this.configReady;
-    const [providers, models, defaultModel, defaultProvider, secondaryModel] = await Promise.all([
+    const [providers, models, defaultModel, defaultProvider] = await Promise.all([
       this.klient.global.config.inspect<Record<string, unknown>>('providers'),
       this.klient.global.config.inspect<Record<string, Record<string, unknown>>>('models'),
       this.klient.global.config.inspect<string>('defaultModel'),
       this.klient.global.config.inspect<string>('defaultProvider'),
-      this.klient.global.config.inspect<Record<string, unknown>>('secondaryModel'),
     ]);
     const plan = planProviderRemoval({
       providers: providers.userValue,
       models: models.userValue,
       defaultModel: defaultModel.userValue,
       defaultProvider: defaultProvider.userValue,
-      secondaryModel: secondaryModel.userValue,
       providerId,
     });
     const sections: Record<string, unknown> = {
@@ -726,11 +725,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     }
     if (plan.clearDefaultProvider) {
       sections['defaultProvider'] = undefined;
-    }
-    if (plan.secondaryModel !== undefined) {
-      // `null` clears the whole section; a replacement object folds the
-      // filtered pool into the same atomic write.
-      sections['secondaryModel'] = plan.secondaryModel ?? undefined;
     }
     await this.klient.global.config.replaceSections({ sections });
     return this.getConfig();
@@ -1820,9 +1814,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async getTodos(input: SessionIdRpcInput): Promise<readonly SessionTodoItem[]> {
     const session = this.requireLiveSession(input.sessionId);
     const agents = session.accessor.get(IAgentLifecycleService);
-    const main = agents.get(MAIN_AGENT_ID);
+    const main = agents.handleOf(MAIN_AGENT_ID);
     if (main === undefined) return [];
-    const todos = agents.resolve(main, AgentTodo).get();
+    const todos = main.accessor.get(IAgentTodoService).get();
     return todos.map((todo) => ({ title: todo.title, status: todo.status }));
   }
 
@@ -1951,7 +1945,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Through the agent scope (`IAgentSkillService.activate`) — the direct call
+   * Through the target agent's `IAgentSkillService` — the direct call
    * keeps v1's semantics: validate first (`skill.not_found` /
    * `skill.type_unsupported` reject synchronously), then render the skill
    * prompt and launch a turn with it. The engine updates title/lastPrompt for
@@ -1962,7 +1956,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async activateSkill(input: ActivateSkillRpcInput): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
-    await agent.accessor.get(IAgentSkillService).activate({ name: input.name, args: input.args });
+    await agent.accessor
+      .get(IAgentSkillService)
+      .activate({ name: input.name, args: input.args });
   }
 
   /**
@@ -2066,7 +2062,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     } else {
       swarm.exit();
     }
-    await agent.accessor.get(IAgentContextInjectorService).reconcileWhenIdle('swarm_mode');
+    await agent.accessor.get(IAgentReminderService).reconcileWhenIdle('swarm_mode');
   }
 
   /** v1's `swarm()` composition: enter with the one-shot `task` trigger, then prompt. */
@@ -2090,7 +2086,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     } else {
       tower.exit();
     }
-    await agent.accessor.get(IAgentContextInjectorService).reconcileWhenIdle('tower_mode');
+    await agent.accessor.get(IAgentReminderService).reconcileWhenIdle('tower_mode');
   }
 
   // -----------------------------------------------------------------------
@@ -2107,8 +2103,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   // -----------------------------------------------------------------------
 
   /**
-   * Through the `AgentGoal` runtime facade resolved from the session's agent
-   * lifecycle service — no klient
+   * Through the target agent scope's `IAgentGoalService` — no klient
    * facade exists for the goal domain. Gap: v2 rejects every goal command on
    * a non-main agent (`goal.unsupported_agent`) where v1 keeps a `GoalMode`
    * on every agent; only reachable through a non-main `interactiveAgentId`
@@ -2116,48 +2111,35 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async createGoal(input: SessionIdRpcInput & CreateGoalInput): Promise<GoalSnapshot> {
     const agent = await this.agentScope(input.sessionId);
-    return this.requireLiveSession(input.sessionId)
-      .accessor.get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentGoal)
+    return agent.accessor
+      .get(IAgentGoalService)
       .createGoal({ objective: input.objective, replace: input.replace });
   }
 
   override async getGoal(input: SessionIdRpcInput): Promise<GoalToolResult> {
     const agent = await this.agentScope(input.sessionId);
-    return this.requireLiveSession(input.sessionId)
-      .accessor.get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentGoal)
-      .getGoal();
+    return agent.accessor.get(IAgentGoalService).getGoal();
   }
 
   override async pauseGoal(input: SessionIdRpcInput): Promise<GoalSnapshot> {
     const agent = await this.agentScope(input.sessionId);
-    return this.requireLiveSession(input.sessionId)
-      .accessor.get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentGoal)
-      .pauseGoal();
+    return agent.accessor.get(IAgentGoalService).pauseGoal();
   }
 
   override async resumeGoal(input: SessionIdRpcInput): Promise<GoalSnapshot> {
     const agent = await this.agentScope(input.sessionId);
-    return this.requireLiveSession(input.sessionId)
-      .accessor.get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentGoal)
-      .resumeGoal();
+    return agent.accessor.get(IAgentGoalService).resumeGoal();
   }
 
   override async cancelGoal(input: SessionIdRpcInput): Promise<GoalSnapshot> {
     const agent = await this.agentScope(input.sessionId);
-    return this.requireLiveSession(input.sessionId)
-      .accessor.get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentGoal)
-      .cancelGoal();
+    return agent.accessor.get(IAgentGoalService).cancelGoal();
   }
 
   /**
-   * Through the main agent's `AgentCron` runtime facade — no klient facade
+   * Through the main agent's `IAgentCronService` — no klient facade
    * exists for cron. v1's cron manager is per-agent: the main agent's
-   * manager is what the v2 cron runtime ports (it borrows the main
+   * manager is what the v2 cron service ports (it borrows the main
    * agent to steer fires), and a v1 subagent reports `[]` (`cron` is null) —
    * mirrored here for a non-main `interactiveAgentId`. The v1 snapshot shape
    * is restored field-by-field: `recurring` defaults to true, and the
@@ -2167,10 +2149,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async getCronTasks(input: SessionIdRpcInput): Promise<GetCronTasksResult> {
     await this.agentScope(input.sessionId);
     if (this.interactiveAgentId !== MAIN_AGENT_ID) return { tasks: [] };
-    const manager = this.requireLiveSession(input.sessionId).accessor.get(IAgentLifecycleService);
-    const mainContext = manager.get(MAIN_AGENT_ID);
-    if (mainContext === undefined) return { tasks: [] };
-    const cron = manager.resolve(mainContext, AgentCron);
+    const session = this.requireLiveSession(input.sessionId);
+    const main = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
+    if (main === undefined) return { tasks: [] };
+    const cron = main.accessor.get(IAgentCronService);
     return {
       tasks: cron.list().map((task) => ({
         id: task.id,
