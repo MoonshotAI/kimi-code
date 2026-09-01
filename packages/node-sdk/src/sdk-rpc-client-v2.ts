@@ -208,10 +208,12 @@ import {
   IWorkspaceAliases,
   ISessionActivityView,
   IWorkspaceInstanceManager,
+  TOWER_FLAG_ID,
   closeSessionById,
   followSessionLifecycles,
   getLiveSessionById,
   isError2,
+  isTowerFeatureAssembled,
   programForSession,
   resumeSessionById,
   sessionDirOf,
@@ -550,10 +552,17 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * Enabled experimental flag ids in the `session_started` wire shape (sorted,
    * comma-joined), read live from the in-process engine's flag service. The
    * harness-side `session_started` row merges this so both producers of the
-   * event carry the same flag dimension.
+   * event carry the same flag dimension. Restart-only flags (`tower`, whose
+   * tools/profiles assemble at App construction) count only once the feature
+   * is actually assembled in this process.
    */
   enabledExperimentalFlags(): string {
-    return this.engineAccessor.get(IFlagService).enabledIds().toSorted().join(',');
+    const flags = this.engineAccessor.get(IFlagService);
+    return flags
+      .enabledIds()
+      .filter((id) => id !== TOWER_FLAG_ID || isTowerFeatureAssembled(flags))
+      .toSorted()
+      .join(',');
   }
 
   /**
