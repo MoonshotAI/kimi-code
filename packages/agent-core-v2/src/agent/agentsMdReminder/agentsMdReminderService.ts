@@ -374,7 +374,7 @@ function stringArg(args: unknown, key: string): string | undefined {
 
 function reminderText(paths: readonly string[]): string {
   return (
-    'The path(s) touched by a recent tool call are covered by AGENTS.md instruction file(s) that were not part of the injected instructions:\n' +
+    'The following AGENTS.md file(s) apply to paths accessed by your recent tool call, but were not included in your system prompt:\n' +
     paths.map((path) => `- ${path}`).join('\n') +
     '\nRead them before making changes in those directories.'
   );

@@ -401,7 +401,7 @@ describe('agentsMdReminder path-carrying tools', () => {
       variant: 'agents_md',
     });
     expect(messageText(agentsMdMessages(h)[0]!)).toContain(
-      'The path(s) touched by a recent tool call',
+      'The following AGENTS.md file(s) apply to paths accessed by your recent tool call',
     );
     const text = reminderText(h);
     expect(text).toContain(subAgentsMd);
