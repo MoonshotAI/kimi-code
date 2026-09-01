@@ -24,6 +24,7 @@ export type WireFileHistoryChange = z.infer<typeof fileHistoryChangeSchema>;
 
 export const fileHistoryChangesResponseSchema = z.object({
   changes: z.array(fileHistoryChangeSchema),
+  enabled: z.boolean(),
 });
 export type FileHistoryChangesResponse = z.infer<typeof fileHistoryChangesResponseSchema>;
 
