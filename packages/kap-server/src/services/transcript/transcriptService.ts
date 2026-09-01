@@ -469,18 +469,35 @@ export class TranscriptService {
     }
     const messages = [...reduceContextTranscript(records).entries];
     const taskOriginTurnTaskIds = new Set<string>();
-    const steeredContents = new Map<string, Map<string, (readonly string[] | undefined)[]>>();
-    const steeredPromptIdQueues = new Map<string, (readonly string[])[]>();
-    const anchorStack: { taskIdsSnapshot: Set<string> }[] = [];
+    let steeredContents = new Map<string, Map<string, number>>();
+    const steeredPromptIds: (readonly string[] | undefined)[] = [];
+    const pendingSteerPromptIds: (readonly string[])[] = [];
+    const anchorStack: {
+      taskIdsSnapshot: Set<string>;
+      steeredSnapshot: Map<string, Map<string, number>>;
+      pendingSteerCount: number;
+      steeredIdsCount: number;
+    }[] = [];
     let anchorFloor = 0;
     let sawTurnPrompt = false;
     for (const record of records) {
       if (record.type === 'context.undo') {
         const count = typeof record['count'] === 'number' ? (record['count'] as number) : 0;
+        let poppedAny = false;
         for (let i = 0; i < count && anchorStack.length > anchorFloor; i++) {
           const popped = anchorStack.pop()!;
+          poppedAny = true;
           taskOriginTurnTaskIds.clear();
           for (const id of popped.taskIdsSnapshot) taskOriginTurnTaskIds.add(id);
+        }
+        if (poppedAny) {
+          const top =
+            anchorStack.length > anchorFloor ? anchorStack[anchorStack.length - 1] : undefined;
+          pendingSteerPromptIds.length = top?.pendingSteerCount ?? 0;
+          steeredPromptIds.length = top?.steeredIdsCount ?? 0;
+          steeredContents = new Map(
+            [...(top?.steeredSnapshot ?? [])].map(([key, byKind]) => [key, new Map(byKind)]),
+          );
         }
         continue;
       }
@@ -491,22 +508,21 @@ export class TranscriptService {
       if (record.type === 'context.append_message') {
         const message = (record as { message?: ContextMessage }).message;
         if (message !== undefined && isUndoAnchor(message)) {
-          anchorStack.push({ taskIdsSnapshot: new Set(taskOriginTurnTaskIds) });
+          anchorStack.push({
+            taskIdsSnapshot: new Set(taskOriginTurnTaskIds),
+            steeredSnapshot: new Map(
+              [...steeredContents].map(([key, byKind]) => [key, new Map(byKind)]),
+            ),
+            pendingSteerCount: pendingSteerPromptIds.length,
+            steeredIdsCount: steeredPromptIds.length,
+          });
         }
         continue;
       }
       if (record.type === 'prompt.steered') {
-        const content = record['content'];
         const promptIds = record['promptIds'];
-        if (
-          Array.isArray(content) &&
-          Array.isArray(promptIds) &&
-          promptIds.every((id) => typeof id === 'string')
-        ) {
-          const key = JSON.stringify(content);
-          const queue = steeredPromptIdQueues.get(key) ?? [];
-          queue.push(promptIds as readonly string[]);
-          steeredPromptIdQueues.set(key, queue);
+        if (Array.isArray(promptIds) && promptIds.every((id) => typeof id === 'string')) {
+          pendingSteerPromptIds.push(promptIds as readonly string[]);
         }
         continue;
       }
@@ -514,21 +530,14 @@ export class TranscriptService {
         const input = record['input'];
         if (Array.isArray(input)) {
           const key = JSON.stringify(input);
-          const steerOrigin = (record as { origin?: { kind?: unknown; skillActivations?: unknown } }).origin;
-          const kind = typeof steerOrigin?.kind === 'string' ? steerOrigin.kind : 'user';
-          const skillBlockCount = Array.isArray(steerOrigin?.skillActivations)
-            ? steerOrigin.skillActivations.length
-            : 0;
-          const pairKey = skillBlockCount > 0 ? JSON.stringify(input.slice(skillBlockCount)) : key;
-          const idQueue = steeredPromptIdQueues.get(pairKey);
-          const promptIds =
-            idQueue !== undefined && idQueue.length > 0 ? idQueue.shift() : undefined;
-          const byKind =
-            steeredContents.get(key) ?? new Map<string, (readonly string[] | undefined)[]>();
-          const queue = byKind.get(kind) ?? [];
-          queue.push(promptIds);
-          byKind.set(kind, queue);
+          const steerOrigin = (record as { origin?: { kind?: unknown } }).origin?.kind;
+          const kind = typeof steerOrigin === 'string' ? steerOrigin : 'user';
+          const byKind = steeredContents.get(key) ?? new Map<string, number>();
+          byKind.set(kind, (byKind.get(kind) ?? 0) + 1);
           steeredContents.set(key, byKind);
+          steeredPromptIds.push(
+            pendingSteerPromptIds.length > 0 ? pendingSteerPromptIds.shift() : undefined,
+          );
         }
         continue;
       }
@@ -545,7 +554,9 @@ export class TranscriptService {
     }
     const base = groupMessagesIntoSnapshot(
       messages,
-      sawTurnPrompt || steeredContents.size > 0 ? { taskOriginTurnTaskIds, steeredContents } : undefined,
+      sawTurnPrompt || steeredContents.size > 0
+        ? { taskOriginTurnTaskIds, steeredContents, steeredPromptIds }
+        : undefined,
     );
     const folded = foldWireRecordFacts(projectQuestionInteractionRecords(records, sessionId), base, {
       resolvePlanRevisionKey: (key) =>

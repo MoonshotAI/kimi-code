@@ -70,10 +70,8 @@ export function groupMessagesIntoSnapshot(
   messages: readonly HistoryMessage[],
   options?: {
     readonly taskOriginTurnTaskIds?: ReadonlySet<string>;
-    readonly steeredContents?: ReadonlyMap<
-      string,
-      ReadonlyMap<string, readonly (readonly string[] | undefined)[]>
-    >;
+    readonly steeredContents?: ReadonlyMap<string, ReadonlyMap<string, number>>;
+    readonly steeredPromptIds?: readonly (readonly string[] | undefined)[];
   },
 ): AgentTranscriptSnapshot {
   const items: TranscriptItem[] = [];
@@ -81,6 +79,8 @@ export function groupMessagesIntoSnapshot(
   const steeredContents = new Map(
     [...(options?.steeredContents ?? [])].map(([key, byKind]) => [key, new Map(byKind)]),
   );
+  const steeredPromptIds = options?.steeredPromptIds ?? [];
+  let steeredPromptIdIndex = 0;
   let turn: TurnDraft | undefined;
   let pendingNotificationFrames: {
     text: string;
@@ -246,10 +246,11 @@ export function groupMessagesIntoSnapshot(
       const contentKey = JSON.stringify(message.content ?? []);
       const steerKind = originKind ?? 'user';
       const steeredByKind = steeredContents.get(contentKey);
-      const steeredQueue = steeredByKind?.get(steerKind);
-      if (steeredByKind !== undefined && steeredQueue !== undefined && steeredQueue.length > 0) {
-        const promptIds = steeredQueue[0];
-        steeredByKind.set(steerKind, steeredQueue.slice(1));
+      const steeredRemaining = steeredByKind?.get(steerKind) ?? 0;
+      if (steeredByKind !== undefined && steeredRemaining > 0) {
+        steeredByKind.set(steerKind, steeredRemaining - 1);
+        const promptIds = steeredPromptIds[steeredPromptIdIndex];
+        steeredPromptIdIndex += 1;
         const bundled = bundledSkillActivations(message);
         const parts = message.content ?? [];
         bundled.forEach((activation, index) => {

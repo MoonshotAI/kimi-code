@@ -2774,6 +2774,43 @@ describe('AgentTranscriptProjector', () => {
     }
   });
 
+  it('readColdSnapshot rolls back steer id queues across context.undo', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-steer-undo-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const records = [
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'one' }], toolCalls: [], origin: { kind: 'user' } }, time: 1000 },
+        { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] }, time: 2000 },
+        { type: 'prompt.steered', activePromptId: 'msg_active', promptIds: ['msg_a'], content: [{ type: 'text', text: 'same' }], steeredAt: '2026-09-01T10:00:00.000Z', time: 2500 },
+        { type: 'turn.steer', input: [{ type: 'text', text: 'same' }], origin: { kind: 'user' }, time: 3000 },
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'same' }], toolCalls: [], origin: { kind: 'user' } }, time: 3001 },
+        { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] }, time: 4000 },
+        { type: 'context.undo', count: 1, time: 5000 },
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'two' }], toolCalls: [], origin: { kind: 'user' } }, time: 6000 },
+        { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'working2' }], toolCalls: [] }, time: 6500 },
+        { type: 'prompt.steered', activePromptId: 'msg_active2', promptIds: ['msg_b'], content: [{ type: 'text', text: 'same' }], steeredAt: '2026-09-01T10:01:00.000Z', time: 7000 },
+        { type: 'turn.steer', input: [{ type: 'text', text: 'same' }], origin: { kind: 'user' }, time: 7500 },
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'same' }], toolCalls: [], origin: { kind: 'user' } }, time: 7501 },
+        { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'noted2' }], toolCalls: [] }, time: 8000 },
+      ];
+      await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+
+      const snapshot = await coldTranscriptService(home).readColdSnapshot('s1', 'main');
+      const turns = snapshot!.items.filter((item) => item.kind === 'turn');
+      expect(turns).toHaveLength(2);
+      const turn = turns[1];
+      if (turn?.kind !== 'turn') throw new Error('expected turn');
+      const steerFrames = turn.steps.flatMap((step) =>
+        step.frames.filter((frame) => frame.kind === 'text' && frame.role === 'user'),
+      );
+      expect(steerFrames).toHaveLength(1);
+      expect(steerFrames[0]).toMatchObject({ text: 'same', promptIds: ['msg_b'] });
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('readColdSnapshot preserves safe bundled skill provenance before the first step', async () => {
     const home = await mkdtemp(join(tmpdir(), 'transcript-cold-bundled-steer-'));
     try {
