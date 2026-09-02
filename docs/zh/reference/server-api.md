@@ -2634,61 +2634,114 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 列出会话的后台任务。
 
-**Query**：
+**查询参数**：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `status` | string | 只保留单一状态：`running` / `completed` / `failed` / `cancelled` |
 
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ items: `[T-Task](#t-task)`[]` }>`。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `items` | array | [T-Task](#t-task) 数组；冷会话为 `[]` |
+| `items` | [T-Task](#t-task)`[]` | 后台任务；冷会话为 `[]` |
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）（未知的 `status`）、`40401`。
+**非零 code**：`40001`（未知的 `status`；`details` 为 `{ path, message }[]`）、`40401`。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "items": [ { "id": "task_01J...", "session_id": "session_01JZX4...", "kind": "bash", "description": "pnpm test", "status": "running", "created_at": "2026-09-02T08:06:00.000Z", "started_at": "2026-09-02T08:06:00.000Z", "command": "pnpm test", "run_in_background": true } ] }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "items": [
+      {
+        "id": "task_01J...",
+        "session_id": "session_01JZX4...",
+        "kind": "bash",
+        "description": "pnpm test",
+        "status": "running",
+        "created_at": "2026-09-02T08:06:00.000Z",
+        "started_at": "2026-09-02T08:06:00.000Z",
+        "command": "pnpm test",
+        "run_in_background": true
+      }
+    ]
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/sessions/{session_id}/tasks/{task_id}`
 
 读取单个后台任务，可选携带输出的末尾片段。
 
-**Query**：
+**查询参数**：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `with_output` | boolean | 在响应中包含输出末尾片段。默认 `false` |
 | `output_bytes` | integer | 请求的输出末尾片段的字节大小，最小 `0`。默认 `32768` |
 
-**返回**：`ResponseType<`[T-Task](#t-task)`>`；`with_output=true` 且输出非空时附加 `output_preview` 与 `output_bytes`。
+**响应体**：`ResponseType<`[T-Task](#t-task)`>`；`with_output=true` 且输出非空时附加 `output_preview` 与 `output_bytes`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`、`40406`（没有该 id 的任务；冷会话完全没有实时任务）。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-Task](#t-task) | 任务对象；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`、`40406`（没有该 id 的任务；冷会话完全没有实时任务）。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "id": "task_01J...", "session_id": "session_01JZX4...", "kind": "bash", "description": "pnpm test", "status": "completed", "created_at": "2026-09-02T08:06:00.000Z", "started_at": "2026-09-02T08:06:00.000Z", "completed_at": "2026-09-02T08:06:40.000Z", "command": "pnpm test", "output_preview": "... tail of output ...", "output_bytes": 4096, "run_in_background": true }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "id": "task_01J...",
+    "session_id": "session_01JZX4...",
+    "kind": "bash",
+    "description": "pnpm test",
+    "status": "completed",
+    "created_at": "2026-09-02T08:06:00.000Z",
+    "started_at": "2026-09-02T08:06:00.000Z",
+    "completed_at": "2026-09-02T08:06:40.000Z",
+    "command": "pnpm test",
+    "output_preview": "... tail of output ...",
+    "output_bytes": 4096,
+    "run_in_background": true
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/sessions/{session_id}/tasks/{task_id}:{action}`
 
 任务动作经 `POST .../tasks/{tail}` 分发：`:cancel` 取消运行中的任务；`:detach` 将运行中的前台任务转入后台而不终止它（等待该任务的工具调用立即以后台任务结果返回，轮次继续推进）。已在后台或已结束的任务上 `:detach` 为幂等空操作。无请求体。
 
-**返回**：`ResponseType`：`:cancel` → `{ "cancelled": true }`；`:detach` → `{ "detached": boolean, "status": string }`（本次确实转入后台时 `detached` 为 `true`，`status` 为调用后的任务状态）。
+**触发事件**：`:cancel` → `task.terminated`（及派生的 `background.task.terminated`）；`:detach` 无
+
+**响应体**：统一 `ResponseType` 信封：`:cancel` → `{ cancelled: true }`；`:detach` → `{ detached: boolean, status: string }`（本次确实转入后台时 `detached` 为 `true`，`status` 为调用后的任务状态）。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `cancelled` | boolean | 仅 `:cancel`：恒 `true` |
+| `detached` | boolean | 仅 `:detach`：本次确实转入后台时为 `true` |
+| `status` | string | 仅 `:detach`：调用后的任务状态 |
 
 **非零 code**：`40001`（动作缺失或未知；`details` 为 `{ path, message }[]`）、`40401`、`40406`、`40904`（任务已结束，`data: { "cancelled": false }` 且 `details: { "current_status" }`）。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "detached": true, "status": "running" }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "detached": true, "status": "running" },
+  "request_id": "01JZX4..."
+}
 ```
-
 
 ### 终端
 
