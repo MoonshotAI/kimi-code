@@ -42,6 +42,8 @@ const MODEL_SWITCH_CACHE_WARNING =
   'Note: Switching models invalidates the existing prompt cache. Use /new to avoid extra token costs.';
 const EFFORT_SWITCH_CACHE_WARNING =
   'Note: Switching effort invalidates the existing prompt cache. Use /new to avoid extra token costs.';
+const UNCONFIRMED_FILE_CHANGES_WARNING =
+  'In this mode, Kimi Code can modify or delete files without your confirmation';
 
 /** True once the conversation has at least one user message: a switch from
  * then on resends the accumulated context, losing the cache. Shell-command
@@ -145,7 +147,10 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
     }
     await session?.setPermission('yolo');
     host.setAppState({ permissionMode: 'yolo' });
-    host.showNotice('Ask When Needed mode: ON', 'Routine edits and commands run automatically; risky actions, questions, and plans still ask.');
+    host.showNotice(
+      'Ask When Needed mode: ON',
+      `Routine edits and commands run automatically; risky actions, questions, and plans still ask.\n${UNCONFIRMED_FILE_CHANGES_WARNING}`,
+    );
     return;
   }
 
@@ -168,7 +173,10 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
   } else {
     await session?.setPermission('yolo');
     host.setAppState({ permissionMode: 'yolo' });
-    host.showNotice('Ask When Needed mode: ON', 'Routine edits and commands run automatically; risky actions, questions, and plans still ask.');
+    host.showNotice(
+      'Ask When Needed mode: ON',
+      `Routine edits and commands run automatically; risky actions, questions, and plans still ask.\n${UNCONFIRMED_FILE_CHANGES_WARNING}`,
+    );
   }
 }
 
@@ -191,7 +199,10 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
     }
     await session?.setPermission('auto');
     host.setAppState({ permissionMode: 'auto' });
-    host.showNotice('Never Ask mode: ON', 'Never interrupts you; everything runs and is decided automatically.');
+    host.showNotice(
+      'Never Ask mode: ON',
+      `Never interrupts you; everything runs and is decided automatically.\n${UNCONFIRMED_FILE_CHANGES_WARNING}`,
+    );
     return;
   }
 
@@ -214,7 +225,10 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
   } else {
     await session?.setPermission('auto');
     host.setAppState({ permissionMode: 'auto' });
-    host.showNotice('Never Ask mode: ON', 'Never interrupts you; everything runs and is decided automatically.');
+    host.showNotice(
+      'Never Ask mode: ON',
+      `Never interrupts you; everything runs and is decided automatically.\n${UNCONFIRMED_FILE_CHANGES_WARNING}`,
+    );
   }
 }
 
@@ -906,7 +920,10 @@ async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMod
   }
 
   host.setAppState({ permissionMode: mode });
-  host.showNotice(`Permission mode: ${PERMISSION_MODE_DISPLAY_NAMES[mode]}`);
+  host.showNotice(
+    `Permission mode: ${PERMISSION_MODE_DISPLAY_NAMES[mode]}`,
+    mode === 'manual' ? undefined : UNCONFIRMED_FILE_CHANGES_WARNING,
+  );
 }
 
 export function showSettingsSelector(host: SlashCommandHost): void {
