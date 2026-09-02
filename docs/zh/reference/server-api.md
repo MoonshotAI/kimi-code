@@ -3769,7 +3769,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 列出会话工作区目录下的条目，可选递归子目录。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
@@ -3778,25 +3778,53 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 | `limit` | integer | 否 | 最大条目数，1–1000。默认 `200` |
 | `show_hidden` | boolean | 否 | 包含点文件。默认 `false` |
 | `follow_gitignore` | boolean | 否 | 跳过 gitignore 的路径。默认 `true` |
-| `exclude_globs` | array | 否 | 额外要跳过的 glob |
+| `exclude_globs` | `string[]` | 否 | 额外要跳过的 glob |
 | `sort` | string | 否 | `type_first`（默认）/ `name_asc` / `name_desc` / `mtime_desc` / `size_desc` |
 | `include_git_status` | boolean | 否 | 附带每个条目的 git 状态。默认 `false` |
 
-**返回**：`ResponseType<`[T-FsListResponse](#t-fslistresponse)`>`。
+**响应体**：`ResponseType<`[T-FsListResponse](#t-fslistresponse)`>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`、`40409`（路径不存在或不是目录）、`41304`。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-FsListResponse](#t-fslistresponse) | 目录条目与截断标记；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`、`40409`（路径不存在或不是目录）、`41304`。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "items": [ { "path": "src", "name": "src", "kind": "directory", "modified_at": "2026-09-01T10:00:00.000Z", "child_count": 12 }, { "path": "package.json", "name": "package.json", "kind": "file", "size": 1024, "modified_at": "2026-09-01T10:00:00.000Z", "mime": "application/json" } ], "truncated": false }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "items": [
+      {
+        "path": "src",
+        "name": "src",
+        "kind": "directory",
+        "modified_at": "2026-09-01T10:00:00.000Z",
+        "child_count": 12
+      },
+      {
+        "path": "package.json",
+        "name": "package.json",
+        "kind": "file",
+        "size": 1024,
+        "modified_at": "2026-09-01T10:00:00.000Z",
+        "mime": "application/json"
+      }
+    ],
+    "truncated": false
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/sessions/{session_id}/fs:read`
 
 以文本或 base64 读取会话文件的一段内容。`encoding: "auto"` 时文本以 `utf-8` 返回（非 UTF-8 文本会被转码），二进制内容以 `base64` 返回；`encoding: "utf-8"` 强制按文本读取并拒绝二进制文件。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
@@ -3805,218 +3833,381 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 | `length` | integer | 否 | 读取字节数，1–10485760（10 MiB）。默认 `1048576`（1 MiB） |
 | `encoding` | string | 否 | `auto`（默认）/ `utf-8` / `base64` |
 
-**返回**：`ResponseType<`[T-FsReadResponse](#t-fsreadresponse)`>`。
+**响应体**：`ResponseType<`[T-FsReadResponse](#t-fsreadresponse)`>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`、`40409`、`40906`（路径是目录）、`40907`（二进制文件却指定 `utf-8`）、`41302`（文件超过 10 MiB 上限）、`41304`。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-FsReadResponse](#t-fsreadresponse) | 文件内容片段；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`、`40409`、`40906`（路径是目录）、`40907`（二进制文件却指定 `utf-8`）、`41302`（文件超过 10 MiB 上限）、`41304`。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "path": "src/index.ts", "content": "import ...", "encoding": "utf-8", "size": 20480, "truncated": false, "etag": "...", "mime": "text/typescript", "language_id": "typescript", "line_count": 512, "is_binary": false }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "path": "src/index.ts",
+    "content": "import ...",
+    "encoding": "utf-8",
+    "size": 20480,
+    "truncated": false,
+    "etag": "...",
+    "mime": "text/typescript",
+    "language_id": "typescript",
+    "line_count": 512,
+    "is_binary": false
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/sessions/{session_id}/fs:list_many`
 
 一次调用列出多个会话目录；失败的路径折进响应里，而不是让整个请求失败。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `paths` | array | 是 | 要列出的目录，1–100 条 |
+| `paths` | `string[]` | 是 | 要列出的目录，1–100 条 |
 
 其余字段（`depth`、`limit`、`show_hidden`、`follow_gitignore`、`exclude_globs`、`sort`、`include_git_status`）与 `fs:list` 相同。
 
-**返回**：`ResponseType<`[T-FsListManyResponse](#t-fslistmanyresponse)`>`。
+**响应体**：`ResponseType<`[T-FsListManyResponse](#t-fslistmanyresponse)`>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-FsListManyResponse](#t-fslistmanyresponse) | 每个路径的条目与局部错误；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "results": { "src": [ { "path": "src/index.ts", "name": "index.ts", "kind": "file", "modified_at": "..." } ] }, "truncated_paths": [ "src" ], "partial_errors": { "vendor": { "code": 40409, "msg": "path does not exist" } } }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "results": {
+      "src": [ { "path": "src/index.ts", "name": "index.ts", "kind": "file", "modified_at": "..." } ]
+    },
+    "truncated_paths": [ "src" ],
+    "partial_errors": { "vendor": { "code": 40409, "msg": "path does not exist" } }
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/sessions/{session_id}/fs:stat`
 
 查询会话工作区内单个路径的元信息。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `path` | string | 是 | 要查询的路径，相对于会话工作目录 |
 
-**返回**：`ResponseType<`[T-FsEntry](#t-fsentry)`>`。
+**响应体**：`ResponseType<`[T-FsEntry](#t-fsentry)`>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`、`40409`、`41304`。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-FsEntry](#t-fsentry) | 路径元信息；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`、`40409`、`41304`。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "path": "src/index.ts", "name": "index.ts", "kind": "file", "size": 20480, "modified_at": "2026-09-01T10:00:00.000Z", "mime": "text/typescript", "is_binary": false }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "path": "src/index.ts",
+    "name": "index.ts",
+    "kind": "file",
+    "size": 20480,
+    "modified_at": "2026-09-01T10:00:00.000Z",
+    "mime": "text/typescript",
+    "is_binary": false
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/sessions/{session_id}/fs:stat_many`
 
 一次调用查询多个会话路径的元信息；不存在的路径返回 `null`，不会让整个请求失败。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `paths` | array | 是 | 要查询的路径，1–1000 条 |
+| `paths` | `string[]` | 是 | 要查询的路径，1–1000 条 |
 
-**返回**：`ResponseType<`[T-FsStatManyResponse](#t-fsstatmanyresponse)`>`。
+**响应体**：`ResponseType<`[T-FsStatManyResponse](#t-fsstatmanyresponse)`>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-FsStatManyResponse](#t-fsstatmanyresponse) | 每个路径的条目（不存在时为 `null`）；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "entries": { "src/index.ts": { "path": "src/index.ts", "name": "index.ts", "kind": "file", "modified_at": "..." }, "vendor": null } }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "entries": {
+      "src/index.ts": { "path": "src/index.ts", "name": "index.ts", "kind": "file", "modified_at": "..." },
+      "vendor": null
+    }
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/sessions/{session_id}/fs:mkdir`
 
 在会话工作区内创建目录。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `path` | string | 是 | 要创建的目录，相对于会话工作目录 |
 | `recursive` | boolean | 否 | 创建缺失的父目录。默认 `false` |
 
-**返回**：`ResponseType<`[T-FsEntry](#t-fsentry)`>`（所建目录）。
+**响应体**：`ResponseType<`[T-FsEntry](#t-fsentry)`>`（所建目录）。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`、`40409`（父目录不存在）、`40919`（路径已存在）、`41304`。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-FsEntry](#t-fsentry) | 所建目录的元信息；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`、`40409`（父目录不存在）、`40919`（路径已存在）、`41304`。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "path": "docs/api", "name": "api", "kind": "directory", "modified_at": "2026-09-02T08:10:00.000Z" }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "path": "docs/api",
+    "name": "api",
+    "kind": "directory",
+    "modified_at": "2026-09-02T08:10:00.000Z"
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/sessions/{session_id}/fs:search`
 
 在会话工作区内模糊搜索文件与目录名。`query` 为空时改为列出顶层条目。当 `{session_id}` 位置携带的是工作区引用（已注册工作区 id 或绝对根路径）而非会话 id 时，搜索针对该工作区执行——这是为尚未创建的草稿会话准备的无会话形式；正式的无会话端点是 `POST /api/v1/workspace/fs:search`。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `query` | string | 是 | 搜索文本；`""` 表示列出顶层 |
 | `limit` | integer | 否 | 最大命中数，1–200。默认 `50` |
-| `include_globs` | array | 否 | 只保留匹配这些 glob 之一的路径 |
-| `exclude_globs` | array | 否 | 跳过匹配这些 glob 的路径 |
+| `include_globs` | `string[]` | 否 | 只保留匹配这些 glob 之一的路径 |
+| `exclude_globs` | `string[]` | 否 | 跳过匹配这些 glob 的路径 |
 | `follow_gitignore` | boolean | 否 | 跳过 gitignore 的路径。默认 `true` |
 
-**返回**：`ResponseType<{ items: T-FsSearchHit[], truncated: boolean }>`（[T-FsSearchHit](#t-fssearchhit)；命中按得分排序，同分按路径）。
+**响应体**：`ResponseType<{ items: `[T-FsSearchHit](#t-fssearchhit)`[]`, truncated: boolean }>`（命中按得分排序，同分按路径）。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`（该引用既不是会话，也不是可解析的工作区）、`41303`（命中过多）。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `items` | [T-FsSearchHit](#t-fssearchhit)`[]` | 搜索命中 |
+| `truncated` | boolean | 命中数被 `limit` 截断 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`（该引用既不是会话，也不是可解析的工作区）、`41303`（命中过多）。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "items": [ { "path": "src/server-api.ts", "name": "server-api.ts", "kind": "file", "score": 0.92, "match_positions": [ 4, 5, 6 ] } ], "truncated": false }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "items": [
+      {
+        "path": "src/server-api.ts",
+        "name": "server-api.ts",
+        "kind": "file",
+        "score": 0.92,
+        "match_positions": [ 4, 5, 6 ]
+      }
+    ],
+    "truncated": false
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/sessions/{session_id}/fs:grep`
 
 在会话工作区内搜索文件内容——默认按字面字符串，`regex: true` 时按正则表达式。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `pattern` | string | 是 | 要搜索的文本或正则 |
 | `regex` | boolean | 否 | 将 `pattern` 视为正则表达式。默认 `false` |
 | `case_sensitive` | boolean | 否 | 默认 `true` |
-| `include_globs` | array | 否 | 只保留匹配这些 glob 之一的文件 |
-| `exclude_globs` | array | 否 | 跳过匹配这些 glob 的文件 |
+| `include_globs` | `string[]` | 否 | 只保留匹配这些 glob 之一的文件 |
+| `exclude_globs` | `string[]` | 否 | 跳过匹配这些 glob 的文件 |
 | `follow_gitignore` | boolean | 否 | 跳过 gitignore 的路径。默认 `true` |
 | `max_files` | integer | 否 | 最多扫描的文件数，1–10000。默认 `200` |
 | `max_matches_per_file` | integer | 否 | 每个文件保留的匹配数，1–10000。默认 `50` |
 | `max_total_matches` | integer | 否 | 总共保留的匹配数，1–100000。默认 `5000` |
 | `context_lines` | integer | 否 | 每个匹配携带的上下文行数，0–10。默认 `2` |
 
-**返回**：`ResponseType<`[T-FsGrepResponse](#t-fsgrepresponse)`>`。
+**响应体**：`ResponseType<`[T-FsGrepResponse](#t-fsgrepresponse)`>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`、`41303`、`41305`（搜索超时）。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-FsGrepResponse](#t-fsgrepresponse) | 按文件分组的匹配；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`、`41303`、`41305`（搜索超时）。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "files": [ { "path": "src/index.ts", "matches": [ { "line": 12, "col": 8, "text": "const token = ...", "before": [ "..." ], "after": [ "..." ] } ] } ], "files_scanned": 87, "truncated": false, "elapsed_ms": 42 }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "files": [
+      {
+        "path": "src/index.ts",
+        "matches": [
+          {
+            "line": 12,
+            "col": 8,
+            "text": "const token = ...",
+            "before": [ "..." ],
+            "after": [ "..." ]
+          }
+        ]
+      }
+    ],
+    "files_scanned": 87,
+    "truncated": false,
+    "elapsed_ms": 42
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/sessions/{session_id}/fs:git_status`
 
 读取会话工作区的 git 状态，可选限定在一组路径内。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `paths` | array | 否 | 将状态限定在这些路径；省略表示整个工作区 |
+| `paths` | `string[]` | 否 | 将状态限定在这些路径；省略表示整个工作区 |
 
-**返回**：`ResponseType<`[T-FsGitStatusResponse](#t-fsgitstatusresponse)`>`（注意 camelCase `pullRequest`）。
+**响应体**：`ResponseType<`[T-FsGitStatusResponse](#t-fsgitstatusresponse)`>`（注意 camelCase `pullRequest`）。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`、`40908`（git 不可用：不是仓库，或没有 git 可执行文件）。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-FsGitStatusResponse](#t-fsgitstatusresponse) | git 状态；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`、`40908`（git 不可用：不是仓库，或没有 git 可执行文件）。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "branch": "main", "ahead": 1, "behind": 0, "entries": { "src/index.ts": "modified" }, "additions": 12, "deletions": 3, "pullRequest": { "number": 3451, "state": "open", "url": "https://github.com/example/repo/pull/3451" } }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "branch": "main",
+    "ahead": 1,
+    "behind": 0,
+    "entries": { "src/index.ts": "modified" },
+    "additions": 12,
+    "deletions": 3,
+    "pullRequest": { "number": 3451, "state": "open", "url": "https://github.com/example/repo/pull/3451" }
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/sessions/{session_id}/fs:diff`
 
 返回会话工作区内单个文件的 unified git diff。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `path` | string | 是 | 要 diff 的文件，相对于会话工作目录 |
 
-**返回**：`ResponseType<`[T-FsDiffResponse](#t-fsdiffresponse)`>`。
+**响应体**：`ResponseType<`[T-FsDiffResponse](#t-fsdiffresponse)`>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`、`40908`、`41304`。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-FsDiffResponse](#t-fsdiffresponse) | unified diff 文本；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`、`40908`、`41304`。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "path": "src/index.ts", "diff": "@@ -1,4 +1,5 @@\n ...", "truncated": false }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "path": "src/index.ts", "diff": "@@ -1,4 +1,5 @@\n ...", "truncated": false },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/sessions/{session_id}/fs:open`
 
 用宿主操作系统的默认程序打开会话文件。仅限 local 运行时。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `path` | string | 是 | 要打开的文件，相对于会话工作目录 |
 | `line` | integer | 否 | 在处理程序支持时跳转到的行号（正整数） |
 
-**返回**：`ResponseType<{ "opened": true }>`。
+**响应体**：`ResponseType<{ opened: true }>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`、`40409`、`41304`。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `opened` | boolean | 恒 `true` |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`、`40409`、`41304`。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "opened": true }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "opened": true },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/sessions/{session_id}/fs:open-in`
 
 在指定的宿主应用程序中打开会话文件或目录。仅限 local 运行时。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
@@ -4024,79 +4215,118 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 | `path` | string | 是 | 要打开的文件或目录，相对于会话工作目录 |
 | `line` | integer | 否 | 在应用支持时跳转到的行号（正整数） |
 
-**返回**：`ResponseType<{ "opened": true }>`。
+**响应体**：`ResponseType<{ opened: true }>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`、`40409`、`41304`、`50001`（应用启动失败）。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `opened` | boolean | 恒 `true` |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`、`40409`、`41304`、`50001`（应用启动失败）。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "opened": true }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "opened": true },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/sessions/{session_id}/fs:reveal`
 
 在宿主操作系统的文件管理器中显示会话文件。仅限 local 运行时。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `path` | string | 是 | 要显示的文件，相对于会话工作目录 |
 
-**返回**：`ResponseType<{ "revealed": true }>`。
+**响应体**：`ResponseType<{ revealed: true }>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`、`40409`、`41304`。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `revealed` | boolean | 恒 `true` |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`、`40409`、`41304`。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "revealed": true }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "revealed": true },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/sessions/{session_id}/fs/{path}:download`
 
-从会话工作区下载文件；`{path}` 是相对于工作区的文件路径，并带字面量 `:download` 后缀。响应为支持 Range 与 ETag 的二进制流——见 [二进制与流式端点](#二进制与流式端点)。
+从会话工作区下载文件；`{path}` 是相对于工作区的文件路径，并带字面量 `:download` 后缀。响应为支持 Range 与 ETag 的二进制流，不返回 `ResponseType`——见 [二进制与流式端点](#二进制与流式端点)。
 
-**Query**：
+**查询参数**：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `runtime_id` | string | 从哪个运行时读取。默认 `local` |
 
-**非零 code**（`ResponseType`）：`40001`（校验失败，`details` 为 `{ path, message }[]`）（路径缺失或不以 `:download` 结尾）、`40401`、`40409`、`41304`。
+**非零 code**（`ResponseType`）：`40001`（路径缺失或不以 `:download` 结尾；`details` 为 `{ path, message }[]`）、`40401`、`40409`、`41304`。
 
 #### `POST /api/v1/workspace/fs:search`
 
 `fs:search` 的无会话形式：工作区改由请求体而非 URL 携带。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `workspace` | string | 是 | 已注册工作区 id 或绝对根路径（当场注册） |
 | `query` | string | 是 | 搜索文本；`""` 表示列出顶层 |
 | `limit` | integer | 否 | 最大命中数，1–200。默认 `50` |
-| `include_globs` | array | 否 | 只保留匹配这些 glob 之一的路径 |
-| `exclude_globs` | array | 否 | 跳过匹配这些 glob 的路径 |
+| `include_globs` | `string[]` | 否 | 只保留匹配这些 glob 之一的路径 |
+| `exclude_globs` | `string[]` | 否 | 跳过匹配这些 glob 的路径 |
 | `follow_gitignore` | boolean | 否 | 跳过 gitignore 的路径。默认 `true` |
 | `runtime_id` | string | 否 | 在哪个运行时上搜索。默认 `local` |
 
-**返回**：`ResponseType<{ items: T-FsSearchHit[], truncated: boolean }>`，命中结构与排序同 `fs:search`。
+**响应体**：`ResponseType<{ items: `[T-FsSearchHit](#t-fssearchhit)`[]`, truncated: boolean }>`（命中结构与排序同 `fs:search`）。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40410`（工作区不存在，且不是可用的绝对路径）、`41303`。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `items` | [T-FsSearchHit](#t-fssearchhit)`[]` | 搜索命中 |
+| `truncated` | boolean | 命中数被 `limit` 截断 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40410`（工作区不存在，且不是可用的绝对路径）、`41303`。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "items": [ { "path": "src/server-api.ts", "name": "server-api.ts", "kind": "file", "score": 0.92, "match_positions": [ 4, 5, 6 ] } ], "truncated": false }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "items": [
+      {
+        "path": "src/server-api.ts",
+        "name": "server-api.ts",
+        "kind": "file",
+        "score": 0.92,
+        "match_positions": [ 4, 5, 6 ]
+      }
+    ],
+    "truncated": false
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/workspace/fs:suggest`
 
 在无会话的情况下给出工作区内的文件与目录补全候选——即输入框中 `@` 文件提及的后端。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
@@ -4105,84 +4335,148 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 | `limit` | integer | 否 | 最大候选数，1–200。默认 `50` |
 | `follow_gitignore` | boolean | 否 | 跳过 gitignore 的路径。默认 `true` |
 | `show_hidden` | boolean | 否 | 包含点文件。默认 `false` |
-| `include_globs` | array | 否 | 只保留匹配这些 glob 之一的路径 |
-| `exclude_globs` | array | 否 | 跳过匹配这些 glob 的路径 |
+| `include_globs` | `string[]` | 否 | 只保留匹配这些 glob 之一的路径 |
+| `exclude_globs` | `string[]` | 否 | 跳过匹配这些 glob 的路径 |
 | `runtime_id` | string | 否 | 在哪个运行时上补全。默认 `local` |
 
-**返回**：`ResponseType<{ items: T-FsSuggestItem[], truncated: boolean }>`（[T-FsSuggestItem](#t-fssuggestitem)，结构同搜索命中）。
+**响应体**：`ResponseType<{ items: `[T-FsSuggestItem](#t-fssuggestitem)`[]`, truncated: boolean }>`（结构同搜索命中）。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40410`。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `items` | [T-FsSuggestItem](#t-fssuggestitem)`[]` | 补全候选 |
+| `truncated` | boolean | 候选数被 `limit` 截断 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40410`。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "items": [ { "path": "src/server-api.ts", "name": "server-api.ts", "kind": "file", "score": 0.9, "match_positions": [ 4, 5 ] } ], "truncated": false }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "items": [
+      {
+        "path": "src/server-api.ts",
+        "name": "server-api.ts",
+        "kind": "file",
+        "score": 0.9,
+        "match_positions": [ 4, 5 ]
+      }
+    ],
+    "truncated": false
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/fs:suggest`
 
 `fs:suggest` 的工作区无关形式：请求体直接携带绝对 `roots`（1–32 条）。首 root 为主——其候选以相对路径返回，附加 root 的候选为绝对路径；重叠的 root 按 realpath 去重。每个 root 都会先 stat，不存在则整个请求失败。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `roots` | array | 是 | 绝对根路径数组，1–32 条 |
+| `roots` | `string[]` | 是 | 绝对根路径数组，1–32 条 |
 | `query` | string | 是 | 要补全的部分路径文本 |
 | `limit` | integer | 否 | 最大候选数。默认 `50` |
 | `follow_gitignore` | boolean | 否 | 默认 `true` |
 | `show_hidden` | boolean | 否 | 默认 `false` |
-| `include_globs` | array | 否 | 只保留匹配这些 glob 之一的路径 |
-| `exclude_globs` | array | 否 | 跳过匹配这些 glob 的路径 |
+| `include_globs` | `string[]` | 否 | 只保留匹配这些 glob 之一的路径 |
+| `exclude_globs` | `string[]` | 否 | 跳过匹配这些 glob 的路径 |
 | `runtime_id` | string | 否 | 默认 `local` |
 
-**返回**：`ResponseType<{ items: T-FsSuggestItem[], truncated: boolean }>`。
+**响应体**：`ResponseType<{ items: `[T-FsSuggestItem](#t-fssuggestitem)`[]`, truncated: boolean }>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40409`（某个 root 不存在）、`40420`、`40926`。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `items` | [T-FsSuggestItem](#t-fssuggestitem)`[]` | 补全候选 |
+| `truncated` | boolean | 候选数被 `limit` 截断 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40409`（某个 root 不存在）、`40420`、`40926`。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "items": [ { "path": "src/server-api.ts", "name": "server-api.ts", "kind": "file", "score": 0.9, "match_positions": [ 4, 5 ] } ], "truncated": false }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "items": [
+      {
+        "path": "src/server-api.ts",
+        "name": "server-api.ts",
+        "kind": "file",
+        "score": 0.9,
+        "match_positions": [ 4, 5 ]
+      }
+    ],
+    "truncated": false
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/fs:browse`
 
 列出某个本机目录的子目录——文件夹选择器的后端。
 
-**Query**：
+**查询参数**：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `path` | string | 绝对目录路径。默认用户主目录 |
 
-**返回**：`ResponseType<`[T-FsBrowseResponse](#t-fsbrowseresponse)`>`。
+**响应体**：`ResponseType<`[T-FsBrowseResponse](#t-fsbrowseresponse)`>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）（`path` 不是绝对路径）、`40409`、`40411`（权限不足）。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-FsBrowseResponse](#t-fsbrowseresponse) | 目录列表；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（`path` 不是绝对路径；`details` 为 `{ path, message }[]`）、`40409`、`40411`（权限不足）。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "path": "/Users/dev", "parent": "/Users", "entries": [ { "name": "my-app", "path": "/Users/dev/my-app", "is_dir": true } ] }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "path": "/Users/dev",
+    "parent": "/Users",
+    "entries": [ { "name": "my-app", "path": "/Users/dev/my-app", "is_dir": true } ]
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/fs:home`
 
 返回文件夹选择器的落地数据。无参数。
 
-**返回**：`ResponseType<`[T-FsHomeResponse](#t-fshomeresponse)`>`（`recent_roots` 上限 8）。
+**响应体**：`ResponseType<`[T-FsHomeResponse](#t-fshomeresponse)`>`（`recent_roots` 上限 8）。
 
-**示例**：
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-FsHomeResponse](#t-fshomeresponse) | 主目录与最近工作区；字段见类型汇总 |
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "home": "/Users/dev", "recent_roots": [ "/Users/dev/my-app" ] }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "home": "/Users/dev", "recent_roots": [ "/Users/dev/my-app" ] },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/fs:content`
 
-以流式返回本机文件系统上任意文件的原始字节——仅受 API token 保护，暴露端口时务必谨慎。支持 Range 请求与 ETag 缓存；见 [二进制与流式端点](#二进制与流式端点)。
+以流式返回本机文件系统上任意文件的原始字节——仅受 API token 保护，暴露端口时务必谨慎。响应为二进制流，支持 Range 请求与 ETag 缓存，不返回 `ResponseType`；见 [二进制与流式端点](#二进制与流式端点)。
 
-**Query**：
+**查询参数**：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
@@ -4194,20 +4488,29 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 按绝对路径在本机文件系统上创建一个目录——文件夹选择器「新建文件夹」的后端。非递归：父目录必须已存在。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `path` | string | 是 | 绝对目录路径 |
 
-**返回**：`ResponseType<{ "path": string }>`。
+**响应体**：`ResponseType<{ path: string }>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40409`（父路径不存在）、`40411`、`40919`（路径已存在）。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `path` | string | 创建的目录路径 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40409`（父路径不存在）、`40411`、`40919`（路径已存在）。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "path": "/Users/dev/new-project" }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "path": "/Users/dev/new-project" },
+  "request_id": "01JZX4..."
+}
 ```
 
 **文件上传与媒体。**
@@ -4225,7 +4528,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 以 `multipart/form-data` 上传文件，供后续引用（例如作为提示词附件）。
 
-**Body**（multipart）：
+**请求体**（multipart）：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
@@ -4233,19 +4536,34 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 | `name` | string | 否 | 存储的显示名。默认上传文件名 |
 | `expires_in_sec` | number | 否 | 文件过期前的秒数（非负）。默认永不过期 |
 
-**返回**：`ResponseType<`[T-FileMeta](#t-filemeta)`>`。
+**响应体**：`ResponseType<`[T-FileMeta](#t-filemeta)`>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）（multipart 未初始化或缺少 `file` 字段）。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-FileMeta](#t-filemeta) | 文件元信息；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（multipart 未初始化或缺少 `file` 字段；`details` 为 `{ path, message }[]`）。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "id": "f_01JZX4...", "name": "screenshot.png", "media_type": "image/png", "size": 204800, "created_at": "2026-09-02T08:12:00.000Z" }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "id": "f_01JZX4...",
+    "name": "screenshot.png",
+    "media_type": "image/png",
+    "size": 204800,
+    "created_at": "2026-09-02T08:12:00.000Z"
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/files/{file_id}`
 
-下载已上传的文件。响应为二进制流，支持 Range 请求但不处理 `If-None-Match`；失败使用真实 HTTP 状态码——见 [二进制与流式端点](#二进制与流式端点)。
+下载已上传的文件。响应为二进制流，支持 Range 请求但不处理 `If-None-Match`，不返回 `ResponseType`；失败使用真实 HTTP 状态码——见 [二进制与流式端点](#二进制与流式端点)。
 
 **非零 code**：`40407`（HTTP 404：没有该 id 的文件，包括已过期的）、`50001`（HTTP 500）。
 
@@ -4253,19 +4571,28 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 删除已上传的文件。无请求体。
 
-**返回**：`ResponseType<{ "deleted": true }>`。
+**响应体**：`ResponseType<{ deleted: true }>`。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `deleted` | boolean | 恒 `true` |
 
 **非零 code**：同下载——`40407`（HTTP 404）、`50001`（HTTP 500）。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "deleted": true }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "deleted": true },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/sessions/{session_id}/media/{file_id}`
 
-按文件 id 下载提示词媒体文件（会话提示词引用的图片或其他附件）；尚未提交到会话的 id 会回退到暂存的上传中查找。响应为二进制并支持 Range——共享约定见 [二进制与流式端点](#二进制与流式端点)；与那里返回 `ResponseType` 的端点不同，会话或文件不存在时返回真正的 404 状态码且响应体仍为 `ResponseType`。
+按文件 id 下载提示词媒体文件（会话提示词引用的图片或其他附件）；尚未提交到会话的 id 会回退到暂存的上传中查找。响应为二进制并支持 Range，不返回 `ResponseType`——共享约定见 [二进制与流式端点](#二进制与流式端点)；与那里返回 `ResponseType` 的端点不同，会话或文件不存在时返回真正的 404 状态码且响应体仍为 `ResponseType`。
 
 **非零 code**：`40401`（HTTP 404）、`40407`（HTTP 404）。
 
@@ -4275,14 +4602,14 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 跨会话全文搜索，覆盖 User 消息、Assistant 回复与会话标题，由服务端的持久搜索索引支撑。当 `container.session_id` 指向本服务进程中存活的会话时，搜索改为直接扫描该会话的内存转录，响应的 `source` 字段（`index` 或 `live`）会报告本页结果由哪条路径提供。分页遵循 [`page_token`](#分页) 风格。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `query` | string | 是 | 搜索文本 |
 | `mode` | string | 否 | `terms`（默认）/ `literal`（零误报的精确子串搜索） |
 | `op` | string | 否 | `terms` 模式下的词项组合符：`AND`（默认）/ `OR` |
-| `container` | object | 否 | 将搜索限定在 `{ session_id?, agent_id? }` |
+| `container` | `{ session_id?: string, agent_id?: string }` | 否 | 将搜索限定在该容器内 |
 | `role` | string | 否 | 限定 `user` / `assistant` / `title` 命中 |
 | `start_time` | integer | 否 | 只看不早于该时间的命中（epoch 毫秒） |
 | `end_time` | integer | 否 | 只看不晚于该时间的命中（epoch 毫秒） |
@@ -4292,14 +4619,40 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 `terms` 模式下查询会被分词（ASCII 词加 CJK n-gram）、去重，并以至多 32 个词项匹配倒排索引。
 
-**返回**：`ResponseType<`[T-SearchResponse](#t-searchresponse)`>`。
+**响应体**：`ResponseType<`[T-SearchResponse](#t-searchresponse)`>`。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-SearchResponse](#t-searchresponse) | 一页命中与索引状态；字段见类型汇总 |
 
 **非零 code**：`40001`（校验失败、查询为空或超过 32 个词项、分页令牌非法；`details` 为 `{ path, message }[]`）、`50001`。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "items": [ { "session_id": "session_01JZX4...", "workspace_id": "wd_my-app_a1b2c3d4e5f6", "session_title": "Fix the login page", "agent_id": "main", "role": "user", "snippet": "...adjust the button spacing...", "time": 1787000000000, "turn": 3, "score": 2.31 } ], "has_more": false, "index_state": { "state": "ready", "indexed_sessions": 12, "total_sessions": 12, "documents": 340 }, "source": "index" }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "items": [
+      {
+        "session_id": "session_01JZX4...",
+        "workspace_id": "wd_my-app_a1b2c3d4e5f6",
+        "session_title": "Fix the login page",
+        "agent_id": "main",
+        "role": "user",
+        "snippet": "...adjust the button spacing...",
+        "time": 1787000000000,
+        "turn": 3,
+        "score": 2.31
+      }
+    ],
+    "has_more": false,
+    "index_state": { "state": "ready", "indexed_sessions": 12, "total_sessions": 12, "documents": 340 },
+    "source": "index"
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 **GUI 存储。**
@@ -4320,79 +4673,124 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 返回已存键的数量（对齐 `localStorage.length`）。无参数。
 
-**返回**：`ResponseType<{ "length": number }>`。
+**响应体**：`ResponseType<{ length: number }>`。
 
-**示例**：
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `length` | number | 已存键的数量 |
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "length": 3 }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "length": 3 },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/gui/store/getItem`
 
 读取一个值（对齐 `localStorage.getItem`）。
 
-**Query**：
+**查询参数**：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `key` | string | **必填。** 要读取的键，1–256 个字符 |
 
-**返回**：`ResponseType<{ "value": string | null }>`——键不存在时为 `null`。
+**响应体**：`ResponseType<{ value: string | null }>`——键不存在时为 `null`。
 
-**示例**：
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `value` | string `| null` | 存储的值；键不存在时为 `null` |
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "value": "{ \"sidebar\": \"collapsed\" }" }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "value": "{ \"sidebar\": \"collapsed\" }" },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/gui/store/setItem`
 
 写入一个值（对齐 `localStorage.setItem`）。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `key` | string | 是 | 要写入的键，1–256 个字符 |
 | `value` | string | 是 | 要存储的值 |
 
-**返回**：`ResponseType<null>`。
+**响应体**：`ResponseType<null>`。
 
-**示例**：
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | null | 恒 `null` |
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": null, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": null,
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/gui/store/removeItem`
 
 删除一个值（对齐 `localStorage.removeItem`）。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `key` | string | 是 | 要删除的键，1–256 个字符 |
 
-**返回**：`ResponseType<null>`。
+**响应体**：`ResponseType<null>`。
 
-**示例**：
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | null | 恒 `null` |
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": null, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": null,
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/gui/store/clear`
 
 删除所有已存值（对齐 `localStorage.clear`）。无请求体。
 
-**返回**：`ResponseType<null>`。
+**响应体**：`ResponseType<null>`。
 
-**示例**：
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | null | 恒 `null` |
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": null, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": null,
+  "request_id": "01JZX4..."
+}
 ```
 
 ## WebSocket 帧
