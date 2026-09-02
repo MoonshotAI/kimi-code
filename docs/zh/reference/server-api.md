@@ -112,79 +112,6 @@ HTTP 状态码例外（非 200）：
 - **游标式**：`before_id` / `after_id`（互斥）加 `page_size`（1–100），响应为 `{ items, has_more }`。用于会话列表、消息列表、子会话列表；转录分页的游标为 `before_turn` / `after_turn`。
 - **`page_token`**：不透明令牌（绑定了查询条件的指纹），用于 `POST /api/v1/search` 与 `GET /api/v2/sessions`。翻页途中改变任何查询条件会使令牌失效：v2 返回 `40922`，search 返回 `40001`。`GET /api/v2/sessions` 另提供无状态的 `page` 页码模式作为替代。
 
-## WebSocket 时序
-
-事件流端点为 `ws://<host>:<port>/api/v1/ws`，鉴权在升级请求时完成（见 [鉴权](#鉴权)）。本节按生命周期梳理帧的到达顺序；各帧型的字段定义见 [WebSocket 帧](#websocket-帧)。
-
-### 连接与握手
-
-连接建立后服务端立即发送 `server_hello`（携带 `protocol_version` 与 `heartbeat_ms`）。客户端随后可发 `client_hello` 声明身份与初始订阅，再发 `subscribe` 订阅会话事件；每个带 `id` 的入站帧都收到一个 `ack` 应答。保活由服务端驱动：每 `heartbeat_ms`（默认 10000 毫秒）发送 `ping`，客户端回 `pong`；连续两个周期没有任何入站帧，服务端以 `close(1001, 'heartbeat timeout')` 断连。
-
-### 一个轮次的事件顺序
-
-提交提示词的 REST 调用在提示词被接受后立即返回，轮次（turn）进度全部经事件流推送：
-
-```text
-POST /sessions/{id}/prompts → 200（T-PromptItem）
-  → prompt.submitted
-  → turn.started
-  → （turn.step.started → assistant.delta / thinking.delta → tool.call.started → tool.progress → tool.result → turn.step.completed）× N
-  → turn.ended
-  → prompt.completed
-```
-
-流式增量帧（`assistant.delta` / `thinking.delta` 等）是易失（volatile）事件：不落盘、不回放，帧上带 `offset`（该轮次内的累计文本长度）用于对齐；相邻同轮次的增量帧在发送前可能被合并，客户端不能把增量帧当作不可变日志。
-
-### 交互：审批与提问
-
-工具调用需要许可或结构化输入时，轮次暂停并等待 REST 答复，解决后事件流继续：
-
-```text
-event.approval.requested → POST .../approvals/{approval_id} → event.approval.resolved
-event.question.requested → POST .../questions/{question_id}（或 :dismiss）→ event.question.answered（或 event.question.dismissed）
-```
-
-### 断线恢复
-
-重连后在 `subscribe` 的 `cursors` 里带上每个会话最后应用事件的 `{ seq, epoch }`，服务端回放缺口；落后超过事件缓冲（`max_event_buffer_size`，默认 1000 条）、`epoch` 不符或会话被重建时，改为收到 `resync_required`。此时调用 `GET /api/v1/sessions/{session_id}/snapshot` 拿全量快照（含 `as_of_seq` 水位与 `epoch`），再以新游标重新订阅。「水位」（watermark）指事件日志的序列号位置：`seq` 严格递增，同一 `epoch` 内可比较先后。
-
-```mermaid
-sequenceDiagram
-    participant C as 客户端
-    participant S as 服务
-
-    Note over C,S: 连接与握手
-    C->>S: GET /api/v1/ws（upgrade，Bearer token）
-    S->>C: server_hello
-    C->>S: client_hello / subscribe（可带 cursors）
-    S->>C: ack（accepted、resync_required、cursors）
-    loop 每 heartbeat_ms
-        S->>C: ping
-        C->>S: pong
-    end
-
-    Note over C,S: 一个轮次
-    C->>S: POST /sessions/{id}/prompts
-    S->>C: 200 信封（T-PromptItem）
-    S->>C: prompt.submitted → turn.started
-    loop 每个 step
-        S->>C: turn.step.started → delta / 工具调用帧 → turn.step.completed
-    end
-    S->>C: turn.ended → prompt.completed
-
-    Note over C,S: 交互与恢复
-    S->>C: event.approval.requested
-    C->>S: POST .../approvals/{approval_id}
-    S->>C: event.approval.resolved
-    C->>S: subscribe（cursors: {seq, epoch}）
-    alt 缺口可回放
-        S->>C: 回放错过的事件
-    else 缓冲溢出 / epoch 不符 / 会话重建
-        S->>C: resync_required
-        C->>S: GET .../snapshot → 以新游标重新订阅
-    end
-```
-
 ## REST 端点
 
 下文按资源分组列出全部端点。路径里的 `:{action}` 后缀是动作约定——对单个资源 POST 到 `路径:动作` 执行非 CRUD 操作（如会话的 `:fork`、`:archive`）；动作缺失或未知时返回 `40001`。共享类型（T-Session 等）不在条目内展开，统一见 [类型汇总](#类型汇总)；「可缺省」「可空」的语义区分见 [null 与缺省语义](#null-与缺省语义)。
@@ -1285,7 +1212,7 @@ main agent 的 Agent 循环运行在哪个运行时上的读取与切换。
 
 ### 提示词
 
-提示词是一次用户输入的单位：提交一条提示词会把它排入会话的 main agent（或指定 Agent）的队列；轮次进度通过 [WebSocket 时序](#websocket-时序) 推送，不经过这些端点。
+提示词是一次用户输入的单位：提交一条提示词会把它排入会话的 main agent（或指定 Agent）的队列；轮次进度通过 [WebSocket 帧](#websocket-帧) 推送，不经过这些端点。
 
 | 方法与路径 | 说明 |
 | --- | --- |
