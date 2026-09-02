@@ -190,6 +190,61 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
     expect(cancel).toHaveBeenCalledOnce();
   });
 
+  it("does not execute the compact handler when a payload is supplied", async () => {
+    const result = await bridge.handle(
+      { id: "rpc-1", method: Methods.CompactContext, params: {} },
+      "view-1",
+    );
+
+    expect(result).toEqual({
+      id: "rpc-1",
+      error: "Invalid bridge params for method: compactContext",
+    });
+  });
+
+  it("reports not-ok when compacting without an active session", async () => {
+    const result = await bridge.handle({ id: "rpc-1", method: Methods.CompactContext }, "view-1");
+
+    expect(result).toEqual({ id: "rpc-1", result: { ok: false } });
+  });
+
+  it("compacts the view's session on request", async () => {
+    const runCompaction = vi.fn(async () => "completed" as const);
+    vi.spyOn(bridge.runtime, "getSessionForView").mockReturnValue({
+      isBusy: false,
+      runCompaction,
+    } as never);
+
+    const result = await bridge.handle({ id: "rpc-1", method: Methods.CompactContext }, "view-1");
+
+    expect(result).toEqual({ id: "rpc-1", result: { ok: true } });
+    expect(runCompaction).toHaveBeenCalledOnce();
+  });
+
+  it("reports not-ok when the compaction is cancelled", async () => {
+    vi.spyOn(bridge.runtime, "getSessionForView").mockReturnValue({
+      isBusy: false,
+      runCompaction: vi.fn(async () => "cancelled" as const),
+    } as never);
+
+    const result = await bridge.handle({ id: "rpc-1", method: Methods.CompactContext }, "view-1");
+
+    expect(result).toEqual({ id: "rpc-1", result: { ok: false } });
+  });
+
+  it("refuses to compact while the session is busy", async () => {
+    const runCompaction = vi.fn(async () => "completed" as const);
+    vi.spyOn(bridge.runtime, "getSessionForView").mockReturnValue({
+      isBusy: true,
+      runCompaction,
+    } as never);
+
+    const result = await bridge.handle({ id: "rpc-1", method: Methods.CompactContext }, "view-1");
+
+    expect(result).toEqual({ id: "rpc-1", result: { ok: false } });
+    expect(runCompaction).not.toHaveBeenCalled();
+  });
+
   it.each(["missingMethod", "toString", "constructor", "__proto__"])(
     "does not dispatch the unknown or prototype method %s",
     async (method) => {
