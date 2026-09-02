@@ -40,4 +40,5 @@ export interface ReminderRegistration extends IDisposable {}
 export interface ReminderNotification {
   readonly variant: string;
   readonly ownerPromptId?: string;
+  readonly disclosure?: unknown;
 }

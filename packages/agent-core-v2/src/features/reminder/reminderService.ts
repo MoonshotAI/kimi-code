@@ -69,6 +69,7 @@ function appendReminder(
       kind: 'injection',
       variant: notification.variant,
       ownerPromptId: notification.ownerPromptId,
+      disclosure: notification.disclosure,
     },
   });
 }

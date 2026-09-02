@@ -48,15 +48,14 @@ import { AgentToolDedupeService } from '#/agent/toolDedupe/toolDedupeService';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
+import { wrapSystemReminder } from '#/features/reminder/systemReminder';
+import type { ReminderNotification } from '#/features/reminder/types';
 import { createReminderHarness } from '../../features/reminder/stubs';
 import { OrderedHookSlot } from '#/hooks';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
-import {
-  AgentAgentsMdReminderService,
-  agentsMdReminderPendingKey,
-} from '#/agent/agentsMdReminder/agentsMdReminderService';
+import { AgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminderService';
 import { extractBashTargetDirs } from '#/agent/agentsMdReminder/bashTargets';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
@@ -164,8 +163,20 @@ function createHarness(
       reg.defineInstance(
         IAgentReminderService,
         Object.assign(reminderRuntime, {
-          notify: (content: string, notification: { variant: string }) => {
-            reminders.push({ content, origin: { kind: 'injection', ...notification } });
+          notify: (content: string, notification: ReminderNotification) => {
+            const origin: PromptOrigin = {
+              kind: 'injection',
+              variant: notification.variant,
+              ownerPromptId: notification.ownerPromptId,
+              disclosure: notification.disclosure,
+            };
+            context.append({
+              role: 'user',
+              content: [{ type: 'text', text: wrapSystemReminder(content) }],
+              toolCalls: [],
+              origin,
+            });
+            reminders.push({ content, origin });
           },
         }),
       );
@@ -371,7 +382,7 @@ describe('agentsMdReminder instructions change announcements', () => {
     expect(h.reminders).toHaveLength(0);
   });
 
-  it('adds announced created paths to the pending set so the reminder re-injects until read', async () => {
+  it('reminds an announced created path on the next access to its directory', async () => {
     const h = createHarness();
     const rootAgentsMd = await writeAgentsMd(workDir, 'root instructions');
     h.reminder.seedInjected([], workDir);
@@ -379,8 +390,11 @@ describe('agentsMdReminder instructions change announcements', () => {
     h.instructionsChange.fire([{ path: rootAgentsMd, action: 'created', kind: 'file' }]);
 
     expect(h.reminders).toHaveLength(1);
-    const pending = h.ix.get(IAgentStateService).get(agentsMdReminderPendingKey);
-    expect(pending.has(normalize(rootAgentsMd))).toBe(true);
+    expect(agentsMdMessages(h)).toHaveLength(0);
+
+    await fire(h, didCtx('Read', { path: join(workDir, 'index.ts') }));
+    expect(agentsMdMessages(h)).toHaveLength(1);
+    expect(reminderText(h)).toContain(rootAgentsMd);
   });
 });
 
@@ -579,7 +593,7 @@ describe('agentsMdReminder re-injection after context loss', () => {
     expect(agentsMdMessages(h)).toHaveLength(0);
   });
 
-  it('re-reminds a pending path after an undo removes the reminder', async () => {
+  it('re-reminds a pending path on the next access after an undo removes the reminder', async () => {
     const h = createHarness();
     const subDir = join(workDir, 'packages', 'kap-server');
     const subAgentsMd = await writeAgentsMd(subDir);
@@ -597,6 +611,9 @@ describe('agentsMdReminder re-injection after context loss', () => {
     expect(agentsMdMessages(h)).toHaveLength(0);
 
     await h.step();
+    expect(agentsMdMessages(h)).toHaveLength(0);
+
+    await fire(h, didCtx('Read', { path: join(subDir, 'other.ts') }));
     expect(agentsMdMessages(h)).toHaveLength(1);
     expect(reminderText(h)).toContain(subAgentsMd);
   });
@@ -632,7 +649,7 @@ describe('agentsMdReminder re-injection after context loss', () => {
     expect(messageText(messages[1]!)).not.toContain(agentsMdA);
   });
 
-  it('re-reminds a created-and-announced path after compaction', async () => {
+  it('re-reminds a created-and-announced path on the next access after compaction', async () => {
     const h = createHarness();
     const rootAgentsMd = await writeAgentsMd(workDir, 'root instructions');
     h.reminder.seedInjected([], workDir);
@@ -640,15 +657,26 @@ describe('agentsMdReminder re-injection after context loss', () => {
     h.instructionsChange.fire([{ path: rootAgentsMd, action: 'created', kind: 'file' }]);
     expect(h.reminders).toHaveLength(1);
 
-    await h.step();
+    compact(h);
+
+    await fire(h, didCtx('Read', { path: join(workDir, 'index.ts') }));
+    expect(agentsMdMessages(h)).toHaveLength(1);
+    expect(reminderText(h)).toContain(rootAgentsMd);
+  });
+
+  it('does not re-remind at a bare step after compaction without a new access', async () => {
+    const h = createHarness();
+    const subDir = join(workDir, 'packages', 'kap-server');
+    await writeAgentsMd(subDir);
+    h.reminder.seedInjected([], workDir);
+
+    await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
     expect(agentsMdMessages(h)).toHaveLength(1);
 
     compact(h);
-    expect(agentsMdMessages(h)).toHaveLength(0);
-
     await h.step();
-    expect(agentsMdMessages(h)).toHaveLength(1);
-    expect(reminderText(h)).toContain(rootAgentsMd);
+
+    expect(agentsMdMessages(h)).toHaveLength(0);
   });
 });
 
