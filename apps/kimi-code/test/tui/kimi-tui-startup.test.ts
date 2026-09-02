@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { BannerProvider } from '#/tui/banner/banner-provider';
 import { readBannerDisplayState } from '#/tui/banner/state';
 import { handleLoginCommand, handleLogoutCommand } from '#/tui/commands/auth';
+import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
 import { promptPlatformSelection, promptLogoutProviderSelection } from '#/tui/commands/prompts';
 import { BannerComponent } from '#/tui/components/chrome/banner';
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
@@ -16,6 +17,10 @@ import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui
 import { REPLAY_FETCH_TURN_LIMIT } from '#/tui/utils/message-replay';
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { quoteShellArg } from '#/utils/shell-quote';
+import {
+  DISABLE_TERMINAL_MOUSE_REPORTING,
+  ENABLE_TERMINAL_MOUSE_REPORTING,
+} from '#/tui/constant/terminal';
 import {
   DISABLE_TERMINAL_THEME_REPORTING,
   ENABLE_TERMINAL_THEME_REPORTING,
@@ -50,12 +55,28 @@ interface ThemeTrackingDriver extends StartupDriver {
   refreshTerminalThemeTracking(): void;
 }
 
+interface MouseTrackingDriver extends StartupDriver {
+  refreshTerminalMouseTracking(): void;
+  suspendTerminalMouseTracking(): void;
+}
+
 interface MigrateExitDriver extends StartupDriver {
   start(): Promise<void>;
   onExit?: (code?: number) => Promise<void>;
   runMigrationScreen(plan: unknown): Promise<unknown>;
   initMainTui(): Promise<boolean>;
   terminalFocusTrackingDispose?: () => void;
+}
+
+interface TrustPromptStartupDriver extends StartupDriver {
+  start(): Promise<void>;
+  registerSignalHandlers(): void;
+  maybeRunWorkspaceTrustPrompt(): Promise<boolean>;
+  initMainTui(): Promise<boolean>;
+  startEventLoop(): void;
+  refreshTerminalMouseTracking(): void;
+  startBackgroundFdAutocomplete(): void;
+  finishStartup(shouldReplayHistory: boolean): Promise<void>;
 }
 
 const MIGRATION_PLAN: MigrationPlan = {
@@ -1435,6 +1456,38 @@ describe('KimiTUI startup', () => {
     expect(stop).not.toHaveBeenCalled();
   });
 
+  it('tracks terminal mouse input only while the main editor is mounted', () => {
+    const harness = makeHarness();
+    const driver = makeDriver(harness, makeStartupInput()) as unknown as MouseTrackingDriver;
+    const { write, addInputListener, removeInputListener } = captureInputListeners(driver);
+
+    try {
+      setExperimentalFeatures([{ id: 'terminal_mouse_input', enabled: true }]);
+      driver.state.editorContainer.clear();
+      driver.state.editorContainer.addChild(driver.state.editor);
+
+      driver.refreshTerminalMouseTracking();
+
+      expect(addInputListener).toHaveBeenCalledOnce();
+      expect(write).toHaveBeenCalledWith(ENABLE_TERMINAL_MOUSE_REPORTING);
+
+      driver.suspendTerminalMouseTracking();
+      expect(removeInputListener).toHaveBeenCalledOnce();
+      expect(write).toHaveBeenCalledWith(DISABLE_TERMINAL_MOUSE_REPORTING);
+
+      driver.state.ui.clear();
+      driver.refreshTerminalMouseTracking();
+      expect(addInputListener).toHaveBeenCalledOnce();
+
+      driver.state.ui.addChild(driver.state.editorContainer);
+      driver.state.editorContainer.clear();
+      driver.refreshTerminalMouseTracking();
+      expect(addInputListener).toHaveBeenCalledOnce();
+    } finally {
+      setExperimentalFeatures([]);
+    }
+  });
+
   it('tracks terminal theme reports while auto theme is active', () => {
     const harness = makeHarness();
     const driver = makeDriver(
@@ -2115,6 +2168,38 @@ describe('KimiTUI startup', () => {
     });
     expect(driver.state.startupState).toBe('ready');
     expect(driver.state.appState.sessionId).toBe('');
+  });
+
+  it('refreshes terminal mouse tracking after the trust prompt starts the event loop', async () => {
+    const harness = makeHarness();
+    const driver = makeDriver(harness, {
+      ...makeStartupInput(),
+      engineV2: true,
+    }) as unknown as TrustPromptStartupDriver;
+    vi.spyOn(driver, 'registerSignalHandlers').mockImplementation(() => {});
+    const trustPrompt = vi
+      .spyOn(driver, 'maybeRunWorkspaceTrustPrompt')
+      .mockResolvedValue(true);
+    const initMainTui = vi.spyOn(driver, 'initMainTui').mockResolvedValue(false);
+    const startEventLoop = vi.spyOn(driver, 'startEventLoop').mockImplementation(() => {});
+    const refreshMouse = vi
+      .spyOn(driver, 'refreshTerminalMouseTracking')
+      .mockImplementation(() => {});
+    vi.spyOn(driver, 'startBackgroundFdAutocomplete').mockImplementation(() => {});
+    vi.spyOn(driver, 'finishStartup').mockResolvedValue();
+
+    await driver.start();
+
+    expect(trustPrompt).toHaveBeenCalledOnce();
+    expect(initMainTui).toHaveBeenCalledOnce();
+    expect(startEventLoop).not.toHaveBeenCalled();
+    expect(refreshMouse).toHaveBeenCalledOnce();
+    const initOrder = initMainTui.mock.invocationCallOrder[0];
+    const refreshOrder = refreshMouse.mock.invocationCallOrder[0];
+    if (initOrder === undefined || refreshOrder === undefined) {
+      throw new Error('expected startup and mouse refresh calls');
+    }
+    expect(initOrder).toBeLessThan(refreshOrder);
   });
 
   it('disposes terminal focus/theme tracking on the kimi migrate exit', async () => {

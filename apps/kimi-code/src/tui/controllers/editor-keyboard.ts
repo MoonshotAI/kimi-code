@@ -8,6 +8,7 @@ import {
   readClipboardMedia,
   type ClipboardVideo,
 } from '#/utils/clipboard/clipboard-image';
+import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { parseImageMeta } from '#/utils/image/image-mime';
 import { editInExternalEditor, resolveEditorCommand } from '#/utils/process/external-editor';
 
@@ -80,6 +81,8 @@ export interface EditorKeyboardHost {
   handleInputModeChange(mode: 'prompt' | 'bash'): void;
   clearQueuedMessages(): void;
   setExternalEditorRunning(running: boolean): void;
+  suspendTerminalMouseTracking(): void;
+  refreshTerminalMouseTracking(): void;
   updateActivityPane(): void;
 }
 
@@ -162,6 +165,10 @@ export class EditorKeyboardController {
 
     editor.onNonEscapeInput = () => {
       this.clearPendingUndoEsc();
+    };
+
+    editor.onCopySelection = (text: string) => {
+      void copyTextToClipboard(text).catch(() => undefined);
     };
 
     editor.onCtrlC = () => {
@@ -755,6 +762,7 @@ export class EditorKeyboardController {
     }
     this.host.setExternalEditorRunning(true);
     const seed = state.editor.getExpandedText?.() ?? state.editor.getText();
+    this.host.suspendTerminalMouseTracking();
     // Fullscreen: a plain stop() would replay the whole transcript into the
     // main screen on exit; the external editor only needs the alternate
     // screen released, so preserve the screen instead.
@@ -775,6 +783,7 @@ export class EditorKeyboardController {
         process.stdin.pause();
       }
       state.ui.start();
+      this.host.refreshTerminalMouseTracking();
       state.ui.setFocus(state.editor);
       state.ui.requestRender(true);
       // terminal.stop() cleared the OSC 9;4 progress indicator while the

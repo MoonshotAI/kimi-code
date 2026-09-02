@@ -40,6 +40,10 @@ Type `!` in an empty input box to enter shell mode and run terminal commands dir
 | `Alt-V` | Paste an image or video from the clipboard (Windows) |
 | `Ctrl--` | Undo |
 | `Esc` `Esc` | Open the undo selector (double-press while idle) |
+| `Ctrl-C` | Copy selected prompt text; without a selection, keep the existing cancel, clear, or exit behavior |
+| Left-button drag | Select prompt text when `KIMI_CODE_EXPERIMENTAL_TERMINAL_MOUSE_INPUT=1` |
+
+With experimental terminal mouse input enabled, a click moves the prompt cursor and a left-button drag selects text. Use `Ctrl-C` to copy it, a delete key to remove it, or type to replace it. Hold `Shift` for the terminal's native text selection or scrollback behavior instead.
 
 Pressing `Ctrl-G` opens an external editor, selected according to the following priority:
 

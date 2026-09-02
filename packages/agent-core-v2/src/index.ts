@@ -304,6 +304,7 @@ import '#/app/flag/flag';
 import '#/app/flag/flagRegistry';
 import '#/app/flag/flagRegistryService';
 import '#/app/flag/flagService';
+import '#/app/terminalMouseInput/flag';
 export * from '#/app/flag/flagRegistry';
 export * from '#/app/flag/flagRegistryService';
 export * from '#/app/flag/flag';

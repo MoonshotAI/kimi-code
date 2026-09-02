@@ -224,6 +224,21 @@ interface EditorState {
 	cursorCol: number;
 }
 
+export interface EditorPosition {
+	line: number;
+	col: number;
+}
+
+export interface EditorSelectionRange {
+	start: EditorPosition;
+	end: EditorPosition;
+}
+
+interface EditorSelection {
+	anchor: EditorPosition;
+	head: EditorPosition;
+}
+
 /** Undo snapshot: editor text state plus the paste registry. */
 interface EditorSnapshot {
 	state: EditorState;
@@ -233,8 +248,20 @@ interface EditorSnapshot {
 
 interface LayoutLine {
 	text: string;
+	logicalLine: number;
+	startCol: number;
+	endCol: number;
 	hasCursor: boolean;
 	cursorPos?: number;
+}
+
+interface RenderedEditorLayout {
+	width: number;
+	paddingX: number;
+	contentWidth: number;
+	lines: LayoutLine[];
+	allLines: LayoutLine[];
+	scrollOffset: number;
 }
 
 export interface EditorTheme {
@@ -276,6 +303,34 @@ function buildDebouncePattern(triggerCharacters: string[]): RegExp {
 	return new RegExp(`(?:^|[ \\t])(?:@(?:"[^"]*|[^\\s]*)|[${escapedWithoutAt.join("")}][^\\s]*)$`);
 }
 
+function compareEditorPositions(a: EditorPosition, b: EditorPosition): number {
+	return a.line === b.line ? a.col - b.col : a.line - b.line;
+}
+
+function inverse(text: string): string {
+	return `\x1b[7m${text}\x1b[27m`;
+}
+
+function offsetAtVisualColumn(
+	text: string,
+	targetCol: number,
+	segments: Iterable<Intl.SegmentData>,
+): number {
+	if (targetCol <= 0) return 0;
+	let visibleCol = 0;
+
+	for (const segment of segments) {
+		const width = visibleWidth(segment.segment);
+		const end = visibleCol + width;
+		if (targetCol < end) {
+			return targetCol >= visibleCol + width / 2 ? segment.index + segment.segment.length : segment.index;
+		}
+		visibleCol = end;
+	}
+
+	return text.length;
+}
+
 function createScrollBorder(direction: "↑" | "↓", hiddenLineCount: number, width: number): string {
 	const availableWidth = Math.max(0, width);
 	const indicator = `─── ${direction} ${hiddenLineCount} more `;
@@ -306,6 +361,12 @@ export class Editor implements Component, Focusable {
 
 	// Vertical scrolling support
 	private scrollOffset: number = 0;
+
+	// Mouse-driven text selection. The range is stored as anchor/head so
+	// reverse drags preserve the active endpoint while getSelectionRange()
+	// exposes a normalized half-open range.
+	private selection: EditorSelection | undefined;
+	private renderedLayout: RenderedEditorLayout | undefined;
 
 	// Border color (can be changed dynamically)
 	public borderColor: (str: string) => string;
@@ -485,6 +546,7 @@ export class Editor implements Component, Focusable {
 	}
 
 	private navigateHistory(direction: 1 | -1): void {
+		this.selection = undefined;
 		this.lastAction = null;
 		if (this.history.length === 0) return;
 
@@ -532,6 +594,7 @@ export class Editor implements Component, Focusable {
 			this.historyDraft = null;
 			if (draft) {
 				this.state = draft;
+				this.selection = undefined;
 				this.preferredVisualCol = null;
 				this.snappedFromCursorCol = null;
 				this.scrollOffset = 0;
@@ -558,6 +621,7 @@ export class Editor implements Component, Focusable {
 
 	/** Internal setText that doesn't reset history state - used by navigateHistory */
 	private setTextInternal(text: string, cursorPlacement: "start" | "end" = "end"): void {
+		this.selection = undefined;
 		const lines = text.split("\n");
 		this.state.lines = lines.length === 0 ? [""] : lines;
 		this.state.cursorLine = cursorPlacement === "start" ? 0 : this.state.lines.length - 1;
@@ -571,7 +635,77 @@ export class Editor implements Component, Focusable {
 	}
 
 	invalidate(): void {
-		// No cached state to invalidate currently
+		this.renderedLayout = undefined;
+	}
+
+	private selectionOffsets(
+		line: LayoutLine,
+	): { start: number; end: number; lineBreakSelected: boolean } | undefined {
+		const range = this.getSelectionRange();
+		if (!range || line.logicalLine < range.start.line || line.logicalLine > range.end.line) {
+			return undefined;
+		}
+		const logicalText = this.state.lines[line.logicalLine] || "";
+		const startCol = line.logicalLine === range.start.line ? range.start.col : 0;
+		const endCol = line.logicalLine === range.end.line ? range.end.col : logicalText.length;
+		const start = Math.max(line.startCol, startCol);
+		const end = Math.min(line.endCol, endCol);
+		const lineBreakSelected = line.logicalLine < range.end.line && line.endCol === logicalText.length;
+		return end > start || lineBreakSelected
+			? { start: start - line.startCol, end: end - line.startCol, lineBreakSelected }
+			: undefined;
+	}
+
+	private renderLayoutText(line: LayoutLine, emitCursorMarker: boolean): { text: string; endCellVisible: boolean } {
+		const selected = this.selectionOffsets(line);
+		const cursorPos = line.hasCursor ? line.cursorPos : undefined;
+		const cursorAtEnd = cursorPos === line.text.length;
+		let cursorEnd: number | undefined;
+
+		if (cursorPos !== undefined && !cursorAtEnd) {
+			const cursorSegment = this.segment(line.text.slice(cursorPos), "grapheme")[Symbol.iterator]().next().value;
+			cursorEnd = cursorPos + (cursorSegment?.segment.length ?? 1);
+		}
+
+		const boundaries = new Set<number>([0, line.text.length]);
+		if (selected !== undefined) {
+			boundaries.add(selected.start);
+			boundaries.add(selected.end);
+		}
+		if (cursorPos !== undefined && cursorEnd !== undefined) {
+			boundaries.add(cursorPos);
+			boundaries.add(cursorEnd);
+		}
+
+		const offsets = [...boundaries].sort((a, b) => a - b);
+		let rendered = "";
+		for (let index = 0; index < offsets.length - 1; index++) {
+			const start = offsets[index]!;
+			const end = offsets[index + 1]!;
+			if (end <= start) continue;
+			if (start === cursorPos && emitCursorMarker) rendered += CURSOR_MARKER;
+			const text = line.text.slice(start, end);
+			const isCursor = start === cursorPos && end === cursorEnd;
+			const isSelected = selected !== undefined && start >= selected.start && end <= selected.end;
+			if (isCursor) {
+				rendered += `\x1b[7m${text}\x1b[0m`;
+			} else {
+				rendered += isSelected ? inverse(text) : text;
+			}
+		}
+
+		if (cursorAtEnd && emitCursorMarker) rendered += CURSOR_MARKER;
+		if (cursorAtEnd) {
+			rendered += "\x1b[7m \x1b[0m";
+		} else if (selected?.lineBreakSelected === true) {
+			const inverseEnd = "\x1b[27m";
+			if (selected.end === line.text.length && selected.end > selected.start && rendered.endsWith(inverseEnd)) {
+				rendered = `${rendered.slice(0, -inverseEnd.length)} ${inverseEnd}`;
+			} else {
+				rendered += inverse(" ");
+			}
+		}
+		return { text: rendered, endCellVisible: cursorAtEnd || selected?.lineBreakSelected === true };
 	}
 
 	render(width: number): string[] {
@@ -612,6 +746,14 @@ export class Editor implements Component, Focusable {
 
 		// Get visible lines slice
 		const visibleLines = layoutLines.slice(this.scrollOffset, this.scrollOffset + maxVisibleLines);
+		this.renderedLayout = {
+			width,
+			paddingX,
+			contentWidth,
+			lines: visibleLines,
+			allLines: layoutLines,
+			scrollOffset: this.scrollOffset,
+		};
 
 		const result: string[] = [];
 		const leftPadding = " ".repeat(paddingX);
@@ -632,45 +774,17 @@ export class Editor implements Component, Focusable {
 		const emitCursorMarker = this.focused;
 
 		for (const layoutLine of visibleLines) {
-			let displayText = layoutLine.text;
+			const rendered = this.renderLayoutText(layoutLine, emitCursorMarker);
 			let lineVisibleWidth = visibleWidth(layoutLine.text);
 			let cursorInPadding = false;
-
-			// Add cursor if this line has it
-			if (layoutLine.hasCursor && layoutLine.cursorPos !== undefined) {
-				const before = displayText.slice(0, layoutLine.cursorPos);
-				const after = displayText.slice(layoutLine.cursorPos);
-
-				// Hardware cursor marker (zero-width, emitted before fake cursor for IME positioning)
-				const marker = emitCursorMarker ? CURSOR_MARKER : "";
-
-				if (after.length > 0) {
-					// Cursor is on a character (grapheme) - replace it with highlighted version
-					// Get the first grapheme from 'after'
-					const afterGraphemes = [...this.segment(after, "grapheme")];
-					const firstGrapheme = afterGraphemes[0]?.segment || "";
-					const restAfter = after.slice(firstGrapheme.length);
-					const cursor = `\x1b[7m${firstGrapheme}\x1b[0m`;
-					displayText = before + marker + cursor + restAfter;
-					// lineVisibleWidth stays the same - we're replacing, not adding
-				} else {
-					// Cursor is at the end - add highlighted space
-					const cursor = "\x1b[7m \x1b[0m";
-					displayText = before + marker + cursor;
-					lineVisibleWidth = lineVisibleWidth + 1;
-					// If cursor overflows content width into the padding, flag it
-					if (lineVisibleWidth > contentWidth && paddingX > 0) {
-						cursorInPadding = true;
-					}
-				}
+			if (rendered.endCellVisible) {
+				lineVisibleWidth++;
+				if (lineVisibleWidth > contentWidth && paddingX > 0) cursorInPadding = true;
 			}
 
-			// Calculate padding based on actual visible width
 			const padding = " ".repeat(Math.max(0, contentWidth - lineVisibleWidth));
 			const lineRightPadding = cursorInPadding ? rightPadding.slice(1) : rightPadding;
-
-			// Render the line (no side borders, just horizontal lines above and below)
-			result.push(`${leftPadding}${displayText}${padding}${lineRightPadding}`);
+			result.push(`${leftPadding}${rendered.text}${padding}${lineRightPadding}`);
 		}
 
 		// Render bottom border (with scroll indicator if more content below)
@@ -833,6 +947,7 @@ export class Editor implements Component, Focusable {
 
 		// Tab - trigger completion
 		if (kb.matches(data, "tui.input.tab") && !this.autocompleteState) {
+			this.selection = undefined;
 			this.handleTabCompletion();
 			return;
 		}
@@ -1027,84 +1142,49 @@ export class Editor implements Component, Focusable {
 		const layoutLines: LayoutLine[] = [];
 
 		if (this.state.lines.length === 0 || (this.state.lines.length === 1 && this.state.lines[0] === "")) {
-			// Empty editor
 			layoutLines.push({
 				text: "",
+				logicalLine: 0,
+				startCol: 0,
+				endCol: 0,
 				hasCursor: true,
 				cursorPos: 0,
 			});
 			return layoutLines;
 		}
 
-		// Process each logical line
 		for (let i = 0; i < this.state.lines.length; i++) {
 			const line = this.state.lines[i] || "";
 			const isCurrentLine = i === this.state.cursorLine;
-			const lineVisibleWidth = visibleWidth(line);
+			const chunks =
+				visibleWidth(line) <= contentWidth
+					? [{ text: line, startIndex: 0, endIndex: line.length }]
+					: wordWrapLine(line, contentWidth, [...this.segment(line, "grapheme")]);
 
-			if (lineVisibleWidth <= contentWidth) {
-				// Line fits in one layout line
+			for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+				const chunk = chunks[chunkIndex];
+				if (!chunk) continue;
+				const isLastChunk = chunkIndex === chunks.length - 1;
+				let hasCursor = false;
+				let cursorPos: number | undefined;
+
 				if (isCurrentLine) {
-					layoutLines.push({
-						text: line,
-						hasCursor: true,
-						cursorPos: this.state.cursorCol,
-					});
-				} else {
-					layoutLines.push({
-						text: line,
-						hasCursor: false,
-					});
-				}
-			} else {
-				// Line needs wrapping - use word-aware wrapping
-				const chunks = wordWrapLine(line, contentWidth, [...this.segment(line, "grapheme")]);
-
-				for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
-					const chunk = chunks[chunkIndex];
-					if (!chunk) continue;
-
-					const cursorPos = this.state.cursorCol;
-					const isLastChunk = chunkIndex === chunks.length - 1;
-
-					// Determine if cursor is in this chunk
-					// For word-wrapped chunks, we need to handle the case where
-					// cursor might be in trimmed whitespace at end of chunk
-					let hasCursorInChunk = false;
-					let adjustedCursorPos = 0;
-
-					if (isCurrentLine) {
-						if (isLastChunk) {
-							// Last chunk: cursor belongs here if >= startIndex
-							hasCursorInChunk = cursorPos >= chunk.startIndex;
-							adjustedCursorPos = cursorPos - chunk.startIndex;
-						} else {
-							// Non-last chunk: cursor belongs here if in range [startIndex, endIndex)
-							// But we need to handle the visual position in the trimmed text
-							hasCursorInChunk = cursorPos >= chunk.startIndex && cursorPos < chunk.endIndex;
-							if (hasCursorInChunk) {
-								adjustedCursorPos = cursorPos - chunk.startIndex;
-								// Clamp to text length (in case cursor was in trimmed whitespace)
-								if (adjustedCursorPos > chunk.text.length) {
-									adjustedCursorPos = chunk.text.length;
-								}
-							}
-						}
-					}
-
-					if (hasCursorInChunk) {
-						layoutLines.push({
-							text: chunk.text,
-							hasCursor: true,
-							cursorPos: adjustedCursorPos,
-						});
-					} else {
-						layoutLines.push({
-							text: chunk.text,
-							hasCursor: false,
-						});
+					hasCursor = isLastChunk
+						? this.state.cursorCol >= chunk.startIndex
+						: this.state.cursorCol >= chunk.startIndex && this.state.cursorCol < chunk.endIndex;
+					if (hasCursor) {
+						cursorPos = Math.min(chunk.text.length, this.state.cursorCol - chunk.startIndex);
 					}
 				}
+
+				layoutLines.push({
+					text: chunk.text,
+					logicalLine: i,
+					startCol: chunk.startIndex,
+					endCol: chunk.endIndex,
+					hasCursor,
+					cursorPos,
+				});
 			}
 		}
 
@@ -1136,11 +1216,154 @@ export class Editor implements Component, Focusable {
 		return [...this.state.lines];
 	}
 
-	getCursor(): { line: number; col: number } {
+	getCursor(): EditorPosition {
 		return { line: this.state.cursorLine, col: this.state.cursorCol };
 	}
 
+	getSelectionRange(): EditorSelectionRange | undefined {
+		if (!this.selection || compareEditorPositions(this.selection.anchor, this.selection.head) === 0) {
+			return undefined;
+		}
+		return compareEditorPositions(this.selection.anchor, this.selection.head) < 0
+			? { start: { ...this.selection.anchor }, end: { ...this.selection.head } }
+			: { start: { ...this.selection.head }, end: { ...this.selection.anchor } };
+	}
+
+	getSelectedText(): string | undefined {
+		const range = this.getSelectionRange();
+		if (!range) return undefined;
+		if (range.start.line === range.end.line) {
+			return (this.state.lines[range.start.line] || "").slice(range.start.col, range.end.col);
+		}
+
+		const lines = [
+			(this.state.lines[range.start.line] || "").slice(range.start.col),
+			...this.state.lines.slice(range.start.line + 1, range.end.line),
+			(this.state.lines[range.end.line] || "").slice(0, range.end.col),
+		];
+		return lines.join("\n");
+	}
+
+	hasSelection(): boolean {
+		return this.getSelectionRange() !== undefined;
+	}
+
+	clearSelection(): void {
+		if (!this.selection) return;
+		this.selection = undefined;
+		this.tui.requestRender();
+	}
+
+	beginSelection(position: EditorPosition): void {
+		const normalized = this.normalizePosition(position);
+		this.cancelAutocomplete();
+		this.exitHistoryBrowsing();
+		this.lastAction = null;
+		this.selection = { anchor: normalized, head: normalized };
+		this.setCursorPosition(normalized);
+		this.tui.requestRender();
+	}
+
+	updateSelection(position: EditorPosition): void {
+		if (!this.selection) return;
+		const normalized = this.normalizePosition(position);
+		if (compareEditorPositions(this.selection.head, normalized) === 0) return;
+		this.selection = { anchor: this.selection.anchor, head: normalized };
+		this.setCursorPosition(normalized);
+		this.tui.requestRender();
+	}
+
+	finishSelection(): void {
+		if (!this.selection) return;
+		if (!this.hasSelection()) {
+			this.selection = undefined;
+		}
+		this.tui.requestRender();
+	}
+
+	/**
+	 * Map a terminal cell in the most recently rendered editor frame to a
+	 * logical insertion position. row/col are zero-based and include the
+	 * editor's top border and horizontal padding.
+	 */
+	positionAtRenderedCell(row: number, col: number, clamp = false): EditorPosition | undefined {
+		const layout = this.renderedLayout;
+		if (!layout || !Number.isInteger(row) || !Number.isInteger(col)) return undefined;
+		if (!clamp && (row < 1 || row > layout.lines.length || col < 0 || col >= layout.width)) {
+			return undefined;
+		}
+
+		let line: LayoutLine | undefined;
+		if (clamp && row < 1) {
+			line = layout.allLines[Math.max(0, layout.scrollOffset - 1)];
+		} else if (clamp && row > layout.lines.length) {
+			line = layout.allLines[Math.min(layout.allLines.length - 1, layout.scrollOffset + layout.lines.length)];
+		} else {
+			const contentRow = Math.max(0, Math.min(layout.lines.length - 1, row - 1));
+			line = layout.lines[contentRow];
+		}
+		if (!line) return undefined;
+		const contentCol = Math.max(0, Math.min(layout.contentWidth, col - layout.paddingX));
+		const logicalText = this.state.lines[line.logicalLine] || "";
+		const lineWidth = visibleWidth(line.text);
+		const logicalCol =
+			contentCol >= lineWidth
+				? line.endCol
+				: line.startCol + offsetAtVisualColumn(line.text, contentCol, this.segment(line.text, "grapheme"));
+		return this.normalizePosition({
+			line: line.logicalLine,
+			col: Math.min(logicalText.length, logicalCol),
+		});
+	}
+
+	private normalizePosition(position: EditorPosition): EditorPosition {
+		const line = Math.max(0, Math.min(this.state.lines.length - 1, Math.floor(position.line)));
+		const text = this.state.lines[line] || "";
+		let col = Math.max(0, Math.min(text.length, Math.floor(position.col)));
+		for (const segment of this.segment(text, "grapheme")) {
+			const end = segment.index + segment.segment.length;
+			if (col > segment.index && col < end) {
+				col = segment.index;
+				break;
+			}
+		}
+		return { line, col };
+	}
+
+	private setCursorPosition(position: EditorPosition): void {
+		this.state.cursorLine = position.line;
+		this.setCursorCol(position.col);
+	}
+
+	private deleteSelection(pushUndo = true, notifyChange = true): boolean {
+		const range = this.getSelectionRange();
+		if (!range) return false;
+		if (pushUndo) this.pushUndoSnapshot();
+		this.cancelAutocomplete();
+		this.exitHistoryBrowsing();
+		this.lastAction = null;
+
+		const before = (this.state.lines[range.start.line] || "").slice(0, range.start.col);
+		const after = (this.state.lines[range.end.line] || "").slice(range.end.col);
+		this.state.lines.splice(range.start.line, range.end.line - range.start.line + 1, before + after);
+		this.selection = undefined;
+		this.setCursorPosition(range.start);
+		if (notifyChange && this.onChange) this.onChange(this.getText());
+		return true;
+	}
+
+	private killSelection(prepend: boolean): boolean {
+		const selectedText = this.getSelectedText();
+		if (selectedText === undefined) return false;
+		const accumulate = this.lastAction === "kill";
+		this.killRing.push(selectedText, { prepend, accumulate });
+		this.deleteSelection();
+		this.lastAction = "kill";
+		return true;
+	}
+
 	setText(text: string, options?: { preservePasteRegistry?: boolean }): void {
+		this.selection = undefined;
 		this.cancelAutocomplete();
 		this.lastAction = null;
 		this.exitHistoryBrowsing();
@@ -1167,6 +1390,7 @@ export class Editor implements Component, Focusable {
 		this.pushUndoSnapshot();
 		this.lastAction = null;
 		this.exitHistoryBrowsing();
+		this.deleteSelection(false, false);
 		this.insertTextAtCursorInternal(text);
 	}
 
@@ -1230,13 +1454,19 @@ export class Editor implements Component, Focusable {
 	// All the editor methods from before...
 	private insertCharacter(char: string, skipUndoCoalescing?: boolean): void {
 		this.exitHistoryBrowsing();
+		const replacingSelection = this.hasSelection();
+		if (replacingSelection) {
+			this.pushUndoSnapshot();
+			this.deleteSelection(false, false);
+			this.lastAction = skipUndoCoalescing ? null : "type-word";
+		}
 
 		// Undo coalescing (fish-style):
 		// - Consecutive word chars coalesce into one undo unit
 		// - Space captures state before itself (so undo removes space+following word together)
 		// - Each space is separately undoable
 		// Skip coalescing when called from atomic operations (e.g., handlePaste)
-		if (!skipUndoCoalescing) {
+		if (!skipUndoCoalescing && !replacingSelection) {
 			if (isWhitespaceChar(char) || this.lastAction !== "type-word") {
 				this.pushUndoSnapshot();
 			}
@@ -1303,6 +1533,7 @@ export class Editor implements Component, Focusable {
 		this.lastAction = null;
 
 		this.pushUndoSnapshot();
+		this.deleteSelection(false, false);
 
 		// Some terminals (e.g. tmux popups with extended-keys-format=csi-u) re-encode
 		// control bytes inside bracketed paste as CSI-u Ctrl+<letter> sequences
@@ -1371,6 +1602,7 @@ export class Editor implements Component, Focusable {
 		this.lastAction = null;
 
 		this.pushUndoSnapshot();
+		this.deleteSelection(false, false);
 
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 
@@ -1391,7 +1623,7 @@ export class Editor implements Component, Focusable {
 	}
 
 	private shouldSubmitOnBackslashEnter(data: string, kb: ReturnType<typeof getKeybindings>): boolean {
-		if (this.disableSubmit) return false;
+		if (this.disableSubmit || this.hasSelection()) return false;
 		if (!matchesKey(data, "enter")) return false;
 		const submitKeys = kb.getKeys("tui.input.submit");
 		const hasShiftEnter = submitKeys.includes("shift+enter") || submitKeys.includes("shift+return");
@@ -1406,6 +1638,7 @@ export class Editor implements Component, Focusable {
 		const result = this.expandPasteMarkers(this.state.lines.join("\n")).trim();
 
 		this.state = { lines: [""], cursorLine: 0, cursorCol: 0 };
+		this.selection = undefined;
 		this.pastes.clear();
 		this.pasteCounter = 0;
 		this.exitHistoryBrowsing();
@@ -1420,6 +1653,7 @@ export class Editor implements Component, Focusable {
 	private handleBackspace(): void {
 		this.exitHistoryBrowsing();
 		this.lastAction = null;
+		if (this.deleteSelection()) return;
 
 		if (this.state.cursorCol > 0) {
 			this.pushUndoSnapshot();
@@ -1652,11 +1886,13 @@ export class Editor implements Component, Focusable {
 	}
 
 	private moveToLineStart(): void {
+		this.selection = undefined;
 		this.lastAction = null;
 		this.setCursorCol(0);
 	}
 
 	private moveToLineEnd(): void {
+		this.selection = undefined;
 		this.lastAction = null;
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 		this.setCursorCol(currentLine.length);
@@ -1664,6 +1900,7 @@ export class Editor implements Component, Focusable {
 
 	private deleteToStartOfLine(): void {
 		this.exitHistoryBrowsing();
+		if (this.killSelection(true)) return;
 
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 
@@ -1699,6 +1936,7 @@ export class Editor implements Component, Focusable {
 
 	private deleteToEndOfLine(): void {
 		this.exitHistoryBrowsing();
+		if (this.killSelection(false)) return;
 
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 
@@ -1731,6 +1969,7 @@ export class Editor implements Component, Focusable {
 
 	private deleteWordBackwards(): void {
 		this.exitHistoryBrowsing();
+		if (this.killSelection(true)) return;
 
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 
@@ -1776,6 +2015,7 @@ export class Editor implements Component, Focusable {
 
 	private deleteWordForward(): void {
 		this.exitHistoryBrowsing();
+		if (this.killSelection(false)) return;
 
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 
@@ -1819,6 +2059,7 @@ export class Editor implements Component, Focusable {
 	private handleForwardDelete(): void {
 		this.exitHistoryBrowsing();
 		this.lastAction = null;
+		if (this.deleteSelection()) return;
 
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 
@@ -1932,6 +2173,7 @@ export class Editor implements Component, Focusable {
 	}
 
 	private moveCursor(deltaLine: number, deltaCol: number): void {
+		this.selection = undefined;
 		this.lastAction = null;
 		const visualLines = this.buildVisualLineMap(this.lastWidth);
 		const currentVisualLine = this.findCurrentVisualLine(visualLines);
@@ -1999,6 +2241,7 @@ export class Editor implements Component, Focusable {
 	 * Moves cursor by the page size while keeping it in bounds.
 	 */
 	private pageScroll(direction: -1 | 1): void {
+		this.selection = undefined;
 		this.lastAction = null;
 		const terminalRows = this.tui.terminal.rows;
 		const pageSize = Math.max(5, Math.floor(terminalRows * 0.3));
@@ -2011,6 +2254,7 @@ export class Editor implements Component, Focusable {
 	}
 
 	private moveWordBackwards(): void {
+		this.selection = undefined;
 		this.lastAction = null;
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 
@@ -2039,6 +2283,7 @@ export class Editor implements Component, Focusable {
 		if (this.killRing.length === 0) return;
 
 		this.pushUndoSnapshot();
+		this.deleteSelection(false, false);
 
 		const text = this.killRing.peek()!;
 		this.insertYankedText(text);
@@ -2159,6 +2404,7 @@ export class Editor implements Component, Focusable {
 
 	private undo(): void {
 		this.exitHistoryBrowsing();
+		this.selection = undefined;
 		const snapshot = this.undoStack.pop();
 		if (!snapshot) return;
 		Object.assign(this.state, snapshot.state);
@@ -2176,6 +2422,7 @@ export class Editor implements Component, Focusable {
 	 * Multi-line search. Case-sensitive. Skips the current cursor position.
 	 */
 	private jumpToChar(char: string, direction: "forward" | "backward"): void {
+		this.selection = undefined;
 		this.lastAction = null;
 		const isForward = direction === "forward";
 		const lines = this.state.lines;
@@ -2206,6 +2453,7 @@ export class Editor implements Component, Focusable {
 	}
 
 	private moveWordForwards(): void {
+		this.selection = undefined;
 		this.lastAction = null;
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 
@@ -2447,6 +2695,7 @@ export class Editor implements Component, Focusable {
 		if (options.force && options.explicitTab && suggestions.items.length === 1) {
 			const item = suggestions.items[0]!;
 			this.pushUndoSnapshot();
+			this.selection = undefined;
 			this.lastAction = null;
 			const result = this.autocompleteProvider.applyCompletion(
 				this.state.lines,

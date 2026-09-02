@@ -178,6 +178,7 @@ import { formatBashOutputForDisplay } from './utils/shell-output';
 import { thinkingEffortFromConfig } from './utils/thinking-config';
 import { combineStartupNotice, isOAuthLoginRequiredError } from './utils/startup';
 import { installTerminalFocusTracking } from './utils/terminal-focus';
+import { installEditorMouseTracking } from './utils/editor-mouse';
 import { notifyTerminalOnce } from './utils/terminal-notification';
 import { installTerminalThemeTracking } from './utils/terminal-theme';
 import { detectTmuxKeyboardWarning } from './utils/tmux-keyboard';
@@ -332,6 +333,7 @@ export class KimiTUI {
   aborted = false;
   private terminalFocusTrackingDispose: (() => void) | undefined;
   private terminalThemeTrackingDispose: (() => void) | undefined;
+  private terminalMouseTrackingDispose: (() => void) | undefined;
   private clipboardImageHintController: ClipboardImageHintController | undefined;
   private uninstallRainbowDance: () => void;
   private signalCleanupHandlers: Array<() => void> = [];
@@ -627,6 +629,7 @@ export class KimiTUI {
             return;
           }
           const shouldReplayHistory = await this.initMainTui();
+          this.refreshTerminalMouseTracking();
           this.startBackgroundFdAutocomplete();
           await this.finishStartup(shouldReplayHistory);
         } catch (error) {
@@ -645,8 +648,14 @@ export class KimiTUI {
       // When the trust prompt already started the event loop, starting it
       // again would re-run pi-tui's terminal.start() — stacking a second
       // Kitty keyboard-protocol push (leaking CSI-u mode past exit) and
-      // duplicate stdin listeners.
-      if (!trustPromptStartedLoop) this.startEventLoop();
+      // duplicate stdin listeners. The prompt started before init() loaded the
+      // experimental-feature snapshot, so refresh mouse tracking once the main
+      // editor is mounted instead.
+      if (trustPromptStartedLoop) {
+        this.refreshTerminalMouseTracking();
+      } else {
+        this.startEventLoop();
+      }
       startupTrace('eventLoop:started');
       try {
         this.startBackgroundFdAutocomplete();
@@ -734,6 +743,7 @@ export class KimiTUI {
     this.startClipboardImageHintController();
     this.terminalFocusTrackingDispose = installTerminalFocusTracking(this.state);
     this.refreshTerminalThemeTracking();
+    this.refreshTerminalMouseTracking();
   }
 
   private startClipboardImageHintController(): void {
@@ -1083,6 +1093,7 @@ export class KimiTUI {
 
   private disposeTerminalTracking(): void {
     this.stopTerminalThemeTracking();
+    this.suspendTerminalMouseTracking();
     this.clipboardImageHintController?.stop();
     this.clipboardImageHintController = undefined;
     this.terminalFocusTrackingDispose?.();
@@ -3610,6 +3621,20 @@ export class KimiTUI {
     this.terminalThemeTrackingDispose = undefined;
   }
 
+  suspendTerminalMouseTracking(): void {
+    this.terminalMouseTrackingDispose?.();
+    this.terminalMouseTrackingDispose = undefined;
+  }
+
+  refreshTerminalMouseTracking(): void {
+    this.suspendTerminalMouseTracking();
+    if (this.isShuttingDown) return;
+    if (!isExperimentalFlagEnabled('terminal_mouse_input')) return;
+    if (!this.state.ui.children.includes(this.state.editorContainer)) return;
+    if (!this.state.editorContainer.children.includes(this.state.editor)) return;
+    this.terminalMouseTrackingDispose = installEditorMouseTracking(this.state);
+  }
+
   private async applyResolvedAutoTheme(resolved: ResolvedTheme): Promise<void> {
     if (this.state.appState.theme !== 'auto') return;
     const palette = getBuiltInPalette(resolved);
@@ -3686,6 +3711,8 @@ export class KimiTUI {
   // =========================================================================
 
   mountEditorReplacement(panel: Component & Focusable): void {
+    this.suspendTerminalMouseTracking();
+    this.state.editor.clearSelection();
     this.state.editorReplacementMounted = true;
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(panel);
@@ -3698,6 +3725,7 @@ export class KimiTUI {
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(this.state.editor);
     this.state.ui.setFocus(this.state.editor);
+    this.refreshTerminalMouseTracking();
     // Differential render only: closing a tall panel leaves the editor a few
     // rows above the bottom (blank tail) until the next append, but avoids a
     // destructive full redraw on every dialog close.

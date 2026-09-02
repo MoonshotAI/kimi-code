@@ -46,6 +46,13 @@ export interface Component {
 	invalidate(): void;
 }
 
+export interface RenderedChildLayout {
+	readonly startRow: number;
+	readonly endRow: number;
+	readonly totalRows: number;
+	readonly width: number;
+}
+
 export type TuiInputListenerResult = { consume?: boolean; data?: string } | undefined;
 export type TuiInputListener = (data: string) => TuiInputListenerResult;
 type PendingOsc11BackgroundQuery = {
@@ -210,6 +217,7 @@ type OverlayFocusRestorePolicy = "clear" | "preserve";
  */
 export class Container implements Component {
 	children: Component[] = [];
+	private renderedChildLayouts = new Map<Component, RenderedChildLayout>();
 
 	addChild(component: Component): void {
 		this.children.push(component);
@@ -233,17 +241,34 @@ export class Container implements Component {
 	}
 
 	render(width: number): string[] {
-		// Extremely narrow terminals can report tiny or even non-positive
-		// column counts; never propagate a width below 1 into components.
 		width = Math.max(1, width);
 		const lines: string[] = [];
+		const pendingLayouts: Array<{
+			component: Component;
+			startRow: number;
+			endRow: number;
+		}> = [];
 		for (const child of this.children) {
+			const startRow = lines.length;
 			const childLines = child.render(width);
 			for (const line of childLines) {
 				lines.push(line);
 			}
+			pendingLayouts.push({ component: child, startRow, endRow: lines.length });
 		}
+		const totalRows = lines.length;
+		this.renderedChildLayouts = new Map(
+			pendingLayouts.map(({ component, startRow, endRow }) => [
+				component,
+				{ startRow, endRow, totalRows, width },
+			]),
+		);
 		return lines;
+	}
+
+	getRenderedChildLayout(component: Component): RenderedChildLayout | undefined {
+		const layout = this.renderedChildLayouts.get(component);
+		return layout === undefined ? undefined : { ...layout };
 	}
 }
 
@@ -314,6 +339,8 @@ export interface TUI extends Component {
 	requestRender(force?: boolean): void;
 	addInputListener(listener: TuiInputListener): () => void;
 	removeInputListener(listener: TuiInputListener): void;
+	getRenderedChildLayout(component: Component): RenderedChildLayout | undefined;
+	getRenderedViewportTop(): number;
 	onTerminalColorSchemeChange(listener: (scheme: TerminalColorScheme) => void): () => void;
 	setTerminalColorSchemeNotifications(enabled: boolean): void;
 	queryTerminalBackgroundColor(options: { timeoutMs: number }): Promise<RgbColor | undefined>;
@@ -383,6 +410,10 @@ export abstract class TuiBase extends Container implements TUI {
 	protected beforeTerminalStop(_options: TuiStopOptions): void {}
 
 	protected afterTerminalStop(_options: TuiStopOptions): void {}
+
+	getRenderedViewportTop(): number {
+		return 0;
+	}
 
 	get fullRedraws(): number {
 		return this.fullRedrawCount;

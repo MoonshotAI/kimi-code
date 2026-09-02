@@ -77,6 +77,7 @@ vi.mock('@moonshot-ai/agent-core-v2/_base/execEnv/environmentProbe', async (impo
 const tempDirs: string[] = [];
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   // The read-model mirror/query-store close asynchronously on dispose; await
   // the drains so the rm below never races their final flush (ENOTEMPTY).
   await drainSessionIndexMirror();
@@ -389,6 +390,27 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
         expect(typeof feature.enabled).toBe('boolean');
         expect(typeof feature.defaultEnabled).toBe('boolean');
       }
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('registers terminal mouse input in the v2 feature catalog', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TERMINAL_MOUSE_INPUT', '1');
+    const { harness } = await makeHarness();
+    try {
+      const feature = (await harness.getExperimentalFeatures()).find(
+        ({ id }) => id === 'terminal_mouse_input',
+      );
+      expect(feature).toMatchObject({
+        id: 'terminal_mouse_input',
+        title: 'Terminal mouse input',
+        env: 'KIMI_CODE_EXPERIMENTAL_TERMINAL_MOUSE_INPUT',
+        surface: 'tui',
+        defaultEnabled: false,
+        enabled: true,
+        source: 'env',
+      });
     } finally {
       await harness.close();
     }

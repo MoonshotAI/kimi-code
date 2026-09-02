@@ -356,6 +356,16 @@ describe('KimiHarness config API', () => {
         enabled: false,
         source: 'default',
       },
+      {
+        id: 'terminal_mouse_input',
+        title: 'Terminal mouse input',
+        description: 'Allow mouse clicks and drags to position and select text in the main prompt editor.',
+        surface: 'tui',
+        env: 'KIMI_CODE_EXPERIMENTAL_TERMINAL_MOUSE_INPUT',
+        defaultEnabled: false,
+        enabled: false,
+        source: 'default',
+      },
     ]);
   });
 
