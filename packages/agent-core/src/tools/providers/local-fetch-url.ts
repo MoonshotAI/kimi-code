@@ -206,12 +206,15 @@ export class LocalFetchURLProvider implements UrlFetcher {
     this.allowPrivateAddresses = options.allowPrivateAddresses ?? false;
   }
 
-  async fetch(url: string, _options?: { toolCallId?: string }): Promise<UrlFetchResult> {
+  async fetch(
+    url: string,
+    options?: { toolCallId?: string; signal?: AbortSignal },
+  ): Promise<UrlFetchResult> {
     // Pinned Agents are created per redirect hop and closed once the final
     // body is consumed, so keep-alive sockets never linger.
     const dispatchers: Dispatcher[] = [];
     try {
-      const response = await this.requestWithValidatedRedirects(url, dispatchers);
+      const response = await this.requestWithValidatedRedirects(url, dispatchers, options?.signal);
       return await this.readResponse(response);
     } finally {
       await Promise.all(
@@ -280,6 +283,7 @@ export class LocalFetchURLProvider implements UrlFetcher {
   private async requestWithValidatedRedirects(
     url: string,
     dispatchers: Dispatcher[],
+    signal: AbortSignal | undefined,
   ): Promise<Response> {
     let currentUrl = url;
     let redirects = 0;
@@ -289,6 +293,7 @@ export class LocalFetchURLProvider implements UrlFetcher {
         method: 'GET',
         headers: { 'User-Agent': this.userAgent },
         redirect: 'manual',
+        signal,
         // `dispatcher` is honored by undici at runtime but absent from
         // DOM's RequestInit type (DOM-lib consumers typecheck this source)
         // — hide it behind `unknown` to stay lib-agnostic.
