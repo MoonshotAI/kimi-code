@@ -155,6 +155,7 @@ export class SubagentTool implements ISubagentTool {
       this.config,
       this.flags,
       this.profile.data().modelAlias,
+      this.subagents.secondaryModel,
     );
     if (modelLines !== undefined) {
       description += `\n\n${modelLines}`;

@@ -190,6 +190,24 @@ export function assertValidSubagentModelConfig(
 
 export type SubagentModelSource = 'forced' | 'primary_override' | 'inherited' | 'secondary_pool';
 
+export function poolWithSessionDefault(
+  configPool: SubagentModelPool | undefined,
+  sessionDefault: string | undefined,
+): SubagentModelPool | undefined {
+  if (configPool === undefined) {
+    return sessionDefault === undefined
+      ? undefined
+      : { defaultModel: sessionDefault, models: { [sessionDefault]: '' } };
+  }
+  if (sessionDefault === undefined || Object.hasOwn(configPool.models, sessionDefault)) {
+    return configPool;
+  }
+  return {
+    defaultModel: configPool.defaultModel,
+    models: { ...configPool.models, [sessionDefault]: '' },
+  };
+}
+
 export function resolveSubagentBinding(
   config: IConfigService,
   flags: IFlagService,
@@ -225,9 +243,7 @@ export function resolveSubagentBinding(
   }
   const bound = enabled ? sessionDefault : undefined;
   const configPool = enabled ? resolveSubagentModelPool(config) : undefined;
-  const pool =
-    configPool ??
-    (bound === undefined ? undefined : { defaultModel: bound, models: { [bound]: '' } });
+  const pool = poolWithSessionDefault(configPool, bound);
   if (pool === undefined) {
     if (requested !== undefined) {
       throw new Error2(
@@ -281,13 +297,8 @@ export function buildSubagentModelDescriptions(
   sessionDefault?: string,
 ): string | undefined {
   if (!exposesSubagentModelChoice(config, flags, sessionDefault)) return undefined;
-  const configPool = resolveSubagentModelPool(config);
-  const pool: SubagentModelPool =
-    configPool ??
-    ({
-      defaultModel: sessionDefault,
-      models: sessionDefault === undefined ? {} : { [sessionDefault]: '' },
-    });
+  const pool = poolWithSessionDefault(resolveSubagentModelPool(config), sessionDefault);
+  if (pool === undefined) return undefined;
   const lines = ['Available models (pass via model):'];
   const defaultModel = sessionDefault ?? pool.defaultModel;
   const markersFor = (alias: string): string => {

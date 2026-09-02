@@ -33,7 +33,7 @@ import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStor
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
-import { SECONDARY_MODEL_SECTION } from '#/session/subagent/configSection';
+import { SECONDARY_MODEL_SECTION, buildSubagentModelDescriptions } from '#/session/subagent/configSection';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
 import {
@@ -587,6 +587,41 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     expect(error.message).toContain(
       'Invalid model "provider/smart". Available models: provider/fast, primary.',
     );
+  });
+
+  it('makes an out-of-pool session default requestable through the effective pool', async () => {
+    modelIds.add('provider/fast').add('provider/smart');
+    const svc = service({
+      [SECONDARY_MODEL_SECTION]: {
+        defaultModel: 'provider/fast',
+        models: { 'provider/fast': 'fast' },
+      },
+    });
+    await svc.setSecondaryModel('provider/smart');
+
+    const byDefault = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'coder' });
+    expect(byDefault.model).toBe('provider/smart');
+
+    const explicit = await svc.planSpawn({
+      callerAgentId: CALLER_ID,
+      profileName: 'coder',
+      model: 'provider/smart',
+    });
+    expect(explicit.model).toBe('provider/smart');
+  });
+
+  it('marks the session-scoped default in the tool model descriptions', () => {
+    const config = new StubConfigService({
+      [SECONDARY_MODEL_SECTION]: {
+        defaultModel: 'provider/fast',
+        models: { 'provider/fast': 'fast' },
+      },
+    });
+
+    const lines = buildSubagentModelDescriptions(config, stubFlag(true), 'main-model', 'provider/smart');
+
+    expect(lines).toContain('- provider/smart [default]');
+    expect(lines).toContain('- provider/fast');
   });
 
   it('ignores the session-scoped secondary model when the experiment is off', async () => {
