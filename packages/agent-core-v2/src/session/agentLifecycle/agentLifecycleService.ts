@@ -143,7 +143,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     let stage = 'scope';
     let containerRef: InstantiationService | undefined;
     let createdHandle: IAgentScopeHandle | undefined;
-    const telemetryBinding = bindTelemetryScope(this.telemetry, `agents/${agentId}`, {
+    const telemetryBinding = bindTelemetryScope(this.telemetry, {
       agent_id: agentId,
       mode: 'agent',
     });

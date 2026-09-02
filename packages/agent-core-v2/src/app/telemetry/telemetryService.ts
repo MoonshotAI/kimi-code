@@ -22,8 +22,6 @@ import {
 
 type MutableContext = Record<string, TelemetryPrimitive>;
 
-const ROOT_CHAIN: readonly string[] = [];
-
 const WIRE_SESSION_ID_PROPERTY = 'sessionId';
 
 function applyPatch(target: MutableContext, patch: TelemetryContextPatch): MutableContext {
@@ -65,27 +63,31 @@ export interface TelemetryScopeBinding extends IDisposable {
   readonly telemetry: ITelemetryService;
 }
 
+interface TelemetryAmbientSource {
+  ambient(): TelemetryProperties;
+}
+
 export interface ITelemetryScopeBindingHost {
-  createScopeBinding(segment: string, seed: TelemetryContextPatch): TelemetryScopeBinding;
+  createScopeBinding(seed: TelemetryContextPatch): TelemetryScopeBinding;
 }
 
 export function bindTelemetryScope(
   parent: ITelemetryService,
-  segment: string,
   seed: TelemetryContextPatch,
 ): TelemetryScopeBinding {
   const host = parent as ITelemetryService & Partial<ITelemetryScopeBindingHost>;
   if (host.createScopeBinding !== undefined) {
-    return host.createScopeBinding(segment, seed);
+    return host.createScopeBinding(seed);
   }
   return { telemetry: parent.withContext(seed), dispose: () => {} };
 }
 
-export class TelemetryService implements ITelemetryService, ITelemetryScopeBindingHost {
+export class TelemetryService
+  implements ITelemetryService, ITelemetryScopeBindingHost, TelemetryAmbientSource
+{
   declare readonly _serviceBrand: undefined;
 
   private appenders: ITelemetryAppender[] = [nullTelemetryAppender];
-  private readonly fragments = new Map<string, MutableContext>();
   private context: MutableContext = {};
   private enabled = true;
 
@@ -93,11 +95,11 @@ export class TelemetryService implements ITelemetryService, ITelemetryScopeBindi
     event: K,
     properties?: StrictPropertyCheck<TelemetryEventPayload<K>, E>,
   ): void {
-    this.dispatch(event, this.ambientFor(ROOT_CHAIN), properties as TelemetryProperties | undefined);
+    this.dispatch(event, this.ambient(), properties as TelemetryProperties | undefined);
   }
 
   withContext(patch: TelemetryContextPatch): ITelemetryService {
-    return new TelemetrySnapshotView(this, applyPatch(this.ambientFor(ROOT_CHAIN), patch));
+    return new TelemetrySnapshotView(this, applyPatch(this.ambient(), patch));
   }
 
   setContext(patch: TelemetryContextPatch): void {
@@ -105,30 +107,12 @@ export class TelemetryService implements ITelemetryService, ITelemetryScopeBindi
   }
 
   getContext(): Readonly<TelemetryContextPatch> {
-    return this.ambientFor(ROOT_CHAIN);
+    return this.ambient();
   }
 
-  createScopeBinding(segment: string, seed: TelemetryContextPatch): TelemetryScopeBinding {
-    const { fragment, release } = this.registerFragment(segment, seed);
-    const bound = new BoundTelemetryService(this, segment, fragment, [segment], release);
+  createScopeBinding(seed: TelemetryContextPatch): TelemetryScopeBinding {
+    const bound = new BoundTelemetryService(this, this, applyPatch({}, seed));
     return { telemetry: bound, dispose: () => bound.dispose() };
-  }
-
-  registerFragment(
-    key: string,
-    seed: TelemetryContextPatch,
-  ): { readonly fragment: MutableContext; readonly release: () => void } {
-    const fragment: MutableContext = {};
-    applyPatch(fragment, seed);
-    this.fragments.set(key, fragment);
-    return {
-      fragment,
-      release: () => {
-        if (this.fragments.get(key) === fragment) {
-          this.fragments.delete(key);
-        }
-      },
-    };
   }
 
   addAppender(appender: ITelemetryAppender): IDisposable {
@@ -160,15 +144,8 @@ export class TelemetryService implements ITelemetryService, ITelemetryScopeBindi
     );
   }
 
-  ambientFor(chain: readonly string[]): TelemetryProperties {
-    let merged: MutableContext = { ...this.context };
-    for (const key of chain) {
-      const fragment = this.fragments.get(key);
-      if (fragment !== undefined) {
-        merged = { ...merged, ...fragment };
-      }
-    }
-    return merged;
+  ambient(): TelemetryProperties {
+    return { ...this.context };
   }
 
   dispatch(
@@ -194,21 +171,21 @@ export class TelemetryService implements ITelemetryService, ITelemetryScopeBindi
   }
 }
 
-class BoundTelemetryService implements ITelemetryService, ITelemetryScopeBindingHost {
+class BoundTelemetryService
+  implements ITelemetryService, ITelemetryScopeBindingHost, TelemetryAmbientSource
+{
   declare readonly _serviceBrand: undefined;
 
   private disposed = false;
 
   constructor(
     private readonly root: TelemetryService,
-    private readonly key: string,
+    private readonly parent: TelemetryAmbientSource,
     private readonly fragment: MutableContext,
-    private readonly chain: readonly string[],
-    private readonly release: () => void,
   ) {}
 
-  private ambient(): TelemetryProperties {
-    const inherited = this.root.ambientFor(this.chain.slice(0, -1));
+  ambient(): TelemetryProperties {
+    const inherited = this.parent.ambient();
     if (this.disposed) {
       return inherited;
     }
@@ -239,16 +216,8 @@ class BoundTelemetryService implements ITelemetryService, ITelemetryScopeBinding
     return this.ambient();
   }
 
-  createScopeBinding(segment: string, seed: TelemetryContextPatch): TelemetryScopeBinding {
-    const key = `${this.key}/${segment}`;
-    const { fragment, release } = this.root.registerFragment(key, seed);
-    const bound = new BoundTelemetryService(
-      this.root,
-      key,
-      fragment,
-      [...this.chain, key],
-      release,
-    );
+  createScopeBinding(seed: TelemetryContextPatch): TelemetryScopeBinding {
+    const bound = new BoundTelemetryService(this.root, this, applyPatch({}, seed));
     return { telemetry: bound, dispose: () => bound.dispose() };
   }
 
@@ -273,10 +242,7 @@ class BoundTelemetryService implements ITelemetryService, ITelemetryScopeBinding
   }
 
   dispose(): void {
-    if (!this.disposed) {
-      this.disposed = true;
-      this.release();
-    }
+    this.disposed = true;
   }
 }
 

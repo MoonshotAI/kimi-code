@@ -249,11 +249,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       scope: (subKey?: string): string =>
         subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
     };
-    const telemetryBinding = bindTelemetryScope(
-      this.telemetry,
-      `sessions/${opts.sessionId}`,
-      { session_id: opts.sessionId },
-    );
+    const telemetryBinding = bindTelemetryScope(this.telemetry, {
+      session_id: opts.sessionId,
+    });
     let handle: ISessionScopeHandle;
     try {
       handle = createScopedChildHandle(

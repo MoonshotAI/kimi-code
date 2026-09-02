@@ -227,9 +227,9 @@ describe('TelemetryService (layered ambient)', () => {
     const root = serviceWithAppenders(appender);
     root.setContext({ session_id: 'app-level', model: 'm1' });
 
-    const session = root.createScopeBinding('sessions/s1', { session_id: 's1' });
+    const session = root.createScopeBinding({ session_id: 's1' });
     const agent = (session.telemetry as ITelemetryService & ITelemetryScopeBindingHost)
-      .createScopeBinding('agents/a1', { agent_id: 'a1', mode: 'agent' });
+      .createScopeBinding({ agent_id: 'a1', mode: 'agent' });
 
     agent.telemetry.track2('session_ended', { reason: 'exit' });
     expect(appender.records[0]?.properties).toEqual({
@@ -250,7 +250,7 @@ describe('TelemetryService (layered ambient)', () => {
   it('setContext on a bound handle writes its own fragment', () => {
     const appender = new CapturingAppender();
     const root = serviceWithAppenders(appender);
-    const session = root.createScopeBinding('sessions/s1', { session_id: 's1' });
+    const session = root.createScopeBinding({ session_id: 's1' });
     session.telemetry.setContext({ model: 'session-model' });
     expect(root.getContext()).toEqual({});
     expect(session.telemetry.getContext()).toEqual({
@@ -262,9 +262,9 @@ describe('TelemetryService (layered ambient)', () => {
   it('a turn event picks the ambient turn fragment up', () => {
     const appender = new CapturingAppender();
     const root = serviceWithAppenders(appender);
-    const session = root.createScopeBinding('sessions/s1', { session_id: 's1' });
+    const session = root.createScopeBinding({ session_id: 's1' });
     const agent = (session.telemetry as ITelemetryService & ITelemetryScopeBindingHost)
-      .createScopeBinding('agents/a1', { agent_id: 'a1', mode: 'agent' });
+      .createScopeBinding({ agent_id: 'a1', mode: 'agent' });
     agent.telemetry.setContext({ turn_id: 3 });
     agent.telemetry.track2('tool_call_dedup_detected', {
       step_no: 1,
@@ -289,7 +289,7 @@ describe('TelemetryService (layered ambient)', () => {
   it('an event not declaring context fields still receives the full ambient context', () => {
     const appender = new CapturingAppender();
     const root = serviceWithAppenders(appender);
-    const agent = root.createScopeBinding('sessions/s1/agents/a1', {
+    const agent = root.createScopeBinding({
       agent_id: 'a1',
       mode: 'plan',
     });
@@ -320,7 +320,7 @@ describe('TelemetryService (layered ambient)', () => {
   it('explicitly passed fields pass through even when the event does not declare them', () => {
     const appender = new CapturingAppender();
     const root = serviceWithAppenders(appender);
-    const agent = root.createScopeBinding('sessions/s1/agents/a1', {
+    const agent = root.createScopeBinding({
       agent_id: 'a1',
       mode: 'agent',
     });
@@ -343,7 +343,7 @@ describe('TelemetryService (layered ambient)', () => {
   it('events emitted after a turn ends carry no turn_id', () => {
     const appender = new CapturingAppender();
     const root = serviceWithAppenders(appender);
-    const agent = root.createScopeBinding('sessions/s1/agents/a1', {
+    const agent = root.createScopeBinding({
       agent_id: 'a1',
       mode: 'agent',
     });
@@ -380,7 +380,7 @@ describe('TelemetryService (layered ambient)', () => {
   it('profile and plan writes flow into subsequent turn events', () => {
     const appender = new CapturingAppender();
     const root = serviceWithAppenders(appender);
-    const agent = root.createScopeBinding('sessions/s1/agents/a1', {
+    const agent = root.createScopeBinding({
       agent_id: 'a1',
       mode: 'agent',
     });
@@ -409,7 +409,7 @@ describe('TelemetryService (layered ambient)', () => {
   it('withContext snapshots isolate the view from later setContext writes', () => {
     const appender = new CapturingAppender();
     const root = serviceWithAppenders(appender);
-    const session = root.createScopeBinding('sessions/s1', { session_id: 's1' });
+    const session = root.createScopeBinding({ session_id: 's1' });
     session.telemetry.setContext({ model: 'm1' });
 
     const snapshot = session.telemetry.withContext({ session_id: 's2' });
@@ -434,9 +434,9 @@ describe('TelemetryService (layered ambient)', () => {
   it('disposing a scope binding removes its fragment and degrades to the parent chain', () => {
     const appender = new CapturingAppender();
     const root = serviceWithAppenders(appender);
-    const session = root.createScopeBinding('sessions/s1', { session_id: 's1' });
+    const session = root.createScopeBinding({ session_id: 's1' });
     const agent = (session.telemetry as ITelemetryService & ITelemetryScopeBindingHost)
-      .createScopeBinding('agents/a1', { agent_id: 'a1' });
+      .createScopeBinding({ agent_id: 'a1' });
 
     agent.dispose();
     agent.telemetry.track2('session_ended', { reason: 'exit' });
@@ -450,7 +450,7 @@ describe('TelemetryService (layered ambient)', () => {
     const appender = new CapturingAppender();
     const root = serviceWithAppenders(appender);
     root.setContext({ model: 'app-model' });
-    const session = root.createScopeBinding('sessions/s1', { session_id: 's1' });
+    const session = root.createScopeBinding({ session_id: 's1' });
     session.dispose();
     session.telemetry.track2('session_ended', { reason: 'exit' });
     expect(appender.records[0]?.properties).toEqual({
@@ -459,11 +459,11 @@ describe('TelemetryService (layered ambient)', () => {
     });
   });
 
-  it('a stale disposer cannot delete a replacement fragment registered under the same key', () => {
+  it('disposing one binding leaves a sibling binding untouched', () => {
     const appender = new CapturingAppender();
     const root = serviceWithAppenders(appender);
-    const first = root.createScopeBinding('sessions/s1', { session_id: 's1' });
-    const second = root.createScopeBinding('sessions/s1', {
+    const first = root.createScopeBinding({ session_id: 's1' });
+    const second = root.createScopeBinding({
       session_id: 's1',
       model: 'resumed-model',
     });
@@ -480,11 +480,11 @@ describe('TelemetryService (layered ambient)', () => {
     expect(appender.records[1]?.properties).toEqual({ resumed: true, experimental_flags: '' });
   });
 
-  it('keeps context writes of a stale binding on its own fragment', () => {
+  it('context writes on one binding do not leak into a sibling binding', () => {
     const appender = new CapturingAppender();
     const root = serviceWithAppenders(appender);
-    const first = root.createScopeBinding('agents/a1', { agent_id: 'a1', mode: 'agent' });
-    const second = root.createScopeBinding('agents/a1', { agent_id: 'a1', mode: 'plan' });
+    const first = root.createScopeBinding({ agent_id: 'a1', mode: 'agent' });
+    const second = root.createScopeBinding({ agent_id: 'a1', mode: 'plan' });
     first.telemetry.setContext({ turn_id: 7, mode: 'agent' });
     first.telemetry.setContext({ turn_id: undefined, mode: 'agent' });
     second.telemetry.track2('turn_started', { turn_id: 3, mode: 'plan' });
@@ -495,12 +495,12 @@ describe('TelemetryService (layered ambient)', () => {
     });
   });
 
-  it('keeps stale emissions on the fragment owned by the binding while it remains active', () => {
+  it('each binding emits with its own fragment', () => {
     const appender = new CapturingAppender();
     const root = serviceWithAppenders(appender);
-    const first = root.createScopeBinding('agents/a1', { agent_id: 'a1', mode: 'agent' });
+    const first = root.createScopeBinding({ agent_id: 'a1', mode: 'agent' });
     first.telemetry.setContext({ provider_type: 'old-provider' });
-    root.createScopeBinding('agents/a1', {
+    root.createScopeBinding({
       agent_id: 'a1',
       mode: 'plan',
       provider_type: 'new-provider',
