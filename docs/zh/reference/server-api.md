@@ -85,9 +85,13 @@ HTTP 状态码例外（非 200）：
 
 ## REST 端点
 
-下文按资源分组列出全部端点。路径里的 `:{action}` 后缀是动作约定——对单个资源 POST 到 `路径:动作` 执行非 CRUD 操作（如会话的 `:fork`、`:archive`）；动作缺失或未知时返回 `40001`。共享类型（T-Session 等）不在条目内展开，统一见 [类型汇总](#类型汇总)；「可缺省」「可空」的语义区分见 [null 与缺省语义](#null-与缺省语义)。
+下文按业务域分组列出全部端点，覆盖 `/api/v1` 与 `/api/v2`（路径前缀区分版本）。路径里的 `:{action}` 后缀是动作约定——对单个资源 POST 到 `路径:动作` 执行非 CRUD 操作（如会话的 `:fork`、`:archive`）；动作缺失或未知时返回 `40001`。共享类型（T-Session 等）不在条目内展开，统一见 [类型汇总](#类型汇总)；「可缺省」「可空」的语义区分见 [null 与缺省语义](#null-与缺省语义)。
 
-### 服务与元信息
+### 服务与账号
+
+服务接入、登录与账号、全局配置、模型与供应商。
+
+**服务与元信息。**
 
 服务自身的探活、身份、关停与连接管理。
 
@@ -184,7 +188,156 @@ HTTP 状态码例外（非 200）：
 { "code": 0, "msg": "success", "data": { "connections": [ { "id": "conn_01JZX4...", "connected_at": "2026-09-02T08:00:00.000Z", "remote_address": "127.0.0.1", "user_agent": "Mozilla/5.0 ...", "has_client_hello": true, "subscriptions": [ "session_..." ] } ] }, "request_id": "01JZX4..." }
 ```
 
-### 配置
+**登录与用量。**
+
+托管 Kimi OAuth 登录的生命周期与账号级信息。托管供应商名为 `managed:kimi-code`；下面每个端点上可选的 `provider` 参数都默认取它。
+
+| 方法与路径 | 说明 |
+| --- | --- |
+| `POST /api/v1/oauth/login` | 发起 OAuth device-code 登录流程 |
+| `GET /api/v1/oauth/login` | 轮询登录流程状态 |
+| `DELETE /api/v1/oauth/login` | 取消进行中的登录流程 |
+| `POST /api/v1/oauth/logout` | 登出托管供应商 |
+| `GET /api/v1/oauth/usage` | 套餐用量与限额 |
+| `GET /api/v1/oauth/userinfo` | 账号资料 |
+| `GET /api/v1/oauth/region` | 解析客户端所属区域 |
+
+#### `POST /api/v1/oauth/login`
+
+为托管供应商发起 OAuth device-code（设备码）登录流程；发起新流程会中止同一供应商进行中的流程。账号已登录时无需用户交互，响应会立即报告 `authenticated`。
+
+**Body**：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `provider` | string | 否 | 托管供应商名称。默认 `managed:kimi-code` |
+| `region` | string | 否 | `mainland-cn` 或 `global`；覆盖区域解析结果，仅对本次流程生效 |
+
+**返回**：`ResponseType<[T-OAuthFlowStart](#t-oauthflowstart)>`——进行中的流程报告 `status: "pending"`，打开 `verification_uri_complete`（或打开 `verification_uri` 并输入 `user_code`），然后每隔 `interval` 秒轮询 `GET /api/v1/oauth/login`；已登录的快速路径报告 `status: "authenticated"`。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "flow_id": "01JZX4...", "provider": "managed:kimi-code", "status": "pending", "verification_uri": "https://www.kimi.com/code/device", "verification_uri_complete": "https://www.kimi.com/code/device?code=ABCD-EFGH", "user_code": "ABCD-EFGH", "expires_in": 600, "interval": 5, "expires_at": "2026-09-02T08:10:00.000Z" }, "request_id": "01JZX4..." }
+```
+
+#### `GET /api/v1/oauth/login`
+
+轮询某供应商的登录流程状态；尚未发起过流程时 `data` 为 `null`。
+
+**Query**：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `provider` | string | 托管供应商名称。默认 `managed:kimi-code` |
+
+**返回**：`ResponseType<[T-OAuthFlowSnapshot](#t-oauthflowsnapshot)>` 或 `null`。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "flow_id": "01JZX4...", "provider": "managed:kimi-code", "status": "authenticated", "verification_uri": "...", "verification_uri_complete": "...", "user_code": "ABCD-EFGH", "expires_in": 600, "expires_at": "2026-09-02T08:10:00.000Z", "interval": 5, "resolved_at": "2026-09-02T08:02:00.000Z" }, "request_id": "01JZX4..." }
+```
+
+#### `DELETE /api/v1/oauth/login`
+
+取消某供应商进行中的登录流程；没有进行中的流程时为空操作，返回最近一次已知状态。
+
+**Query**：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `provider` | string | 托管供应商名称。默认 `managed:kimi-code` |
+
+**返回**：`ResponseType`，`data` 字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `cancelled` | boolean | 只有确实中止了一个 `pending` 流程时才为 `true` |
+| `status` | string | 调用后的流程状态，取值同 [T-OAuthFlowSnapshot](#t-oauthflowsnapshot) 的 `status` |
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "cancelled": true, "status": "cancelled" }, "request_id": "01JZX4..." }
+```
+
+#### `POST /api/v1/oauth/logout`
+
+登出托管供应商：丢弃已存储的 OAuth 凭据、中止进行中的登录流程，并把托管供应商从配置中移除。OAuth 托管的供应商拒绝手动编辑与删除，因此要移除它需先登出。
+
+**Body**：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `provider` | string | 否 | 托管供应商名称。默认 `managed:kimi-code` |
+
+**返回**：`ResponseType`，`data` 字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `logged_out` | boolean | 恒 `true` |
+| `provider` | string | 被登出的供应商名 |
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "logged_out": true, "provider": "managed:kimi-code" }, "request_id": "01JZX4..." }
+```
+
+#### `GET /api/v1/oauth/usage`
+
+托管账号的套餐用量与限额，实时取自账号服务。上游失败不会让响应失败——以 `kind: "error"` 带内返回。
+
+**Query**：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `provider` | string | 托管供应商名称。默认 `managed:kimi-code` |
+
+**返回**：`ResponseType<[T-ManagedUsageResult](#t-managedusageresult)>`。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "kind": "ok", "summary": { "name": "每周额度", "window": { "duration": 1, "unit": "week" }, "used": 42, "limit": 100, "reset_at": "2026-09-09T00:00:00.000Z" }, "limits": [ "..." ], "extra_usage": null }, "request_id": "01JZX4..." }
+```
+
+#### `GET /api/v1/oauth/userinfo`
+
+托管账号的资料；带内 `kind: "error"` 约定与 `GET /api/v1/oauth/usage` 相同。
+
+**Query**：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `provider` | string | 托管供应商名称。默认 `managed:kimi-code` |
+
+**返回**：`ResponseType<[T-ManagedUserInfoResult](#t-manageduserinforesult)>`（camelCase 载荷）。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "kind": "ok", "userInfo": { "userId": "u_...", "nickname": "dev", "status": "active", "region": "mainland-cn", "userLevel": 2, "userLevelName": "...", "domain": 1, "domainName": "..." } }, "request_id": "01JZX4..." }
+```
+
+#### `GET /api/v1/oauth/region`
+
+解析该客户端所属的 Kimi 区域。结果在本地推导，不经网络探测：优先取环境变量或配置固定的 OAuth host，其次是已配置的 OAuth key，再次是 home 目录中的区域标记文件；默认为 `mainland-cn`。无参数。
+
+**返回**：`ResponseType`，`data` 字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `region` | string | `mainland-cn` / `global` |
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "region": "mainland-cn" }, "request_id": "01JZX4..." }
+```
+
+**配置。**
 
 全局配置的读取与合并式更新；密钥字段一律脱敏。
 
@@ -221,7 +374,7 @@ HTTP 状态码例外（非 200）：
 { "code": 0, "msg": "success", "data": { "default_model": "my-provider/kimi-for-coding", "yolo": true, "providers": { "...": {} } }, "request_id": "01JZX4..." }
 ```
 
-### 模型与供应商
+**模型与供应商。**
 
 模型配置的两半——`config.toml` 的 [供应商](../configuration/providers.md) 表与模型别名表——外加一个由服务端代理的 models.dev 目录。模型别名 id 就是配置中的别名键：通过供应商管理端点创建的别名形如 `provider_id/model`（例如 `my-provider/kimi-for-coding`），模型别名表中的裸键（如 `turbo`）原样使用；API 中任何接收 `model_id` 的地方指的都是这个别名 id。
 
@@ -459,351 +612,167 @@ HTTP 状态码例外（非 200）：
 { "code": 0, "msg": "success", "data": { "id": "openai", "name": "OpenAI", "wire_type": "openai", "guessed": false, "needs_base_url": false, "rejected": false, "reject_reason": null, "env_key": "OPENAI_API_KEY", "models": [ "..." ] }, "request_id": "01JZX4..." }
 ```
 
-### 登录与用量
+### 工作区与会话
 
-托管 Kimi OAuth 登录的生命周期与账号级信息。托管供应商名为 `managed:kimi-code`；下面每个端点上可选的 `provider` 参数都默认取它。
+工作区与会话两个核心业务对象的生命周期。路径前缀区分版本：`/api/v1` 与 `/api/v2`。
+
+**工作区。**
+
+工作区是已注册的项目目录，会话都落在其中。这组端点管理注册表与每工作区信任状态（控制项目级 MCP 配置是否加载），以及附加目录。返回的工作区对象统一为 [T-Workspace](#t-workspace)。
 
 | 方法与路径 | 说明 |
 | --- | --- |
-| `POST /api/v1/oauth/login` | 发起 OAuth device-code 登录流程 |
-| `GET /api/v1/oauth/login` | 轮询登录流程状态 |
-| `DELETE /api/v1/oauth/login` | 取消进行中的登录流程 |
-| `POST /api/v1/oauth/logout` | 登出托管供应商 |
-| `GET /api/v1/oauth/usage` | 套餐用量与限额 |
-| `GET /api/v1/oauth/userinfo` | 账号资料 |
-| `GET /api/v1/oauth/region` | 解析客户端所属区域 |
+| `GET /api/v1/workspaces` | 列出已注册工作区 |
+| `POST /api/v1/workspaces` | 注册工作区（按根路径幂等） |
+| `PATCH /api/v1/workspaces/{workspace_id}` | 重命名 |
+| `DELETE /api/v1/workspaces/{workspace_id}` | 注销（保留磁盘内容） |
+| `GET /api/v1/workspaces/{workspace_id}/trust` | 读取信任状态 |
+| `POST /api/v1/workspaces/{workspace_id}/trust` | 授予信任 |
+| `POST /api/v1/workspaces/{workspace_id}/untrust` | 撤销信任 |
+| `POST /api/v1/workspaces/{workspace_id}/add-dir` | 添加附加目录 |
 
-#### `POST /api/v1/oauth/login`
+#### `GET /api/v1/workspaces`
 
-为托管供应商发起 OAuth device-code（设备码）登录流程；发起新流程会中止同一供应商进行中的流程。账号已登录时无需用户交互，响应会立即报告 `authenticated`。
+列出所有已注册工作区。无参数。
+
+**返回**：`ResponseType`，`data` 字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `items` | array | [T-Workspace](#t-workspace) 数组 |
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "items": [ { "id": "wd_my-app_a1b2c3d4e5f6", "root": "/Users/dev/my-app", "name": "my-app", "created_at": "2026-09-01T10:00:00.000Z", "last_opened_at": "2026-09-02T08:00:00.000Z", "session_count": 3 } ] }, "request_id": "01JZX4..." }
+```
+
+#### `POST /api/v1/workspaces`
+
+注册工作区并返回它。注册按根路径幂等：重复注册同一根路径会返回已存在的工作区，仅刷新 `last_opened_at`（保留已存名称），并广播 `event.workspace.updated` 而非 `event.workspace.created`。
 
 **Body**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `provider` | string | 否 | 托管供应商名称。默认 `managed:kimi-code` |
-| `region` | string | 否 | `mainland-cn` 或 `global`；覆盖区域解析结果，仅对本次流程生效 |
+| `root` | string | 是 | 已存在目录的绝对路径 |
+| `name` | string | 否 | 显示名，1–100 个字符。默认根目录的基名 |
 
-**返回**：`ResponseType<[T-OAuthFlowStart](#t-oauthflowstart)>`——进行中的流程报告 `status: "pending"`，打开 `verification_uri_complete`（或打开 `verification_uri` 并输入 `user_code`），然后每隔 `interval` 秒轮询 `GET /api/v1/oauth/login`；已登录的快速路径报告 `status: "authenticated"`。
+**返回**：`ResponseType<[T-Workspace](#t-workspace)>`。
 
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "flow_id": "01JZX4...", "provider": "managed:kimi-code", "status": "pending", "verification_uri": "https://www.kimi.com/code/device", "verification_uri_complete": "https://www.kimi.com/code/device?code=ABCD-EFGH", "user_code": "ABCD-EFGH", "expires_in": 600, "interval": 5, "expires_at": "2026-09-02T08:10:00.000Z" }, "request_id": "01JZX4..." }
-```
-
-#### `GET /api/v1/oauth/login`
-
-轮询某供应商的登录流程状态；尚未发起过流程时 `data` 为 `null`。
-
-**Query**：
-
-| 参数 | 类型 | 说明 |
-| --- | --- | --- |
-| `provider` | string | 托管供应商名称。默认 `managed:kimi-code` |
-
-**返回**：`ResponseType<[T-OAuthFlowSnapshot](#t-oauthflowsnapshot)>` 或 `null`。
+**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）（`root` 缺失或不是绝对路径）、`40409`（`root` 不存在或不是目录）。
 
 **示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "flow_id": "01JZX4...", "provider": "managed:kimi-code", "status": "authenticated", "verification_uri": "...", "verification_uri_complete": "...", "user_code": "ABCD-EFGH", "expires_in": 600, "expires_at": "2026-09-02T08:10:00.000Z", "interval": 5, "resolved_at": "2026-09-02T08:02:00.000Z" }, "request_id": "01JZX4..." }
+{ "code": 0, "msg": "success", "data": { "id": "wd_my-app_a1b2c3d4e5f6", "root": "/Users/dev/my-app", "name": "my-app", "created_at": "2026-09-02T08:00:00.000Z", "last_opened_at": "2026-09-02T08:00:00.000Z", "session_count": 0 }, "request_id": "01JZX4..." }
 ```
 
-#### `DELETE /api/v1/oauth/login`
+#### `PATCH /api/v1/workspaces/{workspace_id}`
 
-取消某供应商进行中的登录流程；没有进行中的流程时为空操作，返回最近一次已知状态。
-
-**Query**：
-
-| 参数 | 类型 | 说明 |
-| --- | --- | --- |
-| `provider` | string | 托管供应商名称。默认 `managed:kimi-code` |
-
-**返回**：`ResponseType`，`data` 字段：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `cancelled` | boolean | 只有确实中止了一个 `pending` 流程时才为 `true` |
-| `status` | string | 调用后的流程状态，取值同 [T-OAuthFlowSnapshot](#t-oauthflowsnapshot) 的 `status` |
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "cancelled": true, "status": "cancelled" }, "request_id": "01JZX4..." }
-```
-
-#### `POST /api/v1/oauth/logout`
-
-登出托管供应商：丢弃已存储的 OAuth 凭据、中止进行中的登录流程，并把托管供应商从配置中移除。OAuth 托管的供应商拒绝手动编辑与删除，因此要移除它需先登出。
+重命名工作区——仅修改显示名，根路径不变。
 
 **Body**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `provider` | string | 否 | 托管供应商名称。默认 `managed:kimi-code` |
+| `name` | string | 是 | 新的显示名，1–100 个字符 |
 
-**返回**：`ResponseType`，`data` 字段：
+**返回**：`ResponseType<[T-Workspace](#t-workspace)>`。
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `logged_out` | boolean | 恒 `true` |
-| `provider` | string | 被登出的供应商名 |
+**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40410`。
 
 **示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "logged_out": true, "provider": "managed:kimi-code" }, "request_id": "01JZX4..." }
+{ "code": 0, "msg": "success", "data": { "id": "wd_my-app_a1b2c3d4e5f6", "root": "/Users/dev/my-app", "name": "My App", "created_at": "2026-09-01T10:00:00.000Z", "last_opened_at": "2026-09-02T08:00:00.000Z", "session_count": 3 }, "request_id": "01JZX4..." }
 ```
 
-#### `GET /api/v1/oauth/usage`
+#### `DELETE /api/v1/workspaces/{workspace_id}`
 
-托管账号的套餐用量与限额，实时取自账号服务。上游失败不会让响应失败——以 `kind: "error"` 带内返回。
+注销工作区。只移除注册表条目——磁盘上的目录不受影响。无请求体。
 
-**Query**：
+**返回**：`ResponseType<{ "deleted": true }>`。
 
-| 参数 | 类型 | 说明 |
-| --- | --- | --- |
-| `provider` | string | 托管供应商名称。默认 `managed:kimi-code` |
-
-**返回**：`ResponseType<[T-ManagedUsageResult](#t-managedusageresult)>`。
+**非零 code**：`40410`。
 
 **示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "kind": "ok", "summary": { "name": "每周额度", "window": { "duration": 1, "unit": "week" }, "used": 42, "limit": 100, "reset_at": "2026-09-09T00:00:00.000Z" }, "limits": [ "..." ], "extra_usage": null }, "request_id": "01JZX4..." }
+{ "code": 0, "msg": "success", "data": { "deleted": true }, "request_id": "01JZX4..." }
 ```
 
-#### `GET /api/v1/oauth/userinfo`
+#### `GET /api/v1/workspaces/{workspace_id}/trust`
 
-托管账号的资料；带内 `kind: "error"` 约定与 `GET /api/v1/oauth/usage` 相同。
+读取工作区信任状态。信任状态决定是否为该工作区加载项目级 MCP 配置。无参数。
 
-**Query**：
+**返回**：`ResponseType<{ "trusted": boolean }>`。
 
-| 参数 | 类型 | 说明 |
-| --- | --- | --- |
-| `provider` | string | 托管供应商名称。默认 `managed:kimi-code` |
-
-**返回**：`ResponseType<[T-ManagedUserInfoResult](#t-manageduserinforesult)>`（camelCase 载荷）。
+**非零 code**：`40410`。
 
 **示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "kind": "ok", "userInfo": { "userId": "u_...", "nickname": "dev", "status": "active", "region": "mainland-cn", "userLevel": 2, "userLevelName": "...", "domain": 1, "domainName": "..." } }, "request_id": "01JZX4..." }
+{ "code": 0, "msg": "success", "data": { "trusted": true }, "request_id": "01JZX4..." }
 ```
 
-#### `GET /api/v1/oauth/region`
+#### `POST /api/v1/workspaces/{workspace_id}/trust`
 
-解析该客户端所属的 Kimi 区域。结果在本地推导，不经网络探测：优先取环境变量或配置固定的 OAuth host，其次是已配置的 OAuth key，再次是 home 目录中的区域标记文件；默认为 `mainland-cn`。无参数。
+将工作区标记为信任，并加载其项目级 MCP 配置。无请求体。
 
-**返回**：`ResponseType`，`data` 字段：
+**返回**：`ResponseType<{ "trusted": true }>`。
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `region` | string | `mainland-cn` / `global` |
+**非零 code**：`40410`。
 
 **示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "region": "mainland-cn" }, "request_id": "01JZX4..." }
+{ "code": 0, "msg": "success", "data": { "trusted": true }, "request_id": "01JZX4..." }
 ```
 
-### 插件
+#### `POST /api/v1/workspaces/{workspace_id}/untrust`
 
-插件是已安装的技能、MCP 服务、hook 与命令的打包集合。这组端点管理插件从市场列表到移除的整个生命周期。
+撤销工作区信任，并卸载其项目级 MCP 配置。无请求体。
 
-| 方法与路径 | 说明 |
-| --- | --- |
-| `GET /api/v1/plugins/marketplace` | 插件市场目录，合并实时安装状态 |
-| `GET /api/v1/plugins` | 列出已安装插件 |
-| `POST /api/v1/plugins` | 从本地路径、zip URL 或 GitHub 仓库安装插件 |
-| `POST /api/v1/plugins/{plugin_id}:{action}` | 插件动作：`enable` / `disable` / `remove` |
+**返回**：`ResponseType<{ "trusted": false }>`。
 
-#### `GET /api/v1/plugins/marketplace`
-
-列出插件市场目录并合并实时安装状态。目录按请求从配置的市场 URL 拉取（超时 10 秒）；使用默认目录时，目录中缺少的内置能力会作为条目合并进来（带 `capabilityId`），当前平台不支持的能力对应条目会被剔除。无参数。
-
-**返回**：`ResponseType`，`data` 字段：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `entries` | array | 市场条目（camelCase）：`{ id, tier, displayName, description?, homepage?, keywords?, version?, source, installed?, updateAvailable?, capabilityId? }`；`tier` 为 `official` / `curated` / `third-party`；`installed` 为 `{ version?, enabled }`；`source` 即 `POST /api/v1/plugins` 的 `source` 取值 |
-
-**非零 code**：`50001`（市场不可达或返回了非法目录）。
+**非零 code**：`40410`。
 
 **示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "entries": [ { "id": "my-plugin", "tier": "official", "displayName": "My Plugin", "source": "https://github.com/example/my-plugin", "installed": { "version": "1.2.0", "enabled": true }, "updateAvailable": false } ] }, "request_id": "01JZX4..." }
+{ "code": 0, "msg": "success", "data": { "trusted": false }, "request_id": "01JZX4..." }
 ```
 
-#### `GET /api/v1/plugins`
+#### `POST /api/v1/workspaces/{workspace_id}/add-dir`
 
-列出已安装插件。无参数。
-
-**返回**：`ResponseType`，`data` 字段：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `plugins` | array | [T-PluginSummary](#t-pluginsummary) 数组 |
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "plugins": [ { "id": "my-plugin", "displayName": "My Plugin", "version": "1.2.0", "enabled": true, "state": "ok", "skillCount": 2, "mcpServerCount": 1, "enabledMcpServerCount": 1, "hookCount": 0, "commandCount": 1, "hasErrors": false, "source": "github" } ] }, "request_id": "01JZX4..." }
-```
-
-#### `POST /api/v1/plugins`
-
-安装插件并返回其摘要。
+为工作区添加附加目录，语义与 CLI `--add-dir` 及 TUI `/add-dir` 一致。路径支持绝对路径、相对路径（相对工作区根目录解析）与 `~` 展开。
 
 **Body**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `source` | string | 是 | 安装来源：本地绝对路径、指向 zip 压缩包的 `http(s)` URL，或 GitHub URL——`https://github.com/<owner>/<repo>`，可选地用 `/tree/<branch-or-sha>`、`/releases/tag/<tag>` 或 `/commit/<sha>` 锁定版本 |
-
-**返回**：`ResponseType<[T-PluginSummary](#t-pluginsummary)>`。
-
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）（`source` 既不是 URL 也不是绝对路径，或插件加载失败）、`40409`（本地路径不存在）。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "id": "my-plugin", "displayName": "My Plugin", "enabled": true, "state": "ok", "skillCount": 2, "mcpServerCount": 0, "enabledMcpServerCount": 0, "hookCount": 0, "commandCount": 0, "hasErrors": false, "source": "local-path" }, "request_id": "01JZX4..." }
-```
-
-#### `POST /api/v1/plugins/{plugin_id}:{action}`
-
-插件动作经单一路由分发：尾部按 `{plugin_id}:{action}` 解析，动作为 `enable`（启用）/ `disable`（停用但不移除）/ `remove`（移除）。无请求体。
-
-**返回**：`ResponseType<{ "ok": true }>`。
-
-**非零 code**：`40001`（缺少动作后缀或动作未知；`details` 为 `{ path, message }[]`）、`40419`（没有该 id 的已安装插件）。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "ok": true }, "request_id": "01JZX4..." }
-```
-
-### 能力
-
-能力是带有分层就绪状态的内置特性——由检测步骤加后台安装组成；当前版本注册了 `kimi-cu`（Kimi Computer Use）与 `kimi-webbridge`（Kimi WebBridge）。
-
-| 方法与路径 | 说明 |
-| --- | --- |
-| `GET /api/v1/capabilities` | 列出内置能力及其就绪状态 |
-| `GET /api/v1/capabilities/{capability_id}` | 读取单个能力的状态 |
-| `POST /api/v1/capabilities/{capability_id}:install` | 开始安装能力（后台进行，轮询 GET 查看进度） |
-
-#### `GET /api/v1/capabilities`
-
-列出所有已注册能力及其就绪状态。无参数。
+| `path` | string | 是 | 要添加的目录 |
+| `persist` | boolean | 否 | 缺省 `true`：追加到 `<项目根>/.kimi-code/local.toml` 的 `workspace.additional_dir`；为 `false` 时仅加入内存中的临时集合（同一工作区所有会话共享），不写盘 |
 
 **返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `capabilities` | array | [T-CapabilityStatus](#t-capabilitystatus) 数组 |
+| `project_root` | string | 项目根目录 |
+| `config_path` | string | 写入的本地配置文件路径 |
+| `additional_dirs` | array | 全部附加目录（含既有目录） |
+| `persisted` | boolean | 本次是否写盘 |
+
+**非零 code**：`40001`（校验失败，或项目本地配置损坏等引擎校验错误；`details` 为 `{ path, message }[]`）、`40409`（`path` 不存在或不是目录）、`40410`。
 
 **示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "capabilities": [ { "id": "kimi-cu", "displayName": "Kimi Computer Use", "description": "...", "supported": true, "state": "ready", "steps": [ { "id": "os", "state": "ok" } ], "install": { "running": false } } ] }, "request_id": "01JZX4..." }
+{ "code": 0, "msg": "success", "data": { "project_root": "/Users/dev/my-app", "config_path": "/Users/dev/my-app/.kimi-code/local.toml", "additional_dirs": [ "/Users/dev/shared-lib" ], "persisted": true }, "request_id": "01JZX4..." }
 ```
 
-#### `GET /api/v1/capabilities/{capability_id}`
-
-读取单个能力的就绪状态——`:install` 动作的轮询对应端点。无参数。
-
-**返回**：`ResponseType<[T-CapabilityStatus](#t-capabilitystatus)>`。
-
-**非零 code**：`40418`（没有该 id 的能力）。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "id": "kimi-cu", "displayName": "Kimi Computer Use", "description": "...", "supported": true, "state": "partial", "steps": [ { "id": "app", "state": "missing", "optional": true } ], "install": { "running": true, "percent": 40 } }, "request_id": "01JZX4..." }
-```
-
-#### `POST /api/v1/capabilities/{capability_id}:install`
-
-在后台开始安装能力并立即返回当前状态（`install.running` 为 `true`）；轮询 `GET /api/v1/capabilities/{capability_id}` 查看进度。幂等。经 `POST /api/v1/capabilities/{tail}` 分发，`install` 是唯一动作。无请求体。
-
-**返回**：`ResponseType<[T-CapabilityStatus](#t-capabilitystatus)>`。
-
-**非零 code**：`40001`（缺少动作后缀或动作未知；`details` 为 `{ path, message }[]`）、`40418`、`40924`（安装已在进行中）、`40925`（当前平台 / 架构不支持）。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "id": "kimi-cu", "displayName": "Kimi Computer Use", "description": "...", "supported": true, "state": "not_installed", "steps": [ "..." ], "install": { "running": true, "step": "download", "percent": 0 } }, "request_id": "01JZX4..." }
-```
-
-### 工具与 MCP（v1）
-
-当前生效 Agent 的工具列表及其 MCP 服务；管理 MCP 服务的完整面在 [v2 MCP](#v2-mcp)。
-
-| 方法与路径 | 说明 |
-| --- | --- |
-| `GET /api/v1/tools` | 列出当前生效 Agent 的工具 |
-| `GET /api/v1/mcp/servers` | 列出 MCP 服务 |
-| `POST /api/v1/mcp/servers/{mcp_server_id}:restart` | 重启 MCP 服务 |
-
-#### `GET /api/v1/tools`
-
-列出当前生效 Agent 的工具——即 `session_id` 指定会话的 main agent；省略参数时取最近创建的存活会话。会话不在本服务进程中存活时列表为空。
-
-**Query**：
-
-| 参数 | 类型 | 说明 |
-| --- | --- | --- |
-| `session_id` | string | 要查看其 main agent 的会话。默认最近创建的存活会话 |
-
-**返回**：`ResponseType`，`data` 字段：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `tools` | array | [T-ToolDescriptor](#t-tooldescriptor) 数组 |
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "tools": [ { "name": "Bash", "description": "...", "input_schema": null, "source": "builtin", "active": true } ] }, "request_id": "01JZX4..." }
-```
-
-#### `GET /api/v1/mcp/servers`
-
-列出当前生效 Agent 配置的 MCP 服务（与 `GET /api/v1/tools` 相同的会话选取规则）；没有存活会话时列表为空。无参数。
-
-**返回**：`ResponseType`，`data` 字段：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `servers` | array | [T-McpServer](#t-mcpserver) 数组 |
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "servers": [ { "id": "my-server", "name": "my-server", "transport": "stdio", "status": "connected", "tool_count": 5 } ] }, "request_id": "01JZX4..." }
-```
-
-#### `POST /api/v1/mcp/servers/{mcp_server_id}:restart`
-
-重新连接当前生效 Agent 的某个 MCP 服务。经 `POST /api/v1/mcp/servers/{tail}` 分发，`restart` 是唯一动作。无请求体。
-
-**返回**：`ResponseType<{ "restarting": true }>`。
-
-**非零 code**：`40001`（缺少动作后缀或动作未知；`details` 为 `{ path, message }[]`）、`40408`（没有该 id 的 MCP 服务；无存活会话时同样返回此错误）。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "restarting": true }, "request_id": "01JZX4..." }
-```
-
-### 会话
+**会话。**
 
 创建、列出和查看会话，执行会话级动作，并读取会话级汇总。返回的会话对象统一为 [T-Session](#t-session)；其实时状态字段（`busy`、`main_turn_active`、`pending_interaction`、`last_turn_reason`）由会话的活动聚合解析——未加载到本服务进程中的会话（冷会话）始终上报为不忙碌且无待处理交互。
 
@@ -1072,7 +1041,7 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 { "code": 0, "msg": "success", "data": { "warnings": [ { "code": "agents-md-oversized", "message": "AGENTS.md is ...", "severity": "warning" } ] }, "request_id": "01JZX4..." }
 ```
 
-### 运行时绑定
+**运行时绑定。**
 
 main agent 的 Agent 循环运行在哪个运行时上的读取与切换。
 
@@ -1120,7 +1089,23 @@ main agent 的 Agent 循环运行在哪个运行时上的读取与切换。
 { "code": 0, "msg": "success", "data": { "workspace_id": "wd_my-app_a1b2c3d4e5f6", "runtime_id": "local" }, "request_id": "01JZX4..." }
 ```
 
-### 会话导出
+**会话快照。**
+
+#### `GET /api/v1/sessions/{session_id}/snapshot`
+
+为重新同步后重建客户端组装一份原子快照：会话、最近的消息、进行中的轮次、存活的 subagent 以及待处理交互，全部盖上 `as_of_seq` 水位与用于重新订阅的 `epoch`——恢复流程见 [断线恢复](#断线恢复)。与普通的会话端点不同，内嵌的会话携带实时的 `agent_config.model` 与真实的 `usage` 总计。无参数。
+
+**返回**：`ResponseType<[T-SnapshotResponse](#t-snapshotresponse)>`。
+
+**非零 code**：`40401`、`50001`。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "as_of_seq": 128, "epoch": "01JZX4...", "session": { "id": "session_01JZX4...", "agent_config": { "model": "kimi-for-coding" }, "usage": { "input_tokens": 152000, "...": 0 }, "...": "..." }, "messages": { "items": [ "..." ], "has_more": true }, "in_flight_turn": null, "subagents": [], "pending_approvals": [], "pending_questions": [] }, "request_id": "01JZX4..." }
+```
+
+**会话导出。**
 
 #### `POST /api/v1/sessions/{session_id}/export`
 
@@ -1135,53 +1120,139 @@ main agent 的 Agent 循环运行在哪个运行时上的读取与切换。
 
 **非零 code**（`ResponseType`）：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`、`50001`。
 
-### 消息
+**文件历史（实验性）。**
 
-`messages` 端点分页返回 main agent 的扁平化消息历史；按 Agent 组织的结构化转录见 [转录](#转录)。
+::: info 新增
+实验特性：由 `KIMI_CODE_EXPERIMENTAL_FILE_HISTORY` 开关控制（默认关闭），接口形态可能随版本更改。
+:::
+
+按轮次记录的文件历史快照：main agent 每个轮次在开始与结束两个检查点版本化所有被 Edit / Write 工具触碰的文件（未变化的文件按内容哈希去重，超过 4 MiB 的文件只记录哨兵指纹）。这两个端点从检查点计算单个轮次的逐文件增删行数与任一检查点的完整内容；冷会话会按需恢复。开关关闭时路由仍注册，但 `changes` 恒返回空列表、`enabled` 恒为 `false`、`content` 恒为 `null`。
 
 | 方法与路径 | 说明 |
 | --- | --- |
-| `GET /api/v1/sessions/{session_id}/messages` | 消息分页（`before_id` / `after_id` / `role`） |
-| `GET /api/v1/sessions/{session_id}/messages/{message_id}` | 读取单条消息 |
+| `GET /api/v1/sessions/{session_id}/file-history/changes` | 单个轮次的逐文件增删统计 |
+| `GET /api/v1/sessions/{session_id}/file-history/content` | 某文件在指定检查点的完整内容 |
 
-#### `GET /api/v1/sessions/{session_id}/messages`
+#### `GET /api/v1/sessions/{session_id}/file-history/changes`
 
-分页返回 main agent 的消息历史，最新在前；读取历史会在会话为冷态时将其恢复。
+返回单个轮次开始与结束检查点之间每个文件的精确增删行数。
 
 **Query**：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
-| `before_id` | string | 只保留早于该消息 id 的消息；与 `after_id` 互斥 |
-| `after_id` | string | 只保留晚于该消息 id 的消息；与 `before_id` 互斥 |
-| `page_size` | integer | 1–100。默认 `50` |
-| `role` | string | 只保留单一角色：`user` / `assistant` / `tool` / `system`。过滤在分页切片之后应用，因此过滤后的一页可能少于 `page_size` 条而 `has_more` 仍为 `true`——持续翻页直到 `has_more` 为 `false` |
+| `turn_id` | integer | **必填。** 轮次 id（≥ 0） |
 
-**返回**：`ResponseType<{ items: T-Message[], has_more: boolean }>`（[T-Message](#t-message)）。
+**返回**：`ResponseType`，`data` 字段：
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `changes` | array | `{ path, status, additions, deletions, binary?, oversize? }[]`；`status` 为 `added` / `modified` / `deleted`；二进制与超大文件的增删行为 `0`，并以 `binary` / `oversize` 标记 |
+| `enabled` | boolean | 实验开关是否开启 |
+| `recorded` | boolean | 该轮次是否有已记录的检查点 |
 
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "items": [ { "id": "msg_session_..._000007", "session_id": "session_01JZX4...", "role": "assistant", "content": [ { "type": "text", "text": "..." } ], "created_at": "2026-09-02T08:05:00.000Z" } ], "has_more": true }, "request_id": "01JZX4..." }
-```
-
-#### `GET /api/v1/sessions/{session_id}/messages/{message_id}`
-
-按 id 从同一历史中读取单条消息。无参数。
-
-**返回**：`ResponseType<[T-Message](#t-message)>`。
-
-**非零 code**：`40401`、`40403`（该会话中不存在此 id 的消息）。
+**非零 code**：`40401`。
 
 **示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "id": "msg_session_..._000007", "session_id": "session_01JZX4...", "role": "user", "content": [ { "type": "text", "text": "..." } ], "created_at": "2026-09-02T08:04:00.000Z" }, "request_id": "01JZX4..." }
+{ "code": 0, "msg": "success", "data": { "changes": [ { "path": "src/index.ts", "status": "modified", "additions": 12, "deletions": 3 } ], "enabled": true, "recorded": true }, "request_id": "01JZX4..." }
 ```
 
-### 提示词
+#### `GET /api/v1/sessions/{session_id}/file-history/content`
+
+返回某文件在指定轮次检查点的完整内容；`phase: "end"` 时若该文件在结束检查点没有记录，回退到开始检查点的版本。
+
+**Query**：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `turn_id` | integer | **必填。** 轮次 id（≥ 0） |
+| `path` | string | **必填。** 文件路径 |
+| `phase` | string | `start`（默认）/ `end`——取轮次开始还是结束检查点 |
+
+**返回**：`ResponseType`，`data` 字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `content` | object \| null | `{ version, content?, binary? }`——`version` 为该文件在检查点的版本号；二进制文件只携带 `binary: true` 不携带文本；无记录时为 `null` |
+
+**非零 code**：`40401`。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "content": { "version": 2, "content": "import ..." } }, "request_id": "01JZX4..." }
+```
+
+**v2 会话。**
+
+`/api/v2` 的会话查询与批量管理。与 v1 共享 `ResponseType` 与错误约定；分页为绑定查询指纹的 `page_token`（见 [分页](#分页)）。
+
+| 方法与路径 | 说明 |
+| --- | --- |
+| `GET /api/v2/sessions` | 新一代会话列表：筛选、排序、字段组、分组视图 |
+| `POST /api/v2/sessions:archive` | 批量归档会话 |
+| `POST /api/v2/sessions:restore` | 批量恢复已归档会话 |
+
+#### `GET /api/v2/sessions`
+
+面向列表页的新一代会话查询，筛选、排序、字段组都在查询参数里。
+
+**Query**：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `workspace.id` | string | 按工作区过滤，可重复 |
+| `activity.status` | string | 按活动状态过滤：`running` / `approval` / `question` / `failed` / `idle`，可重复 |
+| `meta.updated_after` | integer | 只看该时间（epoch 毫秒）之后更新过的会话 |
+| `meta.updated_before` | integer | 只看该时间（epoch 毫秒）之前更新过的会话 |
+| `meta.archived` | string | `true` / `false`（默认）/ `all` |
+| `meta.has_prompt` | string | `true` 只保留有用户 prompt 的会话，`false` 只保留空会话（等价 v1 的 `exclude_empty`） |
+| `view` | string | `flat`（默认）/ `by_workspace`（按工作区分组） |
+| `group.page_size` | integer | `view=by_workspace` 时每个工作区返回的会话数：1–100，默认 `5`（`id,archived` 投影时上限 10000）；未开分组视图时传入返回 `40001` |
+| `sort` | string | `meta.updated_at_desc`（默认）/ `meta.updated_at_asc` / `meta.created_at_desc` |
+| `include` | string | 逗号分隔的附加字段组；目前支持 `git`（分支与 PR 信息，按目录去重并缓存 60 秒） |
+| `fields` | string | 逗号分隔的字段投影；目前仅支持 `id,archived`，每项裁剪为 `{ id, archived }`。不可与 `include=git` 同传（`40001`） |
+| `page_size` | integer | 1–100，默认 `50`；`id,archived` 投影时上限放宽至 10000。`view=by_workspace` 时按组计数 |
+| `page` | integer | 无状态的 1 起始页码；与 `page_token` 互斥（同传返回 `40001`） |
+| `page_token` | string | 上一页返回的翻页令牌 |
+
+**返回**：`ResponseType<[T-V2SessionPage](#t-v2sessionpage)>`（flat）或 [T-V2SessionGroupPage](#t-v2sessiongrouppage)（`by_workspace`）。每页额外携带 `total`（过滤后的集合大小）；翻页令牌绑定首页查询条件（含投影），中途改条件返回 `40922`；`page` 模式每次请求都是独立快照，不签发令牌，`next_page_token` 恒为 `null`。`by_workspace` 时每组携带该工作区按 `sort` 排序的前 `group.page_size` 条会话及其匹配总数 `total`；只有至少一条匹配会话的工作区才会出现，组间按组内首条会话的 sort key 排序（相同则按工作区 id）。
+
+**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）（未知 `include` / `fields`、组合非法）、`40922`。
+
+**示例**（`view=by_workspace`）：
+
+```json
+{ "code": 0, "msg": "success", "data": { "groups": [ { "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" }, "sessions": [ { "id": "session_01JZX4...", "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" }, "meta": { "title": "Fix the login page", "last_prompt": "adjust the button spacing", "created_at": 1787000000000, "updated_at": 1787000100000, "archived": false, "archived_at": null }, "activity": { "status": "idle", "model": "kimi-for-coding" } } ], "total": 42 } ], "total": 7, "has_more": true, "next_page_token": "eyJ2IjoxLCJmIjoi..." }, "request_id": "01JZX4..." }
+```
+
+#### `POST /api/v2/sessions:archive` 与 `POST /api/v2/sessions:restore`
+
+面向会话管理页的批量归档 / 恢复。仍在线的会话走完整生命周期；未加载的冷会话直接改写磁盘上的元数据，不会被加载。只有请求体校验失败才会让整个请求失败（`40001`）；其余情况按条返回。
+
+**Body**：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `ids` | array | 是 | 会话 id 数组——非空、去重后不超过 5000 条 |
+
+**返回**：`ResponseType<[T-V2BatchSessionResponse](#t-v2batchsessionresponse)>`——`results` 保持输入顺序，不存在的 id 在自身条目里报 `40401`。
+
+**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "results": [ { "id": "session_a", "ok": true }, { "id": "session_b", "ok": false, "error": { "code": 40401, "message": "session session_b does not exist" } } ], "succeeded": 1, "failed": 1 }, "request_id": "01JZX4..." }
+```
+
+### 对话
+
+驱动一轮对话：提交提示词、流式消息、审批与提问交互、转录。
+
+**提示词。**
 
 提示词是一次用户输入的单位：提交一条提示词会把它排入会话的 main agent（或指定 Agent）的队列；轮次进度通过 [WebSocket 帧](#websocket-帧) 推送，不经过这些端点。
 
@@ -1289,7 +1360,53 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 { "code": 0, "msg": "success", "data": { "aborted": true }, "request_id": "01JZX4..." }
 ```
 
-### 审批
+**消息。**
+
+`messages` 端点分页返回 main agent 的扁平化消息历史；按 Agent 组织的结构化转录见「对话」域的 [转录](#对话) 部分。
+
+| 方法与路径 | 说明 |
+| --- | --- |
+| `GET /api/v1/sessions/{session_id}/messages` | 消息分页（`before_id` / `after_id` / `role`） |
+| `GET /api/v1/sessions/{session_id}/messages/{message_id}` | 读取单条消息 |
+
+#### `GET /api/v1/sessions/{session_id}/messages`
+
+分页返回 main agent 的消息历史，最新在前；读取历史会在会话为冷态时将其恢复。
+
+**Query**：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `before_id` | string | 只保留早于该消息 id 的消息；与 `after_id` 互斥 |
+| `after_id` | string | 只保留晚于该消息 id 的消息；与 `before_id` 互斥 |
+| `page_size` | integer | 1–100。默认 `50` |
+| `role` | string | 只保留单一角色：`user` / `assistant` / `tool` / `system`。过滤在分页切片之后应用，因此过滤后的一页可能少于 `page_size` 条而 `has_more` 仍为 `true`——持续翻页直到 `has_more` 为 `false` |
+
+**返回**：`ResponseType<{ items: T-Message[], has_more: boolean }>`（[T-Message](#t-message)）。
+
+**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "items": [ { "id": "msg_session_..._000007", "session_id": "session_01JZX4...", "role": "assistant", "content": [ { "type": "text", "text": "..." } ], "created_at": "2026-09-02T08:05:00.000Z" } ], "has_more": true }, "request_id": "01JZX4..." }
+```
+
+#### `GET /api/v1/sessions/{session_id}/messages/{message_id}`
+
+按 id 从同一历史中读取单条消息。无参数。
+
+**返回**：`ResponseType<[T-Message](#t-message)>`。
+
+**非零 code**：`40401`、`40403`（该会话中不存在此 id 的消息）。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "id": "msg_session_..._000007", "session_id": "session_01JZX4...", "role": "user", "content": [ { "type": "text", "text": "..." } ], "created_at": "2026-09-02T08:04:00.000Z" }, "request_id": "01JZX4..." }
+```
+
+**审批。**
 
 审批是为工具调用请求许可的待处理交互。新的请求通过 WebSocket 以 `event.approval.requested` 到达；这两个端点用于列出和答复。
 
@@ -1345,7 +1462,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 { "code": 0, "msg": "success", "data": { "resolved": true, "resolved_at": "2026-09-02T08:07:00.000Z" }, "request_id": "01JZX4..." }
 ```
 
-### 提问
+**提问。**
 
 提问是请求带标签选项的结构化输入的待处理交互。新的请求通过 WebSocket 以 `event.question.requested` 到达。
 
@@ -1425,7 +1542,107 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 { "code": 40909, "msg": "question dismissed", "data": { "dismissed": true, "dismissed_at": "2026-09-02T08:07:20.000Z" }, "request_id": "01JZX4..." }
 ```
 
-### 后台任务
+**转录。**
+
+`transcript` 端点提供按 Agent 组织的结构化转录——轮次、任务、交互、附件——即 WebSocket [transcript 帧](#transcript-帧) 实时流式推送的内容。历史分页与补漏用这些端点，实时尾部用 WebSocket 订阅。转录载荷的类型正本是共享包 `@moonshot-ai/transcript` 的契约（[T-Transcript 族](#t-transcript-族)）。
+
+| 方法与路径 | 说明 |
+| --- | --- |
+| `GET /api/v1/sessions/{session_id}/transcript` | 按轮次分页的转录（需 `agent_id`） |
+| `GET /api/v1/sessions/{session_id}/transcript/ops` | op 批次补漏（`since_seq`） |
+| `GET /api/v1/sessions/{session_id}/transcript/user-messages` | 各轮次起始的用户输入，不分页 |
+| `GET /api/v1/sessions/{session_id}/transcript/plan` | ExitPlanMode 计划内容、路径与审阅结果 |
+
+#### `GET /api/v1/sessions/{session_id}/transcript`
+
+返回某个 Agent 的结构化转录中的一页：轮次（含其步骤与帧）以及轮次之间的标记与任务引用。活跃会话从内存存储应答（先回填所请求 Agent 的持久化历史）；冷会话则从持久化的线上记录重建 Agent。
+
+**Query**：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `agent_id` | string | **必填。** 要读取其转录的 Agent；必须是纯文本形式的 agent id（字母、数字、`.`、`_`、`-`，不含路径分隔符） |
+| `before_turn` | string | 只保留早于该轮次 id 的轮次；与 `after_turn` 互斥 |
+| `after_turn` | string | 只保留晚于该轮次 id 的轮次；与 `before_turn` 互斥 |
+| `page_size` | integer | 1–100 个轮次。默认 `20` |
+
+**返回**：`ResponseType<[T-TranscriptResponse](#t-transcriptresponse)>`——分页单位是轮次：不带游标时返回最新的一页，`has_more` 表示还有更早的轮次；`tasks` / `interactions` / `attachments` / `todos` / `meta` / `agents` / `pending_interactions` 是不分页、随每次响应一起返回的全局 Agent 状态；`seq` 是该 Agent 用于恢复流的 op 批次水位（仅活跃会话携带）。
+
+**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "agent_id": "main", "items": [ { "kind": "turn", "turnId": 3, "...": "..." } ], "has_more": true, "tasks": [], "interactions": [], "attachments": [], "todos": [], "prompts": [], "meta": { "...": "..." }, "agents": [ { "agentId": "main", "...": "..." } ], "pending_interactions": [], "seq": 42 }, "request_id": "01JZX4..." }
+```
+
+#### `GET /api/v1/sessions/{session_id}/transcript/ops`
+
+从服务端的 op 日志提供点对点的补漏：某个 Agent 的 `seq > since_seq` 的已记录 op 批次，最旧在前。它是 `transcript_since` 恢复游标的 REST 对应物，共享同一份有界日志，因此适用相同的回退规则。
+
+**Query**：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `agent_id` | string | **必填。** Agent id（纯文本形式） |
+| `since_seq` | integer | **必填。** 调用方已应用的最后一个 op 批次 seq，最小为 `0`；返回其之后的批次 |
+
+**返回**：`ResponseType<[T-TranscriptOpsCatchupResponse](#t-transcriptopscatchupresponse)>`——`complete: true` 表示直到 `latest_seq` 的每个批次都在；`complete: false` 表示日志已不再覆盖到 `since_seq`（或会话根本不是活跃状态），调用方必须回退为一次完整的 `GET .../transcript` 刷新。会话存在但非活跃时固定返回 `{ agent_id, batches: [], latest_seq: 0, complete: false }`。
+
+**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "agent_id": "main", "batches": [ { "seq": 41, "ops": [ { "op": "append", "...": "..." } ] } ], "latest_seq": 42, "complete": true }, "request_id": "01JZX4..." }
+```
+
+#### `GET /api/v1/sessions/{session_id}/transcript/user-messages`
+
+列出会话中每个开启轮次的输入，按 Agent 分组且不分页：真实用户文本、以斜杠命令形式使用的 Skill 与插件命令、以及 cron 提示词——可通过 `origin` 区分——另有仅含附件的提示词，其 `prompt` 投影为空。所列消息引用的附件实体会随响应一起返回（仅元数据，绝不包含字节内容）。
+
+**Query**：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `agent_id` | string | 只读取一个 Agent（纯文本 id）。默认读取所有在册 Agent（冷会话保证含 main agent） |
+
+**返回**：`ResponseType<[T-TranscriptUserMessagesResponse](#t-transcriptusermessagesresponse)>`。
+
+**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "agents": [ { "agent_id": "main", "messages": [ { "turn_id": 3, "ordinal": 0, "state": "completed", "origin": { "kind": "user" }, "prompt": "adjust the button spacing", "started_at": "2026-09-02T08:04:00.000Z" } ], "attachments": [] } ] }, "request_id": "01JZX4..." }
+```
+
+#### `GET /api/v1/sessions/{session_id}/transcript/plan`
+
+按时间线顺序读取某个 Agent 的 `ExitPlanMode` 工具调用的计划信息——计划内容、计划文件路径、提供的选项以及审阅结果。内容投影自第一个可用的事实来源：关联的审批交互（交互式审阅）、实时工具帧的展示（auto 模式），或工具结果的输出文本；每个条目在 `source` 中记录具体来源。
+
+**Query**：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `agent_id` | string | **必填。** Agent id（纯文本形式） |
+| `tool_call_id` | string | 将读取范围限定到单次 `ExitPlanMode` 调用；不提供时列出所有可恢复计划内容的调用 |
+
+**返回**：`ResponseType<[T-TranscriptPlanResponse](#t-transcriptplanresponse)>`。
+
+**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`、`40416`（提供了 `tool_call_id`，但不存在该 id 的 `ExitPlanMode` 调用）。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "agent_id": "main", "plans": [ { "tool_call_id": "toolu_01J...", "turn_id": 2, "source": "interaction", "plan": "# Plan\n ...", "path": "/Users/dev/my-app/.kimi-code/plans/....md", "options": [ { "label": "实施" } ], "review": { "state": "approved", "selected_option": "实施" } } ] }, "request_id": "01JZX4..." }
+```
+
+### 任务与终端
+
+后台任务与终端。
+
+**后台任务。**
 
 后台任务是会话的异步单元——后台 Shell、subagent 与长时间运行的工具任务。注册表仅包含实时数据：未加载到本服务进程中的会话会返回空列表。
 
@@ -1494,7 +1711,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 { "code": 0, "msg": "success", "data": { "detached": true, "status": "running" }, "request_id": "01JZX4..." }
 ```
 
-### 终端
+**终端。**
 
 PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳过它们，除非传入 `--allow-remote-terminals`）。注意：终端输入输出的 `terminal_*` WebSocket 帧当前是死协议（见 [terminal 帧](#terminal-帧)）——REST 侧只管理终端生命周期。
 
@@ -1575,7 +1792,11 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 { "code": 0, "msg": "success", "data": { "closed": true }, "request_id": "01JZX4..." }
 ```
 
-### 技能
+### 扩展
+
+技能、插件、能力与 MCP。路径前缀区分版本：`/api/v1` 与 `/api/v2`。
+
+**技能。**
 
 会话或工作区可见的技能目录，以及技能激活——激活即斜杠命令 `/<skill>` 的 REST 等价形式。
 
@@ -1638,163 +1859,446 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 { "code": 0, "msg": "success", "data": { "activated": true, "skill_name": "review" }, "request_id": "01JZX4..." }
 ```
 
-### 工作区
+**插件。**
 
-工作区是已注册的项目目录，会话都落在其中。这组端点管理注册表与每工作区信任状态（控制项目级 MCP 配置是否加载），以及附加目录。返回的工作区对象统一为 [T-Workspace](#t-workspace)。
+插件是已安装的技能、MCP 服务、hook 与命令的打包集合。这组端点管理插件从市场列表到移除的整个生命周期。
 
 | 方法与路径 | 说明 |
 | --- | --- |
-| `GET /api/v1/workspaces` | 列出已注册工作区 |
-| `POST /api/v1/workspaces` | 注册工作区（按根路径幂等） |
-| `PATCH /api/v1/workspaces/{workspace_id}` | 重命名 |
-| `DELETE /api/v1/workspaces/{workspace_id}` | 注销（保留磁盘内容） |
-| `GET /api/v1/workspaces/{workspace_id}/trust` | 读取信任状态 |
-| `POST /api/v1/workspaces/{workspace_id}/trust` | 授予信任 |
-| `POST /api/v1/workspaces/{workspace_id}/untrust` | 撤销信任 |
-| `POST /api/v1/workspaces/{workspace_id}/add-dir` | 添加附加目录 |
+| `GET /api/v1/plugins/marketplace` | 插件市场目录，合并实时安装状态 |
+| `GET /api/v1/plugins` | 列出已安装插件 |
+| `POST /api/v1/plugins` | 从本地路径、zip URL 或 GitHub 仓库安装插件 |
+| `POST /api/v1/plugins/{plugin_id}:{action}` | 插件动作：`enable` / `disable` / `remove` |
 
-#### `GET /api/v1/workspaces`
+#### `GET /api/v1/plugins/marketplace`
 
-列出所有已注册工作区。无参数。
+列出插件市场目录并合并实时安装状态。目录按请求从配置的市场 URL 拉取（超时 10 秒）；使用默认目录时，目录中缺少的内置能力会作为条目合并进来（带 `capabilityId`），当前平台不支持的能力对应条目会被剔除。无参数。
 
 **返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `items` | array | [T-Workspace](#t-workspace) 数组 |
+| `entries` | array | 市场条目（camelCase）：`{ id, tier, displayName, description?, homepage?, keywords?, version?, source, installed?, updateAvailable?, capabilityId? }`；`tier` 为 `official` / `curated` / `third-party`；`installed` 为 `{ version?, enabled }`；`source` 即 `POST /api/v1/plugins` 的 `source` 取值 |
+
+**非零 code**：`50001`（市场不可达或返回了非法目录）。
 
 **示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "items": [ { "id": "wd_my-app_a1b2c3d4e5f6", "root": "/Users/dev/my-app", "name": "my-app", "created_at": "2026-09-01T10:00:00.000Z", "last_opened_at": "2026-09-02T08:00:00.000Z", "session_count": 3 } ] }, "request_id": "01JZX4..." }
+{ "code": 0, "msg": "success", "data": { "entries": [ { "id": "my-plugin", "tier": "official", "displayName": "My Plugin", "source": "https://github.com/example/my-plugin", "installed": { "version": "1.2.0", "enabled": true }, "updateAvailable": false } ] }, "request_id": "01JZX4..." }
 ```
 
-#### `POST /api/v1/workspaces`
+#### `GET /api/v1/plugins`
 
-注册工作区并返回它。注册按根路径幂等：重复注册同一根路径会返回已存在的工作区，仅刷新 `last_opened_at`（保留已存名称），并广播 `event.workspace.updated` 而非 `event.workspace.created`。
-
-**Body**：
-
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `root` | string | 是 | 已存在目录的绝对路径 |
-| `name` | string | 否 | 显示名，1–100 个字符。默认根目录的基名 |
-
-**返回**：`ResponseType<[T-Workspace](#t-workspace)>`。
-
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）（`root` 缺失或不是绝对路径）、`40409`（`root` 不存在或不是目录）。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "id": "wd_my-app_a1b2c3d4e5f6", "root": "/Users/dev/my-app", "name": "my-app", "created_at": "2026-09-02T08:00:00.000Z", "last_opened_at": "2026-09-02T08:00:00.000Z", "session_count": 0 }, "request_id": "01JZX4..." }
-```
-
-#### `PATCH /api/v1/workspaces/{workspace_id}`
-
-重命名工作区——仅修改显示名，根路径不变。
-
-**Body**：
-
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `name` | string | 是 | 新的显示名，1–100 个字符 |
-
-**返回**：`ResponseType<[T-Workspace](#t-workspace)>`。
-
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40410`。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "id": "wd_my-app_a1b2c3d4e5f6", "root": "/Users/dev/my-app", "name": "My App", "created_at": "2026-09-01T10:00:00.000Z", "last_opened_at": "2026-09-02T08:00:00.000Z", "session_count": 3 }, "request_id": "01JZX4..." }
-```
-
-#### `DELETE /api/v1/workspaces/{workspace_id}`
-
-注销工作区。只移除注册表条目——磁盘上的目录不受影响。无请求体。
-
-**返回**：`ResponseType<{ "deleted": true }>`。
-
-**非零 code**：`40410`。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "deleted": true }, "request_id": "01JZX4..." }
-```
-
-#### `GET /api/v1/workspaces/{workspace_id}/trust`
-
-读取工作区信任状态。信任状态决定是否为该工作区加载项目级 MCP 配置。无参数。
-
-**返回**：`ResponseType<{ "trusted": boolean }>`。
-
-**非零 code**：`40410`。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "trusted": true }, "request_id": "01JZX4..." }
-```
-
-#### `POST /api/v1/workspaces/{workspace_id}/trust`
-
-将工作区标记为信任，并加载其项目级 MCP 配置。无请求体。
-
-**返回**：`ResponseType<{ "trusted": true }>`。
-
-**非零 code**：`40410`。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "trusted": true }, "request_id": "01JZX4..." }
-```
-
-#### `POST /api/v1/workspaces/{workspace_id}/untrust`
-
-撤销工作区信任，并卸载其项目级 MCP 配置。无请求体。
-
-**返回**：`ResponseType<{ "trusted": false }>`。
-
-**非零 code**：`40410`。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "trusted": false }, "request_id": "01JZX4..." }
-```
-
-#### `POST /api/v1/workspaces/{workspace_id}/add-dir`
-
-为工作区添加附加目录，语义与 CLI `--add-dir` 及 TUI `/add-dir` 一致。路径支持绝对路径、相对路径（相对工作区根目录解析）与 `~` 展开。
-
-**Body**：
-
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `path` | string | 是 | 要添加的目录 |
-| `persist` | boolean | 否 | 缺省 `true`：追加到 `<项目根>/.kimi-code/local.toml` 的 `workspace.additional_dir`；为 `false` 时仅加入内存中的临时集合（同一工作区所有会话共享），不写盘 |
+列出已安装插件。无参数。
 
 **返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `project_root` | string | 项目根目录 |
-| `config_path` | string | 写入的本地配置文件路径 |
-| `additional_dirs` | array | 全部附加目录（含既有目录） |
-| `persisted` | boolean | 本次是否写盘 |
-
-**非零 code**：`40001`（校验失败，或项目本地配置损坏等引擎校验错误；`details` 为 `{ path, message }[]`）、`40409`（`path` 不存在或不是目录）、`40410`。
+| `plugins` | array | [T-PluginSummary](#t-pluginsummary) 数组 |
 
 **示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "project_root": "/Users/dev/my-app", "config_path": "/Users/dev/my-app/.kimi-code/local.toml", "additional_dirs": [ "/Users/dev/shared-lib" ], "persisted": true }, "request_id": "01JZX4..." }
+{ "code": 0, "msg": "success", "data": { "plugins": [ { "id": "my-plugin", "displayName": "My Plugin", "version": "1.2.0", "enabled": true, "state": "ok", "skillCount": 2, "mcpServerCount": 1, "enabledMcpServerCount": 1, "hookCount": 0, "commandCount": 1, "hasErrors": false, "source": "github" } ] }, "request_id": "01JZX4..." }
 ```
 
-### 文件系统
+#### `POST /api/v1/plugins`
+
+安装插件并返回其摘要。
+
+**Body**：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `source` | string | 是 | 安装来源：本地绝对路径、指向 zip 压缩包的 `http(s)` URL，或 GitHub URL——`https://github.com/<owner>/<repo>`，可选地用 `/tree/<branch-or-sha>`、`/releases/tag/<tag>` 或 `/commit/<sha>` 锁定版本 |
+
+**返回**：`ResponseType<[T-PluginSummary](#t-pluginsummary)>`。
+
+**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）（`source` 既不是 URL 也不是绝对路径，或插件加载失败）、`40409`（本地路径不存在）。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "id": "my-plugin", "displayName": "My Plugin", "enabled": true, "state": "ok", "skillCount": 2, "mcpServerCount": 0, "enabledMcpServerCount": 0, "hookCount": 0, "commandCount": 0, "hasErrors": false, "source": "local-path" }, "request_id": "01JZX4..." }
+```
+
+#### `POST /api/v1/plugins/{plugin_id}:{action}`
+
+插件动作经单一路由分发：尾部按 `{plugin_id}:{action}` 解析，动作为 `enable`（启用）/ `disable`（停用但不移除）/ `remove`（移除）。无请求体。
+
+**返回**：`ResponseType<{ "ok": true }>`。
+
+**非零 code**：`40001`（缺少动作后缀或动作未知；`details` 为 `{ path, message }[]`）、`40419`（没有该 id 的已安装插件）。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "ok": true }, "request_id": "01JZX4..." }
+```
+
+**能力。**
+
+能力是带有分层就绪状态的内置特性——由检测步骤加后台安装组成；当前版本注册了 `kimi-cu`（Kimi Computer Use）与 `kimi-webbridge`（Kimi WebBridge）。
+
+| 方法与路径 | 说明 |
+| --- | --- |
+| `GET /api/v1/capabilities` | 列出内置能力及其就绪状态 |
+| `GET /api/v1/capabilities/{capability_id}` | 读取单个能力的状态 |
+| `POST /api/v1/capabilities/{capability_id}:install` | 开始安装能力（后台进行，轮询 GET 查看进度） |
+
+#### `GET /api/v1/capabilities`
+
+列出所有已注册能力及其就绪状态。无参数。
+
+**返回**：`ResponseType`，`data` 字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `capabilities` | array | [T-CapabilityStatus](#t-capabilitystatus) 数组 |
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "capabilities": [ { "id": "kimi-cu", "displayName": "Kimi Computer Use", "description": "...", "supported": true, "state": "ready", "steps": [ { "id": "os", "state": "ok" } ], "install": { "running": false } } ] }, "request_id": "01JZX4..." }
+```
+
+#### `GET /api/v1/capabilities/{capability_id}`
+
+读取单个能力的就绪状态——`:install` 动作的轮询对应端点。无参数。
+
+**返回**：`ResponseType<[T-CapabilityStatus](#t-capabilitystatus)>`。
+
+**非零 code**：`40418`（没有该 id 的能力）。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "id": "kimi-cu", "displayName": "Kimi Computer Use", "description": "...", "supported": true, "state": "partial", "steps": [ { "id": "app", "state": "missing", "optional": true } ], "install": { "running": true, "percent": 40 } }, "request_id": "01JZX4..." }
+```
+
+#### `POST /api/v1/capabilities/{capability_id}:install`
+
+在后台开始安装能力并立即返回当前状态（`install.running` 为 `true`）；轮询 `GET /api/v1/capabilities/{capability_id}` 查看进度。幂等。经 `POST /api/v1/capabilities/{tail}` 分发，`install` 是唯一动作。无请求体。
+
+**返回**：`ResponseType<[T-CapabilityStatus](#t-capabilitystatus)>`。
+
+**非零 code**：`40001`（缺少动作后缀或动作未知；`details` 为 `{ path, message }[]`）、`40418`、`40924`（安装已在进行中）、`40925`（当前平台 / 架构不支持）。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "id": "kimi-cu", "displayName": "Kimi Computer Use", "description": "...", "supported": true, "state": "not_installed", "steps": [ "..." ], "install": { "running": true, "step": "download", "percent": 0 } }, "request_id": "01JZX4..." }
+```
+
+**工具与 MCP（v1）。**
+
+当前生效 Agent 的工具列表及其 MCP 服务；管理 MCP 服务的完整面在「扩展」域的 [v2 MCP](#扩展) 部分。
+
+| 方法与路径 | 说明 |
+| --- | --- |
+| `GET /api/v1/tools` | 列出当前生效 Agent 的工具 |
+| `GET /api/v1/mcp/servers` | 列出 MCP 服务 |
+| `POST /api/v1/mcp/servers/{mcp_server_id}:restart` | 重启 MCP 服务 |
+
+#### `GET /api/v1/tools`
+
+列出当前生效 Agent 的工具——即 `session_id` 指定会话的 main agent；省略参数时取最近创建的存活会话。会话不在本服务进程中存活时列表为空。
+
+**Query**：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `session_id` | string | 要查看其 main agent 的会话。默认最近创建的存活会话 |
+
+**返回**：`ResponseType`，`data` 字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `tools` | array | [T-ToolDescriptor](#t-tooldescriptor) 数组 |
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "tools": [ { "name": "Bash", "description": "...", "input_schema": null, "source": "builtin", "active": true } ] }, "request_id": "01JZX4..." }
+```
+
+#### `GET /api/v1/mcp/servers`
+
+列出当前生效 Agent 配置的 MCP 服务（与 `GET /api/v1/tools` 相同的会话选取规则）；没有存活会话时列表为空。无参数。
+
+**返回**：`ResponseType`，`data` 字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `servers` | array | [T-McpServer](#t-mcpserver) 数组 |
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "servers": [ { "id": "my-server", "name": "my-server", "transport": "stdio", "status": "connected", "tool_count": 5 } ] }, "request_id": "01JZX4..." }
+```
+
+#### `POST /api/v1/mcp/servers/{mcp_server_id}:restart`
+
+重新连接当前生效 Agent 的某个 MCP 服务。经 `POST /api/v1/mcp/servers/{tail}` 分发，`restart` 是唯一动作。无请求体。
+
+**返回**：`ResponseType<{ "restarting": true }>`。
+
+**非零 code**：`40001`（缺少动作后缀或动作未知；`details` 为 `{ path, message }[]`）、`40408`（没有该 id 的 MCP 服务；无存活会话时同样返回此错误）。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "restarting": true }, "request_id": "01JZX4..." }
+```
+
+**v2 MCP。**
+
+`/api/v2/mcp/*` 是统一的 MCP 管理面：独立于任何会话，直接管理 MCP server 注册表本身——全局（用户级）CRUD 与逐条校验、连接测试探测、locator 寻址的检查目录、按 server 的授权状态列表，以及完整的 OAuth 流程生命周期。响应该组一律不包 `{ items }`：`data` 直接为数组或对象。
+
+该管理面有两种寻址方式。CRUD 路由与 `servers:test` 使用普通的运行时 `name`；检查与 OAuth 路由使用 **locator**——文件层条目用 `{ "source": "global", "name" }`，插件清单条目用 `{ "source": "plugin", "pluginId", "serverName" }`——因为插件条目和文件条目可能共用同一个运行时名称。检查条目还带有一个稳定的 `serverId` 线上标识：`global:<name>` 或 `plugin:<pluginId>:<serverName>`（URL 编码）。
+
+大多数路由接受可选的 `cwd`（查询参数，`:`-action 路由则为请求体字段）。不传时目录只覆盖用户级文件与插件清单；传入后，该目录的项目根层与项目本地层会并入——但仅当工作区受信任时，否则项目层会被跳过。对 stdio server 执行 `servers:test` 时，`cwd` 同时是子进程的工作目录。
+
+| 方法与路径 | 说明 |
+| --- | --- |
+| `GET /api/v2/mcp/servers` | 列出所有已知 MCP server |
+| `GET /api/v2/mcp/servers/{name}` | 按运行时名称获取单个 server |
+| `POST /api/v2/mcp/servers` | 向用户级 `mcp.json` 添加 server |
+| `PUT /api/v2/mcp/servers/{name}` | 替换一个用户级条目 |
+| `DELETE /api/v2/mcp/servers/{name}` | 删除一个用户级条目 |
+| `POST /api/v2/mcp/servers:test` | 对单个 server 发起真实连接探测 |
+| `POST /api/v2/mcp/servers:inspect` | locator 寻址的目录及批量连接探测 |
+| `GET /api/v2/mcp/auth-statuses` | 目录中各 server 的 OAuth 状态 |
+| `POST /api/v2/mcp/auth:begin` | 开始一次交互式 OAuth 流程 |
+| `POST /api/v2/mcp/auth:complete` | 等待浏览器回调并完成 code 交换 |
+| `POST /api/v2/mcp/auth:cancel` | 终止已开始的 OAuth 流程 |
+| `POST /api/v2/mcp/auth:reset` | 清除某个 server 已存储的凭据 |
+
+#### `GET /api/v2/mcp/servers`
+
+列出管理面已知的全部 MCP server。
+
+**Query**：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `cwd` | string | 并入该（受信任）目录的项目层 |
+
+**返回**：`ResponseType<[T-McpManagedServer](#t-mcpmanagedserver)>` 数组。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": [ { "name": "my-server", "config": { "transport": "stdio", "command": "npx", "args": [ "-y", "my-mcp-server" ], "envKeys": [ "API_KEY" ] }, "source": "global", "origin": "/Users/dev/.kimi-code/mcp.json", "mutable": true } ], "request_id": "01JZX4..." }
+```
+
+#### `GET /api/v2/mcp/servers/{name}`
+
+按运行时名称获取单个 server。
+
+**Query**：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `cwd` | string | 并入该（受信任）目录的项目层 |
+
+**返回**：`ResponseType<[T-McpManagedServer](#t-mcpmanagedserver)>`。
+
+**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40408`（不存在该名称的 server）。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "name": "my-server", "config": { "transport": "stdio", "command": "npx", "args": [ "-y", "my-mcp-server" ] }, "source": "global", "origin": "/Users/dev/.kimi-code/mcp.json", "mutable": true }, "request_id": "01JZX4..." }
+```
+
+#### `POST /api/v2/mcp/servers`
+
+向用户级 `mcp.json` 添加 server。若写入与项目层的同名条目冲突，会因只读被拒绝；与同名的插件条目冲突并不阻止写入，新的文件条目会将其遮蔽。
+
+**Body**：包含 `name` 的完整 server 配置——`transport`（`stdio` / `http` / `sse`）决定配置形状（见 [T-McpServerConfigView](#t-mcpserverconfigview) 的输入形态）。
+
+**返回**：`ResponseType<[T-McpManagedServer](#t-mcpmanagedserver)>` 数组（刷新后的列表）。
+
+**非零 code**：`40001`（校验失败，或目标条目为只读；`details` 为 `{ path, message }[]`）。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": [ { "name": "my-server", "config": { "transport": "stdio", "command": "npx" }, "source": "global", "origin": "...", "mutable": true } ], "request_id": "01JZX4..." }
+```
+
+#### `PUT /api/v2/mcp/servers/{name}`
+
+替换一个用户级条目；身份由路径指定。
+
+**Body**：不含 `name` 的完整 server 配置（形态同 `POST /api/v2/mcp/servers`）。
+
+**返回**：`ResponseType<[T-McpManagedServer](#t-mcpmanagedserver)>` 数组（刷新后的列表）。
+
+**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40408`。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": [ { "name": "my-server", "config": { "transport": "http", "url": "https://mcp.example.com" }, "source": "global", "origin": "...", "mutable": true } ], "request_id": "01JZX4..." }
+```
+
+#### `DELETE /api/v2/mcp/servers/{name}`
+
+删除一个用户级条目。无请求体。
+
+**返回**：`ResponseType<[T-McpManagedServer](#t-mcpmanagedserver)>` 数组（刷新后的列表）。
+
+**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40408`。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": [], "request_id": "01JZX4..." }
+```
+
+#### `POST /api/v2/mcp/servers:test`
+
+对单个 server 发起真实连接探测，不持久化任何内容。传 `name` 探测注册表条目（含插件与受信任的项目层），或传 `server`（包含 `name` 的完整内联配置）按原样探测；两者都传或都不传会报 `40001`。
+
+**Body**：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `name` | string | 二选一 | 注册表条目的运行时名称 |
+| `server` | object | 二选一 | 按原样探测的内联 server 配置（含 `name`） |
+| `cwd` | string | 否 | 项目层并入解析；同时是 stdio 的工作目录 |
+
+**返回**：`ResponseType<{ "success": boolean, "output": string }>`——连接成功时 `output` 列出该 server 的可用工具，否则携带失败信息。
+
+**非零 code**：`40001`（两种目标形式都传或都不传、内联配置无效，或运行时名称被多个启用的 server 共用；`details` 为 `{ path, message }[]`）、`40408`。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "success": true, "output": "5 tools: search, fetch, ..." }, "request_id": "01JZX4..." }
+```
+
+#### `POST /api/v2/mcp/servers:inspect`
+
+locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批量真实连接探测。运行时名称被多个启用的 server 共用时无法无歧义地探测，会报告 `unavailable` 并在 `error` 中给出说明；探测遇到过期授权时，可能刷新或作废已存储的凭据。
+
+**Body**：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `targets` | array | 否 | 缩小目录范围的 locator 数组；不传则检查全部 server |
+| `cwd` | string | 否 | 并入该（受信任）目录的项目层 |
+
+**返回**：`ResponseType<[T-McpServerInspection](#t-mcpserverinspection)>` 数组。
+
+**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40408`（`targets` 中有 locator 未匹配到任何条目）。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": [ { "serverId": "global:my-server", "locator": { "source": "global", "name": "my-server" }, "runtimeName": "my-server", "origin": "global", "config": { "transport": "http", "url": "https://mcp.example.com" }, "enabled": true, "editable": true, "authStatus": "oauth-authorized", "checkedAt": 1787000000000 } ], "request_id": "01JZX4..." }
+```
+
+#### `GET /api/v2/mcp/auth-statuses`
+
+注册表目录中各 server 的 OAuth 状态——只需要授权维度时，这是比 `servers:inspect` 更轻量的选择。
+
+**Query**：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `cwd` | string | 并入该（受信任）目录的项目层 |
+| `verify` | string | `true` 对每个 OAuth 候选发起真实连接验证；`false` 完全离线（仅凭配置与已存储 token 分类）；缺省保留隐式 OAuth 探测，只探测未固定且没有已存储凭据的远程 server |
+
+**返回**：`ResponseType<[T-McpServerAuthStatus](#t-mcpserverauthstatus)>` 数组。验证探测可能刷新或作废已存储的凭据。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": [ { "name": "my-server", "authStatus": "oauth-authorized" } ], "request_id": "01JZX4..." }
+```
+
+#### `POST /api/v2/mcp/auth:begin`
+
+开始一次交互式 OAuth 流程。目标 server 必须使用远程传输（`http` / `sse`）且不含静态 bearer token；静态请求头仅当配置显式设置 `auth: "oauth"` 时允许。
+
+**Body**：locator（`{ "source": "global", "name" }` 或 `{ "source": "plugin", "pluginId", "serverName" }`）；另有可选的 `cwd` 查询参数。
+
+**返回**：`ResponseType`：`{ "status": "authorization-required", "flowId": string, "authorizationUrl": string }`（在浏览器中打开该 URL 完成授权），或授权已存在时 `{ "status": "already-authorized" }`。
+
+**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）（server 无法使用 OAuth：stdio 传输、静态 bearer token，或未设置 `auth: "oauth"` 的静态请求头）、`40408`（locator 未匹配）、`40929`（OAuth 流程本身失败）。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "status": "authorization-required", "flowId": "flow_01J...", "authorizationUrl": "https://mcp.example.com/authorize?..." }, "request_id": "01JZX4..." }
+```
+
+#### `POST /api/v2/mcp/auth:complete`
+
+等待已开始流程的浏览器回调并完成 code 交换。等待默认 15 分钟（`timeoutMs` 可覆盖），空闲流程无论如何都会在 15 分钟后过期；关闭 HTTP 连接会中止等待。
+
+**Body**：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `flowId` | string | 是 | `auth:begin` 返回的流程 id |
+| `timeoutMs` | integer | 否 | 等待上限（毫秒）。默认 15 分钟 |
+
+**返回**：`ResponseType<null>`。
+
+**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）（`flowId` 未知）、`40929`。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": null, "request_id": "01JZX4..." }
+```
+
+#### `POST /api/v2/mcp/auth:cancel`
+
+在未完成的情况下终止已开始的流程；未知流程会被忽略。
+
+**Body**：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `flowId` | string | 是 | 要终止的流程 id |
+
+**返回**：`ResponseType<null>`。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": null, "request_id": "01JZX4..." }
+```
+
+#### `POST /api/v2/mcp/auth:reset`
+
+清除某个 server 已存储的凭据；失效事件会送达存活的会话。
+
+**Body**：locator（形态同 `auth:begin`）。
+
+**返回**：`ResponseType<null>`。
+
+**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40408`（locator 未匹配）、`40929`。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": null, "request_id": "01JZX4..." }
+```
+
+### 文件与其他
+
+文件操作、全局搜索与界面存储。
+
+**文件系统。**
 
 会话内文件操作走 `POST /api/v1/sessions/{session_id}/fs:{action}`，请求体为 JSON；另有工作区级与本机级的补充端点。每个动作的请求体还接受可选的 `runtime_id`（string，默认 `local`），用于选择执行操作的运行时；`search`、`grep`、`git_status` 与 `diff` 额外要求运行时具备 process capability（进程执行能力），`open`、`open-in` 与 `reveal` 仅在 `local` 运行时上可用。
 
@@ -2255,7 +2759,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 { "code": 0, "msg": "success", "data": { "path": "/Users/dev/new-project" }, "request_id": "01JZX4..." }
 ```
 
-### 文件上传与媒体
+**文件上传与媒体。**
 
 提示词附件的上传、下载与删除；会话媒体按会话作用域寻址。
 
@@ -2314,7 +2818,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 **非零 code**：`40401`（HTTP 404）、`40407`（HTTP 404）。
 
-### 全局搜索
+**全局搜索。**
 
 #### `POST /api/v1/search`
 
@@ -2347,7 +2851,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 { "code": 0, "msg": "success", "data": { "items": [ { "session_id": "session_01JZX4...", "workspace_id": "wd_my-app_a1b2c3d4e5f6", "session_title": "Fix the login page", "agent_id": "main", "role": "user", "snippet": "...adjust the button spacing...", "time": 1787000000000, "turn": 3, "score": 2.31 } ], "has_more": false, "index_state": { "state": "ready", "indexed_sessions": 12, "total_sessions": 12, "documents": 340 }, "source": "index" }, "request_id": "01JZX4..." }
 ```
 
-### GUI 存储
+**GUI 存储。**
 
 由服务端支撑的键值存储，接口对齐浏览器的 `localStorage`，持久化在服务的 home 目录下；web UI 用它保存跨客户端的 UI 状态。值是不透明字符串——序列化由调用方负责。
 
@@ -2433,486 +2937,6 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 删除所有已存值（对齐 `localStorage.clear`）。无请求体。
 
 **返回**：`ResponseType<null>`。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": null, "request_id": "01JZX4..." }
-```
-
-### 会话快照
-
-#### `GET /api/v1/sessions/{session_id}/snapshot`
-
-为重新同步后重建客户端组装一份原子快照：会话、最近的消息、进行中的轮次、存活的 subagent 以及待处理交互，全部盖上 `as_of_seq` 水位与用于重新订阅的 `epoch`——恢复流程见 [断线恢复](#断线恢复)。与普通的会话端点不同，内嵌的会话携带实时的 `agent_config.model` 与真实的 `usage` 总计。无参数。
-
-**返回**：`ResponseType<[T-SnapshotResponse](#t-snapshotresponse)>`。
-
-**非零 code**：`40401`、`50001`。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "as_of_seq": 128, "epoch": "01JZX4...", "session": { "id": "session_01JZX4...", "agent_config": { "model": "kimi-for-coding" }, "usage": { "input_tokens": 152000, "...": 0 }, "...": "..." }, "messages": { "items": [ "..." ], "has_more": true }, "in_flight_turn": null, "subagents": [], "pending_approvals": [], "pending_questions": [] }, "request_id": "01JZX4..." }
-```
-
-### 转录
-
-`transcript` 端点提供按 Agent 组织的结构化转录——轮次、任务、交互、附件——即 WebSocket [transcript 帧](#transcript-帧) 实时流式推送的内容。历史分页与补漏用这些端点，实时尾部用 WebSocket 订阅。转录载荷的类型正本是共享包 `@moonshot-ai/transcript` 的契约（[T-Transcript 族](#t-transcript-族)）。
-
-| 方法与路径 | 说明 |
-| --- | --- |
-| `GET /api/v1/sessions/{session_id}/transcript` | 按轮次分页的转录（需 `agent_id`） |
-| `GET /api/v1/sessions/{session_id}/transcript/ops` | op 批次补漏（`since_seq`） |
-| `GET /api/v1/sessions/{session_id}/transcript/user-messages` | 各轮次起始的用户输入，不分页 |
-| `GET /api/v1/sessions/{session_id}/transcript/plan` | ExitPlanMode 计划内容、路径与审阅结果 |
-
-#### `GET /api/v1/sessions/{session_id}/transcript`
-
-返回某个 Agent 的结构化转录中的一页：轮次（含其步骤与帧）以及轮次之间的标记与任务引用。活跃会话从内存存储应答（先回填所请求 Agent 的持久化历史）；冷会话则从持久化的线上记录重建 Agent。
-
-**Query**：
-
-| 参数 | 类型 | 说明 |
-| --- | --- | --- |
-| `agent_id` | string | **必填。** 要读取其转录的 Agent；必须是纯文本形式的 agent id（字母、数字、`.`、`_`、`-`，不含路径分隔符） |
-| `before_turn` | string | 只保留早于该轮次 id 的轮次；与 `after_turn` 互斥 |
-| `after_turn` | string | 只保留晚于该轮次 id 的轮次；与 `before_turn` 互斥 |
-| `page_size` | integer | 1–100 个轮次。默认 `20` |
-
-**返回**：`ResponseType<[T-TranscriptResponse](#t-transcriptresponse)>`——分页单位是轮次：不带游标时返回最新的一页，`has_more` 表示还有更早的轮次；`tasks` / `interactions` / `attachments` / `todos` / `meta` / `agents` / `pending_interactions` 是不分页、随每次响应一起返回的全局 Agent 状态；`seq` 是该 Agent 用于恢复流的 op 批次水位（仅活跃会话携带）。
-
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "agent_id": "main", "items": [ { "kind": "turn", "turnId": 3, "...": "..." } ], "has_more": true, "tasks": [], "interactions": [], "attachments": [], "todos": [], "prompts": [], "meta": { "...": "..." }, "agents": [ { "agentId": "main", "...": "..." } ], "pending_interactions": [], "seq": 42 }, "request_id": "01JZX4..." }
-```
-
-#### `GET /api/v1/sessions/{session_id}/transcript/ops`
-
-从服务端的 op 日志提供点对点的补漏：某个 Agent 的 `seq > since_seq` 的已记录 op 批次，最旧在前。它是 `transcript_since` 恢复游标的 REST 对应物，共享同一份有界日志，因此适用相同的回退规则。
-
-**Query**：
-
-| 参数 | 类型 | 说明 |
-| --- | --- | --- |
-| `agent_id` | string | **必填。** Agent id（纯文本形式） |
-| `since_seq` | integer | **必填。** 调用方已应用的最后一个 op 批次 seq，最小为 `0`；返回其之后的批次 |
-
-**返回**：`ResponseType<[T-TranscriptOpsCatchupResponse](#t-transcriptopscatchupresponse)>`——`complete: true` 表示直到 `latest_seq` 的每个批次都在；`complete: false` 表示日志已不再覆盖到 `since_seq`（或会话根本不是活跃状态），调用方必须回退为一次完整的 `GET .../transcript` 刷新。会话存在但非活跃时固定返回 `{ agent_id, batches: [], latest_seq: 0, complete: false }`。
-
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "agent_id": "main", "batches": [ { "seq": 41, "ops": [ { "op": "append", "...": "..." } ] } ], "latest_seq": 42, "complete": true }, "request_id": "01JZX4..." }
-```
-
-#### `GET /api/v1/sessions/{session_id}/transcript/user-messages`
-
-列出会话中每个开启轮次的输入，按 Agent 分组且不分页：真实用户文本、以斜杠命令形式使用的 Skill 与插件命令、以及 cron 提示词——可通过 `origin` 区分——另有仅含附件的提示词，其 `prompt` 投影为空。所列消息引用的附件实体会随响应一起返回（仅元数据，绝不包含字节内容）。
-
-**Query**：
-
-| 参数 | 类型 | 说明 |
-| --- | --- | --- |
-| `agent_id` | string | 只读取一个 Agent（纯文本 id）。默认读取所有在册 Agent（冷会话保证含 main agent） |
-
-**返回**：`ResponseType<[T-TranscriptUserMessagesResponse](#t-transcriptusermessagesresponse)>`。
-
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "agents": [ { "agent_id": "main", "messages": [ { "turn_id": 3, "ordinal": 0, "state": "completed", "origin": { "kind": "user" }, "prompt": "adjust the button spacing", "started_at": "2026-09-02T08:04:00.000Z" } ], "attachments": [] } ] }, "request_id": "01JZX4..." }
-```
-
-#### `GET /api/v1/sessions/{session_id}/transcript/plan`
-
-按时间线顺序读取某个 Agent 的 `ExitPlanMode` 工具调用的计划信息——计划内容、计划文件路径、提供的选项以及审阅结果。内容投影自第一个可用的事实来源：关联的审批交互（交互式审阅）、实时工具帧的展示（auto 模式），或工具结果的输出文本；每个条目在 `source` 中记录具体来源。
-
-**Query**：
-
-| 参数 | 类型 | 说明 |
-| --- | --- | --- |
-| `agent_id` | string | **必填。** Agent id（纯文本形式） |
-| `tool_call_id` | string | 将读取范围限定到单次 `ExitPlanMode` 调用；不提供时列出所有可恢复计划内容的调用 |
-
-**返回**：`ResponseType<[T-TranscriptPlanResponse](#t-transcriptplanresponse)>`。
-
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`、`40416`（提供了 `tool_call_id`，但不存在该 id 的 `ExitPlanMode` 调用）。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "agent_id": "main", "plans": [ { "tool_call_id": "toolu_01J...", "turn_id": 2, "source": "interaction", "plan": "# Plan\n ...", "path": "/Users/dev/my-app/.kimi-code/plans/....md", "options": [ { "label": "实施" } ], "review": { "state": "approved", "selected_option": "实施" } } ] }, "request_id": "01JZX4..." }
-```
-
-### 文件历史（实验性）
-
-::: info 新增
-实验特性：由 `KIMI_CODE_EXPERIMENTAL_FILE_HISTORY` 开关控制（默认关闭），接口形态可能随版本更改。
-:::
-
-按轮次记录的文件历史快照：main agent 每个轮次在开始与结束两个检查点版本化所有被 Edit / Write 工具触碰的文件（未变化的文件按内容哈希去重，超过 4 MiB 的文件只记录哨兵指纹）。这两个端点从检查点计算单个轮次的逐文件增删行数与任一检查点的完整内容；冷会话会按需恢复。开关关闭时路由仍注册，但 `changes` 恒返回空列表、`enabled` 恒为 `false`、`content` 恒为 `null`。
-
-| 方法与路径 | 说明 |
-| --- | --- |
-| `GET /api/v1/sessions/{session_id}/file-history/changes` | 单个轮次的逐文件增删统计 |
-| `GET /api/v1/sessions/{session_id}/file-history/content` | 某文件在指定检查点的完整内容 |
-
-#### `GET /api/v1/sessions/{session_id}/file-history/changes`
-
-返回单个轮次开始与结束检查点之间每个文件的精确增删行数。
-
-**Query**：
-
-| 参数 | 类型 | 说明 |
-| --- | --- | --- |
-| `turn_id` | integer | **必填。** 轮次 id（≥ 0） |
-
-**返回**：`ResponseType`，`data` 字段：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `changes` | array | `{ path, status, additions, deletions, binary?, oversize? }[]`；`status` 为 `added` / `modified` / `deleted`；二进制与超大文件的增删行为 `0`，并以 `binary` / `oversize` 标记 |
-| `enabled` | boolean | 实验开关是否开启 |
-| `recorded` | boolean | 该轮次是否有已记录的检查点 |
-
-**非零 code**：`40401`。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "changes": [ { "path": "src/index.ts", "status": "modified", "additions": 12, "deletions": 3 } ], "enabled": true, "recorded": true }, "request_id": "01JZX4..." }
-```
-
-#### `GET /api/v1/sessions/{session_id}/file-history/content`
-
-返回某文件在指定轮次检查点的完整内容；`phase: "end"` 时若该文件在结束检查点没有记录，回退到开始检查点的版本。
-
-**Query**：
-
-| 参数 | 类型 | 说明 |
-| --- | --- | --- |
-| `turn_id` | integer | **必填。** 轮次 id（≥ 0） |
-| `path` | string | **必填。** 文件路径 |
-| `phase` | string | `start`（默认）/ `end`——取轮次开始还是结束检查点 |
-
-**返回**：`ResponseType`，`data` 字段：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `content` | object \| null | `{ version, content?, binary? }`——`version` 为该文件在检查点的版本号；二进制文件只携带 `binary: true` 不携带文本；无记录时为 `null` |
-
-**非零 code**：`40401`。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "content": { "version": 2, "content": "import ..." } }, "request_id": "01JZX4..." }
-```
-
-### v2 会话
-
-`/api/v2` 的会话查询与批量管理。与 v1 共享 `ResponseType` 与错误约定；分页为绑定查询指纹的 `page_token`（见 [分页](#分页)）。
-
-| 方法与路径 | 说明 |
-| --- | --- |
-| `GET /api/v2/sessions` | 新一代会话列表：筛选、排序、字段组、分组视图 |
-| `POST /api/v2/sessions:archive` | 批量归档会话 |
-| `POST /api/v2/sessions:restore` | 批量恢复已归档会话 |
-
-#### `GET /api/v2/sessions`
-
-面向列表页的新一代会话查询，筛选、排序、字段组都在查询参数里。
-
-**Query**：
-
-| 参数 | 类型 | 说明 |
-| --- | --- | --- |
-| `workspace.id` | string | 按工作区过滤，可重复 |
-| `activity.status` | string | 按活动状态过滤：`running` / `approval` / `question` / `failed` / `idle`，可重复 |
-| `meta.updated_after` | integer | 只看该时间（epoch 毫秒）之后更新过的会话 |
-| `meta.updated_before` | integer | 只看该时间（epoch 毫秒）之前更新过的会话 |
-| `meta.archived` | string | `true` / `false`（默认）/ `all` |
-| `meta.has_prompt` | string | `true` 只保留有用户 prompt 的会话，`false` 只保留空会话（等价 v1 的 `exclude_empty`） |
-| `view` | string | `flat`（默认）/ `by_workspace`（按工作区分组） |
-| `group.page_size` | integer | `view=by_workspace` 时每个工作区返回的会话数：1–100，默认 `5`（`id,archived` 投影时上限 10000）；未开分组视图时传入返回 `40001` |
-| `sort` | string | `meta.updated_at_desc`（默认）/ `meta.updated_at_asc` / `meta.created_at_desc` |
-| `include` | string | 逗号分隔的附加字段组；目前支持 `git`（分支与 PR 信息，按目录去重并缓存 60 秒） |
-| `fields` | string | 逗号分隔的字段投影；目前仅支持 `id,archived`，每项裁剪为 `{ id, archived }`。不可与 `include=git` 同传（`40001`） |
-| `page_size` | integer | 1–100，默认 `50`；`id,archived` 投影时上限放宽至 10000。`view=by_workspace` 时按组计数 |
-| `page` | integer | 无状态的 1 起始页码；与 `page_token` 互斥（同传返回 `40001`） |
-| `page_token` | string | 上一页返回的翻页令牌 |
-
-**返回**：`ResponseType<[T-V2SessionPage](#t-v2sessionpage)>`（flat）或 [T-V2SessionGroupPage](#t-v2sessiongrouppage)（`by_workspace`）。每页额外携带 `total`（过滤后的集合大小）；翻页令牌绑定首页查询条件（含投影），中途改条件返回 `40922`；`page` 模式每次请求都是独立快照，不签发令牌，`next_page_token` 恒为 `null`。`by_workspace` 时每组携带该工作区按 `sort` 排序的前 `group.page_size` 条会话及其匹配总数 `total`；只有至少一条匹配会话的工作区才会出现，组间按组内首条会话的 sort key 排序（相同则按工作区 id）。
-
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）（未知 `include` / `fields`、组合非法）、`40922`。
-
-**示例**（`view=by_workspace`）：
-
-```json
-{ "code": 0, "msg": "success", "data": { "groups": [ { "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" }, "sessions": [ { "id": "session_01JZX4...", "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" }, "meta": { "title": "Fix the login page", "last_prompt": "adjust the button spacing", "created_at": 1787000000000, "updated_at": 1787000100000, "archived": false, "archived_at": null }, "activity": { "status": "idle", "model": "kimi-for-coding" } } ], "total": 42 } ], "total": 7, "has_more": true, "next_page_token": "eyJ2IjoxLCJmIjoi..." }, "request_id": "01JZX4..." }
-```
-
-#### `POST /api/v2/sessions:archive` 与 `POST /api/v2/sessions:restore`
-
-面向会话管理页的批量归档 / 恢复。仍在线的会话走完整生命周期；未加载的冷会话直接改写磁盘上的元数据，不会被加载。只有请求体校验失败才会让整个请求失败（`40001`）；其余情况按条返回。
-
-**Body**：
-
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `ids` | array | 是 | 会话 id 数组——非空、去重后不超过 5000 条 |
-
-**返回**：`ResponseType<[T-V2BatchSessionResponse](#t-v2batchsessionresponse)>`——`results` 保持输入顺序，不存在的 id 在自身条目里报 `40401`。
-
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "results": [ { "id": "session_a", "ok": true }, { "id": "session_b", "ok": false, "error": { "code": 40401, "message": "session session_b does not exist" } } ], "succeeded": 1, "failed": 1 }, "request_id": "01JZX4..." }
-```
-
-### v2 MCP
-
-`/api/v2/mcp/*` 是统一的 MCP 管理面：独立于任何会话，直接管理 MCP server 注册表本身——全局（用户级）CRUD 与逐条校验、连接测试探测、locator 寻址的检查目录、按 server 的授权状态列表，以及完整的 OAuth 流程生命周期。响应该组一律不包 `{ items }`：`data` 直接为数组或对象。
-
-该管理面有两种寻址方式。CRUD 路由与 `servers:test` 使用普通的运行时 `name`；检查与 OAuth 路由使用 **locator**——文件层条目用 `{ "source": "global", "name" }`，插件清单条目用 `{ "source": "plugin", "pluginId", "serverName" }`——因为插件条目和文件条目可能共用同一个运行时名称。检查条目还带有一个稳定的 `serverId` 线上标识：`global:<name>` 或 `plugin:<pluginId>:<serverName>`（URL 编码）。
-
-大多数路由接受可选的 `cwd`（查询参数，`:`-action 路由则为请求体字段）。不传时目录只覆盖用户级文件与插件清单；传入后，该目录的项目根层与项目本地层会并入——但仅当工作区受信任时，否则项目层会被跳过。对 stdio server 执行 `servers:test` 时，`cwd` 同时是子进程的工作目录。
-
-| 方法与路径 | 说明 |
-| --- | --- |
-| `GET /api/v2/mcp/servers` | 列出所有已知 MCP server |
-| `GET /api/v2/mcp/servers/{name}` | 按运行时名称获取单个 server |
-| `POST /api/v2/mcp/servers` | 向用户级 `mcp.json` 添加 server |
-| `PUT /api/v2/mcp/servers/{name}` | 替换一个用户级条目 |
-| `DELETE /api/v2/mcp/servers/{name}` | 删除一个用户级条目 |
-| `POST /api/v2/mcp/servers:test` | 对单个 server 发起真实连接探测 |
-| `POST /api/v2/mcp/servers:inspect` | locator 寻址的目录及批量连接探测 |
-| `GET /api/v2/mcp/auth-statuses` | 目录中各 server 的 OAuth 状态 |
-| `POST /api/v2/mcp/auth:begin` | 开始一次交互式 OAuth 流程 |
-| `POST /api/v2/mcp/auth:complete` | 等待浏览器回调并完成 code 交换 |
-| `POST /api/v2/mcp/auth:cancel` | 终止已开始的 OAuth 流程 |
-| `POST /api/v2/mcp/auth:reset` | 清除某个 server 已存储的凭据 |
-
-#### `GET /api/v2/mcp/servers`
-
-列出管理面已知的全部 MCP server。
-
-**Query**：
-
-| 参数 | 类型 | 说明 |
-| --- | --- | --- |
-| `cwd` | string | 并入该（受信任）目录的项目层 |
-
-**返回**：`ResponseType<[T-McpManagedServer](#t-mcpmanagedserver)>` 数组。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": [ { "name": "my-server", "config": { "transport": "stdio", "command": "npx", "args": [ "-y", "my-mcp-server" ], "envKeys": [ "API_KEY" ] }, "source": "global", "origin": "/Users/dev/.kimi-code/mcp.json", "mutable": true } ], "request_id": "01JZX4..." }
-```
-
-#### `GET /api/v2/mcp/servers/{name}`
-
-按运行时名称获取单个 server。
-
-**Query**：
-
-| 参数 | 类型 | 说明 |
-| --- | --- | --- |
-| `cwd` | string | 并入该（受信任）目录的项目层 |
-
-**返回**：`ResponseType<[T-McpManagedServer](#t-mcpmanagedserver)>`。
-
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40408`（不存在该名称的 server）。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "name": "my-server", "config": { "transport": "stdio", "command": "npx", "args": [ "-y", "my-mcp-server" ] }, "source": "global", "origin": "/Users/dev/.kimi-code/mcp.json", "mutable": true }, "request_id": "01JZX4..." }
-```
-
-#### `POST /api/v2/mcp/servers`
-
-向用户级 `mcp.json` 添加 server。若写入与项目层的同名条目冲突，会因只读被拒绝；与同名的插件条目冲突并不阻止写入，新的文件条目会将其遮蔽。
-
-**Body**：包含 `name` 的完整 server 配置——`transport`（`stdio` / `http` / `sse`）决定配置形状（见 [T-McpServerConfigView](#t-mcpserverconfigview) 的输入形态）。
-
-**返回**：`ResponseType<[T-McpManagedServer](#t-mcpmanagedserver)>` 数组（刷新后的列表）。
-
-**非零 code**：`40001`（校验失败，或目标条目为只读；`details` 为 `{ path, message }[]`）。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": [ { "name": "my-server", "config": { "transport": "stdio", "command": "npx" }, "source": "global", "origin": "...", "mutable": true } ], "request_id": "01JZX4..." }
-```
-
-#### `PUT /api/v2/mcp/servers/{name}`
-
-替换一个用户级条目；身份由路径指定。
-
-**Body**：不含 `name` 的完整 server 配置（形态同 `POST /api/v2/mcp/servers`）。
-
-**返回**：`ResponseType<[T-McpManagedServer](#t-mcpmanagedserver)>` 数组（刷新后的列表）。
-
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40408`。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": [ { "name": "my-server", "config": { "transport": "http", "url": "https://mcp.example.com" }, "source": "global", "origin": "...", "mutable": true } ], "request_id": "01JZX4..." }
-```
-
-#### `DELETE /api/v2/mcp/servers/{name}`
-
-删除一个用户级条目。无请求体。
-
-**返回**：`ResponseType<[T-McpManagedServer](#t-mcpmanagedserver)>` 数组（刷新后的列表）。
-
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40408`。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": [], "request_id": "01JZX4..." }
-```
-
-#### `POST /api/v2/mcp/servers:test`
-
-对单个 server 发起真实连接探测，不持久化任何内容。传 `name` 探测注册表条目（含插件与受信任的项目层），或传 `server`（包含 `name` 的完整内联配置）按原样探测；两者都传或都不传会报 `40001`。
-
-**Body**：
-
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `name` | string | 二选一 | 注册表条目的运行时名称 |
-| `server` | object | 二选一 | 按原样探测的内联 server 配置（含 `name`） |
-| `cwd` | string | 否 | 项目层并入解析；同时是 stdio 的工作目录 |
-
-**返回**：`ResponseType<{ "success": boolean, "output": string }>`——连接成功时 `output` 列出该 server 的可用工具，否则携带失败信息。
-
-**非零 code**：`40001`（两种目标形式都传或都不传、内联配置无效，或运行时名称被多个启用的 server 共用；`details` 为 `{ path, message }[]`）、`40408`。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "success": true, "output": "5 tools: search, fetch, ..." }, "request_id": "01JZX4..." }
-```
-
-#### `POST /api/v2/mcp/servers:inspect`
-
-locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批量真实连接探测。运行时名称被多个启用的 server 共用时无法无歧义地探测，会报告 `unavailable` 并在 `error` 中给出说明；探测遇到过期授权时，可能刷新或作废已存储的凭据。
-
-**Body**：
-
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `targets` | array | 否 | 缩小目录范围的 locator 数组；不传则检查全部 server |
-| `cwd` | string | 否 | 并入该（受信任）目录的项目层 |
-
-**返回**：`ResponseType<[T-McpServerInspection](#t-mcpserverinspection)>` 数组。
-
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40408`（`targets` 中有 locator 未匹配到任何条目）。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": [ { "serverId": "global:my-server", "locator": { "source": "global", "name": "my-server" }, "runtimeName": "my-server", "origin": "global", "config": { "transport": "http", "url": "https://mcp.example.com" }, "enabled": true, "editable": true, "authStatus": "oauth-authorized", "checkedAt": 1787000000000 } ], "request_id": "01JZX4..." }
-```
-
-#### `GET /api/v2/mcp/auth-statuses`
-
-注册表目录中各 server 的 OAuth 状态——只需要授权维度时，这是比 `servers:inspect` 更轻量的选择。
-
-**Query**：
-
-| 参数 | 类型 | 说明 |
-| --- | --- | --- |
-| `cwd` | string | 并入该（受信任）目录的项目层 |
-| `verify` | string | `true` 对每个 OAuth 候选发起真实连接验证；`false` 完全离线（仅凭配置与已存储 token 分类）；缺省保留隐式 OAuth 探测，只探测未固定且没有已存储凭据的远程 server |
-
-**返回**：`ResponseType<[T-McpServerAuthStatus](#t-mcpserverauthstatus)>` 数组。验证探测可能刷新或作废已存储的凭据。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": [ { "name": "my-server", "authStatus": "oauth-authorized" } ], "request_id": "01JZX4..." }
-```
-
-#### `POST /api/v2/mcp/auth:begin`
-
-开始一次交互式 OAuth 流程。目标 server 必须使用远程传输（`http` / `sse`）且不含静态 bearer token；静态请求头仅当配置显式设置 `auth: "oauth"` 时允许。
-
-**Body**：locator（`{ "source": "global", "name" }` 或 `{ "source": "plugin", "pluginId", "serverName" }`）；另有可选的 `cwd` 查询参数。
-
-**返回**：`ResponseType`：`{ "status": "authorization-required", "flowId": string, "authorizationUrl": string }`（在浏览器中打开该 URL 完成授权），或授权已存在时 `{ "status": "already-authorized" }`。
-
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）（server 无法使用 OAuth：stdio 传输、静态 bearer token，或未设置 `auth: "oauth"` 的静态请求头）、`40408`（locator 未匹配）、`40929`（OAuth 流程本身失败）。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "status": "authorization-required", "flowId": "flow_01J...", "authorizationUrl": "https://mcp.example.com/authorize?..." }, "request_id": "01JZX4..." }
-```
-
-#### `POST /api/v2/mcp/auth:complete`
-
-等待已开始流程的浏览器回调并完成 code 交换。等待默认 15 分钟（`timeoutMs` 可覆盖），空闲流程无论如何都会在 15 分钟后过期；关闭 HTTP 连接会中止等待。
-
-**Body**：
-
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `flowId` | string | 是 | `auth:begin` 返回的流程 id |
-| `timeoutMs` | integer | 否 | 等待上限（毫秒）。默认 15 分钟 |
-
-**返回**：`ResponseType<null>`。
-
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）（`flowId` 未知）、`40929`。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": null, "request_id": "01JZX4..." }
-```
-
-#### `POST /api/v2/mcp/auth:cancel`
-
-在未完成的情况下终止已开始的流程；未知流程会被忽略。
-
-**Body**：
-
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `flowId` | string | 是 | 要终止的流程 id |
-
-**返回**：`ResponseType<null>`。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": null, "request_id": "01JZX4..." }
-```
-
-#### `POST /api/v2/mcp/auth:reset`
-
-清除某个 server 已存储的凭据；失效事件会送达存活的会话。
-
-**Body**：locator（形态同 `auth:begin`）。
-
-**返回**：`ResponseType<null>`。
-
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40408`（locator 未匹配）、`40929`。
 
 **示例**：
 
@@ -3192,7 +3216,7 @@ payload 内统一带 `agentId: "main"` 与 `sessionId`（全局事件为 `__glob
 
 ### terminal 帧
 
-`terminal_attach` / `terminal_detach` / `terminal_input` / `terminal_resize` / `terminal_close` 及其 `ack`、以及服务端到客户端的 `terminal_output` / `terminal_exit` 在 AsyncAPI（`/asyncapi.json`）中完整声明，但**当前是死协议**：服务端不处理这些入站帧（按未知 `type` 静默丢弃），也没有任何 `terminal_output` / `terminal_exit` 的产出点。REST 的终端生命周期端点（见 [终端](#终端)）不受影响。
+`terminal_attach` / `terminal_detach` / `terminal_input` / `terminal_resize` / `terminal_close` 及其 `ack`、以及服务端到客户端的 `terminal_output` / `terminal_exit` 在 AsyncAPI（`/asyncapi.json`）中完整声明，但**当前是死协议**：服务端不处理这些入站帧（按未知 `type` 静默丢弃），也没有任何 `terminal_output` / `terminal_exit` 的产出点。REST 的终端生命周期端点（见「任务与终端」域的 [终端](#任务与终端) 部分）不受影响。
 
 ## 完整错误码
 
