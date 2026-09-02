@@ -202,6 +202,7 @@ import {
   ISessionMcpHandle,
   ISessionMetadata,
   ISessionSkillCatalog,
+  ISessionSubagentService,
   IAgentTodoService,
   ISessionWorkspaceContext,
   ITelemetryService,
@@ -261,6 +262,7 @@ import {
   type SetSessionModelRpcResult,
   type SetSessionPermissionRpcInput,
   type SetSessionPlanModeRpcInput,
+  type SetSessionSecondaryModelRpcInput,
   type SetSessionSwarmModeRpcInput,
   type SetSessionThinkingRpcInput,
   type SetSessionTowerModeRpcInput,
@@ -1677,6 +1679,16 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async setThinking(input: SetSessionThinkingRpcInput): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
     agent.accessor.get(IAgentProfileService).setThinking(input.effort);
+  }
+
+  override async setSecondaryModel(input: SetSessionSecondaryModelRpcInput): Promise<void> {
+    const session = this.requireLiveSession(input.sessionId);
+    await session.accessor.get(ISessionSubagentService).setSecondaryModel(input.model);
+  }
+
+  override async getSecondaryModel(input: SessionIdRpcInput): Promise<string | undefined> {
+    const session = this.requireLiveSession(input.sessionId);
+    return session.accessor.get(ISessionSubagentService).getSecondaryModel();
   }
 
   override async setPermission(input: SetSessionPermissionRpcInput): Promise<void> {

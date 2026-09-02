@@ -124,6 +124,10 @@ export interface SetSessionThinkingRpcInput extends SessionIdRpcInput {
   readonly effort: string;
 }
 
+export interface SetSessionSecondaryModelRpcInput extends SessionIdRpcInput {
+  readonly model: string;
+}
+
 export interface SetSessionPermissionRpcInput extends SessionIdRpcInput {
   readonly mode: PermissionMode;
 }
@@ -651,6 +655,19 @@ export abstract class SDKRpcClientBase {
       agentId: this.interactiveAgentId,
       effort: input.effort,
     });
+  }
+
+  async setSecondaryModel(input: SetSessionSecondaryModelRpcInput): Promise<void> {
+    void input;
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'This SDK client does not support a session-scoped secondary model.',
+    );
+  }
+
+  async getSecondaryModel(input: SessionIdRpcInput): Promise<string | undefined> {
+    void input;
+    return undefined;
   }
 
   async setPermission(input: SetSessionPermissionRpcInput): Promise<void> {

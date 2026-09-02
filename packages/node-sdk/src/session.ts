@@ -280,6 +280,21 @@ export class Session {
     await this.rpc.setThinking({ sessionId: this.id, effort: normalized });
   }
 
+  async setSecondaryModel(model: string): Promise<void> {
+    this.ensureOpen();
+    const normalized = normalizeRequiredString(
+      model,
+      'Session secondary model cannot be empty',
+      ErrorCodes.SESSION_MODEL_EMPTY,
+    );
+    await this.rpc.setSecondaryModel({ sessionId: this.id, model: normalized });
+  }
+
+  async getSecondaryModel(): Promise<string | undefined> {
+    this.ensureOpen();
+    return this.rpc.getSecondaryModel({ sessionId: this.id });
+  }
+
   async setPermission(mode: PermissionMode): Promise<void> {
     this.ensureOpen();
     if (!isPermissionMode(mode)) {

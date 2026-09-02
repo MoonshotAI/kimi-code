@@ -114,10 +114,11 @@ export function isSubagentModelForced(config: IConfigService): boolean {
 export function exposesSubagentModelChoice(
   config: IConfigService,
   flags: IFlagService,
+  sessionDefault?: string,
 ): boolean {
   if (!flags.enabled(SECONDARY_MODEL_FLAG_ID)) return false;
   if (isSubagentModelForced(config)) return false;
-  return resolveSubagentModelPool(config) !== undefined;
+  return resolveSubagentModelPool(config) !== undefined || sessionDefault !== undefined;
 }
 
 export const SECONDARY_MODEL_DEFAULT_MODEL_REQUIRED_MESSAGE =
@@ -194,6 +195,7 @@ export function resolveSubagentBinding(
   flags: IFlagService,
   own: { modelAlias: string; thinkingLevel: string },
   requested?: string,
+  sessionDefault?: string,
 ): { model: string; thinking?: string; modelSource: SubagentModelSource } {
   const section = config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
   const enabled = flags.enabled(SECONDARY_MODEL_FLAG_ID);
@@ -221,7 +223,11 @@ export function resolveSubagentBinding(
   if (requested === PRIMARY_SUBAGENT_MODEL_CHOICE) {
     return { model: own.modelAlias, thinking: own.thinkingLevel, modelSource: 'primary_override' };
   }
-  const pool = enabled ? resolveSubagentModelPool(config) : undefined;
+  const bound = enabled ? sessionDefault : undefined;
+  const configPool = enabled ? resolveSubagentModelPool(config) : undefined;
+  const pool =
+    configPool ??
+    (bound === undefined ? undefined : { defaultModel: bound, models: { [bound]: '' } });
   if (pool === undefined) {
     if (requested !== undefined) {
       throw new Error2(
@@ -241,19 +247,19 @@ export function resolveSubagentBinding(
       },
     });
   }
-  const choice = requested ?? pool.defaultModel;
+  if (requested !== undefined && !Object.hasOwn(pool.models, requested)) {
+    const available = [...Object.keys(pool.models), PRIMARY_SUBAGENT_MODEL_CHOICE];
+    throw new Error2(
+      ErrorCodes.CONFIG_INVALID,
+      `Invalid model "${requested}". Available models: ${available.join(', ')}.`,
+      { details: { model: requested, availableModels: available } },
+    );
+  }
+  const choice = requested ?? bound ?? pool.defaultModel;
   if (choice === undefined) {
     throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_DEFAULT_MODEL_REQUIRED_MESSAGE, {
       details: { section: SECONDARY_MODEL_SECTION, field: 'defaultModel' },
     });
-  }
-  if (!Object.hasOwn(pool.models, choice)) {
-    const available = [...Object.keys(pool.models), PRIMARY_SUBAGENT_MODEL_CHOICE];
-    throw new Error2(
-      ErrorCodes.CONFIG_INVALID,
-      `Invalid model "${choice}". Available models: ${available.join(', ')}.`,
-      { details: { model: choice, availableModels: available } },
-    );
   }
   return { model: choice, thinking: section?.defaultEffort, modelSource: 'secondary_pool' };
 }
@@ -272,11 +278,18 @@ export function buildSubagentModelDescriptions(
   config: IConfigService,
   flags: IFlagService,
   callerModelAlias: string | undefined,
+  sessionDefault?: string,
 ): string | undefined {
-  if (!exposesSubagentModelChoice(config, flags)) return undefined;
-  const pool = resolveSubagentModelPool(config)!;
+  if (!exposesSubagentModelChoice(config, flags, sessionDefault)) return undefined;
+  const configPool = resolveSubagentModelPool(config);
+  const pool: SubagentModelPool =
+    configPool ??
+    ({
+      defaultModel: sessionDefault,
+      models: sessionDefault === undefined ? {} : { [sessionDefault]: '' },
+    });
   const lines = ['Available models (pass via model):'];
-  const defaultModel = pool.defaultModel;
+  const defaultModel = sessionDefault ?? pool.defaultModel;
   const markersFor = (alias: string): string => {
     const markers: string[] = [];
     if (alias === defaultModel) markers.push('[default]');

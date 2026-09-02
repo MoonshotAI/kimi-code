@@ -19,6 +19,7 @@ interface PickerOptions {
   readonly title?: string;
   readonly thinkingControl?: boolean;
   readonly onSelect: (selection: { alias: string }) => void;
+  readonly onSessionOnlySelect?: (selection: { alias: string }) => void;
 }
 
 function model(name: string): ModelAlias {
@@ -32,6 +33,9 @@ function model(name: string): ModelAlias {
 
 function makeHost(options?: {
   readonly secondaryModel?: { defaultModel?: string; models?: Record<string, string> };
+  readonly engineV2?: boolean;
+  readonly sessionSecondaryModel?: string;
+  readonly noSession?: boolean;
 }) {
   const appState = {
     availableModels: {
@@ -45,11 +49,21 @@ function makeHost(options?: {
     availableProviders: {},
     transcriptEntries: [],
   };
+  const session =
+    options?.engineV2 === true && options.noSession !== true
+      ? {
+          setSecondaryModel: vi.fn(async () => {}),
+          getSecondaryModel: vi.fn(async () => options.sessionSecondaryModel),
+        }
+      : undefined;
   const host = {
     state: {
       appState,
       transcriptEntries: [],
     },
+    engineV2: options?.engineV2 === true,
+    session,
+    waitForLazyCreation: vi.fn(async () => {}),
     authFlow: {
       refreshOAuthProviderModels: vi.fn(async () => undefined),
     },
@@ -77,7 +91,7 @@ function makeHost(options?: {
     showError: ReturnType<typeof vi.fn>;
     showNotice: ReturnType<typeof vi.fn>;
   };
-  return { host };
+  return { host, session };
 }
 
 function mountedPicker(host: { mountEditorReplacement: ReturnType<typeof vi.fn> }): PickerOptions {
@@ -229,6 +243,70 @@ describe('handleSecondaryModelCommand', () => {
       expect(host.showError).toHaveBeenCalled();
     });
     expect(host.showError.mock.calls[0]![0]).toContain('disk full');
+    expect(host.showStatus).not.toHaveBeenCalled();
+  });
+
+  it('applies the selection to the v2 session first and then persists on Enter', async () => {
+    const { host, session } = makeHost({ engineV2: true });
+
+    await handleSecondaryModelCommand(host, '');
+    mountedPicker(host).onSelect({ alias: 'k2' });
+
+    await vi.waitFor(() => {
+      expect(host.showStatus).toHaveBeenCalled();
+    });
+    expect(session!.setSecondaryModel).toHaveBeenCalledWith('k2');
+    expect(host.harness.setConfig).toHaveBeenCalledWith({
+      secondaryModel: { defaultModel: 'k2' },
+    });
+  });
+
+  it('applies Alt+S to the v2 session only, without touching the config file', async () => {
+    const { host, session } = makeHost({ engineV2: true });
+
+    await handleSecondaryModelCommand(host, '');
+    const opts = mountedPicker(host);
+    expect(opts.onSessionOnlySelect).toBeDefined();
+    opts.onSessionOnlySelect!({ alias: 'k2' });
+
+    await vi.waitFor(() => {
+      expect(host.showStatus).toHaveBeenCalled();
+    });
+    expect(session!.setSecondaryModel).toHaveBeenCalledWith('k2');
+    expect(host.harness.setConfig).not.toHaveBeenCalled();
+    expect(host.showStatus.mock.calls[0]![0]).toContain('for this session only');
+  });
+
+  it('does not offer Alt+S on v1', async () => {
+    const { host } = makeHost();
+
+    await handleSecondaryModelCommand(host, '');
+
+    expect(mountedPicker(host).onSessionOnlySelect).toBeUndefined();
+  });
+
+  it('prefers the session-scoped value as the picker current on v2', async () => {
+    const { host } = makeHost({
+      engineV2: true,
+      secondaryModel: { defaultModel: 'cheap' },
+      sessionSecondaryModel: 'k2',
+    });
+
+    await handleSecondaryModelCommand(host, '');
+
+    expect(mountedPicker(host).currentValue).toBe('k2');
+  });
+
+  it('rejects Alt+S when no v2 session exists yet', async () => {
+    const { host } = makeHost({ engineV2: true, noSession: true });
+
+    await handleSecondaryModelCommand(host, '');
+    mountedPicker(host).onSessionOnlySelect!({ alias: 'k2' });
+
+    await vi.waitFor(() => {
+      expect(host.showError).toHaveBeenCalled();
+    });
+    expect(host.harness.setConfig).not.toHaveBeenCalled();
     expect(host.showStatus).not.toHaveBeenCalled();
   });
 });

@@ -224,7 +224,9 @@ Constraints between the fields:
 
 Pool aliases reference the current `[models]` table: if a provider is later deleted or logged out, or its refreshed model list no longer contains an alias, session startup fails with a configuration error naming the broken alias — fix or remove the entry to recover. The `[secondary_model]` section itself is never rewritten automatically.
 
-In the interactive TUI, the [`/secondary-model`](../reference/slash-commands.md) command (alias `/subagent-model`) opens a model selector: the choice is written to `default_model` (when a models table exists and the picked alias is not in it, an entry with an empty description is added), and newly spawned subagents pick up the new default immediately — no session restart needed.
+In the interactive TUI, the [`/secondary-model`](../reference/slash-commands.md) command (alias `/subagent-model`) opens a model selector. `Enter` saves the choice as the default: it is written to `default_model` (when a models table exists and the picked alias is not in it, an entry with an empty description is added) and applied to the current session, so newly spawned subagents pick it up immediately. `Alt-S` applies the choice to the current session only — the saved default and other windows stay unchanged.
+
+The saved `default_model` is only the initial value a session starts with. Editing it never moves windows that are already running; it takes effect in newly started sessions.
 
 A configured pool — an explicit `models` table or a lone `default_model` — enables model selection: the `Agent` / `AgentSwarm` tools gain a `model` parameter, and the tool description lists the pool (the default marked `[default]`) so the main agent can choose per spawn. Pool keys can only reference configured [`[models]`](#models) entries — the `kimi-code/*` aliases below are provisioned by `/login`:
 
@@ -240,7 +242,8 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 A spawn resolves the subagent's model in this order:
 
 1. An explicit `model` passed in the tool call
-2. `default_model`
+2. The session-scoped selection (set with `Alt-S` in `/secondary-model`), when present
+3. `default_model`
 
 Rules for the `model` parameter:
 
