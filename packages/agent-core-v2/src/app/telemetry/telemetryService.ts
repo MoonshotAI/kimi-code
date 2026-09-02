@@ -25,6 +25,8 @@ type MutableContext = Record<string, TelemetryPrimitive>;
 
 const ROOT_CHAIN: readonly string[] = [];
 
+const WIRE_SESSION_ID_PROPERTY = 'sessionId';
+
 const FILTERED_CONTEXT_KEYS = [
   'turn_id',
   'trace_id',
@@ -56,10 +58,7 @@ function declaredKeysFor(event: string): readonly string[] | undefined {
   if (definition === undefined) {
     return undefined;
   }
-  const keys = Object.keys(definition.meta.properties);
-  return definition.context === 'agent' && !keys.includes('agent_id')
-    ? [...keys, 'agent_id']
-    : keys;
+  return Object.keys(definition.meta.properties);
 }
 
 export function composeTelemetryProperties(
@@ -69,7 +68,7 @@ export function composeTelemetryProperties(
 ): TelemetryProperties {
   const properties: MutableContext = {};
   if (ambient['session_id'] !== undefined) {
-    properties['sessionId'] = ambient['session_id'];
+    properties[WIRE_SESSION_ID_PROPERTY] = ambient['session_id'];
   }
   if (ambient['agent_id'] !== undefined) {
     properties['agent_id'] = ambient['agent_id'];
