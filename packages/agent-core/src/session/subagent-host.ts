@@ -339,7 +339,21 @@ export class SessionSubagentHost {
    */
   delegatableSubagents(callerProfileName?: string): Record<string, ResolvedAgentProfile> {
     const owner = this.getOwnerAgent?.() ?? this.session.getReadyAgent(this.ownerAgentId);
-    return this.resolveDelegatableSubagents(callerProfileName, owner?.config.subagentNames);
+    const profiles = this.resolveDelegatableSubagents(callerProfileName, owner?.config.subagentNames);
+    // Apply global [tools].disabled to the profiles exposed to the parent
+    // agent's Agent tool description, so the model does not advertise a
+    // subagent as having a tool the spawned child will not receive. #2534.
+    const toolsDisabled = this.session.readToolsDisabled();
+    if (toolsDisabled.length === 0) return profiles;
+    return Object.fromEntries(
+      Object.entries(profiles).map(([name, profile]) => [
+        name,
+        {
+          ...profile,
+          disallowedTools: [...(profile.disallowedTools ?? []), ...toolsDisabled],
+        },
+      ]),
+    );
   }
 
   private resolveDelegatableSubagents(
@@ -457,7 +471,17 @@ export class SessionSubagentHost {
     const subagentNames = Object.keys(
       this.session.agentCatalog.delegatableSubagents(profile.name),
     );
+
+    // Apply global [tools].disabled to subagents without persisting it into
+    // the child's profile/wire record. useProfile persists only
+    // profile.disallowedTools; config denies are added via addDisallowedTools,
+    // which mutates the deny set without logging a record, so a config deny
+    // does not survive a later config removal on resume. #2534.
+    const toolsDisabled = this.session.readToolsDisabled();
     child.useProfile(profile, context, this.session.options.kimiHomeDir, subagentNames);
+    if (toolsDisabled.length > 0) {
+      child.tools.addDisallowedTools(toolsDisabled);
+    }
     child.tools.inheritUserTools(parent.tools);
   }
 
