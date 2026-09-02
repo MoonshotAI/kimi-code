@@ -1992,38 +1992,54 @@ main agent 的 Agent 循环运行在哪个运行时上的读取与切换。
 
 读取 main agent 的提示词队列快照。无参数。
 
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ active: `[T-PromptItem](#t-promptitem)` | null, queued: `[T-PromptItem](#t-promptitem)`[]` }>`。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `active` | object \| null | 运行中的提示词（[T-PromptItem](#t-promptitem)），空闲时为 `null` |
-| `queued` | array | 等待中的 [T-PromptItem](#t-promptitem)，按顺序 |
+| `active` | [T-PromptItem](#t-promptitem) `| null` | 运行中的提示词，空闲时为 `null` |
+| `queued` | [T-PromptItem](#t-promptitem)`[]` | 等待中的提示词，按顺序 |
 
 **非零 code**：`40401`。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "active": { "prompt_id": "prompt_01J...", "user_message_id": "msg_session_..._000007", "status": "running", "content": [ { "type": "text", "text": "..." } ], "created_at": "2026-09-02T08:04:00.000Z" }, "queued": [] }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "active": {
+      "prompt_id": "prompt_01J...",
+      "user_message_id": "msg_session_..._000007",
+      "status": "running",
+      "content": [ { "type": "text", "text": "..." } ],
+      "created_at": "2026-09-02T08:04:00.000Z"
+    },
+    "queued": []
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/sessions/{session_id}/prompts`
 
 向会话提交一条用户提示词。先校验媒体引用，然后把可选的覆盖项应用到目标 Agent——`profile`（与 `model` / `thinking` 一起绑定），接着是 `model`、`thinking`、`permission_mode` 和 `disabled_tools`——随后提示词入队；响应在提示词被接受后立即返回，不等待轮次执行。提供 `skills` 时，提示词以打包的 Skill 激活方式运行，而不是普通用户提示词。
 
-**Body**：
+**触发事件**：`prompt.submitted`（随后进入轮次事件流，见 [agent 事件](#agent-事件)）、`session.meta.updated`
+
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `content` | array | 是 | 非空的内容块数组；变体见下 |
+| `content` | `{ type: string, … }[]` | 是 | 非空的内容块数组；变体见下 |
 | `agent_id` | string | 否 | 目标 Agent。默认为 main agent |
 | `prompt_id` | string | 否 | 客户端选定的提示词 id，用于幂等提交；已被进行中提示词占用的 id 返回 `40927`，已完成的返回 `40903`。不能与 `skills` 同用 |
-| `skills` | array | 否 | 打包的 Skill 激活，至少 1 个 `{ name, args? }` 条目；每个 Skill 必须存在且可由用户激活 |
+| `skills` | `{ name: string, args?: string }[]` | 否 | 打包的 Skill 激活，至少 1 个条目；每个 Skill 必须存在且可由用户激活 |
 | `profile` | string | 否 | 提交前要绑定的 Agent 档案 |
 | `model` | string | 否 | 要切换到的模型别名 |
 | `thinking` | string | 否 | Thinking 强度等级 |
 | `permission_mode` | string | 否 | `manual` / `yolo` / `auto` |
-| `disabled_tools` | array | 否 | 要为会话禁用的工具名 |
+| `disabled_tools` | `string[]` | 否 | 要为会话禁用的工具名 |
 
 schema 还接受 `metadata`、`plan_mode`、`swarm_mode`、`goal_objective` 和 `goal_control`，但提交路由当前不会应用它们。每个 `content` 内容块是按 `type` 区分的对象：
 
@@ -2035,54 +2051,94 @@ schema 还接受 `metadata`、`plan_mode`、`swarm_mode`、`goal_objective` 和 
 
 schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinking` 内容块，但它们在用户提示词中没有意义。未知或 kind 不匹配的 `file_id` 引用会在提示词创建之前、任何覆盖项应用之前被拒绝。
 
-**返回**：`ResponseType<`[T-PromptItem](#t-promptitem)`>`（被接受的提示词）。
+**响应体**：`ResponseType<`[T-PromptItem](#t-promptitem)`>`（被接受的提示词）。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-PromptItem](#t-promptitem) | 被接受的提示词；字段见类型汇总 |
 
 **非零 code**（鉴权错误族的 `data` / `details` 形态各异）：
 
-- `40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`、`40407`（引用的 `file_id` 不存在或 kind 不匹配）、`40415`（未知的 Skill）、`40901`（会话忙）、`40912`（Skill 无法由用户激活）、`40927`（`prompt_id` 冲突）
+- `40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`、`40407`（引用的 `file_id` 不存在或 kind 不匹配）、`40415`（未知的 Skill）、`40901`（会话忙）、`40912`（Skill 无法由用户激活）、`40927`（`prompt_id` 冲突）
 - `40110`（尚未配置供应商）：`data: null`，`details: null`
 - `40111` / `40112`（供应商没有凭据 / 凭据被拒绝）：`data: null`，`details: { provider_id }`（缺 `provider_id` 时降级为 `50001`）
 - `40113`（模型无法解析）：`data: null`，`details: { model_id?, provider_id? }` 或 `null`
 - `40903`（`prompt_id` 属于已完成的提示词）：`data: { "aborted": false }`
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "prompt_id": "prompt_01J...", "user_message_id": "msg_session_..._000008", "status": "running", "content": [ { "type": "text", "text": "用一句话介绍这个仓库" } ], "created_at": "2026-09-02T08:06:00.000Z" }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "prompt_id": "prompt_01J...",
+    "user_message_id": "msg_session_..._000008",
+    "status": "running",
+    "content": [ { "type": "text", "text": "用一句话介绍这个仓库" } ],
+    "created_at": "2026-09-02T08:06:00.000Z"
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/sessions/{session_id}/prompts:steer`
 
 把排队的提示词插入进行中的轮次，让运行中的轮次立即消费它们，而不是先运行结束。
 
-**Body**：
+**触发事件**：`prompt.steered`
+
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `prompt_ids` | array | 是 | 非空的排队提示词 id 数组 |
+| `prompt_ids` | `string[]` | 是 | 非空的排队提示词 id 数组 |
 
-**返回**：`ResponseType<{ "steered": true, "prompt_ids": string[] }>`。
+**响应体**：`ResponseType<{ steered: true, prompt_ids: string[] }>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`、`40402`（所列提示词 id 不在队列中）。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `steered` | boolean | 恒 `true` |
+| `prompt_ids` | `string[]` | 被插入轮次的提示词 id |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`、`40402`（所列提示词 id 不在队列中）。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "steered": true, "prompt_ids": [ "prompt_01J..." ] }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "steered": true, "prompt_ids": [ "prompt_01J..." ] },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:{action}`
 
 单条提示词动作，经 `POST .../prompts/{tail}` 分发：`:abort` 中止运行中的提示词；`:steer` 把单条排队的提示词插入进行中的轮次（集合形式的单提示词版）。无请求体。
 
-**返回**：`ResponseType`：`:abort` → `{ "aborted": true }`；`:steer` → `{ "steered": true, "prompt_ids": [prompt_id] }`。
+**触发事件**：`:abort` → `prompt.aborted`；`:steer` → `prompt.steered`
+
+**响应体**：统一 `ResponseType` 信封：`:abort` → `{ aborted: true }`；`:steer` → `{ steered: true, prompt_ids: [prompt_id] }`。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `aborted` | boolean | 仅 `:abort`：恒 `true` |
+| `steered` | boolean | 仅 `:steer`：恒 `true` |
+| `prompt_ids` | `string[]` | 仅 `:steer`：被插入轮次的提示词 id（单条） |
 
 **非零 code**：`40001`（动作缺失或未知；`details` 为 `{ path, message }[]`）、`40401`、`40402`、`40903`（提示词已完成，`data: { "aborted": false }`）。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "aborted": true }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "aborted": true },
+  "request_id": "01JZX4..."
+}
 ```
 
 **消息。**
@@ -2098,7 +2154,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 分页返回 main agent 的消息历史，最新在前；读取历史会在会话为冷态时将其恢复。
 
-**Query**：
+**查询参数**：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
@@ -2107,28 +2163,64 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `page_size` | integer | 1–100。默认 `50` |
 | `role` | string | 只保留单一角色：`user` / `assistant` / `tool` / `system`。过滤在分页切片之后应用，因此过滤后的一页可能少于 `page_size` 条而 `has_more` 仍为 `true`——持续翻页直到 `has_more` 为 `false` |
 
-**返回**：`ResponseType<{ items: T-Message[], has_more: boolean }>`（[T-Message](#t-message)）。
+**响应体**：`ResponseType<{ items: `[T-Message](#t-message)`[]`, has_more: boolean }>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `items` | [T-Message](#t-message)`[]` | 一页消息，最新在前 |
+| `has_more` | boolean | 是否还有更早的消息 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "items": [ { "id": "msg_session_..._000007", "session_id": "session_01JZX4...", "role": "assistant", "content": [ { "type": "text", "text": "..." } ], "created_at": "2026-09-02T08:05:00.000Z" } ], "has_more": true }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "items": [
+      {
+        "id": "msg_session_..._000007",
+        "session_id": "session_01JZX4...",
+        "role": "assistant",
+        "content": [ { "type": "text", "text": "..." } ],
+        "created_at": "2026-09-02T08:05:00.000Z"
+      }
+    ],
+    "has_more": true
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/sessions/{session_id}/messages/{message_id}`
 
 按 id 从同一历史中读取单条消息。无参数。
 
-**返回**：`ResponseType<`[T-Message](#t-message)`>`。
+**响应体**：`ResponseType<`[T-Message](#t-message)`>`。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-Message](#t-message) | 消息对象；字段见类型汇总 |
 
 **非零 code**：`40401`、`40403`（该会话中不存在此 id 的消息）。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "id": "msg_session_..._000007", "session_id": "session_01JZX4...", "role": "user", "content": [ { "type": "text", "text": "..." } ], "created_at": "2026-09-02T08:04:00.000Z" }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "id": "msg_session_..._000007",
+    "session_id": "session_01JZX4...",
+    "role": "user",
+    "content": [ { "type": "text", "text": "..." } ],
+    "created_at": "2026-09-02T08:04:00.000Z"
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 **审批。**
@@ -2144,31 +2236,52 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 列出会话待处理的审批请求；读取列表会在会话为冷态时将其恢复。
 
-**Query**：
+**查询参数**：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `status` | string | **必填。** 必须为 `pending`，缺省或其他值返回 `40001` |
 
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ items: `[T-ApprovalRequest](#t-approvalrequest)`[]` }>`。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `items` | array | [T-ApprovalRequest](#t-approvalrequest) 数组 |
+| `items` | [T-ApprovalRequest](#t-approvalrequest)`[]` | 待处理的审批请求 |
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`。
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "items": [ { "approval_id": "approval_01J...", "session_id": "session_01JZX4...", "turn_id": 3, "tool_call_id": "toolu_01J...", "tool_name": "Bash", "action": "run", "tool_input_display": { "kind": "command", "command": "pnpm test" }, "created_at": "2026-09-02T08:06:30.000Z", "expires_at": "2026-09-03T08:06:30.000Z" } ] }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "items": [
+      {
+        "approval_id": "approval_01J...",
+        "session_id": "session_01JZX4...",
+        "turn_id": 3,
+        "tool_call_id": "toolu_01J...",
+        "tool_name": "Bash",
+        "action": "run",
+        "tool_input_display": { "kind": "command", "command": "pnpm test" },
+        "created_at": "2026-09-02T08:06:30.000Z",
+        "expires_at": "2026-09-03T08:06:30.000Z"
+      }
+    ]
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/sessions/{session_id}/approvals/{approval_id}`
 
 答复一个待处理的审批请求，让等待中的工具调用继续执行（或不执行）。
 
-**Body**：
+**触发事件**：`event.approval.resolved`
+
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
@@ -2177,14 +2290,24 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `feedback` | string | 否 | 回传给 Agent 的自由文本反馈 |
 | `selected_label` | string | 否 | 当请求提供了带标签的选项时（例如计划审阅），所选选项的标签 |
 
-**返回**：`ResponseType<{ "resolved": true, "resolved_at": ISO }>`。
+**响应体**：`ResponseType<{ resolved: true, resolved_at: string }>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`、`40404`（没有该 id 的待处理审批）、`40902`（已被答复，`data: { "resolved": false }`）。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `resolved` | boolean | 恒 `true` |
+| `resolved_at` | string | ISO 8601 时间 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`、`40404`（没有该 id 的待处理审批）、`40902`（已被答复，`data: { "resolved": false }`）。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "resolved": true, "resolved_at": "2026-09-02T08:07:00.000Z" }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "resolved": true, "resolved_at": "2026-09-02T08:07:00.000Z" },
+  "request_id": "01JZX4..."
+}
 ```
 
 **提问。**
@@ -2201,35 +2324,61 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 列出会话待处理的提问。
 
-**Query**：
+**查询参数**：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `status` | string | **必填。** 必须为 `pending`，缺省或其他值返回 `40001` |
 
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ items: `[T-QuestionRequest](#t-questionrequest)`[]` }>`。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `items` | array | [T-QuestionRequest](#t-questionrequest) 数组 |
+| `items` | [T-QuestionRequest](#t-questionrequest)`[]` | 待处理的提问 |
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`。
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "items": [ { "question_id": "question_01J...", "session_id": "session_01JZX4...", "questions": [ { "id": "q_0", "question": "选择部署目标", "options": [ { "id": "opt_0_0", "label": "staging" }, { "id": "opt_0_1", "label": "production" } ], "allow_other": true } ], "created_at": "2026-09-02T08:06:40.000Z" } ] }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "items": [
+      {
+        "question_id": "question_01J...",
+        "session_id": "session_01JZX4...",
+        "questions": [
+          {
+            "id": "q_0",
+            "question": "选择部署目标",
+            "options": [
+              { "id": "opt_0_0", "label": "staging" },
+              { "id": "opt_0_1", "label": "production" }
+            ],
+            "allow_other": true
+          }
+        ],
+        "created_at": "2026-09-02T08:06:40.000Z"
+      }
+    ]
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/sessions/{session_id}/questions/{question_id}`
 
 回答一个待处理的提问。两个提问端点经同一条路由 `POST .../questions/{tail}` 分发：单独的提问 id 表示回答问题，`{question_id}:dismiss` 尾部表示忽略。
 
-**Body**：
+**触发事件**：`event.question.answered`
+
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `answers` | object | 是 | 提问条目 id（`q_0`……）到答案对象的映射；答案变体见下 |
+| `answers` | `Record<string, { kind: string, … }>` | 是 | 提问条目 id（`q_0`……）到答案对象的映射；答案变体见下 |
 | `method` | string | 否 | 答案的产生方式：`enter` / `space` / `number_key` / `click` |
 | `note` | string | 否 | 附在回答上的自由文本备注 |
 
@@ -2243,28 +2392,50 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `multi_with_other` | `option_ids`、`other_text` | 选项加自由文本 |
 | `skipped` | — | 跳过了该条目 |
 
-**返回**：`ResponseType<{ "resolved": true, "resolved_at": ISO }>`。
+**响应体**：`ResponseType<{ resolved: true, resolved_at: string }>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）（`details` 逐字段说明）、`40401`、`40405`（没有该 id 的待处理提问）、`40902`（已被答复，`data: { "resolved": false }`）。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `resolved` | boolean | 恒 `true` |
+| `resolved_at` | string | ISO 8601 时间 |
 
-**示例**：
+**非零 code**：`40001`（校验失败，`details` 逐字段说明；`details` 为 `{ path, message }[]`）、`40401`、`40405`（没有该 id 的待处理提问）、`40902`（已被答复，`data: { "resolved": false }`）。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "resolved": true, "resolved_at": "2026-09-02T08:07:10.000Z" }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "resolved": true, "resolved_at": "2026-09-02T08:07:10.000Z" },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/sessions/{session_id}/questions/{question_id}:dismiss`
 
 忽略一个待处理的提问，不作回答。无请求体。
 
-**成功形态**：`ResponseType` 的 `code` 是 `40909` 而不是 `0`，`data` 为 `{ "dismissed": true, "dismissed_at": ISO }`——客户端必须特殊处理该端点的成功码。
+**触发事件**：`event.question.dismissed`
+
+**响应体**：成功时 `ResponseType` 的 `code` 是 `40909` 而不是 `0`，`data` 为 `{ dismissed: true, dismissed_at: string }`——客户端必须特殊处理该端点的成功码。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `dismissed` | boolean | 恒 `true` |
+| `dismissed_at` | string | ISO 8601 时间 |
 
 **非零 code**：`40401`、`40405`、`40902`（已被答复，`data: { "resolved": false }`）。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 40909, "msg": "question dismissed", "data": { "dismissed": true, "dismissed_at": "2026-09-02T08:07:20.000Z" }, "request_id": "01JZX4..." }
+{
+  "code": 40909,
+  "msg": "question dismissed",
+  "data": { "dismissed": true, "dismissed_at": "2026-09-02T08:07:20.000Z" },
+  "request_id": "01JZX4..."
+}
 ```
 
 **转录。**
@@ -2282,7 +2453,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 返回某个 Agent 的结构化转录中的一页：轮次（含其步骤与帧）以及轮次之间的标记与任务引用。活跃会话从内存存储应答（先回填所请求 Agent 的持久化历史）；冷会话则从持久化的线上记录重建 Agent。
 
-**Query**：
+**查询参数**：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
@@ -2291,76 +2462,160 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `after_turn` | string | 只保留晚于该轮次 id 的轮次；与 `before_turn` 互斥 |
 | `page_size` | integer | 1–100 个轮次。默认 `20` |
 
-**返回**：`ResponseType<`[T-TranscriptResponse](#t-transcriptresponse)`>`——分页单位是轮次：不带游标时返回最新的一页，`has_more` 表示还有更早的轮次；`tasks` / `interactions` / `attachments` / `todos` / `meta` / `agents` / `pending_interactions` 是不分页、随每次响应一起返回的全局 Agent 状态；`seq` 是该 Agent 用于恢复流的 op 批次水位（仅活跃会话携带）。
+**响应体**：`ResponseType<`[T-TranscriptResponse](#t-transcriptresponse)`>`——分页单位是轮次：不带游标时返回最新的一页，`has_more` 表示还有更早的轮次；`tasks` / `interactions` / `attachments` / `todos` / `meta` / `agents` / `pending_interactions` 是不分页、随每次响应一起返回的全局 Agent 状态；`seq` 是该 Agent 用于恢复流的 op 批次水位（仅活跃会话携带）。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-TranscriptResponse](#t-transcriptresponse) | 一页转录；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "agent_id": "main", "items": [ { "kind": "turn", "turnId": 3, "...": "..." } ], "has_more": true, "tasks": [], "interactions": [], "attachments": [], "todos": [], "prompts": [], "meta": { "...": "..." }, "agents": [ { "agentId": "main", "...": "..." } ], "pending_interactions": [], "seq": 42 }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "agent_id": "main",
+    "items": [ { "kind": "turn", "turnId": 3, "...": "..." } ],
+    "has_more": true,
+    "tasks": [],
+    "interactions": [],
+    "attachments": [],
+    "todos": [],
+    "prompts": [],
+    "meta": { "...": "..." },
+    "agents": [ { "agentId": "main", "...": "..." } ],
+    "pending_interactions": [],
+    "seq": 42
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/sessions/{session_id}/transcript/ops`
 
 从服务端的 op 日志提供点对点的补漏：某个 Agent 的 `seq > since_seq` 的已记录 op 批次，最旧在前。它是 `transcript_since` 恢复游标的 REST 对应物，共享同一份有界日志，因此适用相同的回退规则。
 
-**Query**：
+**查询参数**：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `agent_id` | string | **必填。** Agent id（纯文本形式） |
 | `since_seq` | integer | **必填。** 调用方已应用的最后一个 op 批次 seq，最小为 `0`；返回其之后的批次 |
 
-**返回**：`ResponseType<`[T-TranscriptOpsCatchupResponse](#t-transcriptopscatchupresponse)`>`——`complete: true` 表示直到 `latest_seq` 的每个批次都在；`complete: false` 表示日志已不再覆盖到 `since_seq`（或会话根本不是活跃状态），调用方必须回退为一次完整的 `GET .../transcript` 刷新。会话存在但非活跃时固定返回 `{ agent_id, batches: [], latest_seq: 0, complete: false }`。
+**响应体**：`ResponseType<`[T-TranscriptOpsCatchupResponse](#t-transcriptopscatchupresponse)`>`——`complete: true` 表示直到 `latest_seq` 的每个批次都在；`complete: false` 表示日志已不再覆盖到 `since_seq`（或会话根本不是活跃状态），调用方必须回退为一次完整的 `GET .../transcript` 刷新。会话存在但非活跃时固定返回 `{ agent_id, batches: [], latest_seq: 0, complete: false }`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-TranscriptOpsCatchupResponse](#t-transcriptopscatchupresponse) | 补漏批次；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "agent_id": "main", "batches": [ { "seq": 41, "ops": [ { "op": "append", "...": "..." } ] } ], "latest_seq": 42, "complete": true }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "agent_id": "main",
+    "batches": [ { "seq": 41, "ops": [ { "op": "append", "...": "..." } ] } ],
+    "latest_seq": 42,
+    "complete": true
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/sessions/{session_id}/transcript/user-messages`
 
 列出会话中每个开启轮次的输入，按 Agent 分组且不分页：真实用户文本、以斜杠命令形式使用的 Skill 与插件命令、以及 cron 提示词——可通过 `origin` 区分——另有仅含附件的提示词，其 `prompt` 投影为空。所列消息引用的附件实体会随响应一起返回（仅元数据，绝不包含字节内容）。
 
-**Query**：
+**查询参数**：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `agent_id` | string | 只读取一个 Agent（纯文本 id）。默认读取所有在册 Agent（冷会话保证含 main agent） |
 
-**返回**：`ResponseType<`[T-TranscriptUserMessagesResponse](#t-transcriptusermessagesresponse)`>`。
+**响应体**：`ResponseType<`[T-TranscriptUserMessagesResponse](#t-transcriptusermessagesresponse)`>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-TranscriptUserMessagesResponse](#t-transcriptusermessagesresponse) | 按 Agent 分组的用户输入；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "agents": [ { "agent_id": "main", "messages": [ { "turn_id": 3, "ordinal": 0, "state": "completed", "origin": { "kind": "user" }, "prompt": "adjust the button spacing", "started_at": "2026-09-02T08:04:00.000Z" } ], "attachments": [] } ] }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "agents": [
+      {
+        "agent_id": "main",
+        "messages": [
+          {
+            "turn_id": 3,
+            "ordinal": 0,
+            "state": "completed",
+            "origin": { "kind": "user" },
+            "prompt": "adjust the button spacing",
+            "started_at": "2026-09-02T08:04:00.000Z"
+          }
+        ],
+        "attachments": []
+      }
+    ]
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/sessions/{session_id}/transcript/plan`
 
 按时间线顺序读取某个 Agent 的 `ExitPlanMode` 工具调用的计划信息——计划内容、计划文件路径、提供的选项以及审阅结果。内容投影自第一个可用的事实来源：关联的审批交互（交互式审阅）、实时工具帧的展示（auto 模式），或工具结果的输出文本；每个条目在 `source` 中记录具体来源。
 
-**Query**：
+**查询参数**：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `agent_id` | string | **必填。** Agent id（纯文本形式） |
 | `tool_call_id` | string | 将读取范围限定到单次 `ExitPlanMode` 调用；不提供时列出所有可恢复计划内容的调用 |
 
-**返回**：`ResponseType<`[T-TranscriptPlanResponse](#t-transcriptplanresponse)`>`。
+**响应体**：`ResponseType<`[T-TranscriptPlanResponse](#t-transcriptplanresponse)`>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`、`40416`（提供了 `tool_call_id`，但不存在该 id 的 `ExitPlanMode` 调用）。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-TranscriptPlanResponse](#t-transcriptplanresponse) | 计划条目列表；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`、`40416`（提供了 `tool_call_id`，但不存在该 id 的 `ExitPlanMode` 调用）。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "agent_id": "main", "plans": [ { "tool_call_id": "toolu_01J...", "turn_id": 2, "source": "interaction", "plan": "# Plan\n ...", "path": "/Users/dev/my-app/.kimi-code/plans/....md", "options": [ { "label": "实施" } ], "review": { "state": "approved", "selected_option": "实施" } } ] }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "agent_id": "main",
+    "plans": [
+      {
+        "tool_call_id": "toolu_01J...",
+        "turn_id": 2,
+        "source": "interaction",
+        "plan": "# Plan\n ...",
+        "path": "/Users/dev/my-app/.kimi-code/plans/....md",
+        "options": [ { "label": "实施" } ],
+        "review": { "state": "approved", "selected_option": "实施" }
+      }
+    ]
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 ### 任务
