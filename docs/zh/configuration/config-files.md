@@ -480,7 +480,9 @@ api_key = "sk-xxx"
 
 ## `permission`
 
-`permission` 设置会话启动时自动加载的权限规则，控制 Agent 调用工具时是否需要用户确认。规则用 `[[permission.rules]]` 数组表写出，按顺序匹配，第一条命中即生效。
+`permission` 设置会话启动时自动加载的权限规则，控制 Agent 调用工具时是否需要用户确认。规则用 `[[permission.rules]]` 数组表写出。
+
+匹配先按 `decision` 分类，再按顺序：先查所有 `deny` 规则，再查所有 `ask`，最后查所有 `allow`；同一类之内第一条命中即生效。因此命中的 `deny` 会压过命中的 `ask` 和 `allow`，命中的 `ask` 会压过命中的 `allow`，与各条规则在文件中的先后位置无关。
 
 也可以在 `[permission]` 下设置 `dangerous_command_guard = false` 完全关闭内置危险命令策略（不再触发危险命令审批或 auto 模式拒绝），默认 `true`。环境变量 `KIMI_CODE_DANGEROUS_COMMAND_GUARD=false` 会覆盖文件设置并恢复策略引入前的行为。此开关只适用于已经在 Agent 之外统一命令限权的环境。
 
@@ -510,6 +512,30 @@ pattern = "Bash(rm -rf*)"
 decision = "ask"
 pattern = "Bash"
 ```
+
+::: warning 注意
+同一个工具上，兜底规则无法与更窄的 `allow` 规则搭配使用。由于范围更宽的那条规则是按类别而非按位置被查到的，它会把你放行的调用一并吞掉：
+
+```toml
+# 不生效：下面这条兜底规则同样会作用于 `Bash(git status)`。
+[[permission.rules]]
+decision = "allow"
+pattern = "Bash(git status*)"
+
+[[permission.rules]]
+decision = "deny" # 换成 "ask" 效果相同，两者都压过 `allow`
+pattern = "Bash"
+```
+
+在默认的 `default_permission_mode = "manual"` 下，兜底规则通常也没有必要：未命中任何规则的工具调用本来就会走到确认提示，除非该工具默认放行（`Read`、`Grep` 这类只读工具即是）。只写窄规则即可——`allow` 用于希望静默放行的调用，`deny` 用于永远不想执行的调用，其余交给确认提示处理。
+
+自主模式下没有这道兜底提示，因此不能依赖它：
+
+- `yolo` 会放行走到链尾的所有调用，但你的 `deny` 和 `ask` 规则仍然生效。
+- `auto` 在查 `ask` 和 `allow` **之前**就已放行，因此只有 `deny` 规则还有作用。
+
+这两种模式下，凡是希望拦下的调用都需要显式的 `deny` 规则。
+:::
 
 ::: tip
 MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-code/mcp.json` 中，不在 `config.toml` 里。交互式配置入口是 `/mcp-config`，详见 [Model Context Protocol](../customization/mcp.md)。
