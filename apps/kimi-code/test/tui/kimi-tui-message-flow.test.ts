@@ -358,6 +358,29 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
   return harness;
 }
 
+/** Two models with distinct context caps, for the footer's context readout. */
+function makeContextCapConfig(largeInputSize?: number) {
+  return {
+    models: {
+      small: {
+        provider: 'managed:kimi-code',
+        model: 'kimi-small',
+        maxContextSize: 262_144,
+        displayName: 'Kimi Small',
+      },
+      large: {
+        provider: 'managed:kimi-code',
+        model: 'kimi-large',
+        maxContextSize: 1_048_576,
+        maxInputSize: largeInputSize,
+        displayName: 'Kimi Large',
+      },
+    },
+    defaultModel: 'small',
+    thinking: { enabled: false },
+  };
+}
+
 async function makeDriver(
   session = makeSession(),
   harnessOverrides: Record<string, unknown> = {},
@@ -7598,6 +7621,81 @@ command = "vim"
     expect(setConfig).not.toHaveBeenCalled();
     expect(driver.state.appState.model).toBe('turbo');
     expect(driver.state.appState.thinkingEffort).toBe('on');
+  });
+
+  it('refreshes the context cap when /model switches before a session exists (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const { driver, harness } = await makeDriver(
+      session,
+      { getConfig: vi.fn(async () => makeContextCapConfig()) },
+      { ...makeStartupInput(), engineV2: true },
+    );
+
+    // Session-less startup seeds the footer from the default model.
+    expect(harness.createSession).not.toHaveBeenCalled();
+    expect(driver.state.appState.maxContextTokens).toBe(262_144);
+
+    driver.handleUserInput('/model large');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(TabbedModelSelectorComponent);
+    });
+    (driver.state.editorContainer.children[0] as TabbedModelSelectorComponent).handleInput('\r');
+
+    // With no session there is no agent.status.updated to carry the new cap.
+    await vi.waitFor(() => {
+      expect(driver.state.appState.model).toBe('large');
+    });
+    expect(session.setModel).not.toHaveBeenCalled();
+    expect(driver.state.appState.maxContextTokens).toBe(1_048_576);
+  });
+
+  it('refreshes the context cap on a session-only /model switch before a session exists (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const setConfig = vi.fn(async () => ({ providers: {} }));
+    const { driver } = await makeDriver(
+      session,
+      { getConfig: vi.fn(async () => makeContextCapConfig()), setConfig },
+      { ...makeStartupInput(), engineV2: true },
+    );
+
+    driver.handleUserInput('/model large');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(TabbedModelSelectorComponent);
+    });
+    (driver.state.editorContainer.children[0] as TabbedModelSelectorComponent).handleInput(
+      `${ESC}s`,
+    );
+
+    await vi.waitFor(() => {
+      expect(driver.state.appState.model).toBe('large');
+    });
+    expect(setConfig).not.toHaveBeenCalled();
+    expect(driver.state.appState.maxContextTokens).toBe(1_048_576);
+  });
+
+  it('prefers the declared input cap over the total window (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const { driver } = await makeDriver(
+      session,
+      { getConfig: vi.fn(async () => makeContextCapConfig(524_288)) },
+      { ...makeStartupInput(), engineV2: true },
+    );
+
+    driver.handleUserInput('/model large');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(TabbedModelSelectorComponent);
+    });
+    (driver.state.editorContainer.children[0] as TabbedModelSelectorComponent).handleInput('\r');
+
+    // The engine reports max_input_tokens ?? max_context_tokens, so the footer
+    // must not show the wider total window and then drop once a session exists.
+    await vi.waitFor(() => {
+      expect(driver.state.appState.model).toBe('large');
+    });
+    expect(driver.state.appState.maxContextTokens).toBe(524_288);
   });
 
   it('uses the effective effort returned after a model-switch fallback', async () => {

@@ -30,6 +30,7 @@ import { PERMISSION_MODE_DISPLAY_NAMES } from '../utils/permission-mode';
 import { thinkingEffortToConfig } from '../utils/thinking-config';
 import { showUsage } from './info';
 import { setExperimentalFeatures } from './experimental-flags';
+import type { AppState } from '../types';
 import type { SlashCommandHost } from './dispatch';
 
 // ---------------------------------------------------------------------------
@@ -545,7 +546,13 @@ async function performModelSwitch(
     effectiveAlias,
     host.state.appState.availableModels[effectiveAlias],
   );
-  host.setAppState({ model: effectiveAlias, thinkingEffort: effectiveEffort });
+  const patch: Partial<AppState> = { model: effectiveAlias, thinkingEffort: effectiveEffort };
+  if (session === undefined) {
+    const picked = host.state.appState.availableModels[effectiveAlias];
+    const effective = picked === undefined ? undefined : effectiveModelForHost(host, picked);
+    patch.maxContextTokens = effective?.maxInputSize ?? effective?.maxContextSize ?? 0;
+  }
+  host.setAppState(patch);
   if (session === undefined && runtimeChanged) {
     if (effectiveModelChanged) {
       host.track('model_switch', { model: effectiveAlias });

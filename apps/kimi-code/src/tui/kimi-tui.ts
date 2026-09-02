@@ -2181,8 +2181,10 @@ export class KimiTUI {
     if (startupModel !== undefined) {
       patch.model = startupModel;
       const selected = config.models?.[startupModel];
-      if (selected?.maxContextSize !== undefined) {
-        patch.maxContextTokens = selected.maxContextSize;
+      if (selected !== undefined) {
+        const providerType = config.providers?.[selected.provider]?.type;
+        const effective = effectiveModelAlias(selected, providerType ?? selected.protocol);
+        patch.maxContextTokens = effective.maxInputSize ?? effective.maxContextSize;
       }
     } else {
       // The default disappeared from config (edited externally): clear the
