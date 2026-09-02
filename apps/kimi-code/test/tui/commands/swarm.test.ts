@@ -234,11 +234,8 @@ describe('handleSwarmCommand', () => {
     expect(session.setSwarmMode).toHaveBeenCalledTimes(1);
     expect(host.setAppState).toHaveBeenCalledWith({ permissionMode: 'auto' });
     expect(host.setAppState).toHaveBeenCalledWith({ swarmMode: true });
-    expect(host.showNotice).toHaveBeenCalledWith(
-      'Permission mode: Never Ask',
-      undefined,
-      UNCONFIRMED_FILE_CHANGES_WARNING,
-    );
+    expect(host.showNotice).toHaveBeenCalledWith('Permission mode: Never Ask');
+    expect(host.showStatus).toHaveBeenCalledWith(UNCONFIRMED_FILE_CHANGES_WARNING, 'warning');
     expect(host.state.swarmModeEntry).toBe('task');
     expectSwarmMarker(host, 'Swarm activated');
   });
@@ -259,6 +256,7 @@ describe('handleSwarmCommand', () => {
     expect(session.setSwarmMode).toHaveBeenCalledWith(true, 'task');
     expect(session.setSwarmMode).toHaveBeenCalledTimes(1);
     expect(host.showNotice).not.toHaveBeenCalled();
+    expect(host.showStatus).not.toHaveBeenCalledWith(UNCONFIRMED_FILE_CHANGES_WARNING, 'warning');
     expect(host.state.swarmModeEntry).toBe('task');
     expectSwarmMarker(host, 'Swarm activated');
   });
@@ -279,11 +277,8 @@ describe('handleSwarmCommand', () => {
     expect(session.setSwarmMode).toHaveBeenCalledTimes(1);
     expect(host.setAppState).toHaveBeenCalledWith({ permissionMode: 'yolo' });
     expect(host.setAppState).toHaveBeenCalledWith({ swarmMode: true });
-    expect(host.showNotice).toHaveBeenCalledWith(
-      'Permission mode: Ask When Needed',
-      undefined,
-      UNCONFIRMED_FILE_CHANGES_WARNING,
-    );
+    expect(host.showNotice).toHaveBeenCalledWith('Permission mode: Ask When Needed');
+    expect(host.showStatus).toHaveBeenCalledWith(UNCONFIRMED_FILE_CHANGES_WARNING, 'warning');
     expect(host.state.swarmModeEntry).toBe('task');
     expectSwarmMarker(host, 'Swarm activated');
   });

@@ -145,11 +145,8 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
     }
     await session?.setPermission('yolo');
     host.setAppState({ permissionMode: 'yolo' });
-    host.showNotice(
-      'Ask When Needed mode: ON',
-      'Routine edits and commands run automatically; risky actions, questions, and plans still ask.',
-      UNCONFIRMED_FILE_CHANGES_WARNING,
-    );
+    host.showNotice('Ask When Needed mode: ON', 'Routine edits and commands run automatically; risky actions, questions, and plans still ask.');
+    host.showStatus(UNCONFIRMED_FILE_CHANGES_WARNING, 'warning');
     return;
   }
 
@@ -172,11 +169,8 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
   } else {
     await session?.setPermission('yolo');
     host.setAppState({ permissionMode: 'yolo' });
-    host.showNotice(
-      'Ask When Needed mode: ON',
-      'Routine edits and commands run automatically; risky actions, questions, and plans still ask.',
-      UNCONFIRMED_FILE_CHANGES_WARNING,
-    );
+    host.showNotice('Ask When Needed mode: ON', 'Routine edits and commands run automatically; risky actions, questions, and plans still ask.');
+    host.showStatus(UNCONFIRMED_FILE_CHANGES_WARNING, 'warning');
   }
 }
 
@@ -199,11 +193,8 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
     }
     await session?.setPermission('auto');
     host.setAppState({ permissionMode: 'auto' });
-    host.showNotice(
-      'Never Ask mode: ON',
-      'Never interrupts you; everything runs and is decided automatically.',
-      UNCONFIRMED_FILE_CHANGES_WARNING,
-    );
+    host.showNotice('Never Ask mode: ON', 'Never interrupts you; everything runs and is decided automatically.');
+    host.showStatus(UNCONFIRMED_FILE_CHANGES_WARNING, 'warning');
     return;
   }
 
@@ -226,11 +217,8 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
   } else {
     await session?.setPermission('auto');
     host.setAppState({ permissionMode: 'auto' });
-    host.showNotice(
-      'Never Ask mode: ON',
-      'Never interrupts you; everything runs and is decided automatically.',
-      UNCONFIRMED_FILE_CHANGES_WARNING,
-    );
+    host.showNotice('Never Ask mode: ON', 'Never interrupts you; everything runs and is decided automatically.');
+    host.showStatus(UNCONFIRMED_FILE_CHANGES_WARNING, 'warning');
   }
 }
 
@@ -922,11 +910,10 @@ async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMod
   }
 
   host.setAppState({ permissionMode: mode });
-  host.showNotice(
-    `Permission mode: ${PERMISSION_MODE_DISPLAY_NAMES[mode]}`,
-    undefined,
-    mode === 'manual' ? undefined : UNCONFIRMED_FILE_CHANGES_WARNING,
-  );
+  host.showNotice(`Permission mode: ${PERMISSION_MODE_DISPLAY_NAMES[mode]}`);
+  if (mode !== 'manual') {
+    host.showStatus(UNCONFIRMED_FILE_CHANGES_WARNING, 'warning');
+  }
 }
 
 export function showSettingsSelector(host: SlashCommandHost): void {

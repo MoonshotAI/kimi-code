@@ -86,11 +86,8 @@ async function setPermissionForSwarm(host: SlashCommandHost, mode: PermissionMod
     return false;
   }
   host.setAppState({ permissionMode: mode });
-  host.showNotice(
-    `Permission mode: ${PERMISSION_MODE_DISPLAY_NAMES[mode]}`,
-    undefined,
-    UNCONFIRMED_FILE_CHANGES_WARNING,
-  );
+  host.showNotice(`Permission mode: ${PERMISSION_MODE_DISPLAY_NAMES[mode]}`);
+  host.showStatus(UNCONFIRMED_FILE_CHANGES_WARNING, 'warning');
   return true;
 }
 

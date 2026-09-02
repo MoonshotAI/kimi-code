@@ -459,11 +459,8 @@ async function setPermissionForGoal(host: GoalCommandHost, mode: PermissionMode)
   // The failure-rollback path also comes through here with 'manual'; only warn
   // when entering a mode that skips confirmation.
   if (mode !== 'manual') {
-    host.showNotice(
-      `Permission mode: ${PERMISSION_MODE_DISPLAY_NAMES[mode]}`,
-      undefined,
-      UNCONFIRMED_FILE_CHANGES_WARNING,
-    );
+    host.showNotice(`Permission mode: ${PERMISSION_MODE_DISPLAY_NAMES[mode]}`);
+    host.showStatus(UNCONFIRMED_FILE_CHANGES_WARNING, 'warning');
   }
   return true;
 }

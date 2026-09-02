@@ -1,5 +1,4 @@
 import { visibleWidth } from '@moonshot-ai/pi-tui';
-import chalk from 'chalk';
 import { describe, expect, it } from 'vitest';
 
 import { CronMessageComponent } from '#/tui/components/messages/cron-message';
@@ -35,24 +34,6 @@ describe('NoticeComponent', () => {
     expect(titleColumn).toBeDefined();
     expect(firstColumn).toBe(titleColumn);
     expect(secondColumn).toBe(titleColumn);
-  });
-
-  it('renders the warning line in the warning color, aligned with the title', () => {
-    const previousChalkLevel = chalk.level;
-    chalk.level = 3;
-    try {
-      const component = new NoticeMessageComponent('Title', 'Detail line.', 'Warning line.');
-
-      const lines = component.render(120);
-      // darkColors.warning #E8A838
-      expect(lines.find((line) => line.includes('Warning line.'))).toContain('38;2;232;168;56');
-      const stripped = lines.map((line) => strip(line));
-      const titleColumn = stripped.find((line) => line.includes('Title'))?.indexOf('Title');
-      const warningColumn = stripped.find((line) => line.includes('Warning line.'))?.indexOf('Warning line.');
-      expect(warningColumn).toBe(titleColumn);
-    } finally {
-      chalk.level = previousChalkLevel;
-    }
   });
 });
 

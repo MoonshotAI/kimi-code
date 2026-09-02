@@ -376,11 +376,8 @@ describe('handleGoalCommand', () => {
     });
     expect(s.setPermission).toHaveBeenCalledWith('auto');
     expect(manualHost.setAppState).toHaveBeenCalledWith({ permissionMode: 'auto' });
-    expect(manualHost.showNotice).toHaveBeenCalledWith(
-      'Permission mode: Never Ask',
-      undefined,
-      UNCONFIRMED_FILE_CHANGES_WARNING,
-    );
+    expect(manualHost.showNotice).toHaveBeenCalledWith('Permission mode: Never Ask');
+    expect(manualHost.showStatus).toHaveBeenCalledWith(UNCONFIRMED_FILE_CHANGES_WARNING, 'warning');
     expect(manualHost.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
   });
 
@@ -400,6 +397,7 @@ describe('handleGoalCommand', () => {
     });
     expect(s.setPermission).not.toHaveBeenCalled();
     expect(manualHost.showNotice).not.toHaveBeenCalled();
+    expect(manualHost.showStatus).not.toHaveBeenCalledWith(UNCONFIRMED_FILE_CHANGES_WARNING, 'warning');
     expect(manualHost.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
   });
 
@@ -418,11 +416,8 @@ describe('handleGoalCommand', () => {
     });
     expect(s.setPermission).toHaveBeenCalledWith('yolo');
     expect(manualHost.setAppState).toHaveBeenCalledWith({ permissionMode: 'yolo' });
-    expect(manualHost.showNotice).toHaveBeenCalledWith(
-      'Permission mode: Ask When Needed',
-      undefined,
-      UNCONFIRMED_FILE_CHANGES_WARNING,
-    );
+    expect(manualHost.showNotice).toHaveBeenCalledWith('Permission mode: Ask When Needed');
+    expect(manualHost.showStatus).toHaveBeenCalledWith(UNCONFIRMED_FILE_CHANGES_WARNING, 'warning');
   });
 
   it('restores the previous permission mode when the goal fails to start', async () => {
@@ -442,8 +437,9 @@ describe('handleGoalCommand', () => {
     });
     expect(s.setPermission).toHaveBeenCalledWith('yolo');
     expect(manualHost.setAppState).toHaveBeenLastCalledWith({ permissionMode: 'manual' });
-    // The rollback to Manual must not emit a second warning notice.
+    // The rollback to Manual must not emit a second warning.
     expect(manualHost.showNotice).toHaveBeenCalledTimes(1);
+    expect(manualHost.showStatus).toHaveBeenCalledTimes(1);
   });
 
   it('returns the command to the input box when a Manual-mode goal start is cancelled', async () => {

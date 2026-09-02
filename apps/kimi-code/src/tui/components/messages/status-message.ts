@@ -46,44 +46,34 @@ export class StatusMessageComponent extends Container {
 export class NoticeMessageComponent extends Container {
   private titleText: Text;
   private detailText?: Text;
-  private warningText?: Text;
   private title: string;
   private detail?: string;
-  private warning?: string;
 
-  constructor(title: string, detail: string | undefined, warning?: string) {
+  constructor(title: string, detail: string | undefined) {
     super();
     this.title = title;
     this.detail = detail;
-    this.warning = warning;
     this.addChild(new Spacer(1));
     this.titleText = new Text(`  ${currentTheme.fg('textStrong', title)}`, 0, 0);
     this.addChild(this.titleText);
     if (detail !== undefined && detail.length > 0) {
-      this.detailText = new Text(this.renderDetail(detail, 'textDim'), 0, 0);
+      this.detailText = new Text(this.renderDetail(detail), 0, 0);
       this.addChild(this.detailText);
-    }
-    if (warning !== undefined && warning.length > 0) {
-      this.warningText = new Text(this.renderDetail(warning, 'warning'), 0, 0);
-      this.addChild(this.warningText);
     }
   }
 
   override invalidate(): void {
     this.titleText.setText(`  ${currentTheme.fg('textStrong', this.title)}`);
     if (this.detailText !== undefined && this.detail !== undefined) {
-      this.detailText.setText(this.renderDetail(this.detail, 'textDim'));
-    }
-    if (this.warningText !== undefined && this.warning !== undefined) {
-      this.warningText.setText(this.renderDetail(this.warning, 'warning'));
+      this.detailText.setText(this.renderDetail(this.detail));
     }
     super.invalidate();
   }
 
-  // Indent every line, not just the first. The text may be multi-line;
+  // Indent every line, not just the first. The `detail` may be multi-line;
   // prefixing the whole string once would only indent the first line and leave
   // the rest at column 0 (same handling as StatusMessageComponent).
-  private renderDetail(text: string, token: ColorToken): string {
-    return currentTheme.fg(token, text).split('\n').map((line) => `  ${line}`).join('\n');
+  private renderDetail(detail: string): string {
+    return currentTheme.fg('textDim', detail).split('\n').map((line) => `  ${line}`).join('\n');
   }
 }
