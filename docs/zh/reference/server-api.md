@@ -244,7 +244,7 @@ HTTP 状态码例外（非 200）：
 
 合并式更新全局配置：请求体中的每个顶层域被深合并进对应域，未出现的域保持不动。把 `yolo` 设为 `true` 是 `default_permission_mode: "yolo"` 的简写（`false` 被忽略）。每一次配置变更——经本端点、在进程外编辑 `config.toml`，或服务端内部写入——都会广播全局 `event.config.changed` 事件。
 
-**触发事件**：`event.config.changed`
+**触发事件**：[`event.config.changed`](#event-config-changed-s→c)
 
 **请求体**：部分配置对象——[T-ConfigResponse](#t-configresponse) 中除 `raw` 外的任意子集，均为可选。
 
@@ -323,7 +323,7 @@ HTTP 状态码例外（非 200）：
 
 把全局 `default_model` 设为一个已存在的别名。`model_id` 是配置中的别名键原样——裸键如 `POST /api/v1/models/turbo:set_default`；id 含 `/` 时需 URL 编码，如 `POST /api/v1/models/my-provider%2Fkimi-for-coding:set_default`。
 
-**触发事件**：`event.config.changed`
+**触发事件**：[`event.config.changed`](#event-config-changed-s→c)
 
 **响应体**：`ResponseType<{ default_model: string, model: `[T-ModelCatalogItem](#t-modelcatalogitem)` }>`
 
@@ -384,7 +384,7 @@ HTTP 状态码例外（非 200）：
 
 一次保存创建供应商及其模型别名；响应为 HTTP 201 加 `ResponseType`。当全局 `default_model` 完全未配置时，会以新供应商的 `default_model`（或第一个模型）播种；已有默认值绝不被修改。
 
-**触发事件**：`event.config.changed`
+**触发事件**：[`event.config.changed`](#event-config-changed-s→c)
 
 **请求体**：
 
@@ -469,7 +469,7 @@ HTTP 状态码例外（非 200）：
 
 一次保存整体替换供应商：`type`、`base_url` 与模型列表被重写，不再列出的别名从 `config.toml` 中消失。`api_key` 是三态的：省略表示保留已存密钥，`""` 表示清除，其他值表示替换。除 `new_id` 重命名迁移外，全局默认指针绝不被修改。
 
-**触发事件**：`event.config.changed`
+**触发事件**：[`event.config.changed`](#event-config-changed-s→c)
 
 **请求体**：
 
@@ -507,7 +507,7 @@ HTTP 状态码例外（非 200）：
 
 删除供应商及其全部模型别名；subagent 次级模型池会级联清理。全局 `default_provider` / `default_model` 指针保持不动，即使它们指向被删的供应商。
 
-**触发事件**：`event.config.changed`
+**触发事件**：[`event.config.changed`](#event-config-changed-s→c)
 
 **响应体**：HTTP 204 空体——状态行本身即表示删除成功，无 `ResponseType`。
 
@@ -517,7 +517,7 @@ HTTP 状态码例外（非 200）：
 
 从上游来源重新发现单个供应商的模型元数据，并重写该供应商的别名；模型来源为静态的供应商不经网络调用直接报告 `unchanged`。
 
-**触发事件**：`event.model_catalog.changed`（至少一个供应商的别名发生变化时；配置写入同时触发 `event.config.changed`）
+**触发事件**：[`event.model_catalog.changed`](#event-model-catalog-changed-s→c)（至少一个供应商的别名发生变化时；配置写入同时触发 [`event.config.changed`](#event-config-changed-s→c)）
 
 **响应体**：`ResponseType<`[T-RefreshProviderModelsResponse](#t-refreshprovidermodelsresponse)`>`。
 
@@ -546,7 +546,7 @@ HTTP 状态码例外（非 200）：
 
 集合级动作路由；请求体按动作校验。四个动作：
 
-**触发事件**：`:refresh` / `:refresh_oauth` → `event.model_catalog.changed`（至少一个供应商的别名发生变化时；配置写入同时触发 `event.config.changed`）；`:import_catalog` / `:import_registry` → `event.config.changed`
+**触发事件**：`:refresh` / `:refresh_oauth` → [`event.model_catalog.changed`](#event-model-catalog-changed-s→c)（至少一个供应商的别名发生变化时；配置写入同时触发 [`event.config.changed`](#event-config-changed-s→c)）；`:import_catalog` / `:import_registry` → [`event.config.changed`](#event-config-changed-s→c)
 
 **响应体**：统一 `ResponseType` 信封，`data` 形态随动作（见下表）。
 
@@ -807,7 +807,7 @@ HTTP 状态码例外（非 200）：
 
 登出托管供应商：丢弃已存储的 OAuth 凭据、中止进行中的登录流程，并把托管供应商从配置中移除。OAuth 托管的供应商拒绝手动编辑与删除，因此要移除它需先登出。
 
-**触发事件**：`event.config.changed`
+**触发事件**：[`event.config.changed`](#event-config-changed-s→c)
 
 **请求体**：
 
@@ -986,7 +986,7 @@ HTTP 状态码例外（非 200）：
 
 注册工作区并返回它。注册按根路径幂等：重复注册同一根路径会返回已存在的工作区，仅刷新 `last_opened_at`（保留已存名称），并广播 `event.workspace.updated` 而非 `event.workspace.created`。
 
-**触发事件**：`event.workspace.created`（根路径首次注册）或 `event.workspace.updated`（重复注册同一根路径）
+**触发事件**：[`event.workspace.created`](#event-workspace-created-s→c)（根路径首次注册）或 [`event.workspace.updated`](#event-workspace-updated-s→c)（重复注册同一根路径）
 
 **请求体**：
 
@@ -1025,7 +1025,7 @@ HTTP 状态码例外（非 200）：
 
 重命名工作区——仅修改显示名，根路径不变。
 
-**触发事件**：`event.workspace.updated`
+**触发事件**：[`event.workspace.updated`](#event-workspace-updated-s→c)
 
 **请求体**：
 
@@ -1063,7 +1063,7 @@ HTTP 状态码例外（非 200）：
 
 注销工作区。只移除注册表条目——磁盘上的目录不受影响。无请求体。
 
-**触发事件**：`event.workspace.deleted`
+**触发事件**：[`event.workspace.deleted`](#event-workspace-deleted-s→c)
 
 **响应体**：`ResponseType<{ deleted: true }>`。
 
@@ -1214,7 +1214,7 @@ HTTP 状态码例外（非 200）：
 
 创建会话并返回。目标目录来自 `workspace_id`（已注册的工作区）或 `metadata.cwd`（首次使用时注册该工作区）；两者同时提供时必须一致。
 
-**触发事件**：`event.session.created`；触碰工作区另触发 `event.workspace.updated`（首次经 `metadata.cwd` 注册时为 `event.workspace.created`）
+**触发事件**：[`event.session.created`](#event-session-created-s→c)；触碰工作区另触发 [`event.workspace.updated`](#event-workspace-updated-s→c)（首次经 `metadata.cwd` 注册时为 [`event.workspace.created`](#event-workspace-created-s→c)）
 
 **请求体**：
 
@@ -1373,7 +1373,7 @@ HTTP 状态码例外（非 200）：
 
 更新会话档案：标题、自定义元数据以及 main agent 的配置。设置的标题会成为自定义标题，优先级高于生成的标题。
 
-**触发事件**：`session.meta.updated`（设置标题时）、`goal.updated`（`goal_objective` / `goal_control` 变更目标时）
+**触发事件**：[`session.meta.updated`](#session-meta-updated-s→c)（设置标题时）、[`goal.updated`](#goal-updated-s→c)（`goal_objective` / `goal_control` 变更目标时）
 
 **请求体**：
 
@@ -1423,7 +1423,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 通过托管供应商的 `chat_title` 工具根据会话的提示词生成标题并应用。生成需要托管 OAuth 登录和 `auto_session_title` 实验开关；未提供 `force` 时，已有自定义标题或已生成标题的会话会上报为不可用。
 
-**触发事件**：`session.meta.updated`
+**触发事件**：[`session.meta.updated`](#session-meta-updated-s→c)
 
 **请求体**：
 
@@ -1455,7 +1455,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 会话动作经同一条路由分发：路径尾部解析为 `{session_id}:{action}`，请求体按动作的 schema 校验。每个动作都会先解析会话，因此会话未知时都可能返回 `40401`。
 
-**触发事件**：`:fork` → `event.session.created`；`:compact` → `compaction.started`（随后进入 compaction 事件流，见 [agent 事件](#agent-事件)）；`:undo` → `session.meta.updated`；`:btw` → `agent.created`；`:archive` → `event.session.archived`；`:abort` / `:restore` 无
+**触发事件**：`:fork` → [`event.session.created`](#event-session-created-s→c)；`:compact` → [`compaction.started`](#compaction-started-s→c)（随后进入 compaction 事件流，见 [agent 事件](#agent-事件帧)）；`:undo` → [`session.meta.updated`](#session-meta-updated-s→c)；`:btw` → [`agent.created`](#agent-created-s→c)；`:archive` → [`event.session.archived`](#event-session-archived-s→c)；`:abort` / `:restore` 无
 
 **响应体**：统一 `ResponseType` 信封，`data` 形态随动作（见下表）。
 
@@ -1527,7 +1527,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 创建子会话：fork 当前会话并记录为其子会话。适用与 `:fork` 相同的进行中轮次限制。
 
-**触发事件**：`event.session.created`
+**触发事件**：[`event.session.created`](#event-session-created-s→c)
 
 **请求体**：
 
@@ -1939,7 +1939,7 @@ main agent 的 Agent 循环运行在哪个运行时上的读取与切换。
 
 面向会话管理页的批量归档 / 恢复。仍在线的会话走完整生命周期；未加载的冷会话直接改写磁盘上的元数据，不会被加载。只有请求体校验失败才会让整个请求失败（`40001`）；其余情况按条返回。
 
-**触发事件**：`:archive` → `event.session.archived`（每个成功归档的会话一条）；`:restore` 无
+**触发事件**：`:archive` → [`event.session.archived`](#event-session-archived-s→c)（每个成功归档的会话一条）；`:restore` 无
 
 **请求体**：
 
@@ -2027,7 +2027,7 @@ main agent 的 Agent 循环运行在哪个运行时上的读取与切换。
 
 向会话提交一条用户提示词。先校验媒体引用，然后把可选的覆盖项应用到目标 Agent——`profile`（与 `model` / `thinking` 一起绑定），接着是 `model`、`thinking`、`permission_mode` 和 `disabled_tools`——随后提示词入队；响应在提示词被接受后立即返回，不等待轮次执行。提供 `skills` 时，提示词以打包的 Skill 激活方式运行，而不是普通用户提示词。
 
-**触发事件**：`prompt.submitted`（随后进入轮次事件流，见 [agent 事件](#agent-事件)）、`session.meta.updated`
+**触发事件**：[`prompt.submitted`](#prompt-submitted-s→c)（随后进入轮次事件流，见 [agent 事件](#agent-事件帧)）、[`session.meta.updated`](#session-meta-updated-s→c)
 
 **请求体**：
 
@@ -2088,7 +2088,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 把排队的提示词插入进行中的轮次，让运行中的轮次立即消费它们，而不是先运行结束。
 
-**触发事件**：`prompt.steered`
+**触发事件**：[`prompt.steered`](#prompt-steered-s→c)
 
 **请求体**：
 
@@ -2120,7 +2120,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 单条提示词动作，经 `POST .../prompts/{tail}` 分发：`:abort` 中止运行中的提示词；`:steer` 把单条排队的提示词插入进行中的轮次（集合形式的单提示词版）。无请求体。
 
-**触发事件**：`:abort` → `prompt.aborted`；`:steer` → `prompt.steered`
+**触发事件**：`:abort` → [`prompt.aborted`](#prompt-aborted-s→c)；`:steer` → [`prompt.steered`](#prompt-steered-s→c)
 
 **响应体**：统一 `ResponseType` 信封：`:abort` → `{ aborted: true }`；`:steer` → `{ steered: true, prompt_ids: [prompt_id] }`。
 
@@ -2281,7 +2281,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 答复一个待处理的审批请求，让等待中的工具调用继续执行（或不执行）。
 
-**触发事件**：`event.approval.resolved`
+**触发事件**：[`event.approval.resolved`](#event-approval-resolved-s→c)
 
 **请求体**：
 
@@ -2374,7 +2374,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 回答一个待处理的提问。两个提问端点经同一条路由 `POST .../questions/{tail}` 分发：单独的提问 id 表示回答问题，`{question_id}:dismiss` 尾部表示忽略。
 
-**触发事件**：`event.question.answered`
+**触发事件**：[`event.question.answered`](#event-question-answered-s→c)
 
 **请求体**：
 
@@ -2418,7 +2418,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 忽略一个待处理的提问，不作回答。无请求体。
 
-**触发事件**：`event.question.dismissed`
+**触发事件**：[`event.question.dismissed`](#event-question-dismissed-s→c)
 
 **响应体**：成功时 `ResponseType` 的 `code` 是 `40909` 而不是 `0`，`data` 为 `{ dismissed: true, dismissed_at: string }`——客户端必须特殊处理该端点的成功码。
 
@@ -2722,7 +2722,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 任务动作经 `POST .../tasks/{tail}` 分发：`:cancel` 取消运行中的任务；`:detach` 将运行中的前台任务转入后台而不终止它（等待该任务的工具调用立即以后台任务结果返回，轮次继续推进）。已在后台或已结束的任务上 `:detach` 为幂等空操作。无请求体。
 
-**触发事件**：`:cancel` → `task.terminated`（及派生的 `background.task.terminated`）；`:detach` 无
+**触发事件**：`:cancel` → [`task.terminated`](#task-terminated-s→c)（及派生的 [`background.task.terminated`](#background-task-terminated-s→c)）；`:detach` 无
 
 **响应体**：统一 `ResponseType` 信封：`:cancel` → `{ cancelled: true }`；`:detach` → `{ detached: boolean, status: string }`（本次确实转入后台时 `detached` 为 `true`，`status` 为调用后的任务状态）。
 
@@ -2970,7 +2970,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 在会话中激活技能——以技能内容加上 `args` 与附件在 main agent 上开启一个轮次。经 `POST .../skills/{tail}` 分发，`activate` 是唯一动作。
 
-**触发事件**：`skill.activated`（随后进入轮次事件流，见 [agent 事件](#agent-事件)）
+**触发事件**：[`skill.activated`](#skill-activated-s→c)（随后进入轮次事件流，见 [agent 事件](#agent-事件帧)）
 
 **请求体**：
 
@@ -3086,7 +3086,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 安装插件并返回其摘要。
 
-**触发事件**：`event.plugin.changed`
+**触发事件**：[`event.plugin.changed`](#event-plugin-changed-s→c)
 
 **请求体**：
 
@@ -3129,7 +3129,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 插件动作经单一路由分发：尾部按 `{plugin_id}:{action}` 解析，动作为 `enable`（启用）/ `disable`（停用但不移除）/ `remove`（移除）。无请求体。
 
-**触发事件**：`event.plugin.changed`
+**触发事件**：[`event.plugin.changed`](#event-plugin-changed-s→c)
 
 **响应体**：`ResponseType<{ ok: true }>`。
 
@@ -3228,7 +3228,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 在后台开始安装能力并立即返回当前状态（`install.running` 为 `true`）；轮询 `GET /api/v1/capabilities/{capability_id}` 查看进度。幂等。经 `POST /api/v1/capabilities/{tail}` 分发，`install` 是唯一动作。无请求体。
 
-**触发事件**：`event.capability.changed`（安装进度，易失事件）
+**触发事件**：[`event.capability.changed`](#event-capability-changed-s→c)（安装进度，易失事件）
 
 **响应体**：`ResponseType<`[T-CapabilityStatus](#t-capabilitystatus)`>`。
 
