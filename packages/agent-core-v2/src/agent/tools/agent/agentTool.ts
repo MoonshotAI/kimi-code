@@ -6,6 +6,8 @@ import {
   userCancellationReason,
 } from '#/_base/utils/abort';
 import { Error2, ErrorCodes, isError2 } from '#/errors';
+import { REPEAT_BREAKER_STOP_REASON } from '#/agent/toolDedupe/toolDedupe';
+import type { AgentTaskInfo } from '#/agent/task/types';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
 import {
@@ -336,7 +338,11 @@ export class SubagentTool implements ISubagentTool {
       thinkingEffort: this.agentLifecycle.handleOf(agentId)
         ?.accessor.get(IAgentProfileService)
         .getEffectiveThinkingLevel(),
-      completion: mirrored.then((r) => ({ result: r.summary, usage: r.usage })),
+      completion: mirrored.then((r) => ({
+        result: r.summary,
+        usage: r.usage,
+        stopReason: r.stopReason,
+      })),
     };
   }
 
@@ -494,9 +500,10 @@ export class SubagentTool implements ISubagentTool {
     timeoutMs: number,
   ): Promise<ExecutableToolResult> {
     const info = this.tasks.getTask(taskId);
+    const stopCode = info?.kind === 'agent' ? info.stopCode : undefined;
     if (info?.status === 'completed') {
       return {
-        output: formatForegroundAgentSuccess(handle, await this.tasks.readOutput(taskId)),
+        output: formatForegroundAgentSuccess(handle, await this.tasks.readOutput(taskId), stopCode),
       };
     }
     const timedOut = info?.status === 'timed_out';
@@ -504,10 +511,85 @@ export class SubagentTool implements ISubagentTool {
       ? `Agent timed out after ${formatSubagentTimeoutDescription(timeoutMs)}.`
       : formatSubagentStoppedMessage(info?.stopReason);
     return {
-      output: formatForegroundAgentFailure(handle, message, timedOut),
+      output: formatForegroundAgentFailure(handle, message, failureStopReason(info, stopCode)),
       isError: true,
     };
   }
+}
+
+type SubagentStopReason =
+  | 'completed'
+  | 'repeat_breaker'
+  | 'max_tokens'
+  | 'max_steps'
+  | 'filtered'
+  | 'provider_error'
+  | 'no_final_message'
+  | 'cancelled'
+  | 'stopped'
+  | 'timed_out'
+  | 'error';
+
+const REASON_MAX_CHARS = 2000;
+
+const REPEAT_BREAKER_NOTICE =
+  'notice: The subagent was stopped by the repeat breaker after issuing the same tool call repeatedly. The summary below is its handoff, not a finished result.';
+
+function resumeHint(agentId: string, prompt: string): string {
+  return `resume_hint: Continue with Agent(resume="${agentId}", prompt="${prompt}"). Use agent_id only; do not set subagent_type. The subagent retains its prior context; redo any unfinished tool call if its result was lost.`;
+}
+
+const RESUME_NEXT_STEP =
+  'next_step: Resume to continue where it stopped, or take over the task yourself; if neither works, report the failure to the user.';
+
+const NEXT_STEP_BY_REASON: Readonly<Record<SubagentStopReason, string | undefined>> = {
+  completed: undefined,
+  repeat_breaker:
+    'next_step: The subagent was stuck on one tool call. If you resume it, change the instructions or supply the missing input; otherwise continue the work yourself.',
+  cancelled: 'next_step: The user stopped this subagent. Do not restart it unless the user asks.',
+  filtered:
+    'next_step: Resuming is unlikely to help; rephrase or split the task before trying again.',
+  max_tokens: RESUME_NEXT_STEP,
+  max_steps: RESUME_NEXT_STEP,
+  provider_error: RESUME_NEXT_STEP,
+  no_final_message: RESUME_NEXT_STEP,
+  stopped: RESUME_NEXT_STEP,
+  timed_out: RESUME_NEXT_STEP,
+  error: RESUME_NEXT_STEP,
+};
+
+const STOP_REASON_BY_CODE: Readonly<Record<string, SubagentStopReason>> = {
+  [REPEAT_BREAKER_STOP_REASON]: 'repeat_breaker',
+  [ErrorCodes.AGENT_MAX_TOKENS_EXCEEDED]: 'max_tokens',
+  [ErrorCodes.LOOP_MAX_STEPS_EXCEEDED]: 'max_steps',
+  [ErrorCodes.PROVIDER_FILTERED]: 'filtered',
+  [ErrorCodes.PROVIDER_RATE_LIMIT]: 'provider_error',
+  [ErrorCodes.PROVIDER_API_ERROR]: 'provider_error',
+  [ErrorCodes.PROVIDER_OVERLOADED]: 'provider_error',
+  [ErrorCodes.PROVIDER_CONNECTION_ERROR]: 'provider_error',
+  [ErrorCodes.PROVIDER_AUTH_ERROR]: 'provider_error',
+  [ErrorCodes.AGENT_NO_FINAL_MESSAGE]: 'no_final_message',
+};
+
+function nextStep(reason: SubagentStopReason): string | undefined {
+  return NEXT_STEP_BY_REASON[reason];
+}
+
+function failureStopReason(
+  info: AgentTaskInfo | undefined,
+  stopCode: string | undefined,
+): SubagentStopReason {
+  if (info?.status === 'timed_out') return 'timed_out';
+  if (info?.status === 'killed') {
+    return info.stopReason?.trim() === userCancellationReason().message ? 'cancelled' : 'stopped';
+  }
+  if (stopCode === undefined) return 'error';
+  return STOP_REASON_BY_CODE[stopCode] ?? 'error';
+}
+
+function truncateReason(reason: string): string {
+  if (reason.length <= REASON_MAX_CHARS) return reason;
+  return `${reason.slice(0, REASON_MAX_CHARS)}… [truncated]`;
 }
 
 registerAgentToolService(ISubagentTool, SubagentTool, {
@@ -584,34 +666,42 @@ function formatBackgroundAgentResult(
   ].join('\n');
 }
 
-function formatForegroundAgentSuccess(handle: SubagentHandle, result: string): string {
-  return [
+function formatForegroundAgentSuccess(
+  handle: SubagentHandle,
+  result: string,
+  stopCode: string | undefined,
+): string {
+  const reason: SubagentStopReason =
+    stopCode === REPEAT_BREAKER_STOP_REASON ? 'repeat_breaker' : 'completed';
+  const lines = [
     `agent_id: ${handle.agentId}`,
     `actual_subagent_type: ${handle.profileName}`,
     'status: completed',
-    '',
-    '[summary]',
-    result,
-  ].join('\n');
+    `stop_reason: ${reason}`,
+  ];
+  if (reason === 'repeat_breaker') lines.push(REPEAT_BREAKER_NOTICE);
+  lines.push('', '[summary]', result, '', resumeHint(handle.agentId, '...'));
+  const next = nextStep(reason);
+  if (next !== undefined) lines.push(next);
+  return lines.join('\n');
 }
 
 function formatForegroundAgentFailure(
   handle: SubagentHandle,
   message: string,
-  timedOut: boolean,
+  reason: SubagentStopReason,
 ): string {
   const lines = [
     `agent_id: ${handle.agentId}`,
     `actual_subagent_type: ${handle.profileName}`,
     'status: failed',
+    `stop_reason: ${reason}`,
     '',
     `subagent error: ${message}`,
   ];
-  if (timedOut) {
-    lines.push(
-      `resume_hint: Continue with Agent(resume="${handle.agentId}", prompt="continue"). Use agent_id only; do not set subagent_type. The subagent retains its prior context; redo any unfinished tool call if its result was lost.`,
-    );
-  }
+  if (reason !== 'cancelled') lines.push(resumeHint(handle.agentId, 'continue'));
+  const next = nextStep(reason);
+  if (next !== undefined) lines.push(next);
   return lines.join('\n');
 }
 
@@ -625,7 +715,7 @@ function formatSubagentStoppedMessage(reason: string | undefined): string {
   const normalized = reason?.trim();
   if (normalized === userCancellationReason().message) return USER_INTERRUPTED_SUBAGENT_MESSAGE;
   if (normalized === undefined || normalized.length === 0) return SUBAGENT_STOPPED_MESSAGE;
-  return `${SUBAGENT_STOPPED_MESSAGE} Reason: ${normalized}`;
+  return `${SUBAGENT_STOPPED_MESSAGE} Reason: ${truncateReason(normalized)}`;
 }
 
 function errorMessage(error: unknown): string | undefined {

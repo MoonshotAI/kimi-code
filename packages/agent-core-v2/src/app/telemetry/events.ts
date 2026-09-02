@@ -10,6 +10,12 @@ export interface AgentTelemetryEventContext {
   agent_id: string;
 }
 
+export interface WirePlanRevisionMigratedEvent {
+  record_type: 'plan.revision';
+  legacy_field: 'path';
+  migration_outcome: 'migrated' | 'skipped';
+}
+
 export const agentTelemetryContextProperties: {
   readonly [K in keyof AgentTelemetryEventContext]-?: string;
 } = {
@@ -354,6 +360,11 @@ export interface ToolCallTurnRepeatEvent {
   trace_id?: string;
 }
 
+export interface ToolCallRepeatHandoffEvent {
+  turn_id?: number;
+  outcome: 'text' | 'vetoed';
+}
+
 export interface AgentsMdReminderShownEvent {
   turn_id: number;
   tool_name: string;
@@ -571,6 +582,15 @@ export interface WorkspaceTrustReadFailedEvent {
 }
 
 export const telemetryEventDefinitions = {
+  wire_plan_revision_migrated: defineAgentTelemetryEvent<WirePlanRevisionMigratedEvent>({
+    owner: 'kimi-code',
+    comment: 'A legacy plan revision wire record is normalized during restore.',
+    properties: {
+      record_type: 'Wire record type',
+      legacy_field: 'Legacy field name',
+      migration_outcome: 'Migration outcome',
+    },
+  }),
   turn_started: defineAgentTelemetryEvent<TurnStartedEvent>({
     owner: 'kimi-code',
     comment: 'A turn starts running.',
@@ -982,6 +1002,14 @@ export const telemetryEventDefinitions = {
       args_hash: 'Hash of the tool call arguments',
       trace_id:
         'Trace id of the LLM request that produced the repeated tool call; absent for non-Kimi protocols',
+    },
+  }),
+  tool_call_repeat_handoff: defineAgentTelemetryEvent<ToolCallRepeatHandoffEvent>({
+    owner: 'kimi-code',
+    comment: 'The text-only handoff step that follows a repeat-breaker force stop finished.',
+    properties: {
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session; omitted when no turn is active',
+      outcome: 'Whether the model answered in text or its tool calls were vetoed',
     },
   }),
   agents_md_reminder_shown: defineAgentTelemetryEvent<AgentsMdReminderShownEvent>({

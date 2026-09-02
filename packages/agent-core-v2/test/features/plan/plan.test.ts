@@ -265,9 +265,8 @@ describe('Plan service', () => {
         .map((event) => event.args as Record<string, unknown>);
     }
 
-    function revisionPath(id: string, version: number): string {
-      const agent = ctx.get(IAgentScopeContext);
-      return `${agent.scope()}/plan/${id}/v${version}.md`;
+    function revisionKey(id: string, version: number): string {
+      return `plan/${id}/v${version}.md`;
     }
 
     async function readRevisionBlob(id: string, version: number): Promise<string | undefined> {
@@ -299,7 +298,7 @@ describe('Plan service', () => {
           agentId: 'main',
           id: 'rev-plan',
           version: 1,
-          path: revisionPath('rev-plan', 1),
+          key: revisionKey('rev-plan', 1),
           sha256: createHash('sha256').update(content, 'utf8').digest('hex'),
           bytes: Buffer.byteLength(content),
           time: expect.any(Number),
@@ -336,7 +335,7 @@ describe('Plan service', () => {
         type: 'plan.revision',
         id: 'rev-plan',
         version: 1,
-        path: revisionPath('rev-plan', 1),
+        key: revisionKey('rev-plan', 1),
         sha256: 'restored-sha',
         bytes: 5,
       });

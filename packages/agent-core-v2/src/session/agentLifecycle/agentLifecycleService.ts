@@ -43,6 +43,7 @@ import { IWireService } from '#/wire/wire';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { bindTelemetryScope } from '#/app/telemetry/telemetryService';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 
 import { ManagedAgent } from './managedAgent';
@@ -142,6 +143,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     let stage = 'scope';
     let containerRef: InstantiationService | undefined;
     let createdHandle: IAgentScopeHandle | undefined;
+    const telemetryBinding = bindTelemetryScope(this.telemetry, {
+      agent_id: agentId,
+      mode: 'agent',
+    });
     try {
       const handle = createScopedChildHandle(
         this.instantiation,
@@ -150,13 +155,17 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         {
           seeds: [
             [IAgentScopeContext, scopeContext],
-            [ITelemetryService, this.telemetry.withContext({ agent_id: agentId })],
+            [ITelemetryService, telemetryBinding.telemetry],
             [IAgentRuntimeBindingSeed, {
               _serviceBrand: undefined,
               binding: { workspaceId: this.ctx.workspaceId, runtimeId: opts.runtimeId ?? 'local' },
             }],
           ],
           configureContainer: (container) => {
+            container.anchorKernelEntry(
+              () => telemetryBinding.dispose(),
+              'telemetry:agent-context',
+            );
             container.anchorKernelFinalizer(() => {
               eventBus?.deactivateAgent(agent);
             }, 'agent-event-bus-deactivate');
@@ -209,10 +218,13 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         try {
           await managed.handle.dispose();
         } catch { }
-      } else if (createdHandle !== undefined) {
-        try {
-          await createdHandle.dispose();
-        } catch { }
+      } else {
+        if (createdHandle !== undefined) {
+          try {
+            await createdHandle.dispose();
+          } catch { }
+        }
+        telemetryBinding.dispose();
       }
       if (!finalizerArmed) eventBus?.deactivateAgent(agent);
       if (didCreate) this.onDidCloseEmitter.fire(agent);

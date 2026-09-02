@@ -1219,7 +1219,7 @@ export class AgentTestContext {
     const workspaceId = 'test-workspace';
     const agentTelemetry = this.root.accessor
       .get(ITelemetryService)
-      .withContext({ agent_id: agentId });
+      .withContext({ agent_id: agentId, mode: 'agent' });
     const sessionScope = `${bootstrap.scope('sessions')}/${workspaceId}/${sessionId}`;
     this.session = this.root.createChild(LifecycleScope.Session, sessionId, {
       seeds: collectScopeSeed(

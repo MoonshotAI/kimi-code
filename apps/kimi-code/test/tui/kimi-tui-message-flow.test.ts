@@ -2613,6 +2613,9 @@ command = "vim"
     expect(driver.state.appState).toMatchObject({
       permissionMode: 'yolo',
     });
+    expect(stripSgr(renderTranscript(driver))).toContain(
+      'In this mode, Kimi Code can modify or delete files without your confirmation',
+    );
     expect(harness.track).toHaveBeenCalledWith('input_command', { command: 'ask-when-needed' });
     expect(harness.track).not.toHaveBeenCalledWith('yolo_toggle', expect.anything());
   });
@@ -2856,6 +2859,9 @@ command = "vim"
     expect(transcript).not.toContain('hello');
     expect(transcript).not.toContain('Cannot undo 10 prompts');
     expect(transcript).toContain('Never Ask mode: ON');
+    expect(transcript).toContain(
+      'In this mode, Kimi Code can modify or delete files without your confirmation',
+    );
     expect(driver.state.appState.permissionMode).toBe('auto');
   });
 

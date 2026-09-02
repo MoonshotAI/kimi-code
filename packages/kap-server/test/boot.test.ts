@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Writable } from 'node:stream';
 
 import { pino } from 'pino';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -224,7 +225,7 @@ describe('server-v2 boot', () => {
       ],
     });
     const core = server.core;
-    core.accessor.get(ITelemetryService).track('server_probe');
+    core.accessor.get(ITelemetryService).track2('session_ended', { reason: 'exit' });
 
     await server.close();
     server = undefined;
@@ -233,26 +234,56 @@ describe('server-v2 boot', () => {
     expect(await listLiveServerInstances(home)).toEqual([]);
   });
 
-  it('installs process-level rejection handlers while running and removes them on close', async () => {
+  it('logs process-level exceptions without exiting and removes the handlers on close', async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-'));
-    const rejectionBefore = process.listenerCount('unhandledRejection');
-    const exceptionBefore = process.listenerCount('uncaughtException');
+    const lines: string[] = [];
+    const stream = new Writable({
+      write(chunk, _encoding, callback) {
+        lines.push(String(chunk));
+        callback();
+      },
+    });
+    const rejectionBefore = process.listeners('unhandledRejection');
+    const exceptionBefore = process.listeners('uncaughtException');
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
-      logLevel: 'silent',
+      logger: pino({ level: 'error' }, stream),
     });
 
-    expect(process.listenerCount('unhandledRejection')).toBe(rejectionBefore + 1);
-    expect(process.listenerCount('uncaughtException')).toBe(exceptionBefore + 1);
+    expect(process.listenerCount('unhandledRejection')).toBe(rejectionBefore.length + 1);
+    expect(process.listenerCount('uncaughtException')).toBe(exceptionBefore.length + 1);
+
+    const onUncaughtException = process
+      .listeners('uncaughtException')
+      .find((listener) => !exceptionBefore.includes(listener)) as
+      | ((error: Error) => void)
+      | undefined;
+    const onUnhandledRejection = process
+      .listeners('unhandledRejection')
+      .find((listener) => !rejectionBefore.includes(listener)) as
+      | ((reason: unknown) => void)
+      | undefined;
+    expect(onUncaughtException).toBeDefined();
+    expect(onUnhandledRejection).toBeDefined();
+
+    onUncaughtException?.(new Error('synthetic uncaught'));
+    onUnhandledRejection?.(new Error('synthetic rejection'));
+
+    const output = lines.join('');
+    expect(output).toContain('"msg":"uncaughtException"');
+    expect(output).toContain('"msg":"unhandledRejection"');
+
+    const healthz = await fetch(`http://127.0.0.1:${server.port}/api/v1/healthz`);
+    expect(healthz.status).toBe(200);
 
     await server.close();
     server = undefined;
 
-    expect(process.listenerCount('unhandledRejection')).toBe(rejectionBefore);
-    expect(process.listenerCount('uncaughtException')).toBe(exceptionBefore);
+    expect(process.listenerCount('unhandledRejection')).toBe(rejectionBefore.length);
+    expect(process.listenerCount('uncaughtException')).toBe(exceptionBefore.length);
   });
 
   it('does not leave process handlers installed when startup fails', async () => {

@@ -1384,14 +1384,16 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('projects plan.revision as a marker and refines the active plan badge', () => {
-    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID, {
+      resolvePlanRevisionKey: (key) => `sessions/w/s/agents/main/${key}`,
+    });
     const tx = new AgentTranscript('main');
 
     const revision = {
       type: 'plan.revision',
       id: 'plan-1',
       version: 1,
-      path: 'agents/main/plan/plan-1/v1.md',
+      key: 'plan/plan-1/v1.md',
       sha256: 'deadbeef',
       bytes: 128,
     };
@@ -1402,10 +1404,10 @@ describe('AgentTranscriptProjector', () => {
     tx.apply(projector.map(ev({ type: 'agent.status.updated', planMode: true })));
     expect(tx.getMeta().modes).toEqual({ plan: {} });
     tx.apply(
-      projector.map(ev({ ...revision, version: 2, path: 'agents/main/plan/plan-1/v2.md' })),
+      projector.map(ev({ ...revision, version: 2, key: 'plan/plan-1/v2.md' })),
     );
     expect(tx.getMeta().modes).toEqual({
-      plan: { reviewPath: 'agents/main/plan/plan-1/v2.md', version: 2 },
+      plan: { reviewPath: 'sessions/w/s/agents/main/plan/plan-1/v2.md', version: 2 },
     });
 
     const markers = tx
@@ -1419,7 +1421,7 @@ describe('AgentTranscriptProjector', () => {
       payload: {
         id: 'plan-1',
         version: 2,
-        path: 'agents/main/plan/plan-1/v2.md',
+        path: 'sessions/w/s/agents/main/plan/plan-1/v2.md',
         sha256: 'deadbeef',
         bytes: 128,
       },

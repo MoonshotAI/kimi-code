@@ -59,7 +59,7 @@ export interface PlanRevisionRecordedEvent {
   readonly agentId: string;
   readonly id: string;
   readonly version: number;
-  readonly path: string;
+  readonly key: string;
   readonly sha256: string;
   readonly bytes: number;
 }
@@ -68,7 +68,7 @@ const planRevisionSchema = z.object({
   agentId: z.string(),
   id: z.string(),
   version: z.number(),
-  path: z.string(),
+  key: z.string(),
   sha256: z.string(),
   bytes: z.number(),
 });

@@ -118,9 +118,10 @@ describe('FlagService', () => {
     expect(state?.configValue).toBe(false);
   });
 
-  it('lets per-feature env override config', async () => {
+  it('lets per-feature env override config and the master env', async () => {
     const { config, flags } = makeFlags({
       KIMI_CODE_EXPERIMENTAL_EXAMPLE_FLAG: 'true',
+      [MASTER_ENV]: '1',
     });
     await config.set(EXPERIMENTAL_SECTION, { example_flag: false });
     const state = flags.explain('example_flag');
@@ -129,12 +130,39 @@ describe('FlagService', () => {
     expect(state?.configValue).toBe(false);
   });
 
-  it('lets the master env switch force every flag on', async () => {
+  it('lets per-feature env force a flag off against config and the master env', async () => {
+    const { config, flags } = makeFlags({
+      KIMI_CODE_EXPERIMENTAL_EXAMPLE_FLAG: 'false',
+      [MASTER_ENV]: '1',
+    });
+    await config.set(EXPERIMENTAL_SECTION, { example_flag: true });
+    const state = flags.explain('example_flag');
+    expect(state?.enabled).toBe(false);
+    expect(state?.source).toBe('env');
+    expect(state?.configValue).toBe(true);
+  });
+
+  it('lets config override the master env', async () => {
     const { config, flags } = makeFlags({ [MASTER_ENV]: '1' });
     await config.set(EXPERIMENTAL_SECTION, { example_flag: false });
     const state = flags.explain('example_flag');
+    expect(state?.enabled).toBe(false);
+    expect(state?.source).toBe('config');
+    expect(state?.configValue).toBe(false);
+  });
+
+  it('lets the master env switch turn flags on when nothing else is set', () => {
+    const { flags } = makeFlags({ [MASTER_ENV]: '1' });
+    const state = flags.explain('example_flag');
     expect(state?.enabled).toBe(true);
     expect(state?.source).toBe('master-env');
+  });
+
+  it('treats a falsy master env as unset', () => {
+    const { flags } = makeFlags({ [MASTER_ENV]: '0' });
+    const state = flags.explain('example_flag');
+    expect(state?.enabled).toBe(true);
+    expect(state?.source).toBe('default');
   });
 
   it('refreshes overrides when the experimental config section changes', async () => {

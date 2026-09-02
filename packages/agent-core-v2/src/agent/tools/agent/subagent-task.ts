@@ -2,15 +2,21 @@ import type { TokenUsage } from '#/kosong/contract/usage';
 import type { SubagentModelSource } from '#/session/subagent/configSection';
 
 import { isAbortError } from '#/_base/utils/abort';
+import { ErrorCodes, isError2 } from '#/errors';
+import { REPEAT_BREAKER_STOP_REASON } from '#/agent/toolDedupe/toolDedupe';
 import {
   type AgentTask,
   type AgentTaskInfoBase,
   type AgentTaskSink,
 } from '#/agent/task/types';
 
+const REPEAT_BREAKER_SETTLE_REASON =
+  'stopped by the repeat breaker after issuing the same tool call repeatedly; its output is a handoff, not a finished result';
+
 type SubagentCompletion = {
   readonly result: string;
   readonly usage?: TokenUsage;
+  readonly stopReason?: string;
 };
 
 export type SubagentHandle = {
@@ -30,6 +36,7 @@ export interface SubagentTaskInfo extends AgentTaskInfoBase {
   readonly parentToolCallId?: string;
   readonly model?: string;
   readonly thinkingEffort?: string;
+  readonly stopCode?: string;
 }
 
 declare module '#/agent/task/types' {
@@ -40,6 +47,19 @@ declare module '#/agent/task/types' {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function stopCodeOf(error: unknown): string | undefined {
+  if (!isError2(error)) return undefined;
+  if (error.code === ErrorCodes.AGENT_NO_FINAL_MESSAGE) {
+    const stopReason = error.details?.['stopReason'];
+    if (typeof stopReason === 'string') return stopReason;
+  }
+  return error.code;
+}
+
+function completedSettleReason(stopReason: string | undefined): string | undefined {
+  return stopReason === REPEAT_BREAKER_STOP_REASON ? REPEAT_BREAKER_SETTLE_REASON : undefined;
 }
 
 export function createSubagentExecutor(
@@ -79,6 +99,7 @@ export class SubagentTask implements AgentTask {
   readonly parentToolCallId?: string;
   readonly model?: string;
   readonly thinkingEffort?: string;
+  private stopCode: string | undefined;
 
   constructor(
     private readonly handle: SubagentHandle,
@@ -104,13 +125,18 @@ export class SubagentTask implements AgentTask {
 
     try {
       const outcome = await this.handle.completion;
+      this.stopCode = outcome.stopReason;
       sink.appendOutput(outcome.result);
-      await sink.settle({ status: 'completed' });
+      await sink.settle({
+        status: 'completed',
+        stopReason: completedSettleReason(outcome.stopReason),
+      });
     } catch (error: unknown) {
       if (sink.signal.aborted && (isAbortError(error) || error === sink.signal.reason)) {
         await sink.settle({ status: 'killed' });
         return;
       }
+      this.stopCode = stopCodeOf(error);
       await sink.settle({ status: 'failed', stopReason: errorMessage(error) });
     } finally {
       sink.signal.removeEventListener('abort', requestAbort);
@@ -126,6 +152,7 @@ export class SubagentTask implements AgentTask {
       parentToolCallId: this.parentToolCallId,
       model: this.model,
       thinkingEffort: this.thinkingEffort,
+      stopCode: this.stopCode,
     };
   }
 }

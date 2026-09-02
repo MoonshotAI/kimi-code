@@ -1,4 +1,6 @@
 import type { ContentPart } from '#/kosong/contract/message';
+import type { ImageCompressEvent, ImageCropEvent } from '#/app/telemetry/events';
+import type { ITelemetryService } from '#/app/telemetry/telemetry';
 
 import { sniffImageDimensions } from './file-type';
 import {
@@ -60,19 +62,8 @@ export interface CompressImageOptions {
   readonly maxEdge?: number;
   readonly byteBudget?: number;
   readonly maxDecodeBytes?: number;
-  readonly telemetry?: ImageCompressionTelemetry;
-}
-
-export interface ImageCompressionTelemetryClient {
-  track(
-    event: string,
-    properties?: Readonly<Record<string, string | number | boolean | null | undefined>>,
-  ): void;
-}
-
-export interface ImageCompressionTelemetry {
-  readonly client: ImageCompressionTelemetryClient;
-  readonly source: string;
+  readonly telemetry?: ITelemetryService;
+  readonly telemetrySource?: string;
 }
 
 type CompressOutcome =
@@ -119,7 +110,7 @@ export async function compressImageForModel(
     finalByteLength: bytes.length,
   });
   const finish = (outcome: CompressOutcome, result: CompressImageResult): CompressImageResult => {
-    reportCompressEvent(options.telemetry, {
+    reportCompressEvent(options.telemetry, options.telemetrySource, {
       outcome,
       startedAt,
       inputMime: normalizedMime,
@@ -215,7 +206,7 @@ export async function compressBase64ForModel(
       originalByteLength: approxBytes,
       finalByteLength: approxBytes,
     };
-    reportCompressEvent(options.telemetry, {
+    reportCompressEvent(options.telemetry, options.telemetrySource, {
       outcome: 'passthrough_guard',
       startedAt,
       inputMime: normalizeImageMime(mimeType),
@@ -239,7 +230,7 @@ export async function compressBase64ForModel(
       originalByteLength: 0,
       finalByteLength: 0,
     };
-    reportCompressEvent(options.telemetry, {
+    reportCompressEvent(options.telemetry, options.telemetrySource, {
       outcome: 'passthrough_error',
       startedAt,
       inputMime: normalizeImageMime(mimeType),
@@ -425,11 +416,11 @@ export async function cropImageForModel(
   const normalizedMime = normalizeImageMime(mimeType);
 
   const fail = (errorKind: CropErrorKind, error: string): CropImageFailure => {
-    reportCropEvent(options.telemetry, { startedAt, ok: false, errorKind });
+    reportCropEvent(options.telemetry, options.telemetrySource, { startedAt, ok: false, errorKind });
     return { ok: false, error };
   };
   const succeed = (result: CropImageSuccess): CropImageSuccess => {
-    reportCropEvent(options.telemetry, { startedAt, ok: true, result });
+    reportCropEvent(options.telemetry, options.telemetrySource, { startedAt, ok: true, result });
     return result;
   };
 
@@ -719,7 +710,8 @@ interface CompressEventResult {
 }
 
 function reportCompressEvent(
-  telemetry: ImageCompressionTelemetry | undefined,
+  telemetry: ITelemetryService | undefined,
+  source: string | undefined,
   input: {
     readonly outcome: CompressOutcome;
     readonly startedAt: number;
@@ -728,10 +720,10 @@ function reportCompressEvent(
     readonly result: CompressEventResult;
   },
 ): void {
-  if (telemetry === undefined) return;
+  if (telemetry === undefined || source === undefined) return;
   try {
-    telemetry.client.track('image_compress', {
-      source: telemetry.source,
+    const event: ImageCompressEvent = {
+      source,
       outcome: input.outcome,
       input_mime: input.inputMime,
       output_mime: normalizeImageMime(input.result.mimeType),
@@ -743,13 +735,15 @@ function reportCompressEvent(
       final_height: input.result.height,
       exif_transposed: input.exifTransposed,
       duration_ms: Date.now() - input.startedAt,
-    });
+    };
+    telemetry.track2('image_compress', event);
   } catch {
   }
 }
 
 function reportCropEvent(
-  telemetry: ImageCompressionTelemetry | undefined,
+  telemetry: ITelemetryService | undefined,
+  source: string | undefined,
   input: {
     readonly startedAt: number;
     readonly ok: boolean;
@@ -757,13 +751,13 @@ function reportCropEvent(
     readonly result?: CropImageSuccess;
   },
 ): void {
-  if (telemetry === undefined) return;
+  if (telemetry === undefined || source === undefined) return;
   try {
     const { result } = input;
     const originalPixels =
       result === undefined ? 0 : result.originalWidth * result.originalHeight;
-    telemetry.client.track('image_crop', {
-      source: telemetry.source,
+    const event: ImageCropEvent = {
+      source,
       ok: input.ok,
       error_kind: input.errorKind,
       resized: result?.resized,
@@ -775,7 +769,8 @@ function reportCropEvent(
           : (result.region.width * result.region.height) / originalPixels,
       final_bytes: result?.finalByteLength,
       duration_ms: Date.now() - input.startedAt,
-    });
+    };
+    telemetry.track2('image_crop', event);
   } catch {
   }
 }
