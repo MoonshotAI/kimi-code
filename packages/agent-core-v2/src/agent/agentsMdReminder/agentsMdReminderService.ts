@@ -11,8 +11,6 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { HostFsChange } from '#/os/interface/hostFsWatch';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentLoopService } from '#/agent/loop/loop';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { normalizeUserPath } from '#/tool/path-access';
@@ -28,6 +26,10 @@ import {
 import { profileKey } from '#/agent/profile/profileOps';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
+import type {
+  ContextInjectionContext,
+  ContextInjectionResult,
+} from '#/features/reminder/types';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
@@ -61,11 +63,12 @@ export class AgentAgentsMdReminderService
 {
   declare readonly _serviceBrand: undefined;
 
+  private readonly remindQueue = new Set<string>();
+  private readonly telemetryFired = new Set<string>();
+
   constructor(
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IAgentReminderService private readonly reminder: IAgentReminderService,
-    @IAgentContextMemoryService private readonly contextMemory: IAgentContextMemoryService,
-    @IAgentLoopService loop: IAgentLoopService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
     @ISessionContext private readonly sessionContext: ISessionContext,
@@ -81,14 +84,13 @@ export class AgentAgentsMdReminderService
     this.states.contributeState(agentsMdReminderCwdKey);
     this.states.contributeState(agentsMdReminderSeededKey);
     this._register(
-      this.instructions.onDidChange((changes) => {
-        this.announceChanged(changes);
-      }),
+      this.reminder.register<readonly string[]>(DISCOVERY_REMINDER_VARIANT, (context) =>
+        this.injectReminder(context),
+      ),
     );
     this._register(
-      loop.hooks.onWillBeginStep.register('agentsMdReminder', async (_ctx, next) => {
-        this.claimed.clear();
-        await next();
+      this.instructions.onDidChange((changes) => {
+        this.announceChanged(changes);
       }),
     );
     this._register(
@@ -111,6 +113,7 @@ export class AgentAgentsMdReminderService
     const known = new Set(this.known);
     for (const path of paths) known.add(normalize(path));
     this.states.set(agentsMdReminderKnownKey, known);
+    for (const path of paths) this.remindQueue.delete(normalize(path));
     this.states.set(agentsMdReminderCwdKey, cwd);
     this.states.set(agentsMdReminderSeededKey, true);
   }
@@ -135,8 +138,6 @@ export class AgentAgentsMdReminderService
     );
   }
 
-  private readonly claimed = new Set<string>();
-
   private get known(): Set<string> {
     return this.states.get(agentsMdReminderKnownKey);
   }
@@ -145,18 +146,17 @@ export class AgentAgentsMdReminderService
     return this.states.get(agentsMdReminderCwdKey) ?? this.sessionContext.cwd;
   }
 
-  private inContextCoverage(): Set<string> {
-    const covered = new Set<string>();
-    for (const message of this.contextMemory.get()) {
-      if (message.origin?.kind !== 'injection') continue;
-      if (message.origin.variant !== DISCOVERY_REMINDER_VARIANT) continue;
-      const disclosure = message.origin.disclosure;
-      if (!Array.isArray(disclosure)) continue;
-      for (const path of disclosure) {
-        if (typeof path === 'string') covered.add(normalize(path));
-      }
-    }
-    return covered;
+  private injectReminder(
+    context: ContextInjectionContext<readonly string[]>,
+  ): ContextInjectionResult<readonly string[]> | undefined {
+    const known = this.known;
+    const queued = [...this.remindQueue].filter((path) => !known.has(path));
+    this.remindQueue.clear();
+    if (queued.length === 0) return undefined;
+    const covered = context.lastDisclosure ?? [];
+    const fresh = queued.filter((path) => !covered.includes(path));
+    if (fresh.length === 0) return undefined;
+    return { content: reminderText(fresh), disclosure: [...covered, ...fresh] };
   }
 
   private async ensureSeeded(): Promise<void> {
@@ -176,41 +176,34 @@ export class AgentAgentsMdReminderService
 
   private async probeAndRemind(ctx: ToolDidExecuteContext): Promise<void> {
     if (ctx.outcome !== 'executed') return;
-    const discovered: string[] = [];
-    let keepClaims = false;
     try {
       await this.ensureSeeded();
       const { dirs, selfKnown } = this.targetDirs(ctx);
       const selfKnownSet = new Set(selfKnown);
+      const discovered: string[] = [];
       for (const dir of dirs) {
         for (const path of await this.probeDir(dir)) {
-          if (this.known.has(path) || this.claimed.has(path) || selfKnownSet.has(path)) continue;
-          this.claimed.add(path);
+          if (this.known.has(path) || this.remindQueue.has(path) || selfKnownSet.has(path)) {
+            continue;
+          }
           discovered.push(path);
         }
       }
       this.markKnown(selfKnown);
       if (discovered.length === 0) return;
-      const covered = this.inContextCoverage();
-      const fresh = discovered.filter((path) => !covered.has(path));
-      if (fresh.length === 0) return;
-      const properties: AgentsMdReminderShownEvent = {
-        turn_id: ctx.turnId,
-        tool_name: ctx.toolCall.name,
-        reminded_count: fresh.length,
-        trace_id: ctx.trace?.traceId,
-      };
-      this.telemetry.track2('agents_md_reminder_shown', properties);
-      this.reminder.notify(reminderText(fresh), {
-        variant: DISCOVERY_REMINDER_VARIANT,
-        disclosure: fresh,
-      });
-      keepClaims = true;
-    } catch {} finally {
-      if (!keepClaims) {
-        for (const path of discovered) this.claimed.delete(path);
+      const untracked = discovered.filter((path) => !this.telemetryFired.has(path));
+      if (untracked.length > 0) {
+        const properties: AgentsMdReminderShownEvent = {
+          turn_id: ctx.turnId,
+          tool_name: ctx.toolCall.name,
+          reminded_count: untracked.length,
+          trace_id: ctx.trace?.traceId,
+        };
+        this.telemetry.track2('agents_md_reminder_shown', properties);
+        for (const path of untracked) this.telemetryFired.add(path);
       }
-    }
+      for (const path of discovered) this.remindQueue.add(path);
+    } catch {}
   }
 
   private markKnown(paths: readonly string[]): void {

@@ -958,7 +958,7 @@ export const telemetryEventDefinitions = {
   }),
   agents_md_reminder_shown: defineAgentTelemetryEvent<AgentsMdReminderShownEvent>({
     owner: 'kimi-code',
-    comment: 'An AGENTS.md discovery reminder is appended to the context after a tool call.',
+    comment: 'An AGENTS.md discovery reminder is queued for context injection after a tool call.',
     properties: {
       turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session',
       tool_name: 'Registered tool name whose execution discovered the file',

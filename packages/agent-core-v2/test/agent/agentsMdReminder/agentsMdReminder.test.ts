@@ -48,8 +48,6 @@ import { AgentToolDedupeService } from '#/agent/toolDedupe/toolDedupeService';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
-import { wrapSystemReminder } from '#/features/reminder/systemReminder';
-import type { ReminderNotification } from '#/features/reminder/types';
 import { createReminderHarness } from '../../features/reminder/stubs';
 import { OrderedHookSlot } from '#/hooks';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -163,20 +161,8 @@ function createHarness(
       reg.defineInstance(
         IAgentReminderService,
         Object.assign(reminderRuntime, {
-          notify: (content: string, notification: ReminderNotification) => {
-            const origin: PromptOrigin = {
-              kind: 'injection',
-              variant: notification.variant,
-              ownerPromptId: notification.ownerPromptId,
-              disclosure: notification.disclosure,
-            };
-            context.append({
-              role: 'user',
-              content: [{ type: 'text', text: wrapSystemReminder(content) }],
-              toolCalls: [],
-              origin,
-            });
-            reminders.push({ content, origin });
+          notify: (content: string, notification: { variant: string }) => {
+            reminders.push({ content, origin: { kind: 'injection', ...notification } });
           },
         }),
       );
@@ -996,7 +982,7 @@ describe('agentsMdReminder probing boundaries', () => {
     expect(agentsMdMessages(h)).toHaveLength(1);
   });
 
-  it('deduplicates staggered same-step completions while the first reminder is still deferred', async () => {
+  it('deduplicates staggered same-step completions that discover the same file', async () => {
     const h = createHarness();
     const subDir = join(workDir, 'packages', 'kap-server');
     const subAgentsMd = await writeAgentsMd(subDir);
@@ -1005,19 +991,31 @@ describe('agentsMdReminder probing boundaries', () => {
     await h.events.didExecuteSlot.run(
       didCtx('Read', { path: join(subDir, 'a.ts') }, { id: 'call-a' }),
     );
-    expect(agentsMdMessages(h)).toHaveLength(1);
-
-    h.context.clear();
-
     await h.events.didExecuteSlot.run(
       didCtx('Read', { path: join(subDir, 'b.ts') }, { id: 'call-b' }),
     );
-    expect(agentsMdMessages(h)).toHaveLength(0);
-    expect(h.telemetryEvents.filter((e) => e.event === 'agents_md_reminder_shown')).toHaveLength(1);
-
     await h.step();
-    await fire(h, didCtx('Read', { path: join(subDir, 'c.ts') }));
+
+    expect(agentsMdMessages(h)).toHaveLength(1);
     expect(reminderText(h)).toContain(subAgentsMd);
+    expect(h.telemetryEvents.filter((e) => e.event === 'agents_md_reminder_shown')).toHaveLength(1);
+  });
+
+  it('suppresses a queued reminder when a sibling call reads the file directly', async () => {
+    const h = createHarness();
+    const subDir = join(workDir, 'packages', 'kap-server');
+    const subAgentsMd = await writeAgentsMd(subDir);
+    h.reminder.seedInjected([], workDir);
+
+    await h.events.didExecuteSlot.run(
+      didCtx('Read', { path: join(subDir, 'a.ts') }, { id: 'call-a' }),
+    );
+    await h.events.didExecuteSlot.run(
+      didCtx('Read', { path: subAgentsMd }, { id: 'call-b' }),
+    );
+    await h.step();
+
+    expect(agentsMdMessages(h)).toHaveLength(0);
   });
 
   it('re-judges the project root at a nested repository', async () => {
