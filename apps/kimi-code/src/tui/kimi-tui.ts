@@ -1570,7 +1570,7 @@ export class KimiTUI {
     }
   }
 
-  private async persistInputHistory(text: string): Promise<void> {
+  async persistInputHistory(text: string): Promise<void> {
     const trimmed = text.trim();
     if (trimmed.length === 0) return;
     if (trimmed === this.lastHistoryContent) return;

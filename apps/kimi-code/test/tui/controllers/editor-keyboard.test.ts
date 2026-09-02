@@ -476,9 +476,11 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
     queued: Array<Record<string, unknown>>;
     engineV2?: boolean;
     skillCommandMap?: Map<string, string>;
+    model?: string;
   }) {
     const steerMessage = vi.fn();
     const steerSkillActivation = vi.fn();
+    const persistInputHistory = vi.fn();
     const updateQueueDisplay = vi.fn();
     const setText = vi.fn();
     const editor: Record<string, ((...args: never[]) => unknown) | undefined> = {
@@ -493,7 +495,7 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
         editor,
         activeDialog: null,
         queuedMessages: options.queued,
-        appState: { streamingPhase: 'waiting', isCompacting: false, model: 'k2' },
+        appState: { streamingPhase: 'waiting', isCompacting: false, model: options.model ?? 'k2' },
         footer: { setTransientHint: vi.fn() },
         ui: { requestRender: vi.fn() },
       },
@@ -502,8 +504,10 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
       skillCommandMap: options.skillCommandMap ?? new Map(),
       steerMessage,
       steerSkillActivation,
+      persistInputHistory,
       updateQueueDisplay,
       validateMediaCapabilities: vi.fn(() => true),
+      releaseStagingMedia: vi.fn(),
       showError: vi.fn(),
       track: vi.fn(),
       btwPanelController: {
@@ -513,7 +517,7 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
     } as unknown as EditorKeyboardHost;
     const controller = new EditorKeyboardController(
       host,
-      undefined as unknown as ImageAttachmentStore,
+      { get: vi.fn(() => undefined), retainFileIds: vi.fn() } as unknown as ImageAttachmentStore,
     );
     controller.install();
     const onCtrlS = editor['onCtrlS'];
@@ -524,10 +528,66 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
       setText,
       steerMessage,
       steerSkillActivation,
+      persistInputHistory,
       updateQueueDisplay,
       onCtrlS: onCtrlS as () => void,
     };
   }
+
+  it('persists a steered editor draft into input history', () => {
+    const { host, setText, steerMessage, persistInputHistory, onCtrlS } = createCtrlSHarness({
+      editorText: 'fresh steer',
+      queued: [],
+    });
+
+    onCtrlS();
+
+    expect(steerMessage).toHaveBeenCalledWith(host.session, [
+      { text: 'fresh steer', parts: undefined, imageAttachmentIds: undefined, stagingPaths: [] },
+    ]);
+    expect(persistInputHistory).toHaveBeenCalledWith('fresh steer');
+    expect(setText).toHaveBeenCalledWith('');
+  });
+
+  it('does not re-persist queued items — they were persisted at submit time', () => {
+    const { steerMessage, persistInputHistory, onCtrlS } = createCtrlSHarness({
+      editorText: '',
+      queued: [{ text: 'queued text', agentId: 'main' }],
+    });
+
+    onCtrlS();
+
+    expect(steerMessage).toHaveBeenCalled();
+    expect(persistInputHistory).not.toHaveBeenCalled();
+  });
+
+  it('does not persist the draft when steering is rejected and the draft stays', () => {
+    const { setText, steerMessage, persistInputHistory, onCtrlS } = createCtrlSHarness({
+      editorText: 'fresh steer',
+      queued: [],
+      model: '',
+    });
+
+    onCtrlS();
+
+    expect(steerMessage).not.toHaveBeenCalled();
+    expect(persistInputHistory).not.toHaveBeenCalled();
+    expect(setText).not.toHaveBeenCalled();
+  });
+
+  it('does not persist an inline-skill draft left in the editor for the grouped path', () => {
+    const { setText, persistInputHistory, onCtrlS } = createCtrlSHarness({
+      editorText: 'check /skill:review',
+      queued: [],
+      engineV2: true,
+      skillCommandMap: new Map([['skill:review', 'review']]),
+    });
+
+    onCtrlS();
+
+    expect(persistInputHistory).not.toHaveBeenCalled();
+    expect(setText).not.toHaveBeenCalled();
+  });
 
   it('steers text as a message, skill items as activations, and keeps bash queued', () => {
     const { host, steerMessage, steerSkillActivation, updateQueueDisplay, onCtrlS } =
