@@ -310,7 +310,7 @@ describe("models", () => {
     const entries = await fetchOktaModels(aliased, "tok");
     expect(entries[0]?.protocol).toBe("openai_responses");
     const sections = applyOktaProviderConfig({} as never, { gateway: aliased, models: entries });
-    expect(sections.providers["okta-openai_responses-one.example.internal"]?.type).toBe("openai_responses");
+    expect(sections.providers["okta-openai_responses"]?.type).toBe("openai_responses");
   });
 
   it("rejects a protocolAliases value that is not a supported protocol", async () => {
@@ -340,8 +340,8 @@ describe("models", () => {
     const entries = await fetchOktaModels(aliased, "tok");
     expect(entries.every((entry) => entry.protocol === "openai_responses")).toBe(true);
     const sections = applyOktaProviderConfig({} as never, { gateway: aliased, models: entries });
-    expect(sections.providers["okta-openai_responses-one.example.internal"]?.type).toBe("openai_responses");
-    expect(sections.models["okta-openai_responses-one.example.internal/deepseek-v4"]).toBeDefined();
+    expect(sections.providers["okta-openai_responses"]?.type).toBe("openai_responses");
+    expect(sections.models["okta-openai_responses/deepseek-v4"]).toBeDefined();
   });
 
   it("rejects unknown protocols and missing apiBase with the model named", async () => {
@@ -357,21 +357,23 @@ describe("models", () => {
 
   it("groups models by protocol and apiBase into provider sections", () => {
     const sections = applyOktaProviderConfig({} as never, { gateway, models: [openaiModel, anthropicModel] });
-    expect(Object.keys(sections.providers).sort()).toEqual(["okta-anthropic-two.example.internal", "okta-openai-one.example.internal"]);
-    expect(sections.providers["okta-openai-one.example.internal"]).toEqual({
+    expect(Object.keys(sections.providers).sort()).toEqual(["okta-anthropic", "okta-openai"]);
+    expect(sections.providers["okta-openai"]).toEqual({
       type: "openai",
       baseUrl: "https://one.example.internal/v1",
       apiKey: "",
     });
-    expect(sections.models["okta-openai-one.example.internal/gpt-5.4"]).toMatchObject({
-      provider: "okta-openai-one.example.internal",
+    expect(sections.models["okta-openai/gpt-5.4"]).toMatchObject({
+      provider: "okta-openai",
       model: "gpt-5.4",
       displayName: "GPT 5.4",
       maxContextSize: 200000,
+      protocol: "openai",
     });
-    expect(sections.models["okta-anthropic-two.example.internal/claude-x"]?.maxContextSize).toBe(128000);
-    expect(sections.providerNames).toContain("okta-openai-one.example.internal");
-    expect(sections.defaultModel).toBe("okta-openai-one.example.internal/gpt-5.4");
+    expect(sections.models["okta-anthropic/claude-x"]?.maxContextSize).toBe(128000);
+    expect(sections.models["okta-anthropic/claude-x"]?.protocol).toBe("anthropic");
+    expect(sections.providerNames).toContain("okta-openai");
+    expect(sections.defaultModel).toBe("okta-openai/gpt-5.4");
   });
 
   it("falls back to defaultContextLength when the entry omits contextLength", () => {
@@ -379,29 +381,29 @@ describe("models", () => {
       gateway,
       models: [{ ...openaiModel, contextLength: undefined }],
     });
-    expect(sections.models["okta-openai-one.example.internal/gpt-5.4"]?.maxContextSize).toBe(128000);
+    expect(sections.models["okta-openai/gpt-5.4"]?.maxContextSize).toBe(128000);
   });
 
   it("heals stale groups: removes our prefixed sections and aliases absent from the catalog", () => {
     const config = {
       providers: {
-        "okta-openai-one.example.internal": { type: "openai", baseUrl: "https://one.example.internal/v1", apiKey: "" },
+        "okta-openai": { type: "openai", baseUrl: "https://one.example.internal/v1", apiKey: "" },
         "okta-openai-gone.example.internal": { type: "openai", baseUrl: "https://gone.example.internal/v1", apiKey: "" },
         other: { type: "openai", baseUrl: "https://other.example", apiKey: "k" },
       },
       models: {
         "okta-openai-gone.example.internal/old": { provider: "okta-openai-gone.example.internal", model: "old", maxContextSize: 1 },
-        "okta-openai-one.example.internal/gpt-5.4": { provider: "okta-openai-one.example.internal", model: "gpt-5.4", maxContextSize: 1, overrides: { displayName: "Custom" } },
+        "okta-openai/gpt-5.4": { provider: "okta-openai", model: "gpt-5.4", maxContextSize: 1, overrides: { displayName: "Custom" } },
         "other/keep": { provider: "other", model: "keep", maxContextSize: 1 },
       },
       defaultModel: "other/keep",
     } as never;
     const sections = applyOktaProviderConfig(config, { gateway, models: [openaiModel] });
     expect(sections.providers["okta-openai-gone.example.internal"]).toBeUndefined();
-    expect(sections.providers["okta-openai-one.example.internal"]).toBeDefined();
+    expect(sections.providers["okta-openai"]).toBeDefined();
     expect(sections.providers["other"]).toBeDefined();
     expect(sections.models["okta-openai-gone.example.internal/old"]).toBeUndefined();
-    expect(sections.models["okta-openai-one.example.internal/gpt-5.4"]?.["overrides"]).toEqual({ displayName: "Custom" });
+    expect(sections.models["okta-openai/gpt-5.4"]?.["overrides"]).toEqual({ displayName: "Custom" });
     expect(sections.models["other/keep"]).toBeDefined();
     expect(sections.defaultModel).toBe("other/keep");
   });
@@ -411,15 +413,15 @@ describe("models", () => {
     const config = { providers: first.providers, models: first.models, defaultModel: first.defaultModel } as never;
     const second = applyOktaProviderConfig(config, { gateway, models: [openaiModel, anthropicModel] });
     expect([...second.providerNames].sort()).toEqual([...first.providerNames].sort());
-    expect(second.models["okta-openai-one.example.internal/gpt-5.4"]).toBeDefined();
+    expect(second.models["okta-openai/gpt-5.4"]).toBeDefined();
   });
 
   it("suffices same-host same-protocol groups differently", () => {
     const otherBase = { ...openaiModel, model: "gpt-5.4-mini", apiBase: "https://one.example.internal/v2" };
     const sections = applyOktaProviderConfig({} as never, { gateway, models: [openaiModel, otherBase] });
     expect([...sections.providerNames].sort()).toEqual([
-      "okta-openai-one.example.internal",
-      "okta-openai-one.example.internal-2",
+      "okta-openai",
+      "okta-openai-2",
     ].sort());
   });
 
@@ -455,7 +457,7 @@ describe("token store", () => {
   const session = {
     token: { accessToken: "at", refreshToken: "rt", expiresAt: Math.floor(Date.now() / 1000) + 3000, scope: "openid", tokenType: "Bearer", expiresIn: 3600 },
     accountLabel: "user@example.com",
-    providerNames: ["okta-openai-one.example.internal", "okta-anthropic-two.example.internal"],
+    providerNames: ["okta-openai", "okta-anthropic"],
   };
 
   it("persists to SecretStorage and pushes the access token to the engine", async () => {
@@ -470,9 +472,9 @@ describe("token store", () => {
     const { store, injector } = makeStore();
     await store.save({ ...session, providerNames: [] });
     expect(injector.inject).toHaveBeenLastCalledWith("at", []);
-    await store.updateProviderNames(["okta-openai-one.example.internal"]);
-    expect(injector.inject).toHaveBeenLastCalledWith("at", ["okta-openai-one.example.internal"]);
-    expect((await store.load())?.providerNames).toEqual(["okta-openai-one.example.internal"]);
+    await store.updateProviderNames(["okta-openai"]);
+    expect(injector.inject).toHaveBeenLastCalledWith("at", ["okta-openai"]);
+    expect((await store.load())?.providerNames).toEqual(["okta-openai"]);
   });
 
   it("clears both tiers on logout", async () => {
@@ -497,7 +499,7 @@ describe("activation restore", () => {
     const freshSession = {
       token: { accessToken: "at", refreshToken: "rt", expiresAt: Math.floor(Date.now() / 1000) + 3000, scope: "openid", tokenType: "Bearer", expiresIn: 3600 },
       accountLabel: "user@example.com",
-      providerNames: ["okta-openai-one.example.internal"],
+      providerNames: ["okta-openai"],
     };
     const secrets = new Map<string, string>([["kimi-code.okta", JSON.stringify(freshSession)]]);
     const injector: OktaEngineInjector = {
@@ -521,7 +523,7 @@ describe("activation restore", () => {
     });
     // No okta.json in homeDir: the restore must still inject the token.
     await provider.restoreOnActivation();
-    expect(injector.inject).toHaveBeenCalledWith("at", ["okta-openai-one.example.internal"]);
+    expect(injector.inject).toHaveBeenCalledWith("at", ["okta-openai"]);
   });
 });
 

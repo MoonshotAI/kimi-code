@@ -21,6 +21,9 @@ import type { GatewayConfig } from "./gateway-config";
 /** Values accepted as a config.toml provider `type` (ProviderTypeSchema). */
 const KNOWN_PROTOCOLS = new Set(["anthropic", "openai", "openai_responses", "kimi", "google-genai", "vertexai"]);
 
+/** Wire protocols valid on a MODEL entry (models.<id>.protocol). */
+const MODEL_PROTOCOLS = new Set(["anthropic", "openai", "openai_responses", "google-genai"]);
+
 /** One catalog entry from `{data: [...]}` — the raw gateway shape. */
 export interface OktaModelEntry {
   /** Model id sent in the inference request payload. */
@@ -48,6 +51,7 @@ export async function fetchOktaModels(gateway: GatewayConfig, accessToken: strin
   try {
     response = await fetch(url, {
       headers: {
+        "api-key": accessToken,
         Authorization: `Bearer ${accessToken}`,
         Accept: "application/json",
       },
@@ -142,11 +146,15 @@ function parseContextLength(value: unknown): number | undefined {
 
 /**
  * Pure section builder: groups the catalog by (protocol, apiBase) into
- * provider sections named `<prefix>-<protocol>-<host>`, writes one alias per
- * model, and returns the COMPLETE `providers` / `models` / `defaultModel`
- * sections (foreign entries preserved) ready for `replaceConfigSections`.
- * Sections and aliases carrying our prefix but absent from the current
- * catalog are removed (stale groups heal on re-login).
+ * provider sections named `<prefix>-<protocol>` (short, host-free; a second
+ * group on the same protocol gets -2, -3, …), writes one alias per model
+ * with an explicit `protocol` (the chat preflight demands
+ * models.<id>.protocol, so we never rely on the provider.type fallback), and
+ * returns the COMPLETE `providers` / `models` / `defaultModel` sections
+ * (foreign entries preserved) ready for `replaceConfigSections`. Sections
+ * and aliases carrying our prefix but absent from the current catalog are
+ * removed (stale groups heal on re-login — including the older long
+ * host-suffixed names).
  */
 export function applyOktaProviderConfig(
   config: KimiConfig,
@@ -182,7 +190,7 @@ export function applyOktaProviderConfig(
   for (const key of [...groups.keys()].sort()) {
     const group = groups.get(key);
     if (group === undefined) continue;
-    const base = providerEntryName(gateway.providerName, group.protocol, group.apiBase);
+    const base = `${gateway.providerName}-${group.protocol}`;
     let name = base;
     let suffix = 2;
     while (taken.has(name)) {
@@ -236,6 +244,11 @@ export function applyOktaProviderConfig(
       model: entry.model,
       maxContextSize: entry.contextLength ?? gateway.defaultContextLength,
       displayName: entry.displayName,
+      // The wire protocol lives on the model itself: some resolution paths
+      // only consult models.<id>.protocol, so belt-and-braces alongside the
+      // provider section's type. Only the four wire protocols are valid at
+      // model level (kimi/vertexai stay provider-type-only).
+      ...(MODEL_PROTOCOLS.has(entry.protocol) ? { protocol: entry.protocol as "anthropic" } : {}),
     };
   }
 
@@ -279,17 +292,6 @@ export async function removeOktaProviders(harness: KimiHarness, providerNames: r
     await harness.removeProvider(name);
   }
   await harness.getConfig({ reload: true });
-}
-
-function providerEntryName(prefix: string, protocol: string, apiBase: string): string {
-  let host = "invalid";
-  try {
-    host = new URL(apiBase).hostname.replace(/^www\./, "");
-  } catch {
-    // apiBase was validated at parse time; unreachable in practice.
-  }
-  const slug = host.replace(/[^a-zA-Z0-9.-]+/g, "-").replace(/^-+|-+$/g, "");
-  return `${prefix}-${protocol}-${slug.length > 0 ? slug : "endpoint"}`;
 }
 
 function nonEmptyString(value: unknown): string | undefined {
