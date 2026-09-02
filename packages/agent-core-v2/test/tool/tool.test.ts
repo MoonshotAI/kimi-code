@@ -2322,6 +2322,92 @@ describe('Agent tool execution contract', () => {
     expect(result.output).toContain('resumed result');
   });
 
+  it('rebuilds a persisted subagent that is not live before resuming it', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      runCompletion: async () => ({ summary: 'resumed after restart' }),
+    });
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(
+        ISessionMetadata,
+        sessionMetadataStub({
+          'agent-existing': {
+            type: 'sub',
+            parentAgentId: 'main',
+            forkedFrom: 'main',
+            labels: { parentAgentId: 'main' },
+          },
+        }),
+      ),
+    );
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+    });
+
+    expect(lifecycle.create).toHaveBeenCalledTimes(1);
+    expect(lifecycle.create).toHaveBeenCalledWith({
+      agentId: 'agent-existing',
+      labels: { parentAgentId: 'main' },
+      forkedFrom: 'main',
+    });
+    expect(lifecycle.run).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: 'agent-existing' }),
+      { kind: 'prompt', prompt: 'Continue' },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(result.isError).not.toBe(true);
+    expect(result.output).toContain('agent_id: agent-existing');
+    expect(result.output).toContain('resumed after restart');
+  });
+
+  it('keeps rejecting resume of an agent id that was never persisted', async () => {
+    const lifecycle = createAgentLifecycleStub();
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(ISessionMetadata, sessionMetadataStub({})),
+    );
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-missing',
+    });
+
+    expect(result).toMatchObject({
+      isError: true,
+      output: 'subagent error: Agent instance "agent-missing" does not exist',
+    });
+    expect(lifecycle.create).not.toHaveBeenCalled();
+    expect(lifecycle.run).not.toHaveBeenCalled();
+  });
+
+  it('does not rebuild a persisted subagent owned by another parent', async () => {
+    const lifecycle = createAgentLifecycleStub();
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(
+        ISessionMetadata,
+        sessionMetadataStub({ 'agent-existing': subagentMeta('other') }),
+      ),
+    );
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+    });
+
+    expect(result).toMatchObject({
+      isError: true,
+      output: 'subagent error: Agent instance "agent-existing" does not belong to this parent agent',
+    });
+    expect(lifecycle.create).not.toHaveBeenCalled();
+    expect(lifecycle.run).not.toHaveBeenCalled();
+  });
+
   it('rejects direct resume of a non-subagent', async () => {
     const lifecycle = createAgentLifecycleStub();
     const context = createAgentToolContext(
