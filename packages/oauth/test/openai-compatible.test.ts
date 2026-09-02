@@ -445,6 +445,7 @@ describe('refreshProviderCatalog — OpenAI-compatible on-demand', () => {
     expect(alias?.capabilities).toBeUndefined();
   });
 
+
   it('carries an OpenRouter context_length through and never clobbers it', async () => {
     const config: ManagedKimiConfigShape = {
       providers: {
