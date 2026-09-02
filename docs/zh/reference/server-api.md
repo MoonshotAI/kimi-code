@@ -87,7 +87,7 @@ HTTP 状态码例外（非 200）：
 
 ## 服务
 
-服务自身的探活、身份、关停与连接管理；全局配置的读取与合并式更新；模型别名与供应商管理，以及 models.dev 目录浏览。
+服务自身的探活、身份、关停与连接管理。
 
 | 方法与路径 | 说明 |
 | --- | --- |
@@ -95,19 +95,6 @@ HTTP 状态码例外（非 200）：
 | `GET /api/v1/meta` | 服务版本、能力集、`server_id`、实验开关 |
 | `POST /api/v1/shutdown` | 优雅退出（先回 200 再关闭）；仅 loopback 绑定时挂载 |
 | `GET /api/v1/connections` | 列出当前在线的 WebSocket 连接 |
-| `GET /api/v1/config` | 读取全局配置（密钥字段脱敏） |
-| `POST /api/v1/config` | 合并式更新配置，并广播 `event.config.changed` |
-| `GET /api/v1/models` | 列出已配置的模型别名 |
-| `POST /api/v1/models/{model_id}:set_default` | 设置全局默认模型 |
-| `GET /api/v1/providers` | 列出供应商 |
-| `POST /api/v1/providers` | 创建供应商（201） |
-| `GET /api/v1/providers/{provider_id}` | 读取供应商（含已存密钥） |
-| `PUT /api/v1/providers/{provider_id}` | 整体替换供应商配置 |
-| `DELETE /api/v1/providers/{provider_id}` | 删除供应商（204） |
-| `POST /api/v1/providers/{provider_id}:refresh` | 刷新该供应商的模型元数据 |
-| `POST /api/v1/providers:{action}` | 集合级动作：`refresh` / `refresh_oauth` / `import_catalog` / `import_registry` |
-| `GET /api/v1/catalog/providers` | 浏览 models.dev 目录（服务端代理） |
-| `GET /api/v1/catalog/providers/{catalog_id}` | 读取目录中单个条目 |
 
 ### `GET /api/v1/healthz`
 
@@ -223,7 +210,14 @@ HTTP 状态码例外（非 200）：
 }
 ```
 
-**配置。**
+## 配置
+
+全局配置的读取与合并式更新；密钥字段一律脱敏。
+
+| 方法与路径 | 说明 |
+| --- | --- |
+| `GET /api/v1/config` | 读取全局配置（密钥字段脱敏） |
+| `POST /api/v1/config` | 合并式更新配置，并广播 `event.config.changed` |
 
 ### `GET /api/v1/config`
 
@@ -282,9 +276,23 @@ HTTP 状态码例外（非 200）：
 }
 ```
 
-**模型与供应商。**
+## 模型与供应商
 
 模型配置的两半——`config.toml` 的 [供应商](../configuration/providers.md) 表与模型别名表——外加一个由服务端代理的 models.dev 目录。模型别名 id 就是配置中的别名键：通过供应商管理端点创建的别名形如 `provider_id/model`（例如 `my-provider/kimi-for-coding`），模型别名表中的裸键（如 `turbo`）原样使用；API 中任何接收 `model_id` 的地方指的都是这个别名 id。
+
+| 方法与路径 | 说明 |
+| --- | --- |
+| `GET /api/v1/models` | 列出已配置的模型别名 |
+| `POST /api/v1/models/{model_id}:set_default` | 设置全局默认模型 |
+| `GET /api/v1/providers` | 列出供应商 |
+| `POST /api/v1/providers` | 创建供应商（201） |
+| `GET /api/v1/providers/{provider_id}` | 读取供应商（含已存密钥） |
+| `PUT /api/v1/providers/{provider_id}` | 整体替换供应商配置 |
+| `DELETE /api/v1/providers/{provider_id}` | 删除供应商（204） |
+| `POST /api/v1/providers/{provider_id}:refresh` | 刷新该供应商的模型元数据 |
+| `POST /api/v1/providers:{action}` | 集合级动作：`refresh` / `refresh_oauth` / `import_catalog` / `import_registry` |
+| `GET /api/v1/catalog/providers` | 浏览 models.dev 目录（服务端代理） |
+| `GET /api/v1/catalog/providers/{catalog_id}` | 读取目录中单个条目 |
 
 ### `GET /api/v1/models`
 
