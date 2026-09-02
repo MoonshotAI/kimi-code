@@ -40,6 +40,7 @@ import { ThinkingComponent } from '#/tui/components/messages/thinking';
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import { TabbedModelSelectorComponent } from '#/tui/components/dialogs/tabbed-model-selector';
+import { PermissionSelectorComponent } from '#/tui/components/dialogs/permission-selector';
 import { UndoSelectorComponent } from '#/tui/components/dialogs/undo-selector';
 import {
   PluginInstallTrustConfirmComponent,
@@ -1885,7 +1886,7 @@ describe('KimiTUI message flow', () => {
     expect(driver.state.appState.sessionId).toBe('');
   });
 
-  it('applies /yolo on session-less and passes the mode to the lazy session (v2 engine)', async () => {
+  it('applies /yolo session-less via the permission picker and passes the mode to the lazy session (v2 engine)', async () => {
     const session = makeSession({ id: 'ses-lazy' });
     const startupInput: KimiTUIStartupInput = {
       ...makeStartupInput(),
@@ -1894,7 +1895,12 @@ describe('KimiTUI message flow', () => {
     };
     const { driver, harness } = await makeDriver(session, {}, startupInput);
 
-    driver.handleUserInput('/yolo on');
+    driver.handleUserInput('/yolo');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PermissionSelectorComponent);
+    });
+    (driver.state.editorContainer.children[0] as PermissionSelectorComponent).handleInput('\r');
 
     await vi.waitFor(() => {
       expect(driver.state.appState.permissionMode).toBe('yolo');
@@ -2536,7 +2542,12 @@ command = "vim"
     const { driver, session, harness } = await makeDriver();
     harness.track.mockClear();
 
-    driver.handleUserInput('/yolo on');
+    driver.handleUserInput('/yolo');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PermissionSelectorComponent);
+    });
+    (driver.state.editorContainer.children[0] as PermissionSelectorComponent).handleInput('\r');
 
     await vi.waitFor(() => {
       expect(session.setPermission).toHaveBeenCalledWith('yolo');
@@ -2545,9 +2556,9 @@ command = "vim"
       permissionMode: 'yolo',
     });
     expect(stripSgr(renderTranscript(driver))).toContain(
-      'In this mode, Kimi Code can modify or delete files without your confirmation',
+      'Routine edits and commands run automatically; risky actions, questions, and plans still ask.',
     );
-    expect(harness.track).toHaveBeenCalledWith('input_command', { command: 'ask-when-needed' });
+    expect(harness.track).toHaveBeenCalledWith('input_command', { command: 'yolo' });
     expect(harness.track).not.toHaveBeenCalledWith('yolo_toggle', expect.anything());
   });
 
@@ -2766,10 +2777,15 @@ command = "vim"
 
     driver.handleUserInput('hello');
     driver.state.appState.streamingPhase = 'idle';
-    driver.handleUserInput('/auto on');
+    driver.handleUserInput('/auto');
 
     await vi.waitFor(() => {
-      expect(stripSgr(renderTranscript(driver))).toContain('Never Ask mode: ON');
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PermissionSelectorComponent);
+    });
+    (driver.state.editorContainer.children[0] as PermissionSelectorComponent).handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain('Permission mode: Never Ask');
     });
 
     driver.handleUserInput('/undo 10');
@@ -2789,9 +2805,9 @@ command = "vim"
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).not.toContain('hello');
     expect(transcript).not.toContain('Cannot undo 10 prompts');
-    expect(transcript).toContain('Never Ask mode: ON');
+    expect(transcript).toContain('Permission mode: Never Ask');
     expect(transcript).toContain(
-      'In this mode, Kimi Code can modify or delete files without your confirmation',
+      'Never interrupts you; everything runs and is decided automatically.',
     );
     expect(driver.state.appState.permissionMode).toBe('auto');
   });

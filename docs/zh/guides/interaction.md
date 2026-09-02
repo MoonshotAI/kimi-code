@@ -33,7 +33,7 @@ Kimi Code CLI 支持在输入框中直接粘贴图片和视频，让 AI 结合�
 | `/undo` | 撤销最近的提示词 |
 | `/model` | 切换当前会话使用的模型 |
 | `/plan` | 切换 Plan 模式（先出计划再动手） |
-| `/ask-when-needed` | 切换 "Ask When Needed" 模式（常规修改和命令自动完成） |
+| `/yolo` | 打开权限模式列表并预选 "Ask When Needed"（常规修改和命令自动完成） |
 | `/goal` | 开始或管理目标模式 |
 | `/help` | 查看全部命令 |
 
@@ -64,9 +64,9 @@ Agent 调用会产生副作用的工具（修改文件、执行命令等）时�
 
 **"Always Ask"**（始终询问，原 Manual）是默认模式：只读操作自动放行，修改文件、执行命令等其余操作都会逐一向你确认，适合需要全程掌控每个改动的场景。
 
-**"Ask When Needed"**（必要时询问，原 YOLO）用 `/ask-when-needed` 切换，自动批准普通工具调用，适合已知安全的批处理任务。敏感操作仍会询问——例如访问 `.env`、SSH 私钥等敏感文件、执行 `shutdown`、`rm -rf` 这类危险命令，或退出 Plan 模式——Agent 也仍可能向你提问。
+**"Ask When Needed"**（必要时询问，原 YOLO）用 `/yolo` 开启，自动批准普通工具调用，适合已知安全的批处理任务。敏感操作仍会询问——例如访问 `.env`、SSH 私钥等敏感文件、执行 `shutdown`、`rm -rf` 这类危险命令，或退出 Plan 模式——Agent 也仍可能向你提问。
 
-**"Never Ask"**（完全自动，原 Auto）用 `/never-ask` 切换，是完全无人值守模式：所有工具审批自动处理，包括敏感文件和计划退出，且 Agent 不会向你提问，完全由它自己做决定。内置的危险命令拦截会在 "Always Ask" 和 "Ask When Needed" 模式下要求你确认 `shutdown`、`reboot`、`rm -rf` 这类命令；在 "Never Ask" 模式下这些命令直接执行，不再拦截。
+**"Never Ask"**（完全自动，原 Auto）用 `/auto` 开启，是完全无人值守模式：所有工具审批自动处理，包括敏感文件和计划退出，且 Agent 不会向你提问，完全由它自己做决定。内置的危险命令拦截会在 "Always Ask" 和 "Ask When Needed" 模式下要求你确认 `shutdown`、`reboot`、`rm -rf` 这类命令；在 "Never Ask" 模式下这些命令直接执行，不再拦截。
 
 
 ## 模式切换
