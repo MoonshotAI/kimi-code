@@ -1,6 +1,13 @@
+/**
+ * Scenario: the /tasks browser renders and refreshes background-task previews.
+ * Responsibilities: layout, keyboard actions, preview states, refresh races, and agent viewers.
+ * Wiring: real TUI components/controllers with minimal terminal, UI shell, and SDK session stubs.
+ * Run: pnpm exec vitest run apps/kimi-code/test/tui/tasks-browser.test.ts
+ */
+
 import type { Terminal } from '@moonshot-ai/pi-tui';
 import type { BackgroundTaskInfo, BackgroundTaskStatus, Event } from '@moonshot-ai/kimi-code-sdk';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   TasksBrowserApp,
@@ -67,6 +74,7 @@ function makeProps(overrides: Partial<TasksBrowserProps> = {}): TasksBrowserProp
     selectedTaskId: undefined,
     tailOutput: undefined,
     tailLoading: false,
+    tailError: undefined,
     flashMessage: undefined,
     onSelect: vi.fn(),
     onToggleFilter: vi.fn(),
@@ -267,6 +275,22 @@ describe('TasksBrowserApp — full-screen rendering', () => {
         .join('\n'),
     );
     expect(out).toContain('[loading');
+  });
+
+  it('renders a retryable error when preview retrieval fails', () => {
+    const out = strip(
+      makeApp({
+        tasks: [task({ taskId: 'bash-aaaaaaaa' })],
+        selectedTaskId: 'bash-aaaaaaaa',
+        tailError: 'RPC unavailable',
+      })
+        .render(120)
+        .join('\n'),
+    );
+
+    expect(out).toContain('Cannot load preview: RPC unavailable');
+    expect(out).toContain('Press R to retry.');
+    expect(out).not.toContain('[no output captured]');
   });
 
   it('shows empty-state copy in the Tasks pane when no tasks', () => {
@@ -554,6 +578,176 @@ describe('TasksBrowserApp — setProps', () => {
         app.setProps(makeProps({ tasks, filter }));
       }).not.toThrow();
     }
+  });
+});
+
+describe('TasksBrowserController — preview refresh', () => {
+  const controllers: TasksBrowserController[] = [];
+
+  afterEach(() => {
+    for (const controller of controllers) controller.close();
+    controllers.length = 0;
+  });
+
+  async function flushMicrotasks(): Promise<void> {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+
+  function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
+  }
+
+  function previewRig(options: {
+    tasks: readonly BackgroundTaskInfo[];
+    listBackgroundTasks?: () => Promise<readonly BackgroundTaskInfo[]>;
+    getBackgroundTaskOutput: (
+      taskId: string,
+      opts?: { tail?: number },
+    ) => Promise<string>;
+  }) {
+    const ui = {
+      children: [] as unknown[],
+      clear() {
+        this.children = [];
+      },
+      addChild(child: unknown) {
+        this.children.push(child);
+      },
+      setFocus: () => {},
+      requestRender: () => {},
+    };
+    const state = {
+      tasksBrowser: undefined as unknown,
+      terminal: fakeTerminal(30),
+      ui,
+      editor: {},
+    };
+    const listBackgroundTasks = vi.fn(
+      options.listBackgroundTasks ?? (async () => options.tasks),
+    );
+    const getBackgroundTaskOutput = vi.fn(options.getBackgroundTaskOutput);
+    const host = {
+      state,
+      backgroundTasks: new Map(options.tasks.map((item) => [item.taskId, item])),
+      sessionEventHandler: {
+        subAgentEventHandler: { activityStore: new SubagentActivityStore() },
+      },
+      session: {
+        listBackgroundTasks,
+        getBackgroundTaskOutput,
+      },
+      showError: vi.fn(),
+      setTasksBrowser(value: unknown) {
+        state.tasksBrowser = value;
+      },
+    };
+    const controller = new TasksBrowserController(host as never);
+    controllers.push(controller);
+
+    return {
+      controller,
+      getBackgroundTaskOutput,
+      component: () =>
+        (state.tasksBrowser as { component: TasksBrowserApp }).component,
+      render: () =>
+        strip(
+          (state.tasksBrowser as { component: TasksBrowserApp }).component
+            .render(120)
+            .join('\n'),
+        ),
+    };
+  }
+
+  it('updates the selected running preview when a silent refresh observes new output', async () => {
+    let output = 'starting';
+    const rig = previewRig({
+      tasks: [task({ taskId: 'bash-aaaaaaaa', status: 'running' })],
+      getBackgroundTaskOutput: async () => output,
+    });
+    await rig.controller.show();
+    await flushMicrotasks();
+
+    output = 'server ready';
+    await rig.controller.refresh({ silent: true });
+
+    expect(rig.render()).toContain('server ready');
+    expect(rig.getBackgroundTaskOutput).toHaveBeenCalledTimes(2);
+    expect(rig.getBackgroundTaskOutput).toHaveBeenLastCalledWith('bash-aaaaaaaa', {
+      tail: 4000,
+    });
+  });
+
+  it('loads terminal output once when the selected task leaves the running state', async () => {
+    let terminal = false;
+    let output = 'partial output';
+    const rig = previewRig({
+      tasks: [task({ taskId: 'bash-aaaaaaaa', status: 'running' })],
+      listBackgroundTasks: async () => [
+        task({ taskId: 'bash-aaaaaaaa', status: terminal ? 'completed' : 'running' }),
+      ],
+      getBackgroundTaskOutput: async () => output,
+    });
+    await rig.controller.show();
+    await flushMicrotasks();
+
+    terminal = true;
+    output = 'final output';
+    await rig.controller.refresh({ silent: true });
+    await rig.controller.refresh({ silent: true });
+
+    expect(rig.render()).toContain('final output');
+    expect(rig.getBackgroundTaskOutput).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries the selected preview when R is pressed after a retrieval error', async () => {
+    let attempt = 0;
+    const rig = previewRig({
+      tasks: [task({ taskId: 'bash-aaaaaaaa', status: 'completed' })],
+      getBackgroundTaskOutput: async () => {
+        attempt += 1;
+        if (attempt === 1) throw new Error('RPC unavailable');
+        return 'recovered output';
+      },
+    });
+    await rig.controller.show();
+    await flushMicrotasks();
+    expect(rig.render()).toContain('Cannot load preview: RPC unavailable');
+
+    rig.component().handleInput('r');
+    await flushMicrotasks();
+
+    expect(rig.render()).toContain('recovered output');
+    expect(rig.render()).not.toContain('Cannot load preview');
+    expect(rig.getBackgroundTaskOutput).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the selected task preview when the previous task response arrives late', async () => {
+    const firstOutput = deferred<string>();
+    const rig = previewRig({
+      tasks: [
+        task({ taskId: 'bash-aaaaaaaa', status: 'running', startedAt: 1 }),
+        task({ taskId: 'bash-bbbbbbbb', status: 'running', startedAt: 2 }),
+      ],
+      getBackgroundTaskOutput: (taskId) =>
+        taskId === 'bash-aaaaaaaa' ? firstOutput.promise : Promise.resolve('current output'),
+    });
+    await rig.controller.show();
+
+    rig.component().handleInput('\u001B[B');
+    await flushMicrotasks();
+    expect(rig.render()).toContain('current output');
+
+    firstOutput.resolve('stale output');
+    await flushMicrotasks();
+
+    expect(rig.render()).toContain('current output');
+    expect(rig.render()).not.toContain('stale output');
   });
 });
 
