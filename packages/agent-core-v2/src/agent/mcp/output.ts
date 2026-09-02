@@ -139,10 +139,8 @@ export async function mcpResultToExecutableOutput(
   }
 
   const compressed = await compressImageContentParts(wrapped, {
-    telemetry:
-      options.telemetry === undefined
-        ? undefined
-        : { client: options.telemetry, source: 'mcp_tool_result' },
+    telemetry: options.telemetry,
+    telemetrySource: 'mcp_tool_result',
     annotate: {
       persistOriginal: (bytes, mimeType) =>
         persistOriginalImage(

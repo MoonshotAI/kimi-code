@@ -209,7 +209,7 @@ export async function runV2Print(
     // model is reconciled via setContext once resolved.
     telemetryService = app.accessor.get(ITelemetryService);
     if (telemetryEnabled) {
-      telemetryService.setAppender(
+      telemetryService.addAppender(
         createCloudAppender(app.accessor, {
           deviceId,
           appName: CLI_USER_AGENT_PRODUCT,
@@ -223,7 +223,7 @@ export async function runV2Print(
     const resolved = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);
     restorePermission = resolved.restorePermission;
 
-    telemetryService.setContext({ sessionId: resolved.session.id, model: resolved.telemetryModel });
+    telemetryService.setContext({ session_id: resolved.session.id, model: resolved.telemetryModel });
     if (firstLaunch) {
       telemetryService.track2('first_launch');
     }
@@ -253,7 +253,7 @@ export async function runV2Print(
     }
     writeResumeHint(resolved.session.id, outputFormat, stdout, stderr);
 
-    telemetryService.withContext({ sessionId: resolved.session.id }).track2('exit', {
+    telemetryService.withContext({ session_id: resolved.session.id }).track2('exit', {
       duration_ms: Date.now() - startedAt,
     });
   } finally {

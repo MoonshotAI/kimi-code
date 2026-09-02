@@ -1,5 +1,5 @@
 import { CLI_COMMAND_NAME } from '#/constant/app';
-import { registerMigrateCommand } from '#/migration/index';
+import { registerMigrateCommand, type MigrateCommandOptions } from '#/migration/index';
 import { Command, InvalidArgumentError, Option } from 'commander';
 
 import type { CLIOptions } from './options';
@@ -14,7 +14,7 @@ import { registerVisCommand } from './sub/vis';
 import { registerWebCommand } from './sub/web';
 
 export type MainCommandHandler = (opts: CLIOptions) => void;
-export type MigrateCommandHandler = () => void;
+export type MigrateCommandHandler = (options: MigrateCommandOptions) => void;
 export type PluginNodeRunnerHandler = (entry: string, args: readonly string[]) => void;
 export type UpgradeCommandHandler = () => void | Promise<void>;
 export type UpdateDownloadHandler = (version: string, manual: boolean) => void;
