@@ -1112,7 +1112,10 @@ describe('AgentToolDedupeService', () => {
       return { type: 'function', id, name: 'Bash', arguments: `{"command_${String(variant)}: "ls"` };
     }
 
-    function rejectedBashAgent(records: TelemetryRecord[]): {
+    function rejectedBashAgent(
+      records: TelemetryRecord[],
+      maxStepsPerTurn?: number,
+    ): {
       readonly ctx: ReturnType<typeof createTestAgent>;
       readonly exec: ReturnType<typeof vi.fn>;
     } {
@@ -1120,6 +1123,7 @@ describe('AgentToolDedupeService', () => {
       const ctx = createTestAgent(
         telemetryServices(recordingTelemetry(records)),
         execEnvServices({ processRunner: createFakeProcessRunner({ spawn: exec as unknown as IHostProcessService['spawn'] }) }),
+        { initialConfig: { providers: {}, loopControl: { maxStepsPerTurn } } },
       );
       ctx.get(IAgentProfileService).update({ activeToolNames: ['Bash'] });
       records.length = 0;
@@ -1185,6 +1189,48 @@ describe('AgentToolDedupeService', () => {
             entry.event === 'tool_call_repeat' && entry.properties?.['repeat_count'] === 13,
         ),
       ).toHaveLength(0);
+    });
+
+    it('runs the handoff step even when the force stop lands on the step cap', async () => {
+      const records: TelemetryRecord[] = [];
+      const { ctx, exec } = rejectedBashAgent(records, 12);
+
+      for (let i = 0; i < 12; i += 1) {
+        ctx.mockNextResponse(invalidBashCallWithId(`call_bad_${String(i)}`));
+      }
+      ctx.mockNextResponse({ type: 'text', text: 'Handoff: still blocked on the same call.' });
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Repeat the bad call' }] });
+      const turn = (ctx.get(IAgentLoopService) as unknown as { activeTurnJob?: { turn: Turn } })
+        .activeTurnJob?.turn;
+      await ctx.untilTurnEnd();
+
+      expect(exec).not.toHaveBeenCalled();
+      expect(ctx.llmCalls).toHaveLength(13);
+      await expect(turn!.result).resolves.toMatchObject({
+        type: 'completed',
+        steps: 13,
+        stopReason: 'repeat_breaker',
+      });
+    });
+
+    it('still enforces the step cap for ordinary steps', async () => {
+      const records: TelemetryRecord[] = [];
+      const { ctx, exec } = rejectedBashAgent(records, 12);
+
+      for (let i = 0; i < 12; i += 1) {
+        ctx.mockNextResponse(malformedBashCallWithId(`call_mal_${String(i)}`, i));
+      }
+      ctx.mockNextResponse({ type: 'text', text: 'must never be generated' });
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Repeat the bad call' }] });
+      const turn = (ctx.get(IAgentLoopService) as unknown as { activeTurnJob?: { turn: Turn } })
+        .activeTurnJob?.turn;
+      await ctx.untilTurnEnd();
+
+      expect(exec).not.toHaveBeenCalled();
+      expect(ctx.llmCalls).toHaveLength(12);
+      await expect(turn!.result).resolves.toMatchObject({ type: 'failed', steps: 12 });
     });
 
     it('does not force-stop when the malformed argument text keeps changing', async () => {

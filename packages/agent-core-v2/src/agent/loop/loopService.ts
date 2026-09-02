@@ -56,6 +56,7 @@ import {
   type TurnSeed,
 } from './stepRequest';
 import { StepRequestQueue, type StepRequestBatch } from './stepRequestQueue';
+import { HANDOFF_STEP_KIND } from './handoffStep';
 import {
   AssistantDelta,
   isDisplayablePromptOrigin,
@@ -701,7 +702,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       return { result: this.completedResult(runtime) };
     }
     const maxSteps = this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn;
-    if (maxSteps !== undefined && maxSteps > 0 && runtime.steps >= maxSteps) {
+    if (
+      maxSteps !== undefined &&
+      maxSteps > 0 &&
+      runtime.steps >= maxSteps &&
+      runtime.queue.peekDriverKind() !== HANDOFF_STEP_KIND
+    ) {
       throw createMaxStepsExceededError(maxSteps);
     }
     const batch = runtime.queue.takeNextBatch()!;

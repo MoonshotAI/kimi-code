@@ -3444,6 +3444,56 @@ describe('AgentSwarm tool execution contract', () => {
     expect(result.isError).toBeUndefined();
   });
 
+  it('renders a handoff stop reason on a completed subagent and offers a resume hint', async () => {
+    const runSwarm = vi.fn(
+      async (
+        args: SessionSwarmRunArgs<unknown>,
+      ): Promise<readonly SessionSwarmRunResult<unknown>[]> => [
+        {
+          task: args.tasks[0]!,
+          agentId: 'agent-coder-1',
+          status: 'completed' as const,
+          result: 'imports are stable',
+        },
+        {
+          task: args.tasks[1]!,
+          agentId: 'agent-coder-2',
+          status: 'completed' as const,
+          result: 'Stuck: the same grep keeps returning nothing.',
+          stopReason: 'repeat_breaker',
+        },
+      ],
+    );
+    const swarmService: ISessionSwarmService = {
+      _serviceBrand: undefined,
+      getSwarmItem: async () => undefined,
+      run: runSwarm as ISessionSwarmService['run'],
+      cancel: () => {},
+    };
+    ctx = createTestAgent(swarmServices(swarmService));
+
+    const result = await executeTool(agentSwarmTool(ctx), {
+      turnId: 0,
+      toolCallId: 'call_swarm',
+      args: {
+        description: 'Review files',
+        prompt_template: 'Review {{item}}',
+        items: ['src/a.ts', 'src/b.ts'],
+      },
+      signal,
+    });
+
+    expect(result.output).toBe([
+      '<agent_swarm_result>',
+      '<summary>completed: 2</summary>',
+      '<resume_hint>Call AgentSwarm with resume_agent_ids using the agent_id values in this result to continue unfinished work.</resume_hint>',
+      '<subagent agent_id="agent-coder-1" item="src/a.ts" outcome="completed">imports are stable</subagent>',
+      '<subagent agent_id="agent-coder-2" item="src/b.ts" outcome="completed" stop_reason="repeat_breaker">Stuck: the same grep keeps returning nothing.</subagent>',
+      '</agent_swarm_result>',
+    ].join('\n'));
+    expect(result.isError).toBeUndefined();
+  });
+
   it('reports partial aborted subagents inside the XML result', async () => {
     const runSwarm = vi.fn(
       async (
