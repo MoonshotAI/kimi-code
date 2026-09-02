@@ -221,6 +221,14 @@ export async function showMcpServers(host: SlashCommandHost): Promise<void> {
 }
 
 async function loadSessionUsageReport(host: SlashCommandHost): Promise<SessionUsageResult> {
+  // A /usage typed right behind the first prompt can land while the v2 lazy
+  // session creation is still in flight; wait it out so the report isn't
+  // skipped as if no message had been sent yet (no-op otherwise).
+  await host.waitForLazyCreation();
+  // v2 session-less startup: the session is created lazily on the first
+  // message, so a missing session is not a sign-in problem — don't surface
+  // requireSession's "Send /login" error.
+  if (host.session === undefined && host.engineV2) return {};
   try {
     return { usage: await host.requireSession().getUsage() };
   } catch (error) {
@@ -229,6 +237,12 @@ async function loadSessionUsageReport(host: SlashCommandHost): Promise<SessionUs
 }
 
 async function loadRuntimeStatusReport(host: SlashCommandHost): Promise<RuntimeStatusResult> {
+  // Same wait as loadSessionUsageReport: /status is always-available and can
+  // run while the first prompt's lazy session creation is still in flight.
+  await host.waitForLazyCreation();
+  // Same session-less guard as loadSessionUsageReport: on the v2 engine a
+  // missing session just means no message has been sent yet.
+  if (host.session === undefined && host.engineV2) return {};
   try {
     return { status: await host.requireSession().getStatus() };
   } catch (error) {
