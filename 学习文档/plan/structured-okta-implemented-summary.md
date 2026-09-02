@@ -50,7 +50,7 @@ config.toml 里 provider 写 `apiKey: ""`（引擎视为"未设置"），`~/.kim
 {
   "issuer": "https://example.okta.com",
   "clientId": "0oa1abcd2EFgHiJkLmN3",
-  "redirectUri": "vscode://moonshot-ai.kimi-code/callback",
+  "redirectUri": "vscode://life-restver-rd.restver-code/callback",
   "scopes": "openid profile email offline_access",
   "authorizePath": "/v1/authorize",
   "tokenPath": "/v1/token",
@@ -65,7 +65,7 @@ config.toml 里 provider 写 `apiKey: ""`（引擎视为"未设置"），`~/.kim
 |---|---|---|---|
 | `issuer` | string | **必填** | Okta 授权服务器的身份 URL，端点由它拼出（`{issuer}/v1/authorize`、`{issuer}/v1/token`）。Org 授权服务器填裸域名 `https://你的域.okta.com`；自定义授权服务器（Security → API 里建的）填 `https://你的域.okta.com/oauth2/<id>`（常见 `/oauth2/default`）。验证：访问 `{issuer}/.well-known/openid-configuration`，JSON 里的 `issuer` 字段与所填一致即对 |
 | `clientId` | string | **必填** | Okta OIDC 应用（即 OAuth2 应用，同一东西）的 client_id |
-| `redirectUri` | string | 无（走回环） | **vscode:// 深链回调**：配置后 authorize 与 token 交换都用它，code 经 `registerUriHandler` 回到插件。需与 Okta 应用注册的 redirect URI 一致，且与本插件 `publisher.name` 路由一致（`vscode://moonshot-ai.kimi-code`）；state 不匹配的迟到深链被忽略。不配 → 默认回环 server（callbackPorts/redirectPath） |
+| `redirectUri` | string | 无（走回环） | **vscode:// 深链回调**：配置后 authorize 与 token 交换都用它，code 经 `registerUriHandler` 回到插件。需与 Okta 应用注册的 redirect URI 一致，且与本插件 `publisher.name` 路由一致（`vscode://life-restver-rd.restver-code`）；state 不匹配的迟到深链被忽略。不配 → 默认回环 server（callbackPorts/redirectPath） |
 | `scopes` | string | `"openid profile email offline_access"` | 空格分隔；`offline_access` 必须保留，否则拿不到 refresh token |
 | `authorizePath` | string | `"/v1/authorize"` | Okta 授权端点路径 |
 | `tokenPath` | string | `"/v1/token"` | Okta token 端点路径 |

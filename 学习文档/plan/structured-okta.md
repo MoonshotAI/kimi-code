@@ -36,7 +36,7 @@ IdP 与网关由不同的人管、变更时机不同，拆开互不牵连。都�
 
 ### okta.json（纯身份：怎么登录）
 
-必填 `issuer`（授权服务器 URL，端点由它拼：`{issuer}/v1/authorize`、`{issuer}/v1/token`）、`clientId`；可选 `redirectUri`（**vscode:// 深链回调**：设置后 authorize/token 交换都用它，code 经 `vscode.window.registerUriHandler` 回到插件；必须同时满足两点——与 Okta 应用注册的 redirect URI 一致、与本插件构建的 `publisher.name` 路由一致（当前为 `vscode://moonshot-ai.kimi-code`），state 不匹配的迟到深链被忽略）、`scopes`（默认含 `offline_access`，否则拿不到 refresh token）、`authorizePath`/`tokenPath`/`callbackPorts`（默认 35173-35175，回环模式下每个端口都要在 Okta 应用注册为 redirect URI）、`redirectPath`、`loginTimeoutMs`（10min，< webview RPC 的 16min）、`authMode`（`"okta"` 默认 / `"kimi"` 退回内置登录页，其他值报错）。
+必填 `issuer`（授权服务器 URL，端点由它拼：`{issuer}/v1/authorize`、`{issuer}/v1/token`）、`clientId`；可选 `redirectUri`（**vscode:// 深链回调**：设置后 authorize/token 交换都用它，code 经 `vscode.window.registerUriHandler` 回到插件；必须同时满足两点——与 Okta 应用注册的 redirect URI 一致、与本插件构建的 `publisher.name` 路由一致（当前为 `vscode://life-restver-rd.restver-code`），state 不匹配的迟到深链被忽略）、`scopes`（默认含 `offline_access`，否则拿不到 refresh token）、`authorizePath`/`tokenPath`/`callbackPorts`（默认 35173-35175，回环模式下每个端口都要在 Okta 应用注册为 redirect URI）、`redirectPath`、`loginTimeoutMs`（10min，< webview RPC 的 16min）、`authMode`（`"okta"` 默认 / `"kimi"` 退回内置登录页，其他值报错）。
 
 ### gateway.json（模型目录：登录后调谁拿清单）
 
@@ -122,6 +122,11 @@ OktaLoginScreen 点击 → oktaLogin RPC（16min 超时）
 模块清单（12 个新文件，职责一句话）：`okta/gateway-config.ts` 目录配置 loader、`okta/okta-config.ts` IdP 配置 loader、`okta/pkce.ts`、`okta/loopback.ts` 回环回调服务器、`okta/token-store.ts` SecretStorage + 多段注入器 + 刷新调度、`okta/auth-provider.ts` AuthenticationProvider（懒 config + restoreOnActivation）、`okta/models.ts` 目录解析/分组合并/原子供给、`okta/runtime.ts` 单例装配与模式读取、`handlers/okta.handler.ts` 四个 RPC、webview 的 `OktaLoginScreen`/`LoginScreenGate`/`useAuthMode`；详见实施总结。
 
 上游触碰面（5 文件约 33 行，全追加式）：`shared/bridge.ts`（4 Methods + 1 Event + validateParams 四 case）、`handlers/index.ts`（+2）、`extension.ts`（+2）、webview `services/bridge.ts`（+16）、`App.tsx`（换 LoginScreenGate 2 行）。**不改**：package.json、LoginScreen、useAppInit、resolveAppView、ActionMenu、全部 packages/*（node-sdk 的 `setMemoryConfig` 一族为配套新增，属 fork 侧变更）。
+
+### fork 定制点（上游合并时逐处核对，勿被上游覆盖）
+
+1. **扩展标识符已改为 `life-restver-rd.restver-code`**（package.json 的 `publisher: "life-restver-rd"` + `name: "code"`），使 Okta 管理员注册的深链 `vscode://life-restver-rd.restver-code` 能路由到本插件。随之同步：根 `package.json` typecheck 的 `--filter code`、`flake.nix` workspaceNames 的 `"code"`、`.changeset` 包名键 `"code"`、`.github/workflows/vscode-publish.yml` 的 filter/扩展 ID/open-vsx 查询。VSIX 产物文件名（`kimi-code-<平台>.vsix`）由 `vsix-targets.mjs` 硬编码，与扩展 ID 解耦，保持原名。
+2. node-sdk 的 `setMemoryConfig`/`clearMemoryConfig` 一族（packages/node-sdk，含 v2 实现与测试）。
 
 ## 六、边界情况
 
