@@ -5,7 +5,7 @@ import { IInstantiationService } from '#/_base/di/instantiation';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
-import { extractImageCompressionCaptions } from '#/agent/media/image-compress';
+import { extractImageCompressionCaptions, gateImageFormatParts } from '#/agent/media/image-compress';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { newMessageId } from '#/agent/contextMemory/messageId';
@@ -556,7 +556,8 @@ export class AgentPromptService implements IAgentPromptService {
         ownerPromptId,
       });
     }
-    if (message.content.length > 0) this.context.append({ ...message, id: ownerPromptId });
+    const content = gateImageFormatParts(message.content);
+    if (content.length > 0) this.context.append({ ...message, id: ownerPromptId, content });
   }
   private async deliverToolResult(ctx: ToolDidExecuteContext): Promise<void> {
     const delivery = ctx.result.delivery; if (delivery === undefined) return;
