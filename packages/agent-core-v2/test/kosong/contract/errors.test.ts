@@ -13,6 +13,7 @@ import {
   classifyApiError,
   createAbortError,
   isAbortError,
+  isImageFormatError,
   isRetryableGenerateError,
   normalizeAPIStatusError,
   throwIfAbortError,
@@ -129,6 +130,17 @@ describe('isRetryableGenerateError', () => {
       isRetryableGenerateError(new APIEmptyResponseError('empty', { finishReason: 'completed' })),
     ).toBe(true);
     expect(isRetryableGenerateError(new APIEmptyResponseError('empty'))).toBe(true);
+  });
+});
+
+describe('isImageFormatError', () => {
+  it('recognizes providers that reject the image_url content variant', () => {
+    const error = new APIStatusError(
+      400,
+      'messages[124]: unknown variant image_url, expected text at line 1 column 811568',
+    );
+
+    expect(isImageFormatError(error)).toBe(true);
   });
 });
 
