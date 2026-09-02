@@ -371,37 +371,20 @@ describe('server-v2 /api/v1 plugins', () => {
       '/api/v1/plugins/marketplace',
     );
     expect(body.code).toBe(0);
-    expect(body.data.entries.find((e) => e.id === 'kimi-webbridge')?.capabilityId).toBe(
-      'kimi-webbridge',
+    // Official capabilities are temporarily hidden from listings: even with
+    // the default catalog, no capability rows are synthesized and catalog
+    // entries carrying a capability id stay out.
+    expect(body.data.entries.find((e) => e.id === 'kimi-webbridge')).toBeUndefined();
+    expect(body.data.entries.find((e) => e.id === 'kimi-cu')).toBeUndefined();
+
+    // An installed instance does not leak back into the marketplace listing.
+    const cuSource = await makePluginDir('kimi-cu', '0.1.0');
+    await call('POST', '/api/v1/plugins', { source: cuSource });
+    const after = await call<{ entries: { id: string }[] }>(
+      'GET',
+      '/api/v1/plugins/marketplace',
     );
-
-    const cuSupported = process.platform === 'darwin' || (process.platform === 'win32' && process.arch === 'x64');
-    const after0 = await call<{
-      entries: { id: string; capabilityId?: string; installed?: { version?: string } }[];
-    }>('GET', '/api/v1/plugins/marketplace');
-    if (!cuSupported) {
-      expect(after0.body.data.entries.find((e) => e.id === 'kimi-cu')).toBeUndefined();
-      return;
-    }
-
-    const winSource = await makePluginDir('kimi-cu-win', '0.5.4');
-    await call('POST', '/api/v1/plugins', { source: winSource });
-    const after = await call<{
-      entries: { id: string; capabilityId?: string; installed?: { version?: string } }[];
-    }>('GET', '/api/v1/plugins/marketplace');
-    const cu = after.body.data.entries.find((e) => e.id === 'kimi-cu');
-    expect(cu?.capabilityId).toBe('kimi-cu');
-    expect(cu?.installed?.version).toBe('0.5.4');
-
-    const staleSource = await makePluginDir('kimi-cu', '0.1.0');
-    await call('POST', '/api/v1/plugins', { source: staleSource });
-    const both = await call<{
-      entries: { id: string; installed?: { version?: string } }[];
-    }>('GET', '/api/v1/plugins/marketplace');
-    const expected = process.platform === 'win32' && process.arch === 'x64' ? '0.5.4' : '0.1.0';
-    expect(both.body.data.entries.find((e) => e.id === 'kimi-cu')?.installed?.version).toBe(
-      expected,
-    );
+    expect(after.body.data.entries.find((e) => e.id === 'kimi-cu')).toBeUndefined();
   });
 
   it('maps an unreachable marketplace to 50001', async () => {
@@ -500,31 +483,20 @@ describe('server-v2 /api/v1 plugins', () => {
       }[];
     }>('GET', '/api/v1/plugins/marketplace');
     expect(body.code).toBe(0);
-    const datasource = body.data.entries.find((e) => e.id === 'kimi-datasource');
-    expect(datasource?.source.startsWith('http')).toBe(false);
-    expect(datasource?.source.endsWith(join('plugins', 'official', 'kimi-datasource'))).toBe(true);
-    const webbridge = body.data.entries.find((e) => e.id === 'kimi-webbridge');
-    expect(webbridge?.capabilityId).toBe('kimi-webbridge');
-    const cuSupported = process.platform === 'darwin' || (process.platform === 'win32' && process.arch === 'x64');
-    const cu = body.data.entries.find((e) => e.id === 'kimi-cu');
-    if (!cuSupported) {
-      expect(cu).toBeUndefined();
-      return;
-    }
-    expect(cu?.tier).toBe('official');
-    expect(cu?.capabilityId).toBe('kimi-cu');
-    expect(cu?.source).toBe('capability:kimi-cu');
-    expect(cu?.displayName).toBe('Kimi Computer Use');
+    // Official Kimi-branded plugins are temporarily hidden from the catalog:
+    // no official rows, including capability rows from the engine registry.
+    expect(body.data.entries.find((e) => e.id === 'kimi-datasource')).toBeUndefined();
+    expect(body.data.entries.find((e) => e.id === 'kimi-webbridge')).toBeUndefined();
+    expect(body.data.entries.find((e) => e.id === 'kimi-cu')).toBeUndefined();
 
+    // An installed instance does not leak back into the marketplace listing.
     const cuSource = await makePluginDir('kimi-cu', '0.5.8');
     await call('POST', '/api/v1/plugins', { source: cuSource });
-    const after = await call<{
-      entries: { id: string; installed?: { version?: string; enabled: boolean } }[];
-    }>('GET', '/api/v1/plugins/marketplace');
-    expect(after.body.data.entries.find((e) => e.id === 'kimi-cu')?.installed).toEqual({
-      version: '0.5.8',
-      enabled: true,
-    });
+    const after = await call<{ entries: { id: string }[] }>(
+      'GET',
+      '/api/v1/plugins/marketplace',
+    );
+    expect(after.body.data.entries.find((e) => e.id === 'kimi-cu')).toBeUndefined();
   });
 
   it('expands ~ in local catalog paths like the CLI loader', async () => {

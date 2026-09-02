@@ -63,27 +63,13 @@ describe('server-v2 /api/v1 capabilities', () => {
     return { status: res.status, body: (await res.json()) as Envelope<T> };
   }
 
-  it('lists both built-in capabilities with the documented shape', async () => {
+  it('lists no capabilities while official entries are hidden from listings', async () => {
     const { body } = await getJson<unknown>('/api/v1/capabilities');
     expect(body.code).toBe(0);
     const parsed = listCapabilitiesResponseSchema.parse(body.data);
-    const ids = parsed.capabilities.map((c) => c.id).toSorted();
-    expect(ids).toEqual(['kimi-cu', 'kimi-webbridge']);
-    for (const capability of parsed.capabilities) {
-      expect(capabilityStatusSchema.parse(capability)).toBeTruthy();
-      expect(capability.install.running).toBe(false);
-    }
-    const kimiCu = parsed.capabilities.find((c) => c.id === 'kimi-cu');
-    if (process.platform === 'darwin' || (process.platform === 'win32' && process.arch === 'x64')) {
-      expect(kimiCu?.supported).toBe(true);
-    } else {
-      expect(kimiCu?.supported).toBe(false);
-      expect(kimiCu?.state).toBe('unsupported');
-    }
-    const webbridge = parsed.capabilities.find((c) => c.id === 'kimi-webbridge');
-    expect(webbridge?.supported).toBe(true);
-    expect(webbridge?.steps.find((s) => s.id === 'skill')?.state).toBe('missing');
-    expect(webbridge?.steps.find((s) => s.id === 'extension')?.optional).toBe(true);
+    // Official capabilities are temporarily hidden from listings; per-entry
+    // get/install keep working for already-installed users.
+    expect(parsed.capabilities).toEqual([]);
   });
 
   it('gets a single capability and 40418s on an unknown id', async () => {

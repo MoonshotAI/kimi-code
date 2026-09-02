@@ -2,24 +2,6 @@
   "version": "1",
   "plugins": [
     {
-      "id": "kimi-datasource",
-      "tier": "official",
-      "displayName": "Kimi Datasource",
-      "version": "3.4.0",
-      "description": "Stocks and financials from Wind, S&P Capital IQ, SEC EDGAR, etc.; news from Caixin, Xinhua Finance; macro from World Bank, IMF, FRED, NBS; corporate, academic, legal data, and more",
-      "keywords": ["data", "mcp"],
-      "source": "./official/kimi-datasource"
-    },
-    {
-      "id": "kimi-webbridge",
-      "tier": "official",
-      "displayName": "Kimi WebBridge",
-      "version": "1.11.3",
-      "description": "Control your real browser from Kimi Code.",
-      "keywords": ["browser", "automation", "webbridge"],
-      "source": "./official/kimi-webbridge"
-    },
-    {
       "id": "superpowers",
       "tier": "curated",
       "displayName": "Superpowers",

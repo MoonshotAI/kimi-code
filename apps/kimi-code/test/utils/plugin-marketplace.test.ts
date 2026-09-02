@@ -227,13 +227,8 @@ describe('loadPluginMarketplace', () => {
         version: '6.0.3',
       }),
     );
-    expect(marketplace.plugins).toContainEqual(
-      expect.objectContaining({
-        id: 'kimi-datasource',
-        tier: 'official',
-        source: join(REPO_ROOT, 'plugins/official/kimi-datasource'),
-      }),
-    );
+    // Official Kimi-branded plugins are temporarily hidden from the catalog.
+    expect(marketplace.plugins.some((entry) => entry.tier === 'official')).toBe(false);
   });
 
   it('loads the default CDN marketplace with injectable fetch', async () => {

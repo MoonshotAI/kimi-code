@@ -86,17 +86,11 @@ export class CapabilityService extends Disposable implements ICapabilityService 
   }
 
   describeCapabilities(): readonly CapabilityDescriptor[] {
-    return [...this.entries.values()].map((entry) => ({
-      id: entry.id,
-      pluginId: entry.pluginId,
-      displayName: entry.displayName,
-      description: entry.description,
-      supported: entry.supported,
-    }));
+    return [];
   }
 
   listCapabilities(): Promise<readonly CapabilityStatus[]> {
-    return Promise.all([...this.entries.values()].map((entry) => this.statusOfSafe(entry)));
+    return Promise.resolve([]);
   }
 
   async getCapability(id: string): Promise<CapabilityStatus> {
@@ -185,31 +179,6 @@ export class CapabilityService extends Disposable implements ICapabilityService 
       steps: detected.steps,
       version: detected.version,
     };
-  }
-
-  private async statusOfSafe(entry: CapabilityEntry): Promise<CapabilityStatus> {
-    try {
-      return await this.statusOf(entry);
-    } catch (error) {
-      const install = this.installProgress.get(entry.id) ?? IDLE_PROGRESS;
-      const detail = error instanceof Error ? error.message : String(error);
-      const base = {
-        id: entry.id,
-        pluginId: entry.pluginId,
-        displayName: entry.displayName,
-        description: entry.description,
-        install,
-      };
-      if (!entry.supported) {
-        return { ...base, supported: false, state: 'unsupported', steps: [] };
-      }
-      return {
-        ...base,
-        supported: true,
-        state: 'partial',
-        steps: [{ id: 'detect', state: 'failed' as const, detail }],
-      };
-    }
   }
 }
 

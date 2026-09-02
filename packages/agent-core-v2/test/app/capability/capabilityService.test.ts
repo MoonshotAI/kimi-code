@@ -53,7 +53,7 @@ function expectErrorCode(error: unknown, code: string): void {
 }
 
 describe('CapabilityService', () => {
-  it('lists entries with readiness computed from required steps', async () => {
+  it('hides entries from listings while per-entry readiness stays available', async () => {
     const service = fakeService([
       fakeEntry({
         id: 'kimi-cu',
@@ -71,33 +71,14 @@ describe('CapabilityService', () => {
         },
       }),
     ]);
-    const list = await service.listCapabilities();
-    expect(list.map((c) => [c.id, c.state])).toEqual([
-      ['kimi-cu', 'ready'],
-      ['kimi-webbridge', 'partial'],
-    ]);
-    expect(list[0]?.pluginId).toBe('kimi-cu-win');
-  });
-
-  it('isolates a failing detector to its own entry', async () => {
-    const broken: CapabilityEntry = {
-      id: 'kimi-cu',
-      displayName: 'kimi-cu',
-      description: 'fake',
-      supported: true,
-      detect: () => Promise.reject(new Error('probe timed out')),
-      install: () => Promise.resolve(undefined),
-    };
-    const service = fakeService([
-      broken,
-      fakeEntry({ id: 'kimi-webbridge', detect: { steps: [{ id: 'daemon', state: 'ok' }] } }),
-    ]);
-
-    const list = await service.listCapabilities();
-    expect(list.find((c) => c.id === 'kimi-webbridge')?.state).toBe('ready');
-    const cu = list.find((c) => c.id === 'kimi-cu');
-    expect(cu?.state).toBe('partial');
-    expect(cu?.steps).toEqual([{ id: 'detect', state: 'failed', detail: 'probe timed out' }]);
+    // Official capabilities are temporarily hidden from listings; the
+    // registry keeps answering per-entry status for installed users.
+    expect(await service.listCapabilities()).toEqual([]);
+    const cu = await service.getCapability('kimi-cu');
+    expect(cu.state).toBe('ready');
+    expect(cu.pluginId).toBe('kimi-cu-win');
+    const webbridge = await service.getCapability('kimi-webbridge');
+    expect(webbridge.state).toBe('partial');
   });
 
   it('marks optional steps as non-blocking for ready', async () => {
@@ -123,11 +104,11 @@ describe('CapabilityService', () => {
       fakeEntry({ id: 'kimi-cu', detect: { steps: [{ id: 'plugin', state: 'missing' }] } }),
       fakeEntry({ id: 'kimi-webbridge', supported: false }),
     ]);
-    const list = await service.listCapabilities();
-    expect(list.find((c) => c.id === 'kimi-cu')?.state).toBe('not_installed');
-    const unsupported = list.find((c) => c.id === 'kimi-webbridge');
-    expect(unsupported?.state).toBe('unsupported');
-    expect(unsupported?.supported).toBe(false);
+    const cu = await service.getCapability('kimi-cu');
+    expect(cu.state).toBe('not_installed');
+    const unsupported = await service.getCapability('kimi-webbridge');
+    expect(unsupported.state).toBe('unsupported');
+    expect(unsupported.supported).toBe(false);
   });
 
   it('throws capability.not_found for unknown ids', async () => {
@@ -205,14 +186,16 @@ describe('CapabilityService', () => {
     expect.unreachable('install never settled');
   });
 
-  it('describes the registry without running detectors', async () => {
+  it('hides descriptors from listings while the registry stays intact', async () => {
     const service = fakeService([
       fakeEntry({ id: 'kimi-cu', supported: true }),
       fakeEntry({ id: 'kimi-webbridge', supported: false }),
     ]);
-    const descriptors = service.describeCapabilities();
-    expect(descriptors.map((d) => d.id)).toEqual(['kimi-cu', 'kimi-webbridge']);
-    expect(descriptors.find((d) => d.id === 'kimi-webbridge')?.supported).toBe(false);
+    // Official capabilities are temporarily hidden from listings; the
+    // registry keeps answering per-entry status for installed users.
+    expect(service.describeCapabilities()).toEqual([]);
+    expect((await service.getCapability('kimi-cu')).state).toBe('ready');
+    expect((await service.getCapability('kimi-webbridge')).supported).toBe(false);
   });
 
   it('emits onDidChangeInstall on every progress transition', async () => {

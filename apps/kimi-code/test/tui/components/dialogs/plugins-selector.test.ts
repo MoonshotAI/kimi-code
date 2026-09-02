@@ -459,20 +459,20 @@ describe('plugins selector dialogs', () => {
     expect(out).toContain('0 installed · 1 available');
   });
 
-  it('renders the hardcoded Web Bridge entry on the Official tab while loading', () => {
+  it('renders no fallback entries on the Official tab while loading', () => {
     const { panel } = makePanel({ initialTab: 'official' });
-    // The catalog is still loading, but the built-in Web Bridge entry is shown
-    // immediately because it is baked into the TUI, not fetched.
+    // The catalog is still loading and there are no locally-known capability
+    // rows, so the tab shows only the loading state.
     const out = strip(renderRaw(panel));
-    expect(out).toContain('Kimi WebBridge  open in browser');
+    expect(out).not.toContain('Kimi WebBridge');
     expect(out).toContain('Loading marketplace');
   });
 
-  it('keeps the Web Bridge entry visible when the Official catalog errors', () => {
+  it('renders no fallback entries when the Official catalog errors', () => {
     const { panel } = makePanel({ initialTab: 'official' });
     panel.setMarketplaceError('fetch failed');
     const out = strip(renderRaw(panel));
-    expect(out).toContain('Kimi WebBridge  open in browser');
+    expect(out).not.toContain('Kimi WebBridge');
     expect(out).toContain('Marketplace unavailable: fetch failed');
   });
 
@@ -515,15 +515,13 @@ describe('plugins selector dialogs', () => {
     const { panel, onSelect } = makePanel({ initialTab: 'official', capabilities });
 
     // No setMarketplace yet — built-in runtime setup must not wait on the
-    // remote catalog: the engine-known rows render (and the promo is
-    // suppressed by the real webbridge row).
+    // remote catalog: the engine-known rows render immediately.
     const out = strip(renderRaw(panel));
     expect(out).toContain('Kimi Computer Use  install');
     expect(out).toContain('Kimi WebBridge  install');
     expect(out).toContain('Background GUI automation');
     expect(out).not.toContain('id kimi-cu');
     expect(out).not.toContain('Official plugin');
-    expect(out).not.toContain('open in browser');
     expect(out).toContain('Loading marketplace');
 
     panel.handleInput('\r'); // index 0 → kimi-cu routes to capability install
@@ -547,26 +545,13 @@ describe('plugins selector dialogs', () => {
 
     const out = strip(renderRaw(panel));
     expect(out).not.toContain('Kimi Computer Use');
-    expect(out).toContain('Kimi WebBridge  open in browser');
+    expect(out).not.toContain('Kimi WebBridge');
     expect(out).toContain('Loading marketplace');
   });
 
-  it('opens the Web Bridge webpage on Enter instead of installing', () => {
+  it('installs a catalog official entry on Enter', async () => {
     const { panel, onSelect } = makePanel({ initialTab: 'official' });
     panel.setMarketplace(marketplaceEntries, '/tmp/marketplace.json');
-    // Web Bridge is pinned at index 0, so Enter selects it directly.
-    panel.handleInput('\r');
-    expect(onSelect).toHaveBeenCalledWith({
-      kind: 'open-url',
-      url: 'https://www.kimi.com/features/webbridge#local-agent',
-      label: 'Kimi WebBridge',
-    });
-  });
-
-  it('installs a catalog official entry after navigating past Web Bridge', () => {
-    const { panel, onSelect } = makePanel({ initialTab: 'official' });
-    panel.setMarketplace(marketplaceEntries, '/tmp/marketplace.json');
-    panel.handleInput('\u001B[B'); // ↓ → kimi-datasource
     panel.handleInput('\r');
     expect(onSelect).toHaveBeenCalledWith({
       kind: 'install',
@@ -574,34 +559,9 @@ describe('plugins selector dialogs', () => {
     });
   });
 
-  it('lets the real catalog entry win over the pinned Web Bridge promo', () => {
-    const entries = [
-      {
-        id: 'kimi-webbridge',
-        tier: 'official' as const,
-        displayName: 'Kimi WebBridge',
-        source: 'capability:kimi-webbridge',
-      },
-      ...officialEntries,
-    ];
-    const { panel, onSelect } = makePanel({ initialTab: 'official' });
-    panel.setMarketplace(entries, '/tmp/marketplace.json');
-    const out = strip(renderRaw(panel));
-    // Exactly one row, and it is the installable catalog copy — the hardcoded
-    // open-in-browser promo is suppressed.
-    expect(out.split('Kimi WebBridge').length - 1).toBe(1);
-    expect(out).not.toContain('open in browser');
-    panel.handleInput('\r'); // index 0 → the real entry installs
-    expect(onSelect).toHaveBeenCalledWith({
-      kind: 'install',
-      entry: expect.objectContaining({ id: 'kimi-webbridge', source: 'capability:kimi-webbridge' }),
-    });
-  });
-
-  it('installs a Curated entry whose id matches the pinned WebBridge', () => {
+  it('installs a Curated entry that reuses the kimi-webbridge id', () => {
     // A curated/custom marketplace entry can legitimately reuse the
-    // kimi-webbridge id; on the Curated tab it must install normally, not
-    // open the WebBridge page (that shortcut is reserved for the pinned row).
+    // kimi-webbridge id; it renders and installs as a plain plugin.
     const entries = [
       {
         id: 'kimi-webbridge',
