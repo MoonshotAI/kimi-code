@@ -96,7 +96,7 @@ HTTP 状态码例外（非 200）：
 | `POST /api/v1/shutdown` | 优雅退出（先回 200 再关闭）；仅 loopback 绑定时挂载 |
 | `GET /api/v1/connections` | 列出当前在线的 WebSocket 连接 |
 
-### `GET /api/v1/healthz`
+#### `GET /api/v1/healthz`
 
 供脚本与进程管理器使用的探活端点，应答时不触碰配置与引擎。免鉴权（见 [例外接口](#鉴权)）。
 
@@ -117,7 +117,7 @@ HTTP 状态码例外（非 200）：
 }
 ```
 
-### `GET /api/v1/meta`
+#### `GET /api/v1/meta`
 
 返回本实例的身份信息与能力集。大多数字段在启动时即固定；`experimental_flags` 与 `features` 按请求实时解析。
 
@@ -157,7 +157,7 @@ HTTP 状态码例外（非 200）：
 }
 ```
 
-### `POST /api/v1/shutdown`
+#### `POST /api/v1/shutdown`
 
 请求服务优雅退出；响应先发出，随后立即执行关闭。仅在 loopback 绑定时挂载——非 loopback 绑定时不会注册（请求得到 404），除非服务以 `--allow-remote-shutdown` 启动。
 
@@ -178,7 +178,7 @@ HTTP 状态码例外（非 200）：
 }
 ```
 
-### `GET /api/v1/connections`
+#### `GET /api/v1/connections`
 
 列出当前连接到本服务的 WebSocket 客户端，按连接时间最早在前。
 
@@ -219,7 +219,7 @@ HTTP 状态码例外（非 200）：
 | `GET /api/v1/config` | 读取全局配置（密钥字段脱敏） |
 | `POST /api/v1/config` | 合并式更新配置，并广播 `event.config.changed` |
 
-### `GET /api/v1/config`
+#### `GET /api/v1/config`
 
 返回解析后的全局配置——`config.toml` 叠加覆盖层后的生效结果。密钥已脱敏：供应商与模型只报告 `has_api_key`，绝不返回存储的密钥。
 
@@ -247,7 +247,7 @@ HTTP 状态码例外（非 200）：
 }
 ```
 
-### `POST /api/v1/config`
+#### `POST /api/v1/config`
 
 合并式更新全局配置：请求体中的每个顶层域被深合并进对应域，未出现的域保持不动。把 `yolo` 设为 `true` 是 `default_permission_mode: "yolo"` 的简写（`false` 被忽略）。每一次配置变更——经本端点、在进程外编辑 `config.toml`，或服务端内部写入——都会广播全局 `event.config.changed` 事件。
 
@@ -294,7 +294,7 @@ HTTP 状态码例外（非 200）：
 | `GET /api/v1/catalog/providers` | 浏览 models.dev 目录（服务端代理） |
 | `GET /api/v1/catalog/providers/{catalog_id}` | 读取目录中单个条目 |
 
-### `GET /api/v1/models`
+#### `GET /api/v1/models`
 
 列出所有供应商下已配置的模型别名。
 
@@ -324,7 +324,7 @@ HTTP 状态码例外（非 200）：
 }
 ```
 
-### `POST /api/v1/models/{model_id}:set_default`
+#### `POST /api/v1/models/{model_id}:set_default`
 
 把全局 `default_model` 设为一个已存在的别名。`model_id` 是配置中的别名键原样——裸键如 `POST /api/v1/models/turbo:set_default`；id 含 `/` 时需 URL 编码，如 `POST /api/v1/models/my-provider%2Fkimi-for-coding:set_default`。
 
@@ -351,7 +351,7 @@ HTTP 状态码例外（非 200）：
 }
 ```
 
-### `GET /api/v1/providers`
+#### `GET /api/v1/providers`
 
 列出每个已配置供应商及其凭据与模型发现状态，不泄露任何密钥。
 
@@ -383,7 +383,7 @@ HTTP 状态码例外（非 200）：
 }
 ```
 
-### `POST /api/v1/providers`
+#### `POST /api/v1/providers`
 
 一次保存创建供应商及其模型别名；响应为 HTTP 201 加 `ResponseType`。当全局 `default_model` 完全未配置时，会以新供应商的 `default_model`（或第一个模型）播种；已有默认值绝不被修改。
 
@@ -435,7 +435,7 @@ HTTP 状态码例外（非 200）：
 }
 ```
 
-### `GET /api/v1/providers/{provider_id}`
+#### `GET /api/v1/providers/{provider_id}`
 
 读取单个供应商。与列表路由不同，设置了密钥时响应会附带存储的 `api_key`，以便本地编辑表单预填——这是唯一回显密钥的端点，暴露端口时请牢记这一点。
 
@@ -466,7 +466,7 @@ HTTP 状态码例外（非 200）：
 }
 ```
 
-### `PUT /api/v1/providers/{provider_id}`
+#### `PUT /api/v1/providers/{provider_id}`
 
 一次保存整体替换供应商：`type`、`base_url` 与模型列表被重写，不再列出的别名从 `config.toml` 中消失。`api_key` 是三态的：省略表示保留已存密钥，`""` 表示清除，其他值表示替换。除 `new_id` 重命名迁移外，全局默认指针绝不被修改。
 
@@ -502,7 +502,7 @@ HTTP 状态码例外（非 200）：
 }
 ```
 
-### `DELETE /api/v1/providers/{provider_id}`
+#### `DELETE /api/v1/providers/{provider_id}`
 
 删除供应商及其全部模型别名；subagent 次级模型池会级联清理。全局 `default_provider` / `default_model` 指针保持不动，即使它们指向被删的供应商。
 
@@ -510,7 +510,7 @@ HTTP 状态码例外（非 200）：
 
 **非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40003`、`40412`。
 
-### `POST /api/v1/providers/{provider_id}:refresh`
+#### `POST /api/v1/providers/{provider_id}:refresh`
 
 从上游来源重新发现单个供应商的模型元数据，并重写该供应商的别名；模型来源为静态的供应商不经网络调用直接报告 `unchanged`。至少一个供应商的别名发生变化时广播全局 `event.model_catalog.changed` 事件。
 
@@ -537,7 +537,7 @@ HTTP 状态码例外（非 200）：
 }
 ```
 
-### `POST /api/v1/providers:{action}`
+#### `POST /api/v1/providers:{action}`
 
 集合级动作路由；请求体按动作校验。四个动作：
 
@@ -580,7 +580,7 @@ HTTP 状态码例外（非 200）：
 }
 ```
 
-### `GET /api/v1/catalog/providers`
+#### `GET /api/v1/catalog/providers`
 
 浏览 models.dev 目录，由服务端代理，带 10 分钟内存缓存与内置快照兜底；条目保持上游目录顺序。服务无法导入的条目携带 `rejected: true` 与机器可读的 `reject_reason`。
 
@@ -617,7 +617,7 @@ HTTP 状态码例外（非 200）：
 }
 ```
 
-### `GET /api/v1/catalog/providers/{catalog_id}`
+#### `GET /api/v1/catalog/providers/{catalog_id}`
 
 按 catalog id 读取单个 models.dev 目录条目。
 
