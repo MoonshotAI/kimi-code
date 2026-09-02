@@ -17,7 +17,7 @@
 import { randomBytes } from 'node:crypto';
 import { closeSync, fsyncSync, openSync } from 'node:fs';
 import * as nodeFs from 'node:fs';
-import { open, rename, unlink } from 'node:fs/promises';
+import { lstat, open, realpath, rename, unlink } from 'node:fs/promises';
 import { dirname } from 'pathe';
 
 /**
@@ -52,6 +52,23 @@ export function syncDirSync(dirPath: string): void {
   }
 }
 /**
+ * Resolve a path that may be a symlink to the real underlying file path.
+ * If the path does not exist or is not a symlink, returns the original path.
+ */
+async function resolveSymlinkTarget(filePath: string): Promise<string> {
+  try {
+    const stats = await lstat(filePath);
+    if (stats.isSymbolicLink()) {
+      return await realpath(filePath);
+    }
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== 'ENOENT') throw error;
+  }
+  return filePath;
+}
+
+/**
  * Write `content` to `filePath` atomically and durably:
  *   1. Write content to `<filePath>.tmp`, fsync it, close it.
  *   2. Rename `<filePath>.tmp` → `filePath` (atomic on POSIX).
@@ -67,7 +84,8 @@ export async function writeFileAtomicDurable(
   filePath: string,
   content: string | Uint8Array,
 ): Promise<void> {
-  const tmpPath = filePath + '.tmp';
+  const targetPath = await resolveSymlinkTarget(filePath);
+  const tmpPath = targetPath + '.tmp';
   let renamed = false;
   try {
     const fh = await open(tmpPath, 'w');
@@ -80,15 +98,15 @@ export async function writeFileAtomicDurable(
     // Windows pre-unlink for MoveFileEx parity.
     if (process.platform === 'win32') {
       try {
-        await unlink(filePath);
+        await unlink(targetPath);
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
         if (code !== 'ENOENT') throw error;
       }
     }
-    await rename(tmpPath, filePath);
+    await rename(tmpPath, targetPath);
     renamed = true;
-    await syncDir(dirname(filePath));
+    await syncDir(dirname(targetPath));
   } finally {
     if (!renamed) {
       // Best-effort cleanup of the `.tmp` file if we never got to the
@@ -151,8 +169,9 @@ export async function atomicWrite(
   content: string | Uint8Array,
   _syncOverride?: (fd: number) => Promise<void>,
 ): Promise<void> {
+  const targetPath = await resolveSymlinkTarget(filePath);
   const hex = randomBytes(4).toString('hex');
-  const tmpPath = `${filePath}.tmp.${process.pid}.${hex}`;
+  const tmpPath = `${targetPath}.tmp.${process.pid}.${hex}`;
   let renamed = false;
   try {
     const fh = await open(tmpPath, 'w');
@@ -167,13 +186,13 @@ export async function atomicWrite(
     // before the rename turns this into the POSIX-style "replace" case.
     if (process.platform === 'win32') {
       try {
-        await unlink(filePath);
+        await unlink(targetPath);
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
         if (code !== 'ENOENT') throw error;
       }
     }
-    await rename(tmpPath, filePath);
+    await rename(tmpPath, targetPath);
     renamed = true;
   } finally {
     if (!renamed) {
