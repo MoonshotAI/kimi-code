@@ -2760,25 +2760,43 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 列出会话的终端；读取列表会在会话为冷态时将其恢复。无参数。
 
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ items: `[T-Terminal](#t-terminal)`[]` }>`。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `items` | array | [T-Terminal](#t-terminal) 数组 |
+| `items` | [T-Terminal](#t-terminal)`[]` | 会话的终端 |
 
 **非零 code**：`40401`。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "items": [ { "id": "term_01J...", "session_id": "session_01JZX4...", "cwd": ".", "shell": "/bin/zsh", "cols": 80, "rows": 24, "status": "running", "created_at": "2026-09-02T08:08:00.000Z" } ] }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "items": [
+      {
+        "id": "term_01J...",
+        "session_id": "session_01JZX4...",
+        "cwd": ".",
+        "shell": "/bin/zsh",
+        "cols": 80,
+        "rows": 24,
+        "status": "running",
+        "created_at": "2026-09-02T08:08:00.000Z"
+      }
+    ]
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/sessions/{session_id}/terminals`
 
 为会话创建一个 PTY 终端。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
@@ -2788,42 +2806,89 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | `cols` | integer | 否 | 终端宽度，正数。默认 `80` |
 | `rows` | integer | 否 | 终端高度，正数。默认 `24` |
 
-**返回**：`ResponseType<`[T-Terminal](#t-terminal)`>`。
+**响应体**：`ResponseType<`[T-Terminal](#t-terminal)`>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）（`details` 逐字段说明）、`40401`、`41304`（`cwd` 解析后越出会话工作区）。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-Terminal](#t-terminal) | 新建的终端；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（校验失败，`details` 逐字段说明；`details` 为 `{ path, message }[]`）、`40401`、`41304`（`cwd` 解析后越出会话工作区）。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "id": "term_01J...", "session_id": "session_01JZX4...", "cwd": ".", "shell": "/bin/zsh", "cols": 80, "rows": 24, "status": "running", "created_at": "2026-09-02T08:08:00.000Z" }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "id": "term_01J...",
+    "session_id": "session_01JZX4...",
+    "cwd": ".",
+    "shell": "/bin/zsh",
+    "cols": 80,
+    "rows": 24,
+    "status": "running",
+    "created_at": "2026-09-02T08:08:00.000Z"
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/sessions/{session_id}/terminals/{terminal_id}`
 
 读取单个终端。无参数。
 
-**返回**：`ResponseType<`[T-Terminal](#t-terminal)`>`。
+**响应体**：`ResponseType<`[T-Terminal](#t-terminal)`>`。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-Terminal](#t-terminal) | 终端对象；字段见类型汇总 |
 
 **非零 code**：`40401`、`40414`（没有该 id 的终端）。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "id": "term_01J...", "session_id": "session_01JZX4...", "cwd": ".", "shell": "/bin/zsh", "cols": 80, "rows": 24, "status": "exited", "created_at": "2026-09-02T08:08:00.000Z", "exited_at": "2026-09-02T08:09:00.000Z", "exit_code": 0 }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "id": "term_01J...",
+    "session_id": "session_01JZX4...",
+    "cwd": ".",
+    "shell": "/bin/zsh",
+    "cols": 80,
+    "rows": 24,
+    "status": "exited",
+    "created_at": "2026-09-02T08:08:00.000Z",
+    "exited_at": "2026-09-02T08:09:00.000Z",
+    "exit_code": 0
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/sessions/{session_id}/terminals/{terminal_id}:close`
 
 关闭终端并结束其进程。经 `POST .../terminals/{tail}` 分发，`close` 是唯一动作。无请求体。
 
-**返回**：`ResponseType<{ "closed": true }>`。
+**响应体**：`ResponseType<{ closed: true }>`。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `closed` | boolean | 恒 `true` |
 
 **非零 code**：`40001`（缺少动作后缀或动作未知；`details` 为 `{ path, message }[]`）、`40401`、`40414`。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "closed": true }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "closed": true },
+  "request_id": "01JZX4..."
+}
 ```
 
 ### 扩展
