@@ -544,6 +544,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     if (changed.modelAlias !== undefined) {
       const model = this.tryResolveRawModel();
       this.telemetry.setContext({
+        model: changed.modelAlias,
         provider_type: model?.providerType ?? model?.protocol,
         protocol: model?.protocol,
       });

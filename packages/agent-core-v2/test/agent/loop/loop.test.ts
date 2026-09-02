@@ -1061,6 +1061,7 @@ describe('turn telemetry', () => {
           turn_id: 0,
           agent_id: 'main',
           mode: 'agent',
+          model: 'mock-model',
           provider_type: 'kimi',
           protocol: 'openai',
           thinking_effort: 'off',

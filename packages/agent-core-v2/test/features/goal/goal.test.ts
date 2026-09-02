@@ -622,6 +622,7 @@ describe('AgentGoalService', () => {
         actor: 'user',
         replace: true,
         mode: 'agent',
+        model: 'mock-model',
         protocol: 'openai',
         provider_type: 'kimi',
       });

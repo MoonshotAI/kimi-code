@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ModelRecord } from '#/kosong/model/model';
 import {
   configServices,
@@ -162,9 +163,45 @@ describe('ConfigState model capabilities', () => {
         effort: 'low',
         from: 'off',
         mode: 'agent',
+        model: 'kimi-code/kimi-for-coding',
         protocol: 'openai',
         provider_type: 'kimi',
       },
+    });
+  });
+
+  it('writes the bound model into the ambient telemetry context', () => {
+    kimiConfig = {
+      providers: {
+        kimi: {
+          type: 'kimi',
+          apiKey: 'test-key',
+          baseUrl: 'https://api.example.test/v1',
+        },
+      },
+      models: {
+        'kimi-code/kimi-for-coding': {
+          provider: 'kimi',
+          model: 'kimi-for-coding',
+          maxContextSize: 1_000_000,
+        },
+      },
+    };
+
+    profile.update({ modelAlias: 'kimi-code/kimi-for-coding' });
+
+    expect(ctx.get(ITelemetryService).getContext()).toMatchObject({
+      model: 'kimi-code/kimi-for-coding',
+      provider_type: 'kimi',
+      protocol: 'openai',
+    });
+  });
+
+  it('keeps the alias as ambient model when the bound model does not resolve', () => {
+    profile.update({ modelAlias: 'ghost/model' });
+
+    expect(ctx.get(ITelemetryService).getContext()).toMatchObject({
+      model: 'ghost/model',
     });
   });
 

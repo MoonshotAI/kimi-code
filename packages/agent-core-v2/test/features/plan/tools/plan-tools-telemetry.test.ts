@@ -256,6 +256,7 @@ describe('AgentPlanService EnterPlanMode telemetry', () => {
           properties: {
             agent_id: 'main',
             mode: 'plan',
+            model: 'mock-model',
             outcome: 'auto_approved',
             protocol: 'openai',
             provider_type: 'kimi',
