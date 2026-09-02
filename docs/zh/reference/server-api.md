@@ -4801,57 +4801,17 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 ### 帧总览
 
-```ts
-// 服务端 → 客户端
 
-// 控制帧（正名 union）
-type ServerSystemMessage =
-  | ServerHelloMessage
-  | PingMessage
-  | ResyncRequiredMessage
-  | WsErrorMessage; // 死声明，无产出
-// ack 应答帧：wsAckEnvelope<T> 按请求一一对应
-// （ClientHelloAckMessage / SubscribeAckMessage / SubscribeV2AckMessage / …）
 
-// event.* 协议事件（19 型，无 union）
-SessionCreatedEvent | SessionArchivedEvent | SessionWorkChangedEvent | SessionStatusChangedEvent
-| WorkspaceCreatedEvent | WorkspaceUpdatedEvent | WorkspaceDeletedEvent
-| ConfigChangedEvent | ConfigWarningEvent
-| ModelCatalogChangedEvent | PluginChangedEvent | CapabilityChangedEvent | DiUnitChangedEvent
-// 以下 6 型系统内未命名（broadcaster 内联构造）：
-// event.question.requested / answered / dismissed、event.approval.requested / resolved、event.fs.changed
 
-// agent 事件（正名 union，51 型）
-type AgentEvent = TurnStartedEvent | AssistantDeltaEvent | …;
-// wire 上的形态：Event = AgentEvent & { agentId, sessionId, time? }
 
-// transcript 帧（正名）
-TranscriptResetEvent | TranscriptOpsEvent
-
-// 客户端 → 服务端（正名 union）
-type ClientControlMessage =
-  | ClientHelloMessage
-  | SubscribeMessage
-  | SubscribeV2Message
-  | UnsubscribeMessage
-  | UnsubscribeV2Message
-  | WatchFsAddMessage
-  | WatchFsRemoveMessage
-  | PongMessage;
-// 死声明（服务端不处理、静默丢弃）：
-// AbortMessage、TerminalAttachMessage、TerminalDetachMessage、
-// TerminalInputMessage、TerminalResizeMessage、TerminalCloseMessage
-```
-
-命名一律取系统正名：`ServerSystemMessage` / `ClientControlMessage` / `AgentEvent` / `Event`（kap-server `protocol/ws-control.ts`、`transport/ws/v1/events.ts`），`TranscriptResetEvent` / `TranscriptOpsEvent`（`@moonshot-ai/transcript` 契约）。注意 `ack` 不在 `ServerSystemMessage` 内——服务端把 ack 当应答帧独立处理；`event.question.*` / `event.approval.*` / `event.fs.changed` 在系统内没有命名类型，本文以 `type` 字符串指代。
-
-| 分类 | 方向 | 帧数 | 用途 |
-| --- | --- | --- | --- |
-| [控制帧](#控制帧) | 双向 | 12 活跃 + 7 死声明 | 握手、订阅、心跳与恢复 |
-| [event.\* 事件帧](#event-协议事件) | S→C | 19 | 工作区 / 会话 / 配置等状态同步 |
-| [agent 事件帧](#agent-事件) | S→C | 51 | 轮次生命周期、状态与 subagent 内容 |
-| [transcript 帧](#transcript-帧) | S→C | 2 | 主会话内容的结构化流（新实现） |
-| [terminal 帧](#terminal-帧) | S→C | 2 | 死协议 |
+| 分类 | 方向 | 帧数 | 类型正名 | 用途 |
+| --- | --- | --- | --- | --- |
+| [控制帧](#控制帧) | 双向 | 12 活跃 + 7 死声明 | `ServerSystemMessage`（下行）/ `ClientControlMessage`（上行） | 握手、订阅、心跳与恢复 |
+| [event.\* 事件帧](#event-协议事件) | S→C | 19 | 13 型有接口正名，6 型未命名 | 工作区 / 会话 / 配置等状态同步 |
+| [agent 事件帧](#agent-事件) | S→C | 51 | `AgentEvent` | 轮次生命周期、状态与 subagent 内容 |
+| [transcript 帧](#transcript-帧) | S→C | 2 | `TranscriptResetEvent` / `TranscriptOpsEvent` | 主会话内容的结构化流（新实现） |
+| [terminal 帧](#terminal-帧) | S→C | 2 | — | 死协议 |
 
 事件帧共享外层信封 `EventEnvelope`；`payload` 为各事件自己的载荷：
 
@@ -4880,6 +4840,33 @@ volatile 类型全集：`assistant.delta` / `thinking.delta` / `tool.call.delta`
 ### 控制帧
 
 握手与保活：连接建立后服务端立即发 `server_hello`；客户端回 `client_hello`（可带初始订阅与断线游标），再按需发订阅帧；每个带 `id` 的入站帧收到一个 `ack`。服务端每 `heartbeat_ms`（默认 10000）发 `ping`，客户端回 `pong`；连续两个周期无任何入站帧，服务端以 `close(1001, "heartbeat timeout")` 断连。
+
+下行控制帧的正名 union（ack 不在内——每个带 `id` 入站帧的应答帧按请求一一对应，如 `ClientHelloAckMessage` / `SubscribeAckMessage`）：
+
+```ts
+type ServerSystemMessage =
+  | ServerHelloMessage
+  | PingMessage
+  | ResyncRequiredMessage
+  | WsErrorMessage; // 死声明，无产出
+```
+
+上行控制帧的正名 union：
+
+```ts
+type ClientControlMessage =
+  | ClientHelloMessage
+  | SubscribeMessage
+  | SubscribeV2Message
+  | UnsubscribeMessage
+  | UnsubscribeV2Message
+  | WatchFsAddMessage
+  | WatchFsRemoveMessage
+  | PongMessage;
+// 死声明（服务端不处理、静默丢弃）：
+// AbortMessage、TerminalAttachMessage、TerminalDetachMessage、
+// TerminalInputMessage、TerminalResizeMessage、TerminalCloseMessage
+```
 
 #### `server_hello`（S→C）
 
@@ -4956,6 +4943,8 @@ ack payload：`{ accepted: string[], not_found: string[], resync_required: strin
 
 ### event.\* 事件帧
 
+19 型，系统内无 union。13 型有接口正名：`SessionCreatedEvent` / `SessionArchivedEvent` / `SessionWorkChangedEvent` / `SessionStatusChangedEvent` / `WorkspaceCreatedEvent` / `WorkspaceUpdatedEvent` / `WorkspaceDeletedEvent` / `ConfigChangedEvent` / `ConfigWarningEvent` / `ModelCatalogChangedEvent` / `PluginChangedEvent` / `CapabilityChangedEvent` / `DiUnitChangedEvent`；6 型未命名（broadcaster 内联构造，以 `type` 字符串指代）：`event.question.requested` / `event.question.answered` / `event.question.dismissed` / `event.approval.requested` / `event.approval.resolved` / `event.fs.changed`。
+
 （以下为格式样例，19 型全量待写入）
 
 #### `event.workspace.created`（S→C）
@@ -4982,6 +4971,8 @@ ack payload：`{ accepted: string[], not_found: string[], resync_required: strin
 外层为 durable 信封（见 [帧总览](#帧总览)）。
 
 ### agent 事件帧
+
+51 型，正名 union 为 `AgentEvent`（`transport/ws/v1/events.ts`）；wire 上的形态为 `Event = AgentEvent & { agentId, sessionId, time? }`（广播器补全 `agentId` / `sessionId`）。主会话内容渲染走 [transcript 帧](#transcript-帧)；本流承载状态 / 生命周期与 subagent 内容。
 
 （以下为格式样例，51 型全量待写入）
 
