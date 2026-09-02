@@ -3214,420 +3214,1229 @@ payload 内统一带 `agentId: "main"` 与 `sessionId`（全局事件为 `__glob
 
 ## 类型汇总
 
-端点与帧型共享的类型字典。「可缺省」表示该键可能不出现（`undefined` 被序列化丢弃），「可空」表示显式 `null`，两者语义不同（见 [null 与缺省语义](#null-与缺省语义)）。
+端点与帧型共享的类型字典，按传输面分为 REST 与 WS 两类，每条目以一个 TypeScript 定义块给出。「可缺省」（`field?: T`）表示该键可能不出现（`undefined` 被序列化丢弃），「可空」（`field: T | null`）表示显式 `null`，两者语义不同（见 [null 与缺省语义](#null-与缺省语义)）；简短语义以 `//` 行尾注释标注。
+
+### REST 类型
+
+REST 端点的请求与响应类型，按域分组。
+
+**会话。**
 
 ### T-Session
 
-会话对象。返回会话的各端点（除快照）中 `usage` 恒为全 0 的 T-SessionUsage、`permission_rules` 恒 `[]`、`message_count` 恒 `0`；`last_seq` 仅 `GET /api/v1/sessions/{session_id}` 携带真实事件水位，其余端点恒 `0`。
+会话对象。
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `id` | string | 会话 id（`session_...`） |
-| `workspace_id` | string | 所属工作区 id（`wd_<slug>_<hash12>`） |
-| `title` | string | 标题；未设置时为 `""` |
-| `created_at` | string | 创建时间，ISO 8601 |
-| `updated_at` | string | 最后更新时间，ISO 8601 |
-| `archived_at` | string | 可缺省：归档时间；未归档时不出现 |
-| `busy` | boolean | 任一 Agent 有活动轮次或后台任务 |
-| `main_turn_active` | boolean | main agent 轮次进行中 |
-| `pending_interaction` | string | `none` / `approval` / `question` |
-| `last_turn_reason` | string | 可缺省：`completed` / `cancelled` / `failed`——存活会话取实时值，冷会话取最后持久化值，均无则缺省 |
-| `archived` | boolean | 归档标记 |
-| `last_prompt` | string | 可缺省：最近一条提示词文本 |
-| `metadata` | object | 必含 `cwd: string`；附加自定义任意键（`goal` 键被剔除） |
-| `agent_config` | object | 恒 `{ "model": string }`——存活会话取绑定模型，否则 `""`；schema 声明的其余配置键产出侧均不出现 |
-| `usage` | object | [T-SessionUsage](#t-sessionusage) |
-| `permission_rules` | array | 恒 `[]` |
-| `message_count` | integer | 恒 `0` |
-| `last_seq` | integer | 事件水位或 `0`，见上 |
+```ts
+type Session = {
+  id: string; // `session_...`
+  workspace_id: string; // 所属工作区 id（`wd_<slug>_<hash12>`）
+  title: string; // 未设置时为 ""
+  created_at: string; // ISO 8601
+  updated_at: string; // ISO 8601
+  archived_at?: string; // ISO 8601；未归档时不出现
+  busy: boolean; // 任一 Agent 有活动轮次或后台任务
+  main_turn_active: boolean; // main agent 轮次进行中
+  pending_interaction: 'none' | 'approval' | 'question';
+  last_turn_reason?: 'completed' | 'cancelled' | 'failed';
+  archived: boolean;
+  last_prompt?: string; // 最近一条提示词文本
+  metadata: {
+    cwd: string;
+    [key: string]: unknown; // 附加自定义任意键（goal 键被剔除）
+  };
+  agent_config: {
+    model: string; // 存活会话取绑定模型，否则 ""
+  };
+  usage: SessionUsage;
+  permission_rules: unknown[]; // 恒 []
+  message_count: number; // 恒 0
+  last_seq: number; // 事件水位或 0
+};
+```
 
-schema 另声明的 `current_prompt_id` 产出侧从不出现（仅快照的 `in_flight_turn` 有同名字段）。
+- 返回会话的各端点（除快照）中 `usage` 恒为全 0 的 [T-SessionUsage](#t-sessionusage)、`permission_rules` 恒 `[]`、`message_count` 恒 `0`；`last_seq` 仅 `GET /api/v1/sessions/{session_id}` 携带真实事件水位，其余端点恒 `0`。
+- `last_turn_reason`：存活会话取实时值，冷会话取最后持久化值，均无则缺省。
+- `agent_config` 恒只有 `model` 一键，schema 声明的其余配置键产出侧均不出现；schema 另声明的 `current_prompt_id` 产出侧从不出现（仅快照的 `in_flight_turn` 有同名字段）。
 
 ### T-SessionUsage
 
-`{ input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_cost_usd, context_tokens, context_limit, turn_count }`——全部 number。普通会话端点恒全 0；快照端点用法不同，见 [T-SnapshotUsage](#t-snapshotusage)。
+```ts
+type SessionUsage = {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  total_cost_usd: number;
+  context_tokens: number;
+  context_limit: number;
+  turn_count: number;
+};
+```
+
+普通会话端点恒全 0；快照端点用法不同，见 [T-SnapshotUsage](#t-snapshotusage)。
 
 ### T-SessionStatus
 
 main agent 的实时状态汇总。
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `busy` | boolean | 同 T-Session 的 `busy` |
-| `model` | string | 可缺省：模型别名；未绑定时不出现 |
-| `thinking_level` | string | 思考档位；模型未绑定时为 `""` |
-| `permission` | string | `manual` / `yolo` / `auto` |
-| `plan_mode` | boolean | Plan 模式 |
-| `swarm_mode` | boolean | swarm 模式 |
-| `tower_mode` | boolean | tower 模式 |
-| `context_tokens` | integer | 当前上下文 tokens |
-| `max_context_tokens` | integer | 可缺省：上下文上限；不可解析时不出现 |
-| `context_usage` | number | 可缺省：上下文占比（0–1）；无上限时不出现 |
+```ts
+type SessionStatus = {
+  busy: boolean; // 同 Session.busy
+  model?: string; // 模型别名；未绑定时不出现
+  thinking_level: string; // 模型未绑定时为 ""
+  permission: 'manual' | 'yolo' | 'auto';
+  plan_mode: boolean; // Plan 模式
+  swarm_mode: boolean;
+  tower_mode: boolean;
+  context_tokens: number; // 当前上下文 tokens
+  max_context_tokens?: number; // 上下文上限；不可解析时不出现
+  context_usage?: number; // 上下文占比（0–1）；无上限时不出现
+};
+```
 
 ### T-GoalSnapshot
 
-目标快照（camelCase 载荷）：`{ goalId, objective, completionCriterion?, status, turnsUsed, tokensUsed, wallClockMs, budget, terminalReason? }`。
+目标快照（camelCase 载荷），与 `goal.updated` 事件的载荷共享。
 
-- `status`：`active` / `paused` / `blocked` / `complete`。
-- `budget`：`{ tokenBudget, turnBudget, wallClockBudgetMs, remainingTokens, remainingTurns, remainingWallClockMs }`（六项均 number 或 `null`）加 `{ tokenBudgetReached, turnBudgetReached, wallClockBudgetReached, overBudget }`（均 boolean）。
+```ts
+type GoalSnapshot = {
+  goalId: string;
+  objective: string;
+  completionCriterion?: string;
+  status: 'active' | 'paused' | 'blocked' | 'complete';
+  turnsUsed: number;
+  tokensUsed: number;
+  wallClockMs: number;
+  terminalReason?: string;
+  budget: {
+    tokenBudget: number | null;
+    turnBudget: number | null;
+    wallClockBudgetMs: number | null;
+    remainingTokens: number | null;
+    remainingTurns: number | null;
+    remainingWallClockMs: number | null;
+    tokenBudgetReached: boolean;
+    turnBudgetReached: boolean;
+    wallClockBudgetReached: boolean;
+    overBudget: boolean;
+  };
+};
+```
+
+### T-InFlightTurn
+
+进行中轮次的实时投影，仅由快照的 `in_flight_turn` 产出。
+
+```ts
+type InFlightTurn = {
+  turn_id: number;
+  assistant_text: string;
+  thinking_text: string;
+  running_tools: {
+    tool_call_id: string;
+    name: string;
+    args?: unknown;
+    description?: string;
+    display?: unknown;
+    last_progress?: {
+      kind: 'stdout' | 'stderr' | 'progress' | 'status' | 'custom';
+      text?: string;
+      percent?: number;
+    };
+  }[];
+  current_prompt_id?: string;
+};
+```
+
+**消息与提示词。**
 
 ### T-Message
 
 消息对象。
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `id` | string | 消息 id（`msg_<sessionId>_<6 位序号>` 或核心 id） |
-| `session_id` | string | 所属会话 |
-| `role` | string | `user` / `assistant` / `tool` / `system` |
-| `content` | array | [T-MessageContent](#t-messagecontent) 数组 |
-| `created_at` | string | ISO 8601，单调递增 |
-| `metadata` | object | 可缺省：仅当消息带 origin 时——`{ origin: <核心 PromptOrigin 对象> }`（camelCase 嵌套，原样透传） |
+```ts
+type Message = {
+  id: string; // `msg_<sessionId>_<6 位序号>` 或核心 id
+  session_id: string;
+  role: 'user' | 'assistant' | 'tool' | 'system';
+  content: MessageContent[];
+  created_at: string; // ISO 8601，单调递增
+  metadata?: Record<string, unknown>; // 仅当消息带 origin 时：{ origin: PromptOrigin }（camelCase 嵌套，原样透传）
+};
+```
 
 schema 声明的 `prompt_id` / `parent_message_id` 产出侧从不出现。
 
 ### T-MessageContent
 
-消息内容块，按 `type` 区分：
+消息内容块，按 `type` 区分。
 
-| `type` | 字段 | 说明 |
-| --- | --- | --- |
-| `text` | `text: string` | 文本；`audio_url` 降级为 `[audio:<url>]` 文本 |
-| `thinking` | `thinking: string, signature?: string` | 思考块 |
-| `tool_use` | `tool_call_id, tool_name, input` | assistant 消息的工具调用；`input` 为解析后的参数（解析失败回原字符串） |
-| `tool_result` | `tool_call_id, output, is_error?: boolean` | tool 角色消息；`output` 有媒体块时为原始内容块数组，否则为拼接文本；`is_error` 仅 `true` 时出现 |
-| `image` / `video` | `source` | 见下 |
-| `file` | `file_id?, path?, name?, media_type?, size?` | 仅出现在输入（提示词 / 技能提交）；REST 投影不产出 |
+```ts
+type MessageContent =
+  | { type: 'text'; text: string } // audio_url 降级为 [audio:<url>] 文本
+  | { type: 'thinking'; thinking: string; signature?: string }
+  | { type: 'tool_use'; tool_call_id: string; tool_name: string; input: unknown } // input 为解析后的参数（解析失败回原字符串）
+  | { type: 'tool_result'; tool_call_id: string; output: unknown; is_error?: boolean } // is_error 仅 true 时出现
+  | { type: 'image' | 'video'; source: ImageSource }
+  | { type: 'file'; file_id?: string; path?: string; name?: string; media_type?: string; size?: number }; // 仅出现在输入（提示词 / 技能提交）；REST 投影不产出
 
-`image` / `video` 的 `source`（产出侧三种，按 `kind` 区分）：`{ kind: "url", url, id? }`（外部 URL）、`{ kind: "base64", media_type, data }`（仅提示词提交回显）、`{ kind: "session_media", file_id }`（会话媒体引用）。schema 声明的 `{ kind: "file", file_id }` 与 `{ kind: "path", path }` 为输入专用变体，产出侧不出现。
+type ImageSource =
+  | { kind: 'url'; url: string; id?: string } // 外部 URL
+  | { kind: 'base64'; media_type: string; data: string } // 仅提示词提交回显
+  | { kind: 'session_media'; file_id: string }; // 会话媒体引用
+```
+
+- `tool_result` 的 `output`：有媒体块时为原始内容块数组，否则为拼接文本。
+- `image` / `video` 的 `source` 产出侧仅上述三种；schema 声明的 `{ kind: 'file', file_id }` 与 `{ kind: 'path', path }` 为输入专用变体，产出侧不出现。
 
 ### T-PromptItem
 
 提示词队列项 / 提交结果。
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `prompt_id` | string | 提示词 id |
-| `user_message_id` | string | 用户消息 id（Skill 捆绑提交时与 `prompt_id` 相同） |
-| `status` | string | `running` / `queued` / `blocked` |
-| `content` | array | 投影后的用户输入（[T-MessageContent](#t-messagecontent) 数组，剥离 Skill 捆绑块） |
-| `created_at` | string | ISO 8601 |
+```ts
+type PromptItem = {
+  prompt_id: string;
+  user_message_id: string; // Skill 捆绑提交时与 prompt_id 相同
+  status: 'running' | 'queued' | 'blocked';
+  content: MessageContent[]; // 投影后的用户输入（剥离 Skill 捆绑块）
+  created_at: string; // ISO 8601
+};
+```
+
+### T-PromptOrigin
+
+提示词来源（camelCase 嵌套对象，原样透传）。
+
+```ts
+type PromptOrigin = {
+  kind:
+    | 'user'
+    | 'skill_activation'
+    | 'plugin_command'
+    | 'injection'
+    | 'shell_command'
+    | 'compaction_summary'
+    | 'system_trigger'
+    | 'task'
+    | 'background_task'
+    | 'cron_job'
+    | 'cron_missed'
+    | 'hook_result'
+    | 'retry';
+  [key: string]: unknown; // 各态附带相应上下文字段
+};
+```
+
+**交互。**
 
 ### T-ApprovalRequest
 
-审批请求：`{ approval_id, session_id, turn_id?, tool_call_id, tool_name, action, tool_input_display, created_at, expires_at }`。
+审批请求。
 
-- `turn_id`：number，可缺省。
-- `tool_call_id`：缺省时回退为交互 id。
-- `tool_input_display`：[T-ToolInputDisplay](#t-toolinputdisplay)。
-- `expires_at`：`created_at` 之后 24 小时。
+```ts
+type ApprovalRequest = {
+  approval_id: string;
+  session_id: string;
+  turn_id?: number;
+  tool_call_id: string; // 缺省时回退为交互 id
+  tool_name: string;
+  action: string;
+  tool_input_display: ToolInputDisplay;
+  created_at: string; // ISO 8601
+  expires_at: string; // ISO 8601，created_at 之后 24 小时
+};
+```
 
 ### T-ToolInputDisplay
 
-工具输入展示，按 `kind` 区分：`command`（`command` / `cwd?` / `description?` / `language?`）、`file_io`（`operation` / `path` / `detail?` / `content?` / `before?` / `after?`）、`diff`（`path` / `before` / `after` / `hunks?`）、`search`（`query` / `scope?`）、`url_fetch`（`url` / `method?`）、`agent_call`（`agent_name` / `prompt` / `background?`）、`skill_call`（`skill_name` / `args?`）、`todo_list`（`items: { title, status }[]`）、`task`（`task_id` / `status` / `description` / `task_kind?`）、`task_stop`（`task_id` / `task_description`）、`plan_review`（`plan` / `path?` / `options?: { label, description }[]`）、`goal_start`（`objective` / `completionCriterion?` / `mode`）、`generic`（`summary` / `detail?`）。
+工具输入展示，按 `kind` 区分。
+
+```ts
+type ToolInputDisplay =
+  | { kind: 'command'; command: string; cwd?: string; description?: string; language?: 'bash' }
+  | {
+      kind: 'file_io';
+      operation: 'read' | 'write' | 'edit' | 'glob' | 'grep';
+      path: string;
+      detail?: string;
+      content?: string;
+      before?: string;
+      after?: string;
+    }
+  | { kind: 'diff'; path: string; before: string; after: string; hunks?: unknown }
+  | { kind: 'search'; query: string; scope?: string }
+  | { kind: 'url_fetch'; url: string; method?: string }
+  | { kind: 'agent_call'; agent_name: string; prompt: string; background?: boolean }
+  | { kind: 'skill_call'; skill_name: string; args?: string }
+  | { kind: 'todo_list'; items: { title: string; status: string }[] }
+  | { kind: 'task'; task_id: string; status: string; description: string; task_kind?: string }
+  | { kind: 'task_stop'; task_id: string; task_description: string }
+  | { kind: 'plan_review'; plan: string; path?: string; options?: { label: string; description: string }[] }
+  | { kind: 'goal_start'; objective: string; completionCriterion?: string; mode: 'manual' | 'yolo' }
+  | { kind: 'generic'; summary: string; detail?: string };
+```
 
 ### T-QuestionRequest
 
 提问请求。
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `question_id` | string | 交互 id |
-| `session_id` | string | 所属会话 |
-| `turn_id` | number | 可缺省 |
-| `tool_call_id` | string | 可缺省 |
-| `questions` | array | 1–4 个 T-QuestionItem |
-| `created_at` | string | ISO 8601 |
+```ts
+type QuestionRequest = {
+  question_id: string; // 交互 id
+  session_id: string;
+  turn_id?: number;
+  tool_call_id?: string;
+  questions: QuestionItem[]; // 1–4 个
+  created_at: string; // ISO 8601
+};
 
-T-QuestionItem：`{ id: "q_<i>", question, header?, body?, options, multi_select?, allow_other, other_label?, other_description? }`——`options` 为 2–4 个 `{ id: "opt_<i>_<j>", label, description? }`（id 由投影合成）；`allow_other` 恒产出。
+type QuestionItem = {
+  id: string; // `q_<i>`，投影合成
+  question: string;
+  header?: string;
+  body?: string;
+  options: QuestionOption[]; // 2–4 个
+  multi_select?: boolean;
+  allow_other: true; // 恒产出
+  other_label?: string;
+  other_description?: string;
+};
+
+type QuestionOption = {
+  id: string; // `opt_<i>_<j>`，投影合成
+  label: string;
+  description?: string;
+};
+```
+
+**任务与终端。**
 
 ### T-Task
 
 后台任务。
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `id` | string | 任务 id |
-| `session_id` | string | 所属会话 |
-| `kind` | string | `subagent` / `bash` / `tool`（核心映射：process→`bash`、agent→`subagent`、question→`tool`） |
-| `description` | string | 描述 |
-| `status` | string | `running` / `completed` / `failed` / `cancelled`（核心映射：timed_out→`failed`、killed→`cancelled`、lost→`failed`） |
-| `created_at` | string | 取 startedAt，ISO 8601 |
-| `started_at` | string | 与 `created_at` 相同 |
-| `completed_at` | string | 可缺省：结束时间 |
-| `command` | string | 可缺省：仅 `bash` 任务 |
-| `model` | string | 可缺省：仅 `subagent` 任务且有值 |
-| `thinking_effort` | string | 可缺省：同上 |
-| `agent_id` | string | 可缺省：同上 |
-| `subagent_type` | string | 可缺省：同上 |
-| `parent_tool_call_id` | string | 可缺省：`subagent` / `bash` 任务且有值 |
-| `output_preview` | string | 可缺省：仅 `with_output` 读取且输出非空 |
-| `output_bytes` | integer | 可缺省：同上 |
-| `run_in_background` | boolean | `detached ?? true` |
+```ts
+type Task = {
+  id: string;
+  session_id: string;
+  kind: 'subagent' | 'bash' | 'tool'; // 核心映射：process→bash、agent→subagent、question→tool
+  description: string;
+  status: 'running' | 'completed' | 'failed' | 'cancelled'; // 核心映射：timed_out→failed、killed→cancelled、lost→failed
+  created_at: string; // ISO 8601，取 startedAt
+  started_at: string; // 与 created_at 相同
+  completed_at?: string; // ISO 8601
+  command?: string; // 仅 bash 任务
+  model?: string; // 仅 subagent 任务且有值
+  thinking_effort?: string; // 同上
+  agent_id?: string; // 同上
+  subagent_type?: string; // 同上
+  parent_tool_call_id?: string; // subagent / bash 任务且有值
+  output_preview?: string; // 仅 with_output 读取且输出非空
+  output_bytes?: number; // 同上
+  run_in_background: boolean; // detached ?? true
+};
+```
 
 REST 的 T-Task 不含 `subagent_phase` / `suspended_reason` / `swarm_index`——那些字段只在快照的 subagent 条目上（见 [T-SnapshotSubagent](#t-snapshotsubagent)）。
 
 ### T-Terminal
 
-`{ id, session_id, cwd, shell, cols, rows, status, created_at, exited_at?, exit_code? }`——`status` 为 `running` / `exited`；`exited_at` 与 `exit_code`（integer 或 `null`，例如因信号终止时）可缺省。
-
-### T-Workspace
-
-`{ id, root, name, created_at, last_opened_at, session_count }`——全字段必有；`created_at` / `last_opened_at` 为 ISO 8601，`session_count` 为 integer。注册与重命名会广播全局事件 `event.workspace.created` / `event.workspace.updated`。
-
-### T-SkillDescriptor
-
-`{ name, description, path, source, type?, disable_model_invocation? }`——`source` 为 `project` / `user` / `extra` / `builtin`；`type` 标识技能类别（只有用户可激活的类型才能被激活）；`disable_model_invocation` 会让技能对模型不可见。
-
-### T-CapabilityStatus
-
-能力状态（camelCase 载荷）：`{ id, pluginId?, displayName, description, supported, state, version?, steps, install }`。
-
-- `state`：`ready`（所有必需检测步骤均为 `ok`）/ `partial` / `not_installed` / `unsupported`。
-- `steps`：`{ id, state, detail?, optional? }[]`，其 `state` 为 `ok` / `missing` / `failed`。
-- `install`：`{ running, step?, percent?, error?, note? }`，`percent` 取值 0–100。
-
-### T-PluginSummary
-
-插件摘要（camelCase 载荷）：`{ id, displayName, version?, enabled, state, skillCount, mcpServerCount, enabledMcpServerCount, hookCount, commandCount, hasErrors, source, originalSource?, github? }`。
-
-- `state`：`ok` / `error`（加载失败也会置 `hasErrors`）。
-- `source`：`local-path` / `zip-url` / `github`。
-- `github`：`{ owner, repo, ref, installedSha? }`，`ref` 为 `{ kind: "branch" \| "tag" \| "sha", value }`。
-
-### T-ToolDescriptor
-
-`{ name, description, input_schema, source, active, mcp_server_id? }`——`input_schema` 恒 `null`；`source` 为 `builtin` / `skill` / `mcp`；`mcp_server_id` 仅 MCP 工具携带（从 `mcp__<server>__<tool>` 名称解析）；`active` 报告工具策略的判定结果。
-
-### T-McpServer
-
-`{ id, name, transport, status, tool_count, last_error? }`——`id` 与 `name` 均为 server 名称；`transport` 为 `stdio` / `http` / `sse`；`status` 为 `connected` / `connecting` / `disconnected` / `error`（核心六态压为四态：pending→`connecting`、disabled/removed→`disconnected`、failed/needs-auth→`error`）。
-
-### T-Connection
-
-`{ id, connected_at, remote_address, user_agent, has_client_hello, subscriptions }`——`id` 为 `conn_<ulid>`；`remote_address` 与 `user_agent` 可空（`null`）；`subscriptions` 为排序的会话 id 数组。
-
-### T-FsEntry
-
-文件条目：`{ path, name, kind, size?, modified_at, etag?, mime?, language_id?, is_binary?, is_symlink_to?, git_status?, child_count? }`。
-
-- `kind`：`file` / `directory` / `symlink`。
-- `git_status`：`clean` / `modified` / `added` / `deleted` / `renamed` / `untracked` / `ignored` / `conflicted`（仅 `include_git_status: true` 时存在）。
-- `size` 为 integer；`modified_at` 为 ISO 8601。
-
-### T-FsListResponse
-
-`{ items: T-FsEntry[], children_by_path?, truncated }`——`depth` 大于 1 时另附 `children_by_path`（路径 → 条目数组的映射）；`truncated` 表示 `limit` 截断了列表。
-
-### T-FsReadResponse
-
-`{ path, content, encoding, size, truncated, etag, mime, language_id?, line_count?, is_binary }`——`encoding` 报告实际使用的编码（`utf-8` 或 `base64`）；`size` 为文件完整大小。
-
-### T-FsListManyResponse
-
-`{ results, truncated_paths?, partial_errors? }`——`results` 为每个请求路径到其条目数组的映射；`truncated_paths` 为达到 `limit` 的路径；`partial_errors` 为失败路径到其 `{ code, msg }` 错误的映射。
-
-### T-FsStatManyResponse
-
-`{ entries }`——每个请求路径到其 [T-FsEntry](#t-fsentry)（不存在时为 `null`）的映射。
-
-### T-FsSearchHit
-
-`{ path, name, kind, score, match_positions }`——`score` 为 0–1 的模糊匹配得分；`match_positions` 为匹配到的字符偏移数组。响应形态为 `{ items: T-FsSearchHit[], truncated: boolean }`。
-
-### T-FsSuggestItem
-
-结构同 [T-FsSearchHit](#t-fssearchhit)；响应形态相同。
-
-### T-FsGrepResponse
-
-`{ files, files_scanned, truncated, elapsed_ms }`——`files` 的每项为 `{ path, matches }`，每个匹配为 `{ line, col, text, before, after }`（`before` / `after` 最多携带 `context_lines` 行上下文）；`truncated` 表示某个匹配配额截断了结果。
-
-### T-FsGitStatusResponse
-
-`{ branch, ahead, behind, entries, additions, deletions, pullRequest }`——`entries` 把每个变更路径映射到其 `git_status`；`pullRequest`（camelCase）为 `{ number, state, url }`（`state` 为 `open` / `merged` / `closed` / `draft`）或 `null`。
-
-### T-FsDiffResponse
-
-`{ path, diff, truncated }`——`diff` 为 unified diff 文本；`truncated` 表示过长的 diff 被截断。
-
-### T-FsBrowseResponse
-
-`{ path, parent, entries }`——`path` 为解析后的目录；`parent` 为其父目录（文件系统根处为 `null`）；`entries` 每条目为 `{ name, path, is_dir: true }`。
-
-### T-FsHomeResponse
-
-`{ home, recent_roots }`——`home` 为用户主目录；`recent_roots` 列出已注册工作区的根目录（上限 8）。
-
-### T-FileMeta
-
-`{ id, name, media_type, size, created_at, expires_at? }`——`id` 为 `f_...`；`media_type` 取自上传的内容类型；`expires_at` 可缺省。
-
-### T-ConfigResponse
-
-配置全域对象（camelCase 域名转 snake_case）加合成键；未列出的域原样透传：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `providers` | object | 供应商 id → `{ type, base_url?, default_model?, has_api_key }` 的映射（必有，空为 `{}`；密钥被剥离为 `has_api_key`） |
-| `models` | object | 模型别名 → 模型记录的映射（剥离 `apiKey` / `oauth`，加 `has_api_key`，其余键原样） |
-| `services` | object | 内置外部服务配置（同 `models`，另把 `customHeaders` 换成 `custom_header_keys: string[]`） |
-| `yolo` | boolean | 可缺省：由 `default_permission_mode === "yolo"` 合成 |
-| `default_provider` | string | 全局默认供应商 id |
-| `default_model` | string | 全局默认模型别名 |
-| 其余域 | — | `thinking` / `plan_mode` / `default_permission_mode` / `default_plan_mode` / `permission` / `hooks` / `merge_all_available_skills` / `extra_skill_dirs` / `loop_control` / `background` / `subagent` / `secondary_model` / `experimental` / `telemetry` / `raw` 等，原样透传，可缺省 |
-
-### T-AuthSummary
-
-`{ models_ready, providers_count, managed_provider }`——`managed_provider` 为 `{ name, status }`（`status` 为 `authenticated` / `expired` / `revoked` / `unauthenticated`）或 `null`。全局默认模型别名改从 `GET /api/v1/config` 的 `default_model` 读取，本对象不携带。
-
-### T-OAuthFlowStart
-
-OAuth 流程发起结果，按 `status` 区分：
-
-- `pending`：`{ flow_id, provider, status: "pending", verification_uri, verification_uri_complete, user_code, expires_in, interval, expires_at }`——`expires_in`（秒）与 `expires_at`（ISO 8601）是同一时限的两种表示。
-- `authenticated`：`{ flow_id, provider, status: "authenticated" }`。
-
-### T-OAuthFlowSnapshot
-
-`{ flow_id, provider, status, verification_uri, verification_uri_complete, user_code, expires_in, expires_at, interval, resolved_at?, error_message? }`——`status` 为 `pending` / `authenticated` / `denied` / `expired` / `cancelled`；离开 `pending` 后 `resolved_at` 记录到达终态的时间，`error_message` 描述失败的流程。
-
-### T-ManagedUsageResult
-
-托管用量结果，按 `kind` 区分：
-
-- `ok`：`{ kind: "ok", summary, limits, extra_usage }`——`summary`（可空）是主配额行，`limits` 列出每个配额窗口；一行（T-UsageRow）为 `{ name?, window?, used, limit, reset_at? }`，其中 `window` 为 `{ duration, unit }`（`unit` 为 `minute` / `hour` / `day` / `week`）。`extra_usage`（可空）是按量付费钱包：`{ balance_cents, total_cents, monthly_charge_limit_enabled, monthly_charge_limit_cents, monthly_used_cents, currency }`（金额均 integer 分）。
-- `error`：`{ kind: "error", message, status? }`——`status` 为上游 HTTP 状态码（如存在）。
-
-### T-ManagedUserInfoResult
-
-托管账号资料（camelCase 载荷），按 `kind` 区分：
-
-- `ok`：`{ kind: "ok", userInfo }`——`userInfo` 始终携带 `userId`、`nickname`、`status`、`region`、`userLevel`、`userLevelName`、`domain`、`domainName`，并可能附加 `globalId`、`bio`、`avatar`、`username`、`email`、`phone`（`{ countryCode, number }`）、`createdTime`、`lastLoginTime`。
-- `error`：`{ kind: "error", message, status? }`。
-
-### T-ModelCatalogItem
-
-`{ provider, model, display_name?, max_context_size, capabilities?, support_efforts?, default_effort? }`——`model` 是别名 id，`provider` 是所属供应商 id；`max_context_size` 是以 token 计的上下文窗口。
-
-### T-ProviderCatalogItem
-
-`{ id, type, base_url?, default_model?, has_api_key, status, models? }`——`type` 为通信协议（`kimi` / `openai` / `openai_responses` / `anthropic` / `google-genai` / `vertexai`）；`status` 为 `connected` / `error` / `unconfigured`；`models` 为该供应商的模型别名 id 数组。
-
-### T-CatalogProviderItem
-
-models.dev 目录条目：`{ id, name, wire_type, guessed, needs_base_url, rejected, reject_reason, env_key, models }`——`wire_type` 为解析出的协议（可空，枚举与供应商 `type` 相同）；`guessed` 标记启发式解析；`env_key` 是上游约定的 API 密钥环境变量（可空）；`reject_reason` 可空；`models` 为 `{ id, name?, max_context_size, capabilities?, reasoning }[]`。
-
-### T-RefreshProviderModelsResponse
-
-`{ changed, unchanged, failed }`——`changed` 为 `{ provider_id, provider_name, added, removed }[]`（新增 / 移除的别名数）；`unchanged` 为无差异的供应商 id 数组；`failed` 为 `{ provider, reason }[]`。
-
-### T-SearchResponse
-
-`{ items, has_more, page_token?, incomplete?, index_state, source }`。
-
-- 每项：`{ session_id, workspace_id, session_title, agent_id, role, snippet, time, turn?, step_id?, score }`——`role` 为 `user` / `assistant` / `title`；`time` 为 epoch 毫秒。
-- `incomplete`：超出预算的页携带，取值 `candidate_cap` / `postings_budget` / `deadline`。
-- `index_state`：`{ state, indexed_sessions, total_sessions, documents, stale?, degraded? }`——`state` 为 `building` / `ready` / `readonly`；`stale` 标记仍在追赶的落后视图，`degraded` 携带最近一次刷新失败的信息。
-- `source`：`live` / `index`——本页结果由内存转录还是持久索引提供。
+```ts
+type Terminal = {
+  id: string;
+  session_id: string;
+  cwd: string;
+  shell: string;
+  cols: number;
+  rows: number;
+  status: 'running' | 'exited';
+  created_at: string; // ISO 8601
+  exited_at?: string; // ISO 8601
+  exit_code?: number | null; // 例如因信号终止时为 null
+};
+```
+
+**快照。**
 
 ### T-SnapshotResponse
 
 会话快照。
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `as_of_seq` | integer | 事件日志水位 |
-| `epoch` | string | 事件 epoch（冷会话可为 `""`） |
-| `session` | object | [T-Session](#t-session)——`agent_config.model` 取实时绑定，`usage` 为 [T-SnapshotUsage](#t-snapshotusage) |
-| `messages` | object | `{ items: T-Message[], has_more }`——尾部最多 100 条 |
-| `in_flight_turn` | object \| null | [T-InFlightTurn](#t-inflightturn)；无进行中轮次时为 `null` |
-| `subagents` | array | [T-SnapshotSubagent](#t-snapshotsubagent) 数组（无存活时 `[]`） |
-| `pending_approvals` | array | [T-ApprovalRequest](#t-approvalrequest) 数组 |
-| `pending_questions` | array | [T-QuestionRequest](#t-questionrequest) 数组 |
+```ts
+type SnapshotResponse = {
+  as_of_seq: number; // 事件日志水位
+  epoch: string; // 事件 epoch（冷会话可为 ""）
+  session: Session; // agent_config.model 取实时绑定，usage 为 SnapshotUsage
+  messages: { items: Message[]; has_more: boolean }; // 尾部最多 100 条
+  in_flight_turn: InFlightTurn | null; // 无进行中轮次时为 null
+  subagents: SnapshotSubagent[]; // 无存活时 []
+  pending_approvals: ApprovalRequest[];
+  pending_questions: QuestionRequest[];
+};
+```
 
 ### T-SnapshotUsage
 
-`{ input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, context_tokens, context_limit }`——与 [T-SessionUsage](#t-sessionusage) 不同：**无** `total_cost_usd` / `turn_count`，且 `context_limit` 可缺省。
+```ts
+type SnapshotUsage = {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  context_tokens: number;
+  context_limit?: number;
+};
+```
 
-### T-InFlightTurn
-
-`{ turn_id, assistant_text, thinking_text, running_tools, current_prompt_id? }`——`running_tools` 为 `{ tool_call_id, name, args?, description?, display?, last_progress? }[]`，`last_progress` 为 `{ kind: "stdout" \| "stderr" \| "progress" \| "status" \| "custom", text?, percent? }`。
+与 [T-SessionUsage](#t-sessionusage) 不同：**无** `total_cost_usd` / `turn_count`，且 `context_limit` 可缺省。
 
 ### T-SnapshotSubagent
 
-快照中的 subagent 条目：`{ id, session_id, kind: "subagent", description, status, subagent_phase?, subagent_type?, parent_tool_call_id?, swarm_index?, run_in_background, model?, thinking_effort?, created_at, started_at?, completed_at?, output_preview?, suspended_reason? }`——`status` 取值同 [T-Task](#t-task)；`subagent_phase` 为 `queued` / `working` / `suspended` / `completed` / `failed`。
+快照中的 subagent 条目。
 
-### T-Transcript 族
+```ts
+type SnapshotSubagent = {
+  id: string; // subagentId
+  session_id: string;
+  kind: 'subagent';
+  description: string;
+  status: Task['status'];
+  subagent_phase?: 'queued' | 'working' | 'suspended' | 'completed' | 'failed';
+  subagent_type?: string;
+  parent_tool_call_id?: string;
+  swarm_index?: number;
+  run_in_background: boolean;
+  model?: string;
+  thinking_effort?: string;
+  created_at: string; // ISO 8601
+  started_at?: string; // ISO 8601
+  completed_at?: string; // ISO 8601
+  output_preview?: string;
+  suspended_reason?: string;
+};
+```
 
-转录载荷的类型正本是共享包 `@moonshot-ai/transcript` 的契约（客户端经同一依赖消费）：
+**工作区。**
 
-- **T-TranscriptResponse**：`{ agent_id, items, has_more, tasks, interactions, attachments, todos, prompts, meta, agents, pending_interactions, seq? }`——`items` 为 TranscriptItem（turn / marker / taskref 三态；turn 含 `steps[].frames[]`，frame 分 text / thinking / tool / notice 四种）。
-- **T-TranscriptOpsCatchupResponse**：`{ agent_id, batches, latest_seq, complete }`——`batches` 为 `{ seq, ops }[]`；TranscriptOperation 全集（判别字段为 `op`）：reset / turn.upsert / step.upsert / frame.upsert / append / marker.upsert / taskref.upsert / task.upsert / interaction.upsert / attachment.upsert / todo.upsert / prompt.upsert / meta.merge / items.remove。
-- **T-TranscriptUserMessagesResponse**：`{ agents }`——每条目为 `{ agent_id, messages, attachments }`；`messages` 为 `{ turn_id, ordinal, state, origin, prompt, attachment_ids?, started_at? }[]`，`state` 为轮次状态（`queued` / `running` / `completed` / `failed` / `cancelled`）。
-- **T-TranscriptPlanResponse**：`{ agent_id, plans }`——每个计划为 `{ tool_call_id, turn_id, source, plan, path?, options?, review? }`；`source` 为 `interaction` / `display` / `output`；`review`（仅交互式审阅时存在）为 `{ state, selected_option?, feedback? }`，`state` 为 `pending` / `approved` / `rejected` / `cancelled`。
+### T-Workspace
+
+```ts
+type Workspace = {
+  id: string;
+  root: string;
+  name: string;
+  created_at: string; // ISO 8601
+  last_opened_at: string; // ISO 8601
+  session_count: number;
+};
+```
+
+注册与重命名会广播全局事件 `event.workspace.created` / `event.workspace.updated`。
+
+**文件与搜索。**
+
+### T-FsEntry
+
+文件条目。
+
+```ts
+type FsGitStatus =
+  | 'clean'
+  | 'modified'
+  | 'added'
+  | 'deleted'
+  | 'renamed'
+  | 'untracked'
+  | 'ignored'
+  | 'conflicted';
+
+type FsEntry = {
+  path: string;
+  name: string;
+  kind: 'file' | 'directory' | 'symlink';
+  size?: number;
+  modified_at: string; // ISO 8601
+  etag?: string;
+  mime?: string;
+  language_id?: string;
+  is_binary?: boolean;
+  is_symlink_to?: string;
+  git_status?: FsGitStatus; // 仅 include_git_status: true 时存在
+  child_count?: number;
+};
+```
+
+### T-FsListResponse
+
+```ts
+type FsListResponse = {
+  items: FsEntry[];
+  children_by_path?: Record<string, FsEntry[]>; // depth 大于 1 时另附
+  truncated: boolean; // limit 截断了列表
+};
+```
+
+### T-FsReadResponse
+
+```ts
+type FsReadResponse = {
+  path: string;
+  content: string;
+  encoding: 'utf-8' | 'base64'; // 实际使用的编码
+  size: number; // 文件完整大小
+  truncated: boolean;
+  etag: string;
+  mime: string;
+  language_id?: string;
+  line_count?: number;
+  is_binary: boolean;
+};
+```
+
+### T-FsListManyResponse
+
+```ts
+type FsListManyResponse = {
+  results: Record<string, FsEntry[]>; // 每个请求路径到其条目数组
+  truncated_paths?: string[]; // 达到 limit 的路径
+  partial_errors?: Record<string, { code: number; msg: string }>; // 失败路径到其错误
+};
+```
+
+### T-FsStatManyResponse
+
+```ts
+type FsStatManyResponse = {
+  entries: Record<string, FsEntry | null>; // 每个请求路径到其条目（不存在时为 null）
+};
+```
+
+### T-FsSearchHit
+
+```ts
+type FsSearchHit = {
+  path: string;
+  name: string;
+  kind: FsEntry['kind'];
+  score: number; // 0–1 的模糊匹配得分
+  match_positions: number[]; // 匹配到的字符偏移
+};
+```
+
+响应形态为 `{ items: FsSearchHit[], truncated: boolean }`。
+
+### T-FsSuggestItem
+
+结构同 [T-FsSearchHit](#t-fssearchhit)，响应形态相同。
+
+```ts
+type FsSuggestItem = FsSearchHit;
+```
+
+### T-FsGrepResponse
+
+```ts
+type FsGrepResponse = {
+  files: {
+    path: string;
+    matches: {
+      line: number;
+      col: number;
+      text: string;
+      before: string[]; // 最多携带 context_lines 行上下文
+      after: string[]; // 同上
+    }[];
+  }[];
+  files_scanned: number;
+  truncated: boolean; // 某个匹配配额截断了结果
+  elapsed_ms: number;
+};
+```
+
+### T-FsGitStatusResponse
+
+```ts
+type FsGitStatusResponse = {
+  branch: string;
+  ahead: number;
+  behind: number;
+  entries: Record<string, FsGitStatus>; // 每个变更路径到其 git_status
+  additions: number;
+  deletions: number;
+  pullRequest: { number: number; state: 'open' | 'merged' | 'closed' | 'draft'; url: string } | null; // camelCase 岛屿
+};
+```
+
+### T-FsDiffResponse
+
+```ts
+type FsDiffResponse = {
+  path: string;
+  diff: string; // unified diff 文本
+  truncated: boolean; // 过长的 diff 被截断
+};
+```
+
+### T-FsBrowseResponse
+
+```ts
+type FsBrowseResponse = {
+  path: string; // 解析后的目录
+  parent: string | null; // 父目录（文件系统根处为 null）
+  entries: { name: string; path: string; is_dir: true }[];
+};
+```
+
+### T-FsHomeResponse
+
+```ts
+type FsHomeResponse = {
+  home: string; // 用户主目录
+  recent_roots: string[]; // 已注册工作区的根目录（上限 8）
+};
+```
+
+### T-FileMeta
+
+```ts
+type FileMeta = {
+  id: string; // `f_...`
+  name: string;
+  media_type: string; // 取自上传的内容类型
+  size: number;
+  created_at: string; // ISO 8601
+  expires_at?: string; // ISO 8601
+};
+```
+
+### T-SearchResponse
+
+```ts
+type SearchResponse = {
+  items: {
+    session_id: string;
+    workspace_id: string;
+    session_title: string;
+    agent_id: string;
+    role: 'user' | 'assistant' | 'title';
+    snippet: string;
+    time: number; // epoch 毫秒
+    turn?: number;
+    step_id?: string;
+    score: number;
+  }[];
+  has_more: boolean;
+  page_token?: string;
+  incomplete?: 'candidate_cap' | 'postings_budget' | 'deadline'; // 超出预算的页携带
+  index_state: {
+    state: 'building' | 'ready' | 'readonly';
+    indexed_sessions: number;
+    total_sessions: number;
+    documents: number;
+    stale?: boolean; // 仍在追赶的落后视图
+    degraded?: string; // 最近一次刷新失败的信息
+  };
+  source: 'live' | 'index'; // 本页结果由内存转录还是持久索引提供
+};
+```
+
+**配置与模型。**
+
+### T-ConfigResponse
+
+配置全域对象（camelCase 域名转 snake_case）加合成键。
+
+```ts
+type ConfigResponse = {
+  providers: Record<
+    string,
+    {
+      type: string;
+      base_url?: string;
+      default_model?: string;
+      has_api_key: boolean; // 密钥被剥离为 has_api_key
+    }
+  >; // 必有，空为 {}
+  models?: Record<string, unknown>; // 模型别名 → 模型记录（剥离 apiKey / oauth，加 has_api_key，其余键原样）
+  services?: unknown; // 内置外部服务配置（同 models，另把 customHeaders 换成 custom_header_keys: string[]）
+  yolo?: boolean; // 由 default_permission_mode === "yolo" 合成
+  default_provider?: string; // 全局默认供应商 id
+  default_model?: string; // 全局默认模型别名
+  [key: string]: unknown; // 未列出的域原样透传
+};
+```
+
+未列出域（`thinking` / `plan_mode` / `default_permission_mode` / `default_plan_mode` / `permission` / `hooks` / `merge_all_available_skills` / `extra_skill_dirs` / `loop_control` / `background` / `subagent` / `secondary_model` / `experimental` / `telemetry` / `raw` 等）原样透传，可缺省。
+
+### T-ModelCatalogItem
+
+```ts
+type ModelCatalogItem = {
+  provider: string; // 所属供应商 id
+  model: string; // 别名 id
+  display_name?: string;
+  max_context_size: number; // 以 token 计的上下文窗口
+  capabilities?: string[];
+  support_efforts?: string[];
+  default_effort?: string;
+};
+```
+
+### T-ProviderCatalogItem
+
+```ts
+type ProviderCatalogItem = {
+  id: string;
+  type: string; // 通信协议：kimi / openai / openai_responses / anthropic / google-genai / vertexai
+  base_url?: string;
+  default_model?: string;
+  has_api_key: boolean;
+  status: 'connected' | 'error' | 'unconfigured';
+  models?: string[]; // 该供应商的模型别名 id
+};
+```
+
+### T-CatalogProviderItem
+
+models.dev 目录条目。
+
+```ts
+type CatalogProviderItem = {
+  id: string;
+  name: string;
+  wire_type: 'kimi' | 'openai' | 'openai_responses' | 'anthropic' | 'google-genai' | 'vertexai' | null; // 解析出的协议
+  guessed: boolean; // 启发式解析标记
+  needs_base_url: boolean;
+  rejected: boolean;
+  reject_reason: string | null;
+  env_key: string | null; // 上游约定的 API 密钥环境变量
+  models: {
+    id: string;
+    name?: string;
+    max_context_size: number;
+    capabilities?: string[];
+    reasoning: boolean;
+  }[];
+};
+```
+
+### T-RefreshProviderModelsResponse
+
+```ts
+type RefreshProviderModelsResponse = {
+  changed: { provider_id: string; provider_name: string; added: number; removed: number }[]; // 新增 / 移除的别名数
+  unchanged: string[]; // 无差异的供应商 id
+  failed: { provider: string; reason: string }[];
+};
+```
+
+**账号。**
+
+### T-AuthSummary
+
+```ts
+type AuthSummary = {
+  models_ready: boolean;
+  providers_count: number;
+  managed_provider: {
+    name: string;
+    status: 'authenticated' | 'expired' | 'revoked' | 'unauthenticated';
+  } | null;
+};
+```
+
+全局默认模型别名改从 `GET /api/v1/config` 的 `default_model` 读取，本对象不携带。
+
+### T-OAuthFlowStart
+
+OAuth 流程发起结果，按 `status` 区分。
+
+```ts
+type OAuthFlowStart =
+  | {
+      flow_id: string;
+      provider: string;
+      status: 'pending';
+      verification_uri: string;
+      verification_uri_complete: string;
+      user_code: string;
+      expires_in: number; // 秒；与 expires_at 是同一时限的两种表示
+      interval: number;
+      expires_at: string; // ISO 8601
+    }
+  | { flow_id: string; provider: string; status: 'authenticated' };
+```
+
+### T-OAuthFlowSnapshot
+
+```ts
+type OAuthFlowSnapshot = {
+  flow_id: string;
+  provider: string;
+  status: 'pending' | 'authenticated' | 'denied' | 'expired' | 'cancelled';
+  verification_uri: string;
+  verification_uri_complete: string;
+  user_code: string;
+  expires_in: number;
+  expires_at: string; // ISO 8601
+  interval: number;
+  resolved_at?: string; // ISO 8601；离开 pending 后记录到达终态的时间
+  error_message?: string; // 描述失败的流程
+};
+```
+
+### T-ManagedUsageResult
+
+托管用量结果，按 `kind` 区分。
+
+```ts
+type ManagedUsageResult =
+  | {
+      kind: 'ok';
+      summary: UsageRow | null; // 主配额行
+      limits: UsageRow[]; // 每个配额窗口一行
+      extra_usage: {
+        balance_cents: number;
+        total_cents: number;
+        monthly_charge_limit_enabled: boolean;
+        monthly_charge_limit_cents: number;
+        monthly_used_cents: number;
+        currency: string;
+      } | null; // 按量付费钱包（金额均 integer 分）
+    }
+  | { kind: 'error'; message: string; status?: number }; // status 为上游 HTTP 状态码（如存在）
+
+type UsageRow = {
+  name?: string;
+  window?: { duration: number; unit: 'minute' | 'hour' | 'day' | 'week' };
+  used: number;
+  limit: number;
+  reset_at?: string;
+};
+```
+
+### T-ManagedUserInfoResult
+
+托管账号资料（camelCase 载荷），按 `kind` 区分。
+
+```ts
+type ManagedUserInfoResult =
+  | {
+      kind: 'ok';
+      userInfo: {
+        userId: string;
+        nickname: string;
+        status: string;
+        region: string;
+        userLevel: number;
+        userLevelName: string;
+        domain: number;
+        domainName: string;
+        globalId?: string;
+        bio?: string;
+        avatar?: string;
+        username?: string;
+        email?: string;
+        phone?: { countryCode: string; number: string };
+        createdTime?: string;
+        lastLoginTime?: string;
+      };
+    }
+  | { kind: 'error'; message: string; status?: number };
+```
+
+**扩展。**
+
+### T-SkillDescriptor
+
+```ts
+type SkillDescriptor = {
+  name: string;
+  description: string;
+  path: string;
+  source: 'project' | 'user' | 'extra' | 'builtin';
+  type?: string; // 技能类别（只有用户可激活的类型才能被激活）
+  disable_model_invocation?: boolean; // 让技能对模型不可见
+};
+```
+
+### T-CapabilityStatus
+
+能力状态（camelCase 载荷）。
+
+```ts
+type CapabilityStatus = {
+  id: 'kimi-cu' | 'kimi-webbridge';
+  pluginId?: string;
+  displayName: string;
+  description: string;
+  supported: boolean;
+  state: 'ready' | 'partial' | 'not_installed' | 'unsupported'; // ready = 所有必需检测步骤均为 ok
+  version?: string;
+  steps: { id: string; state: 'ok' | 'missing' | 'failed'; detail?: string; optional?: boolean }[];
+  install: {
+    running: boolean;
+    step?: string;
+    percent?: number; // 0–100
+    error?: string;
+    note?: string;
+  };
+};
+```
+
+### T-PluginSummary
+
+插件摘要（camelCase 载荷）。
+
+```ts
+type PluginSummary = {
+  id: string;
+  displayName: string;
+  version?: string;
+  enabled: boolean;
+  state: 'ok' | 'error'; // 加载失败也会置 hasErrors
+  skillCount: number;
+  mcpServerCount: number;
+  enabledMcpServerCount: number;
+  hookCount: number;
+  commandCount: number;
+  hasErrors: boolean;
+  source: 'local-path' | 'zip-url' | 'github';
+  originalSource?: string;
+  github?: {
+    owner: string;
+    repo: string;
+    ref: { kind: 'branch' | 'tag' | 'sha'; value: string };
+    installedSha?: string;
+  };
+};
+```
+
+### T-ToolDescriptor
+
+```ts
+type ToolDescriptor = {
+  name: string;
+  description: string;
+  input_schema: null; // 恒 null
+  source: 'builtin' | 'skill' | 'mcp';
+  active: boolean; // 工具策略的判定结果
+  mcp_server_id?: string; // 仅 MCP 工具携带（从 mcp__<server>__<tool> 名称解析）
+};
+```
+
+### T-McpServer
+
+```ts
+type McpServer = {
+  id: string; // server 名称
+  name: string; // 同 id
+  transport: 'stdio' | 'http' | 'sse';
+  status: 'connected' | 'connecting' | 'disconnected' | 'error';
+  tool_count: number;
+  last_error?: string;
+};
+```
+
+`status` 由核心六态压为四态：pending→`connecting`、disabled/removed→`disconnected`、failed/needs-auth→`error`。
+
+**v2。**
 
 ### T-V2Session
 
-v2 会话对象：`{ id, workspace, meta, activity, git? }`。
+v2 会话对象。
 
-- `workspace`：`{ id, cwd }`——`cwd` 可空。
-- `meta`：`{ title, last_prompt, created_at, updated_at, archived, archived_at }`——`title` / `last_prompt` 可空；`created_at` / `updated_at` 为 epoch 毫秒；`archived_at` 恒产出（integer 或 `null`）。
-- `activity`：`{ status, model }`——`status` 为 `running` / `approval` / `question` / `failed` / `idle`（冷会话恒 `idle`）；`model` 为存活会话的绑定模型别名，冷会话为 `null`。
-- `git`：仅 `include=git` 时产出——`{ branch, pull_request }`，不可用时为 `{ branch: null, pull_request: null }`；`pull_request` 为 `{ number, state, url }`（`state` 为 `open` / `closed` / `merged`）或 `null`。
+```ts
+type V2Session = {
+  id: string;
+  workspace: { id: string; cwd: string | null };
+  meta: {
+    title: string | null;
+    last_prompt: string | null;
+    created_at: number; // epoch 毫秒
+    updated_at: number; // epoch 毫秒
+    archived: boolean;
+    archived_at: number | null; // 恒产出
+  };
+  activity: {
+    status: 'running' | 'approval' | 'question' | 'failed' | 'idle'; // 冷会话恒 idle
+    model: string | null; // 存活会话的绑定模型别名，冷会话为 null
+  };
+  git?: {
+    // 仅 include=git 时产出；不可用时为 { branch: null, pull_request: null }
+    branch: string | null;
+    pull_request: { number: number; state: 'open' | 'closed' | 'merged'; url: string } | null;
+  };
+};
+```
 
 ### T-V2SessionPage
 
-`{ items, total, has_more, next_page_token }`——`items` 为 [T-V2Session](#t-v2session) 数组（`fields=id,archived` 投影时裁剪为 `{ id, archived }`）；`next_page_token` 可空。
+```ts
+type V2SessionPage = {
+  items: V2Session[]; // fields=id,archived 投影时裁剪为 { id, archived }
+  total: number;
+  has_more: boolean;
+  next_page_token: string | null;
+};
+```
 
 ### T-V2SessionGroupPage
 
-`{ groups, total, has_more, next_page_token }`——`groups` 为 `{ workspace, sessions, total }[]`（`workspace` 形态同 T-V2Session 的 `workspace` 组，`total` 为该工作区匹配过滤条件的会话总数）；外层 `total` 为组数。
+```ts
+type V2SessionGroupPage = {
+  groups: {
+    workspace: { id: string; cwd: string | null };
+    sessions: V2Session[];
+    total: number; // 该工作区匹配过滤条件的会话总数
+  }[];
+  total: number; // 组数
+  has_more: boolean;
+  next_page_token: string | null;
+};
+```
 
 ### T-V2BatchSessionResponse
 
-`{ results, succeeded, failed }`——`results` 为 `{ id, ok, error? }[]`（保持输入顺序；`error` 为 `{ code, message }`）；`succeeded` / `failed` 为计数。
+```ts
+type V2BatchSessionResponse = {
+  results: { id: string; ok: boolean; error?: { code: number; message: string } }[]; // 保持输入顺序
+  succeeded: number;
+  failed: number;
+};
+```
 
 ### T-McpManagedServer
 
-受管 MCP server（camelCase 载荷）：`{ name, config, source, origin, mutable, plugin? }`。
+受管 MCP server（camelCase 载荷）。
 
-- `source`：`global`（配置文件层）/ `plugin`（插件清单）/ `caller`。
-- `origin`：条目的定义位置——文件路径或插件 id。
-- `mutable`：只有用户级条目可变；插件与项目层条目均为只读。
-- `config`：[T-McpServerConfigView](#t-mcpserverconfigview)——可变条目携带完整配置；只读条目被脱敏为排序后的键名列表。
-- `plugin`：`{ id, name }`，仅插件条目携带。
+```ts
+type McpManagedServer = {
+  name: string;
+  config: McpServerConfigView | string[]; // 可变条目携带完整配置；只读条目被脱敏为排序后的键名列表
+  source: 'global' | 'plugin' | 'caller'; // global = 配置文件层，plugin = 插件清单
+  origin: string; // 条目的定义位置——文件路径或插件 id
+  mutable: boolean; // 只有用户级条目可变；插件与项目层条目均为只读
+  plugin?: { id: string; name: string }; // 仅插件条目携带
+};
+```
 
 ### T-McpServerConfigView
 
-MCP server 配置的脱敏视图，按 `transport` 区分：
+MCP server 配置的脱敏视图，按 `transport` 区分。
 
-- `stdio`：`{ transport: "stdio", command, args?, cwd?, executor?, runtime_id?, envKeys?, enabled?, startupTimeoutMs?, toolTimeoutMs?, enabledTools?, disabledTools? }`——`envKeys`（排序的键名）替代 `env`，绝不泄露密钥值。
-- `http` / `sse`：`{ transport: "http" \| "sse", url, auth?, bearerTokenEnvVar?, headerKeys? }` 加上述公共字段——`auth` 仅取值 `"oauth"`；`headerKeys` 替代 `headers`。
+```ts
+type McpServerConfigView =
+  | {
+      transport: 'stdio';
+      command: string;
+      args?: string[];
+      cwd?: string;
+      executor?: string;
+      runtime_id?: string;
+      envKeys?: string[]; // 替代 env（排序的键名），绝不泄露密钥值
+      enabled?: boolean;
+      startupTimeoutMs?: number;
+      toolTimeoutMs?: number;
+      enabledTools?: string[];
+      disabledTools?: string[];
+    }
+  | {
+      transport: 'http' | 'sse';
+      url: string;
+      auth?: 'oauth';
+      bearerTokenEnvVar?: string;
+      headerKeys?: string[]; // 替代 headers
+      enabled?: boolean;
+      startupTimeoutMs?: number;
+      toolTimeoutMs?: number;
+      enabledTools?: string[];
+      disabledTools?: string[];
+    };
+```
 
 ### T-McpServerInspection
 
-`{ serverId, locator, runtimeName, canonicalUrl?, origin, config, enabled, editable, authStatus, checkedAt?, error? }`——`serverId` 为 `global:<name>` 或 `plugin:<pluginId>:<serverName>`（URL 编码）；`locator` 为 `{ source: "global", name }` 或 `{ source: "plugin", pluginId, serverName }`；`config` 为 [T-McpServerConfigView](#t-mcpserverconfigview)；`checkedAt` 为 epoch 毫秒。
+```ts
+type McpServerInspection = {
+  serverId: string; // `global:<name>` 或 `plugin:<pluginId>:<serverName>`（URL 编码）
+  locator: { source: 'global'; name: string } | { source: 'plugin'; pluginId: string; serverName: string };
+  runtimeName: string;
+  canonicalUrl?: string;
+  origin: 'global' | 'plugin' | 'caller';
+  config: McpServerConfigView;
+  enabled: boolean;
+  editable: boolean;
+  authStatus: McpServerAuthStatus['authStatus'];
+  checkedAt?: number; // epoch 毫秒
+  error?: string;
+};
+```
 
 ### T-McpServerAuthStatus
 
-`{ name, authStatus }`——`authStatus` 为 `not-applicable` / `bearer-token` / `oauth-required` / `oauth-authorized` / `oauth-expired` / `unavailable`。
+```ts
+type McpServerAuthStatus = {
+  name: string;
+  authStatus:
+    | 'not-applicable'
+    | 'bearer-token'
+    | 'oauth-required'
+    | 'oauth-authorized'
+    | 'oauth-expired'
+    | 'unavailable';
+};
+```
 
-### T-TokenUsage
+**服务。**
 
-`{ inputOther, output, inputCacheRead, inputCacheCreation }`（camelCase）。
+### T-Connection
+
+活跃 WS 连接，由 REST `GET /connections` 返回。
+
+```ts
+type Connection = {
+  id: string; // `conn_<ulid>`
+  connected_at: string; // ISO 8601
+  remote_address: string | null;
+  user_agent: string | null;
+  has_client_hello: boolean;
+  subscriptions: string[]; // 排序的会话 id
+};
+```
+
+### WS 类型
+
+WS 帧携带的载荷类型：协议事件的内嵌对象与转录契约。
+
+**事件载荷。**
 
 ### T-AgentPhase
 
-agent 阶段（`agent.status.updated` 的 `phase` 字段）：按 `kind` 区分的对象，`kind` 为 `idle` / `running` / `streaming` / `tool_call` / `retrying` / `awaiting_approval` / `interrupted` / `ended` 之一，各态附带相应上下文字段（如 `turnId`、`step`）。
+agent 阶段（`agent.status.updated` 的 `phase` 字段）。
 
-### T-PromptOrigin
+```ts
+type AgentPhase = {
+  kind:
+    | 'idle'
+    | 'running'
+    | 'streaming'
+    | 'tool_call'
+    | 'retrying'
+    | 'awaiting_approval'
+    | 'interrupted'
+    | 'ended';
+  [key: string]: unknown; // 各态附带相应上下文字段（如 turnId、step）
+};
+```
 
-提示词来源十三态：`user` / `skill_activation` / `plugin_command` / `injection` / `shell_command` / `compaction_summary` / `system_trigger` / `task` / `background_task` / `cron_job` / `cron_missed` / `hook_result` / `retry`（camelCase 嵌套对象，原样透传）。
+### T-TokenUsage
+
+token 用量（camelCase 载荷）。
+
+```ts
+type TokenUsage = {
+  inputOther: number;
+  output: number;
+  inputCacheRead: number;
+  inputCacheCreation: number;
+};
+```
 
 ### T-KimiError
 
-核心错误对象：`{ code, message, name?, details?, retryable, cause? }`——`code` 为核心错误码字符串；`retryable` 为 boolean；`cause` 递归同构。
+核心错误对象。
+
+```ts
+type KimiError = {
+  code: string; // 核心错误码字符串
+  message: string;
+  name?: string;
+  details?: unknown;
+  retryable: boolean;
+  cause?: unknown; // 递归同构
+};
+```
+
+**转录。**
+
+### T-Transcript 族
+
+转录载荷的类型正本是共享包 `@moonshot-ai/transcript` 的契约（客户端经同一依赖消费），`TranscriptItem` / `TranscriptOperation` 等嵌套类型均定义于该包。
+
+**T-TranscriptResponse**：
+
+```ts
+type TranscriptResponse = {
+  agent_id: string;
+  items: TranscriptItem[]; // turn / marker / taskref 三态；turn 含 steps[].frames[]，frame 分 text / thinking / tool / notice 四种
+  has_more: boolean;
+  tasks: TranscriptTask[];
+  interactions: Interaction[];
+  attachments: Attachment[];
+  todos: Todo[];
+  prompts: TranscriptPrompt[];
+  meta: TranscriptMeta;
+  agents: AgentDescriptor[];
+  pending_interactions: string[];
+  seq?: number;
+};
+```
+
+**T-TranscriptOpsCatchupResponse**：
+
+```ts
+type TranscriptOpsCatchupResponse = {
+  agent_id: string;
+  batches: { seq: number; ops: TranscriptOperation[] }[];
+  latest_seq: number;
+  complete: boolean;
+};
+```
+
+`TranscriptOperation` 全集（判别字段为 `op`）：reset / turn.upsert / step.upsert / frame.upsert / append / marker.upsert / taskref.upsert / task.upsert / interaction.upsert / attachment.upsert / todo.upsert / prompt.upsert / meta.merge / items.remove。
+
+**T-TranscriptUserMessagesResponse**：
+
+```ts
+type TranscriptUserMessagesResponse = {
+  agents: {
+    agent_id: string;
+    messages: {
+      turn_id: string;
+      ordinal: number;
+      state: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'; // 轮次状态
+      origin: TurnOrigin;
+      prompt: string;
+      attachment_ids?: string[];
+      started_at?: string;
+    }[];
+    attachments: Attachment[];
+  }[];
+};
+```
+
+**T-TranscriptPlanResponse**：
+
+```ts
+type TranscriptPlanResponse = {
+  agent_id: string;
+  plans: {
+    tool_call_id: string;
+    turn_id: string;
+    source: 'interaction' | 'display' | 'output';
+    plan: string;
+    path?: string;
+    options?: { label: string; description?: string }[];
+    review?: {
+      // 仅交互式审阅时存在
+      state: 'pending' | 'approved' | 'rejected' | 'cancelled';
+      selected_option?: string;
+      feedback?: string;
+    };
+  }[];
+};
+```
 
 ## 二进制与流式端点
 
