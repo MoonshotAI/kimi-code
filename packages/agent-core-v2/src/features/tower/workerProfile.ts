@@ -7,7 +7,6 @@ import {
   skillActiveFor,
   TASK_AGENT_ROLE_PREFIX,
 } from '#/app/agentProfileCatalog/profile-shared';
-import SUMMARY_CONTINUATION_PROMPT from '../../session/agentLifecycle/profile/summary-continuation.md?raw';
 
 import { TOWER_WORKER_PROFILE } from './tower';
 import TOWER_WORKER_ROLE_OVERLAY from './tower-worker-overlay.md?raw';
@@ -48,16 +47,10 @@ const CODER_ROLE =
   'Your final message is the entire handoff — the parent sees nothing else from your run. ' +
   'Make it technically complete: what you changed and why, the path of every file you touched, ' +
   'how you verified the change (tests or commands run, with results), and anything left undone ' +
-  'or worth follow-up. A final message of only a sentence or two is treated as too brief and ' +
-  'sent back to you for expansion, costing an extra turn.';
+  'or worth follow-up. If you are stopped before finishing, the parent receives only what ' +
+  'you have written so far, so keep the handoff current.';
 
 const TOWER_WORKER_ROLE = `${CODER_ROLE}\n\n${TOWER_WORKER_ROLE_OVERLAY.trim()}`;
-
-const DEFAULT_SUMMARY_POLICY = {
-  minChars: 200,
-  continuationPrompt: SUMMARY_CONTINUATION_PROMPT,
-  retries: 1,
-} as const;
 
 export const TOWER_WORKER_PROFILE_DEF: AgentProfile = normalizeAgentProfile({
   name: TOWER_WORKER_PROFILE,
@@ -71,5 +64,4 @@ export const TOWER_WORKER_PROFILE_DEF: AgentProfile = normalizeAgentProfile({
     renderSystemPromptResult(TOWER_WORKER_ROLE, context, {
       skillActive: skillActiveFor(TOWER_WORKER_TOOLS),
     }),
-  summaryPolicy: DEFAULT_SUMMARY_POLICY,
 });

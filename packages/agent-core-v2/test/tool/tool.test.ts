@@ -44,6 +44,8 @@ import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { DEFAULT_SUBAGENT_TIMEOUT_MS, SECONDARY_MODEL_SECTION, SUBAGENT_SECTION } from '#/session/subagent/configSection';
 import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
 import { Error2, ErrorCodes } from '#/errors';
+import type { AgentTaskSettlement } from '#/agent/task/types';
+import { SubagentTask } from '#/agent/tools/agent/subagent-task';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
@@ -52,6 +54,7 @@ import {
   type AgentScopeCreatedEvent,
 } from '#/session/agentLifecycle/agentLifecycle';
 import {
+  type AgentRunCompletion,
   type AgentRunHandle,
   type AgentRunRequest,
   type AgentTaskStopHookContext,
@@ -98,6 +101,7 @@ import {
 import { executeTool } from '../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../agent/agentContext/stubs';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
+import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
 
 const signal = new AbortController().signal;
 
@@ -211,7 +215,7 @@ interface AgentLifecycleStubOptions {
     agentId: string,
     request: AgentRunRequest,
     options: RunAgentOptions,
-  ) => Promise<{ readonly summary: string; readonly usage?: TokenUsage }>;
+  ) => Promise<AgentRunCompletion>;
   readonly createError?: Error;
   readonly handleServices?: ReadonlyMap<string, ReadonlyMap<unknown, unknown>>;
 }
@@ -1337,6 +1341,239 @@ describe('Agent tool execution contract', () => {
     expect(result.output).toContain('actual_subagent_type: explore');
   });
 
+  it('reports a normal completion with stop_reason and a resume hint', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: async () => ({ summary: 'child result' }),
+    });
+    const context = createAgentToolContext(lifecycle);
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toContain('status: completed');
+    expect(result.output).toContain('stop_reason: completed');
+    expect(result.output).toContain('[summary]\nchild result');
+    expect(result.output).toContain('resume_hint: Continue with Agent(resume="agent-child"');
+    expect(result.output).not.toContain('notice:');
+    expect(result.output).not.toContain('next_step:');
+  });
+
+  it('reports a repeat-breaker handoff as completed with stop_reason repeat_breaker', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: async () => ({
+        summary: 'Stuck: the same grep keeps returning nothing.',
+        stopReason: 'repeat_breaker',
+      }),
+    });
+    const context = createAgentToolContext(lifecycle);
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toContain('status: completed');
+    expect(result.output).toContain('stop_reason: repeat_breaker');
+    expect(result.output).toContain('notice: The subagent was stopped by the repeat breaker');
+    expect(result.output).toContain('[summary]\nStuck: the same grep keeps returning nothing.');
+    expect(result.output).toContain('next_step: The subagent was stuck on one tool call.');
+  });
+
+  it('settles a repeat-breaker completion with a stop code and a task reason', async () => {
+    const task = new SubagentTask(
+      {
+        agentId: 'agent-child',
+        profileName: 'coder',
+        completion: Promise.resolve({ result: 'handoff', stopReason: 'repeat_breaker' }),
+      },
+      'Find cause',
+      new AbortController(),
+    );
+    const settlements: AgentTaskSettlement[] = [];
+    const output: string[] = [];
+    await task.start({
+      signal: new AbortController().signal,
+      appendOutput: (chunk) => {
+        output.push(chunk);
+      },
+      settle: async (settlement) => {
+        settlements.push(settlement);
+        return true;
+      },
+    });
+
+    expect(output).toEqual(['handoff']);
+    expect(settlements).toEqual([
+      { status: 'completed', stopReason: expect.stringContaining('repeat breaker') },
+    ]);
+    const info = task.toInfo({
+      taskId: 'agent-1',
+      description: 'Find cause',
+      status: 'completed',
+      startedAt: 0,
+      endedAt: 1,
+    });
+    expect(info.stopCode).toBe('repeat_breaker');
+  });
+
+  it('derives the stop code from the stop reason of a missing-handoff failure', async () => {
+    const task = new SubagentTask(
+      {
+        agentId: 'agent-child',
+        profileName: 'coder',
+        completion: Promise.reject(
+          new Error2(ErrorCodes.AGENT_NO_FINAL_MESSAGE, 'no handoff', {
+            details: { stopReason: 'repeat_breaker' },
+          }),
+        ),
+      },
+      'Find cause',
+      new AbortController(),
+    );
+    const settlements: AgentTaskSettlement[] = [];
+    await task.start({
+      signal: new AbortController().signal,
+      appendOutput: () => {},
+      settle: async (settlement) => {
+        settlements.push(settlement);
+        return true;
+      },
+    });
+
+    expect(settlements).toEqual([{ status: 'failed', stopReason: 'no handoff' }]);
+    const info = task.toInfo({
+      taskId: 'agent-1',
+      description: 'Find cause',
+      status: 'failed',
+      startedAt: 0,
+      endedAt: 1,
+    });
+    expect(info.stopCode).toBe('repeat_breaker');
+  });
+
+  it('reports a missing final message as a failure with stop_reason no_final_message', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: async () => {
+        throw new Error2(
+          ErrorCodes.AGENT_NO_FINAL_MESSAGE,
+          'Subagent turn ended without a final message (stop reason: repeat_breaker).',
+        );
+      },
+    });
+    const context = createAgentToolContext(lifecycle);
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('status: failed');
+    expect(result.output).toContain('stop_reason: no_final_message');
+    expect(result.output).toContain(
+      'subagent error: The subagent was stopped before it finished. Reason: Subagent turn ended without a final message (stop reason: repeat_breaker).',
+    );
+    expect(result.output).toContain('resume_hint: Continue with Agent(resume="agent-child", prompt="continue")');
+    expect(result.output).toContain('next_step: Resume to continue where it stopped');
+  });
+
+  it('keeps the repeat_breaker classification when the handoff produced no text', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: async () => {
+        throw new Error2(
+          ErrorCodes.AGENT_NO_FINAL_MESSAGE,
+          'Subagent turn ended without a final message (stop reason: repeat_breaker).',
+          { details: { stopReason: 'repeat_breaker' } },
+        );
+      },
+    });
+    const context = createAgentToolContext(lifecycle);
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('status: failed');
+    expect(result.output).toContain('stop_reason: repeat_breaker');
+    expect(result.output).toContain('Reason: Subagent turn ended without a final message');
+    expect(result.output).toContain('resume_hint: Continue with Agent(resume="agent-child", prompt="continue")');
+    expect(result.output).toContain('next_step: The subagent was stuck on one tool call.');
+    expect(result.output).not.toContain('[summary]');
+  });
+
+  it('maps a step-cap failure to stop_reason max_steps without config advice', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: async () => {
+        throw new Error2(
+          ErrorCodes.LOOP_MAX_STEPS_EXCEEDED,
+          'Subagent hit the per-turn step cap (maxSteps=5) before finishing its handoff.',
+        );
+      },
+    });
+    const context = createAgentToolContext(lifecycle);
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('stop_reason: max_steps');
+    expect(result.output).toContain('maxSteps=5');
+    expect(result.output).not.toContain('config.toml');
+    expect(result.output).toContain('resume_hint:');
+  });
+
+  it('maps a provider filter failure to stop_reason filtered with a rephrase hint', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: async () => {
+        throw new Error2(ErrorCodes.PROVIDER_FILTERED, 'Provider safety policy blocked the response.');
+      },
+    });
+    const context = createAgentToolContext(lifecycle);
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('stop_reason: filtered');
+    expect(result.output).toContain('next_step: Resuming is unlikely to help');
+  });
+
+  it('truncates an oversized failure reason', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: async () => {
+        throw new Error('x'.repeat(5000));
+      },
+    });
+    const context = createAgentToolContext(lifecycle);
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('stop_reason: error');
+    expect(result.output).toContain('[truncated]');
+    expect((result.output as string).length).toBeLessThan(3000);
+  });
+
   it('declares no resource accesses so concurrent Agent calls can run in parallel', async () => {
     const context = createAgentToolContext();
 
@@ -1364,6 +1601,48 @@ describe('Agent tool execution contract', () => {
     if (execution.isError === true) throw new Error('expected runnable execution');
     expect(execution.description).toBe('Launching explore agent: Continue work');
     expect(lifecycle.list).toHaveBeenCalled();
+  });
+
+  it('uses the persisted profile of an offline subagent for display and approval rules', async () => {
+    const lifecycle = createAgentLifecycleStub();
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(
+        ISessionMetadata,
+        sessionMetadataStub({
+          'agent-existing': { labels: { parentAgentId: 'main', profileName: 'explore' } },
+        }),
+      ),
+    );
+
+    const execution = await agentTool(context).resolveExecution({
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+    });
+
+    if (execution.isError === true) throw new Error('expected runnable execution');
+    expect(execution.description).toBe('Launching explore agent: Continue work');
+    expect(execution.matchesRule?.('explore')).toBe(true);
+    expect(execution.matchesRule?.('coder')).toBe(false);
+    expect(lifecycle.create).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the generic label when an offline subagent has no persisted profile', async () => {
+    const lifecycle = createAgentLifecycleStub();
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(ISessionMetadata, sessionMetadataStub({ 'agent-existing': subagentMeta() })),
+    );
+
+    const execution = await agentTool(context).resolveExecution({
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+    });
+
+    if (execution.isError === true) throw new Error('expected runnable execution');
+    expect(execution.description).toBe('Launching subagent agent: Continue work');
   });
 
   it('labels fork launches with the caller profile for display and approval rules', async () => {
@@ -2086,6 +2365,178 @@ describe('Agent tool execution contract', () => {
     expect(result.output).toContain('resumed result');
   });
 
+  it('rebuilds a persisted subagent that is not live before resuming it', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      runCompletion: async () => ({ summary: 'resumed after restart' }),
+    });
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(
+        ISessionMetadata,
+        sessionMetadataStub({
+          'agent-existing': {
+            type: 'sub',
+            parentAgentId: 'main',
+            forkedFrom: 'main',
+            labels: { parentAgentId: 'main' },
+          },
+        }),
+      ),
+    );
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+    });
+
+    expect(lifecycle.create).toHaveBeenCalledTimes(1);
+    expect(lifecycle.create).toHaveBeenCalledWith({
+      agentId: 'agent-existing',
+      labels: { parentAgentId: 'main' },
+      forkedFrom: 'main',
+    });
+    expect(lifecycle.run).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: 'agent-existing' }),
+      { kind: 'prompt', prompt: 'Continue' },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(result.isError).not.toBe(true);
+    expect(result.output).toContain('agent_id: agent-existing');
+    expect(result.output).toContain('resumed after restart');
+  });
+
+  it('keeps rejecting resume of an agent id that was never persisted', async () => {
+    const lifecycle = createAgentLifecycleStub();
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(ISessionMetadata, sessionMetadataStub({})),
+    );
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-missing',
+    });
+
+    expect(result).toMatchObject({
+      isError: true,
+      output: 'subagent error: Agent instance "agent-missing" does not exist',
+    });
+    expect(lifecycle.create).not.toHaveBeenCalled();
+    expect(lifecycle.run).not.toHaveBeenCalled();
+  });
+
+  it('does not rebuild a persisted subagent owned by another parent', async () => {
+    const lifecycle = createAgentLifecycleStub();
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(
+        ISessionMetadata,
+        sessionMetadataStub({ 'agent-existing': subagentMeta('other') }),
+      ),
+    );
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+    });
+
+    expect(result).toMatchObject({
+      isError: true,
+      output: 'subagent error: Agent instance "agent-existing" does not belong to this parent agent',
+    });
+    expect(lifecycle.create).not.toHaveBeenCalled();
+    expect(lifecycle.run).not.toHaveBeenCalled();
+  });
+
+  it('syncs a rebuilt subagent to the caller permission mode before resuming it', async () => {
+    const setMode = vi.fn();
+    const lifecycle = createAgentLifecycleStub({
+      runCompletion: async () => ({ summary: 'resumed after restart' }),
+      handleServices: new Map<string, ReadonlyMap<unknown, unknown>>([
+        [
+          'agent-existing',
+          new Map<unknown, unknown>([
+            [
+              IAgentPermissionModeService,
+              { _serviceBrand: undefined, mode: 'yolo', setMode, onDidChangeMode: Event.None },
+            ],
+          ]),
+        ],
+      ]),
+    });
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(ISessionMetadata, sessionMetadataStub({ 'agent-existing': subagentMeta() })),
+    );
+    context.get(IAgentPermissionModeService).setMode('auto');
+    expect(context.get(IAgentPermissionModeService).mode).toBe('auto');
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(setMode).toHaveBeenCalledWith('auto');
+    expect(setMode.mock.invocationCallOrder[0]).toBeLessThan(
+      lifecycle.run.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('keeps a rebuilt tower worker on its pinned permission mode', async () => {
+    const setMode = vi.fn();
+    const lifecycle = createAgentLifecycleStub({
+      runCompletion: async () => ({ summary: 'worker resumed' }),
+      handleServices: new Map<string, ReadonlyMap<unknown, unknown>>([
+        [
+          'agent-existing',
+          new Map<unknown, unknown>([
+            [
+              IAgentProfileService,
+              {
+                _serviceBrand: undefined,
+                data: () => ({ profileName: TOWER_WORKER_PROFILE }),
+                update: () => {},
+                republishStatus: () => {},
+                getEffectiveThinkingLevel: () => 'off',
+                getActiveToolNames: () => [],
+                isToolActive: () => false,
+              },
+            ],
+            [
+              IAgentPermissionModeService,
+              { _serviceBrand: undefined, mode: 'auto', setMode, onDidChangeMode: Event.None },
+            ],
+          ]),
+        ],
+      ]),
+    });
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(
+        ISessionMetadata,
+        sessionMetadataStub({
+          'agent-existing': { labels: { parentAgentId: 'main', profileName: TOWER_WORKER_PROFILE } },
+        }),
+      ),
+    );
+    context.get(IAgentPermissionModeService).setMode('manual');
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+    });
+
+    expect(result).toEqual({ output: expect.stringContaining(`actual_subagent_type: ${TOWER_WORKER_PROFILE}`) });
+    expect(setMode).not.toHaveBeenCalled();
+    expect(lifecycle.run).toHaveBeenCalledOnce();
+  });
+
   it('rejects direct resume of a non-subagent', async () => {
     const lifecycle = createAgentLifecycleStub();
     const context = createAgentToolContext(
@@ -2600,7 +3051,10 @@ describe('Agent tool execution contract', () => {
 
     expect(result.isError).toBe(true);
     expect(result.output).toContain('status: failed');
+    expect(result.output).toContain('stop_reason: cancelled');
     expect(result.output).toContain('The subagent was stopped before it finished by user.');
+    expect(result.output).not.toContain('resume_hint:');
+    expect(result.output).toContain('next_step: The user stopped this subagent.');
   });
 
   it('reports the reason when a foreground subagent is stopped for another cause', async () => {
@@ -2627,9 +3081,12 @@ describe('Agent tool execution contract', () => {
     const result = await resultPromise;
 
     expect(result.isError).toBe(true);
+    expect(result.output).toContain('stop_reason: stopped');
     expect(result.output).toContain(
       'The subagent was stopped before it finished. Reason: Session closed',
     );
+    expect(result.output).toContain('resume_hint: Continue with Agent(resume="agent-child"');
+    expect(result.output).not.toContain('The user stopped this subagent');
   });
 
   it('returns the spawned agent id when a foreground subagent times out', async () => {
@@ -3264,6 +3721,56 @@ describe('AgentSwarm tool execution contract', () => {
       '</agent_swarm_result>',
     ].join('\n'));
     expect(result.output).not.toContain('<resume_hint>');
+    expect(result.isError).toBeUndefined();
+  });
+
+  it('renders a handoff stop reason on a completed subagent and offers a resume hint', async () => {
+    const runSwarm = vi.fn(
+      async (
+        args: SessionSwarmRunArgs<unknown>,
+      ): Promise<readonly SessionSwarmRunResult<unknown>[]> => [
+        {
+          task: args.tasks[0]!,
+          agentId: 'agent-coder-1',
+          status: 'completed' as const,
+          result: 'imports are stable',
+        },
+        {
+          task: args.tasks[1]!,
+          agentId: 'agent-coder-2',
+          status: 'completed' as const,
+          result: 'Stuck: the same grep keeps returning nothing.',
+          stopReason: 'repeat_breaker',
+        },
+      ],
+    );
+    const swarmService: ISessionSwarmService = {
+      _serviceBrand: undefined,
+      getSwarmItem: async () => undefined,
+      run: runSwarm as ISessionSwarmService['run'],
+      cancel: () => {},
+    };
+    ctx = createTestAgent(swarmServices(swarmService));
+
+    const result = await executeTool(agentSwarmTool(ctx), {
+      turnId: 0,
+      toolCallId: 'call_swarm',
+      args: {
+        description: 'Review files',
+        prompt_template: 'Review {{item}}',
+        items: ['src/a.ts', 'src/b.ts'],
+      },
+      signal,
+    });
+
+    expect(result.output).toBe([
+      '<agent_swarm_result>',
+      '<summary>completed: 2</summary>',
+      '<resume_hint>Call AgentSwarm with resume_agent_ids using the agent_id values in this result to continue unfinished work.</resume_hint>',
+      '<subagent agent_id="agent-coder-1" item="src/a.ts" outcome="completed">imports are stable</subagent>',
+      '<subagent agent_id="agent-coder-2" item="src/b.ts" outcome="completed" stop_reason="repeat_breaker">Stuck: the same grep keeps returning nothing.</subagent>',
+      '</agent_swarm_result>',
+    ].join('\n'));
     expect(result.isError).toBeUndefined();
   });
 

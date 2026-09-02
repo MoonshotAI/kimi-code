@@ -133,7 +133,7 @@ describe('AgentTaskService', () => {
       },
     });
     ix.stub(IAgentContextMemoryService, stubContextMemory());
-    ix.stub(ITelemetryService, { track: () => {}, track2: () => {} });
+    ix.stub(ITelemetryService, { track2: () => {} });
     ix.stub(IAgentToolRegistryService, {
       register: () => toDisposable(() => {}),
     });
@@ -711,7 +711,7 @@ describe('AgentTaskService', () => {
       },
     });
     ix.stub(IAgentContextMemoryService, stubContextMemory());
-    ix.stub(ITelemetryService, { track: () => {}, track2: () => {} });
+    ix.stub(ITelemetryService, { track2: () => {} });
     ix.stub(IAgentLoopService, stubLoopWithHooks());
     ix.stub(IConfigService, {
       get: (() => undefined) as IConfigService['get'],
@@ -765,7 +765,7 @@ describe('AgentTaskService', () => {
       },
     });
     ix.stub(IAgentContextMemoryService, context);
-    ix.stub(ITelemetryService, { track: () => {}, track2: () => {} });
+    ix.stub(ITelemetryService, { track2: () => {} });
     ix.stub(IAgentLoopService, stubLoopWithHooks());
     ix.stub(IConfigService, {
       get: (() => undefined) as IConfigService['get'],

@@ -17,6 +17,8 @@ export interface ProjectFile {
   path: string;
   name: string;
   isDirectory: boolean;
+  /** Matched-character offsets into `path`, for mention-style highlighting. */
+  matchPositions?: number[];
 }
 
 export interface FileChange {

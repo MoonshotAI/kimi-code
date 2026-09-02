@@ -28,7 +28,6 @@ import {
   formatByteSize,
   resolveMaxImageEdgePx,
   resolveReadImageByteBudget,
-  type ImageCompressionTelemetry,
   type ImageCropRegion,
 } from '#/agent/media/image-compress';
 import {
@@ -177,7 +176,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
   readonly name = 'ReadMediaFile' as const;
   readonly description: string;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadMediaFileInputSchema);
-  private readonly compressTelemetry: ImageCompressionTelemetry | undefined;
+  private readonly telemetry: ITelemetryService | undefined;
   private readonly inlineVideoSupported: boolean;
   constructor(
     private readonly runtime: IAgentRuntimeService,
@@ -188,8 +187,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     inlineVideoSupported?: boolean,
   ) {
     this.description = buildDescription(capabilities);
-    this.compressTelemetry =
-      telemetry === undefined ? undefined : { client: telemetry, source: 'read_media' };
+    this.telemetry = telemetry;
     this.inlineVideoSupported = inlineVideoSupported ?? false;
   }
 
@@ -376,7 +374,8 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
         if (args.region !== undefined) {
           const outcome = await cropImageForModel(data, fileType.mimeType, args.region, {
             skipResize: args.full_resolution === true,
-            telemetry: this.compressTelemetry,
+            telemetry: this.telemetry,
+            telemetrySource: 'read_media',
           });
           if (!outcome.ok) {
             return { isError: true, output: `Cannot read region from "${args.path}": ${outcome.error}` };
@@ -420,7 +419,8 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
           const compressed = await compressImageForModel(data, fileType.mimeType, {
             byteBudget: readByteBudget,
             maxEdge,
-            telemetry: this.compressTelemetry,
+            telemetry: this.telemetry,
+            telemetrySource: 'read_media',
           });
           if (
             compressed.finalByteLength > readByteBudget ||

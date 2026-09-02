@@ -8,7 +8,6 @@ import {
   registerScopedService,
 } from '#/_base/di/scope';
 import { Emitter } from '#/_base/event';
-import type { AgentProfileSummaryPolicy } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
 import {
   rootDelegationExtras,
@@ -87,11 +86,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
         details: { agentId: agent.agentId },
       });
     }
-    return runAgentTurn(handle, request, {
-      summaryPolicy: opts.summaryPolicy ?? this.summaryPolicyFor(handle),
-      signal: opts.signal,
-      onReady: opts.onReady,
-    });
+    return runAgentTurn(handle, request, { signal: opts.signal, onReady: opts.onReady });
   }
 
   async planSpawn(input: SubagentSpawnPlanInput): Promise<SubagentSpawnPlan> {
@@ -244,12 +239,6 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       });
     }
     return handle;
-  }
-
-  private summaryPolicyFor(handle: IAgentScopeHandle): AgentProfileSummaryPolicy | undefined {
-    const profileName = handle.accessor.get(IAgentProfileService).data().profileName;
-    if (profileName === undefined) return undefined;
-    return this.catalog.get(profileName)?.summaryPolicy;
   }
 }
 

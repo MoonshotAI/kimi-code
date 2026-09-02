@@ -252,7 +252,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
             attachments,
             resolved.handle.accessor.get(ISessionMediaStore),
           );
-          const telemetry = core.accessor.get(ITelemetryService).withContext({ sessionId: session_id });
+          const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
           const sessionDir = resolved.handle.accessor.get(ISessionContext).sessionDir;
           preparedMedia = await resolvePromptMediaFiles(
             attachments,
