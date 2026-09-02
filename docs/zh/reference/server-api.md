@@ -102,7 +102,7 @@ HTTP 状态码例外（非 200）：
 
 供脚本与进程管理器使用的探活端点，应答时不触碰配置与引擎。免鉴权（见 [例外接口](#鉴权)）。
 
-**响应体**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ ok: boolean }>`
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -123,7 +123,7 @@ HTTP 状态码例外（非 200）：
 
 返回本实例的身份信息与能力集。大多数字段在启动时即固定；`experimental_flags` 与 `features` 按请求实时解析。
 
-**响应体**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ server_version: string, capabilities: object, server_id: string, started_at: string, open_in_apps: array, dangerous_bypass_auth: boolean, backend: string, web_title?: string, experimental_flags: object, features: array }>`
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -163,7 +163,7 @@ HTTP 状态码例外（非 200）：
 
 请求服务优雅退出；响应先发出，随后立即执行关闭。仅在 loopback 绑定时挂载——非 loopback 绑定时不会注册（请求得到 404），除非服务以 `--allow-remote-shutdown` 启动。
 
-**响应体**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ ok: boolean }>`
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -184,7 +184,7 @@ HTTP 状态码例外（非 200）：
 
 列出当前连接到本服务的 WebSocket 客户端，按连接时间最早在前。
 
-**响应体**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ connections: T-Connection[] }>`
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -300,7 +300,7 @@ HTTP 状态码例外（非 200）：
 
 列出所有供应商下已配置的模型别名。
 
-**响应体**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ items: T-ModelCatalogItem[] }>`
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -330,7 +330,7 @@ HTTP 状态码例外（非 200）：
 
 把全局 `default_model` 设为一个已存在的别名。`model_id` 是配置中的别名键原样——裸键如 `POST /api/v1/models/turbo:set_default`；id 含 `/` 时需 URL 编码，如 `POST /api/v1/models/my-provider%2Fkimi-for-coding:set_default`。
 
-**响应体**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ default_model: string, model: T-ModelCatalogItem }>`
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -357,7 +357,7 @@ HTTP 状态码例外（非 200）：
 
 列出每个已配置供应商及其凭据与模型发现状态，不泄露任何密钥。
 
-**响应体**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ items: T-ProviderCatalogItem[] }>`
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -483,7 +483,7 @@ HTTP 状态码例外（非 200）：
 | `default_model` | string | 否 | 该供应商的默认模型；必须是 `models[].model` 之一 |
 | `models` | array | 是 | 至少一条，条目结构与 `POST /api/v1/providers` 相同 |
 
-**响应体**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ provider: T-ProviderCatalogItem }>`
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -586,7 +586,7 @@ HTTP 状态码例外（非 200）：
 
 浏览 models.dev 目录，由服务端代理，带 10 分钟内存缓存与内置快照兜底；条目保持上游目录顺序。服务无法导入的条目携带 `rejected: true` 与机器可读的 `reject_reason`。
 
-**响应体**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ items: T-CatalogProviderItem[] }>`
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
