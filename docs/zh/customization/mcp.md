@@ -56,6 +56,7 @@ MCP server 配置写在 `mcp.json` 中，分两层：
 | `headers` | `Record<string, string>` | HTTP、SSE | 附加到每次请求的静态请求头 |
 | `bearerTokenEnvVar` | `string` | HTTP、SSE | 存放 bearer token 的环境变量名 |
 | `enabled` | `boolean` | 全部 | 设为 `false` 可禁用该 server |
+| `deferred` | `boolean` | 全部 | 实验功能：启用 `tool-select` 标志且模型声明动态工具加载能力时，该 server 的工具默认不进入顶层工具列表，由模型通过 `select_tools` 按需加载；设为 `false` 则始终直接暴露。默认 `true`；标志未启用时该字段无效 |
 | `startupTimeoutMs` | `number` | 全部 | 连接超时，取值范围为 `1` 到 `2147483647` 毫秒，默认 `30000` |
 | `toolTimeoutMs` | `number` | 全部 | 单次工具调用超时，取值范围为 `1` 到 `2147483647` 毫秒 |
 | `enabledTools` | `string[]` | 全部 | 工具白名单 |

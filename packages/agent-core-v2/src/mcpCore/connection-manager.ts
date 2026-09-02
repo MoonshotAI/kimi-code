@@ -49,6 +49,7 @@ export interface McpConnectionView {
         tools: readonly Tool[];
         rawTools: readonly MCPToolDefinition[];
         enabledNames: ReadonlySet<string>;
+        deferred: boolean;
       }
     | undefined;
   getRemoteServerUrl(name: string): string | undefined;
@@ -144,6 +145,7 @@ export class McpConnectionManager implements McpConnectionView {
         tools: readonly Tool[];
         rawTools: readonly MCPToolDefinition[];
         enabledNames: ReadonlySet<string>;
+        deferred: boolean;
       }
     | undefined {
     const entry = this.entries.get(name);
@@ -160,6 +162,7 @@ export class McpConnectionManager implements McpConnectionView {
       tools: entry.tools,
       rawTools: entry.rawTools,
       enabledNames: entry.enabledNames ?? new Set(entry.tools.map((t) => t.name)),
+      deferred: entry.config.deferred !== false,
     };
   }
 
