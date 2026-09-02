@@ -18,7 +18,7 @@ import {
 } from '#/tui/goal-queue-store';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import { getBuiltInPalette } from '#/tui/theme';
-import { UNCONFIRMED_FILE_CHANGES_WARNING } from '#/tui/utils/permission-mode';
+import { UNCONFIRMED_FILE_CHANGES_WARNING } from '#/tui/constant/kimi-tui';
 
 vi.mock('#/tui/goal-queue-store', () => ({
   appendGoalQueueItem: vi.fn(async () => ({

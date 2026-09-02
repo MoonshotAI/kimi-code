@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { handleSwarmCommand } from '#/tui/commands/index';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import { currentTheme } from '#/tui/theme';
-import { UNCONFIRMED_FILE_CHANGES_WARNING } from '#/tui/utils/permission-mode';
+import { UNCONFIRMED_FILE_CHANGES_WARNING } from '#/tui/constant/kimi-tui';
 
 const ENTER = '\r';
 const ESCAPE = '\u001B';

@@ -24,9 +24,9 @@ import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-
 import { DEFAULT_TUI_CONFIG, saveTuiConfig, type TuiConfig } from '../config';
 import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
-import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
+import { NO_ACTIVE_SESSION_MESSAGE, UNCONFIRMED_FILE_CHANGES_WARNING } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
-import { PERMISSION_MODE_DISPLAY_NAMES, UNCONFIRMED_FILE_CHANGES_WARNING } from '../utils/permission-mode';
+import { PERMISSION_MODE_DISPLAY_NAMES } from '../utils/permission-mode';
 import { thinkingEffortToConfig } from '../utils/thinking-config';
 import { showUsage } from './info';
 import { setExperimentalFeatures } from './experimental-flags';

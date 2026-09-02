@@ -15,7 +15,7 @@ import {
   GoalStatusMessageComponent,
   UpcomingGoalAddedMessageComponent,
 } from '../components/messages/goal-panel';
-import { LLM_NOT_SET_MESSAGE } from '../constant/kimi-tui';
+import { LLM_NOT_SET_MESSAGE, UNCONFIRMED_FILE_CHANGES_WARNING } from '../constant/kimi-tui';
 import {
   appendGoalQueueItem,
   moveGoalQueueItem,
@@ -25,7 +25,7 @@ import {
   type GoalQueueSnapshot,
 } from '../goal-queue-store';
 import { formatErrorMessage } from '../utils/event-payload';
-import { PERMISSION_MODE_DISPLAY_NAMES, UNCONFIRMED_FILE_CHANGES_WARNING } from '../utils/permission-mode';
+import { PERMISSION_MODE_DISPLAY_NAMES } from '../utils/permission-mode';
 import { canRestoreSubmittedInput } from './resolve';
 import type { SlashCommandHost } from './dispatch';
 
