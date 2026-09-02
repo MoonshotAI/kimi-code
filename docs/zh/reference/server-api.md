@@ -4797,20 +4797,194 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 ## WebSocket 帧
 
-事件流端点为 `/api/v1/ws`。服务端到客户端的帧分五路：
+事件流端点为 `/api/v1/ws`，鉴权见 [基础约定](#鉴权)。帧为双向 JSON 消息：下行（服务端→客户端）分控制帧、event.\* 事件帧、agent 事件帧、transcript 帧四路；上行（客户端→服务端）只有控制帧。
 
-| 路由 | type 值 | 说明 |
-| --- | --- | --- |
-| 控制帧 | `server_hello` / `ping` / `ack` / `resync_required`（`error` 已声明但从不产出） | 连接管理，见 [控制帧](#控制帧) |
-| 事件帧 | `event.*` 协议事件与裸 agent 事件 | 共享事件信封，见 [事件信封](#事件信封)、[event.\* 协议事件](#event-协议事件)、[agent 事件](#agent-事件) |
-| transcript 帧 | `transcript.reset` / `transcript.ops` | 结构化转录流，见 [transcript 帧](#transcript-帧) |
-| terminal 帧 | `terminal_output` / `terminal_exit` | 死协议，见 [terminal 帧](#terminal-帧) |
+### 帧总览
 
-入站（客户端→服务端）控制帧按到达顺序串行处理；未知 `type` 被静默忽略。出站事件先进批量队列（16 毫秒或 64 条 flush，1 MB 高水位背压）；相邻同轮次的 `assistant.delta` / `thinking.delta` 帧在 flush 时会合并 `delta` 字符串——客户端不能把 delta 帧当不可变日志。
+```ts
+// 服务端 → 客户端
+type ServerFrame =
+  | ControlFrame // server_hello | ack | ping | resync_required（error 为死声明）
+  | EventFrame // event.* 19 型
+  | AgentEventFrame // agent 事件 51 型
+  | TranscriptFrame; // transcript.reset | transcript.ops
+
+// 客户端 → 服务端
+type ClientFrame =
+  | ClientHello
+  | Subscribe
+  | Unsubscribe
+  | SubscribeV2
+  | UnsubscribeV2
+  | WatchFsAdd
+  | WatchFsRemove
+  | Pong;
+// 死声明（服务端不处理、静默丢弃）：abort、terminal_attach、terminal_detach、
+// terminal_input、terminal_resize、terminal_close
+```
+
+| 分类 | 方向 | 帧数 | 用途 |
+| --- | --- | --- | --- |
+| [控制帧](#控制帧) | 双向 | 12 活跃 + 7 死声明 | 握手、订阅、心跳与恢复 |
+| [event.\* 事件帧](#event-协议事件) | S→C | 19 | 工作区 / 会话 / 配置等状态同步 |
+| [agent 事件帧](#agent-事件) | S→C | 51 | 轮次生命周期、状态与 subagent 内容 |
+| [transcript 帧](#transcript-帧) | S→C | 2 | 主会话内容的结构化流（新实现） |
+| [terminal 帧](#terminal-帧) | S→C | 2 | 死协议 |
+
+事件帧共享外层信封 `EventEnvelope`；`payload` 为各事件自己的载荷：
+
+```ts
+type EventEnvelope = {
+  type: string; // 与 payload 内事件 type 重复一次
+  seq: number; // 语义随产出形态，见下表
+  epoch?: string;
+  volatile?: true;
+  offset?: number; // 仅主 agent 的 assistant.delta / thinking.delta 携带
+  session_id?: string;
+  timestamp: string; // ISO 8601
+  payload: object;
+};
+```
+
+| 形态 | `seq` | `epoch` | `volatile` | `offset` |
+| --- | --- | --- | --- | --- |
+| durable | journal 递增，落日志可回放 | 有 | — | — |
+| volatile | 当前 journal seq（不递增），不落日志不回放 | 有 | `true` | delta 帧携带 |
+| transcript | 外层为当前 journal seq；transcript seq 在 `payload.seq` | 有 | `true` | — |
+| `event.fs.changed` | watch 作用域自增（与 journal 无关） | 无 | — | — |
+
+volatile 类型全集：`assistant.delta` / `thinking.delta` / `tool.call.delta` / `tool.progress` / `shell.started` / `shell.output` / `shell.completed` / `agent.status.updated` / `event.di.unit_changed` / `event.capability.changed`；transcript 两型恒 volatile。
 
 ### 控制帧
 
-客户端发送 JSON 帧 `{ "type", "id"?, "payload" }`；每个带 `id` 的入站帧都会收到一个 `ack` 应答。
+握手与保活：连接建立后服务端立即发 `server_hello`；客户端回 `client_hello`（可带初始订阅与断线游标），再按需发订阅帧；每个带 `id` 的入站帧收到一个 `ack`。服务端每 `heartbeat_ms`（默认 10000）发 `ping`，客户端回 `pong`；连续两个周期无任何入站帧，服务端以 `close(1001, "heartbeat timeout")` 断连。
+
+#### `server_hello`（S→C）
+
+连接建立后服务端立即发送的首帧，不等任何入站。
+
+```ts
+{
+  type: 'server_hello';
+  timestamp: string; // ISO 8601
+  payload: {
+    ws_connection_id: string; // conn_<ulid>
+    protocol_version: 2;
+    heartbeat_ms: number; // 默认 10000
+    max_event_buffer_size: number; // 默认 1000
+    capabilities: { event_batching: boolean; compression: boolean };
+  };
+}
+```
+
+**帧示例**：
+
+```json
+{
+  "type": "server_hello",
+  "timestamp": "2026-09-02T08:00:00.000Z",
+  "payload": {
+    "ws_connection_id": "conn_01JZX4...",
+    "protocol_version": 2,
+    "heartbeat_ms": 10000,
+    "max_event_buffer_size": 1000,
+    "capabilities": { "event_batching": false, "compression": false }
+  }
+}
+```
+
+#### `client_hello`（C→S → ack）
+
+声明客户端身份；可一次性携带初始订阅与断线游标。`payload.token` 是冗余第二鉴权通道——upgrade 已鉴权时可缺省；校验失败回 `ack` code `40112` 并关闭连接。
+
+```ts
+{
+  type: 'client_hello';
+  id?: string; // 回显进 ack
+  payload: {
+    client_id: string; // kimi-inspect 时本连接加入 DI 事件目标集
+    subscriptions?: string[]; // 建连即订阅的 session id
+    cursors?: Record<string, { seq: number; epoch?: string }>; // 逐会话事件续传水位
+    agent_filter?: Record<string, string[]>; // 逐会话 agent 过滤
+    token?: string; // wire schema 未声明但服务端实际读取
+  };
+}
+```
+
+ack payload：`{ accepted_subscriptions: string[], resync_required: string[], cursors: Record<string, { seq, epoch? }> }`。
+
+#### `subscribe`（C→S → ack）
+
+订阅会话事件；带 `cursors` 时服务端先回放缺口再回 ack（回放完成以该 ack 为信号）。
+
+```ts
+{
+  type: 'subscribe';
+  id?: string;
+  payload: {
+    session_ids: string[];
+    cursors?: Record<string, { seq: number; epoch?: string }>;
+    agent_filter?: Record<string, string[]>;
+    watch_fs?: Record<string, { paths: string[]; recursive?: boolean }>; // schema 声明，服务端当前不读
+  };
+}
+```
+
+ack payload：`{ accepted: string[], not_found: string[], resync_required: string[], cursors: Record<string, { seq, epoch? }> }`。
+
+### event.\* 事件帧
+
+（以下为格式样例，19 型全量待写入）
+
+#### `event.workspace.created`（S→C）
+
+新工作区注册时广播。投递范围：全局（所有连接）。durable。
+
+```ts
+{
+  type: 'event.workspace.created';
+  payload: {
+    sessionId: '__global__';
+    agentId: 'main';
+    workspace: {
+      id: string;
+      root: string;
+      name: string;
+      createdAt: string; // ISO 8601；camelCase，与 REST T-Workspace 的 snake_case 不同
+      lastOpenedAt: string; // ISO 8601
+    };
+  };
+}
+```
+
+外层为 durable 信封（见 [帧总览](#帧总览)）。
+
+### agent 事件帧
+
+（以下为格式样例，51 型全量待写入）
+
+#### `assistant.delta`（S→C）
+
+流式文本增量。投递范围：会话订阅。volatile；相邻同轮次帧 flush 时可能被服务端合并（合并保留首帧 `offset`），客户端不能把 delta 帧当不可变日志。主会话内容渲染走 [transcript 帧](#transcript-帧)；本帧仍承载 subagent 内容（subagent 的 delta 不带 `offset`）。
+
+```ts
+{
+  type: 'assistant.delta';
+  offset?: number; // 该轮次内累计文本长度，仅主 agent 携带
+  payload: {
+    turnId: number;
+    delta: string;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+---
+
+（以下为旧格式内容，待全量按新格式替换后删除）
+
+### 控制帧（旧格式，待替换）
 
 #### server_hello（服务端→客户端）
 
