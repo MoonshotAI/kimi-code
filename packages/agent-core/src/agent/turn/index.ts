@@ -69,6 +69,10 @@ export interface TurnEndResult {
   readonly blockedByUserPromptHook?: boolean;
 }
 
+interface OneTurnEndResult extends TurnEndResult {
+  readonly madeToolCall: boolean;
+}
+
 interface PromptHookEndResult {
   readonly event: TurnEndedEvent;
   readonly blocked: boolean;
@@ -85,6 +89,8 @@ const GOAL_PROVIDER_API_PAUSE_PREFIX = 'Paused after provider API error';
 const GOAL_MODEL_CONFIG_PAUSE_PREFIX = 'Paused after model configuration error';
 const GOAL_RUNTIME_PAUSE_PREFIX = 'Paused after runtime error';
 const GOAL_PROVIDER_FILTERED_PAUSE_REASON = 'Paused after provider safety policy block';
+const GOAL_IDLE_CONTINUATION_DELAYS_MS = [60_000, 5 * 60_000, 15 * 60_000] as const;
+const GOAL_IDLE_TURNS_BEFORE_BACKOFF = 2;
 
 /**
  * The prompt the goal driver appends to start each continuation turn — the
@@ -154,6 +160,7 @@ export class TurnFlow {
   private activeRequestTrace: LLMRequestTrace | undefined;
   private latestTraceId: string | undefined;
   private currentStep = 0;
+  private wakeGoalContinuation: (() => void) | undefined;
 
   constructor(protected readonly agent: Agent) {}
 
@@ -193,6 +200,7 @@ export class TurnFlow {
     // exactly what fire-and-forget callers (background notifications, cron) assume.
     if (this.activeTurn || this.agent.fullCompaction.isCompacting) {
       this.steerBuffer.push({ input: gated, origin });
+      this.wakeGoalContinuation?.();
       return null;
     }
     return this.launch(gated, origin);
@@ -477,6 +485,7 @@ export class TurnFlow {
     let turnId = firstTurnId;
     let turnInput = input;
     let turnOrigin = origin;
+    let consecutiveIdleTurns = 0;
     while (true) {
       const goalBeforeTurn = this.agent.goal.getGoal().goal;
       if (goalBeforeTurn?.status === 'active' && goalBeforeTurn.budget.overBudget) {
@@ -525,6 +534,25 @@ export class TurnFlow {
         return end;
       }
 
+      consecutiveIdleTurns = end.madeToolCall ? 0 : consecutiveIdleTurns + 1;
+      const idleDelayMs = goalIdleContinuationDelayMs(consecutiveIdleTurns);
+      const continuationDelayMs =
+        goal.budget.remainingWallClockMs === null
+          ? idleDelayMs
+          : Math.min(idleDelayMs, goal.budget.remainingWallClockMs);
+      if (continuationDelayMs > 0) {
+        if (this.steerBuffer.length > 0) {
+          consecutiveIdleTurns = 0;
+        } else {
+          const waitResult = await this.waitForGoalContinuation(continuationDelayMs, signal);
+          if (waitResult === 'cancelled') {
+            await this.agent.goal.pauseOnInterrupt({ reason: 'Paused after interruption' });
+            return end;
+          }
+          if (waitResult === 'steered') consecutiveIdleTurns = 0;
+        }
+      }
+
       turnId = this.allocateTurnId();
       turnInput = [
         {
@@ -533,6 +561,32 @@ export class TurnFlow {
         },
       ];
       turnOrigin = GOAL_CONTINUATION_ORIGIN;
+    }
+  }
+
+  private async waitForGoalContinuation(
+    delayMs: number,
+    signal: AbortSignal,
+  ): Promise<'elapsed' | 'steered' | 'cancelled'> {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let wake: (() => void) | undefined;
+    const wait = new Promise<'elapsed' | 'steered'>((resolve) => {
+      wake = () => {
+        resolve('steered');
+      };
+      this.wakeGoalContinuation = wake;
+      timeout = setTimeout(() => {
+        resolve('elapsed');
+      }, delayMs);
+    });
+    try {
+      return await abortable(wait, signal);
+    } catch (error) {
+      if (signal.aborted || isAbortError(error)) return 'cancelled';
+      throw error;
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
+      if (this.wakeGoalContinuation === wake) this.wakeGoalContinuation = undefined;
     }
   }
 
@@ -570,7 +624,7 @@ export class TurnFlow {
     origin: PromptOrigin,
     signal: AbortSignal,
     standalone: boolean,
-  ): Promise<TurnEndResult> {
+  ): Promise<OneTurnEndResult> {
     this.currentStep = 0;
     this.stepToolCallKeys.clear();
     this.toolCallDupType.clear();
@@ -748,7 +802,8 @@ export class TurnFlow {
     this.stepFailureByTurn.delete(turnId);
     this.activeRequestTrace = undefined;
     this.latestTraceId = undefined;
-    return { event: ended, stopReason: completedStopReason, blockedByUserPromptHook };
+    const madeToolCall = [...this.stepToolCallKeys.values()].some((keys) => keys.size > 0);
+    return { event: ended, stopReason: completedStopReason, blockedByUserPromptHook, madeToolCall };
   }
 
   private async applyUserPromptHook(
@@ -1313,6 +1368,14 @@ function nonNegativeIntFromEnv(name: string): number | undefined {
 
 function hasStepBudgetRemaining(maxSteps: number | undefined, currentStep: number): boolean {
   return maxSteps === undefined || maxSteps <= 0 || currentStep < maxSteps;
+}
+
+function goalIdleContinuationDelayMs(consecutiveIdleTurns: number): number {
+  const delayIndex = consecutiveIdleTurns - GOAL_IDLE_TURNS_BEFORE_BACKOFF;
+  if (delayIndex < 0) return 0;
+  return GOAL_IDLE_CONTINUATION_DELAYS_MS[
+    Math.min(delayIndex, GOAL_IDLE_CONTINUATION_DELAYS_MS.length - 1)
+  ]!;
 }
 
 /**

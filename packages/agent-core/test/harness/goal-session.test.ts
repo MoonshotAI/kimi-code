@@ -109,6 +109,22 @@ async function setupSession(
   return { session, agent, scripted };
 }
 
+function signalGenerateCall(
+  scripted: ReturnType<typeof createScriptedGenerate>,
+  callNumber: number,
+): { readonly generate: NonNullable<AgentOptions['generate']>; readonly started: Promise<void> } {
+  let resolveStarted: (() => void) | undefined;
+  const started = new Promise<void>((resolve) => {
+    resolveStarted = resolve;
+  });
+  const generate: NonNullable<AgentOptions['generate']> = (...args) => {
+    const response = scripted.generate(...args);
+    if (scripted.calls.length === callNumber) resolveStarted?.();
+    return response;
+  };
+  return { generate, started };
+}
+
 describe('goal session end-to-end', () => {
   it('drives a goal across sequential turns until the model marks it complete', async () => {
     const sessionDir = await makeTempDir();
@@ -204,6 +220,140 @@ describe('goal session end-to-end', () => {
     );
     expect(completion).toBeDefined();
     expect(finalUsage).toBeGreaterThan(0);
+  });
+
+  it('backs off after consecutive goal turns make no tool progress', async () => {
+    vi.useFakeTimers();
+    try {
+      const sessionDir = await makeTempDir();
+      const events: Array<Record<string, unknown>> = [];
+      const scripted = createScriptedGenerate();
+      const secondCall = signalGenerateCall(scripted, 2);
+      const { session, agent } = await setupSession(
+        sessionDir,
+        events,
+        ['GetGoal', 'UpdateGoal'],
+        secondCall.generate,
+      );
+      const api = new SessionAPIImpl(session);
+      await api.createGoal({ agentId: 'main', objective: 'Wait for external work' });
+
+      scripted.mockNextResponse({ type: 'text', text: 'Still waiting.' });
+      scripted.mockNextResponse({ type: 'text', text: 'Nothing changed.' });
+      scripted.mockNextResponse({ type: 'text', text: 'Still no change.' });
+      scripted.mockNextResponse({ type: 'text', text: 'Still waiting for it.' });
+      scripted.mockNextResponse({
+        type: 'function',
+        id: 'complete',
+        name: 'UpdateGoal',
+        arguments: JSON.stringify({ status: 'complete' }),
+      });
+      scripted.mockNextResponse({ type: 'text', text: 'The external work completed.' });
+
+      agent.turn.prompt([{ type: 'text', text: 'Check the external work' }]);
+      const turnDone = agent.turn.waitForCurrentTurn();
+      await secondCall.started;
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(scripted.calls).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(scripted.calls).toHaveLength(2);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(scripted.calls).toHaveLength(3);
+      await vi.advanceTimersByTimeAsync(5 * 60_000 - 1);
+      expect(scripted.calls).toHaveLength(3);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(scripted.calls).toHaveLength(4);
+      await vi.advanceTimersByTimeAsync(15 * 60_000 - 1);
+      expect(scripted.calls).toHaveLength(4);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await turnDone;
+      expect(scripted.calls).toHaveLength(6);
+      expect((await api.getGoal({ agentId: 'main' })).goal).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('allows cancellation while an idle goal continuation is backed off', async () => {
+    vi.useFakeTimers();
+    try {
+      const sessionDir = await makeTempDir();
+      const events: Array<Record<string, unknown>> = [];
+      const scripted = createScriptedGenerate();
+      const secondCall = signalGenerateCall(scripted, 2);
+      const { session, agent } = await setupSession(
+        sessionDir,
+        events,
+        ['GetGoal', 'UpdateGoal'],
+        secondCall.generate,
+      );
+      const api = new SessionAPIImpl(session);
+      await api.createGoal({ agentId: 'main', objective: 'Wait for external work' });
+
+      scripted.mockNextResponse({ type: 'text', text: 'Still waiting.' });
+      scripted.mockNextResponse({ type: 'text', text: 'Nothing changed.' });
+
+      agent.turn.prompt([{ type: 'text', text: 'Check the external work' }]);
+      const turnDone = agent.turn.waitForCurrentTurn();
+      await secondCall.started;
+      await vi.advanceTimersByTimeAsync(0);
+      agent.turn.cancel();
+      await turnDone;
+
+      expect(scripted.calls).toHaveLength(2);
+      expect((await api.getGoal({ agentId: 'main' })).goal?.status).toBe('paused');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('wakes an idle goal continuation when steered input arrives', async () => {
+    vi.useFakeTimers();
+    try {
+      const sessionDir = await makeTempDir();
+      const events: Array<Record<string, unknown>> = [];
+      const scripted = createScriptedGenerate();
+      const secondCall = signalGenerateCall(scripted, 2);
+      const { session, agent } = await setupSession(
+        sessionDir,
+        events,
+        ['GetGoal', 'UpdateGoal'],
+        secondCall.generate,
+      );
+      const api = new SessionAPIImpl(session);
+      await api.createGoal({ agentId: 'main', objective: 'Wait for external work' });
+
+      scripted.mockNextResponse({ type: 'text', text: 'Still waiting.' });
+      scripted.mockNextResponse({ type: 'text', text: 'Nothing changed.' });
+      scripted.mockNextResponse({
+        type: 'function',
+        id: 'complete',
+        name: 'UpdateGoal',
+        arguments: JSON.stringify({ status: 'complete' }),
+      });
+      scripted.mockNextResponse({ type: 'text', text: 'The external work completed.' });
+
+      agent.turn.prompt([{ type: 'text', text: 'Check the external work' }]);
+      const turnDone = agent.turn.waitForCurrentTurn();
+      await secondCall.started;
+      await vi.advanceTimersByTimeAsync(0);
+      expect(scripted.calls).toHaveLength(2);
+
+      agent.turn.steer([{ type: 'text', text: 'The external work is finished now.' }]);
+      await turnDone;
+
+      expect(scripted.calls).toHaveLength(4);
+      expect(JSON.stringify(scripted.calls[2]?.history ?? [])).toContain(
+        'The external work is finished now.',
+      );
+      expect((await api.getGoal({ agentId: 'main' })).goal).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('blocks at a turn budget (no wrap-up segment)', async () => {
