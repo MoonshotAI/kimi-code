@@ -132,6 +132,16 @@ export function emitAgentRunSpawned(
   requester.accessor.get(ITelemetryService)?.track2('subagent_created', telemetryEvent);
 }
 
+export function emitAgentRunFailed(
+  requester: IAgentScopeHandle,
+  targetAgentId: string,
+  error: string,
+): void {
+  void requester.accessor
+    .get(IEventDispatcher)
+    ?.dispatch(new SubagentFailed({ subagentId: targetAgentId, error }));
+}
+
 export async function mirrorAgentRun(
   requester: IAgentScopeHandle,
   run: AgentRunHandle,
@@ -180,12 +190,7 @@ export async function mirrorAgentRun(
     return result;
   } catch (error) {
     if (!isAbortError(error) && !shouldSuppressFailure(options, error)) {
-      void dispatcher?.dispatch(
-        new SubagentFailed({
-          subagentId: run.agentId,
-          error: errorMessage(error),
-        }),
-      );
+      emitAgentRunFailed(requester, run.agentId, errorMessage(error));
     }
     throw error;
   }

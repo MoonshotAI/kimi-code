@@ -47,7 +47,12 @@ import { Error2, ErrorCodes } from '#/errors';
 import type { AgentTaskSettlement } from '#/agent/task/types';
 import { SubagentTask } from '#/agent/tools/agent/subagent-task';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
-import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
+import {
+  emitAgentRunSpawned,
+  mirrorAgentRun,
+  SubagentFailed,
+  SubagentSpawned,
+} from '#/session/subagent/mirrorAgentRun';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import {
   IAgentLifecycleService,
@@ -2790,6 +2795,21 @@ describe('Agent tool execution contract', () => {
       output: 'Too many background tasks are already running.',
     });
     expect(lifecycle.create).toHaveBeenCalledTimes(2);
+
+    const events = lifecycle.publishedEvents;
+    const spawnedIndex = events.findIndex(
+      (event) => event instanceof SubagentSpawned && event.subagentId === 'agent-second',
+    );
+    const failedEvents = events.filter(
+      (event): event is SubagentFailed =>
+        event instanceof SubagentFailed && event.subagentId === 'agent-second',
+    );
+    expect(spawnedIndex).toBeGreaterThanOrEqual(0);
+    expect(failedEvents).toHaveLength(1);
+    expect(events.indexOf(failedEvents[0]!)).toBeGreaterThan(spawnedIndex);
+    expect(failedEvents[0]).toMatchObject({
+      error: 'Too many background tasks are already running.',
+    });
     completions[0]?.resolve({ summary: 'finished later' });
   });
 
