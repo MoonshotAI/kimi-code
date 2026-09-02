@@ -15,6 +15,10 @@ export const TOWER_STATUS_PROMPT =
 export const TOWER_TEARDOWN_PROMPT =
   'Tear down the tower: call TowerTeardown and report what it did. It refuses to destroy dirty worktrees unless forced.';
 export const EXIT_CONFIRM_WINDOW_MS = 1500;
+// Fallback for the dynamic (skill/plugin) slash-command readiness gate: if the
+// catalog load never settles (wedged IPC), the gate clears after this long so
+// input stops queueing — a wedged load must not swallow submissions forever.
+export const DYNAMIC_COMMANDS_READY_TIMEOUT_MS = 10_000;
 // Time window for treating two consecutive Esc presses as a double-Esc, which
 // opens the undo selector. Kept short (double-click feel) so two deliberate
 // presses far apart don't accidentally trigger undo.

@@ -130,6 +130,18 @@ function makeHost(
   return { host, session };
 }
 
+// Mirror of the KimiTUI.refreshDynamicCommands wiring: arm the gate and clear
+// it once it settles, so deferred submissions re-dispatch against the loaded
+// maps instead of queueing again.
+function armDynamicCommandsGate(host: SlashCommandHost, ready: Promise<void>): void {
+  Object.assign(host, { dynamicCommandsReady: ready });
+  void ready.finally(() => {
+    if (host.dynamicCommandsReady === ready) {
+      Object.assign(host, { dynamicCommandsReady: undefined });
+    }
+  });
+}
+
 interface TestPicker {
   handleInput(data: string): void;
   render(width: number): string[];
@@ -805,6 +817,91 @@ describe('dispatchInput /goal integration', () => {
     });
     expect(host.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
     expect(host.sendNormalUserInput).not.toHaveBeenCalledWith('/goal Ship feature X');
+  });
+
+  it('waits for dynamic commands readiness before resolving the input', async () => {
+    const { host } = makeHost();
+    host.skillCommandMap.set('mcp-config', 'mcp-config');
+    Object.assign(host, { sendSkillActivation: vi.fn() });
+    let resolveReady!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      resolveReady = resolve;
+    });
+    armDynamicCommandsGate(host, ready);
+
+    dispatchInput(host, '/mcp-config enable context7');
+
+    expect(host.sendSkillActivation).not.toHaveBeenCalled();
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+
+    resolveReady();
+    await vi.waitFor(() => {
+      expect(host.sendSkillActivation).toHaveBeenCalledWith(
+        expect.anything(),
+        'mcp-config',
+        'enable context7',
+      );
+    });
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+  });
+
+  it('drains multiple queued submissions in submission order', async () => {
+    const { host } = makeHost();
+    host.skillCommandMap.set('skill-a', 'skill-a');
+    host.skillCommandMap.set('skill-b', 'skill-b');
+    const dispatched: string[] = [];
+    Object.assign(host, {
+      sendSkillActivation: vi.fn((_session: unknown, skillName: string) => {
+        dispatched.push(skillName);
+      }),
+    });
+    let resolveReady!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      resolveReady = resolve;
+    });
+    armDynamicCommandsGate(host, ready);
+
+    dispatchInput(host, '/skill-a first');
+    dispatchInput(host, '/skill-b second');
+
+    expect(host.sendSkillActivation).not.toHaveBeenCalled();
+
+    resolveReady();
+    // The drains were queued before this await, so both have run once the
+    // gate promise resumes here (the skill path is synchronous with a session).
+    await ready;
+
+    expect(dispatched).toEqual(['skill-a', 'skill-b']);
+  });
+
+  it('queues plain text behind the gate and keeps its order relative to a slash submission', async () => {
+    const { host } = makeHost();
+    host.skillCommandMap.set('skill-a', 'skill-a');
+    const dispatched: string[] = [];
+    Object.assign(host, {
+      sendNormalUserInput: vi.fn((text: string) => {
+        dispatched.push(`text:${text}`);
+      }),
+      sendSkillActivation: vi.fn((_session: unknown, skillName: string) => {
+        dispatched.push(`skill:${skillName}`);
+      }),
+    });
+    let resolveReady!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      resolveReady = resolve;
+    });
+    armDynamicCommandsGate(host, ready);
+
+    dispatchInput(host, 'plain prompt one');
+    dispatchInput(host, '/skill-a second');
+
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+    expect(host.sendSkillActivation).not.toHaveBeenCalled();
+
+    resolveReady();
+    await ready;
+
+    expect(dispatched).toEqual(['text:plain prompt one', 'skill:skill-a']);
   });
 
   it('restores the input when /goal is rejected by the busy gate while streaming', async () => {
