@@ -244,6 +244,8 @@ HTTP 状态码例外（非 200）：
 
 合并式更新全局配置：请求体中的每个顶层域被深合并进对应域，未出现的域保持不动。把 `yolo` 设为 `true` 是 `default_permission_mode: "yolo"` 的简写（`false` 被忽略）。每一次配置变更——经本端点、在进程外编辑 `config.toml`，或服务端内部写入——都会广播全局 `event.config.changed` 事件。
 
+**触发事件**：`event.config.changed`
+
 **请求体**：部分配置对象——[T-ConfigResponse](#t-configresponse) 中除 `raw` 外的任意子集，均为可选。
 
 **响应体**：`ResponseType<`[T-ConfigResponse](#t-configresponse)`>`。
@@ -321,6 +323,8 @@ HTTP 状态码例外（非 200）：
 
 把全局 `default_model` 设为一个已存在的别名。`model_id` 是配置中的别名键原样——裸键如 `POST /api/v1/models/turbo:set_default`；id 含 `/` 时需 URL 编码，如 `POST /api/v1/models/my-provider%2Fkimi-for-coding:set_default`。
 
+**触发事件**：`event.config.changed`
+
 **响应体**：`ResponseType<{ default_model: string, model: T-ModelCatalogItem }>`
 
 | 字段 | 类型 | 说明 |
@@ -379,6 +383,8 @@ HTTP 状态码例外（非 200）：
 #### `POST /api/v1/providers`
 
 一次保存创建供应商及其模型别名；响应为 HTTP 201 加 `ResponseType`。当全局 `default_model` 完全未配置时，会以新供应商的 `default_model`（或第一个模型）播种；已有默认值绝不被修改。
+
+**触发事件**：`event.config.changed`
 
 **请求体**：
 
@@ -463,6 +469,8 @@ HTTP 状态码例外（非 200）：
 
 一次保存整体替换供应商：`type`、`base_url` 与模型列表被重写，不再列出的别名从 `config.toml` 中消失。`api_key` 是三态的：省略表示保留已存密钥，`""` 表示清除，其他值表示替换。除 `new_id` 重命名迁移外，全局默认指针绝不被修改。
 
+**触发事件**：`event.config.changed`
+
 **请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -499,13 +507,17 @@ HTTP 状态码例外（非 200）：
 
 删除供应商及其全部模型别名；subagent 次级模型池会级联清理。全局 `default_provider` / `default_model` 指针保持不动，即使它们指向被删的供应商。
 
+**触发事件**：`event.config.changed`
+
 **响应体**：HTTP 204 空体——状态行本身即表示删除成功，无 `ResponseType`。
 
 **非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40003`、`40412`。
 
 #### `POST /api/v1/providers/{provider_id}:refresh`
 
-从上游来源重新发现单个供应商的模型元数据，并重写该供应商的别名；模型来源为静态的供应商不经网络调用直接报告 `unchanged`。至少一个供应商的别名发生变化时广播全局 `event.model_catalog.changed` 事件。
+从上游来源重新发现单个供应商的模型元数据，并重写该供应商的别名；模型来源为静态的供应商不经网络调用直接报告 `unchanged`。
+
+**触发事件**：`event.model_catalog.changed`（至少一个供应商的别名发生变化时；配置写入同时触发 `event.config.changed`）
 
 **响应体**：`ResponseType<`[T-RefreshProviderModelsResponse](#t-refreshprovidermodelsresponse)`>`。
 
@@ -533,6 +545,8 @@ HTTP 状态码例外（非 200）：
 #### `POST /api/v1/providers:{action}`
 
 集合级动作路由；请求体按动作校验。四个动作：
+
+**触发事件**：`:refresh` / `:refresh_oauth` → `event.model_catalog.changed`（至少一个供应商的别名发生变化时；配置写入同时触发 `event.config.changed`）；`:import_catalog` / `:import_registry` → `event.config.changed`
 
 | 动作 | 请求体 | `data`（code = 0） | HTTP 状态 |
 | --- | --- | --- | --- |
