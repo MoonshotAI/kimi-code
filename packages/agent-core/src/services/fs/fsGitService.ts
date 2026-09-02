@@ -172,6 +172,7 @@ export class FsGitService extends Disposable implements IFsGitService {
         'git',
         ['diff', '--no-color', '--no-index', '--', '/dev/null', rel],
         realCwd,
+        { stdoutMaxBytes: DIFF_MAX_BYTES },
       );
       if (diffRes.exitCode !== 0 && diffRes.exitCode !== 1) {
         throw new FsGitUnavailableError(
@@ -184,6 +185,7 @@ export class FsGitService extends Disposable implements IFsGitService {
         'git',
         ['diff', '--no-color', 'HEAD', '--', rel],
         realCwd,
+        { stdoutMaxBytes: DIFF_MAX_BYTES },
       );
       if (diffRes.exitCode !== 0) {
         throw new FsGitUnavailableError(
@@ -202,12 +204,10 @@ export class FsGitService extends Disposable implements IFsGitService {
       }
     }
 
-    const full = diffRes.stdout;
-    const truncated = full.length > DIFF_MAX_BYTES;
     return {
       path: rel,
-      diff: truncated ? full.slice(0, DIFF_MAX_BYTES) : full,
-      truncated,
+      diff: diffRes.stdout,
+      truncated: diffRes.stdoutTruncated,
     };
   }
 }
@@ -215,12 +215,14 @@ export class FsGitService extends Disposable implements IFsGitService {
 interface RunResult {
   exitCode: number;
   stdout: string;
+  stdoutTruncated: boolean;
   stderr: string;
 }
 
 interface RunCommandOptions {
   readonly timeoutMs?: number;
   readonly env?: NodeJS.ProcessEnv;
+  readonly stdoutMaxBytes?: number;
 }
 
 async function runCommand(
@@ -236,7 +238,7 @@ async function runCommand(
       env: options.env ? { ...process.env, ...options.env } : process.env,
       windowsHide: true,
     });
-    let stdout = '';
+    const stdout = createTextCapture();
     let stderr = '';
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -249,25 +251,72 @@ async function runCommand(
     if (options.timeoutMs !== undefined) {
       timer = setTimeout(() => {
         killChild(child);
-        finish({ exitCode: -1, stdout, stderr });
+        finish({
+          exitCode: -1,
+          stdout: stdout.value,
+          stdoutTruncated: stdout.truncated,
+          stderr,
+        });
       }, options.timeoutMs);
       timer.unref?.();
     }
     child.stdout.setEncoding('utf-8');
     child.stderr.setEncoding('utf-8');
     child.stdout.on('data', (c: string) => {
-      stdout += c;
+      appendText(stdout, c, options.stdoutMaxBytes);
     });
     child.stderr.on('data', (c: string) => {
       stderr += c;
     });
     child.once('error', () => {
-      finish({ exitCode: -1, stdout, stderr });
+      finish({
+        exitCode: -1,
+        stdout: stdout.value,
+        stdoutTruncated: stdout.truncated,
+        stderr,
+      });
     });
     child.once('close', (code) => {
-      finish({ exitCode: code ?? -1, stdout, stderr });
+      finish({
+        exitCode: code ?? -1,
+        stdout: stdout.value,
+        stdoutTruncated: stdout.truncated,
+        stderr,
+      });
     });
   });
+}
+
+interface TextCapture {
+  value: string;
+  bytes: number;
+  truncated: boolean;
+}
+
+const UTF8_ENCODER = new TextEncoder();
+
+function createTextCapture(): TextCapture {
+  return { value: '', bytes: 0, truncated: false };
+}
+
+function appendText(capture: TextCapture, chunk: string, maxBytes?: number): void {
+  if (maxBytes === undefined) {
+    capture.value += chunk;
+    return;
+  }
+  if (capture.truncated) return;
+
+  const remaining = maxBytes - capture.bytes;
+  if (remaining <= 0) {
+    capture.truncated ||= chunk.length > 0;
+    return;
+  }
+
+  const destination = new Uint8Array(Math.min(remaining, chunk.length * 3));
+  const { read, written } = UTF8_ENCODER.encodeInto(chunk, destination);
+  capture.value += chunk.slice(0, read);
+  capture.bytes += written;
+  capture.truncated ||= read < chunk.length;
 }
 
 function killChild(child: ChildProcess): void {
