@@ -135,7 +135,7 @@ describe("Editor component", () => {
 			assert.strictEqual(editor.getText(), "first");
 		});
 
-		it("jumps to start before entering history from a non-empty draft", () => {
+		it("never enters history from a non-empty draft", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 
 			editor.addToHistory("prompt");
@@ -143,15 +143,47 @@ describe("Editor component", () => {
 			editor.handleInput("\x1b[D");
 			editor.handleInput("\x1b[D");
 
-			editor.handleInput("\x1b[A"); // Up - jumps to start before history browsing
+			editor.handleInput("\x1b[A"); // Up - jumps to start of line, no history
 			assert.strictEqual(editor.getText(), "draft");
 			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 0 });
 
-			editor.handleInput("\x1b[A"); // Up at start - shows "prompt"
+			editor.handleInput("\x1b[A"); // Up at start with content - still no history
+			assert.strictEqual(editor.getText(), "draft");
+			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 0 });
+
+			// Clearing the draft re-enables history recall
+			editor.setText("");
+			editor.handleInput("\x1b[A"); // Up on empty editor - shows "prompt"
 			assert.strictEqual(editor.getText(), "prompt");
 
-			editor.handleInput("\x1b[B"); // Down - restores draft
-			assert.strictEqual(editor.getText(), "draft");
+			editor.handleInput("\x1b[B"); // Down - restores empty draft
+			assert.strictEqual(editor.getText(), "");
+		});
+
+		it("treats a whitespace-only draft as content for history recall", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+
+			editor.addToHistory("prompt");
+			editor.setText("   ");
+
+			editor.handleInput("\x1b[A"); // Up - whitespace counts as content, no history
+			assert.strictEqual(editor.getText(), "   ");
+		});
+
+		it("does not enter history at the start of the first line of a multi-line draft", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+
+			editor.addToHistory("prompt");
+			editor.setText("ab\ncd");
+
+			editor.handleInput("\x1b[A"); // Up - moves to first line
+			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 2 });
+
+			editor.handleInput("\x1b[D");
+			editor.handleInput("\x1b[D"); // cursor to column 0 of the first line
+
+			editor.handleInput("\x1b[A"); // Up at (0, 0) with content - no history
+			assert.strictEqual(editor.getText(), "ab\ncd");
 			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 0 });
 		});
 
@@ -161,10 +193,8 @@ describe("Editor component", () => {
 			editor.addToHistory("first");
 			editor.addToHistory("second");
 			editor.addToHistory("third");
-			editor.setText("draft");
 
 			// Go to oldest
-			editor.handleInput("\x1b[A"); // start of draft
 			editor.handleInput("\x1b[A"); // third
 			editor.handleInput("\x1b[A"); // second
 			editor.handleInput("\x1b[A"); // first
@@ -176,8 +206,8 @@ describe("Editor component", () => {
 			editor.handleInput("\x1b[B"); // third
 			assert.strictEqual(editor.getText(), "third");
 
-			editor.handleInput("\x1b[B"); // draft
-			assert.strictEqual(editor.getText(), "draft");
+			editor.handleInput("\x1b[B"); // back to the (empty) draft
+			assert.strictEqual(editor.getText(), "");
 		});
 
 		it("exits history mode when typing a character", () => {
@@ -397,16 +427,12 @@ describe("Editor component", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 			editor.addToHistory("!cmd");
 			editor.setHistoryFilter((entry) => entry.startsWith("!"));
-			editor.setText("draft");
-			editor.handleInput("\x1b[D");
-			editor.handleInput("\x1b[D");
 
-			editor.handleInput("\x1b[A"); // to line start
-			editor.handleInput("\x1b[A"); // recall "!cmd"
+			editor.handleInput("\x1b[A"); // recall "!cmd" from the empty editor
 			assert.strictEqual(editor.getText(), "!cmd");
 
-			editor.handleInput("\x1b[B"); // restore draft
-			assert.strictEqual(editor.getText(), "draft");
+			editor.handleInput("\x1b[B"); // restore the (empty) draft
+			assert.strictEqual(editor.getText(), "");
 		});
 	});
 
