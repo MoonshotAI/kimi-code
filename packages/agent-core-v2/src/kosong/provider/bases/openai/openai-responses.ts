@@ -1181,7 +1181,6 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
           message: JSON.stringify(errorData),
           headers: response.headers,
         } as unknown, this._convertErrorHook);
-        }, this._convertErrorHook);
       }
 
       if (this._stream) {
