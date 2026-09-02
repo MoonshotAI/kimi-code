@@ -496,12 +496,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     let result: TurnResult | undefined;
     try {
       thinkingEffort = this.llmRequester.prepareTurnConfig(turn.id)?.thinkingEffort;
+      this.telemetry.setContext({ thinking_effort: thinkingEffort });
       const started: TurnStartedTelemetryEvent = {
         turn_id: turn.id,
         mode: mode ?? 'agent',
         provider_type,
         protocol,
-        thinking_effort: thinkingEffort,
       };
       this.telemetry.track2('turn_started', started);
       result = await this.run({
@@ -548,7 +548,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
             interrupt_reason: interruptReason,
             provider_type,
             protocol,
-            thinking_effort: thinkingEffort,
             trace_id: traceId,
           };
           this.telemetry.track2('turn_interrupted', interrupted);
@@ -561,11 +560,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         mode: mode ?? 'agent',
         provider_type,
         protocol,
-        thinking_effort: thinkingEffort,
         trace_id: traceId,
       };
       this.telemetry.track2('turn_ended', ended);
-      this.telemetry.setContext({ turn_id: undefined, trace_id: undefined });
+      this.telemetry.setContext({ turn_id: undefined, trace_id: undefined, thinking_effort: undefined });
       this.activeRequestTrace = undefined;
       this.lastRequestTraceId = undefined;
       this.pumpTurns();
