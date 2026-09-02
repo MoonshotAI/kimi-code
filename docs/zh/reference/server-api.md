@@ -2909,53 +2909,92 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 列出单个会话可用的技能，按会话的优先级合并所有来源（内置、插件、extra、用户、项目）；会话处于冷态时读取目录会恢复该会话。无参数。
 
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ skills: `[T-SkillDescriptor](#t-skilldescriptor)`[]` }>`。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `skills` | array | [T-SkillDescriptor](#t-skilldescriptor) 数组 |
+| `skills` | [T-SkillDescriptor](#t-skilldescriptor)`[]` | 会话可用的技能 |
 
 **非零 code**：`40401`（会话不存在或未激活）。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "skills": [ { "name": "review", "description": "...", "path": "/Users/dev/my-app/.agents/skills/review/SKILL.md", "source": "project" } ] }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "skills": [
+      {
+        "name": "review",
+        "description": "...",
+        "path": "/Users/dev/my-app/.agents/skills/review/SKILL.md",
+        "source": "project"
+      }
+    ]
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/workspaces/{workspace_id}/skills`
 
 列出该工作区中的会话将看到的技能目录，但不创建或恢复会话。无参数。
 
-**返回**：同 `GET /api/v1/sessions/{session_id}/skills`。
+**响应体**：`ResponseType<{ skills: `[T-SkillDescriptor](#t-skilldescriptor)`[]` }>`（同 `GET /api/v1/sessions/{session_id}/skills`）。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `skills` | [T-SkillDescriptor](#t-skilldescriptor)`[]` | 工作区会话将看到的技能 |
 
 **非零 code**：`40410`（工作区不存在）。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "skills": [ { "name": "review", "description": "...", "path": "...", "source": "project" } ] }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "skills": [
+      { "name": "review", "description": "...", "path": "...", "source": "project" }
+    ]
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/sessions/{session_id}/skills/{skill_name}:activate`
 
 在会话中激活技能——以技能内容加上 `args` 与附件在 main agent 上开启一个轮次。经 `POST .../skills/{tail}` 分发，`activate` 是唯一动作。
 
-**Body**：
+**触发事件**：`skill.activated`（随后进入轮次事件流，见 [agent 事件](#agent-事件)）
+
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `args` | string | 否 | 传给技能的自由文本参数，相当于斜杠命令后的文本 |
-| `attachments` | array | 否 | 随激活携带的媒体块。`image` / `video` 块带 `source` 对象（`kind` 为 `url` / `base64` / `file` / `session_media`，与提示词内容块同形）；`file` 块带顶层 `file_id`、`name`、`media_type`、`size` |
+| `attachments` | `{ type: string, … }[]` | 否 | 随激活携带的媒体块。`image` / `video` 块带 `source` 对象（`kind` 为 `url` / `base64` / `file` / `session_media`，与提示词内容块同形）；`file` 块带顶层 `file_id`、`name`、`media_type`、`size` |
 
-**返回**：`ResponseType<{ "activated": true, "skill_name": string }>`。
+**响应体**：`ResponseType<{ activated: true, skill_name: string }>`。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `activated` | boolean | 恒 `true` |
+| `skill_name` | string | 被激活的技能名 |
 
 **非零 code**：`40001`（校验失败或动作后缀不支持；`details` 为 `{ path, message }[]`）、`40401`、`40407`（引用的附件文件不存在）、`40415`（没有该名称的技能）、`40912`（技能类型不允许用户激活）。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "activated": true, "skill_name": "review" }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "activated": true, "skill_name": "review" },
+  "request_id": "01JZX4..."
+}
 ```
 
 **插件。**
@@ -2973,68 +3012,140 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 列出插件市场目录并合并实时安装状态。目录按请求从配置的市场 URL 拉取（超时 10 秒）；使用默认目录时，目录中缺少的内置能力会作为条目合并进来（带 `capabilityId`），当前平台不支持的能力对应条目会被剔除。无参数。
 
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ entries: `[T-PluginMarketplaceEntry](#t-pluginmarketplaceentry)`[]` }>`。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `entries` | array | 市场条目（camelCase）：`{ id, tier, displayName, description?, homepage?, keywords?, version?, source, installed?, updateAvailable?, capabilityId? }`；`tier` 为 `official` / `curated` / `third-party`；`installed` 为 `{ version?, enabled }`；`source` 即 `POST /api/v1/plugins` 的 `source` 取值 |
+| `entries` | [T-PluginMarketplaceEntry](#t-pluginmarketplaceentry)`[]` | 市场条目（camelCase）；字段见类型汇总 |
 
 **非零 code**：`50001`（市场不可达或返回了非法目录）。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "entries": [ { "id": "my-plugin", "tier": "official", "displayName": "My Plugin", "source": "https://github.com/example/my-plugin", "installed": { "version": "1.2.0", "enabled": true }, "updateAvailable": false } ] }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "entries": [
+      {
+        "id": "my-plugin",
+        "tier": "official",
+        "displayName": "My Plugin",
+        "source": "https://github.com/example/my-plugin",
+        "installed": { "version": "1.2.0", "enabled": true },
+        "updateAvailable": false
+      }
+    ]
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/plugins`
 
 列出已安装插件。无参数。
 
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ plugins: `[T-PluginSummary](#t-pluginsummary)`[]` }>`。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `plugins` | array | [T-PluginSummary](#t-pluginsummary) 数组 |
+| `plugins` | [T-PluginSummary](#t-pluginsummary)`[]` | 已安装插件摘要（camelCase） |
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "plugins": [ { "id": "my-plugin", "displayName": "My Plugin", "version": "1.2.0", "enabled": true, "state": "ok", "skillCount": 2, "mcpServerCount": 1, "enabledMcpServerCount": 1, "hookCount": 0, "commandCount": 1, "hasErrors": false, "source": "github" } ] }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "plugins": [
+      {
+        "id": "my-plugin",
+        "displayName": "My Plugin",
+        "version": "1.2.0",
+        "enabled": true,
+        "state": "ok",
+        "skillCount": 2,
+        "mcpServerCount": 1,
+        "enabledMcpServerCount": 1,
+        "hookCount": 0,
+        "commandCount": 1,
+        "hasErrors": false,
+        "source": "github"
+      }
+    ]
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/plugins`
 
 安装插件并返回其摘要。
 
-**Body**：
+**触发事件**：`event.plugin.changed`
+
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `source` | string | 是 | 安装来源：本地绝对路径、指向 zip 压缩包的 `http(s)` URL，或 GitHub URL——`https://github.com/<owner>/<repo>`，可选地用 `/tree/<branch-or-sha>`、`/releases/tag/<tag>` 或 `/commit/<sha>` 锁定版本 |
 
-**返回**：`ResponseType<`[T-PluginSummary](#t-pluginsummary)`>`。
+**响应体**：`ResponseType<`[T-PluginSummary](#t-pluginsummary)`>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）（`source` 既不是 URL 也不是绝对路径，或插件加载失败）、`40409`（本地路径不存在）。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-PluginSummary](#t-pluginsummary) | 安装后的插件摘要；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（`source` 既不是 URL 也不是绝对路径，或插件加载失败；`details` 为 `{ path, message }[]`）、`40409`（本地路径不存在）。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "id": "my-plugin", "displayName": "My Plugin", "enabled": true, "state": "ok", "skillCount": 2, "mcpServerCount": 0, "enabledMcpServerCount": 0, "hookCount": 0, "commandCount": 0, "hasErrors": false, "source": "local-path" }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "id": "my-plugin",
+    "displayName": "My Plugin",
+    "enabled": true,
+    "state": "ok",
+    "skillCount": 2,
+    "mcpServerCount": 0,
+    "enabledMcpServerCount": 0,
+    "hookCount": 0,
+    "commandCount": 0,
+    "hasErrors": false,
+    "source": "local-path"
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/plugins/{plugin_id}:{action}`
 
 插件动作经单一路由分发：尾部按 `{plugin_id}:{action}` 解析，动作为 `enable`（启用）/ `disable`（停用但不移除）/ `remove`（移除）。无请求体。
 
-**返回**：`ResponseType<{ "ok": true }>`。
+**触发事件**：`event.plugin.changed`
+
+**响应体**：`ResponseType<{ ok: true }>`。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `ok` | boolean | 恒 `true` |
 
 **非零 code**：`40001`（缺少动作后缀或动作未知；`details` 为 `{ path, message }[]`）、`40419`（没有该 id 的已安装插件）。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "ok": true }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "ok": true },
+  "request_id": "01JZX4..."
+}
 ```
 
 **能力。**
@@ -3051,44 +3162,97 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 列出所有已注册能力及其就绪状态。无参数。
 
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ capabilities: `[T-CapabilityStatus](#t-capabilitystatus)`[]` }>`。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `capabilities` | array | [T-CapabilityStatus](#t-capabilitystatus) 数组 |
+| `capabilities` | [T-CapabilityStatus](#t-capabilitystatus)`[]` | 各能力的就绪状态（camelCase） |
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "capabilities": [ { "id": "kimi-cu", "displayName": "Kimi Computer Use", "description": "...", "supported": true, "state": "ready", "steps": [ { "id": "os", "state": "ok" } ], "install": { "running": false } } ] }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "capabilities": [
+      {
+        "id": "kimi-cu",
+        "displayName": "Kimi Computer Use",
+        "description": "...",
+        "supported": true,
+        "state": "ready",
+        "steps": [ { "id": "os", "state": "ok" } ],
+        "install": { "running": false }
+      }
+    ]
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/capabilities/{capability_id}`
 
 读取单个能力的就绪状态——`:install` 动作的轮询对应端点。无参数。
 
-**返回**：`ResponseType<`[T-CapabilityStatus](#t-capabilitystatus)`>`。
+**响应体**：`ResponseType<`[T-CapabilityStatus](#t-capabilitystatus)`>`。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-CapabilityStatus](#t-capabilitystatus) | 能力的就绪状态；字段见类型汇总 |
 
 **非零 code**：`40418`（没有该 id 的能力）。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "id": "kimi-cu", "displayName": "Kimi Computer Use", "description": "...", "supported": true, "state": "partial", "steps": [ { "id": "app", "state": "missing", "optional": true } ], "install": { "running": true, "percent": 40 } }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "id": "kimi-cu",
+    "displayName": "Kimi Computer Use",
+    "description": "...",
+    "supported": true,
+    "state": "partial",
+    "steps": [ { "id": "app", "state": "missing", "optional": true } ],
+    "install": { "running": true, "percent": 40 }
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/capabilities/{capability_id}:install`
 
 在后台开始安装能力并立即返回当前状态（`install.running` 为 `true`）；轮询 `GET /api/v1/capabilities/{capability_id}` 查看进度。幂等。经 `POST /api/v1/capabilities/{tail}` 分发，`install` 是唯一动作。无请求体。
 
-**返回**：`ResponseType<`[T-CapabilityStatus](#t-capabilitystatus)`>`。
+**触发事件**：`event.capability.changed`（安装进度，易失事件）
+
+**响应体**：`ResponseType<`[T-CapabilityStatus](#t-capabilitystatus)`>`。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-CapabilityStatus](#t-capabilitystatus) | 发起安装后的能力状态；字段见类型汇总 |
 
 **非零 code**：`40001`（缺少动作后缀或动作未知；`details` 为 `{ path, message }[]`）、`40418`、`40924`（安装已在进行中）、`40925`（当前平台 / 架构不支持）。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "id": "kimi-cu", "displayName": "Kimi Computer Use", "description": "...", "supported": true, "state": "not_installed", "steps": [ "..." ], "install": { "running": true, "step": "download", "percent": 0 } }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "id": "kimi-cu",
+    "displayName": "Kimi Computer Use",
+    "description": "...",
+    "supported": true,
+    "state": "not_installed",
+    "steps": [ "..." ],
+    "install": { "running": true, "step": "download", "percent": 0 }
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 **工具与 MCP（v1）。**
@@ -3105,52 +3269,85 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 列出当前生效 Agent 的工具——即 `session_id` 指定会话的 main agent；省略参数时取最近创建的存活会话。会话不在本服务进程中存活时列表为空。
 
-**Query**：
+**查询参数**：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `session_id` | string | 要查看其 main agent 的会话。默认最近创建的存活会话 |
 
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ tools: `[T-ToolDescriptor](#t-tooldescriptor)`[]` }>`。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `tools` | array | [T-ToolDescriptor](#t-tooldescriptor) 数组 |
+| `tools` | [T-ToolDescriptor](#t-tooldescriptor)`[]` | 当前生效 Agent 的工具 |
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "tools": [ { "name": "Bash", "description": "...", "input_schema": null, "source": "builtin", "active": true } ] }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "tools": [
+      {
+        "name": "Bash",
+        "description": "...",
+        "input_schema": null,
+        "source": "builtin",
+        "active": true
+      }
+    ]
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/mcp/servers`
 
 列出当前生效 Agent 配置的 MCP 服务（与 `GET /api/v1/tools` 相同的会话选取规则）；没有存活会话时列表为空。无参数。
 
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ servers: `[T-McpServer](#t-mcpserver)`[]` }>`。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `servers` | array | [T-McpServer](#t-mcpserver) 数组 |
+| `servers` | [T-McpServer](#t-mcpserver)`[]` | 当前生效 Agent 的 MCP 服务 |
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "servers": [ { "id": "my-server", "name": "my-server", "transport": "stdio", "status": "connected", "tool_count": 5 } ] }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "servers": [
+      { "id": "my-server", "name": "my-server", "transport": "stdio", "status": "connected", "tool_count": 5 }
+    ]
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/mcp/servers/{mcp_server_id}:restart`
 
 重新连接当前生效 Agent 的某个 MCP 服务。经 `POST /api/v1/mcp/servers/{tail}` 分发，`restart` 是唯一动作。无请求体。
 
-**返回**：`ResponseType<{ "restarting": true }>`。
+**响应体**：`ResponseType<{ restarting: true }>`。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `restarting` | boolean | 恒 `true` |
 
 **非零 code**：`40001`（缺少动作后缀或动作未知；`details` 为 `{ path, message }[]`）、`40408`（没有该 id 的 MCP 服务；无存活会话时同样返回此错误）。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "restarting": true }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "restarting": true },
+  "request_id": "01JZX4..."
+}
 ```
 
 **v2 MCP。**
@@ -3180,217 +3377,374 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 列出管理面已知的全部 MCP server。
 
-**Query**：
+**查询参数**：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `cwd` | string | 并入该（受信任）目录的项目层 |
 
-**返回**：`ResponseType<`[T-McpManagedServer](#t-mcpmanagedserver)`>` 数组。
+**响应体**：`ResponseType<`[T-McpManagedServer](#t-mcpmanagedserver)`[]>`。
 
-**示例**：
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-McpManagedServer](#t-mcpmanagedserver)`[]` | 全部已知 server（camelCase）；字段见类型汇总 |
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": [ { "name": "my-server", "config": { "transport": "stdio", "command": "npx", "args": [ "-y", "my-mcp-server" ], "envKeys": [ "API_KEY" ] }, "source": "global", "origin": "/Users/dev/.kimi-code/mcp.json", "mutable": true } ], "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": [
+    {
+      "name": "my-server",
+      "config": { "transport": "stdio", "command": "npx", "args": [ "-y", "my-mcp-server" ], "envKeys": [ "API_KEY" ] },
+      "source": "global",
+      "origin": "/Users/dev/.kimi-code/mcp.json",
+      "mutable": true
+    }
+  ],
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v2/mcp/servers/{name}`
 
 按运行时名称获取单个 server。
 
-**Query**：
+**查询参数**：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `cwd` | string | 并入该（受信任）目录的项目层 |
 
-**返回**：`ResponseType<`[T-McpManagedServer](#t-mcpmanagedserver)`>`。
+**响应体**：`ResponseType<`[T-McpManagedServer](#t-mcpmanagedserver)`>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40408`（不存在该名称的 server）。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-McpManagedServer](#t-mcpmanagedserver) | 单个 server；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40408`（不存在该名称的 server）。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "name": "my-server", "config": { "transport": "stdio", "command": "npx", "args": [ "-y", "my-mcp-server" ] }, "source": "global", "origin": "/Users/dev/.kimi-code/mcp.json", "mutable": true }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "name": "my-server",
+    "config": { "transport": "stdio", "command": "npx", "args": [ "-y", "my-mcp-server" ] },
+    "source": "global",
+    "origin": "/Users/dev/.kimi-code/mcp.json",
+    "mutable": true
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v2/mcp/servers`
 
 向用户级 `mcp.json` 添加 server。若写入与项目层的同名条目冲突，会因只读被拒绝；与同名的插件条目冲突并不阻止写入，新的文件条目会将其遮蔽。
 
-**Body**：包含 `name` 的完整 server 配置——`transport`（`stdio` / `http` / `sse`）决定配置形状（见 [T-McpServerConfigView](#t-mcpserverconfigview) 的输入形态）。
+**请求体**：包含 `name` 的完整 server 配置——`transport`（`stdio` / `http` / `sse`）决定配置形状（见 [T-McpServerConfigView](#t-mcpserverconfigview) 的输入形态）。
 
-**返回**：`ResponseType<`[T-McpManagedServer](#t-mcpmanagedserver)`>` 数组（刷新后的列表）。
+**响应体**：`ResponseType<`[T-McpManagedServer](#t-mcpmanagedserver)`[]>`（刷新后的列表）。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-McpManagedServer](#t-mcpmanagedserver)`[]` | 刷新后的完整列表；字段见类型汇总 |
 
 **非零 code**：`40001`（校验失败，或目标条目为只读；`details` 为 `{ path, message }[]`）。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": [ { "name": "my-server", "config": { "transport": "stdio", "command": "npx" }, "source": "global", "origin": "...", "mutable": true } ], "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": [
+    {
+      "name": "my-server",
+      "config": { "transport": "stdio", "command": "npx" },
+      "source": "global",
+      "origin": "...",
+      "mutable": true
+    }
+  ],
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `PUT /api/v2/mcp/servers/{name}`
 
 替换一个用户级条目；身份由路径指定。
 
-**Body**：不含 `name` 的完整 server 配置（形态同 `POST /api/v2/mcp/servers`）。
+**请求体**：不含 `name` 的完整 server 配置（形态同 `POST /api/v2/mcp/servers`）。
 
-**返回**：`ResponseType<`[T-McpManagedServer](#t-mcpmanagedserver)`>` 数组（刷新后的列表）。
+**响应体**：`ResponseType<`[T-McpManagedServer](#t-mcpmanagedserver)`[]>`（刷新后的列表）。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40408`。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-McpManagedServer](#t-mcpmanagedserver)`[]` | 刷新后的完整列表；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40408`。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": [ { "name": "my-server", "config": { "transport": "http", "url": "https://mcp.example.com" }, "source": "global", "origin": "...", "mutable": true } ], "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": [
+    {
+      "name": "my-server",
+      "config": { "transport": "http", "url": "https://mcp.example.com" },
+      "source": "global",
+      "origin": "...",
+      "mutable": true
+    }
+  ],
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `DELETE /api/v2/mcp/servers/{name}`
 
 删除一个用户级条目。无请求体。
 
-**返回**：`ResponseType<`[T-McpManagedServer](#t-mcpmanagedserver)`>` 数组（刷新后的列表）。
+**响应体**：`ResponseType<`[T-McpManagedServer](#t-mcpmanagedserver)`[]>`（刷新后的列表）。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40408`。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-McpManagedServer](#t-mcpmanagedserver)`[]` | 刷新后的完整列表；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40408`。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": [], "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": [],
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v2/mcp/servers:test`
 
 对单个 server 发起真实连接探测，不持久化任何内容。传 `name` 探测注册表条目（含插件与受信任的项目层），或传 `server`（包含 `name` 的完整内联配置）按原样探测；两者都传或都不传会报 `40001`。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `name` | string | 二选一 | 注册表条目的运行时名称 |
-| `server` | object | 二选一 | 按原样探测的内联 server 配置（含 `name`） |
+| `server` | `{ name: string, transport: string, … }` | 二选一 | 按原样探测的内联 server 配置（含 `name`） |
 | `cwd` | string | 否 | 项目层并入解析；同时是 stdio 的工作目录 |
 
-**返回**：`ResponseType<{ "success": boolean, "output": string }>`——连接成功时 `output` 列出该 server 的可用工具，否则携带失败信息。
+**响应体**：`ResponseType<{ success: boolean, output: string }>`——连接成功时 `output` 列出该 server 的可用工具，否则携带失败信息。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `success` | boolean | 连接是否成功 |
+| `output` | string | 成功时列出可用工具，否则为失败信息 |
 
 **非零 code**：`40001`（两种目标形式都传或都不传、内联配置无效，或运行时名称被多个启用的 server 共用；`details` 为 `{ path, message }[]`）、`40408`。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "success": true, "output": "5 tools: search, fetch, ..." }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "success": true, "output": "5 tools: search, fetch, ..." },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v2/mcp/servers:inspect`
 
 locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批量真实连接探测。运行时名称被多个启用的 server 共用时无法无歧义地探测，会报告 `unavailable` 并在 `error` 中给出说明；探测遇到过期授权时，可能刷新或作废已存储的凭据。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `targets` | array | 否 | 缩小目录范围的 locator 数组；不传则检查全部 server |
+| `targets` | `( { source: 'global', name: string } \| { source: 'plugin', pluginId: string, serverName: string } )[]` | 否 | 缩小目录范围的 locator 数组；不传则检查全部 server |
 | `cwd` | string | 否 | 并入该（受信任）目录的项目层 |
 
-**返回**：`ResponseType<`[T-McpServerInspection](#t-mcpserverinspection)`>` 数组。
+**响应体**：`ResponseType<`[T-McpServerInspection](#t-mcpserverinspection)`[]>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40408`（`targets` 中有 locator 未匹配到任何条目）。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-McpServerInspection](#t-mcpserverinspection)`[]` | 检查目录（camelCase）；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40408`（`targets` 中有 locator 未匹配到任何条目）。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": [ { "serverId": "global:my-server", "locator": { "source": "global", "name": "my-server" }, "runtimeName": "my-server", "origin": "global", "config": { "transport": "http", "url": "https://mcp.example.com" }, "enabled": true, "editable": true, "authStatus": "oauth-authorized", "checkedAt": 1787000000000 } ], "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": [
+    {
+      "serverId": "global:my-server",
+      "locator": { "source": "global", "name": "my-server" },
+      "runtimeName": "my-server",
+      "origin": "global",
+      "config": { "transport": "http", "url": "https://mcp.example.com" },
+      "enabled": true,
+      "editable": true,
+      "authStatus": "oauth-authorized",
+      "checkedAt": 1787000000000
+    }
+  ],
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v2/mcp/auth-statuses`
 
 注册表目录中各 server 的 OAuth 状态——只需要授权维度时，这是比 `servers:inspect` 更轻量的选择。
 
-**Query**：
+**查询参数**：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `cwd` | string | 并入该（受信任）目录的项目层 |
 | `verify` | string | `true` 对每个 OAuth 候选发起真实连接验证；`false` 完全离线（仅凭配置与已存储 token 分类）；缺省保留隐式 OAuth 探测，只探测未固定且没有已存储凭据的远程 server |
 
-**返回**：`ResponseType<`[T-McpServerAuthStatus](#t-mcpserverauthstatus)`>` 数组。验证探测可能刷新或作废已存储的凭据。
+**响应体**：`ResponseType<`[T-McpServerAuthStatus](#t-mcpserverauthstatus)`[]>`。验证探测可能刷新或作废已存储的凭据。
 
-**示例**：
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-McpServerAuthStatus](#t-mcpserverauthstatus)`[]` | 各 server 的授权状态；字段见类型汇总 |
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": [ { "name": "my-server", "authStatus": "oauth-authorized" } ], "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": [ { "name": "my-server", "authStatus": "oauth-authorized" } ],
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v2/mcp/auth:begin`
 
 开始一次交互式 OAuth 流程。目标 server 必须使用远程传输（`http` / `sse`）且不含静态 bearer token；静态请求头仅当配置显式设置 `auth: "oauth"` 时允许。
 
-**Body**：locator（`{ "source": "global", "name" }` 或 `{ "source": "plugin", "pluginId", "serverName" }`）；另有可选的 `cwd` 查询参数。
+**请求体**：locator——`{ source: 'global', name: string }` 或 `{ source: 'plugin', pluginId: string, serverName: string }`；另有可选的 `cwd` 查询参数。
 
-**返回**：`ResponseType`：`{ "status": "authorization-required", "flowId": string, "authorizationUrl": string }`（在浏览器中打开该 URL 完成授权），或授权已存在时 `{ "status": "already-authorized" }`。
+**响应体**：`ResponseType<{ status: 'authorization-required', flowId: string, authorizationUrl: string } | { status: 'already-authorized' }>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）（server 无法使用 OAuth：stdio 传输、静态 bearer token，或未设置 `auth: "oauth"` 的静态请求头）、`40408`（locator 未匹配）、`40929`（OAuth 流程本身失败）。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `status` | string | `authorization-required`（需在浏览器中打开 `authorizationUrl` 完成授权）/ `already-authorized`（授权已存在） |
+| `flowId` | string | 仅 `authorization-required`：流程 id，传给 `auth:complete` |
+| `authorizationUrl` | string | 仅 `authorization-required`：授权页 URL |
 
-**示例**：
+**非零 code**：`40001`（server 无法使用 OAuth：stdio 传输、静态 bearer token，或未设置 `auth: "oauth"` 的静态请求头；`details` 为 `{ path, message }[]`）、`40408`（locator 未匹配）、`40929`（OAuth 流程本身失败）。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "status": "authorization-required", "flowId": "flow_01J...", "authorizationUrl": "https://mcp.example.com/authorize?..." }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "status": "authorization-required",
+    "flowId": "flow_01J...",
+    "authorizationUrl": "https://mcp.example.com/authorize?..."
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v2/mcp/auth:complete`
 
 等待已开始流程的浏览器回调并完成 code 交换。等待默认 15 分钟（`timeoutMs` 可覆盖），空闲流程无论如何都会在 15 分钟后过期；关闭 HTTP 连接会中止等待。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `flowId` | string | 是 | `auth:begin` 返回的流程 id |
 | `timeoutMs` | integer | 否 | 等待上限（毫秒）。默认 15 分钟 |
 
-**返回**：`ResponseType<null>`。
+**响应体**：`ResponseType<null>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）（`flowId` 未知）、`40929`。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | null | 恒 `null` |
 
-**示例**：
+**非零 code**：`40001`（`flowId` 未知；`details` 为 `{ path, message }[]`）、`40929`。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": null, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": null,
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v2/mcp/auth:cancel`
 
 在未完成的情况下终止已开始的流程；未知流程会被忽略。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `flowId` | string | 是 | 要终止的流程 id |
 
-**返回**：`ResponseType<null>`。
+**响应体**：`ResponseType<null>`。
 
-**示例**：
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | null | 恒 `null` |
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": null, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": null,
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v2/mcp/auth:reset`
 
 清除某个 server 已存储的凭据；失效事件会送达存活的会话。
 
-**Body**：locator（形态同 `auth:begin`）。
+**请求体**：locator（形态同 `auth:begin`）。
 
-**返回**：`ResponseType<null>`。
+**响应体**：`ResponseType<null>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40408`（locator 未匹配）、`40929`。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | null | 恒 `null` |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40408`（locator 未匹配）、`40929`。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": null, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": null,
+  "request_id": "01JZX4..."
+}
 ```
 
 ### 文件与其他
@@ -5216,6 +5570,26 @@ type PluginSummary = {
     ref: { kind: 'branch' | 'tag' | 'sha'; value: string };
     installedSha?: string;
   };
+};
+```
+
+### T-PluginMarketplaceEntry
+
+插件市场条目（camelCase 载荷），服务端正名为 `PluginMarketplaceEntryWire`。
+
+```ts
+type PluginMarketplaceEntry = {
+  id: string;
+  tier: 'official' | 'curated' | 'third-party';
+  displayName: string;
+  description?: string;
+  homepage?: string;
+  keywords?: string[];
+  version?: string;
+  source: string; // 同 POST /api/v1/plugins 的 source 取值
+  installed?: { version?: string; enabled: boolean }; // 实时安装状态；未安装时缺省
+  updateAvailable?: boolean;
+  capabilityId?: string; // 内置能力合并进来的条目携带
 };
 ```
 
