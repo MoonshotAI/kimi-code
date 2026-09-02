@@ -216,6 +216,7 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
     fileItems,
     selectedIndex: fileSelectedIndex,
     isLoading: isFileLoading,
+    isStale: isFileStale,
     showMediaOption,
     setSelectedIndex: setFileSelectedIndex,
     handleFileMenuKey,
@@ -337,6 +338,7 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
               items={fileItems}
               selectedIndex={fileSelectedIndex}
               isLoading={isFileLoading}
+              isStale={isFileStale}
               showMediaOption={showMediaOption}
               onSelectMedia={() => {
                 void handlePickMedia();

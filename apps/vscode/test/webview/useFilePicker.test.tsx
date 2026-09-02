@@ -133,6 +133,32 @@ describe('keyboard navigation', () => {
     expect(onPickMedia).toHaveBeenCalledTimes(1);
   });
 
+  it('ignores confirmation while results are stale for the current query', async () => {
+    getProjectFiles.mockResolvedValue([{ name: 'a.ts', path: 'src/a.ts', isDirectory: false }]);
+    const onInsertFile = vi.fn();
+    const { result, rerender } = renderHook(({ token }) => useFilePicker(token, onInsertFile, noop, noop), {
+      initialProps: { token: at('a') as Token },
+      wrapper: createWrapper(),
+    });
+    await waitFor(() => { expect(result.current.fileItems).toHaveLength(1); });
+
+    let resolveNext: (value: unknown) => void = noop;
+    getProjectFiles.mockImplementation(() => new Promise((resolve) => { resolveNext = resolve; }));
+    rerender({ token: at('ap') });
+    expect(result.current.isStale).toBe(true);
+
+    key(result, 'Enter');
+    expect(onInsertFile).not.toHaveBeenCalled();
+
+    await waitFor(() => { expect(getProjectFiles).toHaveBeenCalledWith({ query: 'ap' }); });
+    act(() => { resolveNext([{ name: 'app.ts', path: 'src/app.ts', isDirectory: false }]); });
+    await waitFor(() => { expect(result.current.fileItems[0]?.name).toBe('app.ts'); });
+    expect(result.current.isStale).toBe(false);
+
+    key(result, 'Enter');
+    expect(onInsertFile).toHaveBeenCalledWith('src/app.ts');
+  });
+
   it('calls onInsertFile when Enter selects a file', async () => {
     getProjectFiles.mockResolvedValue([{ name: 'a.ts', path: 'src/a.ts', isDirectory: false }]);
     const onInsertFile = vi.fn();

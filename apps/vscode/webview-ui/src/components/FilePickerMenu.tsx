@@ -14,6 +14,7 @@ interface FilePickerMenuProps {
   items: FileItem[];
   selectedIndex: number;
   isLoading?: boolean;
+  isStale?: boolean;
   showMediaOption?: boolean;
   onSelectMedia?: () => void;
   onSelectItem: (item: FileItem) => void;
@@ -39,6 +40,7 @@ export function FilePickerMenu({
   items,
   selectedIndex,
   isLoading,
+  isStale = false,
   showMediaOption = true,
   onSelectMedia,
   onSelectItem,
@@ -77,7 +79,7 @@ export function FilePickerMenu({
           <span className="text-xs">Select images or videos…</span>
         </button>
       )}
-      <div className="max-h-64 overflow-y-auto">
+      <div className={cn("max-h-64 overflow-y-auto", isStale && "opacity-60")}>
         {isLoading ? (
           <div className="px-2 py-4 text-center text-xs text-muted-foreground">Loading…</div>
         ) : items.length === 0 ? (

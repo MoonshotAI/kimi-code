@@ -26,6 +26,7 @@ interface UseFilePickerResult {
   fileItems: FileItem[];
   selectedIndex: number;
   isLoading: boolean;
+  isStale: boolean;
   showMediaOption: boolean;
   fileMenuHeaderCount: number;
   setSelectedIndex: (index: number) => void;
@@ -51,6 +52,7 @@ export function useFilePicker(activeToken: ActiveToken | null, onInsertFile: (pa
   });
   const searchResults = searchQuery.data ?? NO_FILES;
   const isLoading = searchQuery.isLoading;
+  const isStale = debouncedQuery !== query || searchQuery.isPlaceholderData;
 
   useEffect(() => {
     setSelectedIndex(0);
@@ -78,10 +80,11 @@ export function useFilePicker(activeToken: ActiveToken | null, onInsertFile: (pa
       return;
     }
 
+    if (isStale) return;
     const item = fileItems[selectedIndex - fileMenuHeaderCount];
     if (!item) return;
     onInsertFile(item.path);
-  }, [selectedIndex, showMediaOption, fileMenuHeaderCount, fileItems, onPickMedia, onInsertFile]);
+  }, [selectedIndex, showMediaOption, isStale, fileMenuHeaderCount, fileItems, onPickMedia, onInsertFile]);
 
   const handleFileMenuKey = useCallback(
     (e: React.KeyboardEvent): boolean => {
@@ -119,6 +122,7 @@ export function useFilePicker(activeToken: ActiveToken | null, onInsertFile: (pa
     fileItems,
     selectedIndex,
     isLoading,
+    isStale,
     showMediaOption,
     fileMenuHeaderCount,
     setSelectedIndex,
