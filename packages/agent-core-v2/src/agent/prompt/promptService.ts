@@ -2,6 +2,7 @@
 import { z } from 'zod';
 
 import { IInstantiationService } from '#/_base/di/instantiation';
+import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
@@ -224,7 +225,7 @@ export const STEER_REMINDER = [
   'Address it as you continue this turn; where it changes the current task or approach, the new message takes precedence.',
 ].join(' ');
 
-export class AgentPromptService implements IAgentPromptService {
+export class AgentPromptService extends Disposable implements IAgentPromptService {
   declare readonly _serviceBrand: undefined;
   private active: (Record & { turn: Turn }) | undefined;
   private readonly pending: Record[] = [];
@@ -250,18 +251,19 @@ export class AgentPromptService implements IAgentPromptService {
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {
+    super();
     this.states.contributeState(promptLaunchingKey);
     this.states.contributeState(promptAdmissionKey);
     this.states.contributeState(promptResolutionKey);
-    this.reminder.register('steer', () => (this.steerReminderArmed ? STEER_REMINDER : undefined));
-    this.loop.hooks.onDidFinishStep.register('steer-reminder', async (_ctx, next) => {
+    this._register(this.reminder.register('steer', () => (this.steerReminderArmed ? STEER_REMINDER : undefined)));
+    this._register(this.loop.hooks.onDidFinishStep.register('steer-reminder', async (_ctx, next) => {
       this.steerReminderArmed = false;
       await next();
-    });
-    toolExecutor.hooks.onDidExecuteTool.register('prompt-service-delivery', async (ctx, next) => {
+    }));
+    this._register(toolExecutor.hooks.onDidExecuteTool.register('prompt-service-delivery', async (ctx, next) => {
       await this.deliverToolResult(ctx);
       await next();
-    });
+    }));
   }
 
   private get launching(): boolean {
