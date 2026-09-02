@@ -12,7 +12,7 @@ import type {
   PermissionPolicyResult,
 } from '#/agent/permissionPolicy/types';
 
-const PARSE_OPTIONS = { timeoutMs: 20, maxNodes: 10_000 } as const;
+const PARSE_OPTIONS = { timeoutMs: 500, maxNodes: 10_000 } as const;
 
 const MAX_NESTED_SHELL_DEPTH = 4;
 
