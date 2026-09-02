@@ -115,7 +115,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
     "kimi.newConversation": async () => {
       await vscode.commands.executeCommand("kimi.webview.focus");
-      provider?.broadcast(Events.NewConversation, {});
+      provider?.broadcastToSidebar(Events.NewConversation, {});
     },
     "kimi.showLogs": () => outputChannel?.show(),
     "kimi.resetKimi": () => provider?.resetAllWebviews(),
