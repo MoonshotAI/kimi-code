@@ -565,7 +565,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         trace_id: traceId,
       };
       this.telemetry.track2('turn_ended', ended);
-      this.telemetry.setContext({ turn_id: undefined });
+      this.telemetry.setContext({ turn_id: undefined, trace_id: undefined });
       this.activeRequestTrace = undefined;
       this.lastRequestTraceId = undefined;
       this.pumpTurns();

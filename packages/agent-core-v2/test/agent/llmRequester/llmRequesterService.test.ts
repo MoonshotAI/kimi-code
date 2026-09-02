@@ -271,6 +271,7 @@ function createService(
     dispatcher: ix.get(IEventDispatcher),
     records,
     events,
+    telemetry,
     telemetryRecords,
     measuredCalls,
   };
@@ -890,6 +891,75 @@ describe('AgentLLMRequesterService trace id', () => {
     expect(
       telemetryRecords.find((record) => record.event === 'api_error')?.properties?.['trace_id'],
     ).toBeUndefined();
+  });
+
+  it('mirrors the request trace into the ambient telemetry context', async () => {
+    const { service, telemetry } = createService(
+      createTracedRequester('trace-ambient-1'),
+      passthroughProjector,
+    );
+
+    await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
+
+    expect(telemetry.getContext()['trace_id']).toBe('trace-ambient-1');
+  });
+
+  it('clears the ambient trace when the next turn request starts without one', async () => {
+    let nextTrace: string | null = 'trace-ambient-2';
+    const requester = createTracedRequester(null);
+    Object.defineProperty(requester, 'request', {
+      value: async function* (_input: unknown, _signal: unknown, requestOptions: {
+        onTraceId?: (traceId: string | null) => void;
+      }) {
+        requestOptions?.onTraceId?.(nextTrace);
+        yield {
+          type: 'finish',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }], toolCalls: [] },
+          providerFinishReason: 'completed',
+          rawFinishReason: 'stop',
+          id: 'resp-1',
+          traceId: nextTrace ?? undefined,
+        } satisfies ModelRequestEvent;
+      },
+    });
+    const { service, telemetry } = createService(requester, passthroughProjector);
+
+    await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
+    expect(telemetry.getContext()['trace_id']).toBe('trace-ambient-2');
+
+    nextTrace = null;
+    await service.request({ source: { type: 'turn', turnId: 1, step: 2 } });
+    expect(telemetry.getContext()['trace_id']).toBeUndefined();
+  });
+
+  it('mirrors the failing request trace into the ambient telemetry context', async () => {
+    const requester = createTracedRequester(null);
+    Object.defineProperty(requester, 'request', {
+      value: async function* () {
+        const events: ModelRequestEvent[] = [];
+        for (const event of events) yield event;
+        throw new APIStatusError(500, 'boom', 'req-1', null, 'trace-fail-ambient');
+      },
+    });
+    const { service, telemetry } = createService(requester, passthroughProjector);
+
+    await expect(
+      service.request({ source: { type: 'turn', turnId: 1, step: 1 } }),
+    ).rejects.toMatchObject({ statusCode: 500 });
+
+    expect(telemetry.getContext()['trace_id']).toBe('trace-fail-ambient');
+  });
+
+  it('keeps the ambient trace untouched for operation requests', async () => {
+    const { service, telemetry } = createService(
+      createTracedRequester('trace-operation-1'),
+      passthroughProjector,
+    );
+    telemetry.setContext({ trace_id: 'trace-turn-1' });
+
+    await service.request({ source: { type: 'operation', requestKind: 'full_compaction' } });
+
+    expect(telemetry.getContext()['trace_id']).toBe('trace-turn-1');
   });
 });
 
