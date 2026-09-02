@@ -1,3 +1,6 @@
+const SURROGATE_PAIR_AT_START = /^[\uD800-\uDBFF][\uDC00-\uDFFF]/;
+const SURROGATE_PAIR_EXACT = /^[\uD800-\uDBFF][\uDC00-\uDFFF]$/;
+
 export interface MentionMatchSpan {
   text: string;
   hit: boolean;
@@ -21,14 +24,11 @@ export function mentionMatchSpans(
     if (i >= 0 && i < text.length) hits.add(i);
   }
   if (hits.size === 0) return [{ text, hit: false }];
-  for (const i of [...hits]) {
-    const code = text.charCodeAt(i);
-    if (code >= 0xd800 && code <= 0xdbff && i + 1 < text.length) {
-      const next = text.charCodeAt(i + 1);
-      if (next >= 0xdc00 && next <= 0xdfff) hits.add(i + 1);
-    } else if (code >= 0xdc00 && code <= 0xdfff && i > 0) {
-      const prev = text.charCodeAt(i - 1);
-      if (prev >= 0xd800 && prev <= 0xdbff) hits.add(i - 1);
+  for (const i of Array.from(hits)) {
+    if (SURROGATE_PAIR_AT_START.test(text.slice(i, i + 2))) {
+      hits.add(i + 1);
+    } else if (SURROGATE_PAIR_EXACT.test(text.slice(i - 1, i + 1))) {
+      hits.add(i - 1);
     }
   }
   const spans: MentionMatchSpan[] = [];
