@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { APIEmptyResponseError, isRetryableGenerateError } from '#/kosong/contract/errors';
+import { APIEmptyResponseError, APITimeoutError, isRetryableGenerateError } from '#/kosong/contract/errors';
 import { generate, type GenerateResult } from '#/kosong/contract/generate';
 import type { Message, StreamedMessagePart, ToolCall } from '#/kosong/contract/message';
 import type {
@@ -321,6 +321,146 @@ describe('generate() per-turn intent passthrough', () => {
     await generate(provider, SYSTEM_PROMPT, NO_TOOLS, HISTORY, undefined, options);
 
     expect(generateSpy).toHaveBeenCalledTimes(1);
-    expect(generateSpy.mock.calls[0]?.[3]).toBe(options);
+    const received = generateSpy.mock.calls[0]?.[3];
+    expect(received).toMatchObject({
+      cacheKey: 'session-42',
+      sampling: { temperature: 0.7, topP: 0.9 },
+      thinking: { effort: 'high', keep: 'all' },
+      maxCompletionTokens: 4096,
+      usedContextTokens: 1000,
+      maxContextTokens: 128000,
+    });
+    expect(received?.signal).toBeInstanceOf(AbortSignal);
+  });
+});
+
+describe('generate() stream-stall watchdog', () => {
+  class HangingStreamedMessage implements StreamedMessage {
+    readonly id: string | null = 'hang-1';
+    readonly usage: TokenUsage | null = null;
+    readonly finishReason: FinishReason | null = null;
+    readonly rawFinishReason: string | null = null;
+    cancelCalls = 0;
+
+    constructor(private readonly firstPart?: StreamedMessagePart) {}
+
+    [Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
+      const firstPart = this.firstPart;
+      let yielded = false;
+      return {
+        next: (): Promise<IteratorResult<StreamedMessagePart>> => {
+          if (firstPart !== undefined && !yielded) {
+            yielded = true;
+            return Promise.resolve({ done: false, value: firstPart });
+          }
+          return new Promise<IteratorResult<StreamedMessagePart>>(() => {});
+        },
+      };
+    }
+
+    cancel(): void {
+      this.cancelCalls++;
+    }
+  }
+
+  it('fails with APITimeoutError and cancels the stream when it stalls mid-generation', async () => {
+    const stream = new HangingStreamedMessage({ type: 'text', text: 'partial' });
+    const { provider } = createFakeProvider(stream);
+    const startedAt = Date.now();
+
+    await expect(
+      generate(provider, SYSTEM_PROMPT, NO_TOOLS, HISTORY, undefined, {
+        streamStallTimeoutMs: 50,
+      }),
+    ).rejects.toBeInstanceOf(APITimeoutError);
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+    expect(stream.cancelCalls).toBeGreaterThan(0);
+  });
+
+  it('applies the watchdog to the wait for the first part', async () => {
+    const stream = new HangingStreamedMessage();
+    const { provider } = createFakeProvider(stream);
+
+    await expect(
+      generate(provider, SYSTEM_PROMPT, NO_TOOLS, HISTORY, undefined, {
+        streamStallTimeoutMs: 50,
+      }),
+    ).rejects.toBeInstanceOf(APITimeoutError);
+  });
+
+  it('covers the response-headers wait inside provider.generate()', async () => {
+    const hangingProvider: ChatProvider = {
+      name: 'hanging-generate',
+      modelName: 'hanging-model',
+      thinkingEffort: null,
+      generate: () => new Promise<StreamedMessage>(() => {}),
+    };
+    const startedAt = Date.now();
+
+    await expect(
+      generate(hangingProvider, SYSTEM_PROMPT, NO_TOOLS, HISTORY, undefined, {
+        streamStallTimeoutMs: 50,
+      }),
+    ).rejects.toBeInstanceOf(APITimeoutError);
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+  });
+
+  it('does not hang when stream teardown never settles', async () => {
+    const stream = new HangingStreamedMessage();
+    stream.cancel = () => new Promise<void>(() => {});
+    const { provider } = createFakeProvider(stream);
+    const startedAt = Date.now();
+
+    await expect(
+      generate(provider, SYSTEM_PROMPT, NO_TOOLS, HISTORY, undefined, {
+        streamStallTimeoutMs: 50,
+      }),
+    ).rejects.toBeInstanceOf(APITimeoutError);
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+  });
+
+  it('cancels the stream when a part callback throws', async () => {
+    const stream = new FakeStreamedMessage([{ type: 'text', text: 'x' }]);
+    const { provider } = createFakeProvider(stream);
+
+    await expect(
+      generate(
+        provider,
+        SYSTEM_PROMPT,
+        NO_TOOLS,
+        HISTORY,
+        {
+          onMessagePart: () => {
+            throw new Error('boom');
+          },
+        },
+        { streamStallTimeoutMs: 0 },
+      ),
+    ).rejects.toThrow('boom');
+    expect(stream.cancelCalls).toBeGreaterThan(0);
+  });
+
+  it('aborting mid-stall rejects promptly with the standard abort DOMException', async () => {
+    const stream = new HangingStreamedMessage();
+    const { provider } = createFakeProvider(stream);
+    const controller = new AbortController();
+    const startedAt = Date.now();
+
+    const pending = generate(provider, SYSTEM_PROMPT, NO_TOOLS, HISTORY, undefined, {
+      streamStallTimeoutMs: 60_000,
+      signal: controller.signal,
+    });
+    setTimeout(() => controller.abort(), 30);
+
+    let caught: unknown;
+    try {
+      await pending;
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(DOMException);
+    expect((caught as DOMException).name).toBe('AbortError');
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+    expect(stream.cancelCalls).toBeGreaterThan(0);
   });
 });

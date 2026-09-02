@@ -130,12 +130,12 @@ describe('ModelRequesterImpl request execution', () => {
   it('maps ModelRequestParams onto GenerateOptions 1:1', async () => {
     const provider = new FakeChatProvider();
     const requester = new ModelRequesterImpl(modelWith(staticAuth('sk-1')), registryReturning(provider));
-    const signal = AbortSignal.timeout(1000);
+    const controller = new AbortController();
 
     await collect(
       requester.request(
         { ...INPUT, responseFormat: { type: 'json_object' } },
-        signal,
+        controller.signal,
         {
           cacheKey: 'session-1',
           sampling: { temperature: 0.5, topP: 0.9 },
@@ -150,7 +150,10 @@ describe('ModelRequesterImpl request execution', () => {
 
     expect(provider.calls).toHaveLength(1);
     const options = provider.calls[0]!.options;
-    expect(options?.signal).toBe(signal);
+    expect(options?.signal).toBeInstanceOf(AbortSignal);
+    expect(options?.signal?.aborted).toBe(false);
+    controller.abort();
+    expect(options?.signal?.aborted).toBe(true);
     expect(options?.auth).toEqual({ apiKey: 'sk-1' });
     expect(options?.cacheKey).toBe('session-1');
     expect(options?.sampling).toEqual({ temperature: 0.5, topP: 0.9 });

@@ -35,6 +35,7 @@ import type {
   LLMChatResponse,
   LLMStreamTiming,
 } from '../../loop';
+import { parseFloatEnv } from '#/config/resolve';
 import {
   applyCompletionBudget,
   type CompletionBudgetConfig,
@@ -124,6 +125,10 @@ export class KosongLLM implements LLM {
       onStreamEnd: markStreamEnd,
       onTraceId: (traceId) => params.trace?.capture(traceId),
       requestLogFields: params.requestLogFields,
+      streamStallTimeoutMs: parseFloatEnv(
+        process.env['KIMI_STREAM_STALL_TIMEOUT_MS'],
+        'KIMI_STREAM_STALL_TIMEOUT_MS',
+      ),
     };
 
     const result = await this.generate(
