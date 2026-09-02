@@ -45,10 +45,21 @@ export function FilePickerMenu({
   onHover,
 }: FilePickerMenuProps) {
   const selectedRef = useRef<HTMLButtonElement>(null);
+  const hoverSelectionRef = useRef<number | null>(null);
 
   useEffect(() => {
+    if (hoverSelectionRef.current === selectedIndex) {
+      hoverSelectionRef.current = null;
+      return;
+    }
+    hoverSelectionRef.current = null;
     selectedRef.current?.scrollIntoView({ block: "nearest" });
   }, [selectedIndex]);
+
+  const handleHover = (index: number) => {
+    hoverSelectionRef.current = index;
+    onHover(index);
+  };
 
   const headerCount = showMediaOption ? 1 : 0;
 
@@ -59,7 +70,7 @@ export function FilePickerMenu({
           ref={selectedIndex === 0 ? selectedRef : null}
           onMouseDown={(e) => e.preventDefault()}
           onClick={onSelectMedia}
-          onMouseMove={() => onHover(0)}
+          onMouseMove={() => handleHover(0)}
           className={cn("w-full px-2 py-1.5 text-left flex items-center gap-2 border-b border-border", selectedIndex === 0 ? "bg-accent" : "hover:bg-accent/50")}
         >
           <IconPhoto className="size-3.5 text-muted-foreground" />
@@ -81,7 +92,7 @@ export function FilePickerMenu({
                 ref={itemIndex === selectedIndex ? selectedRef : null}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => onSelectItem(item)}
-                onMouseMove={() => onHover(itemIndex)}
+                onMouseMove={() => handleHover(itemIndex)}
                 className={cn("w-full px-2 py-1.5 text-left flex items-center justify-between gap-3", itemIndex === selectedIndex ? "bg-accent" : "hover:bg-accent/50")}
               >
                 <span className="flex items-center gap-1.5 text-xs shrink-0">
