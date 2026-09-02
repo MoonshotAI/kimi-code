@@ -189,7 +189,7 @@ export class AgentAgentsMdReminderService
           discovered.push(path);
         }
       }
-      this.markKnown(selfKnown);
+      for (const path of selfKnown) this.remindQueue.delete(path);
       if (discovered.length === 0) return;
       const untracked = discovered.filter((path) => !this.telemetryFired.has(path));
       if (untracked.length > 0) {

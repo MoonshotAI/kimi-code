@@ -422,7 +422,7 @@ describe('agentsMdReminder path-carrying tools', () => {
     expect(reminderText(h)).toContain(subAgentsMd);
   });
 
-  it('marks an AGENTS.md known when read directly and never suggests it afterwards', async () => {
+  it('does not queue the file read in the triggering call, but re-reminds on a later access', async () => {
     const h = createHarness();
     const subDir = join(workDir, 'packages', 'kap-server');
     const subAgentsMd = await writeAgentsMd(subDir);
@@ -433,7 +433,8 @@ describe('agentsMdReminder path-carrying tools', () => {
 
     const after = await fire(h, didCtx('Read', { path: join(subDir, 'src', 'index.ts') }));
     expect(outputText(after)).toBe('original result');
-    expect(agentsMdMessages(h)).toHaveLength(0);
+    expect(agentsMdMessages(h)).toHaveLength(1);
+    expect(reminderText(h)).toContain(subAgentsMd);
   });
 
   it('discovers the .kimi-code/AGENTS.md variant alongside the plain one', async () => {
@@ -519,7 +520,7 @@ describe('agentsMdReminder re-injection after context loss', () => {
     expect(reminderText(h)).toContain(subAgentsMd);
   });
 
-  it('keeps directly-read paths silent across compaction', async () => {
+  it('re-reminds a directly-read path on access after compaction drops the read content', async () => {
     const h = createHarness();
     const subDir = join(workDir, 'packages', 'kap-server');
     const subAgentsMd = await writeAgentsMd(subDir);
@@ -531,7 +532,8 @@ describe('agentsMdReminder re-injection after context loss', () => {
     compact(h);
 
     await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
-    expect(agentsMdMessages(h)).toHaveLength(0);
+    expect(agentsMdMessages(h)).toHaveLength(1);
+    expect(reminderText(h)).toContain(subAgentsMd);
   });
 
   it('keeps injected paths silent across compaction', async () => {
@@ -952,7 +954,7 @@ describe('agentsMdReminder probing boundaries', () => {
     expect(reminderText(h)).toContain(subAgentsMd);
   });
 
-  it('marks an AGENTS.md known when it is written directly', async () => {
+  it('does not queue a directly written file, but re-reminds on a later access', async () => {
     const h = createHarness();
     const subDir = join(workDir, 'packages', 'kap-server');
     await mkdir(subDir, { recursive: true });
@@ -962,9 +964,11 @@ describe('agentsMdReminder probing boundaries', () => {
     expect(outputText(written)).toBe('original result');
     expect(agentsMdMessages(h)).toHaveLength(0);
 
+    await writeAgentsMd(subDir);
     const after = await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
     expect(outputText(after)).toBe('original result');
-    expect(agentsMdMessages(h)).toHaveLength(0);
+    expect(agentsMdMessages(h)).toHaveLength(1);
+    expect(reminderText(h)).toContain(agentsMdPath);
   });
 
   it('reminds at most once for two parallel touches of the same directory', async () => {
