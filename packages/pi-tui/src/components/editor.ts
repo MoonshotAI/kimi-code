@@ -1,6 +1,6 @@
 import type { AutocompleteProvider, AutocompleteSuggestions } from "../autocomplete.ts";
 import { getKeybindings } from "../keybindings.ts";
-import { decodePrintableKey, matchesKey } from "../keys.ts";
+import { decodePrintableKey, isKeyRepeat, isKittyProtocolActive, matchesKey } from "../keys.ts";
 import { KillRing } from "../kill-ring.ts";
 import { PasteBurst } from "../paste-burst.ts";
 import { type Component, CURSOR_MARKER, type Focusable, type TUI } from "../tui.ts";
@@ -24,6 +24,20 @@ const PASTE_MARKER_REGEX = /\[paste #(\d+)( (\+\d+ lines|\d+ chars))?\]/g;
 
 /** Non-global version for single-segment testing. */
 const PASTE_MARKER_SINGLE = /^\[paste #(\d+)( (\+\d+ lines|\d+ chars))?\]$/;
+
+/**
+ * Two ↑ events arriving closer together than this are treated as a held key
+ * (key repeat) rather than discrete presses. Terminals emit held-key repeats
+ * every ~25-40ms; humans rarely re-press faster than ~100ms.
+ */
+const UP_ARROW_REPEAT_THRESHOLD_MS = 100;
+
+/**
+ * Upper bound of a keyboard's initial repeat delay (how long a key must be
+ * held before autorepeat starts) that the history snap-back accounts for.
+ * X11 defaults to 660ms; macOS and Windows repeat delays top out around 1s.
+ */
+const UP_ARROW_INITIAL_DELAY_MAX_MS = 1200;
 
 /** Check if a segment is a paste marker (i.e. was merged by segmentWithMarkers). */
 function isPasteMarker(segment: string): boolean {
@@ -344,6 +358,14 @@ export class Editor implements Component, Focusable {
 	private historyDraft: EditorState | null = null;
 	private hostHistoryDraft: unknown = undefined;
 	private historyFilter: ((entry: string) => boolean) | null = null;
+	/** Timestamp of the previous ↑ key event, for held-key repeat detection. */
+	private lastUpArrowAt = 0;
+	/**
+	 * Set when ↑ crosses from the draft into history soon after a previous ↑:
+	 * the crossing may still prove to be a held key's first autorepeat (its
+	 * initial delay outran the repeat threshold), arming the snap-back.
+	 */
+	private pendingHeldUpCrossingAt = 0;
 
 	// Kill ring for Emacs-style kill/yank operations
 	private killRing = new KillRing();
@@ -482,6 +504,34 @@ export class Editor implements Component, Focusable {
 		const visualLines = this.buildVisualLineMap(this.lastWidth);
 		const currentVisualLine = this.findCurrentVisualLine(visualLines);
 		return currentVisualLine === visualLines.length - 1;
+	}
+
+	/**
+	 * Classify this ↑ event: a held-key repeat when the terminal reported a
+	 * repeat event (Kitty keyboard protocol) or — without that protocol —
+	 * when it arrived faster after the previous ↑ than a human re-presses.
+	 * A user holding ↑ to reach the top of a long draft expects to stop
+	 * there, so repeats must not carry the editor from the draft into
+	 * history browsing; once history was entered by a discrete press,
+	 * repeats may keep browsing.
+	 */
+	private upArrowRepeatInfo(data: string): { now: number; gap: number; repeat: boolean } {
+		const now = Date.now();
+		const gap = now - this.lastUpArrowAt;
+		this.lastUpArrowAt = now;
+		const repeat = isKittyProtocolActive()
+			? isKeyRepeat(data)
+			: gap < UP_ARROW_REPEAT_THRESHOLD_MS;
+		return { now, gap, repeat };
+	}
+
+	/**
+	 * Break the held-↑ repeat stream: the next ↑ reads as a fresh press.
+	 * Called for non-↑ keys here, and by hosts for programmatic text changes
+	 * or subclass-intercepted shortcuts the base class never sees.
+	 */
+	resetUpArrowRepeatChain(): void {
+		this.lastUpArrowAt = 0;
 	}
 
 	private navigateHistory(direction: 1 | -1): void {
@@ -697,6 +747,12 @@ export class Editor implements Component, Focusable {
 
 	handleInput(data: string): void {
 		const kb = getKeybindings();
+
+		// A non-↑ key between two ↑ presses breaks the repeat stream — the
+		// next ↑ is a fresh press, not an autorepeat of the earlier one.
+		if (!kb.matches(data, "tui.editor.cursorUp")) {
+			this.resetUpArrowRepeatChain();
+		}
 
 		// Handle character jump mode (awaiting next character to jump to)
 		if (this.jumpMode !== null) {
@@ -946,10 +1002,43 @@ export class Editor implements Component, Focusable {
 
 		// Arrow key navigation (with history support)
 		if (kb.matches(data, "tui.editor.cursorUp")) {
+			const { now, gap, repeat } = this.upArrowRepeatInfo(data);
+
+			// Snap back: a repeat-classified ↑ right after a recent crossing
+			// proves the "discrete" press that crossed was really a held key's
+			// first autorepeat — the keyboard's initial repeat delay outran
+			// the repeat threshold. Return to the draft and stay there.
+			if (
+				repeat &&
+				this.pendingHeldUpCrossingAt > 0 &&
+				now - this.pendingHeldUpCrossingAt < UP_ARROW_INITIAL_DELAY_MAX_MS &&
+				this.historyIndex > -1
+			) {
+				this.pendingHeldUpCrossingAt = 0;
+				this.navigateHistory(1);
+				return;
+			}
+
 			if (
 				this.isOnFirstVisualLine() &&
-				(this.isEditorEmpty() || this.historyIndex > -1 || this.state.cursorCol === 0)
+				(this.isEditorEmpty() || this.historyIndex > -1 || this.state.cursorCol === 0) &&
+				// A held ↑ must not cross from the draft into history; a discrete
+				// press still enters, and once browsing, repeats keep browsing.
+				!(repeat && this.historyIndex === -1 && this.history.length > 0)
 			) {
+				if (this.historyIndex === -1) {
+					// A crossing soon after a previous ↑ may still prove to be a
+					// held key's first autorepeat — arm the snap-back above.
+					// Legacy input only: with the Kitty protocol the crossing
+					// event's press/repeat type is exact, so a press crossing
+					// is deliberate and holding that key afterwards must be
+					// free to keep browsing.
+					this.pendingHeldUpCrossingAt =
+						!isKittyProtocolActive() && gap < UP_ARROW_INITIAL_DELAY_MAX_MS ? now : 0;
+				} else {
+					// Browsing past the first entry is deliberate navigation.
+					this.pendingHeldUpCrossingAt = 0;
+				}
 				this.navigateHistory(-1);
 			} else if (this.isOnFirstVisualLine()) {
 				// Already at top - jump to start of line
@@ -1144,6 +1233,7 @@ export class Editor implements Component, Focusable {
 		this.cancelAutocomplete();
 		this.lastAction = null;
 		this.exitHistoryBrowsing();
+		this.resetUpArrowRepeatChain();
 		const normalized = this.normalizeText(text);
 		// Push undo snapshot if content differs (makes programmatic changes undoable)
 		if (this.getText() !== normalized) {

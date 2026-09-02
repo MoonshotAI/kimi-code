@@ -815,3 +815,33 @@ describe('CustomEditor bash mode file completion', () => {
     expect(calls.every((call) => call.force === true)).toBe(true);
   });
 });
+
+describe('CustomEditor held-Up repeat guard', () => {
+  it('treats an Up after an intercepted shortcut as a fresh press', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000);
+      const editor = makeEditor();
+      editor.addToHistory('entry');
+      editor.setText('ab');
+      editor.render(90); // establish layout width for visual-line math
+
+      editor.handleInput('\u001B[A'); // Up: cursor jumps to line start
+      expect(editor.getCursor()).toEqual({ line: 0, col: 0 });
+
+      vi.setSystemTime(1_030);
+      const onCtrlC = vi.fn();
+      editor.onCtrlC = onCtrlC;
+      editor.handleInput('\x03'); // Ctrl+C: intercepted, never reaches super.handleInput
+      expect(onCtrlC).toHaveBeenCalled();
+
+      vi.setSystemTime(1_060);
+      // 60ms after the previous Up, but the intercepted Ctrl+C broke the
+      // repeat stream — this is a fresh press and must recall history.
+      editor.handleInput('\u001B[A');
+      expect(editor.getText()).toBe('entry');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

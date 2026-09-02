@@ -366,6 +366,13 @@ export class CustomEditor extends Editor {
       return;
     }
 
+    // A non-↑ key breaks any held-↑ repeat stream. The base Editor resets
+    // on keys it sees, but this class consumes some (Ctrl+C, Escape, …)
+    // before they ever reach super.handleInput — reset here too.
+    if (!matchesKey(normalized, Key.up)) {
+      this.resetUpArrowRepeatChain();
+    }
+
     // Clipboard reads are asynchronous. Queue every key received while a
     // paste callback is in flight and replay it once the callback settles
     // (clipboard read + placeholder insert — compression and the daemon
