@@ -12,8 +12,8 @@ import { currentTheme } from '#/tui/theme';
 export type DiffLineKind = 'context' | 'add' | 'delete';
 
 interface DiffStyles {
-  add: (s: string) => string;
-  del: (s: string) => string;
+  addLine: (s: string) => string;
+  delLine: (s: string) => string;
   addBold: (s: string) => string;
   delBold: (s: string) => string;
   gutter: (s: string) => string;
@@ -23,8 +23,8 @@ interface DiffStyles {
 function makeDiffStyles(): DiffStyles {
   const palette = currentTheme.palette;
   return {
-    add: (s) => chalk.hex(palette.diffAdded)(s),
-    del: (s) => chalk.hex(palette.diffRemoved)(s),
+    addLine: (s) => chalk.hex(palette.diffAdded).bgHex(palette.diffAddedBg)(s),
+    delLine: (s) => chalk.hex(palette.diffRemoved).bgHex(palette.diffRemovedBg)(s),
     addBold: (s) => chalk.bold.hex(palette.diffAddedStrong)(s),
     delBold: (s) => chalk.bold.hex(palette.diffRemovedStrong)(s),
     gutter: (s) => chalk.hex(palette.diffGutter)(s),
@@ -134,9 +134,7 @@ export function renderDiffLines(
       : changedLines;
 
   for (const line of shown) {
-    const marker = line.kind === 'add' ? '+' : '-';
-    const color = line.kind === 'add' ? s.add : s.del;
-    output.push(s.gutter(String(line.lineNum).padStart(4) + ' ') + color(marker + ' ' + line.code));
+    output.push(formatDiffRow(line, s));
   }
 
   const hidden = changedLines.length - shown.length;
@@ -217,9 +215,9 @@ function buildClusters(
 }
 
 function formatDiffRow(line: DiffLine, s: DiffStyles): string {
-  const gutter = s.gutter(String(line.lineNum).padStart(4) + ' ');
-  if (line.kind === 'add') return gutter + s.add('+ ' + line.code);
-  if (line.kind === 'delete') return gutter + s.del('- ' + line.code);
+  const gutter = s.gutter(String(line.lineNum).padStart(4) + ' │ ');
+  if (line.kind === 'add') return gutter + s.addLine('+ ' + line.code);
+  if (line.kind === 'delete') return gutter + s.delLine('- ' + line.code);
   return gutter + '  ' + line.code;
 }
 

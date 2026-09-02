@@ -165,10 +165,16 @@ describe('renderDiffLinesClustered', () => {
     );
     // Context lines keep the new (post-edit) line numbers from newStart;
     // deleted lines use oldStart; added lines use newStart.
-    expect(text).toContain('  20   A');
-    expect(text).toContain('  11 - B');
-    expect(text).toContain('  21 + X');
-    expect(text).toContain('  22   C');
+    expect(text).toContain('  20 │   A');
+    expect(text).toContain('  11 │ - B');
+    expect(text).toContain('  21 │ + X');
+    expect(text).toContain('  22 │   C');
+  });
+
+  it('renders a clear sign column between the gutter and code', () => {
+    const text = stripAnsi(renderDiffLinesClustered('old', 'new', 'f.ts').join('\n'));
+    expect(text).toContain('   1 │ - old');
+    expect(text).toContain('   1 │ + new');
   });
 
   it('truncates at cluster boundary and appends the ctrl+o footer when maxLines is set', () => {

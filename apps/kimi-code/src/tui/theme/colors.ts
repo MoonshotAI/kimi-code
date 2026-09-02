@@ -56,8 +56,12 @@ export interface ColorPalette {
   // ── Diff (all consumed by components/media/diff-preview.ts) ──
   /** Added lines. */
   diffAdded: string;
+  /** Added line background. */
+  diffAddedBg: string;
   /** Removed lines. */
   diffRemoved: string;
+  /** Removed line background. */
+  diffRemovedBg: string;
   /** Added lines — intra-line changed words (bold). */
   diffAddedStrong: string;
   /** Removed lines — intra-line changed words (bold). */
@@ -96,7 +100,9 @@ export const darkColors: ColorPalette = {
   error: '#E85454',
 
   diffAdded: '#4EC87E',
+  diffAddedBg: '#173326',
   diffRemoved: '#E85454',
+  diffRemovedBg: '#32181D',
   diffAddedStrong: '#7AD99B',
   diffRemovedStrong: '#F08585',
   diffGutter: '#6B6B6B',
@@ -123,7 +129,9 @@ export const lightColors: ColorPalette = {
   error: '#B91C1C',
 
   diffAdded: '#0E7A38',
+  diffAddedBg: '#E8F5EE',
   diffRemoved: '#B91C1C',
+  diffRemovedBg: '#FDECEC',
   diffAddedStrong: '#0E7A38',
   diffRemovedStrong: '#B91C1C',
   diffGutter: '#737373',
