@@ -996,6 +996,30 @@ describe('agentsMdReminder probing boundaries', () => {
     expect(agentsMdMessages(h)).toHaveLength(1);
   });
 
+  it('deduplicates staggered same-step completions while the first reminder is still deferred', async () => {
+    const h = createHarness();
+    const subDir = join(workDir, 'packages', 'kap-server');
+    const subAgentsMd = await writeAgentsMd(subDir);
+    h.reminder.seedInjected([], workDir);
+
+    await h.events.didExecuteSlot.run(
+      didCtx('Read', { path: join(subDir, 'a.ts') }, { id: 'call-a' }),
+    );
+    expect(agentsMdMessages(h)).toHaveLength(1);
+
+    h.context.clear();
+
+    await h.events.didExecuteSlot.run(
+      didCtx('Read', { path: join(subDir, 'b.ts') }, { id: 'call-b' }),
+    );
+    expect(agentsMdMessages(h)).toHaveLength(0);
+    expect(h.telemetryEvents.filter((e) => e.event === 'agents_md_reminder_shown')).toHaveLength(1);
+
+    await h.step();
+    await fire(h, didCtx('Read', { path: join(subDir, 'c.ts') }));
+    expect(reminderText(h)).toContain(subAgentsMd);
+  });
+
   it('re-judges the project root at a nested repository', async () => {
     const h = createHarness();
     const nested = join(workDir, 'packages', 'nested');

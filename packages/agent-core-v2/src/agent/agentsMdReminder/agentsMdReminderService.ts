@@ -12,6 +12,7 @@ import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { HostFsChange } from '#/os/interface/hostFsWatch';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { normalizeUserPath } from '#/tool/path-access';
@@ -64,6 +65,7 @@ export class AgentAgentsMdReminderService
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IAgentReminderService private readonly reminder: IAgentReminderService,
     @IAgentContextMemoryService private readonly contextMemory: IAgentContextMemoryService,
+    @IAgentLoopService loop: IAgentLoopService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
     @ISessionContext private readonly sessionContext: ISessionContext,
@@ -81,6 +83,12 @@ export class AgentAgentsMdReminderService
     this._register(
       this.instructions.onDidChange((changes) => {
         this.announceChanged(changes);
+      }),
+    );
+    this._register(
+      loop.hooks.onWillBeginStep.register('agentsMdReminder', async (_ctx, next) => {
+        this.claimed.clear();
+        await next();
       }),
     );
     this._register(
@@ -169,6 +177,7 @@ export class AgentAgentsMdReminderService
   private async probeAndRemind(ctx: ToolDidExecuteContext): Promise<void> {
     if (ctx.outcome !== 'executed') return;
     const discovered: string[] = [];
+    let keepClaims = false;
     try {
       await this.ensureSeeded();
       const { dirs, selfKnown } = this.targetDirs(ctx);
@@ -196,8 +205,11 @@ export class AgentAgentsMdReminderService
         variant: DISCOVERY_REMINDER_VARIANT,
         disclosure: fresh,
       });
+      keepClaims = true;
     } catch {} finally {
-      for (const path of discovered) this.claimed.delete(path);
+      if (!keepClaims) {
+        for (const path of discovered) this.claimed.delete(path);
+      }
     }
   }
 
