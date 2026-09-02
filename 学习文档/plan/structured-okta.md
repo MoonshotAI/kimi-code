@@ -12,7 +12,7 @@
 
 | 决策点 | 最终选择 |
 |---|---|
-| 登录协议 | OAuth2 授权码 + PKCE（Okta OIDC 应用 = OAuth2 应用，同一东西）；回调用**回环 HTTP server**（非 Continue 的托管重定向页），零托管依赖 |
+| 登录协议 | OAuth2 授权码 + PKCE（Okta OIDC 应用 = OAuth2 应用，同一东西）；回调**双通路**：默认回环 HTTP server（127.0.0.1，零托管依赖），或 okta.json 配 `redirectUri` 走 **vscode:// 深链**（Continue 官方同款，浏览器授权后 Okta 直接重定向到 `vscode://<publisher>.<扩展名>/...`，VS Code 路由给本插件的 UriHandler）——按 Okta 应用里实际注册的 redirect URI 形态二选一 |
 | 配置来源 | **两个外部文件**：`okta.json`（纯 IdP）+ `gateway.json`（模型目录） |
 | 登录入口 | 独立 Okta 登录页；**Okta 是默认登录方式**，唯一退回口是 okta.json 的 `authMode: "kimi"` |
 | Token 存储 | **SecretStorage 唯一存储 + 引擎内存层注入**（`setMemoryConfig`），全链路零落盘 |
@@ -36,7 +36,7 @@ IdP 与网关由不同的人管、变更时机不同，拆开互不牵连。都�
 
 ### okta.json（纯身份：怎么登录）
 
-必填 `issuer`（授权服务器 URL，端点由它拼：`{issuer}/v1/authorize`、`{issuer}/v1/token`）、`clientId`；可选 `scopes`（默认含 `offline_access`，否则拿不到 refresh token）、`authorizePath`/`tokenPath`/`callbackPorts`（默认 35173-35175，每个端口都要在 Okta 应用注册为 redirect URI）、`redirectPath`、`loginTimeoutMs`（10min，< webview RPC 的 16min）、`authMode`（`"okta"` 默认 / `"kimi"` 退回内置登录页，其他值报错）。
+必填 `issuer`（授权服务器 URL，端点由它拼：`{issuer}/v1/authorize`、`{issuer}/v1/token`）、`clientId`；可选 `redirectUri`（**vscode:// 深链回调**：设置后 authorize/token 交换都用它，code 经 `vscode.window.registerUriHandler` 回到插件；必须同时满足两点——与 Okta 应用注册的 redirect URI 一致、与本插件构建的 `publisher.name` 路由一致（当前为 `vscode://moonshot-ai.kimi-code`），state 不匹配的迟到深链被忽略）、`scopes`（默认含 `offline_access`，否则拿不到 refresh token）、`authorizePath`/`tokenPath`/`callbackPorts`（默认 35173-35175，回环模式下每个端口都要在 Okta 应用注册为 redirect URI）、`redirectPath`、`loginTimeoutMs`（10min，< webview RPC 的 16min）、`authMode`（`"okta"` 默认 / `"kimi"` 退回内置登录页，其他值报错）。
 
 ### gateway.json（模型目录：登录后调谁拿清单）
 
@@ -108,7 +108,8 @@ config.toml 与 `~/.kimi-code/credentials/` **零 token 写入**（已 grep 核�
 OktaLoginScreen 点击 → oktaLogin RPC（16min 超时）
   → 宿主读 okta.json（scopes 等）+ gateway.json（目录参数），缺失者报错上浮
   → authentication.getSession("kimi-code-okta", …, {createIfNone})
-  → createSession（单飞）：PKCE + loopback(127.0.0.1) + asExternalUri
+  → createSession（单飞）：PKCE + 回调通路二选一
+      （redirectUri 配置 → vscode:// 深链，URI handler 收 code；否则 loopback + asExternalUri）
       → 广播 OktaLoginUrl（兜底链接）→ 开浏览器 → Okta 授权 → 回调 code+state
       → POST {issuer}/v1/token 换 token
       → SecretStorage 存会话（providerNames 暂空）+ 注入引擎
@@ -154,3 +155,4 @@ Okta 侧：OIDC 应用（Native/SPA 均可，PKCE 必选 + Refresh Token grant�
 | 6 | 目录假设 OpenAI 风格 `{data:[{id}]}`、单一 provider（type 固定 openai_responses、baseUrl 全局一个） | 用户给出真实格式：每条自带 `provider`（协议）与 `apiBase`（各自端点） | 按 `(协议, apiBase)` 分组建多段；`name`→displayName、`contextLength`→逐模型窗口 |
 | 7 | 内置别名 `openrouter → openai`（代码里猜） | 用户：他们 openrouter 标签实际也是 Responses API——内置猜测与部署现实相撞 | 删除全部内置映射；`protocolAliases` 是唯一映射来源，未映射报错点名 |
 | 8 | `GetAuthMode` 失败静默回落默认 | 用户：错误应该显示在 Okta 页面告诉用户 | RPC 返回 `{mode, error}`，错误渲染为页面横幅 |
+| 9 | 回调只有回环 server 一种 | 用户：管理员在 Okta 注册的 redirect_uri 是 `vscode://…` 深链，不是 localhost | 双通路：okta.json 配 `redirectUri` 即走 vscode:// 深链（UriHandler 收 code）；不配保持回环默认 |

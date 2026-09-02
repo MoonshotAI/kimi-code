@@ -8,7 +8,7 @@
 ```
 OktaLoginScreen 点击 → oktaLogin RPC（16min 超时）
   → vscode.authentication.getSession("kimi-code-okta", …, {createIfNone})
-  → AuthenticationProvider: PKCE + loopback(127.0.0.1) + asExternalUri
+  → AuthenticationProvider: PKCE + 回调通路二选一（redirectUri → vscode:// 深链；默认 loopback + asExternalUri）
   → 广播 OktaLoginUrl（兜底链接）→ 开浏览器 → Okta 授权 → 回调 code+state
   → POST {issuer}/v1/token 换 token
   → SecretStorage 存完整会话 + setMemoryConfig 注入引擎内存层（零落盘）
@@ -50,6 +50,7 @@ config.toml 里 provider 写 `apiKey: ""`（引擎视为"未设置"），`~/.kim
 {
   "issuer": "https://example.okta.com",
   "clientId": "0oa1abcd2EFgHiJkLmN3",
+  "redirectUri": "vscode://moonshot-ai.kimi-code/callback",
   "scopes": "openid profile email offline_access",
   "authorizePath": "/v1/authorize",
   "tokenPath": "/v1/token",
@@ -64,6 +65,7 @@ config.toml 里 provider 写 `apiKey: ""`（引擎视为"未设置"），`~/.kim
 |---|---|---|---|
 | `issuer` | string | **必填** | Okta 授权服务器的身份 URL，端点由它拼出（`{issuer}/v1/authorize`、`{issuer}/v1/token`）。Org 授权服务器填裸域名 `https://你的域.okta.com`；自定义授权服务器（Security → API 里建的）填 `https://你的域.okta.com/oauth2/<id>`（常见 `/oauth2/default`）。验证：访问 `{issuer}/.well-known/openid-configuration`，JSON 里的 `issuer` 字段与所填一致即对 |
 | `clientId` | string | **必填** | Okta OIDC 应用（即 OAuth2 应用，同一东西）的 client_id |
+| `redirectUri` | string | 无（走回环） | **vscode:// 深链回调**：配置后 authorize 与 token 交换都用它，code 经 `registerUriHandler` 回到插件。需与 Okta 应用注册的 redirect URI 一致，且与本插件 `publisher.name` 路由一致（`vscode://moonshot-ai.kimi-code`）；state 不匹配的迟到深链被忽略。不配 → 默认回环 server（callbackPorts/redirectPath） |
 | `scopes` | string | `"openid profile email offline_access"` | 空格分隔；`offline_access` 必须保留，否则拿不到 refresh token |
 | `authorizePath` | string | `"/v1/authorize"` | Okta 授权端点路径 |
 | `tokenPath` | string | `"/v1/token"` | Okta token 端点路径 |
@@ -184,7 +186,7 @@ token（同一个 Okta token）注入到**每一个**生成的 provider 段（�
 
 ## 待办（人工步骤）
 
-1. Okta 管理台建应用（已有的 OAuth2/OIDC 应用直接复用）：Sign-in method 选 **OIDC - OpenID Connect**（即 OAuth2 应用，同一东西），Application type 选 **Native 或 SPA**（公共客户端 + PKCE）；Grant types 勾 **Authorization Code**（带 PKCE）+ **Refresh Token**；Sign-in redirect URIs 加 `http://localhost:35173/callback`、`http://localhost:35174/callback`、`http://localhost:35175/callback`
+1. Okta 管理台建应用（已有的 OAuth2/OIDC 应用直接复用）：Sign-in method 选 **OIDC - OpenID Connect**（即 OAuth2 应用，同一东西），Application type 选 **Native 或 SPA**（公共客户端 + PKCE）；Grant types 勾 **Authorization Code**（带 PKCE）+ **Refresh Token**；Sign-in redirect URIs 按回调方式二选一：**深链模式**（管理员已注册 `vscode://…`）→ okta.json 配同样的 `redirectUri`；**回环模式**（默认）→ 注册 `http://localhost:35173/callback`、`http://localhost:35174/callback`、`http://localhost:35175/callback`
 2. 写两个配置文件：`~/.kimi-code/okta.json`（最小只需 issuer + clientId）+ `~/.kimi-code/gateway.json`（最小只需 apiBaseUrl），按上文全量示例
 3. F5 起 Extension Development Host 走一遍真实登录 → 验证 config.toml 供给段、聊天发消息带 Bearer、登出清理
 4. 变更未提交 git，可先 review
