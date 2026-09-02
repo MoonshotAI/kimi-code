@@ -1,6 +1,6 @@
 # 数据路径
 
-Kimi Code CLI 把所有运行时数据——配置文件、会话历史、登录凭据、诊断日志——集中存放在 `~/.kimi-code/` 下。本页帮你搞清楚每类数据在哪里、用来做什么，以及需要时怎么清理或搬迁。
+Kimi Code CLI 把配置文件、会话历史、登录凭据、诊断日志等运行时数据集中存放在 `~/.kimi-code/` 下。本页帮你搞清楚每类数据在哪里、用来做什么，以及需要时怎么清理或搬迁。
 
 ## 数据根目录
 
@@ -61,7 +61,7 @@ $KIMI_CODE_HOME  （默认 ~/.kimi-code）
 数据根下的顶层文件各有用途，大部分由 CLI 自动管理：
 
 - **`config.toml`**：主运行时配置，存放供应商、模型、循环控制等用户级设置。详见[配置文件](./config-files.md)。
-- **`tui.toml`**：终端界面客户端偏好，包括 `[upgrade].auto_install`（自动更新，默认开启）。可在 `/settings` 关闭，或手动设为 `auto_install = false`。
+- **`tui.toml`**：终端界面客户端偏好，包括自动更新开关 `[upgrade].auto_install`（默认开启）。可在 `/settings` 关闭，或手动设为 `auto_install = false`。
 - **`AGENTS.md`**：全局 Kimi 专属 Agent 指令。该文件会随 `KIMI_CODE_HOME` 移动；跨工具通用指令仍可放在 `~/.agents/AGENTS.md`。
 - **`mcp.json`**：用户级 MCP server 声明，启动时与项目内的 `.kimi-code/mcp.json` 合并加载。详见 [MCP](../customization/mcp.md)。
 - **`skills/`**：Kimi 专属用户级 Skills。该目录会随 `KIMI_CODE_HOME` 移动；跨工具通用 Skills 仍可放在 `~/.agents/skills/`。详见 [Agent Skills](../customization/skills.md)。
@@ -80,7 +80,7 @@ $KIMI_CODE_HOME  （默认 ~/.kimi-code）
 - **`agents/main/plans/`**：Plan 模式下写入的计划文件，按计划 id 命名（`<id>.md`）。
 - **`agents/agent-0/` 等**：subagent 实例目录，各自含 `wire.jsonl`。
 - **`logs/kimi-code.log`**：该会话的诊断日志，只有发生诊断事件时才存在。
-- **`tasks/`**：后台任务持久化——`tasks/<task_id>.json` 保存状态/pid/退出码，`tasks/<task_id>/output.log` 保存输出。
+- **`tasks/`**：后台任务持久化。`tasks/<task_id>.json` 保存状态/pid/退出码，`tasks/<task_id>/output.log` 保存输出。
 - **`cron/`**：定时任务持久化，用 `kimi --session` 恢复会话时重新加载到调度器。详见[定时任务](../reference/tools.md#定时任务)。
 
 ## 内置工具缓存
