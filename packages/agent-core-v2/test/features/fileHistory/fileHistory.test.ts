@@ -661,6 +661,11 @@ describe('countLineDiff', () => {
     expect(countLineDiff('a\nb\nc\n', 'a\nx\nc\n')).toEqual({ additions: 1, deletions: 1 });
   });
 
+  it('counts a trailing-newline-only change as one changed line', () => {
+    expect(countLineDiff('a\n', 'a')).toEqual({ additions: 1, deletions: 1 });
+    expect(countLineDiff('a', 'a')).toEqual({ additions: 0, deletions: 0 });
+  });
+
   it('short-circuits identical content without touching the budget', () => {
     const budget = { remaining: 0 };
     expect(countLineDiff('same\n', 'same\n', budget)).toEqual({ additions: 0, deletions: 0 });

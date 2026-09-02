@@ -620,6 +620,7 @@ function splitLines(content: string): string[] {
   if (content === '') return [];
   const lines = content.split('\n');
   if (lines.at(-1) === '') lines.pop();
+  else lines[lines.length - 1] = `${lines[lines.length - 1]!}\u0000`;
   return lines;
 }
 
