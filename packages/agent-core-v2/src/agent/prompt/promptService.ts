@@ -219,6 +219,11 @@ function mergeSteerMessages(records: readonly Record[]): ContextMessage {
 
 export const promptLaunchingKey = defineState<boolean>('prompt.launching', () => false);
 
+export const STEER_REMINDER = [
+  'The user sent a new message while you were working; it appears above, delivered into the running turn.',
+  'Address it as you continue this turn; where it changes the current task or approach, the new message takes precedence.',
+].join(' ');
+
 export class AgentPromptService implements IAgentPromptService {
   declare readonly _serviceBrand: undefined;
   private active: (Record & { turn: Turn }) | undefined;
@@ -226,6 +231,7 @@ export class AgentPromptService implements IAgentPromptService {
   private readonly steered = new Map<string, Record[]>();
   private readonly reservedPromptIds = new Set<string>();
   private steering = 0;
+  private steerReminderArmed = false;
   private fullCompactionService: IAgentFullCompactionService | undefined;
   readonly hooks = { onBeforeSubmitPrompt: new OrderedHookSlot<PromptSubmitContext>() };
 
@@ -247,6 +253,11 @@ export class AgentPromptService implements IAgentPromptService {
     this.states.contributeState(promptLaunchingKey);
     this.states.contributeState(promptAdmissionKey);
     this.states.contributeState(promptResolutionKey);
+    this.reminder.register('steer', () => {
+      if (!this.steerReminderArmed) return undefined;
+      this.steerReminderArmed = false;
+      return STEER_REMINDER;
+    });
     toolExecutor.hooks.onDidExecuteTool.register('prompt-service-delivery', async (ctx, next) => {
       await this.deliverToolResult(ctx);
       await next();
@@ -413,6 +424,7 @@ export class AgentPromptService implements IAgentPromptService {
       this.pending.splice(index, 1);
     }
     const request = new SteerStepRequest(rerouted, captions, this.reminder, (materialized) => {
+      this.steerReminderArmed = true;
       void this.dispatcher.dispatch(
         new TurnSteer({
           agentId: this.scopeContext.agentId,
@@ -513,6 +525,7 @@ export class AgentPromptService implements IAgentPromptService {
   private settle(item: Record, result: TurnResult): void {
     if (this.active?.id !== item.id) return;
     this.active = undefined;
+    this.steerReminderArmed = false;
     const state = result.type === 'cancelled' ? 'cancelled' : result.type === 'failed' ? 'failed' : 'completed';
     item.state = state; item.completionDeferred.resolve({ promptId: item.id, result, state });
     for (const child of this.steered.get(item.id) ?? []) { child.state = state; child.completionDeferred.resolve({ promptId: child.id, result, state }); }

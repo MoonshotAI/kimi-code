@@ -2,7 +2,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { Readable } from 'node:stream';
 
-import { DisposableStore } from '#/_base/di/lifecycle';
+import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
@@ -13,10 +13,11 @@ import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompacti
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { TurnSteer } from '#/agent/loop/turnOps';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
-import { AgentPromptService, PromptAborted, PromptCompleted, PromptQueued, PromptStarted, PromptSteered, PromptSubmitted } from '#/agent/prompt/promptService';
+import { AgentPromptService, PromptAborted, PromptCompleted, PromptQueued, PromptStarted, PromptSteered, PromptSubmitted, STEER_REMINDER } from '#/agent/prompt/promptService';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
+import type { ContextInjectionContext, ContextInjectionProvider } from '#/features/reminder/types';
 import { createReminderStub } from '../../features/reminder/stubs';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
@@ -63,7 +64,12 @@ function harness(loopOptions: StubLoopOptions = { pendingTurnResult: true }) {
   const disposables = new DisposableStore();
   onTestFinished(() => disposables.dispose());
   const context = stubContextMemory();
+  const reminderProviders = new Map<string, ContextInjectionProvider>();
   const reminder = createReminderStub({
+    register: (variant, provider) => {
+      reminderProviders.set(variant, provider as ContextInjectionProvider);
+      return toDisposable(() => { reminderProviders.delete(variant); });
+    },
     notify: (content, notification) => {
       context.append({
         role: 'user',
@@ -124,7 +130,11 @@ function harness(loopOptions: StubLoopOptions = { pendingTurnResult: true }) {
   (ix.get(IEventBus) as ISessionEventBus).activateAgent(
     ix.get(IAgentScopeContext).agentContext,
   );
-  return { prompt: ix.get(IAgentPromptService), loop, context, fullCompaction, eventBus: ix.get(IEventBus), intake };
+  return { prompt: ix.get(IAgentPromptService), loop, context, fullCompaction, eventBus: ix.get(IEventBus), intake, reminderProviders };
+}
+
+function injectionContext(): ContextInjectionContext {
+  return { injectedPositions: [], lastInjectedAt: null, lastInjection: undefined, lastDisclosure: undefined, isNewTurn: false };
 }
 
 describe('AgentPromptService', () => {
@@ -228,6 +238,54 @@ describe('AgentPromptService', () => {
     ]);
     expect(events[0]).not.toHaveProperty('messageId');
     expect(events[0]).not.toHaveProperty('promptIds');
+  });
+
+  it('emits the steer reminder once after a steer materializes', async () => {
+    const { prompt, context, loop, reminderProviders } = harness();
+    const active = await prompt.enqueue({ message: message('active') });
+    await active.launched;
+    const queued = await prompt.enqueue({ message: message('new direction') });
+    const provider = reminderProviders.get('steer')!;
+    await prompt.steer([queued.id]);
+    expect(await provider(injectionContext())).toBeUndefined();
+    loop.drainNextBatch(context);
+    expect(await provider(injectionContext())).toBe(STEER_REMINDER);
+    expect(await provider(injectionContext())).toBeUndefined();
+  });
+
+  it('arms the steer reminder once when separate steers merge into the same step', async () => {
+    const { prompt, context, loop, reminderProviders } = harness();
+    const active = await prompt.enqueue({ message: message('active') });
+    await active.launched;
+    const one = await prompt.enqueue({ message: message('one') });
+    const two = await prompt.enqueue({ message: message('two') });
+    await prompt.steer([one.id]);
+    await prompt.steer([two.id]);
+    loop.drainNextBatch(context);
+    const provider = reminderProviders.get('steer')!;
+    expect(await provider(injectionContext())).toBe(STEER_REMINDER);
+    expect(await provider(injectionContext())).toBeUndefined();
+  });
+
+  it('does not arm the steer reminder for tool-injected steers', async () => {
+    const { prompt, context, loop, reminderProviders } = harness();
+    const active = await prompt.enqueue({ message: message('active') });
+    await active.launched;
+    await prompt.inject({ role: 'user', content: [{ type: 'text', text: 'tool delivery' }], toolCalls: [] });
+    loop.drainNextBatch(context);
+    expect(await reminderProviders.get('steer')!(injectionContext())).toBeUndefined();
+  });
+
+  it('drops an armed steer reminder when the turn settles before the next step', async () => {
+    const { prompt, context, loop, reminderProviders } = harness({ manualTurnResult: true });
+    const active = await prompt.enqueue({ message: message('active') });
+    await active.launched;
+    const queued = await prompt.enqueue({ message: message('late') });
+    await prompt.steer([queued.id]);
+    loop.drainNextBatch(context);
+    loop.settleActive({ type: 'cancelled', steps: 1, reason: new Error('stop') });
+    await active.completion;
+    expect(await reminderProviders.get('steer')!(injectionContext())).toBeUndefined();
   });
 
   it('aborts pending prompts and settles completion', async () => {
