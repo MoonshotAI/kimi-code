@@ -17,9 +17,11 @@ import {
 import { Service } from '#/_base/di/service';
 import { createScopedTestHost } from '#/_base/di/test';
 import { AgentProfileContribution } from '#/app/agentProfileCatalog/agentProfileContribution';
+import { IConfigService } from '#/app/config/config';
 import { ConfigSectionContribution } from '#/app/config/configSectionContributions';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { FeatureManagerService } from '#/app/feature/featureManagerService';
+import { IFlagService } from '#/app/flag/flag';
 import { LifecycleScope } from '#/app/scopes';
 import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
 import { Feature } from '#/features/feature';
@@ -37,6 +39,13 @@ import {
   registerFeature,
 } from '#/features/featureRegistry';
 import type { AgentTool, ToolExecution } from '#/tool/toolContract';
+
+import { stubFlag } from '../app/flag/stubs';
+
+const featureAssemblySeeds = [
+  [IConfigService, { ready: Promise.resolve() }],
+  [IFlagService, stubFlag(false)],
+] as const;
 
 interface IGreeter {
   readonly _serviceBrand: undefined;
@@ -115,7 +124,7 @@ describe('Feature — built-in capability assembly (src/features)', () => {
     }
     registerFeature(TestFeature);
 
-    const host = createScopedTestHost();
+    const host = createScopedTestHost(featureAssemblySeeds);
     const manager = host.app.accessor.get(IFeatureManager);
     expect(manager.units()).toHaveLength(1);
     expect(manager.units()[0]!.name).toBe('test-feature');
@@ -185,7 +194,7 @@ describe('Feature — built-in capability assembly (src/features)', () => {
     }
     registerFeature(DomainFeature);
 
-    const host = createScopedTestHost();
+    const host = createScopedTestHost(featureAssemblySeeds);
     const manager = host.app.accessor.get(IFeatureManager);
     const views = [
       collectionViewOf(host.app, SessionModelContribution),
@@ -225,7 +234,7 @@ describe('Feature — built-in capability assembly (src/features)', () => {
     }
     registerFeature(FirstFeature);
 
-    const host = createScopedTestHost();
+    const host = createScopedTestHost(featureAssemblySeeds);
     const manager = host.app.accessor.get(IFeatureManager);
     const agent = host.child(LifecycleScope.Agent, 'agent-1');
     const original = agent.accessor.get(IGreeter);
@@ -261,8 +270,8 @@ describe('Feature — built-in capability assembly (src/features)', () => {
     }
     registerFeature(SharedFeature);
 
-    const first = createScopedTestHost();
-    const second = createScopedTestHost();
+    const first = createScopedTestHost(featureAssemblySeeds);
+    const second = createScopedTestHost(featureAssemblySeeds);
     const firstManager = first.app.accessor.get(IFeatureManager);
     const secondManager = second.app.accessor.get(IFeatureManager);
     const firstAgent = first.child(LifecycleScope.Agent, 'agent-1');
@@ -301,7 +310,7 @@ describe('Feature — built-in capability assembly (src/features)', () => {
     }
     registerFeature(SoloFeature);
 
-    const host = createScopedTestHost();
+    const host = createScopedTestHost(featureAssemblySeeds);
     const agent = host.child(LifecycleScope.Agent, 'agent-1');
     expect(agent.accessor.get(IGreeter).greet()).toBe('hi');
     host.dispose();

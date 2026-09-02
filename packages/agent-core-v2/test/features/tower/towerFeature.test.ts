@@ -50,6 +50,10 @@ function collectionViewOf<T>(scope: Scope, token: CollectionToken<T>): Collectio
   return (scope.instantiation as InstantiationService).fiberHost.collectionView(token);
 }
 
+function flushMicrotasks(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe('TowerFeature — experimental flag gating', () => {
   beforeEach(() => {
     _clearScopedRegistryForTests();
@@ -68,13 +72,17 @@ describe('TowerFeature — experimental flag gating', () => {
       ScopeActivation.OnScopeCreated,
       'features',
     );
-    registerFeature(TowerFeature);
+    registerFeature(TowerFeature, { flag: TOWER_FLAG_ID });
   });
 
-  it('assembles an empty unit when the tower flag is off', () => {
-    const host = createScopedTestHost([[IFlagService, stubFlag(false)]]);
+  it('does not assemble when the tower flag is off', async () => {
+    const host = createScopedTestHost([
+      [IFlagService, stubFlag(false)],
+      [IConfigService, { ready: Promise.resolve() }],
+    ]);
+    await host.app.accessor.get(IFeatureAssemblyService).ready;
     const manager = host.app.accessor.get(IFeatureManager);
-    expect(manager.units().map((unit) => unit.name)).toEqual(['tower']);
+    expect(manager.units()).toHaveLength(0);
     expect(manager.contributedServices()).toHaveLength(0);
     expect(collectionViewOf(host.app, AgentProfileContribution).items).toHaveLength(0);
     const agent = host.child(LifecycleScope.Agent, 'agent-1');
@@ -82,10 +90,12 @@ describe('TowerFeature — experimental flag gating', () => {
     host.dispose();
   });
 
-  it('contributes tools, profile, and rate-limit service when the tower flag is on', () => {
+  it('contributes tools, profile, and rate-limit service when the tower flag is on', async () => {
     const host = createScopedTestHost([
       [IFlagService, stubFlag((id) => id === TOWER_FLAG_ID)],
+      [IConfigService, { ready: Promise.resolve() }],
     ]);
+    await host.app.accessor.get(IFeatureAssemblyService).ready;
     const manager = host.app.accessor.get(IFeatureManager);
     expect(
       manager
@@ -121,13 +131,90 @@ describe('TowerFeature — experimental flag gating', () => {
 
   it('clears the assembly marker when the feature unit unloads', async () => {
     const flags = stubFlag((id) => id === TOWER_FLAG_ID);
-    const host = createScopedTestHost([[IFlagService, flags]]);
+    const host = createScopedTestHost([
+      [IFlagService, flags],
+      [IConfigService, { ready: Promise.resolve() }],
+    ]);
+    await host.app.accessor.get(IFeatureAssemblyService).ready;
     const manager = host.app.accessor.get(IFeatureManager);
     expect(isTowerFeatureAssembled(flags)).toBe(true);
 
     await manager.unprovideUnit('tower');
 
     expect(isTowerFeatureAssembled(flags)).toBe(false);
+    host.dispose();
+  });
+
+  it('defers gated assembly until config ready resolves', async () => {
+    let resolveConfigReady!: () => void;
+    const configReady = new Promise<void>((resolve) => {
+      resolveConfigReady = resolve;
+    });
+    const host = createScopedTestHost([
+      [IFlagService, stubFlag((id) => id === TOWER_FLAG_ID)],
+      [IConfigService, { ready: configReady }],
+    ]);
+    const assembly = host.app.accessor.get(IFeatureAssemblyService);
+    const manager = host.app.accessor.get(IFeatureManager);
+    await flushMicrotasks();
+    expect(manager.units()).toHaveLength(0);
+    expect(manager.contributedServices()).toHaveLength(0);
+    expect(collectionViewOf(host.app, AgentProfileContribution).items).toHaveLength(0);
+    const pendingAgent = host.child(LifecycleScope.Agent, 'agent-pending');
+    expect(collectionViewOf(pendingAgent, AgentToolContribution).items).toHaveLength(0);
+
+    resolveConfigReady();
+    await assembly.ready;
+
+    expect(manager.units().map((unit) => unit.name)).toContain('tower');
+    expect(
+      manager
+        .contributedServices()
+        .filter(
+          (entry) => entry.scope === LifecycleScope.App && entry.id === ITowerRateLimitService,
+        ),
+    ).toHaveLength(1);
+    const profiles = collectionViewOf(host.app, AgentProfileContribution).items;
+    expect(profiles).toHaveLength(1);
+    expect(profiles[0]!.sourceId).toBe('feature:tower');
+    const agent = host.child(LifecycleScope.Agent, 'agent-1');
+    expect(collectionViewOf(agent, AgentToolContribution).items).toHaveLength(11);
+    host.dispose();
+  });
+
+  it('does not assemble when the flag turns on after ready', async () => {
+    let towerEnabled = false;
+    const host = createScopedTestHost([
+      [IFlagService, stubFlag((id) => id === TOWER_FLAG_ID && towerEnabled)],
+      [IConfigService, { ready: Promise.resolve() }],
+    ]);
+    await host.app.accessor.get(IFeatureAssemblyService).ready;
+    const manager = host.app.accessor.get(IFeatureManager);
+    expect(manager.units()).toHaveLength(0);
+
+    towerEnabled = true;
+    await flushMicrotasks();
+
+    expect(manager.units()).toHaveLength(0);
+    expect(collectionViewOf(host.app, AgentProfileContribution).items).toHaveLength(0);
+    host.dispose();
+  });
+
+  it('does not unload when the flag turns off after ready', async () => {
+    let towerEnabled = true;
+    const host = createScopedTestHost([
+      [IFlagService, stubFlag((id) => id === TOWER_FLAG_ID && towerEnabled)],
+      [IConfigService, { ready: Promise.resolve() }],
+    ]);
+    await host.app.accessor.get(IFeatureAssemblyService).ready;
+    const manager = host.app.accessor.get(IFeatureManager);
+    expect(manager.units()).toHaveLength(1);
+
+    towerEnabled = false;
+    await flushMicrotasks();
+
+    expect(manager.units()).toHaveLength(1);
+    expect(collectionViewOf(host.app, AgentProfileContribution).items).toHaveLength(1);
     host.dispose();
   });
 });

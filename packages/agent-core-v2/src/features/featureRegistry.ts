@@ -1,15 +1,24 @@
 import type { ServiceClassRecipe } from '#/_base/di/fiber';
+import type { FlagId } from '#/app/flag/flagRegistry';
 
-const _featureRecipes: ServiceClassRecipe[] = [];
-
-export function registerFeature(recipe: ServiceClassRecipe): void {
-  _featureRecipes.push(recipe);
+export interface FeatureRegistration {
+  readonly recipe: ServiceClassRecipe;
+  readonly flag?: FlagId;
 }
 
-export function getFeatureRecipes(): readonly ServiceClassRecipe[] {
-  return _featureRecipes;
+const _featureRegistrations: FeatureRegistration[] = [];
+
+export function registerFeature(
+  recipe: ServiceClassRecipe,
+  options: { readonly flag?: FlagId } = {},
+): void {
+  _featureRegistrations.push({ recipe, flag: options.flag });
+}
+
+export function getFeatureRegistrations(): readonly FeatureRegistration[] {
+  return _featureRegistrations;
 }
 
 export function _clearFeatureRecipesForTests(): void {
-  _featureRecipes.length = 0;
+  _featureRegistrations.length = 0;
 }
