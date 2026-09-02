@@ -153,6 +153,7 @@ import {
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { McpConnectionManager } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
 import { loadMcpServers } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
+import { fsSuggestRequestSchema } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
 import { IAppendLogStore } from '@moonshot-ai/agent-core-v2/persistence/interface/appendLogStore';
 import type { McpServerConfig as WorkspaceMcpServerConfig } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
 import {
@@ -633,15 +634,24 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * the web client's @ mention results.
    */
   override async suggestFiles(workDir: string, input: SuggestFilesInput): Promise<SuggestFilesResult | undefined> {
-    const handler = await this.engineAccessor
-      .get(IWorkspaceInstanceManager)
-      .getOrCreate({ root: normalizeRequiredWorkDir('suggestFiles', workDir) });
-    const result = await handler.program.fs.suggest({
+    const parsed = fsSuggestRequestSchema.safeParse({
       query: input.query,
       limit: input.limit ?? 50,
       follow_gitignore: true,
       show_hidden: false,
     });
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      const where = issue !== undefined && issue.path.length > 0 ? `${String(issue.path[0])}: ` : '';
+      throw new KimiError(
+        ErrorCodes.REQUEST_INVALID,
+        `suggestFiles ${where}${issue?.message ?? 'invalid input'}`,
+      );
+    }
+    const handler = await this.engineAccessor
+      .get(IWorkspaceInstanceManager)
+      .getOrCreate({ root: normalizeRequiredWorkDir('suggestFiles', workDir) });
+    const result = await handler.program.fs.suggest(parsed.data);
     return {
       items: result.items.map((item) => ({
         path: item.path,
