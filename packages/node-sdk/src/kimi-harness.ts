@@ -468,6 +468,24 @@ export class KimiHarness {
   }
 
   /**
+   * Deep-merge a patch into the engine's in-memory config layer only —
+   * nothing reaches config.toml, and the layer survives config reloads
+   * until the engine process exits. Intended for ephemeral credentials
+   * (e.g. short-lived SSO tokens the host keeps in a secret store): the
+   * effective config resolves them per request while the disk never
+   * stores them. Re-inject after engine restarts; clear with
+   * {@link clearMemoryConfig}. v1-only hosts throw `not_implemented`.
+   */
+  async setMemoryConfig(patch: KimiConfigPatch): Promise<void> {
+    return this.rpc.setMemoryConfig(patch);
+  }
+
+  /** Drop the given top-level domains from the in-memory config layer. */
+  async clearMemoryConfig(domains: readonly string[]): Promise<void> {
+    return this.rpc.clearMemoryConfig(domains);
+  }
+
+  /**
    * The unified MCP management view: user-level `<KIMI_CODE_HOME>/mcp.json`
    * entries (mutable), plus read-only project-layer entries when `cwd` is
    * given and plugin-contributed entries — each tagged with its `source`,

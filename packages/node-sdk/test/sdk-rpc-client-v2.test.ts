@@ -953,6 +953,29 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  it('setMemoryConfig injects an ephemeral provider apiKey that never reaches config.toml', async () => {
+    const { harness, homeDir } = await makeHarness();
+    try {
+      await harness.setConfig({
+        providers: { okta: { type: 'openai_responses', baseUrl: 'https://api.example.test/v1', apiKey: '' } },
+      });
+      await harness.setMemoryConfig({ providers: { okta: { apiKey: 'okta-access-token' } } });
+      const effective = await harness.getConfig();
+      expect(effective.providers['okta']?.apiKey).toBe('okta-access-token');
+      // The memory layer survives a disk reload…
+      const reloaded = await harness.getConfig({ reload: true });
+      expect(reloaded.providers['okta']?.apiKey).toBe('okta-access-token');
+      // …but nothing is persisted: the token never appears in config.toml.
+      const toml = await readFile(join(homeDir, 'config.toml'), 'utf-8');
+      expect(toml).not.toContain('okta-access-token');
+      await harness.clearMemoryConfig(['providers']);
+      const cleared = await harness.getConfig();
+      expect(cleared.providers['okta']?.apiKey).not.toBe('okta-access-token');
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('round-trips the secondaryModel pool field to the [secondary_model] config section', async () => {
     const { harness, homeDir } = await makeHarness();
     try {

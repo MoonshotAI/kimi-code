@@ -134,6 +134,22 @@ class Bridge {
     return this.call<LoginResult>(Methods.Logout);
   }
 
+  oktaLogin() {
+    return this.call<LoginResult>(Methods.OktaLogin, undefined, OAUTH_REQUEST_TIMEOUT_MS);
+  }
+
+  oktaLogout() {
+    return this.call<LoginResult>(Methods.OktaLogout);
+  }
+
+  oktaStatus() {
+    return this.call<{ configured: boolean; loggedIn: boolean; providerNames: readonly string[] }>(Methods.OktaStatus);
+  }
+
+  getAuthMode() {
+    return this.call<{ mode: "okta" | "kimi"; error: string | null }>(Methods.GetAuthMode);
+  }
+
   saveConfig(sessionConfig: SessionConfig) {
     return this.call<{ ok: boolean }>(Methods.SaveConfig, sessionConfig);
   }

@@ -739,6 +739,26 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     await this.klient.global.config.replaceSections({ sections });
   }
 
+  /**
+   * Same per-domain fan-out as {@link setConfig}, but against the engine's
+   * memory target: deep-merged into the in-memory layer, validated, never
+   * persisted, retained across `reload()`.
+   */
+  override async setMemoryConfig(patch: KimiConfigPatch): Promise<void> {
+    await this.configReady;
+    for (const [domain, domainPatch] of Object.entries(patch)) {
+      if (domainPatch === undefined) continue;
+      await this.klient.global.config.set({ domain, patch: domainPatch, target: 'memory' });
+    }
+  }
+
+  override async clearMemoryConfig(domains: readonly string[]): Promise<void> {
+    await this.configReady;
+    for (const domain of domains) {
+      await this.klient.global.config.replace({ domain, value: null, target: 'memory' });
+    }
+  }
+
   override async listPlugins(): Promise<readonly PluginSummary[]> {
     return this.klient.global.plugins.list();
   }

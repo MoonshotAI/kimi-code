@@ -61,6 +61,11 @@ export const Methods = {
   ShowLogs: "showLogs",
   ReloadWebview: "reloadWebview",
   RespondQuestion: "respondQuestion",
+
+  OktaLogin: "oktaLogin",
+  OktaLogout: "oktaLogout",
+  OktaStatus: "oktaStatus",
+  GetAuthMode: "getAuthMode",
 } as const;
 
 export type RpcMethod = (typeof Methods)[keyof typeof Methods];
@@ -96,6 +101,7 @@ export const Events = {
   FileChangesUpdated: "fileChangesUpdated",
   RollbackInput: "rollbackInput",
   LoginUrl: "loginUrl",
+  OktaLoginUrl: "oktaLoginUrl",
 } as const;
 
 const rpcMethods = new Set<string>(Object.values(Methods));
@@ -148,6 +154,10 @@ function validateParams(method: RpcMethod, params: unknown): boolean {
     case Methods.ClearTrackedFiles:
     case Methods.ShowLogs:
     case Methods.ReloadWebview:
+    case Methods.OktaLogin:
+    case Methods.OktaLogout:
+    case Methods.OktaStatus:
+    case Methods.GetAuthMode:
       return params === undefined;
 
     case Methods.AddInputHistory:

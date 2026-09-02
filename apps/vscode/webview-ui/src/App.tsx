@@ -6,7 +6,7 @@ import { InputArea } from "./components/inputarea/InputArea";
 import { MCPServersModal } from "./components/MCPServersModal";
 import { WorkDirModal } from "./components/WorkDirModal";
 import { ConfigErrorScreen } from "./components/ConfigErrorScreen";
-import { LoginScreen } from "./components/LoginScreen";
+import { LoginScreenGate } from "./components/LoginScreenGate";
 import { Toaster, toast } from "./components/ui/sonner";
 import { useChatStore, useSettingsStore } from "./stores";
 import { bridge, Events } from "./services";
@@ -112,7 +112,7 @@ export default function App() {
     return (
       <div className="flex flex-col h-screen text-foreground overflow-hidden">
         <Header />
-        <LoginScreen onLoginSuccess={handleLoginSuccess} onSkip={handleSkip} />
+        <LoginScreenGate onLoginSuccess={handleLoginSuccess} onSkip={handleSkip} />
         <Toaster position="top-center" />
       </div>
     );

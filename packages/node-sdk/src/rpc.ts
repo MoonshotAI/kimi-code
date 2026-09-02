@@ -370,6 +370,32 @@ export abstract class SDKRpcClientBase {
   }
 
   /**
+   * Deep-merge a patch into the engine's in-memory config layer ONLY —
+   * nothing is persisted to config.toml, and the layer survives config
+   * reloads until the engine process exits. Lets a host inject ephemeral
+   * credentials (e.g. short-lived SSO tokens) that the effective config
+   * resolves but the disk never stores. See {@link clearMemoryConfig}.
+   */
+  setMemoryConfig(_patch: KimiConfigPatch): Promise<void> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'This SDK client does not support in-memory config overrides.',
+    );
+  }
+
+  /**
+   * Drop the given top-level domains from the in-memory config layer (the
+   * on-disk sections are untouched). Clears what {@link setMemoryConfig}
+   * wrote, domain by domain.
+   */
+  clearMemoryConfig(_domains: readonly string[]): Promise<void> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'This SDK client does not support in-memory config overrides.',
+    );
+  }
+
+  /**
    * Upload media bytes to the engine's daemon file store; pair the returned
    * meta with `buildDaemonFileUrl` to reference the file from a prompt. Only
    * the v2 client wires this (through the klient files facade) — the v1

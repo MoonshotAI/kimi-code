@@ -8,6 +8,7 @@ import {
   type LegacyMigrationDiscovery,
   type LegacyMigrationRunResult,
 } from "./migration";
+import { initOktaModule } from "./okta/runtime";
 import { updateLoginContext } from "./utils/context";
 
 let outputChannel: vscode.OutputChannel | undefined;
@@ -28,6 +29,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     (message) => log(message),
   );
   context.subscriptions.push(provider, outputChannel);
+  initOktaModule({ context, harness: provider.harness, log, logError });
 
   let isLoggedIn = false;
   try {
