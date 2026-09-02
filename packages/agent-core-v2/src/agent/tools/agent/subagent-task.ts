@@ -2,7 +2,7 @@ import type { TokenUsage } from '#/kosong/contract/usage';
 import type { SubagentModelSource } from '#/session/subagent/configSection';
 
 import { isAbortError } from '#/_base/utils/abort';
-import { isError2 } from '#/errors';
+import { ErrorCodes, isError2 } from '#/errors';
 import { REPEAT_BREAKER_STOP_REASON } from '#/agent/toolDedupe/toolDedupe';
 import {
   type AgentTask,
@@ -50,7 +50,12 @@ function errorMessage(err: unknown): string {
 }
 
 function stopCodeOf(error: unknown): string | undefined {
-  return isError2(error) ? error.code : undefined;
+  if (!isError2(error)) return undefined;
+  if (error.code === ErrorCodes.AGENT_NO_FINAL_MESSAGE) {
+    const stopReason = error.details?.['stopReason'];
+    if (typeof stopReason === 'string') return stopReason;
+  }
+  return error.code;
 }
 
 function completedSettleReason(stopReason: string | undefined): string | undefined {

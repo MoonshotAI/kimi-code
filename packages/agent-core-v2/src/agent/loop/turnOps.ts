@@ -91,6 +91,7 @@ const turnEndedSchema = z.object({
   reason: z.enum(['completed', 'cancelled', 'failed', 'blocked']),
   error: z.custom<KimiErrorPayload>().optional(),
   durationMs: z.number().optional(),
+  stopReason: z.string().optional(),
 });
 
 export interface TurnEndedPayload {
@@ -118,6 +119,7 @@ export class TurnEnded extends AgentEvent2<TurnEndedPayload> {
     };
     if (this.error !== undefined) record['error'] = this.error;
     if (this.durationMs !== undefined) record['durationMs'] = this.durationMs;
+    if (this.stopReason !== undefined) record['stopReason'] = this.stopReason;
     record['time'] = this.time;
     return record as SerializedEvent2;
   }

@@ -669,6 +669,8 @@ describe('Agent loop', () => {
       (event) => event.type === '[rpc]' && event.event === 'turn.ended',
     );
     expect(turnEnded?.args).toMatchObject({ reason: 'completed', stopReason: 'demo_reason' });
+    const record = (await ctx.persistedWireRecords()).find((entry) => entry.type === 'turn.ended');
+    expect(record).toMatchObject({ turnId: 0, reason: 'completed', stopReason: 'demo_reason' });
   });
 
   it('queues consecutive nextTurn requests in FIFO order without overlapping turns', async () => {

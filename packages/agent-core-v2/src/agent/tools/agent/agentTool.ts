@@ -526,6 +526,7 @@ type SubagentStopReason =
   | 'provider_error'
   | 'no_final_message'
   | 'cancelled'
+  | 'stopped'
   | 'timed_out'
   | 'error';
 
@@ -552,11 +553,13 @@ const NEXT_STEP_BY_REASON: Readonly<Record<SubagentStopReason, string | undefine
   max_steps: RESUME_NEXT_STEP,
   provider_error: RESUME_NEXT_STEP,
   no_final_message: RESUME_NEXT_STEP,
+  stopped: RESUME_NEXT_STEP,
   timed_out: RESUME_NEXT_STEP,
   error: RESUME_NEXT_STEP,
 };
 
 const STOP_REASON_BY_CODE: Readonly<Record<string, SubagentStopReason>> = {
+  [REPEAT_BREAKER_STOP_REASON]: 'repeat_breaker',
   [ErrorCodes.AGENT_MAX_TOKENS_EXCEEDED]: 'max_tokens',
   [ErrorCodes.LOOP_MAX_STEPS_EXCEEDED]: 'max_steps',
   [ErrorCodes.PROVIDER_FILTERED]: 'filtered',
@@ -577,7 +580,9 @@ function failureStopReason(
   stopCode: string | undefined,
 ): SubagentStopReason {
   if (info?.status === 'timed_out') return 'timed_out';
-  if (info?.status === 'killed') return 'cancelled';
+  if (info?.status === 'killed') {
+    return info.stopReason?.trim() === userCancellationReason().message ? 'cancelled' : 'stopped';
+  }
   if (stopCode === undefined) return 'error';
   return STOP_REASON_BY_CODE[stopCode] ?? 'error';
 }
