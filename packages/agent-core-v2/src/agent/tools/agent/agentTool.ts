@@ -42,6 +42,7 @@ import {
   withoutDelegatingTargets,
 } from '#/app/agentProfileCatalog/profile-shared';
 import { ILogService } from '#/_base/log/log';
+import { hasPinnedPermissionMode } from '#/features/tower/tower';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -391,7 +392,9 @@ export class SubagentTool implements ISubagentTool {
         details: { agentId },
       });
     }
-    rebuilt.accessor.get(IAgentPermissionModeService).setMode(this.permissionMode.mode);
+    if (!hasPinnedPermissionMode(rebuilt.accessor.get(IAgentProfileService).data().profileName)) {
+      rebuilt.accessor.get(IAgentPermissionModeService).setMode(this.permissionMode.mode);
+    }
     this.log.info('subagent rebuilt for resume', { agentId, callerAgentId: this.callerAgentId });
     return rebuilt;
   }

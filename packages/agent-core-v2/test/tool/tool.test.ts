@@ -101,6 +101,7 @@ import {
 import { executeTool } from '../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../agent/agentContext/stubs';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
+import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
 
 const signal = new AbortController().signal;
 
@@ -2505,6 +2506,56 @@ describe('Agent tool execution contract', () => {
     expect(setMode.mock.invocationCallOrder[0]).toBeLessThan(
       lifecycle.run.mock.invocationCallOrder[0]!,
     );
+  });
+
+  it('keeps a rebuilt tower worker on its pinned permission mode', async () => {
+    const setMode = vi.fn();
+    const lifecycle = createAgentLifecycleStub({
+      runCompletion: async () => ({ summary: 'worker resumed' }),
+      handleServices: new Map<string, ReadonlyMap<unknown, unknown>>([
+        [
+          'agent-existing',
+          new Map<unknown, unknown>([
+            [
+              IAgentProfileService,
+              {
+                _serviceBrand: undefined,
+                data: () => ({ profileName: TOWER_WORKER_PROFILE }),
+                update: () => {},
+                republishStatus: () => {},
+                getEffectiveThinkingLevel: () => 'off',
+                getActiveToolNames: () => [],
+                isToolActive: () => false,
+              },
+            ],
+            [
+              IAgentPermissionModeService,
+              { _serviceBrand: undefined, mode: 'auto', setMode, onDidChangeMode: Event.None },
+            ],
+          ]),
+        ],
+      ]),
+    });
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(
+        ISessionMetadata,
+        sessionMetadataStub({
+          'agent-existing': { labels: { parentAgentId: 'main', profileName: TOWER_WORKER_PROFILE } },
+        }),
+      ),
+    );
+    context.get(IAgentPermissionModeService).setMode('manual');
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+    });
+
+    expect(result).toEqual({ output: expect.stringContaining(`actual_subagent_type: ${TOWER_WORKER_PROFILE}`) });
+    expect(setMode).not.toHaveBeenCalled();
+    expect(lifecycle.run).toHaveBeenCalledOnce();
   });
 
   it('rejects direct resume of a non-subagent', async () => {
