@@ -548,6 +548,8 @@ HTTP 状态码例外（非 200）：
 
 **触发事件**：`:refresh` / `:refresh_oauth` → `event.model_catalog.changed`（至少一个供应商的别名发生变化时；配置写入同时触发 `event.config.changed`）；`:import_catalog` / `:import_registry` → `event.config.changed`
 
+**响应体**：统一 `ResponseType` 信封，`data` 形态随动作（见下表）。
+
 | 动作 | 请求体 | `data`（code = 0） | HTTP 状态 |
 | --- | --- | --- | --- |
 | `:refresh` | 可选，被忽略 | [T-RefreshProviderModelsResponse](#t-refreshprovidermodelsresponse)（刷新每个供应商） | 200 |
@@ -6279,7 +6281,7 @@ type KimiError = {
 
 转录载荷的类型正本是共享包 `@moonshot-ai/transcript` 的契约（客户端经同一依赖消费），`TranscriptItem` / `TranscriptOperation` 等嵌套类型均定义于该包。
 
-**T-TranscriptResponse**：
+#### T-TranscriptResponse
 
 ```ts
 type TranscriptResponse = {
@@ -6298,7 +6300,7 @@ type TranscriptResponse = {
 };
 ```
 
-**T-TranscriptOpsCatchupResponse**：
+#### T-TranscriptOpsCatchupResponse
 
 ```ts
 type TranscriptOpsCatchupResponse = {
@@ -6311,7 +6313,7 @@ type TranscriptOpsCatchupResponse = {
 
 `TranscriptOperation` 全集（判别字段为 `op`）：reset / turn.upsert / step.upsert / frame.upsert / append / marker.upsert / taskref.upsert / task.upsert / interaction.upsert / attachment.upsert / todo.upsert / prompt.upsert / meta.merge / items.remove。
 
-**T-TranscriptUserMessagesResponse**：
+#### T-TranscriptUserMessagesResponse
 
 ```ts
 type TranscriptUserMessagesResponse = {
@@ -6331,7 +6333,7 @@ type TranscriptUserMessagesResponse = {
 };
 ```
 
-**T-TranscriptPlanResponse**：
+#### T-TranscriptPlanResponse
 
 ```ts
 type TranscriptPlanResponse = {
