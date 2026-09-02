@@ -67,6 +67,28 @@ describe('Session context', () => {
     }
   });
 
+  it('serves getTodos on the v1 engine and keeps it callable after undo', async () => {
+    const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-context-todos-home-');
+    const workDir = await makeTempDir(tempDirs, 'kimi-sdk-context-todos-work-');
+    await writeTestConfig(homeDir, 200_000);
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      const session = await harness.createSession({ id: 'ses_context_todos', workDir });
+      await session.importContext('Earlier context to undo.', "file 'notes.md'");
+
+      await expect(session.getTodos()).resolves.toEqual([]);
+
+      await session.undoHistory(1);
+
+      // The TUI's post-undo todo panel refresh relies on this resolving
+      // instead of throwing NOT_IMPLEMENTED.
+      await expect(session.getTodos()).resolves.toEqual([]);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('appends old-compatible user context markup when importing raw content', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-context-import-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-context-import-work-');

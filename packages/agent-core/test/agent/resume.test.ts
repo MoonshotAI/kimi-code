@@ -230,6 +230,82 @@ describe('Agent resume', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('replays context.undo and restores the pre-undo tool store', async () => {
+    // Legacy wire shape: the undo record carries no compensating store write,
+    // so replay itself must fold the store back to the pre-undo value.
+    const todosA = [{ title: 'first task', status: 'done' as const }];
+    const todosB = [{ title: 'second task', status: 'in_progress' as const }];
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'tools.update_store',
+        key: 'todo',
+        value: todosA,
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'undone prompt' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'tools.update_store',
+        key: 'todo',
+        value: todosB,
+      },
+      { type: 'context.undo', count: 1 },
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    expect(ctx.agent.tools.storeData()).toEqual({ todo: todosA });
+    expect(ctx.agent.context.history).toEqual([]);
+    await ctx.expectResumeMatches();
+  });
+
+  it('replays compensating store records after undo idempotently', async () => {
+    // New wire shape: the live undo already logged the compensating write.
+    const todosA = [{ title: 'first task', status: 'done' as const }];
+    const todosB = [{ title: 'second task', status: 'in_progress' as const }];
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'tools.update_store',
+        key: 'todo',
+        value: todosA,
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'undone prompt' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'tools.update_store',
+        key: 'todo',
+        value: todosB,
+      },
+      { type: 'context.undo', count: 1 },
+      {
+        type: 'tools.update_store',
+        key: 'todo',
+        value: todosA,
+      },
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    expect(ctx.agent.tools.storeData()).toEqual({ todo: todosA });
+    expect(ctx.agent.context.history).toEqual([]);
+    await ctx.expectResumeMatches();
+  });
+
   it('applies wire migrations while replaying persisted records', async () => {
     const persistence = new RecordingAgentPersistence([
       {
