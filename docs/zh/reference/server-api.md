@@ -676,147 +676,257 @@ HTTP 状态码例外（非 200）：
 
 鉴权状态快照：默认模型能否解析到可用的供应商配置，以及托管供应商的登录状态。它不做凭据校验，此后的对话请求仍可能以 `40111` / `40112` 失败。
 
-**返回**：`ResponseType<`[T-AuthSummary](#t-authsummary)`>`。
+**响应体**：`ResponseType<`[T-AuthSummary](#t-authsummary)`>`。
 
-**示例**：
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-AuthSummary](#t-authsummary) | 鉴权状态快照；字段见类型汇总 |
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "models_ready": true, "providers_count": 1, "managed_provider": { "name": "managed:kimi-code", "status": "authenticated" } }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "models_ready": true,
+    "providers_count": 1,
+    "managed_provider": { "name": "managed:kimi-code", "status": "authenticated" }
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/oauth/login`
 
 为托管供应商发起 OAuth device-code（设备码）登录流程；发起新流程会中止同一供应商进行中的流程。账号已登录时无需用户交互，响应会立即报告 `authenticated`。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `provider` | string | 否 | 托管供应商名称。默认 `managed:kimi-code` |
 | `region` | string | 否 | `mainland-cn` 或 `global`；覆盖区域解析结果，仅对本次流程生效 |
 
-**返回**：`ResponseType<`[T-OAuthFlowStart](#t-oauthflowstart)`>`——进行中的流程报告 `status: "pending"`，打开 `verification_uri_complete`（或打开 `verification_uri` 并输入 `user_code`），然后每隔 `interval` 秒轮询 `GET /api/v1/oauth/login`；已登录的快速路径报告 `status: "authenticated"`。
+**响应体**：`ResponseType<`[T-OAuthFlowStart](#t-oauthflowstart)`>`——进行中的流程报告 `status: "pending"`，打开 `verification_uri_complete`（或打开 `verification_uri` 并输入 `user_code`），然后每隔 `interval` 秒轮询 `GET /api/v1/oauth/login`；已登录的快速路径报告 `status: "authenticated"`。
 
-**示例**：
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-OAuthFlowStart](#t-oauthflowstart) | 流程发起结果；字段见类型汇总 |
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "flow_id": "01JZX4...", "provider": "managed:kimi-code", "status": "pending", "verification_uri": "https://www.kimi.com/code/device", "verification_uri_complete": "https://www.kimi.com/code/device?code=ABCD-EFGH", "user_code": "ABCD-EFGH", "expires_in": 600, "interval": 5, "expires_at": "2026-09-02T08:10:00.000Z" }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "flow_id": "01JZX4...",
+    "provider": "managed:kimi-code",
+    "status": "pending",
+    "verification_uri": "https://www.kimi.com/code/device",
+    "verification_uri_complete": "https://www.kimi.com/code/device?code=ABCD-EFGH",
+    "user_code": "ABCD-EFGH",
+    "expires_in": 600,
+    "interval": 5,
+    "expires_at": "2026-09-02T08:10:00.000Z"
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/oauth/login`
 
 轮询某供应商的登录流程状态；尚未发起过流程时 `data` 为 `null`。
 
-**Query**：
+**查询参数**：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `provider` | string | 托管供应商名称。默认 `managed:kimi-code` |
 
-**返回**：`ResponseType<`[T-OAuthFlowSnapshot](#t-oauthflowsnapshot)`>` 或 `null`。
+**响应体**：`ResponseType<`[T-OAuthFlowSnapshot](#t-oauthflowsnapshot)` | null>`。
 
-**示例**：
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-OAuthFlowSnapshot](#t-oauthflowsnapshot) `| null` | 流程状态快照；未发起过流程时为 `null` |
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "flow_id": "01JZX4...", "provider": "managed:kimi-code", "status": "authenticated", "verification_uri": "...", "verification_uri_complete": "...", "user_code": "ABCD-EFGH", "expires_in": 600, "expires_at": "2026-09-02T08:10:00.000Z", "interval": 5, "resolved_at": "2026-09-02T08:02:00.000Z" }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "flow_id": "01JZX4...",
+    "provider": "managed:kimi-code",
+    "status": "authenticated",
+    "verification_uri": "...",
+    "verification_uri_complete": "...",
+    "user_code": "ABCD-EFGH",
+    "expires_in": 600,
+    "expires_at": "2026-09-02T08:10:00.000Z",
+    "interval": 5,
+    "resolved_at": "2026-09-02T08:02:00.000Z"
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `DELETE /api/v1/oauth/login`
 
 取消某供应商进行中的登录流程；没有进行中的流程时为空操作，返回最近一次已知状态。
 
-**Query**：
+**查询参数**：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `provider` | string | 托管供应商名称。默认 `managed:kimi-code` |
 
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ cancelled: boolean, status: string }>`。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `cancelled` | boolean | 只有确实中止了一个 `pending` 流程时才为 `true` |
 | `status` | string | 调用后的流程状态，取值同 [T-OAuthFlowSnapshot](#t-oauthflowsnapshot) 的 `status` |
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "cancelled": true, "status": "cancelled" }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "cancelled": true, "status": "cancelled" },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/oauth/logout`
 
 登出托管供应商：丢弃已存储的 OAuth 凭据、中止进行中的登录流程，并把托管供应商从配置中移除。OAuth 托管的供应商拒绝手动编辑与删除，因此要移除它需先登出。
 
-**Body**：
+**触发事件**：`event.config.changed`
+
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `provider` | string | 否 | 托管供应商名称。默认 `managed:kimi-code` |
 
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ logged_out: boolean, provider: string }>`。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `logged_out` | boolean | 恒 `true` |
 | `provider` | string | 被登出的供应商名 |
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "logged_out": true, "provider": "managed:kimi-code" }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "logged_out": true, "provider": "managed:kimi-code" },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/oauth/usage`
 
 托管账号的套餐用量与限额，实时取自账号服务。上游失败不会让响应失败——以 `kind: "error"` 带内返回。
 
-**Query**：
+**查询参数**：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `provider` | string | 托管供应商名称。默认 `managed:kimi-code` |
 
-**返回**：`ResponseType<`[T-ManagedUsageResult](#t-managedusageresult)`>`。
+**响应体**：`ResponseType<`[T-ManagedUsageResult](#t-managedusageresult)`>`。
 
-**示例**：
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-ManagedUsageResult](#t-managedusageresult) | 用量与限额；字段见类型汇总 |
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "kind": "ok", "summary": { "name": "每周额度", "window": { "duration": 1, "unit": "week" }, "used": 42, "limit": 100, "reset_at": "2026-09-09T00:00:00.000Z" }, "limits": [ "..." ], "extra_usage": null }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "kind": "ok",
+    "summary": {
+      "name": "每周额度",
+      "window": { "duration": 1, "unit": "week" },
+      "used": 42,
+      "limit": 100,
+      "reset_at": "2026-09-09T00:00:00.000Z"
+    },
+    "limits": [ "..." ],
+    "extra_usage": null
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/oauth/userinfo`
 
 托管账号的资料；带内 `kind: "error"` 约定与 `GET /api/v1/oauth/usage` 相同。
 
-**Query**：
+**查询参数**：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `provider` | string | 托管供应商名称。默认 `managed:kimi-code` |
 
-**返回**：`ResponseType<`[T-ManagedUserInfoResult](#t-manageduserinforesult)`>`（camelCase 载荷）。
+**响应体**：`ResponseType<`[T-ManagedUserInfoResult](#t-manageduserinforesult)`>`（camelCase 载荷）。
 
-**示例**：
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-ManagedUserInfoResult](#t-manageduserinforesult) | 账号资料（camelCase）；字段见类型汇总 |
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "kind": "ok", "userInfo": { "userId": "u_...", "nickname": "dev", "status": "active", "region": "mainland-cn", "userLevel": 2, "userLevelName": "...", "domain": 1, "domainName": "..." } }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "kind": "ok",
+    "userInfo": {
+      "userId": "u_...",
+      "nickname": "dev",
+      "status": "active",
+      "region": "mainland-cn",
+      "userLevel": 2,
+      "userLevelName": "...",
+      "domain": 1,
+      "domainName": "..."
+    }
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/oauth/region`
 
 解析该客户端所属的 Kimi 区域。结果在本地推导，不经网络探测：优先取环境变量或配置固定的 OAuth host，其次是已配置的 OAuth key，再次是 home 目录中的区域标记文件；默认为 `mainland-cn`。无参数。
 
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ region: string }>`。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `region` | string | `mainland-cn` / `global` |
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "region": "mainland-cn" }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "region": "mainland-cn" },
+  "request_id": "01JZX4..."
+}
 ```
 
 ### 工作区与会话
