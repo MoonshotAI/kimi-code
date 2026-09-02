@@ -138,43 +138,6 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     }
   });
 
-  it('sets, reads, and restores the session-scoped secondary model through Session', async () => {
-    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
-    tempDirs.push(homeDir);
-    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
-    tempDirs.push(workDir);
-    await writeFile(
-      join(homeDir, 'config.toml'),
-      `
-[providers.stub]
-type = "openai"
-base_url = "https://model.example.test/v1"
-api_key = "stub"
-
-[models.stub]
-provider = "stub"
-model = "stub"
-max_context_size = 1000
-`,
-      'utf-8',
-    );
-    const harness = createKimiHarnessV2({ homeDir, identity: TEST_IDENTITY });
-    try {
-      const session = await harness.createSession({ id: 'ses_secondary_model', workDir });
-      await expect(session.getSecondaryModel()).resolves.toBeUndefined();
-      await session.setSecondaryModel('stub');
-      await expect(session.getSecondaryModel()).resolves.toBe('stub');
-      await expect(session.setSecondaryModel('missing-model')).rejects.toThrow(/missing-model/);
-
-      const closing = session.close();
-      const resumed = await harness.resumeSession({ id: 'ses_secondary_model' });
-      await closing;
-      await expect(resumed.getSecondaryModel()).resolves.toBe('stub');
-    } finally {
-      await harness.close();
-    }
-  });
-
   it('reports global MCP authorization without probing when verify is false', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);

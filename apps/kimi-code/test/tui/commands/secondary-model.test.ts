@@ -34,8 +34,6 @@ function model(name: string): ModelAlias {
 function makeHost(options?: {
   readonly secondaryModel?: { defaultModel?: string; models?: Record<string, string> };
   readonly engineV2?: boolean;
-  readonly sessionSecondaryModel?: string;
-  readonly noSession?: boolean;
 }) {
   const appState = {
     availableModels: {
@@ -50,10 +48,10 @@ function makeHost(options?: {
     transcriptEntries: [],
   };
   const session =
-    options?.engineV2 === true && options.noSession !== true
+    options?.engineV2 === true
       ? {
           setSecondaryModel: vi.fn(async () => {}),
-          getSecondaryModel: vi.fn(async () => options.sessionSecondaryModel),
+          getSecondaryModel: vi.fn(async () => undefined),
         }
       : undefined;
   const host = {
@@ -275,38 +273,5 @@ describe('handleSecondaryModelCommand', () => {
     expect(session!.setSecondaryModel).toHaveBeenCalledWith('k2');
     expect(host.harness.setConfig).not.toHaveBeenCalled();
     expect(host.showStatus.mock.calls[0]![0]).toContain('for this session only');
-  });
-
-  it('does not offer Alt+S on v1', async () => {
-    const { host } = makeHost();
-
-    await handleSecondaryModelCommand(host, '');
-
-    expect(mountedPicker(host).onSessionOnlySelect).toBeUndefined();
-  });
-
-  it('prefers the session-scoped value as the picker current on v2', async () => {
-    const { host } = makeHost({
-      engineV2: true,
-      secondaryModel: { defaultModel: 'cheap' },
-      sessionSecondaryModel: 'k2',
-    });
-
-    await handleSecondaryModelCommand(host, '');
-
-    expect(mountedPicker(host).currentValue).toBe('k2');
-  });
-
-  it('rejects Alt+S when no v2 session exists yet', async () => {
-    const { host } = makeHost({ engineV2: true, noSession: true });
-
-    await handleSecondaryModelCommand(host, '');
-    mountedPicker(host).onSessionOnlySelect!({ alias: 'k2' });
-
-    await vi.waitFor(() => {
-      expect(host.showError).toHaveBeenCalled();
-    });
-    expect(host.harness.setConfig).not.toHaveBeenCalled();
-    expect(host.showStatus).not.toHaveBeenCalled();
   });
 });

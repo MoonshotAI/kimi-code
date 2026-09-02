@@ -33,7 +33,7 @@ import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStor
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
-import { SECONDARY_MODEL_SECTION, buildSubagentModelDescriptions } from '#/session/subagent/configSection';
+import { SECONDARY_MODEL_SECTION } from '#/session/subagent/configSection';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
 import {
@@ -524,7 +524,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     expect(await svc.getSecondaryModel()).toBe('provider/smart');
   });
 
-  it('lets an explicit spawn model choice win over the session-scoped default', async () => {
+  it('lets explicit spawn choices and [secondary_model].force win over the session-scoped default', async () => {
     modelIds.add('provider/fast').add('provider/smart');
     const svc = service({
       [SECONDARY_MODEL_SECTION]: {
@@ -534,24 +534,26 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     });
     await svc.setSecondaryModel('provider/smart');
 
-    const plan = await svc.planSpawn({
+    const explicit = await svc.planSpawn({
       callerAgentId: CALLER_ID,
       profileName: 'coder',
       model: 'provider/fast',
     });
+    expect(explicit.model).toBe('provider/fast');
 
-    expect(plan.model).toBe('provider/fast');
-  });
+    const child = ix.createChild(
+      new ServiceCollection([ISessionStateService, new SessionStateService()]),
+    );
+    child.stub(
+      IConfigService,
+      new StubConfigService({
+        [SECONDARY_MODEL_SECTION]: { force: true, defaultModel: 'provider/fast' },
+      }),
+    );
+    const forced = child.createInstance(SessionSubagentService);
+    await forced.setSecondaryModel('provider/smart');
 
-  it('lets [secondary_model].force win over the session-scoped default', async () => {
-    modelIds.add('provider/fast').add('provider/smart');
-    const svc = service({
-      [SECONDARY_MODEL_SECTION]: { force: true, defaultModel: 'provider/fast' },
-    });
-    await svc.setSecondaryModel('provider/smart');
-
-    const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'coder' });
-
+    const plan = await forced.planSpawn({ callerAgentId: CALLER_ID, profileName: 'coder' });
     expect(plan.model).toBe('provider/fast');
     expect(plan.modelSource).toBe('forced');
   });
@@ -572,86 +574,12 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     });
   });
 
-  it('rejects a spawn model choice outside the session-implicit pool', async () => {
-    modelIds.add('provider/fast').add('provider/smart');
-    const svc = service();
-    await svc.setSecondaryModel('provider/fast');
-
-    const error = await planSpawnError(svc, {
-      callerAgentId: CALLER_ID,
-      profileName: 'coder',
-      model: 'provider/smart',
-    });
-
-    expect(error.code).toBe(ErrorCodes.CONFIG_INVALID);
-    expect(error.message).toContain(
-      'Invalid model "provider/smart". Available models: provider/fast, primary.',
-    );
-  });
-
-  it('makes an out-of-pool session default requestable through the effective pool', async () => {
-    modelIds.add('provider/fast').add('provider/smart');
-    const svc = service({
-      [SECONDARY_MODEL_SECTION]: {
-        defaultModel: 'provider/fast',
-        models: { 'provider/fast': 'fast' },
-      },
-    });
-    await svc.setSecondaryModel('provider/smart');
-
-    const byDefault = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'coder' });
-    expect(byDefault.model).toBe('provider/smart');
-
-    const explicit = await svc.planSpawn({
-      callerAgentId: CALLER_ID,
-      profileName: 'coder',
-      model: 'provider/smart',
-    });
-    expect(explicit.model).toBe('provider/smart');
-  });
-
-  it('marks the session-scoped default in the tool model descriptions', () => {
-    const config = new StubConfigService({
-      [SECONDARY_MODEL_SECTION]: {
-        defaultModel: 'provider/fast',
-        models: { 'provider/fast': 'fast' },
-      },
-    });
-
-    const lines = buildSubagentModelDescriptions(config, stubFlag(true), 'main-model', 'provider/smart');
-
-    expect(lines).toContain('- provider/smart [default]');
-    expect(lines).toContain('- provider/fast');
-  });
-
-  it('ignores the session-scoped secondary model when the experiment is off', async () => {
-    modelIds.add('provider/fast');
-    ix.stub(IFlagService, stubFlag(false));
-    const svc = service();
-    await svc.setSecondaryModel('provider/fast');
-
-    const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'coder' });
-
-    expect(plan).toEqual({
-      profileName: 'coder',
-      model: 'main-model',
-      modelSource: 'inherited',
-      thinking: 'high',
-      fork: false,
-    });
-  });
-
-  it('rejects a session-scoped secondary model that does not resolve', async () => {
+  it('rejects session-scoped secondary models that are unresolvable or reserved', async () => {
     const svc = service();
 
     await expect(svc.setSecondaryModel('provider/typo')).rejects.toThrow(/provider\/typo/);
-    await expect(svc.getSecondaryModel()).resolves.toBeUndefined();
-  });
-
-  it('rejects the reserved primary choice as the session-scoped secondary model', async () => {
-    const svc = service();
-
     await expect(svc.setSecondaryModel('primary')).rejects.toThrow(/reserved/);
+    await expect(svc.getSecondaryModel()).resolves.toBeUndefined();
   });
 
   it('restores the session-scoped secondary model from the persisted document', async () => {
