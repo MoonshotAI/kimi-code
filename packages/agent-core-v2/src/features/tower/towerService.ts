@@ -2,6 +2,7 @@ import { join } from 'node:path';
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService, type ISessionScopeHandle } from '#/_base/di/scope';
+import { ILogService } from '#/_base/log/log';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
@@ -70,6 +71,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @IAgentReminderService reminder: IAgentReminderService,
     @IAgentContextMemoryService context: IAgentContextMemoryService,
     @IEventBus eventBus: IEventBus,
+    @ILogService private readonly log: ILogService,
   ) {
     super();
     this.agentState.contributeState(towerKey);
@@ -231,6 +233,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
   private async prepareUserBase(base: string): Promise<void> {
     const repoRoot = resolveTowerRepoRoot(this.sessionCtx.cwd);
     const store = new TowerStore(repoRoot);
+    await store.ensureRepository(base);
     if (await store.isInitialized()) {
       const state = await store.load();
       if (state.base === base) {
@@ -296,6 +299,19 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     if (!this.agentState.get(towerKey)) return;
     this.lastPublished = false;
     void this.dispatcher.dispatch(new TowerModeExit({ agentId: this.agentCtx.agentId }));
+    void this.releaseTowerOwnership();
+  }
+
+  private async releaseTowerOwnership(): Promise<void> {
+    const store = new TowerStore(resolveTowerRepoRoot(this.sessionCtx.cwd));
+    await store.release(this.sessionCtx.sessionId).then(
+      () => undefined,
+      (error: unknown) => {
+        this.log.warn(
+          `failed to release tower workspace ownership: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      },
+    );
   }
 
   get isActive(): boolean {
@@ -313,7 +329,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     const owner = await this.resolveTowerOwner();
     if (owner === undefined || owner === this.sessionCtx.sessionId) return;
     if (this.sessions.get(owner) === undefined) return;
-    void this.dispatcher.dispatch(new TowerModeExit({ agentId: this.agentCtx.agentId }));
+    this.exit();
   }
 
   private async resolveTowerOwner(): Promise<string | undefined> {
