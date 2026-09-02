@@ -2,6 +2,7 @@
 import { z } from 'zod';
 
 import { IInstantiationService } from '#/_base/di/instantiation';
+import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
@@ -219,13 +220,19 @@ function mergeSteerMessages(records: readonly Record[]): ContextMessage {
 
 export const promptLaunchingKey = defineState<boolean>('prompt.launching', () => false);
 
-export class AgentPromptService implements IAgentPromptService {
+export const STEER_REMINDER = [
+  'The user sent a new message while you were working; it appears above, delivered into the running turn.',
+  'Address it as you continue this turn; where it changes the current task or approach, the new message takes precedence.',
+].join(' ');
+
+export class AgentPromptService extends Disposable implements IAgentPromptService {
   declare readonly _serviceBrand: undefined;
   private active: (Record & { turn: Turn }) | undefined;
   private readonly pending: Record[] = [];
   private readonly steered = new Map<string, Record[]>();
   private readonly reservedPromptIds = new Set<string>();
   private steering = 0;
+  private steerReminderArmed = false;
   private fullCompactionService: IAgentFullCompactionService | undefined;
   readonly hooks = { onBeforeSubmitPrompt: new OrderedHookSlot<PromptSubmitContext>() };
 
@@ -244,13 +251,19 @@ export class AgentPromptService implements IAgentPromptService {
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {
+    super();
     this.states.contributeState(promptLaunchingKey);
     this.states.contributeState(promptAdmissionKey);
     this.states.contributeState(promptResolutionKey);
-    toolExecutor.hooks.onDidExecuteTool.register('prompt-service-delivery', async (ctx, next) => {
+    this._register(this.reminder.register('steer', () => (this.steerReminderArmed ? STEER_REMINDER : undefined)));
+    this._register(this.loop.hooks.onDidFinishStep.register('steer-reminder', async (_ctx, next) => {
+      this.steerReminderArmed = false;
+      await next();
+    }));
+    this._register(toolExecutor.hooks.onDidExecuteTool.register('prompt-service-delivery', async (ctx, next) => {
       await this.deliverToolResult(ctx);
       await next();
-    });
+    }));
   }
 
   private get launching(): boolean {
@@ -413,6 +426,7 @@ export class AgentPromptService implements IAgentPromptService {
       this.pending.splice(index, 1);
     }
     const request = new SteerStepRequest(rerouted, captions, this.reminder, (materialized) => {
+      this.steerReminderArmed = true;
       void this.dispatcher.dispatch(
         new TurnSteer({
           agentId: this.scopeContext.agentId,
@@ -513,6 +527,7 @@ export class AgentPromptService implements IAgentPromptService {
   private settle(item: Record, result: TurnResult): void {
     if (this.active?.id !== item.id) return;
     this.active = undefined;
+    this.steerReminderArmed = false;
     const state = result.type === 'cancelled' ? 'cancelled' : result.type === 'failed' ? 'failed' : 'completed';
     item.state = state; item.completionDeferred.resolve({ promptId: item.id, result, state });
     for (const child of this.steered.get(item.id) ?? []) { child.state = state; child.completionDeferred.resolve({ promptId: child.id, result, state }); }
