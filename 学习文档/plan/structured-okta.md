@@ -69,18 +69,19 @@ IdP 与网关由不同的人管、变更时机不同，拆开互不牵连。都�
 
 ### 供给结果（按 `(协议, apiBase)` 分组）
 
-每组一个 provider 段，段名 `<前缀>-<协议>-<主机名>`（同主机同协议的第二组加 `-2`；分组按排序遍历，**同目录重登录段名稳定**）：
+每组一个 provider 段，段名 `<前缀>-<协议>`（短名、不含主机名；同协议的第二组加 `-2`；分组按排序遍历，**同目录重登录段名稳定**）。每个模型条目**显式写 `protocol`**（聊天 preflight 按 `models.<id>.protocol` 校验，不依赖 provider.type 回退；四个 wire 协议 anthropic/openai/openai_responses/google-genai 可写在模型上，kimi/vertexai 只能留在 provider.type）：
 
 ```toml
-[providers.okta-openai_responses-one.example.internal]
+[providers.okta-openai_responses]
 type = "openai_responses"
 baseUrl = "https://one.example.internal/v1"
 apiKey = ""                      # 永远空：真实 token 在引擎内存层
 
-[models."okta-openai_responses-one.example.internal/gpt-5.4"]
-provider = "okta-openai_responses-one.example.internal"
+[models."okta-openai_responses/gpt-5.4"]
+provider = "okta-openai_responses"
 model = "gpt-5.4"
 displayName = "gpt-5.4"
+protocol = "openai_responses"    # 显式声明，preflight 直接满足
 maxContextSize = 200000
 ```
 
@@ -161,3 +162,5 @@ Okta 侧：OIDC 应用（Native/SPA 均可，PKCE 必选 + Refresh Token grant�
 | 7 | 内置别名 `openrouter → openai`（代码里猜） | 用户：他们 openrouter 标签实际也是 Responses API——内置猜测与部署现实相撞 | 删除全部内置映射；`protocolAliases` 是唯一映射来源，未映射报错点名 |
 | 8 | `GetAuthMode` 失败静默回落默认 | 用户：错误应该显示在 Okta 页面告诉用户 | RPC 返回 `{mode, error}`，错误渲染为页面横幅 |
 | 9 | 回调只有回环 server 一种 | 用户：管理员在 Okta 注册的 redirect_uri 是 `vscode://…` 深链，不是 localhost | 双通路：okta.json 配 `redirectUri` 即走 vscode:// 深链（UriHandler 收 code）；不配保持回环默认 |
+| 10 | 段名 `<前缀>-<协议>-<主机名>`（如 `okta-openai_responses-tss-apim-dr.aiaazure.biz`，太长） | 用户实测反馈太啰嗦 | 段名缩短为 `<前缀>-<协议>`（同协议第二组 `-2`）；旧长名段带前缀，重登录自愈清除 |
+| 11 | 模型 protocol 依赖 provider.type 回退 | 用户实测发消息报 `must declare a wire protocol (models.<id>.protocol)`——某条解析链只看模型级 protocol | 每个模型条目显式写 `protocol`（四个 wire 协议直接写；kimi/vertexai 留在 provider.type），belt-and-braces |

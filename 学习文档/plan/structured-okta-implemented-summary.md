@@ -120,23 +120,24 @@ config.toml 里 provider 写 `apiKey: ""`（引擎视为"未设置"），`~/.kim
 | `apiBase` | **该模型自己的推理端点**（provider 段的 baseUrl） |
 | `contextLength` | 窗口大小（字符串/数字均可），逐模型写 `maxContextSize`；缺失用 defaultContextLength |
 
-**供给结果**（按 `(provider, apiBase)` 分组，每组一个段；段名 `<前缀>-<协议>-<主机名>`，同主机同协议的第二个组加 `-2`）：
+**供给结果**（按 `(协议, apiBase)` 分组，每组一个段；段名 `<前缀>-<协议>` 短名（同协议第二组 `-2`）；每个模型条目显式写 `protocol` 满足聊天 preflight 的 `models.<id>.protocol` 校验）：
 
 ```toml
-[providers.okta-openai-one.example.internal]
+[providers.okta-openai]
 type = "openai"
 baseUrl = "https://one.example.internal/v1"
 apiKey = ""
 
-[providers.okta-anthropic-two.example.internal]
+[providers.okta-anthropic]
 type = "anthropic"
 baseUrl = "https://two.example.internal/v1"
 apiKey = ""
 
-[models."okta-openai-one.example.internal/gpt-5.4"]
-provider = "okta-openai-one.example.internal"
+[models."okta-openai/gpt-5.4"]
+provider = "okta-openai"
 model = "gpt-5.4"
 displayName = "gpt-5.4"
+protocol = "openai"
 maxContextSize = 200000
 ```
 
