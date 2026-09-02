@@ -22,7 +22,6 @@ import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
-import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ToolCall } from '#/kosong/contract/message';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -176,7 +175,6 @@ describe('AgentPlanService plan-guard listener', () => {
         });
         reg.definePartialInstance(IAgentContextMemoryService, {});
         reg.defineInstance(IAgentReminderService, createReminderStub());
-        reg.definePartialInstance(IAgentTelemetryContextService, { set: () => {} });
         reg.defineInstance(IAgentToolExecutorService, executorEvents.executor);
         reg.defineInstance(IAgentToolApprovalService, toolApproval);
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
@@ -358,7 +356,7 @@ describe('AgentPlanService plan-guard listener', () => {
       expect(requests[0]?.ask.reason).toEqual({ has_options: false });
       expect(records).toContainEqual({
         event: 'plan_submitted',
-        properties: { has_options: false },
+        properties: { has_options: false, mode: 'plan' },
       });
       expect(decision?.veto).toBeDefined();
     });
@@ -380,11 +378,11 @@ describe('AgentPlanService plan-guard listener', () => {
       expect(decision?.veto?.output).toContain('## Approved Plan:\n# Plan');
       expect(records).toContainEqual({
         event: 'plan_submitted',
-        properties: { has_options: true },
+        properties: { has_options: true, mode: 'plan' },
       });
       expect(records).toContainEqual({
         event: 'plan_resolved',
-        properties: { outcome: 'approved', chosen_option: 'Approach B' },
+        properties: { outcome: 'approved', chosen_option: 'Approach B', mode: 'agent' },
       });
       expect(await svc.status()).toBeNull();
     });
@@ -401,7 +399,7 @@ describe('AgentPlanService plan-guard listener', () => {
       expect(decision?.veto?.output).not.toContain('Selected approach:');
       expect(records).toContainEqual({
         event: 'plan_resolved',
-        properties: { outcome: 'approved' },
+        properties: { outcome: 'approved', mode: 'agent' },
       });
       expect(await svc.status()).toBeNull();
     });
@@ -432,7 +430,7 @@ describe('AgentPlanService plan-guard listener', () => {
       });
       expect(records).toContainEqual({
         event: 'plan_resolved',
-        properties: { outcome: 'rejected_and_exited' },
+        properties: { outcome: 'rejected_and_exited', mode: 'plan' },
       });
       expect(await svc.status()).toBeNull();
     });
@@ -452,7 +450,7 @@ describe('AgentPlanService plan-guard listener', () => {
       expect(decision?.veto?.output).toContain('Add verification.');
       expect(records).toContainEqual({
         event: 'plan_resolved',
-        properties: { outcome: 'revise', has_feedback: true },
+        properties: { outcome: 'revise', has_feedback: true, mode: 'plan' },
       });
       expect(await svc.status()).not.toBeNull();
     });
@@ -471,7 +469,7 @@ describe('AgentPlanService plan-guard listener', () => {
       });
       expect(records).toContainEqual({
         event: 'plan_resolved',
-        properties: { outcome: 'rejected' },
+        properties: { outcome: 'rejected', mode: 'plan' },
       });
       expect(await svc.status()).not.toBeNull();
     });
@@ -489,7 +487,7 @@ describe('AgentPlanService plan-guard listener', () => {
       });
       expect(records).toContainEqual({
         event: 'plan_resolved',
-        properties: { outcome: 'dismissed' },
+        properties: { outcome: 'dismissed', mode: 'plan' },
       });
       expect(await svc.status()).not.toBeNull();
     });

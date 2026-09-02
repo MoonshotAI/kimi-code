@@ -24,6 +24,7 @@ import { RetryStepRequest } from '#/agent/prompt/promptStepRequests';
 import type { ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IEventBus } from '#/app/event/eventBus';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { userCancellationReason } from '#/_base/utils/abort';
 
 import {
@@ -1147,6 +1148,24 @@ describe('turn telemetry', () => {
           trace_id: 'trace-turn-1',
         }),
       });
+    } finally {
+      await local.dispose();
+    }
+  });
+
+  it('clears the ambient trace id when the turn ends', async () => {
+    const records: TelemetryRecord[] = [];
+    const local = createTestAgent({ telemetry: recordingTelemetry(records) });
+    try {
+      local.get(IAgentProfileService).update({ activeToolNames: [] });
+      local.mockNextProviderResponse({
+        parts: [{ type: 'text', text: 'hi' }],
+        traceId: 'trace-turn-clear',
+      });
+      await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+      await local.untilTurnEnd();
+
+      expect(local.get(ITelemetryService).getContext()['trace_id']).toBeUndefined();
     } finally {
       await local.dispose();
     }

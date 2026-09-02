@@ -34,7 +34,8 @@ Highest wins; env is read live on every call (nothing cached):
 ## Config integration
 
 - `FlagService` registers the `[experimental]` section into `IConfigRegistry` at construction (`registerSection('experimental', ExperimentalConfigSchema)`) and reads overrides from `IConfigService`.
-- It subscribes `IConfigService.onDidChangeConfiguration` and refreshes overrides whenever the `experimental` domain changes, so config edits apply live.
+- It subscribes `IConfigService.onDidChangeConfiguration` and refreshes overrides whenever the `experimental` domain changes, so config edits apply live. `ConfigService` seeds its state synchronously at construction (a best-effort sync read of the config file), so overrides from `config.toml` are already visible during App-scope creation.
+- Overrides are re-read on every change (`enabled()`/`explain()` are computed, not cached), so new values apply to all subsequent calls. Decisions already made from the old values are not revisited: in particular a flag-gated Feature's constructor runs once at assembly, and a runtime flip only takes effect for it after a restart.
 - `IConfigRegistry.registerSection` throws if a domain is registered twice — `experimental` is owned exclusively by `FlagService`.
 - `setConfigOverrides(overrides)` is an imperative escape hatch for tests and hosts without an `IConfigService`; hosts on `IConfigService` should set the `[experimental]` section instead.
 

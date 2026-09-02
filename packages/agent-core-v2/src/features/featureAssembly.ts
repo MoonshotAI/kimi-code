@@ -2,6 +2,7 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 
 export interface IFeatureAssemblyService {
   readonly _serviceBrand: undefined;
+  readonly ready: Promise<void>;
 }
 
 export const IFeatureAssemblyService: ServiceIdentifier<IFeatureAssemblyService> =

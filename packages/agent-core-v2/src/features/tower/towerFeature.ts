@@ -90,4 +90,4 @@ export function _setTowerFeatureAssembledForTests(value: boolean | undefined): v
   assembledOverrideForTests = value;
 }
 
-registerFeature(TowerFeature);
+registerFeature(TowerFeature, { flag: TOWER_FLAG_ID });

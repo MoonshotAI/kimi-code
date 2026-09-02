@@ -11,6 +11,7 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { FeatureManagerService } from '#/app/feature/featureManagerService';
+import { IFlagService } from '#/app/flag/flag';
 import { IPluginService } from '#/app/plugin/plugin';
 import { LifecycleScope } from '#/app/scopes';
 import { IFeatureAssemblyService } from '#/features/featureAssembly';
@@ -23,6 +24,7 @@ import { ISessionExternalHooksService } from '#/features/externalHooks/session/s
 import { IHostProcessService } from '#/os/interface/hostProcess';
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
+import { stubFlag } from '../../app/flag/stubs';
 
 function collectionViewOf<T>(scope: Scope, token: CollectionToken<T>): CollectionView<T> {
   return (scope.instantiation as InstantiationService).fiberHost.collectionView(token);
@@ -59,6 +61,7 @@ describe('ExternalHooksFeature — assembly (src/features/externalHooks)', () =>
         { _serviceBrand: undefined, enabledHooks: async () => [], onDidReload: Event.None },
       ],
       [IHostProcessService, { _serviceBrand: undefined }],
+      [IFlagService, stubFlag(false)],
     ]);
     const manager = host.app.accessor.get(IFeatureManager);
     expect(manager.units().map((unit) => unit.name)).toContain('externalHooks');

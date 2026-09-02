@@ -61,10 +61,9 @@ export * from '#/wire/record';
 export * from '#/wire/migration/migration';
 export * from '#/session/sessionLog/sessionLogService';
 export * from '#/app/telemetry/telemetry';
+export * from '#/app/telemetry/context';
 export * from '#/app/telemetry/events';
 export * from '#/app/telemetry/telemetryService';
-export * from '#/app/telemetry/agentTelemetryContext';
-export * from '#/app/telemetry/agentTelemetryContextService';
 export * from '#/app/telemetry/consoleAppender';
 export * from '#/app/telemetry/cloudAppender';
 export * from '#/app/bootstrap/bootstrap';
@@ -583,7 +582,6 @@ export {
   READ_IMAGE_BYTE_BUDGET,
   resolveMaxImageEdgePx,
   resolveReadImageByteBudget,
-  type ImageCompressionTelemetry,
 } from '#/agent/media/image-compress';
 export {
   MODEL_ACCEPTED_IMAGE_MIMES,

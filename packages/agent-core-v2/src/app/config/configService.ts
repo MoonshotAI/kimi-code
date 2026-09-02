@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs';
+
+import { parse as parseToml } from 'smol-toml';
+
 import { type CollectionView } from '#/_base/di/collection';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
@@ -322,6 +326,7 @@ export class ConfigService extends Disposable implements IConfigService {
     this._register(this.registry.onDidRegisterOverlay(() => this.reapplyOverlays()));
     const { configKey } = this;
     const { homeDir } = this.bootstrap;
+    this.seedInitialLoad();
     this.ready = (async () => {
       await migrateThinkingEffortMaxToHigh(this.documentStore, configKey, homeDir);
       await this.load('load');
@@ -517,6 +522,25 @@ export class ConfigService extends Disposable implements IConfigService {
       () => undefined,
     );
     return run;
+  }
+
+  private seedInitialLoad(): void {
+    let fileData: ResolvedConfig;
+    try {
+      const text = readFileSync(this.bootstrap.configPath, 'utf8');
+      const data: unknown = text.trim().length === 0 ? {} : parseToml(text);
+      if (!isPlainObject(data)) return;
+      fileData = data;
+    } catch {
+      return;
+    }
+    this.rawSnake = cloneRecord(fileData);
+    this.raw = transformTomlData(fileData, this.registry);
+    this.validated = this.buildValidated(this.raw);
+    const next = { ...this.validated };
+    this.applySectionEnvBindings(next, true);
+    this.applyEnvOverlay(next);
+    this.effective = next;
   }
 
   private async load(source: ConfigChangeSource): Promise<void> {

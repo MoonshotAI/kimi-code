@@ -85,7 +85,6 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
@@ -363,11 +362,6 @@ describe('AgentLifecycleService', () => {
         track2: () => {},
       }) as unknown as ITelemetryService,
     } as unknown as ITelemetryService);
-    ix.stub(IAgentTelemetryContextService, {
-      _serviceBrand: undefined,
-      get: () => ({ mode: 'agent' }),
-      set: () => {},
-    });
     ix.stub(IHostEnvironment, { _serviceBrand: undefined } as IHostEnvironment);
     ix.stub(IHostFileSystem, { _serviceBrand: undefined } as IHostFileSystem);
     ix.stub(IHostClock, { _serviceBrand: undefined } as IHostClock);
@@ -827,11 +821,11 @@ describe('AgentLifecycleService', () => {
 
     expect(records).toContainEqual({
       event: 'yolo_toggle',
-      properties: { agent_id: 'main', enabled: true },
+      properties: { agent_id: 'main', enabled: true, mode: 'agent' },
     });
     expect(records).toContainEqual({
       event: 'yolo_toggle',
-      properties: { agent_id: sub.agentId, enabled: false },
+      properties: { agent_id: sub.agentId, enabled: false, mode: 'agent' },
     });
   });
 

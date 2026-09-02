@@ -130,6 +130,7 @@ beforeEach(async () => {
         },
         enter: () => {
           towerActive = true;
+          return Promise.resolve({ entered: true as const });
         },
         exit: () => {
           towerActive = false;
@@ -298,6 +299,24 @@ describe('TowerInitTool', () => {
     const state = await new TowerStore(repo).load();
     expect(state.sessionId).toBe('session-test');
   });
+
+  it('adopts once the owning session released ownership, even while it is still live', async () => {
+    await initViaTool();
+    liveSessionIds = ['session-test'];
+    currentSessionId = 'session-next';
+
+    const blocked = await run(ix.get(ITowerInitTool), {});
+    expect(blocked.isError).toBe(true);
+    expect(blocked.output).toContain('owned by a live session (session-test)');
+
+    await new TowerStore(repo).release('session-test');
+
+    const adopted = await run(ix.get(ITowerInitTool), {});
+    expect(adopted.isError).toBeFalsy();
+    expect(adopted.output).toContain('tower workspace already initialized');
+    const state = await new TowerStore(repo).load();
+    expect(state.sessionId).toBe('session-next');
+  });
 });
 
 describe('TowerPlanTool', () => {
@@ -349,6 +368,22 @@ describe('TowerTeardownTool', () => {
     expect(result.isError).toBe(true);
     expect(result.output).toContain('dismantle that session');
     expect((await new TowerStore(repo).load()).sessionId).toBe('session-test');
+  });
+
+  it('tears down once the owning session released ownership, even while it is still live', async () => {
+    await initViaTool();
+    liveSessionIds = ['session-test'];
+    currentSessionId = 'session-next';
+
+    const blocked = await run(ix.get(ITowerTeardownTool), {});
+    expect(blocked.isError).toBe(true);
+    expect(blocked.output).toContain('dismantle that session');
+
+    await new TowerStore(repo).release('session-test');
+
+    const result = await run(ix.get(ITowerTeardownTool), {});
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('tower teardown:');
   });
 });
 

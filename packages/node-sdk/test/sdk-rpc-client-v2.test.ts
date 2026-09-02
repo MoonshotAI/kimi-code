@@ -1094,8 +1094,8 @@ key = "${titleOAuthRef.key}"
       };
 
       await client.setTowerMode({ sessionId: 'ses_tower', enabled: true });
-      // The tower feature is flag-gated engine-side, so enter() may be a
-      // no-op; the wire must always mirror the engine truth.
+      // A refused enter() rejects with a typed reason, so a resolved call
+      // means the engine activated tower mode; the wire mirrors it.
       expect((await client.getStatus({ sessionId: 'ses_tower' })).towerMode).toBe(
         mainTower().isActive,
       );
@@ -1114,6 +1114,7 @@ key = "${titleOAuthRef.key}"
   });
 
   it('rejects setTowerMode when the tower feature is unavailable', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOWER', '0');
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);
@@ -1124,11 +1125,38 @@ key = "${titleOAuthRef.key}"
       await client.createSession({ id: 'ses_tower_off', workDir });
 
       await expect(client.setTowerMode({ sessionId: 'ses_tower_off', enabled: true }))
-        .rejects.toMatchObject({ code: 'session.tower_mode_invalid' });
+        .rejects.toMatchObject({
+          code: 'session.tower_mode_invalid',
+          message: expect.stringContaining('the tower experiment is disabled'),
+        });
       expect((await client.getStatus({ sessionId: 'ses_tower_off' })).towerMode).toBe(false);
 
       await client.setTowerMode({ sessionId: 'ses_tower_off', enabled: false });
       expect((await client.getStatus({ sessionId: 'ses_tower_off' })).towerMode).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+      await client.close();
+    }
+  });
+
+  it('enables tower mode from config.toml [experimental] without env vars', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOWER', undefined);
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    await writeFile(join(homeDir, 'config.toml'), '[experimental]\ntower = true\n', 'utf-8');
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await client.createSession({ id: 'ses_tower_config', workDir });
+
+      await expect(client.setTowerMode({ sessionId: 'ses_tower_config', enabled: true }))
+        .resolves.toBeUndefined();
+      expect((await client.getStatus({ sessionId: 'ses_tower_config' })).towerMode).toBe(true);
+
+      await client.setTowerMode({ sessionId: 'ses_tower_config', enabled: false });
+      expect((await client.getStatus({ sessionId: 'ses_tower_config' })).towerMode).toBe(false);
     } finally {
       vi.unstubAllEnvs();
       await client.close();

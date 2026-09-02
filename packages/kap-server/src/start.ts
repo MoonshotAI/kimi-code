@@ -171,11 +171,10 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     );
   };
   const onUncaughtException = (err: unknown): void => {
-    logger.fatal(
+    logger.error(
       { err: err instanceof Error ? err : new Error(String(err)) },
       'uncaughtException',
     );
-    process.exit(1);
   };
   const authFailureLimiter =
     exposureClass === 'loopback' ? undefined : createAuthFailureLimiter({ logger });

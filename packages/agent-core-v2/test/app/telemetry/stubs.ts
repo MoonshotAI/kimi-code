@@ -1,9 +1,7 @@
 import type { ServiceRegistration } from '#/_base/di/test';
-import {
-  ITelemetryService,
-  type TelemetryContextPatch,
-  type TelemetryProperties,
-} from '#/app/telemetry/telemetry';
+import type { TelemetryContextPatch, TelemetryProperties } from '#/app/telemetry/context';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { composeTelemetryProperties } from '#/app/telemetry/telemetryService';
 
 export interface TelemetryRecord {
   readonly event: string;
@@ -18,26 +16,25 @@ export function recordingTelemetry(
   let enabled = true;
   const service: ITelemetryService = {
     _serviceBrand: undefined,
-    track(event, properties) {
+    track2: (event, properties) => {
       if (!enabled) return;
       records.push({
         event,
-        properties:
-          properties === undefined
-            ? currentContext
-            : { ...currentContext, ...properties },
+        properties: composeTelemetryProperties(
+          currentContext,
+          properties as TelemetryProperties | undefined,
+        ),
       });
     },
-    track2: (event, properties) => service.track(event, properties as TelemetryProperties),
     withContext(patch: TelemetryContextPatch) {
       return recordingTelemetry(records, { ...currentContext, ...patch });
     },
     setContext(patch: TelemetryContextPatch) {
       currentContext = { ...currentContext, ...patch };
     },
+    getContext: () => currentContext,
     addAppender: () => ({ dispose: () => {} }),
     removeAppender: () => {},
-    setAppender: () => {},
     setEnabled(next) {
       enabled = next;
     },

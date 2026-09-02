@@ -43,7 +43,6 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
   extractAgentsMdPathsFromSystemPrompt,
@@ -144,7 +143,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   constructor(
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
     @IConfigService private readonly config: IConfigService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IProtocolAdapterRegistry private readonly protocolAdapters: IProtocolAdapterRegistry,
@@ -545,7 +543,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   private afterConfigDispatch(changed: Omit<ProfileUpdateData, 'activeToolNames'>): void {
     if (changed.modelAlias !== undefined) {
       const model = this.tryResolveRawModel();
-      this.telemetryContext.set({
+      this.telemetry.setContext({
         provider_type: model?.providerType ?? model?.protocol,
         protocol: model?.protocol,
       });

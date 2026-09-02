@@ -63,6 +63,13 @@ compositions over the existing seams:
    feature contributes at Agent scope appears in every existing and future Agent scope,
    bound by the same cascade rules as a static registration.
 
+A feature whose assembly is gated on an experimental flag decides inside its constructor
+(e.g. `TowerFeature` returns early when `flags.enabled('tower')` is false). `ConfigService`
+seeds its state synchronously at construction (a best-effort sync read of the config
+file), so a config-sourced flag is already visible in that constructor. A flag flipped at
+runtime does not re-run feature constructors: turning a flag-gated feature on or off from
+config at runtime requires a restart.
+
 ## Static channels vs Feature channels (the rule for built-in features)
 
 Some contribution kinds must stay on the **static import=register channels** even when
