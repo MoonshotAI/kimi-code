@@ -2,10 +2,6 @@
 
 此页面记录 kap-server 的 API 接口类型，分为 REST API 与 WebSocket 事件流两种。
 
-::: warning 注意
-本页描述的 REST 与 WebSocket API 为实验性特性：不保证接口稳定性，端点、字段与事件类型可能随任何版本更改。集成时请以你所用版本服务的 `/openapi.json` 与 `/asyncapi.json` 文档为准。
-:::
-
 ## 基础约定
 
 ### 地址
