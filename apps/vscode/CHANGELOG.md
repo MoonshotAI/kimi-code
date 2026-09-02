@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.4
+
+### Patch Changes
+
+- [#3371](https://github.com/MoonshotAI/kimi-code/pull/3371) [`9e88152`](https://github.com/MoonshotAI/kimi-code/commit/9e881528a89945a373002b0b229f91735e8f2c4f) Thanks [@tpoisonooo](https://github.com/tpoisonooo)! - Fix prompts remaining queued forever after reopening a session.
+
+- [#3366](https://github.com/MoonshotAI/kimi-code/pull/3366) [`9619277`](https://github.com/MoonshotAI/kimi-code/commit/961927739ef34819d67d76fa5870cbe4ba7a01ff) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - Use the Unicode ellipsis "…" in user-facing TUI and VS Code webview text.
+
 ## 0.7.3
 
 ### Patch Changes

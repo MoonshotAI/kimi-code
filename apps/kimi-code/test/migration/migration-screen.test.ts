@@ -16,7 +16,9 @@ function makePlan(over: Partial<MigrationPlan> = {}): MigrationPlan {
     hasConfig: true,
     hasMcp: true,
     hasUserHistory: true,
-    oauthCredentials: ['kimi-code.json'],
+    hasSkills: false,
+    hasPlans: false,
+    oauthCredentials: ['kimi-code'],
     workdirs: [],
     detectedPlugins: [],
     detectedMcpOauthServers: [],
@@ -261,11 +263,14 @@ function makeReport(
         wroteTuiSibling: false,
         migratedHooks: 0,
         droppedHooks: 0,
+        sourceUnreadable: false,
+        deviceIdCopied: false,
         siblingContents: { providers: [], models: [], hooks: 0 },
       },
-      mcp: { mergedServers: [], keptNewForConflicts: [], droppedServers: [], wroteSiblingDueToConflict: false },
+      mcp: { mergedServers: [], keptNewForConflicts: [], droppedServers: [], wroteSiblingDueToConflict: false, sourceUnreadable: false },
       userHistory: { copied: 12, skippedExisting: 0 },
       skills: { copied: 0, skippedExisting: 0 },
+      plans: { copied: 0, skippedExisting: 0 },
       sessions: {
         scope: 'all',
         bucketsScanned: 0,
@@ -274,6 +279,7 @@ function makeReport(
         sessionsAttempted: 50,
         sessionsMigrated: 50,
         sessionsAlreadyMigrated: 0,
+        sessionsRepaired: 0,
         sessionsSkippedPlaceholder: 0,
         sessionsSkippedEmpty: 0,
         sessionsSkippedMalformed: 0,
@@ -289,6 +295,7 @@ function makeReport(
       detectedPlugins: ['p1', 'p2'],
       configConflictNotice: null,
       tuiConflictNotice: null,
+      plansCopiedNotice: null,
       ...noticesOver,
     },
   };
@@ -307,6 +314,19 @@ describe('MigrationScreenComponent — result phase', () => {
     expect(out).toContain('Migration complete');
     expect(out).toContain('50 sessions migrated');
     expect(out).toContain('2 kimi-cli plugins');
+  });
+
+  it('renders a repaired-sessions line and never claims nothing-to-migrate for repairs', () => {
+    const c = new MigrationScreenComponent({
+      plan: makePlan(),
+      sourceHome: '/x/.kimi',
+      targetHome: '/y/.kimi-code',
+      onComplete: () => {},
+    });
+    c._testShowResult(makeReport({ sessionsMigrated: 0, sessionsRepaired: 7 }));
+    const out = c.render(80).join('\n');
+    expect(out).toContain('7 sessions repaired');
+    expect(out).not.toContain('Nothing needed migrating');
   });
 
   it('renders migrated hooks in the ✓ line and dropped hooks as a warning', () => {
@@ -331,6 +351,8 @@ describe('MigrationScreenComponent — result phase', () => {
             wroteTuiSibling: false,
             migratedHooks: 2,
             droppedHooks: 1,
+            sourceUnreadable: false,
+            deviceIdCopied: false,
             siblingContents: { providers: [], models: [], hooks: 0 },
           },
         },
@@ -380,6 +402,8 @@ describe('MigrationScreenComponent — result phase', () => {
             wroteTuiSibling: false,
             migratedHooks: 0,
             droppedHooks: 0,
+            sourceUnreadable: false,
+            deviceIdCopied: false,
             siblingContents: { providers: [], models: [], hooks: 0 },
           },
         },
@@ -414,9 +438,11 @@ describe('MigrationScreenComponent — result phase', () => {
             wroteTuiSibling: false,
             migratedHooks: 0,
             droppedHooks: 0,
+            sourceUnreadable: false,
+            deviceIdCopied: false,
             siblingContents: { providers: [], models: [], hooks: 0 },
           },
-          mcp: { mergedServers: ['m'], keptNewForConflicts: [], droppedServers: [], wroteSiblingDueToConflict: true },
+          mcp: { mergedServers: ['m'], keptNewForConflicts: [], droppedServers: [], wroteSiblingDueToConflict: true, sourceUnreadable: false },
         },
       ),
     );
@@ -454,6 +480,8 @@ describe('MigrationScreenComponent — result phase', () => {
             wroteTuiSibling: false,
             migratedHooks: 0,
             droppedHooks: 0,
+            sourceUnreadable: false,
+            deviceIdCopied: false,
             siblingContents: {
               providers: ['openai', 'managed:kimi-code'],
               models: ['gpt4'],
@@ -509,6 +537,8 @@ describe('MigrationScreenComponent — result phase', () => {
             wroteTuiSibling: false,
             migratedHooks: 0,
             droppedHooks: 0,
+            sourceUnreadable: false,
+            deviceIdCopied: false,
             siblingContents: { providers: [], models: [], hooks: 0 },
           },
         },

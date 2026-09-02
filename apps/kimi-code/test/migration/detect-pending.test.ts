@@ -36,7 +36,11 @@ describe('detectPendingMigration', () => {
 
   it('returns null when source has nothing worth migrating', async () => {
     // empty source dir, no config/mcp/credentials/sessions
-    const plan = await detectPendingMigration({ sourceHome: src, targetHome: tgt });
+    const plan = await detectPendingMigration({
+      sourceHome: src,
+      targetHome: tgt,
+      plansSourceHome: tgt,
+    });
     expect(plan).toBeNull();
   });
 
@@ -57,7 +61,11 @@ describe('detectPendingMigration', () => {
       }),
       'utf-8',
     );
-    const plan = await detectPendingMigration({ sourceHome: src, targetHome: tgt });
+    const plan = await detectPendingMigration({
+      sourceHome: src,
+      targetHome: tgt,
+      plansSourceHome: tgt,
+    });
     expect(plan).toBeNull();
   });
 
@@ -93,6 +101,85 @@ describe('detectPendingMigration', () => {
       join(src, '.migrated-to-kimi-code'),
       JSON.stringify({ version: 1, target_path: tgt }),
       'utf-8',
+    );
+    const plan = await detectPendingMigration({ sourceHome: src, targetHome: tgt });
+    expect(plan).toBeNull();
+  });
+
+  it('returns a MigrationPlan when source has only skills', async () => {
+    await mkdir(join(src, 'skills', 'mine'), { recursive: true });
+    await writeFile(join(src, 'skills', 'mine', 'SKILL.md'), '# skill', 'utf-8');
+    const plan = await detectPendingMigration({ sourceHome: src, targetHome: tgt });
+    expect(plan).not.toBeNull();
+    expect(plan?.hasSkills).toBe(true);
+  });
+
+  it('returns a MigrationPlan when source has only session scan failures', async () => {
+    const bucket = join(src, 'sessions', '11111111111111111111111111111111');
+    await mkdir(join(bucket, 'legacy-session'), { recursive: true });
+    const plan = await detectPendingMigration({ sourceHome: src, targetHome: tgt });
+    expect(plan).not.toBeNull();
+    expect(plan?.sessionScanFailures?.length).toBeGreaterThan(0);
+  });
+
+  it('detects skills from skillsSourceHome when it differs from the source home', async () => {
+    const skillsHome = await mkdtemp(join(tmpdir(), 'detect-pending-skills-'));
+    try {
+      await mkdir(join(skillsHome, 'skills', 'mine'), { recursive: true });
+      await writeFile(join(skillsHome, 'skills', 'mine', 'SKILL.md'), '# skill', 'utf-8');
+      const plan = await detectPendingMigration({
+        sourceHome: src,
+        skillsSourceHome: skillsHome,
+        targetHome: tgt,
+      });
+      expect(plan).not.toBeNull();
+      expect(plan?.hasSkills).toBe(true);
+      expect(plan?.skillsSourceHome).toBe(skillsHome);
+    } finally {
+      await rm(skillsHome, { recursive: true, force: true });
+    }
+  });
+
+  async function seedImportedSession(wireSecondLine: string, importFormatVersion?: number): Promise<void> {
+    const dir = join(tgt, 'sessions', 'wd_test', 'ses_old-import', 'agents', 'main');
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, 'wire.jsonl'),
+      '{"type":"metadata","protocol_version":"1.0","created_at":1}\n' + wireSecondLine + '\n',
+    );
+    await writeFile(
+      join(tgt, 'sessions', 'wd_test', 'ses_old-import', 'state.json'),
+      JSON.stringify({
+        custom: { imported_from_kimi_cli: true, import_format_version: importFormatVersion },
+      }),
+    );
+  }
+
+  it('lifts marker suppression when an imported session still lacks turn structure', async () => {
+    await writeFile(join(src, 'config.toml'), 'default_thinking = true\n', 'utf-8');
+    await writeFile(
+      join(src, '.migrated-to-kimi-code'),
+      JSON.stringify({ version: 1, target_path: tgt }),
+      'utf-8',
+    );
+    await seedImportedSession(
+      '{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"x"}],"toolCalls":[]}}',
+    );
+    const plan = await detectPendingMigration({ sourceHome: src, targetHome: tgt });
+    expect(plan).not.toBeNull();
+    expect(plan?.sessionsNeedingRepair).toBe(1);
+  });
+
+  it('stays suppressed when imported sessions already carry the current import format', async () => {
+    await writeFile(join(src, 'config.toml'), 'default_thinking = true\n', 'utf-8');
+    await writeFile(
+      join(src, '.migrated-to-kimi-code'),
+      JSON.stringify({ version: 1, target_path: tgt }),
+      'utf-8',
+    );
+    await seedImportedSession(
+      '{"type":"turn.prompt","agentId":"main","input":[],"origin":{"kind":"user"},"time":1}',
+      2,
     );
     const plan = await detectPendingMigration({ sourceHome: src, targetHome: tgt });
     expect(plan).toBeNull();

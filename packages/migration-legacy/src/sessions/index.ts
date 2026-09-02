@@ -1,12 +1,13 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { OldKimiJsonSchema, OldSessionStateSchema } from '../kimi-cli-schema.js';
+import { OldKimiJsonSchema } from '../kimi-cli-schema.js';
 import { ensureSessionIndexEntry } from '../session-index.js';
 import { sourceKimiJson, sourceSessionsDir } from '../paths.js';
 import type { SessionsSummary } from '../types.js';
-import { classifySessionDir } from './classify.js';
+import { classifyLegacySession } from './classify.js';
 import { migrateOneSession } from './migrate-one.js';
+import { listBucketSessions, readMergedSessionState, type LegacySessionRef } from './source.js';
 import { oldMd5BucketName } from './workdir-bucket.js';
 
 export interface SessionsStepInput {
@@ -22,8 +23,7 @@ interface WorkdirMeta {
 }
 
 interface SessionCandidate {
-  readonly sourceSessionDir: string;
-  readonly oldSessionUuid: string;
+  readonly source: LegacySessionRef;
   readonly workdirPath: string;
   readonly wireMtime: number;
 }
@@ -84,9 +84,9 @@ export async function migrateSessionsStep(
       continue;
     }
     // workdir.kind === 'local'
-    let sessionUuids: string[];
+    let refs: LegacySessionRef[];
     try {
-      sessionUuids = await readdir(bucketPath);
+      refs = await listBucketSessions(bucketPath);
     } catch (error) {
       sessionsFailed.push({
         sourcePath: bucketPath,
@@ -94,9 +94,8 @@ export async function migrateSessionsStep(
       });
       continue;
     }
-    for (const uuid of sessionUuids) {
-      const sessionDir = join(bucketPath, uuid);
-      const cls = await classifySessionDir(sessionDir);
+    for (const ref of refs) {
+      const cls = await classifyLegacySession(ref);
       if (cls === 'placeholder') {
         sessionsSkippedPlaceholder++;
         continue;
@@ -107,15 +106,14 @@ export async function migrateSessionsStep(
       }
       if (cls === 'malformed') {
         sessionsFailed.push({
-          sourcePath: sessionDir,
+          sourcePath: sessionReportPath(ref, bucketPath),
           reason: unreadableSessionReason(),
         });
         continue;
       }
-      const wireMtime = await readWireMtime(sessionDir);
+      const wireMtime = await readWireMtime(ref);
       candidates.push({
-        sourceSessionDir: sessionDir,
-        oldSessionUuid: uuid,
+        source: ref,
         workdirPath: workdir.path,
         wireMtime,
       });
@@ -128,11 +126,11 @@ export async function migrateSessionsStep(
 
   let migrated = 0;
   let alreadyMigrated = 0;
+  let repaired = 0;
   let processedCount = 0;
   for (const c of candidates) {
     const result = await migrateOneSession({
-      sourceSessionDir: c.sourceSessionDir,
-      oldSessionUuid: c.oldSessionUuid,
+      source: c.source,
       workdirPath: c.workdirPath,
       targetHome: input.targetHome,
     });
@@ -144,7 +142,7 @@ export async function migrateSessionsStep(
         // this session survived a deleted target dir, re-migrating it must not
         // append a second line for the same id.
         await ensureSessionIndexEntry(input.targetHome, {
-          sessionId: `ses_${c.oldSessionUuid}`,
+          sessionId: `ses_${c.source.uuid}`,
           sessionDir: result.targetDir,
           workDir: c.workdirPath,
         });
@@ -154,44 +152,45 @@ export async function migrateSessionsStep(
         // without it the session is unopenable. Record it as failed so the run
         // summary is honest; one bad index write must not abort the batch.
         sessionsFailed.push({
-          sourcePath: c.sourceSessionDir,
+          sourcePath: sessionReportPath(c.source, ''),
           reason: `session migrated but index append failed: ${String(error)}`,
         });
       }
-    } else if (result.outcome === 'already-migrated') {
+    } else if (result.outcome === 'already-migrated' || result.outcome === 'repaired') {
       // The session dir exists from a prior run, but that run may have crashed
       // before appending the index entry. `ensureSessionIndexEntry` is
       // idempotent — it adds the entry only when absent — so a rerun
       // self-heals an index that is missing this session.
       try {
         await ensureSessionIndexEntry(input.targetHome, {
-          sessionId: `ses_${c.oldSessionUuid}`,
+          sessionId: `ses_${c.source.uuid}`,
           sessionDir: result.targetDir,
           workDir: c.workdirPath,
         });
-        alreadyMigrated++;
+        if (result.outcome === 'repaired') repaired++;
+        else alreadyMigrated++;
       } catch (error) {
         // The index entry is genuinely missing and could not be added — the
         // session stays unreachable by id, so record it as failed.
         sessionsFailed.push({
-          sourcePath: c.sourceSessionDir,
+          sourcePath: sessionReportPath(c.source, ''),
           reason: `session already migrated but index entry could not be ensured: ${String(error)}`,
         });
       }
     } else if (result.outcome === 'conflict') {
       sessionsConflicts.push({
-        sourcePath: c.sourceSessionDir,
+        sourcePath: sessionReportPath(c.source, ''),
         targetPath: result.targetDir,
       });
     } else if (result.outcome === 'empty') {
       // No migratable conversation (empty or user-cleared session). Counted
-      // as skipped, not failed — `classifySessionDir` usually catches these
+      // as skipped, not failed — `classifyLegacySession` usually catches these
       // before they become candidates, but a translator/classifier edge can
       // still land one here.
       sessionsSkippedEmpty++;
     } else {
       sessionsFailed.push({
-        sourcePath: c.sourceSessionDir,
+        sourcePath: sessionReportPath(c.source, ''),
         reason: result.reason,
       });
     }
@@ -205,6 +204,7 @@ export async function migrateSessionsStep(
     sessionsAttempted: candidates.length,
     sessionsMigrated: migrated,
     sessionsAlreadyMigrated: alreadyMigrated,
+    sessionsRepaired: repaired,
     sessionsSkippedPlaceholder,
     sessionsSkippedEmpty,
     sessionsSkippedMalformed,
@@ -252,22 +252,30 @@ async function loadWorkdirs(sourceHome: string): Promise<WorkdirMeta[]> {
   }
 }
 
-async function readWireMtime(sessionDir: string): Promise<number> {
-  try {
-    const text = await readFile(join(sessionDir, 'state.json'), 'utf-8');
-    const parsed = OldSessionStateSchema.parse(JSON.parse(text));
-    if (parsed.wire_mtime !== null && parsed.wire_mtime !== undefined) {
-      return parsed.wire_mtime * 1000;
+async function readWireMtime(ref: LegacySessionRef): Promise<number> {
+  const state = await readMergedSessionState(ref.sessionDir);
+  if (state.wire_mtime !== null && state.wire_mtime !== undefined) {
+    return state.wire_mtime * 1000;
+  }
+  if (ref.sessionDir !== undefined) {
+    try {
+      return (await stat(join(ref.sessionDir, 'wire.jsonl'))).mtimeMs;
+    } catch {
+      // fall through to the context payload's mtime
     }
-  } catch {
-    // fall through to wire.jsonl mtime
   }
-  try {
-    const st = await stat(join(sessionDir, 'wire.jsonl'));
-    return st.mtimeMs;
-  } catch {
-    return 0;
+  if (ref.contextPath !== undefined) {
+    try {
+      return (await stat(ref.contextPath)).mtimeMs;
+    } catch {
+      // fall through
+    }
   }
+  return 0;
+}
+
+function sessionReportPath(ref: LegacySessionRef, fallback: string): string {
+  return ref.sessionDir ?? ref.flatContextFile ?? join(fallback, ref.uuid);
 }
 
 function emptySummary(): SessionsSummary {
@@ -279,6 +287,7 @@ function emptySummary(): SessionsSummary {
     sessionsAttempted: 0,
     sessionsMigrated: 0,
     sessionsAlreadyMigrated: 0,
+    sessionsRepaired: 0,
     sessionsSkippedPlaceholder: 0,
     sessionsSkippedEmpty: 0,
     sessionsSkippedMalformed: 0,
@@ -292,7 +301,7 @@ function unknownWorkdirReason(): string {
 }
 
 function unreadableSessionReason(): string {
-  return 'Legacy session could not be inspected because context.jsonl is missing or unreadable.';
+  return 'Legacy session could not be inspected because its context is missing or unreadable.';
 }
 
 function isMissingError(error: unknown): boolean {

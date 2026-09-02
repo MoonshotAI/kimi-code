@@ -38,3 +38,17 @@ export const workspaceTrustResponseSchema = z.object({
   trusted: z.boolean(),
 });
 export type WorkspaceTrustResponse = z.infer<typeof workspaceTrustResponseSchema>;
+
+export const addDirRequestSchema = z.object({
+  path: z.string().min(1),
+  persist: z.boolean().optional(),
+});
+export type AddDirRequest = z.infer<typeof addDirRequestSchema>;
+
+export const addDirResponseSchema = z.object({
+  project_root: z.string(),
+  config_path: z.string(),
+  additional_dirs: z.array(z.string()),
+  persisted: z.boolean(),
+});
+export type AddDirResponse = z.infer<typeof addDirResponseSchema>;

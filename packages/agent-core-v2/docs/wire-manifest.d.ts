@@ -24,7 +24,7 @@
 // cross-reducers), blobs (the folding states whose blob codec offloads inline
 // media to blob storage), owner (the source file declaring the class).
 
-// Index (60 record types)
+// Index (62 record types)
 //   config.update                      profile                                               src/agent/profile/profileOps.ts
 //   context.append_loop_event          contextMemory, turn                                   src/agent/contextMemory/contextEvents.ts
 //   context.append_message             contextMemory, plan, task.notificationDelivery        src/agent/contextMemory/contextEvents.ts
@@ -34,6 +34,8 @@
 //   cron.add                           (none)                                                src/features/cron/cronOps.ts
 //   cron.cursor                        (none)                                                src/features/cron/cronOps.ts
 //   cron.delete                        (none)                                                src/features/cron/cronOps.ts
+//   file_history.checkpoint            fileHistory                                           src/features/fileHistory/fileHistoryOps.ts
+//   file_history.tracked               fileHistory                                           src/features/fileHistory/fileHistoryOps.ts
 //   forked                             (none)                                                src/features/goal/goalOps.ts
 //   full_compaction.begin              fullCompaction                                        src/agent/fullCompaction/compactionOps.ts
 //   full_compaction.cancel             fullCompaction                                        src/agent/fullCompaction/compactionOps.ts
@@ -216,6 +218,37 @@ interface CronCursorPayload {
 interface CronDeletePayload {
   _name: 'cron.delete';
   ids: string[];
+}
+
+/**
+ * states: fileHistory
+ * owner: src/features/fileHistory/fileHistoryOps.ts
+ */
+interface FileHistoryCheckpointPayload {
+  _name: 'file_history.checkpoint';
+  agentId: string;
+  turnId: number;
+  phase?: 'start' | 'end';
+  entries: Record<string, object>;
+}
+
+/**
+ * states: fileHistory
+ * owner: src/features/fileHistory/fileHistoryOps.ts
+ */
+interface FileHistoryTrackedPayload {
+  _name: 'file_history.tracked';
+  agentId: string;
+  turnId: number;
+  path: string;
+  entry: {
+    key: string | null;
+    version: number;
+    contentHash?: string;
+    size?: number;
+    oversize?: boolean;
+    mtimeMs?: number;
+  };
 }
 
 /**
@@ -911,6 +944,8 @@ interface WirePayloadMap {
   "cron.add": CronAddPayload;
   "cron.cursor": CronCursorPayload;
   "cron.delete": CronDeletePayload;
+  "file_history.checkpoint": FileHistoryCheckpointPayload;
+  "file_history.tracked": FileHistoryTrackedPayload;
   "forked": ForkedPayload;
   "full_compaction.begin": FullCompactionBeginPayload;
   "full_compaction.cancel": FullCompactionCancelPayload;

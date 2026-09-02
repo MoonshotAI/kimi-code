@@ -4,10 +4,12 @@ import type {
   MigrationScope,
   SessionsSummary,
 } from './types.js';
+import { join } from 'node:path';
 import { migrateConfigStep } from './steps/config.js';
 import { migrateMcpStep } from './steps/mcp.js';
 import { migrateUserHistoryStep } from './steps/user-history.js';
 import { migrateSkillsStep } from './steps/skills.js';
+import { migratePlansStep } from './steps/plans.js';
 import { migrateSessionsStep } from './sessions/index.js';
 import { writeReport } from './report.js';
 import { writeMigrationErrorsLog } from './migration-errors-log.js';
@@ -26,6 +28,8 @@ export interface RunMigrationInput {
   readonly scope: MigrationScope;
   readonly source: string;
   readonly target: string;
+  /** Legacy plans dir; defaults to `~/.kimi/plans` per kimi-cli's hardcode. */
+  readonly plansSourceDir?: string;
   readonly migratorVersion?: string;
   readonly onProgress?: (msg: string) => void;
   readonly onSessionProgress?: (done: number, total: number) => void;
@@ -51,13 +55,15 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
         wroteTuiSibling: false,
         migratedHooks: 0,
         droppedHooks: 0,
+        sourceUnreadable: false,
+        deviceIdCopied: false,
         siblingContents: { providers: [], models: [], hooks: 0 },
       };
   log('config done');
 
   const mcp = input.scope.mcp
     ? await migrateMcpStep({ sourceHome: input.source, targetHome: input.target })
-    : { mergedServers: [], keptNewForConflicts: [], droppedServers: [], wroteSiblingDueToConflict: false };
+    : { mergedServers: [], keptNewForConflicts: [], droppedServers: [], wroteSiblingDueToConflict: false, sourceUnreadable: false };
   log('mcp done');
 
   const userHistory = input.scope.userHistory
@@ -66,7 +72,10 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
   log('user-history done');
 
   const skills = input.scope.skills
-    ? await migrateSkillsStep({ sourceHome: input.source, targetHome: input.target })
+    ? await migrateSkillsStep({
+        sourceHome: input.plan.skillsSourceHome ?? input.source,
+        targetHome: input.target,
+      })
     : { copied: 0, skippedExisting: 0 };
   log('skills done');
 
@@ -79,7 +88,17 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
     : emptyConfigOnlySessions();
   log('sessions done');
 
+  const plans = input.scope.sessions
+    ? await migratePlansStep({ targetHome: input.target, plansSourceDir: input.plansSourceDir })
+    : { copied: 0, skippedExisting: 0 };
+  log('plans done');
+
   const completedAt = new Date().toISOString();
+
+  const plansCopiedNotice =
+    plans.copied > 0
+      ? `${plans.copied} plan file(s) copied to ${join(input.target, 'plans')} — plain copies, not wired into plan mode; reuse or delete them as you see fit.`
+      : null;
 
   const report: MigrationReport = {
     startedAt,
@@ -92,6 +111,7 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
       mcp,
       userHistory,
       skills,
+      plans,
       sessions,
     },
     notices: {
@@ -100,6 +120,7 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
       detectedPlugins: input.plan.detectedPlugins,
       configConflictNotice: config.wroteSiblingDueToConflict ? CONFIG_CONFLICT_NOTICE : null,
       tuiConflictNotice: config.wroteTuiSibling ? TUI_CONFLICT_NOTICE : null,
+      plansCopiedNotice,
     },
   };
 
@@ -121,10 +142,17 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
     sessions,
   };
 
-  // Do not suppress a later retry when session data could not be inspected or
-  // migrated. Successful marker persistence remains best-effort: the data and
-  // report are already complete, so a marker write failure must not reject.
-  if (sessions.sessionsFailed.length === 0) {
+  // Do not suppress a later retry while anything in the chosen scope remains
+  // unresolved: unmigrated/uninspectable sessions, target conflicts, or a
+  // legacy config/MCP file that exists but could not be parsed. Successful
+  // marker persistence remains best-effort: the data and report are already
+  // complete, so a marker write failure must not reject.
+  const scopeComplete =
+    sessions.sessionsFailed.length === 0 &&
+    sessions.sessionsConflicts.length === 0 &&
+    !(input.scope.config && config.sourceUnreadable) &&
+    !(input.scope.mcp && mcp.sourceUnreadable);
+  if (scopeComplete) {
     try {
       const existingMarker = await readMarker(input.source);
       if (existingMarker === undefined) {
@@ -161,6 +189,7 @@ function emptyConfigOnlySessions(): SessionsSummary {
     sessionsAttempted: 0,
     sessionsMigrated: 0,
     sessionsAlreadyMigrated: 0,
+    sessionsRepaired: 0,
     sessionsSkippedPlaceholder: 0,
     sessionsSkippedEmpty: 0,
     sessionsSkippedMalformed: 0,

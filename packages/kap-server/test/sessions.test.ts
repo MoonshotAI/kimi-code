@@ -454,6 +454,23 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(got.body.data.agent_config).toEqual({ model: 'stub' });
   });
 
+  it('reports the journaled event watermark as last_seq', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const id = created.body.data.id;
+
+    const initial = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
+    const baseline = initial.body.data.last_seq;
+
+    const renamed = await postJson<SessionWire>(`/api/v1/sessions/${id}/profile`, {
+      title: 'watermark probe',
+    });
+    expect(renamed.body.code).toBe(0);
+
+    const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
+    expect(got.body.data.last_seq).toBeGreaterThan(baseline);
+  });
+
   it('supports exclude_empty when listing sessions', async () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });

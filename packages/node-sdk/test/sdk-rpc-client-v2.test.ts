@@ -800,6 +800,45 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  it('serves suggestFiles through the workspace handler fs service', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    await mkdir(join(workDir, 'src'), { recursive: true });
+    await writeFile(join(workDir, 'src', 'app.ts'), 'app');
+    await writeFile(join(workDir, 'src', 'index.ts'), 'index');
+    await writeFile(join(workDir, 'README.md'), 'readme');
+    try {
+      const matched = await harness.suggestFiles(workDir, { query: 'app', limit: 20 });
+      expect(matched?.items).toContainEqual(
+        expect.objectContaining({ kind: 'file', path: 'src/app.ts', name: 'app.ts' }),
+      );
+      const appItem = matched?.items.find((item) => item.name === 'app.ts');
+      expect(appItem?.matchPositions.length).toBeGreaterThan(0);
+
+      const topLevel = await harness.suggestFiles(workDir, { query: '', limit: 20 });
+      expect(topLevel?.items).toContainEqual(expect.objectContaining({ kind: 'directory', name: 'src' }));
+      expect(topLevel?.items).toContainEqual(expect.objectContaining({ kind: 'file', name: 'README.md' }));
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('rejects an out-of-range suggestFiles limit before touching the engine', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    try {
+      for (const limit of [0, -1, 201, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        await expect(harness.suggestFiles(workDir, { query: 'a', limit })).rejects.toMatchObject({
+          code: ErrorCodes.REQUEST_INVALID,
+        });
+      }
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('honors skillDirs (explicit dirs) over default user / project discovery', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);

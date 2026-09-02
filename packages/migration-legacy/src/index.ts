@@ -6,6 +6,8 @@ export {
   shouldSuppressMigration,
   type MigrationSuppressionInput,
 } from './marker.js';
+export { countImportedSessionsNeedingRepair } from './sessions/repair-imported.js';
+export { defaultPlansSourceDir } from './steps/plans.js';
 export { runMigration, type RunMigrationInput } from './run-migration.js';
 export {
   resolveMigrationScope,
