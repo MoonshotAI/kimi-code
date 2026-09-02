@@ -139,49 +139,4 @@ describe('detectPendingMigration', () => {
       await rm(skillsHome, { recursive: true, force: true });
     }
   });
-
-  async function seedImportedSession(wireSecondLine: string, importFormatVersion?: number): Promise<void> {
-    const dir = join(tgt, 'sessions', 'wd_test', 'ses_old-import', 'agents', 'main');
-    await mkdir(dir, { recursive: true });
-    await writeFile(
-      join(dir, 'wire.jsonl'),
-      '{"type":"metadata","protocol_version":"1.0","created_at":1}\n' + wireSecondLine + '\n',
-    );
-    await writeFile(
-      join(tgt, 'sessions', 'wd_test', 'ses_old-import', 'state.json'),
-      JSON.stringify({
-        custom: { imported_from_kimi_cli: true, import_format_version: importFormatVersion },
-      }),
-    );
-  }
-
-  it('lifts marker suppression when an imported session still lacks turn structure', async () => {
-    await writeFile(join(src, 'config.toml'), 'default_thinking = true\n', 'utf-8');
-    await writeFile(
-      join(src, '.migrated-to-kimi-code'),
-      JSON.stringify({ version: 1, target_path: tgt }),
-      'utf-8',
-    );
-    await seedImportedSession(
-      '{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"x"}],"toolCalls":[]}}',
-    );
-    const plan = await detectPendingMigration({ sourceHome: src, targetHome: tgt });
-    expect(plan).not.toBeNull();
-    expect(plan?.sessionsNeedingRepair).toBe(1);
-  });
-
-  it('stays suppressed when imported sessions already carry the current import format', async () => {
-    await writeFile(join(src, 'config.toml'), 'default_thinking = true\n', 'utf-8');
-    await writeFile(
-      join(src, '.migrated-to-kimi-code'),
-      JSON.stringify({ version: 1, target_path: tgt }),
-      'utf-8',
-    );
-    await seedImportedSession(
-      '{"type":"turn.prompt","agentId":"main","input":[],"origin":{"kind":"user"},"time":1}',
-      2,
-    );
-    const plan = await detectPendingMigration({ sourceHome: src, targetHome: tgt });
-    expect(plan).toBeNull();
-  });
 });

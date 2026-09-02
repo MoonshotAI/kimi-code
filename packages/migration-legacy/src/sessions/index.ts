@@ -126,7 +126,6 @@ export async function migrateSessionsStep(
 
   let migrated = 0;
   let alreadyMigrated = 0;
-  let repaired = 0;
   let processedCount = 0;
   for (const c of candidates) {
     const result = await migrateOneSession({
@@ -156,7 +155,7 @@ export async function migrateSessionsStep(
           reason: `session migrated but index append failed: ${String(error)}`,
         });
       }
-    } else if (result.outcome === 'already-migrated' || result.outcome === 'repaired') {
+    } else if (result.outcome === 'already-migrated') {
       // The session dir exists from a prior run, but that run may have crashed
       // before appending the index entry. `ensureSessionIndexEntry` is
       // idempotent — it adds the entry only when absent — so a rerun
@@ -167,8 +166,7 @@ export async function migrateSessionsStep(
           sessionDir: result.targetDir,
           workDir: c.workdirPath,
         });
-        if (result.outcome === 'repaired') repaired++;
-        else alreadyMigrated++;
+        alreadyMigrated++;
       } catch (error) {
         // The index entry is genuinely missing and could not be added — the
         // session stays unreachable by id, so record it as failed.
@@ -204,7 +202,6 @@ export async function migrateSessionsStep(
     sessionsAttempted: candidates.length,
     sessionsMigrated: migrated,
     sessionsAlreadyMigrated: alreadyMigrated,
-    sessionsRepaired: repaired,
     sessionsSkippedPlaceholder,
     sessionsSkippedEmpty,
     sessionsSkippedMalformed,
@@ -287,7 +284,6 @@ function emptySummary(): SessionsSummary {
     sessionsAttempted: 0,
     sessionsMigrated: 0,
     sessionsAlreadyMigrated: 0,
-    sessionsRepaired: 0,
     sessionsSkippedPlaceholder: 0,
     sessionsSkippedEmpty: 0,
     sessionsSkippedMalformed: 0,
