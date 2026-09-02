@@ -4804,12 +4804,13 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 ```ts
 // 服务端 → 客户端
 type ServerFrame =
-  | ControlFrame // server_hello | ack | ping | resync_required（error 为死声明）
+  | ServerSystemMessage // server_hello | ping | resync_required | error（死声明）
+  | Ack // 每个带 id 入站帧的应答
   | EventFrame // event.* 19 型
   | AgentEventFrame // agent 事件 51 型
   | TranscriptFrame; // transcript.reset | transcript.ops
 
-// 客户端 → 服务端
+// 客户端 → 服务端（服务端正名 ClientControlMessage）
 type ClientFrame =
   | ClientHello
   | Subscribe
@@ -4822,6 +4823,8 @@ type ClientFrame =
 // 死声明（服务端不处理、静默丢弃）：abort、terminal_attach、terminal_detach、
 // terminal_input、terminal_resize、terminal_close
 ```
+
+命名对照：`ServerSystemMessage` 与 `ClientControlMessage` 是服务端 protocol 层的正名 union（`protocol/ws-control.ts`），`AgentEvent` 为 agent 事件的系统正名（`transport/ws/v1/events.ts`）；`ServerFrame` / `ClientFrame` / `EventFrame` / `AgentEventFrame` / `TranscriptFrame` 是文档总览用的汇总名（transcript 帧的 payload 契约由 `@moonshot-ai/transcript` 持有）。注意 `ack` 不在 `ServerSystemMessage` 内——服务端把 ack 当应答帧独立处理。
 
 | 分类 | 方向 | 帧数 | 用途 |
 | --- | --- | --- | --- |
