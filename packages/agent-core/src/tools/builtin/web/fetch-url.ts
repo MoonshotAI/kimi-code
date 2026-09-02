@@ -6,6 +6,7 @@
  * should not be registered (not exposed to the LLM).
  */
 
+import type { ContentPart } from '@moonshot-ai/kosong';
 import { z } from 'zod';
 
 import type { BuiltinTool } from '../../../agent/tool';
@@ -26,13 +27,20 @@ import DESCRIPTION from './fetch-url.md?raw';
  * - `extracted` — the body was an HTML page; only the main article text
  *   was extracted and returned.
  */
-export type UrlFetchKind = 'passthrough' | 'extracted';
+export type UrlFetchKind = 'passthrough' | 'extracted' | 'image';
+
+export interface ImageFetchData {
+  mimeType: string;
+  base64: string;
+}
 
 export interface UrlFetchResult {
   /** The text handed to the LLM. */
   content: string;
   /** Whether `content` is a verbatim passthrough or extracted main text. */
   kind: UrlFetchKind;
+  /** Optional image data when the response is an image. */
+  imageData?: ImageFetchData;
 }
 
 export interface UrlFetcher {
@@ -89,7 +97,18 @@ export class FetchURLTool implements BuiltinTool<FetchURLInput> {
     }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
     try {
-      const { content, kind } = await this.fetcher.fetch(args.url, { toolCallId });
+      const { content, kind, imageData } = await this.fetcher.fetch(args.url, { toolCallId });
+
+      if (imageData) {
+        const output: ContentPart[] = [
+          { type: 'text', text: `Fetched image from ${args.url}` },
+          {
+            type: 'image_url',
+            imageUrl: { url: `data:${imageData.mimeType};base64,${imageData.base64}` },
+          },
+        ];
+        return { output, isError: false };
+      }
 
       if (!content) {
         return {
@@ -99,12 +118,6 @@ export class FetchURLTool implements BuiltinTool<FetchURLInput> {
       }
 
       const builder = new ToolResultBuilder({ maxLineLength: null });
-      // Tell the LLM whether it received the whole body or only the extracted
-      // article text, so it can judge how complete the content is, and remind it
-      // to cite this page when it uses the content. Both notes must ride in
-      // `output`: the result's `message` field is dropped from the transcript, so
-      // `output` is the only place the model can read them. Put them at the front
-      // so they survive any downstream truncation of the body.
       const note =
         kind === 'passthrough'
           ? 'The returned content is the full response body, returned verbatim.'
