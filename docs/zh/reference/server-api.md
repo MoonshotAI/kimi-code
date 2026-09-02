@@ -83,9 +83,11 @@ HTTP 状态码例外（非 200）：
 - **游标式**：`before_id` / `after_id`（互斥）加 `page_size`（1–100），响应为 `{ items, has_more }`。用于会话列表、消息列表、子会话列表；转录分页的游标为 `before_turn` / `after_turn`。
 - **`page_token`**：不透明令牌（绑定了查询条件的指纹），用于 `POST /api/v1/search` 与 `GET /api/v2/sessions`。翻页途中改变任何查询条件会使令牌失效：v2 返回 `40922`，search 返回 `40001`。`GET /api/v2/sessions` 另提供无状态的 `page` 页码模式作为替代。
 
+## REST API
+
 下文按业务域分组列出全部端点，覆盖 `/api/v1` 与 `/api/v2`（路径前缀区分版本）。路径里的 `:{action}` 后缀是动作约定——对单个资源 POST 到 `路径:动作` 执行非 CRUD 操作（如会话的 `:fork`、`:archive`）；动作缺失或未知时返回 `40001`。共享类型（T-Session 等）不在条目内展开，统一见 [类型汇总](#类型汇总)；「可缺省」「可空」的语义区分见 [null 与缺省语义](#null-与缺省语义)。
 
-## 服务
+### 服务
 
 服务自身的探活、身份、关停与连接管理。
 
@@ -210,7 +212,7 @@ HTTP 状态码例外（非 200）：
 }
 ```
 
-## 配置
+### 配置
 
 全局配置的读取与合并式更新；密钥字段一律脱敏。
 
@@ -276,7 +278,7 @@ HTTP 状态码例外（非 200）：
 }
 ```
 
-## 模型与供应商
+### 模型与供应商
 
 模型配置的两半——`config.toml` 的 [供应商](../configuration/providers.md) 表与模型别名表——外加一个由服务端代理的 models.dev 目录。模型别名 id 就是配置中的别名键：通过供应商管理端点创建的别名形如 `provider_id/model`（例如 `my-provider/kimi-for-coding`），模型别名表中的裸键（如 `turbo`）原样使用；API 中任何接收 `model_id` 的地方指的都是这个别名 id。
 
