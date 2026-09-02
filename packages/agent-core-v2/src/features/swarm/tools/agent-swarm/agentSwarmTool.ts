@@ -39,6 +39,9 @@ import AGENT_SWARM_FORK_DESCRIPTION from './agent-swarm-fork.md?raw';
 
 const DEFAULT_SUBAGENT_TYPE = 'coder';
 
+const MIN_AGENT_SWARM_ITEM_LENGTH = 16;
+const AGENT_SWARM_ITEM_IDENTIFIER_PATTERN = /^[a-z_]+$/;
+
 const AGENT_SWARM_PARAMETERS = toInputJsonSchema(AgentSwarmToolInputSchema);
 const AGENT_SWARM_PARAMETERS_NO_MODEL = stripSubagentModelParameter(AGENT_SWARM_PARAMETERS);
 
@@ -222,6 +225,16 @@ async function createAgentSwarmSpecs(
     prompt: prompt.trim(),
   }));
   const items = (args.items ?? []).map((item) => item.trim());
+  items.forEach((item, index) => {
+    const reason = invalidAgentSwarmItemReason(item);
+    if (reason !== undefined) {
+      throw new Error2(
+        ErrorCodes.VALIDATION_FAILED,
+        `AgentSwarm item ${String(index + 1)} is invalid: ${reason}.`,
+        { details: { index: index + 1, item } },
+      );
+    }
+  });
   const itemCount = items.length;
   const resumeCount = resumeEntries.length;
   const totalCount = resumeCount + itemCount;
@@ -290,6 +303,19 @@ async function createAgentSwarmSpecs(
 
 function hasMinimumAgentSwarmInputs(itemCount: number, resumeCount: number): boolean {
   return resumeCount > 0 || itemCount >= 2;
+}
+
+function invalidAgentSwarmItemReason(item: string): string | undefined {
+  if (item.length === 0) {
+    return 'it is empty';
+  }
+  if (AGENT_SWARM_ITEM_IDENTIFIER_PATTERN.test(item)) {
+    return `"${item}" looks like a parameter name or placeholder, not a task item`;
+  }
+  if (item.length < MIN_AGENT_SWARM_ITEM_LENGTH) {
+    return `it is only ${String(item.length)} characters; a task item needs at least ${String(MIN_AGENT_SWARM_ITEM_LENGTH)}`;
+  }
+  return undefined;
 }
 
 function childDescription(swarmDescription: string, index: number, profileName: string): string {

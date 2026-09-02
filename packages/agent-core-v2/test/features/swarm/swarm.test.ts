@@ -668,12 +668,12 @@ describe('AgentSwarmTool', () => {
             data: {
               kind: 'spawn',
               index: 1,
-              item: 'src/a.ts',
-              prompt: 'Review src/a.ts',
+              item: 'src/modules/a.ts',
+              prompt: 'Review src/modules/a.ts',
             },
             profileName: 'explore',
             parentToolCallId: 'call_swarm',
-            prompt: 'Review src/a.ts',
+            prompt: 'Review src/modules/a.ts',
             description: 'Review files #1 (explore)',
             runInBackground: false,
           },
@@ -687,12 +687,12 @@ describe('AgentSwarmTool', () => {
             data: {
               kind: 'spawn',
               index: 2,
-              item: 'src/b.ts',
-              prompt: 'Review src/b.ts',
+              item: 'src/modules/b.ts',
+              prompt: 'Review src/modules/b.ts',
             },
             profileName: 'explore',
             parentToolCallId: 'call_swarm',
-            prompt: 'Review src/b.ts',
+            prompt: 'Review src/modules/b.ts',
             description: 'Review files #2 (explore)',
             runInBackground: false,
           },
@@ -707,7 +707,7 @@ describe('AgentSwarmTool', () => {
     const input = {
       description: 'Review files',
       prompt_template: 'Review {{item}}',
-      items: ['src/a.ts', 'src/b.ts'],
+      items: ['src/modules/a.ts', 'src/modules/b.ts'],
       subagent_type: 'explore',
     };
 
@@ -715,13 +715,13 @@ describe('AgentSwarmTool', () => {
     expect(
       AgentSwarmToolInputSchema.safeParse({
         ...input,
-        items: Array.from({ length: 128 }, (_, index) => `src/${String(index + 1)}.ts`),
+        items: Array.from({ length: 128 }, (_, index) => `src/modules/${String(index + 1)}.ts`),
       }).success,
     ).toBe(true);
     expect(
       AgentSwarmToolInputSchema.safeParse({
         ...input,
-        items: Array.from({ length: 129 }, (_, index) => `src/${String(index + 1)}.ts`),
+        items: Array.from({ length: 129 }, (_, index) => `src/modules/${String(index + 1)}.ts`),
       }).success,
     ).toBe(false);
     expect(tool.parameters).toMatchObject({
@@ -754,15 +754,15 @@ describe('AgentSwarmTool', () => {
         data: {
           kind: 'spawn',
           index: 1,
-          item: 'src/a.ts',
-          prompt: 'Review src/a.ts',
+          item: 'src/modules/a.ts',
+          prompt: 'Review src/modules/a.ts',
         },
         profileName: 'explore',
         parentToolCallId: 'call_swarm',
-        prompt: 'Review src/a.ts',
+        prompt: 'Review src/modules/a.ts',
         description: 'Review files #1 (explore)',
         swarmIndex: 1,
-        swarmItem: 'src/a.ts',
+        swarmItem: 'src/modules/a.ts',
         runInBackground: false,
         signal,
         timeout: DEFAULT_SWARM_TIMEOUT_MS,
@@ -773,15 +773,15 @@ describe('AgentSwarmTool', () => {
         data: {
           kind: 'spawn',
           index: 2,
-          item: 'src/b.ts',
-          prompt: 'Review src/b.ts',
+          item: 'src/modules/b.ts',
+          prompt: 'Review src/modules/b.ts',
         },
         profileName: 'explore',
         parentToolCallId: 'call_swarm',
-        prompt: 'Review src/b.ts',
+        prompt: 'Review src/modules/b.ts',
         description: 'Review files #2 (explore)',
         swarmIndex: 2,
-        swarmItem: 'src/b.ts',
+        swarmItem: 'src/modules/b.ts',
         runInBackground: false,
         signal,
         timeout: DEFAULT_SWARM_TIMEOUT_MS,
@@ -792,8 +792,8 @@ describe('AgentSwarmTool', () => {
       [
         '<agent_swarm_result>',
         '<summary>completed: 2</summary>',
-        '<subagent agent_id="agent-explore-1" item="src/a.ts" outcome="completed">explore result a</subagent>',
-        '<subagent agent_id="agent-explore-2" item="src/b.ts" outcome="completed">explore result b</subagent>',
+        '<subagent agent_id="agent-explore-1" item="src/modules/a.ts" outcome="completed">explore result a</subagent>',
+        '<subagent agent_id="agent-explore-2" item="src/modules/b.ts" outcome="completed">explore result b</subagent>',
         '</agent_swarm_result>',
       ].join('\n'),
     );
@@ -806,7 +806,7 @@ describe('AgentSwarmTool', () => {
     const execution = tool.resolveExecution({
       description: 'Review files',
       prompt_template: 'Review {{item}}',
-      items: ['src/a.ts', 'src/b.ts'],
+      items: ['src/modules/a.ts', 'src/modules/b.ts'],
     });
 
     expect(execution.isError).toBeUndefined();
@@ -848,7 +848,7 @@ describe('AgentSwarmTool', () => {
       context({
         description: 'Review files',
         prompt_template: 'Review {{item}}',
-        items: ['src/a.ts', 'src/b.ts'],
+        items: ['src/modules/a.ts', 'src/modules/b.ts'],
         subagent_type: 'coder',
       }),
     );
@@ -864,7 +864,7 @@ describe('AgentSwarmTool', () => {
         input: {
           description: 'Review files',
           prompt_template: 'Review {{item}}',
-          items: Array.from({ length: 129 }, (_, index) => `src/${String(index + 1)}.ts`),
+          items: Array.from({ length: 129 }, (_, index) => `src/modules/${String(index + 1)}.ts`),
         },
         output: 'AgentSwarm supports at most 128 subagents.',
       },
@@ -872,14 +872,14 @@ describe('AgentSwarmTool', () => {
         input: {
           description: 'Review one file',
           prompt_template: 'Review {{item}}',
-          items: ['src/only.ts'],
+          items: ['src/modules/only.ts'],
         },
         output: 'AgentSwarm requires at least 2 items unless resume_agent_ids is provided.',
       },
       {
         input: {
           description: 'Review files',
-          items: ['src/a.ts', 'src/b.ts'],
+          items: ['src/modules/a.ts', 'src/modules/b.ts'],
         },
         output: 'prompt_template is required when items are provided.',
       },
@@ -887,7 +887,7 @@ describe('AgentSwarmTool', () => {
         input: {
           description: 'Review files',
           prompt_template: 'Review files',
-          items: ['src/a.ts', 'src/b.ts'],
+          items: ['src/modules/a.ts', 'src/modules/b.ts'],
         },
         output: 'prompt_template must include the {{item}} placeholder.',
       },
@@ -895,10 +895,36 @@ describe('AgentSwarmTool', () => {
         input: {
           description: 'Review files',
           prompt_template: 'Review {{item}}',
-          items: ['same', 'same'],
+          items: ['the same task item', 'the same task item'],
         },
         output:
           'Duplicate subagent prompts from items 1 and 2. AgentSwarm requires distinct subagents.',
+      },
+      {
+        input: {
+          description: 'Review files',
+          prompt_template: 'Review {{item}}',
+          items: ['src/modules/a.ts', 'subagent_type', 'src/modules/b.ts'],
+        },
+        output:
+          'AgentSwarm item 2 is invalid: "subagent_type" looks like a parameter name or placeholder, not a task item.',
+      },
+      {
+        input: {
+          description: 'Review files',
+          prompt_template: 'Review {{item}}',
+          items: ['fix bug', 'src/modules/b.ts'],
+        },
+        output:
+          'AgentSwarm item 1 is invalid: it is only 7 characters; a task item needs at least 16.',
+      },
+      {
+        input: {
+          description: 'Review files',
+          prompt_template: 'Review {{item}}',
+          items: ['src/modules/a.ts', '   '],
+        },
+        output: 'AgentSwarm item 2 is invalid: it is empty.',
       },
     ];
 
@@ -912,6 +938,50 @@ describe('AgentSwarmTool', () => {
       expect(result.isError).toBe(true);
       expect(host.swarmService.run).not.toHaveBeenCalled();
     }
+  });
+
+  it('accepts descriptive task items', async () => {
+    const host = mockSwarmHost({
+      run: vi.fn().mockImplementation(async ({ tasks }) => [
+        {
+          task: tasks[0],
+          agentId: 'agent-coder-1',
+          status: 'completed',
+          result: 'first done',
+        },
+        {
+          task: tasks[1],
+          agentId: 'agent-coder-2',
+          status: 'completed',
+          result: 'second done',
+        },
+      ]),
+    });
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), realSubagents(stubSwarmCatalog(), stubConfig(), stubCallerProfile()), stubCallerProfile());
+
+    const result = await executeTool(
+      tool,
+      context({
+        description: 'Review files',
+        prompt_template: 'Handle this task: {{item}}',
+        items: [
+          'Review the login module for race conditions',
+          'Audit the session store for stale writes',
+        ],
+      }),
+    );
+
+    expect(host.swarmService.run).toHaveBeenCalledTimes(1);
+    expect(result.output).toBe(
+      [
+        '<agent_swarm_result>',
+        '<summary>completed: 2</summary>',
+        '<subagent agent_id="agent-coder-1" item="Review the login module for race conditions" outcome="completed">first done</subagent>',
+        '<subagent agent_id="agent-coder-2" item="Audit the session store for stale writes" outcome="completed">second done</subagent>',
+        '</agent_swarm_result>',
+      ].join('\n'),
+    );
+    expect(result.isError).toBeUndefined();
   });
 
   it('resumes mapped agents before spawning item subagents', async () => {
@@ -942,7 +1012,7 @@ describe('AgentSwarmTool', () => {
       description: 'Finish review',
       subagent_type: 'explore',
       prompt_template: 'Review {{item}}',
-      items: ['src/new.ts'],
+      items: ['src/modules/new.ts'],
       resume_agent_ids: {
         'agent-old-1': 'Continue previous review A',
         'agent-old-2': 'Continue previous review B',
@@ -1013,15 +1083,15 @@ describe('AgentSwarmTool', () => {
         data: {
           kind: 'spawn',
           index: 3,
-          item: 'src/new.ts',
-          prompt: 'Review src/new.ts',
+          item: 'src/modules/new.ts',
+          prompt: 'Review src/modules/new.ts',
         },
         profileName: 'explore',
         parentToolCallId: 'call_swarm',
-        prompt: 'Review src/new.ts',
+        prompt: 'Review src/modules/new.ts',
         description: 'Finish review #3 (explore)',
         swarmIndex: 3,
-        swarmItem: 'src/new.ts',
+        swarmItem: 'src/modules/new.ts',
         runInBackground: false,
         signal,
         timeout: DEFAULT_SWARM_TIMEOUT_MS,
@@ -1034,7 +1104,7 @@ describe('AgentSwarmTool', () => {
         '<summary>completed: 3</summary>',
         '<subagent mode="resume" agent_id="agent-old-1" item="src/old-a.ts" outcome="completed">result 1</subagent>',
         '<subagent mode="resume" agent_id="agent-old-2" item="src/old-b.ts" outcome="completed">result 2</subagent>',
-        '<subagent agent_id="agent-new-3" item="src/new.ts" outcome="completed">result 3</subagent>',
+        '<subagent agent_id="agent-new-3" item="src/modules/new.ts" outcome="completed">result 3</subagent>',
         '</agent_swarm_result>',
       ].join('\n'),
     );
@@ -1128,7 +1198,7 @@ describe('AgentSwarmTool', () => {
       context({
         description: 'Review files',
         prompt_template: 'Review {{item}}',
-        items: ['src/a.ts', 'src/b.ts'],
+        items: ['src/modules/a.ts', 'src/modules/b.ts'],
       }),
     );
 
@@ -1137,8 +1207,8 @@ describe('AgentSwarmTool', () => {
         '<agent_swarm_result>',
         '<summary>completed: 1, failed: 1</summary>',
         '<resume_hint>Call AgentSwarm with resume_agent_ids using the agent_id values in this result to continue unfinished work.</resume_hint>',
-        '<subagent agent_id="agent-coder-1" item="src/a.ts" outcome="completed">imports are stable</subagent>',
-        '<subagent agent_id="agent-coder-2" item="src/b.ts" outcome="failed">Agent timed out after 30s.</subagent>',
+        '<subagent agent_id="agent-coder-1" item="src/modules/a.ts" outcome="completed">imports are stable</subagent>',
+        '<subagent agent_id="agent-coder-2" item="src/modules/b.ts" outcome="failed">Agent timed out after 30s.</subagent>',
         '</agent_swarm_result>',
       ].join('\n'),
     );
@@ -1154,7 +1224,7 @@ describe('AgentSwarmTool', () => {
       context({
         description: 'Review files',
         prompt_template: 'Review {{item}}',
-        items: ['src/a.ts', 'src/b.ts'],
+        items: ['src/modules/a.ts', 'src/modules/b.ts'],
       }),
     );
 
@@ -1182,7 +1252,7 @@ describe('AgentSwarmTool', () => {
       context({
         description: 'Review files',
         prompt_template: 'Review {{item}}',
-        items: ['src/a.ts', 'src/b.ts'],
+        items: ['src/modules/a.ts', 'src/modules/b.ts'],
       }),
     );
 
@@ -1205,7 +1275,7 @@ describe('AgentSwarmTool', () => {
       context({
         description: 'Review files',
         prompt_template: 'Review {{item}}',
-        items: ['src/a.ts', 'src/b.ts'],
+        items: ['src/modules/a.ts', 'src/modules/b.ts'],
       }),
     );
 
@@ -1232,7 +1302,7 @@ describe('AgentSwarmTool', () => {
       context({
         description: 'Review files',
         prompt_template: 'Review {{item}}',
-        items: ['src/a.ts', 'src/b.ts'],
+        items: ['src/modules/a.ts', 'src/modules/b.ts'],
         model: 'primary',
       }),
     );
@@ -1287,7 +1357,7 @@ describe('AgentSwarmTool', () => {
       context({
         description: 'Review files',
         prompt_template: 'Review {{item}}',
-        items: ['src/a.ts', 'src/b.ts'],
+        items: ['src/modules/a.ts', 'src/modules/b.ts'],
       }),
     );
 
@@ -1295,8 +1365,8 @@ describe('AgentSwarmTool', () => {
       [
         '<agent_swarm_result>',
         '<summary>failed: 2</summary>',
-        '<subagent item="src/a.ts" outcome="failed">Agent did not start.</subagent>',
-        '<subagent item="src/b.ts" outcome="failed">Agent also did not start.</subagent>',
+        '<subagent item="src/modules/a.ts" outcome="failed">Agent did not start.</subagent>',
+        '<subagent item="src/modules/b.ts" outcome="failed">Agent also did not start.</subagent>',
         '</agent_swarm_result>',
       ].join('\n'),
     );
@@ -1334,7 +1404,7 @@ describe('AgentSwarmTool', () => {
       context({
         description: 'Review files',
         prompt_template: 'Review {{item}}',
-        items: ['src/a.ts', 'src/b.ts', 'src/c.ts'],
+        items: ['src/modules/a.ts', 'src/modules/b.ts', 'src/modules/c.ts'],
       }),
     );
 
@@ -1343,9 +1413,9 @@ describe('AgentSwarmTool', () => {
         '<agent_swarm_result>',
         '<summary>completed: 1, aborted: 2</summary>',
         '<resume_hint>Call AgentSwarm with resume_agent_ids using the agent_id values in this result to continue unfinished work.</resume_hint>',
-        '<subagent agent_id="agent-coder-1" item="src/a.ts" outcome="completed">imports are stable</subagent>',
-        '<subagent agent_id="agent-coder-2" item="src/b.ts" state="started" outcome="aborted">The user manually interrupted this subagent batch before this subagent finished.</subagent>',
-        '<subagent item="src/c.ts" state="not_started" outcome="aborted">The user manually interrupted this subagent batch before this subagent was started.</subagent>',
+        '<subagent agent_id="agent-coder-1" item="src/modules/a.ts" outcome="completed">imports are stable</subagent>',
+        '<subagent agent_id="agent-coder-2" item="src/modules/b.ts" state="started" outcome="aborted">The user manually interrupted this subagent batch before this subagent finished.</subagent>',
+        '<subagent item="src/modules/c.ts" state="not_started" outcome="aborted">The user manually interrupted this subagent batch before this subagent was started.</subagent>',
         '</agent_swarm_result>',
       ].join('\n'),
     );
@@ -1379,7 +1449,7 @@ describe('AgentSwarmTool', () => {
       context({
         description: 'Review files',
         prompt_template: 'Review {{item}}',
-        items: ['src/a.ts', 'src/b.ts'],
+        items: ['src/modules/a.ts', 'src/modules/b.ts'],
         subagent_type: 'coder',
         fork: true,
       }),
@@ -1399,7 +1469,7 @@ describe('AgentSwarmTool', () => {
       context({
         description: 'Review files',
         prompt_template: 'Review {{item}}',
-        items: ['src/a.ts', 'src/b.ts'],
+        items: ['src/modules/a.ts', 'src/modules/b.ts'],
         model: 'provider/fast',
         fork: true,
       }),
@@ -1418,7 +1488,7 @@ describe('AgentSwarmTool', () => {
       context({
         description: 'Review files',
         prompt_template: 'Review {{item}}',
-        items: ['src/a.ts', 'src/b.ts'],
+        items: ['src/modules/a.ts', 'src/modules/b.ts'],
         fork: true,
       }),
     );
@@ -1441,7 +1511,7 @@ describe('AgentSwarmTool', () => {
       context({
         description: 'Review files',
         prompt_template: 'Review {{item}}',
-        items: ['src/a.ts', 'src/b.ts'],
+        items: ['src/modules/a.ts', 'src/modules/b.ts'],
         fork: true,
       }),
     );
