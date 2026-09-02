@@ -437,9 +437,10 @@ describe('handleGoalCommand', () => {
     });
     expect(s.setPermission).toHaveBeenCalledWith('yolo');
     expect(manualHost.setAppState).toHaveBeenLastCalledWith({ permissionMode: 'manual' });
-    // The rollback to Manual must not emit a second warning.
-    expect(manualHost.showNotice).toHaveBeenCalledTimes(1);
-    expect(manualHost.showStatus).toHaveBeenCalledTimes(1);
+    // The permissive-mode notice is deferred until the goal starts, so a failed
+    // start leaves no stale notice behind.
+    expect(manualHost.showNotice).not.toHaveBeenCalled();
+    expect(manualHost.showStatus).not.toHaveBeenCalledWith(UNCONFIRMED_FILE_CHANGES_WARNING, 'warning');
   });
 
   it('returns the command to the input box when a Manual-mode goal start is cancelled', async () => {

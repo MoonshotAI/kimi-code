@@ -445,6 +445,14 @@ async function startGoalWithPermission(
   // previous mode so the session is not left more permissive than before.
   if (!started && switched) {
     await setPermissionForGoal(host, previousMode);
+    return;
+  }
+  // Announce the switch only once the goal actually starts: shown earlier, a
+  // failed creation would leave a stale permissive-mode notice in the
+  // transcript even though the rollback above restored the previous mode.
+  if (switched) {
+    host.showNotice(`Permission mode: ${PERMISSION_MODE_DISPLAY_NAMES[choice]}`);
+    host.showStatus(UNCONFIRMED_FILE_CHANGES_WARNING, 'warning');
   }
 }
 
@@ -456,12 +464,6 @@ async function setPermissionForGoal(host: GoalCommandHost, mode: PermissionMode)
     return false;
   }
   host.setAppState({ permissionMode: mode });
-  // The failure-rollback path also comes through here with 'manual'; only warn
-  // when entering a mode that skips confirmation.
-  if (mode !== 'manual') {
-    host.showNotice(`Permission mode: ${PERMISSION_MODE_DISPLAY_NAMES[mode]}`);
-    host.showStatus(UNCONFIRMED_FILE_CHANGES_WARNING, 'warning');
-  }
   return true;
 }
 
