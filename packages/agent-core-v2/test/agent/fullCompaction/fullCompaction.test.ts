@@ -1081,6 +1081,9 @@ describe('FullCompaction', () => {
         agent_id: 'main',
         from: 'compacting',
         trace_id: 'trace-compact-retry',
+        mode: 'agent',
+        protocol: 'openai',
+        provider_type: 'kimi',
       },
     });
     vi.useRealTimers();

@@ -21,7 +21,6 @@ export function recordingTelemetry(
       records.push({
         event,
         properties: composeTelemetryProperties(
-          event,
           currentContext,
           properties as TelemetryProperties | undefined,
         ),

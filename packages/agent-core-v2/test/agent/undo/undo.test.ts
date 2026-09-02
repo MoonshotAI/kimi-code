@@ -504,7 +504,13 @@ describe('AgentConversationUndoService', () => {
 
     expect(records).toContainEqual({
       event: 'conversation_undo',
-      properties: { agent_id: 'main', count: 1 },
+      properties: {
+        agent_id: 'main',
+        count: 1,
+        mode: 'agent',
+        protocol: 'openai',
+        provider_type: 'kimi',
+      },
     });
     expect(ctx.context.get().map((m) => m.role)).toEqual(['user', 'assistant']);
   });
@@ -572,7 +578,13 @@ describe('AgentConversationUndoService', () => {
       expect(undone).toEqual([1]);
       expect(records).toContainEqual({
         event: 'conversation_undo',
-        properties: { agent_id: 'main', count: 1 },
+        properties: {
+          agent_id: 'main',
+          count: 1,
+          mode: 'agent',
+          protocol: 'openai',
+          provider_type: 'kimi',
+        },
       });
     } finally {
       subscription.dispose();

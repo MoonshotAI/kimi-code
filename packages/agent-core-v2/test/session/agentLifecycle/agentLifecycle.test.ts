@@ -821,11 +821,11 @@ describe('AgentLifecycleService', () => {
 
     expect(records).toContainEqual({
       event: 'yolo_toggle',
-      properties: { agent_id: 'main', enabled: true },
+      properties: { agent_id: 'main', enabled: true, mode: 'agent' },
     });
     expect(records).toContainEqual({
       event: 'yolo_toggle',
-      properties: { agent_id: sub.agentId, enabled: false },
+      properties: { agent_id: sub.agentId, enabled: false, mode: 'agent' },
     });
   });
 

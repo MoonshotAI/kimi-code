@@ -9,7 +9,6 @@ import type {
   TelemetryProperties,
 } from './context';
 import {
-  telemetryEventDefinitions,
   type StrictPropertyCheck,
   type TelemetryEventName,
   type TelemetryEventPayload,
@@ -27,15 +26,6 @@ const ROOT_CHAIN: readonly string[] = [];
 
 const WIRE_SESSION_ID_PROPERTY = 'sessionId';
 
-const FILTERED_CONTEXT_KEYS = [
-  'turn_id',
-  'trace_id',
-  'thinking_effort',
-  'mode',
-  'provider_type',
-  'protocol',
-] as const;
-
 function applyPatch(target: MutableContext, patch: TelemetryContextPatch): MutableContext {
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined) {
@@ -47,52 +37,24 @@ function applyPatch(target: MutableContext, patch: TelemetryContextPatch): Mutab
   return target;
 }
 
-function declaredKeysFor(event: string): readonly string[] | undefined {
-  const definition = (
-    telemetryEventDefinitions as Record<
-      string,
-      | { readonly context: string; readonly meta: { readonly properties: Readonly<Record<string, string>> } }
-      | undefined
-    >
-  )[event];
-  if (definition === undefined) {
-    return undefined;
-  }
-  return Object.keys(definition.meta.properties);
-}
-
 export function composeTelemetryProperties(
-  event: string,
   ambient: TelemetryProperties,
   explicit: TelemetryProperties | undefined,
 ): TelemetryProperties {
   const properties: MutableContext = {};
+  for (const [key, value] of Object.entries(ambient)) {
+    if (key === 'session_id' || value === undefined) {
+      continue;
+    }
+    properties[key] = value;
+  }
   if (ambient['session_id'] !== undefined) {
     properties[WIRE_SESSION_ID_PROPERTY] = ambient['session_id'];
   }
-  if (ambient['agent_id'] !== undefined) {
-    properties['agent_id'] = ambient['agent_id'];
-  }
-  if (ambient['model'] !== undefined) {
-    properties['model'] = ambient['model'];
-  }
-  const declared = declaredKeysFor(event);
-  if (declared !== undefined) {
-    for (const key of declared) {
-      if (key === 'agent_id') continue;
-      const value = ambient[key];
+  if (explicit !== undefined) {
+    for (const [key, value] of Object.entries(explicit)) {
       if (value !== undefined) {
         properties[key] = value;
-      }
-    }
-  }
-  if (explicit !== undefined) {
-    Object.assign(properties, explicit);
-  }
-  if (declared !== undefined) {
-    for (const key of FILTERED_CONTEXT_KEYS) {
-      if (!declared.includes(key)) {
-        delete properties[key];
       }
     }
   }
@@ -220,7 +182,7 @@ export class TelemetryService implements ITelemetryService, ITelemetryScopeBindi
     const record: TelemetryAppenderRecord = {
       event,
       context: { ...ambient },
-      properties: composeTelemetryProperties(event, ambient, properties),
+      properties: composeTelemetryProperties(ambient, properties),
     };
     for (const appender of this.appenders) {
       try {

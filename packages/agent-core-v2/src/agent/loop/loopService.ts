@@ -838,6 +838,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     onStarted: ((step: number) => void) | undefined,
   ): Promise<StepExecutionResult> {
     this.activeRequestTrace = undefined;
+    this.telemetry.setContext({ trace_id: undefined });
     await this.hooks.onWillBeginStep.run({ turnId, step: currentStep, firstStepOfTurn, signal });
     const markStepStarted = this.beginStep(turnId, signal, currentStep, stepUuid, onStarted);
     let stepEndAppended = false;

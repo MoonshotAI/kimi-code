@@ -156,7 +156,15 @@ describe('ConfigState model capabilities', () => {
 
     expect(records).toContainEqual({
       event: 'thinking_toggle',
-      properties: { agent_id: 'main', enabled: true, effort: 'low', from: 'off' },
+      properties: {
+        agent_id: 'main',
+        enabled: true,
+        effort: 'low',
+        from: 'off',
+        mode: 'agent',
+        protocol: 'openai',
+        provider_type: 'kimi',
+      },
     });
   });
 

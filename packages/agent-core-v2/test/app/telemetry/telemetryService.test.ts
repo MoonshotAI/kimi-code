@@ -235,6 +235,7 @@ describe('TelemetryService (layered ambient)', () => {
     expect(appender.records[0]?.properties).toEqual({
       sessionId: 's1',
       agent_id: 'a1',
+      mode: 'agent',
       model: 'm1',
       reason: 'exit',
     });
@@ -258,7 +259,7 @@ describe('TelemetryService (layered ambient)', () => {
     });
   });
 
-  it('a turn event declaring turn fields picks the ambient turn fragment up', () => {
+  it('a turn event picks the ambient turn fragment up', () => {
     const appender = new CapturingAppender();
     const root = serviceWithAppenders(appender);
     const session = root.createScopeBinding('sessions/s1', { session_id: 's1' });
@@ -275,6 +276,7 @@ describe('TelemetryService (layered ambient)', () => {
     expect(appender.records[0]?.properties).toEqual({
       sessionId: 's1',
       agent_id: 'a1',
+      mode: 'agent',
       turn_id: 3,
       step_no: 1,
       tool_call_id: 'call_1',
@@ -284,7 +286,7 @@ describe('TelemetryService (layered ambient)', () => {
     });
   });
 
-  it('an event not declaring turn fields never receives turn_id or trace_id', () => {
+  it('an event not declaring context fields still receives the full ambient context', () => {
     const appender = new CapturingAppender();
     const root = serviceWithAppenders(appender);
     const agent = root.createScopeBinding('sessions/s1/agents/a1', {
@@ -302,21 +304,20 @@ describe('TelemetryService (layered ambient)', () => {
       skill_name: 'review',
       trigger: 'user-slash',
     });
-    const properties = appender.records[0]?.properties ?? {};
-    expect(properties).toEqual({
+    expect(appender.records[0]?.properties).toEqual({
       agent_id: 'a1',
+      mode: 'plan',
+      turn_id: 3,
+      trace_id: 'trace-1',
+      thinking_effort: 'high',
+      provider_type: 'kimi',
+      protocol: 'openai',
       skill_name: 'review',
       trigger: 'user-slash',
     });
-    expect(properties).not.toHaveProperty('turn_id');
-    expect(properties).not.toHaveProperty('trace_id');
-    expect(properties).not.toHaveProperty('thinking_effort');
-    expect(properties).not.toHaveProperty('mode');
-    expect(properties).not.toHaveProperty('provider_type');
-    expect(properties).not.toHaveProperty('protocol');
   });
 
-  it('drops explicitly passed turn fields when the event does not declare them', () => {
+  it('explicitly passed fields pass through even when the event does not declare them', () => {
     const appender = new CapturingAppender();
     const root = serviceWithAppenders(appender);
     const agent = root.createScopeBinding('sessions/s1/agents/a1', {
@@ -329,9 +330,11 @@ describe('TelemetryService (layered ambient)', () => {
       turn_id: 3,
       trace_id: 'trace-1',
     } as never);
-    const properties = appender.records[0]?.properties ?? {};
-    expect(properties).toEqual({
+    expect(appender.records[0]?.properties).toEqual({
       agent_id: 'a1',
+      mode: 'agent',
+      turn_id: 3,
+      trace_id: 'trace-1',
       skill_name: 'review',
       trigger: 'user-slash',
     });
@@ -365,6 +368,7 @@ describe('TelemetryService (layered ambient)', () => {
     expect(appender.records[1]?.properties?.['turn_id']).toBeUndefined();
     expect(appender.records[1]?.properties).toEqual({
       agent_id: 'a1',
+      mode: 'agent',
       step_no: 2,
       tool_call_id: 'call_2',
       tool_name: 'bash',
