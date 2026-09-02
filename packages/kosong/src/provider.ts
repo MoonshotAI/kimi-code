@@ -137,8 +137,13 @@ export interface GenerateOptions {
    * to their underlying HTTP client; the generate loop in
    * {@link generate | generate()} also checks the signal between streamed
    * parts.
-   */
+  */
   signal?: AbortSignal;
+  /**
+   * Maximum time to wait for the next streamed part after response headers
+   * arrive. Invalid values fall back to the default three-minute deadline.
+   */
+  streamIdleTimeoutMs?: number;
   /**
    * Request-scoped provider auth. Hosts should resolve this immediately before
    * each request/retry so providers never retain mutable credential state.
