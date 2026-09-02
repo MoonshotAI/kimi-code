@@ -304,6 +304,14 @@ export class MigrationScreenComponent extends Container implements Focusable {
           chalk.hex(colors.success)(`  ✓ ${sum.sessions.sessionsMigrated} sessions migrated`),
         );
       }
+      if (sum.sessions.sessionsRepaired > 0) {
+        lines.push(
+          chalk.hex(colors.success)(`  ✓ ${sum.sessions.sessionsRepaired} sessions repaired`),
+        );
+      }
+      if (sum.plans.copied > 0) {
+        lines.push(chalk.hex(colors.success)(`  ✓ ${sum.plans.copied} plan files copied`));
+      }
       // Only claim a data class was migrated when the summary says it was —
       // a skipped/failed step (e.g. malformed config.toml) must not show ✓.
       const migratedKinds: string[] = [];
@@ -315,7 +323,12 @@ export class MigrationScreenComponent extends Container implements Focusable {
       if (migratedKinds.length > 0) {
         lines.push(chalk.hex(colors.success)(`  ✓ ${migratedKinds.join(' · ')}`));
       }
-      if (sum.sessions.sessionsMigrated === 0 && migratedKinds.length === 0) {
+      if (
+        sum.sessions.sessionsMigrated === 0 &&
+        sum.sessions.sessionsRepaired === 0 &&
+        sum.plans.copied === 0 &&
+        migratedKinds.length === 0
+      ) {
         lines.push(chalk.hex(colors.textMuted)('  Nothing needed migrating.'));
       }
       if (r.notices.detectedPlugins.length > 0) {
@@ -324,6 +337,9 @@ export class MigrationScreenComponent extends Container implements Focusable {
             `  ⚠ ${r.notices.detectedPlugins.length} kimi-cli plugins — not yet supported for migration`,
           ),
         );
+      }
+      if (r.notices.plansCopiedNotice !== null) {
+        lines.push(chalk.hex(colors.textMuted)(`  ⓘ ${r.notices.plansCopiedNotice}`));
       }
       // OAuth credentials are deliberately not migrated (refresh tokens cannot
       // safely be held by two installs at once). kimi-code's normal auth flow
@@ -419,7 +435,7 @@ export class MigrationScreenComponent extends Container implements Focusable {
       }
       lines.push('');
       lines.push(
-        chalk.hex(colors.textMuted)(' Old data kept at ~/.kimi/ — kimi-cli still works.'),
+        chalk.hex(colors.textMuted)(` Old data kept at ${this.opts.sourceHome} — kimi-cli still works.`),
       );
     }
     lines.push('');
@@ -536,9 +552,12 @@ function formatMigrationFailureReason(error: unknown): string | undefined {
 function summarizePlan(plan: MigrationPlan): string {
   const parts: string[] = [];
   if (plan.totalSessions > 0) parts.push(`${plan.totalSessions} sessions`);
-  if (plan.hasConfig) parts.push('config.toml');
+  if (plan.hasConfig) parts.push('config');
   if (plan.hasMcp) parts.push('mcp.json');
   if (plan.hasUserHistory) parts.push('REPL history');
+  if (plan.hasSkills) parts.push('skills');
+  const scanFailures = plan.sessionScanFailures?.length ?? 0;
+  if (scanFailures > 0) parts.push(`${scanFailures} unreadable`);
   return parts.join(' · ');
 }
 

@@ -33,11 +33,14 @@ describe('writeReport', () => {
           wroteTuiSibling: false,
           migratedHooks: 0,
           droppedHooks: 0,
+          sourceUnreadable: false,
+          deviceIdCopied: false,
           siblingContents: { providers: [], models: [], hooks: 0 },
         },
-        mcp: { mergedServers: [], keptNewForConflicts: [], droppedServers: [], wroteSiblingDueToConflict: false },
+        mcp: { mergedServers: [], keptNewForConflicts: [], droppedServers: [], wroteSiblingDueToConflict: false, sourceUnreadable: false },
         userHistory: { copied: 0, skippedExisting: 0 },
         skills: { copied: 0, skippedExisting: 0 },
+        plans: { copied: 0, skippedExisting: 0 },
         sessions: {
           scope: 'all',
           bucketsScanned: 0,
@@ -46,6 +49,7 @@ describe('writeReport', () => {
           sessionsAttempted: 0,
           sessionsMigrated: 0,
           sessionsAlreadyMigrated: 0,
+          sessionsRepaired: 0,
           sessionsSkippedPlaceholder: 0,
           sessionsSkippedEmpty: 0,
           sessionsSkippedMalformed: 0,
@@ -59,6 +63,7 @@ describe('writeReport', () => {
         detectedPlugins: [],
         configConflictNotice: null,
         tuiConflictNotice: null,
+        plansCopiedNotice: null,
       },
     };
     await writeReport(tgt, report);

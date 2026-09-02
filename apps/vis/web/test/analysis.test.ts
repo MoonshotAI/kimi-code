@@ -47,7 +47,7 @@ describe('analyzeWire', () => {
     expect(tc.outputBytes).toBe(50);
     expect(tc.isError).toBe(false);
 
-    // Context-window fill snapshots (agent-core formula)
+    // Context-window fill snapshots (the engine's formula)
     expect(a.turns[0]!.steps[0]!.contextTokens).toBe(210); // 100+20+80+10
     expect(a.turns[0]!.steps[1]!.contextTokens).toBe(400); // 200+50+150+0
     expect(a.summary.peakContextTokens).toBe(400);

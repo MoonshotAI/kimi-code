@@ -113,6 +113,29 @@ export interface WorkspaceTrustInfo {
   readonly gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[];
 }
 
+/**
+ * File-suggestion query against a workspace root, no session required. Only
+ * meaningful on the agent-core-v2 engine; the v1 engine has no equivalent
+ * and reports `undefined`.
+ */
+export interface SuggestFilesInput {
+  readonly query: string;
+  readonly limit?: number;
+}
+
+export interface SuggestFilesItem {
+  readonly path: string;
+  readonly name: string;
+  readonly kind: 'file' | 'directory' | 'symlink';
+  /** Matched-character offsets into `path`, for mention-style highlighting. */
+  readonly matchPositions: readonly number[];
+}
+
+export interface SuggestFilesResult {
+  readonly items: readonly SuggestFilesItem[];
+  readonly truncated: boolean;
+}
+
 /** Metadata of one upload in the engine's daemon file store. */
 export type { FileMeta } from '@moonshot-ai/agent-core-v2/app/file/fileService';
 
@@ -263,6 +286,10 @@ export interface ExportSessionResult {
 export interface ListSessionsOptions {
   readonly workDir?: string;
   readonly sessionId?: string;
+  /**
+   * Include archived sessions in the listing. Defaults to non-archived only.
+   */
+  readonly includeArchived?: boolean;
   /**
    * Maximum number of summaries in one page. Only consulted by
    * `listSessionsPage`; plain `listSessions` always returns the whole

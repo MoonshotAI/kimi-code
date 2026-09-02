@@ -7,11 +7,27 @@ export interface MigrationPlan {
   readonly hasConfig: boolean;
   readonly hasMcp: boolean;
   readonly hasUserHistory: boolean;
-  readonly oauthCredentials: readonly string[]; // basenames found under credentials/
+  readonly hasSkills: boolean;
+  readonly skillsSourceHome?: string;
+  /** Legacy `~/.kimi/plans/` (share-dir independent) holds plan files to copy. */
+  readonly hasPlans: boolean;
+  /**
+   * OAuth login names that will require a fresh `/login` after migration,
+   * derived from config semantics (providers carrying an `oauth` ref) unioned
+   * with basenames found under credentials/.
+   */
+  readonly oauthCredentials: readonly string[];
   readonly workdirs: readonly WorkDirEntry[];
   readonly detectedPlugins: readonly string[];
   readonly detectedMcpOauthServers: readonly string[];
   readonly totalSessions: number; // sum across workdirs (real, post-classify)
+  /**
+   * Previously imported sessions under the target home whose wire still lacks
+   * turn-structure records (an old migrator wrote message-only imports).
+   * Filled by callers via `countImportedSessionsNeedingRepair`; a value > 0
+   * means a completed marker must not suppress a repair run.
+   */
+  readonly sessionsNeedingRepair?: number;
   /**
    * Session storage that detection could see but could not safely inspect.
    * Optional for callers that persisted or constructed an older plan shape.
@@ -88,6 +104,9 @@ export interface MigrationSummary {
     readonly migratedHooks: number;
     /** Count of kimi-cli hook entries dropped because kimi-code's schema rejects them. */
     readonly droppedHooks: number;
+    readonly sourceUnreadable: boolean;
+    /** Legacy `device_id` was copied because the target had none of its own. */
+    readonly deviceIdCopied: boolean;
     /**
      * When `wroteSiblingDueToConflict` is true, what landed in
      * `config.migrated-from-kimi-cli.toml` instead of the live `config.toml`.
@@ -107,9 +126,11 @@ export interface MigrationSummary {
     readonly droppedServers: readonly string[];
     /** Target `mcp.json` was unparseable; merged servers went to a sibling. */
     readonly wroteSiblingDueToConflict: boolean;
+    readonly sourceUnreadable: boolean;
   };
   readonly userHistory: { readonly copied: number; readonly skippedExisting: number };
   readonly skills: { readonly copied: number; readonly skippedExisting: number };
+  readonly plans: { readonly copied: number; readonly skippedExisting: number };
   readonly sessions: SessionsSummary;
 }
 
@@ -122,6 +143,11 @@ export interface SessionsSummary {
   readonly sessionsMigrated: number;
   /** Sessions already imported by a previous run (idempotent re-run). */
   readonly sessionsAlreadyMigrated: number;
+  /**
+   * Previously imported sessions whose wire was repaired in place on this run
+   * (turn-structure records inserted into an old message-only import).
+   */
+  readonly sessionsRepaired: number;
   readonly sessionsSkippedPlaceholder: number;
   readonly sessionsSkippedEmpty: number;
   readonly sessionsSkippedMalformed: number;
@@ -132,7 +158,8 @@ export interface SessionsSummary {
 export interface MigrationNotices {
   readonly mcpOauthServersRequiringReauth: readonly string[];
   /**
-   * Basenames of kimi-cli OAuth logins (`~/.kimi/credentials/<name>.json`)
+   * Names of kimi-cli OAuth logins requiring re-login, derived from the legacy
+   * config's `oauth` provider refs plus any `~/.kimi/credentials/<name>.json`
    * found at detection time. OAuth credentials are deliberately NOT migrated:
    * refresh tokens rotate server-side, so a copied credential breaks login for
    * whichever install refreshes second. The user must run `/login` in
@@ -142,4 +169,9 @@ export interface MigrationNotices {
   readonly detectedPlugins: readonly string[];
   readonly configConflictNotice: string | null;
   readonly tuiConflictNotice: string | null;
+  /**
+   * Tells the user that legacy plan files were copied as plain files (no
+   * plan-mode wiring) and where to find them. Null when nothing was copied.
+   */
+  readonly plansCopiedNotice: string | null;
 }
