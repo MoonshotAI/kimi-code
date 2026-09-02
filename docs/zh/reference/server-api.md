@@ -83,13 +83,11 @@ HTTP 状态码例外（非 200）：
 - **游标式**：`before_id` / `after_id`（互斥）加 `page_size`（1–100），响应为 `{ items, has_more }`。用于会话列表、消息列表、子会话列表；转录分页的游标为 `before_turn` / `after_turn`。
 - **`page_token`**：不透明令牌（绑定了查询条件的指纹），用于 `POST /api/v1/search` 与 `GET /api/v2/sessions`。翻页途中改变任何查询条件会使令牌失效：v2 返回 `40922`，search 返回 `40001`。`GET /api/v2/sessions` 另提供无状态的 `page` 页码模式作为替代。
 
-## REST 端点
-
 下文按业务域分组列出全部端点，覆盖 `/api/v1` 与 `/api/v2`（路径前缀区分版本）。路径里的 `:{action}` 后缀是动作约定——对单个资源 POST 到 `路径:动作` 执行非 CRUD 操作（如会话的 `:fork`、`:archive`）；动作缺失或未知时返回 `40001`。共享类型（T-Session 等）不在条目内展开，统一见 [类型汇总](#类型汇总)；「可缺省」「可空」的语义区分见 [null 与缺省语义](#null-与缺省语义)。
 
-### 服务
+## 服务
 
-服务自身的探活、身份、关停与连接管理。
+服务自身的探活、身份、关停与连接管理；全局配置的读取与合并式更新；模型别名与供应商管理，以及 models.dev 目录浏览。
 
 | 方法与路径 | 说明 |
 | --- | --- |
@@ -97,28 +95,46 @@ HTTP 状态码例外（非 200）：
 | `GET /api/v1/meta` | 服务版本、能力集、`server_id`、实验开关 |
 | `POST /api/v1/shutdown` | 优雅退出（先回 200 再关闭）；仅 loopback 绑定时挂载 |
 | `GET /api/v1/connections` | 列出当前在线的 WebSocket 连接 |
+| `GET /api/v1/config` | 读取全局配置（密钥字段脱敏） |
+| `POST /api/v1/config` | 合并式更新配置，并广播 `event.config.changed` |
+| `GET /api/v1/models` | 列出已配置的模型别名 |
+| `POST /api/v1/models/{model_id}:set_default` | 设置全局默认模型 |
+| `GET /api/v1/providers` | 列出供应商 |
+| `POST /api/v1/providers` | 创建供应商（201） |
+| `GET /api/v1/providers/{provider_id}` | 读取供应商（含已存密钥） |
+| `PUT /api/v1/providers/{provider_id}` | 整体替换供应商配置 |
+| `DELETE /api/v1/providers/{provider_id}` | 删除供应商（204） |
+| `POST /api/v1/providers/{provider_id}:refresh` | 刷新该供应商的模型元数据 |
+| `POST /api/v1/providers:{action}` | 集合级动作：`refresh` / `refresh_oauth` / `import_catalog` / `import_registry` |
+| `GET /api/v1/catalog/providers` | 浏览 models.dev 目录（服务端代理） |
+| `GET /api/v1/catalog/providers/{catalog_id}` | 读取目录中单个条目 |
 
-#### `GET /api/v1/healthz`
+### `GET /api/v1/healthz`
 
-供脚本与进程管理器使用的探活端点，应答时不触碰配置与引擎。
+供脚本与进程管理器使用的探活端点，应答时不触碰配置与引擎。免鉴权（见 [例外接口](#鉴权)）。
 
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `ok` | boolean | 恒 `true` |
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "ok": true }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "ok": true },
+  "request_id": "01JZX4..."
+}
 ```
 
-#### `GET /api/v1/meta`
+### `GET /api/v1/meta`
 
 返回本实例的身份信息与能力集。大多数字段在启动时即固定；`experimental_flags` 与 `features` 按请求实时解析。
 
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -133,120 +149,178 @@ HTTP 状态码例外（非 200）：
 | `experimental_flags` | object | 实验开关 id → 是否启用 |
 | `features` | array | 引擎 feature 单元，形如 `{ name, state, meta }`；`state` 为 `Pending` / `Activating` / `Active` / `Unloading` / `Failed` |
 
-**示例**：
+**响应示例**：
 
 ```json
 {
-  "code": 0, "msg": "success",
-  "data": { "server_version": "0.40.0", "capabilities": { "websocket": true, "...": true }, "server_id": "01JZX4...", "started_at": "2026-09-02T08:00:00.000Z", "open_in_apps": [], "dangerous_bypass_auth": false, "backend": "v2", "experimental_flags": { "search_worker": true }, "features": [ { "name": "fileHistory", "state": "Active", "meta": {} } ] },
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "server_version": "0.40.0",
+    "capabilities": { "websocket": true, "...": true },
+    "server_id": "01JZX4...",
+    "started_at": "2026-09-02T08:00:00.000Z",
+    "open_in_apps": [],
+    "dangerous_bypass_auth": false,
+    "backend": "v2",
+    "experimental_flags": { "search_worker": true },
+    "features": [ { "name": "fileHistory", "state": "Active", "meta": {} } ]
+  },
   "request_id": "01JZX4..."
 }
 ```
 
-#### `POST /api/v1/shutdown`
+### `POST /api/v1/shutdown`
 
-请求服务优雅退出；响应先发出，随后立即执行关闭。仅在 loopback 绑定时挂载——非 loopback 绑定时不会注册（请求得到 404），除非服务以 `--allow-remote-shutdown` 启动。无参数。
+请求服务优雅退出；响应先发出，随后立即执行关闭。仅在 loopback 绑定时挂载——非 loopback 绑定时不会注册（请求得到 404），除非服务以 `--allow-remote-shutdown` 启动。
 
-**返回**：`ResponseType<{ "ok": true }>`。
+**响应体**：`ResponseType`，`data` 字段：
 
-**示例**：
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `ok` | boolean | 恒 `true` |
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "ok": true }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "ok": true },
+  "request_id": "01JZX4..."
+}
 ```
 
-#### `GET /api/v1/connections`
+### `GET /api/v1/connections`
 
-列出当前连接到本服务的 WebSocket 客户端，按连接时间最早在前。无参数。
+列出当前连接到本服务的 WebSocket 客户端，按连接时间最早在前。
 
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `connections` | array | [T-Connection](#t-connection) 数组 |
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "connections": [ { "id": "conn_01JZX4...", "connected_at": "2026-09-02T08:00:00.000Z", "remote_address": "127.0.0.1", "user_agent": "Mozilla/5.0 ...", "has_client_hello": true, "subscriptions": [ "session_..." ] } ] }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "connections": [
+      {
+        "id": "conn_01JZX4...",
+        "connected_at": "2026-09-02T08:00:00.000Z",
+        "remote_address": "127.0.0.1",
+        "user_agent": "Mozilla/5.0 ...",
+        "has_client_hello": true,
+        "subscriptions": [ "session_..." ]
+      }
+    ]
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 **配置。**
 
-全局配置的读取与合并式更新；密钥字段一律脱敏。
-
-| 方法与路径 | 说明 |
-| --- | --- |
-| `GET /api/v1/config` | 读取全局配置（密钥字段脱敏） |
-| `POST /api/v1/config` | 合并式更新配置，并广播 `event.config.changed` |
-
-#### `GET /api/v1/config`
+### `GET /api/v1/config`
 
 返回解析后的全局配置——`config.toml` 叠加覆盖层后的生效结果。密钥已脱敏：供应商与模型只报告 `has_api_key`，绝不返回存储的密钥。
 
-**返回**：`ResponseType<[T-ConfigResponse](#t-configresponse)>`。
+**响应体**：`ResponseType<[T-ConfigResponse](#t-configresponse)>`。
 
-**示例**：
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-ConfigResponse](#t-configresponse) | 生效的全量配置；字段见类型汇总 |
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "providers": { "my-provider": { "type": "openai", "base_url": "https://api.example.com/v1", "has_api_key": true } }, "default_provider": "my-provider", "default_model": "my-provider/kimi-for-coding", "models": { "...": {} } }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "providers": {
+      "my-provider": { "type": "openai", "base_url": "https://api.example.com/v1", "has_api_key": true }
+    },
+    "default_provider": "my-provider",
+    "default_model": "my-provider/kimi-for-coding",
+    "models": { "...": {} }
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
-#### `POST /api/v1/config`
+### `POST /api/v1/config`
 
 合并式更新全局配置：请求体中的每个顶层域被深合并进对应域，未出现的域保持不动。把 `yolo` 设为 `true` 是 `default_permission_mode: "yolo"` 的简写（`false` 被忽略）。每一次配置变更——经本端点、在进程外编辑 `config.toml`，或服务端内部写入——都会广播全局 `event.config.changed` 事件。
 
-**Body**：部分配置对象，[T-ConfigResponse](#t-configresponse) 中除 `raw` 外的任意子集，均为可选。
+**请求体**：部分配置对象——[T-ConfigResponse](#t-configresponse) 中除 `raw` 外的任意子集，均为可选。
 
-**返回**：`ResponseType<[T-ConfigResponse](#t-configresponse)>`（合并写入后的全量）。
+**响应体**：`ResponseType<[T-ConfigResponse](#t-configresponse)>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）（值非法或持久化失败，`details` 逐字段说明）。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-ConfigResponse](#t-configresponse) | 合并写入后的全量配置；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（值非法或持久化失败；`details` 为 `{ path, message }[]`）。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "default_model": "my-provider/kimi-for-coding", "yolo": true, "providers": { "...": {} } }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "default_model": "my-provider/kimi-for-coding",
+    "yolo": true,
+    "providers": { "...": {} }
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 **模型与供应商。**
 
 模型配置的两半——`config.toml` 的 [供应商](../configuration/providers.md) 表与模型别名表——外加一个由服务端代理的 models.dev 目录。模型别名 id 就是配置中的别名键：通过供应商管理端点创建的别名形如 `provider_id/model`（例如 `my-provider/kimi-for-coding`），模型别名表中的裸键（如 `turbo`）原样使用；API 中任何接收 `model_id` 的地方指的都是这个别名 id。
 
-| 方法与路径 | 说明 |
-| --- | --- |
-| `GET /api/v1/models` | 列出已配置的模型别名 |
-| `POST /api/v1/models/{model_id}:set_default` | 设置全局默认模型 |
-| `GET /api/v1/providers` | 列出供应商 |
-| `POST /api/v1/providers` | 创建供应商（201） |
-| `GET /api/v1/providers/{provider_id}` | 读取供应商（含已存密钥） |
-| `PUT /api/v1/providers/{provider_id}` | 整体替换供应商配置 |
-| `DELETE /api/v1/providers/{provider_id}` | 删除供应商（204） |
-| `POST /api/v1/providers/{provider_id}:refresh` | 刷新该供应商的模型元数据 |
-| `POST /api/v1/providers:{action}` | 集合级动作：`refresh` / `refresh_oauth` / `import_catalog` / `import_registry` |
-| `GET /api/v1/catalog/providers` | 浏览 models.dev 目录（服务端代理） |
-| `GET /api/v1/catalog/providers/{catalog_id}` | 读取目录中单个条目 |
+### `GET /api/v1/models`
 
-#### `GET /api/v1/models`
+列出所有供应商下已配置的模型别名。
 
-列出所有供应商下已配置的模型别名。无参数。
-
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `items` | array | [T-ModelCatalogItem](#t-modelcatalogitem) 数组 |
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "items": [ { "provider": "my-provider", "model": "my-provider/kimi-for-coding", "max_context_size": 262144, "capabilities": [ "thinking", "image_in" ] } ] }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "items": [
+      {
+        "provider": "my-provider",
+        "model": "my-provider/kimi-for-coding",
+        "max_context_size": 262144,
+        "capabilities": [ "thinking", "image_in" ]
+      }
+    ]
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
-#### `POST /api/v1/models/{model_id}:set_default`
+### `POST /api/v1/models/{model_id}:set_default`
 
-把全局 `default_model` 设为一个已存在的别名。`model_id` 是配置中的别名键原样——裸键如 `POST /api/v1/models/turbo:set_default`；id 含 `/` 时需 URL 编码，如 `POST /api/v1/models/my-provider%2Fkimi-for-coding:set_default`。无请求体。
+把全局 `default_model` 设为一个已存在的别名。`model_id` 是配置中的别名键原样——裸键如 `POST /api/v1/models/turbo:set_default`；id 含 `/` 时需 URL 编码，如 `POST /api/v1/models/my-provider%2Fkimi-for-coding:set_default`。
 
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -255,33 +329,57 @@ HTTP 状态码例外（非 200）：
 
 **非零 code**：`40001`（动作后缀非法；`details` 为 `{ path, message }[]`）、`40413`（模型别名不存在）。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "default_model": "turbo", "model": { "provider": "my-provider", "model": "turbo", "max_context_size": 262144 } }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "default_model": "turbo",
+    "model": { "provider": "my-provider", "model": "turbo", "max_context_size": 262144 }
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
-#### `GET /api/v1/providers`
+### `GET /api/v1/providers`
 
-列出每个已配置供应商及其凭据与模型发现状态，不泄露任何密钥。无参数。
+列出每个已配置供应商及其凭据与模型发现状态，不泄露任何密钥。
 
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `items` | array | [T-ProviderCatalogItem](#t-providercatalogitem) 数组 |
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "items": [ { "id": "my-provider", "type": "openai", "base_url": "https://api.example.com/v1", "has_api_key": true, "status": "connected", "models": [ "my-provider/kimi-for-coding" ] } ] }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "items": [
+      {
+        "id": "my-provider",
+        "type": "openai",
+        "base_url": "https://api.example.com/v1",
+        "has_api_key": true,
+        "status": "connected",
+        "models": [ "my-provider/kimi-for-coding" ]
+      }
+    ]
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
-#### `POST /api/v1/providers`
+### `POST /api/v1/providers`
 
 一次保存创建供应商及其模型别名；响应为 HTTP 201 加 `ResponseType`。当全局 `default_model` 完全未配置时，会以新供应商的 `default_model`（或第一个模型）播种；已有默认值绝不被修改。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
@@ -304,35 +402,67 @@ HTTP 状态码例外（非 200）：
 | `support_efforts` | array | 否 | 支持的 Thinking 模式 effort 档位 |
 | `adaptive_thinking` | boolean | 否 | 自适应 thinking 开关 |
 
-**返回**：`ResponseType<[T-ProviderCatalogItem](#t-providercatalogitem)>`（新建对象）。
+**响应体**：`ResponseType<[T-ProviderCatalogItem](#t-providercatalogitem)>`（新建对象，HTTP 201）。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40921`（已存在该 `id` 的供应商）。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-ProviderCatalogItem](#t-providercatalogitem) | 新建的供应商；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40921`（已存在该 `id` 的供应商）。
 
-```json
-{ "code": 0, "msg": "success", "data": { "id": "my-provider", "type": "openai", "has_api_key": true, "status": "connected", "models": [ "my-provider/kimi-for-coding" ] }, "request_id": "01JZX4..." }
-```
-
-#### `GET /api/v1/providers/{provider_id}`
-
-读取单个供应商。与列表路由不同，设置了密钥时响应会附带存储的 `api_key`，以便本地编辑表单预填——这是唯一回显密钥的端点，暴露端口时请牢记这一点。无参数。
-
-**返回**：`ResponseType<[T-ProviderCatalogItem](#t-providercatalogitem)>`，存有密钥时附带 `api_key: string`。
-
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40412`。
-
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "id": "my-provider", "type": "openai", "base_url": "https://api.example.com/v1", "has_api_key": true, "status": "connected", "api_key": "sk-..." }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "id": "my-provider",
+    "type": "openai",
+    "has_api_key": true,
+    "status": "connected",
+    "models": [ "my-provider/kimi-for-coding" ]
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
-#### `PUT /api/v1/providers/{provider_id}`
+### `GET /api/v1/providers/{provider_id}`
+
+读取单个供应商。与列表路由不同，设置了密钥时响应会附带存储的 `api_key`，以便本地编辑表单预填——这是唯一回显密钥的端点，暴露端口时请牢记这一点。
+
+**响应体**：`ResponseType<[T-ProviderCatalogItem](#t-providercatalogitem)>`，存有密钥时附带 `api_key: string`。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-ProviderCatalogItem](#t-providercatalogitem) | 供应商；字段见类型汇总 |
+| `data.api_key` | string | 可缺省：存储的密钥，仅本端点回显 |
+
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40412`。
+
+**响应示例**：
+
+```json
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "id": "my-provider",
+    "type": "openai",
+    "base_url": "https://api.example.com/v1",
+    "has_api_key": true,
+    "status": "connected",
+    "api_key": "sk-..."
+  },
+  "request_id": "01JZX4..."
+}
+```
+
+### `PUT /api/v1/providers/{provider_id}`
 
 一次保存整体替换供应商：`type`、`base_url` 与模型列表被重写，不再列出的别名从 `config.toml` 中消失。`api_key` 是三态的：省略表示保留已存密钥，`""` 表示清除，其他值表示替换。除 `new_id` 重命名迁移外，全局默认指针绝不被修改。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
@@ -343,54 +473,74 @@ HTTP 状态码例外（非 200）：
 | `default_model` | string | 否 | 该供应商的默认模型；必须是 `models[].model` 之一 |
 | `models` | array | 是 | 至少一条，条目结构与 `POST /api/v1/providers` 相同 |
 
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `provider` | object | [T-ProviderCatalogItem](#t-providercatalogitem) |
+| `provider` | [T-ProviderCatalogItem](#t-providercatalogitem) | 替换后的供应商 |
 
 **非零 code**：`40001`（重命名后的别名 id 冲突；`details` 为 `{ path, message }[]`）、`40003`（供应商由 OAuth 托管，改用 `POST /api/v1/oauth/logout`）、`40412`、`40921`（`new_id` 已被占用）。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "provider": { "id": "my-provider", "type": "openai", "has_api_key": true, "status": "connected" } }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "provider": { "id": "my-provider", "type": "openai", "has_api_key": true, "status": "connected" }
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
-#### `DELETE /api/v1/providers/{provider_id}`
+### `DELETE /api/v1/providers/{provider_id}`
 
-删除供应商及其全部模型别名；subagent 次级模型池会级联清理。全局 `default_provider` / `default_model` 指针保持不动，即使它们指向被删的供应商。无请求体。
+删除供应商及其全部模型别名；subagent 次级模型池会级联清理。全局 `default_provider` / `default_model` 指针保持不动，即使它们指向被删的供应商。
 
-**成功形态**：HTTP 204 空体——状态行本身即表示删除成功。
+**响应体**：HTTP 204 空体——状态行本身即表示删除成功，无 `ResponseType`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40003`、`40412`。
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40003`、`40412`。
 
-#### `POST /api/v1/providers/{provider_id}:refresh`
+### `POST /api/v1/providers/{provider_id}:refresh`
 
-从上游来源重新发现单个供应商的模型元数据，并重写该供应商的别名；模型来源为静态的供应商不经网络调用直接报告 `unchanged`。至少一个供应商的别名发生变化时广播全局 `event.model_catalog.changed` 事件。无请求体。
+从上游来源重新发现单个供应商的模型元数据，并重写该供应商的别名；模型来源为静态的供应商不经网络调用直接报告 `unchanged`。至少一个供应商的别名发生变化时广播全局 `event.model_catalog.changed` 事件。
 
-**返回**：`ResponseType<[T-RefreshProviderModelsResponse](#t-refreshprovidermodelsresponse)>`。
+**响应体**：`ResponseType<[T-RefreshProviderModelsResponse](#t-refreshprovidermodelsresponse)>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40412`。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-RefreshProviderModelsResponse](#t-refreshprovidermodelsresponse) | 按供应商分组的刷新结果；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40412`。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "changed": [ { "provider_id": "my-provider", "provider_name": "my-provider", "added": 2, "removed": 0 } ], "unchanged": [], "failed": [] }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "changed": [ { "provider_id": "my-provider", "provider_name": "my-provider", "added": 2, "removed": 0 } ],
+    "unchanged": [],
+    "failed": []
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
-#### `POST /api/v1/providers:{action}`
+### `POST /api/v1/providers:{action}`
 
 集合级动作路由；请求体按动作校验。四个动作：
 
-| 动作 | Body | data（code = 0） |
-| --- | --- | --- |
-| `:refresh` | 可选，被忽略 | [T-RefreshProviderModelsResponse](#t-refreshprovidermodelsresponse)（刷新每个供应商） |
-| `:refresh_oauth` | 可选，被忽略 | 同上，仅限 OAuth 凭据的供应商 |
-| `:import_catalog` | 见下 | `{ provider, models_imported }`，HTTP 201 |
-| `:import_registry` | 见下 | `{ providers, models_imported }`，HTTP 201 |
+| 动作 | 请求体 | `data`（code = 0） | HTTP 状态 |
+| --- | --- | --- | --- |
+| `:refresh` | 可选，被忽略 | [T-RefreshProviderModelsResponse](#t-refreshprovidermodelsresponse)（刷新每个供应商） | 200 |
+| `:refresh_oauth` | 可选，被忽略 | 同上，仅限 OAuth 凭据的供应商 | 200 |
+| `:import_catalog` | 见下 | `{ provider, models_imported }` | 201 |
+| `:import_registry` | 见下 | `{ providers, models_imported }` | 201 |
 
-`:import_catalog` 的 Body——把一个 models.dev 目录条目导入为已配置供应商：通信协议与端点来自目录解析，目录中的每个模型都写为一个别名；导入已存在的 id 等同于刷新，省略 `api_key` 表示保留已存密钥。全局默认指针绝不被修改，仅在完全未配置默认模型时以第一个导入的模型播种 `default_model`：
+`:import_catalog` 把一个 models.dev 目录条目导入为已配置供应商：通信协议与端点来自目录解析，目录中的每个模型都写为一个别名；导入已存在的 id 等同于刷新，省略 `api_key` 表示保留已存密钥。全局默认指针绝不被修改，仅在完全未配置默认模型时以第一个导入的模型播种 `default_model`。请求体：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
@@ -399,26 +549,34 @@ HTTP 状态码例外（非 200）：
 | `api_key` | string | 否 | 导入供应商的 API 密钥 |
 | `base_url` | string | 否 | 覆盖目录解析出的端点；条目的 `needs_base_url` 为 `true` 时必填 |
 
-`:import_registry` 的 Body——把一个 models.dev 形态的私有注册表（一个 `api.json` URL 加可选的 Bearer key）导入：每个列出的供应商都带 `source` 记录写入，以便定时刷新重新发现；重复导入同一 URL 会移除上游已消失的供应商——URL 是注册表的稳定身份，因此轮换 key 是安全的。全局默认指针遵循与 `:import_catalog` 相同的规则：
+`:import_registry` 把一个 models.dev 形态的私有注册表（一个 `api.json` URL 加可选的 Bearer key）导入：每个列出的供应商都带 `source` 记录写入，以便定时刷新重新发现；重复导入同一 URL 会移除上游已消失的供应商——URL 是注册表的稳定身份，因此轮换 key 是安全的。全局默认指针遵循与 `:import_catalog` 相同的规则。请求体：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `url` | string | 是 | 注册表 `api.json` 的 URL |
 | `api_key` | string | 否 | 注册表的 Bearer key；省略时复用上一次导入同一 URL 所用的 key |
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40003`、`40004`（目录条目无法导入）、`40005`（注册表无法获取或解析）、`40417`、`50004`（models.dev 目录不可用）。
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40003`、`40004`（目录条目无法导入）、`40005`（注册表无法获取或解析）、`40417`、`50004`（models.dev 目录不可用）。
 
-**示例**（`:import_catalog`）：
+**响应示例**（`:import_catalog`）：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "provider": { "id": "my-provider", "type": "openai", "has_api_key": true, "status": "connected" }, "models_imported": 3 }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "provider": { "id": "my-provider", "type": "openai", "has_api_key": true, "status": "connected" },
+    "models_imported": 3
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
-#### `GET /api/v1/catalog/providers`
+### `GET /api/v1/catalog/providers`
 
-浏览 models.dev 目录，由服务端代理，带 10 分钟内存缓存与内置快照兜底；条目保持上游目录顺序。服务无法导入的条目携带 `rejected: true` 与机器可读的 `reject_reason`。无参数。
+浏览 models.dev 目录，由服务端代理，带 10 分钟内存缓存与内置快照兜底；条目保持上游目录顺序。服务无法导入的条目携带 `rejected: true` 与机器可读的 `reject_reason`。
 
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -426,24 +584,62 @@ HTTP 状态码例外（非 200）：
 
 **非零 code**：`50004`（在线拉取与内置快照均失败）。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "items": [ { "id": "openai", "name": "OpenAI", "wire_type": "openai", "guessed": false, "needs_base_url": false, "rejected": false, "reject_reason": null, "env_key": "OPENAI_API_KEY", "models": [ { "id": "gpt-5", "max_context_size": 400000, "reasoning": true } ] } ] }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "items": [
+      {
+        "id": "openai",
+        "name": "OpenAI",
+        "wire_type": "openai",
+        "guessed": false,
+        "needs_base_url": false,
+        "rejected": false,
+        "reject_reason": null,
+        "env_key": "OPENAI_API_KEY",
+        "models": [ { "id": "gpt-5", "max_context_size": 400000, "reasoning": true } ]
+      }
+    ]
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
-#### `GET /api/v1/catalog/providers/{catalog_id}`
+### `GET /api/v1/catalog/providers/{catalog_id}`
 
-按 catalog id 读取单个 models.dev 目录条目。无参数。
+按 catalog id 读取单个 models.dev 目录条目。
 
-**返回**：`ResponseType<[T-CatalogProviderItem](#t-catalogprovideritem)>`。
+**响应体**：`ResponseType<[T-CatalogProviderItem](#t-catalogprovideritem)>`。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-CatalogProviderItem](#t-catalogprovideritem) | 目录条目；字段见类型汇总 |
 
 **非零 code**：`40417`、`50004`。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "id": "openai", "name": "OpenAI", "wire_type": "openai", "guessed": false, "needs_base_url": false, "rejected": false, "reject_reason": null, "env_key": "OPENAI_API_KEY", "models": [ "..." ] }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "id": "openai",
+    "name": "OpenAI",
+    "wire_type": "openai",
+    "guessed": false,
+    "needs_base_url": false,
+    "rejected": false,
+    "reject_reason": null,
+    "env_key": "OPENAI_API_KEY",
+    "models": [ "..." ]
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 ### 账号
