@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   IconX,
   IconPlus,
@@ -31,6 +32,9 @@ import { bridge } from "@/services";
 import { RECOMMENDED_MCP_SERVERS, recommendedToConfig, type RecommendedMCPServer } from "@/services/recommended-mcp";
 import { cn } from "@/lib/utils";
 import { MCP_SECRET_MASK, type MCPServerConfig } from "shared/legacy-sdk";
+
+const MCP_SERVERS_KEY = ["mcpServers"] as const;
+const NO_SERVERS: MCPServerConfig[] = [];
 
 type TransportType = "stdio" | "http";
 
@@ -308,14 +312,14 @@ function ServerItem({ server, onDelete }: { server: MCPServerConfig; onDelete: (
   const [form, setForm] = useState(() => serverToForm(server));
   const [testOutput, setTestOutput] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const { setMCPServers } = useSettingsStore();
+  const queryClient = useQueryClient();
 
   const isHttp = server.transport === "http";
 
   const handleUpdate = async () => {
     try {
       const servers = await bridge.updateMCPServer(server.name, formToConfig(form));
-      setMCPServers(servers);
+      queryClient.setQueryData(MCP_SERVERS_KEY, servers);
       setExpanded(false);
     } catch (error) {
       setTestOutput(`Update failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -446,7 +450,8 @@ function RecommendedItem({ server, onInstall, isInstalling }: { server: Recommen
 }
 
 export function MCPServersModal() {
-  const { mcpServers, mcpModalOpen, setMCPServers, setMCPModalOpen } = useSettingsStore();
+  const { mcpModalOpen, setMCPModalOpen } = useSettingsStore();
+  const queryClient = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState<FormData>(() => emptyForm());
   const [installingRecommended, setInstallingRecommended] = useState<string | null>(null);
@@ -454,13 +459,13 @@ export function MCPServersModal() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (mcpModalOpen) {
-      void bridge.getMCPServers().then(setMCPServers).catch((error: unknown) => {
-        setActionError(error instanceof Error ? error.message : String(error));
-      });
-    }
-  }, [mcpModalOpen, setMCPServers]);
+  const serversQuery = useQuery({
+    queryKey: MCP_SERVERS_KEY,
+    queryFn: () => bridge.getMCPServers(),
+    enabled: mcpModalOpen,
+  });
+  const mcpServers = serversQuery.data ?? NO_SERVERS;
+  const loadError = serversQuery.isError ? (serversQuery.error instanceof Error ? serversQuery.error.message : String(serversQuery.error)) : null;
 
   useEffect(() => {
     if (!showAdd) setAddForm(emptyForm());
@@ -472,7 +477,7 @@ export function MCPServersModal() {
     setActionError(null);
     try {
       const servers = await bridge.addMCPServer(formToConfig(addForm));
-      setMCPServers(servers);
+      queryClient.setQueryData(MCP_SERVERS_KEY, servers);
       setShowAdd(false);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : String(error));
@@ -485,7 +490,7 @@ export function MCPServersModal() {
     setActionError(null);
     try {
       const servers = await bridge.removeMCPServer(deleteTarget);
-      setMCPServers(servers);
+      queryClient.setQueryData(MCP_SERVERS_KEY, servers);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : String(error));
     }
@@ -499,7 +504,7 @@ export function MCPServersModal() {
     try {
       const config = recommendedToConfig(server);
       const servers = await bridge.addMCPServer(config);
-      setMCPServers(servers);
+      queryClient.setQueryData(MCP_SERVERS_KEY, servers);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : String(error));
     }
@@ -528,9 +533,9 @@ export function MCPServersModal() {
         </div>
         <div className="flex-1 overflow-y-auto">
           <div className="max-w-2xl mx-auto px-3 py-3 space-y-4">
-            {actionError && (
+            {(actionError ?? loadError) && (
               <div className="rounded border border-destructive/30 bg-destructive/5 px-2.5 py-2 text-xs text-destructive">
-                {actionError}
+                {actionError ?? loadError}
               </div>
             )}
             {showAdd && (

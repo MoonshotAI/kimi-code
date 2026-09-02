@@ -15,7 +15,7 @@ import {
   GoalStatusMessageComponent,
   UpcomingGoalAddedMessageComponent,
 } from '../components/messages/goal-panel';
-import { LLM_NOT_SET_MESSAGE } from '../constant/kimi-tui';
+import { LLM_NOT_SET_MESSAGE, UNCONFIRMED_FILE_CHANGES_WARNING } from '../constant/kimi-tui';
 import {
   appendGoalQueueItem,
   moveGoalQueueItem,
@@ -25,6 +25,7 @@ import {
   type GoalQueueSnapshot,
 } from '../goal-queue-store';
 import { formatErrorMessage } from '../utils/event-payload';
+import { PERMISSION_MODE_DISPLAY_NAMES } from '../utils/permission-mode';
 import { canRestoreSubmittedInput } from './resolve';
 import type { SlashCommandHost } from './dispatch';
 
@@ -39,6 +40,7 @@ type GoalCommandHost = Pick<
   | 'requireSession'
   | 'setAppState'
   | 'showError'
+  | 'showNotice'
   | 'showStatus'
   | 'track'
   | 'mountEditorReplacement'
@@ -443,6 +445,14 @@ async function startGoalWithPermission(
   // previous mode so the session is not left more permissive than before.
   if (!started && switched) {
     await setPermissionForGoal(host, previousMode);
+    return;
+  }
+  // Announce the switch only once the goal actually starts: shown earlier, a
+  // failed creation would leave a stale permissive-mode notice in the
+  // transcript even though the rollback above restored the previous mode.
+  if (switched) {
+    host.showNotice(`Permission mode: ${PERMISSION_MODE_DISPLAY_NAMES[choice]}`);
+    host.showStatus(UNCONFIRMED_FILE_CHANGES_WARNING, 'warning');
   }
 }
 

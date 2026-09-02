@@ -108,7 +108,7 @@ function harness(loopOptions: StubLoopOptions = { pendingTurnResult: true }) {
       reg.define(IEventBus, EventBusService);
       reg.defineInstance(IAgentReminderService, reminder);
       reg.define(IAgentPromptService, AgentPromptService);
-      reg.definePartialInstance(ITelemetryService, { track: () => {}, track2: () => {} });
+      reg.definePartialInstance(ITelemetryService, { track2: () => {} });
       reg.definePartialInstance(ISessionMetadata, {
         read: async () => ({ id: 'test-session', createdAt: 0, updatedAt: 0, archived: false }),
         update: async () => {},

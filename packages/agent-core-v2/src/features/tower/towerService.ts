@@ -1,7 +1,8 @@
 import { join } from 'node:path';
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { ScopeActivation, registerScopedService, type ISessionScopeHandle } from '#/_base/di/scope';
+import { ILogService } from '#/_base/log/log';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
@@ -25,6 +26,8 @@ import { ISessionActivityView } from '#/session/sessionActivity/sessionActivity'
 import { isWithinDirectory } from '#/tool/path-access';
 import type { ToolFileAccess } from '#/tool/toolContract';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+import { isUntitled } from '#/session/sessionMetadata/promptMetadata';
 import { SubagentStarted } from '#/session/subagent/mirrorAgentRun';
 import { TowerModeInjection } from './injection/towerModeInjection';
 import {
@@ -43,6 +46,7 @@ import {
   TOWER_FLAG_ID,
   TOWER_TOOL_NAMES,
   TOWER_WORKER_PROFILE,
+  type TowerEnterResult,
 } from './tower';
 import { isTowerFeatureAssembled } from './towerFeature';
 import { TowerModeEnter, TowerModeExit, towerBaseKey, towerKey, towerOwnerKey } from './towerOps';
@@ -67,6 +71,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @IAgentReminderService reminder: IAgentReminderService,
     @IAgentContextMemoryService context: IAgentContextMemoryService,
     @IEventBus eventBus: IEventBus,
+    @ILogService private readonly log: ILogService,
   ) {
     super();
     this.agentState.contributeState(towerKey);
@@ -186,10 +191,10 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     );
   }
 
-  async enter(base?: string): Promise<void> {
-    if (this.agentCtx.agentId !== 'main') return;
-    if (!this.flags.enabled(TOWER_FLAG_ID)) return;
-    if (!isTowerFeatureAssembled(this.flags)) return;
+  async enter(base?: string): Promise<TowerEnterResult> {
+    if (this.agentCtx.agentId !== 'main') return { entered: false, reason: 'not-main-agent' };
+    if (!this.flags.enabled(TOWER_FLAG_ID)) return { entered: false, reason: 'experiment-off' };
+    if (!isTowerFeatureAssembled(this.flags)) return { entered: false, reason: 'feature-not-assembled' };
     if (base !== undefined) {
       await this.prepareUserBase(base);
     }
@@ -197,14 +202,17 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       if (base !== undefined && base !== this.agentState.get(towerBaseKey)) {
         this.dispatchEnter(base);
       }
-      return;
+      return { entered: true };
     }
     const owner = await this.resolveTowerOwner();
     if (owner !== undefined && owner !== this.sessionCtx.sessionId) {
       const ownerHandle = this.sessions.get(owner);
       if (ownerHandle !== undefined) {
         const activity = ownerHandle.accessor.get(ISessionActivityView).state();
-        if (activity.busy || activity.pendingInteraction !== 'none') return;
+        if (activity.busy || activity.pendingInteraction !== 'none') {
+          const ownerTitle = await this.resolveOwnerTitle(ownerHandle);
+          return { entered: false, reason: 'owned-by-live-session', owner, ownerTitle };
+        }
         ownerHandle.accessor
           .get(IAgentLifecycleService)
           .handleOf('main')
@@ -215,6 +223,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
     this.lastPublished = true;
     this.dispatchEnter(base);
+    return { entered: true };
   }
 
   get requestedBase(): string | undefined {
@@ -224,6 +233,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
   private async prepareUserBase(base: string): Promise<void> {
     const repoRoot = resolveTowerRepoRoot(this.sessionCtx.cwd);
     const store = new TowerStore(repoRoot);
+    await store.ensureRepository(base);
     if (await store.isInitialized()) {
       const state = await store.load();
       if (state.base === base) {
@@ -289,6 +299,19 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     if (!this.agentState.get(towerKey)) return;
     this.lastPublished = false;
     void this.dispatcher.dispatch(new TowerModeExit({ agentId: this.agentCtx.agentId }));
+    void this.releaseTowerOwnership();
+  }
+
+  private async releaseTowerOwnership(): Promise<void> {
+    const store = new TowerStore(resolveTowerRepoRoot(this.sessionCtx.cwd));
+    await store.release(this.sessionCtx.sessionId).then(
+      () => undefined,
+      (error: unknown) => {
+        this.log.warn(
+          `failed to release tower workspace ownership: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      },
+    );
   }
 
   get isActive(): boolean {
@@ -306,7 +329,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     const owner = await this.resolveTowerOwner();
     if (owner === undefined || owner === this.sessionCtx.sessionId) return;
     if (this.sessions.get(owner) === undefined) return;
-    void this.dispatcher.dispatch(new TowerModeExit({ agentId: this.agentCtx.agentId }));
+    this.exit();
   }
 
   private async resolveTowerOwner(): Promise<string | undefined> {
@@ -316,6 +339,15 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       () => undefined,
     );
     return storeOwner ?? this.agentState.get(towerOwnerKey);
+  }
+
+  private async resolveOwnerTitle(ownerHandle: ISessionScopeHandle): Promise<string | undefined> {
+    try {
+      const meta = await ownerHandle.accessor.get(ISessionMetadata).read();
+      return isUntitled(meta.title) ? undefined : meta.title;
+    } catch {
+      return undefined;
+    }
   }
 
   private async recordTowerAgentDeath(info: AgentTaskInfo): Promise<void> {

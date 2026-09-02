@@ -1,3 +1,7 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+import { stringify as stringifyToml } from 'smol-toml';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type CollectionToken, type CollectionView } from '#/_base/di/collection';
@@ -128,6 +132,89 @@ describe('TowerFeature — experimental flag gating', () => {
     await manager.unprovideUnit('tower');
 
     expect(isTowerFeatureAssembled(flags)).toBe(false);
+    host.dispose();
+  });
+});
+
+describe('TowerFeature — config-sourced flag assembly', () => {
+  let disposables: DisposableStore;
+  let homeDir: string;
+
+  beforeEach(() => {
+    disposables = new DisposableStore();
+    homeDir = `/tmp/kimi-code-tower-assembly-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    _clearScopedRegistryForTests();
+    _clearFeatureRecipesForTests();
+    registerScopedService(
+      LifecycleScope.App,
+      IFeatureManager,
+      FeatureManagerService,
+      ScopeActivation.OnScopeCreated,
+      'feature',
+    );
+    registerScopedService(
+      LifecycleScope.App,
+      IFeatureAssemblyService,
+      FeatureAssemblyService,
+      ScopeActivation.OnScopeCreated,
+      'features',
+    );
+    registerFeature(TowerFeature);
+  });
+  afterEach(() => disposables.dispose());
+
+  async function makeRealFlags(preseed?: Record<string, unknown>) {
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(IBootstrapService, stubBootstrap(homeDir));
+    ix.stub(ILogService, stubLog());
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    ix.set(IFlagRegistry, new SyncDescriptor(FlagRegistryService));
+    ix.set(IFlagService, new SyncDescriptor(FlagService));
+    if (preseed !== undefined) {
+      mkdirSync(homeDir, { recursive: true });
+      writeFileSync(join(homeDir, 'config.toml'), `${stringifyToml(preseed)}\n`);
+      await ix.get(IAtomicTomlDocumentStore).set('', 'config.toml', preseed);
+    }
+    return { config: ix.get(IConfigService), flags: ix.get(IFlagService) };
+  }
+
+  it('assembles a config-sourced flag at startup', async () => {
+    const { flags } = await makeRealFlags({ experimental: { [TOWER_FLAG_ID]: true } });
+    const host = createScopedTestHost([[IFlagService, flags]]);
+
+    expect(isTowerFeatureAssembled(flags)).toBe(true);
+    expect(flags.explain(TOWER_FLAG_ID)).toMatchObject({ enabled: true, source: 'config' });
+    const manager = host.app.accessor.get(IFeatureManager);
+    expect(
+      manager
+        .contributedServices()
+        .filter(
+          (entry) => entry.scope === LifecycleScope.App && entry.id === ITowerRateLimitService,
+        ),
+    ).toHaveLength(1);
+    const agent = host.child(LifecycleScope.Agent, 'agent-1');
+    expect(collectionViewOf(agent, AgentToolContribution).items).toHaveLength(11);
+    host.dispose();
+  });
+
+  it('does not assemble on a config flip after startup — a restart is required', async () => {
+    const { config, flags } = await makeRealFlags();
+    const host = createScopedTestHost([[IFlagService, flags]]);
+    const manager = host.app.accessor.get(IFeatureManager);
+    expect(manager.units().map((unit) => unit.name)).toEqual(['tower']);
+    expect(isTowerFeatureAssembled(flags)).toBe(false);
+
+    await config.set(EXPERIMENTAL_SECTION, { [TOWER_FLAG_ID]: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(flags.enabled(TOWER_FLAG_ID)).toBe(true);
+    expect(isTowerFeatureAssembled(flags)).toBe(false);
+    expect(manager.contributedServices()).toHaveLength(0);
+    const agent = host.child(LifecycleScope.Agent, 'agent-1');
+    expect(collectionViewOf(agent, AgentToolContribution).items).toHaveLength(0);
     host.dispose();
   });
 });
