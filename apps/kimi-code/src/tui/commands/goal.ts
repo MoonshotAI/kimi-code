@@ -25,6 +25,7 @@ import {
   type GoalQueueSnapshot,
 } from '../goal-queue-store';
 import { formatErrorMessage } from '../utils/event-payload';
+import { PERMISSION_MODE_DISPLAY_NAMES, UNCONFIRMED_FILE_CHANGES_WARNING } from '../utils/permission-mode';
 import { canRestoreSubmittedInput } from './resolve';
 import type { SlashCommandHost } from './dispatch';
 
@@ -39,6 +40,7 @@ type GoalCommandHost = Pick<
   | 'requireSession'
   | 'setAppState'
   | 'showError'
+  | 'showNotice'
   | 'showStatus'
   | 'track'
   | 'mountEditorReplacement'
@@ -454,6 +456,14 @@ async function setPermissionForGoal(host: GoalCommandHost, mode: PermissionMode)
     return false;
   }
   host.setAppState({ permissionMode: mode });
+  // The failure-rollback path also comes through here with 'manual'; only warn
+  // when entering a mode that skips confirmation.
+  if (mode !== 'manual') {
+    host.showNotice(
+      `Permission mode: ${PERMISSION_MODE_DISPLAY_NAMES[mode]}`,
+      UNCONFIRMED_FILE_CHANGES_WARNING,
+    );
+  }
   return true;
 }
 

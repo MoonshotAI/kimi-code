@@ -18,6 +18,7 @@ import {
 } from '#/tui/goal-queue-store';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import { getBuiltInPalette } from '#/tui/theme';
+import { UNCONFIRMED_FILE_CHANGES_WARNING } from '#/tui/utils/permission-mode';
 
 vi.mock('#/tui/goal-queue-store', () => ({
   appendGoalQueueItem: vi.fn(async () => ({
@@ -375,6 +376,10 @@ describe('handleGoalCommand', () => {
     });
     expect(s.setPermission).toHaveBeenCalledWith('auto');
     expect(manualHost.setAppState).toHaveBeenCalledWith({ permissionMode: 'auto' });
+    expect(manualHost.showNotice).toHaveBeenCalledWith(
+      'Permission mode: Never Ask',
+      UNCONFIRMED_FILE_CHANGES_WARNING,
+    );
     expect(manualHost.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
   });
 
@@ -393,6 +398,7 @@ describe('handleGoalCommand', () => {
       );
     });
     expect(s.setPermission).not.toHaveBeenCalled();
+    expect(manualHost.showNotice).not.toHaveBeenCalled();
     expect(manualHost.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
   });
 
@@ -411,6 +417,10 @@ describe('handleGoalCommand', () => {
     });
     expect(s.setPermission).toHaveBeenCalledWith('yolo');
     expect(manualHost.setAppState).toHaveBeenCalledWith({ permissionMode: 'yolo' });
+    expect(manualHost.showNotice).toHaveBeenCalledWith(
+      'Permission mode: Ask When Needed',
+      UNCONFIRMED_FILE_CHANGES_WARNING,
+    );
   });
 
   it('restores the previous permission mode when the goal fails to start', async () => {
@@ -430,6 +440,8 @@ describe('handleGoalCommand', () => {
     });
     expect(s.setPermission).toHaveBeenCalledWith('yolo');
     expect(manualHost.setAppState).toHaveBeenLastCalledWith({ permissionMode: 'manual' });
+    // The rollback to Manual must not emit a second warning notice.
+    expect(manualHost.showNotice).toHaveBeenCalledTimes(1);
   });
 
   it('returns the command to the input box when a Manual-mode goal start is cancelled', async () => {

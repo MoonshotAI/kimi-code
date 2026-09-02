@@ -5,3 +5,6 @@ export const PERMISSION_MODE_DISPLAY_NAMES: Readonly<Record<PermissionMode, stri
   yolo: 'Ask When Needed',
   auto: 'Never Ask',
 };
+
+export const UNCONFIRMED_FILE_CHANGES_WARNING =
+  'In this mode, Kimi Code can modify or delete files without your confirmation';
