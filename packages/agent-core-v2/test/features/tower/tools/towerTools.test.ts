@@ -130,6 +130,7 @@ beforeEach(async () => {
         },
         enter: () => {
           towerActive = true;
+          return Promise.resolve({ entered: true as const });
         },
         exit: () => {
           towerActive = false;

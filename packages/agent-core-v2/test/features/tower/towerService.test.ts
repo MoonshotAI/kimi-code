@@ -25,7 +25,12 @@ import type {
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
 import { TowerStore } from '#/features/tower/protocol/index';
-import { IAgentTowerService, TOWER_FLAG_ID } from '#/features/tower/tower';
+import {
+  IAgentTowerService,
+  TOWER_FLAG_ID,
+  towerEnterFailureMessage,
+  type TowerEnterFailure,
+} from '#/features/tower/tower';
 import { _setTowerFeatureAssembledForTests } from '#/features/tower/towerFeature';
 import { AgentTowerService, TOWER_MODE_TOOLS } from '#/features/tower/towerService';
 import { towerKey } from '#/features/tower/towerOps';
@@ -44,6 +49,7 @@ import {
   ISessionActivityView,
   type SessionPendingInteraction,
 } from '#/session/sessionActivity/sessionActivity';
+import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import type { ToolCall } from '#/kosong/contract/message';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
@@ -138,7 +144,7 @@ describe('AgentTowerService', () => {
   let addedTools: string[];
   let removedTools: string[];
   let activeTools: string[] | undefined;
-  let liveSessions: Map<string, { busy: boolean; pendingInteraction: SessionPendingInteraction; exit: Mock<() => void> }>;
+  let liveSessions: Map<string, { busy: boolean; pendingInteraction: SessionPendingInteraction; exit: Mock<() => void>; title?: string; metadataReadFails?: boolean }>;
   let fireUnitsChanged: () => void = () => {};
 
   beforeEach(() => {
@@ -181,6 +187,14 @@ describe('AgentTowerService', () => {
                           : undefined,
                     },
                   }),
+                };
+              }
+              if (token === (ISessionMetadata as unknown)) {
+                return {
+                  read: async () => {
+                    if (stub.metadataReadFails === true) throw new Error('metadata read failed');
+                    return { title: stub.title };
+                  },
                 };
               }
               return undefined;
@@ -251,7 +265,7 @@ describe('AgentTowerService', () => {
     );
 
     expect(tower.isActive).toBe(false);
-    await tower.enter();
+    await expect(tower.enter()).resolves.toEqual({ entered: true });
     expect(tower.isActive).toBe(true);
     tower.exit();
     expect(tower.isActive).toBe(false);
@@ -856,7 +870,7 @@ describe('AgentTowerService', () => {
     expect(formatDenyMessage).toHaveBeenCalledTimes(1);
   });
 
-  it('enter() is a no-op while the tower flag is off', async () => {
+  it('enter() reports experiment-off while the tower flag is off', async () => {
     towerFlagOn = false;
     const tower = ix.get(IAgentTowerService);
     const events: { readonly type: string }[] = [];
@@ -866,18 +880,18 @@ describe('AgentTowerService', () => {
       }),
     );
 
-    await tower.enter();
+    await expect(tower.enter()).resolves.toEqual({ entered: false, reason: 'experiment-off' });
 
     expect(tower.isActive).toBe(false);
     expect(events).toEqual([]);
   });
 
-  it('enter() is a no-op until the feature is assembled — a live flag flip needs a restart', async () => {
+  it('enter() reports feature-not-assembled until the feature is assembled — a live flag flip needs a restart', async () => {
     _setTowerFeatureAssembledForTests(false);
     try {
       const tower = ix.get(IAgentTowerService);
 
-      await tower.enter();
+      await expect(tower.enter()).resolves.toEqual({ entered: false, reason: 'feature-not-assembled' });
 
       expect(tower.isActive).toBe(false);
       expect(addedTools).toEqual([]);
@@ -945,18 +959,20 @@ describe('AgentTowerService', () => {
 
   function stubLiveSession(
     id: string,
-    init: { busy?: boolean; pendingInteraction?: SessionPendingInteraction } = {},
+    init: { busy?: boolean; pendingInteraction?: SessionPendingInteraction; title?: string; metadataReadFails?: boolean } = {},
   ): Mock<() => void> {
     const exit = vi.fn();
     liveSessions.set(id, {
       busy: init.busy ?? false,
       pendingInteraction: init.pendingInteraction ?? 'none',
       exit,
+      title: init.title,
+      metadataReadFails: init.metadataReadFails,
     });
     return exit;
   }
 
-  it('enter() is a no-op while a busy foreign session owns the tower in this process', async () => {
+  it('enter() reports owned-by-live-session with the owner id while a busy foreign session owns the tower in this process', async () => {
     const repo = await mkdtemp(join(tmpdir(), 'tower-enter-foreign-'));
     try {
       await initGitRepo(repo);
@@ -969,7 +985,11 @@ describe('AgentTowerService', () => {
       ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-fork' } as unknown as ISessionContext);
       const tower = ix.get(IAgentTowerService);
 
-      await tower.enter();
+      await expect(tower.enter()).resolves.toEqual({
+        entered: false,
+        reason: 'owned-by-live-session',
+        owner: 'session-original',
+      });
 
       expect(tower.isActive).toBe(false);
       expect(addedTools).toEqual([]);
@@ -978,7 +998,7 @@ describe('AgentTowerService', () => {
     }
   });
 
-  it('enter() is a no-op while the owning session waits on an interaction', async () => {
+  it('enter() reports owned-by-live-session while the owning session waits on an interaction', async () => {
     const repo = await mkdtemp(join(tmpdir(), 'tower-enter-pending-'));
     try {
       await initGitRepo(repo);
@@ -991,8 +1011,105 @@ describe('AgentTowerService', () => {
       ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-fork' } as unknown as ISessionContext);
       const tower = ix.get(IAgentTowerService);
 
-      await tower.enter();
+      await expect(tower.enter()).resolves.toEqual({
+        entered: false,
+        reason: 'owned-by-live-session',
+        owner: 'session-original',
+      });
 
+      expect(tower.isActive).toBe(false);
+      expect(addedTools).toEqual([]);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('enter() includes the live owner session title in the owned-by-live-session result', async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'tower-enter-owner-title-'));
+    try {
+      await initGitRepo(repo);
+      await writeFile(join(repo, 'README.md'), '# fixture\n');
+      await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
+      await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
+      await new TowerStore(repo).init('session-original');
+
+      stubLiveSession('session-original', { busy: true, title: 'Tower docs polish' });
+      ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-fork' } as unknown as ISessionContext);
+      const tower = ix.get(IAgentTowerService);
+
+      await expect(tower.enter()).resolves.toEqual({
+        entered: false,
+        reason: 'owned-by-live-session',
+        owner: 'session-original',
+        ownerTitle: 'Tower docs polish',
+      });
+
+      expect(tower.isActive).toBe(false);
+      expect(addedTools).toEqual([]);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('enter() degrades to the owner id when the live owner has only a placeholder title', async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'tower-enter-owner-untitled-'));
+    try {
+      await initGitRepo(repo);
+      await writeFile(join(repo, 'README.md'), '# fixture\n');
+      await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
+      await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
+      await new TowerStore(repo).init('session-original');
+
+      stubLiveSession('session-original', { busy: true, title: 'New Session' });
+      ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-fork' } as unknown as ISessionContext);
+      const tower = ix.get(IAgentTowerService);
+
+      const result = await tower.enter();
+
+      expect(result).toEqual({
+        entered: false,
+        reason: 'owned-by-live-session',
+        owner: 'session-original',
+        ownerTitle: undefined,
+      });
+      if (!result.entered) {
+        expect(towerEnterFailureMessage(result)).toBe(
+          'another live session owns the workspace tower (session session-original)',
+        );
+      }
+      expect(tower.isActive).toBe(false);
+      expect(addedTools).toEqual([]);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('enter() degrades to the owner id when the live owner metadata cannot be read', async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'tower-enter-owner-unreadable-'));
+    try {
+      await initGitRepo(repo);
+      await writeFile(join(repo, 'README.md'), '# fixture\n');
+      await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
+      await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
+      await new TowerStore(repo).init('session-original');
+
+      stubLiveSession('session-original', { busy: true, metadataReadFails: true });
+      ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-fork' } as unknown as ISessionContext);
+      const tower = ix.get(IAgentTowerService);
+
+      const result = await tower.enter();
+
+      expect(result).toEqual({
+        entered: false,
+        reason: 'owned-by-live-session',
+        owner: 'session-original',
+        ownerTitle: undefined,
+      });
+      if (!result.entered) {
+        expect(towerEnterFailureMessage(result)).toBe(
+          'another live session owns the workspace tower (session session-original)',
+        );
+      }
       expect(tower.isActive).toBe(false);
       expect(addedTools).toEqual([]);
     } finally {
@@ -1069,14 +1186,14 @@ describe('AgentTowerService', () => {
     expect(removedTools).toEqual([]);
   });
 
-  it('enter is inert on a non-main agent', async () => {
+  it('enter reports not-main-agent and is inert on a non-main agent', async () => {
     ix.stub(
       IAgentScopeContext,
       makeAgentScopeContext({ agentId: 'test-agent', agentScope: testWireScope('wire', 'tower-test'), generation: 0 }),
     );
     const tower = ix.get(IAgentTowerService);
 
-    await tower.enter();
+    await expect(tower.enter()).resolves.toEqual({ entered: false, reason: 'not-main-agent' });
 
     expect(tower.isActive).toBe(false);
     expect(addedTools).toEqual([]);
@@ -2057,5 +2174,37 @@ describe('TowerModeInjection', () => {
 
     expect(towerReminderMessages(context)).toHaveLength(3);
     expect(lastTowerReminder(context)).toContain('Tower mode is active');
+  });
+});
+
+describe('towerEnterFailureMessage', () => {
+  it.each([
+    [
+      { entered: false, reason: 'not-main-agent' },
+      'tower mode is only supported by the main agent',
+    ],
+    [
+      { entered: false, reason: 'experiment-off' },
+      'the tower experiment is disabled; enable it with KIMI_CODE_EXPERIMENTAL_TOWER=1 or `[experimental] tower = true` in config.toml',
+    ],
+    [
+      { entered: false, reason: 'feature-not-assembled' },
+      'the tower feature is not assembled in this process; a restart is required',
+    ],
+    [
+      { entered: false, reason: 'owned-by-live-session', owner: 'session-original' },
+      'another live session owns the workspace tower (session session-original)',
+    ],
+    [
+      {
+        entered: false,
+        reason: 'owned-by-live-session',
+        owner: 'session-original',
+        ownerTitle: 'Tower docs polish',
+      },
+      'another live session owns the workspace tower (session Tower docs polish (session-original))',
+    ],
+  ] as [TowerEnterFailure, string][])('maps %o to its message', (failure, message) => {
+    expect(towerEnterFailureMessage(failure)).toBe(message);
   });
 });
