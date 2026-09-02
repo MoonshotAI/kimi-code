@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import {
   FileTokenStorage,
   KIMI_CODE_PROVIDER_NAME,
+  resolveKimiCodeOAuthKey,
   resolveKimiTokenStorageName,
   type TokenInfo,
 } from '@moonshot-ai/kimi-code-oauth';
@@ -241,6 +242,61 @@ describe('Remote Control tunnel', () => {
         stderr: { write: () => true },
       }),
     ).rejects.toThrow(/DEVICE_LIMIT_EXCEEDED.*membership allows 3 devices/);
+  });
+
+  it('loads the env-scoped credential when OAuth env overrides are set', async () => {
+    const oauthHost = 'https://auth.dev.example.test';
+    const baseUrl = 'https://api.dev.example.test/coding/v1';
+    vi.stubEnv('KIMI_CODE_OAUTH_HOST', oauthHost);
+    vi.stubEnv('KIMI_CODE_BASE_URL', baseUrl);
+    const homeDir = mkdtempSync(join(tmpdir(), 'kimi-rc-env-'));
+    cleanups.push(() => rmSync(homeDir, { recursive: true, force: true }));
+    const storage = new FileTokenStorage(join(homeDir, 'credentials'));
+    // The default (production) slot holds a credential for a different
+    // environment; the dev login wrote to the env-scoped slot instead.
+    await storage.save(resolveKimiTokenStorageName({ providerName: KIMI_CODE_PROVIDER_NAME }), {
+      ...TOKEN,
+      refreshToken: 'prod-refresh-token',
+    });
+    await storage.save(
+      resolveKimiTokenStorageName({
+        providerName: KIMI_CODE_PROVIDER_NAME,
+        oauthKey: resolveKimiCodeOAuthKey({ oauthHost, baseUrl }),
+      }),
+      { ...TOKEN, refreshToken: 'dev-refresh-token' },
+    );
+    const relay = await startAuthRelay();
+    let handle: RemoteControlHandle | undefined;
+    cleanups.push(async () => handle?.close());
+
+    handle = await startRemoteControl({
+      homeDir,
+      localOrigin: 'http://127.0.0.1:1',
+      localServerToken: 'local-server-token',
+      relayOrigin: `http://127.0.0.1:${relay.port}/coding-relay`,
+      stderr: { write: () => true },
+    });
+
+    const bearerTokens = relay.requests.map(
+      (request) => request.authorization ?? request.protocol?.replace('kimi-code.bearer.', ''),
+    );
+    expect(bearerTokens).toContain('dev-refresh-token');
+    expect(bearerTokens).not.toContain('prod-refresh-token');
+  });
+
+  it('ignores the default credential slot when OAuth env overrides are set', async () => {
+    vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://auth.dev.example.test');
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+
+    await expect(
+      startRemoteControl({
+        homeDir,
+        localOrigin: 'http://127.0.0.1:1',
+        localServerToken: 'local-server-token',
+        relayOrigin: 'http://127.0.0.1:1',
+        stderr: { write: () => true },
+      }),
+    ).rejects.toThrow('Remote Control requires a Kimi login');
   });
 
   it('uses only Authorization when the refresh token is not a valid subprotocol token', async () => {

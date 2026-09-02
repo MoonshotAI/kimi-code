@@ -7,6 +7,9 @@ import {
   createKimiDeviceId,
   FileTokenStorage,
   KIMI_CODE_PROVIDER_NAME,
+  kimiCodeEnvBaseUrl,
+  kimiCodeEnvOAuthHost,
+  resolveKimiCodeOAuthKey,
   resolveKimiTokenStorageName,
 } from '@moonshot-ai/kimi-code-oauth';
 import { WebSocket, type RawData } from 'ws';
@@ -294,8 +297,18 @@ export async function startRemoteControl(
     throw new Error('Remote Control requires local server authentication.');
   }
   const storage = new FileTokenStorage(join(options.homeDir, 'credentials'));
+  // Resolve the credential slot the same way login and the runtime provider
+  // do: with KIMI_CODE_OAUTH_HOST / KIMI_CODE_BASE_URL overrides the token
+  // lives in an env-scoped slot (kimi-code-env-<hash>), and reading only the
+  // default slot would pick up a credential for the wrong environment.
   const token = await storage.load(
-    resolveKimiTokenStorageName({ providerName: KIMI_CODE_PROVIDER_NAME }),
+    resolveKimiTokenStorageName({
+      providerName: KIMI_CODE_PROVIDER_NAME,
+      oauthKey: resolveKimiCodeOAuthKey({
+        oauthHost: kimiCodeEnvOAuthHost(),
+        baseUrl: kimiCodeEnvBaseUrl(),
+      }),
+    }),
   );
   if (token?.refreshToken === undefined || token.refreshToken.length === 0) {
     throw new Error('Remote Control requires a Kimi login. Run `kimi login` first.');
