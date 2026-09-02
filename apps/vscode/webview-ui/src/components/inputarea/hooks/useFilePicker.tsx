@@ -57,7 +57,7 @@ export function useFilePicker(activeToken: ActiveToken | null, onInsertFile: (pa
   }, [query]);
 
   const fileItems = useMemo((): FileItem[] => {
-    return searchResults.map((f) => ({
+    return searchResults.slice(0, 50).map((f) => ({
       name: f.name,
       path: f.path,
       isDirectory: f.isDirectory,

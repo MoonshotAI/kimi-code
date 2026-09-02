@@ -49,6 +49,14 @@ describe('search', () => {
     expect(result.current.fileItems[0]).toMatchObject({ name: 'app.ts', path: 'src/app.ts' });
   });
 
+  it('caps the displayed items at 50', async () => {
+    getProjectFiles.mockResolvedValue(
+      Array.from({ length: 60 }, (_, i) => ({ name: `f${i}.ts`, path: `f${i}.ts`, isDirectory: false })),
+    );
+    const { result } = renderHook(() => useFilePicker(at('f'), noop, noop, noop), { wrapper: createWrapper() });
+    await waitFor(() => { expect(result.current.fileItems).toHaveLength(50); });
+  });
+
   it('debounces rapid query changes into a single request after 100ms', async () => {
     const { rerender } = renderHook(({ token }) => useFilePicker(token, noop, noop, noop), {
       initialProps: { token: at('') as Token },
