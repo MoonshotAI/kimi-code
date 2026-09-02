@@ -7,10 +7,8 @@ import {
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IConfigService } from '#/app/config/config';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { FeatureManagerService } from '#/app/feature/featureManagerService';
-import { IFlagService } from '#/app/flag/flag';
 import { LifecycleScope } from '#/app/scopes';
 import { SessionInitFeature } from '#/features/sessionInit/sessionInitFeature';
 import { ISessionInitService } from '#/features/sessionInit/sessionInit';
@@ -25,13 +23,6 @@ import {
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
-
-import { stubFlag } from '../../app/flag/stubs';
-
-const featureAssemblySeeds = [
-  [IConfigService, { ready: Promise.resolve() }],
-  [IFlagService, stubFlag(false)],
-] as const;
 
 describe('SessionInitFeature', () => {
   beforeEach(() => {
@@ -55,7 +46,7 @@ describe('SessionInitFeature', () => {
   });
 
   it('withdraws and restores the Session service with the Feature', async () => {
-    const host = createScopedTestHost(featureAssemblySeeds);
+    const host = createScopedTestHost();
     const session = host.child(LifecycleScope.Session, 'session-1', [
       stubPair(IAgentLifecycleService, {} as IAgentLifecycleService),
       stubPair(ISessionSubagentService, {} as ISessionSubagentService),

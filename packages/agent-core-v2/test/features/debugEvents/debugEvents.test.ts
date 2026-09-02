@@ -7,10 +7,8 @@ import {
   registerScopedService,
 } from '#/_base/di/scope';
 import { createScopedTestHost } from '#/_base/di/test';
-import { IConfigService } from '#/app/config/config';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { FeatureManagerService } from '#/app/feature/featureManagerService';
-import { IFlagService } from '#/app/flag/flag';
 import { LifecycleScope } from '#/app/scopes';
 import { IFeatureAssemblyService } from '#/features/featureAssembly';
 import { FeatureAssemblyService } from '#/features/featureAssemblyService';
@@ -20,13 +18,7 @@ import {
 } from '#/features/featureRegistry';
 
 import { IDebugEventsService } from '#/features/debugEvents/debugEvents';
-import { stubFlag } from '../../app/flag/stubs';
 import { DebugEventsFeature } from '#/features/debugEvents/debugEventsFeature';
-
-const featureAssemblySeeds = [
-  [IConfigService, { ready: Promise.resolve() }],
-  [IFlagService, stubFlag(false)],
-] as const;
 
 describe('DebugEventsFeature — App-scope introspection service', () => {
   beforeEach(() => {
@@ -56,7 +48,7 @@ describe('DebugEventsFeature — App-scope introspection service', () => {
       ),
     ).toBe(false);
 
-    const host = createScopedTestHost(featureAssemblySeeds);
+    const host = createScopedTestHost();
     const manager = host.app.accessor.get(IFeatureManager);
     expect(manager.units().map((unit) => unit.name)).toContain('debugEvents');
     expect(

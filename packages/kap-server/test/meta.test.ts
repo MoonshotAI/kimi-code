@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureManager';
-import { getFeatureRegistrations } from '@moonshot-ai/agent-core-v2/features/featureRegistry';
+import { getFeatureRecipes } from '@moonshot-ai/agent-core-v2/features/featureRegistry';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -164,13 +164,7 @@ describe('/api/v1/meta features', () => {
     meta: Record<string, unknown>;
   }
 
-  beforeEach(() => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOWER', '0');
-  });
-
   afterEach(async () => {
-    vi.unstubAllEnvs();
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -205,9 +199,8 @@ describe('/api/v1/meta features', () => {
   it('lists every registered built-in feature as Active with an empty meta', async () => {
     const base = await boot();
     const features = await getMetaFeatures(base);
-    const expected = getFeatureRegistrations()
-      .filter((registration) => registration.flag === undefined)
-      .map((registration) => registration.recipe.name)
+    const expected = getFeatureRecipes()
+      .map((recipe) => recipe.name)
       .sort();
     expect(features.map((feature) => feature.name).sort()).toEqual(expected);
     for (const feature of features) {

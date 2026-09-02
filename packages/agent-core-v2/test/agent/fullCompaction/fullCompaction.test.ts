@@ -1082,6 +1082,7 @@ describe('FullCompaction', () => {
         from: 'compacting',
         trace_id: 'trace-compact-retry',
         mode: 'agent',
+        model: 'kimi-code',
         protocol: 'openai',
         provider_type: 'kimi',
       },

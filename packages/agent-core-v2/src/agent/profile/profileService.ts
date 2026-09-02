@@ -173,6 +173,12 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     this.states.contributeState(profileEmittedPluginBudgetWarningsKey);
     this.configure({});
     this._register(
+      this.dispatcher.hooks.onDidRestore.register('profile', async (_ctx, next) => {
+        this.syncTelemetryModelContext(this.modelAlias);
+        await next();
+      }),
+    );
+    this._register(
       this.config.onDidSectionChange(({ domain }) => {
         if (domain === TOOLS_SECTION) {
           this.publishToolPatternWarnings();
@@ -542,11 +548,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   private afterConfigDispatch(changed: Omit<ProfileUpdateData, 'activeToolNames'>): void {
     if (changed.modelAlias !== undefined) {
-      const model = this.tryResolveRawModel();
-      this.telemetry.setContext({
-        provider_type: model?.providerType ?? model?.protocol,
-        protocol: model?.protocol,
-      });
+      this.syncTelemetryModelContext(changed.modelAlias);
     }
     if (changed.modelAlias !== undefined || changed.thinkingLevel !== undefined) {
       this.warnAboutAnthropicThinkingEffort();
@@ -554,6 +556,18 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     this.emitStatusUpdated(
       changed.modelAlias !== undefined || changed.thinkingLevel !== undefined,
     );
+  }
+
+  private syncTelemetryModelContext(modelAlias: string | undefined): void {
+    if (modelAlias === undefined) {
+      return;
+    }
+    const model = this.tryResolveRawModel();
+    this.telemetry.setContext({
+      model: modelAlias,
+      provider_type: model?.providerType ?? model?.protocol,
+      protocol: model?.protocol,
+    });
   }
 
   private warnAboutAnthropicThinkingEffort(): void {
