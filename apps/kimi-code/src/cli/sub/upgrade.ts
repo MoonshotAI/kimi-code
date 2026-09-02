@@ -100,7 +100,7 @@ export async function handleUpgrade(
       source,
     });
     deps.stdout.write(renderManualUpdateMessage(currentVersion, target, source, installCommand));
-    return 0;
+    return deps.isInteractive ? 0 : 1;
   }
 
   trackUpgradeEvent(deps.track, 'upgrade_command_prompted', {

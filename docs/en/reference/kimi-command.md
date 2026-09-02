@@ -271,6 +271,8 @@ kimi upgrade
 
 For global npm, pnpm, yarn, and bun installations, `kimi upgrade` shows update options; selecting `Install update now` runs the corresponding foreground install command. For native installations (including Windows), it downloads and verifies the new binary in the foreground and swaps it in on the next start. When the current installation method cannot be upgraded automatically, the manual update command is printed instead.
 
+When an update is available and `kimi upgrade` is run non-interactively, such as from CI or an application wrapper, it prints the manual update command without installing it and exits with code `1`. This lets automation distinguish the unchanged result from a successful upgrade.
+
 ### `kimi vis`
 
 Launch the session visualizer in your browser to inspect a session as it unfolds. The command starts an in-process server pointed at your local sessions, prints the URL, opens your browser, and keeps running until you press `Ctrl-C`.
