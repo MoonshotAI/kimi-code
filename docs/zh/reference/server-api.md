@@ -4808,8 +4808,8 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 | 分类 | 方向 | 帧数 | 类型正名 | 用途 |
 | --- | --- | --- | --- | --- |
 | [控制帧](#控制帧) | 双向 | 12 活跃 + 7 死声明 | `ServerSystemMessage`（下行）/ `ClientControlMessage`（上行） | 握手、订阅、心跳与恢复 |
-| [event.\* 事件帧](#event-协议事件) | S→C | 19 | 13 型有接口正名，6 型未命名 | 工作区 / 会话 / 配置等状态同步 |
-| [agent 事件帧](#agent-事件) | S→C | 51 | `AgentEvent` | 轮次生命周期、状态与 subagent 内容 |
+| [event.\* 事件帧](#event-事件帧) | S→C | 19 | 13 型有接口正名，6 型未命名 | 工作区 / 会话 / 配置等状态同步 |
+| [agent 事件帧](#agent-事件帧) | S→C | 51 | `AgentEvent` | 轮次生命周期、状态与 subagent 内容 |
 | [transcript 帧](#transcript-帧) | S→C | 2 | `TranscriptResetEvent` / `TranscriptOpsEvent` | 主会话内容的结构化流（新实现） |
 | [terminal 帧](#terminal-帧) | S→C | 2 | — | 死协议 |
 
@@ -6528,268 +6528,82 @@ MCP server 状态变化；`status` 透传核心六态，与 REST [T-McpServer](#
 }
 ```
 
----
-
-（以下为旧格式内容，待全量按新格式替换后删除）
-
-### 控制帧（旧格式，待替换）
-
-#### server_hello（服务端→客户端）
-
-连接建立后的首帧。
-
-**payload**：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `ws_connection_id` | string | 连接 id（`conn_<ulid>`） |
-| `protocol_version` | number | 恒 `2`。当前无任何一侧判定该版本号 |
-| `heartbeat_ms` | number | 心跳间隔（默认 `10000`） |
-| `max_event_buffer_size` | number | 每会话事件缓冲容量（默认 `1000`），断线回放的上限 |
-| `capabilities` | object | 恒 `{ "event_batching": false, "compression": false }` |
-
-**示例**：
-
-```json
-{ "type": "server_hello", "timestamp": "2026-09-02T08:00:00.000Z", "payload": { "ws_connection_id": "conn_01JZX4...", "protocol_version": 2, "heartbeat_ms": 10000, "max_event_buffer_size": 1000, "capabilities": { "event_batching": false, "compression": false } } }
-```
-
-#### ping / pong
-
-- 服务端→客户端：`{ "type": "ping", "timestamp", "payload": { "nonce": number } }`，每 `heartbeat_ms` 一帧。
-- 客户端→服务端：`{ "type": "pong", "payload": { "nonce": number } }`——服务端只重置心跳计时，不回 `ack`。连续两个周期没有任何入站帧，服务端以 `close(1001, 'heartbeat timeout')` 断连。
-
-#### ack（服务端→客户端）
-
-每个带 `id` 的入站控制帧一个应答：`{ "type": "ack", "id", "code", "msg", "payload" }`。`code: 0` 成功；`1` 参数或内部错误；`40112` 鉴权失败（`client_hello.payload.token` 校验失败，随后连接关闭）。
-
-各入站帧及其 `ack` 的 payload：
-
-| 入站帧 | payload（入） | ack payload（出） |
-| --- | --- | --- |
-| `client_hello` | `{ client_id, subscriptions?, cursors?, agent_filter?, token? }` | `{ accepted_subscriptions, resync_required, cursors }` |
-| `subscribe` | `{ session_ids: string[], cursors?, watch_fs?, agent_filter? }` | `{ accepted, not_found, resync_required, cursors }` |
-| `subscribe_v2` | `{ session_id, transcript, transcript_since? }`（见 [transcript 帧](#transcript-帧)） | 同 `subscribe` |
-| `unsubscribe_v2` | `{ session_id, agent_ids? }` | `{ accepted: [session_id], not_found: [], resync_required: [] }`（无 `cursors` 键） |
-| `unsubscribe` | `{ session_ids: string[] }` | `{ accepted: [], not_found: [], resync_required: [] }`（恒空数组） |
-| `watch_fs_add` / `watch_fs_remove` | `{ session_id, paths: string[], runtime_id?, recursive? }` | `{ watched_paths, current_count }`；bridge 缺失或异常时 `code: 1` |
-
-字段说明：
-
-- `cursors`：`Record<session_id, { seq, epoch? }>`——断线恢复游标，见 [断线恢复](#断线恢复)。带游标订阅时服务端回放缺口事件；无法回放时先发 `resync_required`，并把该会话 id 列入 `ack` 的 `resync_required`。
-- `watch_fs`：`Record<session_id, { paths: string[], recursive? }>`——随订阅一并登记的文件监听（等价于逐会话发 `watch_fs_add`），变更经 `event.fs.changed` 送达。
-- `agent_filter`：`Record<session_id, string[]>`——只接收所列 Agent 的事件。
-- `token`：`client_hello` 的冗余第二鉴权通道（升级请求已鉴权，缺省直接放行）。
-- `client_id === 'kimi-inspect'` 的连接会被加入 DI 事件目标集（`event.di.*` 的门控，见 [event.\* 协议事件](#event-协议事件)）。
-
-**示例**（`subscribe` 的 `ack`）：
-
-```json
-{ "type": "ack", "id": "1", "code": 0, "msg": "ok", "payload": { "accepted": [ "session_01JZX4..." ], "not_found": [], "resync_required": [], "cursors": { "session_01JZX4...": { "seq": 128, "epoch": "01JZX4..." } } } }
-```
-
-#### resync_required（服务端→客户端）
-
-订阅游标无法回放时下发：事件缓冲溢出（`buffer_overflow`）、会话被重建（`session_recreated`）或 `epoch` 不符（`epoch_changed`）。处理方式见 [断线恢复](#断线恢复)。
-
-**payload**：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `session_id` | string | 需要重新同步的会话 |
-| `reason` | string | `buffer_overflow` / `session_recreated` / `epoch_changed` |
-| `current_seq` | integer | 当前事件水位 |
-| `epoch` | string | 可缺省：当前 epoch |
-
-**示例**：
-
-```json
-{ "type": "resync_required", "timestamp": "2026-09-02T08:10:00.000Z", "payload": { "session_id": "session_01JZX4...", "reason": "buffer_overflow", "current_seq": 1420, "epoch": "01JZX4..." } }
-```
-
-#### error（控制帧，死声明）
-
-控制帧形态的 `error`（`{ type: "error", timestamp, payload: { code, msg, fatal, request_id?, details? } }`）在 AsyncAPI 中声明，但服务端没有任何产出点。事件流中出现的 `type: "error"` 帧均为裸 agent `error` 事件（带 `session_id` / `seq` 事件信封，见 [agent 事件](#agent-事件)），客户端可按有无 `session_id` 分流。
-
-### 事件信封
-
-所有事件帧共享外层 `{ "type", "seq", "epoch"?, "volatile"?, "offset"?, "session_id", "timestamp", "payload" }`：`type` 与 `payload` 内事件的 `type` 重复一次；`session_id` 在全局事件上为 `__global__`；`timestamp` 为 ISO 8601（事件自带时间时取之）。`seq` / `epoch` / `volatile` / `offset` 的语义随产出器分四种形态：
-
-| 形态 | `seq` | `epoch` | `volatile` | `offset` |
-| --- | --- | --- | --- | --- |
-| 持久（durable）事件 | 事件日志水位，严格递增并落盘 | 有 | 缺省 | 缺省 |
-| 易失（volatile）事件 | 当前水位（不递增，与前后持久帧同 `seq`） | 有 | `true` | delta 类携带（该轮次内累计文本长度） |
-| transcript 帧 | 外层为会话事件水位（非 transcript seq）；transcript seq 在 `payload.seq` | 有 | `true` | 缺省 |
-| `event.fs.changed` | 文件监听作用域自增计数（与事件日志无关） | **无** | 缺省 | 缺省 |
-
-易失类型全集：`assistant.delta` / `thinking.delta` / `tool.call.delta` / `tool.progress` / `shell.started` / `shell.output` / `shell.completed` / `agent.status.updated`，另有 `event.di.unit_changed` 与 `event.capability.changed`。易失事件不落盘、不回放；消费易失文本流时用 `offset` 与本地已累积文本比对：小于本地长度说明是重复帧，大于说明有缺漏、需走快照恢复。
-
-投递范围分两类：**全局事件**广播给每个已建立连接（含未订阅该会话的）——`session.meta.updated`、`event.session.*`、`event.workspace.*`、`event.config.*`、`event.model_catalog.*`、`event.plugin.*`、`event.capability.*`、`event.di.*`（仅发往 `client_id: "kimi-inspect"` 的连接）；**会话事件**只发给订阅了该会话的连接，受 `agent_filter` 过滤——`event.question.*`、`event.approval.*` 与全部裸 agent 事件。`event.fs.changed` 单独一路：仅发往经 `watch_fs_add`（或 `subscribe` 的 `watch_fs`）登记了对应路径监听的连接。这些事件只覆盖本服务进程内的变更；其他进程（例如写同一 home 目录的 CLI）的变更要等索引 reconcile（约一分钟）才可见，因此概览客户端应保留低频兜底轮询。目前没有会话删除事件。
-
-### event.* 协议事件
-
-payload 内统一带 `agentId: "main"` 与 `sessionId`（全局事件为 `__global__` 或真实会话 id）。除标注外均为持久事件；各族的投递范围见 [事件信封](#事件信封)。
-
-| type | payload 字段 | 备注 |
-| --- | --- | --- |
-| `event.session.created` | `session: T-Session` | 创建会话 / fork / 创建子会话时 |
-| `event.session.archived` | `workspace_id`（另有 `agentId` 与 camelCase `sessionId`） | 在线与冷归档两条路径都会发出；概览免轮询 |
-| `event.session.work_changed` | `busy, main_turn_active, pending_interaction, last_turn_reason?` | 会话工作聚合变化时 |
-| `event.session.status_changed` | — | schema 已声明但**无产出点** |
-| `event.workspace.created` | `workspace: T-Workspace` | 注册工作区时 |
-| `event.workspace.updated` | `workspace: T-Workspace` | 重命名 / 重新注册 / 会话创建触碰工作区时 |
-| `event.workspace.deleted` | `workspace_id, root` | 注销工作区时 |
-| `event.config.changed` | `changedFields: string[]`（camelCase 域名）、`config: T-ConfigResponse` | 任何来源的配置变更；短时间窗内多次变更合并为一个事件 |
-| `event.config.warning` | `warnings: { domain?, message }[]` | 配置告警 |
-| `event.model_catalog.changed` | `changed, unchanged, failed`（同 [T-RefreshProviderModelsResponse](#t-refreshprovidermodelsresponse)） | 至少一个供应商的别名变化时 |
-| `event.plugin.changed` | （无附加字段） | 插件安装 / 启用 / 停用 / 移除时 |
-| `event.capability.changed` | `capability_id, install: { running, step?, percent?, error?, note? }` | 易失；能力安装进度 |
-| `event.di.unit_changed` | `scope, token, state, error?` | 易失；仅发往 `client_id: "kimi-inspect"` 的连接；`state` 取值同 meta `features[].state`，枚举非封闭 |
-| `event.question.requested` | [T-QuestionRequest](#t-questionrequest) 全字段 | 提问到达 |
-| `event.question.answered` | `question_id, answers, resolved_at` | `answers` 为拍平的文本 map（`Record<条目 id, 文本>`），与 REST 的结构化 answers 形态不同 |
-| `event.question.dismissed` | `question_id, dismissed_at` | |
-| `event.approval.requested` | [T-ApprovalRequest](#t-approvalrequest) 全字段 | 审批到达 |
-| `event.approval.resolved` | `approval_id, decision?, scope?, feedback?, selected_label?, resolved_at` | |
-| `event.fs.changed` | `changes: { path, change, kind, size_delta?, etag? }[], coalesced_window_ms, truncated?, count?` | `change` 为 `created` / `modified` / `deleted`，`kind` 为 `file` / `directory` / `symlink`；`truncated: true` 时 `changes` 为空数组。信封特殊（见 [事件信封](#事件信封)） |
-
-**示例**（`event.session.work_changed`）：
-
-```json
-{ "type": "event.session.work_changed", "seq": 129, "epoch": "01JZX4...", "session_id": "session_01JZX4...", "timestamp": "2026-09-02T08:06:00.000Z", "payload": { "type": "event.session.work_changed", "busy": true, "main_turn_active": true, "pending_interaction": "none", "agentId": "main", "sessionId": "session_01JZX4..." } }
-```
-
-### agent 事件
-
-裸 agent 事件的 `payload` 为核心事件对象字段外加广播器补充的 `{ agentId, sessionId }`（camelCase）；除标注外均为持久事件。广播器的特判：
-
-- `prompt.accepted` 被过滤，不广播。
-- `turn.started` 的 `promptAttachments` 被显式剥离（schema 声明但 wire 上不出现）。
-- `prompt.submitted` / `prompt.queued` / `prompt.steered` 的 `content` 从核心内容块投影为 [T-MessageContent](#t-messagecontent) 数组。
-- `task.started` / `task.terminated` 各自额外派生一条 `background.task.started` / `background.task.terminated`（同 payload 改 type，随后发出）。
-- `context.spliced` 触发一次 main agent 的 `agent.status.updated` 重发。
-
-#### 轮次族
-
-| type | payload 字段 | 备注 |
-| --- | --- | --- |
-| `turn.started` | `turnId, origin, prompt?, promptId?` | `origin` 为 [T-PromptOrigin](#t-promptorigin)；无 `promptAttachments` |
-| `turn.ended` | `turnId, reason, error?, durationMs?, interruptReason?, time?` | `reason` 为 `completed` / `cancelled` / `failed` / `blocked`；`error` 为 [T-KimiError](#t-kimierror) |
-| `turn.step.started` | `turnId, step, stepId?` | |
-| `turn.step.completed` | `turnId, step, stepId?, usage?, finishReason?, providerFinishReason?, rawFinishReason?` 及时延组字段 | `usage` 为 [T-TokenUsage](#t-tokenusage) |
-| `turn.step.retrying` | `turnId, step, stepId?, failedAttempt, nextAttempt, maxAttempts, delayMs, errorName, errorMessage, statusCode?` | |
-| `turn.step.interrupted` | `turnId, step, stepId?, reason, message?` | |
-
-#### 流式文本族（易失）
-
-| type | payload 字段 | 备注 |
-| --- | --- | --- |
-| `assistant.delta` | `turnId, delta` | 带 `offset`；相邻同轮次帧可能被合并 |
-| `thinking.delta` | `turnId, delta` | 同上 |
-
-#### 工具调用族
-
-| type | payload 字段 | 备注 |
-| --- | --- | --- |
-| `tool.call.delta` | `turnId, toolCallId, name?, argumentsPart?` | 易失 |
-| `tool.call.started` | `turnId, toolCallId, name, args, description?, display?` | `display` 为 [T-ToolInputDisplay](#t-toolinputdisplay) |
-| `tool.progress` | `turnId, toolCallId, update` | 易失；`update` 为 `{ kind: "stdout" \| "stderr" \| "progress" \| "status" \| "custom", text?, percent?, customKind?, customData?, replace? }` |
-| `tool.result` | `turnId, toolCallId, output, isError?, synthetic?` | |
-| `tool.list.updated` | `reason, serverName` | `reason` 为 `mcp.connected` / `mcp.disconnected` / `mcp.failed` |
-
-#### Shell 族（易失）
-
-| type | payload 字段 |
-| --- | --- |
-| `shell.started` | `commandId, taskId` |
-| `shell.output` | `commandId, update, taskId?`（`update` 形态同 `tool.progress`） |
-| `shell.completed` | `commandId, isError, taskId?` |
-
-#### 任务族
-
-| type | payload 字段 | 备注 |
-| --- | --- | --- |
-| `task.started` | `info` | `info` 为 T-TaskInfo（camelCase：`taskId, description, status, detached?, startedAt, endedAt?, stopReason?, timeoutMs?` 及 process / agent / question 三态各自扩展） |
-| `task.terminated` | `info` | 同上 |
-| `background.task.started` | 同 `task.started` | 派生帧 |
-| `background.task.terminated` | 同 `task.terminated` | 派生帧 |
-| `task.notified` | `notificationType, title, body, severity, sourceKind, sourceId` | `severity` 为 `info` / `warning` |
-
-#### subagent 族
-
-| type | payload 字段 |
-| --- | --- |
-| `subagent.spawned` | `subagentId, subagentName, parentToolCallId, parentToolCallUuid?, parentAgentId?, callerAgentId?, description?, swarmIndex?, runInBackground, model?, thinkingEffort?, taskId?` |
-| `subagent.started` | `subagentId` |
-| `subagent.suspended` | `subagentId, reason` |
-| `subagent.completed` | `subagentId, resultSummary, usage?, contextTokens?` |
-| `subagent.failed` | `subagentId, error` |
-
-#### prompt 族
-
-| type | payload 字段 | 备注 |
-| --- | --- | --- |
-| `prompt.submitted` | `promptId, userMessageId, status, content, createdAt` | `status` 为 `running` / `queued`；`content` 为投影后的 [T-MessageContent](#t-messagecontent) 数组 |
-| `prompt.queued` | `promptId, content, queueLength` | |
-| `prompt.started` | `promptId` | |
-| `prompt.completed` | `promptId, finishedAt, reason` | `reason` 恒产出，为 `completed` / `failed` / `blocked` |
-| `prompt.aborted` | `promptId, abortedAt` | |
-| `prompt.steered` | `activePromptId, promptIds, content, steeredAt` | |
-| `turn.steer` | `input, origin` | `input` 为核心内容块数组（**未投影**）；`origin` 为 [T-PromptOrigin](#t-promptorigin) |
-
-#### compaction 族
-
-| type | payload 字段 |
-| --- | --- |
-| `compaction.started` | `trigger?`（`manual` / `auto`）、`instruction?` |
-| `compaction.blocked` | `turnId?` |
-| `compaction.cancelled` | — |
-| `compaction.completed` | `result: { summary, compactedCount, tokensBefore, tokensAfter, keptUserMessageCount?, keptHeadUserMessageCount?, droppedCount? }` |
-| `context.spliced` | `start, deleteCount, messages, tokens?`（`messages` 为核心 ContextMessage 数组，**未投影**） |
-
-#### 其他 agent 事件
-
-| type | payload 字段 | 备注 |
-| --- | --- | --- |
-| `goal.updated` | `snapshot, change?` | `snapshot` 为 [T-GoalSnapshot](#t-goalsnapshot) 或 `null`；`change` 为 `{ kind: "lifecycle" \| "completion", status?, reason?, stats?, actor? }` |
-| `plan.revision` | `id, version, path, sha256, bytes` | |
-| `skill.activated` | `activationId, skillName, skillArgs?, trigger, skillPath?, skillSource?` | `trigger` 为 `user-slash` / `model-tool` / `nested-skill` |
-| `plugin_command.activated` | `activationId, pluginId, commandName, commandArgs?, trigger` | `trigger` 恒 `user-slash` |
-| `agent.status.updated` | `usage?, swarmMode?, towerMode?, planMode?, model?, thinkingEffort?, maxContextTokens?, contextTokens?` 合并 legacy 状态（`usage?, contextTokens, maxContextTokens?, model`），外加 `phase?` | 易失；`phase` 为 [T-AgentPhase](#t-agentphase)。schema 声明的 `permission` / `contextUsage` 无产出路径 |
-| `agent.created` | （仅 `agentId` / `sessionId`） | |
-| `agent.disposed` | （仅 `agentId` / `sessionId`） | |
-| `session.meta.updated` | `title?, patch?` | 全局事件（广播给所有连接） |
-| `error` | [T-KimiError](#t-kimierror) | 带事件信封；与控制帧 `error`（死声明）不同 |
-| `warning` | `message, code?` | |
-| `cron.fired` | `origin, prompt` | `origin` 为 T-CronJobOrigin |
-| `hook.result` | `turnId?, hookEvent, content, blocked?` | |
-| `mcp.server.status` | `server: { name, transport, status, toolCount, error? }` | `status` 直接透传核心六态：`pending` / `connected` / `failed` / `disabled` / `needs-auth` / `removed`——与 REST [T-McpServer](#t-mcpserver) 的四态取值域不同 |
-
-**示例**（`tool.call.started`）：
-
-```json
-{ "type": "tool.call.started", "seq": 131, "epoch": "01JZX4...", "session_id": "session_01JZX4...", "timestamp": "2026-09-02T08:06:05.000Z", "payload": { "type": "tool.call.started", "turnId": 3, "toolCallId": "toolu_01J...", "name": "Bash", "args": { "command": "pnpm test" }, "display": { "kind": "command", "command": "pnpm test" }, "agentId": "main", "sessionId": "session_01JZX4..." } }
-```
-
 ### transcript 帧
 
-`subscribe_v2` 是唯一的转录订阅通道：其 `transcript` 按 Agent 指定粒度（`off` / `turn` / `block` / `delta`，键 `"*"` 表示默认粒度），粒度越高推送越细。粒度非 `off` 的 Agent 改由转录帧承载，该 Agent 的旧式事件在同一连接上被抑制（其他连接不受影响）。两种帧型：
+`subscribe_v2` 是唯一的 transcript 订阅通道：`transcript` 按 agent 指定粒度（`off` / `turn` / `block` / `delta`，键 `"*"` 为通配档），粒度越高推送越细——`turn` 只投递轮次级 op（基线快照中 `steps` 置空数组），`block` 起含 step 与 frame 级 op、仅排除 `append` 增量，`delta` 全量。连接对某 agent 订阅了非 `off` 粒度后，该 agent 的内容改由 transcript 帧承载，其已被 transcript 投影的裸 agent 事件在同一连接上被抑制（见 [agent 事件帧](#agent-事件帧)）。payload 内 item 与 op 的类型全集见 [T-Transcript 族](#t-transcript-族)。
 
-| type | payload | 触发 |
-| --- | --- | --- |
-| `transcript.reset` | `{ type, agent_id, snapshot, has_more_older, seq? }` | 订阅、粒度升级或新 Agent 上名册时发送基线快照（`snapshot` 按订阅粒度裁剪，items 为空、仅全局状态与水位；历史经 REST 分页回读） |
-| `transcript.ops` | `{ type, agent_id, ops, seq? }` | 转录存储产生 op 批次，或 `transcript_since` 游标回放 |
+两型帧的信封均恒 `volatile: true`（见 [帧总览](#帧总览)）：外层 `seq` 为会话事件水位（不递增），逐 agent 连续递增的 transcript seq 在 `payload.seq`。
 
-两帧的信封均为 `volatile: true`，外层 `seq` 为会话事件水位；每个 Agent 连续递增的 transcript seq 在 `payload.seq`。断线时用 `subscribe_v2` 的 `transcript_since`（`Record<agentId, seq>`）续传：服务端批次日志完整覆盖缺口时走 `transcript.ops` 回放，否则重发 `transcript.reset`；REST 侧对应 `GET .../transcript/ops?since_seq=`（补漏返回 `complete: false` 时需全量刷新）。粒度升降是否重发 reset 由转录契约的粒度规则决定。
+#### `transcript.reset`（S→C）
 
-**示例**（`transcript.ops`）：
+基线快照，按订阅粒度裁剪。触发：订阅、粒度升级（仅升级时重发，降级不重发）或新 agent 上名册。
+
+```ts
+{
+  type: 'transcript.reset';
+  volatile: true; // 外层恒 volatile；外层 seq 为会话事件水位
+  payload: {
+    type: 'transcript.reset'; // payload 内重复 type
+    agent_id: string;
+    snapshot: AgentTranscriptSnapshot; // 见 T-Transcript 族
+    has_more_older: boolean; // 存在更早历史，经 REST 分页回读
+    seq?: number; // transcript seq 水位
+  };
+}
+```
+
+#### `transcript.ops`（S→C）
+
+op 批次，按订阅粒度过滤。触发：transcript store 产生 op（批量投递），或 `transcript_since` 游标回放。
+
+```ts
+{
+  type: 'transcript.ops';
+  volatile: true;
+  payload: {
+    type: 'transcript.ops';
+    agent_id: string;
+    ops: TranscriptOperation[]; // 14 型，见 T-Transcript 族
+    seq?: number; // 该批的 transcript seq
+  };
+}
+```
+
+**帧示例**（`transcript.ops`）：
 
 ```json
-{ "type": "transcript.ops", "seq": 132, "epoch": "01JZX4...", "volatile": true, "session_id": "session_01JZX4...", "timestamp": "2026-09-02T08:06:06.000Z", "payload": { "type": "transcript.ops", "agent_id": "main", "ops": [ { "op": "append", "...": "..." } ], "seq": 43 } }
+{
+  "type": "transcript.ops",
+  "seq": 132,
+  "epoch": "01JZX4...",
+  "volatile": true,
+  "session_id": "session_01JZX4...",
+  "timestamp": "2026-09-02T08:06:06.000Z",
+  "payload": {
+    "type": "transcript.ops",
+    "agent_id": "main",
+    "ops": [ { "op": "append", "...": "..." } ],
+    "seq": 43
+  }
+}
 ```
+
+续传与补漏：断线后用 `subscribe_v2` 的 `transcript_since`（逐 agent 或 `'*'` 的 seq 水位）续传——服务端 op 日志完整覆盖缺口时走 `transcript.ops` 回放，覆盖不到或无水位时重发 `transcript.reset`；`subscribe` 的事件游标与 transcript 水位是两套独立续传。REST 侧对应补漏端点 [`GET .../transcript/ops`](#get-api-v1-sessions-session-id-transcript-ops)：返回 `complete: false`（会话不活跃或日志回溯不到）时，调用方须回退为一次全量 `GET .../transcript` 刷新。
 
 ### terminal 帧
 
-`terminal_attach` / `terminal_detach` / `terminal_input` / `terminal_resize` / `terminal_close` 及其 `ack`、以及服务端到客户端的 `terminal_output` / `terminal_exit` 在 AsyncAPI（`/asyncapi.json`）中完整声明，但**当前是死协议**：服务端不处理这些入站帧（按未知 `type` 静默丢弃），也没有任何 `terminal_output` / `terminal_exit` 的产出点。REST 的终端生命周期端点见 [终端](#终端) 域。
+`terminal_attach` / `terminal_detach` / `terminal_input` / `terminal_resize` / `terminal_close`（C→S，各带 ack schema）与 `terminal_output` / `terminal_exit`（S→C）在 AsyncAPI（`/asyncapi.json`）中完整声明，`abort`（C→S，带 ack schema）同样声明在案，但**当前都是死协议**：服务端不处理这些入站帧（按未知 `type` 静默丢弃），也没有任何 `terminal_output` / `terminal_exit` 的产出点。中止 prompt 走 REST 的 [`:abort`](#post-api-v1-sessions-session-id-prompts-prompt-id-action) 动作；REST 的终端生命周期端点见 [终端](#终端) 域。
+
+| 帧 | 方向 | schema 要点 | 现状 |
+| --- | --- | --- | --- |
+| `terminal_attach` | C→S | `{ session_id, terminal_id, since_seq? }`；ack `{ attached: true, replayed: number }` | 静默丢弃 |
+| `terminal_detach` | C→S | `{ session_id, terminal_id }`；ack `{ detached: true }` | 静默丢弃 |
+| `terminal_input` | C→S | `{ session_id, terminal_id, data }`；ack `{ accepted: true }` | 静默丢弃 |
+| `terminal_resize` | C→S | `{ session_id, terminal_id, cols, rows }`；ack `{ resized: true }` | 静默丢弃 |
+| `terminal_close` | C→S | `{ session_id, terminal_id }`；ack `{ closed: true }` | 静默丢弃 |
+| `terminal_output` | S→C | `{ seq, session_id, terminal_id, timestamp, payload: { data } }` | 无产出 |
+| `terminal_exit` | S→C | `{ session_id, terminal_id, timestamp, payload: { exit_code?: number \| null } }` | 无产出 |
+| `abort` | C→S | `{ session_id, prompt_id }`；ack `{ aborted?, at_seq? }` | 静默丢弃 |
 
 ## 完整错误码
 
