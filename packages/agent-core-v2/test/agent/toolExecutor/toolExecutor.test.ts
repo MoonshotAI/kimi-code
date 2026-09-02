@@ -801,6 +801,71 @@ describe('AgentToolExecutorService', () => {
       }),
     });
   });
+
+  it('runs onExecuteTool middleware inside the scheduled task around the execution', async () => {
+    const first = new ControlledTool('first', ToolAccesses.writeFile('/repo/a.ts'));
+    const second = new TestTool('second', { accesses: ToolAccesses.writeFile('/repo/a.ts') });
+    registry.register(first);
+    registry.register(second);
+    const order: string[] = [];
+    executor.hooks.onExecuteTool.register('observe', async (ctx, next) => {
+      order.push(`before:${ctx.toolCall.id}`);
+      await next();
+      order.push(`after:${ctx.toolCall.id}`);
+    });
+
+    const execution = execute([
+      toolCall('call_first', 'first', {}),
+      toolCall('call_second', 'second', {}),
+    ]);
+    await first.started;
+    expect(order).toEqual(['before:call_first']);
+    const results = await execution;
+
+    expect(order).toEqual([
+      'before:call_first',
+      'after:call_first',
+      'before:call_second',
+      'after:call_second',
+    ]);
+    expect(results).toHaveLength(2);
+  });
+
+  it('an onExecuteTool middleware can veto the call without running the tool', async () => {
+    const tool = new TestTool('echo');
+    registry.register(tool);
+    const outcomes = new Map<string, ToolExecutionOutcome>();
+    executor.hooks.onDidExecuteTool.register('capture-outcomes', async (ctx, next) => {
+      outcomes.set(ctx.toolCall.id, ctx.outcome);
+      await next();
+    });
+    executor.hooks.onExecuteTool.register('veto', (ctx) => {
+      ctx.result = {
+        result: { output: 'vetoed at run time', isError: true },
+        outcome: 'vetoed',
+      };
+    });
+
+    const results = await execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
+
+    expect(tool.calls).toEqual([]);
+    expect(results).toEqual([
+      expect.objectContaining({ output: 'vetoed at run time', isError: true }),
+    ]);
+    expect(outcomes).toEqual(new Map([['call_echo', 'vetoed']]));
+  });
+
+  it('rejects the batch when the onExecuteTool chain completes without a result', async () => {
+    const tool = new TestTool('echo');
+    registry.register(tool);
+    executor.hooks.onExecuteTool.register('swallow', async () => {});
+
+    await expect(execute([toolCall('call_echo', 'echo', { text: 'hi' })])).rejects.toThrow(
+      'onExecuteTool hook chain for tool "echo" completed without producing a result',
+    );
+    expect(tool.calls).toEqual([]);
+  });
+
   it('threads a declared delivery onto the yielded result for the agent layer to consume', async () => {
     const message = {
       role: 'user' as const,

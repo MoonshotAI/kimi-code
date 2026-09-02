@@ -5,6 +5,7 @@ import type { ToolResult } from '#/tool/toolContract';
 import type {
   BeforeToolExecuteEvent,
   ToolDidExecuteContext,
+  ToolExecuteContext,
   WillExecuteToolEvent,
 } from '#/agent/toolExecutor/toolHooks';
 import type { ToolCall } from '#/kosong/contract/message';
@@ -50,6 +51,7 @@ export interface IAgentToolExecutorService {
   readonly onWillExecuteTool: Event<WillExecuteToolEvent>;
 
   readonly hooks: {
+    readonly onExecuteTool: OrderedHookSlot<ToolExecuteContext>;
     readonly onDidExecuteTool: OrderedHookSlot<ToolDidExecuteContext>;
   };
 

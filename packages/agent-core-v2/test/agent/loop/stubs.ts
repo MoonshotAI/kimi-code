@@ -4,7 +4,7 @@ import type { IAgentLoopService, LoopErrorHandler, LoopErrorHandlerRegistrationO
 import type { StepRequest } from '#/agent/loop/stepRequest';
 import { StepRequestQueue, type StepRequestBatch } from '#/agent/loop/stepRequestQueue';
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import type { BeforeToolExecuteEvent, ToolDidExecuteContext, WillExecuteToolEvent } from '#/agent/toolExecutor/toolHooks';
+import type { BeforeToolExecuteEvent, ToolDidExecuteContext, ToolExecuteContext, WillExecuteToolEvent } from '#/agent/toolExecutor/toolHooks';
 import { OrderedHookSlot } from '#/hooks';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { createHooks } from '#/hooks';
@@ -92,4 +92,4 @@ export async function runWillBeginStepHooks(
   });
 }
 export function stubWire(): IWireService { return { _serviceBrand: undefined, seal: async () => {}, appendRecord: () => {}, readJournal: async function* () {}, flush: async () => {} }; }
-export function stubToolExecutor(): IAgentToolExecutorService { return { _serviceBrand: undefined, execute: async function* () {}, onBeforeExecuteTool: Event.None as Event<BeforeToolExecuteEvent>, onWillExecuteTool: Event.None as Event<WillExecuteToolEvent>, hooks: { onDidExecuteTool: new OrderedHookSlot<ToolDidExecuteContext>() }, recordDupType: () => {}, registerToolCallGuard: () => ({ dispose() {} }), registerUnavailableToolDescriber: () => ({ dispose() {} }), registerMissingToolDescriber: () => ({ dispose() {} }) }; }
+export function stubToolExecutor(): IAgentToolExecutorService { return { _serviceBrand: undefined, execute: async function* () {}, onBeforeExecuteTool: Event.None as Event<BeforeToolExecuteEvent>, onWillExecuteTool: Event.None as Event<WillExecuteToolEvent>, hooks: { onExecuteTool: new OrderedHookSlot<ToolExecuteContext>(), onDidExecuteTool: new OrderedHookSlot<ToolDidExecuteContext>() }, recordDupType: () => {}, registerToolCallGuard: () => ({ dispose() {} }), registerUnavailableToolDescriber: () => ({ dispose() {} }), registerMissingToolDescriber: () => ({ dispose() {} }) }; }
