@@ -117,6 +117,8 @@ export interface SessionEventHost {
   handleShellStarted(event: { commandId: string; taskId: string }): void;
   sendNormalUserInput(text: string): void;
   updateTerminalTitle(): void;
+  /** Re-read the active session's wire journal into the staleness baseline. */
+  refreshWireTipFromDisk(): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
   shiftQueuedMessage(): QueuedMessage | undefined;
   handleTurnStarted?(event: TurnStartedEvent): void;
@@ -402,6 +404,9 @@ export class SessionEventHandler {
     }
     this.pluginMcpToolsUsedInTurn.clear();
     this.scheduleQueuedGoalPromotion();
+    // The turn's journal records are now on disk; advance the staleness
+    // baseline so the next input is not mistaken for an external append.
+    this.host.refreshWireTipFromDisk();
   }
 
   private handleStepBegin(event: TurnStepStartedEvent): void {
