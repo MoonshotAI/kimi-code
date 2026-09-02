@@ -396,8 +396,8 @@ importers:
         version: 5.0.14(@types/react@19.2.14)(immer@11.1.11)(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5))
     devDependencies:
       '@tailwindcss/vite':
-        specifier: 4.1.18
-        version: 4.1.18(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
+        specifier: ^4.1.4
+        version: 4.2.2(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
       '@types/diff':
         specifier: ^8.0.0
         version: 8.0.0
@@ -441,8 +441,8 @@ importers:
         specifier: 1.0.2
         version: 1.0.2
       tailwindcss:
-        specifier: 4.1.18
-        version: 4.1.18
+        specifier: ^4.1.4
+        version: 4.2.2
       vite:
         specifier: ^6.3.3
         version: 6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)

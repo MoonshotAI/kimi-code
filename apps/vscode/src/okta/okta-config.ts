@@ -9,7 +9,7 @@
  * {
  *   "issuer": "https://example.okta.com",
  *   "clientId": "0oa1abcd2EFgHiJkLmN3",
- *   "redirectUri": "vscode://moonshot-ai.kimi-code/callback",
+ *   "redirectUri": "vscode://life-restver-rd.restver-code/callback",
  *   "scopes": "openid profile email offline_access",
  *   "authorizePath": "/v1/authorize",
  *   "tokenPath": "/v1/token",

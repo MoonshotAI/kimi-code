@@ -101,7 +101,7 @@ jobs:
 
           ovsx_missing=""
           for target in ${platforms}; do
-            if ! curl -fsS -o /dev/null "https://open-vsx.org/api/moonshot-ai/kimi-code/${target}/${version}"; then
+            if ! curl -fsS -o /dev/null "https://open-vsx.org/api/life-restver-rd.restver-code/${target}/${version}"; then
               ovsx_missing="${ovsx_missing} ${target}"
             fi
           done
@@ -113,7 +113,7 @@ jobs:
             echo "ovsx_published=false" >> "$GITHUB_OUTPUT"
           fi
 
-          if pnpm --filter kimi-code exec vsce show moonshot-ai.kimi-code --json \
+          if pnpm --filter restver-code exec vsce show life-restver-rd.restver-code --json \
               | node -e "const v=process.argv[1];const want=process.argv[2].split(' ');let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{const j=JSON.parse(d);const got=new Set((j.versions||[]).filter(x=>x.version===v).map(x=>x.targetPlatform||''));const missing=want.filter(p=>!got.has(p));if(missing.length){console.error('VS Marketplace missing platform(s): '+missing.join(' '));process.exit(1)}process.exit(0)})" "${version}" "${platforms}"; then
             echo "${version} is fully on VS Marketplace (all 6 platforms) — publish:vsix will be skipped"
             echo "vsix_published=true" >> "$GITHUB_OUTPUT"

@@ -107,7 +107,7 @@
         "@moonshot-ai/transcript"
         "@moonshot-ai/tree-sitter-bash"
         "@moonshot-ai/kimi-code"
-        "kimi-code"
+        "restver-code"
         "@moonshot-ai/kimi-inspect"
         "@moonshot-ai/vis"
         "@moonshot-ai/vis-server"
