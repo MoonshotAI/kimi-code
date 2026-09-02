@@ -6,6 +6,12 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.40.1 (2026-09-02)
+
+### Bug Fixes
+
+- Fix the condition for showing the kimi-cli migration prompt.
+
 ## 0.40.0 (2026-09-02)
 
 ### Features
