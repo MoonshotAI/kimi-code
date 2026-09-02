@@ -319,6 +319,23 @@ describe('AgentPromptService', () => {
     expect(steerInjections()).toHaveLength(1);
   });
 
+  it('re-emits the steer reminder when a step re-runs its injection pass before finishing', async () => {
+    const { prompt, context, loop } = harness({ pendingTurnResult: true, integrationReminder: true });
+    const steerInjections = () =>
+      context.get().filter((m) => m.origin?.kind === 'injection' && m.origin.variant === 'steer');
+    const active = await prompt.enqueue({ message: message('active') });
+    await active.launched;
+    const queued = await prompt.enqueue({ message: message('retry target') });
+    await prompt.steer([queued.id]);
+    loop.drainNextBatch(context);
+    await runWillBeginStepHooks(loop);
+    await runWillBeginStepHooks(loop);
+    expect(steerInjections()).toHaveLength(2);
+    await runDidFinishStepHooks(loop);
+    await runWillBeginStepHooks(loop);
+    expect(steerInjections()).toHaveLength(2);
+  });
+
   it('does not arm the steer reminder for tool-injected steers', async () => {
     const { prompt, context, loop, reminderProviders } = harness();
     const active = await prompt.enqueue({ message: message('active') });
