@@ -52,7 +52,7 @@ continue:
   here is one less thing the next turn must rediscover. Include any required
   format for the final answer.
 
-The complete record of this conversation stays on disk and a recovery pointer is appended below your note automatically, so you need not reproduce long outputs verbatim — keep exact identifiers, key values and error lines, and name anything the next turn should look up.
+This conversation's event log stays on disk and a recovery pointer is appended below your note automatically, so you need not reproduce long outputs verbatim — keep exact identifiers, key values and error lines, and name anything the next turn should look up.
 
 Your TODO list is re-attached automatically below this note from its live
 source, so do not transcribe it — copying it wastes space and can contradict the

@@ -21,6 +21,7 @@ import { makeCarriageReturnsVisible, splitLinesKeepingTerminator, type LineEndin
 import { decodeUtfText, detectTextEncoding, type UtfTextEncoding } from '#/_base/text/encoding';
 import { renderPrompt } from '#/_base/utils/render-prompt';
 import {
+  EVENT_LOG_MAX_LINE_LENGTH,
   IReadTool,
   MAX_BYTES,
   MAX_LINE_LENGTH,
@@ -62,7 +63,7 @@ interface FinishReadResultInput {
 }
 
 function lineLengthLimit(eventLog: boolean): number {
-  return eventLog ? Number.POSITIVE_INFINITY : MAX_LINE_LENGTH;
+  return eventLog ? EVENT_LOG_MAX_LINE_LENGTH : MAX_LINE_LENGTH;
 }
 
 function truncateLine(line: string, maxLength: number): string {
@@ -486,7 +487,7 @@ export class ReadTool implements IReadTool {
         const candidate = renderedCandidates[i];
         if (candidate === undefined) continue;
         const lineBytes = renderedLineBytes(candidate.rendered.line, kept.length === 0);
-        if (bytes + lineBytes > MAX_BYTES) break;
+        if (kept.length > 0 && bytes + lineBytes > MAX_BYTES) break;
         kept.unshift(candidate);
         bytes += lineBytes;
       }
@@ -543,12 +544,12 @@ export class ReadTool implements IReadTool {
     }
     if (input.truncatedLineNumbers.length > 0) {
       parts.push(
-        `Lines [${input.truncatedLineNumbers.join(', ')}] were truncated to ${String(MAX_LINE_LENGTH)} characters; use Bash (e.g. cut or sed) to read the elided content of those lines.`,
+        `Lines [${input.truncatedLineNumbers.join(', ')}] were truncated to ${String(lineLengthLimit(input.eventLog))} characters; use Bash (e.g. cut or sed) to read the elided content of those lines.`,
       );
     }
     if (input.eventLog) {
       parts.push(
-        'Kimi Code agent event log: lines are returned untruncated; read one record at a time (n_lines=1). See the wire.jsonl primer in your latest compaction note.',
+        `Kimi Code agent event log: records are returned whole up to ${String(EVENT_LOG_MAX_LINE_LENGTH)} characters per line; read one record at a time (n_lines=1). For a longer record, extract fields with Bash: sed -n 'Np' <file> | jq. See the wire.jsonl primer in your latest compaction note.`,
       );
     }
     if (input.lineEndingStyle === 'mixed') {

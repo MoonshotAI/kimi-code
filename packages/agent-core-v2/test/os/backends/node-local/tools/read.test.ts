@@ -6,6 +6,7 @@ import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import {
+  EVENT_LOG_MAX_LINE_LENGTH,
   MAX_BYTES,
   MAX_LINE_LENGTH,
   MAX_LINES,
@@ -670,6 +671,57 @@ describe('ReadTool', () => {
     expect(result.note).not.toContain('were truncated');
     expect(result.note).toContain('Kimi Code agent event log');
     expect(result.spillExempt).toBe(true);
+  });
+
+  it('caps a single event log record and reports the cap in the note', async () => {
+    const huge = 'y'.repeat(EVENT_LOG_MAX_LINE_LENGTH + 100);
+    const truncation: IAgentToolResultTruncationService = {
+      ...stubToolResultTruncationService(),
+      isWireJournalPath: (path) => path.endsWith('/wire.jsonl'),
+    };
+    const tool = createReadTool(
+      createSpiedFs(`${huge}\nshort`).fs,
+      createTestEnv(),
+      PERMISSIVE_WORKSPACE,
+      undefined,
+      truncation,
+    );
+
+    const result = await execute(tool, {
+      path: '/home/user/.kimi-code/sessions/ws/session/agents/main/wire.jsonl',
+      line_offset: 1,
+      n_lines: 1,
+    });
+    const output = toolContentString(result);
+
+    expect(output.length).toBeLessThanOrEqual(EVENT_LOG_MAX_LINE_LENGTH + 20);
+    expect(output).toContain('...');
+    expect(result.note).toContain(`truncated to ${String(EVENT_LOG_MAX_LINE_LENGTH)} characters`);
+    expect(result.spillExempt).toBe(true);
+  });
+
+  it('returns the last oversized event log record when reading from the tail', async () => {
+    const huge = 'z'.repeat(MAX_BYTES + 5_000);
+    const truncation: IAgentToolResultTruncationService = {
+      ...stubToolResultTruncationService(),
+      isWireJournalPath: (path) => path.endsWith('/wire.jsonl'),
+    };
+    const tool = createReadTool(
+      createSpiedFs(`first\n${huge}`).fs,
+      createTestEnv(),
+      PERMISSIVE_WORKSPACE,
+      undefined,
+      truncation,
+    );
+
+    const result = await execute(tool, {
+      path: '/home/user/.kimi-code/sessions/ws/session/agents/main/wire.jsonl',
+      line_offset: -1,
+    });
+    const output = toolContentString(result);
+
+    expect(output).toContain('z'.repeat(1_000));
+    expect(result.note).not.toContain('No lines read');
   });
 
   it('keeps truncating long lines when the truncation service does not recognize the path', async () => {

@@ -701,6 +701,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
               overflowShrinkCount,
               (message) => this.tokenCounting.estimateMessage(message),
             );
+            if (historyForModel.length === 0) throw error;
             droppedCount += before - historyForModel.length;
             retryCount = 0;
             continue;

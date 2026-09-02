@@ -309,7 +309,7 @@ describe('FullCompaction', () => {
         compacted_count: 6,
         retry_count: 0,
         thinking_effort: 'off',
-        input_tokens: 1249,
+        input_tokens: 1247,
         output_tokens: 8,
         input_cache_read: 0,
         input_cache_creation: 0,
@@ -663,7 +663,7 @@ describe('FullCompaction', () => {
       event: 'compaction_finished',
       properties: expect.objectContaining({
         source: 'manual',
-        tokens_before: 17_943,
+        tokens_before: 17_950,
         retry_count: 1,
         trace_id: 'trace-compact-1',
       }),
@@ -1012,6 +1012,35 @@ describe('FullCompaction', () => {
     ]);
   });
 
+  it('fails the compaction instead of compacting an empty history when overflow shrink drops everything', async () => {
+    let calls = 0;
+    const generate: GenerateFn = async () => {
+      calls += 1;
+      if (calls === 1) {
+        throw new APIContextOverflowError(400, 'Context length exceeded', 'req-shrink-empty');
+      }
+      return textResult('Groundless summary.');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'small user one', 'small assistant one', 20);
+    ctx.context.append({
+      role: 'user',
+      content: [{ type: 'text', text: 'X'.repeat(400_000) }],
+      toolCalls: [],
+    });
+    const failed = ctx.once('error');
+
+    await ctx.rpc.beginCompaction({});
+    await failed;
+
+    expect(calls).toBe(1);
+    expect(ctx.context.get()).toHaveLength(3);
+  });
+
   it('waits before retrying compaction generation after a retryable failure', async () => {
     vi.useFakeTimers();
     const firstAttemptFailed = deferred<void>();
@@ -1134,7 +1163,7 @@ describe('FullCompaction', () => {
       properties: expect.objectContaining({
         agent_id: 'main',
         source: 'manual',
-        tokens_before: 17_943,
+        tokens_before: 17_950,
         duration_ms: expect.any(Number),
         round: 1,
         retry_count: 0,
@@ -1359,7 +1388,7 @@ describe('FullCompaction', () => {
       event: 'compaction_failed',
       properties: expect.objectContaining({
         source: 'manual',
-        tokens_before: 17_943,
+        tokens_before: 17_950,
         duration_ms: expect.any(Number),
         retry_count: 4,
         error_type: 'APIConnectionError',
@@ -3299,7 +3328,7 @@ describe('FullCompaction context recovery pointer', () => {
     const withCustom = renderCompactionInstruction({ customInstruction: ' keep the API facts ' });
 
     expect(withPointer).toContain('a recovery pointer is appended below your note automatically');
-    expect(withPointer).toContain('format for the final answer.\n\nThe complete record');
+    expect(withPointer).toContain('format for the final answer.\n\nThis conversation');
     expect(withPointer).not.toContain('${');
     expect(withCustom).toContain('Optional user instruction:\nkeep the API facts');
   });

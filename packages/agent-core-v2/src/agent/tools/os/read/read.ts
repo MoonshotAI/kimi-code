@@ -6,6 +6,7 @@ import { type AgentTool } from '#/tool/toolContract';
 export const MAX_LINES: number = 1000;
 export const MAX_LINE_LENGTH: number = 2000;
 export const MAX_BYTES: number = 100 * 1024;
+export const EVENT_LOG_MAX_LINE_LENGTH: number = 150_000;
 
 export const TRANSCODE_MAX_BYTES: number = 10 * 1024 * 1024;
 
