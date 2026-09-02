@@ -1632,7 +1632,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 { "code": 0, "msg": "success", "data": { "agent_id": "main", "plans": [ { "tool_call_id": "toolu_01J...", "turn_id": 2, "source": "interaction", "plan": "# Plan\n ...", "path": "/Users/dev/my-app/.kimi-code/plans/....md", "options": [ { "label": "实施" } ], "review": { "state": "approved", "selected_option": "实施" } } ] }, "request_id": "01JZX4..." }
 ```
 
-### 任务与终端
+### 任务
 
 **后台任务。**
 
@@ -1702,6 +1702,9 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 ```json
 { "code": 0, "msg": "success", "data": { "detached": true, "status": "running" }, "request_id": "01JZX4..." }
 ```
+
+
+### 终端
 
 **终端。**
 
@@ -3206,7 +3209,7 @@ payload 内统一带 `agentId: "main"` 与 `sessionId`（全局事件为 `__glob
 
 ### terminal 帧
 
-`terminal_attach` / `terminal_detach` / `terminal_input` / `terminal_resize` / `terminal_close` 及其 `ack`、以及服务端到客户端的 `terminal_output` / `terminal_exit` 在 AsyncAPI（`/asyncapi.json`）中完整声明，但**当前是死协议**：服务端不处理这些入站帧（按未知 `type` 静默丢弃），也没有任何 `terminal_output` / `terminal_exit` 的产出点。REST 的终端生命周期端点（见「任务与终端」域的 [终端](#任务与终端) 部分）不受影响。
+`terminal_attach` / `terminal_detach` / `terminal_input` / `terminal_resize` / `terminal_close` 及其 `ack`、以及服务端到客户端的 `terminal_output` / `terminal_exit` 在 AsyncAPI（`/asyncapi.json`）中完整声明，但**当前是死协议**：服务端不处理这些入站帧（按未知 `type` 静默丢弃），也没有任何 `terminal_output` / `terminal_exit` 的产出点。REST 的终端生命周期端点见 [终端](#终端) 域。
 
 ## 完整错误码
 
