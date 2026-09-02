@@ -6,15 +6,17 @@
 
 ### 鉴权
 
-除以下例外，所有 `/api/*` 路径（含 `/openapi.json` 与 `/asyncapi.json`）都要求 bearer token（持有方令牌）：
+REST 请求在请求头携带 bearer token（持有方令牌）：`Authorization: Bearer <token>`；WebSocket 升级请求接受同一请求头，或子协议 `kimi-code.bearer.<token>`。除下方例外接口外，所有 `/api/*` 路径（含 `/openapi.json` 与 `/asyncapi.json`）都要求鉴权。token 的生成与轮换见 [在网页中使用：开始使用](../guides/web.md#开始使用)。
 
-- `OPTIONS` 预检请求
-- `GET /api/v1/healthz`（探活）
-- 静态 web 资源（非 `/api/` 路径）
+鉴权失败返回 HTTP 401，响应体为标准 [错误信封](#响应信封)，`code` 为 `40101`。在非 loopback 绑定上，同一来源 60 秒内鉴权失败 10 次会被封禁 60 秒，期间每个请求都返回 HTTP 429（`code` 为 `42901`）。
 
-携带方式：REST 用 `Authorization: Bearer <token>` 请求头；WebSocket 升级请求接受同一请求头，或子协议 `kimi-code.bearer.<token>`。token 的生成与轮换见 [在网页中使用：开始使用](../guides/web.md#开始使用)。
+例外接口（不要求鉴权）：
 
-鉴权失败返回 HTTP 401，信封 `code` 为 `40101`。在非 loopback 绑定上，同一来源 60 秒内鉴权失败 10 次会被封禁 60 秒，期间每个请求都返回 HTTP 429（`code` 为 `42901`）。
+| 接口 | 说明 |
+| --- | --- |
+| `OPTIONS` 预检请求 | 全部路径 |
+| `GET /api/v1/healthz` | 探活 |
+| 静态 web 资源 | 非 `/api/` 路径 |
 
 ### 响应信封
 
