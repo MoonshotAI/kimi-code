@@ -132,6 +132,44 @@ describe('permissionRules/matchPermissionRule', () => {
     expect(matches(rule('Bad(unclosed'), 'Bad', noArgs)).toBe(false);
   });
 
+  it('matches glob rule subjects as opaque text rather than as paths', () => {
+    expect(matchesGlobRuleSubject('rm -rf*', 'rm -rf x')).toBe(true);
+    expect(matchesGlobRuleSubject('rm -rf*', 'rm -rf /tmp/x')).toBe(true);
+    expect(matchesGlobRuleSubject('git *', 'git commit -m "fix src/a.ts"')).toBe(true);
+    expect(matchesGlobRuleSubject('rm -rf*', 'rm -rf ./build')).toBe(true);
+    expect(matchesGlobRuleSubject('rm -rf*', 'rm -rf ~/.ssh')).toBe(true);
+    expect(matchesGlobRuleSubject('rm -rf*', 'rm -rf /home/u/.ssh')).toBe(true);
+    expect(matchesGlobRuleSubject('https://example.com/*', 'https://example.com/a/b')).toBe(true);
+    expect(matchesGlobRuleSubject('*acme corp*', 'news about acme corp / rivals')).toBe(true);
+    expect(matchesGlobRuleSubject('**rm**', 'rm -rf /tmp/x')).toBe(true);
+    expect(matchesGlobRuleSubject('git *', 'git status')).toBe(true);
+    expect(matchesGlobRuleSubject('git *', 'git2 status')).toBe(false);
+    expect(matchesGlobRuleSubject('rm -rf*', 'git status')).toBe(false);
+    expect(matchesGlobRuleSubject('git log -- src/*.ts', 'git log -- srcXx.ts')).toBe(false);
+    expect(matchesGlobRuleSubject('https://example.com/a', 'https://example.com/b')).toBe(false);
+    expect(matchesGlobRuleSubject('!git *', 'git commit -m "fix src/a.ts"')).toBe(false);
+    expect(matchesGlobRuleSubject('!git *', 'npm test')).toBe(true);
+  });
+
+  it('keeps historical glob matches that opaque-text semantics alone would drop', () => {
+    expect(matchesGlobRuleSubject('**/*.ts', 'a.ts')).toBe(true);
+    expect(matchesGlobRuleSubject('a/**/b', 'a/b')).toBe(true);
+    expect(matchesGlobRuleSubject('a/**/b', 'a/x/y/b')).toBe(true);
+  });
+
+  it('keeps NUL-bearing subjects distinct instead of conflating them', () => {
+    expect(matchesGlobRuleSubject('ab', 'a\u0000b')).toBe(false);
+    expect(matchesGlobRuleSubject('a/b', 'a\u0000b')).toBe(false);
+    expect(matchesGlobRuleSubject('a\u0000b', 'a\u0000b')).toBe(true);
+    expect(matchesGlobRuleSubject('a*', 'a\u0000b')).toBe(true);
+  });
+
+  it('keeps path rule subjects on path semantics where * does not cross /', () => {
+    expect(matchesPathRuleSubject('src/*', 'src/a.ts')).toBe(true);
+    expect(matchesPathRuleSubject('src/**', 'src/sub/a.ts')).toBe(true);
+    expect(matchesPathRuleSubject('src/*', 'src/sub/a.ts')).toBe(false);
+  });
+
   it('does not match rule arguments without an execution matcher', () => {
     expect(matches(rule('Custom("query":"a.b")'), 'Custom', noArgs)).toBe(false);
     expect(matches(rule('Bash("command":"git status")'), 'Bash', noArgs)).toBe(false);
