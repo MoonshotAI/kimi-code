@@ -660,6 +660,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
           message: JSON.stringify(errorData),
           headers: response.headers,
         } as unknown, this._hooks?.convertError);
+        }, this._hooks?.convertError);
       }
 
       if (this._stream) {
