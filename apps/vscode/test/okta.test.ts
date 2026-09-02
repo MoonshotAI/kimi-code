@@ -79,6 +79,15 @@ describe("okta config", () => {
     expect(config?.scopes).toBe("openid profile email offline_access");
     expect(config?.callbackPorts).toEqual([35173, 35174, 35175]);
     expect(config?.authMode).toBe("okta");
+    expect(config?.redirectUri).toBeUndefined();
+  });
+
+  it("reads a pre-registered vscode:// deep-link redirectUri", () => {
+    writeFileSync(
+      oktaConfigPath(homeDir),
+      JSON.stringify({ issuer: "https://example.okta.com", clientId: "cid", redirectUri: "vscode://moonshot-ai.kimi-code/callback" }),
+    );
+    expect(loadOktaConfig(homeDir)?.redirectUri).toBe("vscode://moonshot-ai.kimi-code/callback");
   });
 
   it("honors an explicit authMode opt-out and rejects invalid values", () => {
@@ -513,6 +522,55 @@ describe("activation restore", () => {
     // No okta.json in homeDir: the restore must still inject the token.
     await provider.restoreOnActivation();
     expect(injector.inject).toHaveBeenCalledWith("at", ["okta-openai-one.example.internal"]);
+  });
+});
+
+describe("deep-link callback flow", () => {
+  it("completes sign-in via the vscode:// URI handler when redirectUri is set", async () => {
+    writeFileSync(
+      oktaConfigPath(homeDir),
+      JSON.stringify({
+        issuer: "https://example.okta.com",
+        clientId: "cid",
+        redirectUri: "vscode://moonshot-ai.kimi-code/callback",
+        scopes: "openid",
+      }),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({ access_token: "at", refresh_token: "rt", expires_in: 3600, scope: "openid", token_type: "Bearer" }),
+          { status: 200 },
+        ),
+      ),
+    );
+    const secrets = new Map<string, string>();
+    const injector: OktaEngineInjector = { inject: vi.fn(async () => undefined), clear: vi.fn(async () => undefined) };
+    const store = new OktaTokenStore({
+      secrets: {
+        get: async (key: string) => secrets.get(key),
+        store: async (key: string, value: string) => void secrets.set(key, value),
+        delete: async (key: string) => void secrets.delete(key),
+      } as never,
+      logError: () => {},
+    });
+    store.setEngineInjector(injector);
+    const provider = new OktaAuthenticationProvider({
+      harness: { homeDir } as never,
+      tokenStore: store,
+      log: () => {},
+      logError: () => {},
+    });
+    provider.onLoginUrl = (url) => {
+      const authorize = new URL(url);
+      expect(authorize.searchParams.get("redirect_uri")).toBe("vscode://moonshot-ai.kimi-code/callback");
+      void provider.handleUri({ query: "code=abc&state=" + (authorize.searchParams.get("state") ?? "") } as never);
+    };
+    const session = await provider.createSession(["openid"]);
+    expect(session.accessToken).toBe("at");
+    expect((await store.load())?.token.refreshToken).toBe("rt");
+    provider.handleUri({ query: "code=late&state=whatever" } as never);
   });
 });
 

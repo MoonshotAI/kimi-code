@@ -118,7 +118,9 @@ export function ensureOktaRuntime(harness: KimiHarness): OktaRuntime {
   const registration = vscode.authentication.registerAuthenticationProvider(OKTA_PROVIDER_ID, OKTA_PROVIDER_LABEL, provider, {
     supportsMultipleAccounts: false,
   });
-  runtime = { tokenStore, provider, harness, disposables: [registration, provider] };
+  // Receives vscode:// deep-link callbacks when okta.json sets redirectUri.
+  const uriHandler = vscode.window.registerUriHandler({ handleUri: (uri) => provider.handleUri(uri) });
+  runtime = { tokenStore, provider, harness, disposables: [registration, uriHandler, provider] };
   void provider.restoreOnActivation();
   return runtime;
 }

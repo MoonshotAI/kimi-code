@@ -23,7 +23,7 @@ import type { KimiHarness } from "@moonshot-ai/kimi-code-sdk";
 
 import { loadOktaConfig, type OktaSsoConfig } from "./okta-config";
 import { createPkceChallenge, randomState } from "./pkce";
-import { startLoopbackServer } from "./loopback";
+import { startLoopbackServer, type LoopbackCallbackResult } from "./loopback";
 import { OktaTokenStore, needsRefresh, type StoredOktaSession } from "./token-store";
 
 export const OKTA_PROVIDER_ID = "kimi-code-okta";
@@ -57,6 +57,8 @@ export class OktaAuthenticationProvider implements vscode.AuthenticationProvider
   private readonly _onDidChangeSessions =
     new vscode.EventEmitter<vscode.AuthenticationProviderAuthenticationSessionsChangeEvent>();
   private inFlightCreate: Promise<vscode.AuthenticationSession> | undefined;
+  /** Pending vscode:// deep-link callback, if a login flow is waiting on one. */
+  private pendingCallback: { readonly state: string; readonly resolve: (result: LoopbackCallbackResult) => void } | undefined;
 
   readonly onDidChangeSessions = this._onDidChangeSessions.event;
 
@@ -92,6 +94,29 @@ export class OktaAuthenticationProvider implements vscode.AuthenticationProvider
   async removeSession(): Promise<void> {
     await this.tokenStore.clear();
     this._onDidChangeSessions.fire({ added: [], removed: [], changed: [] });
+  }
+
+  /**
+   * vscode:// deep-link callback (redirectUri mode): Okta redirects the
+   * browser to the registered vscode:// URI and VS Code routes it here.
+   * A state mismatch (stale link, another window) is ignored.
+   */
+  handleUri(uri: vscode.Uri): void {
+    const pending = this.pendingCallback;
+    if (pending === undefined) return;
+    const params = new URLSearchParams(uri.query);
+    const error = params.get("error");
+    if (error !== null) {
+      pending.resolve({ error: `Okta authorization failed: ${error}` });
+      this.pendingCallback = undefined;
+      return;
+    }
+    const code = params.get("code");
+    const state = params.get("state");
+    if (code !== null && state === pending.state) {
+      pending.resolve({ code });
+      this.pendingCallback = undefined;
+    }
   }
 
   /**
@@ -205,13 +230,31 @@ export class OktaAuthenticationProvider implements vscode.AuthenticationProvider
     const config = this.requireConfig();
     const state = randomState();
     const { verifier, challenge } = createPkceChallenge();
-    const server = await startLoopbackServer({
-      ports: config.callbackPorts,
-      redirectPath: config.redirectPath,
-      state,
-    });
-    try {
-      let redirectUri = server.redirectUri;
+    // Two callback transports, both settling the same {code | error}
+    // promise: the pre-registered vscode:// deep link (the browser hands the
+    // code to our URI handler) or the default loopback server on 127.0.0.1.
+    let redirectUri: string;
+    let callback: Promise<LoopbackCallbackResult>;
+    let finish: () => void;
+    if (config.redirectUri !== undefined) {
+      redirectUri = config.redirectUri;
+      callback = new Promise<LoopbackCallbackResult>((resolve) => {
+        this.pendingCallback = { state, resolve };
+      });
+      finish = () => {
+        this.pendingCallback = undefined;
+      };
+    } else {
+      const server = await startLoopbackServer({
+        ports: config.callbackPorts,
+        redirectPath: config.redirectPath,
+        state,
+      });
+      redirectUri = server.redirectUri;
+      callback = server.callback;
+      finish = () => {
+        server.dispose();
+      };
       try {
         const external = await vscode.env.asExternalUri(vscode.Uri.parse(server.redirectUri));
         if (external.scheme === "http" || external.scheme === "https") {
@@ -226,6 +269,8 @@ export class OktaAuthenticationProvider implements vscode.AuthenticationProvider
           }`,
         );
       }
+    }
+    try {
 
       const authorizeUrl = new URL(`${config.issuer}${config.authorizePath}`);
       authorizeUrl.searchParams.set("response_type", "code");
@@ -239,7 +284,7 @@ export class OktaAuthenticationProvider implements vscode.AuthenticationProvider
       this.onLoginUrl?.(authorizeUrl.toString());
       await vscode.env.openExternal(vscode.Uri.parse(authorizeUrl.toString()));
 
-      const result = await raceWithTimeout(server.callback, config.loginTimeoutMs, () =>
+      const result = await raceWithTimeout(callback, config.loginTimeoutMs, () =>
         new Error(`Okta sign-in timed out after ${Math.ceil(config.loginTimeoutMs / 1000)}s`),
       );
       if ("error" in result) throw new Error(result.error);
@@ -263,7 +308,7 @@ export class OktaAuthenticationProvider implements vscode.AuthenticationProvider
       this.log(`Okta SSO signed in (${session.accountLabel})`);
       return this.toSession(session);
     } finally {
-      server.dispose();
+      finish();
     }
   }
 

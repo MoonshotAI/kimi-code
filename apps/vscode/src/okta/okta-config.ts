@@ -9,6 +9,7 @@
  * {
  *   "issuer": "https://example.okta.com",
  *   "clientId": "0oa1abcd2EFgHiJkLmN3",
+ *   "redirectUri": "vscode://moonshot-ai.kimi-code/callback",
  *   "scopes": "openid profile email offline_access",
  *   "authorizePath": "/v1/authorize",
  *   "tokenPath": "/v1/token",
@@ -30,6 +31,14 @@ import { join } from "node:path";
 export interface OktaSsoConfig {
   readonly issuer: string;
   readonly clientId: string;
+  /**
+   * Pre-registered vscode:// deep-link redirect (Continue-style): when set,
+   * the browser hands the code straight to this extension's URI handler
+   * instead of a loopback server. Must match the extension's
+   * publisher.name routing (vscode://<publisher>.<extension>/...) AND the
+   * Okta app's registered redirect URI. Unset → loopback callback.
+   */
+  readonly redirectUri: string | undefined;
   readonly scopes: string;
   readonly authorizePath: string;
   readonly tokenPath: string;
@@ -107,6 +116,9 @@ function parseOktaConfig(path: string): OktaSsoConfig {
   return {
     issuer,
     clientId,
+    redirectUri: typeof raw["redirectUri"] === "string" && raw["redirectUri"].trim().length > 0
+      ? raw["redirectUri"].trim()
+      : undefined,
     scopes: typeof raw["scopes"] === "string" && raw["scopes"].length > 0 ? raw["scopes"] : DEFAULT_SCOPES,
     authorizePath:
       typeof raw["authorizePath"] === "string" && raw["authorizePath"].startsWith("/")
