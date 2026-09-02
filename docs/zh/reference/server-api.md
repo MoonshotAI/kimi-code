@@ -751,7 +751,7 @@ HTTP 状态码例外（非 200）：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `data` | [T-OAuthFlowSnapshot](#t-oauthflowsnapshot) `| null` | 流程状态快照；未发起过流程时为 `null` |
+| `data` | [T-OAuthFlowSnapshot](#t-oauthflowsnapshot) \| null | 流程状态快照；未发起过流程时为 `null` |
 
 **响应示例**：
 
@@ -1597,7 +1597,7 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `data` | [T-GoalSnapshot](#t-goalsnapshot) `| null` | 目标快照（camelCase）；无活跃目标时为 `null` |
+| `data` | [T-GoalSnapshot](#t-goalsnapshot) \| null | 目标快照（camelCase）；无活跃目标时为 `null` |
 
 **非零 code**：`40401`。
 
@@ -1998,7 +1998,7 @@ main agent 的 Agent 循环运行在哪个运行时上的读取与切换。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `active` | [T-PromptItem](#t-promptitem) `| null` | 运行中的提示词，空闲时为 `null` |
+| `active` | [T-PromptItem](#t-promptitem) \| null | 运行中的提示词，空闲时为 `null` |
 | `queued` | [T-PromptItem](#t-promptitem)`[]` | 等待中的提示词，按顺序 |
 
 **非零 code**：`40401`。
@@ -4706,7 +4706,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `value` | string `| null` | 存储的值；键不存在时为 `null` |
+| `value` | string \| null | 存储的值；键不存在时为 `null` |
 
 **响应示例**：
 
