@@ -137,6 +137,18 @@ function injectionContext(): ContextInjectionContext {
   return { injectedPositions: [], lastInjectedAt: null, lastInjection: undefined, lastDisclosure: undefined, isNewTurn: false };
 }
 
+async function runDidFinishStepHooks(loop: IAgentLoopService): Promise<void> {
+  await loop.hooks.onDidFinishStep.run({
+    turnId: 0,
+    step: 0,
+    firstStepOfTurn: false,
+    signal: new AbortController().signal,
+    usage: { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 },
+    finishReason: 'completed',
+    stopTurn: false,
+  });
+}
+
 describe('AgentPromptService', () => {
   it('assigns stable identity and launches an idle prompt', async () => {
     const { prompt } = harness();
@@ -240,7 +252,7 @@ describe('AgentPromptService', () => {
     expect(events[0]).not.toHaveProperty('promptIds');
   });
 
-  it('emits the steer reminder once after a steer materializes', async () => {
+  it('emits the steer reminder from materialize until the step finishes', async () => {
     const { prompt, context, loop, reminderProviders } = harness();
     const active = await prompt.enqueue({ message: message('active') });
     await active.launched;
@@ -250,10 +262,12 @@ describe('AgentPromptService', () => {
     expect(await provider(injectionContext())).toBeUndefined();
     loop.drainNextBatch(context);
     expect(await provider(injectionContext())).toBe(STEER_REMINDER);
+    expect(await provider(injectionContext())).toBe(STEER_REMINDER);
+    await runDidFinishStepHooks(loop);
     expect(await provider(injectionContext())).toBeUndefined();
   });
 
-  it('arms the steer reminder once when separate steers merge into the same step', async () => {
+  it('keeps one steer reminder armed when separate steers merge into the same step', async () => {
     const { prompt, context, loop, reminderProviders } = harness();
     const active = await prompt.enqueue({ message: message('active') });
     await active.launched;
@@ -264,6 +278,7 @@ describe('AgentPromptService', () => {
     loop.drainNextBatch(context);
     const provider = reminderProviders.get('steer')!;
     expect(await provider(injectionContext())).toBe(STEER_REMINDER);
+    await runDidFinishStepHooks(loop);
     expect(await provider(injectionContext())).toBeUndefined();
   });
 

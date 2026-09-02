@@ -253,10 +253,10 @@ export class AgentPromptService implements IAgentPromptService {
     this.states.contributeState(promptLaunchingKey);
     this.states.contributeState(promptAdmissionKey);
     this.states.contributeState(promptResolutionKey);
-    this.reminder.register('steer', () => {
-      if (!this.steerReminderArmed) return undefined;
+    this.reminder.register('steer', () => (this.steerReminderArmed ? STEER_REMINDER : undefined));
+    this.loop.hooks.onDidFinishStep.register('steer-reminder', async (_ctx, next) => {
       this.steerReminderArmed = false;
-      return STEER_REMINDER;
+      await next();
     });
     toolExecutor.hooks.onDidExecuteTool.register('prompt-service-delivery', async (ctx, next) => {
       await this.deliverToolResult(ctx);
