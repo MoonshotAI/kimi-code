@@ -1564,6 +1564,7 @@ Workspaces are the registered project directories sessions live in. These endpoi
 | `GET /api/v1/workspaces/{workspace_id}/trust` | Read the trust state |
 | `POST /api/v1/workspaces/{workspace_id}/trust` | Grant trust |
 | `POST /api/v1/workspaces/{workspace_id}/untrust` | Revoke trust |
+| `POST /api/v1/workspaces/{workspace_id}/add-dir` | Add an additional directory |
 
 #### The workspace object
 
@@ -1658,6 +1659,22 @@ Revokes workspace trust, unloading its project-level MCP config.
 
 On success, `data` is `{ trusted: false }`.
 
+- `40410`: workspace not found
+
+#### `POST /api/v1/workspaces/{workspace_id}/add-dir`
+
+Adds an additional directory to the workspace, with the same semantics as the CLI `--add-dir` flag and the TUI `/add-dir` command. The path accepts absolute paths, relative paths (resolved against the workspace root), and `~` expansion.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `workspace_id` | path | string | **Required.** Workspace id |
+| `path` | body | string | **Required.** Directory to add |
+| `persist` | body | boolean | Defaults to `true`: appends to `workspace.additional_dir` in `<project root>/.kimi-code/local.toml`. With `false`, the directory only joins the in-memory ephemeral set shared by all sessions of the workspace |
+
+On success, `data` is `{ project_root, config_path, additional_dirs, persisted }`, where `additional_dirs` lists every additional directory (existing ones included) and `persisted` reports whether this call wrote to disk.
+
+- `40001`: validation failure (`details` lists each field), or an engine-side config validation error such as a corrupted project local config
+- `40409`: `path` does not exist or is not a directory
 - `40410`: workspace not found
 
 ### File system

@@ -486,6 +486,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
+      "/api/v1/workspaces/{workspace_id}/add-dir",
+    ],
+    [
+      "POST",
       "/api/v1/workspaces/{workspace_id}/trust",
     ],
     [
