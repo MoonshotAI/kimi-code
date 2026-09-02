@@ -952,141 +952,241 @@ HTTP 状态码例外（非 200）：
 
 列出所有已注册工作区。无参数。
 
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ items: `[T-Workspace](#t-workspace)`[] }>`。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `items` | array | [T-Workspace](#t-workspace) 数组 |
+| `items` | [T-Workspace](#t-workspace)`[]` | 全部已注册工作区 |
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "items": [ { "id": "wd_my-app_a1b2c3d4e5f6", "root": "/Users/dev/my-app", "name": "my-app", "created_at": "2026-09-01T10:00:00.000Z", "last_opened_at": "2026-09-02T08:00:00.000Z", "session_count": 3 } ] }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "items": [
+      {
+        "id": "wd_my-app_a1b2c3d4e5f6",
+        "root": "/Users/dev/my-app",
+        "name": "my-app",
+        "created_at": "2026-09-01T10:00:00.000Z",
+        "last_opened_at": "2026-09-02T08:00:00.000Z",
+        "session_count": 3
+      }
+    ]
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/workspaces`
 
 注册工作区并返回它。注册按根路径幂等：重复注册同一根路径会返回已存在的工作区，仅刷新 `last_opened_at`（保留已存名称），并广播 `event.workspace.updated` 而非 `event.workspace.created`。
 
-**Body**：
+**触发事件**：`event.workspace.created`（根路径首次注册）或 `event.workspace.updated`（重复注册同一根路径）
+
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `root` | string | 是 | 已存在目录的绝对路径 |
 | `name` | string | 否 | 显示名，1–100 个字符。默认根目录的基名 |
 
-**返回**：`ResponseType<`[T-Workspace](#t-workspace)`>`。
+**响应体**：`ResponseType<`[T-Workspace](#t-workspace)`>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）（`root` 缺失或不是绝对路径）、`40409`（`root` 不存在或不是目录）。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-Workspace](#t-workspace) | 工作区对象；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（`root` 缺失或不是绝对路径；`details` 为 `{ path, message }[]`）、`40409`（`root` 不存在或不是目录）。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "id": "wd_my-app_a1b2c3d4e5f6", "root": "/Users/dev/my-app", "name": "my-app", "created_at": "2026-09-02T08:00:00.000Z", "last_opened_at": "2026-09-02T08:00:00.000Z", "session_count": 0 }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "id": "wd_my-app_a1b2c3d4e5f6",
+    "root": "/Users/dev/my-app",
+    "name": "my-app",
+    "created_at": "2026-09-02T08:00:00.000Z",
+    "last_opened_at": "2026-09-02T08:00:00.000Z",
+    "session_count": 0
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `PATCH /api/v1/workspaces/{workspace_id}`
 
 重命名工作区——仅修改显示名，根路径不变。
 
-**Body**：
+**触发事件**：`event.workspace.updated`
+
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `name` | string | 是 | 新的显示名，1–100 个字符 |
 
-**返回**：`ResponseType<`[T-Workspace](#t-workspace)`>`。
+**响应体**：`ResponseType<`[T-Workspace](#t-workspace)`>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40410`。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-Workspace](#t-workspace) | 重命名后的工作区；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40410`。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "id": "wd_my-app_a1b2c3d4e5f6", "root": "/Users/dev/my-app", "name": "My App", "created_at": "2026-09-01T10:00:00.000Z", "last_opened_at": "2026-09-02T08:00:00.000Z", "session_count": 3 }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "id": "wd_my-app_a1b2c3d4e5f6",
+    "root": "/Users/dev/my-app",
+    "name": "My App",
+    "created_at": "2026-09-01T10:00:00.000Z",
+    "last_opened_at": "2026-09-02T08:00:00.000Z",
+    "session_count": 3
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `DELETE /api/v1/workspaces/{workspace_id}`
 
 注销工作区。只移除注册表条目——磁盘上的目录不受影响。无请求体。
 
-**返回**：`ResponseType<{ "deleted": true }>`。
+**触发事件**：`event.workspace.deleted`
+
+**响应体**：`ResponseType<{ deleted: true }>`。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `deleted` | boolean | 恒 `true` |
 
 **非零 code**：`40410`。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "deleted": true }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "deleted": true },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/workspaces/{workspace_id}/trust`
 
 读取工作区信任状态。信任状态决定是否为该工作区加载项目级 MCP 配置。无参数。
 
-**返回**：`ResponseType<{ "trusted": boolean }>`。
+**响应体**：`ResponseType<{ trusted: boolean }>`。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `trusted` | boolean | 当前信任状态 |
 
 **非零 code**：`40410`。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "trusted": true }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "trusted": true },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/workspaces/{workspace_id}/trust`
 
 将工作区标记为信任，并加载其项目级 MCP 配置。无请求体。
 
-**返回**：`ResponseType<{ "trusted": true }>`。
+**响应体**：`ResponseType<{ trusted: true }>`。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `trusted` | boolean | 恒 `true` |
 
 **非零 code**：`40410`。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "trusted": true }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "trusted": true },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/workspaces/{workspace_id}/untrust`
 
 撤销工作区信任，并卸载其项目级 MCP 配置。无请求体。
 
-**返回**：`ResponseType<{ "trusted": false }>`。
+**响应体**：`ResponseType<{ trusted: false }>`。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `trusted` | boolean | 恒 `false` |
 
 **非零 code**：`40410`。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "trusted": false }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "trusted": false },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/workspaces/{workspace_id}/add-dir`
 
 为工作区添加附加目录，语义与 CLI `--add-dir` 及 TUI `/add-dir` 一致。路径支持绝对路径、相对路径（相对工作区根目录解析）与 `~` 展开。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `path` | string | 是 | 要添加的目录 |
 | `persist` | boolean | 否 | 缺省 `true`：追加到 `<项目根>/.kimi-code/local.toml` 的 `workspace.additional_dir`；为 `false` 时仅加入内存中的临时集合（同一工作区所有会话共享），不写盘 |
 
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ project_root: string, config_path: string, additional_dirs: string[], persisted: boolean }>`。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `project_root` | string | 项目根目录 |
 | `config_path` | string | 写入的本地配置文件路径 |
-| `additional_dirs` | array | 全部附加目录（含既有目录） |
+| `additional_dirs` | `string[]` | 全部附加目录（含既有目录） |
 | `persisted` | boolean | 本次是否写盘 |
 
 **非零 code**：`40001`（校验失败，或项目本地配置损坏等引擎校验错误；`details` 为 `{ path, message }[]`）、`40409`（`path` 不存在或不是目录）、`40410`。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "project_root": "/Users/dev/my-app", "config_path": "/Users/dev/my-app/.kimi-code/local.toml", "additional_dirs": [ "/Users/dev/shared-lib" ], "persisted": true }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "project_root": "/Users/dev/my-app",
+    "config_path": "/Users/dev/my-app/.kimi-code/local.toml",
+    "additional_dirs": [ "/Users/dev/shared-lib" ],
+    "persisted": true
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 **会话。**
@@ -1110,32 +1210,59 @@ HTTP 状态码例外（非 200）：
 
 #### `POST /api/v1/sessions`
 
-创建会话并返回。目标目录来自 `workspace_id`（已注册的工作区）或 `metadata.cwd`（首次使用时注册该工作区）；两者同时提供时必须一致。创建时广播全局 `event.session.created` 事件。
+创建会话并返回。目标目录来自 `workspace_id`（已注册的工作区）或 `metadata.cwd`（首次使用时注册该工作区）；两者同时提供时必须一致。
 
-**Body**：
+**触发事件**：`event.session.created`；触碰工作区另触发 `event.workspace.updated`（首次经 `metadata.cwd` 注册时为 `event.workspace.created`）
+
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `workspace_id` | string | 条件 | 未提供 `metadata.cwd` 时必填。已注册的工作区 id |
-| `metadata` | object | 条件 | 自定义元数据。`metadata.cwd` 为工作目录，未提供 `workspace_id` 时必填；同时提供时必须等于工作区根目录 |
+| `metadata` | `Record<string, unknown>` | 条件 | 自定义元数据。`metadata.cwd` 为工作目录，未提供 `workspace_id` 时必填；同时提供时必须等于工作区根目录 |
 | `title` | string | 否 | 初始标题（至少 1 个字符） |
-| `agent_config` | object | 否 | schema 接受但当前不会应用——模型与各模式请经 `POST .../profile` 设置 |
+| `agent_config` | `{ model?: string, … }` | 否 | schema 接受但当前不会应用——模型与各模式请经 `POST .../profile` 设置 |
 
-**返回**：`ResponseType<`[T-Session](#t-session)`>`。
+**响应体**：`ResponseType<`[T-Session](#t-session)`>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）（`workspace_id` 与 `metadata.cwd` 二缺一，或不一致）、`40409`（工作目录不存在或不是目录）、`40410`（工作区未注册）。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-Session](#t-session) | 新建的会话；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（`workspace_id` 与 `metadata.cwd` 二缺一，或不一致；`details` 为 `{ path, message }[]`）、`40409`（工作目录不存在或不是目录）、`40410`（工作区未注册）。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "id": "session_01JZX4...", "workspace_id": "wd_my-app_a1b2c3d4e5f6", "title": "", "created_at": "2026-09-02T08:00:00.000Z", "updated_at": "2026-09-02T08:00:00.000Z", "busy": false, "main_turn_active": false, "pending_interaction": "none", "archived": false, "metadata": { "cwd": "/Users/dev/my-app" }, "agent_config": { "model": "" }, "usage": { "...": 0 }, "permission_rules": [], "message_count": 0, "last_seq": 0 }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "id": "session_01JZX4...",
+    "workspace_id": "wd_my-app_a1b2c3d4e5f6",
+    "title": "",
+    "created_at": "2026-09-02T08:00:00.000Z",
+    "updated_at": "2026-09-02T08:00:00.000Z",
+    "busy": false,
+    "main_turn_active": false,
+    "pending_interaction": "none",
+    "archived": false,
+    "metadata": { "cwd": "/Users/dev/my-app" },
+    "agent_config": { "model": "" },
+    "usage": { "...": 0 },
+    "permission_rules": [],
+    "message_count": 0,
+    "last_seq": 0
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/sessions`
 
 跨工作区列出会话，按 `updated_at` 最新在前。特例：不提供 `page_size`（且不提供 `archived_only`）时，响应是单个不分页的窗口，`has_more` 恒为 `false`——要真正翻页请传入 `page_size`。
 
-**Query**：
+**查询参数**：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
@@ -1148,56 +1275,112 @@ HTTP 状态码例外（非 200）：
 | `exclude_empty` | boolean | 去掉没有任何用户提示词的会话 |
 | `workspace_id` | string | 限定到单个工作区（别名会被解析） |
 
-**返回**：`ResponseType<{ items: T-Session[], has_more: boolean }>`。
+**响应体**：`ResponseType<{ items: `[T-Session](#t-session)`[]`, has_more: boolean }>`。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `items` | [T-Session](#t-session)`[]` | 一页会话，按 `updated_at` 最新在前 |
+| `has_more` | boolean | 是否还有更早的会话 |
 
 **非零 code**：`40001`（互斥参数同用；`details` 为 `{ path, message }[]`）、`40410`（未知的 `workspace_id`）。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "items": [ { "id": "session_01JZX4...", "workspace_id": "wd_my-app_a1b2c3d4e5f6", "title": "Fix the login page", "...": "..." } ], "has_more": false }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "items": [
+      {
+        "id": "session_01JZX4...",
+        "workspace_id": "wd_my-app_a1b2c3d4e5f6",
+        "title": "Fix the login page",
+        "...": "..."
+      }
+    ],
+    "has_more": false
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/sessions/{session_id}`
 
 从索引中读取单个会话。`last_seq` 携带真实的事件水位（watermark）：存活会话为当前事件日志的序列号，冷会话为最后持久化的水位——用它作为 `subscribe` 的 `cursors` 起点时回放为空。其余会话端点的 `last_seq` 均为 `0` 占位。
 
-**返回**：`ResponseType<`[T-Session](#t-session)`>`。
+**响应体**：`ResponseType<`[T-Session](#t-session)`>`。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-Session](#t-session) | 会话对象；字段见类型汇总 |
 
 **非零 code**：`40401`（会话不存在，或其工作区已无法解析）。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "id": "session_01JZX4...", "workspace_id": "wd_my-app_a1b2c3d4e5f6", "title": "Fix the login page", "busy": false, "main_turn_active": false, "pending_interaction": "none", "last_turn_reason": "completed", "archived": false, "last_prompt": "adjust the button spacing", "metadata": { "cwd": "/Users/dev/my-app" }, "agent_config": { "model": "kimi-for-coding" }, "usage": { "...": 0 }, "permission_rules": [], "message_count": 0, "last_seq": 128 }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "id": "session_01JZX4...",
+    "workspace_id": "wd_my-app_a1b2c3d4e5f6",
+    "title": "Fix the login page",
+    "busy": false,
+    "main_turn_active": false,
+    "pending_interaction": "none",
+    "last_turn_reason": "completed",
+    "archived": false,
+    "last_prompt": "adjust the button spacing",
+    "metadata": { "cwd": "/Users/dev/my-app" },
+    "agent_config": { "model": "kimi-for-coding" },
+    "usage": { "...": 0 },
+    "permission_rules": [],
+    "message_count": 0,
+    "last_seq": 128
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/sessions/{session_id}/profile`
 
 读取会话档案——与 `GET /api/v1/sessions/{session_id}` 相同的线上载荷（`last_seq` 为 `0` 占位）。
 
-**返回**：`ResponseType<`[T-Session](#t-session)`>`。
+**响应体**：`ResponseType<`[T-Session](#t-session)`>`。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-Session](#t-session) | 会话档案；字段见类型汇总 |
 
 **非零 code**：`40401`。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "id": "session_01JZX4...", "...": "..." }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "id": "session_01JZX4...", "...": "..." },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/sessions/{session_id}/profile`
 
-更新会话档案：标题、自定义元数据以及 main agent 的配置。设置的标题会成为自定义标题，优先级高于生成的标题；设置标题会广播全局 `session.meta.updated` 事件。
+更新会话档案：标题、自定义元数据以及 main agent 的配置。设置的标题会成为自定义标题，优先级高于生成的标题。
 
-**Body**：
+**触发事件**：`session.meta.updated`（设置标题时）、`goal.updated`（`goal_objective` / `goal_control` 变更目标时）
+
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `title` | string | 否 | 新标题（至少 1 个字符）；会成为自定义标题 |
-| `metadata` | object | 否 | 合并进会话自定义元数据的键 |
-| `agent_config` | object | 否 | main agent 的部分配置；字段见下，均为可选，且都会立即应用 |
-| `permission_rules` | array | 否 | 被接受但不回显（T-Session 恒 `permission_rules: []`） |
+| `metadata` | `Record<string, unknown>` | 否 | 合并进会话自定义元数据的键 |
+| `agent_config` | `{ model?: string, thinking?: string, … }` | 否 | main agent 的部分配置；字段见下，均为可选，且都会立即应用 |
+| `permission_rules` | `{ id: string, tool_name: string, … }[]` | 否 | 被接受但不回显（T-Session 恒 `permission_rules: []`） |
 
 `agent_config` 字段：
 
@@ -1215,64 +1398,98 @@ HTTP 状态码例外（非 200）：
 
 schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`，但更新路由当前不会应用它们。
 
-**返回**：`ResponseType<`[T-Session](#t-session)`>`（更新后）。
+**响应体**：`ResponseType<`[T-Session](#t-session)`>`（更新后）。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-Session](#t-session) | 更新后的会话；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "id": "session_01JZX4...", "title": "Fix the login page", "...": "..." }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "id": "session_01JZX4...", "title": "Fix the login page", "...": "..." },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/sessions/{session_id}/title/generate`
 
-通过托管供应商的 `chat_title` 工具根据会话的提示词生成标题并应用，同时广播 `session.meta.updated`。生成需要托管 OAuth 登录和 `auto_session_title` 实验开关；未提供 `force` 时，已有自定义标题或已生成标题的会话会上报为不可用。
+通过托管供应商的 `chat_title` 工具根据会话的提示词生成标题并应用。生成需要托管 OAuth 登录和 `auto_session_title` 实验开关；未提供 `force` 时，已有自定义标题或已生成标题的会话会上报为不可用。
 
-**Body**：
+**触发事件**：`session.meta.updated`
+
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `force` | boolean | 否 | 即使已有自定义或生成的标题也重新生成。默认 `false` |
 | `source` | string | 否 | 标题输入：`user_prompts`（默认）/ `first_turn` / `digest` |
 
-**返回**：`ResponseType<{ "title": string }>`——当前应用到会话的标题。
+**响应体**：`ResponseType<{ title: string }>`——当前应用到会话的标题。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `title` | string | 应用到会话的标题 |
 
 **非零 code**：`40401`、`40923`（开关未开启、没有托管登录或尚无提示词内容、已有标题但未提供 `force`，或后端请求失败）。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "title": "Fix the login page" }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "title": "Fix the login page" },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/sessions/{session_id}:{action}`
 
 会话动作经同一条路由分发：路径尾部解析为 `{session_id}:{action}`，请求体按动作的 schema 校验。每个动作都会先解析会话，因此会话未知时都可能返回 `40401`。
 
-| 动作 | Body | data（code = 0） | 特有非零 code |
+**触发事件**：`:fork` → `event.session.created`；`:compact` → `compaction.started`（随后进入 compaction 事件流，见 [agent 事件](#agent-事件)）；`:undo` → `session.meta.updated`；`:btw` → `agent.created`；`:archive` → `event.session.archived`；`:abort` / `:restore` 无
+
+**响应体**：统一 `ResponseType` 信封，`data` 形态随动作（见下表）。
+
+| 动作 | 请求体 | `data`（code = 0） | 特有非零 code |
 | --- | --- | --- | --- |
-| `:fork` | `{ title?, metadata? }` | [T-Session](#t-session)（新会话；广播 `event.session.created`） | `40901`（有进行中的轮次） |
+| `:fork` | `{ title?, metadata? }` | [T-Session](#t-session)（新会话） | `40901`（有进行中的轮次） |
 | `:compact` | `{ instruction? }` | `{}`（空对象；进度经 `compaction.*` 事件投递） | `40910`（有轮次或上下文变更进行中，或无可压缩内容） |
-| `:undo` | `{ count?=1, page_size?≤100 }` | `{ messages: { items, has_more }, status }`——剩余上下文消息最新在前；`status` 同 [T-SessionStatus](#t-sessionstatus)。回退 main agent 的对话 `count` 个轮次，并同步修正派生的会话状态（包括 `last_prompt`） | `40901`、`40911`（`data` 为引擎 details 或 `null`，形态不定） |
-| `:abort` | 无 | `{ "aborted": true }` | — |
-| `:btw` | 无 | `{ "agent_id": string }`——把 main agent fork 成一个禁用工具调用的子 Agent，让快速的临时问题在隔离环境中运行，不触碰工作上下文；需要可用的模型配置 | — |
-| `:archive` | 无 | `{ "archived": true }`——会话从默认列表中消失（`include_archive` / `archived_only` 仍会列出），广播 `event.session.archived` | — |
+| `:undo` | `{ count?=1, page_size?≤100 }` | `{ messages: { items: `[T-Message](#t-message)`[]`, has_more: boolean }, status: `[T-SessionStatus](#t-sessionstatus)` }`——剩余上下文消息最新在前；回退 main agent 的对话 `count` 个轮次，并同步修正派生的会话状态（包括 `last_prompt`） | `40901`、`40911`（`data` 为引擎 details 或 `null`，形态不定） |
+| `:abort` | 无 | `{ aborted: true }` | — |
+| `:btw` | 无 | `{ agent_id: string }`——把 main agent fork 成一个禁用工具调用的子 Agent，让快速的临时问题在隔离环境中运行，不触碰工作上下文；需要可用的模型配置 | — |
+| `:archive` | 无 | `{ archived: true }`——会话从默认列表中消失（`include_archive` / `archived_only` 仍会列出） | — |
 | `:restore` | 无 | [T-Session](#t-session)（`archived: false`） | — |
 
 共有非零 code：`40001`（动作缺失或未知；`details` 为 `{ path, message }[]`）、`40401`。
 
-**示例**（`:fork`）：
+**响应示例**（`:fork`）：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "id": "session_01JZX5...", "workspace_id": "wd_my-app_a1b2c3d4e5f6", "title": "Fork: Fix the login page", "...": "..." }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "id": "session_01JZX5...",
+    "workspace_id": "wd_my-app_a1b2c3d4e5f6",
+    "title": "Fork: Fix the login page",
+    "...": "..."
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/sessions/{session_id}/children`
 
 列出会话的子会话——即通过 `POST .../children` 创建的会话。游标分页遵循 [分页](#分页)。
 
-**Query**：
+**查询参数**：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
@@ -1281,81 +1498,162 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 | `page_size` | integer | 1–100。默认 `100` |
 | `busy` | boolean | 只保留忙碌（或只保留空闲）的子会话 |
 
-**返回**：`ResponseType<{ items: T-Session[], has_more: boolean }>`。
+**响应体**：`ResponseType<{ items: `[T-Session](#t-session)`[]`, has_more: boolean }>`。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `items` | [T-Session](#t-session)`[]` | 一页子会话 |
+| `has_more` | boolean | 是否还有更早的子会话 |
 
 **非零 code**：`40401`。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "items": [ { "id": "session_01JZX5...", "...": "..." } ], "has_more": false }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "items": [ { "id": "session_01JZX5...", "...": "..." } ],
+    "has_more": false
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/sessions/{session_id}/children`
 
-创建子会话：fork 当前会话并记录为其子会话；广播 `event.session.created`。适用与 `:fork` 相同的进行中轮次限制。
+创建子会话：fork 当前会话并记录为其子会话。适用与 `:fork` 相同的进行中轮次限制。
 
-**Body**：
+**触发事件**：`event.session.created`
+
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `title` | string | 否 | 子会话的标题（至少 1 个字符）。默认 `Child: <source title>` |
-| `metadata` | object | 否 | 子会话的自定义元数据 |
+| `metadata` | `Record<string, unknown>` | 否 | 子会话的自定义元数据 |
 
-**返回**：`ResponseType<`[T-Session](#t-session)`>`。
+**响应体**：`ResponseType<`[T-Session](#t-session)`>`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`、`40901`。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-Session](#t-session) | 新建的子会话；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`、`40901`。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "id": "session_01JZX6...", "title": "Child: Fix the login page", "...": "..." }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "id": "session_01JZX6...", "title": "Child: Fix the login page", "...": "..." },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/sessions/{session_id}/status`
 
 main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复。无参数。
 
-**返回**：`ResponseType<`[T-SessionStatus](#t-sessionstatus)`>`。
+**响应体**：`ResponseType<`[T-SessionStatus](#t-sessionstatus)`>`。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-SessionStatus](#t-sessionstatus) | 实时状态汇总；字段见类型汇总 |
 
 **非零 code**：`40401`。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "busy": false, "model": "kimi-for-coding", "thinking_level": "medium", "permission": "manual", "plan_mode": false, "swarm_mode": false, "tower_mode": false, "context_tokens": 15230, "max_context_tokens": 262144, "context_usage": 0.058 }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "busy": false,
+    "model": "kimi-for-coding",
+    "thinking_level": "medium",
+    "permission": "manual",
+    "plan_mode": false,
+    "swarm_mode": false,
+    "tower_mode": false,
+    "context_tokens": 15230,
+    "max_context_tokens": 262144,
+    "context_usage": 0.058
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/sessions/{session_id}/goal`
 
 读取会话当前的目标快照；没有活跃目标时为 `null`。注意该载荷使用 camelCase 键。无参数。
 
-**返回**：`ResponseType<`[T-GoalSnapshot](#t-goalsnapshot)`>` 或 `null`。
+**响应体**：`ResponseType<`[T-GoalSnapshot](#t-goalsnapshot)` | null>`。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-GoalSnapshot](#t-goalsnapshot) `| null` | 目标快照（camelCase）；无活跃目标时为 `null` |
 
 **非零 code**：`40401`。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "goalId": "goal_...", "objective": "Ship the release", "status": "active", "turnsUsed": 3, "tokensUsed": 152000, "wallClockMs": 540000, "budget": { "tokenBudget": 1000000, "turnBudget": 50, "wallClockBudgetMs": null, "remainingTokens": 848000, "remainingTurns": 47, "remainingWallClockMs": null, "tokenBudgetReached": false, "turnBudgetReached": false, "wallClockBudgetReached": false, "overBudget": false } }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "goalId": "goal_...",
+    "objective": "Ship the release",
+    "status": "active",
+    "turnsUsed": 3,
+    "tokensUsed": 152000,
+    "wallClockMs": 540000,
+    "budget": {
+      "tokenBudget": 1000000,
+      "turnBudget": 50,
+      "wallClockBudgetMs": null,
+      "remainingTokens": 848000,
+      "remainingTurns": 47,
+      "remainingWallClockMs": null,
+      "tokenBudgetReached": false,
+      "turnBudgetReached": false,
+      "wallClockBudgetReached": false,
+      "overBudget": false
+    }
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/sessions/{session_id}/warnings`
 
 读取会话级告警。目前的产生者只有 `AGENTS.md` 过大检查（`agents-md-oversized`），因此大多数会话的列表为空。无参数。
 
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ warnings: { code: string, message: string, severity: 'info' | 'warning' | 'error' }[] }>`。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `warnings` | array | `{ code, message, severity }[]`；`severity` 为 `info` / `warning` / `error` |
+| `warnings` | `{ code: string, message: string, severity: 'info' \| 'warning' \| 'error' }[]` | 会话级告警；大多数会话为空 |
 
 **非零 code**：`40401`。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "warnings": [ { "code": "agents-md-oversized", "message": "AGENTS.md is ...", "severity": "warning" } ] }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "warnings": [
+      { "code": "agents-md-oversized", "message": "AGENTS.md is ...", "severity": "warning" }
+    ]
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 **运行时绑定。**
@@ -1371,7 +1669,7 @@ main agent 的 Agent 循环运行在哪个运行时上的读取与切换。
 
 读取 main agent 的运行时绑定。无参数。
 
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ workspace_id: string, runtime_id: string }>`。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -1380,30 +1678,45 @@ main agent 的 Agent 循环运行在哪个运行时上的读取与切换。
 
 **非零 code**：`40401`。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "workspace_id": "wd_my-app_a1b2c3d4e5f6", "runtime_id": "local" }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "workspace_id": "wd_my-app_a1b2c3d4e5f6", "runtime_id": "local" },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v1/sessions/{session_id}/runtime`
 
 切换 main agent 的运行时绑定。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `runtime_id` | string | 是 | 目标运行时 id |
 
-**返回**：同 `GET .../runtime`。
+**响应体**：`ResponseType<{ workspace_id: string, runtime_id: string }>`（同 `GET .../runtime`）。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`、`40420`（不存在该 `runtime_id` 的运行时）、`40926`（运行时存在但不可用）。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `workspace_id` | string | 所属工作区 id |
+| `runtime_id` | string | 切换后绑定的运行时 id |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`、`40420`（不存在该 `runtime_id` 的运行时）、`40926`（运行时存在但不可用）。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "workspace_id": "wd_my-app_a1b2c3d4e5f6", "runtime_id": "local" }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "workspace_id": "wd_my-app_a1b2c3d4e5f6", "runtime_id": "local" },
+  "request_id": "01JZX4..."
+}
 ```
 
 **会话快照。**
@@ -1412,14 +1725,37 @@ main agent 的 Agent 循环运行在哪个运行时上的读取与切换。
 
 为重新同步后重建客户端组装一份原子快照：会话、最近的消息、进行中的轮次、存活的 subagent 以及待处理交互，全部盖上 `as_of_seq` 水位与用于重新订阅的 `epoch`——恢复流程见 [断线恢复](#断线恢复)。与普通的会话端点不同，内嵌的会话携带实时的 `agent_config.model` 与真实的 `usage` 总计。无参数。
 
-**返回**：`ResponseType<`[T-SnapshotResponse](#t-snapshotresponse)`>`。
+**响应体**：`ResponseType<`[T-SnapshotResponse](#t-snapshotresponse)`>`。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-SnapshotResponse](#t-snapshotresponse) | 原子快照；字段见类型汇总 |
 
 **非零 code**：`40401`、`50001`。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "as_of_seq": 128, "epoch": "01JZX4...", "session": { "id": "session_01JZX4...", "agent_config": { "model": "kimi-for-coding" }, "usage": { "input_tokens": 152000, "...": 0 }, "...": "..." }, "messages": { "items": [ "..." ], "has_more": true }, "in_flight_turn": null, "subagents": [], "pending_approvals": [], "pending_questions": [] }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "as_of_seq": 128,
+    "epoch": "01JZX4...",
+    "session": {
+      "id": "session_01JZX4...",
+      "agent_config": { "model": "kimi-for-coding" },
+      "usage": { "input_tokens": 152000, "...": 0 },
+      "...": "..."
+    },
+    "messages": { "items": [ "..." ], "has_more": true },
+    "in_flight_turn": null,
+    "subagents": [],
+    "pending_approvals": [],
+    "pending_questions": []
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 **会话导出。**
@@ -1428,14 +1764,14 @@ main agent 的 Agent 循环运行在哪个运行时上的读取与切换。
 
 将会话连同诊断日志一起导出为 zip 附件（`kimi-session-<id>.zip`）。响应是 `application/zip` 二进制流，不返回 `ResponseType`（`content-disposition: attachment`、`cache-control: no-store`）；客户端断连即中止导出。
 
-**Body**：
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `web_log` | string | 否 | 要包含在归档中的客户端日志文本，最多 256 KB UTF-8 |
 | `desktop` | boolean | 否 | 同时包含桌面宿主的日志。默认 `false` |
 
-**非零 code**（`ResponseType`）：`40001`（校验失败，`details` 为 `{ path, message }[]`）、`40401`、`50001`。
+**非零 code**（`ResponseType`）：`40001`（校验失败；`details` 为 `{ path, message }[]`）、`40401`、`50001`。
 
 **文件历史（实验性）。**
 
@@ -1454,33 +1790,44 @@ main agent 的 Agent 循环运行在哪个运行时上的读取与切换。
 
 返回单个轮次开始与结束检查点之间每个文件的精确增删行数。
 
-**Query**：
+**查询参数**：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `turn_id` | integer | **必填。** 轮次 id（≥ 0） |
 
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ changes: { path: string, status: 'added' | 'modified' | 'deleted', additions: number, deletions: number, binary?: boolean, oversize?: boolean }[], enabled: boolean, recorded: boolean }>`。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `changes` | array | `{ path, status, additions, deletions, binary?, oversize? }[]`；`status` 为 `added` / `modified` / `deleted`；二进制与超大文件的增删行为 `0`，并以 `binary` / `oversize` 标记 |
+| `changes` | `{ path: string, status: 'added' \| 'modified' \| 'deleted', additions: number, deletions: number, binary?: boolean, oversize?: boolean }[]` | 逐文件增删统计；二进制与超大文件的增删行为 `0`，并以 `binary` / `oversize` 标记 |
 | `enabled` | boolean | 实验开关是否开启 |
 | `recorded` | boolean | 该轮次是否有已记录的检查点 |
 
 **非零 code**：`40401`。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "changes": [ { "path": "src/index.ts", "status": "modified", "additions": 12, "deletions": 3 } ], "enabled": true, "recorded": true }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "changes": [
+      { "path": "src/index.ts", "status": "modified", "additions": 12, "deletions": 3 }
+    ],
+    "enabled": true,
+    "recorded": true
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `GET /api/v1/sessions/{session_id}/file-history/content`
 
 返回某文件在指定轮次检查点的完整内容；`phase: "end"` 时若该文件在结束检查点没有记录，回退到开始检查点的版本。
 
-**Query**：
+**查询参数**：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
@@ -1488,18 +1835,23 @@ main agent 的 Agent 循环运行在哪个运行时上的读取与切换。
 | `path` | string | **必填。** 文件路径 |
 | `phase` | string | `start`（默认）/ `end`——取轮次开始还是结束检查点 |
 
-**返回**：`ResponseType`，`data` 字段：
+**响应体**：`ResponseType<{ content: { version: number, content?: string, binary?: boolean } | null }>`。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `content` | object \| null | `{ version, content?, binary? }`——`version` 为该文件在检查点的版本号；二进制文件只携带 `binary: true` 不携带文本；无记录时为 `null` |
+| `content` | `{ version: number, content?: string, binary?: boolean } \| null` | `version` 为该文件在检查点的版本号；二进制文件只携带 `binary: true` 不携带文本；无记录时为 `null` |
 
 **非零 code**：`40401`。
 
-**示例**：
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "content": { "version": 2, "content": "import ..." } }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": { "content": { "version": 2, "content": "import ..." } },
+  "request_id": "01JZX4..."
+}
 ```
 
 **v2 会话。**
@@ -1516,7 +1868,7 @@ main agent 的 Agent 循环运行在哪个运行时上的读取与切换。
 
 面向列表页的新一代会话查询，筛选、排序、字段组都在查询参数里。
 
-**Query**：
+**查询参数**：
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
@@ -1535,34 +1887,92 @@ main agent 的 Agent 循环运行在哪个运行时上的读取与切换。
 | `page` | integer | 无状态的 1 起始页码；与 `page_token` 互斥（同传返回 `40001`） |
 | `page_token` | string | 上一页返回的翻页令牌 |
 
-**返回**：`ResponseType<`[T-V2SessionPage](#t-v2sessionpage)`>`（flat）或 [T-V2SessionGroupPage](#t-v2sessiongrouppage)（`by_workspace`）。每页额外携带 `total`（过滤后的集合大小）；翻页令牌绑定首页查询条件（含投影），中途改条件返回 `40922`；`page` 模式每次请求都是独立快照，不签发令牌，`next_page_token` 恒为 `null`。`by_workspace` 时每组携带该工作区按 `sort` 排序的前 `group.page_size` 条会话及其匹配总数 `total`；只有至少一条匹配会话的工作区才会出现，组间按组内首条会话的 sort key 排序（相同则按工作区 id）。
+**响应体**：`ResponseType<`[T-V2SessionPage](#t-v2sessionpage)`>`（`view=flat`，默认）或 `ResponseType<`[T-V2SessionGroupPage](#t-v2sessiongrouppage)`>`（`view=by_workspace`）。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）（未知 `include` / `fields`、组合非法）、`40922`。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-V2SessionPage](#t-v2sessionpage) 或 [T-V2SessionGroupPage](#t-v2sessiongrouppage) | 一页结果；字段见类型汇总 |
 
-**示例**（`view=by_workspace`）：
+每页额外携带 `total`（过滤后的集合大小）；翻页令牌绑定首页查询条件（含投影），中途改条件返回 `40922`；`page` 模式每次请求都是独立快照，不签发令牌，`next_page_token` 恒为 `null`。`by_workspace` 时每组携带该工作区按 `sort` 排序的前 `group.page_size` 条会话及其匹配总数 `total`；只有至少一条匹配会话的工作区才会出现，组间按组内首条会话的 sort key 排序（相同则按工作区 id）。
+
+**非零 code**：`40001`（未知 `include` / `fields`、组合非法；`details` 为 `{ path, message }[]`）、`40922`。
+
+**响应示例**（`view=by_workspace`）：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "groups": [ { "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" }, "sessions": [ { "id": "session_01JZX4...", "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" }, "meta": { "title": "Fix the login page", "last_prompt": "adjust the button spacing", "created_at": 1787000000000, "updated_at": 1787000100000, "archived": false, "archived_at": null }, "activity": { "status": "idle", "model": "kimi-for-coding" } } ], "total": 42 } ], "total": 7, "has_more": true, "next_page_token": "eyJ2IjoxLCJmIjoi..." }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "groups": [
+      {
+        "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" },
+        "sessions": [
+          {
+            "id": "session_01JZX4...",
+            "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" },
+            "meta": {
+              "title": "Fix the login page",
+              "last_prompt": "adjust the button spacing",
+              "created_at": 1787000000000,
+              "updated_at": 1787000100000,
+              "archived": false,
+              "archived_at": null
+            },
+            "activity": { "status": "idle", "model": "kimi-for-coding" }
+          }
+        ],
+        "total": 42
+      }
+    ],
+    "total": 7,
+    "has_more": true,
+    "next_page_token": "eyJ2IjoxLCJmIjoi..."
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 #### `POST /api/v2/sessions:archive` 与 `POST /api/v2/sessions:restore`
 
 面向会话管理页的批量归档 / 恢复。仍在线的会话走完整生命周期；未加载的冷会话直接改写磁盘上的元数据，不会被加载。只有请求体校验失败才会让整个请求失败（`40001`）；其余情况按条返回。
 
-**Body**：
+**触发事件**：`:archive` → `event.session.archived`（每个成功归档的会话一条）；`:restore` 无
+
+**请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `ids` | array | 是 | 会话 id 数组——非空、去重后不超过 5000 条 |
+| `ids` | `string[]` | 是 | 会话 id 数组——非空、去重后不超过 5000 条 |
 
-**返回**：`ResponseType<`[T-V2BatchSessionResponse](#t-v2batchsessionresponse)`>`——`results` 保持输入顺序，不存在的 id 在自身条目里报 `40401`。
+**响应体**：`ResponseType<`[T-V2BatchSessionResponse](#t-v2batchsessionresponse)`>`——`results` 保持输入顺序，不存在的 id 在自身条目里报 `40401`。
 
-**非零 code**：`40001`（校验失败，`details` 为 `{ path, message }[]`）。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | [T-V2BatchSessionResponse](#t-v2batchsessionresponse) | 批量结果；字段见类型汇总 |
 
-**示例**：
+**非零 code**：`40001`（校验失败；`details` 为 `{ path, message }[]`）。
+
+**响应示例**：
 
 ```json
-{ "code": 0, "msg": "success", "data": { "results": [ { "id": "session_a", "ok": true }, { "id": "session_b", "ok": false, "error": { "code": 40401, "message": "session session_b does not exist" } } ], "succeeded": 1, "failed": 1 }, "request_id": "01JZX4..." }
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "results": [
+      { "id": "session_a", "ok": true },
+      {
+        "id": "session_b",
+        "ok": false,
+        "error": { "code": 40401, "message": "session session_b does not exist" }
+      }
+    ],
+    "succeeded": 1,
+    "failed": 1
+  },
+  "request_id": "01JZX4..."
+}
 ```
 
 ### 对话
