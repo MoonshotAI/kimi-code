@@ -35,6 +35,24 @@ describe('mentionMatchSpans', () => {
     ]);
   });
 
+  it('extends a hit across the complete surrogate pair', () => {
+    // 'a😀b': 😀 occupies UTF-16 units 1 and 2; a match reported at offset 1
+    // must not split the pair between two spans.
+    expect(mentionMatchSpans('a\u{1F600}b', [1], 0)).toEqual([
+      { text: 'a', hit: false },
+      { text: '\u{1F600}', hit: true },
+      { text: 'b', hit: false },
+    ]);
+  });
+
+  it('keeps an unmatched surrogate pair in one plain run', () => {
+    expect(mentionMatchSpans('\u{1F600}ab', [2], 0)).toEqual([
+      { text: '\u{1F600}', hit: false },
+      { text: 'a', hit: true },
+      { text: 'b', hit: false },
+    ]);
+  });
+
   it('handles adjacent hits as a single run', () => {
     expect(mentionMatchSpans('abc', [0, 1, 2], 0)).toEqual([{ text: 'abc', hit: true }]);
   });
