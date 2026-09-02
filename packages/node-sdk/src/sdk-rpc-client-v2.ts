@@ -16,6 +16,9 @@
  * - `listWorkspaceSkills` → not covered by the klient facade, so it goes
  *   through the `engineAccessor` escape hatch (the workspace handler's
  *   `IWorkspaceSkillCatalog`) instead.
+ * - `suggestFiles` → same escape hatch (the workspace handler's
+ *   `IWorkspaceFsService`); the v1 client inherits the base's `undefined`
+ *   (capability absent).
  * - `getConfig` / `setConfig` / `removeProvider` / `getConfigDiagnostics` →
  *   `klient.global.config.*`, with the v1 `KimiConfig` shape restored by the
  *   pure mapping layer in `src/v2/config-mapper.ts`.
@@ -316,6 +319,8 @@ import type {
   SessionTodoItem,
   SessionUsage,
   SkillSummary,
+  SuggestFilesInput,
+  SuggestFilesResult,
   TelemetryClient,
   UploadFileOptions,
   WorkspaceTrustInfo,
@@ -619,6 +624,33 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const catalog = handler.program.skills;
     await catalog.ready;
     return catalog.catalog.listSkills().map(summarizeSkill);
+  }
+
+  /**
+   * Through the workspace handler's `IWorkspaceFsService` — the same engine
+   * suggest the kap-server `fs:suggest` routes serve (fuzzy scoring,
+   * directories included, gitignore respected), so in-process hosts match
+   * the web client's @ mention results.
+   */
+  override async suggestFiles(workDir: string, input: SuggestFilesInput): Promise<SuggestFilesResult | undefined> {
+    const handler = await this.engineAccessor
+      .get(IWorkspaceInstanceManager)
+      .getOrCreate({ root: normalizeRequiredWorkDir('suggestFiles', workDir) });
+    const result = await handler.program.fs.suggest({
+      query: input.query,
+      limit: input.limit ?? 50,
+      follow_gitignore: true,
+      show_hidden: false,
+    });
+    return {
+      items: result.items.map((item) => ({
+        path: item.path,
+        name: item.name,
+        kind: item.kind,
+        matchPositions: item.match_positions,
+      })),
+      truncated: result.truncated,
+    };
   }
 
   /**

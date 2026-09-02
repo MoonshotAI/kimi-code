@@ -213,15 +213,11 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
 
   const {
     showFileMenu,
-    filePickerMode,
-    folderPath,
     fileItems,
     selectedIndex: fileSelectedIndex,
     isLoading: isFileLoading,
     showMediaOption,
     setSelectedIndex: setFileSelectedIndex,
-    setFilePickerMode,
-    setFolderPath,
     handleFileMenuKey,
     resetFilePicker,
   } = useFilePicker(
@@ -338,35 +334,14 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
         {showFileMenu && (
           <div ref={menuRef} className="absolute bottom-full left-0 right-0 mb-2 z-10">
             <FilePickerMenu
-              mode={filePickerMode}
               items={fileItems}
-              currentPath={folderPath}
               selectedIndex={fileSelectedIndex}
               isLoading={isFileLoading}
               showMediaOption={showMediaOption}
               onSelectMedia={() => {
                 void handlePickMedia();
               }}
-              onSwitchToFolder={() => {
-                setFilePickerMode("folder");
-                setFolderPath("");
-                setFileSelectedIndex(0);
-              }}
-              onSwitchToSearch={() => {
-                setFilePickerMode("search");
-                setFolderPath("");
-                setFileSelectedIndex(0);
-              }}
               onSelectItem={(item) => { applyMention(item.path); }}
-              onNavigateUp={() => {
-                setFolderPath(folderPath.split("/").slice(0, -1).join("/"));
-                setFileSelectedIndex(0);
-              }}
-              onNavigateInto={(item) => {
-                setFilePickerMode("folder");
-                setFolderPath(item.path);
-                setFileSelectedIndex(0);
-              }}
               onHover={setFileSelectedIndex}
             />
           </div>
