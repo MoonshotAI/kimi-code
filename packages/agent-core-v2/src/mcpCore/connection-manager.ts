@@ -268,14 +268,15 @@ export class McpConnectionManager implements McpConnectionView {
       throw new Error2(ErrorCodes.MCP_SERVER_DISABLED, `MCP server is disabled: ${name}`);
     }
     const attemptId = this.beginConnectAttempt(entry);
-    await this.closeClient(entry);
-    if (!this.isCurrent(entry, attemptId)) return;
+    const closing = this.closeClient(entry);
     entry.status = 'pending';
     entry.tools = undefined;
     entry.enabledNames = undefined;
     entry.rawTools = undefined;
     entry.error = undefined;
     this.emit(entry);
+    await closing;
+    if (!this.isCurrent(entry, attemptId)) return;
     await this.connectOne(entry, attemptId);
   }
 
