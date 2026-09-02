@@ -36,6 +36,7 @@ const copyTextToClipboardMock = vi.mocked(copyTextToClipboard);
 
 interface StartupDriver {
   state: TUIState;
+  readonly authFlow: KimiTUI['authFlow'];
   init(): Promise<boolean>;
   handleLoginCommand(): Promise<void>;
   handleLogoutCommand(): Promise<void>;
@@ -1511,6 +1512,36 @@ describe('KimiTUI startup', () => {
 
     expect(showStatus).toHaveBeenCalledTimes(1);
     expect(showStatus).toHaveBeenCalledWith("New Models · +2 models.");
+  });
+
+  it('reloads provider state when a refresh reports no model changes', async () => {
+    const getConfig = vi
+      .fn()
+      .mockResolvedValueOnce({ providers: {}, models: {} })
+      .mockResolvedValue({
+        providers: {
+          acme: {
+            type: 'openai',
+            baseUrl: 'https://api.example.test/v1',
+            apiKey: 'YOUR_API_KEY',
+          },
+        },
+        models: {
+          'acme/example-model': {
+            provider: 'acme',
+            model: 'example-model',
+            maxContextSize: 4096,
+            capabilities: [],
+          },
+        },
+      });
+    const harness = makeHarness(makeSession(), { getConfig });
+    const driver = makeDriver(harness, makeStartupInput());
+
+    await driver.authFlow.refreshProviderModels();
+
+    expect(driver.state.appState.availableProviders).toHaveProperty('acme');
+    expect(driver.state.appState.availableModels).toHaveProperty('acme/example-model');
   });
 
   it("stages provider-refresh removals and persists one atomic write on atomic-capable harnesses", async () => {
