@@ -395,6 +395,16 @@ export const BUILTIN_SLASH_COMMANDS = [
     requiresEngineV2: true,
   },
   {
+    name: 'compact-threshold-k',
+    aliases: [],
+    description:
+      'Show or set the per-session auto-compaction token budget (in thousands of tokens, absolute cap)',
+    priority: 80,
+    argumentHint: '[<tokens in 1000s>|off]',
+    availability: (args) => (args.trim() === '' ? 'always' : 'idle-only'),
+    requiresEngineV2: true,
+  },
+  {
     name: 'goal',
     aliases: [],
     description: 'Start or manage an autonomous goal',

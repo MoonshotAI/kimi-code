@@ -10,42 +10,12 @@ import {
   type CompactionModelConfig,
 } from './configSection';
 
-/**
- * `kosongConfig` domain — `[compaction_model]` derived-entry overlay.
- *
- * Compaction-model mirror of {@link visualModelOverlay}: when the
- * compaction-model recipe carries patch fields, synthesizes the derived
- * registry entry ({@link COMPACTION_DERIVED_MODEL_ID}) into the effective
- * `models` view — a copy of the pointed entry with the patch merged into its
- * `overrides` block (patch wins conflicts) and `aliases` dropped, so the
- * derived entry never competes in name/alias routing. Compaction-model binding
- * then resolves it by name through the standard catalog path, and the patch
- * rides the same `effectiveModelConfig` merge as any `models.*.overrides`
- * (including its `supportEfforts` / `defaultEffort` pruning and input
- * clamping).
- *
- * The synthesized entry lives ONLY in the in-memory effective view: `strip`
- * removes it from `models` writes so it never reaches `config.toml`, and the
- * persistence bridge's deep-equal guards keep the two-way sync silent. `strip`
- * also rolls back a `defaultModel` pointer set to the derived id (restoring the
- * raw value). Nothing is synthesized when the recipe has no patch fields (when
- * `compaction.model` is unset), or when the pointed entry does not exist. The
- * id is reserved: a user-configured entry under it is stripped on write all the
- * same.
- *
- * Self-registered at module load via `registerConfigOverlay`; it is imported
- * for side effects after the visual-model overlay.
- */
 export const COMPACTION_DERIVED_MODEL_ID = '__compaction__';
 
 export function compactionModelPatch(
   compaction: CompactionModelConfig | undefined,
 ): ModelOverride | undefined {
   if (compaction === undefined) return undefined;
-  // `model`, the legacy `defaultModel` pointer, and the cascade pointer
-  // `secondaryModel` are not patch fields — stripping them keeps a
-  // pointer-only config patch-free so it binds the pointed entry directly
-  // instead of synthesizing the derived override.
   const {
     model: _model,
     defaultModel: _defaultModel,

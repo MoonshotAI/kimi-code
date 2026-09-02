@@ -262,6 +262,189 @@ describe('refreshProviderCatalog — OpenAI-compatible on-demand', () => {
     expect(alias?.maxContextSize).toBe(1000000);
   });
 
+  it('uses the models.dev catalog context when the /models endpoint omits context_length (opencode-style)', async () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        opencode: {
+          type: 'openai',
+          baseUrl: 'https://opencode.ai/zen/v1',
+          apiKey: 'sk-oc-test',
+        },
+      },
+      telemetry: true,
+    };
+    const host = makeRefreshHost(config);
+
+    // Warm the models.dev memo with a catalog entry for the opencode-style id
+    // (no `nvidia/` namespace, no `:free` suffix — opencode renames the model).
+    const catalog = {
+      opencode: {
+        models: {
+          'nemotron-3-ultra-free': {
+            id: 'nemotron-3-ultra-free',
+            name: 'Nemotron 3 Ultra Free',
+            limit: { context: 1000000 },
+            tool_call: true,
+            modalities: { input: ['text', 'image'], output: ['text'] },
+          },
+        },
+      },
+    };
+    const catalogFetch = vi.fn<FetchMock>(async () =>
+      new Response(JSON.stringify(catalog), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', catalogFetch);
+    const { refreshModelsDevCatalog } = await import('../src/modelsDevCatalog');
+    await refreshModelsDevCatalog();
+
+    // opencode's real /models returns { id, object, created, owned_by } with
+    // no `context_length` — the bug was that this collapsed the alias to the
+    // 262144 default instead of using the catalog's 1000000.
+    const endpointFetch = vi.fn<FetchMock>(async () =>
+      new Response(
+        JSON.stringify({ data: [{ id: 'nemotron-3-ultra-free' }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    vi.stubGlobal('fetch', endpointFetch);
+
+    const result = await refreshProviderCatalog(host, {});
+    expect(result.failed).toEqual([]);
+    const alias = (await host.getConfig()).models?.['opencode/nemotron-3-ultra-free'];
+    // Without the fix this would be 262144 (OPENAI_COMPATIBLE_DEFAULT_CONTEXT).
+    expect(alias?.maxContextSize).toBe(1000000);
+    expect(alias?.displayName).toBe('Nemotron 3 Ultra Free');
+    // `image_in` is the discriminating assertion here: `tool_use` is added
+    // unconditionally by `toCapabilities`, so it would pass even if the
+    // catalog→alias capabilities merge were a no-op. `image_in` only appears
+    // because the catalog fixture's `modalities.input` includes `'image'`.
+    expect(alias?.capabilities).toEqual(expect.arrayContaining(['tool_use', 'image_in']));
+  });
+
+  it('preserves a user-curated maxContextSize over the catalog context (opencode-style endpoint)', async () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        opencode: {
+          type: 'openai',
+          baseUrl: 'https://opencode.ai/zen/v1',
+          apiKey: 'sk-oc-test',
+        },
+      },
+      models: {
+        'opencode/nemotron-3-ultra-free': {
+          provider: 'opencode',
+          model: 'nemotron-3-ultra-free',
+          maxContextSize: 500000,
+          capabilities: ['tool_use'],
+        },
+      },
+      telemetry: true,
+    };
+    const host = makeRefreshHost(config);
+
+    // Catalog says 1000000, but the user has already curated 500000 — the
+    // user's value must survive.
+    const catalog = {
+      opencode: {
+        models: {
+          'nemotron-3-ultra-free': {
+            id: 'nemotron-3-ultra-free',
+            name: 'Nemotron 3 Ultra Free',
+            limit: { context: 1000000 },
+            tool_call: true,
+            modalities: { input: ['text'], output: ['text'] },
+          },
+        },
+      },
+    };
+    const catalogFetch = vi.fn<FetchMock>(async () =>
+      new Response(JSON.stringify(catalog), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', catalogFetch);
+    const { refreshModelsDevCatalog } = await import('../src/modelsDevCatalog');
+    await refreshModelsDevCatalog();
+
+    const endpointFetch = vi.fn<FetchMock>(async () =>
+      new Response(
+        JSON.stringify({ data: [{ id: 'nemotron-3-ultra-free' }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    vi.stubGlobal('fetch', endpointFetch);
+
+    const result = await refreshProviderCatalog(host, {});
+    expect(result.failed).toEqual([]);
+    const alias = (await host.getConfig()).models?.['opencode/nemotron-3-ultra-free'];
+    // The catalog (1000000) was a stronger hint than the default but must
+    // still lose to the user's curated 500000.
+    expect(alias?.maxContextSize).toBe(500000);
+  });
+
+  it('still uses the catalog context for a deprecated/alpha opencode model', async () => {
+    // Deprecation/alpha in the catalog strips capabilities (toCapabilities
+    // returns undefined) but the `limit.context` is independent — it must
+    // still be surfaced. Regression test for the v1.1 follow-up to the
+    // original bug.
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        opencode: {
+          type: 'openai',
+          baseUrl: 'https://opencode.ai/zen/v1',
+          apiKey: 'sk-oc-test',
+        },
+      },
+      telemetry: true,
+    };
+    const host = makeRefreshHost(config);
+
+    const catalog = {
+      opencode: {
+        models: {
+          'nemotron-3-ultra-free': {
+            id: 'nemotron-3-ultra-free',
+            name: 'Nemotron 3 Ultra Free',
+            limit: { context: 1000000 },
+            tool_call: true,
+            status: 'deprecated',
+            modalities: { input: ['text'], output: ['text'] },
+          },
+        },
+      },
+    };
+    const catalogFetch = vi.fn<FetchMock>(async () =>
+      new Response(JSON.stringify(catalog), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', catalogFetch);
+    const { refreshModelsDevCatalog } = await import('../src/modelsDevCatalog');
+    await refreshModelsDevCatalog();
+
+    const endpointFetch = vi.fn<FetchMock>(async () =>
+      new Response(
+        JSON.stringify({ data: [{ id: 'nemotron-3-ultra-free' }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    vi.stubGlobal('fetch', endpointFetch);
+
+    const result = await refreshProviderCatalog(host, {});
+    expect(result.failed).toEqual([]);
+    const alias = (await host.getConfig()).models?.['opencode/nemotron-3-ultra-free'];
+    // Catalog context survives the deprecated/alpha gate.
+    expect(alias?.maxContextSize).toBe(1000000);
+    // Capabilities are stripped by toCapabilities, so the alias carries none
+    // (no merging happens for an empty/undefined catalog capability set).
+    expect(alias?.capabilities).toBeUndefined();
+  });
+
   it('carries an OpenRouter context_length through and never clobbers it', async () => {
     const config: ManagedKimiConfigShape = {
       providers: {

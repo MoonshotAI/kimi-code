@@ -1,19 +1,3 @@
-/**
- * `agent/fullCompaction` — dedicated compaction model integration tests.
- *
- * Exercises the end-to-end wiring of the `[compaction_model]` experiment inside
- * `AgentFullCompactionService`:
- *  - US1: when the flag is on and `[compaction_model]` points at a valid model,
- *    compaction uses that model (telemetry `model` reflects it).
- *  - US2: when the dedicated model errors or is inaccessible, compaction
- *    transparently falls back to the current model on the same round
- *    (telemetry `model` reflects the current model, the round still completes).
- *  - US3: when the flag is off or `[compaction_model]` is unset, compaction uses
- *    the current model with no behavior change (no-regression).
- *
- * Mirrors the manual-compaction flow from `fullCompaction.test.ts` but drives
- * the model selection through the experimental flag + config section.
- */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 

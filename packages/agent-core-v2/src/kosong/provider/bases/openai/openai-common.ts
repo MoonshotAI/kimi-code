@@ -137,6 +137,17 @@ export function convertOpenAIError(
   if (error instanceof Error) {
     return classifyBaseApiError(error.message);
   }
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    typeof (error as { status?: unknown }).status === 'number'
+  ) {
+    const e = error as { status: number; message?: unknown; headers?: unknown };
+    const message = typeof e.message === 'string' ? e.message : '';
+    const retryAfterMs = parseRetryAfterMs(e.headers);
+    const traceId = parseTraceId(e.headers);
+    return normalizeAPIStatusError(e.status, message, null, retryAfterMs, traceId);
+  }
   return new ChatProviderError(`Error: ${String(error)}`);
 }
 

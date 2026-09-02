@@ -14,38 +14,6 @@ import { COMPACTION_MODEL_FLAG_ID } from './flag';
 
 export { COMPACTION_DERIVED_MODEL_ID };
 
-/**
- * `compaction` domain — compaction-model config-section resolver.
- *
- * Compaction-model mirror of {@link ../../../session/visual/configSection}:
- * resolves which model handles context compaction when the `compaction-model`
- * experiment is enabled and `[compaction_model]` is configured. The active
- * conversation model remains the default; the compaction model is an opt-in
- * override for the summarization/compaction step, parallel to how the visual
- * model is an opt-in override for visual inspection tasks.
- *
- * Resolution rules (mirror of `resolveVisualModel` / `resolveVisualBinding`):
- *  - When the experiment is disabled, or `[compaction_model]` is unset, returns
- *    `undefined` from {@link resolveCompactionModel} and the caller's own model
- *    from {@link resolveCompactionBinding} — no behavior change.
- *  - When set, {@link resolveCompactionModel} returns the configured recipe; a
- *    recipe with patch fields binds the synthesized derived entry
- *    ({@link COMPACTION_DERIVED_MODEL_ID}, materialized by
- *    `compactionModelOverlay`); a pointer-only recipe binds the pointed entry
- *    directly. `default_effort` is passed as the explicit compaction thinking
- *    effort; without it the compaction step resolves thinking naturally (global
- *    thinking config → the bound model's default effort) rather than inheriting
- *    the caller's level.
- *
- * The caller resolves a binding via {@link compactionModelBindingFor}: a helper
- * that returns the dedicated compaction model when configured, or the caller's
- * own model otherwise. When the dedicated model errors or is inaccessible, the
- * caller transparently retries the same round on its own model — the dedicated
- * model is a best-effort override, never a hard dependency. Display-facing
- * alias resolution goes through {@link compactionDisplayModel}: the derived
- * entry id means nothing to a user, so it resolves back to the recipe's base
- * alias.
- */
 export interface CompactionBinding {
   readonly model: string;
   readonly thinking?: string;
@@ -60,14 +28,6 @@ export function resolveCompactionModel(
   return config.get<CompactionModelConfig | undefined>(COMPACTION_MODEL_SECTION);
 }
 
-/**
- * The secondary squeeze model (`[compaction_model] secondary_model`, set via
- * `/squeeze-model-secondary`): the second tier of the compaction cascade.
- * Compaction tries the primary squeeze model first, then this alias, and only
- * then falls back to the caller's own (current) model. Returns `undefined`
- * while the experiment is off or no secondary is configured — the cascade
- * then collapses to the historical two-tier behavior.
- */
 export function resolveCompactionSecondaryModel(
   config: IConfigService,
   flags: IFlagService,
@@ -75,20 +35,12 @@ export function resolveCompactionSecondaryModel(
   return resolveCompactionModel(config, flags)?.secondaryModel;
 }
 
-/**
- * Resolve which model handles a compaction round. `own` is the caller's current
- * model state, used when inheriting (compaction model unset). Returns the
- * dedicated compaction model when configured, otherwise the caller's own model.
- */
 export function resolveCompactionBinding(
   config: IConfigService,
   flags: IFlagService,
   own: { modelAlias: string; thinkingLevel: string },
 ): CompactionBinding {
   const compaction = resolveCompactionModel(config, flags);
-  // `model` is the engine-contract pointer; `defaultModel` is the legacy
-  // field an older TUI wrote — honored as a fallback so those configs start
-  // working instead of staying dead. `model` wins when both are set.
   const pointer = compaction?.model ?? compaction?.defaultModel;
   if (compaction !== undefined && pointer !== undefined) {
     const model =
@@ -108,12 +60,6 @@ export function resolveCompactionBinding(
   };
 }
 
-/**
- * Convenience wrapper around {@link resolveCompactionBinding} that fails back to
- * the caller's own model when the compaction model is not configured. The
- * dedicated model is never a hard requirement: callers treat the returned
- * binding as a best-effort override and retry on their own model on error.
- */
 export function compactionModelBindingFor(
   config: IConfigService,
   flags: IFlagService,
@@ -129,13 +75,6 @@ export function compactionDisplayModel(config: IConfigService, boundAlias: strin
   );
 }
 
-/**
- * Point a compaction-model resolution failure at `[compaction_model]` when the
- * bound model is not the caller's own — otherwise the caller sees a bare
- * "model not configured" error with no hint that it comes from the compaction
- * model configuration. Used by callers to wrap a dedicated-model error before
- * falling back to the current model.
- */
 export function wrapCompactionModelError(error: unknown, boundModel: string): unknown {
   if (boundModel === COMPACTION_DERIVED_MODEL_ID) {
     return new Error(

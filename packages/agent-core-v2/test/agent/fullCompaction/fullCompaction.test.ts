@@ -2255,10 +2255,6 @@ describe('FullCompaction', () => {
         max_context_tokens: 1_000_000,
       },
     });
-    // ~30% used (300k of a 1M window) plus the ~30k-token pending prompt
-    // crosses a 0.3 session override, but stays far below the built-in
-    // 0.85 default — only the override can fire. Auto compaction now always
-    // blocks the step, so the compaction request runs before the answer.
     ctx.appendExchange(1, 'old user one', 'old assistant one', 300_000);
     const pendingPrompt = `override-pending-verbatim:${'x'.repeat(120_000)}`;
 
@@ -2269,16 +2265,12 @@ describe('FullCompaction', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: pendingPrompt }] });
     const events = await ctx.untilTurnEnd();
 
-    // The 0.3 override fired an auto compaction the built-in 0.85 default
-    // would never trigger at this context size (see the control test below).
     expect(events).toContainEqual(
       expect.objectContaining({
         event: 'compaction.started',
         args: expect.objectContaining({ trigger: 'auto' }),
       }),
     );
-    // Compaction first (blocking), then the answer over the compacted
-    // context — both must see the oversized pending prompt.
     expect(ctx.llmCalls).toHaveLength(2);
     const [compactionCall, answerCall] = ctx.llmCalls;
     expect(
@@ -2298,8 +2290,6 @@ describe('FullCompaction', () => {
         max_context_tokens: 1_000_000,
       },
     });
-    // Same context size as the override test above, no override: 330k of a
-    // 1M window is far below the built-in 0.85 default, so nothing compacts.
     ctx.appendExchange(1, 'old user one', 'old assistant one', 300_000);
     const pendingPrompt = `control-pending-verbatim:${'x'.repeat(120_000)}`;
 

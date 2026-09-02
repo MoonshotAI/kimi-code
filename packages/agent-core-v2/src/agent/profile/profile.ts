@@ -87,18 +87,10 @@ export interface ApplyProfileOptions {
   readonly additionalDirs?: readonly string[];
 }
 
-/**
- * Lowest accepted auto-compaction trigger ratio (fraction of the context
- * window at which auto-compaction triggers). Applies both to the global
- * `[loop_control] compaction_trigger_ratio` config value and to the
- * session-scoped override set through `setCompactionTriggerRatio`.
- */
 export const COMPACTION_TRIGGER_RATIO_MIN = 0.05;
 
-/** Highest accepted auto-compaction trigger ratio. */
 export const COMPACTION_TRIGGER_RATIO_MAX = 0.99;
 
-/** Validates a compaction trigger ratio; returns a human error message when invalid. */
 export function compactionTriggerRatioError(
   ratio: number,
 ): string | undefined {
@@ -116,6 +108,7 @@ export interface ProfileModelContext {
   readonly thinkingLevel: ThinkingEffort;
   readonly reservedContextSize: number | undefined;
   readonly compactionTriggerRatio: number | undefined;
+  readonly compactionTokenBudget: number | undefined;
 }
 
 export interface ProfileSetModelResult {
@@ -139,24 +132,12 @@ export interface IAgentProfileService {
   bind(input: BindAgentInput): Promise<void>;
   setModel(model: string): Promise<ProfileSetModelResult>;
   setThinking(level: string): void;
-  /**
-   * Set (or clear, when `ratio` is undefined) the session-scoped auto-compaction
-   * trigger ratio override. Takes precedence over the global
-   * `[loop_control] compaction_trigger_ratio` config value for the rest of the
-   * session; it is never persisted. Throws `ProfileError` for values outside
-   * [COMPACTION_TRIGGER_RATIO_MIN, COMPACTION_TRIGGER_RATIO_MAX].
-   */
   setCompactionTriggerRatio(ratio: number | undefined): void;
-  /** The session-scoped override set via {@link setCompactionTriggerRatio}, or undefined. */
   getCompactionTriggerRatioOverride(): number | undefined;
-  /**
-   * The effective auto-compaction trigger ratio — session override when set,
-   * otherwise the global `[loop_control] compaction_trigger_ratio` config
-   * value, otherwise undefined (the engine default applies). Unlike
-   * {@link resolveModelContext} this never requires a bound model, so it is
-   * safe to call on model-less sessions (e.g. from getStatus).
-   */
   getEffectiveCompactionTriggerRatio(): number | undefined;
+  setCompactionTokenBudget(tokens: number | undefined): void;
+  getCompactionTokenBudgetOverride(): number | undefined;
+  getEffectiveCompactionTokenBudget(): number | undefined;
   republishStatus(): void;
   getModel(): string;
   useProfile(profile: ResolvedAgentProfile, context: SystemPromptContext): void;

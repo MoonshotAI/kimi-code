@@ -131,6 +131,11 @@ export interface SetSessionCompactionTriggerRatioRpcInput extends SessionIdRpcIn
   readonly ratio?: number | undefined;
 }
 
+export interface SetSessionCompactionTokenBudgetRpcInput extends SessionIdRpcInput {
+  /** New session-scoped absolute compaction token budget (in thousands of tokens); `undefined` clears the override. */
+  readonly tokens?: number | undefined;
+}
+
 export interface SetSessionPermissionRpcInput extends SessionIdRpcInput {
   readonly mode: PermissionMode;
 }
@@ -672,6 +677,15 @@ export abstract class SDKRpcClientBase {
     throw new KimiError(
       ErrorCodes.NOT_IMPLEMENTED,
       'This SDK client does not support setting the compaction trigger ratio.',
+    );
+  }
+
+  setCompactionTokenBudget(
+    _input: SetSessionCompactionTokenBudgetRpcInput,
+  ): Promise<void> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'This SDK client does not support setting the compaction token budget.',
     );
   }
 

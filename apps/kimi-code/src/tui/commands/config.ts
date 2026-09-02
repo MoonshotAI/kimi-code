@@ -238,6 +238,10 @@ const COMPACT_THRESHOLD_MAX = 0.99;
 const COMPACT_THRESHOLD_DEFAULT = 0.85;
 const COMPACT_THRESHOLD_USAGE =
   'Usage: /compact-threshold [<ratio 0.05-0.99>|off] — with no argument, shows the current value.';
+/** Built-in default compaction token budget used when neither override nor config sets one. */
+const COMPACT_TOKEN_BUDGET_DEFAULT = 850_000;
+const COMPACT_THRESHOLD_K_USAGE =
+  'Usage: /compact-threshold-k [<tokens in 1000s>|off] — with no argument, shows the current value.';
 
 export async function handleCompactThresholdCommand(
   host: SlashCommandHost,
@@ -300,6 +304,71 @@ export async function handleCompactThresholdCommand(
     );
   } catch (error) {
     host.showError(`Failed to set compaction threshold: ${formatErrorMessage(error)}`);
+  }
+}
+
+export async function handleCompactThresholdKCommand(
+  host: SlashCommandHost,
+  args: string,
+): Promise<void> {
+  const session = host.session;
+  if (session === undefined) {
+    host.showError(NO_ACTIVE_SESSION_MESSAGE);
+    return;
+  }
+
+  const value = args.trim();
+
+  if (value.length === 0) {
+    try {
+      const status = await session.getStatus();
+      const effective = status.compactionTokenBudget;
+      const source =
+        status.compactionTokenBudgetOverridden === true
+          ? 'session override — /compact-threshold-k off clears it'
+          : effective !== undefined
+            ? 'from config.toml [loop_control] compaction_token_budget'
+            : 'built-in default (config.toml key not set)';
+      host.showNotice(
+        `Auto-compact token budget: ${effective ?? COMPACT_TOKEN_BUDGET_DEFAULT}`,
+        source,
+      );
+    } catch (error) {
+      host.showError(`Failed to read compaction token budget: ${formatErrorMessage(error)}`);
+    }
+    return;
+  }
+
+  if (value === 'off' || value === 'reset' || value === 'clear') {
+    try {
+      await session.setCompactionTokenBudget(undefined);
+      host.showNotice(
+        'Auto-compact token budget override cleared',
+        'The config.toml [loop_control] compaction_token_budget value (or built-in default) applies again.',
+      );
+    } catch (error) {
+      host.showError(`Failed to clear compaction token budget: ${formatErrorMessage(error)}`);
+    }
+    return;
+  }
+
+  if (!/^[1-9][0-9]*$/.test(value)) {
+    host.showError(
+      `Invalid token budget "${value}": must be a positive integer (in thousands).`,
+    );
+    host.showStatus(COMPACT_THRESHOLD_K_USAGE);
+    return;
+  }
+
+  const thousands = Number(value);
+  try {
+    await session.setCompactionTokenBudget(thousands);
+    host.showNotice(
+      `Auto-compact token budget set to ${thousands * 1_000} for this session`,
+      'Absolute cap overrides the ratio path until the session ends.',
+    );
+  } catch (error) {
+    host.showError(`Failed to set compaction token budget: ${formatErrorMessage(error)}`);
   }
 }
 

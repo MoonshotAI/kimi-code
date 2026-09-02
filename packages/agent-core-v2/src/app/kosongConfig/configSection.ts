@@ -311,9 +311,6 @@ export const secondaryModelEnvBindings = envBindings(SecondaryModelConfigSchema,
   defaultEffort: { env: SECONDARY_MODEL_EFFORT_ENV, parse: parseNonEmptyEnv },
 });
 
-// NOTE: secondaryModel registration moved to session/subagent/configSection.ts (upstream)
-
-
 export const VISUAL_MODEL_SECTION = 'visualModel';
 
 export const VISUAL_MODEL_ENV = 'KIMI_VISUAL_MODEL';
@@ -321,8 +318,6 @@ export const VISUAL_MODEL_EFFORT_ENV = 'KIMI_VISUAL_EFFORT';
 
 export const VisualModelConfigSchema = ModelOverrideSchema.extend({
   model: z.string().min(1).optional(),
-  /** Legacy pointer written by an older TUI; honored as a fallback by the
-   * resolver so those configs start working instead of staying dead. */
   defaultModel: z.string().min(1).optional(),
 });
 
@@ -338,7 +333,6 @@ registerConfigSection(VISUAL_MODEL_SECTION, VisualModelConfigSchema, {
   stripEnv: stripEnvBoundFields(visualModelEnvBindings),
 });
 
-
 export const COMPACTION_MODEL_SECTION = 'compactionModel';
 
 export const COMPACTION_MODEL_ENV = 'KIMI_COMPACTION_MODEL';
@@ -346,12 +340,7 @@ export const COMPACTION_MODEL_EFFORT_ENV = 'KIMI_COMPACTION_EFFORT';
 
 export const CompactionModelConfigSchema = ModelOverrideSchema.extend({
   model: z.string().min(1).optional(),
-  /** Legacy pointer written by an older TUI; honored as a fallback by the
-   * resolver so those configs start working instead of staying dead. */
   defaultModel: z.string().min(1).optional(),
-  /** Second tier of the compaction model cascade (`/squeeze-model-secondary`):
-   * tried when the primary squeeze model is unset or unavailable, before
-   * falling back to the current conversation model. */
   secondaryModel: z.string().min(1).optional(),
 });
 
@@ -366,7 +355,6 @@ registerConfigSection(COMPACTION_MODEL_SECTION, CompactionModelConfigSchema, {
   env: compactionModelEnvBindings,
   stripEnv: stripEnvBoundFields(compactionModelEnvBindings),
 });
-
 
 export const FALLBACK_MODEL_SECTION = 'fallbackModel';
 
@@ -389,7 +377,6 @@ registerConfigSection(FALLBACK_MODEL_SECTION, FallbackModelConfigSchema, {
   env: fallbackModelEnvBindings,
   stripEnv: stripEnvBoundFields(fallbackModelEnvBindings),
 });
-
 
 export const MODEL_CATALOG_SECTION = 'modelCatalog';
 

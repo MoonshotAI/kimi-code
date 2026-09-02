@@ -29,6 +29,7 @@ function makeComponent(overrides: Partial<ProviderManagerOptions> = {}): Provide
     onAddKey: vi.fn(),
     onRemoveKey: vi.fn(),
     onSetActiveKey: vi.fn(),
+    onSetProxyUrl: vi.fn(),
     onClose: vi.fn(),
     ...overrides,
   });

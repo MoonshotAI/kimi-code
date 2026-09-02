@@ -740,13 +740,19 @@ export function applyOpenAiCompatibleCatalog(
     const existingMaxContextSize =
       typeof existing['maxContextSize'] === 'number' ? existing['maxContextSize'] : undefined;
     const catalog = lookupModelsDevModel(providerId, model.id);
-    // When the endpoint actually reported a context window, trust it (OpenRouter
-    // style). When it reported nothing, preserve a curated `maxContextSize`
-    // already on the alias (e.g. a 1M window imported from models.dev) and only
-    // fall back to the 256K default for brand-new aliases.
+    // Resolution order for maxContextSize:
+    //  1. provider-reported `context_length` (kilo/OpenRouter style — most
+    //     authoritative for the current pricing tier);
+    //  2. an existing curated `maxContextSize` (the user's manual override —
+    //     the contract today is "if you set it, the catalog never clobbers it");
+    //  3. the models.dev catalog's `limit.context` (covers providers whose
+    //     `/models` endpoint omits context length, e.g. opencode);
+    //  4. `OPENAI_COMPATIBLE_DEFAULT_CONTEXT` (256K — the safety net for a
+    //     brand-new alias with no other signal).
     const maxContextSize =
       model.reportedContextLength ??
       existingMaxContextSize ??
+      catalog?.context ??
       OPENAI_COMPATIBLE_DEFAULT_CONTEXT;
     const remoteAlias: ManagedKimiModelAlias = {
       provider: providerId,

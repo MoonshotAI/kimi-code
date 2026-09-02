@@ -144,8 +144,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   private activeProfile: ResolvedAgentProfile | undefined;
 
-  /** Session-scoped auto-compaction trigger ratio override; undefined = use config. */
   private compactionTriggerRatioOverride: number | undefined;
+  private compactionTokenBudgetOverride: number | undefined;
 
   private frozenSkillListing: string | undefined;
   private frozenPluginSections: string | undefined;
@@ -402,6 +402,34 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     return this.compactionTriggerRatioOverride ?? loopControl?.compactionTriggerRatio;
   }
 
+  setCompactionTokenBudget(tokens: number | undefined): void {
+    if (tokens === undefined) {
+      this.compactionTokenBudgetOverride = undefined;
+      this.telemetry.track2('compaction_token_budget_override', { action: 'clear' });
+      return;
+    }
+    if (!Number.isInteger(tokens) || tokens < 1) {
+      throw new ProfileError(
+        ProfileErrors.codes.MODEL_CONFIG_INVALID,
+        `Invalid compaction token budget "${String(tokens)}": must be a positive integer (in thousands).`,
+      );
+    }
+    this.compactionTokenBudgetOverride = tokens * 1_000;
+    this.telemetry.track2('compaction_token_budget_override', {
+      tokens: this.compactionTokenBudgetOverride,
+      action: 'set',
+    });
+  }
+
+  getCompactionTokenBudgetOverride(): number | undefined {
+    return this.compactionTokenBudgetOverride;
+  }
+
+  getEffectiveCompactionTokenBudget(): number | undefined {
+    const loopControl = this.config.get<LoopControl>('loopControl');
+    return this.compactionTokenBudgetOverride ?? (loopControl as { compactionTokenBudget?: number } | undefined)?.compactionTokenBudget;
+  }
+
   private assertThinkingEffortSupported(
     requested: string,
     model: Model | undefined,
@@ -488,6 +516,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       thinkingLevel: this.resolveThinkingState(model).effective,
       reservedContextSize: loopControl?.reservedContextSize,
       compactionTriggerRatio: this.getEffectiveCompactionTriggerRatio(),
+      compactionTokenBudget: this.getEffectiveCompactionTokenBudget(),
     };
   }
 
@@ -502,6 +531,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       thinkingLevel: this.resolveThinkingState(model).effective,
       reservedContextSize: loopControl?.reservedContextSize,
       compactionTriggerRatio: loopControl?.compactionTriggerRatio,
+      compactionTokenBudget: this.getEffectiveCompactionTokenBudget(),
     };
   }
 

@@ -292,6 +292,17 @@ export class Session {
     await this.rpc.setCompactionTriggerRatio({ sessionId: this.id, ratio });
   }
 
+  /**
+   * Set or clear the session-scoped compaction token budget (absolute cap in
+   * thousands of tokens). The override takes precedence over the ratio path
+   * for the rest of the session and is never persisted. Only the v2 engine
+   * supports this.
+   */
+  async setCompactionTokenBudget(tokens?: number): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.setCompactionTokenBudget({ sessionId: this.id, tokens });
+  }
+
   async setPermission(mode: PermissionMode): Promise<void> {
     this.ensureOpen();
     if (!isPermissionMode(mode)) {

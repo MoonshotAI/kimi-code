@@ -9,17 +9,6 @@ import { FALLBACK_MODEL_FLAG_ID } from './flag';
 
 export { FALLBACK_MODEL_FLAG_ID };
 
-/**
- * `fallback` domain — fallback-model config-section resolver.
- *
- * Mirror of the compaction-model resolver: when the `fallback-model`
- * experiment is enabled and `[fallback_model]` is configured, the agent loop
- * transparently retries on the configured alias after the primary model
- * exhausts its retry budget. The dedicated cascade is opt-in: when the flag is
- * off or `[fallback_model]` is unset, returns `undefined` from
- * {@link resolveFallbackModel} — the loop's existing terminal-error behavior
- * is unchanged.
- */
 export function resolveFallbackModel(
   config: IConfigService,
   flags: IFlagService,

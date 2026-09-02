@@ -336,15 +336,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     this.observedMaxContextTokensByModel.set(modelAlias, observed);
   }
 
-  /**
-   * Resolve the squeeze model alias for the compaction started indicator,
-   * cascading exactly like the compaction round itself: the primary squeeze
-   * model (`[compaction_model] model`) when configured and resolvable, else
-   * the secondary squeeze model (`[compaction_model] secondary_model`, set
-   * via `/squeeze-model-secondary`) when configured and resolvable, else the
-   * caller's own model. Never throws — an unresolvable tier just cascades to
-   * the next, mirroring run()'s fallback order.
-   */
   private resolveSqueezeModelAliasWithCascade(currentModelAlias: string): string {
     const binding = compactionModelBindingFor(this.configService, this.flags, {
       modelAlias: currentModelAlias,
@@ -356,7 +347,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         this.profile.resolveModelContextFor(primaryAlias);
         return primaryAlias;
       } catch {
-        // Primary squeeze model unresolvable — cascade to the secondary tier.
       }
     }
     const secondaryAlias = resolveCompactionSecondaryModel(this.configService, this.flags);
@@ -369,8 +359,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         this.profile.resolveModelContextFor(secondaryAlias);
         return secondaryAlias;
       } catch {
-        // Secondary squeeze model also unresolvable — fall through to the
-        // caller's own model.
       }
     }
     return currentModelAlias;
@@ -379,10 +367,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   begin(input: FullCompactionInput): boolean {
     if (this._compacting) return false;
     const data: CompactionBeginData = { source: input.source, instruction: input.instruction };
-    // Surface the model the compaction will use on the started event. Read
-    // `profile.data()` (non-throwing) rather than `resolveModelContext()`,
-    // which throws `model.not_configured` on model-less sessions — the begin
-    // path must not fail before the regular compaction validation runs.
     const profileData = this.profile.data();
     const currentModelAlias = profileData.modelAlias;
     if (currentModelAlias !== undefined) {
@@ -713,9 +697,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         try {
           boundModel = this.profile.resolveModelContextFor(dedicatedModelAlias);
         } catch (error) {
-          // Primary squeeze model unavailable — cascade to the secondary
-          // squeeze model (`/squeeze-model-secondary`) before giving up on
-          // dedicated compaction models entirely.
           const secondaryAlias = resolveCompactionSecondaryModel(
             this.configService,
             this.flags,
@@ -758,8 +739,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
           }
         }
       } else {
-        // No primary squeeze model configured — the secondary squeeze model
-        // still applies on its own (squeeze → secondary → current cascade).
         const secondaryAlias = resolveCompactionSecondaryModel(
           this.configService,
           this.flags,
@@ -869,10 +848,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             (isRetryableGenerateError(unwrappedError) ||
               !(error instanceof CompactionTruncatedError))
           ) {
-            // The active squeeze model failed at runtime. Cascade order:
-            // primary squeeze model → secondary squeeze model → current
-            // model. Skip the secondary tier when we are already on it or
-            // when it is unset/same-as-current.
             const secondaryAlias = resolveCompactionSecondaryModel(
               this.configService,
               this.flags,
@@ -887,9 +862,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
               activeSqueezeAlias = secondaryAlias;
               effectiveModelAlias = secondaryAlias;
               compactionRequestModel = secondaryAlias;
-              // Only reachable while still on the primary squeeze model
-              // (a config-resolution cascade sets usingSecondaryModel up
-              // front), so the failed model is always the primary here.
               this.log.warn(
                 `compaction model "${dedicatedModelAlias}" failed; trying secondary compaction model "${secondaryAlias}"`,
                 { cause: wrapCompactionModelError(error, dedicatedModelAlias) },

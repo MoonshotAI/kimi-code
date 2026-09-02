@@ -1,14 +1,3 @@
-/**
- * `session/compaction` resolver tests — covers `resolveCompactionModel`,
- * `resolveCompactionSecondaryModel`, `resolveCompactionBinding`,
- * `compactionModelBindingFor`, `compactionDisplayModel`, and
- * `wrapCompactionModelError`, including the unset-fallback path.
- *
- * Mirror of the `session/visual` resolver tests: the compaction model is an
- * opt-in override for the compaction step, parallel to how the visual model is
- * an opt-in override for visual inspection. Uses the StubConfigService +
- * stubFlag helpers.
- */
 
 import { describe, expect, it } from 'vitest';
 
@@ -128,13 +117,10 @@ describe('resolveCompactionBinding', () => {
     const binding = resolveCompactionBinding(config, flags, own);
     expect(binding.model).toBe(COMPACTION_DERIVED_MODEL_ID);
     expect(binding.thinking).toBe('low');
-    // displayModel resolves the derived id back to the recipe's base alias
     expect(binding.displayModel).toBe('kimi/compaction');
   });
 
   it('binds the legacy default_model pointer when model is unset', () => {
-    // An older TUI wrote default_model; the resolver honors it as a fallback
-    // so those configs start working instead of staying dead.
     const { config, flags } = makeServices({
       [COMPACTION_MODEL_SECTION]: { defaultModel: 'kimi/compaction' },
     });

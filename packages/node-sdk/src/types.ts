@@ -375,6 +375,10 @@ export interface SessionStatus {
   readonly compactionTriggerRatio?: number;
   /** True when a session-scoped override (e.g. `/compact-threshold`) is active. */
   readonly compactionTriggerRatioOverridden?: boolean;
+  /** Absolute compaction trigger in tokens (e.g. `/compact-threshold-k 120` → 120000). */
+  readonly compactionTokenBudget?: number;
+  /** True when a session-scoped token-budget override is active. */
+  readonly compactionTokenBudgetOverridden?: boolean;
   readonly contextTokens: number;
   readonly maxContextTokens: number;
   readonly contextUsage: number;

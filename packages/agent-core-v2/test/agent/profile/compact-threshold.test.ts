@@ -254,7 +254,6 @@ describe('AgentProfileService.setCompactionTriggerRatio', () => {
   });
 
   it('getEffectiveCompactionTriggerRatio resolves precedence without a bound model', () => {
-    // getStatus reads this accessor on model-less sessions; it must not throw.
     configValues['loopControl'] = { compactionTriggerRatio: 0.7 };
     expect(svc.getEffectiveCompactionTriggerRatio()).toBe(0.7);
     svc.setCompactionTriggerRatio(0.3);
@@ -266,8 +265,6 @@ describe('AgentProfileService.setCompactionTriggerRatio', () => {
 
 describe('AgentProfileService compaction trigger ratio precedence', () => {
   beforeEach(() => {
-    // resolveModelContext requires a model to be configured; a plain state
-    // update is enough (no full bind / system-prompt rendering needed).
     svc.update({ modelAlias: MOCK_MODEL });
   });
 
@@ -297,5 +294,56 @@ describe('AgentProfileService compaction trigger ratio precedence', () => {
   it('respects a config value at the new 0.05 minimum', () => {
     configValues['loopControl'] = { compactionTriggerRatio: 0.05 };
     expect(svc.resolveModelContext().compactionTriggerRatio).toBe(0.05);
+  });
+});
+describe('AgentProfileService.setCompactionTokenBudget', () => {
+  it('stores the override as tokens (input N means N * 1000)', () => {
+    svc.setCompactionTokenBudget(120);
+    expect(svc.getCompactionTokenBudgetOverride()).toBe(120_000);
+  });
+
+  it('clears the override when called with undefined', () => {
+    svc.setCompactionTokenBudget(120);
+    expect(svc.getCompactionTokenBudgetOverride()).toBe(120_000);
+    svc.setCompactionTokenBudget(undefined);
+    expect(svc.getCompactionTokenBudgetOverride()).toBeUndefined();
+  });
+
+  it('rejects 0 (below the 1 000-token floor)', () => {
+    expect(() => svc.setCompactionTokenBudget(0)).toThrow(ProfileError);
+    expect(svc.getCompactionTokenBudgetOverride()).toBeUndefined();
+  });
+
+  it('rejects negative values', () => {
+    expect(() => svc.setCompactionTokenBudget(-1)).toThrow(ProfileError);
+    expect(svc.getCompactionTokenBudgetOverride()).toBeUndefined();
+  });
+
+  it('rejects NaN', () => {
+    expect(() => svc.setCompactionTokenBudget(Number.NaN)).toThrow(ProfileError);
+    expect(svc.getCompactionTokenBudgetOverride()).toBeUndefined();
+  });
+
+  it('rejects non-integer values', () => {
+    expect(() => svc.setCompactionTokenBudget(2.5)).toThrow(ProfileError);
+    expect(svc.getCompactionTokenBudgetOverride()).toBeUndefined();
+  });
+
+  it('getEffectiveCompactionTokenBudget resolves precedence: override > config > default', () => {
+    configValues['loopControl'] = { compactionTokenBudget: 200_000 };
+    expect(svc.getEffectiveCompactionTokenBudget()).toBe(200_000);
+    svc.setCompactionTokenBudget(120);
+    expect(svc.getEffectiveCompactionTokenBudget()).toBe(120_000);
+    svc.setCompactionTokenBudget(undefined);
+    expect(svc.getEffectiveCompactionTokenBudget()).toBe(200_000);
+  });
+
+  it('token override and ratio override are independent', () => {
+    svc.setCompactionTriggerRatio(0.5);
+    svc.setCompactionTokenBudget(120);
+    expect(svc.getCompactionTriggerRatioOverride()).toBe(0.5);
+    expect(svc.getCompactionTokenBudgetOverride()).toBe(120_000);
+    svc.setCompactionTokenBudget(undefined);
+    expect(svc.getCompactionTriggerRatioOverride()).toBe(0.5);
   });
 });

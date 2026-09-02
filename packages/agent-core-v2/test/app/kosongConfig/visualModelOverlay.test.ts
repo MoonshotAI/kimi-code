@@ -1,14 +1,3 @@
-/**
- * `app/kosongConfig` visualModelOverlay tests — the `[visual_model]`
- * derived-entry synthesis (visual-model mirror of `secondaryModelOverlay`):
- *
- *  - a recipe with patch fields synthesizes `VISUAL_DERIVED_MODEL_ID`
- *    (base copy, patch merged into `overrides` with patch winning conflicts,
- *    `aliases` dropped); a pointer-only recipe, a missing pointer, and a
- *    dangling pointer synthesize nothing;
- *  - `strip` keeps the synthesized entry out of `config.toml` and rolls
- *    back a `defaultModel` pointer at the derived id.
- */
 
 import { describe, expect, it } from 'vitest';
 
@@ -87,8 +76,6 @@ describe('visualModelOverlay.apply', () => {
   });
 
   it('does not collide with the secondary-model derived entry', () => {
-    // The visual and secondary overlays use distinct reserved ids
-    // (__visual__ vs __secondary__), so both can be configured at once.
     const SECONDARY_DERIVED_MODEL_ID = '__secondary__';
     const effective: Record<string, unknown> = {
       [MODELS_SECTION]: {

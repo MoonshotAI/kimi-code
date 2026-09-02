@@ -17,12 +17,10 @@ import { drivesThinkingThroughTraits } from './thinking';
 
 function getActiveProviderApiKey(provider: ProviderConfig | undefined): string | undefined {
   if (!provider) return undefined;
-  // 1. Named keys with active selection
   if (provider.apiKeys && provider.activeApiKeyId) {
     const active = provider.apiKeys[provider.activeApiKeyId];
     if (active) return active.key;
   }
-  // 2. Legacy single key
   return provider.apiKey;
 }
 

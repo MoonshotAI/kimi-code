@@ -278,6 +278,11 @@ export interface CompactionThresholdOverrideEvent {
   ratio?: number;
 }
 
+export interface CompactionTokenBudgetOverrideEvent {
+  action: 'set' | 'clear';
+  tokens?: number;
+}
+
 export interface QuestionDismissedEvent {
   trace_id?: string;
 }
@@ -880,6 +885,14 @@ export const telemetryEventDefinitions = {
     properties: {
       action: 'Whether the override was set or cleared',
       ratio: 'The new trigger ratio; absent when clearing',
+    },
+  }),
+  compaction_token_budget_override: defineAgentTelemetryEvent<CompactionTokenBudgetOverrideEvent>({
+    owner: 'kimi-code',
+    comment: 'The session-scoped auto-compaction token-budget override is set or cleared.',
+    properties: {
+      action: 'Whether the override was set or cleared',
+      tokens: 'The new absolute token budget (raw tokens, not thousands); absent when clearing',
     },
   }),
   question_dismissed: defineAgentTelemetryEvent<QuestionDismissedEvent>({

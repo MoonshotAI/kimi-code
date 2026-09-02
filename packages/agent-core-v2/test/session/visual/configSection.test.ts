@@ -1,11 +1,3 @@
-/**
- * `session/visual` resolver tests — covers `resolveVisualModel` and
- * `resolveVisualBinding`, including the unset-fallback path.
- *
- * Mirrors the shape of the subagent resolver tests but uses the visual-model
- * flag + section. The StubConfigService + stubFlag helpers mirror the
- * secondary-model warning tests.
- */
 
 import { describe, expect, it } from 'vitest';
 
@@ -93,13 +85,10 @@ describe('resolveVisualBinding', () => {
     const binding = resolveVisualBinding(config, flags, own);
     expect(binding.model).toBe(VISUAL_DERIVED_MODEL_ID);
     expect(binding.thinking).toBe('low');
-    // displayModel resolves the derived id back to the recipe's base alias
     expect(binding.displayModel).toBe('kimi/vision');
   });
 
   it('binds the legacy default_model pointer when model is unset', () => {
-    // An older TUI wrote default_model; the resolver honors it as a fallback
-    // so those configs start working instead of staying dead.
     const { config, flags } = makeServices({
       [VISUAL_MODEL_SECTION]: { defaultModel: 'kimi/vision' },
     });

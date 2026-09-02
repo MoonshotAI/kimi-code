@@ -1,13 +1,3 @@
-/**
- * Scenario: `compaction.started` must surface the model the compaction will use.
- * The started indicator shows the intended model (resolved before the
- * `full_compaction.begin` record is logged), so the TUI can render
- * "Compacting context using <model>...". The dedicated `[compaction_model]` model
- * is carried when configured; otherwise the active conversation model is.
- * The payload fields are snake_case (`model`, `model_display`) so they survive
- * the klient/protocol event validation on the way to the TUI.
- * Run: pnpm -C packages/agent-core-v2 exec vitest run test/agent/fullCompaction/compactionStartedModel.test.ts
- */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentProfileService } from '#/index';
@@ -108,8 +98,6 @@ describe('FullCompaction started model', () => {
   });
 
   it('honors the legacy default_model pointer written by an older TUI', async () => {
-    // The buggy TUI persisted `default_model` instead of `model`; the resolver
-    // treats it as a fallback pointer so those configs become live.
     vi.stubEnv(COMPACTION_MODEL_FLAG_ENV, 'true');
     const ctx = makeAgent({ compactionModel: { defaultModel: 'kimi/compaction' } });
     await runCompaction(ctx);
@@ -121,8 +109,6 @@ describe('FullCompaction started model', () => {
 
   it('cascades to the secondary squeeze model when the primary is unresolvable', async () => {
     vi.stubEnv(COMPACTION_MODEL_FLAG_ENV, 'true');
-    // Primary points at a catalog entry that does not exist; the secondary
-    // resolves — the started indicator and the round use the secondary.
     const ctx = makeAgent({ compactionModel: { model: 'kimi/ghost', secondaryModel: 'kimi/backup' } });
     await runCompaction(ctx);
 

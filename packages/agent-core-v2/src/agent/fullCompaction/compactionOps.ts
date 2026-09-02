@@ -61,9 +61,7 @@ export interface CompactionStartedPayload {
   readonly agentId: string;
   readonly trigger: CompactionSource;
   readonly instruction?: string;
-  /** Alias of the model the compaction will use (dedicated `[compaction_model]` model or the active model). */
   readonly model?: string;
-  /** User-facing model name; snake_case to match the protocol/klient contract so the field survives event validation. */
   readonly model_display?: string;
 }
 

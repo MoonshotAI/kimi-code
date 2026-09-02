@@ -31,6 +31,7 @@ import {
   handleAutoCommand,
   handleCompactCommand,
   handleCompactThresholdCommand,
+  handleCompactThresholdKCommand,
   handleEditorCommand,
   handleEffortCommand,
   handleModelCommand,
@@ -94,6 +95,7 @@ export {
   handleAutoCommand,
   handleCompactCommand,
   handleCompactThresholdCommand,
+  handleCompactThresholdKCommand,
   handleEditorCommand,
   handleEffortCommand,
   handleModelCommand,
@@ -622,6 +624,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'compact-threshold':
       await handleCompactThresholdCommand(host, args);
+      return;
+    case 'compact-threshold-k':
+      await handleCompactThresholdKCommand(host, args);
       return;
     case 'goal':
       await handleGoalCommand(host, args);

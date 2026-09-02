@@ -9,11 +9,11 @@ import { fetchOpenAIProviderModels } from '../src/openai-compatible';
 // ---------------------------------------------------------------------------
 
 const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
-const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY ?? '';
+const OPENROUTER_KEY = process.env['OPENROUTER_API_KEY'] ?? '';
 const OPENCODE_BASE = 'https://opencode.ai/zen/v1';
-const OPENCODE_KEY = process.env.OPENCODE_API_KEY ?? '';
+const OPENCODE_KEY = process.env['OPENCODE_API_KEY'] ?? '';
 const KILO_BASE = 'https://api.kilo.ai/api/gateway';
-const KILO_KEY = process.env.KILO_API_KEY ?? '';
+const KILO_KEY = process.env['KILO_API_KEY'] ?? '';
 
 const NETWORK_TIMEOUT = 30_000;
 
@@ -248,7 +248,7 @@ describe.skipIf(!hasOpenRouterKey && !hasOpenCodeKey && !hasKiloKey)('free_model
           providers: {
             openrouter: { type: 'openai', baseUrl: OPENROUTER_BASE, apiKey: OPENROUTER_KEY, free_models_only: true },
             kilo: { type: 'openai', baseUrl: KILO_BASE, apiKey: KILO_KEY, free_models_only: true },
-            'opencode-go': { type: 'openai', baseUrl: 'https://opencode.ai/zen/go/v1', apiKey: process.env.OPENCODE_GO_API_KEY ?? '' },
+            'opencode-go': { type: 'openai', baseUrl: 'https://opencode.ai/zen/go/v1', apiKey: process.env['OPENCODE_GO_API_KEY'] ?? '' },
           },
           models: {
             'openrouter/old-paid': { provider: 'openrouter', model: 'old-paid', maxContextSize: 100000 },

@@ -1,9 +1,3 @@
-/**
- * `session/fallback` resolver tests — covers `resolveFallbackModel`,
- * `resolveFallbackSecondaryModel`, and `resolveFallbackBinding` for the
- * per-provider fallback model cascade. Mirrors the `session/compaction`
- * resolver tests. Uses the StubConfigService + stubFlag helpers.
- */
 
 import { describe, expect, it } from 'vitest';
 
