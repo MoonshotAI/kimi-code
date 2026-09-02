@@ -711,6 +711,9 @@ export class Agent {
       // `cron` is null for subagents, which never schedule; report an empty
       // list rather than failing the RPC so callers can poll uniformly.
       getCronTasks: () => ({ tasks: this.cron?.listTaskSnapshots() ?? [] }),
+      deleteCronTask: (payload) => ({
+        deleted: this.cron?.removeTasks([payload.taskId]).length === 1,
+      }),
       getBackgroundOutput: (payload) => this.background.readOutput(payload.taskId, payload.tail),
       getContext: () => this.context.data(),
       getConfig: () => this.config.data(),

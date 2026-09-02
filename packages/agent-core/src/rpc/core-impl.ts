@@ -106,6 +106,8 @@ import type {
   CoreInfo,
   CreateGoalPayload,
   CreateSessionPayload,
+  DeleteCronTaskPayload,
+  DeleteCronTaskResult,
   DeleteSessionPayload,
   DetachBackgroundPayload,
   ClientTelemetryInfo,
@@ -1764,6 +1766,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     ...payload
   }: SessionAgentPayload<EmptyPayload>): Promise<GetCronTasksResult> {
     return Promise.resolve(this.sessionApi(sessionId).getCronTasks(payload));
+  }
+
+  deleteCronTask({
+    sessionId,
+    ...payload
+  }: SessionAgentPayload<DeleteCronTaskPayload>): Promise<DeleteCronTaskResult> {
+    return Promise.resolve(this.sessionApi(sessionId).deleteCronTask(payload));
   }
 
   async installPlugin(payload: InstallPluginPayload): Promise<PluginSummary> {

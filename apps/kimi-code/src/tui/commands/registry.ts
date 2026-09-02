@@ -266,6 +266,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'cron',
+    aliases: [],
+    description: 'List and cancel scheduled cron tasks',
+    priority: 80,
+    availability: 'always',
+  },
+  {
     name: 'mcp',
     aliases: [],
     description: 'Show MCP server status',

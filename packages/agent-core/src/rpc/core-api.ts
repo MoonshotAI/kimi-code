@@ -602,6 +602,15 @@ export interface GetCronTasksResult {
   readonly tasks: readonly CronTaskSnapshot[];
 }
 
+export interface DeleteCronTaskPayload {
+  readonly taskId: string;
+}
+
+export interface DeleteCronTaskResult {
+  /** True when the task existed and was removed. */
+  readonly deleted: boolean;
+}
+
 export interface AgentAPI {
   prompt: (payload: PromptPayload) => void;
   runShellCommand: (payload: RunShellCommandPayload) => Promise<ShellCommandResult>;
@@ -637,6 +646,7 @@ export interface AgentAPI {
   resumeGoal: (payload: EmptyPayload) => GoalSnapshot;
   cancelGoal: (payload: EmptyPayload) => GoalSnapshot;
   getCronTasks: (payload: EmptyPayload) => GetCronTasksResult;
+  deleteCronTask: (payload: DeleteCronTaskPayload) => DeleteCronTaskResult;
   getBackgroundOutput: (payload: GetBackgroundOutputPayload) => string;
   getContext: (payload: EmptyPayload) => AgentContextData;
   getConfig: (payload: EmptyPayload) => AgentConfigData;

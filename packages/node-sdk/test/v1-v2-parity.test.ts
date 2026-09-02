@@ -3210,6 +3210,18 @@ describe('v1↔v2 goal parity', () => {
       await expect(pair.v2.getCronTasks({ sessionId: 'session_missing' })).rejects.toMatchObject({
         code: ErrorCodes.SESSION_NOT_FOUND,
       });
+      const [v1Delete, v2Delete] = await Promise.all([
+        pair.v1.deleteCronTask({ sessionId: 'session_parity_cron', taskId: '01JMISSING0000000000000000' }),
+        pair.v2.deleteCronTask({ sessionId: 'session_parity_cron', taskId: '01JMISSING0000000000000000' }),
+      ]);
+      expect(v2Delete).toEqual(v1Delete);
+      expect(v1Delete).toEqual({ deleted: false });
+      await expect(
+        pair.v1.deleteCronTask({ sessionId: 'session_missing', taskId: '01JMISSING0000000000000000' }),
+      ).rejects.toMatchObject({ code: ErrorCodes.SESSION_NOT_FOUND });
+      await expect(
+        pair.v2.deleteCronTask({ sessionId: 'session_missing', taskId: '01JMISSING0000000000000000' }),
+      ).rejects.toMatchObject({ code: ErrorCodes.SESSION_NOT_FOUND });
     } finally {
       await closeSessionPair(pair);
       restoreEnv();

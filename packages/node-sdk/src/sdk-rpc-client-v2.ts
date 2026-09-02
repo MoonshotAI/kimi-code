@@ -283,6 +283,7 @@ import type {
   ConfigDiagnostics,
   CreateGoalInput,
   CreateSessionOptions,
+  DeleteCronTaskResult,
   ExportSessionInput,
   ExportSessionResult,
   FileMeta,
@@ -2222,12 +2223,27 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       tasks: cron.list().map((task) => ({
         id: task.id,
         cron: task.cron,
+        prompt: task.prompt,
         recurring: task.recurring !== false,
         createdAt: task.createdAt,
         lastFiredAt: task.lastFiredAt,
         nextFireAt: cron.getNextFireForTask(task.id),
       })),
     };
+  }
+
+  /**
+   * Same main-agent mirroring as `getCronTasks`: a non-main
+   * `interactiveAgentId` owns no cron tasks, so it reports `deleted: false`
+   * rather than failing the RPC.
+   */
+  override async deleteCronTask(
+    input: SessionIdRpcInput & { taskId: string },
+  ): Promise<DeleteCronTaskResult> {
+    await this.agentScope(input.sessionId);
+    if (this.interactiveAgentId !== MAIN_AGENT_ID) return { deleted: false };
+    const cron = this.requireLiveSession(input.sessionId).accessor.get(ISessionCronService);
+    return { deleted: cron.removeTasks([input.taskId]).length === 1 };
   }
 
   /**
