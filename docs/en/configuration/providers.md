@@ -32,13 +32,109 @@ The manager displays providers as a list of entries grouped by source. Navigatio
 Two paths when adding:
 
 - **Known third-party provider**: fetches the model catalog from [models.dev](https://models.dev/), select a provider → enter an API key → select a default model. Vendors whose protocol the catalog does not declare (e.g. xai, openrouter, and other vendor-specific SDKs) are imported as OpenAI-compatible with a "guessed" note; when the catalog provides no usable endpoint, a base URL prompt appears first; proprietary protocols (Amazon Bedrock, Cohere) and unrecognized explicit protocols are refused. Deprecated and alpha-status models are excluded from the import list. If the public catalog is unreachable, the CLI falls back to a built-in snapshot of the catalog, so the import still works offline or in blocked networks
-- **Custom registry (api.json)**: paste a custom registry URL and Bearer token; the CLI automatically creates the `providers` / `models` entries. On later startup, providers from the same registry URL are refreshed together, so upstream provider additions, removals, and model metadata changes are synced.
+- **[Custom registry (`api.json`)](#custom-registry-format)**: paste a custom registry URL and Bearer token; the CLI automatically creates the `providers` / `models` entries. On later startup, providers from the same registry URL are refreshed together, so upstream provider additions, removals, and model metadata changes are synced.
 
 ::: warning
 Kimi Code OAuth managed accounts logged in via `/login` do not appear in `/provider`. Use `/login` and `/logout` to manage them.
 :::
 
 The same operations are also available in non-interactive environments via the shell command: [`kimi provider`](../reference/kimi-command.md#kimi-provider).
+
+## Custom registry format
+
+A custom registry is a hosted JSON catalog that describes one or more providers and their models. Serve the file from an HTTPS URL, then import it through `/provider` or `kimi provider add`.
+
+### Minimal example
+
+The smallest useful registry defines one provider and one model:
+
+```json
+{
+  "example": {
+    "id": "example",
+    "name": "Example provider",
+    "api": "https://api.example.com/v1",
+    "type": "openai",
+    "models": {
+      "example-model": {
+        "id": "example-model"
+      }
+    }
+  }
+}
+```
+
+After publishing that file, import it with a neutral placeholder API key:
+
+```sh
+kimi provider add https://registry.example.com/api.json --api-key YOUR_API_KEY
+```
+
+The key is sent to the registry as `Authorization: Bearer YOUR_API_KEY` and is also saved as the API key for every provider imported from the file. The top-level `example` key identifies the registry record, while the nested `id` becomes the provider ID. Likewise, the model object key creates the model alias `example/example-model` (the model name users select or reference in Kimi Code), and the nested model `id` is sent to the upstream API.
+
+### Provider fields
+
+Each top-level value is a provider object. Missing or invalid required fields, or an unsupported `type`, cause that provider entry to be skipped; invalid optional fields are ignored.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | Yes | Non-empty, stable provider ID used in generated configuration and model aliases |
+| `name` | `string` | Yes | Non-empty display name |
+| `api` | `string` | Yes | Non-empty base URL used for model requests |
+| `type` | `string` | Yes | API protocol; must be one of the four values below |
+| `models` | `object` | Yes | Object keyed by the alias suffix for each model |
+| `env` | `string[]` | No | Compatibility metadata listing credential environment-variable names; the importer accepts it but uses the supplied Bearer token for credentials |
+
+Custom registries support these four provider types. The `google-genai` and `vertexai` types available in `config.toml` are not accepted in `api.json`.
+
+| `type` | Protocol |
+| --- | --- |
+| `kimi` | Kimi's OpenAI-compatible protocol |
+| `anthropic` | Anthropic Messages |
+| `openai` | OpenAI Chat Completions |
+| `openai_responses` | OpenAI Responses API |
+
+### Model fields
+
+Each value under `models` is a model object. A model entry without a non-empty string `id` is skipped without rejecting the rest of its provider.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | Yes | Model ID sent to the provider API |
+| `name` | `string` | No | Display name; defaults to `id` |
+| `limit` | `object` | No | Positive numeric `context` and `output` limits. `context` becomes `max_context_size`; when it is absent, `output` is used as the fallback. If neither is valid, the default is `131072`. `output` does not currently create `max_output_size` |
+| `tool_call` | `boolean` | No | Whether the model supports tool calls |
+| `reasoning` | `boolean` | No | Whether the model supports Thinking |
+| `modalities` | `object` | No | String arrays under `input` and `output` that describe supported media |
+| `support_efforts` | `string[]` | No | Available Thinking effort names, such as `low`, `medium`, and `high` |
+| `default_effort` | `string` | No | Non-empty default Thinking effort; normally one of `support_efforts` |
+
+### Capability mapping
+
+Capability metadata is translated into the generated model alias as follows:
+
+| Registry value | Generated model metadata |
+| --- | --- |
+| `limit.context: 200000` | `max_context_size = 200000` |
+| `tool_call: true` | `tool_use` capability |
+| `reasoning: true` | `thinking` capability |
+| `modalities.input` contains `image` / `video` | `image_in` / `video_in` capability |
+| `modalities.output` contains `image` / `audio` | `image_out` / `audio_out` capability |
+| Non-empty `support_efforts` | `thinking` capability plus the listed effort levels |
+| `default_effort: "medium"` | Default effort `medium` |
+
+When any of `tool_call`, `reasoning`, `modalities`, or `support_efforts` is present, the importer derives the complete capability list from those fields. Include `tool_call: true` alongside the other hints when the model supports tools. If all four fields are omitted, the importer falls back to `tool_use`; `default_effort` by itself does not enable Thinking.
+
+### Refresh behavior
+
+Every imported provider stores the registry source. On a normal startup refresh, Kimi Code groups providers by the exact source URL; the URL remains the registry identity even if its API key changes. After a successful fetch, Kimi Code:
+
+- adds provider and model entries newly published at that URL
+- removes providers no longer present and every alias that references them; removes generated aliases for deleted models; clears default provider or model selections when their target disappears
+- updates provider protocol, base URL, credential, model ID, display name, context size, capabilities, and effort metadata
+- preserves unrelated providers, hand-created aliases outside the generated `<providerId>/...` namespace for providers that remain, and extra model fields that the registry does not own
+
+If the registry fetch fails, the existing provider configuration is left unchanged and the refresh reports the failure.
 
 ## `kimi`
 
