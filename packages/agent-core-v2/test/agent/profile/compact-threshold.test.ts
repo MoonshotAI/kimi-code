@@ -347,3 +347,102 @@ describe('AgentProfileService.setCompactionTokenBudget', () => {
     expect(svc.getCompactionTriggerRatioOverride()).toBe(0.5);
   });
 });
+
+describe('AgentProfileService.setCompactionTokenBudget telemetry (U11)', () => {
+  let track2Calls: Array<[string, Record<string, unknown>]>;
+
+  function buildHostWithTelemetrySpy(key: string): IAgentProfileService {
+    const host = disposables.add(new TestInstantiationService());
+    host.stub(IFileSystemStorageService, new InMemoryStorageService());
+    host.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    track2Calls = [];
+    host.stub(ITelemetryService, {
+      _serviceBrand: undefined,
+      track: () => undefined,
+      track2: (event: string, payload: Record<string, unknown>) => {
+        track2Calls.push([event, payload]);
+      },
+    } as unknown as ITelemetryService);
+    host.stub(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
+    host.stub(IAgentTelemetryContextService, new AgentTelemetryContextService());
+    host.stub(IConfigService, createConfigStub());
+    host.stub(IModelCatalog, createModelCatalogStub(createTestModel()));
+    host.stub(IProtocolAdapterRegistry, createProtocolRegistryStub());
+    host.stub(IHostEnvironment, stubUnused());
+    host.stub(IHostFileSystem, stubUnused());
+    host.stub(IBootstrapService, stubUnused());
+    host.stub(ISessionContext, createSessionContextStub());
+    host.stub(ISessionWorkspaceContext, stubUnused());
+    host.stub(ISessionAgentProfileCatalog, {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      get: () => undefined,
+      getDefault: () => {
+        throw new Error('catalog resolution is not exercised');
+      },
+      list: () => [],
+      load: async () => {},
+      reload: async () => {},
+      onDidChange: () => ({ dispose: () => {} }),
+    });
+    host.stub(ISessionSkillCatalog, {
+      _serviceBrand: undefined,
+      onDidChange: () => ({ dispose: () => {} }),
+    });
+    host.stub(ISessionInstructionsProvider, {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      agentsMd: undefined,
+      agentsMdWarning: undefined,
+      agentsMdPaths: undefined,
+      onDidChange: Event.None as Event<never>,
+    } satisfies ISessionInstructionsProvider);
+    host.stub(IAgentAgentsMdReminderService, {
+      _serviceBrand: undefined,
+      seedInjected: () => {},
+    });
+    host.stub(ISessionToolPolicy, {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      onDidChange: () => ({ dispose: () => {} }),
+      disabledTools: () => [],
+      setDisabledTools: () => Promise.resolve(),
+    });
+    host.set(IAgentStateService, new AgentStateService());
+    host.set(IAgentProfileService, new SyncDescriptor(AgentProfileService));
+    registerTestAgentWire(host, testWireScope(SCOPE, key), {
+      log: host.get(IAppendLogStore),
+    });
+    registerTestEventDispatcher(host);
+    return host.get(IAgentProfileService);
+  }
+
+  it('fires compaction_token_budget_override with action: set on store', () => {
+    const spySvc = buildHostWithTelemetrySpy(KEY);
+    spySvc.setCompactionTokenBudget(120);
+    const matching = track2Calls.filter(([event]) => event === 'compaction_token_budget_override');
+    expect(matching.length).toBeGreaterThan(0);
+    const [event, payload] = matching[matching.length - 1];
+    expect(event).toBe('compaction_token_budget_override');
+    expect(payload.action).toBe('set');
+    expect(payload.tokens).toBe(120_000);
+  });
+
+  it('fires compaction_token_budget_override with action: clear on undefined', () => {
+    const spySvc = buildHostWithTelemetrySpy(KEY);
+    spySvc.setCompactionTokenBudget(120);
+    spySvc.setCompactionTokenBudget(undefined);
+    const matching = track2Calls.filter(([event]) => event === 'compaction_token_budget_override');
+    expect(matching.length).toBeGreaterThanOrEqual(2);
+    const [event, payload] = matching[matching.length - 1];
+    expect(event).toBe('compaction_token_budget_override');
+    expect(payload.action).toBe('clear');
+  });
+
+  it('does not fire compaction_token_budget_override on validation reject', () => {
+    const spySvc = buildHostWithTelemetrySpy(KEY);
+    expect(() => spySvc.setCompactionTokenBudget(0)).toThrow(ProfileError);
+    const matching = track2Calls.filter(([event]) => event === 'compaction_token_budget_override');
+    expect(matching.length).toBe(0);
+  });
+});

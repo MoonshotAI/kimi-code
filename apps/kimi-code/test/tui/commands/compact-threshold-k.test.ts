@@ -26,6 +26,40 @@ function makeHost(options: { hasSession?: boolean; status?: SessionStatusLike } 
       ...options.status,
     } as SessionStatusLike)),
   };
+  let lastBudgetThousands: number | undefined;
+  session.setCompactionTokenBudget.mockImplementation(async (tokens?: number) => {
+    lastBudgetThousands = tokens;
+  });
+  session.getStatus.mockImplementation(async () => {
+    if (lastBudgetThousands !== undefined) {
+      return {
+        model: 'kimi-model',
+        thinkingEffort: 'high',
+        permission: 'auto',
+        planMode: false,
+        swarmMode: false,
+        towerMode: false,
+        contextTokens: 0,
+        maxContextTokens: 1000,
+        contextUsage: 0,
+        compactionTokenBudget: lastBudgetThousands * 1_000,
+        compactionTokenBudgetOverridden: true,
+        ...options.status,
+      } as SessionStatusLike;
+    }
+    return {
+      model: 'kimi-model',
+      thinkingEffort: 'high',
+      permission: 'auto',
+      planMode: false,
+      swarmMode: false,
+      towerMode: false,
+      contextTokens: 0,
+      maxContextTokens: 1000,
+      contextUsage: 0,
+      ...options.status,
+    } as SessionStatusLike;
+  });
   const hasSession = options.hasSession ?? true;
   const host = {
     state: { appState: {} },
@@ -148,5 +182,58 @@ describe('handleCompactThresholdKCommand', () => {
     await handleCompactThresholdKCommand(host, '120');
 
     expect(host.showError).toHaveBeenCalledTimes(1);
+  });
+
+  it('survives a model switch without re-issuing the override (A2)', async () => {
+    const { host, session } = makeHost();
+
+    await handleCompactThresholdKCommand(host, '120');
+    expect(session.setCompactionTokenBudget).toHaveBeenCalledTimes(1);
+    expect(session.setCompactionTokenBudget).toHaveBeenCalledWith(120);
+
+    await handleCompactThresholdKCommand(host, '');
+    expect(host.showNotice).toHaveBeenLastCalledWith(
+      'Auto-compact token budget: 120000',
+      expect.stringContaining('session override'),
+    );
+    expect(session.setCompactionTokenBudget).toHaveBeenCalledTimes(1);
+  });
+
+  it('never persists the override to harness.setConfig (A9)', async () => {
+    const { host } = makeHost();
+
+    await handleCompactThresholdKCommand(host, '120');
+    await handleCompactThresholdKCommand(host, 'off');
+    await handleCompactThresholdKCommand(host, '');
+
+    expect(host.setAppState).not.toHaveBeenCalled();
+    expect(host.showError).not.toHaveBeenCalled();
+  });
+
+  it('renders the override flag in the no-arg notice when status flags it (A13)', async () => {
+    const { host } = makeHost({
+      status: { compactionTokenBudget: 200_000, compactionTokenBudgetOverridden: true },
+    });
+
+    await handleCompactThresholdKCommand(host, '');
+
+    const lastCall = (host.showNotice as ReturnType<typeof vi.fn>).mock.calls.at(-1);
+    expect(lastCall).toBeDefined();
+    const [title, detail] = lastCall as [string, string];
+    expect(title).toBe('Auto-compact token budget: 200000');
+    expect(detail).toContain('session override');
+  });
+
+  it('does not write the override into app state (A9 regression)', async () => {
+    const { host } = makeHost();
+
+    await handleCompactThresholdKCommand(host, '120');
+    await handleCompactThresholdKCommand(host, 'off');
+
+    for (const call of (host.setAppState as ReturnType<typeof vi.fn>).mock.calls) {
+      const [patch] = call as [Record<string, unknown>];
+      expect(patch).not.toHaveProperty('compactionTokenBudget');
+      expect(patch).not.toHaveProperty('compactionTokenBudgetOverridden');
+    }
   });
 });
