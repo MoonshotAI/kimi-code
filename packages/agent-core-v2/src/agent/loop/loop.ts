@@ -75,6 +75,7 @@ export type LoopRunResult =
       readonly type: 'completed';
       readonly steps: number;
       readonly truncated: boolean;
+      readonly stopReason?: string;
     }
   | {
       readonly type: 'failed';

@@ -246,7 +246,7 @@ function makeFakeHarness() {
       ITelemetryService,
       (() => {
         const svc = {
-          setAppender: vi.fn(),
+          addAppender: vi.fn(() => ({ dispose: vi.fn() })),
           setContext: vi.fn(),
           track: vi.fn(),
           track2: vi.fn(),

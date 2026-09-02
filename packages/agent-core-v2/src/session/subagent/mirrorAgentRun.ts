@@ -13,7 +13,7 @@ import { isAbortError } from '#/_base/utils/abort';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
-import { type AgentRunHandle, ISessionSubagentService } from './subagent';
+import { type AgentRunCompletion, type AgentRunHandle, ISessionSubagentService } from './subagent';
 import type { SubagentModelSource } from './configSection';
 
 export interface SubagentSpawnedPayload {
@@ -136,7 +136,7 @@ export async function mirrorAgentRun(
   requester: IAgentScopeHandle,
   run: AgentRunHandle,
   options: MirrorAgentRunOptions,
-): Promise<{ summary: string; usage?: TokenUsage }> {
+): Promise<AgentRunCompletion> {
   const dispatcher = requester.accessor.get(IEventDispatcher);
   const subagents = requester.accessor.get(ISessionSubagentService);
   const agentLifecycle = requester.accessor.get(IAgentLifecycleService);

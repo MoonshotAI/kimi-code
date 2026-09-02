@@ -55,8 +55,8 @@ Kimi Code CLI 有三个地方可以影响运行参数：配置文件、命令行
 | --- | --- |
 | `-S, --session [id]` | 恢复指定会话；不带 id 时进入交互式选择 |
 | `-c, --continue` | 续上当前目录的上一次会话 |
-| `-y, --yolo` | 「必要时询问」模式：常规修改和命令自动完成，Agent 仍可能提问 |
-| `--auto` | 「完全自动」模式：完全不打断，Agent 不会向用户提问 |
+| `-y, --yolo` | "Ask When Needed" 模式：常规修改和命令自动完成，Agent 仍可能提问 |
+| `--auto` | "Never Ask" 模式：完全不打断，Agent 不会向用户提问 |
 | `--plan` | 以 Plan 模式启动 |
 | `-m, --model <model>` | 指定本次使用的模型别名 |
 | `-p, --prompt <prompt>` | 非交互模式：执行单条提示词后退出 |

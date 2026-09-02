@@ -45,12 +45,12 @@
 
 | 命令 | 别名 | 说明 | 随时可用 |
 | --- | --- | --- | --- |
-| `/ask-when-needed [on\|off]` | `/yolo`、`/yes` | 切换「必要时询问」模式。不带参数时翻转；显式传 `on`/`off` 时强制设置。开启后常规修改和命令自动完成；高危操作、提问和计划仍会问你 | 是 |
-| `/never-ask [on\|off]` | `/auto` | 切换「完全自动」模式。开启后完全不打断，所有操作和判断自动完成 | 是 |
+| `/ask-when-needed [on\|off]` | `/yolo`、`/yes` | 切换 "Ask When Needed" 模式。不带参数时翻转；显式传 `on`/`off` 时强制设置。开启后常规修改和命令自动完成；高危操作、提问和计划仍会问你 | 是 |
+| `/never-ask [on\|off]` | `/auto` | 切换 "Never Ask" 模式。开启后完全不打断，所有操作和判断自动完成 | 是 |
 | `/plan [on\|off]` | — | 切换 Plan 模式。不带参数时翻转；显式传 `on`/`off` 时强制设置。单纯切换不会创建空计划文件 | 是 |
 | `/plan clear` | — | 清除当前 plan 方案 | 否 |
 | `/swarm on\|off` | — | 开启或关闭 swarm mode，但不发送提示词。 | 是 |
-| `/swarm <task>` | — | 先开启 swarm mode，再把 `<task>` 作为普通提示词发送。如果该轮次正常完成，swarm mode 会自动关闭。若当前是 `manual` 权限模式，启动前会提示是否切换到「必要时询问」或「完全自动」模式。 | 否 |
+| `/swarm <task>` | — | 先开启 swarm mode，再把 `<task>` 作为普通提示词发送。如果该轮次正常完成，swarm mode 会自动关闭。若当前是 `manual` 权限模式，启动前会提示是否切换到 "Ask When Needed" 或 "Never Ask" 模式。 | 否 |
 | `/goal [...]` | — | 开始或管理目标模式 | 见下文 |
 
 ::: warning 注意
