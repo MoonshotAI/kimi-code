@@ -22,6 +22,7 @@ import {
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import {
   ToolAccesses,
   type ExecutableToolContext,
@@ -49,6 +50,7 @@ import {
   labelsFromAgentMeta,
   subagentLabels,
   subagentParentAgentId,
+  subagentProfileName,
 } from '#/session/agentLifecycle/subagentMetadata';
 import { type AgentMeta, ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
@@ -114,6 +116,7 @@ export class SubagentTool implements ISubagentTool {
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
+    @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
     @ISessionMetadata private readonly sessionMetadata: ISessionMetadata,
     @ILogService private readonly log: ILogService,
     @IConfigService private readonly config: IConfigService,
@@ -237,7 +240,7 @@ export class SubagentTool implements ISubagentTool {
 
     const profileNameForDisplay =
       resumeAgentId !== undefined && resumeAgentId.length > 0
-        ? this.resumeProfileName(resumeAgentId) ?? RESUMED_LABEL
+        ? (await this.resumeProfileName(resumeAgentId)) ?? RESUMED_LABEL
         : (requestedProfileName ??
             (args.fork === true
               ? (this.profile.data().profileName ?? DEFAULT_PROFILE_NAME)
@@ -258,10 +261,10 @@ export class SubagentTool implements ISubagentTool {
     };
   }
 
-  private resumeProfileName(agentId: string): string | undefined {
+  private async resumeProfileName(agentId: string): Promise<string | undefined> {
     const target = this.agentLifecycle.handleOf(agentId);
-    if (target === undefined) return undefined;
-    return target.accessor.get(IAgentProfileService).data().profileName;
+    if (target !== undefined) return target.accessor.get(IAgentProfileService).data().profileName;
+    return subagentProfileName((await this.sessionMetadata.read()).agents?.[agentId]);
   }
 
   private async launch(
@@ -302,7 +305,7 @@ export class SubagentTool implements ISubagentTool {
       const spawned = await this.subagents.spawn({
         callerAgentId: this.callerAgentId,
         plan,
-        labels: subagentLabels(this.callerAgentId),
+        labels: subagentLabels(this.callerAgentId, { profileName: plan.profileName }),
         prompt: args.prompt,
       });
       agentId = spawned.agentId;
@@ -388,6 +391,7 @@ export class SubagentTool implements ISubagentTool {
         details: { agentId },
       });
     }
+    rebuilt.accessor.get(IAgentPermissionModeService).setMode(this.permissionMode.mode);
     this.log.info('subagent rebuilt for resume', { agentId, callerAgentId: this.callerAgentId });
     return rebuilt;
   }

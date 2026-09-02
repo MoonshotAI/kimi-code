@@ -1000,7 +1000,7 @@ describe('SessionSwarmService metadata compatibility', () => {
     expect(spawnAgent).toHaveBeenCalledWith({
       callerAgentId: 'main',
       plan: { profileName: 'coder', model: 'kimi-test', thinking: 'medium', fork: false },
-      labels: { parentAgentId: 'main', swarmItem: 'src/a.ts' },
+      labels: { parentAgentId: 'main', swarmItem: 'src/a.ts', profileName: 'coder' },
       prompt: 'Review the file',
     });
   });

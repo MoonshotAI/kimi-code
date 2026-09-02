@@ -1602,6 +1602,69 @@ describe('Agent tool execution contract', () => {
     expect(lifecycle.list).toHaveBeenCalled();
   });
 
+  it('records the spawned profile in the subagent labels', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: async () => ({ summary: 'child result' }),
+    });
+    const context = createAgentToolContext(lifecycle);
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      subagent_type: 'explore',
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(lifecycle.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        labels: { parentAgentId: 'main', profileName: 'explore' },
+      }),
+    );
+  });
+
+  it('uses the persisted profile of an offline subagent for display and approval rules', async () => {
+    const lifecycle = createAgentLifecycleStub();
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(
+        ISessionMetadata,
+        sessionMetadataStub({
+          'agent-existing': { labels: { parentAgentId: 'main', profileName: 'explore' } },
+        }),
+      ),
+    );
+
+    const execution = await agentTool(context).resolveExecution({
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+    });
+
+    if (execution.isError === true) throw new Error('expected runnable execution');
+    expect(execution.description).toBe('Launching explore agent: Continue work');
+    expect(execution.matchesRule?.('explore')).toBe(true);
+    expect(execution.matchesRule?.('coder')).toBe(false);
+    expect(lifecycle.create).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the generic label when an offline subagent has no persisted profile', async () => {
+    const lifecycle = createAgentLifecycleStub();
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(ISessionMetadata, sessionMetadataStub({ 'agent-existing': subagentMeta() })),
+    );
+
+    const execution = await agentTool(context).resolveExecution({
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+    });
+
+    if (execution.isError === true) throw new Error('expected runnable execution');
+    expect(execution.description).toBe('Launching subagent agent: Continue work');
+  });
+
   it('labels fork launches with the caller profile for display and approval rules', async () => {
     const lifecycle = createAgentLifecycleStub();
     const context = createAgentToolContext(lifecycle, forkFlags());
@@ -2406,6 +2469,42 @@ describe('Agent tool execution contract', () => {
     });
     expect(lifecycle.create).not.toHaveBeenCalled();
     expect(lifecycle.run).not.toHaveBeenCalled();
+  });
+
+  it('syncs a rebuilt subagent to the caller permission mode before resuming it', async () => {
+    const setMode = vi.fn();
+    const lifecycle = createAgentLifecycleStub({
+      runCompletion: async () => ({ summary: 'resumed after restart' }),
+      handleServices: new Map<string, ReadonlyMap<unknown, unknown>>([
+        [
+          'agent-existing',
+          new Map<unknown, unknown>([
+            [
+              IAgentPermissionModeService,
+              { _serviceBrand: undefined, mode: 'yolo', setMode, onDidChangeMode: Event.None },
+            ],
+          ]),
+        ],
+      ]),
+    });
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(ISessionMetadata, sessionMetadataStub({ 'agent-existing': subagentMeta() })),
+    );
+    context.get(IAgentPermissionModeService).setMode('auto');
+    expect(context.get(IAgentPermissionModeService).mode).toBe('auto');
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(setMode).toHaveBeenCalledWith('auto');
+    expect(setMode.mock.invocationCallOrder[0]).toBeLessThan(
+      lifecycle.run.mock.invocationCallOrder[0]!,
+    );
   });
 
   it('rejects direct resume of a non-subagent', async () => {
