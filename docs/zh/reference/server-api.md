@@ -1,6 +1,6 @@
 # 服务 API
 
-`kimi web` 启动的本地服务暴露两组程序化接口：REST API（`/api/v1`，另有 `/api/v2/sessions` 与 `/api/v2/mcp`）和 WebSocket 事件流（`/api/v1/ws`）。本页是这两组接口的协议参考：基础约定、事件时序、全部端点与帧型、共享类型字典。启动服务及其命令行选项见 [kimi 命令](./kimi-command.md#kimi-web)；端到端的上手流程见 [用 API 驱动一个会话](../guides/web.md#用-api-驱动一个会话)。
+`kimi web` 启动的本地服务暴露两组程序化接口：REST API（`/api/v1`，另有 `/api/v2/sessions` 与 `/api/v2/mcp`）和 WebSocket 事件流（`/api/v1/ws`）。本页是这两组接口的协议参考：基础约定、事件时序、全部端点与帧型、共享类型字典。启动服务及其命令行选项见 [kimi 命令](./kimi-command.md#kimi-web)。
 
 每个端点精确的机器可读 schema 以服务的在线规范文档为准：`GET /openapi.json`（OpenAPI）与 `GET /asyncapi.json`（AsyncAPI），两者都由服务运行时实际执行的校验 schema 生成，也都需要鉴权。
 
@@ -3728,5 +3728,5 @@ agent 阶段（`agent.status.updated` 的 `phase` 字段）：按 `kind` 区分�
 
 ## 下一步
 
-- [在网页中使用](../guides/web.md) — 启动服务并在浏览器中使用 Kimi Code；含 [用 API 驱动一个会话](../guides/web.md#用-api-驱动一个会话) 的端到端上手
+- [在网页中使用](../guides/web.md) — 启动服务并在浏览器中使用 Kimi Code
 - [kimi 命令](./kimi-command.md#kimi-web) — `kimi web` 的全部命令行选项
