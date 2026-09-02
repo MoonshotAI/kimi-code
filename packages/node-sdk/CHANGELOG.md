@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.20.0
+
+### Minor Changes
+
+- [#3453](https://github.com/MoonshotAI/kimi-code/pull/3453) [`411572e`](https://github.com/MoonshotAI/kimi-code/commit/411572e166edee8581ba9c5a7f1bbf6c8b405606) Thanks [@Grapedge](https://github.com/Grapedge)! - Add `suggestFiles(workDir, { query, limit })` to `KimiHarness`: session-less fuzzy file suggestions from the agent-core-v2 workspace fs service, `undefined` on the v1 engine.
+
 ## 0.19.2
 
 ### Patch Changes
