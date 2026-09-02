@@ -124,6 +124,36 @@ describe('keyboard navigation', () => {
     expect(result.current.selectedIndex).toBe(maxIndex - 1);
   });
 
+  it('lets Enter fall through when there is no selectable entry', async () => {
+    getProjectFiles.mockResolvedValue([]);
+    const { result } = renderHook(() => useFilePicker(at('zzz'), noop, noop, noop), { wrapper: createWrapper() });
+    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+
+    let handled = true;
+    act(() => {
+      handled = result.current.handleFileMenuKey({ key: 'Enter', preventDefault: vi.fn() } as unknown as React.KeyboardEvent);
+    });
+    expect(handled).toBe(false);
+  });
+
+  it('clamps the selection when fresh results shrink the list', async () => {
+    getProjectFiles.mockResolvedValue([
+      { name: 'a.ts', path: 'a.ts', isDirectory: false },
+      { name: 'b.ts', path: 'b.ts', isDirectory: false },
+    ]);
+    const { result, rerender } = renderHook(({ token }) => useFilePicker(token, noop, noop, noop), {
+      initialProps: { token: at('a') as Token },
+      wrapper: createWrapper(),
+    });
+    await waitFor(() => { expect(result.current.fileItems).toHaveLength(2); });
+
+    getProjectFiles.mockResolvedValue([{ name: 'app.ts', path: 'app.ts', isDirectory: false }]);
+    rerender({ token: at('ap') });
+    act(() => { result.current.setSelectedIndex(1); });
+    await waitFor(() => { expect(result.current.fileItems).toHaveLength(1); });
+    expect(result.current.selectedIndex).toBe(0);
+  });
+
   it('calls onPickMedia when Enter selects the media option', async () => {
     const onPickMedia = vi.fn();
     const { result } = renderHook(() => useFilePicker(at(''), noop, onPickMedia, noop), { wrapper: createWrapper() });

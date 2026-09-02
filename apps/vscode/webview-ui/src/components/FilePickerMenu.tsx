@@ -59,6 +59,7 @@ export function FilePickerMenu({
   }, [selectedIndex]);
 
   const handleHover = (index: number) => {
+    if (isStale) return;
     hoverSelectionRef.current = index;
     onHover(index);
   };
