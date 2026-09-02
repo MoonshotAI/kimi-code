@@ -64,6 +64,7 @@ export class AgentAgentsMdReminderService
   declare readonly _serviceBrand: undefined;
 
   private readonly remindQueue = new Set<string>();
+  private readonly readRecently = new Set<string>();
   private readonly telemetryFired = new Set<string>();
 
   constructor(
@@ -149,8 +150,12 @@ export class AgentAgentsMdReminderService
   private injectReminder(
     context: ContextInjectionContext<readonly string[]>,
   ): ContextInjectionResult<readonly string[]> | undefined {
+    const readRecently = new Set(this.readRecently);
+    this.readRecently.clear();
     const known = this.known;
-    const queued = [...this.remindQueue].filter((path) => !known.has(path));
+    const queued = [...this.remindQueue].filter(
+      (path) => !known.has(path) && !readRecently.has(path),
+    );
     this.remindQueue.clear();
     if (queued.length === 0) return undefined;
     const covered = context.lastDisclosure ?? [];
@@ -189,7 +194,10 @@ export class AgentAgentsMdReminderService
           discovered.push(path);
         }
       }
-      for (const path of selfKnown) this.remindQueue.delete(path);
+      for (const path of selfKnown) {
+        this.remindQueue.delete(path);
+        this.readRecently.add(path);
+      }
       if (discovered.length === 0) return;
       const untracked = discovered.filter((path) => !this.telemetryFired.has(path));
       if (untracked.length > 0) {
@@ -216,7 +224,11 @@ export class AgentAgentsMdReminderService
   private markDeleted(paths: readonly string[]): void {
     if (paths.length === 0) return;
     const known = new Set(this.known);
-    for (const path of paths) known.delete(path);
+    for (const path of paths) {
+      known.delete(path);
+      this.remindQueue.delete(path);
+      this.telemetryFired.delete(path);
+    }
     this.states.set(agentsMdReminderKnownKey, known);
   }
 

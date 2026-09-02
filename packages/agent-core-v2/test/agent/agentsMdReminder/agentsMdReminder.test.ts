@@ -1022,6 +1022,42 @@ describe('agentsMdReminder probing boundaries', () => {
     expect(agentsMdMessages(h)).toHaveLength(0);
   });
 
+  it('suppresses a reminder when the direct read completes before the sibling access', async () => {
+    const h = createHarness();
+    const subDir = join(workDir, 'packages', 'kap-server');
+    const subAgentsMd = await writeAgentsMd(subDir);
+    h.reminder.seedInjected([], workDir);
+
+    await h.events.didExecuteSlot.run(
+      didCtx('Read', { path: subAgentsMd }, { id: 'call-read' }),
+    );
+    await h.events.didExecuteSlot.run(
+      didCtx('Read', { path: join(subDir, 'a.ts') }, { id: 'call-access' }),
+    );
+    await h.step();
+
+    expect(agentsMdMessages(h)).toHaveLength(0);
+
+    await fire(h, didCtx('Read', { path: join(subDir, 'b.ts') }));
+    expect(agentsMdMessages(h)).toHaveLength(1);
+    expect(reminderText(h)).toContain(subAgentsMd);
+  });
+
+  it('drops a queued reminder when the file is deleted before the step head', async () => {
+    const h = createHarness();
+    const subDir = join(workDir, 'packages', 'kap-server');
+    const subAgentsMd = await writeAgentsMd(subDir);
+    h.reminder.seedInjected([], workDir);
+
+    await h.events.didExecuteSlot.run(
+      didCtx('Read', { path: join(subDir, 'a.ts') }, { id: 'call-a' }),
+    );
+    h.instructionsChange.fire([{ path: subAgentsMd, action: 'deleted', kind: 'file' }]);
+    await h.step();
+
+    expect(agentsMdMessages(h)).toHaveLength(0);
+  });
+
   it('re-judges the project root at a nested repository', async () => {
     const h = createHarness();
     const nested = join(workDir, 'packages', 'nested');
