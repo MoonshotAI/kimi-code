@@ -175,11 +175,11 @@ HTTP 状态码例外（非 200）：
 
 列出当前连接到本服务的 WebSocket 客户端，按连接时间最早在前。
 
-**响应体**：`ResponseType<{ connections: T-Connection[] }>`
+**响应体**：`ResponseType<{ connections: `[T-Connection](#t-connection)`[] }>`
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `connections` | array | [T-Connection](#t-connection) 数组 |
+| `connections` | [T-Connection](#t-connection)`[]` | 当前在线的 WebSocket 连接 |
 
 **响应示例**：
 
@@ -293,11 +293,11 @@ HTTP 状态码例外（非 200）：
 
 列出所有供应商下已配置的模型别名。
 
-**响应体**：`ResponseType<{ items: T-ModelCatalogItem[] }>`
+**响应体**：`ResponseType<{ items: `[T-ModelCatalogItem](#t-modelcatalogitem)`[] }>`
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `items` | array | [T-ModelCatalogItem](#t-modelcatalogitem) 数组 |
+| `items` | [T-ModelCatalogItem](#t-modelcatalogitem)`[]` | 已配置的模型别名 |
 
 **响应示例**：
 
@@ -325,12 +325,12 @@ HTTP 状态码例外（非 200）：
 
 **触发事件**：`event.config.changed`
 
-**响应体**：`ResponseType<{ default_model: string, model: T-ModelCatalogItem }>`
+**响应体**：`ResponseType<{ default_model: string, model: `[T-ModelCatalogItem](#t-modelcatalogitem)` }>`
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `default_model` | string | 当前生效的别名 |
-| `model` | object | [T-ModelCatalogItem](#t-modelcatalogitem) |
+| `model` | [T-ModelCatalogItem](#t-modelcatalogitem) | 别名对应的模型条目 |
 
 **非零 code**：`40001`（动作后缀非法；`details` 为 `{ path, message }[]`）、`40413`（模型别名不存在）。
 
@@ -352,11 +352,11 @@ HTTP 状态码例外（非 200）：
 
 列出每个已配置供应商及其凭据与模型发现状态，不泄露任何密钥。
 
-**响应体**：`ResponseType<{ items: T-ProviderCatalogItem[] }>`
+**响应体**：`ResponseType<{ items: `[T-ProviderCatalogItem](#t-providercatalogitem)`[] }>`
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `items` | array | [T-ProviderCatalogItem](#t-providercatalogitem) 数组 |
+| `items` | [T-ProviderCatalogItem](#t-providercatalogitem)`[]` | 已配置的供应商 |
 
 **响应示例**：
 
@@ -395,7 +395,7 @@ HTTP 状态码例外（非 200）：
 | `api_key` | string | 否 | API 密钥，存储于 `config.toml` |
 | `base_url` | string | 否 | API 基础 URL；不得包含环境变量占位符（`${...}`） |
 | `default_model` | string | 否 | 该供应商的默认模型；必须是 `models[].model` 之一 |
-| `models` | array | 是 | 至少一条，不允许重复的 `model` 值；条目结构见下 |
+| `models` | `{ model: string, max_context_size: number, … }[]` | 是 | 至少一条，不允许重复的 `model` 值；条目结构见下 |
 
 `models[]` 条目（每个声明一个别名，其 id 为 `id/model`）：
 
@@ -404,9 +404,9 @@ HTTP 状态码例外（非 200）：
 | `model` | string | 是 | 上游模型名 |
 | `max_context_size` | integer | 是 | 以 token 计的上下文窗口，≥ 1 |
 | `display_name` | string | 否 | 显示名 |
-| `capabilities` | array | 否 | 能力标志，如 `thinking` 或 `image_in` |
+| `capabilities` | `string[]` | 否 | 能力标志，如 `thinking` 或 `image_in` |
 | `max_output_size` | integer | 否 | 最大输出 token 数，≥ 1 |
-| `support_efforts` | array | 否 | 支持的 Thinking 模式 effort 档位 |
+| `support_efforts` | `string[]` | 否 | 支持的 Thinking 模式 effort 档位 |
 | `adaptive_thinking` | boolean | 否 | 自适应 thinking 开关 |
 
 **响应体**：`ResponseType<`[T-ProviderCatalogItem](#t-providercatalogitem)`>`（新建对象，HTTP 201）。
@@ -480,9 +480,9 @@ HTTP 状态码例外（非 200）：
 | `api_key` | string | 否 | 三态，见上文 |
 | `base_url` | string | 否 | API 基础 URL；不得包含环境变量占位符 |
 | `default_model` | string | 否 | 该供应商的默认模型；必须是 `models[].model` 之一 |
-| `models` | array | 是 | 至少一条，条目结构与 `POST /api/v1/providers` 相同 |
+| `models` | `{ model: string, max_context_size: number, … }[]` | 是 | 至少一条，条目结构与 `POST /api/v1/providers` 相同 |
 
-**响应体**：`ResponseType<{ provider: T-ProviderCatalogItem }>`
+**响应体**：`ResponseType<{ provider: `[T-ProviderCatalogItem](#t-providercatalogitem)` }>`
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -552,8 +552,8 @@ HTTP 状态码例外（非 200）：
 | --- | --- | --- | --- |
 | `:refresh` | 可选，被忽略 | [T-RefreshProviderModelsResponse](#t-refreshprovidermodelsresponse)（刷新每个供应商） | 200 |
 | `:refresh_oauth` | 可选，被忽略 | 同上，仅限 OAuth 凭据的供应商 | 200 |
-| `:import_catalog` | 见下 | `{ provider, models_imported }` | 201 |
-| `:import_registry` | 见下 | `{ providers, models_imported }` | 201 |
+| `:import_catalog` | 见下 | `{ provider: `[T-ProviderCatalogItem](#t-providercatalogitem)`, models_imported: number }` | 201 |
+| `:import_registry` | 见下 | `{ providers: `[T-ProviderCatalogItem](#t-providercatalogitem)`[]`, models_imported: number }` | 201 |
 
 `:import_catalog` 把一个 models.dev 目录条目导入为已配置供应商：通信协议与端点来自目录解析，目录中的每个模型都写为一个别名；导入已存在的 id 等同于刷新，省略 `api_key` 表示保留已存密钥。全局默认指针绝不被修改，仅在完全未配置默认模型时以第一个导入的模型播种 `default_model`。请求体：
 
@@ -591,11 +591,11 @@ HTTP 状态码例外（非 200）：
 
 浏览 models.dev 目录，由服务端代理，带 10 分钟内存缓存与内置快照兜底；条目保持上游目录顺序。服务无法导入的条目携带 `rejected: true` 与机器可读的 `reject_reason`。
 
-**响应体**：`ResponseType<{ items: T-CatalogProviderItem[] }>`
+**响应体**：`ResponseType<{ items: `[T-CatalogProviderItem](#t-catalogprovideritem)`[] }>`
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `items` | array | [T-CatalogProviderItem](#t-catalogprovideritem) 数组 |
+| `items` | [T-CatalogProviderItem](#t-catalogprovideritem)`[]` | 目录条目，保持上游顺序 |
 
 **非零 code**：`50004`（在线拉取与内置快照均失败）。
 
