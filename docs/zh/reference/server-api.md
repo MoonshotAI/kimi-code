@@ -5528,7 +5528,268 @@ agent 向用户发起的提问到达；payload 即 [T-QuestionRequest](#t-questi
 
 51 型，正名 union 为 `AgentEvent`（`transport/ws/v1/events.ts`）；wire 上的形态为 `Event = AgentEvent & { agentId, sessionId, time? }`（广播器补全 `agentId` / `sessionId`）。主会话内容渲染走 [transcript 帧](#transcript-帧)；本流承载状态 / 生命周期与 subagent 内容。
 
-（以下为格式样例，51 型全量待写入）
+投递范围：会话订阅，受 `agent_filter` 过滤（`agent.created` / `agent.disposed` 生命周期事件对过滤器放行）；例外为 [`session.meta.updated`](#session-meta-updated-s→c)，全局投递。连接对某 agent 订阅了非 `off` 的 transcript 粒度后，该 agent 已被 transcript 投影的事件在同一连接上被抑制（未投影型如 `tool.list.updated` / `mcp.server.status` / `prompt.queued` 与生命周期事件始终走本流）。
+
+广播器特判：
+
+- `prompt.accepted` 被过滤，不广播。
+- `turn.started` 的 `promptAttachments` 被显式剥离（schema 声明，wire 上不出现）。
+- `prompt.submitted` / `prompt.queued` / `prompt.steered` 的 `content` 从核心内容块投影为 [T-MessageContent](#t-messagecontent) 数组。
+- `agent.activity.updated` 转换为 `agent.status.updated`（仅 `phase` 字段）；`agent.status.updated` 合并 legacy 状态（`usage` / `contextTokens` / `maxContextTokens` / `model`），schema 声明的 `permission` / `contextUsage` 无产出路径。
+- `task.started` / `task.terminated` 各自额外派生一条 `background.task.*` 帧（同 payload 改 type，紧随原帧）。
+- 主 agent 的 `context.spliced` 额外触发一次 `agent.status.updated` 重发。
+- `task.notified` / `prompt.queued` / `prompt.started` / `turn.steer` / `plan.revision` / `context.spliced` 6 型不在 `agentEventSchema` 联合中（schema 盲区）。
+
+消费 volatile 文本流时用 `offset` 与本地累计文本比对：小于本地长度为重复帧，大于为有缺漏、需走快照恢复。
+
+**轮次。**
+
+#### `turn.started`（S→C）
+
+一轮开始；`origin` 为 [T-PromptOrigin](#t-promptorigin)。durable。
+
+```ts
+{
+  type: 'turn.started';
+  payload: {
+    turnId: number;
+    origin: PromptOrigin;
+    prompt?: string;
+    promptId?: string; // promptAttachments 被广播器剥离，wire 上不出现
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `turn.ended`（S→C）
+
+一轮结束；`error` 为 [T-KimiError](#t-kimierror)。durable。
+
+```ts
+{
+  type: 'turn.ended';
+  payload: {
+    turnId: number;
+    reason: 'completed' | 'cancelled' | 'failed' | 'blocked';
+    error?: KimiError;
+    durationMs?: number;
+    interruptReason?: 'user_cancelled' | 'aborted' | 'max_steps' | 'error' | 'filtered' | 'blocked';
+    time?: number; // 事件自带时刻，外层 timestamp 取之
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `turn.step.started`（S→C）
+
+step（一次 LLM 调用）开始。durable。
+
+```ts
+{
+  type: 'turn.step.started';
+  payload: {
+    turnId: number;
+    step: number;
+    stepId?: string;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `turn.step.completed`（S→C）
+
+step 完成（含 token 与时延遥测）；`usage` 为 [T-TokenUsage](#t-tokenusage)。durable。
+
+```ts
+{
+  type: 'turn.step.completed';
+  payload: {
+    turnId: number;
+    step: number;
+    stepId?: string;
+    usage?: TokenUsage;
+    finishReason?: string;
+    llmFirstTokenLatencyMs?: number; // 本行起六个为时延组
+    llmStreamDurationMs?: number;
+    llmRequestBuildMs?: number;
+    llmServerFirstTokenMs?: number;
+    llmServerDecodeMs?: number;
+    llmClientConsumeMs?: number;
+    providerFinishReason?: 'completed' | 'tool_calls' | 'truncated' | 'filtered' | 'paused' | 'other';
+    rawFinishReason?: string;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `turn.step.retrying`（S→C）
+
+step 失败后等待重试。durable。
+
+```ts
+{
+  type: 'turn.step.retrying';
+  payload: {
+    turnId: number;
+    step: number;
+    stepId?: string;
+    failedAttempt: number;
+    nextAttempt: number;
+    maxAttempts: number;
+    delayMs: number;
+    errorName: string;
+    errorMessage: string;
+    statusCode?: number;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `turn.step.interrupted`（S→C）
+
+step 被中断。durable。
+
+```ts
+{
+  type: 'turn.step.interrupted';
+  payload: {
+    turnId: number;
+    step: number;
+    stepId?: string;
+    reason: string;
+    message?: string;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+**prompt。**
+
+#### `prompt.submitted`（S→C）
+
+prompt 提交入队或立即运行（如 [POST .../prompts](#post-api-v1-sessions-session-id-prompts) 触发）；`content` 为投影后的 [T-MessageContent](#t-messagecontent) 数组。durable。
+
+```ts
+{
+  type: 'prompt.submitted';
+  payload: {
+    promptId: string;
+    userMessageId: string;
+    status: 'running' | 'queued'; // schema 声称含 'blocked' 三态，产出无
+    content: MessageContent[]; // 已投影
+    createdAt: string; // ISO 8601
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `prompt.queued`（S→C）
+
+prompt 进入队列。未被 transcript 投影，订阅 transcript 后仍走本流。durable。
+
+```ts
+{
+  type: 'prompt.queued';
+  payload: {
+    promptId: string;
+    content: MessageContent[]; // 已投影
+    queueLength: number;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `prompt.started`（S→C）
+
+prompt 开始执行。durable。
+
+```ts
+{
+  type: 'prompt.started';
+  payload: {
+    promptId: string;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `prompt.completed`（S→C）
+
+prompt 执行结束。durable。
+
+```ts
+{
+  type: 'prompt.completed';
+  payload: {
+    promptId: string;
+    finishedAt: string; // ISO 8601
+    reason: 'completed' | 'failed' | 'blocked'; // schema 标可缺省，产出恒带
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `prompt.aborted`（S→C）
+
+prompt 被中止。durable。
+
+```ts
+{
+  type: 'prompt.aborted';
+  payload: {
+    promptId: string;
+    abortedAt: string; // ISO 8601
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `prompt.steered`（S→C）
+
+运行中的 prompt 被追加 steer 内容；`content` 为投影后的 [T-MessageContent](#t-messagecontent) 数组。durable。
+
+```ts
+{
+  type: 'prompt.steered';
+  payload: {
+    activePromptId: string;
+    promptIds: string[]; // 被 steer 合并的 prompt
+    content: MessageContent[]; // 已投影
+    steeredAt: string; // ISO 8601
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `turn.steer`（S→C）
+
+steer 触发的轮次级输入记录；`origin` 为 [T-PromptOrigin](#t-promptorigin)。durable。
+
+```ts
+{
+  type: 'turn.steer';
+  payload: {
+    input: ContentPart[]; // 核心内容块，未投影（与 prompt.steered.content 不对称）
+    origin: PromptOrigin;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+**流式增量。**
 
 #### `assistant.delta`（S→C）
 
@@ -5541,6 +5802,726 @@ agent 向用户发起的提问到达；payload 即 [T-QuestionRequest](#t-questi
   payload: {
     turnId: number;
     delta: string;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `thinking.delta`（S→C）
+
+流式思考增量。volatile；`offset`、合并行为与 subagent 差异同 [`assistant.delta`](#assistant-delta-s→c)。
+
+```ts
+{
+  type: 'thinking.delta';
+  offset?: number; // 仅主 agent 携带
+  payload: {
+    turnId: number;
+    delta: string;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `tool.call.delta`（S→C）
+
+工具调用参数的流式增量。volatile；不参与 delta 合并，无 `offset`。
+
+```ts
+{
+  type: 'tool.call.delta';
+  payload: {
+    turnId: number;
+    toolCallId: string;
+    name?: string;
+    argumentsPart?: string;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+**工具调用。**
+
+#### `tool.call.started`（S→C）
+
+工具调用开始；`display` 为 [T-ToolInputDisplay](#t-toolinputdisplay) 展示投影。durable。
+
+```ts
+{
+  type: 'tool.call.started';
+  payload: {
+    turnId: number;
+    toolCallId: string;
+    name: string;
+    args: unknown;
+    description?: string;
+    display?: ToolInputDisplay;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+**帧示例**：
+
+```json
+{
+  "type": "tool.call.started",
+  "seq": 131,
+  "epoch": "01JZX4...",
+  "session_id": "session_01JZX4...",
+  "timestamp": "2026-09-02T08:06:05.000Z",
+  "payload": {
+    "type": "tool.call.started",
+    "turnId": 3,
+    "toolCallId": "toolu_01J...",
+    "name": "Bash",
+    "args": { "command": "pnpm test" },
+    "display": { "kind": "command", "command": "pnpm test" },
+    "agentId": "main",
+    "sessionId": "session_01JZX4..."
+  }
+}
+```
+
+#### `tool.progress`（S→C）
+
+工具执行过程输出。volatile。
+
+```ts
+{
+  type: 'tool.progress';
+  payload: {
+    turnId: number;
+    toolCallId: string;
+    update: {
+      kind: 'stdout' | 'stderr' | 'progress' | 'status' | 'custom';
+      text?: string;
+      percent?: number;
+      customKind?: string; // kind = 'custom' 时
+      customData?: unknown; // 同上
+      replace?: boolean; // 覆盖式更新
+    };
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `tool.result`（S→C）
+
+工具调用结束。durable。
+
+```ts
+{
+  type: 'tool.result';
+  payload: {
+    turnId: number;
+    toolCallId: string;
+    output: unknown;
+    isError?: boolean;
+    synthetic?: boolean; // 合成结果（如中断补齐）
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `tool.list.updated`（S→C）
+
+工具清单因 MCP 连接状态变化。未被 transcript 投影，恒走本流。durable。
+
+```ts
+{
+  type: 'tool.list.updated';
+  payload: {
+    reason: 'mcp.connected' | 'mcp.disconnected' | 'mcp.failed';
+    serverName: string;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+**Shell。**
+
+#### `shell.started`（S→C）
+
+`!` 前缀 shell 命令开始。volatile。
+
+```ts
+{
+  type: 'shell.started';
+  payload: {
+    commandId: string;
+    taskId: string;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `shell.output`（S→C）
+
+shell 命令输出增量；`update` 形态同 [`tool.progress`](#tool-progress-s→c)。volatile。
+
+```ts
+{
+  type: 'shell.output';
+  payload: {
+    commandId: string;
+    update: ToolUpdate;
+    taskId?: string;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `shell.completed`（S→C）
+
+shell 命令结束。volatile。
+
+```ts
+{
+  type: 'shell.completed';
+  payload: {
+    commandId: string;
+    isError: boolean;
+    taskId?: string;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+**后台任务。**
+
+#### `task.started`（S→C）
+
+后台任务开始。每帧随后紧跟一条派生的 [`background.task.started`](#background-task-started-s→c)（同 payload 改 type）。durable。
+
+```ts
+{
+  type: 'task.started';
+  payload: {
+    info: {
+      kind: 'process' | 'agent' | 'question';
+      taskId: string;
+      description: string;
+      status: 'running' | 'completed' | 'failed' | 'timed_out' | 'killed' | 'lost';
+      detached?: boolean;
+      startedAt: number;
+      endedAt: number | null;
+      stopReason?: string;
+      terminalNotificationSuppressed?: boolean;
+      timeoutMs?: number;
+      // kind = 'process' 另有：command: string; pid: number; exitCode: number | null
+      // kind = 'agent' 另有：agentId?: string; subagentType?: string; model?: string; thinkingEffort?: string
+      // kind = 'question' 另有：questionCount: number; toolCallId?: string
+    };
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `task.terminated`（S→C）
+
+后台任务终止，`info` 同 [`task.started`](#task-started-s→c)。每帧随后紧跟一条派生的 [`background.task.terminated`](#background-task-terminated-s→c)。durable。
+
+```ts
+{
+  type: 'task.terminated';
+  payload: {
+    info: TaskInfo; // 同 task.started
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `background.task.started`（S→C）
+
+[`task.started`](#task-started-s→c) 的派生兼容帧，同 payload 改 type，紧随源帧。durable。
+
+```ts
+{
+  type: 'background.task.started';
+  payload: {
+    info: TaskInfo;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `background.task.terminated`（S→C）
+
+[`task.terminated`](#task-terminated-s→c) 的派生兼容帧，同 payload 改 type，紧随源帧。durable。
+
+```ts
+{
+  type: 'background.task.terminated';
+  payload: {
+    info: TaskInfo;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `task.notified`（S→C）
+
+后台任务完成通知（终端通知语义）。durable。
+
+```ts
+{
+  type: 'task.notified';
+  payload: {
+    notificationType: string;
+    title: string;
+    body: string;
+    severity: 'info' | 'warning';
+    sourceKind: string;
+    sourceId: string;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+**subagent。**
+
+#### `subagent.spawned`（S→C）
+
+subagent 被创建。durable。
+
+```ts
+{
+  type: 'subagent.spawned';
+  payload: {
+    subagentId: string;
+    subagentName: string;
+    parentToolCallId: string;
+    parentToolCallUuid?: string;
+    parentAgentId?: string;
+    callerAgentId?: string;
+    description?: string;
+    swarmIndex?: number; // swarm 序号
+    runInBackground: boolean;
+    model?: string;
+    thinkingEffort?: string;
+    taskId?: string; // 挂为后台任务时
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `subagent.started`（S→C）
+
+subagent 开始运行。durable。
+
+```ts
+{
+  type: 'subagent.started';
+  payload: {
+    subagentId: string;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `subagent.suspended`（S→C）
+
+subagent 挂起（swarm 调度）。durable。
+
+```ts
+{
+  type: 'subagent.suspended';
+  payload: {
+    subagentId: string;
+    reason: string;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `subagent.completed`（S→C）
+
+subagent 完成；`usage` 为 [T-TokenUsage](#t-tokenusage)。durable。
+
+```ts
+{
+  type: 'subagent.completed';
+  payload: {
+    subagentId: string;
+    resultSummary: string;
+    usage?: TokenUsage;
+    contextTokens?: number;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `subagent.failed`（S→C）
+
+subagent 失败。durable。
+
+```ts
+{
+  type: 'subagent.failed';
+  payload: {
+    subagentId: string;
+    error: string;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+**状态。**
+
+#### `agent.status.updated`（S→C）
+
+agent 状态快照增量。volatile。两个来源：核心 `agent.status.updated`（合并 legacy 状态）与 `agent.activity.updated` 转换（仅 `phase`）；`phase` 为 [T-AgentPhase](#t-agentphase)。schema 声明的 `permission` / `contextUsage` 无产出路径。
+
+```ts
+{
+  type: 'agent.status.updated';
+  payload: {
+    usage?: {
+      byModel?: Record<string, TokenUsage>;
+      currentTurn?: TokenUsage;
+      total?: TokenUsage;
+    };
+    contextTokens?: number;
+    maxContextTokens?: number;
+    model?: string;
+    thinkingEffort?: string;
+    planMode?: boolean;
+    swarmMode?: boolean;
+    towerMode?: boolean;
+    phase?: AgentPhase;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `agent.created`（S→C）
+
+agent 生命周期事件（创建）；`agent_filter` 对该型放行。durable。
+
+```ts
+{
+  type: 'agent.created';
+  payload: {
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `agent.disposed`（S→C）
+
+agent 生命周期事件（销毁）；`agent_filter` 对该型放行。durable。
+
+```ts
+{
+  type: 'agent.disposed';
+  payload: {
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `session.meta.updated`（S→C）
+
+会话元数据更新；`title` 与 `patch` 至少其一存在。投递范围：全局（虽无 `event.` 前缀）。durable，落该会话 journal。
+
+```ts
+{
+  type: 'session.meta.updated';
+  payload: {
+    title?: string;
+    patch?: Record<string, unknown>;
+    agentId: 'main';
+    sessionId: string;
+  };
+}
+```
+
+**compaction。**
+
+#### `compaction.started`（S→C）
+
+压缩开始。durable。
+
+```ts
+{
+  type: 'compaction.started';
+  payload: {
+    trigger: 'manual' | 'auto';
+    instruction?: string; // 手动指令
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `compaction.blocked`（S→C）
+
+压缩被阻塞（如轮次进行中）。durable。
+
+```ts
+{
+  type: 'compaction.blocked';
+  payload: {
+    turnId?: number;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `compaction.cancelled`（S→C）
+
+压缩被取消，无附加字段。durable。
+
+```ts
+{
+  type: 'compaction.cancelled';
+  payload: {
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `compaction.completed`（S→C）
+
+压缩完成。durable。
+
+```ts
+{
+  type: 'compaction.completed';
+  payload: {
+    result: {
+      summary: string;
+      compactedCount: number;
+      tokensBefore: number;
+      tokensAfter: number;
+      keptUserMessageCount?: number;
+      keptHeadUserMessageCount?: number;
+      droppedCount?: number;
+    };
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+**其他。**
+
+#### `context.spliced`（S→C）
+
+上下文被剪接（undo / fork）。主 agent 上额外触发一次 `agent.status.updated` 重发。durable。
+
+```ts
+{
+  type: 'context.spliced';
+  payload: {
+    start: number;
+    deleteCount: number;
+    messages: ContextMessage[]; // 核心消息，未投影
+    tokens?: number;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `goal.updated`（S→C）
+
+goal 状态变化（`/goal` 模式）；`snapshot` 为 [T-GoalSnapshot](#t-goalsnapshot)。durable。
+
+```ts
+{
+  type: 'goal.updated';
+  payload: {
+    snapshot: GoalSnapshot | null;
+    change?: {
+      kind: 'lifecycle' | 'completion';
+      status?: string; // goalStatus
+      reason?: string;
+      stats?: { turnsUsed: number; tokensUsed: number; wallClockMs: number };
+      actor?: 'user' | 'model' | 'runtime' | 'system';
+    };
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `plan.revision`（S→C）
+
+plan 新修订落盘。durable。
+
+```ts
+{
+  type: 'plan.revision';
+  payload: {
+    id: string; // plan id
+    version: number; // 单调递增版本
+    key: string; // 存储相对键
+    sha256: string;
+    bytes: number;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `skill.activated`（S→C）
+
+Skill 被激活。durable。
+
+```ts
+{
+  type: 'skill.activated';
+  payload: {
+    activationId: string;
+    skillName: string;
+    skillArgs?: string;
+    trigger: 'user-slash' | 'model-tool' | 'nested-skill';
+    skillPath?: string;
+    skillSource?: 'project' | 'user' | 'extra' | 'builtin';
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `plugin_command.activated`（S→C）
+
+插件命令被激活。durable。
+
+```ts
+{
+  type: 'plugin_command.activated';
+  payload: {
+    activationId: string;
+    pluginId: string;
+    commandName: string;
+    commandArgs?: string;
+    trigger: 'user-slash'; // 恒此值
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `error`（S→C）
+
+agent 级错误事件，payload 为 [T-KimiError](#t-kimierror) 全字段。带事件信封（`session_id` / `seq`），与控制帧 [`error`](#error-s→c-死声明)（死声明）不同。durable。
+
+```ts
+{
+  type: 'error';
+  payload: {
+    code: string; // 核心错误码字符串
+    message: string;
+    name?: string;
+    details?: unknown;
+    retryable: boolean;
+    cause?: unknown; // 递归同构
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `warning`（S→C）
+
+agent 级警告（如 profile 配置告警）。durable。
+
+```ts
+{
+  type: 'warning';
+  payload: {
+    message: string;
+    code?: string;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `cron.fired`（S→C）
+
+cron 任务触发注入。durable。
+
+```ts
+{
+  type: 'cron.fired';
+  payload: {
+    origin: {
+      kind: 'cron_job';
+      jobId: string;
+      cron: string;
+      recurring: boolean;
+      coalescedCount: number;
+      stale: boolean;
+    };
+    prompt: string;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `hook.result`（S→C）
+
+外部 hook 执行结果注入。durable。
+
+```ts
+{
+  type: 'hook.result';
+  payload: {
+    turnId?: number;
+    hookEvent: string;
+    content: string;
+    blocked?: boolean;
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+#### `mcp.server.status`（S→C）
+
+MCP server 状态变化；`status` 透传核心六态，与 REST [T-McpServer](#t-mcpserver) 的四态取值域不同。未被 transcript 投影，恒走本流。durable。
+
+```ts
+{
+  type: 'mcp.server.status';
+  payload: {
+    server: {
+      name: string;
+      transport: 'stdio' | 'http';
+      status: 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth' | 'removed';
+      toolCount: number;
+      error?: string;
+    };
     agentId: string;
     sessionId: string;
   };
