@@ -5105,7 +5105,102 @@ schema 声明的控制帧形态错误帧，服务端无任何产出点。事件�
 
 19 型，系统内无 union。13 型有接口正名：`SessionCreatedEvent` / `SessionArchivedEvent` / `SessionWorkChangedEvent` / `SessionStatusChangedEvent` / `WorkspaceCreatedEvent` / `WorkspaceUpdatedEvent` / `WorkspaceDeletedEvent` / `ConfigChangedEvent` / `ConfigWarningEvent` / `ModelCatalogChangedEvent` / `PluginChangedEvent` / `CapabilityChangedEvent` / `DiUnitChangedEvent`；6 型未命名（broadcaster 内联构造，以 `type` 字符串指代）：`event.question.requested` / `event.question.answered` / `event.question.dismissed` / `event.approval.requested` / `event.approval.resolved` / `event.fs.changed`。
 
-（以下为格式样例，19 型全量待写入）
+投递范围分三类：**全局广播**（发往所有连接，含未订阅该会话的）——`event.session.*` / `event.workspace.*` / `event.config.*` / `event.model_catalog.*` / `event.plugin.*` / `event.capability.*`，另有 `event.di.*` 门控到仅以 `client_id: 'kimi-inspect'` 握手的连接；**会话订阅**（受 `agent_filter` 过滤）——`event.question.*` 与 `event.approval.*`；**监听命中**——`event.fs.changed` 只发往经 [`watch_fs_add`](#watch-fs-add-c→s-→-ack) 登记且路径命中的连接。journal 归属决定游标回放范围：`event.session.created` / `event.session.work_changed` 与 question / approval 交互事件落真实会话的 journal，其余全局事件落 `__global__` journal；信封 `session_id` 即 journal 归属（真实会话 id 或 `__global__`）。
+
+广播器产出的 payload 统一补 `agentId` 与 `sessionId`（camelCase；全局事件为 `'main'` / `'__global__'`，交互事件为发起交互的 agent 与真实会话 id），与 payload 既有的 snake_case 字段混存；`event.fs.changed` 不经广播器，不补这两个字段。这些事件只覆盖本服务进程内的变更——其他进程（例如写同一 home 目录的 CLI）的变更要等索引 reconcile（约一分钟）才可见，概览客户端应保留低频兜底轮询；目前没有会话删除事件。
+
+**会话。**
+
+#### `event.session.created`（S→C）
+
+新会话创建时广播（创建、fork、创建子会话都会发出）；`session` 为 [T-Session](#t-session) 全量。投递范围：全局。durable，落该会话 journal。正名 `SessionCreatedEvent`。
+
+```ts
+{
+  type: 'event.session.created';
+  payload: {
+    session: T-Session; // 会话对象全量
+    agentId: 'main';
+    sessionId: string; // 真实会话 id
+  };
+}
+```
+
+外层为 durable 信封（见 [帧总览](#帧总览)）。
+
+#### `event.session.archived`（S→C）
+
+会话归档时广播（在线与冷归档两条路径都会发出）。投递范围：全局。durable，落 `__global__` journal。正名 `SessionArchivedEvent`。
+
+```ts
+{
+  type: 'event.session.archived';
+  payload: {
+    workspace_id: string;
+    agentId: 'main';
+    sessionId: string; // camelCase，真实会话 id
+  };
+}
+```
+
+外层为 durable 信封（见 [帧总览](#帧总览)）。
+
+#### `event.session.work_changed`（S→C）
+
+会话工作聚合状态变化时广播；轮次结束起因的变化经 microtask 延后合流，保证终态先落地。投递范围：全局。durable，落该会话 journal。正名 `SessionWorkChangedEvent`。
+
+```ts
+{
+  type: 'event.session.work_changed';
+  payload: {
+    busy: boolean;
+    main_turn_active: boolean; // schema 标可缺省，产出恒带
+    pending_interaction: 'none' | 'approval' | 'question'; // 同上
+    last_turn_reason?: 'completed' | 'cancelled' | 'failed';
+    agentId: 'main';
+    sessionId: string; // 真实会话 id
+  };
+}
+```
+
+外层为 durable 信封（见 [帧总览](#帧总览)）。
+
+**帧示例**：
+
+```json
+{
+  "type": "event.session.work_changed",
+  "seq": 129,
+  "epoch": "01JZX4...",
+  "session_id": "session_01JZX4...",
+  "timestamp": "2026-09-02T08:06:00.000Z",
+  "payload": {
+    "type": "event.session.work_changed",
+    "busy": true,
+    "main_turn_active": true,
+    "pending_interaction": "none",
+    "agentId": "main",
+    "sessionId": "session_01JZX4..."
+  }
+}
+```
+
+#### `event.session.status_changed`（S→C，无产出声明）
+
+schema 已声明但当前服务端无产出点；旧版本 journal 回放时可能出现。正名 `SessionStatusChangedEvent`。
+
+```ts
+{
+  type: 'event.session.status_changed';
+  payload: {
+    status: string;
+    previous_status: 'idle' | 'running' | 'awaiting_approval' | 'awaiting_question' | 'aborted';
+    current_prompt_id?: string;
+  };
+}
+```
+
+**工作区。**
 
 #### `event.workspace.created`（S→C）
 
@@ -5129,6 +5224,305 @@ schema 声明的控制帧形态错误帧，服务端无任何产出点。事件�
 ```
 
 外层为 durable 信封（见 [帧总览](#帧总览)）。
+
+#### `event.workspace.updated`（S→C）
+
+工作区重命名、重新注册或会话创建触碰时广播。投递范围：全局。durable，落 `__global__` journal。正名 `WorkspaceUpdatedEvent`。
+
+```ts
+{
+  type: 'event.workspace.updated';
+  payload: {
+    sessionId: '__global__';
+    agentId: 'main';
+    workspace: {
+      id: string;
+      root: string;
+      name: string;
+      createdAt: string; // ISO 8601
+      lastOpenedAt: string; // ISO 8601
+    };
+  };
+}
+```
+
+外层为 durable 信封（见 [帧总览](#帧总览)）。
+
+#### `event.workspace.deleted`（S→C）
+
+工作区注销时广播。投递范围：全局。durable，落 `__global__` journal。正名 `WorkspaceDeletedEvent`。
+
+```ts
+{
+  type: 'event.workspace.deleted';
+  payload: {
+    workspace_id: string;
+    root: string;
+    agentId: 'main';
+    sessionId: '__global__';
+  };
+}
+```
+
+外层为 durable 信封（见 [帧总览](#帧总览)）。
+
+**配置。**
+
+#### `event.config.changed`（S→C）
+
+任何来源的配置变更，短时间窗内多次变更合并为一个事件；`config` 为 [T-ConfigResponse](#t-configresponse) 全量快照。投递范围：全局。durable，落 `__global__` journal。正名 `ConfigChangedEvent`。
+
+```ts
+{
+  type: 'event.config.changed';
+  payload: {
+    changedFields: string[]; // camelCase 域名
+    config: T-ConfigResponse; // 全量配置快照
+    agentId: 'main';
+    sessionId: '__global__';
+  };
+}
+```
+
+外层为 durable 信封（见 [帧总览](#帧总览)）。
+
+#### `event.config.warning`（S→C）
+
+配置告警。投递范围：全局。durable，落 `__global__` journal。正名 `ConfigWarningEvent`。
+
+```ts
+{
+  type: 'event.config.warning';
+  payload: {
+    warnings: { domain?: string; message: string }[];
+    agentId: 'main';
+    sessionId: '__global__';
+  };
+}
+```
+
+外层为 durable 信封（见 [帧总览](#帧总览)）。
+
+**模型目录。**
+
+#### `event.model_catalog.changed`（S→C）
+
+至少一个供应商的模型别名变化时广播；`changed` / `unchanged` / `failed` 与 [T-RefreshProviderModelsResponse](#t-refreshprovidermodelsresponse) 同构。投递范围：全局。durable，落 `__global__` journal。正名 `ModelCatalogChangedEvent`。
+
+```ts
+{
+  type: 'event.model_catalog.changed';
+  payload: {
+    changed: { provider_id: string; provider_name: string; added: number; removed: number }[];
+    unchanged: string[]; // provider id
+    failed: { provider: string; reason: string }[];
+    agentId: 'main';
+    sessionId: '__global__';
+  };
+}
+```
+
+外层为 durable 信封（见 [帧总览](#帧总览)）。
+
+**插件。**
+
+#### `event.plugin.changed`（S→C）
+
+插件安装、启用、停用或移除时广播，无附加字段。投递范围：全局。durable，落 `__global__` journal。正名 `PluginChangedEvent`。
+
+```ts
+{
+  type: 'event.plugin.changed';
+  payload: {
+    agentId: 'main';
+    sessionId: '__global__';
+  };
+}
+```
+
+外层为 durable 信封（见 [帧总览](#帧总览)）。
+
+**能力。**
+
+#### `event.capability.changed`（S→C）
+
+能力安装进度。投递范围：全局。volatile（`seq` 不递增，不落 journal、不回放）。正名 `CapabilityChangedEvent`。
+
+```ts
+{
+  type: 'event.capability.changed';
+  payload: {
+    capability_id: string;
+    install: {
+      running: boolean;
+      step?: string;
+      percent?: number;
+      error?: string;
+      note?: string;
+    };
+    agentId: 'main';
+    sessionId: '__global__';
+  };
+}
+```
+
+外层为 volatile 信封（见 [帧总览](#帧总览)）。
+
+**DI。**
+
+#### `event.di.unit_changed`（S→C）
+
+DI unit 状态变化；`state` 取值同 meta `features[].state`，枚举非封闭。投递范围：仅以 `client_id: 'kimi-inspect'` 握手的连接。volatile。正名 `DiUnitChangedEvent`。
+
+```ts
+{
+  type: 'event.di.unit_changed';
+  payload: {
+    scope: string;
+    token: string; // DI token
+    state: 'Pending' | 'Activating' | 'Active' | 'Unloading' | 'Failed'; // PascalCase
+    error?: string;
+    agentId: 'main';
+    sessionId: '__global__';
+  };
+}
+```
+
+外层为 volatile 信封（见 [帧总览](#帧总览)）。
+
+**提问。**
+
+#### `event.question.requested`（S→C）
+
+agent 向用户发起的提问到达；payload 即 [T-QuestionRequest](#t-questionrequest) 全字段外加 `agentId` / `sessionId`。投递范围：会话订阅。durable，落该会话 journal。
+
+```ts
+{
+  type: 'event.question.requested';
+  payload: {
+    question_id: string; // 交互 id
+    session_id: string;
+    turn_id?: number;
+    tool_call_id?: string;
+    questions: QuestionItem[]; // 1–4 个，见 T-QuestionRequest
+    created_at: string; // ISO 8601
+    agentId: string; // 发起交互的 agent（缺省 'main'）
+    sessionId: string; // 真实会话 id
+  };
+}
+```
+
+外层为 durable 信封（见 [帧总览](#帧总览)）。
+
+#### `event.question.answered`（S→C）
+
+提问被应答。投递范围：会话订阅。durable，落该会话 journal。
+
+```ts
+{
+  type: 'event.question.answered';
+  payload: {
+    question_id: string;
+    answers: Record<string, string>; // 拍平的文本 map，与 REST 的结构化 answers 形态不同
+    resolved_at: string; // ISO 8601，服务端解决时刻
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+外层为 durable 信封（见 [帧总览](#帧总览)）。
+
+#### `event.question.dismissed`（S→C）
+
+提问被忽略。投递范围：会话订阅。durable，落该会话 journal。
+
+```ts
+{
+  type: 'event.question.dismissed';
+  payload: {
+    question_id: string;
+    dismissed_at: string; // ISO 8601
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+外层为 durable 信封（见 [帧总览](#帧总览)）。
+
+**审批。**
+
+#### `event.approval.requested`（S→C）
+
+工具调用等动作的审批请求到达；payload 即 [T-ApprovalRequest](#t-approvalrequest) 全字段外加 `agentId` / `sessionId`。投递范围：会话订阅。durable，落该会话 journal。
+
+```ts
+{
+  type: 'event.approval.requested';
+  payload: {
+    approval_id: string; // 交互 id
+    session_id: string;
+    turn_id?: number;
+    tool_call_id: string; // 缺省时回退为交互 id
+    tool_name: string;
+    action: string;
+    tool_input_display: ToolInputDisplay;
+    created_at: string; // ISO 8601
+    expires_at: string; // ISO 8601，created_at 之后 24 小时
+    agentId: string; // 发起交互的 agent
+    sessionId: string; // 真实会话 id
+  };
+}
+```
+
+外层为 durable 信封（见 [帧总览](#帧总览)）。
+
+#### `event.approval.resolved`（S→C）
+
+审批被处理（无 `resolved_by` 字段）。投递范围：会话订阅。durable，落该会话 journal。
+
+```ts
+{
+  type: 'event.approval.resolved';
+  payload: {
+    approval_id: string;
+    decision?: string;
+    scope?: string;
+    feedback?: string;
+    selected_label?: string;
+    resolved_at: string; // ISO 8601
+    agentId: string;
+    sessionId: string;
+  };
+}
+```
+
+外层为 durable 信封（见 [帧总览](#帧总览)）。
+
+**文件监听。**
+
+#### `event.fs.changed`（S→C）
+
+监听路径下的文件变更（按合并窗口合批）。投递范围：经 [`watch_fs_add`](#watch-fs-add-c→s-→-ack) 登记且路径命中的连接。信封特殊：无 `epoch`，`seq` 为监听作用域自增计数（每连接每会话独立，与 journal 无关、不可经游标回放）；payload 不补 `agentId` / `sessionId`。
+
+```ts
+{
+  type: 'event.fs.changed';
+  payload: {
+    changes: {
+      path: string;
+      change: 'created' | 'modified' | 'deleted';
+      kind: 'file' | 'directory' | 'symlink';
+      size_delta?: number;
+      etag?: string;
+    }[]; // truncated 时为空数组
+    coalesced_window_ms: number; // 合并窗口
+    truncated?: true; // 溢出截断标记
+    count?: number; // 截断时被丢弃的变更数
+  };
+}
+```
 
 ### agent 事件帧
 
