@@ -57,6 +57,7 @@ interface ResolvedServer {
   readonly tools: readonly KosongTool[];
   readonly rawTools: readonly MCPToolDefinition[];
   readonly enabledNames: ReadonlySet<string>;
+  readonly deferred: boolean;
 }
 
 class FakeMcpManager {
@@ -125,6 +126,7 @@ class FakeMcpManager {
     tools: readonly KosongTool[],
     enabledNames = new Set(tools.map((tool) => tool.name)),
     rawTools?: readonly MCPToolDefinition[],
+    deferred = true,
   ): void {
     const resolvedRawTools =
       rawTools ??
@@ -138,6 +140,7 @@ class FakeMcpManager {
       tools,
       rawTools: resolvedRawTools,
       enabledNames,
+      deferred,
     });
   }
 
@@ -321,6 +324,7 @@ describe('AgentMcpService', () => {
       'mcp__local_server__echo',
       'mcp__local_server__noop',
     ]);
+    expect(infos.every((info) => info.disclosure === 'deferred')).toBe(true);
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'tool.list.updated',
@@ -362,6 +366,19 @@ describe('AgentMcpService', () => {
     } finally {
       await rm(home, { recursive: true, force: true });
     }
+  });
+
+  it('registers tools of a deferred=false server with inline disclosure', async () => {
+    const manager = new FakeMcpManager();
+    const client = fakeMcpClient();
+    manager.setResolved('s', client, await discoverTools(client), undefined, undefined, false);
+    createService(manager);
+
+    manager.connect('s');
+
+    const infos = ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp');
+    expect(infos.length).toBeGreaterThan(0);
+    expect(infos.every((info) => info.disclosure === 'inline')).toBe(true);
   });
 
   it('ignores status changes from servers outside the session baseline', async () => {

@@ -2114,7 +2114,7 @@ describe('FullCompaction', () => {
     });
     const registration = ctx
       .get(IAgentToolRegistryService)
-      .register(mcpTool(LARGE_MCP_TOOL, parameters), { source: 'mcp' });
+      .register(mcpTool(LARGE_MCP_TOOL, parameters), { source: 'mcp', disclosure: 'deferred' });
     try {
       ctx.context.append({
         role: 'system',
