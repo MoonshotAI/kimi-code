@@ -236,6 +236,7 @@ describe('handleSwarmCommand', () => {
     expect(host.setAppState).toHaveBeenCalledWith({ swarmMode: true });
     expect(host.showNotice).toHaveBeenCalledWith(
       'Permission mode: Never Ask',
+      undefined,
       UNCONFIRMED_FILE_CHANGES_WARNING,
     );
     expect(host.state.swarmModeEntry).toBe('task');
@@ -280,6 +281,7 @@ describe('handleSwarmCommand', () => {
     expect(host.setAppState).toHaveBeenCalledWith({ swarmMode: true });
     expect(host.showNotice).toHaveBeenCalledWith(
       'Permission mode: Ask When Needed',
+      undefined,
       UNCONFIRMED_FILE_CHANGES_WARNING,
     );
     expect(host.state.swarmModeEntry).toBe('task');

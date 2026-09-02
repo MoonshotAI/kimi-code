@@ -103,7 +103,7 @@ export interface SessionEventHost {
   resetLivePane(): void;
   showError(msg: string): void;
   showStatus(msg: string, color?: ColorToken): void;
-  showNotice(title: string, detail?: string): void;
+  showNotice(title: string, detail?: string, warning?: string): void;
   updateActivityPane(): void;
   track(event: string, props?: Record<string, unknown>): void;
   recordSessionActivity(): void;

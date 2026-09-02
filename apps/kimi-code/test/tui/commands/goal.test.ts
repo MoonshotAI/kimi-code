@@ -378,6 +378,7 @@ describe('handleGoalCommand', () => {
     expect(manualHost.setAppState).toHaveBeenCalledWith({ permissionMode: 'auto' });
     expect(manualHost.showNotice).toHaveBeenCalledWith(
       'Permission mode: Never Ask',
+      undefined,
       UNCONFIRMED_FILE_CHANGES_WARNING,
     );
     expect(manualHost.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
@@ -419,6 +420,7 @@ describe('handleGoalCommand', () => {
     expect(manualHost.setAppState).toHaveBeenCalledWith({ permissionMode: 'yolo' });
     expect(manualHost.showNotice).toHaveBeenCalledWith(
       'Permission mode: Ask When Needed',
+      undefined,
       UNCONFIRMED_FILE_CHANGES_WARNING,
     );
   });

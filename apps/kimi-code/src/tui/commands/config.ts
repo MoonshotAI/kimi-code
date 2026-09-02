@@ -147,7 +147,8 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
     host.setAppState({ permissionMode: 'yolo' });
     host.showNotice(
       'Ask When Needed mode: ON',
-      `Routine edits and commands run automatically; risky actions, questions, and plans still ask.\n${UNCONFIRMED_FILE_CHANGES_WARNING}`,
+      'Routine edits and commands run automatically; risky actions, questions, and plans still ask.',
+      UNCONFIRMED_FILE_CHANGES_WARNING,
     );
     return;
   }
@@ -173,7 +174,8 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
     host.setAppState({ permissionMode: 'yolo' });
     host.showNotice(
       'Ask When Needed mode: ON',
-      `Routine edits and commands run automatically; risky actions, questions, and plans still ask.\n${UNCONFIRMED_FILE_CHANGES_WARNING}`,
+      'Routine edits and commands run automatically; risky actions, questions, and plans still ask.',
+      UNCONFIRMED_FILE_CHANGES_WARNING,
     );
   }
 }
@@ -199,7 +201,8 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
     host.setAppState({ permissionMode: 'auto' });
     host.showNotice(
       'Never Ask mode: ON',
-      `Never interrupts you; everything runs and is decided automatically.\n${UNCONFIRMED_FILE_CHANGES_WARNING}`,
+      'Never interrupts you; everything runs and is decided automatically.',
+      UNCONFIRMED_FILE_CHANGES_WARNING,
     );
     return;
   }
@@ -225,7 +228,8 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
     host.setAppState({ permissionMode: 'auto' });
     host.showNotice(
       'Never Ask mode: ON',
-      `Never interrupts you; everything runs and is decided automatically.\n${UNCONFIRMED_FILE_CHANGES_WARNING}`,
+      'Never interrupts you; everything runs and is decided automatically.',
+      UNCONFIRMED_FILE_CHANGES_WARNING,
     );
   }
 }
@@ -920,6 +924,7 @@ async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMod
   host.setAppState({ permissionMode: mode });
   host.showNotice(
     `Permission mode: ${PERMISSION_MODE_DISPLAY_NAMES[mode]}`,
+    undefined,
     mode === 'manual' ? undefined : UNCONFIRMED_FILE_CHANGES_WARNING,
   );
 }

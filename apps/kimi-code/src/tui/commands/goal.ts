@@ -461,6 +461,7 @@ async function setPermissionForGoal(host: GoalCommandHost, mode: PermissionMode)
   if (mode !== 'manual') {
     host.showNotice(
       `Permission mode: ${PERMISSION_MODE_DISPLAY_NAMES[mode]}`,
+      undefined,
       UNCONFIRMED_FILE_CHANGES_WARNING,
     );
   }

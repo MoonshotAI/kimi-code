@@ -3220,8 +3220,8 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
-  showNotice(title: string, detail?: string): void {
-    this.state.transcriptContainer.addChild(new NoticeMessageComponent(title, detail));
+  showNotice(title: string, detail?: string, warning?: string): void {
+    this.state.transcriptContainer.addChild(new NoticeMessageComponent(title, detail, warning));
     this.state.ui.requestRender();
   }
 
