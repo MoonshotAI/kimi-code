@@ -4941,6 +4941,166 @@ ack payload：`{ accepted_subscriptions: string[], resync_required: string[], cu
 
 ack payload：`{ accepted: string[], not_found: string[], resync_required: string[], cursors: Record<string, { seq, epoch? }> }`。
 
+#### `unsubscribe`（C→S → ack）
+
+逐会话退订（含该会话 transcript 订阅状态的清理）。
+
+```ts
+{
+  type: 'unsubscribe';
+  id?: string;
+  payload: {
+    session_ids: string[];
+  };
+}
+```
+
+ack payload：`{ accepted: [], not_found: [], resync_required: [] }`——三个数组恒空，不回报实际退订结果。
+
+#### `subscribe_v2`（C→S → ack）
+
+订阅 transcript 流（粒度订阅，见 [transcript 帧](#transcript-帧)）。只携带 transcript 续传水位，事件续传游标走 `subscribe`。payload 经 zod 校验，失败回 `ack` code `1`。
+
+```ts
+{
+  type: 'subscribe_v2';
+  id?: string;
+  payload: {
+    session_id: string; // 单会话
+    transcript: Record<string, 'off' | 'turn' | 'block' | 'delta'>; // 逐 agent 粒度，'*' 为通配档
+    transcript_since?: Record<string, number>; // 逐 agent 的 transcript seq 续传水位
+  };
+}
+```
+
+ack payload：同 `subscribe`（`accepted` / `not_found` / `resync_required` / `cursors`）。
+
+#### `unsubscribe_v2`（C→S → ack）
+
+退订 transcript 流。payload 经 zod 校验，失败回 `ack` code `1`。
+
+```ts
+{
+  type: 'unsubscribe_v2';
+  id?: string;
+  payload: {
+    session_id: string;
+    agent_ids?: string[]; // 缺省 = 摘掉该会话全部 transcript 订阅；给定 = 这些 agent 置 'off'
+  };
+}
+```
+
+ack payload：`{ accepted: [session_id], not_found: [], resync_required: [] }`——无 `cursors` 键。
+
+#### `watch_fs_add`（C→S → ack）
+
+为会话登记文件监听，变更经 [`event.fs.changed`](#event-fs-changed-s→c) 送达。
+
+```ts
+{
+  type: 'watch_fs_add';
+  id?: string;
+  payload: {
+    session_id: string;
+    paths: string[]; // 相对工作区根；''、'/'、绝对路径、含 '..' 段均被拒
+    runtime_id?: string; // 缺省 'local'
+    recursive?: boolean; // schema 声明，服务端当前不读
+  };
+}
+```
+
+ack payload：`{ watched_paths: string[], current_count: number }`（本连接当前监听的路径与总数）；watch bridge 缺失或内部异常时 code `1`。
+
+#### `watch_fs_remove`（C→S → ack）
+
+移除文件监听。
+
+```ts
+{
+  type: 'watch_fs_remove';
+  id?: string;
+  payload: {
+    session_id: string;
+    paths: string[];
+    runtime_id?: string;
+  };
+}
+```
+
+ack payload：同 `watch_fs_add`。
+
+#### `ack`（S→C）
+
+每个带 `id` 的入站控制帧一个应答（`pong` 除外）。
+
+```ts
+{
+  type: 'ack';
+  id: string; // 回显入站帧 id；入站缺 id 时为 ''
+  code: number; // 0 成功；1 参数或内部错误；40112 鉴权失败
+  msg: string; // 'success' 或错误描述
+  payload: object; // 按请求帧定形，见各入站帧条目
+}
+```
+
+#### `ping`（S→C）
+
+心跳帧，每 `heartbeat_ms`（默认 10000）一个。
+
+```ts
+{
+  type: 'ping';
+  timestamp: string; // ISO 8601
+  payload: { nonce: string };
+}
+```
+
+#### `pong`（C→S）
+
+心跳应答，服务端不回 `ack`。任何合法入站帧（含未知 `type`）都会重置心跳计时。
+
+```ts
+{
+  type: 'pong';
+  payload: { nonce: string };
+}
+```
+
+#### `resync_required`（S→C）
+
+带游标订阅的回放无法覆盖缺口时下发：会话已重建（`session_recreated`）、游标 epoch 不符或游标超前于当前水位（`epoch_changed`）、缺口超出事件缓冲容量（`buffer_overflow`）。发送后该会话同时列入对应 `ack` 的 `resync_required` 数组；游标等于当前水位（空回放）不触发。
+
+```ts
+{
+  type: 'resync_required';
+  timestamp: string; // ISO 8601
+  payload: {
+    session_id: string;
+    reason: 'buffer_overflow' | 'session_recreated' | 'epoch_changed';
+    current_seq: number; // 服务端当前 journal seq
+    epoch?: string;
+  };
+}
+```
+
+#### `error`（S→C，死声明）
+
+schema 声明的控制帧形态错误帧，服务端无任何产出点。事件流中出现的 `type: 'error'` 帧均为裸 agent [`error`](#error-s→c) 事件（带 `session_id` / `seq` 信封，见 [agent 事件帧](#agent-事件帧)），客户端按有无 `session_id` 分流。
+
+```ts
+{
+  type: 'error';
+  timestamp: string;
+  payload: {
+    code: number;
+    msg: string;
+    fatal: boolean;
+    request_id?: string;
+    details?: unknown;
+  };
+}
+```
+
 ### event.\* 事件帧
 
 19 型，系统内无 union。13 型有接口正名：`SessionCreatedEvent` / `SessionArchivedEvent` / `SessionWorkChangedEvent` / `SessionStatusChangedEvent` / `WorkspaceCreatedEvent` / `WorkspaceUpdatedEvent` / `WorkspaceDeletedEvent` / `ConfigChangedEvent` / `ConfigWarningEvent` / `ModelCatalogChangedEvent` / `PluginChangedEvent` / `CapabilityChangedEvent` / `DiUnitChangedEvent`；6 型未命名（broadcaster 内联构造，以 `type` 字符串指代）：`event.question.requested` / `event.question.answered` / `event.question.dismissed` / `event.approval.requested` / `event.approval.resolved` / `event.fs.changed`。
