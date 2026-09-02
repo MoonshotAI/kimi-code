@@ -4,12 +4,14 @@ import { join } from 'node:path';
 
 import type { McpServer } from '@agentclientprotocol/sdk';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2';
+import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   acpBlocksToContentParts,
   acpMcpServersToConfigRecord,
   compressPromptImageParts,
+  displayBlockToAcpContent,
 } from '../src/convert';
 import { solidPng, solidPngBase64 } from './_helpers/png';
 
@@ -168,5 +170,109 @@ describe('compressPromptImageParts', () => {
     expect(files).toHaveLength(1);
     expect(caption.text).toContain(files[0]!);
     expect(await readFile(join(originalsDir, files[0]!))).toEqual(original);
+  });
+});
+
+describe('displayBlockToAcpContent', () => {
+  it('renders a diff block as an inline diff entry', () => {
+    expect(
+      displayBlockToAcpContent({
+        kind: 'diff',
+        path: 'example.ts',
+        before: 'old',
+        after: 'new',
+      }),
+    ).toEqual({ type: 'diff', path: 'example.ts', oldText: 'old', newText: 'new' });
+  });
+
+  it('renders a file_io block with both sides as a diff entry', () => {
+    expect(
+      displayBlockToAcpContent({
+        kind: 'file_io',
+        operation: 'edit',
+        path: 'example.ts',
+        before: 'old',
+        after: 'new',
+      }),
+    ).toEqual({ type: 'diff', path: 'example.ts', oldText: 'old', newText: 'new' });
+  });
+
+  it('drops a file_io block when one side is missing', () => {
+    expect(
+      displayBlockToAcpContent({
+        kind: 'file_io',
+        operation: 'write',
+        path: 'example.ts',
+        before: 'old',
+      }),
+    ).toBeNull();
+  });
+
+  it('renders a plan_review block as a text content entry', () => {
+    expect(
+      displayBlockToAcpContent({
+        kind: 'plan_review',
+        plan: 'do the thing',
+      }),
+    ).toEqual({ type: 'content', content: { type: 'text', text: 'do the thing' } });
+  });
+
+  it('prefixes plan_review with its on-disk path when one is set', () => {
+    expect(
+      displayBlockToAcpContent({
+        kind: 'plan_review',
+        plan: 'do the thing',
+        path: '/tmp/plan.md',
+      }),
+    ).toEqual({
+      type: 'content',
+      content: { type: 'text', text: 'Plan saved to: /tmp/plan.md\n\ndo the thing' },
+    });
+  });
+
+  it('drops an empty plan_review', () => {
+    expect(
+      displayBlockToAcpContent({
+        kind: 'plan_review',
+        plan: '   ',
+      }),
+    ).toBeNull();
+  });
+
+  it('projects a command block as a text content entry carrying the full command', () => {
+    expect(
+      displayBlockToAcpContent({
+        kind: 'command',
+        command: 'echo example.com && ls -la /tmp/example.test',
+      }),
+    ).toEqual({
+      type: 'content',
+      content: {
+        type: 'text',
+        text: 'echo example.com && ls -la /tmp/example.test',
+      },
+    });
+  });
+
+  it('preserves the full command even when it exceeds the 50-char action preview', () => {
+    const longCommand =
+      'echo "long command that is well past the fifty character preview cap used elsewhere"';
+    expect(longCommand.length).toBeGreaterThan(50);
+    const entry = displayBlockToAcpContent({
+      kind: 'command',
+      command: longCommand,
+      cwd: '/tmp/example.test',
+      description: 'echo a string',
+      language: 'bash',
+    });
+    expect(entry).toEqual({
+      type: 'content',
+      content: { type: 'text', text: longCommand },
+    });
+  });
+
+  it('returns null for display kinds that have no projection', () => {
+    const generic: ToolInputDisplay = { kind: 'generic', summary: 'noop' };
+    expect(displayBlockToAcpContent(generic)).toBeNull();
   });
 });
