@@ -4,10 +4,6 @@
 
 ## 基础约定
 
-### 地址
-
-默认地址为 `http://127.0.0.1:58627`。端口被占用时，服务会用下一个端口重试（至多 100 次）；可用 `--port` / `--host` 修改绑定。同一 home 目录下可并存多个实例，运行中的实例登记在 `~/.kimi-code/server/instances/`。
-
 ### 鉴权
 
 除以下例外，所有 `/api/*` 路径（含 `/openapi.json` 与 `/asyncapi.json`）都要求 bearer token（持有方令牌）：
