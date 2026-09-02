@@ -83,6 +83,8 @@ For Zed, add this to `~/.config/zed/settings.json`:
 
 Then open a new conversation in Zed's Agent panel. See [Using in IDEs](https://moonshotai.github.io/kimi-code/en/guides/ides) for JetBrains setup and troubleshooting, and the [`kimi acp` reference](https://moonshotai.github.io/kimi-code/en/reference/kimi-acp) for the full capability matrix.
 
+ACP clients are not limited to editors. For example, [qwen-audio-agent](https://github.com/QwenAudio/qwen-audio-agent) is a realtime full-duplex voice frontend that drives a `kimi acp` session hands-free (barge-in, local wake word); point its generic ACP backend at Kimi Code with `ACP_COMMAND=kimi` and `ACP_ARGS=["acp"]`.
+
 ## Docs
 
 - [Getting Started](https://moonshotai.github.io/kimi-code/en/guides/getting-started)
