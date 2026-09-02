@@ -8,8 +8,6 @@ import {
   type ExecutableToolResult,
 } from '#/tool/toolContract';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IFlagService } from '#/app/flag/flag';
-import { COMPACTION_RECOVERY_POINTER_FLAG_ID } from '#/agent/fullCompaction/flag';
 import { AGENT_WIRE_RECORD_KEY } from '#/wire/record';
 import type { ContentPart } from '#/kosong/contract/message';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -41,7 +39,6 @@ export class ToolResultTruncationService implements IAgentToolResultTruncationSe
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IAgentScopeContext agent: IAgentScopeContext,
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
-    @IFlagService private readonly flags: IFlagService,
   ) {
     this.storageScope = agent.scope('tool-results');
   }
@@ -122,7 +119,6 @@ export class ToolResultTruncationService implements IAgentToolResultTruncationSe
   }
 
   isWireJournalPath(path: string): boolean {
-    if (!this.flags.enabled(COMPACTION_RECOVERY_POINTER_FLAG_ID)) return false;
     const sessionsDir = normalize(join(this.bootstrap.homeDir, this.bootstrap.scope('sessions')));
     const normalized = normalize(path);
     return normalized.startsWith(`${sessionsDir}/`) && basename(normalized) === AGENT_WIRE_RECORD_KEY;

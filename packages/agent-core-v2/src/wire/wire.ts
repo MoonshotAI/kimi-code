@@ -10,6 +10,7 @@ export interface IWireService {
   readJournal(): AsyncIterable<WireRecord>;
   flush(): Promise<void>;
   lineCount(): number;
+  lastContextClearLine(): number | undefined;
   journalPath(): string | undefined;
 }
 

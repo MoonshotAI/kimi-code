@@ -8,7 +8,6 @@ import {
 } from '#/agent/actorService/agentActorService';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IFlagService } from '#/app/flag/flag';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import type { ContextInjectionResult } from '#/features/reminder/types';
@@ -24,7 +23,6 @@ import {
   shouldRemindCompactionAhead,
   type ContextBudgetDisclosure,
 } from './contextBudgetReminder';
-import { CONTEXT_BUDGET_REMINDERS_FLAG_ID } from './flag';
 
 interface ContextBudgetActorContext {
   readonly runtime: AgentActorContext<null>;
@@ -39,15 +37,12 @@ const contextBudgetReminders = fromCallback(({
 }) => {
   const runtime = input.runtime;
   const reminder = runtime.get(IAgentReminderService);
-  const flags = runtime.get(IFlagService);
   const compaction = runtime.get(IAgentFullCompactionService);
   const telemetry = runtime.get(ITelemetryService);
-  const enabled = (): boolean => flags.enabled(CONTEXT_BUDGET_REMINDERS_FLAG_ID);
 
   const budgetRegistration = reminder.register<ContextBudgetDisclosure>(
     CONTEXT_BUDGET_REMINDER_VARIANT,
     ({ lastDisclosure }): ContextInjectionResult<ContextBudgetDisclosure> | undefined => {
-      if (!enabled()) return undefined;
       const budget = compaction.budget();
       const bucket = contextBudgetBucket(budget);
       if (bucket === undefined || lastDisclosure?.bucket === bucket) return undefined;
@@ -64,7 +59,6 @@ const contextBudgetReminders = fromCallback(({
   const aheadRegistration = reminder.register(
     COMPACTION_AHEAD_REMINDER_VARIANT,
     ({ lastInjection }): string | undefined => {
-      if (!enabled()) return undefined;
       if (lastInjection !== undefined) return undefined;
       const budget = compaction.budget();
       if (!shouldRemindCompactionAhead(budget)) return undefined;

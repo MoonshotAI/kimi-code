@@ -44,6 +44,7 @@ import {
   type ToolExecution,
 } from '#/index';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IWireService } from '#/wire/wire';
 import { IAgentTodoService } from '#/features/todo/todoService';
 import { IAgentGoalService } from '#/features/goal/goalService';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
@@ -3042,7 +3043,6 @@ describe('FullCompaction', () => {
 });
 
 describe('FullCompaction context recovery pointer', () => {
-  const RECOVERY_FLAG_ENV = 'KIMI_CODE_EXPERIMENTAL_COMPACTION_RECOVERY_POINTER';
   const JOURNAL_HOME = '/home/user/.kimi-code';
 
   interface ApplyCompactionArgs {
@@ -3109,7 +3109,6 @@ describe('FullCompaction context recovery pointer', () => {
   }
 
   it('appends the journal location and window line ranges to the model-facing note', async () => {
-    vi.stubEnv(RECOVERY_FLAG_ENV, '1');
     const ctx = recoveryAgent(appService(IFileSystemStorageService, locatedStorage(JOURNAL_HOME)));
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 40);
@@ -3134,7 +3133,6 @@ describe('FullCompaction context recovery pointer', () => {
   });
 
   it('lists every earlier window after repeated compactions', async () => {
-    vi.stubEnv(RECOVERY_FLAG_ENV, '1');
     const ctx = recoveryAgent(appService(IFileSystemStorageService, locatedStorage(JOURNAL_HOME)));
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     await compactOnce(ctx, 'First summary.');
@@ -3157,7 +3155,6 @@ describe('FullCompaction context recovery pointer', () => {
   });
 
   it('records window line ranges but omits the pointer when the journal has no on-disk path', async () => {
-    vi.stubEnv(RECOVERY_FLAG_ENV, '1');
     const ctx = recoveryAgent();
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 40);
@@ -3170,17 +3167,51 @@ describe('FullCompaction context recovery pointer', () => {
     expect(record?.contextSummary).not.toContain('Context Recovery');
   });
 
-  it('leaves the note and the record untouched while the flag is disabled', async () => {
-    vi.stubEnv(RECOVERY_FLAG_ENV, '0');
+  it('starts the window after the latest context.clear record', async () => {
     const ctx = recoveryAgent(appService(IFileSystemStorageService, locatedStorage(JOURNAL_HOME)));
-    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
-    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 40);
+    ctx.appendExchange(1, 'discarded user one', 'discarded assistant one', 20);
+    ctx.context.clear();
+    ctx.appendExchange(2, 'post-clear user two', 'post-clear assistant two', 40);
 
-    await compactOnce(ctx, 'Compacted summary.');
+    await compactOnce(ctx, 'Post-clear summary.');
 
+    const wire = ctx.get(IWireService);
+    await wire.flush();
+    let line = 0;
+    let clearLine = 0;
+    for await (const record of wire.readJournal()) {
+      line += 1;
+      if (record.type === 'context.clear') clearLine = line;
+    }
+    expect(clearLine).toBeGreaterThan(1);
     const [record] = applyCompactionRecords(ctx);
-    expect(record?.wireLines).toBeUndefined();
-    expect(noteText(ctx)).not.toContain('Context Recovery');
+    expect(record?.wireLines?.start).toBe(clearLine + 1);
+    expect(record!.wireLines!.end).toBeGreaterThan(clearLine);
+    const note = noteText(ctx);
+    expect(note).toContain(`window 1: lines ${String(clearLine + 1)}–`);
+    expect(note).not.toContain('window 1: lines 1–');
+  });
+
+  it('counts the appended recovery footer into the compacted token floor', async () => {
+    const withFooter = recoveryAgent(
+      appService(IFileSystemStorageService, locatedStorage(JOURNAL_HOME)),
+    );
+    const bare = recoveryAgent();
+    for (const ctx of [withFooter, bare]) {
+      ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+      ctx.appendExchange(2, 'recent user two', 'recent assistant two', 40);
+      await compactOnce(ctx, 'Compacted summary.');
+    }
+
+    const [footerRecord] = applyCompactionRecords(withFooter);
+    const contextSummary = footerRecord!.contextSummary!;
+    const footer = contextSummary.slice(contextSummary.indexOf('## Context Recovery'));
+    expect(footer.length).toBeGreaterThan(0);
+    const withFooterTokens = withFooter.tokenCounting.get().size;
+    const bareTokens = bare.tokenCounting.get().size;
+    expect(withFooterTokens - bareTokens).toBe(
+      withFooter.get(ISessionTokenCountingService).estimateText(footer),
+    );
   });
 
   it('keeps context budget reminders out of the summarizer request', async () => {
@@ -3263,19 +3294,13 @@ describe('FullCompaction context recovery pointer', () => {
     expect(budget.used).toBeGreaterThan(0);
   });
 
-  it('tells the summarizer a recovery pointer follows the note only when the pointer is enabled', () => {
-    const withPointer = renderCompactionInstruction({ recoveryPointer: true });
-    const withoutPointer = renderCompactionInstruction({ recoveryPointer: false });
-    const withCustom = renderCompactionInstruction({
-      recoveryPointer: false,
-      customInstruction: ' keep the API facts ',
-    });
+  it('tells the summarizer a recovery pointer follows the note', () => {
+    const withPointer = renderCompactionInstruction({});
+    const withCustom = renderCompactionInstruction({ customInstruction: ' keep the API facts ' });
 
     expect(withPointer).toContain('a recovery pointer is appended below your note automatically');
     expect(withPointer).toContain('format for the final answer.\n\nThe complete record');
-    expect(withoutPointer).not.toContain('recovery pointer');
-    expect(withoutPointer).toContain('format for the final answer.\n\nYour TODO list');
-    expect(withoutPointer).not.toContain('${');
+    expect(withPointer).not.toContain('${');
     expect(withCustom).toContain('Optional user instruction:\nkeep the API facts');
   });
 });

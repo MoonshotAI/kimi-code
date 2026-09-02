@@ -5,4 +5,3 @@ for (const key of Object.keys(process.env)) {
 }
 
 process.env['KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL'] = 'false';
-process.env['KIMI_CODE_EXPERIMENTAL_CONTEXT_BUDGET_REMINDERS'] = 'false';

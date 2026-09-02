@@ -159,6 +159,7 @@ export function stubAgentWire(
     readJournal: async function* () {},
     flush,
     lineCount: () => 0,
+    lastContextClearLine: () => undefined,
     journalPath: () => undefined,
   };
 }

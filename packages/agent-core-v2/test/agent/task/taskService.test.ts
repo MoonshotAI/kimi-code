@@ -84,6 +84,7 @@ function stubWireService(): IWireService {
     readJournal: async function* () {},
     flush: async () => {},
     lineCount: () => 0,
+    lastContextClearLine: () => undefined,
     journalPath: () => undefined,
   };
 }

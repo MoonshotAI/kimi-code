@@ -30,7 +30,6 @@ import {
   isContextBudgetReminder,
   summarizeCompactionAheadFollowUp,
 } from '#/features/contextBudget/contextBudgetReminder';
-import { IFlagService } from '#/app/flag/flag';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import type { WireLineRange } from '#/wire/record';
 import { IWireService } from '#/wire/wire';
@@ -51,7 +50,6 @@ import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { renderCompactionInstruction } from './compactionInstruction';
 import { renderContextRecoveryPointer } from './contextRecovery';
-import { COMPACTION_RECOVERY_POINTER_FLAG_ID } from './flag';
 import {
   IAgentFullCompactionService,
   type CompactionBudget,
@@ -161,7 +159,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentLoopService private readonly loopService: IAgentLoopService,
     @IAgentStateService private readonly states: IAgentStateService,
-    @IFlagService private readonly flags: IFlagService,
     @IWireService private readonly wire: IWireService,
   ) {
     super();
@@ -651,10 +648,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
           : undefined;
       const compactionMaxOutputSize = resolvedModel.maxOutputSize ?? defaultCompactionCap;
 
-      const instruction = renderCompactionInstruction({
-        customInstruction: data.instruction,
-        recoveryPointer: this.recoveryPointerEnabled(),
-      });
+      const instruction = renderCompactionInstruction({ customInstruction: data.instruction });
 
       const delays = retryBackoffDelays(MAX_COMPACTION_RETRY_ATTEMPTS);
       let attempt: CompactionAttemptResult | undefined;
@@ -755,12 +749,19 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
       const summary = await this.postProcessSummary(attempt.summary);
       const wireLines = await this.captureWireLines();
+      const recoveryFooter = this.renderRecoveryFooter(wireLines);
+      const summaryText = buildCompactionSummaryText(summary);
       const result = this.context.applyCompaction({
         summary,
-        contextSummary: this.renderContextSummary(summary, wireLines),
+        contextSummary:
+          recoveryFooter === undefined ? summaryText : `${summaryText}\n\n${recoveryFooter}`,
         compactedCount: originalHistory.length,
         tokensBefore,
-        summaryOutputTokens: attempt.usage?.output,
+        summaryOutputTokens:
+          attempt.usage === null
+            ? undefined
+            : attempt.usage.output +
+              (recoveryFooter === undefined ? 0 : this.tokenCounting.estimateText(recoveryFooter)),
         requestOverheadTokens: this.requestTokens([]),
         droppedCount: droppedCount === 0 ? undefined : droppedCount,
         wireLines,
@@ -816,12 +817,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     return `${summary.trim()}\n\n${renderTodoList(todos, '## TODO List')}`;
   }
 
-  private recoveryPointerEnabled(): boolean {
-    return this.flags.enabled(COMPACTION_RECOVERY_POINTER_FLAG_ID);
-  }
-
   private async captureWireLines(): Promise<WireLineRange | undefined> {
-    if (!this.recoveryPointerEnabled()) return undefined;
     try {
       await this.wire.flush();
     } catch (error) {
@@ -830,18 +826,17 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     }
     const end = this.wire.lineCount();
     const previous = this.states.get(fullCompactionWireRangesKey).at(-1);
-    const start = (previous?.end ?? 0) + 1;
+    const start = Math.max(previous?.end ?? 0, this.wire.lastContextClearLine() ?? 0) + 1;
     if (end < start) return undefined;
     return { start, end };
   }
 
-  private renderContextSummary(summary: string, wireLines: WireLineRange | undefined): string {
-    const base = buildCompactionSummaryText(summary);
-    if (wireLines === undefined) return base;
+  private renderRecoveryFooter(wireLines: WireLineRange | undefined): string | undefined {
+    if (wireLines === undefined) return undefined;
     const journalPath = this.wire.journalPath();
-    if (journalPath === undefined) return base;
+    if (journalPath === undefined) return undefined;
     const windows = [...this.states.get(fullCompactionWireRangesKey), wireLines];
-    return `${base}\n\n${renderContextRecoveryPointer({ journalPath, windows })}`;
+    return renderContextRecoveryPointer({ journalPath, windows });
   }
 
   private tokenCountWithPending(): number {

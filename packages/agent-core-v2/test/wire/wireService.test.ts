@@ -974,6 +974,22 @@ describe('WireService journal location', () => {
     expect(wire.journalPath()).toBeUndefined();
   });
 
+  it('tracks the latest context.clear line across appends and reads', async () => {
+    await wire.seal();
+    wire.appendRecord({ type: 'wire.test.one', time: 1 });
+    expect(wire.lastContextClearLine()).toBeUndefined();
+    wire.appendRecord({ type: 'context.clear', time: 2 });
+    wire.appendRecord({ type: 'wire.test.two', time: 3 });
+    await wire.flush();
+
+    expect(wire.lastContextClearLine()).toBe(3);
+
+    const reopened = wireOverLog(log, KEY);
+    expect(reopened.lastContextClearLine()).toBeUndefined();
+    await collect(reopened.readJournal());
+    expect(reopened.lastContextClearLine()).toBe(3);
+  });
+
   it('reports the on-disk journal path resolved by the storage layer', () => {
     const locatedStorage: IFileSystemStorageService = Object.assign(Object.create(storage), {
       pathFor: (scope: string, key: string) => `/home/user/.kimi-code/${scope}/${key}`,

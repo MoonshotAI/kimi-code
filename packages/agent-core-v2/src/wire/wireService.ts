@@ -39,6 +39,7 @@ export class WireService extends Service implements IWireService {
 
   private readonly wireScope: string;
   private lines = 0;
+  private lastClearLine: number | undefined;
   private readonly agentId: string;
   private persistQueue: Promise<void> | undefined;
   private pendingRepair:
@@ -125,6 +126,7 @@ export class WireService extends Service implements IWireService {
         recordIndex++;
         continue;
       }
+      if (sourceRecord.type === 'context.clear') this.lastClearLine = lineCount;
       if (!hasRecords) {
         hasRecords = true;
         if (sourceRecord.type !== 'metadata') {
@@ -184,11 +186,16 @@ export class WireService extends Service implements IWireService {
     } else if (rewrittenRecords !== undefined) {
       await this.log.rewrite(this.wireScope, AGENT_WIRE_RECORD_KEY, rewrittenRecords);
       this.lines = rewrittenRecords.length;
+      this.lastClearLine = lastContextClearLineOf(rewrittenRecords);
     }
   }
 
   lineCount(): number {
     return this.lines;
+  }
+
+  lastContextClearLine(): number | undefined {
+    return this.lastClearLine;
   }
 
   journalPath(): string | undefined {
@@ -223,7 +230,10 @@ export class WireService extends Service implements IWireService {
       truncation,
     );
     this.pendingRepair = outcome === 'failed' ? { records, truncation } : undefined;
-    if (outcome !== 'failed') this.lines = records.length;
+    if (outcome !== 'failed') {
+      this.lines = records.length;
+      this.lastClearLine = lastContextClearLineOf(records);
+    }
   }
 
   private async repairPendingJournal(): Promise<void> {
@@ -332,7 +342,15 @@ export class WireService extends Service implements IWireService {
       onError: onUnexpectedError,
     });
     this.lines += 1;
+    if (record.type === 'context.clear') this.lastClearLine = this.lines;
   }
+}
+
+function lastContextClearLineOf(records: readonly WireRecord[]): number | undefined {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    if (records[index]!.type === 'context.clear') return index + 1;
+  }
+  return undefined;
 }
 
 function extractLegacyPlanRevisionKey(path: string, agentId: string): string | undefined {

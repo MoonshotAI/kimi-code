@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -15,7 +15,6 @@ import { runWillBeginStepHooks, type StubLoop } from '../../agent/loop/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { testAgent, type TestAgentContext } from '../../harness';
 
-const FLAG_ENV = 'KIMI_CODE_EXPERIMENTAL_CONTEXT_BUDGET_REMINDERS';
 const PROVIDER = {
   type: 'kimi',
   apiKey: 'test-key',
@@ -105,7 +104,6 @@ describe('context budget reminders in the agent', () => {
   let telemetry: TelemetryRecord[];
 
   beforeEach(async () => {
-    vi.stubEnv(FLAG_ENV, '1');
     telemetry = [];
     ctx = testAgent({
       telemetry: recordingTelemetry(telemetry),
@@ -118,7 +116,6 @@ describe('context budget reminders in the agent', () => {
   });
 
   afterEach(async () => {
-    vi.unstubAllEnvs();
     await ctx.dispose();
   });
 
@@ -176,14 +173,5 @@ describe('context budget reminders in the agent', () => {
     await runWillBeginStepHooks(loop);
     expect(reminders(context, 'compaction_ahead')).toHaveLength(1);
     expect(reminders(context, 'context_budget')).toHaveLength(1);
-  });
-
-  it('stays silent while the flag is off', async () => {
-    vi.stubEnv(FLAG_ENV, '0');
-    ctx.appendExchange(1, 'user one', 'assistant one', 76_000);
-    await runWillBeginStepHooks(loop);
-
-    expect(reminders(context, 'context_budget')).toHaveLength(0);
-    expect(reminders(context, 'compaction_ahead')).toHaveLength(0);
   });
 });
