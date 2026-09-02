@@ -4810,7 +4810,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 | [控制帧](#控制帧) | 双向 | 12 活跃 + 7 死声明 | `ServerSystemMessage`（下行）/ `ClientControlMessage`（上行） | 握手、订阅、心跳与恢复 |
 | [event.\* 事件帧](#event-事件帧) | S→C | 19 | 13 型有接口正名，6 型未命名 | 工作区 / 会话 / 配置等状态同步 |
 | [agent 事件帧](#agent-事件帧) | S→C | 51 | `AgentEvent` | 轮次生命周期、状态与 subagent 内容 |
-| [transcript 帧](#transcript-帧) | S→C | 2 | `TranscriptResetEvent` / `TranscriptOpsEvent` | 主会话内容的结构化流（新实现） |
+| [transcript 帧](#transcript-帧) | S→C | 2 | `TranscriptResetEvent` / `TranscriptOpsEvent` | 会话时间线的结构化投影（聊天渲染数据源） |
 | [terminal 帧](#terminal-帧) | S→C | 2 | — | 死协议 |
 
 事件帧共享外层信封 `EventEnvelope`；`payload` 为各事件自己的载荷：
