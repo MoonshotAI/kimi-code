@@ -123,20 +123,11 @@ HTTP 状态码例外（非 200）：
 
 返回本实例的身份信息与能力集。大多数字段在启动时即固定；`experimental_flags` 与 `features` 按请求实时解析。
 
-**响应体**：`ResponseType<{ server_version: string, capabilities: object, server_id: string, started_at: string, open_in_apps: array, dangerous_bypass_auth: boolean, backend: string, web_title?: string, experimental_flags: object, features: array }>`
+**响应体**：`ResponseType<`[T-MetaResponse](#t-metaresponse)`>`。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `server_version` | string | 服务版本 |
-| `capabilities` | object | 恒 `{ "websocket": true, "file_upload": true, "fs_query": true, "mcp": true, "tasks": true, "terminal": true }` |
-| `server_id` | string | 本次启动生成的 ULID |
-| `started_at` | string | 启动时间，ISO 8601 |
-| `open_in_apps` | array | 恒 `[]` |
-| `dangerous_bypass_auth` | boolean | 服务是否以 `--dangerous-bypass-auth` 启动 |
-| `backend` | string | 恒 `"v2"` |
-| `web_title` | string | 可缺省：`--web-title` 自定义标题，未设置时不出现 |
-| `experimental_flags` | object | 实验开关 id → 是否启用 |
-| `features` | array | 引擎 feature 单元，形如 `{ name, state, meta }`；`state` 为 `Pending` / `Activating` / `Active` / `Unloading` / `Failed` |
+| `data` | [T-MetaResponse](#t-metaresponse) | 实例身份与能力集；字段见类型汇总 |
 
 **响应示例**：
 
@@ -4498,6 +4489,42 @@ type McpServerAuthStatus = {
 ```
 
 **服务。**
+
+### T-MetaResponse
+
+`GET /meta` 的响应，服务端正名为 `MetaResponse`。
+
+```ts
+type MetaResponse = {
+  server_version: string;
+  capabilities: MetaCapabilities;
+  server_id: string; // 本次启动生成的 ULID
+  started_at: string; // ISO 8601
+  open_in_apps: string[]; // 恒 []
+  dangerous_bypass_auth: boolean;
+  experimental_flags: Record<string, boolean>; // 按请求实时解析
+  backend: 'v2';
+  web_title?: string; // --web-title，未设置时缺省
+  features: MetaFeature[]; // 按请求实时解析
+};
+
+type MetaCapabilities = {
+  websocket: true;
+  file_upload: true;
+  fs_query: true;
+  mcp: true;
+  tasks: true;
+  terminal: true;
+};
+
+type MetaFeature = {
+  name: string;
+  state: 'Pending' | 'Activating' | 'Active' | 'Unloading' | 'Failed';
+  meta: Record<string, unknown>;
+};
+```
+
+服务端 schema 中 `experimental_flags` / `backend` / `features` 为可选，但产出恒带这三个字段。
 
 ### T-Connection
 
