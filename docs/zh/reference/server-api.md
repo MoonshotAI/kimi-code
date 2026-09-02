@@ -99,7 +99,6 @@ HTTP 状态码例外（非 200）：
 | --- | --- |
 | `GET /api/v1/healthz` | 探活，免鉴权 |
 | `GET /api/v1/meta` | 服务版本、能力集、`server_id`、实验开关 |
-| `GET /api/v1/auth` | 鉴权状态快照 |
 | `POST /api/v1/shutdown` | 优雅退出（先回 200 再关闭）；仅 loopback 绑定时挂载 |
 | `GET /api/v1/connections` | 列出当前在线的 WebSocket 连接 |
 
@@ -146,18 +145,6 @@ HTTP 状态码例外（非 200）：
   "data": { "server_version": "0.40.0", "capabilities": { "websocket": true, "...": true }, "server_id": "01JZX4...", "started_at": "2026-09-02T08:00:00.000Z", "open_in_apps": [], "dangerous_bypass_auth": false, "backend": "v2", "experimental_flags": { "search_worker": true }, "features": [ { "name": "fileHistory", "state": "Active", "meta": {} } ] },
   "request_id": "01JZX4..."
 }
-```
-
-#### `GET /api/v1/auth`
-
-鉴权状态快照：默认模型能否解析到可用的供应商配置，以及托管供应商的登录状态。它不做凭据校验，此后的对话请求仍可能以 `40111` / `40112` 失败。
-
-**返回**：`ResponseType<[T-AuthSummary](#t-authsummary)>`。
-
-**示例**：
-
-```json
-{ "code": 0, "msg": "success", "data": { "models_ready": true, "providers_count": 1, "managed_provider": { "name": "managed:kimi-code", "status": "authenticated" } }, "request_id": "01JZX4..." }
 ```
 
 #### `POST /api/v1/shutdown`
@@ -473,6 +460,7 @@ HTTP 状态码例外（非 200）：
 
 | 方法与路径 | 说明 |
 | --- | --- |
+| `GET /api/v1/auth` | 鉴权状态快照 |
 | `POST /api/v1/oauth/login` | 发起 OAuth device-code 登录流程 |
 | `GET /api/v1/oauth/login` | 轮询登录流程状态 |
 | `DELETE /api/v1/oauth/login` | 取消进行中的登录流程 |
@@ -480,6 +468,18 @@ HTTP 状态码例外（非 200）：
 | `GET /api/v1/oauth/usage` | 套餐用量与限额 |
 | `GET /api/v1/oauth/userinfo` | 账号资料 |
 | `GET /api/v1/oauth/region` | 解析客户端所属区域 |
+
+#### `GET /api/v1/auth`
+
+鉴权状态快照：默认模型能否解析到可用的供应商配置，以及托管供应商的登录状态。它不做凭据校验，此后的对话请求仍可能以 `40111` / `40112` 失败。
+
+**返回**：`ResponseType<[T-AuthSummary](#t-authsummary)>`。
+
+**示例**：
+
+```json
+{ "code": 0, "msg": "success", "data": { "models_ready": true, "providers_count": 1, "managed_provider": { "name": "managed:kimi-code", "status": "authenticated" } }, "request_id": "01JZX4..." }
+```
 
 #### `POST /api/v1/oauth/login`
 
