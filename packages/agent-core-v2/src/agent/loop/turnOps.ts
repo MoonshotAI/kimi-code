@@ -100,6 +100,7 @@ export interface TurnEndedPayload {
   readonly error?: KimiErrorPayload;
   readonly durationMs?: number;
   readonly interruptReason?: TurnInterruptReason;
+  readonly stopReason?: string;
 }
 
 export class TurnEnded extends AgentEvent2<TurnEndedPayload> {

@@ -631,6 +631,46 @@ describe('Agent loop', () => {
     });
   });
 
+  it('carries a tool stopTurnReason into the completed turn result and turn.ended', async () => {
+    const stopCall: ToolCall = {
+      type: 'function',
+      id: 'call_stop',
+      name: 'Stopper',
+      arguments: '{}',
+    };
+    const stopperTool: ExecutableTool<Record<string, never>> = {
+      name: 'Stopper',
+      description: 'Stops the turn with a reason.',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      resolveExecution: () => ({
+        approvalRule: 'Stopper',
+        execute: async () => ({ output: 'stopped', stopTurn: true, stopTurnReason: 'demo_reason' }),
+      }),
+    };
+    profile.update({ activeToolNames: ['Stopper'] });
+    ctx.get(IAgentToolRegistryService).register(stopperTool);
+
+    ctx.mockNextResponse({ type: 'text', text: 'Stopping.' }, stopCall);
+    ctx.mockNextResponse({ type: 'text', text: 'This step should not run.' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'stop' }] });
+    const turn = (loop as unknown as { activeTurnJob?: { turn: Turn } }).activeTurnJob?.turn;
+    await ctx.untilApproval(true);
+    await ctx.untilTurnEnd();
+
+    expect(ctx.llmCalls).toHaveLength(1);
+    await expect(turn!.result).resolves.toEqual({
+      type: 'completed',
+      steps: 1,
+      truncated: false,
+      stopReason: 'demo_reason',
+    });
+    const turnEnded = ctx.allEvents.find(
+      (event) => event.type === '[rpc]' && event.event === 'turn.ended',
+    );
+    expect(turnEnded?.args).toMatchObject({ reason: 'completed', stopReason: 'demo_reason' });
+  });
+
   it('queues consecutive nextTurn requests in FIFO order without overlapping turns', async () => {
     const events: string[] = [];
     const subscription = ctx.get(IEventBus).subscribe((event) => {

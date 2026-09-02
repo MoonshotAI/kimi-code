@@ -44,6 +44,8 @@ import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { DEFAULT_SUBAGENT_TIMEOUT_MS, SECONDARY_MODEL_SECTION, SUBAGENT_SECTION } from '#/session/subagent/configSection';
 import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
 import { Error2, ErrorCodes } from '#/errors';
+import type { AgentTaskSettlement } from '#/agent/task/types';
+import { SubagentTask } from '#/agent/tools/agent/subagent-task';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
@@ -52,6 +54,7 @@ import {
   type AgentScopeCreatedEvent,
 } from '#/session/agentLifecycle/agentLifecycle';
 import {
+  type AgentRunCompletion,
   type AgentRunHandle,
   type AgentRunRequest,
   type AgentTaskStopHookContext,
@@ -211,7 +214,7 @@ interface AgentLifecycleStubOptions {
     agentId: string,
     request: AgentRunRequest,
     options: RunAgentOptions,
-  ) => Promise<{ readonly summary: string; readonly usage?: TokenUsage }>;
+  ) => Promise<AgentRunCompletion>;
   readonly createError?: Error;
   readonly handleServices?: ReadonlyMap<string, ReadonlyMap<unknown, unknown>>;
 }
@@ -1335,6 +1338,177 @@ describe('Agent tool execution contract', () => {
       }),
     );
     expect(result.output).toContain('actual_subagent_type: explore');
+  });
+
+  it('reports a normal completion with stop_reason and a resume hint', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: async () => ({ summary: 'child result' }),
+    });
+    const context = createAgentToolContext(lifecycle);
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toContain('status: completed');
+    expect(result.output).toContain('stop_reason: completed');
+    expect(result.output).toContain('[summary]\nchild result');
+    expect(result.output).toContain('resume_hint: Continue with Agent(resume="agent-child"');
+    expect(result.output).not.toContain('notice:');
+    expect(result.output).not.toContain('next_step:');
+  });
+
+  it('reports a repeat-breaker handoff as completed with stop_reason repeat_breaker', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: async () => ({
+        summary: 'Stuck: the same grep keeps returning nothing.',
+        stopReason: 'repeat_breaker',
+      }),
+    });
+    const context = createAgentToolContext(lifecycle);
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toContain('status: completed');
+    expect(result.output).toContain('stop_reason: repeat_breaker');
+    expect(result.output).toContain('notice: The subagent was stopped by the repeat breaker');
+    expect(result.output).toContain('[summary]\nStuck: the same grep keeps returning nothing.');
+    expect(result.output).toContain('next_step: The subagent was stuck on one tool call.');
+  });
+
+  it('settles a repeat-breaker completion with a stop code and a task reason', async () => {
+    const task = new SubagentTask(
+      {
+        agentId: 'agent-child',
+        profileName: 'coder',
+        completion: Promise.resolve({ result: 'handoff', stopReason: 'repeat_breaker' }),
+      },
+      'Find cause',
+      new AbortController(),
+    );
+    const settlements: AgentTaskSettlement[] = [];
+    const output: string[] = [];
+    await task.start({
+      signal: new AbortController().signal,
+      appendOutput: (chunk) => {
+        output.push(chunk);
+      },
+      settle: async (settlement) => {
+        settlements.push(settlement);
+        return true;
+      },
+    });
+
+    expect(output).toEqual(['handoff']);
+    expect(settlements).toEqual([
+      { status: 'completed', stopReason: expect.stringContaining('repeat breaker') },
+    ]);
+    const info = task.toInfo({
+      taskId: 'agent-1',
+      description: 'Find cause',
+      status: 'completed',
+      startedAt: 0,
+      endedAt: 1,
+    });
+    expect(info.stopCode).toBe('repeat_breaker');
+  });
+
+  it('reports a missing final message as a failure with stop_reason no_final_message', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: async () => {
+        throw new Error2(
+          ErrorCodes.AGENT_NO_FINAL_MESSAGE,
+          'Subagent turn ended without a final message (stop reason: repeat_breaker).',
+        );
+      },
+    });
+    const context = createAgentToolContext(lifecycle);
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('status: failed');
+    expect(result.output).toContain('stop_reason: no_final_message');
+    expect(result.output).toContain(
+      'subagent error: The subagent was stopped before it finished. Reason: Subagent turn ended without a final message (stop reason: repeat_breaker).',
+    );
+    expect(result.output).toContain('resume_hint: Continue with Agent(resume="agent-child", prompt="continue")');
+    expect(result.output).toContain('next_step: Resume to continue where it stopped');
+  });
+
+  it('maps a step-cap failure to stop_reason max_steps without config advice', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: async () => {
+        throw new Error2(
+          ErrorCodes.LOOP_MAX_STEPS_EXCEEDED,
+          'Subagent hit the per-turn step cap (maxSteps=5) before finishing its handoff.',
+        );
+      },
+    });
+    const context = createAgentToolContext(lifecycle);
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('stop_reason: max_steps');
+    expect(result.output).toContain('maxSteps=5');
+    expect(result.output).not.toContain('config.toml');
+    expect(result.output).toContain('resume_hint:');
+  });
+
+  it('maps a provider filter failure to stop_reason filtered with a rephrase hint', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: async () => {
+        throw new Error2(ErrorCodes.PROVIDER_FILTERED, 'Provider safety policy blocked the response.');
+      },
+    });
+    const context = createAgentToolContext(lifecycle);
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('stop_reason: filtered');
+    expect(result.output).toContain('next_step: Resuming is unlikely to help');
+  });
+
+  it('truncates an oversized failure reason', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: async () => {
+        throw new Error('x'.repeat(5000));
+      },
+    });
+    const context = createAgentToolContext(lifecycle);
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('stop_reason: error');
+    expect(result.output).toContain('[truncated]');
+    expect((result.output as string).length).toBeLessThan(3000);
   });
 
   it('declares no resource accesses so concurrent Agent calls can run in parallel', async () => {
@@ -2600,7 +2774,10 @@ describe('Agent tool execution contract', () => {
 
     expect(result.isError).toBe(true);
     expect(result.output).toContain('status: failed');
+    expect(result.output).toContain('stop_reason: cancelled');
     expect(result.output).toContain('The subagent was stopped before it finished by user.');
+    expect(result.output).not.toContain('resume_hint:');
+    expect(result.output).toContain('next_step: The user stopped this subagent.');
   });
 
   it('reports the reason when a foreground subagent is stopped for another cause', async () => {

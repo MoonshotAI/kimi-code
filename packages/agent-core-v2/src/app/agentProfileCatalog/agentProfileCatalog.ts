@@ -9,12 +9,6 @@ export interface AgentProfilePromptPrefixContext {
   readonly log?: ILogger;
 }
 
-export interface AgentProfileSummaryPolicy {
-  readonly minChars: number;
-  readonly continuationPrompt: string;
-  readonly retries: number;
-}
-
 export interface AgentProfileContext {
   readonly cwd?: string;
   readonly cwdListing?: string;
@@ -51,7 +45,6 @@ export interface AgentProfile {
   readonly systemPrompt: (context: AgentProfileContext) => string;
   readonly renderSystemPrompt: (context: AgentProfileContext) => SystemPromptRenderResult;
   readonly promptPrefix?: (ctx: AgentProfilePromptPrefixContext) => Promise<string>;
-  readonly summaryPolicy?: AgentProfileSummaryPolicy;
 }
 
 export type AgentProfileInput = Omit<AgentProfile, 'systemPrompt' | 'renderSystemPrompt'> &
