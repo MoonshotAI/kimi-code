@@ -31,13 +31,6 @@ import { GoalFeature } from '#/features/goal/goalFeature';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
-import { stubFlag } from '../../app/flag/stubs';
-
-const featureAssemblySeeds = [
-  [IConfigService, { ready: Promise.resolve() }],
-  [IFlagService, stubFlag(false)],
-] as const;
-
 describe('GoalFeature', () => {
   beforeEach(() => {
     _clearScopedRegistryForTests();
@@ -60,14 +53,14 @@ describe('GoalFeature', () => {
   });
 
   it('assembles a named, introspectable goal unit', () => {
-    const host = createScopedTestHost(featureAssemblySeeds);
+    const host = createScopedTestHost();
     const manager = host.app.accessor.get(IFeatureManager);
     expect(manager.units().map((unit) => unit.name)).toContain('goal');
     host.dispose();
   });
 
   it('retracts the goal runtime contribution with the Feature', async () => {
-    const host = createScopedTestHost(featureAssemblySeeds);
+    const host = createScopedTestHost();
     const manager = host.app.accessor.get(IFeatureManager);
 
     await manager.unprovideUnit('goal');

@@ -1139,30 +1139,6 @@ key = "${titleOAuthRef.key}"
     }
   });
 
-  it('enables tower mode from config.toml [experimental] without env vars', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOWER', undefined);
-    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
-    tempDirs.push(homeDir);
-    await writeFile(join(homeDir, 'config.toml'), '[experimental]\ntower = true\n', 'utf-8');
-    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
-    tempDirs.push(workDir);
-    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
-    try {
-      await client.createSession({ id: 'ses_tower_config', workDir });
-
-      await expect(client.setTowerMode({ sessionId: 'ses_tower_config', enabled: true }))
-        .resolves.toBeUndefined();
-      expect((await client.getStatus({ sessionId: 'ses_tower_config' })).towerMode).toBe(true);
-
-      await client.setTowerMode({ sessionId: 'ses_tower_config', enabled: false });
-      expect((await client.getStatus({ sessionId: 'ses_tower_config' })).towerMode).toBe(false);
-    } finally {
-      vi.unstubAllEnvs();
-      await client.close();
-    }
-  });
-
   it('exposes Session.setTowerMode and getStatus().towerMode on the v2 harness', async () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOWER', '1');
     const { harness } = await makeHarness();

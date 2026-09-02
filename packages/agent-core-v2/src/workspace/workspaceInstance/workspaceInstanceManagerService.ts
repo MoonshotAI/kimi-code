@@ -186,7 +186,6 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
 
   private async materialize(workspace: Workspace): Promise<WorkspaceInstance> {
     await this.environment.ready;
-    await this.config.ready;
     const runtimes = new RuntimeRegistry(workspace.id);
     const unitHost = this.unitHostFactory.create(this.instantiation, runtimes);
     const instance = new WorkspaceInstance(
