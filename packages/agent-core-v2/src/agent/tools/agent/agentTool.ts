@@ -306,7 +306,7 @@ export class SubagentTool implements ISubagentTool {
       const spawned = await this.subagents.spawn({
         callerAgentId: this.callerAgentId,
         plan,
-        labels: subagentLabels(this.callerAgentId, { profileName: plan.profileName }),
+        labels: subagentLabels(this.callerAgentId),
         prompt: args.prompt,
       });
       agentId = spawned.agentId;

@@ -306,7 +306,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
           model: binding?.model,
           thinking: resolveSubagentThinking(this.config, model, binding?.thinking),
         },
-        labels: subagentLabels(this.callerAgentId, { profileName: TOWER_WORKER_PROFILE }),
+        labels: subagentLabels(this.callerAgentId),
       });
     } catch (error) {
       throw binding === undefined

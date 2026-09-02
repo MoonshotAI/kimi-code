@@ -2,16 +2,21 @@ import type { AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 
 export function subagentLabels(
   parentAgentId: string,
-  options: { readonly swarmItem?: string; readonly profileName?: string } = {},
+  options: { readonly swarmItem?: string } = {},
 ): Readonly<Record<string, string>> {
   const labels: Record<string, string> = { parentAgentId };
   if (options.swarmItem !== undefined) {
     labels['swarmItem'] = options.swarmItem;
   }
-  if (options.profileName !== undefined) {
-    labels['profileName'] = options.profileName;
-  }
   return labels;
+}
+
+export function withSubagentProfile(
+  labels: Readonly<Record<string, string>> | undefined,
+  profileName: string | undefined,
+): Readonly<Record<string, string>> | undefined {
+  if (profileName === undefined || profileName.length === 0) return labels;
+  return { ...labels, profileName };
 }
 
 export function labelsFromAgentMeta(

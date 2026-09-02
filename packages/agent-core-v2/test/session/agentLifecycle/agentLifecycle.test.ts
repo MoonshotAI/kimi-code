@@ -1257,6 +1257,56 @@ describe('AgentLifecycleService', () => {
     );
   });
 
+  it('records the bound profile in the subagent metadata at registration', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+
+    await svc
+      .create({
+        agentId: 'child',
+        binding: { profile: 'coder', model: 'kimi-test' },
+        labels: { parentAgentId: 'main' },
+      })
+      .catch(() => undefined);
+
+    expect(registerAgent).toHaveBeenCalledWith(
+      'child',
+      expect.objectContaining({
+        type: 'sub',
+        labels: { parentAgentId: 'main', profileName: 'coder' },
+      }),
+    );
+  });
+
+  it('fork records the inherited profile in the subagent metadata', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const source = await svc.create({ agentId: 'main' });
+    svc.handleOf('main')!.accessor.get(IAgentProfileService).applyBindingSnapshot({
+      profileName: 'coder',
+      thinkingLevel: 'off',
+      systemPrompt: 'coder prompt',
+      activeToolNames: ['Read'],
+      disallowedTools: [],
+      subagents: undefined,
+    });
+
+    await svc.fork(agentContextOf(svc.handleOf(source.agentId)!), {
+      agentId: 'forked',
+      labels: { parentAgentId: 'main' },
+    });
+
+    expect(registerAgent).toHaveBeenCalledWith(
+      'forked',
+      expect.objectContaining({
+        forkedFrom: 'main',
+        labels: { parentAgentId: 'main', profileName: 'coder' },
+      }),
+    );
+    expect(registerAgent).toHaveBeenCalledWith(
+      'main',
+      expect.objectContaining({ type: 'main', labels: undefined }),
+    );
+  });
+
   it('run throws when the agent does not exist', () => {
     ix.set(ISessionSubagentService, new SyncDescriptor(SessionSubagentService));
     const svc = ix.get(ISessionSubagentService);

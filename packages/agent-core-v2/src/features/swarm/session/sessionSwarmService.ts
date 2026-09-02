@@ -114,10 +114,7 @@ export class SessionSwarmService implements ISessionSwarmService {
     const spawned = await this.subagents.spawn({
       callerAgentId,
       plan,
-      labels: subagentLabels(callerAgentId, {
-        swarmItem: options.swarmItem,
-        profileName: plan.profileName,
-      }),
+      labels: subagentLabels(callerAgentId, { swarmItem: options.swarmItem }),
       prompt: options.prompt,
     });
     emitAgentRunSpawned(caller, spawned.agentId, {

@@ -16,7 +16,7 @@ import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentTaskService } from '#/agent/task/task';
 import { TowerStore } from '#/features/tower/protocol/index';
-import { IAgentTowerService, TOWER_WORKER_PROFILE } from '#/features/tower/tower';
+import { IAgentTowerService } from '#/features/tower/tower';
 import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
 import { SubagentTask } from '#/agent/tools/agent/subagent-task';
 import { ITowerSpawnTool, type TowerSpawnToolInput } from '#/features/tower/tools/spawn/spawn';
@@ -302,7 +302,7 @@ describe('TowerSpawnTool', () => {
 
     expect(createAgent).toHaveBeenCalledWith({
       binding: { profile: 'tower-worker', model: 'kimi-code', thinking: 'off' },
-      labels: { parentAgentId: 'main', profileName: TOWER_WORKER_PROFILE },
+      labels: { parentAgentId: 'main' },
     });
     expect(runAgent).toHaveBeenCalledWith(
       expect.objectContaining({ agentId: 'agent-7' }),
@@ -352,7 +352,7 @@ describe('TowerSpawnTool', () => {
     expect(result.output).toContain('model: cheap/fast');
     expect(createAgent).toHaveBeenCalledWith({
       binding: { profile: 'tower-worker', model: 'cheap/fast', thinking: undefined },
-      labels: { parentAgentId: 'main', profileName: TOWER_WORKER_PROFILE },
+      labels: { parentAgentId: 'main' },
     });
     const activityLog = await readFile(join(repo, '.tower/comms/log/activity.log'), 'utf8');
     expect(activityLog).toMatch(/spawn .*model=cheap\/fast/);
@@ -366,7 +366,7 @@ describe('TowerSpawnTool', () => {
     expect(result.isError).toBeUndefined();
     expect(createAgent).toHaveBeenCalledWith({
       binding: { profile: 'tower-worker', model: 'cheap/fast', thinking: 'low' },
-      labels: { parentAgentId: 'main', profileName: TOWER_WORKER_PROFILE },
+      labels: { parentAgentId: 'main' },
     });
   });
 
@@ -383,7 +383,7 @@ describe('TowerSpawnTool', () => {
     expect(result.isError).toBeUndefined();
     expect(createAgent).toHaveBeenCalledWith({
       binding: { profile: 'tower-worker', model: 'cheap/fast', thinking: 'max' },
-      labels: { parentAgentId: 'main', profileName: TOWER_WORKER_PROFILE },
+      labels: { parentAgentId: 'main' },
     });
   });
 
@@ -401,7 +401,7 @@ describe('TowerSpawnTool', () => {
     expect(result.isError).toBeUndefined();
     expect(createAgent).toHaveBeenCalledWith({
       binding: { profile: 'tower-worker', model: 'cheap/fast', thinking: undefined },
-      labels: { parentAgentId: 'main', profileName: TOWER_WORKER_PROFILE },
+      labels: { parentAgentId: 'main' },
     });
   });
 
@@ -427,7 +427,7 @@ describe('TowerSpawnTool', () => {
     expect(result.output).toContain('model: kimi-code');
     expect(createAgent).toHaveBeenCalledWith({
       binding: { profile: 'tower-worker', model: 'kimi-code', thinking: 'off' },
-      labels: { parentAgentId: 'main', profileName: TOWER_WORKER_PROFILE },
+      labels: { parentAgentId: 'main' },
     });
   });
 
@@ -444,7 +444,7 @@ describe('TowerSpawnTool', () => {
     expect(result.output).toContain('model: cheap/fast');
     expect(createAgent).toHaveBeenCalledWith({
       binding: { profile: 'tower-worker', model: 'cheap/fast', thinking: undefined },
-      labels: { parentAgentId: 'main', profileName: TOWER_WORKER_PROFILE },
+      labels: { parentAgentId: 'main' },
     });
   });
 

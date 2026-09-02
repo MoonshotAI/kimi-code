@@ -1603,27 +1603,6 @@ describe('Agent tool execution contract', () => {
     expect(lifecycle.list).toHaveBeenCalled();
   });
 
-  it('records the spawned profile in the subagent labels', async () => {
-    const lifecycle = createAgentLifecycleStub({
-      createAgentIds: ['agent-child'],
-      runCompletion: async () => ({ summary: 'child result' }),
-    });
-    const context = createAgentToolContext(lifecycle);
-
-    const result = await executeAgentTool(context, {
-      prompt: 'Investigate',
-      description: 'Find cause',
-      subagent_type: 'explore',
-    });
-
-    expect(result.isError).not.toBe(true);
-    expect(lifecycle.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        labels: { parentAgentId: 'main', profileName: 'explore' },
-      }),
-    );
-  });
-
   it('uses the persisted profile of an offline subagent for display and approval rules', async () => {
     const lifecycle = createAgentLifecycleStub();
     const context = createAgentToolContext(
