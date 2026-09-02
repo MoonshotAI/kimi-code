@@ -244,10 +244,12 @@ export function applyOktaProviderConfig(
       model: entry.model,
       maxContextSize: entry.contextLength ?? gateway.defaultContextLength,
       displayName: entry.displayName,
-      // The wire protocol lives on the model itself: some resolution paths
-      // only consult models.<id>.protocol, so belt-and-braces alongside the
-      // provider section's type. Only the four wire protocols are valid at
-      // model level (kimi/vertexai stay provider-type-only).
+      // The model-level fields are the FIRST-priority source in the engine's
+      // resolution chain; the provider section is a fallback that, when
+      // missing, silently falls through to the provider definition's
+      // defaultBaseUrl (api.openai.com/v1). Write both explicitly so a bad
+      // provider row can never redirect requests to the vendor default.
+      baseUrl: entry.apiBase,
       ...(MODEL_PROTOCOLS.has(entry.protocol) ? { protocol: entry.protocol as "anthropic" } : {}),
     };
   }

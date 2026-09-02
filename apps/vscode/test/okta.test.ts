@@ -369,6 +369,7 @@ describe("models", () => {
       displayName: "GPT 5.4",
       maxContextSize: 200000,
       protocol: "openai",
+      baseUrl: "https://one.example.internal/v1",
     });
     expect(sections.models["okta-anthropic/claude-x"]?.maxContextSize).toBe(128000);
     expect(sections.models["okta-anthropic/claude-x"]?.protocol).toBe("anthropic");
