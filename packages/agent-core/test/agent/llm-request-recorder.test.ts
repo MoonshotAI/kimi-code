@@ -212,6 +212,7 @@ describe('mcp.tools_discovered records', () => {
       async callTool() {
         return { content: [{ type: 'text', text: 'ok' }], isError: false };
       },
+      async ping() {},
     };
     const entry: McpServerEntry = {
       name: input.serverName ?? 'grafana',
@@ -376,6 +377,7 @@ describe('mcp.tools_discovered records', () => {
       async callTool() {
         return { content: [], isError: false };
       },
+      async ping() {},
     };
     ctx.agent.tools.registerMcpServer('graf.ana', occupant, [
       { name: 'query_range', description: 'occupies the qualified name', parameters: {} },

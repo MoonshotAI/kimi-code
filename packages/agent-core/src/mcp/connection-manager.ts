@@ -434,7 +434,6 @@ export class McpConnectionManager {
     if (existing !== undefined) await existing.catch(() => undefined);
     await this.reconnectAndJoin(name);
   }
-
   async shutdown(): Promise<void> {
     const entries = Array.from(this.entries.values());
     this.entries.clear();

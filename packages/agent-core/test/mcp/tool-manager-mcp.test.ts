@@ -1,8 +1,18 @@
+import { randomUUID } from 'node:crypto';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+
 import type { ContentPart, Tool } from '@moonshot-ai/kosong';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import type { Agent } from '../../src/agent';
 import { ToolManager } from '../../src/agent/tool';
+import { KimiError } from '../../src/errors';
+import { McpConnectionManager, type McpServerEntry } from '../../src/mcp/connection-manager';
 import type { MCPClient } from '../../src/mcp/types';
 import { testAgent } from '../agent/harness/agent';
 import { executeTool } from '../tools/fixtures/execute-tool';
@@ -53,6 +63,7 @@ function fakeClient(): MCPClient {
       }
       return { content: [{ type: 'text', text: 'ok' }], isError: false };
     },
+    async ping() {},
   };
 }
 
@@ -133,6 +144,7 @@ describe('ToolManager MCP integration', () => {
       async callTool() {
         return { content: [{ type: 'text', text: 'ok' }], isError: false };
       },
+      async ping() {},
     };
     const result = tm.registerMcpServer('srv', colliding, await discoverTools(colliding));
 
@@ -160,6 +172,7 @@ describe('ToolManager MCP integration', () => {
       async callTool() {
         return { content: [{ type: 'text', text: 'first' }], isError: false };
       },
+      async ping() {},
     };
     const secondClient: MCPClient = {
       async listTools() {
@@ -174,6 +187,7 @@ describe('ToolManager MCP integration', () => {
       async callTool() {
         return { content: [{ type: 'text', text: 'second' }], isError: false };
       },
+      async ping() {},
     };
 
     // Both servers collapse to the same sanitized form ("srv_a"), so the
@@ -210,6 +224,7 @@ describe('ToolManager MCP integration', () => {
       async callTool() {
         return { content: [], isError: false };
       },
+      async ping() {},
     };
 
     tm.registerMcpServer('s', firstClient, await discoverTools(firstClient));
@@ -295,6 +310,7 @@ describe('ToolManager MCP integration', () => {
           isError: false,
         };
       },
+      async ping() {},
     };
     tm.registerMcpServer('s', client, await discoverTools(client));
     const big = tm.loopTools.find((t) => t.name === 'mcp__s__big');
@@ -332,6 +348,7 @@ describe('ToolManager MCP integration', () => {
           isError: false,
         };
       },
+      async ping() {},
     };
     tm.registerMcpServer('s', client, await discoverTools(client));
     const snap = tm.loopTools.find((t) => t.name === 'mcp__s__snap');
@@ -380,6 +397,7 @@ describe('ToolManager MCP integration', () => {
           isError: false,
         };
       },
+      async ping() {},
     };
     tm.registerMcpServer('s', client, await discoverTools(client));
     const tool = tm.loopTools.find((t) => t.name === 'mcp__s__huge_img');
@@ -435,6 +453,7 @@ describe('ToolManager MCP integration', () => {
           isError: false,
         };
       },
+      async ping() {},
     };
     tm.registerMcpServer('s', client, await discoverTools(client));
     const tool = tm.loopTools.find((t) => t.name === 'mcp__s__mixed');
@@ -483,6 +502,7 @@ describe('ToolManager MCP integration', () => {
           isError: false,
         };
       },
+      async ping() {},
     };
     tm.registerMcpServer('s', client, await discoverTools(client));
     const tool = tm.loopTools.find((t) => t.name === 'mcp__s__mixed');
@@ -533,6 +553,7 @@ describe('ToolManager MCP integration', () => {
         receivedSignal = signal;
         return { content: [{ type: 'text', text: String(args['text']) }], isError: false };
       },
+      async ping() {},
     };
     tm.registerMcpServer('s', client, await discoverTools(client));
     const echo = tm.loopTools.find((t) => t.name === 'mcp__s__echo');
@@ -661,3 +682,481 @@ describe('ToolManager MCP integration', () => {
     });
   });
 });
+
+describe('ToolManager MCP reconnect-on-call', () => {
+  const toolCallContext = () => ({
+    turnId: '1',
+    toolCallId: 'tc-1',
+    signal: new AbortController().signal,
+  });
+
+  function fakeAgentWithMcp(mcp: McpConnectionManager): Agent {
+    return {
+      records: {
+        observabilityReady: true,
+        logRecord() {},
+        onOpened() {},
+      },
+      config: {
+        data: () => ({ provider: undefined }),
+      },
+      goal: {
+        getGoal: () => ({ goal: null }),
+      },
+      mcp,
+      emitEvent() {},
+    } as unknown as Agent;
+  }
+
+  interface FakeMcpManagerOptions {
+    readonly resolvedClient: () => MCPClient | undefined;
+    readonly onReconnectAndJoin?: () => void | Promise<void>;
+    readonly onStatusListener?: (listener: (entry: McpServerEntry) => void) => void;
+  }
+
+  function fakeMcpManager(options: FakeMcpManagerOptions): McpConnectionManager {
+    return {
+      list: () => [],
+      oauthService: undefined,
+      onStatusChange: (listener: (entry: McpServerEntry) => void) => {
+        options.onStatusListener?.(listener);
+        return () => {};
+      },
+      resolved: () => {
+        const client = options.resolvedClient();
+        if (client === undefined) return undefined;
+        return { client, tools: [], rawTools: [], enabledNames: new Set<string>() };
+      },
+      reconnectAndJoin: async () => {
+        await options.onReconnectAndJoin?.();
+      },
+    } as unknown as McpConnectionManager;
+  }
+
+  function deadTransportClient(): MCPClient {
+    return {
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        throw new Error('fetch failed');
+      },
+      async ping() {
+        throw new Error('fetch failed');
+      },
+    };
+  }
+
+  async function mcpEchoTool(tm: ToolManager, client: MCPClient) {
+    tm.setActiveTools(['mcp__*']);
+    tm.registerMcpServer('s', client, await discoverTools(fakeClient()));
+    const echo = tm.loopTools.find((t) => t.name === 'mcp__s__echo');
+    expect(echo).toBeDefined();
+    return echo!;
+  }
+
+  it('reconnects a dead transport and retries the call on the fresh client', async () => {
+    const staleClient = deadTransportClient();
+    const freshClient = fakeClient();
+    let reconnects = 0;
+    const mcp = fakeMcpManager({
+      resolvedClient: () => (reconnects === 0 ? staleClient : freshClient),
+      onReconnectAndJoin: () => {
+        reconnects += 1;
+      },
+    });
+    const tm = new ToolManager(fakeAgentWithMcp(mcp));
+    const echo = await mcpEchoTool(tm, staleClient);
+
+    const result = await executeTool(echo, { ...toolCallContext(), args: { text: 'hello world' } });
+    expect(result.isError).toBe(false);
+    expect(result.output).toBe('hello world');
+    expect(reconnects).toBe(1);
+  });
+
+  it('retries in place without reconnecting when the server is still alive', async () => {
+    let calls = 0;
+    let pings = 0;
+    const client: MCPClient = {
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        calls += 1;
+        if (calls === 1) throw new Error('fetch failed');
+        return { content: [{ type: 'text', text: 'recovered' }], isError: false };
+      },
+      async ping() {
+        pings += 1;
+      },
+    };
+    let reconnects = 0;
+    const mcp = fakeMcpManager({
+      resolvedClient: () => undefined,
+      onReconnectAndJoin: () => {
+        reconnects += 1;
+      },
+    });
+    const tm = new ToolManager(fakeAgentWithMcp(mcp));
+    const echo = await mcpEchoTool(tm, client);
+
+    const result = await executeTool(echo, { ...toolCallContext(), args: { text: 'x' } });
+    expect(result.isError).toBe(false);
+    expect(result.output).toBe('recovered');
+    expect(pings).toBe(1);
+    expect(calls).toBe(2);
+    expect(reconnects).toBe(0);
+  });
+
+  it('rethrows server-answered MCP errors without probing or reconnecting', async () => {
+    let pings = 0;
+    const client: MCPClient = {
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        throw new McpError(ErrorCode.InternalError, 'server said no');
+      },
+      async ping() {
+        pings += 1;
+      },
+    };
+    let reconnects = 0;
+    const mcp = fakeMcpManager({
+      resolvedClient: () => undefined,
+      onReconnectAndJoin: () => {
+        reconnects += 1;
+      },
+    });
+    const tm = new ToolManager(fakeAgentWithMcp(mcp));
+    const echo = await mcpEchoTool(tm, client);
+
+    await expect(executeTool(echo, { ...toolCallContext(), args: {} })).rejects.toThrow(
+      'server said no',
+    );
+    expect(pings).toBe(0);
+    expect(reconnects).toBe(0);
+  });
+
+  it('surfaces both errors when the reconnect attempt itself fails', async () => {
+    const staleClient = deadTransportClient();
+    const mcp = fakeMcpManager({
+      resolvedClient: () => staleClient,
+      onReconnectAndJoin: () => {
+        throw new Error('connect ECONNREFUSED');
+      },
+    });
+    const tm = new ToolManager(fakeAgentWithMcp(mcp));
+    const echo = await mcpEchoTool(tm, staleClient);
+
+    const rejection = await executeTool(echo, { ...toolCallContext(), args: {} }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(rejection).toBeInstanceOf(KimiError);
+    expect((rejection as KimiError).code).toBe('mcp.startup_failed');
+    expect((rejection as Error).message).toContain('fetch failed');
+    expect((rejection as Error).message).toContain('ECONNREFUSED');
+  });
+
+  it('rethrows malformed results without probing or reconnecting', async () => {
+    let pings = 0;
+    const client: MCPClient = {
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        const malformed = new Error('response failed schema validation');
+        malformed.name = 'ZodError';
+        throw malformed;
+      },
+      async ping() {
+        pings += 1;
+      },
+    };
+    let reconnects = 0;
+    const mcp = fakeMcpManager({
+      resolvedClient: () => undefined,
+      onReconnectAndJoin: () => {
+        reconnects += 1;
+      },
+    });
+    const tm = new ToolManager(fakeAgentWithMcp(mcp));
+    const echo = await mcpEchoTool(tm, client);
+
+    await expect(executeTool(echo, { ...toolCallContext(), args: {} })).rejects.toThrow(
+      'response failed schema validation',
+    );
+    expect(pings).toBe(0);
+    expect(reconnects).toBe(0);
+  });
+
+  it('surfaces the original error when the reconnect produces no fresh client', async () => {
+    const staleClient = deadTransportClient();
+    let reconnects = 0;
+    const mcp = fakeMcpManager({
+      resolvedClient: () => staleClient,
+      onReconnectAndJoin: () => {
+        reconnects += 1;
+      },
+    });
+    const tm = new ToolManager(fakeAgentWithMcp(mcp));
+    const echo = await mcpEchoTool(tm, staleClient);
+
+    await expect(executeTool(echo, { ...toolCallContext(), args: {} })).rejects.toThrow(
+      'fetch failed',
+    );
+    expect(reconnects).toBe(1);
+  });
+
+  it('does not reconnect when the call was aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const staleClient = deadTransportClient();
+    let reconnects = 0;
+    const mcp = fakeMcpManager({
+      resolvedClient: () => staleClient,
+      onReconnectAndJoin: () => {
+        reconnects += 1;
+      },
+    });
+    const tm = new ToolManager(fakeAgentWithMcp(mcp));
+    const echo = await mcpEchoTool(tm, staleClient);
+
+    await expect(
+      executeTool(echo, {
+        turnId: '1',
+        toolCallId: 'tc-abort',
+        signal: controller.signal,
+        args: {},
+      }),
+    ).rejects.toThrow('fetch failed');
+    expect(reconnects).toBe(0);
+  });
+
+  it('skips the liveness probe when the connection is already closed', async () => {
+    let pings = 0;
+    const staleClient: MCPClient = {
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        const closed = new Error('Connection closed') as Error & { code: number };
+        closed.code = ErrorCode.ConnectionClosed;
+        throw closed;
+      },
+      async ping() {
+        pings += 1;
+      },
+    };
+    const freshClient = fakeClient();
+    let reconnects = 0;
+    const mcp = fakeMcpManager({
+      resolvedClient: () => (reconnects === 0 ? staleClient : freshClient),
+      onReconnectAndJoin: () => {
+        reconnects += 1;
+      },
+    });
+    const tm = new ToolManager(fakeAgentWithMcp(mcp));
+    const echo = await mcpEchoTool(tm, staleClient);
+
+    const result = await executeTool(echo, { ...toolCallContext(), args: { text: 'again' } });
+    expect(result.isError).toBe(false);
+    expect(result.output).toBe('again');
+    expect(pings).toBe(0);
+    expect(reconnects).toBe(1);
+  });
+
+  it('keeps a failed server’s tools registered so the next call can drive the reconnect', async () => {
+    let statusListener: ((entry: McpServerEntry) => void) | undefined;
+    const mcp = fakeMcpManager({
+      resolvedClient: () => undefined,
+      onStatusListener: (listener) => {
+        statusListener = listener;
+      },
+    });
+    const tm = new ToolManager(fakeAgentWithMcp(mcp));
+    const client = fakeClient();
+    tm.registerMcpServer('srv', client, await discoverTools(client));
+    tm.setActiveTools(['mcp__*']);
+    expect(tm.loopTools.map((t) => t.name)).toContain('mcp__srv__echo');
+
+    statusListener?.({
+      name: 'srv',
+      transport: 'http',
+      config: { transport: 'http', url: 'http://example.test/mcp' },
+      status: 'failed',
+      toolCount: 0,
+      error: 'connection dropped',
+    });
+
+    expect(tm.loopTools.map((t) => t.name)).toContain('mcp__srv__echo');
+  });
+
+  it('recovers calls to a streamable-HTTP server that restarts mid-session (#2742)', async () => {
+    let server = await startHttpEchoServer();
+    const url = `http://127.0.0.1:${server.port}/mcp`;
+
+    const manager = new McpConnectionManager();
+    const tm = new ToolManager(fakeAgentWithMcp(manager));
+    tm.setActiveTools(['mcp__*']);
+    try {
+      await manager.connectAll({ srv: { transport: 'http', url } });
+      await manager.waitForInitialLoad();
+      expect(manager.get('srv')?.status).toBe('connected');
+
+      const echo = tm.loopTools.find((t) => t.name === 'mcp__srv__echo');
+      expect(echo).toBeDefined();
+      const context = toolCallContext();
+
+      const first = await executeTool(echo!, { ...context, args: { text: 'before' } });
+      expect(first.isError).toBe(false);
+      expect(first.output).toBe('before');
+
+      // Restart the server mid-session: the replacement process has no memory
+      // of the old streamable-HTTP session.
+      await server.close();
+      server = await startHttpEchoServer(server.port);
+
+      // The drop heals transparently: the SAME tool on the SAME server
+      // answers — no error, and no other server's tool runs in its place.
+      const second = await executeTool(echo!, { ...context, args: { text: 'after' } });
+      expect(second.isError).toBe(false);
+      expect(second.output).toBe('after');
+      expect(manager.get('srv')?.status).toBe('connected');
+      expect(tm.loopTools.map((t) => t.name)).toContain('mcp__srv__echo');
+
+      const third = await executeTool(echo!, { ...context, args: { text: 'third' } });
+      expect(third.isError).toBe(false);
+      expect(third.output).toBe('third');
+    } finally {
+      await manager.shutdown();
+      await server.close();
+    }
+  }, 20000);
+
+  it('keeps tools registered when a call-driven reconnect fails, so a later call re-drives it (#2742)', async () => {
+    let server = await startHttpEchoServer();
+    const url = `http://127.0.0.1:${server.port}/mcp`;
+
+    const manager = new McpConnectionManager();
+    const agent = fakeAgentWithMcp(manager);
+    const emittedEvents: Array<{ type?: string; reason?: string }> = [];
+    agent.emitEvent = (event) => {
+      emittedEvents.push(event as { type?: string; reason?: string });
+    };
+    const tm = new ToolManager(agent);
+    tm.setActiveTools(['mcp__*']);
+    try {
+      await manager.connectAll({ srv: { transport: 'http', url } });
+      await manager.waitForInitialLoad();
+      expect(manager.get('srv')?.status).toBe('connected');
+
+      const echo = tm.loopTools.find((t) => t.name === 'mcp__srv__echo');
+      expect(echo).toBeDefined();
+      const context = toolCallContext();
+
+      const first = await executeTool(echo!, { ...context, args: { text: 'before' } });
+      expect(first.isError).toBe(false);
+      expect(first.output).toBe('before');
+
+      // The server goes DOWN and stays down: the call drives a reconnect that
+      // fails, taking the entry through pending (where the tools used to be
+      // unregistered) into failed.
+      await server.close();
+      const eventsBeforeDownCall = emittedEvents.length;
+
+      const rejection = await executeTool(echo!, { ...context, args: { text: 'while down' } }).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      // The original transport error surfaces: a failed reconnect attempt is
+      // recorded as the entry's `failed` status, not thrown through.
+      expect(rejection).toBeInstanceOf(Error);
+      // The transport's own error text reaches the caller (failure
+      // classification stays byte-equivalent) — not a rewritten wrapper.
+      expect((rejection as Error).message).toMatch(/fetch failed|ECONNREFUSED|socket hang up/);
+      expect((rejection as Error).message).not.toContain(
+        'reconnecting the MCP server also failed',
+      );
+      expect(manager.get('srv')?.status).toBe('failed');
+      // Regression: the failed recovery must not strand the session without
+      // the tools — they stay registered so the NEXT call can drive another
+      // reconnect attempt.
+      expect(tm.loopTools.map((t) => t.name)).toContain('mcp__srv__echo');
+      // The other half of the removed `pending` branch: no tool-list update
+      // (in particular no `mcp.disconnected`) is emitted while the server is
+      // down — the tool list genuinely did not change.
+      expect(
+        emittedEvents.slice(eventsBeforeDownCall).filter((e) => e.type === 'tool.list.updated'),
+      ).toHaveLength(0);
+
+      // The server comes back; the next call re-drives the reconnect and heals.
+      server = await startHttpEchoServer(server.port);
+
+      const healed = await executeTool(echo!, { ...context, args: { text: 'back again' } });
+      expect(healed.isError).toBe(false);
+      expect(healed.output).toBe('back again');
+      expect(manager.get('srv')?.status).toBe('connected');
+      expect(tm.loopTools.map((t) => t.name)).toContain('mcp__srv__echo');
+
+      // The re-listed handle (what the agent loop reads on the next prompt)
+      // works too — not just the stale one captured before the outage.
+      const relisted = tm.loopTools.find((t) => t.name === 'mcp__srv__echo');
+      expect(relisted).toBeDefined();
+      const relistedResult = await executeTool(relisted!, {
+        ...context,
+        args: { text: 'relisted' },
+      });
+      expect(relistedResult.isError).toBe(false);
+      expect(relistedResult.output).toBe('relisted');
+    } finally {
+      await manager.shutdown();
+      // Whichever server generation is current; earlier ones were already
+      // closed (idempotently) above.
+      await server.close();
+    }
+  }, 20000);
+});
+
+async function startHttpEchoServer(
+  port = 0,
+): Promise<{ port: number; close: () => Promise<void> }> {
+  const mcpServer = new McpServer({ name: 'mock-http', version: '0.0.1' });
+  mcpServer.registerTool(
+    'echo',
+    { description: 'Echoes text', inputSchema: { text: z.string() } },
+    ({ text }) => ({ content: [{ type: 'text', text }] }),
+  );
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: () => randomUUID(),
+  });
+  await mcpServer.connect(transport);
+  const httpServer: Server = createServer((req, res) => {
+    void transport.handleRequest(req, res);
+  });
+  await new Promise<void>((resolve) => httpServer.listen(port, '127.0.0.1', resolve));
+  const boundPort = (httpServer.address() as AddressInfo).port;
+  let closePromise: Promise<void> | undefined;
+  return {
+    port: boundPort,
+    close: () => {
+      // Idempotent: cleanup paths must not mask an earlier test failure with
+      // ERR_SERVER_NOT_RUNNING. The promise is cached so a concurrent second
+      // call waits for the same shutdown instead of resolving early.
+      closePromise ??= new Promise((resolve, reject) => {
+        httpServer.close((err) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          resolve();
+        });
+        // Force-close the client's keep-alive / SSE sockets so `close()`
+        // returns even while a long-lived streamable-HTTP stream is open.
+        httpServer.closeAllConnections();
+      });
+      return closePromise;
+    },
+  };
+}
