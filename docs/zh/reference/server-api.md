@@ -4803,28 +4803,47 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 ```ts
 // 服务端 → 客户端
-type ServerFrame =
-  | ServerSystemMessage // server_hello | ping | resync_required | error（死声明）
-  | Ack // 每个带 id 入站帧的应答
-  | EventFrame // event.* 19 型
-  | AgentEventFrame // agent 事件 51 型
-  | TranscriptFrame; // transcript.reset | transcript.ops
 
-// 客户端 → 服务端（服务端正名 ClientControlMessage）
-type ClientFrame =
-  | ClientHello
-  | Subscribe
-  | Unsubscribe
-  | SubscribeV2
-  | UnsubscribeV2
-  | WatchFsAdd
-  | WatchFsRemove
-  | Pong;
-// 死声明（服务端不处理、静默丢弃）：abort、terminal_attach、terminal_detach、
-// terminal_input、terminal_resize、terminal_close
+// 控制帧（正名 union）
+type ServerSystemMessage =
+  | ServerHelloMessage
+  | PingMessage
+  | ResyncRequiredMessage
+  | WsErrorMessage; // 死声明，无产出
+// ack 应答帧：wsAckEnvelope<T> 按请求一一对应
+// （ClientHelloAckMessage / SubscribeAckMessage / SubscribeV2AckMessage / …）
+
+// event.* 协议事件（19 型，无 union）
+SessionCreatedEvent | SessionArchivedEvent | SessionWorkChangedEvent | SessionStatusChangedEvent
+| WorkspaceCreatedEvent | WorkspaceUpdatedEvent | WorkspaceDeletedEvent
+| ConfigChangedEvent | ConfigWarningEvent
+| ModelCatalogChangedEvent | PluginChangedEvent | CapabilityChangedEvent | DiUnitChangedEvent
+// 以下 6 型系统内未命名（broadcaster 内联构造）：
+// event.question.requested / answered / dismissed、event.approval.requested / resolved、event.fs.changed
+
+// agent 事件（正名 union，51 型）
+type AgentEvent = TurnStartedEvent | AssistantDeltaEvent | …;
+// wire 上的形态：Event = AgentEvent & { agentId, sessionId, time? }
+
+// transcript 帧（正名）
+TranscriptResetEvent | TranscriptOpsEvent
+
+// 客户端 → 服务端（正名 union）
+type ClientControlMessage =
+  | ClientHelloMessage
+  | SubscribeMessage
+  | SubscribeV2Message
+  | UnsubscribeMessage
+  | UnsubscribeV2Message
+  | WatchFsAddMessage
+  | WatchFsRemoveMessage
+  | PongMessage;
+// 死声明（服务端不处理、静默丢弃）：
+// AbortMessage、TerminalAttachMessage、TerminalDetachMessage、
+// TerminalInputMessage、TerminalResizeMessage、TerminalCloseMessage
 ```
 
-命名对照：`ServerSystemMessage` 与 `ClientControlMessage` 是服务端 protocol 层的正名 union（`protocol/ws-control.ts`），`AgentEvent` 为 agent 事件的系统正名（`transport/ws/v1/events.ts`）；`ServerFrame` / `ClientFrame` / `EventFrame` / `AgentEventFrame` / `TranscriptFrame` 是文档总览用的汇总名（transcript 帧的 payload 契约由 `@moonshot-ai/transcript` 持有）。注意 `ack` 不在 `ServerSystemMessage` 内——服务端把 ack 当应答帧独立处理。
+命名一律取系统正名：`ServerSystemMessage` / `ClientControlMessage` / `AgentEvent` / `Event`（kap-server `protocol/ws-control.ts`、`transport/ws/v1/events.ts`），`TranscriptResetEvent` / `TranscriptOpsEvent`（`@moonshot-ai/transcript` 契约）。注意 `ack` 不在 `ServerSystemMessage` 内——服务端把 ack 当应答帧独立处理；`event.question.*` / `event.approval.*` / `event.fs.changed` 在系统内没有命名类型，本文以 `type` 字符串指代。
 
 | 分类 | 方向 | 帧数 | 用途 |
 | --- | --- | --- | --- |
