@@ -219,6 +219,7 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
     isStale: isFileStale,
     showMediaOption,
     setSelectedIndex: setFileSelectedIndex,
+    handleSelectItem: handleSelectFileItem,
     handleFileMenuKey,
     resetFilePicker,
   } = useFilePicker(
@@ -343,7 +344,7 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
               onSelectMedia={() => {
                 void handlePickMedia();
               }}
-              onSelectItem={(item) => { applyMention(item.path); }}
+              onSelectItem={handleSelectFileItem}
               onHover={setFileSelectedIndex}
             />
           </div>

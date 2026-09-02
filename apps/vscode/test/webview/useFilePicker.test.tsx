@@ -148,6 +148,7 @@ describe('keyboard navigation', () => {
     expect(result.current.isStale).toBe(true);
 
     key(result, 'Enter');
+    act(() => { result.current.handleSelectItem(result.current.fileItems[0]!); });
     expect(onInsertFile).not.toHaveBeenCalled();
 
     await waitFor(() => { expect(getProjectFiles).toHaveBeenCalledWith({ query: 'ap' }); });
