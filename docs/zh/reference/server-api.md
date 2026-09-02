@@ -8,7 +8,7 @@
 
 REST 请求在请求头携带 bearer token（持有方令牌）：`Authorization: Bearer <token>`；WebSocket 升级请求接受同一请求头，或子协议 `kimi-code.bearer.<token>`。
 
-鉴权失败返回 HTTP 401，响应体为标准 [错误信封](#响应信封)，`code` 为 `40101`。在非 loopback 绑定上，同一来源 60 秒内鉴权失败 10 次会被封禁 60 秒，期间每个请求都返回 HTTP 429（`code` 为 `42901`）。
+鉴权失败返回 HTTP 401，响应体为 [`ResponseType`](#responsetype)，`code` 为 `40101`。在非 loopback 绑定上，同一来源 60 秒内鉴权失败 10 次会被封禁 60 秒，期间每个请求都返回 HTTP 429（`code` 为 `42901`）。
 
 例外接口（不要求鉴权）：
 
@@ -18,29 +18,20 @@ REST 请求在请求头携带 bearer token（持有方令牌）：`Authorization
 | `GET /api/v1/healthz` | 探活 |
 | 静态 web 资源 | 非 `/api/` 路径 |
 
-### 响应信封
+### ResponseType
 
-所有 JSON 响应统一包在信封（envelope）里；业务结果以 `code` 为准（`0` 表示成功），HTTP 状态码几乎总是 200。
+除下方例外外，所有 JSON 响应返回同一个泛型 `ResponseType<T>`；HTTP 状态码几乎总是 200，业务结果以 `code` 为准。
 
-成功信封：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `code` | number | 恒 `0` |
-| `msg` | string | 恒 `"success"` |
-| `data` | any | 业务负载；少数端点为 `null`（GUI 存储写操作、v2 MCP 的 `auth:complete` / `auth:cancel` / `auth:reset`） |
-| `request_id` | string | 请求 id（ULID）；客户端可用 `X-Request-Id` 请求头指定，非法值会被服务端重新生成 |
-
-错误信封：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `code` | number | 非零业务错误码，段位见 [错误码](#错误码) |
-| `msg` | string | 错误消息 |
-| `data` | null | 恒 `null`；例外见下文「非零 code 携带 data」 |
-| `request_id` | string | 请求 id |
-| `stack` | string | 可缺省：服务端 `Error.stack`，多数错误路径会携带 |
-| `details` | any | 可缺省：结构化详情，形态按 `code` 分派（见各端点条目） |
+```ts
+type ResponseType<T> = {
+  code: number // 0 = 成功；非零 = 业务错误码（段位见错误码）
+  msg: string // 成功恒 "success"；失败为错误消息
+  data: T | null // code = 0 为端点数据；非零一般为 null（特例见下）
+  request_id: string // 请求 id（ULID）；可用 X-Request-Id 请求头指定，非法值由服务端重新生成
+  stack?: string // 服务端 Error.stack，多数错误路径携带
+  details?: unknown // 结构化详情，形态按 code 分派（见各端点条目）
+}
+```
 
 `40001`（输入校验失败）的 `details` 恒为 `{ path, message }[]`——校验问题数组，`path` 为 `.` 连接的字段路径（根级为 `""`），`msg` 取首条。
 
@@ -59,12 +50,12 @@ HTTP 状态码例外（非 200）：
 | 场景 | HTTP 状态 |
 | --- | --- |
 | 鉴权失败 / 触发限流 / Host 检查失败 | 401 / 429 / 403 |
-| 创建供应商、导入供应商目录成功 | 201（响应体仍是标准信封） |
+| 创建供应商、导入供应商目录成功 | 201（响应体仍是 `ResponseType`） |
 | 删除供应商成功 | 204（无响应体） |
 | 二进制与流式端点 | 200 / 206（Range 分段）/ 304（ETag 未变），能力见 [二进制与流式端点](#二进制与流式端点) |
-| `GET /api/v1/files/{file_id}`、`GET .../media/{file_id}` 下载错误 | 真实 404 / 500（响应体仍为信封） |
+| `GET /api/v1/files/{file_id}`、`GET .../media/{file_id}` 下载错误 | 真实 404 / 500（响应体仍为 `ResponseType`） |
 
-不走信封的端点：四个二进制下载与 zip 导出（见 [二进制与流式端点](#二进制与流式端点)）、`DELETE /api/v1/providers/{provider_id}`（204 空体）、web 静态资源（非 `/api` 路径）。
+不返回 `ResponseType` 的端点：四个二进制下载与 zip 导出（见 [二进制与流式端点](#二进制与流式端点)）、`DELETE /api/v1/providers/{provider_id}`（204 空体）、web 静态资源（非 `/api` 路径）。
 
 ### 错误码
 
@@ -124,7 +115,7 @@ HTTP 状态码例外（非 200）：
 
 供脚本与进程管理器使用的探活端点，应答时不触碰配置与引擎。
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -140,7 +131,7 @@ HTTP 状态码例外（非 200）：
 
 返回本实例的身份信息与能力集。大多数字段在启动时即固定；`experimental_flags` 与 `features` 按请求实时解析。
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -169,7 +160,7 @@ HTTP 状态码例外（非 200）：
 
 鉴权状态快照：默认模型能否解析到可用的供应商配置，以及托管供应商的登录状态。它不做凭据校验，此后的对话请求仍可能以 `40111` / `40112` 失败。
 
-**data**（code = 0）：[T-AuthSummary](#t-authsummary)。
+**返回**：`ResponseType<[T-AuthSummary](#t-authsummary)>`。
 
 **示例**：
 
@@ -181,7 +172,7 @@ HTTP 状态码例外（非 200）：
 
 请求服务优雅退出；响应先发出，随后立即执行关闭。仅在 loopback 绑定时挂载——非 loopback 绑定时不会注册（请求得到 404），除非服务以 `--allow-remote-shutdown` 启动。无参数。
 
-**data**（code = 0）：`{ "ok": true }`。
+**返回**：`ResponseType<{ "ok": true }>`。
 
 **示例**：
 
@@ -193,7 +184,7 @@ HTTP 状态码例外（非 200）：
 
 列出当前连接到本服务的 WebSocket 客户端，按连接时间最早在前。无参数。
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -218,7 +209,7 @@ HTTP 状态码例外（非 200）：
 
 返回解析后的全局配置——`config.toml` 叠加覆盖层后的生效结果。密钥已脱敏：供应商与模型只报告 `has_api_key`，绝不返回存储的密钥。
 
-**data**（code = 0）：[T-ConfigResponse](#t-configresponse)。
+**返回**：`ResponseType<[T-ConfigResponse](#t-configresponse)>`。
 
 **示例**：
 
@@ -232,7 +223,7 @@ HTTP 状态码例外（非 200）：
 
 **Body**：部分配置对象，[T-ConfigResponse](#t-configresponse) 中除 `raw` 外的任意子集，均为可选。
 
-**data**（code = 0）：[T-ConfigResponse](#t-configresponse)（合并写入后的全量）。
+**返回**：`ResponseType<[T-ConfigResponse](#t-configresponse)>`（合并写入后的全量）。
 
 **非零 code**：`40001`（值非法或持久化失败，`details` 逐字段说明）。
 
@@ -264,7 +255,7 @@ HTTP 状态码例外（非 200）：
 
 列出所有供应商下已配置的模型别名。无参数。
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -280,7 +271,7 @@ HTTP 状态码例外（非 200）：
 
 把全局 `default_model` 设为一个已存在的别名。`model_id` 是配置中的别名键原样——裸键如 `POST /api/v1/models/turbo:set_default`；id 含 `/` 时需 URL 编码，如 `POST /api/v1/models/my-provider%2Fkimi-for-coding:set_default`。无请求体。
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -299,7 +290,7 @@ HTTP 状态码例外（非 200）：
 
 列出每个已配置供应商及其凭据与模型发现状态，不泄露任何密钥。无参数。
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -313,7 +304,7 @@ HTTP 状态码例外（非 200）：
 
 #### `POST /api/v1/providers`
 
-一次保存创建供应商及其模型别名；响应为 HTTP 201 加标准信封。当全局 `default_model` 完全未配置时，会以新供应商的 `default_model`（或第一个模型）播种；已有默认值绝不被修改。
+一次保存创建供应商及其模型别名；响应为 HTTP 201 加 `ResponseType`。当全局 `default_model` 完全未配置时，会以新供应商的 `default_model`（或第一个模型）播种；已有默认值绝不被修改。
 
 **Body**：
 
@@ -338,7 +329,7 @@ HTTP 状态码例外（非 200）：
 | `support_efforts` | array | 否 | 支持的 Thinking 模式 effort 档位 |
 | `adaptive_thinking` | boolean | 否 | 自适应 thinking 开关 |
 
-**data**（code = 0）：[T-ProviderCatalogItem](#t-providercatalogitem)（新建对象）。
+**返回**：`ResponseType<[T-ProviderCatalogItem](#t-providercatalogitem)>`（新建对象）。
 
 **非零 code**：`40001`、`40921`（已存在该 `id` 的供应商）。
 
@@ -352,7 +343,7 @@ HTTP 状态码例外（非 200）：
 
 读取单个供应商。与列表路由不同，设置了密钥时响应会附带存储的 `api_key`，以便本地编辑表单预填——这是唯一回显密钥的端点，暴露端口时请牢记这一点。无参数。
 
-**data**（code = 0）：[T-ProviderCatalogItem](#t-providercatalogitem)，存有密钥时附带 `api_key: string`。
+**返回**：`ResponseType<[T-ProviderCatalogItem](#t-providercatalogitem)>`，存有密钥时附带 `api_key: string`。
 
 **非零 code**：`40001`、`40412`。
 
@@ -377,7 +368,7 @@ HTTP 状态码例外（非 200）：
 | `default_model` | string | 否 | 该供应商的默认模型；必须是 `models[].model` 之一 |
 | `models` | array | 是 | 至少一条，条目结构与 `POST /api/v1/providers` 相同 |
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -403,7 +394,7 @@ HTTP 状态码例外（非 200）：
 
 从上游来源重新发现单个供应商的模型元数据，并重写该供应商的别名；模型来源为静态的供应商不经网络调用直接报告 `unchanged`。至少一个供应商的别名发生变化时广播全局 `event.model_catalog.changed` 事件。无请求体。
 
-**data**（code = 0）：[T-RefreshProviderModelsResponse](#t-refreshprovidermodelsresponse)。
+**返回**：`ResponseType<[T-RefreshProviderModelsResponse](#t-refreshprovidermodelsresponse)>`。
 
 **非零 code**：`40001`、`40412`。
 
@@ -452,7 +443,7 @@ HTTP 状态码例外（非 200）：
 
 浏览 models.dev 目录，由服务端代理，带 10 分钟内存缓存与内置快照兜底；条目保持上游目录顺序。服务无法导入的条目携带 `rejected: true` 与机器可读的 `reject_reason`。无参数。
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -470,7 +461,7 @@ HTTP 状态码例外（非 200）：
 
 按 catalog id 读取单个 models.dev 目录条目。无参数。
 
-**data**（code = 0）：[T-CatalogProviderItem](#t-catalogprovideritem)。
+**返回**：`ResponseType<[T-CatalogProviderItem](#t-catalogprovideritem)>`。
 
 **非零 code**：`40417`、`50004`。
 
@@ -505,7 +496,7 @@ HTTP 状态码例外（非 200）：
 | `provider` | string | 否 | 托管供应商名称。默认 `managed:kimi-code` |
 | `region` | string | 否 | `mainland-cn` 或 `global`；覆盖区域解析结果，仅对本次流程生效 |
 
-**data**（code = 0）：[T-OAuthFlowStart](#t-oauthflowstart)——进行中的流程报告 `status: "pending"`，打开 `verification_uri_complete`（或打开 `verification_uri` 并输入 `user_code`），然后每隔 `interval` 秒轮询 `GET /api/v1/oauth/login`；已登录的快速路径报告 `status: "authenticated"`。
+**返回**：`ResponseType<[T-OAuthFlowStart](#t-oauthflowstart)>`——进行中的流程报告 `status: "pending"`，打开 `verification_uri_complete`（或打开 `verification_uri` 并输入 `user_code`），然后每隔 `interval` 秒轮询 `GET /api/v1/oauth/login`；已登录的快速路径报告 `status: "authenticated"`。
 
 **示例**：
 
@@ -523,7 +514,7 @@ HTTP 状态码例外（非 200）：
 | --- | --- | --- |
 | `provider` | string | 托管供应商名称。默认 `managed:kimi-code` |
 
-**data**（code = 0）：[T-OAuthFlowSnapshot](#t-oauthflowsnapshot) 或 `null`。
+**返回**：`ResponseType<[T-OAuthFlowSnapshot](#t-oauthflowsnapshot)>` 或 `null`。
 
 **示例**：
 
@@ -541,7 +532,7 @@ HTTP 状态码例外（非 200）：
 | --- | --- | --- |
 | `provider` | string | 托管供应商名称。默认 `managed:kimi-code` |
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -564,7 +555,7 @@ HTTP 状态码例外（非 200）：
 | --- | --- | --- | --- |
 | `provider` | string | 否 | 托管供应商名称。默认 `managed:kimi-code` |
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -579,7 +570,7 @@ HTTP 状态码例外（非 200）：
 
 #### `GET /api/v1/oauth/usage`
 
-托管账号的套餐用量与限额，实时取自账号服务。上游失败不会让信封失败——以 `kind: "error"` 带内返回。
+托管账号的套餐用量与限额，实时取自账号服务。上游失败不会让响应失败——以 `kind: "error"` 带内返回。
 
 **Query**：
 
@@ -587,7 +578,7 @@ HTTP 状态码例外（非 200）：
 | --- | --- | --- |
 | `provider` | string | 托管供应商名称。默认 `managed:kimi-code` |
 
-**data**（code = 0）：[T-ManagedUsageResult](#t-managedusageresult)。
+**返回**：`ResponseType<[T-ManagedUsageResult](#t-managedusageresult)>`。
 
 **示例**：
 
@@ -605,7 +596,7 @@ HTTP 状态码例外（非 200）：
 | --- | --- | --- |
 | `provider` | string | 托管供应商名称。默认 `managed:kimi-code` |
 
-**data**（code = 0）：[T-ManagedUserInfoResult](#t-manageduserinforesult)（camelCase 载荷）。
+**返回**：`ResponseType<[T-ManagedUserInfoResult](#t-manageduserinforesult)>`（camelCase 载荷）。
 
 **示例**：
 
@@ -617,7 +608,7 @@ HTTP 状态码例外（非 200）：
 
 解析该客户端所属的 Kimi 区域。结果在本地推导，不经网络探测：优先取环境变量或配置固定的 OAuth host，其次是已配置的 OAuth key，再次是 home 目录中的区域标记文件；默认为 `mainland-cn`。无参数。
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -644,7 +635,7 @@ HTTP 状态码例外（非 200）：
 
 列出插件市场目录并合并实时安装状态。目录按请求从配置的市场 URL 拉取（超时 10 秒）；使用默认目录时，目录中缺少的内置能力会作为条目合并进来（带 `capabilityId`），当前平台不支持的能力对应条目会被剔除。无参数。
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -662,7 +653,7 @@ HTTP 状态码例外（非 200）：
 
 列出已安装插件。无参数。
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -684,7 +675,7 @@ HTTP 状态码例外（非 200）：
 | --- | --- | --- | --- |
 | `source` | string | 是 | 安装来源：本地绝对路径、指向 zip 压缩包的 `http(s)` URL，或 GitHub URL——`https://github.com/<owner>/<repo>`，可选地用 `/tree/<branch-or-sha>`、`/releases/tag/<tag>` 或 `/commit/<sha>` 锁定版本 |
 
-**data**（code = 0）：[T-PluginSummary](#t-pluginsummary)。
+**返回**：`ResponseType<[T-PluginSummary](#t-pluginsummary)>`。
 
 **非零 code**：`40001`（`source` 既不是 URL 也不是绝对路径，或插件加载失败）、`40409`（本地路径不存在）。
 
@@ -698,7 +689,7 @@ HTTP 状态码例外（非 200）：
 
 插件动作经单一路由分发：尾部按 `{plugin_id}:{action}` 解析，动作为 `enable`（启用）/ `disable`（停用但不移除）/ `remove`（移除）。无请求体。
 
-**data**（code = 0）：`{ "ok": true }`。
+**返回**：`ResponseType<{ "ok": true }>`。
 
 **非零 code**：`40001`（缺少动作后缀或动作未知）、`40419`（没有该 id 的已安装插件）。
 
@@ -722,7 +713,7 @@ HTTP 状态码例外（非 200）：
 
 列出所有已注册能力及其就绪状态。无参数。
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -738,7 +729,7 @@ HTTP 状态码例外（非 200）：
 
 读取单个能力的就绪状态——`:install` 动作的轮询对应端点。无参数。
 
-**data**（code = 0）：[T-CapabilityStatus](#t-capabilitystatus)。
+**返回**：`ResponseType<[T-CapabilityStatus](#t-capabilitystatus)>`。
 
 **非零 code**：`40418`（没有该 id 的能力）。
 
@@ -752,7 +743,7 @@ HTTP 状态码例外（非 200）：
 
 在后台开始安装能力并立即返回当前状态（`install.running` 为 `true`）；轮询 `GET /api/v1/capabilities/{capability_id}` 查看进度。幂等。经 `POST /api/v1/capabilities/{tail}` 分发，`install` 是唯一动作。无请求体。
 
-**data**（code = 0）：[T-CapabilityStatus](#t-capabilitystatus)。
+**返回**：`ResponseType<[T-CapabilityStatus](#t-capabilitystatus)>`。
 
 **非零 code**：`40001`（缺少动作后缀或动作未知）、`40418`、`40924`（安装已在进行中）、`40925`（当前平台 / 架构不支持）。
 
@@ -782,7 +773,7 @@ HTTP 状态码例外（非 200）：
 | --- | --- | --- |
 | `session_id` | string | 要查看其 main agent 的会话。默认最近创建的存活会话 |
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -798,7 +789,7 @@ HTTP 状态码例外（非 200）：
 
 列出当前生效 Agent 配置的 MCP 服务（与 `GET /api/v1/tools` 相同的会话选取规则）；没有存活会话时列表为空。无参数。
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -814,7 +805,7 @@ HTTP 状态码例外（非 200）：
 
 重新连接当前生效 Agent 的某个 MCP 服务。经 `POST /api/v1/mcp/servers/{tail}` 分发，`restart` 是唯一动作。无请求体。
 
-**data**（code = 0）：`{ "restarting": true }`。
+**返回**：`ResponseType<{ "restarting": true }>`。
 
 **非零 code**：`40001`（缺少动作后缀或动作未知）、`40408`（没有该 id 的 MCP 服务；无存活会话时同样返回此错误）。
 
@@ -856,7 +847,7 @@ HTTP 状态码例外（非 200）：
 | `title` | string | 否 | 初始标题（至少 1 个字符） |
 | `agent_config` | object | 否 | schema 接受但当前不会应用——模型与各模式请经 `POST .../profile` 设置 |
 
-**data**（code = 0）：[T-Session](#t-session)。
+**返回**：`ResponseType<[T-Session](#t-session)>`。
 
 **非零 code**：`40001`（`workspace_id` 与 `metadata.cwd` 二缺一，或不一致）、`40409`（工作目录不存在或不是目录）、`40410`（工作区未注册）。
 
@@ -883,7 +874,7 @@ HTTP 状态码例外（非 200）：
 | `exclude_empty` | boolean | 去掉没有任何用户提示词的会话 |
 | `workspace_id` | string | 限定到单个工作区（别名会被解析） |
 
-**data**（code = 0）：`{ items: T-Session[], has_more: boolean }`。
+**返回**：`ResponseType<{ items: T-Session[], has_more: boolean }>`。
 
 **非零 code**：`40001`（互斥参数同用）、`40410`（未知的 `workspace_id`）。
 
@@ -897,7 +888,7 @@ HTTP 状态码例外（非 200）：
 
 从索引中读取单个会话。`last_seq` 携带真实的事件水位（watermark）：存活会话为当前事件日志的序列号，冷会话为最后持久化的水位——用它作为 `subscribe` 的 `cursors` 起点时回放为空。其余会话端点的 `last_seq` 均为 `0` 占位。
 
-**data**（code = 0）：[T-Session](#t-session)。
+**返回**：`ResponseType<[T-Session](#t-session)>`。
 
 **非零 code**：`40401`（会话不存在，或其工作区已无法解析）。
 
@@ -911,7 +902,7 @@ HTTP 状态码例外（非 200）：
 
 读取会话档案——与 `GET /api/v1/sessions/{session_id}` 相同的线上载荷（`last_seq` 为 `0` 占位）。
 
-**data**（code = 0）：[T-Session](#t-session)。
+**返回**：`ResponseType<[T-Session](#t-session)>`。
 
 **非零 code**：`40401`。
 
@@ -950,7 +941,7 @@ HTTP 状态码例外（非 200）：
 
 schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`，但更新路由当前不会应用它们。
 
-**data**（code = 0）：[T-Session](#t-session)（更新后）。
+**返回**：`ResponseType<[T-Session](#t-session)>`（更新后）。
 
 **非零 code**：`40001`、`40401`。
 
@@ -971,7 +962,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 | `force` | boolean | 否 | 即使已有自定义或生成的标题也重新生成。默认 `false` |
 | `source` | string | 否 | 标题输入：`user_prompts`（默认）/ `first_turn` / `digest` |
 
-**data**（code = 0）：`{ "title": string }`——当前应用到会话的标题。
+**返回**：`ResponseType<{ "title": string }>`——当前应用到会话的标题。
 
 **非零 code**：`40401`、`40923`（开关未开启、没有托管登录或尚无提示词内容、已有标题但未提供 `force`，或后端请求失败）。
 
@@ -989,7 +980,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 | --- | --- | --- | --- |
 | `:fork` | `{ title?, metadata? }` | [T-Session](#t-session)（新会话；广播 `event.session.created`） | `40901`（有进行中的轮次） |
 | `:compact` | `{ instruction? }` | `{}`（空对象；进度经 `compaction.*` 事件投递） | `40910`（有轮次或上下文变更进行中，或无可压缩内容） |
-| `:undo` | `{ count?=1, page_size?≤100 }` | `{ messages: { items, has_more }, status }`——剩余上下文消息最新在前；`status` 同 [T-SessionStatus](#t-sessionstatus)。回退 main agent 的对话 `count` 个轮次，并同步修正派生的会话状态（包括 `last_prompt`） | `40901`、`40911`（`data` 为引擎 details 或 `null`，见 [响应信封](#响应信封)） |
+| `:undo` | `{ count?=1, page_size?≤100 }` | `{ messages: { items, has_more }, status }`——剩余上下文消息最新在前；`status` 同 [T-SessionStatus](#t-sessionstatus)。回退 main agent 的对话 `count` 个轮次，并同步修正派生的会话状态（包括 `last_prompt`） | `40901`、`40911`（`data` 为引擎 details 或 `null`，见 [ResponseType](#responsetype)） |
 | `:abort` | 无 | `{ "aborted": true }` | — |
 | `:btw` | 无 | `{ "agent_id": string }`——把 main agent fork 成一个禁用工具调用的子 Agent，让快速的临时问题在隔离环境中运行，不触碰工作上下文；需要可用的模型配置 | — |
 | `:archive` | 无 | `{ "archived": true }`——会话从默认列表中消失（`include_archive` / `archived_only` 仍会列出），广播 `event.session.archived` | — |
@@ -1016,7 +1007,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 | `page_size` | integer | 1–100。默认 `100` |
 | `busy` | boolean | 只保留忙碌（或只保留空闲）的子会话 |
 
-**data**（code = 0）：`{ items: T-Session[], has_more: boolean }`。
+**返回**：`ResponseType<{ items: T-Session[], has_more: boolean }>`。
 
 **非零 code**：`40401`。
 
@@ -1037,7 +1028,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 | `title` | string | 否 | 子会话的标题（至少 1 个字符）。默认 `Child: <source title>` |
 | `metadata` | object | 否 | 子会话的自定义元数据 |
 
-**data**（code = 0）：[T-Session](#t-session)。
+**返回**：`ResponseType<[T-Session](#t-session)>`。
 
 **非零 code**：`40001`、`40401`、`40901`。
 
@@ -1051,7 +1042,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复。无参数。
 
-**data**（code = 0）：[T-SessionStatus](#t-sessionstatus)。
+**返回**：`ResponseType<[T-SessionStatus](#t-sessionstatus)>`。
 
 **非零 code**：`40401`。
 
@@ -1065,7 +1056,7 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 
 读取会话当前的目标快照；没有活跃目标时为 `null`。注意该载荷使用 camelCase 键。无参数。
 
-**data**（code = 0）：[T-GoalSnapshot](#t-goalsnapshot) 或 `null`。
+**返回**：`ResponseType<[T-GoalSnapshot](#t-goalsnapshot)>` 或 `null`。
 
 **非零 code**：`40401`。
 
@@ -1079,7 +1070,7 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 
 读取会话级告警。目前的产生者只有 `AGENTS.md` 过大检查（`agents-md-oversized`），因此大多数会话的列表为空。无参数。
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -1106,7 +1097,7 @@ main agent 的 Agent 循环运行在哪个运行时上的读取与切换。
 
 读取 main agent 的运行时绑定。无参数。
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -1131,7 +1122,7 @@ main agent 的 Agent 循环运行在哪个运行时上的读取与切换。
 | --- | --- | --- | --- |
 | `runtime_id` | string | 是 | 目标运行时 id |
 
-**data**（code = 0）：同 `GET .../runtime`。
+**返回**：同 `GET .../runtime`。
 
 **非零 code**：`40001`、`40401`、`40420`（不存在该 `runtime_id` 的运行时）、`40926`（运行时存在但不可用）。
 
@@ -1145,7 +1136,7 @@ main agent 的 Agent 循环运行在哪个运行时上的读取与切换。
 
 #### `POST /api/v1/sessions/{session_id}/export`
 
-将会话连同诊断日志一起导出为 zip 附件（`kimi-session-<id>.zip`）。响应是 `application/zip` 二进制流，不走信封（`content-disposition: attachment`、`cache-control: no-store`）；客户端断连即中止导出。
+将会话连同诊断日志一起导出为 zip 附件（`kimi-session-<id>.zip`）。响应是 `application/zip` 二进制流，不返回 `ResponseType`（`content-disposition: attachment`、`cache-control: no-store`）；客户端断连即中止导出。
 
 **Body**：
 
@@ -1154,7 +1145,7 @@ main agent 的 Agent 循环运行在哪个运行时上的读取与切换。
 | `web_log` | string | 否 | 要包含在归档中的客户端日志文本，最多 256 KB UTF-8 |
 | `desktop` | boolean | 否 | 同时包含桌面宿主的日志。默认 `false` |
 
-**非零 code**（JSON 信封）：`40001`、`40401`、`50001`。
+**非零 code**（`ResponseType`）：`40001`、`40401`、`50001`。
 
 ### 消息
 
@@ -1178,7 +1169,7 @@ main agent 的 Agent 循环运行在哪个运行时上的读取与切换。
 | `page_size` | integer | 1–100。默认 `50` |
 | `role` | string | 只保留单一角色：`user` / `assistant` / `tool` / `system`。过滤在分页切片之后应用，因此过滤后的一页可能少于 `page_size` 条而 `has_more` 仍为 `true`——持续翻页直到 `has_more` 为 `false` |
 
-**data**（code = 0）：`{ items: T-Message[], has_more: boolean }`（[T-Message](#t-message)）。
+**返回**：`ResponseType<{ items: T-Message[], has_more: boolean }>`（[T-Message](#t-message)）。
 
 **非零 code**：`40001`、`40401`。
 
@@ -1192,7 +1183,7 @@ main agent 的 Agent 循环运行在哪个运行时上的读取与切换。
 
 按 id 从同一历史中读取单条消息。无参数。
 
-**data**（code = 0）：[T-Message](#t-message)。
+**返回**：`ResponseType<[T-Message](#t-message)>`。
 
 **非零 code**：`40401`、`40403`（该会话中不存在此 id 的消息）。
 
@@ -1217,7 +1208,7 @@ main agent 的 Agent 循环运行在哪个运行时上的读取与切换。
 
 读取 main agent 的提示词队列快照。无参数。
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -1260,7 +1251,7 @@ schema 还接受 `metadata`、`plan_mode`、`swarm_mode`、`goal_objective` 和 
 
 schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinking` 内容块，但它们在用户提示词中没有意义。未知或 kind 不匹配的 `file_id` 引用会在提示词创建之前、任何覆盖项应用之前被拒绝。
 
-**data**（code = 0）：[T-PromptItem](#t-promptitem)（被接受的提示词）。
+**返回**：`ResponseType<[T-PromptItem](#t-promptitem)>`（被接受的提示词）。
 
 **非零 code**（鉴权错误族的 `data` / `details` 形态各异）：
 
@@ -1286,7 +1277,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | --- | --- | --- | --- |
 | `prompt_ids` | array | 是 | 非空的排队提示词 id 数组 |
 
-**data**（code = 0）：`{ "steered": true, "prompt_ids": string[] }`。
+**返回**：`ResponseType<{ "steered": true, "prompt_ids": string[] }>`。
 
 **非零 code**：`40001`、`40401`、`40402`（所列提示词 id 不在队列中）。
 
@@ -1300,7 +1291,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 单条提示词动作，经 `POST .../prompts/{tail}` 分发：`:abort` 中止运行中的提示词；`:steer` 把单条排队的提示词插入进行中的轮次（集合形式的单提示词版）。无请求体。
 
-**data**（code = 0）：`:abort` → `{ "aborted": true }`；`:steer` → `{ "steered": true, "prompt_ids": [prompt_id] }`。
+**返回**：`ResponseType`：`:abort` → `{ "aborted": true }`；`:steer` → `{ "steered": true, "prompt_ids": [prompt_id] }`。
 
 **非零 code**：`40001`（动作缺失或未知）、`40401`、`40402`、`40903`（提示词已完成，`data: { "aborted": false }`）。
 
@@ -1329,7 +1320,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | --- | --- | --- |
 | `status` | string | **必填。** 必须为 `pending`，缺省或其他值返回 `40001` |
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -1356,7 +1347,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `feedback` | string | 否 | 回传给 Agent 的自由文本反馈 |
 | `selected_label` | string | 否 | 当请求提供了带标签的选项时（例如计划审阅），所选选项的标签 |
 
-**data**（code = 0）：`{ "resolved": true, "resolved_at": ISO }`。
+**返回**：`ResponseType<{ "resolved": true, "resolved_at": ISO }>`。
 
 **非零 code**：`40001`、`40401`、`40404`（没有该 id 的待处理审批）、`40902`（已被答复，`data: { "resolved": false }`）。
 
@@ -1386,7 +1377,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | --- | --- | --- |
 | `status` | string | **必填。** 必须为 `pending`，缺省或其他值返回 `40001` |
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -1422,7 +1413,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `multi_with_other` | `option_ids`、`other_text` | 选项加自由文本 |
 | `skipped` | — | 跳过了该条目 |
 
-**data**（code = 0）：`{ "resolved": true, "resolved_at": ISO }`。
+**返回**：`ResponseType<{ "resolved": true, "resolved_at": ISO }>`。
 
 **非零 code**：`40001`（`details` 逐字段说明）、`40401`、`40405`（没有该 id 的待处理提问）、`40902`（已被答复，`data: { "resolved": false }`）。
 
@@ -1436,7 +1427,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 忽略一个待处理的提问，不作回答。无请求体。
 
-**成功形态**：信封的 `code` 是 `40909` 而不是 `0`，`data` 为 `{ "dismissed": true, "dismissed_at": ISO }`——客户端必须特殊处理该端点的成功码（见 [响应信封](#响应信封)）。
+**成功形态**：`ResponseType` 的 `code` 是 `40909` 而不是 `0`，`data` 为 `{ "dismissed": true, "dismissed_at": ISO }`——客户端必须特殊处理该端点的成功码（见 [ResponseType](#responsetype)）。
 
 **非零 code**：`40401`、`40405`、`40902`（已被答复，`data: { "resolved": false }`）。
 
@@ -1466,7 +1457,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | --- | --- | --- |
 | `status` | string | 只保留单一状态：`running` / `completed` / `failed` / `cancelled` |
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -1491,7 +1482,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `with_output` | boolean | 在响应中包含输出末尾片段。默认 `false` |
 | `output_bytes` | integer | 请求的输出末尾片段的字节大小，最小 `0`。默认 `32768` |
 
-**data**（code = 0）：[T-Task](#t-task)；`with_output=true` 且输出非空时附加 `output_preview` 与 `output_bytes`。
+**返回**：`ResponseType<[T-Task](#t-task)>`；`with_output=true` 且输出非空时附加 `output_preview` 与 `output_bytes`。
 
 **非零 code**：`40001`、`40401`、`40406`（没有该 id 的任务；冷会话完全没有实时任务）。
 
@@ -1505,7 +1496,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 任务动作经 `POST .../tasks/{tail}` 分发：`:cancel` 取消运行中的任务；`:detach` 将运行中的前台任务转入后台而不终止它（等待该任务的工具调用立即以后台任务结果返回，轮次继续推进）。已在后台或已结束的任务上 `:detach` 为幂等空操作。无请求体。
 
-**data**（code = 0）：`:cancel` → `{ "cancelled": true }`；`:detach` → `{ "detached": boolean, "status": string }`（本次确实转入后台时 `detached` 为 `true`，`status` 为调用后的任务状态）。
+**返回**：`ResponseType`：`:cancel` → `{ "cancelled": true }`；`:detach` → `{ "detached": boolean, "status": string }`（本次确实转入后台时 `detached` 为 `true`，`status` 为调用后的任务状态）。
 
 **非零 code**：`40001`（动作缺失或未知）、`40401`、`40406`、`40904`（任务已结束，`data: { "cancelled": false }` 且 `details: { "current_status" }`）。
 
@@ -1530,7 +1521,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 列出会话的终端；读取列表会在会话为冷态时将其恢复。无参数。
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -1558,7 +1549,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | `cols` | integer | 否 | 终端宽度，正数。默认 `80` |
 | `rows` | integer | 否 | 终端高度，正数。默认 `24` |
 
-**data**（code = 0）：[T-Terminal](#t-terminal)。
+**返回**：`ResponseType<[T-Terminal](#t-terminal)>`。
 
 **非零 code**：`40001`（`details` 逐字段说明）、`40401`、`41304`（`cwd` 解析后越出会话工作区）。
 
@@ -1572,7 +1563,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 读取单个终端。无参数。
 
-**data**（code = 0）：[T-Terminal](#t-terminal)。
+**返回**：`ResponseType<[T-Terminal](#t-terminal)>`。
 
 **非零 code**：`40401`、`40414`（没有该 id 的终端）。
 
@@ -1586,7 +1577,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 关闭终端并结束其进程。经 `POST .../terminals/{tail}` 分发，`close` 是唯一动作。无请求体。
 
-**data**（code = 0）：`{ "closed": true }`。
+**返回**：`ResponseType<{ "closed": true }>`。
 
 **非零 code**：`40001`（缺少动作后缀或动作未知）、`40401`、`40414`。
 
@@ -1610,7 +1601,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 列出单个会话可用的技能，按会话的优先级合并所有来源（内置、插件、extra、用户、项目）；会话处于冷态时读取目录会恢复该会话。无参数。
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -1628,7 +1619,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 列出该工作区中的会话将看到的技能目录，但不创建或恢复会话。无参数。
 
-**data**（code = 0）：同 `GET /api/v1/sessions/{session_id}/skills`。
+**返回**：同 `GET /api/v1/sessions/{session_id}/skills`。
 
 **非零 code**：`40410`（工作区不存在）。
 
@@ -1649,7 +1640,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | `args` | string | 否 | 传给技能的自由文本参数，相当于斜杠命令后的文本 |
 | `attachments` | array | 否 | 随激活携带的媒体块。`image` / `video` 块带 `source` 对象（`kind` 为 `url` / `base64` / `file` / `session_media`，与提示词内容块同形）；`file` 块带顶层 `file_id`、`name`、`media_type`、`size` |
 
-**data**（code = 0）：`{ "activated": true, "skill_name": string }`。
+**返回**：`ResponseType<{ "activated": true, "skill_name": string }>`。
 
 **非零 code**：`40001`（校验失败或动作后缀不支持）、`40401`、`40407`（引用的附件文件不存在）、`40415`（没有该名称的技能）、`40912`（技能类型不允许用户激活）。
 
@@ -1678,7 +1669,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 列出所有已注册工作区。无参数。
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -1701,7 +1692,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | `root` | string | 是 | 已存在目录的绝对路径 |
 | `name` | string | 否 | 显示名，1–100 个字符。默认根目录的基名 |
 
-**data**（code = 0）：[T-Workspace](#t-workspace)。
+**返回**：`ResponseType<[T-Workspace](#t-workspace)>`。
 
 **非零 code**：`40001`（`root` 缺失或不是绝对路径）、`40409`（`root` 不存在或不是目录）。
 
@@ -1721,7 +1712,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | --- | --- | --- | --- |
 | `name` | string | 是 | 新的显示名，1–100 个字符 |
 
-**data**（code = 0）：[T-Workspace](#t-workspace)。
+**返回**：`ResponseType<[T-Workspace](#t-workspace)>`。
 
 **非零 code**：`40001`、`40410`。
 
@@ -1735,7 +1726,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 注销工作区。只移除注册表条目——磁盘上的目录不受影响。无请求体。
 
-**data**（code = 0）：`{ "deleted": true }`。
+**返回**：`ResponseType<{ "deleted": true }>`。
 
 **非零 code**：`40410`。
 
@@ -1749,7 +1740,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 读取工作区信任状态。信任状态决定是否为该工作区加载项目级 MCP 配置。无参数。
 
-**data**（code = 0）：`{ "trusted": boolean }`。
+**返回**：`ResponseType<{ "trusted": boolean }>`。
 
 **非零 code**：`40410`。
 
@@ -1763,7 +1754,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 将工作区标记为信任，并加载其项目级 MCP 配置。无请求体。
 
-**data**（code = 0）：`{ "trusted": true }`。
+**返回**：`ResponseType<{ "trusted": true }>`。
 
 **非零 code**：`40410`。
 
@@ -1777,7 +1768,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 撤销工作区信任，并卸载其项目级 MCP 配置。无请求体。
 
-**data**（code = 0）：`{ "trusted": false }`。
+**返回**：`ResponseType<{ "trusted": false }>`。
 
 **非零 code**：`40410`。
 
@@ -1798,7 +1789,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | `path` | string | 是 | 要添加的目录 |
 | `persist` | boolean | 否 | 缺省 `true`：追加到 `<项目根>/.kimi-code/local.toml` 的 `workspace.additional_dir`；为 `false` 时仅加入内存中的临时集合（同一工作区所有会话共享），不写盘 |
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -1848,7 +1839,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | `sort` | string | 否 | `type_first`（默认）/ `name_asc` / `name_desc` / `mtime_desc` / `size_desc` |
 | `include_git_status` | boolean | 否 | 附带每个条目的 git 状态。默认 `false` |
 
-**data**（code = 0）：[T-FsListResponse](#t-fslistresponse)。
+**返回**：`ResponseType<[T-FsListResponse](#t-fslistresponse)>`。
 
 **非零 code**：`40001`、`40401`、`40409`（路径不存在或不是目录）、`41304`。
 
@@ -1871,7 +1862,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | `length` | integer | 否 | 读取字节数，1–10485760（10 MiB）。默认 `1048576`（1 MiB） |
 | `encoding` | string | 否 | `auto`（默认）/ `utf-8` / `base64` |
 
-**data**（code = 0）：[T-FsReadResponse](#t-fsreadresponse)。
+**返回**：`ResponseType<[T-FsReadResponse](#t-fsreadresponse)>`。
 
 **非零 code**：`40001`、`40401`、`40409`、`40906`（路径是目录）、`40907`（二进制文件却指定 `utf-8`）、`41302`（文件超过 10 MiB 上限）、`41304`。
 
@@ -1893,7 +1884,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 其余字段（`depth`、`limit`、`show_hidden`、`follow_gitignore`、`exclude_globs`、`sort`、`include_git_status`）与 `fs:list` 相同。
 
-**data**（code = 0）：[T-FsListManyResponse](#t-fslistmanyresponse)。
+**返回**：`ResponseType<[T-FsListManyResponse](#t-fslistmanyresponse)>`。
 
 **非零 code**：`40001`、`40401`。
 
@@ -1913,7 +1904,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | --- | --- | --- | --- |
 | `path` | string | 是 | 要查询的路径，相对于会话工作目录 |
 
-**data**（code = 0）：[T-FsEntry](#t-fsentry)。
+**返回**：`ResponseType<[T-FsEntry](#t-fsentry)>`。
 
 **非零 code**：`40001`、`40401`、`40409`、`41304`。
 
@@ -1933,7 +1924,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | --- | --- | --- | --- |
 | `paths` | array | 是 | 要查询的路径，1–1000 条 |
 
-**data**（code = 0）：[T-FsStatManyResponse](#t-fsstatmanyresponse)。
+**返回**：`ResponseType<[T-FsStatManyResponse](#t-fsstatmanyresponse)>`。
 
 **非零 code**：`40001`、`40401`。
 
@@ -1954,7 +1945,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | `path` | string | 是 | 要创建的目录，相对于会话工作目录 |
 | `recursive` | boolean | 否 | 创建缺失的父目录。默认 `false` |
 
-**data**（code = 0）：[T-FsEntry](#t-fsentry)（所建目录）。
+**返回**：`ResponseType<[T-FsEntry](#t-fsentry)>`（所建目录）。
 
 **非零 code**：`40001`、`40401`、`40409`（父目录不存在）、`40919`（路径已存在）、`41304`。
 
@@ -1978,7 +1969,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | `exclude_globs` | array | 否 | 跳过匹配这些 glob 的路径 |
 | `follow_gitignore` | boolean | 否 | 跳过 gitignore 的路径。默认 `true` |
 
-**data**（code = 0）：`{ items: T-FsSearchHit[], truncated: boolean }`（[T-FsSearchHit](#t-fssearchhit)；命中按得分排序，同分按路径）。
+**返回**：`ResponseType<{ items: T-FsSearchHit[], truncated: boolean }>`（[T-FsSearchHit](#t-fssearchhit)；命中按得分排序，同分按路径）。
 
 **非零 code**：`40001`、`40401`（该引用既不是会话，也不是可解析的工作区）、`41303`（命中过多）。
 
@@ -2007,7 +1998,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | `max_total_matches` | integer | 否 | 总共保留的匹配数，1–100000。默认 `5000` |
 | `context_lines` | integer | 否 | 每个匹配携带的上下文行数，0–10。默认 `2` |
 
-**data**（code = 0）：[T-FsGrepResponse](#t-fsgrepresponse)。
+**返回**：`ResponseType<[T-FsGrepResponse](#t-fsgrepresponse)>`。
 
 **非零 code**：`40001`、`40401`、`41303`、`41305`（搜索超时）。
 
@@ -2027,7 +2018,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | --- | --- | --- | --- |
 | `paths` | array | 否 | 将状态限定在这些路径；省略表示整个工作区 |
 
-**data**（code = 0）：[T-FsGitStatusResponse](#t-fsgitstatusresponse)（注意 camelCase `pullRequest`）。
+**返回**：`ResponseType<[T-FsGitStatusResponse](#t-fsgitstatusresponse)>`（注意 camelCase `pullRequest`）。
 
 **非零 code**：`40001`、`40401`、`40908`（git 不可用：不是仓库，或没有 git 可执行文件）。
 
@@ -2047,7 +2038,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | --- | --- | --- | --- |
 | `path` | string | 是 | 要 diff 的文件，相对于会话工作目录 |
 
-**data**（code = 0）：[T-FsDiffResponse](#t-fsdiffresponse)。
+**返回**：`ResponseType<[T-FsDiffResponse](#t-fsdiffresponse)>`。
 
 **非零 code**：`40001`、`40401`、`40908`、`41304`。
 
@@ -2068,7 +2059,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | `path` | string | 是 | 要打开的文件，相对于会话工作目录 |
 | `line` | integer | 否 | 在处理程序支持时跳转到的行号（正整数） |
 
-**data**（code = 0）：`{ "opened": true }`。
+**返回**：`ResponseType<{ "opened": true }>`。
 
 **非零 code**：`40001`、`40401`、`40409`、`41304`。
 
@@ -2090,7 +2081,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | `path` | string | 是 | 要打开的文件或目录，相对于会话工作目录 |
 | `line` | integer | 否 | 在应用支持时跳转到的行号（正整数） |
 
-**data**（code = 0）：`{ "opened": true }`。
+**返回**：`ResponseType<{ "opened": true }>`。
 
 **非零 code**：`40001`、`40401`、`40409`、`41304`、`50001`（应用启动失败）。
 
@@ -2110,7 +2101,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | --- | --- | --- | --- |
 | `path` | string | 是 | 要显示的文件，相对于会话工作目录 |
 
-**data**（code = 0）：`{ "revealed": true }`。
+**返回**：`ResponseType<{ "revealed": true }>`。
 
 **非零 code**：`40001`、`40401`、`40409`、`41304`。
 
@@ -2130,7 +2121,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | --- | --- | --- |
 | `runtime_id` | string | 从哪个运行时读取。默认 `local` |
 
-**非零 code**（JSON 信封）：`40001`（路径缺失或不以 `:download` 结尾）、`40401`、`40409`、`41304`。
+**非零 code**（`ResponseType`）：`40001`（路径缺失或不以 `:download` 结尾）、`40401`、`40409`、`41304`。
 
 #### `POST /api/v1/workspace/fs:search`
 
@@ -2148,7 +2139,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | `follow_gitignore` | boolean | 否 | 跳过 gitignore 的路径。默认 `true` |
 | `runtime_id` | string | 否 | 在哪个运行时上搜索。默认 `local` |
 
-**data**（code = 0）：`{ items: T-FsSearchHit[], truncated: boolean }`，命中结构与排序同 `fs:search`。
+**返回**：`ResponseType<{ items: T-FsSearchHit[], truncated: boolean }>`，命中结构与排序同 `fs:search`。
 
 **非零 code**：`40001`、`40410`（工作区不存在，且不是可用的绝对路径）、`41303`。
 
@@ -2175,7 +2166,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | `exclude_globs` | array | 否 | 跳过匹配这些 glob 的路径 |
 | `runtime_id` | string | 否 | 在哪个运行时上补全。默认 `local` |
 
-**data**（code = 0）：`{ items: T-FsSuggestItem[], truncated: boolean }`（[T-FsSuggestItem](#t-fssuggestitem)，结构同搜索命中）。
+**返回**：`ResponseType<{ items: T-FsSuggestItem[], truncated: boolean }>`（[T-FsSuggestItem](#t-fssuggestitem)，结构同搜索命中）。
 
 **非零 code**：`40001`、`40410`。
 
@@ -2202,7 +2193,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | `exclude_globs` | array | 否 | 跳过匹配这些 glob 的路径 |
 | `runtime_id` | string | 否 | 默认 `local` |
 
-**data**（code = 0）：`{ items: T-FsSuggestItem[], truncated: boolean }`。
+**返回**：`ResponseType<{ items: T-FsSuggestItem[], truncated: boolean }>`。
 
 **非零 code**：`40001`、`40409`（某个 root 不存在）、`40420`、`40926`。
 
@@ -2222,7 +2213,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | --- | --- | --- |
 | `path` | string | 绝对目录路径。默认用户主目录 |
 
-**data**（code = 0）：[T-FsBrowseResponse](#t-fsbrowseresponse)。
+**返回**：`ResponseType<[T-FsBrowseResponse](#t-fsbrowseresponse)>`。
 
 **非零 code**：`40001`（`path` 不是绝对路径）、`40409`、`40411`（权限不足）。
 
@@ -2236,7 +2227,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 返回文件夹选择器的落地数据。无参数。
 
-**data**（code = 0）：[T-FsHomeResponse](#t-fshomeresponse)（`recent_roots` 上限 8）。
+**返回**：`ResponseType<[T-FsHomeResponse](#t-fshomeresponse)>`（`recent_roots` 上限 8）。
 
 **示例**：
 
@@ -2254,7 +2245,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | --- | --- | --- |
 | `path` | string | **必填。** 绝对文件路径（realpath 解析） |
 
-**非零 code**（JSON 信封）：`40001`（不是绝对路径或不是普通文件）、`40409`、`40411`、`40906`（路径是目录）。
+**非零 code**（`ResponseType`）：`40001`（不是绝对路径或不是普通文件）、`40409`、`40411`、`40906`（路径是目录）。
 
 #### `POST /api/v1/fs:mkdir`
 
@@ -2266,7 +2257,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | --- | --- | --- | --- |
 | `path` | string | 是 | 绝对目录路径 |
 
-**data**（code = 0）：`{ "path": string }`。
+**返回**：`ResponseType<{ "path": string }>`。
 
 **非零 code**：`40001`、`40409`（父路径不存在）、`40411`、`40919`（路径已存在）。
 
@@ -2299,7 +2290,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | `name` | string | 否 | 存储的显示名。默认上传文件名 |
 | `expires_in_sec` | number | 否 | 文件过期前的秒数（非负）。默认永不过期 |
 
-**data**（code = 0）：[T-FileMeta](#t-filemeta)。
+**返回**：`ResponseType<[T-FileMeta](#t-filemeta)>`。
 
 **非零 code**：`40001`（multipart 未初始化或缺少 `file` 字段）。
 
@@ -2319,7 +2310,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 删除已上传的文件。无请求体。
 
-**data**（code = 0）：`{ "deleted": true }`。
+**返回**：`ResponseType<{ "deleted": true }>`。
 
 **非零 code**：同下载——`40407`（HTTP 404）、`50001`（HTTP 500）。
 
@@ -2331,7 +2322,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 #### `GET /api/v1/sessions/{session_id}/media/{file_id}`
 
-按文件 id 下载提示词媒体文件（会话提示词引用的图片或其他附件）；尚未提交到会话的 id 会回退到暂存的上传中查找。响应为二进制并支持 Range——共享约定见 [二进制与流式端点](#二进制与流式端点)；与那里走信封的端点不同，会话或文件不存在时返回真正的 404 状态码并携带信封体。
+按文件 id 下载提示词媒体文件（会话提示词引用的图片或其他附件）；尚未提交到会话的 id 会回退到暂存的上传中查找。响应为二进制并支持 Range——共享约定见 [二进制与流式端点](#二进制与流式端点)；与那里返回 `ResponseType` 的端点不同，会话或文件不存在时返回真正的 404 状态码且响应体仍为 `ResponseType`。
 
 **非零 code**：`40401`（HTTP 404）、`40407`（HTTP 404）。
 
@@ -2358,7 +2349,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 `terms` 模式下查询会被分词（ASCII 词加 CJK n-gram）、去重，并以至多 32 个词项匹配倒排索引。
 
-**data**（code = 0）：[T-SearchResponse](#t-searchresponse)。
+**返回**：`ResponseType<[T-SearchResponse](#t-searchresponse)>`。
 
 **非零 code**：`40001`（校验失败、查询为空或超过 32 个词项、分页令牌非法）、`50001`。
 
@@ -2386,7 +2377,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 返回已存键的数量（对齐 `localStorage.length`）。无参数。
 
-**data**（code = 0）：`{ "length": number }`。
+**返回**：`ResponseType<{ "length": number }>`。
 
 **示例**：
 
@@ -2404,7 +2395,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | --- | --- | --- |
 | `key` | string | **必填。** 要读取的键，1–256 个字符 |
 
-**data**（code = 0）：`{ "value": string | null }`——键不存在时为 `null`。
+**返回**：`ResponseType<{ "value": string | null }>`——键不存在时为 `null`。
 
 **示例**：
 
@@ -2423,7 +2414,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | `key` | string | 是 | 要写入的键，1–256 个字符 |
 | `value` | string | 是 | 要存储的值 |
 
-**data**（code = 0）：`null`。
+**返回**：`ResponseType<null>`。
 
 **示例**：
 
@@ -2441,7 +2432,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | --- | --- | --- | --- |
 | `key` | string | 是 | 要删除的键，1–256 个字符 |
 
-**data**（code = 0）：`null`。
+**返回**：`ResponseType<null>`。
 
 **示例**：
 
@@ -2453,7 +2444,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 删除所有已存值（对齐 `localStorage.clear`）。无请求体。
 
-**data**（code = 0）：`null`。
+**返回**：`ResponseType<null>`。
 
 **示例**：
 
@@ -2467,7 +2458,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 为重新同步后重建客户端组装一份原子快照：会话、最近的消息、进行中的轮次、存活的 subagent 以及待处理交互，全部盖上 `as_of_seq` 水位与用于重新订阅的 `epoch`——恢复流程见 [断线恢复](#断线恢复)。与普通的会话端点不同，内嵌的会话携带实时的 `agent_config.model` 与真实的 `usage` 总计。无参数。
 
-**data**（code = 0）：[T-SnapshotResponse](#t-snapshotresponse)。
+**返回**：`ResponseType<[T-SnapshotResponse](#t-snapshotresponse)>`。
 
 **非零 code**：`40401`、`50001`。
 
@@ -2501,7 +2492,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | `after_turn` | string | 只保留晚于该轮次 id 的轮次；与 `before_turn` 互斥 |
 | `page_size` | integer | 1–100 个轮次。默认 `20` |
 
-**data**（code = 0）：[T-TranscriptResponse](#t-transcriptresponse)——分页单位是轮次：不带游标时返回最新的一页，`has_more` 表示还有更早的轮次；`tasks` / `interactions` / `attachments` / `todos` / `meta` / `agents` / `pending_interactions` 是不分页、随每次响应一起返回的全局 Agent 状态；`seq` 是该 Agent 用于恢复流的 op 批次水位（仅活跃会话携带）。
+**返回**：`ResponseType<[T-TranscriptResponse](#t-transcriptresponse)>`——分页单位是轮次：不带游标时返回最新的一页，`has_more` 表示还有更早的轮次；`tasks` / `interactions` / `attachments` / `todos` / `meta` / `agents` / `pending_interactions` 是不分页、随每次响应一起返回的全局 Agent 状态；`seq` 是该 Agent 用于恢复流的 op 批次水位（仅活跃会话携带）。
 
 **非零 code**：`40001`、`40401`。
 
@@ -2522,7 +2513,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | `agent_id` | string | **必填。** Agent id（纯文本形式） |
 | `since_seq` | integer | **必填。** 调用方已应用的最后一个 op 批次 seq，最小为 `0`；返回其之后的批次 |
 
-**data**（code = 0）：[T-TranscriptOpsCatchupResponse](#t-transcriptopscatchupresponse)——`complete: true` 表示直到 `latest_seq` 的每个批次都在；`complete: false` 表示日志已不再覆盖到 `since_seq`（或会话根本不是活跃状态），调用方必须回退为一次完整的 `GET .../transcript` 刷新。会话存在但非活跃时固定返回 `{ agent_id, batches: [], latest_seq: 0, complete: false }`。
+**返回**：`ResponseType<[T-TranscriptOpsCatchupResponse](#t-transcriptopscatchupresponse)>`——`complete: true` 表示直到 `latest_seq` 的每个批次都在；`complete: false` 表示日志已不再覆盖到 `since_seq`（或会话根本不是活跃状态），调用方必须回退为一次完整的 `GET .../transcript` 刷新。会话存在但非活跃时固定返回 `{ agent_id, batches: [], latest_seq: 0, complete: false }`。
 
 **非零 code**：`40001`、`40401`。
 
@@ -2542,7 +2533,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | --- | --- | --- |
 | `agent_id` | string | 只读取一个 Agent（纯文本 id）。默认读取所有在册 Agent（冷会话保证含 main agent） |
 
-**data**（code = 0）：[T-TranscriptUserMessagesResponse](#t-transcriptusermessagesresponse)。
+**返回**：`ResponseType<[T-TranscriptUserMessagesResponse](#t-transcriptusermessagesresponse)>`。
 
 **非零 code**：`40001`、`40401`。
 
@@ -2563,7 +2554,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | `agent_id` | string | **必填。** Agent id（纯文本形式） |
 | `tool_call_id` | string | 将读取范围限定到单次 `ExitPlanMode` 调用；不提供时列出所有可恢复计划内容的调用 |
 
-**data**（code = 0）：[T-TranscriptPlanResponse](#t-transcriptplanresponse)。
+**返回**：`ResponseType<[T-TranscriptPlanResponse](#t-transcriptplanresponse)>`。
 
 **非零 code**：`40001`、`40401`、`40416`（提供了 `tool_call_id`，但不存在该 id 的 `ExitPlanMode` 调用）。
 
@@ -2596,7 +2587,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | --- | --- | --- |
 | `turn_id` | integer | **必填。** 轮次 id（≥ 0） |
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -2624,7 +2615,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | `path` | string | **必填。** 文件路径 |
 | `phase` | string | `start`（默认）/ `end`——取轮次开始还是结束检查点 |
 
-**data**（code = 0）：
+**返回**：`ResponseType`，`data` 字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -2640,7 +2631,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 ### v2 会话
 
-`/api/v2` 的会话查询与批量管理。与 v1 共享信封与错误约定；分页为绑定查询指纹的 `page_token`（见 [分页](#分页)）。
+`/api/v2` 的会话查询与批量管理。与 v1 共享 `ResponseType` 与错误约定；分页为绑定查询指纹的 `page_token`（见 [分页](#分页)）。
 
 | 方法与路径 | 说明 |
 | --- | --- |
@@ -2671,7 +2662,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | `page` | integer | 无状态的 1 起始页码；与 `page_token` 互斥（同传返回 `40001`） |
 | `page_token` | string | 上一页返回的翻页令牌 |
 
-**data**（code = 0）：[T-V2SessionPage](#t-v2sessionpage)（flat）或 [T-V2SessionGroupPage](#t-v2sessiongrouppage)（`by_workspace`）。每页额外携带 `total`（过滤后的集合大小）；翻页令牌绑定首页查询条件（含投影），中途改条件返回 `40922`；`page` 模式每次请求都是独立快照，不签发令牌，`next_page_token` 恒为 `null`。`by_workspace` 时每组携带该工作区按 `sort` 排序的前 `group.page_size` 条会话及其匹配总数 `total`；只有至少一条匹配会话的工作区才会出现，组间按组内首条会话的 sort key 排序（相同则按工作区 id）。
+**返回**：`ResponseType<[T-V2SessionPage](#t-v2sessionpage)>`（flat）或 [T-V2SessionGroupPage](#t-v2sessiongrouppage)（`by_workspace`）。每页额外携带 `total`（过滤后的集合大小）；翻页令牌绑定首页查询条件（含投影），中途改条件返回 `40922`；`page` 模式每次请求都是独立快照，不签发令牌，`next_page_token` 恒为 `null`。`by_workspace` 时每组携带该工作区按 `sort` 排序的前 `group.page_size` 条会话及其匹配总数 `total`；只有至少一条匹配会话的工作区才会出现，组间按组内首条会话的 sort key 排序（相同则按工作区 id）。
 
 **非零 code**：`40001`（未知 `include` / `fields`、组合非法）、`40922`。
 
@@ -2691,7 +2682,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | --- | --- | --- | --- |
 | `ids` | array | 是 | 会话 id 数组——非空、去重后不超过 5000 条 |
 
-**data**（code = 0）：[T-V2BatchSessionResponse](#t-v2batchsessionresponse)——`results` 保持输入顺序，不存在的 id 在自身条目里报 `40401`。
+**返回**：`ResponseType<[T-V2BatchSessionResponse](#t-v2batchsessionresponse)>`——`results` 保持输入顺序，不存在的 id 在自身条目里报 `40401`。
 
 **非零 code**：`40001`。
 
@@ -2734,7 +2725,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | --- | --- | --- |
 | `cwd` | string | 并入该（受信任）目录的项目层 |
 
-**data**（code = 0）：[T-McpManagedServer](#t-mcpmanagedserver) 数组。
+**返回**：`ResponseType<[T-McpManagedServer](#t-mcpmanagedserver)>` 数组。
 
 **示例**：
 
@@ -2752,7 +2743,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | --- | --- | --- |
 | `cwd` | string | 并入该（受信任）目录的项目层 |
 
-**data**（code = 0）：[T-McpManagedServer](#t-mcpmanagedserver)。
+**返回**：`ResponseType<[T-McpManagedServer](#t-mcpmanagedserver)>`。
 
 **非零 code**：`40001`、`40408`（不存在该名称的 server）。
 
@@ -2768,7 +2759,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 **Body**：包含 `name` 的完整 server 配置——`transport`（`stdio` / `http` / `sse`）决定配置形状（见 [T-McpServerConfigView](#t-mcpserverconfigview) 的输入形态）。
 
-**data**（code = 0）：[T-McpManagedServer](#t-mcpmanagedserver) 数组（刷新后的列表）。
+**返回**：`ResponseType<[T-McpManagedServer](#t-mcpmanagedserver)>` 数组（刷新后的列表）。
 
 **非零 code**：`40001`（校验失败，或目标条目为只读）。
 
@@ -2784,7 +2775,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 **Body**：不含 `name` 的完整 server 配置（形态同 `POST /api/v2/mcp/servers`）。
 
-**data**（code = 0）：[T-McpManagedServer](#t-mcpmanagedserver) 数组（刷新后的列表）。
+**返回**：`ResponseType<[T-McpManagedServer](#t-mcpmanagedserver)>` 数组（刷新后的列表）。
 
 **非零 code**：`40001`、`40408`。
 
@@ -2798,7 +2789,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 
 删除一个用户级条目。无请求体。
 
-**data**（code = 0）：[T-McpManagedServer](#t-mcpmanagedserver) 数组（刷新后的列表）。
+**返回**：`ResponseType<[T-McpManagedServer](#t-mcpmanagedserver)>` 数组（刷新后的列表）。
 
 **非零 code**：`40001`、`40408`。
 
@@ -2820,7 +2811,7 @@ PTY（伪终端）接口；仅在 loopback 绑定时挂载（非 loopback 绑定
 | `server` | object | 二选一 | 按原样探测的内联 server 配置（含 `name`） |
 | `cwd` | string | 否 | 项目层并入解析；同时是 stdio 的工作目录 |
 
-**data**（code = 0）：`{ "success": boolean, "output": string }`——连接成功时 `output` 列出该 server 的可用工具，否则携带失败信息。
+**返回**：`ResponseType<{ "success": boolean, "output": string }>`——连接成功时 `output` 列出该 server 的可用工具，否则携带失败信息。
 
 **非零 code**：`40001`（两种目标形式都传或都不传、内联配置无效，或运行时名称被多个启用的 server 共用）、`40408`。
 
@@ -2841,7 +2832,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 | `targets` | array | 否 | 缩小目录范围的 locator 数组；不传则检查全部 server |
 | `cwd` | string | 否 | 并入该（受信任）目录的项目层 |
 
-**data**（code = 0）：[T-McpServerInspection](#t-mcpserverinspection) 数组。
+**返回**：`ResponseType<[T-McpServerInspection](#t-mcpserverinspection)>` 数组。
 
 **非零 code**：`40001`、`40408`（`targets` 中有 locator 未匹配到任何条目）。
 
@@ -2862,7 +2853,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 | `cwd` | string | 并入该（受信任）目录的项目层 |
 | `verify` | string | `true` 对每个 OAuth 候选发起真实连接验证；`false` 完全离线（仅凭配置与已存储 token 分类）；缺省保留隐式 OAuth 探测，只探测未固定且没有已存储凭据的远程 server |
 
-**data**（code = 0）：[T-McpServerAuthStatus](#t-mcpserverauthstatus) 数组。验证探测可能刷新或作废已存储的凭据。
+**返回**：`ResponseType<[T-McpServerAuthStatus](#t-mcpserverauthstatus)>` 数组。验证探测可能刷新或作废已存储的凭据。
 
 **示例**：
 
@@ -2876,7 +2867,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 **Body**：locator（`{ "source": "global", "name" }` 或 `{ "source": "plugin", "pluginId", "serverName" }`）；另有可选的 `cwd` 查询参数。
 
-**data**（code = 0）：`{ "status": "authorization-required", "flowId": string, "authorizationUrl": string }`（在浏览器中打开该 URL 完成授权），或授权已存在时 `{ "status": "already-authorized" }`。
+**返回**：`ResponseType`：`{ "status": "authorization-required", "flowId": string, "authorizationUrl": string }`（在浏览器中打开该 URL 完成授权），或授权已存在时 `{ "status": "already-authorized" }`。
 
 **非零 code**：`40001`（server 无法使用 OAuth：stdio 传输、静态 bearer token，或未设置 `auth: "oauth"` 的静态请求头）、`40408`（locator 未匹配）、`40929`（OAuth 流程本身失败）。
 
@@ -2897,7 +2888,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 | `flowId` | string | 是 | `auth:begin` 返回的流程 id |
 | `timeoutMs` | integer | 否 | 等待上限（毫秒）。默认 15 分钟 |
 
-**data**（code = 0）：`null`。
+**返回**：`ResponseType<null>`。
 
 **非零 code**：`40001`（`flowId` 未知）、`40929`。
 
@@ -2917,7 +2908,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 | --- | --- | --- | --- |
 | `flowId` | string | 是 | 要终止的流程 id |
 
-**data**（code = 0）：`null`。
+**返回**：`ResponseType<null>`。
 
 **示例**：
 
@@ -2931,7 +2922,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 **Body**：locator（形态同 `auth:begin`）。
 
-**data**（code = 0）：`null`。
+**返回**：`ResponseType<null>`。
 
 **非零 code**：`40001`、`40408`（locator 未匹配）、`40929`。
 
@@ -3643,7 +3634,7 @@ agent 阶段（`agent.status.updated` 的 `phase` 字段）：按 `kind` 区分�
 | `GET /api/v1/fs:content` | 读取本机任意文件（仅受 token 保护，谨慎暴露端口） | 支持 | 支持 |
 | `POST /api/v1/sessions/{session_id}/export` | 导出会话与诊断信息（zip 流） | 不支持 | 不支持 |
 
-错误语义也不相同：`GET /api/v1/files/{file_id}` 与 `GET .../media/{file_id}` 对查找和存储失败返回真实 404 / 500 状态码（参数校验失败仍走 HTTP 200 信封），其余三个端点的所有失败都走标准 [响应信封](#响应信封)——客户端在这三个端点上仍需检查信封中的 `code`。
+错误语义也不相同：`GET /api/v1/files/{file_id}` 与 `GET .../media/{file_id}` 对查找和存储失败返回真实 404 / 500 状态码（参数校验失败仍返回 HTTP 200 的 `ResponseType`），其余三个端点的所有失败都返回 [`ResponseType`](#responsetype)——客户端在这三个端点上仍需检查 `code`。
 
 ## 下一步
 
