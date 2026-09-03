@@ -30,6 +30,7 @@ import {
   IAgentFullCompactionService,
   IModelOAuthTokens,
   IAgentProfileService,
+  ITelemetryService,
   IAgentToolRegistryService,
   DYNAMIC_TOOL_SCHEMA_VARIANT,
   normalizeAgentProfile,
@@ -40,7 +41,6 @@ import {
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentTodoService } from '#/features/todo/todoService';
 import { IAgentGoalService } from '#/features/goal/goalService';
-import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 
 type GenerateFn = NonNullable<TestAgentOptions['generate']>;
@@ -1081,6 +1081,10 @@ describe('FullCompaction', () => {
         agent_id: 'main',
         from: 'compacting',
         trace_id: 'trace-compact-retry',
+        mode: 'agent',
+        model: 'kimi-code',
+        protocol: 'openai',
+        provider_type: 'kimi',
       },
     });
     vi.useRealTimers();
@@ -1184,7 +1188,7 @@ describe('FullCompaction', () => {
     });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
-    ctx.get(IAgentTelemetryContextService).set({ trace_id: 'trace-turn-1' });
+    ctx.get(ITelemetryService).setContext({ trace_id: 'trace-turn-1' });
     const failed = ctx.once('error');
 
     await ctx.rpc.beginCompaction({});
@@ -1199,7 +1203,7 @@ describe('FullCompaction', () => {
         trace_id: 'trace-mid-stream',
       }),
     });
-    expect(ctx.get(IAgentTelemetryContextService).get().trace_id).toBe('trace-turn-1');
+    expect(ctx.get(ITelemetryService).getContext().trace_id).toBe('trace-turn-1');
     await ctx.expectResumeMatches();
   });
 

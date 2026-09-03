@@ -257,7 +257,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           req.body.model ?? (switchingProfile ? undefined : sessionModel || undefined),
         );
 
-        const telemetry = core.accessor.get(ITelemetryService).withContext({ sessionId: session_id });
+        const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
         preparedMedia = await resolvePromptMediaFiles(
           req.body.content,
           core.accessor.get(IFileService),

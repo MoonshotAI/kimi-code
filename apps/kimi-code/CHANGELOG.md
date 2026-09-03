@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code
 
+## 0.40.1
+
+### Patch Changes
+
+- [#3469](https://github.com/MoonshotAI/kimi-code/pull/3469) [`979baad`](https://github.com/MoonshotAI/kimi-code/commit/979baad8597aa1760917752b3663f1eb4e40eeb0) Thanks [@sailist](https://github.com/sailist)! - Fix the condition for showing the kimi-cli migration prompt.
+
 ## 0.40.0
 
 ### Minor Changes

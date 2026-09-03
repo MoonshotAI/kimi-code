@@ -279,7 +279,6 @@ function makeReport(
         sessionsAttempted: 50,
         sessionsMigrated: 50,
         sessionsAlreadyMigrated: 0,
-        sessionsRepaired: 0,
         sessionsSkippedPlaceholder: 0,
         sessionsSkippedEmpty: 0,
         sessionsSkippedMalformed: 0,
@@ -316,17 +315,38 @@ describe('MigrationScreenComponent — result phase', () => {
     expect(out).toContain('2 kimi-cli plugins');
   });
 
-  it('renders a repaired-sessions line and never claims nothing-to-migrate for repairs', () => {
+  it('renders nothing-needed-migrating when every counter is zero', () => {
     const c = new MigrationScreenComponent({
       plan: makePlan(),
       sourceHome: '/x/.kimi',
       targetHome: '/y/.kimi-code',
       onComplete: () => {},
     });
-    c._testShowResult(makeReport({ sessionsMigrated: 0, sessionsRepaired: 7 }));
+    c._testShowResult(
+      makeReport(
+        { sessionsAttempted: 0, sessionsMigrated: 0 },
+        {
+          config: {
+            migrated: false,
+            tuiExtracted: false,
+            droppedProviders: [],
+            droppedModels: [],
+            droppedKeys: [],
+            configConflicts: [],
+            wroteSiblingDueToConflict: false,
+            wroteTuiSibling: false,
+            migratedHooks: 0,
+            droppedHooks: 0,
+            sourceUnreadable: false,
+            deviceIdCopied: false,
+            siblingContents: { providers: [], models: [], hooks: 0 },
+          },
+          userHistory: { copied: 0, skippedExisting: 0 },
+        },
+      ),
+    );
     const out = c.render(80).join('\n');
-    expect(out).toContain('7 sessions repaired');
-    expect(out).not.toContain('Nothing needed migrating');
+    expect(out).toContain('Nothing needed migrating');
   });
 
   it('renders migrated hooks in the ✓ line and dropped hooks as a warning', () => {

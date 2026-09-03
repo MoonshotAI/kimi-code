@@ -24,6 +24,7 @@ import { RetryStepRequest } from '#/agent/prompt/promptStepRequests';
 import type { ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IEventBus } from '#/app/event/eventBus';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { userCancellationReason } from '#/_base/utils/abort';
 
 import {
@@ -631,6 +632,48 @@ describe('Agent loop', () => {
     });
   });
 
+  it('carries a tool stopTurnReason into the completed turn result and turn.ended', async () => {
+    const stopCall: ToolCall = {
+      type: 'function',
+      id: 'call_stop',
+      name: 'Stopper',
+      arguments: '{}',
+    };
+    const stopperTool: ExecutableTool<Record<string, never>> = {
+      name: 'Stopper',
+      description: 'Stops the turn with a reason.',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      resolveExecution: () => ({
+        approvalRule: 'Stopper',
+        execute: async () => ({ output: 'stopped', stopTurn: true, stopTurnReason: 'demo_reason' }),
+      }),
+    };
+    profile.update({ activeToolNames: ['Stopper'] });
+    ctx.get(IAgentToolRegistryService).register(stopperTool);
+
+    ctx.mockNextResponse({ type: 'text', text: 'Stopping.' }, stopCall);
+    ctx.mockNextResponse({ type: 'text', text: 'This step should not run.' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'stop' }] });
+    const turn = (loop as unknown as { activeTurnJob?: { turn: Turn } }).activeTurnJob?.turn;
+    await ctx.untilApproval(true);
+    await ctx.untilTurnEnd();
+
+    expect(ctx.llmCalls).toHaveLength(1);
+    await expect(turn!.result).resolves.toEqual({
+      type: 'completed',
+      steps: 1,
+      truncated: false,
+      stopReason: 'demo_reason',
+    });
+    const turnEnded = ctx.allEvents.find(
+      (event) => event.type === '[rpc]' && event.event === 'turn.ended',
+    );
+    expect(turnEnded?.args).toMatchObject({ reason: 'completed', stopReason: 'demo_reason' });
+    const record = (await ctx.persistedWireRecords()).find((entry) => entry.type === 'turn.ended');
+    expect(record).toMatchObject({ turnId: 0, reason: 'completed', stopReason: 'demo_reason' });
+  });
+
   it('queues consecutive nextTurn requests in FIFO order without overlapping turns', async () => {
     const events: string[] = [];
     const subscription = ctx.get(IEventBus).subscribe((event) => {
@@ -1018,6 +1061,7 @@ describe('turn telemetry', () => {
           turn_id: 0,
           agent_id: 'main',
           mode: 'agent',
+          model: 'mock-model',
           provider_type: 'kimi',
           protocol: 'openai',
           thinking_effort: 'off',
@@ -1105,6 +1149,24 @@ describe('turn telemetry', () => {
           trace_id: 'trace-turn-1',
         }),
       });
+    } finally {
+      await local.dispose();
+    }
+  });
+
+  it('clears the ambient trace id when the turn ends', async () => {
+    const records: TelemetryRecord[] = [];
+    const local = createTestAgent({ telemetry: recordingTelemetry(records) });
+    try {
+      local.get(IAgentProfileService).update({ activeToolNames: [] });
+      local.mockNextProviderResponse({
+        parts: [{ type: 'text', text: 'hi' }],
+        traceId: 'trace-turn-clear',
+      });
+      await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+      await local.untilTurnEnd();
+
+      expect(local.get(ITelemetryService).getContext()['trace_id']).toBeUndefined();
     } finally {
       await local.dispose();
     }

@@ -854,6 +854,7 @@ interface TurnEndedPayload {
     };
   };
   durationMs?: number;
+  stopReason?: string;
 }
 
 /**
