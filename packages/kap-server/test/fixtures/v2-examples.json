@@ -585,7 +585,7 @@
       },
       {
        "note": "assistant 还在流：`status: streaming` + 断点时刻的累积全量",
-       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_04\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T11:00:04.100Z\",\n  \"message_id\": \"t2.1.a0\",\n  \"turn_id\": \"t2\",\n  \"step_id\": \"t2.1\",\n  \"status\": \"streaming\",\n  \"text\": \"建议加在入口的全局参数解析处：\"\n}"
+       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_04\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T11:00:03.632Z\",\n  \"message_id\": \"t2.1.a0\",\n  \"turn_id\": \"t2\",\n  \"step_id\": \"t2.1\",\n  \"status\": \"streaming\",\n  \"text\": \"建议加在入口的全局参数解析处：\"\n}"
       },
       {
        "note": "状态实体全量重发（本例只有 session.state）",
@@ -610,6 +610,10 @@
       {
        "note": "",
        "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_04\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T11:00:05.200Z\",\n  \"turn_id\": \"t2\",\n  \"ordinal\": 1,\n  \"state\": \"completed\",\n  \"origin\": {\n    \"kind\": \"user\"\n  },\n  \"started_at\": \"2026-09-03T11:00:00.015Z\",\n  \"ended_at\": \"2026-09-03T11:00:05.200Z\",\n  \"usage\": {\n    \"input_tokens\": 5900,\n    \"output_tokens\": 160\n  },\n  \"duration_ms\": 5183,\n  \"user_message_id\": \"t2.u0\"\n}"
+      },
+      {
+       "note": "user 消息随 turn 收官（补漏写帧）",
+       "json": "{\n  \"type\": \"user\",\n  \"session_id\": \"s_04\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T11:00:05.200Z\",\n  \"message_id\": \"t2.u0\",\n  \"turn_id\": \"t2\",\n  \"text\": \"我想给 CLI 加一个全局 `--verbose` 选项，加在哪里比较合适？\",\n  \"status\": \"completed\",\n  \"created_at\": \"2026-09-03T11:00:00.000Z\",\n  \"finished_at\": \"2026-09-03T11:00:05.200Z\"\n}"
       },
       {
        "note": "",
@@ -672,6 +676,10 @@
       {
        "note": "",
        "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_04\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T11:00:06.500Z\",\n  \"turn_id\": \"t2\",\n  \"ordinal\": 1,\n  \"state\": \"completed\",\n  \"origin\": {\n    \"kind\": \"user\"\n  },\n  \"started_at\": \"2026-09-03T11:00:00.015Z\",\n  \"ended_at\": \"2026-09-03T11:00:05.200Z\",\n  \"usage\": {\n    \"input_tokens\": 5900,\n    \"output_tokens\": 160\n  },\n  \"duration_ms\": 6483,\n  \"user_message_id\": \"t2.u0\"\n}"
+      },
+      {
+       "note": "user 消息随 turn 收官（补漏写帧）",
+       "json": "{\n  \"type\": \"user\",\n  \"session_id\": \"s_04\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T11:00:06.500Z\",\n  \"message_id\": \"t2.u0\",\n  \"turn_id\": \"t2\",\n  \"text\": \"我想给 CLI 加一个全局 `--verbose` 选项，加在哪里比较合适？\",\n  \"status\": \"completed\",\n  \"created_at\": \"2026-09-03T11:00:00.000Z\",\n  \"finished_at\": \"2026-09-03T11:00:05.200Z\"\n}"
       },
       {
        "note": "",
