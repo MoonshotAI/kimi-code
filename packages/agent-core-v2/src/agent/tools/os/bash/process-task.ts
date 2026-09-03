@@ -1,6 +1,8 @@
 import type { Readable } from 'node:stream';
 
-import type { IProcess } from '#/session/process/processRunner';
+import type { IHostProcess } from '#/os/interface/hostProcess';
+
+type ProcessHandle = Omit<IHostProcess, '_serviceBrand'>;
 
 import type {
   AgentTask,
@@ -14,6 +16,7 @@ export interface ProcessTaskInfo extends AgentTaskInfoBase {
   readonly command: string;
   readonly pid: number;
   readonly exitCode: number | null;
+  readonly parentToolCallId?: string;
 }
 
 declare module '#/agent/task/types' {
@@ -37,10 +40,12 @@ export class ProcessTask implements AgentTask {
   private exitCode: number | null = null;
 
   constructor(
-    readonly proc: IProcess,
+    readonly proc: ProcessHandle,
     readonly command: string,
     readonly description: string,
     private readonly onOutput?: ProcessTaskOutputCallback,
+    private release?: () => void,
+    readonly parentToolCallId?: string,
   ) {}
 
   async start(sink: AgentTaskSink): Promise<void> {
@@ -98,6 +103,7 @@ export class ProcessTask implements AgentTask {
       command: this.command,
       pid: this.proc.pid,
       exitCode: this.exitCode,
+      parentToolCallId: this.parentToolCallId,
     };
   }
 
@@ -105,6 +111,9 @@ export class ProcessTask implements AgentTask {
     try {
       await this.proc.dispose();
     } catch {
+    } finally {
+      this.release?.();
+      this.release = undefined;
     }
   }
 }
@@ -194,7 +203,7 @@ export interface ProcessTaskResult {
 }
 
 export function createProcessExecutor(
-  proc: IProcess,
+  proc: ProcessHandle,
   onOutput?: ProcessTaskOutputCallback,
 ): (signal: AbortSignal, output: (data: string) => void) => Promise<ProcessTaskResult> {
   return async (signal, output) => {
@@ -283,7 +292,7 @@ function observeProcessStreamRaw(
   });
 }
 
-async function disposeProcess(proc: IProcess): Promise<void> {
+async function disposeProcess(proc: ProcessHandle): Promise<void> {
   try { await proc.dispose(); } catch {   }
 }
 

@@ -14,6 +14,7 @@ import fsSync from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { MiniDb } from '../src/index.js';
+import { TextIndex } from '../src/text-index/index.js';
 import { SkipList, cmpNumber, cmpString } from '../src/skiplist.js';
 import {
   GenerationCorruptError,
@@ -23,6 +24,11 @@ import {
   readSecondaryIndexImage,
   readCompoundIndexImage,
   readTextDocsImage,
+  readSecondaryIndexImageAsync,
+  readCompoundIndexImageAsync,
+  readTextDocsImageAsync,
+  verifyFileIntegritySync,
+  verifyFileIntegrityAsync,
   writeStoreImage,
   writeDtIndexImage,
   writeSecondaryIndexImage,
@@ -30,6 +36,10 @@ import {
   writeTextDocsImage,
 } from '../src/gen-codec.js';
 import type { StoreImageRecord } from '../src/gen-codec.js';
+import { crc32 } from '../src/crc32.js';
+import { Store } from '../src/store.js';
+import { IndexManager } from '../src/index-manager.js';
+import { CompoundIndexManager } from '../src/compound-index.js';
 import { readManifest, listGenerations } from '../src/generation-files.js';
 import { tmpDir, rmrf, waitFor, deferred } from './helpers.js';
 
@@ -155,6 +165,32 @@ describe('skiplist bulkLoad', () => {
       { key: 1, val: 'a' },
       { key: 1, val: 'b' },
     ]);
+  });
+
+  test('bulkLoadAsync builds the identical tower, sliced (incl. duplicates)', async () => {
+    const entries: { key: number; val: string }[] = [];
+    for (let i = 0; i < 5000; i++) {
+      entries.push({ key: i * 2, val: `v${i}` });
+      if (i % 997 === 0) entries.push({ key: i * 2, val: `v${i}` }); // exact duplicates
+    }
+    const sync = SkipList.bulkLoad(entries, { compareKey: cmpNumber, compareVal: cmpString });
+    const asyncList = await SkipList.bulkLoadAsync(entries, { compareKey: cmpNumber, compareVal: cmpString }, { sliceEvery: 1 });
+    expect(asyncList.length).toBe(sync.length);
+    expect(asyncList.toArray()).toEqual(sync.toArray());
+    for (const probe of [0, 1, 42, 2499, 4999]) {
+      const e = entries[probe]!;
+      expect(asyncList.getRank(e.key, e.val)).toBe(sync.getRank(e.key, e.val));
+    }
+    expect(asyncList.getByRank(0)).toEqual(sync.getByRank(0));
+    expect(asyncList.getByRank(asyncList.length - 1)).toEqual(sync.getByRank(sync.length - 1));
+    expect(asyncList.range({ gte: 100, lte: 200, count: 7 })).toEqual(sync.range({ gte: 100, lte: 200, count: 7 }));
+    // Mutations after the sliced bulk load keep every invariant.
+    asyncList.insert(3, 'v-new');
+    asyncList.delete(100, 'v50');
+    sync.insert(3, 'v-new');
+    sync.delete(100, 'v50');
+    expect(asyncList.toArray()).toEqual(sync.toArray());
+    expect(asyncList.getRank(3, 'v-new')).toBe(sync.getRank(3, 'v-new'));
   });
 });
 
@@ -282,6 +318,217 @@ describe('gen-codec', () => {
     expect(docs.liveCount).toBe(2);
     expect(docs.removed).toEqual([1]);
     expect(docs.delta).toEqual([{ term: 'hello', docs: [{ docID: 2, freq: 4 }] }]);
+  });
+});
+
+// ---- unit: the sliced (event-loop-friendly) open-path variants ---------------
+
+describe('sliced open-path variants', () => {
+  test('verifyFileIntegrityAsync streams a chunked verify with the sync error semantics', async () => {
+    const dir = await openTmp('verify-async');
+    const p = path.join(dir, 'raw.bin');
+    const payload = Buffer.alloc(2 * 1024 * 1024 + 123); // spans multiple 1 MiB chunks
+    for (let i = 0; i < payload.length; i++) payload[i] = (i * 31 + 7) & 0xff;
+    await fs.writeFile(p, payload);
+    const good = { bytes: payload.length, crc32: crc32(payload) >>> 0 };
+
+    // Same verdict as the sync verifier, on accept and on both rejections.
+    await verifyFileIntegrityAsync(p, good);
+    expect(() => verifyFileIntegritySync(p, good)).not.toThrow();
+
+    const sizeErr = await verifyFileIntegrityAsync(p, { bytes: good.bytes + 1, crc32: good.crc32 }).catch((e) => e);
+    expect(sizeErr).toBeInstanceOf(GenerationCorruptError);
+    expect((sizeErr as Error).message).toBe('file size does not match manifest record');
+
+    const crcErr = await verifyFileIntegrityAsync(p, { bytes: good.bytes, crc32: (good.crc32 ^ 1) >>> 0 }).catch((e) => e);
+    expect(crcErr).toBeInstanceOf(GenerationCorruptError);
+    expect((crcErr as Error).message).toBe('file crc does not match manifest record');
+    expect(() => verifyFileIntegritySync(p, { bytes: good.bytes, crc32: (good.crc32 ^ 1) >>> 0 })).toThrow(
+      'file crc does not match manifest record',
+    );
+
+    // An empty file is a valid edge: zero chunks, crc of nothing.
+    const empty = path.join(dir, 'empty.bin');
+    await fs.writeFile(empty, Buffer.alloc(0));
+    await verifyFileIntegrityAsync(empty, { bytes: 0, crc32: 0 });
+  });
+
+  test('async image parsers match the sync parsers entry-for-entry', async () => {
+    const dir = await openTmp('parse-async');
+    const secImage = [
+      {
+        name: 'byKind',
+        field: 'kind',
+        type: 'equality' as const,
+        unique: false,
+        sparse: true,
+        equality: [
+          { scalarKey: 'string:t1', pks: ['a', 'b'] },
+          { scalarKey: 'number:7', pks: ['c'] },
+        ],
+        range: null,
+      },
+      {
+        name: 'byScore',
+        field: 'score',
+        type: 'range' as const,
+        unique: false,
+        sparse: true,
+        equality: null,
+        range: [
+          { value: 1.5, pk: 'a' },
+          { value: 2, pk: 'b' },
+          { value: 2, pk: 'c' },
+        ],
+      },
+    ];
+    await writeSecondaryIndexImage(path.join(dir, 'sec'), secImage);
+    const secPayload = parseGenerationBuffer(await fs.readFile(path.join(dir, 'sec')), 'MDSI', 1).payload;
+    const secSync = readSecondaryIndexImage(secPayload);
+    const secAsync = await readSecondaryIndexImageAsync(parseGenerationBuffer(await fs.readFile(path.join(dir, 'sec')), 'MDSI', 1).payload, 1);
+    expect(secAsync).toEqual(secSync);
+
+    const cmpImage = [
+      {
+        name: 'g',
+        groupBy: 'kind',
+        orderBy: 'ts',
+        orderType: 'number' as const,
+        groups: [
+          {
+            group: 't1',
+            entries: [
+              { order: 5, pk: 'a' },
+              { order: 6, pk: 'b' },
+            ],
+          },
+          { group: null, entries: [] },
+          { group: true, entries: [{ order: 2, pk: 'y' }] },
+        ],
+      },
+    ];
+    await writeCompoundIndexImage(path.join(dir, 'cmp'), cmpImage);
+    const cmpSync = readCompoundIndexImage(parseGenerationBuffer(await fs.readFile(path.join(dir, 'cmp')), 'MDCI', 1).payload);
+    const cmpAsync = await readCompoundIndexImageAsync(parseGenerationBuffer(await fs.readFile(path.join(dir, 'cmp')), 'MDCI', 1).payload, 1);
+    expect(cmpAsync).toEqual(cmpSync);
+
+    const docsImage = {
+      keys: ['a', undefined, 'c', 'd'] as (string | undefined)[],
+      docLens: [10, undefined, 3, 40] as (number | undefined)[],
+      liveCount: 3,
+      removed: [1],
+      delta: [
+        { term: 'hello', docs: [{ docID: 2, freq: 4 }] },
+        {
+          term: 'world',
+          docs: [
+            { docID: 0, freq: 1 },
+            { docID: 3, freq: 2 },
+          ],
+        },
+      ],
+    };
+    await writeTextDocsImage(path.join(dir, 'docs'), docsImage);
+    const docsSync = readTextDocsImage(parseGenerationBuffer(await fs.readFile(path.join(dir, 'docs')), 'MDTC', 1).payload);
+    const docsAsync = await readTextDocsImageAsync(parseGenerationBuffer(await fs.readFile(path.join(dir, 'docs')), 'MDTC', 1).payload, 1);
+    expect(docsAsync).toEqual(docsSync);
+    expect(docsAsync).toEqual(docsImage);
+  });
+
+  test('Store.bulkLoadRefsAsync builds the same store as bulkLoadRefs', async () => {
+    const records: StoreImageRecord[] = [];
+    for (let i = 0; i < 300; i++) {
+      const kstr = `k${String(i).padStart(4, '0')}`; // already ascending
+      records.push({
+        kstr,
+        ref: { kind: 'memory', value: Buffer.from(`v${i}`) },
+        expireAt: i % 10 === 0 ? 9999999999999 : 0,
+        dt: i % 3 === 0 ? { ts: i } : null,
+        metaBytes: i % 3 === 0 ? Buffer.byteLength(JSON.stringify({ dt: { ts: i } }), 'utf8') : 0,
+      });
+    }
+    const syncStore = new Store({ activeExpireIntervalMs: 0 });
+    const asyncStore = new Store({ activeExpireIntervalMs: 0 });
+    try {
+      syncStore.bulkLoadRefs(records);
+      await asyncStore.bulkLoadRefsAsync(records, { sliceEvery: 1 });
+      expect([...asyncStore.rawKeys()]).toEqual([...syncStore.rawKeys()]);
+      expect(asyncStore.size).toBe(syncStore.size);
+      expect(asyncStore.bytes).toBe(syncStore.bytes);
+      expect(asyncStore.get('k0007')).toEqual(syncStore.get('k0007'));
+      expect(asyncStore.getRecord('k0150')).toMatchObject({ expireAt: 9999999999999, dt: { ts: 150 } });
+    } finally {
+      syncStore.close();
+      asyncStore.close();
+    }
+  });
+
+  test('loadImageAsync (secondary + compound) builds the same queryable state', async () => {
+    const docs = [];
+    for (let i = 0; i < 200; i++) docs.push({ pk: `k${i}`, doc: { kind: `t${i % 7}`, score: i % 100, ts: 1700000000000 + i } });
+
+    const secSrc = new IndexManager();
+    secSrc.create('byKind', { field: 'kind' });
+    secSrc.create('byScore', { field: 'score', type: 'range' });
+    const cmpSrc = new CompoundIndexManager();
+    cmpSrc.create('byKindTime', { groupBy: 'kind', orderBy: 'ts' });
+    for (const { pk, doc } of docs) {
+      secSrc.add(pk, doc);
+      cmpSrc.add(pk, doc, null);
+    }
+
+    const secDst = new IndexManager();
+    secDst.create('byKind', { field: 'kind' });
+    secDst.create('byScore', { field: 'score', type: 'range' });
+    for (const image of secSrc.exportImage()) await secDst.loadImageAsync(image, { sliceEvery: 1 });
+    expect(secDst.findEq('byKind', 't3').sort()).toEqual(secSrc.findEq('byKind', 't3').sort());
+    expect(secDst.findRange('byScore', { min: 10, max: 42 })).toEqual(secSrc.findRange('byScore', { min: 10, max: 42 }));
+
+    const cmpDst = new CompoundIndexManager();
+    cmpDst.create('byKindTime', { groupBy: 'kind', orderBy: 'ts' });
+    for (const image of cmpSrc.exportImage().images) await cmpDst.loadImageAsync(image, { sliceEvery: 1 });
+    expect(cmpDst.range('byKindTime', 't2', { limit: 5 })).toEqual(cmpSrc.range('byKindTime', 't2', { limit: 5 }));
+    expect(cmpDst.range('byKindTime', 't5', { limit: 50 })).toEqual(cmpSrc.range('byKindTime', 't5', { limit: 50 }));
+  });
+
+  test('TextIndex.attachImageAsync attaches the same base as attachImage', async () => {
+    const dir = await openTmp('attach-async');
+    const postingsPath = path.join(dir, 'ft.postings');
+    const src = new TextIndex({ name: 'ft', fields: ['text'], postingsPath });
+    const syncTi = new TextIndex({ name: 'ft', fields: ['text'] });
+    const asyncTi = new TextIndex({ name: 'ft', fields: ['text'] });
+    try {
+      const corpus = [];
+      for (let i = 0; i < 300; i++) corpus.push({ key: `k${i}`, value: { text: `hello world ${i} 持久化 ${i % 7}` } });
+      await src.build(corpus);
+      src.add('late1', { text: 'late write walrus' }); // lands in the delta
+      src.remove('k5'); // tombstone
+      const image = src.exportImageState();
+
+      syncTi.attachImage({ postingsPath, ...image });
+      const docsImage = {
+        keys: image.keys,
+        docLens: (() => {
+          const out: (number | undefined)[] = [];
+          for (let i = 0; i < image.keys.length; i++) out.push(image.docLens.get(i));
+          return out;
+        })(),
+        liveCount: image.liveCount,
+        removed: [...image.removed],
+        delta: [...image.delta].map(([term, m]) => ({ term, docs: [...m].map(([docID, freq]) => ({ docID, freq })) })),
+      };
+      const dictEntries = [...image.dict].map(([term, e]) => ({ term, off: e.off, len: e.len, df: e.df }));
+      await asyncTi.attachImageAsync({ postingsPath, dictEntries, docs: docsImage }, { sliceEvery: 1 });
+
+      expect(asyncTi.exportImageState()).toEqual(syncTi.exportImageState());
+      expect(asyncTi.N).toBe(syncTi.N);
+      expect(asyncTi.search('walrus').length).toBe(syncTi.search('walrus').length);
+      expect(asyncTi.search('持久化').length).toBeGreaterThan(0);
+    } finally {
+      src.close();
+      syncTi.close();
+      asyncTi.close();
+    }
   });
 });
 
@@ -1040,6 +1287,123 @@ describe('generation availability triggers (wal-growth + close publish)', () => 
     db.genBuildKickFailureBackoffMs = 0;
     await db.set('after-backoff', { text: 'z'.repeat(1024) });
     await waitFor(() => db.getIndexGeneration() !== null, 'post-backoff generation build');
+    await db.close();
+  }, 60000);
+});
+
+describe('open lifecycle status (phase timings + state machine)', () => {
+  test('a healthy generation open reports generation-load with zero corpus work', async () => {
+    const dir = await openTmp('lifecycle-healthy');
+    let db = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json' });
+    await seedIndexedDb(db, 2000);
+    await db.rebuildGeneration();
+    const gen = db.getIndexGeneration()!;
+    await db.close();
+
+    // Hard proof that no full-corpus tokenization runs on the attach path:
+    // the staged builder (the only in-open corpus tokenizer besides the
+    // bounded rebuild) must not be entered at all.
+    const buildSpy = vi.spyOn(TextIndex.prototype, 'build');
+    try {
+      db = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json' });
+      expect(buildSpy).not.toHaveBeenCalled();
+    } finally {
+      buildSpy.mockRestore();
+    }
+    expect(db.stats.generationLoads).toBe(1);
+    expect(db.stats.generationIndexRebuilds).toBe(0);
+    expect(db.stats.indexRebuildDecoded).toBe(0); // no value re-decode
+    expect(db.stats.textRebuildDurationMs).toBe(0); // no tokenization
+
+    const status = db.lifecycleStatus();
+    expect(status.state).toBe('ready');
+    expect(status.path).toEqual(['no-generation', 'generation-load', 'wal-catch-up', 'ready']);
+    expect(status.openedAt).not.toBeNull();
+    expect(status.phases.openMs).toBeGreaterThan(0);
+    expect(status.phases.generationCandidateLoadMs).toBeGreaterThan(0);
+    expect(status.phases.storeImageLoadMs).toBeGreaterThan(0);
+    expect(status.phases.postingsIntegrityCheckMs).toBeGreaterThan(0);
+    expect(status.phases.textImageLoadMs).toBeGreaterThan(0);
+    expect(status.phases.walScanMs).toBeGreaterThanOrEqual(0);
+    expect(status.phases.fullRecoveryMs).toBe(0);
+    expect(status.phases.textRebuildMs).toBe(0);
+    expect(status.textIndexes).toEqual({ ft: 'image', tri: 'image' });
+    expect(status.pendingTextIndexes).toEqual([]);
+    expect(db.recoveryInfo?.indexGeneration?.id).toBe(gen.id);
+    expect(db.recoveryInfo?.walDeltaAppliedOps).toBe(0);
+    assertSeededDb(db, 2000);
+    await db.close();
+  });
+
+  test('a corrupt generation falls back to full-rebuild (only then is the corpus re-tokenized)', async () => {
+    const dir = await openTmp('lifecycle-corrupt');
+    let db = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json' });
+    await seedIndexedDb(db, 2000);
+    await db.rebuildGeneration();
+    const gen = db.getIndexGeneration()!;
+    await db.close();
+
+    // Flip one byte inside the generation's store image: the manifest crc
+    // rejects the candidate and the open must fall back to the legacy full
+    // recovery — the ONLY path allowed to re-tokenize the corpus.
+    const storeImage = path.join(dir, 'generations', gen.id, 'store');
+    const raw = await fs.readFile(storeImage);
+    raw[Math.floor(raw.length / 2)]! ^= 0xff;
+    await fs.writeFile(storeImage, raw);
+
+    db = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json' });
+    expect(db.stats.generationLoads).toBe(0);
+    expect(db.stats.generationLoadFallbacks).toBe(1);
+    expect(db.stats.lastGenerationFallback).toContain(gen.id);
+    expect(db.recoveryInfo?.indexGeneration).toBeUndefined();
+    expect(db.stats.indexRebuildDecoded).toBeGreaterThan(0); // corpus re-decoded
+    expect(db.stats.textRebuildDurationMs).toBeGreaterThan(0); // corpus re-tokenized
+
+    const status = db.lifecycleStatus();
+    // 2000 docs < TEXT_BUILD_WORKER_MIN_DOCS: the rebuild stays in-open
+    // (staged), so the instance is fully ready when open() returns.
+    expect(status.state).toBe('ready');
+    expect(status.path).toEqual(['no-generation', 'generation-load', 'full-rebuild', 'ready']);
+    expect(status.phases.fullRecoveryMs).toBeGreaterThan(0);
+    expect(status.phases.walScanMs).toBeGreaterThan(0);
+    expect(status.phases.walApplyMs).toBeGreaterThan(0);
+    expect(status.phases.textRebuildMs).toBeGreaterThan(0);
+    expect(status.textIndexes).toEqual({ ft: 'staged', tri: 'staged' });
+    assertSeededDb(db, 2000);
+    await db.close();
+  });
+
+  test('a missing generation with a deferrable corpus reports degraded until the background text build commits', async () => {
+    const dir = await openTmp('lifecycle-degraded');
+    let db = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json' });
+    await seedIndexedDb(db, 5000); // >= TEXT_BUILD_WORKER_MIN_DOCS: deferrable
+    await db.rebuildGeneration();
+    await db.close();
+
+    // No candidate at all: the open starts from 'no-generation'.
+    await fs.rm(path.join(dir, 'generations'), { recursive: true, force: true });
+    await fs.rm(path.join(dir, 'CURRENT'), { force: true });
+
+    db = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json' });
+    expect(db.stats.generationLoads).toBe(0);
+    const building = db.lifecycleStatus();
+    expect(building.state).toBe('degraded');
+    expect(building.path).toEqual(['no-generation', 'full-rebuild', 'degraded']);
+    expect(building.pendingTextIndexes.sort()).toEqual(['ft', 'tri']);
+    expect(building.textIndexes).toEqual({ ft: 'deferred', tri: 'deferred' });
+    expect(db.textIndexBuilding('ft')).toBe(true);
+    expect(() => db.search('ft', 'hello')).toThrowError(/still building/);
+
+    await waitFor(() => db.lifecycleStatus().state === 'ready', 'deferred text builds');
+    const ready = db.lifecycleStatus();
+    expect(ready.path).toEqual(['no-generation', 'full-rebuild', 'degraded', 'ready']);
+    expect(ready.pendingTextIndexes).toEqual([]);
+    expect(['worker', 'inline']).toContain(ready.textIndexes['ft']);
+    expect(['worker', 'inline']).toContain(ready.textIndexes['tri']);
+    expect(ready.phases.textRebuildMs).toBeGreaterThan(0);
+    expect(db.stats.textDeferredBuilds).toBe(2);
+    expect(db.stats.textDeferredBuildErrors).toBe(0);
+    assertSeededDb(db, 5000);
     await db.close();
   }, 60000);
 });

@@ -1,8 +1,9 @@
+import { listenerCount, type EventEmitter } from 'node:events';
 import { Readable, Writable } from 'node:stream';
 
 import { describe, expect, it } from 'vitest';
 
-import { type IProcess, type ISessionProcessRunner } from '#/session/process/processRunner';
+import { type IHostProcess, type IHostProcessService } from '#/os/interface/hostProcess';
 
 import { runCommand, type RunCommandOptions } from '#/workspace/workspaceFs/internal/fsProcess';
 
@@ -13,8 +14,9 @@ interface FakeProcessOptions {
   readonly onKill?: () => void;
 }
 
-function fakeProcess(opts: FakeProcessOptions = {}): IProcess {
+function fakeProcess(opts: FakeProcessOptions = {}): IHostProcess {
   return {
+    _serviceBrand: undefined,
     stdin: new Writable({ write(_c, _e, cb) { cb(); } }),
     stdout: Readable.from([opts.stdout ?? '']),
     stderr: Readable.from([opts.stderr ?? '']),
@@ -29,10 +31,10 @@ function fakeProcess(opts: FakeProcessOptions = {}): IProcess {
   };
 }
 
-function fakeRunner(proc: IProcess): ISessionProcessRunner {
+function fakeRunner(proc: IHostProcess): IHostProcessService {
   return {
     _serviceBrand: undefined,
-    exec: () => Promise.resolve(proc),
+    spawn: () => Promise.resolve(proc),
   };
 }
 
@@ -45,10 +47,10 @@ describe('runCommand', () => {
 
   it('passes cwd and env to the runner', async () => {
     let received: { args: readonly string[]; cwd?: string; env?: Record<string, string> } | undefined;
-    const runner: ISessionProcessRunner = {
+    const runner: IHostProcessService = {
       _serviceBrand: undefined,
-      exec: (args, options) => {
-        received = { args, cwd: options?.cwd, env: options?.env };
+      spawn: (command, args, options) => {
+        received = { args: [command, ...(args ?? [])], cwd: options?.cwd, env: options?.env };
         return Promise.resolve(fakeProcess());
       },
     };
@@ -74,5 +76,11 @@ describe('runCommand', () => {
     controller.abort();
     await promise;
     expect(killed).toBe(true);
+  });
+
+  it('removes the abort listener once the command completes', async () => {
+    const controller = new AbortController();
+    await runCommand(fakeRunner(fakeProcess()), ['echo'], { signal: controller.signal });
+    expect(listenerCount(controller.signal as unknown as EventEmitter, 'abort')).toBe(0);
   });
 });

@@ -1,27 +1,5 @@
-/**
- * `sessionIndex` domain (L2) — projector and reconciliation for the read
- * model.
- *
- * The projector materializes the authoritative session metadata
- * (`state.json` documents) into a fresh read-model generation: a full scan
- * with bounded concurrency, chunked `batch` writes (no cross-shard atomicity
- * required), per-workspace counters recomputed exactly, and finally one
- * atomic checkpoint publish that makes the generation readable. A projector
- * that dies midway never publishes, so readers keep serving the previous
- * generation; the next run clears its own stragglers before writing.
- * Publishing also schedules the previous generation's drop.
- *
- * Reconciliation runs against the *published* generation: it re-scans the
- * authoritative set, upserts summaries that drifted (mirror loss, external
- * edits), deletes entries whose document disappeared, and rewrites every
- * counter from the authoritative scan — bounding counter drift to one
- * reconcile interval.
- *
- * This is an internal collaborator of `FileSessionIndex`, not a DI service:
- * the index drives it single-flight and owns the state machine around it.
- */
-
 import { ILogService } from '#/_base/log/log';
+import { SESSION_INDEX_KEY, SESSION_INDEX_SCOPE } from '#/app/workspace/workspaceAlias';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IQueryStore, type WriteOp } from '#/persistence/interface/queryStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -41,11 +19,13 @@ import {
   listWorkspaceIds,
   mapBounded,
   readSessionSummary,
+  sessionStateMaxMtime,
   summaryEquals,
 } from './sessionIndexSource';
 
 const WRITE_CHUNK = 500;
 const SCAN_CONCURRENCY = 16;
+const SHARED_SCAN_REUSE_MS = 30_000;
 
 export interface SessionIndexProjectorDeps {
   readonly storage: IFileSystemStorageService;
@@ -66,15 +46,67 @@ export interface ReconcileResult {
   readonly removed: number;
 }
 
+export interface AuthoritativeScan {
+  readonly summaries: SessionSummary[];
+  readonly counts: Map<string, { active: number; archived: number }>;
+  readonly sourceMaxMtimeMs: number;
+}
+
+interface ScanSlot {
+  readonly promise: Promise<AuthoritativeScan>;
+  readonly reusableUntil: number;
+  settled: boolean;
+}
+
 export class SessionIndexProjector {
+  private scanSlot: ScanSlot | undefined;
+
   constructor(private readonly deps: SessionIndexProjectorDeps) {}
 
-  /** Scan the authoritative set into a fresh generation and publish it. */
+  sharedScan(): Promise<AuthoritativeScan> {
+    const slot = this.scanSlot;
+    if (slot !== undefined && (!slot.settled || Date.now() < slot.reusableUntil)) {
+      return slot.promise;
+    }
+    return this.startScan();
+  }
+
+  sharedScanForRead(): Promise<AuthoritativeScan> {
+    const slot = this.scanSlot;
+    if (slot !== undefined && !slot.settled) return slot.promise;
+    return this.startScan();
+  }
+
+  private startScan(): Promise<AuthoritativeScan> {
+    const slot: ScanSlot = {
+      promise: this.scanAuthoritative(),
+      reusableUntil: Date.now() + SHARED_SCAN_REUSE_MS,
+      settled: false,
+    };
+    const markSettled = (): void => {
+      slot.settled = true;
+    };
+    void slot.promise.then(markSettled, markSettled);
+    this.scanSlot = slot;
+    return slot.promise;
+  }
+
   async project(generation: number): Promise<ProjectionResult> {
+    const scan = this.sharedScan();
+    try {
+      return await this.doProject(generation, scan);
+    } finally {
+      if (this.scanSlot?.promise === scan) this.scanSlot = undefined;
+    }
+  }
+
+  private async doProject(
+    generation: number,
+    scan: Promise<AuthoritativeScan>,
+  ): Promise<ProjectionResult> {
     const { queryStore, log } = this.deps;
     const collection = sessionCollection(generation);
     const counters = sessionCountersCollection(generation);
-    // Clear stragglers of a crashed earlier attempt at this generation.
     await queryStore.dropCollection(collection);
     await queryStore.dropCollection(counters);
     await queryStore.ensureIndex(collection, {
@@ -83,7 +115,7 @@ export class SessionIndexProjector {
       field: `custom.${PARENT_SESSION_ID_KEY}`,
     });
 
-    const { summaries, counts } = await this.scanAuthoritative();
+    const { summaries, counts, sourceMaxMtimeMs } = await scan;
     await this.batchChunks(
       summaries.map((summary) => ({
         kind: 'put' as const,
@@ -94,7 +126,10 @@ export class SessionIndexProjector {
       })),
     );
     await this.writeCounters(counters, counts);
-    await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, { seq: generation });
+    await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, {
+      seq: generation,
+      sourceMaxMtimeMs,
+    });
     log.info('session index generation published', {
       generation,
       sessions: summaries.length,
@@ -116,12 +151,11 @@ export class SessionIndexProjector {
     return { generation, sessions: summaries.length };
   }
 
-  /** Re-scan the authoritative set and repair the published generation. */
   async reconcile(generation: number): Promise<ReconcileResult> {
     const { queryStore, log } = this.deps;
     const collection = sessionCollection(generation);
     const counters = sessionCountersCollection(generation);
-    const { summaries, counts } = await this.scanAuthoritative();
+    const { summaries, counts, sourceMaxMtimeMs } = await this.scanAuthoritative();
     const authoritativeIds = new Set(summaries.map((s) => s.id));
 
     const storedKeys = await queryStore.listKeys(collection);
@@ -149,6 +183,13 @@ export class SessionIndexProjector {
 
     await this.batchChunks([...upserts, ...removals]);
     await this.writeCounters(counters, counts);
+    const manifest = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
+    if (manifest?.seq === generation) {
+      await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, {
+        seq: generation,
+        sourceMaxMtimeMs: Math.max(manifest.sourceMaxMtimeMs ?? 0, sourceMaxMtimeMs),
+      });
+    }
     const result = { sessions: summaries.length, upserted: upserts.length, removed: removals.length };
     if (result.upserted > 0 || result.removed > 0) {
       log.info('session index reconciliation repaired drift', { generation, ...result });
@@ -156,18 +197,18 @@ export class SessionIndexProjector {
     return result;
   }
 
-  private async scanAuthoritative(): Promise<{
-    summaries: SessionSummary[];
-    counts: Map<string, { active: number; archived: number }>;
-  }> {
+  private async scanAuthoritative(): Promise<AuthoritativeScan> {
     const { storage, docs, sessionsScope } = this.deps;
     const summaries: SessionSummary[] = [];
     const counts = new Map<string, { active: number; archived: number }>();
+    let sourceMaxMtimeMs = (await storage.mtime(SESSION_INDEX_SCOPE, SESSION_INDEX_KEY)) ?? 0;
     for (const workspaceId of await listWorkspaceIds(storage, sessionsScope)) {
       const sessionIds = await listSessionIds(storage, sessionsScope, workspaceId);
-      const found = await mapBounded(sessionIds, SCAN_CONCURRENCY, (sessionId) =>
-        readSessionSummary(docs, sessionsScope, workspaceId, sessionId),
-      );
+      const found = await mapBounded(sessionIds, SCAN_CONCURRENCY, async (sessionId) => {
+        const mtime = await sessionStateMaxMtime(storage, sessionsScope, workspaceId, sessionId);
+        if (mtime > sourceMaxMtimeMs) sourceMaxMtimeMs = mtime;
+        return readSessionSummary(docs, sessionsScope, workspaceId, sessionId);
+      });
       const entry = counts.get(workspaceId) ?? { active: 0, archived: 0 };
       for (const summary of found) {
         summaries.push(summary);
@@ -176,7 +217,7 @@ export class SessionIndexProjector {
       }
       counts.set(workspaceId, entry);
     }
-    return { summaries, counts };
+    return { summaries, counts, sourceMaxMtimeMs };
   }
 
   private async writeCounters(
@@ -190,7 +231,6 @@ export class SessionIndexProjector {
       key: workspaceId,
       value: { active: value.active, archived: value.archived } satisfies SessionWorkspaceCounts,
     }));
-    // Workspaces that vanished entirely lose their counter document.
     const existing = await queryStore.listKeys(counters);
     for (const key of existing) {
       if (!counts.has(key)) ops.push({ kind: 'delete', collection: counters, key });

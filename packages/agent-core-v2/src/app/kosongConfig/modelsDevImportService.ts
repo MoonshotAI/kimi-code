@@ -1,37 +1,3 @@
-/**
- * `kosongConfig` domain — `IModelsDevImportService` implementation.
- *
- * Owns the models.dev directory import and the custom-registry (api.json)
- * import. Both are multi-step config writes (inspect → build → replace × N),
- * serialized through an internal chain so two interleaved imports cannot
- * lose each other's section rebuilds. Custom registries reuse the shared
- * OAuth primitives' exact remove-then-apply sequence, split into TWO
- * persisted passes so deletions really reach the disk (the TOML transform is
- * a raw overlay that only honors entry-level deletes; applying in the same
- * pass would let stale fields of kept ids survive on disk). The in-memory
- * shapes
- * deliberately omit the default pointers so the removal logic can never
- * clamp them: imports never move default_provider/default_model — aside
- * from seeding a default_model from the first imported model when none is
- * configured at all (a fresh setup must become usable).
- *
- * One subtlety shapes all the write code below: the providers/models TOML
- * transforms rebuild each section's entries but overlay each entry's fields
- * onto the old on-disk raw — so an entry id absent from the replacement
- * truly disappears, while a FIELD absent from a kept entry would silently
- * survive on disk (and resurrect on the next boot). Field-level clears
- * therefore always assign an explicit `undefined` (the transform's
- * `setDefined` drops those), and the models.dev import swaps aliases in two
- * passes (drop, then re-add onto clean slots). The kosong persistence
- * bridge then pushes the change into the registries, which is also what
- * invalidates the runtime model catalog.
- *
- * Both third-party fetches — the models.dev directory and the custom-registry
- * import — send the identity snapshot's `outboundUserAgent`, matching what
- * the scheduled refresh of the same registry sends: these are directories
- * this service chooses to call, so a header is always sent.
- */
-
 import {
   applyCustomRegistryProvider,
   fetchCustomRegistry,
@@ -40,8 +6,8 @@ import {
   type CustomRegistrySource,
   type ManagedKimiConfigShape,
 } from '@moonshot-ai/kimi-code-oauth';
-
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IConfigService } from '#/app/config/config';

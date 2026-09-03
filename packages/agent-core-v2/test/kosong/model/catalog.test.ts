@@ -1,23 +1,3 @@
-/**
- * `kosong/model` ModelCatalog tests — Model assembly, caching, and
- * config-event invalidation, exercised through the real DI graph (real
- * model/provider services + the real protocol-adapter registry with
- * every base contrib and the kimi + endpoint definitions registered):
- *
- *  - the assembled Model is PURE DATA: no `with*` morphs, no request driver —
- *    per-turn intent belongs to `ModelRequester` params;
- *  - vendor knowledge resolves through the registries: a `kimi` provider
- *    yields `protocol: 'openai'` (the vendor definition's declared base), the
- *    dialect path keeps an explicit foreign protocol, endpoint env fallbacks
- *    come from the definition registry, host-header forwarding follows the
- *    definition's `hostHeaders`, and the Anthropic effort profile is inferred
- *    only for vendors whose thinking is not trait-driven;
- *  - `get`/`getRequester` cache per id; the cache drops on the
- *    model/provider change events — and ONLY there: a registry write
- *    that bypasses the events keeps serving the stale Model until
- *    `notifyConfigChanged()` (the load-bearing test-harness contract).
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createScopedTestHost } from '#/_base/di/test';
@@ -65,8 +45,6 @@ import { stubBootstrap } from '../../app/bootstrap/stubs';
 
 const HOST_HEADERS = { 'User-Agent': 'kimi-test/1.0', 'X-Msh-Device-Id': 'device-1' };
 
-// The real adapter over the real snapshot builder, so these tests cover the
-// exact layers the port hands the catalog in production.
 function hostHeadersPort(spec: {
   headers: Record<string, string>;
   identitySlug?: string;
@@ -96,8 +74,6 @@ function createHost(
     [IModelOAuthTokens, oauthTokens],
     [IHostRequestHeaders, hostHeadersPort(hostHeaders)],
   ]);
-  // Kosong's registries are pure in-memory stores now (persistence lives in
-  // the app/kosongConfig bridge): seed them from the fixture sections.
   const providers = host.app.accessor.get(IProviderService);
   providers.loadAll(
     (sections['providers'] ?? {}) as ProvidersSection,
@@ -126,12 +102,6 @@ const kimiSections: Record<string, unknown> = {
   },
 };
 
-/**
- * Mutate the model registry store WITHOUT firing the change events — the
- * silent-write escape hatch for the cache-invalidation tests (replaces the
- * old `StubConfigService.setSilent`, which the in-memory registries can no
- * longer see).
- */
 function silentModelWrite(models: IModelService, records: Record<string, ModelRecord>): void {
   (models as unknown as { models: Record<string, ModelRecord> }).models = records;
 }
@@ -161,7 +131,6 @@ describe('Model assembly (pure data)', () => {
       expect(model.baseUrl).toBe('https://api.moonshot.ai/v1');
       expect(model.maxContextSize).toBe(262144);
       expect(model.capabilities.max_context_tokens).toBe(262144);
-      // Kimi's definition declares `hostHeaders: 'full'`.
       expect(model.headers).toMatchObject({
         'User-Agent': 'kimi-test/1.0',
         'X-Msh-Device-Id': 'device-1',
@@ -221,7 +190,6 @@ describe('Model assembly (pure data)', () => {
         identitySlug: 'acme-dev',
       });
       try {
-        // Version preserved, product token swapped, device headers still absent.
         expect(catalog.get('gpt').headers).toEqual({ 'User-Agent': 'acme-dev/1.0' });
       } finally {
         host.dispose();
@@ -241,8 +209,6 @@ describe('Model assembly (pure data)', () => {
     });
 
     it('leaves full-header vendor requests byte-for-byte unchanged', () => {
-      // Vendors on the full-header path keep the host's own product token:
-      // that header set is built around it and backends key on it.
       const { host, catalog } = createHost(OFFICIAL, stubModelOAuthTokens(), {
         headers: HOST_HEADERS,
         identitySlug: 'acme-dev',
@@ -275,9 +241,6 @@ describe('Model assembly (pure data)', () => {
       }
     });
 
-    // Inspection must attribute what the runtime actually sent — including a
-    // host that spells the header `user-agent`, which the finished layer
-    // canonicalizes.
     it('attributes the User-Agent provenance for a lowercase host spelling', () => {
       const { host, catalog } = createHost(THIRD_PARTY, stubModelOAuthTokens(), {
         headers: { 'user-agent': 'kimi-test/1.0' },
@@ -307,9 +270,7 @@ describe('Model assembly (pure data)', () => {
       const model = catalog.get('k2');
       expect(model.protocol).toBe('anthropic');
       expect(model.providerType).toBe('kimi');
-      // Anthropic base URLs strip the trailing `/v1`.
       expect(model.baseUrl).toBe('https://api.example.test');
-      // Kimi thinking is trait-driven: no Anthropic effort profile is inferred.
       expect(model.supportEfforts).toBeUndefined();
     } finally {
       host.dispose();
@@ -414,13 +375,11 @@ describe('Model assembly (pure data)', () => {
         project: 'my-project',
         location: 'us-central1',
       });
-      // The location is also discovered from a vertex-style baseUrl host.
       expect(catalog.get('v2').providerOptions).toEqual({
         vertexai: true,
         project: 'my-project',
         location: 'us-east4',
       });
-      // Without both coordinates there is no vertex mode and no options bag.
       expect(catalog.get('g').providerOptions).toBeUndefined();
     } finally {
       host.dispose();
@@ -494,12 +453,10 @@ describe('Model assembly (pure data)', () => {
     };
     expectInvalid(kimiSections, 'nope');
     expectInvalid({ models: { ghost: { provider: 'missing', model: 'm', maxContextSize: 1 } } }, 'ghost');
-    // Flat model with protocol + baseUrl but no wire-facing name.
     expectInvalid(
       { models: { noname: { protocol: 'openai', baseUrl: 'https://x.test', maxContextSize: 1 } } },
       'noname',
     );
-    // Structured kimi model without maxContextSize.
     expectInvalid(
       { ...kimiSections, models: { noctx: { provider: 'kimi', model: 'm' } } },
       'noctx',
@@ -581,8 +538,6 @@ describe('ModelCatalog caching and config-event invalidation', () => {
     try {
       const before = catalog.get('k1');
 
-      // Bypass the change events entirely: the catalog cache is the only
-      // stale layer, and only an explicit notify drops it.
       silentModelWrite(models, {
         k1: { provider: 'kimi', model: 'kimi-k2', maxContextSize: 262144, displayName: 'silent' },
       });
@@ -648,7 +603,6 @@ describe('ModelCatalog inspect', () => {
         kind: 'none',
       });
       expect(view.sources['resolved']).toMatchObject({ kind: 'synthesized' });
-      // Kimi's definition capability is UNKNOWN — nothing is detected.
       expect(view.sources['resolved.capabilities.tool_use']).toMatchObject({ kind: 'none' });
     } finally {
       host.dispose();
@@ -663,8 +617,6 @@ describe('ModelCatalog inspect', () => {
       const { authProvider: _auth, id: _id, name, ...rest } = model;
       expect(view.resolved).toMatchObject({ ...rest, wireName: name });
 
-      // A silent registry write keeps the stale generation: inspect reflects
-      // THAT generation (what get keeps serving), never a re-resolution.
       silentModelWrite(models, {
         k1: { provider: 'kimi', model: 'kimi-k2', maxContextSize: 262144, displayName: 'silent' },
       });
@@ -962,15 +914,6 @@ describe('ModelCatalog ping', () => {
     }
   });
 });
-
-
-/**
- * Enumeration & default-model selection: `listModels` / `listProviders` /
- * `getProvider` project the SAME materialization `get` serves (broken config
- * falls back to the config-only projection so it stays visible), and
- * `setDefaultModel` writes the global default pointer behind a
- * materialization gate.
- */
 
 const catalogSections: Record<string, unknown> = {
   providers: {
@@ -1272,8 +1215,6 @@ describe('ModelCatalog enumeration', () => {
       },
     });
     try {
-      // Conflicting inline credentials make materialization throw; the
-      // listing still shows the broken model with its config values.
       await expect(catalog.listModels()).resolves.toEqual([
         { provider: '', model: 'bad', display_name: 'Bad', max_context_size: 1000 },
       ]);
@@ -1376,8 +1317,6 @@ describe('ModelCatalog setDefaultModel', () => {
           max_context_size: 32768,
         },
       });
-      // The catalog writes the in-memory pointer; persisting it to config is
-      // the app/kosongConfig bridge's job.
       expect(models.getDefaultModel()).toBe('turbo');
     } finally {
       host.dispose();

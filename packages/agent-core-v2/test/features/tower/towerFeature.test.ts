@@ -1,0 +1,303 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+import { stringify as stringifyToml } from 'smol-toml';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { type CollectionToken, type CollectionView } from '#/_base/di/collection';
+import { SyncDescriptor } from '#/_base/di/descriptors';
+import { DisposableStore } from '#/_base/di/lifecycle';
+import { ScopeActivation } from '#/_base/di/instantiation';
+import { type InstantiationService } from '#/_base/di/instantiationService';
+import {
+  _clearScopedRegistryForTests,
+  registerScopedService,
+  type Scope,
+} from '#/_base/di/scope';
+import { TestInstantiationService, createScopedTestHost } from '#/_base/di/test';
+import { ILogService } from '#/_base/log/log';
+import { AgentProfileContribution } from '#/app/agentProfileCatalog/agentProfileContribution';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IConfigRegistry, IConfigService } from '#/app/config/config';
+import { ConfigRegistry, ConfigService } from '#/app/config/configService';
+import { IFeatureManager } from '#/app/feature/featureManager';
+import { FeatureManagerService } from '#/app/feature/featureManagerService';
+import { EXPERIMENTAL_SECTION, IFlagService } from '#/app/flag/flag';
+import { IFlagRegistry } from '#/app/flag/flagRegistry';
+import { FlagRegistryService } from '#/app/flag/flagRegistryService';
+import { FlagService, MASTER_ENV } from '#/app/flag/flagService';
+import { LifecycleScope } from '#/app/scopes';
+import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
+import { IFeatureAssemblyService } from '#/features/featureAssembly';
+import { FeatureAssemblyService } from '#/features/featureAssemblyService';
+import {
+  _clearFeatureRecipesForTests,
+  registerFeature,
+} from '#/features/featureRegistry';
+import { TOWER_FLAG_ENV } from '#/features/tower/flag';
+import { TOWER_FLAG_ID } from '#/features/tower/tower';
+import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
+import {
+  TowerFeature,
+  isTowerFeatureAssembled,
+} from '#/features/tower/towerFeature';
+import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { TomlAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
+import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
+
+import { stubFlag } from '../../app/flag/stubs';
+import { stubBootstrap } from '../../app/bootstrap/stubs';
+import { stubLog } from '../../_base/log/stubs';
+
+function collectionViewOf<T>(scope: Scope, token: CollectionToken<T>): CollectionView<T> {
+  return (scope.instantiation as InstantiationService).fiberHost.collectionView(token);
+}
+
+describe('TowerFeature — experimental flag gating', () => {
+  beforeEach(() => {
+    _clearScopedRegistryForTests();
+    _clearFeatureRecipesForTests();
+    registerScopedService(
+      LifecycleScope.App,
+      IFeatureManager,
+      FeatureManagerService,
+      ScopeActivation.OnScopeCreated,
+      'feature',
+    );
+    registerScopedService(
+      LifecycleScope.App,
+      IFeatureAssemblyService,
+      FeatureAssemblyService,
+      ScopeActivation.OnScopeCreated,
+      'features',
+    );
+    registerFeature(TowerFeature);
+  });
+
+  it('assembles an empty unit when the tower flag is off', () => {
+    const host = createScopedTestHost([[IFlagService, stubFlag(false)]]);
+    const manager = host.app.accessor.get(IFeatureManager);
+    expect(manager.units().map((unit) => unit.name)).toEqual(['tower']);
+    expect(manager.contributedServices()).toHaveLength(0);
+    expect(collectionViewOf(host.app, AgentProfileContribution).items).toHaveLength(0);
+    const agent = host.child(LifecycleScope.Agent, 'agent-1');
+    expect(collectionViewOf(agent, AgentToolContribution).items).toHaveLength(0);
+    host.dispose();
+  });
+
+  it('contributes tools, profile, and rate-limit service when the tower flag is on', () => {
+    const host = createScopedTestHost([
+      [IFlagService, stubFlag((id) => id === TOWER_FLAG_ID)],
+    ]);
+    const manager = host.app.accessor.get(IFeatureManager);
+    expect(
+      manager
+        .contributedServices()
+        .filter(
+          (entry) => entry.scope === LifecycleScope.App && entry.id === ITowerRateLimitService,
+        ),
+    ).toHaveLength(1);
+    const profiles = collectionViewOf(host.app, AgentProfileContribution).items;
+    expect(profiles).toHaveLength(1);
+    expect(profiles[0]!.sourceId).toBe('feature:tower');
+    const agent = host.child(LifecycleScope.Agent, 'agent-1');
+    const tools = collectionViewOf(agent, AgentToolContribution).items.map((record) =>
+      record.options.name,
+    );
+    expect(tools.toSorted()).toEqual(
+      [
+        'TowerFinding',
+        'TowerInbox',
+        'TowerInit',
+        'TowerMerge',
+        'TowerMission',
+        'TowerPlan',
+        'TowerReview',
+        'TowerSend',
+        'TowerSpawn',
+        'TowerStatus',
+        'TowerTeardown',
+      ].toSorted(),
+    );
+    host.dispose();
+  });
+
+  it('clears the assembly marker when the feature unit unloads', async () => {
+    const flags = stubFlag((id) => id === TOWER_FLAG_ID);
+    const host = createScopedTestHost([[IFlagService, flags]]);
+    const manager = host.app.accessor.get(IFeatureManager);
+    expect(isTowerFeatureAssembled(flags)).toBe(true);
+
+    await manager.unprovideUnit('tower');
+
+    expect(isTowerFeatureAssembled(flags)).toBe(false);
+    host.dispose();
+  });
+});
+
+describe('TowerFeature — config-sourced flag assembly', () => {
+  let disposables: DisposableStore;
+  let homeDir: string;
+
+  beforeEach(() => {
+    disposables = new DisposableStore();
+    homeDir = `/tmp/kimi-code-tower-assembly-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    _clearScopedRegistryForTests();
+    _clearFeatureRecipesForTests();
+    registerScopedService(
+      LifecycleScope.App,
+      IFeatureManager,
+      FeatureManagerService,
+      ScopeActivation.OnScopeCreated,
+      'feature',
+    );
+    registerScopedService(
+      LifecycleScope.App,
+      IFeatureAssemblyService,
+      FeatureAssemblyService,
+      ScopeActivation.OnScopeCreated,
+      'features',
+    );
+    registerFeature(TowerFeature);
+  });
+  afterEach(() => disposables.dispose());
+
+  async function makeRealFlags(preseed?: Record<string, unknown>) {
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(IBootstrapService, stubBootstrap(homeDir));
+    ix.stub(ILogService, stubLog());
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    ix.set(IFlagRegistry, new SyncDescriptor(FlagRegistryService));
+    ix.set(IFlagService, new SyncDescriptor(FlagService));
+    if (preseed !== undefined) {
+      mkdirSync(homeDir, { recursive: true });
+      writeFileSync(join(homeDir, 'config.toml'), `${stringifyToml(preseed)}\n`);
+      await ix.get(IAtomicTomlDocumentStore).set('', 'config.toml', preseed);
+    }
+    return { config: ix.get(IConfigService), flags: ix.get(IFlagService) };
+  }
+
+  it('assembles a config-sourced flag at startup', async () => {
+    const { flags } = await makeRealFlags({ experimental: { [TOWER_FLAG_ID]: true } });
+    const host = createScopedTestHost([[IFlagService, flags]]);
+
+    expect(isTowerFeatureAssembled(flags)).toBe(true);
+    expect(flags.explain(TOWER_FLAG_ID)).toMatchObject({ enabled: true, source: 'config' });
+    const manager = host.app.accessor.get(IFeatureManager);
+    expect(
+      manager
+        .contributedServices()
+        .filter(
+          (entry) => entry.scope === LifecycleScope.App && entry.id === ITowerRateLimitService,
+        ),
+    ).toHaveLength(1);
+    const agent = host.child(LifecycleScope.Agent, 'agent-1');
+    expect(collectionViewOf(agent, AgentToolContribution).items).toHaveLength(11);
+    host.dispose();
+  });
+
+  it('does not assemble on a config flip after startup — a restart is required', async () => {
+    const { config, flags } = await makeRealFlags();
+    const host = createScopedTestHost([[IFlagService, flags]]);
+    const manager = host.app.accessor.get(IFeatureManager);
+    expect(manager.units().map((unit) => unit.name)).toEqual(['tower']);
+    expect(isTowerFeatureAssembled(flags)).toBe(false);
+
+    await config.set(EXPERIMENTAL_SECTION, { [TOWER_FLAG_ID]: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(flags.enabled(TOWER_FLAG_ID)).toBe(true);
+    expect(isTowerFeatureAssembled(flags)).toBe(false);
+    expect(manager.contributedServices()).toHaveLength(0);
+    const agent = host.child(LifecycleScope.Agent, 'agent-1');
+    expect(collectionViewOf(agent, AgentToolContribution).items).toHaveLength(0);
+    host.dispose();
+  });
+});
+
+describe('tower flag — resolution', () => {
+  let disposables: DisposableStore;
+  let homeDir: string;
+
+  beforeEach(() => {
+    disposables = new DisposableStore();
+    homeDir = `/tmp/kimi-code-tower-flag-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  });
+  afterEach(() => disposables.dispose());
+
+  function makeFlags(env: Readonly<Record<string, string | undefined>> = {}) {
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(IBootstrapService, stubBootstrap(homeDir, env));
+    ix.stub(ILogService, stubLog());
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    ix.set(IFlagRegistry, new SyncDescriptor(FlagRegistryService));
+    ix.set(IFlagService, new SyncDescriptor(FlagService));
+    return { config: ix.get(IConfigService), flags: ix.get(IFlagService) };
+  }
+
+  it('is registered and disabled by default', () => {
+    const { flags } = makeFlags();
+    expect(flags.explain(TOWER_FLAG_ID)).toMatchObject({
+      id: TOWER_FLAG_ID,
+      env: TOWER_FLAG_ENV,
+      defaultEnabled: false,
+      enabled: false,
+      source: 'default',
+    });
+  });
+
+  it('is enabled by the dedicated env', () => {
+    const { flags } = makeFlags({ [TOWER_FLAG_ENV]: '1' });
+    expect(flags.explain(TOWER_FLAG_ID)).toMatchObject({
+      enabled: true,
+      source: 'env',
+    });
+  });
+
+  it('uses config unless the dedicated env overrides it', async () => {
+    const configured = makeFlags();
+    await configured.config.set(EXPERIMENTAL_SECTION, { [TOWER_FLAG_ID]: true });
+    expect(configured.flags.explain(TOWER_FLAG_ID)).toMatchObject({
+      enabled: true,
+      source: 'config',
+      configValue: true,
+    });
+
+    const overridden = makeFlags({ [TOWER_FLAG_ENV]: 'false' });
+    await overridden.config.set(EXPERIMENTAL_SECTION, { [TOWER_FLAG_ID]: true });
+    expect(overridden.flags.explain(TOWER_FLAG_ID)).toMatchObject({
+      enabled: false,
+      source: 'env',
+      configValue: true,
+    });
+  });
+
+  it('lets the master env turn the flag on only when env and config are unset', async () => {
+    const masterOnly = makeFlags({ [MASTER_ENV]: 'true' });
+    expect(masterOnly.flags.explain(TOWER_FLAG_ID)).toMatchObject({
+      enabled: true,
+      source: 'master-env',
+    });
+
+    const configured = makeFlags({ [MASTER_ENV]: 'true' });
+    await configured.config.set(EXPERIMENTAL_SECTION, { [TOWER_FLAG_ID]: false });
+    expect(configured.flags.explain(TOWER_FLAG_ID)).toMatchObject({
+      enabled: false,
+      source: 'config',
+      configValue: false,
+    });
+
+    const overridden = makeFlags({ [TOWER_FLAG_ENV]: 'false', [MASTER_ENV]: 'true' });
+    expect(overridden.flags.explain(TOWER_FLAG_ID)).toMatchObject({
+      enabled: false,
+      source: 'env',
+    });
+  });
+});

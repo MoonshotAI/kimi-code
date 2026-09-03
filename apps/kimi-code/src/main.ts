@@ -31,13 +31,18 @@ import { runPrompt } from './cli/run-prompt';
 import { runShell } from './cli/run-shell';
 import { formatStartupError } from './cli/startup-error';
 import { runPluginNodeEntry } from './cli/sub/plugin-run-node';
+import { runUpdateDownloadCommand } from './cli/sub/update-download';
 import { handleUpgrade } from './cli/sub/upgrade';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './cli/telemetry';
 import { runUpdatePreflight } from './cli/update/preflight';
+import { detectNativeInstall } from './cli/update/source';
+import { maybeRelaunchWithStagedNativeUpdate } from './cli/update/native-swap';
 import { createKimiCodeHostIdentity, getVersion } from './cli/version';
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE, PROCESS_NAME } from './constant/app';
+import { runHeadlessMigrate, type MigrateCommandOptions } from './migration/index';
 import { cleanupStaleNativeCacheForCurrent } from './native/native-assets';
 import { installMinidbTextBuildWorker } from './native/minidb-worker';
+import { installKapSearchWorker } from './native/search-worker';
 import { installNativeModuleHook } from './native/module-hook';
 import { runNativeAssetSmokeIfRequested } from './native/smoke';
 
@@ -89,8 +94,23 @@ export async function handleMainCommand(
   return { headlessCompleted: false };
 }
 
-/** `kimi migrate`: launch the migration screen only, then exit. */
-async function handleMigrateCommand(version: string): Promise<void> {
+/** `kimi migrate`: launch the migration screen only, then exit. `--run` runs the full migration headlessly with step logs instead. */
+async function handleMigrateCommand(
+  version: string,
+  options: MigrateCommandOptions,
+): Promise<void> {
+  if (options.configOnly && !options.run) {
+    process.stderr.write('error: --config-only requires --run\n');
+    process.exitCode = 2;
+    return;
+  }
+  if (options.run) {
+    // Set the exit code and return normally — an immediate process.exit here
+    // could terminate before buffered step/report output is flushed when the
+    // command is piped or redirected.
+    process.exitCode = await runHeadlessMigrate({ configOnly: options.configOnly });
+    return;
+  }
   await runShell(MIGRATE_CLI_OPTIONS, version, { migrateOnly: true });
 }
 
@@ -143,6 +163,24 @@ const MIGRATE_CLI_OPTIONS: CLIOptions = {
 export function main(): void {
   process.title = PROCESS_NAME;
   installCrashHandlers();
+  // A staged native update is swapped in and re-exec'd here, before any other
+  // initialization, so the user session immediately runs the new binary (and
+  // the old process never replaces itself while running). Every failure path
+  // inside falls back to a normal startup with the current exe.
+  void maybeRelaunchWithStagedNativeUpdate({
+    exePath: process.execPath,
+    argv: process.argv,
+    env: process.env,
+    currentVersion: getVersion(),
+    isNative: detectNativeInstall(),
+  })
+    .catch(() => false)
+    .then((relaunched) => {
+      if (!relaunched) bootstrap();
+    });
+}
+
+function bootstrap(): void {
   // Route all outbound fetch through HTTP_PROXY/HTTPS_PROXY (honoring NO_PROXY)
   // before any client is constructed. No-op when no proxy variable is set; an
   // invalid proxy URL is reported and ignored rather than aborting startup.
@@ -157,6 +195,17 @@ export function main(): void {
       : workerInstall.status === 'failed'
         ? `minidb-worker:failed code=${workerInstall.errorCode} sha256=${workerInstall.assetSha256 ?? 'unknown'}`
         : `minidb-worker:${workerInstall.status}`,
+  );
+  // Same pattern for the global-search worker: extracted from the SEA blob so
+  // the search index runs off the main thread; a failure leaves the search
+  // surface degraded (the `search_worker` flag restores the inline host).
+  const searchWorkerInstall = installKapSearchWorker();
+  startupTrace(
+    searchWorkerInstall.status === 'installed'
+      ? `search-worker:installed basename=${searchWorkerInstall.basename} sha256=${searchWorkerInstall.assetSha256}`
+      : searchWorkerInstall.status === 'failed'
+        ? `search-worker:failed code=${searchWorkerInstall.errorCode} sha256=${searchWorkerInstall.assetSha256 ?? 'unknown'}`
+        : `search-worker:${searchWorkerInstall.status}`,
   );
   if (runNativeAssetSmokeIfRequested()) return;
 
@@ -211,8 +260,8 @@ export function main(): void {
           process.exit(1);
         });
     },
-    () => {
-      void handleMigrateCommand(version).catch(async (error: unknown) => {
+    (migrateOptions) => {
+      void handleMigrateCommand(version, migrateOptions).catch(async (error: unknown) => {
         await logStartupFailure('run migration', error);
         process.stderr.write(formatStartupError(error, { operation: 'run migration' }));
         process.stderr.write(`See log: ${resolveGlobalLogPath(resolveKimiHome())}\n`);
@@ -233,6 +282,17 @@ export function main(): void {
         process.stderr.write(`See log: ${resolveGlobalLogPath(resolveKimiHome())}\n`);
         process.exit(1);
       });
+    },
+    (targetVersion, manual) => {
+      void runUpdateDownloadCommand(targetVersion, manual).then(
+        (code) => {
+          process.exit(code);
+        },
+        async (error: unknown) => {
+          await logStartupFailure('download update', error);
+          process.exit(1);
+        },
+      );
     },
   );
 

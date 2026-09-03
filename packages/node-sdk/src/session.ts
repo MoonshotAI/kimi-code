@@ -11,20 +11,24 @@ import type { SDKRpcClientBase } from '#/rpc';
 import type {
   AddAdditionalDirOptions,
   AddAdditionalDirResult,
-  CapabilityStatus,
+  AgentCommandInfo,
+  AgentRuntimeBinding,
   BackgroundTaskInfo,
+  CapabilityStatus,
   CompactOptions,
   CreateGoalInput,
   GetCronTasksResult,
   GoalSnapshot,
   GoalToolResult,
   JsonObject,
+  McpServerConfig,
   McpServerInfo,
   McpStartupMetrics,
   PermissionMode,
   PluginInfo,
   PluginSummary,
   PromptInput,
+  PromptSkillActivation,
   ReloadSessionOptions,
   ReloadSummary,
   ResumedSessionState,
@@ -32,6 +36,7 @@ import type {
   SessionPlan,
   SessionStatus,
   SessionSummary,
+  SessionTodoItem,
   SessionUsage,
   SkillSummary,
   PluginCommandDef,
@@ -93,6 +98,11 @@ export class Session {
     this.onClose = options.onClose;
   }
 
+  /** True once {@link close} began — the session may still be closing in the engine. */
+  get isClosed(): boolean {
+    return this.closed;
+  }
+
   getResumeState(): ResumedSessionState | undefined {
     this.ensureOpen();
     return this.resumeState;
@@ -128,11 +138,34 @@ export class Session {
     this.rpc.setQuestionHandler(this.id, handler);
   }
 
-  async prompt(input: string | PromptInput): Promise<void> {
+  async prompt(input: string | PromptInput, options?: { promptId?: string }): Promise<void> {
     this.ensureOpen();
+    if (options?.promptId !== undefined && options.promptId.length === 0) {
+      throw new TypeError('promptId must not be empty');
+    }
     await this.rpc.prompt({
       sessionId: this.id,
       input: normalizePromptInput(input),
+      promptId: options?.promptId,
+    });
+  }
+
+  /**
+   * Submit one prompt with one or more skill activations bundled into the
+   * same user message: the skills are validated up front (an unknown name
+   * rejects the whole submission), rendered ahead of the prompt in the same
+   * turn, and the bundle undoes as a single anchor. Requires the
+   * agent-core-v2 engine.
+   */
+  async promptWithSkills(
+    input: string | PromptInput,
+    skills: readonly PromptSkillActivation[],
+  ): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.promptWithSkills({
+      sessionId: this.id,
+      input: normalizePromptInput(input),
+      skills,
     });
   }
 
@@ -222,6 +255,21 @@ export class Session {
     await this.rpc.setModel({ sessionId: this.id, model: normalized });
   }
 
+  async getRuntime(): Promise<AgentRuntimeBinding> {
+    this.ensureOpen();
+    return this.rpc.getRuntime({ sessionId: this.id });
+  }
+
+  async switchRuntime(runtimeId: string): Promise<AgentRuntimeBinding> {
+    this.ensureOpen();
+    const normalized = normalizeRequiredString(
+      runtimeId,
+      'Session runtime cannot be empty',
+      ErrorCodes.REQUEST_INVALID,
+    );
+    return this.rpc.switchRuntime({ sessionId: this.id, runtimeId: normalized });
+  }
+
   async setThinking(effort: ThinkingEffort): Promise<void> {
     this.ensureOpen();
     const normalized = normalizeRequiredString(
@@ -230,18 +278,6 @@ export class Session {
       ErrorCodes.SESSION_THINKING_EMPTY,
     );
     await this.rpc.setThinking({ sessionId: this.id, effort: normalized });
-  }
-
-  /**
-   * Live-apply the persisted `[secondary_model]` recipe to this session
-   * (subagent model binding). Persist the recipe via `KimiHarness.setConfig`
-   * first; this reloads the complete recipe and its synthesized derived entry
-   * before updating the session snapshot — mirroring the `/secondary_model`
-   * flow.
-   */
-  async applyPersistedSecondaryModel(): Promise<void> {
-    this.ensureOpen();
-    await this.rpc.applyPersistedSecondaryModel({ sessionId: this.id });
   }
 
   async setPermission(mode: PermissionMode): Promise<void> {
@@ -305,6 +341,23 @@ export class Session {
     }
   }
 
+  async setTowerMode(enabled: boolean, base?: string): Promise<void> {
+    this.ensureOpen();
+    if (typeof enabled !== 'boolean') {
+      throw new KimiError(
+        ErrorCodes.REQUEST_INVALID,
+        'Session tower mode must be a boolean',
+      );
+    }
+    if (base !== undefined && typeof base !== 'string') {
+      throw new KimiError(
+        ErrorCodes.REQUEST_INVALID,
+        'Session tower mode base must be a string',
+      );
+    }
+    await this.rpc.setTowerMode({ sessionId: this.id, enabled, base });
+  }
+
   async getPlan(): Promise<SessionPlan> {
     this.ensureOpen();
     return this.rpc.getPlan({ sessionId: this.id });
@@ -332,6 +385,11 @@ export class Session {
   async undoHistory(count: number = 1): Promise<void> {
     this.ensureOpen();
     await this.rpc.undoHistory({ sessionId: this.id, count });
+  }
+
+  async getTodos(): Promise<readonly SessionTodoItem[]> {
+    this.ensureOpen();
+    return this.rpc.getTodos({ sessionId: this.id });
   }
 
   /** Clear this session's model context without creating a new session. */
@@ -369,6 +427,15 @@ export class Session {
   async listPluginCommands(): Promise<readonly PluginCommandDef[]> {
     this.ensureOpen();
     return this.rpc.listPluginCommands({ sessionId: this.id });
+  }
+
+  /**
+   * Contributed commands registered with this session's interactive agent
+   * (agent-core-v2 only — a v1-backed session reports the empty set).
+   */
+  async listCommands(): Promise<readonly AgentCommandInfo[]> {
+    this.ensureOpen();
+    return this.rpc.listCommands({ sessionId: this.id });
   }
 
   /**
@@ -529,9 +596,33 @@ export class Session {
     return this.rpc.getMcpStartupMetrics({ sessionId: this.id });
   }
 
-  async reconnectMcpServer(name: string): Promise<void> {
+  /**
+   * Connect an MCP server in this live session. `persist: true` also writes
+   * the user-level `mcp.json` (the entry becomes a mutable `global` one);
+   * otherwise it stays a session-local `caller` entry.
+   */
+  async addMcpServer(
+    server: McpServerConfig,
+    options: { readonly persist?: boolean } = {},
+  ): Promise<McpServerInfo> {
     this.ensureOpen();
-    await this.rpc.reconnectMcpServer({ sessionId: this.id, name });
+    return this.rpc.addSessionMcpServer({
+      sessionId: this.id,
+      server,
+      persist: options.persist,
+    });
+  }
+
+  /**
+   * Reconnect a server. Without `config` the session re-resolves the current
+   * effective config from the unified registry (file edits and plugin
+   * enable/disable land here). With `config`, the entry is replaced with the
+   * given full config — a plugin-contributed server rejects this because its
+   * config is read-only, owned by the plugin manifest.
+   */
+  async reconnectMcpServer(name: string, config?: McpServerConfig): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.reconnectMcpServer({ sessionId: this.id, name, config });
   }
 
   async listPlugins(): Promise<readonly PluginSummary[]> {
@@ -632,6 +723,24 @@ export class Session {
     });
   }
 
+  /**
+   * Run a contributed command engine-side (agent-core-v2 only — a v1-backed
+   * client rejects with `not_implemented`). Unknown names reject with the
+   * engine's `request.invalid` error.
+   */
+  async runCommand(name: string, args?: string): Promise<void> {
+    this.ensureOpen();
+    const commandName = name.trim();
+    if (commandName.length === 0) {
+      throw new KimiError(ErrorCodes.REQUEST_INVALID, 'Command name cannot be empty');
+    }
+    await this.rpc.runCommand({
+      sessionId: this.id,
+      name: commandName,
+      args: normalizeOptionalString(args),
+    });
+  }
+
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
@@ -644,7 +753,7 @@ export class Session {
   }
 
   /** @internal */
-  emitMetaUpdated(patch: { readonly title?: string | undefined }): void {
+  emitMetaUpdated(patch: { readonly title?: string; readonly isCustomTitle?: boolean }): void {
     this.emit({
       type: 'session.meta.updated',
       sessionId: this.id,

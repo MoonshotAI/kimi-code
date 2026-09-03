@@ -7,7 +7,7 @@
  *   - `bootstrap()`s the app scope,
  *   - creates / resumes a session and its main agent via native services,
  *   - subscribes to the main agent's per-agent `IEventBus` and renders the
- *     native `DomainEvent` stream (payloads are already v1-protocol-shaped),
+ *     native `Event2` stream (payloads are already v1-protocol-shaped),
  *   - drives a turn through `IAgentPromptService.enqueue()` and awaits
  *     `Turn.result` for authoritative completion,
  *   - applies the print-mode background policy (config-driven, v1-aligned:
@@ -19,6 +19,7 @@
 import { readFile } from 'node:fs/promises';
 
 import {
+  IAgentCronService,
   IAgentGoalService,
   IAgentLifecycleService,
   IAgentPermissionModeService,
@@ -30,10 +31,8 @@ import {
   IConfigService,
   IEventBus,
   IOAuthToolkit,
-  ISessionCronService,
   ISessionIndex,
-  ISessionLifecycleService,
-  IWorkspaceLifecycleService,
+  ISessionManager,
   ITelemetryService,
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
@@ -50,14 +49,40 @@ import {
   resolveLoggingConfig,
   resolvePrintBackgroundMode,
   setClampedTimeout,
-  type DomainEvent,
+  type Event2,
   type IAgentScopeHandle,
   type ISessionScopeHandle,
   type LoopRunResult,
   type PrintBackgroundMode,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import { createKimiDefaultHeaders, createKimiDeviceId } from '@moonshot-ai/kimi-code-oauth';
+import {
+  createKimiDefaultHeaders,
+  createKimiDeviceId,
+  KIMI_CODE_PROVIDER_NAME,
+} from '@moonshot-ai/kimi-code-oauth';
+import {
+  initializeTelemetry,
+  setCrashPhase,
+  setTelemetryContext,
+  setTelemetryModel,
+  shouldEnableTelemetry,
+  shutdownTelemetry,
+} from '@moonshot-ai/kimi-telemetry';
+import type { GoalUpdated } from '@moonshot-ai/agent-core-v2/features/goal/goalOps';
+import type { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import type {
+  AssistantDelta,
+  ThinkingDelta,
+  ToolCallDelta,
+} from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
+import type { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/agent/stepRetry/stepRetryService';
+import type { HookResult } from '@moonshot-ai/agent-core-v2/features/externalHooks/agent/agentExternalHooksService';
+import type {
+  ToolCallStarted,
+  ToolProgress,
+  ToolResultEvent,
+} from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import { resolve } from 'pathe';
 
 import {
@@ -65,6 +90,7 @@ import {
   CLI_USER_AGENT_PRODUCT,
   PROMPT_CLEANUP_TIMEOUT_MS,
 } from '#/constant/app';
+import { currentKimiProfile } from '#/utils/region';
 
 import {
   formatGoalSummaryText,
@@ -134,6 +160,7 @@ export async function runV2Print(
       clientIdentity: identity,
       args: {
         requestHeaders: hostHeaders,
+        nonInteractive: true,
         // `--skillsDir` (v1 print parity): explicit skill dirs replace default
         // user / project discovery for this process.
         skillDirs: opts.skillsDirs,
@@ -155,12 +182,13 @@ export async function runV2Print(
   // user left unset are filled, in the memory layer.
   await applyPrintModeConfigDefaults(configService);
   const defaultModel = configService.get<string>('defaultModel') ?? undefined;
-  let telemetryEnabled = true;
+  let configTelemetryEnabled = true;
   try {
-    telemetryEnabled = configService.get('telemetry') !== false;
+    configTelemetryEnabled = configService.get('telemetry') !== false;
   } catch {
-    telemetryEnabled = true;
+    configTelemetryEnabled = true;
   }
+  const telemetryEnabled = shouldEnableTelemetry({ enabled: configTelemetryEnabled });
   for (const diagnostic of configService.diagnostics()) {
     if (diagnostic.severity === 'warning') {
       stderr.write(`Warning: ${diagnostic.message}\n`);
@@ -174,12 +202,14 @@ export async function runV2Print(
   const cleanup = async (): Promise<void> => {
     const pending = (cleanupPromise ??= (async () => {
       removeTerminationCleanup?.();
+      setCrashPhase('shutdown');
       try {
         await restorePermission();
       } finally {
         if (telemetryService !== undefined) {
           await raceWithTimeout(telemetryService.shutdown(), CLI_SHUTDOWN_TIMEOUT_MS);
         }
+        await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS }).catch(() => {});
         app.dispose();
       }
     })());
@@ -192,10 +222,13 @@ export async function runV2Print(
     // `session_load_failed` fire inside create()/resume(), so an appender wired
     // up only after resolveNativeSession() would drop them to the null appender.
     // The model below is the best known up front; a resumed session's real
-    // model is reconciled via setContext once resolved.
+    // model is reconciled once resolved (v2 via setContext, v1 via
+    // setTelemetryModel). The v1 pipeline is initialized here too: the
+    // process-wide crash handlers report through its default client, so its
+    // sink must be attached before the run can crash.
     telemetryService = app.accessor.get(ITelemetryService);
     if (telemetryEnabled) {
-      telemetryService.setAppender(
+      telemetryService.addAppender(
         createCloudAppender(app.accessor, {
           deviceId,
           appName: CLI_USER_AGENT_PRODUCT,
@@ -204,12 +237,28 @@ export async function runV2Print(
           getAccessToken: async () => (await auth.getCachedAccessToken()) ?? null,
         }),
       );
+      // No `first_launch` on the v1 client: the v2 side already tracks it via
+      // `telemetryService.track2` below, so tracking here would double-send.
+      initializeTelemetry({
+        homeDir,
+        deviceId,
+        appName: CLI_USER_AGENT_PRODUCT,
+        version,
+        uiMode: PROMPT_UI_MODE,
+        model: opts.model ?? defaultModel,
+        endpoint: () => currentKimiProfile().telemetryEndpoint,
+        getAccessToken: async () =>
+          (await auth.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME)) ?? null,
+      });
     }
 
     const resolved = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);
     restorePermission = resolved.restorePermission;
 
-    telemetryService.setContext({ sessionId: resolved.session.id, model: resolved.telemetryModel });
+    telemetryService.setContext({ session_id: resolved.session.id, model: resolved.telemetryModel });
+    setTelemetryContext({ sessionId: resolved.session.id });
+    setTelemetryModel(resolved.telemetryModel);
+    setCrashPhase('runtime');
     if (firstLaunch) {
       telemetryService.track2('first_launch');
     }
@@ -239,7 +288,7 @@ export async function runV2Print(
     }
     writeResumeHint(resolved.session.id, outputFormat, stdout, stderr);
 
-    telemetryService.withContext({ sessionId: resolved.session.id }).track2('exit', {
+    telemetryService.withContext({ session_id: resolved.session.id }).track2('exit', {
       duration_ms: Date.now() - startedAt,
     });
   } finally {
@@ -262,7 +311,7 @@ async function resolveNativeSession(
   defaultModel: string | undefined,
   stderr: PromptOutput,
 ): Promise<ResolvedNativeSession> {
-  const workspaceLifecycle = app.accessor.get(IWorkspaceLifecycleService);
+  const sessions = app.accessor.get(ISessionManager);
   const index = app.accessor.get(ISessionIndex);
 
   // `--agent` selects a catalog profile by name; otherwise `--agent-file`
@@ -343,7 +392,8 @@ async function resolveNativeSession(
       throw new Error(`Session "${opts.session}" was created under a different directory.`);
     }
     const session = await resumeById(opts.session);
-    const agent = await ensureMainAgent(session);
+    const agentContext = await ensureMainAgent(session);
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;
     const profile = agent.accessor.get(IAgentProfileService);
     await applyModelOverride(profile, opts.model);
     const currentModel = profile.getModel();
@@ -362,7 +412,8 @@ async function resolveNativeSession(
     const previous = page.items.find((summary) => summary.cwd === workDir);
     if (previous !== undefined) {
       const session = await resumeById(previous.id);
-      const agent = await ensureMainAgent(session);
+      const agentContext = await ensureMainAgent(session);
+      const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;
       const profile = agent.accessor.get(IAgentProfileService);
       await applyModelOverride(profile, opts.model);
       const currentModel = profile.getModel();
@@ -379,8 +430,7 @@ async function resolveNativeSession(
   }
 
   const model = requireConfiguredModel(opts.model, defaultModel);
-  const handler = await workspaceLifecycle.handlerFor({ root: workDir });
-  const session = await handler.accessor.get(ISessionLifecycleService).create({
+  const session = await sessions.create({
     workDir,
     additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
     mainAgentBinding: {
@@ -388,7 +438,8 @@ async function resolveNativeSession(
       model,
     },
   });
-  const agent = await ensureMainAgent(session);
+  const agentContext = await ensureMainAgent(session);
+  const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;
   agent.accessor.get(IAgentPermissionModeService).setMode('auto');
   return {
     session,
@@ -416,12 +467,12 @@ async function runNativeTurn(
   await agent.accessor.get(IAuthSummaryService).ensureReady();
 
   const turnEndings = createPrintTurnEndings();
-  const subscription = agent.accessor.get(IEventBus).subscribe((event: DomainEvent) => {
+  const subscription = agent.accessor.get(IEventBus).subscribe((event: Event2<any>) => {
     dispatchNativeEvent(writer, event, stderr);
     // Arm the turn-endings collector before `turn.result` settles so a
     // background-task completion that steers a new turn right after the main
     // turn ends cannot have its `turn.ended` slip past the policy loop.
-    if (event.type === 'turn.ended') turnEndings.push(event);
+    if (event.type === 'turn.ended') turnEndings.push(event as TurnEnded);
   });
   try {
     const handle = await agent.accessor.get(IAgentPromptService).enqueue({
@@ -454,7 +505,7 @@ async function runNativeTurn(
       const configService = app.accessor.get(IConfigService);
       const taskConfig = resolveAgentTaskConfig(configService);
       const goalService = agent.accessor.get(IAgentGoalService);
-      const cronService = session.accessor.get(ISessionCronService);
+      const cronService = agent.accessor.get(IAgentCronService);
       try {
         await applyPrintBackgroundPolicy({
           mode: resolvePrintBackgroundMode(configService),
@@ -513,13 +564,12 @@ async function runNativeGoal(
     replace: goal.replace,
   });
   let completedSnapshot: { readonly status: string } | null = null;
-  const subscription = agent.accessor.get(IEventBus).subscribe((event: DomainEvent) => {
-    if (
-      event.type === 'goal.updated' &&
-      event.change?.kind === 'completion' &&
-      event.snapshot !== null
-    ) {
-      completedSnapshot = event.snapshot;
+  const subscription = agent.accessor.get(IEventBus).subscribe((event: Event2<any>) => {
+    if (event.type === 'goal.updated') {
+      const updated = event as unknown as GoalUpdated;
+      if (updated.change?.kind === 'completion' && updated.snapshot !== null) {
+        completedSnapshot = updated.snapshot;
+      }
     }
   });
   try {
@@ -540,7 +590,7 @@ async function runNativeGoal(
 
 function dispatchNativeEvent(
   writer: PromptTurnWriter,
-  event: DomainEvent,
+  event: Event2<any>,
   stderr: PromptOutput,
 ): void {
   switch (event.type) {
@@ -550,35 +600,43 @@ function dispatchNativeEvent(
       return;
     case 'turn.step.retrying':
       writer.discardAssistant();
-      writer.writeRetrying(event);
+      writer.writeRetrying(event as unknown as TurnStepRetrying);
       return;
     case 'assistant.delta':
-      writer.writeAssistantDelta(event.delta);
+      writer.writeAssistantDelta((event as unknown as AssistantDelta).delta);
       return;
     case 'hook.result':
-      writer.writeHookResult(event);
+      writer.writeHookResult(event as unknown as HookResult);
       return;
     case 'thinking.delta':
-      writer.writeThinkingDelta(event.delta);
+      writer.writeThinkingDelta((event as unknown as ThinkingDelta).delta);
       return;
-    case 'tool.call.started':
-      writer.writeToolCall(event.toolCallId, event.name, event.args);
+    case 'tool.call.started': {
+      const started = event as unknown as ToolCallStarted;
+      writer.writeToolCall(started.toolCallId, started.name, started.args);
       return;
-    case 'tool.call.delta':
-      writer.writeToolCallDelta(event.toolCallId, event.name, event.argumentsPart);
+    }
+    case 'tool.call.delta': {
+      const delta = event as unknown as ToolCallDelta;
+      writer.writeToolCallDelta(delta.toolCallId, delta.name, delta.argumentsPart);
       return;
-    case 'tool.result':
-      writer.writeToolResult(event.toolCallId, event.output);
+    }
+    case 'tool.result': {
+      const result = event as unknown as ToolResultEvent;
+      writer.writeToolResult(result.toolCallId, result.output);
       return;
-    case 'tool.progress':
-      if (event.update.text !== undefined && event.update.text.length > 0) {
-        stderr.write(event.update.text.endsWith('\n') ? event.update.text : `${event.update.text}\n`);
+    }
+    case 'tool.progress': {
+      const progress = (event as unknown as ToolProgress).update;
+      if (progress.text !== undefined && progress.text.length > 0) {
+        stderr.write(progress.text.endsWith('\n') ? progress.text : `${progress.text}\n`);
       }
       return;
+    }
   }
 }
 
-export type PrintTurnEnding = Extract<DomainEvent, { type: 'turn.ended' }>;
+export type PrintTurnEnding = TurnEnded;
 
 /**
  * Source of `turn.ended` events for the print steer loop. `next` resolves with
@@ -802,7 +860,10 @@ function formatTurnEndingFailure(ending: PrintTurnEnding): string {
 
 function countPendingBackgroundTasks(session: ISessionScopeHandle): number {
   let count = 0;
-  for (const handle of session.accessor.get(IAgentLifecycleService).list()) {
+  const agentManager = session.accessor.get(IAgentLifecycleService);
+  for (const agent of agentManager.list()) {
+    const handle = agentManager.handleOf(agent.agentId);
+    if (handle === undefined) continue;
     count += handle.accessor.get(IAgentTaskService).list(true).length;
   }
   return count;
@@ -824,7 +885,10 @@ async function drainBackgroundTasks(
     const batch: Promise<unknown>[] = [];
     const suppressions: Promise<void>[] = [];
     let activeCount = 0;
-    for (const handle of session.accessor.get(IAgentLifecycleService).list()) {
+    const agentManager = session.accessor.get(IAgentLifecycleService);
+    for (const agent of agentManager.list()) {
+      const handle = agentManager.handleOf(agent.agentId);
+      if (handle === undefined) continue;
       const taskService = handle.accessor.get(IAgentTaskService);
       for (const task of taskService.list(true)) {
         activeCount++;

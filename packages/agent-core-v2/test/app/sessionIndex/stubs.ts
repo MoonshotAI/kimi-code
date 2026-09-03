@@ -1,10 +1,3 @@
-/**
- * `sessionIndex` test stubs — capturing no-op `ISessionIndexMirror` for unit
- * tests.
- *
- * Lives under `test/` (not `src/`). Import from a relative path.
- */
-
 import {
   ISessionIndexMirror,
   type SessionSummary,
@@ -21,6 +14,7 @@ export function stubSessionIndexMirror(): ISessionIndexMirror & {
       recorded.push(summary);
     },
     pending: () => recorded,
+    evict: async () => {},
     drain: async () => {},
   };
 }

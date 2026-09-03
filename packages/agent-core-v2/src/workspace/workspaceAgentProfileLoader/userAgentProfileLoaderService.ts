@@ -1,18 +1,4 @@
-/**
- * `workspaceAgentProfileLoader` domain — `IUserAgentProfileLoader` implementation.
- *
- * Discovers user agent profiles through `bootstrap` home paths and `hostFs`,
- * reports skipped files through `log`, and appends the `<home>/SYSTEM.md`
- * prompt-override profile (synthesized against the builtin default from the
- * App builtin loader) after the scanned profiles so it wins same-name
- * collisions within this contribution. The user roots are global os
- * directories, but per-workspace registration keeps every contribution
- * flowing through the same workspace-tagged lane. Bound at Workspace scope.
- */
-
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
-import { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -25,6 +11,7 @@ import {
   AGENT_PROFILE_SOURCE_PRIORITY,
   type AgentProfileContribution,
 } from '#/app/agentProfileCatalog/agentProfileContribution';
+import type { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { profilesFromDiscovery } from './internal/agentProfileFromFile';
 import { userAgentRoots } from './internal/agentRoots';
 import { loadSystemMdProfile } from './internal/systemFile';
@@ -46,10 +33,10 @@ export class UserAgentProfileLoaderService
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @ILogService log: ILogService,
     @IBuiltinAgentProfileLoader private readonly builtin: IBuiltinAgentProfileLoader,
-    @IAgentProfileRegistry registry: IAgentProfileRegistry,
     @IWorkspaceContext private readonly workspace: IWorkspaceContext,
+    registry?: IAgentProfileRegistry,
   ) {
-    super(registry, log);
+    super(log, registry);
     this.defaultProfile = builtin.getDefault();
     this.start();
   }
@@ -87,10 +74,3 @@ export class UserAgentProfileLoaderService
   }
 }
 
-registerScopedService(
-  LifecycleScope.Workspace,
-  IUserAgentProfileLoader,
-  UserAgentProfileLoaderService,
-  ScopeActivation.OnScopeCreated,
-  'workspaceAgentProfileLoader',
-);

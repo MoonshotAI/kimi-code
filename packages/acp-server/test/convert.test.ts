@@ -19,7 +19,7 @@ describe('acpMcpServersToConfigRecord', () => {
     expect(acpMcpServersToConfigRecord([])).toBeUndefined();
   });
 
-  it('maps stdio servers (no `type` discriminator) with env pairs as a record', () => {
+  it('maps stdio servers (no type field) to local stdio configs', () => {
     const servers: McpServer[] = [
       {
         name: 'fs',
@@ -37,6 +37,7 @@ describe('acpMcpServersToConfigRecord', () => {
         command: '/usr/local/bin/mcp-fs',
         args: ['--root', '/tmp'],
         env: { API_KEY: 'secret', DEBUG: '1' },
+        runtime_id: 'local',
       },
     });
   });
@@ -93,7 +94,7 @@ describe('compressPromptImageParts', () => {
   const trash: string[] = [];
 
   afterEach(async () => {
-    await Promise.all(trash.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+    await Promise.all(trash.splice(0).map((dir) => rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })));
   });
 
   async function tempOriginalsDir(): Promise<string> {

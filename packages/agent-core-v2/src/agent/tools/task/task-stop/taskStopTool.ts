@@ -1,16 +1,3 @@
-/**
- * `tools` domain — `TaskStopTool` implementation (the `TaskStop` tool).
- *
- * Stops a running background task through `IAgentTaskService`
- * (`agentTask` domain): terminal tasks report their recorded stop reason
- * untouched; live tasks are stopped after suppressing the terminal
- * notification, so the tool result is the only answer the agent sees.
- *
- * Registered via the module-level `registerAgentToolService(ITaskStopTool,
- * TaskStopTool)` at the bottom of this file — the same "import = register"
- * pattern used by every agent tool. Bound at Agent scope.
- */
-
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
 import { type ToolExecution } from '#/tool/toolContract';
@@ -20,7 +7,6 @@ import { IAgentTaskService } from '#/agent/task/task';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
 import { ITaskStopTool, TaskStopInputSchema, type TaskStopInput } from './task-stop';
 import TASK_STOP_DESCRIPTION from './task-stop.md?raw';
-
 
 export class TaskStopTool implements ITaskStopTool {
   declare readonly _serviceBrand: undefined;

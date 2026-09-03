@@ -2,6 +2,7 @@ import type { KimiConfig } from '@moonshot-ai/kimi-code-sdk';
 
 import { currentTheme, lightColors } from '#/tui/theme';
 import { loadTuiConfig, type TuiConfig } from '../config';
+import { setMarkdownRenderLatex } from '../utils/markdown-options';
 import type { SlashCommandHost } from './dispatch';
 import { setExperimentalFeatures } from './experimental-flags';
 
@@ -20,8 +21,11 @@ export async function handleReloadCommand(host: SlashCommandHost): Promise<void>
   const session = host.session;
 
   if (session !== undefined) {
-    await session.reloadSession({ forcePluginSessionStartReminder: true });
-    await host.reloadCurrentSessionView(session, 'Session reloaded.');
+    const reloadedSession = await host.harness.reloadSession({
+      id: session.id,
+      forcePluginSessionStartReminder: true,
+    });
+    await host.reloadCurrentSessionView(reloadedSession, 'Session reloaded.');
   }
 
   const config = await host.harness.getConfig({ reload: true });
@@ -55,6 +59,10 @@ export async function applyReloadedTuiConfig(
   host: SlashCommandHost,
   config: TuiConfig,
 ): Promise<void> {
+  // Set the LaTeX toggle before applyTheme: theme application invalidates the
+  // transcript components, which rebuild their Markdown children and copy the
+  // options at construction — so the new value must be live by then.
+  setMarkdownRenderLatex(config.renderLatex ?? true);
   const resolved = config.theme === 'auto'
     ? (currentTheme.palette === lightColors ? 'light' : 'dark')
     : undefined;
@@ -63,6 +71,7 @@ export async function applyReloadedTuiConfig(
   host.setAppState({
     editorCommand: config.editorCommand,
     disablePasteBurst: config.disablePasteBurst,
+    renderLatex: config.renderLatex,
     cacheExpiryHint: config.cacheExpiryHint,
     notifications: config.notifications,
     upgrade: config.upgrade,

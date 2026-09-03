@@ -1,11 +1,3 @@
-/**
- * `web` domain tests — `WebFetchService` backend selection.
- *
- * Locks in the precedence chain: an explicit `[services.moonshot_fetch]`
- * config section wins over the managed Kimi OAuth provider, and the built-in
- * local fetcher is the fallback so `FetchURL` keeps working without either.
- */
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -19,6 +11,7 @@ import {
 } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
+import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IProviderService, type ProviderConfig } from '#/kosong/provider/provider';
 import { LocalFetchURLProvider } from '#/app/web/providers/local-fetch-url';
 import { MoonshotFetchURLProvider } from '#/app/web/providers/moonshot-fetch-url';
@@ -60,8 +53,6 @@ describe('WebFetchService', () => {
           resolveTokenProvider:
             resolveTokenProvider as unknown as IOAuthService['resolveTokenProvider'],
         });
-        // Built per call so each test's `identitySlug` assignment lands in the
-        // snapshot the service reads.
         const snapshot = (): AgentIdentitySnapshot =>
           buildAgentIdentitySnapshot({ slug: identitySlug, hostRequestHeaders: HOST_HEADERS });
         reg.defineInstance(IAgentIdentity, {
@@ -76,6 +67,7 @@ describe('WebFetchService', () => {
           get: ((domain: string) =>
             domain === SERVICES_SECTION ? servicesConfig : undefined) as IConfigService['get'],
         });
+        reg.defineInstance(ITelemetryService, noopTelemetryService);
         reg.define(IWebFetchService, WebFetchService);
       },
     });
@@ -185,9 +177,6 @@ describe('WebFetchService', () => {
     expect(headers['X-Config']).toBe('1');
   });
 
-  // A `[services]` entry names its own endpoint, so the identity applies there;
-  // the managed OAuth endpoint is the one the session authenticated against and
-  // keeps the host's own token.
   it('sends the configured identity to a services-config endpoint', async () => {
     identitySlug = 'acme';
     servicesConfig = {

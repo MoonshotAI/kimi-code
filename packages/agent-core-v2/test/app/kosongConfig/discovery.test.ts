@@ -1,26 +1,3 @@
-/**
- * `app/kosongConfig` discovery tests — `IProviderDiscoveryService`:
- *
- *  - `refreshProviderModels` short-circuits `modelSource: 'static'`: a scoped
- *    refresh answers `unchanged` without any I/O, and an unscoped refresh
- *    hides the static entries from the orchestrator and merges them back
- *    verbatim — the static provider, its models, and a default model pointing
- *    at them all survive;
- *  - concurrent refreshes serialize (never overlap);
- *  - custom-registry fetches carry the host `User-Agent`;
- *  - provider/model patches land in config through ONE atomic
- *    `replaceSections` transition (the persistence bridge then syncs them
- *    into the registries), merging discovered aliases into user-owned
- *    provider records, while `defaultModel` / `thinking` ride the same
- *    transition — restoring a surviving default selection and CLEARing a
- *    default (plus its thinking) whose alias the upstream dropped, never a
- *    dangling `set`;
- *  - the two-phase orchestrator host contract (removeProvider, then
- *    setConfig) never exposes a halfway-removed catalog: the registries
- *    stay untouched until the single atomic write;
- *  - the `[modelCatalog]` config section self-registers and validates.
- */
-
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -114,10 +91,6 @@ async function createHost(
   ]);
   const providers = host.app.accessor.get(IProviderService);
   const models = host.app.accessor.get(IModelService);
-  // The real persistence bridge (DI-activated): refresh writes land in
-  // config, and the bridge's config → kosong sync is what carries them into
-  // the registries (exactly like production). Await its initialization so
-  // the event subscriptions are in place before the test refreshes.
   const bridge = host.app.accessor.get(IKosongConfigService);
   await bridge.ready;
   return {
@@ -207,7 +180,6 @@ describe('refreshProviderModels modelSource short-circuit', () => {
     });
     try {
       const result = await discovery.refreshProviderModels({ scope: 'all' });
-      // The registry provider refreshed; the static one is nowhere in the result.
       expect(result.changed).toEqual([
         { provider_id: 'acme', provider_name: 'Acme', added: 1, removed: 0 },
       ]);
@@ -217,10 +189,6 @@ describe('refreshProviderModels modelSource short-circuit', () => {
         expect.objectContaining({ type: 'event.model_catalog.changed' }),
       ]);
 
-      // Static provider, its model, the default selection, and its thinking
-      // all survived the orchestrator's whole-section writes. Providers and
-      // models land in the in-memory registries (the persistence bridge owns
-      // the config write-back); defaultModel/thinking go through config.
       const providerRecords = providers.list();
       expect(Object.keys(providerRecords).toSorted()).toEqual(['acme', 'static-p']);
       expect(providerRecords['static-p']).toEqual({ type: 'openai', modelSource: 'static', apiKey: 'sk-static' });
@@ -395,7 +363,6 @@ describe('refreshProviderModels write behavior', () => {
           headers: expect.objectContaining({ Authorization: 'Bearer sk-distributed-key' }),
         }),
       );
-      // The user-owned provider record survives; only model aliases are merged.
       expect(providers.list()['my-kimi']).toEqual({
         type: 'kimi',
         baseUrl,
@@ -404,7 +371,6 @@ describe('refreshProviderModels write behavior', () => {
       const modelRecords = models.list();
       expect(modelRecords['my-kimi/kimi-k2']?.displayName).toBe('Fresh K2');
       expect(modelRecords['my-kimi/kimi-k2.5']).toBeDefined();
-      // The surviving default selection is written back, not cleared.
       expect(config.get<string>('defaultModel')).toBe('my-kimi/kimi-k2');
     } finally {
       host.dispose();
@@ -447,15 +413,95 @@ describe('refreshProviderModels write behavior', () => {
       expect(result.changed).toEqual([
         { provider_id: 'my-kimi', provider_name: 'my-kimi', added: 1, removed: 1 },
       ]);
-      // The dropped alias was the default: an explicit undefined in the patch
-      // must clear the section instead of leaving the default dangling. It has
-      // to go through a replacing write — `set()`'s deepMerge would resolve
-      // undefined back to the stale base value.
       expect(config.get('defaultModel')).toBeUndefined();
       expect(config.get('thinking')).toBeUndefined();
       const modelRecords = models.list();
       expect(modelRecords['my-kimi/kimi-k3']).toBeDefined();
       expect(modelRecords['my-kimi/kimi-k2']).toBeUndefined();
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('leaves the subagent model pool untouched when a refresh drops its default alias', async () => {
+    const baseUrl = 'https://api.managed.example.test/coding/v1';
+    vi.stubEnv('KIMI_CODE_BASE_URL', baseUrl);
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: [{ id: 'kimi-k3', context_length: 1048576, supports_reasoning: true }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { host, config, discovery } = await createHost({
+      providers: {
+        'my-kimi': { type: 'kimi', baseUrl, apiKey: 'sk-distributed-key' },
+      },
+      models: {
+        'my-kimi/kimi-k2': { provider: 'my-kimi', model: 'kimi-k2', maxContextSize: 262144 },
+      },
+      secondaryModel: {
+        defaultModel: 'my-kimi/kimi-k2',
+        models: { 'my-kimi/kimi-k2': 'fast and cheap' },
+      },
+    });
+    try {
+      const result = await discovery.refreshProviderModels({ scope: 'all' });
+
+      expect(result.changed).toEqual([
+        { provider_id: 'my-kimi', provider_name: 'my-kimi', added: 1, removed: 1 },
+      ]);
+      expect(config.get('secondaryModel')).toEqual({
+        defaultModel: 'my-kimi/kimi-k2',
+        models: { 'my-kimi/kimi-k2': 'fast and cheap' },
+      });
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('leaves the whole pool untouched even when a refresh drops a non-default entry', async () => {
+    const baseUrl = 'https://api.managed.example.test/coding/v1';
+    vi.stubEnv('KIMI_CODE_BASE_URL', baseUrl);
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: [{ id: 'kimi-k3', context_length: 1048576, supports_reasoning: true }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { host, config, discovery } = await createHost({
+      providers: {
+        ...staticProviders,
+        'my-kimi': { type: 'kimi', baseUrl, apiKey: 'sk-distributed-key' },
+      },
+      models: {
+        ...staticModels,
+        'my-kimi/kimi-k2': { provider: 'my-kimi', model: 'kimi-k2', maxContextSize: 262144 },
+      },
+      secondaryModel: {
+        defaultModel: 's1',
+        models: { s1: 'static fallback', 'my-kimi/kimi-k2': 'managed' },
+      },
+    });
+    try {
+      const result = await discovery.refreshProviderModels({ scope: 'all' });
+
+      expect(result.changed).toEqual([
+        { provider_id: 'my-kimi', provider_name: 'my-kimi', added: 1, removed: 1 },
+      ]);
+      expect(config.get('secondaryModel')).toEqual({
+        defaultModel: 's1',
+        models: { s1: 'static fallback', 'my-kimi/kimi-k2': 'managed' },
+      });
     } finally {
       host.dispose();
     }
@@ -497,11 +543,6 @@ describe('refreshProviderModels write behavior', () => {
       defaultModel: 'acme/m1',
     });
     try {
-      // The orchestrator's host contract is two-phase (removeProvider, then
-      // setConfig). By the time the atomic write happens, the removal phase
-      // must NOT have touched the runtime registries — a reader (e.g. a
-      // profile bind racing the refresh) only ever sees the old catalog or
-      // the new one, never a half-removed one.
       let seenDuringWrite: { providers: readonly string[]; models: readonly string[] } | undefined;
       const originalReplaceSections = config.replaceSections.bind(config);
       vi.spyOn(config, 'replaceSections').mockImplementation(async (sections) => {
@@ -517,12 +558,207 @@ describe('refreshProviderModels write behavior', () => {
       expect(result.failed).toEqual([]);
       expect(seenDuringWrite).toEqual({ providers: ['acme'], models: ['acme/m1'] });
       expect(vi.mocked(config.replaceSections).mock.calls.length).toBe(1);
-      // After the write, config and the registries converge on the new state:
-      // the dropped alias (and its default selection) is gone everywhere.
       expect(providers.list()['acme']).toBeDefined();
       expect(models.list()['acme/m2']).toBeDefined();
       expect(models.list()['acme/m1']).toBeUndefined();
       expect(config.get('defaultModel')).toBeUndefined();
+    } finally {
+      host.dispose();
+    }
+  });
+});
+
+describe('refreshProviderModels defaultModel self-heal', () => {
+  const managedProviders = {
+    [KIMI_CODE_PROVIDER_NAME]: {
+      type: 'kimi',
+      baseUrl: 'https://api.example.test/v1',
+      oauth: { storage: 'file', key: 'oauth/kimi-code' },
+    },
+  };
+
+  const managedModels = {
+    'kimi-code/kimi-k2': {
+      provider: KIMI_CODE_PROVIDER_NAME,
+      model: 'kimi-k2',
+      maxContextSize: 131072,
+      capabilities: ['thinking', 'tool_use'],
+      displayName: 'Kimi K2',
+    },
+  };
+
+  function stubManagedCatalogFetch(): void {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              data: [
+                {
+                  id: 'kimi-k2',
+                  context_length: 131072,
+                  supports_reasoning: true,
+                  display_name: 'Kimi K2',
+                },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+      ),
+    );
+  }
+
+  it('rewrites a missing defaultModel even when the catalog is unchanged', async () => {
+    stubManagedCatalogFetch();
+    const { host, config, discovery, events, models } = await createHost(
+      {
+        providers: managedProviders,
+        models: managedModels,
+      },
+      stubOAuthService(stubTokenProvider(['access-token'])),
+    );
+    try {
+      const replaceSections = vi.spyOn(config, 'replaceSections');
+      const result = await discovery.refreshProviderModels({ scope: 'all' });
+
+      expect(result.failed).toEqual([]);
+      expect(result.unchanged).toEqual([]);
+      expect(result.changed).toEqual([
+        { provider_id: KIMI_CODE_PROVIDER_NAME, provider_name: 'Kimi Code', added: 0, removed: 0 },
+      ]);
+      expect(replaceSections).toHaveBeenCalledTimes(1);
+      expect(config.get<string>('defaultModel')).toBe('kimi-code/kimi-k2');
+      expect(config.get('thinking')).toEqual({ enabled: true });
+      expect(models.list()['kimi-code/kimi-k2']).toBeDefined();
+      expect(events.published).toEqual([
+        expect.objectContaining({ type: 'event.model_catalog.changed' }),
+      ]);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('keeps a default model the user selected while the catalog fetch was in flight', async () => {
+    const twoModels = {
+      'kimi-code/kimi-k2': {
+        provider: KIMI_CODE_PROVIDER_NAME,
+        model: 'kimi-k2',
+        maxContextSize: 131072,
+        capabilities: ['thinking', 'tool_use'],
+        displayName: 'Kimi K2',
+      },
+      'kimi-code/kimi-k3': {
+        provider: KIMI_CODE_PROVIDER_NAME,
+        model: 'kimi-k3',
+        maxContextSize: 131072,
+        capabilities: ['thinking', 'tool_use'],
+        displayName: 'Kimi K3',
+      },
+    };
+    const { host, config, discovery, events } = await createHost(
+      {
+        providers: managedProviders,
+        models: twoModels,
+      },
+      stubOAuthService(stubTokenProvider(['access-token'])),
+    );
+    try {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          async () => {
+            await config.set('defaultModel', 'kimi-code/kimi-k3');
+            return new Response(
+              JSON.stringify({
+                data: [
+                  {
+                    id: 'kimi-k2',
+                    context_length: 131072,
+                    supports_reasoning: true,
+                    display_name: 'Kimi K2',
+                  },
+                  {
+                    id: 'kimi-k3',
+                    context_length: 131072,
+                    supports_reasoning: true,
+                    display_name: 'Kimi K3',
+                  },
+                ],
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } },
+            );
+          },
+        ),
+      );
+      const replaceSections = vi.spyOn(config, 'replaceSections');
+      const result = await discovery.refreshProviderModels({ scope: 'all' });
+
+      expect(result).toEqual({
+        changed: [],
+        unchanged: [KIMI_CODE_PROVIDER_NAME],
+        failed: [],
+      });
+      expect(replaceSections).not.toHaveBeenCalled();
+      expect(events.published).toEqual([]);
+      expect(config.get<string>('defaultModel')).toBe('kimi-code/kimi-k3');
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('reports unchanged and skips writes when the catalog and defaultModel are intact', async () => {
+    stubManagedCatalogFetch();
+    const { host, config, discovery, events } = await createHost(
+      {
+        providers: managedProviders,
+        models: managedModels,
+        defaultModel: 'kimi-code/kimi-k2',
+        thinking: { enabled: true },
+      },
+      stubOAuthService(stubTokenProvider(['access-token'])),
+    );
+    try {
+      const replaceSections = vi.spyOn(config, 'replaceSections');
+      const result = await discovery.refreshProviderModels({ scope: 'all' });
+
+      expect(result).toEqual({
+        changed: [],
+        unchanged: [KIMI_CODE_PROVIDER_NAME],
+        failed: [],
+      });
+      expect(replaceSections).not.toHaveBeenCalled();
+      expect(events.published).toEqual([]);
+      expect(config.get<string>('defaultModel')).toBe('kimi-code/kimi-k2');
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('reports unchanged when the defaultModel belongs to a static provider', async () => {
+    stubManagedCatalogFetch();
+    const { host, config, discovery, events } = await createHost(
+      {
+        providers: { ...staticProviders, ...managedProviders },
+        models: { ...staticModels, ...managedModels },
+        defaultModel: 's1',
+        thinking: { enabled: false },
+      },
+      stubOAuthService(stubTokenProvider(['access-token'])),
+    );
+    try {
+      const replaceSections = vi.spyOn(config, 'replaceSections');
+      const result = await discovery.refreshProviderModels({ scope: 'all' });
+
+      expect(result).toEqual({
+        changed: [],
+        unchanged: [KIMI_CODE_PROVIDER_NAME],
+        failed: [],
+      });
+      expect(replaceSections).not.toHaveBeenCalled();
+      expect(events.published).toEqual([]);
+      expect(config.get<string>('defaultModel')).toBe('s1');
+      expect(config.get('thinking')).toEqual({ enabled: false });
     } finally {
       host.dispose();
     }

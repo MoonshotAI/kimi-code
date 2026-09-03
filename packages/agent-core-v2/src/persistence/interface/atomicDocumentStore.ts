@@ -1,13 +1,3 @@
-/**
- * `persistence/interface` — `IAtomicDocumentStore` contract.
- *
- * The atomic-document access-pattern store: one typed value per `(scope,
- * key)`, replaced atomically on every write. Serialization is delegated to a
- * `DocumentCodec` so the same access pattern serves different on-disk formats.
- *
- * This file ships the interface, codec contract, and DI tokens only.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { type IDisposable } from '#/_base/di/lifecycle';
 import { type Event } from '#/_base/event';
@@ -32,5 +22,10 @@ export interface IAtomicDocumentStore {
 export const IAtomicDocumentStore: ServiceIdentifier<IAtomicDocumentStore> =
   createDecorator<IAtomicDocumentStore>('atomicDocumentStore');
 
-export const IAtomicTomlDocumentStore: ServiceIdentifier<IAtomicDocumentStore> =
-  createDecorator<IAtomicDocumentStore>('atomicTomlDocumentStore');
+export interface IAtomicTomlDocumentStore extends IAtomicDocumentStore {
+  getText(scope: string, key: string): Promise<string | undefined>;
+  setText(scope: string, key: string, text: string): Promise<void>;
+}
+
+export const IAtomicTomlDocumentStore: ServiceIdentifier<IAtomicTomlDocumentStore> =
+  createDecorator<IAtomicTomlDocumentStore>('atomicTomlDocumentStore');

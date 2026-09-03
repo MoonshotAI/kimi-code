@@ -24,7 +24,7 @@ src/runtime 下的 event loop 是怎么工作的？事件从哪里产生、又�
 这个项目里「权限审批」是怎么实现的？涉及哪些文件，关键类型是什么？
 ```
 
-大型调研可以让主 Agent 派发**子 Agent** 并行处理子任务，详见 [Agent 与子 Agent](../customization/agents.md)。
+大型调研可以让 main agent 派发**subagent** 并行处理子任务，详见 [Agent 与 subagent](../customization/agents.md)。
 
 ## 实现新功能
 
@@ -99,7 +99,7 @@ src/parser/markdown.ts 目前几乎没有测试。请补一组单元测试，覆
 帮我调研一下 TypeScript 里几种主流的依赖注入方案（tsyringe、inversify、awilix），从 API 风格、装饰器依赖、运行时开销三个维度对比，给一份不超过一页的建议。
 ```
 
-对于确定安全的批处理任务，可以用 `--yolo` 或 `/yolo` 跳过审批，也可以在[配置文件](../configuration/config-files.md#permission)里给特定工具预置白名单规则。
+对于确定安全的批处理任务，可以用 `--yolo` 或 `/ask-when-needed` 跳过审批，也可以在[配置文件](../configuration/config-files.md#permission)里给特定工具预置白名单规则。
 
 ## 定时任务与提醒
 
@@ -143,6 +143,6 @@ src/api 下所有公开函数里，凡是没有 docstring 的都补上文档注�
 
 ## 下一步
 
-- [Agent 与子 Agent](../customization/agents.md) — 如何让 Agent 派发子任务并行处理
+- [Agent 与 subagent](../customization/agents.md) — 如何让 Agent 派发子任务并行处理
 - [Hooks](../customization/hooks.md) — 在任务完成等节点触发本地脚本
 - [内置工具](../reference/tools.md) — Agent 可调用的全部工具参考

@@ -1,10 +1,3 @@
-/**
- * `log` test stubs — shared no-op `ILogService` / `ILogger` for unit tests.
- *
- * Lives under `test/` (not `src/`) so test-support code stays out of the
- * production tree. Import from a relative path (`./stubs` or `../log/stubs`).
- */
-
 import type { ServiceRegistration } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
 import type { ILogger } from '#/_base/log/log';

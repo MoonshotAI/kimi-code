@@ -2,7 +2,8 @@
  * BackgroundManager output retrieval surface.
  */
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
 import type { Writable } from 'node:stream';
@@ -43,8 +44,8 @@ describe('BackgroundManager — readOutput / getOutputSnapshot', () => {
     persistence = fixture.persistence!;
   });
 
-  afterEach(() => {
-    rmSync(sessionDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rm(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   it('getOutputSnapshot returns output.log path when persisted output exists', async () => {

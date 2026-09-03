@@ -8,6 +8,7 @@ import {
   type PluginSummary,
   type Session,
 } from '@moonshot-ai/kimi-code-sdk';
+import { Markdown, Spacer } from '@moonshot-ai/pi-tui';
 
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import {
@@ -26,14 +27,25 @@ import {
   buildPluginsListLines,
 } from '../components/messages/plugins-status-panel';
 import { UsagePanelComponent } from '../components/messages/usage-panel';
+import { createMarkdownTheme } from '../theme/pi-tui-theme';
 import { formatErrorMessage } from '../utils/event-payload';
+import { createMarkdownOptions } from '../utils/markdown-options';
 import {
   formatPluginSourceLabel,
   isOfficialPluginInstall,
   isOfficialPluginSource,
 } from '../utils/plugin-source-label';
-import { KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV, QUOTA_CONSUMING_PLUGIN_IDS } from '#/constant/app';
-import { loadPluginMarketplace, type PluginMarketplaceEntry } from '#/utils/plugin-marketplace';
+import {
+  KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
+  QUOTA_CONSUMING_PLUGIN_IDS,
+} from '#/constant/app';
+import {
+  loadPluginMarketplace,
+  withBuiltInEntries,
+  withMarketplaceLatestVersions,
+  type PluginMarketplace,
+  type PluginMarketplaceEntry,
+} from '#/utils/plugin-marketplace';
 import { openUrl } from '#/utils/open-url';
 import type { SlashCommandHost } from './dispatch';
 
@@ -342,18 +354,49 @@ async function loadMarketplaceCatalog(
   source: string | undefined,
   capabilities: readonly CapabilityStatus[],
 ): Promise<void> {
+  const builtInEntries =
+    host.engineV2 && isDefaultMarketplaceCatalog(source)
+      ? capabilities.map(capabilityMarketplaceEntry)
+      : undefined;
+  let marketplace: PluginMarketplace;
+  let catalog: PluginMarketplace;
   try {
-    const marketplace = await loadPluginMarketplace({
+    // Phase 1: render the catalog as soon as it arrives. Version lookups
+    // (GitHub releases/latest round trips) must not gate the first paint.
+    // Keep the raw parsed catalog for phase 2: injecting built-ins first
+    // would mask the matching catalog entries' GitHub sources behind
+    // `capability:<id>` rows, making their versions unresolvable.
+    catalog = await loadPluginMarketplace({
       workDir: host.state.appState.workDir,
       source,
-      builtInEntries:
-        host.engineV2 && isDefaultMarketplaceCatalog(source)
-          ? capabilities.map(capabilityMarketplaceEntry)
-          : undefined,
+      skipLatestVersions: true,
     });
+    marketplace =
+      builtInEntries !== undefined ? withBuiltInEntries(catalog, builtInEntries) : catalog;
     panel.setMarketplace(marketplace.plugins, marketplace.source);
+    host.state.ui.requestRender();
   } catch (error) {
+    // Any phase-1 failure (unreachable OR malformed catalog) surfaces as an
+    // error: the panel keeps built-in capability rows installable in the
+    // Official tab while the error is shown, and a broken catalog must not
+    // be masked as a successfully loaded, built-ins-only marketplace.
     panel.setMarketplaceError(formatErrorMessage(error));
+    host.state.ui.requestRender();
+    return;
+  }
+  try {
+    // Phase 2: resolve latest versions in the background (against the raw
+    // catalog), re-apply the built-in injection so resolved versions flow
+    // onto capability rows, then refresh so update badges appear. Failures
+    // degrade to badge-less rows and never clobber the rendered list.
+    const enrichedCatalog = await withMarketplaceLatestVersions(catalog);
+    const enriched =
+      builtInEntries !== undefined
+        ? withBuiltInEntries(enrichedCatalog, builtInEntries)
+        : enrichedCatalog;
+    panel.setMarketplace(enriched.plugins, enriched.source);
+  } catch (error) {
+    log.warn('marketplace version lookup failed', { error });
   }
   host.state.ui.requestRender();
 }
@@ -560,6 +603,15 @@ async function installCapabilityFromPanel(
     host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
     return;
   }
+  if (entry.id === 'kimi-webbridge') {
+    host.showNotice(`${label} is installed.`);
+    host.state.transcriptContainer.addChild(new Spacer(1));
+    host.state.transcriptContainer.addChild(
+      new Markdown(WEBBRIDGE_POST_INSTALL_MARKDOWN, 2, 0, createMarkdownTheme(), undefined, createMarkdownOptions()),
+    );
+    host.state.ui.requestRender();
+    return;
+  }
   host.showStatus(`${label} is installed.`);
   host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
 }
@@ -582,7 +634,7 @@ async function installFromPanel(
   if (official) {
     panel.setInstalling(truncateForStatus(label));
   } else {
-    host.showStatus(`Installing or updating ${label} from marketplace...`);
+    host.showStatus(`Installing or updating ${label} from marketplace…`);
   }
   host.state.ui.requestRender();
   try {
@@ -723,8 +775,9 @@ async function removePlugin(host: SlashCommandHost, id: string): Promise<void> {
   host.showStatus(`Removed ${id}.`);
   if (isCapabilityPluginId(host, id)) {
     host.showStatus(
-      'Note: the runtime binaries were left untouched, but Kimi Code plugin wiring is disabled for new sessions. Reinstall any time from the Official tab.',
+      'Note: the runtime binaries were left untouched, but Kimi Code plugin wiring is disabled for new sessions. Restart Kimi Code before reinstalling from the Official tab.',
     );
+    return;
   }
   host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
 }
@@ -768,6 +821,17 @@ async function installPluginFromSource(
 }
 
 const PLUGIN_RELOAD_HINT = 'Run /new or /reload to apply plugin changes.';
+
+const WEBBRIDGE_POST_INSTALL_MARKDOWN = [
+  '*Two steps left to use Kimi WebBridge:*',
+  '1. Install the browser extension',
+  '',
+  '   - [Chrome Web Store](https://chromewebstore.google.com/detail/kimi-webbridge/fldmhceldgbpfpkbgopacenieobmligc)',
+  '   - [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/kimi-webbridge/bnlffdbcfnanfbknnlaflhlhkocccckg)',
+  '   - [Manual installation guide](https://www.kimi.com/code/docs/kimi-code-cli/customization/plugins.html#install-the-browser-extension)',
+  '',
+  '2. Run `/reload` or `/new` to apply it.',
+].join('\n');
 
 const PLUGIN_QUOTA_NOTE = 'Note: This plugin consumes your quota.';
 

@@ -1,25 +1,7 @@
-/**
- * `di` domain — persistent dependency graph (L2 substrate), tree-global.
- *
- * One graph is shared by every container of a scope tree. Edges are recorded
- * when a service's constructor dependencies are resolved and removed when the
- * consumer is torn down, so the graph always mirrors the live containers.
- * Both ends of an edge are scope-tagged: a consumer in a child scope may bind
- * a token owned by an ancestor scope (child → parent only — a parent can never
- * resolve a child's token, so cross-tree cycles are impossible by
- * construction). Instance edges bind a consumer to its dependency's
- * generation (the dependency changes → the consumer is torn down and rebuilt,
- * across scopes); collection edges (Phase 3) are recorded for introspection
- * but never join a cascade contagion set.
- */
-
 import type { ServiceIdentifier } from './instantiation';
 
-/** A token as seen from the tree: the owning container plus the identifier. */
 export interface ScopedToken {
-  /** The container whose collection owns the registration. */
   readonly scope: object;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly token: ServiceIdentifier<any>;
 }
 
@@ -31,10 +13,8 @@ export interface DependencyEdge {
   readonly kind: DependencyEdgeKind;
 }
 
-/** Nested scope → token maps, so scoped tokens stay structural (no interning). */
 export class PairIndex<V> {
   private readonly _map = new Map<object, Map<
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ServiceIdentifier<any>,
     V
   >>();
@@ -77,20 +57,14 @@ export class PairIndex<V> {
 }
 
 export class DependencyGraph {
-  /** live instance → its scoped token */
   private readonly _refByInstance = new Map<object, ScopedToken>();
-  /** scoped token → live instance */
   private readonly _instanceByRef = new PairIndex<object>();
-  /** consumer instance → (dependency scoped token → edge kind) */
   private readonly _out = new Map<object, PairIndex<DependencyEdgeKind>>();
-  /** dependency scoped token → (consumer instance → edge kind) */
   private readonly _in = new PairIndex<Map<object, DependencyEdgeKind>>();
 
-  /** Register a materialized service instance so its edges can be tracked. */
   addInstance(
     instance: object,
     scope: object,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     token: ServiceIdentifier<any>,
   ): void {
     const ref: ScopedToken = { scope, token };
@@ -98,7 +72,6 @@ export class DependencyGraph {
     this._instanceByRef.set(scope, token, instance);
   }
 
-  /** Drop a consumer: its outbound edges and token mapping (inbound edges stay). */
   removeInstance(instance: object): void {
     const ref = this._refByInstance.get(instance);
     if (ref !== undefined) {
@@ -136,12 +109,6 @@ export class DependencyGraph {
     inbound.set(consumerInstance, kind);
   }
 
-  /**
-   * The contagion set: the changed scoped tokens plus every scoped token whose
-   * live instance transitively depends on them through instance edges —
-   * computed across the whole tree (dependents always live in the changed
-   * scope's subtree, since edges point child → parent).
-   */
   affectedSet(changed: Iterable<ScopedToken>): ScopedToken[] {
     const seen = new PairIndex<true>();
     const queue: ScopedToken[] = [];
@@ -169,7 +136,6 @@ export class DependencyGraph {
     return affected;
   }
 
-  /** Dependencies-first order over the given scoped-token subset (instance edges). */
   topoOrder(tokens: Iterable<ScopedToken>): ScopedToken[] {
     const subset = new PairIndex<ScopedToken>();
     for (const ref of tokens) {
@@ -191,12 +157,10 @@ export class DependencyGraph {
     return ordered;
   }
 
-  /** Dependents-first order (teardown order) over the given scoped-token subset. */
   reverseTopoOrder(tokens: Iterable<ScopedToken>): ScopedToken[] {
     return this.topoOrder(tokens).toReversed();
   }
 
-  /** Instance-edge cycle check over the live graph; returns the cycle path or null. */
   findCycle(label: (ref: ScopedToken) => string): string[] | null {
     const state = new PairIndex<'visiting' | 'done'>();
     const path: ScopedToken[] = [];
@@ -228,7 +192,6 @@ export class DependencyGraph {
     return null;
   }
 
-  /** Introspection: every live edge (both kinds), scoped on both ends. */
   edges(): DependencyEdge[] {
     const edges: DependencyEdge[] = [];
     for (const [consumerInstance, out] of this._out) {
@@ -248,7 +211,6 @@ export class DependencyGraph {
     this._in.clear();
   }
 
-  /** In-subset instance-edge dependencies of a scoped token's live instance. */
   private _dependenciesOf(
     ref: ScopedToken,
     subset: PairIndex<ScopedToken> | undefined,

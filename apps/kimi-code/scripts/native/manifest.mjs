@@ -7,6 +7,12 @@ export const MINIDB_TEXT_BUILD_WORKER_ASSET = Object.freeze({
   mode: 0o644,
 });
 
+export const KAP_SEARCH_WORKER_ASSET = Object.freeze({
+  key: 'kap-search-worker',
+  relativePath: 'runtime/kap-server/search-worker.mjs',
+  mode: 0o644,
+});
+
 export function buildManifestKey(target) {
   return `native/${target}/manifest.json`;
 }

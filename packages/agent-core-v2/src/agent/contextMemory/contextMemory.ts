@@ -10,10 +10,8 @@ export interface ContextCompactionInput {
   readonly compactedCount: number;
   readonly tokensBefore: number;
   readonly tokensAfter?: number;
-  /** Measured output tokens of the compaction LLM exchange (the REAL summary
-   *  size); preferred over the summary-text estimate in the `tokensAfter`
-   *  fallback when present. */
   readonly summaryOutputTokens?: number;
+  readonly requestOverheadTokens?: number;
   readonly keptUserMessageCount?: number;
   readonly keptHeadUserMessageCount?: number;
   readonly droppedCount?: number;
@@ -38,6 +36,8 @@ export interface IAgentContextMemoryService {
   append(...messages: readonly ContextMessage[]): void;
 
   appendLoopEvent(event: LoopRecordedEvent): void;
+
+  publishTrailingRemoval(previous: readonly ContextMessage[]): boolean;
 
   clear(): void;
 

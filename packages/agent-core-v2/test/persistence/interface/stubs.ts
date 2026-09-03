@@ -1,9 +1,3 @@
-/**
- * `persistence` test stubs — minimal no-op `IQueryStore` for unit tests.
- *
- * Lives under `test/` (not `src/`). Import from a relative path.
- */
-
 import {
   IQueryStore,
   type Checkpoint,

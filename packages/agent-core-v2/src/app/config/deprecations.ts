@@ -1,14 +1,3 @@
-/**
- * `config` domain — declarative config-key deprecation detection.
- *
- * A section declares its renames once (`RegisterSectionOptions.deprecations`,
- * snake_case keys as written on disk) and this module turns the presence of a
- * deprecated key in the on-disk document into a warning `ConfigDiagnostic`.
- * Detection is read-only: the old value is never mapped onto the new key (the
- * section schema no longer knows the old key, so it is dropped at validation),
- * and the user's file is left untouched — the warning is the migration guide.
- */
-
 import type { ConfigDiagnostic, ConfigSection } from './config';
 import { isPlainObject } from './configPure';
 import { camelToSnake } from './toml';
