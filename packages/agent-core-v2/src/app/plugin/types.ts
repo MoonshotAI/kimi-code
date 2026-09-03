@@ -31,6 +31,11 @@ export interface PluginInterface {
   readonly websiteURL?: string;
 }
 
+export interface PluginWebSkin {
+  readonly light: Readonly<Record<string, string>>;
+  readonly dark: Readonly<Record<string, string>>;
+}
+
 export interface PluginManifest {
   readonly name: string;
   readonly version?: string;
@@ -47,6 +52,7 @@ export interface PluginManifest {
   readonly hooks?: readonly HookDefConfig[];
   readonly commands?: readonly PluginCommandEntry[];
   readonly interface?: PluginInterface;
+  readonly webSkin?: PluginWebSkin;
   readonly skillInstructions?: string;
   readonly systemPrompt?: string;
 }

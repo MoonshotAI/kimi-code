@@ -285,8 +285,51 @@ Plugin 是一个带 manifest 的目录或 zip 文件。Manifest 可以放在以�
 | `mcpServers` | MCP server 声明，默认启用，可从 `/plugins` 中禁用 |
 | `hooks` | 在 plugin 启用期间于生命周期事件上运行的 hook 规则；见[插件中的 Hooks](#插件中的-hooks) |
 | `commands` | 一个或多个 `./` 路径，指向目录或 `.md` 文件，把其中的 Markdown 文件注册为斜杠命令；见[插件斜杠命令](#插件斜杠命令) |
+| `webSkin.tokens` | 指向声明式 Web 设计 token JSON 文件的 `./` 路径；Web 皮肤 plugin 不能同时声明运行时能力 |
 
 `tools`、`apps`、`inject`、`configFile` 等不支持的运行时字段会显示为 diagnostics 并被忽略。
+
+### Web 皮肤
+
+Web 皮肤是一类仅覆盖 Kimi Web 设计 token、完全不含代码的 plugin。启用 plugin 后，其 token 会在下次刷新页面时生效；禁用或移除后恢复内置值。若同时启用多个 Web 皮肤，Kimi 会按 plugin id 顺序层叠应用，因此只保留确实需要组合的皮肤层处于启用状态。
+
+在 `kimi.plugin.json` 中声明 token 文件：
+
+```json
+{
+  "name": "kimi-code-skin-moonlight",
+  "version": "1.0.0",
+  "webSkin": {
+    "tokens": "./web/skin.json"
+  },
+  "interface": {
+    "displayName": "Moonlight",
+    "shortDescription": "为 Kimi Web 提供紫色月光配色"
+  }
+}
+```
+
+被引用的 JSON 文档包含一个版本号和明暗两套 token：
+
+```json
+{
+  "manifestVersion": 1,
+  "light": {
+    "--color-bg": "#fffafd",
+    "--color-accent": "#7c3aed",
+    "--radius-lg": "16px"
+  },
+  "dark": {
+    "--color-bg": "#15111d",
+    "--color-accent": "#c084fc",
+    "--radius-lg": "16px"
+  }
+}
+```
+
+Token 名称仅允许使用 Kimi 设计系统前缀 `--color-*`、`--font-*`、`--radius-*`、`--space-*`、`--shadow-*`、`--duration-*`、`--ease-*`、`--weight-*`、`--leading-*`、`--text-*` 和 `--p-*`，以及 `--bg`、`--panel`、`--blue` 等固定的旧版 Web 兼容 token 白名单。值中不能包含规则、声明、控制字符、CSS 转义、注释、`!important` 或会加载图片和网络资源的函数；函数调用仅允许安全的颜色、数学、缓动和 `var()` 形式。Token 文件上限为 64 KB、256 个 token，单个值最多 256 个 UTF-8 字节。
+
+Web 皮肤 plugin 不能同时声明 Skill、Agent、命令、Hook、MCP server、session-start 行为、Skill 附加指令或系统提示词内容。这样可以让外观包始终保持无代码，避免皮肤在用户不知情时获得 Agent 运行时权限。Kimi 会在 server 侧生成样式表，绝不会提供 plugin JavaScript、HTML、SVG 或任意 CSS。
 
 ### 系统提示词指令
 
