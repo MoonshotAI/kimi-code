@@ -33,6 +33,10 @@ export type PromptWithSkillsInput = Parameters<IAgentSkillService['promptWithSki
 export type PromptWithSkillsResult = Awaited<ReturnType<IAgentSkillService['promptWithSkills']>>;
 export type ShellCommandResult = Awaited<ReturnType<IAgentShellCommandService['run']>>;
 export type SetModelResult = Awaited<ReturnType<IAgentProfileService['setModel']>>;
+export type SessionModelOverrideKind = Parameters<IAgentProfileService['setSessionModelOverride']>[0];
+export type SessionModelOverrides = Awaited<
+  ReturnType<IAgentProfileService['getAllSessionModelOverrides']>
+>;
 export type ThinkingLevel = ReturnType<IAgentProfileService['getEffectiveThinkingLevel']>;
 export type UsageStatus = Awaited<ReturnType<ISessionUsageService['status']>>;
 export type AgentContextData = {
@@ -74,6 +78,9 @@ export interface AgentFacade {
   cancelShellCommand(input: { commandId: string }): Promise<void>;
   getModel(): Promise<string>;
   setModel(model: string): Promise<SetModelResult>;
+  setSessionModelOverride(kind: SessionModelOverrideKind, alias: string | null): Promise<void>;
+  getSessionModelOverride(kind: SessionModelOverrideKind): Promise<string | undefined>;
+  getAllSessionModelOverrides(): Promise<SessionModelOverrides>;
   getThinking(): Promise<ThinkingLevel>;
   setThinking(level: string): Promise<void>;
   setPermission(mode: PermissionMode): Promise<void>;
@@ -125,6 +132,12 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
     getModel: () => call(scope, 'agentProfileService', 'getModel', []) as Promise<string>,
     setModel: (model) =>
       call(scope, 'agentProfileService', 'setModel', [model]) as Promise<SetModelResult>,
+    setSessionModelOverride: (kind, alias) =>
+      call(scope, 'agentProfileService', 'setSessionModelOverride', [kind, alias ?? null]) as Promise<void>,
+    getSessionModelOverride: (kind) =>
+      call(scope, 'agentProfileService', 'getSessionModelOverride', [kind]) as Promise<string | undefined>,
+    getAllSessionModelOverrides: () =>
+      call(scope, 'agentProfileService', 'getAllSessionModelOverrides', []) as Promise<SessionModelOverrides>,
     getThinking: () =>
       call(scope, 'agentProfileService', 'getEffectiveThinkingLevel', []) as Promise<ThinkingLevel>,
     setThinking: (level) =>

@@ -7,6 +7,8 @@ import {
 } from '@moonshot-ai/agent-core';
 
 import { type ApprovalHandler, type Event, type QuestionHandler } from '#/events';
+import type { SessionModelOverrides } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
+import type { SessionModelOverrideKind } from '@moonshot-ai/klient/core/facade/agent';
 import type { SDKRpcClientBase } from '#/rpc';
 import type {
   AddAdditionalDirOptions,
@@ -278,6 +280,21 @@ export class Session {
       ErrorCodes.SESSION_THINKING_EMPTY,
     );
     await this.rpc.setThinking({ sessionId: this.id, effort: normalized });
+  }
+
+  async setSessionModelOverride(kind: SessionModelOverrideKind, alias: string | null): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.setSessionModelOverride({ sessionId: this.id, kind, alias });
+  }
+
+  async getSessionModelOverride(kind: SessionModelOverrideKind): Promise<string | undefined> {
+    this.ensureOpen();
+    return this.rpc.getSessionModelOverride({ sessionId: this.id, kind });
+  }
+
+  async getAllSessionModelOverrides(): Promise<SessionModelOverrides> {
+    this.ensureOpen();
+    return this.rpc.getAllSessionModelOverrides({ sessionId: this.id });
   }
 
   /**

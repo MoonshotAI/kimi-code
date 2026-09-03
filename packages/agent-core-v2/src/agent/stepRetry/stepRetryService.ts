@@ -207,7 +207,9 @@ export class AgentStepRetryService extends Disposable implements IAgentStepRetry
   }
 
   private substituteCandidate(): { alias: string; primaryAlias: string } | undefined {
-    const alias = resolveSubstituteModelAlias(this.config, this.flags);
+    const alias = resolveSubstituteModelAlias(this.config, this.flags, {
+      substituteAlias: this.profile.getSessionModelOverride('substitute'),
+    });
     if (alias === undefined) return undefined;
     if (this.states.get(substituteModelActiveKey) !== undefined) return undefined;
     const primaryAlias = this.profile.data().modelAlias;
@@ -254,7 +256,10 @@ export class AgentStepRetryService extends Disposable implements IAgentStepRetry
       modelAlias: lastTriedAlias ?? '',
       thinkingLevel: this.profile.getEffectiveThinkingLevel(),
     };
-    const binding = resolveFallbackBinding(this.config, this.flags, own, lastTriedAlias);
+    const binding = resolveFallbackBinding(this.config, this.flags, own, lastTriedAlias, {
+      fallbackAlias: this.profile.getSessionModelOverride('fallback'),
+      fallbackSecondaryAlias: this.profile.getSessionModelOverride('fallbackSecondary'),
+    });
     if (binding === undefined) return false;
     try {
       this.profile.resolveModelContextFor(binding.model);

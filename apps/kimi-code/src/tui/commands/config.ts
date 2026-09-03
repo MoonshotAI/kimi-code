@@ -9,6 +9,7 @@ import {
   type SessionSummary,
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
+import type { SessionModelOverrideKind } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 
 import { EditorSelectorComponent } from '../components/dialogs/editor-selector';
 import { EffortSelectorComponent } from '../components/dialogs/effort-selector';
@@ -709,11 +710,46 @@ function showVisualModelPicker(
         host.restoreEditor();
         void performVisualModelSave(host, alias);
       },
+      onSessionOnlySelect: ({ alias }) => {
+        host.restoreEditor();
+        void applySessionModelOverride(host, 'visual', alias);
+      },
       onCancel: () => {
         host.restoreEditor();
       },
     }),
   );
+}
+
+const SESSION_OVERRIDE_LABELS: Record<string, string> = {
+  visual: 'Visual model',
+  compaction: 'Squeeze model',
+  compactionSecondary: 'Secondary squeeze model',
+  fallback: 'Fallback model',
+  fallbackSecondary: 'Secondary fallback model',
+  substitute: 'Substitute model',
+  secondary: 'Secondary (subagent) model',
+};
+
+async function applySessionModelOverride(
+  host: SlashCommandHost,
+  kind: SessionModelOverrideKind,
+  alias: string,
+): Promise<void> {
+  const session = host.session;
+  if (session === undefined) {
+    host.showError('No active session for session-only model override.');
+    return;
+  }
+  try {
+    await session.setSessionModelOverride(kind, alias);
+  } catch (error) {
+    host.showError(`Failed to apply session-only override: ${formatErrorMessage(error)}`);
+    return;
+  }
+  const label = SESSION_OVERRIDE_LABELS[kind] ?? kind;
+  const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
+  host.showStatus(`${label} set to ${displayName} for this session only.`, 'success');
 }
 
 async function performVisualModelSave(host: SlashCommandHost, alias: string): Promise<void> {
@@ -787,6 +823,14 @@ function showSqueezeModelPicker(
         void (secondary
             ? performSqueezeModelSecondarySave(host, alias)
             : performSqueezeModelSave(host, alias));
+      },
+      onSessionOnlySelect: ({ alias }) => {
+        host.restoreEditor();
+        void applySessionModelOverride(
+          host,
+          secondary ? 'compactionSecondary' : 'compaction',
+          alias,
+        );
       },
       onCancel: () => {
         host.restoreEditor();
@@ -923,6 +967,14 @@ function showFallbackModelPicker(
           ? performFallbackModelSecondarySave(host, alias)
           : performFallbackModelSave(host, alias));
       },
+      onSessionOnlySelect: ({ alias }) => {
+        host.restoreEditor();
+        void applySessionModelOverride(
+          host,
+          secondary ? 'fallbackSecondary' : 'fallback',
+          alias,
+        );
+      },
       onCancel: () => {
         host.restoreEditor();
       },
@@ -1039,6 +1091,10 @@ function showSubstituteModelPicker(
       onSelect: ({ alias }) => {
         host.restoreEditor();
         void performSubstituteModelSave(host, alias);
+      },
+      onSessionOnlySelect: ({ alias }) => {
+        host.restoreEditor();
+        void applySessionModelOverride(host, 'substitute', alias);
       },
       onCancel: () => {
         host.restoreEditor();
@@ -1345,7 +1401,7 @@ export async function rotateToNextFavoriteModel(host: SlashCommandHost): Promise
   );
 }
 
-async function performModelSwitch(
+export async function performModelSwitch(
   host: SlashCommandHost,
   alias: string,
   effort: ThinkingEffort,
@@ -1494,13 +1550,15 @@ function showSecondaryModelPicker(
       currentValue,
       selectedValue,
       currentThinkingEffort: 'off',
-      // Subagent pool bindings carry no explicit thinking level, so the picker
-      // hides the Thinking footer instead of offering a no-op choice.
       thinkingControl: false,
       title: ' Select a secondary model (subagents)',
       onSelect: ({ alias }) => {
         host.restoreEditor();
         void performSecondaryModelSave(host, alias);
+      },
+      onSessionOnlySelect: ({ alias }) => {
+        host.restoreEditor();
+        void applySessionModelOverride(host, 'secondary', alias);
       },
       onCancel: () => {
         host.restoreEditor();

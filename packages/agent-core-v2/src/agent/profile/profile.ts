@@ -116,6 +116,25 @@ export interface ProfileSetModelResult {
   readonly providerName?: string | undefined;
 }
 
+export type SessionModelOverrideKind =
+  | 'visual'
+  | 'compaction'
+  | 'compactionSecondary'
+  | 'fallback'
+  | 'fallbackSecondary'
+  | 'substitute'
+  | 'secondary';
+
+export interface SessionModelOverrides {
+  readonly visual?: string;
+  readonly compaction?: string;
+  readonly compactionSecondary?: string;
+  readonly fallback?: string;
+  readonly fallbackSecondary?: string;
+  readonly substitute?: string;
+  readonly secondary?: string;
+}
+
 export interface BindAgentInput {
   readonly profile: string;
   readonly model?: string;
@@ -138,6 +157,9 @@ export interface IAgentProfileService {
   setCompactionTokenBudget(tokens: number | undefined): void;
   getCompactionTokenBudgetOverride(): number | undefined;
   getEffectiveCompactionTokenBudget(): number | undefined;
+  setSessionModelOverride(kind: SessionModelOverrideKind, alias: string | undefined): void;
+  getSessionModelOverride(kind: SessionModelOverrideKind): string | undefined;
+  getAllSessionModelOverrides(): SessionModelOverrides;
   republishStatus(): void;
   getModel(): string;
   useProfile(profile: ResolvedAgentProfile, context: SystemPromptContext): void;

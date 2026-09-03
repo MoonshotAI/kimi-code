@@ -23,6 +23,7 @@ import {
   runShellCommandPayloadSchema,
   runtimeBindingSchema,
   setModelResultSchema,
+  sessionModelOverrideKindSchema,
   shellCommandResultSchema,
   steerPayloadSchema,
   usageStatusSchema,
@@ -88,6 +89,9 @@ export const agentProfileContract = {
   setModel: { input: z.tuple([z.string()]), output: setModelResultSchema },
   setThinking: { input: z.tuple([z.string()]), output: noResult },
   getEffectiveThinkingLevel: { input: z.tuple([]), output: z.string() },
+  setSessionModelOverride: { input: z.tuple([sessionModelOverrideKindSchema, z.string()]), output: noResult },
+  getSessionModelOverride: { input: z.tuple([sessionModelOverrideKindSchema]), output: z.string().nullable() },
+  getAllSessionModelOverrides: { input: z.tuple([]), output: z.record(z.string(), z.string()) },
 } satisfies ServiceContract;
 
 export const agentUsageContract = {

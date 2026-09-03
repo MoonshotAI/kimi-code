@@ -20,6 +20,8 @@ import {
   type ToolCallResponse,
   type SwarmModeTrigger,
 } from '@moonshot-ai/agent-core';
+import type { SessionModelOverrideKind } from '@moonshot-ai/klient/core/facade/agent';
+import type { SessionModelOverrides } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import type { Kaos } from '@moonshot-ai/kaos';
 
 import type { ApprovalHandler, QuestionHandler } from '#/events';
@@ -175,6 +177,15 @@ export interface RunCommandRpcInput extends SessionIdRpcInput {
 
 export interface SwitchSessionRuntimeRpcInput extends SessionIdRpcInput {
   readonly runtimeId: string;
+}
+
+export interface SetSessionModelOverrideRpcInput extends SessionIdRpcInput {
+  readonly kind: SessionModelOverrideKind;
+  readonly alias: string | null;
+}
+
+export interface GetSessionModelOverrideRpcInput extends SessionIdRpcInput {
+  readonly kind: SessionModelOverrideKind;
 }
 
 export interface ReconnectMcpServerRpcInput extends SessionIdRpcInput {
@@ -654,6 +665,27 @@ export abstract class SDKRpcClientBase {
       agentId: this.interactiveAgentId,
       model: input.model,
     });
+  }
+
+  setSessionModelOverride(_input: SetSessionModelOverrideRpcInput): Promise<void> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'This SDK client does not support setting session model overrides.',
+    );
+  }
+
+  getSessionModelOverride(_input: GetSessionModelOverrideRpcInput): Promise<string | undefined> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'This SDK client does not support getting session model overrides.',
+    );
+  }
+
+  getAllSessionModelOverrides(_input: SessionIdRpcInput): Promise<SessionModelOverrides> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'This SDK client does not support getting session model overrides.',
+    );
   }
 
   async setThinking(input: SetSessionThinkingRpcInput): Promise<void> {

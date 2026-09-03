@@ -337,10 +337,11 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   }
 
   private resolveSqueezeModelAliasWithCascade(currentModelAlias: string): string {
+    const overrides = this.profile.getAllSessionModelOverrides();
     const binding = compactionModelBindingFor(this.configService, this.flags, {
       modelAlias: currentModelAlias,
       thinkingLevel: this.profile.data().thinkingLevel,
-    });
+    }, { compactionAlias: overrides.compaction });
     const primaryAlias = binding.model;
     if (primaryAlias !== currentModelAlias) {
       try {
@@ -349,7 +350,9 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       } catch {
       }
     }
-    const secondaryAlias = resolveCompactionSecondaryModel(this.configService, this.flags);
+    const secondaryAlias = resolveCompactionSecondaryModel(this.configService, this.flags, {
+      compactionSecondaryAlias: overrides.compactionSecondary,
+    });
     if (
       secondaryAlias !== undefined &&
       secondaryAlias !== currentModelAlias &&
@@ -686,7 +689,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       const binding = compactionModelBindingFor(this.configService, this.flags, {
         modelAlias: currentModelAlias,
         thinkingLevel: thinkingEffort,
-      });
+      }, { compactionAlias: this.profile.getSessionModelOverride('compaction') });
       const dedicatedModelAlias = binding.model;
       let activeSqueezeAlias = dedicatedModelAlias;
       let hasDedicatedModel = dedicatedModelAlias !== currentModelAlias;
@@ -700,6 +703,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
           const secondaryAlias = resolveCompactionSecondaryModel(
             this.configService,
             this.flags,
+            { compactionSecondaryAlias: this.profile.getSessionModelOverride('compactionSecondary') },
           );
           let cascaded = false;
           if (
@@ -742,6 +746,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         const secondaryAlias = resolveCompactionSecondaryModel(
           this.configService,
           this.flags,
+          { compactionSecondaryAlias: this.profile.getSessionModelOverride('compactionSecondary') },
         );
         if (secondaryAlias !== undefined && secondaryAlias !== currentModelAlias) {
           try {
@@ -851,6 +856,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             const secondaryAlias = resolveCompactionSecondaryModel(
               this.configService,
               this.flags,
+              { compactionSecondaryAlias: this.profile.getSessionModelOverride('compactionSecondary') },
             );
             if (
               !usingSecondaryModel &&
