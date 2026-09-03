@@ -306,6 +306,7 @@ export async function setDefaultModel(
     effort,
     model === undefined ? undefined : effectiveModelForHost(host, model),
   );
+  const hadSession = host.session !== undefined;
   await host.harness.setConfig({
     defaultModel: alias,
     thinking,
@@ -317,7 +318,13 @@ export async function setDefaultModel(
   if (thinking.effort === undefined && effort !== 'off' && effort !== 'on') {
     await host.authFlow.activateModelAfterLogin(alias, effort);
   }
-  host.track('model_switch', { model: alias });
+  // With a live session the engine already tracks model_switch from setModel
+  // (via activateModelAfterLogin); without one the engine never sees the pick
+  // (v2 defers creation to the first prompt, v1 binds the model on creation
+  // without an event), so the TUI stays the sole producer for that path.
+  if (!hadSession) {
+    host.track('model_switch', { model: alias });
+  }
   host.showStatus(`Default model set to ${alias} with thinking ${effort}.`);
 }
 

@@ -543,12 +543,20 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * section gates engine events the same way the v2 print runner gates them;
    * the host keeps owning the client's lifecycle (flush / shutdown stay with
    * the host, matching the v1 core's arrangement).
+   *
+   * The engine's own `session_started` is dropped here: `KimiHarness` emits
+   * that event for every session it opens (create / resume / reload / fork)
+   * with the richer client-attribution schema, so forwarding the engine's
+   * `{resumed, experimental_flags}` copy double-counted every open. Hosts
+   * without a harness (run-v2-print, kap-server) wire their own appenders and
+   * still get the engine's row.
    */
   private installEngineTelemetry(client: TelemetryClient | undefined): void {
     if (client === undefined) return;
     const telemetry = this.app.accessor.get(ITelemetryService);
     telemetry.addAppender({
       track: (record) => {
+        if (record.event === 'session_started') return;
         client.track(record.event, record.properties);
       },
     });

@@ -13,7 +13,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { SlashCommandHost } from '#/tui/commands';
 import { setDefaultModel } from '#/tui/commands/provider';
 
-function makeHost() {
+function makeHost(options: { withSession?: boolean } = {}) {
   const appState = {
     availableModels: {
       // Declares no efforts; the Anthropic profile inference supplies
@@ -30,6 +30,7 @@ function makeHost() {
   };
   const host = {
     state: { appState },
+    session: options.withSession === true ? ({} as SlashCommandHost['session']) : undefined,
     harness: {
       setConfig: vi.fn(async () => ({})),
     },
@@ -45,6 +46,7 @@ function makeHost() {
       refreshConfigAfterLogin: ReturnType<typeof vi.fn>;
       activateModelAfterLogin: ReturnType<typeof vi.fn>;
     };
+    track: ReturnType<typeof vi.fn>;
   };
   return { host };
 }
@@ -65,6 +67,9 @@ describe('setDefaultModel', () => {
     expect(
       host.authFlow.activateModelAfterLogin.mock.invocationCallOrder[0]!,
     ).toBeGreaterThan(host.authFlow.refreshConfigAfterLogin.mock.invocationCallOrder[0]!);
+    // Without a session the engine never sees the pick, so the TUI stays the
+    // sole model_switch producer.
+    expect(host.track).toHaveBeenCalledWith('model_switch', { model: 'opus' });
   });
 
   it('does not re-apply the effort when the pick persists', async () => {
@@ -89,5 +94,15 @@ describe('setDefaultModel', () => {
       thinking: { enabled: true },
     });
     expect(host.authFlow.activateModelAfterLogin).not.toHaveBeenCalled();
+  });
+
+  it('leaves model_switch to the engine when a session is live', async () => {
+    const { host } = makeHost({ withSession: true });
+
+    await setDefaultModel(host, 'opus', 'high');
+
+    // activateModelAfterLogin routes through session.setModel, which the
+    // engine already tracks — a TUI-side event would double-count the switch.
+    expect(host.track).not.toHaveBeenCalled();
   });
 });
