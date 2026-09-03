@@ -92,7 +92,6 @@ describe('file history routes', () => {
     expect(changes.statusCode).toBe(200);
     expect((changes.json() as Envelope<{ changes: unknown[] }>).data).toEqual({
       changes: [],
-      enabled: false,
       recorded: false,
     });
 

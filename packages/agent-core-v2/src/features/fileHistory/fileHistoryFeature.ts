@@ -1,7 +1,6 @@
 import { Feature } from '#/features/feature';
 import { registerFeature } from '#/features/featureRegistry';
 
-import './flag';
 import { IAgentFileHistoryService } from './fileHistory';
 import { AgentFileHistoryService } from './fileHistoryService';
 

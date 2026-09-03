@@ -330,7 +330,6 @@ import '#/features/plan/planFeature';
 export * from '#/features/fileHistory/fileHistory';
 export * from '#/features/fileHistory/fileHistoryOps';
 export * from '#/features/fileHistory/fileHistoryService';
-export * from '#/features/fileHistory/flag';
 import '#/features/fileHistory/fileHistoryFeature';
 export * from '#/features/externalHooks/configSection';
 export * from '#/features/externalHooks/app/externalHooksRunner';
