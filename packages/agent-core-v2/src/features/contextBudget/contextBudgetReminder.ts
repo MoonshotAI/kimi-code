@@ -11,14 +11,13 @@ export const COMPACTION_AHEAD_REMINDER_VARIANT = 'compaction_ahead';
 
 export const COMPACTION_AHEAD_LEAD_RATIO = 0.1;
 
-export type ContextBudgetBucket = 'half' | 'three_quarters' | 'ninety';
+export type ContextBudgetBucket = 'half' | 'three_quarters';
 
 export interface ContextBudgetDisclosure {
   readonly bucket: ContextBudgetBucket;
 }
 
 const BUCKET_THRESHOLDS: readonly (readonly [ContextBudgetBucket, number])[] = [
-  ['ninety', 0.9],
   ['three_quarters', 0.75],
   ['half', 0.5],
 ];

@@ -223,7 +223,7 @@ export interface CompactionFinishedEvent {
 }
 
 export interface ContextBudgetReminderEvent {
-  bucket: 'half' | 'three_quarters' | 'ninety';
+  bucket: 'half' | 'three_quarters';
   used_tokens: number;
   trigger_tokens: number;
   max_tokens: number;
@@ -814,7 +814,7 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'The model is told how much of its context budget is used, once per bucket.',
     properties: {
-      bucket: 'Share of the compaction trigger reached: half, three_quarters, or ninety',
+      bucket: 'Share of the compaction trigger reached: half or three_quarters',
       used_tokens: 'Context tokens in use when the reminder was injected',
       trigger_tokens: 'Token count at which automatic compaction triggers',
       max_tokens: 'Effective context window size in tokens',

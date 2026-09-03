@@ -549,7 +549,7 @@ export class ReadTool implements IReadTool {
     }
     if (input.eventLog) {
       parts.push(
-        `Kimi Code agent event log: records are returned whole up to ${String(EVENT_LOG_MAX_LINE_LENGTH)} characters per line; read one record at a time (n_lines=1). For a longer record, extract fields with Bash: sed -n 'Np' <file> | jq. See the wire.jsonl primer in your latest compaction note.`,
+        `Kimi Code agent event log: records are returned whole up to ${String(EVENT_LOG_MAX_LINE_LENGTH)} characters per line; read one record at a time (n_lines=1). For a longer record, extract fields with Bash: sed -n 'Np' <file> | jq. A primer on this format appears in your compaction note once a compaction has run.`,
       );
     }
     if (input.lineEndingStyle === 'mixed') {

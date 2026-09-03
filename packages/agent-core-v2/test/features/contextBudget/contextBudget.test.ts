@@ -58,8 +58,9 @@ describe('context budget reminder rules', () => {
     expect(contextBudgetBucket(budget(42_500))).toBe('half');
     expect(contextBudgetBucket(budget(63_749))).toBe('half');
     expect(contextBudgetBucket(budget(63_750))).toBe('three_quarters');
-    expect(contextBudgetBucket(budget(76_500))).toBe('ninety');
-    expect(contextBudgetBucket(budget(90_000))).toBe('ninety');
+    expect(contextBudgetBucket(budget(76_500))).toBe('three_quarters');
+    expect(contextBudgetBucket(budget(84_999))).toBe('three_quarters');
+    expect(contextBudgetBucket(budget(90_000))).toBe('three_quarters');
   });
 
   it('never buckets when compaction can never trigger', () => {
