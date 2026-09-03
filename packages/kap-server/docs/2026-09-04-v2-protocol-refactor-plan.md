@@ -195,3 +195,14 @@ wire.jsonl 冷重建 → 按时间排序的实体消息载荷列表（与 WS 同
 - **终端**：`terminal_*` 帧已死；未来若做终端，按开放问题单独设计（不复用旧帧）。
 - **大会话冷重建成本**：wire.jsonl 全量重放的 REST 成本需要 P2 实测；超预算时引入分页投影缓存（内部实现，不进协议）。
 - **多 tab 并存**：同会话多连接各自收到同一份恢复载荷（§9 无差异），P3 测试覆盖。
+
+## 9. P1 落地备忘（实现口径，后续阶段不得漂移）
+
+- **事件源二分**：observable 事件经 Agent 级 `IEventBus` 直达投影层；durable-only 域不走总线——审批走 observable 的 `permission.approval.requested/resolved`（与工具事件同通道、时序确定），question 走 sessionInteractions 枢纽（投影器暴露 `applyInteractionPending/Resolved` 直接方法），todo 走 `tools.update_store`（live 绑定时可用 `IAgentTodoService.onDidChange` 等价驱动），interaction.request/resolved、plan_mode.*、goal.*、context.* 等 durable 记录是 P2 冷重建的来源。
+- **steer 标记**：引擎 `prompt.submitted` 新增可选 `steer: true`（submitSteer 路径，agent-core-v2 `promptService`）。投影层对 steer 提交保持悬挂（不发排队帧），`prompt.steered` 到达时直接把 user 落进当前 turn（`{turn}.u{N}` + `steered_at`）；排队提交照旧立即上时间线（预测 turn id `t{maxTurn+queueLen+1}`）。
+- **id 分配**：turn `t{N}`（引擎 turnId+1）、step `{turn}.{step}`、文本 `{step}.a{N}`/`.h{N}`（每 step 各起）、user `{turn}.u{N}`（每 turn 起）、system/todo 投影器分配 `m_{NN}`/`td_{NN}`（类型前缀+两位序号，会话内单调，REST 冷重建按同规则重放保证一致）；tool_call/interaction/task 用引擎 id 透传。`approval_id` 在 interaction pending 后回链 tool_call 重发帧（同时间戳），并保留到终态帧。
+- **usage 口径**：turn 完成帧 `input_tokens = Σ step.input_other`、`output_tokens = Σ step.output`，不发 `cached_tokens`；step 帧 usage 四字段（input_other/output/input_cache_read/input_cache_creation）；session.state.usage 读最新快照不求和。
+- **流式文本**：占位帧（`status: streaming, text: ''`）与首个 delta 同帧时间；终态全量帧与下一事件同帧时间；空 delta 只开占位不发 delta 帧（`announced` 标记）；retry 重置在流文本但 message_id 不变（textSeq 不回退）；kind 切换/工具事件/step 收官都会关闭在流文本。
+- **时间戳纪律**：同一引擎事件产出的全部消息共享事件时间；`started_at` = 实体首帧时间、`ended_at`/`finished_at` = 终态帧时间；实例 fixture 已按此归一化（code-app `scripts/mock-ws-server/normalize-examples.mjs`，含 phase.since 真实 epoch 修正），HTML 为唯一来源、examples.json 为抽取产物、kap-server test/fixtures/v2-examples.json 为 vendor 副本。
+- **tool.result**：error 与 output 互斥（error 帧不带 output）；done 帧清掉残留的 progress。
+- **已知引擎落差**：`turn.step.interrupted` 引擎 payload 无 usage，fixture 有——投影层有就映射，待引擎补齐确认。
