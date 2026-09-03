@@ -2817,14 +2817,10 @@ describe('AnthropicChatProvider', () => {
     });
 
     it('coerces a missing text field to an empty string for relays that omit it', async () => {
-      const provider = createStreamProvider();
-      const stream = mockStream([
+      const parts = await collectAnthropicStreamParts([
         {
           type: 'message_start',
-          message: {
-            id: 'msg_stream_002',
-            usage: { input_tokens: 10 },
-          },
+          message: { id: 'msg_stream_002', usage: { input_tokens: 10 } },
         },
         { type: 'content_block_start', index: 0, content_block: { type: 'text' } },
         { type: 'content_block_delta', index: 0, delta: { type: 'text_delta' } },
@@ -2832,16 +2828,6 @@ describe('AnthropicChatProvider', () => {
         { type: 'message_delta', delta: {}, usage: { output_tokens: 5 } },
         { type: 'message_stop' },
       ]);
-
-      (provider as any)._client.messages.create = vi.fn().mockResolvedValue(stream) as never;
-
-      const result = await provider.generate(
-        '',
-        [],
-        [{ role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] }],
-      );
-
-      const parts = await collectParts(result);
 
       expect(parts).toEqual([
         { type: 'text', text: '' },
