@@ -26,6 +26,9 @@ import { IFlagService } from '#/app/flag/flag';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { ILogService } from '#/_base/log/log';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionStateService } from '#/session/state/sessionState';
+import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { defineState } from '#/state/state';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { createHooks } from '#/hooks';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -42,7 +45,9 @@ import {
 } from './subagent';
 import { runAgentTurn } from './runAgentTurn';
 import {
+  PRIMARY_SUBAGENT_MODEL_CHOICE,
   resolveSubagentBinding,
+  resolveSubagentModelPool,
   resolveSubagentThinking,
   wrapSubagentModelError,
 } from './configSection';
@@ -55,6 +60,13 @@ import {
   type SubagentSpawnPlanInput,
 } from './spawn';
 
+export const sessionSecondaryModelKey = defineState<string | undefined>(
+  'sessionSubagent.secondaryModel',
+  () => undefined,
+);
+
+const SECONDARY_MODEL_DOC_KEY = 'secondary-model.json';
+
 export class SessionSubagentService extends Service implements ISessionSubagentService {
   declare readonly _serviceBrand: undefined;
 
@@ -62,9 +74,23 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
   private readonly onDidStopAgentTaskEmitter = this._register(
     new Emitter<AgentTaskStopHookContext>(),
   );
+  readonly ready: Promise<void>;
+
+  private secondaryModelSeeded = false;
+  private secondaryModelSeed: string | undefined;
 
   get onDidStopAgentTask() {
     return this.onDidStopAgentTaskEmitter.event;
+  }
+
+  get secondaryModel(): string | undefined {
+    const persisted = this.states.get(sessionSecondaryModelKey);
+    if (persisted !== undefined) return persisted;
+    if (!this.secondaryModelSeeded) {
+      this.secondaryModelSeeded = true;
+      this.secondaryModelSeed = resolveSubagentModelPool(this.configService)?.defaultModel;
+    }
+    return this.secondaryModelSeed;
   }
 
   constructor(
@@ -75,8 +101,53 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ILogService private readonly log: ILogService,
+    @ISessionStateService private readonly states: ISessionStateService,
+    @IAtomicDocumentStore private readonly documentStore: IAtomicDocumentStore,
   ) {
     super();
+    this.states.contributeState(sessionSecondaryModelKey);
+    this.ready = this.loadSecondaryModel();
+  }
+
+  async getSecondaryModel(): Promise<string | undefined> {
+    await this.ready;
+    return this.secondaryModel;
+  }
+
+  async setSecondaryModel(model: string): Promise<void> {
+    await this.ready;
+    if (model === PRIMARY_SUBAGENT_MODEL_CHOICE) {
+      throw new Error2(
+        ErrorCodes.CONFIG_INVALID,
+        `Subagent model "${PRIMARY_SUBAGENT_MODEL_CHOICE}" is reserved: it always binds the caller's own model and cannot be the session default.`,
+        { details: { model } },
+      );
+    }
+    try {
+      this.modelCatalog.get(model);
+    } catch (error) {
+      throw wrapSubagentModelError(error, model, undefined);
+    }
+    this.states.set(sessionSecondaryModelKey, model);
+    await this.documentStore.set(this.sessionContext.metaScope, SECONDARY_MODEL_DOC_KEY, {
+      model,
+    });
+  }
+
+  private async loadSecondaryModel(): Promise<void> {
+    try {
+      const doc = await this.documentStore.get<{ model?: unknown }>(
+        this.sessionContext.metaScope,
+        SECONDARY_MODEL_DOC_KEY,
+      );
+      if (typeof doc?.model === 'string' && doc.model.length > 0) {
+        this.states.set(sessionSecondaryModelKey, doc.model);
+      }
+    } catch (error) {
+      this.log.warn('failed to load the session secondary model', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   run(agent: AgentContext, request: AgentRunRequest, opts: RunAgentOptions): Promise<AgentRunHandle> {
@@ -93,6 +164,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     const caller = this.requireCaller(input.callerAgentId);
     const fork = input.fork === true;
     await this.catalog.ready;
+    await this.ready;
     const own = caller.accessor.get(IAgentProfileService).data();
     const requested = input.profileName !== undefined && input.profileName.length > 0
       ? input.profileName
@@ -132,6 +204,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
           this.flags,
           { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
           input.model,
+          this.secondaryModel,
         );
     let model: Model;
     try {

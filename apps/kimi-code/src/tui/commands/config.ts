@@ -297,8 +297,11 @@ export async function handleSecondaryModelCommand(host: SlashCommandHost, args: 
   }
   const secondary = (await host.harness.getConfig()).secondaryModel;
   // The v2 engine honors a lone legacy `model` key as the fallback pool
-  // default — reflect it as the picker's current value.
-  const current = secondary?.defaultModel ?? secondary?.model ?? '';
+  // default — reflect it as the picker's current value. A session-scoped
+  // selection (Alt+S) outranks the persisted default.
+  const sessionValue =
+    host.session === undefined ? undefined : await host.session.getSecondaryModel();
+  const current = sessionValue ?? secondary?.defaultModel ?? secondary?.model ?? '';
   showSecondaryModelPicker(host, models, current, alias.length > 0 ? alias : undefined);
 }
 
@@ -643,8 +646,14 @@ function showSecondaryModelPicker(
       title: ' Select a secondary model (subagents)',
       onSelect: ({ alias }) => {
         host.restoreEditor();
-        void performSecondaryModelSave(host, alias);
+        void performSecondaryModelSave(host, alias, true);
       },
+      onSessionOnlySelect: host.engineV2
+        ? ({ alias }) => {
+            host.restoreEditor();
+            void performSecondaryModelSave(host, alias, false);
+          }
+        : undefined,
       onCancel: () => {
         host.restoreEditor();
       },
@@ -653,32 +662,56 @@ function showSecondaryModelPicker(
 }
 
 /**
- * Persists `[secondary_model] default_model`. When a
- * `[secondary_model.models]` pool exists and does not list the alias yet, the
- * alias is added with an empty description — the engine requires the default
- * to be a pool key. Without a pool the default alone forms an implicit
- * single-entry pool, so nothing else is written. No live-apply step: the
- * engine resolves the pool per spawn, so the next subagent dispatch picks the
- * new value up on its own.
+ * Saves the secondary-model selection. The runtime channel always comes first
+ * on v2 (`session.setSecondaryModel` — the session's own binding, durable
+ * across resume, invisible to other windows); `persist` additionally writes
+ * `[secondary_model] default_model` so future sessions inherit it, adding the
+ * alias to an existing `[secondary_model.models]` pool when it is not listed
+ * yet (the engine requires the default to be a pool key). On v1 there is no
+ * runtime channel, so every selection is persist-only.
  */
-async function performSecondaryModelSave(host: SlashCommandHost, alias: string): Promise<void> {
+async function performSecondaryModelSave(
+  host: SlashCommandHost,
+  alias: string,
+  persist: boolean,
+): Promise<void> {
   const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
+  let session = host.session;
+  if (session === undefined && host.engineV2) {
+    // Same lazy-creation race as performModelSwitch: wait so the override
+    // lands on the new session instead of being dropped.
+    await host.waitForLazyCreation();
+    session = host.session;
+  }
+  if (!persist && session === undefined) {
+    host.showError(
+      'No active session — send a message first, or press Enter to save as the default.',
+    );
+    return;
+  }
   try {
-    const config = await host.harness.getConfig({ reload: true });
-    const existing = config.secondaryModel?.models;
-    const patch: { defaultModel: string; models?: Record<string, string> } = {
-      defaultModel: alias,
-    };
-    if (existing !== undefined) {
-      patch.models = { ...existing, [alias]: existing[alias] ?? '' };
+    if (session !== undefined && host.engineV2) {
+      await session.setSecondaryModel(alias);
     }
-    await host.harness.setConfig({ secondaryModel: patch });
+    if (persist) {
+      const config = await host.harness.getConfig({ reload: true });
+      const existing = config.secondaryModel?.models;
+      const patch: { defaultModel: string; models?: Record<string, string> } = {
+        defaultModel: alias,
+      };
+      if (existing !== undefined) {
+        patch.models = { ...existing, [alias]: existing[alias] ?? '' };
+      }
+      await host.harness.setConfig({ secondaryModel: patch });
+    }
   } catch (error) {
     host.showError(`Failed to save secondary model: ${formatErrorMessage(error)}`);
     return;
   }
   host.showStatus(
-    `Secondary model set to ${displayName}. Newly spawned subagents will use it by default.`,
+    persist
+      ? `Secondary model set to ${displayName}. Newly spawned subagents will use it by default.`
+      : `Secondary model set to ${displayName} for this session only. Newly spawned subagents will use it by default.`,
     'success',
   );
 }

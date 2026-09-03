@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
+import { ServiceCollection } from '#/_base/di/serviceCollection';
 import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { LifecycleScope } from '#/app/scopes';
@@ -26,6 +27,12 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionStateService } from '#/session/state/sessionState';
+import { SessionStateService } from '#/session/state/sessionStateService';
+import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
+import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { SECONDARY_MODEL_SECTION } from '#/session/subagent/configSection';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
@@ -212,8 +219,15 @@ describe('SessionSubagentService planSpawn and spawn', () => {
         return { id: alias, ...modelMeta.get(alias) } as Model;
       },
     } as unknown as IModelCatalog);
-    ix.stub(ISessionContext, { _serviceBrand: undefined, cwd: '/repo' } as unknown as ISessionContext);
+    ix.stub(ISessionContext, {
+      _serviceBrand: undefined,
+      cwd: '/repo',
+      metaScope: 'sessions/wd_test/s1/session-meta',
+    } as unknown as ISessionContext);
     ix.stub(ILogService, stubLog());
+    ix.set(ISessionStateService, new SyncDescriptor(SessionStateService));
+    ix.set(IFileSystemStorageService, new SyncDescriptor(InMemoryStorageService));
+    ix.set(IAtomicDocumentStore, new SyncDescriptor(JsonAtomicDocumentStore));
   });
 
   afterEach(() => {
@@ -222,6 +236,12 @@ describe('SessionSubagentService planSpawn and spawn', () => {
 
   function service(configValues: Record<string, unknown> = {}): ISessionSubagentService {
     ix.stub(IConfigService, new StubConfigService(configValues));
+    ix.set(ISessionSubagentService, new SyncDescriptor(SessionSubagentService));
+    return ix.get(ISessionSubagentService);
+  }
+
+  function serviceWithConfig(config: StubConfigService): ISessionSubagentService {
+    ix.stub(IConfigService, config);
     ix.set(ISessionSubagentService, new SyncDescriptor(SessionSubagentService));
     return ix.get(ISessionSubagentService);
   }
@@ -463,6 +483,116 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       thinking: 'high',
       fork: false,
     });
+  });
+
+  it('keeps the seed default captured at first use when the global default changes mid-session', async () => {
+    modelIds.add('provider/fast').add('provider/smart');
+    const config = new StubConfigService({
+      [SECONDARY_MODEL_SECTION]: {
+        defaultModel: 'provider/fast',
+        models: { 'provider/fast': 'fast', 'provider/smart': 'smart' },
+      },
+    });
+    const svc = serviceWithConfig(config);
+
+    const first = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'coder' });
+    expect(first.model).toBe('provider/fast');
+
+    await config.replace(SECONDARY_MODEL_SECTION, {
+      defaultModel: 'provider/smart',
+      models: { 'provider/fast': 'fast', 'provider/smart': 'smart' },
+    });
+
+    const second = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'coder' });
+    expect(second.model).toBe('provider/fast');
+  });
+
+  it('binds the session-scoped secondary model ahead of the pool default', async () => {
+    modelIds.add('provider/fast').add('provider/smart');
+    const svc = service({
+      [SECONDARY_MODEL_SECTION]: {
+        defaultModel: 'provider/fast',
+        models: { 'provider/fast': 'fast', 'provider/smart': 'smart' },
+      },
+    });
+
+    await svc.setSecondaryModel('provider/smart');
+
+    const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'coder' });
+    expect(plan.model).toBe('provider/smart');
+    expect(plan.modelSource).toBe('secondary_pool');
+    expect(await svc.getSecondaryModel()).toBe('provider/smart');
+  });
+
+  it('lets explicit spawn choices and [secondary_model].force win over the session-scoped default', async () => {
+    modelIds.add('provider/fast').add('provider/smart');
+    const svc = service({
+      [SECONDARY_MODEL_SECTION]: {
+        defaultModel: 'provider/fast',
+        models: { 'provider/fast': 'fast', 'provider/smart': 'smart' },
+      },
+    });
+    await svc.setSecondaryModel('provider/smart');
+
+    const explicit = await svc.planSpawn({
+      callerAgentId: CALLER_ID,
+      profileName: 'coder',
+      model: 'provider/fast',
+    });
+    expect(explicit.model).toBe('provider/fast');
+
+    const child = ix.createChild(
+      new ServiceCollection([ISessionStateService, new SessionStateService()]),
+    );
+    child.stub(
+      IConfigService,
+      new StubConfigService({
+        [SECONDARY_MODEL_SECTION]: { force: true, defaultModel: 'provider/fast' },
+      }),
+    );
+    const forced = child.createInstance(SessionSubagentService);
+    await forced.setSecondaryModel('provider/smart');
+
+    const plan = await forced.planSpawn({ callerAgentId: CALLER_ID, profileName: 'coder' });
+    expect(plan.model).toBe('provider/fast');
+    expect(plan.modelSource).toBe('forced');
+  });
+
+  it('binds the session-scoped secondary model as an implicit pool when none is configured', async () => {
+    modelIds.add('provider/fast');
+    const svc = service();
+
+    await svc.setSecondaryModel('provider/fast');
+
+    const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'coder' });
+    expect(plan).toEqual({
+      profileName: 'coder',
+      model: 'provider/fast',
+      modelSource: 'secondary_pool',
+      thinking: undefined,
+      fork: false,
+    });
+  });
+
+  it('rejects session-scoped secondary models that are unresolvable or reserved', async () => {
+    const svc = service();
+
+    await expect(svc.setSecondaryModel('provider/typo')).rejects.toThrow(/provider\/typo/);
+    await expect(svc.setSecondaryModel('primary')).rejects.toThrow(/reserved/);
+    await expect(svc.getSecondaryModel()).resolves.toBeUndefined();
+  });
+
+  it('restores the session-scoped secondary model from the persisted document', async () => {
+    modelIds.add('provider/fast');
+    const svc = service();
+    await svc.setSecondaryModel('provider/fast');
+
+    const restored = ix
+      .createChild(new ServiceCollection([ISessionStateService, new SessionStateService()]))
+      .createInstance(SessionSubagentService);
+    await restored.ready;
+
+    expect(await restored.getSecondaryModel()).toBe('provider/fast');
   });
 
   it('skips the allowlist check when forking', async () => {

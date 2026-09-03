@@ -1284,6 +1284,9 @@ function subagentStub(
     _serviceBrand: undefined,
     hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
     onDidStopAgentTask: Event.None,
+    secondaryModel: undefined,
+    getSecondaryModel: vi.fn(async () => undefined),
+    setSecondaryModel: vi.fn(async () => {}),
     run: vi.fn(async (agent: AgentContext) => ({
       agentId: agent.agentId,
       turn: {} as never,

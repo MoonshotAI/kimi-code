@@ -224,7 +224,9 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 
 池别名引用的是 `[models]` 表的当前内容：如果之后删除供应商、登出账号，或其刷新后的模型列表不再包含某个别名，会话启动时会报出指明失效别名的配置错误，修正或移除对应条目即可恢复。系统不会自动改写 `[secondary_model]` 节。
 
-在交互式 TUI 中，也可以用 [`/secondary-model`](../reference/slash-commands.md) 命令（别名 `/subagent-model`）打开模型选择器：选择后写入 `default_model`（已有 models 表而所选别名不在其中时，会一并补一条空描述条目），之后派生的 subagent 立即按新默认值绑定，无需重启会话。
+在交互式 TUI 中，也可以用 [`/secondary-model`](../reference/slash-commands.md) 命令（别名 `/subagent-model`）打开模型选择器。按 `Enter` 会把所选模型保存为默认值：写入 `default_model`（已有 models 表而所选别名不在其中时，会一并补一条空描述条目），并同时应用到当前会话，之后派生的 subagent 立即按新默认值绑定。按 `Alt-S` 则只应用到当前会话——保存的默认值和其他窗口都不受影响。
+
+保存的 `default_model` 只是会话启动时的初始值：修改它不会改变正在运行的窗口，只对新建的会话生效。
 
 配置了模型池（显式的 `models` 表或隐式的单条目池）即启用模型选择：`Agent` / `AgentSwarm` 工具会获得 `model` 参数，工具描述中列出模型池（默认模型标注 `[default]`），main agent 可按次派生选择模型。池 key 只能引用已配置的 [`[models]`](#models) 条目——下面的 `kimi-code/*` 别名由 `/login` 自动提供：
 
@@ -240,7 +242,8 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 派生时按以下顺序解析 subagent 的模型：
 
 1. 工具调用显式传入的 `model`
-2. `default_model`
+2. 会话级选择（在 `/secondary-model` 中按 `Alt-S` 设置），如果存在
+3. `default_model`
 
 `model` 参数的取值规则：
 

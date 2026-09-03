@@ -394,6 +394,9 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
       return contextFor(agentId);
     }),
     notifyAgentTaskStopped: vi.fn(),
+    secondaryModel: undefined,
+    getSecondaryModel: vi.fn(async () => undefined),
+    setSecondaryModel: vi.fn(async () => {}),
     planSpawn: vi.fn(async () => {
       throw new Error('unexpected planSpawn');
     }),

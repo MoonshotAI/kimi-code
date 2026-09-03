@@ -177,7 +177,10 @@ describe('TowerSpawnTool', () => {
       },
       create: createAgent,
     } as unknown as IAgentLifecycleService);
-    ix.stub(ISessionSubagentService, { run: runAgent } as unknown as ISessionSubagentService);
+    ix.stub(ISessionSubagentService, {
+      run: runAgent,
+      getSecondaryModel: async () => undefined,
+    } as unknown as ISessionSubagentService);
     ix.stub(IAgentTaskService, { registerTask, getTask: (taskId: string) => taskInfoLookup(taskId) } as unknown as IAgentTaskService);
     ix.stub(IAgentProfileService, {
       data: () => ({ profileName: 'agent', modelAlias: 'kimi-code', thinkingLevel: 'off' }),

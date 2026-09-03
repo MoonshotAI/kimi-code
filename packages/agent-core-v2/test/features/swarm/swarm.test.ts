@@ -40,6 +40,8 @@ import {
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { SessionStateService } from '#/session/state/sessionStateService';
+import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {
@@ -271,6 +273,8 @@ function realSubagents(
     modelCatalog,
     sessionContext,
     stubLog(),
+    new SessionStateService(),
+    new JsonAtomicDocumentStore(new InMemoryStorageService()),
   );
 }
 

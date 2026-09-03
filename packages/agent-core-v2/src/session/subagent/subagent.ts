@@ -55,11 +55,17 @@ export interface ISessionSubagentService {
 
   readonly onDidStopAgentTask: Event<AgentTaskStopHookContext>;
 
+  readonly secondaryModel: string | undefined;
+
   run(agent: AgentContext, request: AgentRunRequest, opts: RunAgentOptions): Promise<AgentRunHandle>;
 
   planSpawn(input: SubagentSpawnPlanInput): Promise<SubagentSpawnPlan>;
 
   spawn(opts: SpawnSubagentOptions): Promise<SpawnedSubagent>;
+
+  getSecondaryModel(): Promise<string | undefined>;
+
+  setSecondaryModel(model: string): Promise<void>;
 
   notifyAgentTaskStopped(context: AgentTaskStopHookContext): void;
 }

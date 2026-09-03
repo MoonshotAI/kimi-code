@@ -168,6 +168,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
       try {
         const controller = new AbortController();
         const own = this.profile.data();
+        const sessionDefault = await this.subagents.getSecondaryModel();
         const binding =
           own.modelAlias === undefined
             ? undefined
@@ -178,6 +179,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
                 args.kind === 'reviewer' && !isSubagentModelForced(this.config)
                   ? 'primary'
                   : undefined,
+                sessionDefault,
               );
         let handle: SubagentHandle;
         try {
