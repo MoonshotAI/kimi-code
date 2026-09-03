@@ -261,10 +261,10 @@ const CASE_ENABLING_WORDS: ReadonlySet<string> = new Set(['if', 'then', 'elif', 
  * body must not affect the paren count. `((` opens an arithmetic region,
  * skipped as one balanced unit so a left-shift `<<` is not mistaken for a
  * heredoc operator. Comments (`#` at the start of a word, judged by the
- * preceding character) are skipped to end of line, and `${ ... }` /
- * `$[ ... ]` expansions are skipped as balanced units, so a `<<` inside
- * any of these non-redirection contexts is likewise not mistaken for a
- * heredoc operator.
+ * preceding character) are skipped to end of line, `${ ... }` / `$[ ... ]`
+ * expansions and word-glued `[ ... ]` subscripts are skipped as balanced
+ * units, so a `<<` inside any of these non-redirection contexts is
+ * likewise not mistaken for a heredoc operator.
  */
 export function scanBalancedStatements(
   source: string,
@@ -341,6 +341,11 @@ export function scanBalancedStatements(
     if (ch === '$' && (source[j + 1] === '{' || source[j + 1] === '[')) {
       const open = source[j + 1]!;
       j = scanBalanced(source, budget, j + 1, end, open, open === '{' ? '}' : ']', depth + 1).end;
+      previous = 'word';
+      continue;
+    }
+    if (ch === '[' && j > i && isWordChar(source[j - 1])) {
+      j = scanBalanced(source, budget, j, end, '[', ']', depth + 1).end;
       previous = 'word';
       continue;
     }
