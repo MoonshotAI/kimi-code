@@ -39,6 +39,13 @@ export interface SkillRoot {
   readonly path: string;
   readonly source: SkillSource;
   readonly plugin?: SkillPluginContext;
+  /**
+   * How discovery scans this root. Defaults to 'directory' (full directory
+   * scan). 'root-skill-only' treats the root as a single skill bundle and only
+   * parses `<root>/SKILL.md` — used for the plugin manifest fallback so sibling
+   * docs like CHANGELOG.md are not mistaken for flat skills.
+   */
+  readonly scanMode?: 'directory' | 'root-skill-only';
 }
 
 export interface SkillPluginContext {

@@ -62,7 +62,6 @@
       # pnpmConfigHook (dependencies for that workspace won't be fetched).
       # -------------------------------------------------------------------
       workspacePaths = [
-        ./packages/acp-adapter
         ./packages/acp-server
         ./packages/agent-core
         ./packages/agent-core-v2
@@ -82,7 +81,6 @@
         ./apps/kimi-code
         ./apps/vscode
         ./apps/kimi-inspect
-        ./apps/kimi-web
         ./apps/vis
         ./apps/vis/server
         ./apps/vis/web
@@ -90,7 +88,6 @@
       ];
 
       workspaceNames = [
-        "@moonshot-ai/acp-adapter"
         "@moonshot-ai/acp-server"
         "@moonshot-ai/agent-core"
         "@moonshot-ai/agent-core-v2"
@@ -110,7 +107,6 @@
         "@moonshot-ai/kimi-code"
         "kimi-code"
         "@moonshot-ai/kimi-inspect"
-        "@moonshot-ai/kimi-web"
         "@moonshot-ai/vis"
         "@moonshot-ai/vis-server"
         "@moonshot-ai/vis-web"
@@ -164,7 +160,7 @@
               inherit (finalAttrs) pname version src pnpmWorkspaces;
               inherit pnpm;
               fetcherVersion = 3;
-              hash = "sha256-dRVe0stYIorD8H/SyAIAJof6JinpT/3E/I0lyllbFWg=";
+              hash = "sha256-Fi5tYo53mOO6HV2melJ2OP2xtmOTP9mEnyOA6L70IY8=";
             };
 
             nativeBuildInputs = [
@@ -203,10 +199,10 @@
               ''}
               # The SEA blob step (scripts/native/02-sea-blob.mjs) embeds the
               # Kimi web assets from apps/kimi-code/dist-web and fails if that
-              # directory is missing. Build the web app and stage its assets
-              # before producing the native executable.
-              pnpm --filter=@moonshot-ai/kimi-web run build
-              node apps/kimi-code/scripts/copy-web-assets.mjs
+              # directory is missing. The bundle is committed (synced from the
+              # code-app repo) — verify it is in place before producing the
+              # native executable.
+              node apps/kimi-code/scripts/check-web-assets.mjs
               pnpm --filter=@moonshot-ai/kimi-code run build:native:sea
               runHook postBuild
             '';

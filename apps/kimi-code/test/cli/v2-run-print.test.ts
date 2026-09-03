@@ -5,11 +5,13 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  IAgentCronService,
   IAgentGoalService,
   IAgentLifecycleService,
   IAgentPermissionModeService,
   IAgentProfileService,
   IAgentPromptService,
+  IAgentScopeContext,
   IAgentTaskService,
   IAuthSummaryService,
   IBootstrapService,
@@ -17,14 +19,16 @@ import {
   IEventBus,
   IFileSystemStorageService,
   IOAuthToolkit,
-  ISessionCronService,
   ISessionIndex,
-  ISessionLifecycleService,
-  IWorkspaceLifecycleService,
+  ISessionManager,
   ITelemetryService,
+  makeAgentScopeContext,
+  resolveKimiHome,
   type BootstrapInput,
-  type DomainEvent,
+  type Event2,
 } from '@moonshot-ai/agent-core-v2';
+
+import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_USER_AGENT_PRODUCT } from '#/constant/app';
 
 import { runV2Print } from '../../src/cli/v2/run-v2-print';
 
@@ -34,6 +38,11 @@ const mocks = vi.hoisted(() => ({
   createKimiDefaultHeaders: vi.fn(() => ({})),
   resolveKimiHome: vi.fn((homeDir?: string) => homeDir ?? '/tmp/kimi-code-test-home'),
   createKimiDeviceId: vi.fn(() => 'device-1'),
+  initializeTelemetry: vi.fn(),
+  setCrashPhase: vi.fn(),
+  setTelemetryContext: vi.fn(),
+  setTelemetryModel: vi.fn(),
+  shutdownTelemetry: vi.fn(async () => {}),
 }));
 
 vi.mock('@moonshot-ai/agent-core-v2', async (importOriginal) => {
@@ -64,14 +73,22 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
   };
 });
 
-vi.mock('@moonshot-ai/kimi-telemetry', () => ({
-  initializeTelemetry: vi.fn(),
-  setCrashPhase: vi.fn(),
-  shutdownTelemetry: vi.fn(),
-  track: vi.fn(),
-  setTelemetryContext: vi.fn(),
-  withTelemetryContext: vi.fn(() => ({ track: vi.fn() })),
-}));
+vi.mock('@moonshot-ai/kimi-telemetry', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@moonshot-ai/kimi-telemetry')>();
+  return {
+    // Keep the real `shouldEnableTelemetry` so the tests exercise the actual
+    // KIMI_DISABLE_TELEMETRY semantics; only the side-effecting entry points
+    // are stubbed.
+    ...actual,
+    initializeTelemetry: mocks.initializeTelemetry,
+    setCrashPhase: mocks.setCrashPhase,
+    setTelemetryContext: mocks.setTelemetryContext,
+    setTelemetryModel: mocks.setTelemetryModel,
+    shutdownTelemetry: mocks.shutdownTelemetry,
+    track: vi.fn(),
+    withTelemetryContext: vi.fn(() => ({ track: vi.fn() })),
+  };
+});
 
 interface FakeScope {
   readonly id: string;
@@ -124,9 +141,10 @@ function opts(overrides: Record<string, unknown> = {}) {
 function makeFakeHarness() {
   // Native event listeners registered on the main agent's IEventBus; the turn
   // emits a streaming assistant delta before completing.
-  const eventListeners = new Set<(event: DomainEvent) => void>();
+  const eventListeners = new Set<(event: Event2<any>) => void>();
   const profileState: { profileName: string | undefined } = { profileName: undefined };
 
+  const goal = { createGoal: vi.fn(), getGoal: vi.fn() };
   const agentServices = new Map<unknown, unknown>([
     [
       IAgentProfileService,
@@ -142,7 +160,7 @@ function makeFakeHarness() {
     [
       IEventBus,
       {
-        subscribe: vi.fn((handler: (event: DomainEvent) => void) => {
+        subscribe: vi.fn((handler: (event: Event2<any>) => void) => {
           eventListeners.add(handler);
           return { dispose: () => eventListeners.delete(handler) };
         }),
@@ -154,7 +172,7 @@ function makeFakeHarness() {
         enqueue: vi.fn(async () => {
           // Emit a native assistant delta on the main agent bus, then complete.
           for (const listener of [...eventListeners]) {
-            listener({ type: 'assistant.delta', turnId: 1, delta: 'hello world' } as DomainEvent);
+            listener({ type: 'assistant.delta', turnId: 1, delta: 'hello world' } as unknown as Event2<any>);
           }
           return {
             launched: Promise.resolve({
@@ -166,28 +184,26 @@ function makeFakeHarness() {
       },
     ],
     [IAgentTaskService, { list: vi.fn(() => []) }],
-    [IAgentGoalService, { createGoal: vi.fn(), getGoal: vi.fn() }],
+    [IAgentCronService, { getNextFireTime: vi.fn(() => null) }],
+    [IAgentGoalService, goal],
+    [
+      IAgentScopeContext,
+      makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }),
+    ],
   ]);
   const agent = fakeScope('main', agentServices);
 
   const sessionServices = new Map<unknown, unknown>([
     // drain enumerates agents; empty → no background work to wait on.
-    [IAgentLifecycleService, { list: vi.fn(() => []) }],
-    // No scheduled cron tasks → no future fire time to wait on.
-    [ISessionCronService, { getNextFireTime: vi.fn(() => null) }],
-  ]);
-  const session = fakeScope('ses_v2', sessionServices);
-
-  const handlerServices = new Map<unknown, unknown>([
     [
-      ISessionLifecycleService,
+      IAgentLifecycleService,
       {
-        create: vi.fn(async () => session),
-        resume: vi.fn(async () => session),
+        list: vi.fn(() => []),
+        handleOf: vi.fn(() => agent),
       },
     ],
   ]);
-  const workspace = fakeScope('wd_v2', handlerServices);
+  const session = fakeScope('ses_v2', sessionServices);
 
   const appServices = new Map<unknown, unknown>([
     [
@@ -203,10 +219,13 @@ function makeFakeHarness() {
       },
     ],
     [
-      IWorkspaceLifecycleService,
+      ISessionManager,
       {
-        handlerFor: vi.fn(async () => workspace),
-      },
+        create: vi.fn(async () => session),
+        resume: vi.fn(async () => session),
+        get: vi.fn(() => session),
+        list: vi.fn(() => [session]),
+      } as unknown as ISessionManager,
     ],
     [
       ISessionIndex,
@@ -222,6 +241,7 @@ function makeFakeHarness() {
         })),
       },
     ],
+    [ISessionIndex, { get: vi.fn(async () => undefined), listRecent: vi.fn(async () => ({ items: [] })) }],
     [
       IBootstrapService,
       {
@@ -242,7 +262,7 @@ function makeFakeHarness() {
       ITelemetryService,
       (() => {
         const svc = {
-          setAppender: vi.fn(),
+          addAppender: vi.fn(() => ({ dispose: vi.fn() })),
           setContext: vi.fn(),
           track: vi.fn(),
           track2: vi.fn(),
@@ -254,13 +274,16 @@ function makeFakeHarness() {
     ],
   ]);
   const app = fakeScope('app', appServices);
-  return { app, agent, session, agentServices, appServices, handlerServices, profileState };
+  return { app, agent, session, agentServices, appServices, profileState };
 }
 
 describe('runV2Print', () => {
   beforeEach(() => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '1');
     vi.stubEnv('KIMI_MODEL_OUTPUT_FORMAT', '');
+    // Pin the telemetry kill-switch to "unset" so the host environment cannot
+    // flip the default telemetry-on path these tests exercise.
+    vi.stubEnv('KIMI_DISABLE_TELEMETRY', '');
   });
 
   afterEach(() => {
@@ -274,7 +297,7 @@ describe('runV2Print', () => {
     const { app, agent, agentServices } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
 
@@ -299,7 +322,7 @@ describe('runV2Print', () => {
     const { app, agent } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(opts({ skillsDirs: ['/skills'] }) as never, '1.2.3-test', {
       stdout,
@@ -316,7 +339,7 @@ describe('runV2Print', () => {
     const { app, agent } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
 
@@ -327,10 +350,10 @@ describe('runV2Print', () => {
   it('seeds explicit agent files from --agentFile and binds the --agent profile', async () => {
     const stdout = writer();
     const stderr = writer();
-    const { app, agent, appServices, agentServices, handlerServices } = makeFakeHarness();
+    const { app, agent, appServices, agentServices } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(
       opts({ agent: 'reviewer', agentFiles: ['/agents/reviewer.md'] }) as never,
@@ -341,10 +364,8 @@ describe('runV2Print', () => {
     const input = mocks.bootstrap.mock.calls[0]?.[0] as BootstrapInput;
     expect(input.args?.agentFiles).toEqual(['/agents/reviewer.md']);
 
-    const lifecycle = handlerServices.get(ISessionLifecycleService) as {
-      create: ReturnType<typeof vi.fn>;
-    };
-    expect(lifecycle.create).toHaveBeenCalledWith({
+    const sessions = appServices.get(ISessionManager) as { create: ReturnType<typeof vi.fn> };
+    expect(sessions.create).toHaveBeenCalledWith({
       workDir: process.cwd(),
       additionalDirs: undefined,
       mainAgentBinding: { profile: 'reviewer', model: 'k2' },
@@ -362,10 +383,10 @@ describe('runV2Print', () => {
     );
     const stdout = writer();
     const stderr = writer();
-    const { app, agent, appServices, agentServices, handlerServices } = makeFakeHarness();
+    const { app, agent, appServices, agentServices } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(opts({ agentFiles: [agentFile] }) as never, '1.2.3-test', {
       stdout,
@@ -375,10 +396,8 @@ describe('runV2Print', () => {
     const input = mocks.bootstrap.mock.calls[0]?.[0] as BootstrapInput;
     expect(input.args?.agentFiles).toEqual([agentFile]);
 
-    const lifecycle = handlerServices.get(ISessionLifecycleService) as {
-      create: ReturnType<typeof vi.fn>;
-    };
-    expect(lifecycle.create).toHaveBeenCalledWith({
+    const sessions = appServices.get(ISessionManager) as { create: ReturnType<typeof vi.fn> };
+    expect(sessions.create).toHaveBeenCalledWith({
       workDir: process.cwd(),
       additionalDirs: undefined,
       mainAgentBinding: { profile: 'file-reviewer', model: 'k2' },
@@ -390,11 +409,9 @@ describe('runV2Print', () => {
   it('does not materialize a main agent after fresh profile binding fails', async () => {
     const stdout = writer();
     const stderr = writer();
-    const { app, handlerServices } = makeFakeHarness();
-    const lifecycle = handlerServices.get(ISessionLifecycleService) as {
-      create: ReturnType<typeof vi.fn>;
-    };
-    lifecycle.create.mockRejectedValueOnce(new Error('Unknown agent profile'));
+    const { app, appServices } = makeFakeHarness();
+    const sessions = appServices.get(ISessionManager) as { create: ReturnType<typeof vi.fn> };
+    sessions.create.mockRejectedValueOnce(new Error('Unknown agent profile'));
     mocks.bootstrap.mockReturnValue({ app });
 
     await expect(
@@ -413,7 +430,7 @@ describe('runV2Print', () => {
     const { app, agent, agentServices } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await expect(
       runV2Print(opts({ agentFiles: [agentFile] }) as never, '1.2.3-test', { stdout, stderr }),
@@ -431,7 +448,7 @@ describe('runV2Print', () => {
     const { app, agent } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
 
@@ -445,7 +462,7 @@ describe('runV2Print', () => {
     const { app, agent } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(
       opts({ agent: 'reviewer', agentFiles: ['~/agents/reviewer.md'] }) as never,
@@ -463,11 +480,11 @@ describe('runV2Print', () => {
     const { app, agent, agentServices, appServices, profileState } = makeFakeHarness();
     profileState.profileName = 'reviewer';
 
-    const index = appServices.get(ISessionIndex) as { list: ReturnType<typeof vi.fn> };
-    index.list.mockResolvedValue({ items: [{ id: 'ses_1', cwd: process.cwd() }] });
+    const index = appServices.get(ISessionIndex) as { get: ReturnType<typeof vi.fn> };
+    index.get.mockResolvedValue({ id: 'ses_1', cwd: process.cwd() });
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(opts({ session: 'ses_1', agent: 'reviewer' }) as never, '1.2.3-test', {
       stdout,
@@ -488,11 +505,11 @@ describe('runV2Print', () => {
     const { app, agent, agentServices, appServices, profileState } = makeFakeHarness();
     profileState.profileName = 'reviewer';
 
-    const index = appServices.get(ISessionIndex) as { list: ReturnType<typeof vi.fn> };
-    index.list.mockResolvedValue({ items: [{ id: 'ses_1', cwd: process.cwd() }] });
+    const index = appServices.get(ISessionIndex) as { get: ReturnType<typeof vi.fn> };
+    index.get.mockResolvedValue({ id: 'ses_1', cwd: process.cwd() });
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(
       opts({ session: 'ses_1', agent: 'reviewer', model: 'new-model' }) as never,
@@ -506,5 +523,94 @@ describe('runV2Print', () => {
     };
     expect(profile.bind).not.toHaveBeenCalled();
     expect(profile.setModel).toHaveBeenCalledWith('new-model');
+  });
+
+  it('honors KIMI_DISABLE_TELEMETRY: no cloud appender and no v1 pipeline', async () => {
+    vi.stubEnv('KIMI_DISABLE_TELEMETRY', '1');
+    const stdout = writer();
+    const stderr = writer();
+    const { app, appServices } = makeFakeHarness();
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
+
+    const telemetry = appServices.get(ITelemetryService) as {
+      addAppender: ReturnType<typeof vi.fn>;
+    };
+    expect(telemetry.addAppender).not.toHaveBeenCalled();
+    expect(mocks.initializeTelemetry).not.toHaveBeenCalled();
+    // The run itself is unaffected: the prompt still renders and cleanup runs.
+    expect(stdout.text()).toContain('hello world');
+    expect(app.dispose).toHaveBeenCalled();
+  });
+
+  it('initializes the v1 telemetry pipeline alongside the cloud appender', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, appServices } = makeFakeHarness();
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
+
+    const telemetry = appServices.get(ITelemetryService) as {
+      addAppender: ReturnType<typeof vi.fn>;
+    };
+    expect(telemetry.addAppender).toHaveBeenCalledTimes(1);
+    expect(mocks.initializeTelemetry).toHaveBeenCalledTimes(1);
+    expect(mocks.initializeTelemetry).toHaveBeenCalledWith({
+      homeDir: resolveKimiHome(),
+      deviceId: 'device-1',
+      appName: CLI_USER_AGENT_PRODUCT,
+      version: '1.2.3-test',
+      uiMode: 'print',
+      model: 'k2',
+      endpoint: expect.any(Function),
+      getAccessToken: expect.any(Function),
+    });
+    // The resolved session id is synced onto the v1 client so crash events and
+    // system metrics carry it; the sink model is reconciled too (same value
+    // here, since the fresh session uses the configured default).
+    expect(mocks.setTelemetryContext).toHaveBeenCalledWith({ sessionId: 'ses_v2' });
+    expect(mocks.setTelemetryModel).toHaveBeenCalledWith('k2');
+    expect(mocks.setCrashPhase).toHaveBeenCalledWith('runtime');
+    expect(mocks.setCrashPhase).toHaveBeenCalledWith('shutdown');
+    expect(mocks.shutdownTelemetry).toHaveBeenCalledWith({
+      timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS,
+    });
+  });
+
+  it('reconciles the v1 sink model with the resumed session model', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, appServices, agentServices } = makeFakeHarness();
+
+    // The resumed session's stored model differs from the configured default.
+    const profile = agentServices.get(IAgentProfileService) as { getModel: () => string };
+    profile.getModel = () => 'resumed-model';
+    const index = appServices.get(ISessionIndex) as { get: ReturnType<typeof vi.fn> };
+    index.get.mockResolvedValue({ id: 'ses_1', cwd: process.cwd() });
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts({ session: 'ses_1' }) as never, '1.2.3-test', { stdout, stderr });
+
+    // The v1 pipeline was initialized up front with the best-known model, so
+    // crash events during session resolution still reach a sink...
+    expect(mocks.initializeTelemetry).toHaveBeenCalledTimes(1);
+    expect(mocks.initializeTelemetry).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'k2' }),
+    );
+    // ...and the sink's model was reconciled to the resumed session's real
+    // model only after the session resolved.
+    expect(mocks.setTelemetryModel).toHaveBeenCalledWith('resumed-model');
+    const initOrder = mocks.initializeTelemetry.mock.invocationCallOrder[0];
+    const reconcileOrder = mocks.setTelemetryModel.mock.invocationCallOrder[0];
+    expect(initOrder).toBeDefined();
+    expect(reconcileOrder).toBeGreaterThan(initOrder!);
   });
 });

@@ -1,30 +1,15 @@
-/**
- * `web` domain — `IWebFetchService` implementation.
- *
- * Yields the `UrlFetcher` the `FetchURL` tool uses, resolving the backend in
- * precedence order: (1) an explicit `[services.moonshot_fetch]` config
- * section with a `baseUrl` — built with its `apiKey` and/or an `oauth` ref
- * resolved through `IOAuthService.resolveTokenProvider(...)`; (2) the managed
- * Kimi OAuth provider when it carries an `oauth` ref (the state after a
- * successful Kimi login), routing fetches through the Moonshot fetch service
- * (`${provider.baseUrl}/fetch`); and (3) the built-in `LocalFetchURLProvider`,
- * so `FetchURL` keeps working without any configuration. The first two use the
- * host's Kimi identity headers (`IBootstrapService.args.requestHeaders`) and
- * fall back to the local fetcher on failure. Reads config and the managed
- * provider lazily on each `getUrlFetcher()` call so it tracks edits and login
- * state. Bound at App scope.
- */
-
 import {
   KIMI_CODE_PROVIDER_NAME,
   kimiCodeBaseUrl,
 } from '@moonshot-ai/kimi-code-oauth';
-
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IOAuthService } from '#/app/auth/auth';
 import { SERVICES_SECTION, type ServicesConfig } from '#/app/auth/configSection';
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IProviderService } from '#/kosong/provider/provider';
 import { isOAuthCatalogVendor } from '#/kosong/provider/providerDefinition';
 
@@ -42,6 +27,8 @@ export class WebFetchService implements IWebFetchService {
     @IOAuthService private readonly oauth: IOAuthService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IConfigService private readonly config: IConfigService,
+    @IAgentIdentity private readonly identity: IAgentIdentity,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     this.localFetcher = new LocalFetchURLProvider();
   }
@@ -63,9 +50,10 @@ export class WebFetchService implements IWebFetchService {
       baseUrl: fetchConfig.baseUrl,
       tokenProvider,
       apiKey: nonEmptyString(fetchConfig.apiKey),
-      defaultHeaders: { ...this.bootstrap.args.requestHeaders },
+      defaultHeaders: { ...this.identity.current().requestHeaders },
       customHeaders: fetchConfig.customHeaders,
       localFallback: this.localFetcher,
+      telemetry: this.telemetry,
     });
   }
 
@@ -88,6 +76,7 @@ export class WebFetchService implements IWebFetchService {
       defaultHeaders: { ...this.bootstrap.args.requestHeaders },
       customHeaders: provider.customHeaders,
       localFallback: this.localFetcher,
+      telemetry: this.telemetry,
     });
   }
 }

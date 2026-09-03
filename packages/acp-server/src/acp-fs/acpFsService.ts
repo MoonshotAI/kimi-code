@@ -15,6 +15,7 @@
  * connection.
  */
 
+import { RequestError } from '@agentclientprotocol/sdk';
 import {
   HostFileSystem,
   type HostDirEntry,
@@ -45,14 +46,17 @@ function* splitLinesKeepingTerminator(text: string): Generator<string> {
   }
 }
 
+function isResourceNotFound(error: unknown): boolean {
+  return error instanceof RequestError && error.code === -32002;
+}
+
 export class AcpHostFileSystem implements IHostFileSystem {
   declare readonly _serviceBrand: undefined;
 
   /**
    * Local inner backend for every operation the ACP `fs` protocol cannot
-   * express (binary IO, append, stat, realpath, directory ops, exclusive
-   * create). `HostFileSystem` is stateless (no DI dependencies), so
-   * constructing it directly is safe.
+   * express (binary IO, stat, realpath, directory ops, exclusive create),
+   * plus capability fallbacks for text operations.
    */
   private readonly inner = new HostFileSystem();
 
@@ -82,10 +86,23 @@ export class AcpHostFileSystem implements IHostFileSystem {
       .writeTextFile({ sessionId: this.ctx.sessionId, path, content: data });
   }
 
-  // ACP protocol has no append RPC. Read-modify-write emulation would break
-  // O_APPEND atomicity, so appends always go to the local filesystem.
-  appendText(path: string, data: string): Promise<void> {
-    return this.inner.appendText(path, data);
+  /**
+   * ACP has no append RPC. When both text capabilities are available, emulate
+   * append against the client's current buffer; otherwise preserve local
+   * append semantics. A structured ACP resource-not-found means an empty
+   * client file, while all other read failures are propagated.
+   */
+  async appendText(path: string, data: string): Promise<void> {
+    if (!this.connection.fsReadTextFile || !this.connection.fsWriteTextFile) {
+      return this.inner.appendText(path, data);
+    }
+    let existing = '';
+    try {
+      existing = await this.readText(path);
+    } catch (error) {
+      if (!isResourceNotFound(error)) throw error;
+    }
+    await this.writeText(path, existing + data);
   }
 
   async *readLines(path: string, options?: ReadTextOptions): AsyncGenerator<string> {
@@ -97,8 +114,21 @@ export class AcpHostFileSystem implements IHostFileSystem {
     return this.inner.readBytes(path, n);
   }
 
-  writeBytes(path: string, data: Uint8Array): Promise<void> {
-    return this.inner.writeBytes(path, data);
+  /**
+   * Bridge byte writes only when the payload is valid UTF-8. Binary data stays
+   * on the local backend rather than being silently replaced with U+FFFD.
+   */
+  async writeBytes(path: string, data: Uint8Array): Promise<void> {
+    if (!this.connection.fsWriteTextFile) {
+      return this.inner.writeBytes(path, data);
+    }
+    let text: string;
+    try {
+      text = new TextDecoder('utf-8', { fatal: true }).decode(data);
+    } catch {
+      return this.inner.writeBytes(path, data);
+    }
+    await this.writeText(path, text);
   }
 
   createExclusive(path: string, data: Uint8Array): Promise<boolean> {

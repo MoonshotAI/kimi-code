@@ -16,7 +16,7 @@
 | `/logout` | — | 清除当前所选账号的凭据 | 否 |
 | `/provider` | — | 打开交互式供应商管理器，查看、添加和删除已配置的供应商。详见[平台与模型 — `/provider` 与供应商管理](../configuration/providers.md#provider-—-交互式供应商管理) | 是 |
 | `/model` | — | 切换当前会话使用的 LLM 模型 | 是 |
-| `/secondary_model` | — | 配置子 Agent 默认绑定的次主力模型（写入 [`[secondary_model]`](../configuration/config-files.md#secondary-model) 配置并在当前会话立即生效）。需开启 `secondary-model` 实验功能 | 是 |
+| `/secondary-model` | `/subagent-model` | 选择 subagent 的默认模型（写入 `[secondary_model] default_model`，详见[subagent 模型池](../configuration/config-files.md#subagent-模型池)）。subagent 模型池被禁用时不显示 | 是 |
 | `/settings` | `/config` | 打开 TUI 内的设置面板 | 是 |
 | `/experiments` | `/experimental` | 打开实验功能面板 | 是 |
 | `/permission` | — | 选择权限模式 | 是 |
@@ -30,7 +30,7 @@
 | `/new` | `/clear` | 开启全新会话，丢弃当前上下文 | 否 |
 | `/sessions` | `/resume` | 浏览历史会话并切换/恢复 | 否 |
 | `/tasks` | `/task` | 浏览后台任务列表 | 是 |
-| `/fork` | — | 基于当前会话 fork 一份新会话，保留完整对话历史 | 否 |
+| `/fork` | — | 基于当前会话 fork 一份新会话，保留完整对话历史；fork 后仍停留在当前会话 | 否 |
 | `/title [<text>]` | `/rename` | 不带参数时显示当前会话标题；带参数时设置为新标题（最长 200 字符） | 是 |
 | `/compact [<instruction>]` | — | 压缩当前对话上下文，释放 token 占用；可附带自定义指令，提示模型压缩时保留哪些信息 | 否 |
 | `/undo [<count>]` | — | 从当前上下文撤销最近的提示词。不带数量时打开选择器；带数量时撤销对应条数。最后一次上下文压缩之前的提示词不能撤销。撤销会一并回滚这些提示词产生的 todo 列表和计划模式状态（不回滚代码改动） | 否 |
@@ -45,21 +45,21 @@
 
 | 命令 | 别名 | 说明 | 随时可用 |
 | --- | --- | --- | --- |
-| `/yolo [on\|off]` | `/yes` | 切换 YOLO 模式。不带参数时翻转；显式传 `on`/`off` 时强制设置。开启后跳过普通工具调用审批；Plan 模式的退出审批不受影响 | 是 |
-| `/auto [on\|off]` | — | 切换 auto 权限模式。开启后工具审批自动处理，Agent 不会向用户提问 | 是 |
+| `/ask-when-needed [on\|off]` | `/yolo`、`/yes` | 切换 "Ask When Needed" 模式。不带参数时翻转；显式传 `on`/`off` 时强制设置。开启后常规修改和命令自动完成；高危操作、提问和计划仍会问你 | 是 |
+| `/never-ask [on\|off]` | `/auto` | 切换 "Never Ask" 模式。开启后完全不打断，所有操作和判断自动完成 | 是 |
 | `/plan [on\|off]` | — | 切换 Plan 模式。不带参数时翻转；显式传 `on`/`off` 时强制设置。单纯切换不会创建空计划文件 | 是 |
 | `/plan clear` | — | 清除当前 plan 方案 | 否 |
 | `/swarm on\|off` | — | 开启或关闭 swarm mode，但不发送提示词。 | 是 |
-| `/swarm <task>` | — | 先开启 swarm mode，再把 `<task>` 作为普通提示词发送。如果该轮次正常完成，swarm mode 会自动关闭。若当前是 `manual` 权限模式，启动前会提示是否切换到 `auto` 或 `yolo`。 | 否 |
+| `/swarm <task>` | — | 先开启 swarm mode，再把 `<task>` 作为普通提示词发送。如果该轮次正常完成，swarm mode 会自动关闭。若当前是 `manual` 权限模式，启动前会提示是否切换到 "Ask When Needed" 或 "Never Ask" 模式。 | 否 |
 | `/goal [...]` | — | 开始或管理目标模式 | 见下文 |
 
 ::: warning 注意
-`/yolo` 会跳过普通工具调用的审批确认，使用前请确保了解可能的风险。Plan 模式的退出审批不会被 `/yolo` 跳过；Plan 模式下的 `Bash` 也按 `/yolo` 的普通放行规则处理。
+`/ask-when-needed` 会跳过普通工具调用的审批确认，使用前请确保了解可能的风险。Plan 模式的退出审批不会被 `/ask-when-needed` 跳过；Plan 模式下的 `Bash` 也按 `/ask-when-needed` 的普通放行规则处理。
 :::
 
 ## 目标模式
 
-`/goal` 用于开始或管理目标模式：Kimi Code 会在自动续跑的轮次中持续朝一个持久目标工作。使用指导和示例见[使用目标模式](../guides/goals.md)。
+`/goal` 用于开始或管理目标模式：Kimi Code 会在自动续跑的轮次中持续朝一个持久目标工作。使用指导和示例见[交互与输入：目标模式](../guides/interaction.md#目标模式)。
 
 ```sh
 /goal 更新 checkout 文档，运行 docs build，如果 20 轮后仍被阻塞就停止
@@ -100,13 +100,13 @@ Prompt 模式在目标完成时以退出码 `0` 退出，在目标阻塞时以 `
 | 命令 | 别名 | 说明 | 随时可用 |
 | --- | --- | --- | --- |
 | `/help` | `/h`、`/?` | 显示快捷键和所有可用命令 | 是 |
-| `/btw [问题]` | — | 在 fork 出的子 Agent 中打开旁路对话，不改变当前主 Agent 轮次；不带问题时会先打开面板等待输入 | 是 |
+| `/btw [问题]` | — | 在 fork 出的 subagent 中打开旁路对话，不改变当前 main agent 轮次；不带问题时会先打开面板等待输入 | 是 |
 | `/usage` | — | 显示 token 用量、上下文占用以及配额信息 | 是 |
 | `/status` | — | 显示当前会话运行时状态：版本、模型、工作目录、权限模式等 | 是 |
 | `/mcp` | — | 列出当前会话中的 MCP server 及连接状态 | 是 |
 | `/plugins` | — | 打开交互式 plugin 管理器 | 是 |
 | `/version` | — | 显示 Kimi Code CLI 版本号 | 是 |
-| `/feedback` | — | 提交反馈，可附加诊断日志和代码库上下文 | 是 |
+| `/feedback` | `/bug` | 提交反馈，可附加诊断日志和代码库上下文 | 是 |
 
 ## 退出
 
@@ -152,7 +152,7 @@ Kimi Code CLI 随包内置了一组 Skill，直接以 `/<name>` 形式出现在�
 Kimi Code CLI 随包内置的 Skill 会直接以 `/<name>` 形式出现在斜杠命令面板中。例如，`/mcp-config` 用于配置 MCP server 和处理 MCP OAuth 登录，`/custom-theme [附加文本]` 用于进入自定义主题流程，创建或编辑 TUI 主题。
 
 ::: info 说明
-所有 Skill 命令仅在空闲状态下可用。`flow` 类型的 Skill 同样通过 `/skill:<name>` 暴露，没有独立的 `/flow:` 命名空间。
+Agent 忙碌时输入的外部 Skill 命令不会被拒绝，而是排队等待当前轮次结束——按 `Ctrl-S` 可让排队的命令立即插入正在运行的轮次。`flow` 类型的 Skill 同样通过 `/skill:<name>` 暴露，没有独立的 `/flow:` 命名空间。
 :::
 
 Skill 的安装与编写详见 [Agent Skills](../customization/skills.md)。

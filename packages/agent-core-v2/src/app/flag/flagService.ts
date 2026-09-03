@@ -1,13 +1,6 @@
-/**
- * `flag` domain — `IFlagService` implementation.
- *
- * Resolves experimental flags from the environment, the `[experimental]`
- * config section, and defaults; reads flag definitions from the registry, and
- * reads/watches config. Bound at App scope.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { parseBooleanEnv } from '#/_base/utils/env';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -62,12 +55,12 @@ export class FlagService extends Disposable implements IFlagService {
     const def = this.registry.get(id);
     if (def === undefined) return undefined;
     const configValue = this.configOverrides[def.id];
-    if (parseBooleanEnv(this.bootstrap.getEnv(MASTER_ENV)) === true) {
-      return this.state(def, true, 'master-env', configValue);
-    }
     const override = parseBooleanEnv(this.bootstrap.getEnv(def.env));
     if (override !== undefined) return this.state(def, override, 'env', configValue);
     if (configValue !== undefined) return this.state(def, configValue, 'config', configValue);
+    if (parseBooleanEnv(this.bootstrap.getEnv(MASTER_ENV)) === true) {
+      return this.state(def, true, 'master-env', configValue);
+    }
     return this.state(def, def.default, 'default', undefined);
   }
 
@@ -81,6 +74,14 @@ export class FlagService extends Disposable implements IFlagService {
     return this.registry
       .list()
       .filter((def) => this.enabled(def.id))
+      .map((def) => def.id);
+  }
+
+  exposedIds(): readonly FlagId[] {
+    return this.registry
+      .list()
+      .filter((def) => this.enabled(def.id))
+      .filter((def) => def.isExposed?.(this) ?? true)
       .map((def) => def.id);
   }
 

@@ -1,13 +1,3 @@
-/**
- * `kosong/provider` domain — Kimi files API client.
- *
- * Uploads a video (from a filesystem path or in-memory bytes) to the Kimi
- * files endpoint and returns the `ms://<file-id>` video URL part the wire
- * messages reference. Upload failures classify through the Kimi quota
- * classifier (this client runs outside any composed hook context), falling
- * back to the base OpenAI conversion.
- */
-
 import { Blob, File } from 'node:buffer';
 import * as fs from 'node:fs';
 import * as path from 'node:path';

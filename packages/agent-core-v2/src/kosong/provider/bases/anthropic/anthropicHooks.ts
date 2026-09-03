@@ -1,14 +1,3 @@
-/**
- * `kosong/provider` domain — the ONLY composition point from resolved
- * traits to the Anthropic hook set.
- *
- * The Anthropic base has two hooks. `withThinking` takes the LAST declarer
- * and wraps it with a defensive kwargs copy — so a hook can never mutate base
- * state, and a synthetic construction-headers trait (which never declares
- * `withThinking`) can never shadow a real dialect hook. `convertError` is the
- * shared single-value binding from `traitConvertError` (last declarer wins).
- */
-
 import { traitConvertError, type ResolvedTrait } from '#/kosong/protocol/protocolTrait';
 
 import type { AnthropicHooks } from './anthropic';

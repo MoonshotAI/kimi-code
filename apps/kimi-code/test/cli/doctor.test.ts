@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { Command } from 'commander';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   handleDoctor,
@@ -19,6 +19,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await rm(dir, { recursive: true, force: true });
 });
 
@@ -99,6 +100,58 @@ describe('kimi doctor', () => {
     expect(out).toContain('SKIP config.toml');
     expect(out).toContain('SKIP tui.toml');
     expect(out).toContain('built-in defaults will apply');
+  });
+
+  it('keeps v2 validation when the legacy flag is set', async () => {
+    const configPath = join(dir, 'config.toml');
+    await writeFile(
+      configPath,
+      `
+default_model = "kimi"
+
+[providers.kimi]
+type = "kimi"
+base_url = "https://api.example.com/v1"
+api_key = "YOUR_API_KEY"
+
+[models.kimi]
+provider = "kimi"
+model = "kimi"
+protocol = "openai"
+max_context_size = 262144
+`,
+      'utf-8',
+    );
+    vi.stubEnv('KIMI_CODE_LEGACY_FLAG', '1');
+    const { deps, stdout, stderr } = makeDeps();
+
+    const code = await handleDoctor(deps, { target: 'config' });
+
+    expect(code).toBe(0);
+    expect(stderr.join('')).toBe('');
+    expect(stdout.join('')).toContain(`OK config.toml  ${configPath}`);
+  });
+
+  it('reports schema-invalid sections with the v2 engine when the legacy flag is set', async () => {
+    await writeFile(
+      join(dir, 'config.toml'),
+      `
+[models.kimi]
+provider = "kimi"
+model = "kimi"
+max_context_size = "large"
+`,
+      'utf-8',
+    );
+    vi.stubEnv('KIMI_CODE_LEGACY_FLAG', '1');
+    const { deps, stderr } = makeDeps();
+
+    const code = await handleDoctor(deps, { target: 'config' });
+
+    expect(code).toBe(1);
+    const err = stderr.join('');
+    expect(err).toContain('Validation issues:');
+    expect(err).toContain('models.kimi.max_context_size:');
   });
 
   it('checks only config.toml when the config target is selected', async () => {
@@ -269,13 +322,8 @@ max_context_size = "large"
   });
 });
 
-describe('kimi doctor (v2 config validation)', () => {
-  beforeEach(() => {
-    process.env['KIMI_CODE_EXPERIMENTAL_FLAG'] = '1';
-  });
-
+describe('kimi doctor (default v2 config validation)', () => {
   afterEach(() => {
-    delete process.env['KIMI_CODE_EXPERIMENTAL_FLAG'];
     delete process.env['KIMI_LOOP_MAX_RETRIES_PER_STEP'];
     delete process.env['KIMI_LOOP_MAX_ATTEMPTS_PER_STEP'];
   });

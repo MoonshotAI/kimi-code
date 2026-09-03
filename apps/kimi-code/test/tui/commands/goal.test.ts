@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   dispatchInput,
   goalArgumentCompletions,
+  goalObjectiveLengthWarning,
   handleGoalCommand,
   parseGoalCommand,
   setExperimentalFeatures,
@@ -17,6 +18,7 @@ import {
 } from '#/tui/goal-queue-store';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import { getBuiltInPalette } from '#/tui/theme';
+import { UNCONFIRMED_FILE_CHANGES_WARNING } from '#/tui/constant/kimi-tui';
 
 vi.mock('#/tui/goal-queue-store', () => ({
   appendGoalQueueItem: vi.fn(async () => ({
@@ -106,6 +108,7 @@ function makeHost(
         streamingPhase: overrides.streaming ? 'streaming' : 'idle',
         isCompacting: false,
       },
+      editor: { getText: vi.fn(() => '') },
       transcriptContainer,
       ui: { requestRender: vi.fn() },
       theme: { palette: getBuiltInPalette('dark') },
@@ -213,8 +216,61 @@ describe('parseGoalCommand', () => {
     });
   });
 
-  it('rejects objectives longer than 4000 characters', () => {
-    expect(parseGoalCommand('x'.repeat(4001))).toMatchObject({ kind: 'error' });
+  it('rejects objectives longer than 4000 characters with a file-reference hint', () => {
+    expect(parseGoalCommand('x'.repeat(4001))).toEqual({
+      kind: 'error',
+      restoreInput: true,
+      message:
+        'Goal objective is too long (max 4000 characters). Put long content in a file and reference the file path.',
+    });
+    expect(parseGoalCommand(`next ${'x'.repeat(4001)}`)).toEqual({
+      kind: 'error',
+      restoreInput: true,
+      message:
+        'Goal objective is too long (max 4000 characters). Put long content in a file and reference the file path.',
+    });
+  });
+});
+
+describe('goalObjectiveLengthWarning', () => {
+  it('warns once the typed /goal objective exceeds the limit', () => {
+    const warning = goalObjectiveLengthWarning(`/goal ${'x'.repeat(4001)}`);
+    expect(warning).toContain('(4001/4000 characters)');
+    expect(warning).toContain('reference the file path');
+  });
+
+  it('ignores leading whitespace because submitted text is trimmed', () => {
+    expect(goalObjectiveLengthWarning(`  /goal ${'x'.repeat(4001)}`)).toBeDefined();
+  });
+
+  it('warns for over-limit /goal next and /goal replace objectives', () => {
+    expect(goalObjectiveLengthWarning(`/goal next ${'x'.repeat(4001)}`)).toBeDefined();
+    expect(goalObjectiveLengthWarning(`/goal replace ${'x'.repeat(4001)}`)).toBeDefined();
+    expect(goalObjectiveLengthWarning(`/goal -- ${'x'.repeat(4001)}`)).toBeDefined();
+  });
+
+  it('stays quiet for valid objectives and non-goal input', () => {
+    expect(goalObjectiveLengthWarning(`/goal ${'x'.repeat(4000)}`)).toBeUndefined();
+    expect(goalObjectiveLengthWarning('/goal Ship feature X')).toBeUndefined();
+    expect(goalObjectiveLengthWarning('Ship feature X')).toBeUndefined();
+  });
+
+  it('stays quiet for control forms and lookalike commands', () => {
+    expect(goalObjectiveLengthWarning('/goal')).toBeUndefined();
+    expect(goalObjectiveLengthWarning('/goal status')).toBeUndefined();
+    expect(goalObjectiveLengthWarning('/goal pause')).toBeUndefined();
+    expect(goalObjectiveLengthWarning('/goal next manage')).toBeUndefined();
+    expect(goalObjectiveLengthWarning(`/goalie ${'x'.repeat(4001)}`)).toBeUndefined();
+  });
+
+  it('stays quiet when the boundary is a newline or tab (dispatch sends those as plain messages)', () => {
+    expect(goalObjectiveLengthWarning(`/goal\n${'x'.repeat(4001)}`)).toBeUndefined();
+    expect(goalObjectiveLengthWarning(`/goal\t${'x'.repeat(4001)}`)).toBeUndefined();
+  });
+
+  it('still warns for multiline objectives after a literal-space boundary', () => {
+    const objective = `${'x'.repeat(2000)}\n${'x'.repeat(2001)}`;
+    expect(goalObjectiveLengthWarning(`/goal ${objective}`)).toBeDefined();
   });
 });
 
@@ -266,6 +322,34 @@ describe('handleGoalCommand', () => {
     expect(calls).toEqual([{ receiver: host, text: 'Ship feature X' }]);
   });
 
+  it('rejects an over-limit objective before sending and restores the typed input', async () => {
+    const args = 'x'.repeat(4001);
+    await handleGoalCommand(host, args);
+
+    expect(session.createGoal).not.toHaveBeenCalled();
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+    expect(host.showError).toHaveBeenCalledWith(
+      'Goal objective is too long (max 4000 characters). Put long content in a file and reference the file path.',
+    );
+    expect(host.restoreInputText).toHaveBeenCalledWith(`/goal ${args}`);
+  });
+
+  it('does not restore input for the empty-objective usage hint', async () => {
+    await handleGoalCommand(host, 'replace');
+
+    expect(host.showStatus).toHaveBeenCalled();
+    expect(host.restoreInputText).not.toHaveBeenCalled();
+  });
+
+  it('does not restore over a draft typed while validation was pending', async () => {
+    vi.mocked(host.state.editor.getText).mockReturnValue('a newer draft');
+
+    await handleGoalCommand(host, 'x'.repeat(4001));
+
+    expect(host.showError).toHaveBeenCalled();
+    expect(host.restoreInputText).not.toHaveBeenCalled();
+  });
+
   it('asks before starting a goal in Manual mode', async () => {
     const { host: manualHost, session: s } = makeHost({ permissionMode: 'manual' });
 
@@ -275,7 +359,7 @@ describe('handleGoalCommand', () => {
     expect(s.createGoal).not.toHaveBeenCalled();
     expect(manualHost.sendNormalUserInput).not.toHaveBeenCalled();
     const text = stripAnsi(mountedPicker(manualHost).render(80).join('\n'));
-    expect(text).toContain('Manual mode is not suitable for unattended goal work');
+    expect(text).toContain('Always Ask mode is not suitable for unattended goal work');
     expect(text).toContain('Return to the input box with your goal command');
   });
 
@@ -292,6 +376,8 @@ describe('handleGoalCommand', () => {
     });
     expect(s.setPermission).toHaveBeenCalledWith('auto');
     expect(manualHost.setAppState).toHaveBeenCalledWith({ permissionMode: 'auto' });
+    expect(manualHost.showNotice).toHaveBeenCalledWith('Permission mode: Never Ask');
+    expect(manualHost.showStatus).toHaveBeenCalledWith(UNCONFIRMED_FILE_CHANGES_WARNING, 'warning');
     expect(manualHost.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
   });
 
@@ -310,6 +396,8 @@ describe('handleGoalCommand', () => {
       );
     });
     expect(s.setPermission).not.toHaveBeenCalled();
+    expect(manualHost.showNotice).not.toHaveBeenCalled();
+    expect(manualHost.showStatus).not.toHaveBeenCalledWith(UNCONFIRMED_FILE_CHANGES_WARNING, 'warning');
     expect(manualHost.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
   });
 
@@ -328,6 +416,8 @@ describe('handleGoalCommand', () => {
     });
     expect(s.setPermission).toHaveBeenCalledWith('yolo');
     expect(manualHost.setAppState).toHaveBeenCalledWith({ permissionMode: 'yolo' });
+    expect(manualHost.showNotice).toHaveBeenCalledWith('Permission mode: Ask When Needed');
+    expect(manualHost.showStatus).toHaveBeenCalledWith(UNCONFIRMED_FILE_CHANGES_WARNING, 'warning');
   });
 
   it('restores the previous permission mode when the goal fails to start', async () => {
@@ -347,6 +437,10 @@ describe('handleGoalCommand', () => {
     });
     expect(s.setPermission).toHaveBeenCalledWith('yolo');
     expect(manualHost.setAppState).toHaveBeenLastCalledWith({ permissionMode: 'manual' });
+    // The permissive-mode notice is deferred until the goal starts, so a failed
+    // start leaves no stale notice behind.
+    expect(manualHost.showNotice).not.toHaveBeenCalled();
+    expect(manualHost.showStatus).not.toHaveBeenCalledWith(UNCONFIRMED_FILE_CHANGES_WARNING, 'warning');
   });
 
   it('returns the command to the input box when a Manual-mode goal start is cancelled', async () => {
@@ -383,9 +477,9 @@ describe('handleGoalCommand', () => {
     expect(s.createGoal).not.toHaveBeenCalled();
     expect(yoloHost.sendNormalUserInput).not.toHaveBeenCalled();
     const text = stripAnsi(mountedPicker(yoloHost).render(80).join('\n'));
-    expect(text).toContain('YOLO mode can still stop for questions');
-    expect(text).toContain('Keep YOLO and start');
-    expect(text).not.toContain('Start in Manual');
+    expect(text).toContain('Ask When Needed mode can still stop for questions');
+    expect(text).toContain('Keep Ask When Needed and start');
+    expect(text).not.toContain('Start in Always Ask');
   });
 
   it('defaults to Auto when confirming a YOLO-mode goal start', async () => {
@@ -722,6 +816,102 @@ describe('dispatchInput /goal integration', () => {
     });
     expect(host.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
     expect(host.sendNormalUserInput).not.toHaveBeenCalledWith('/goal Ship feature X');
+  });
+
+  it('restores the input when /goal is rejected by the busy gate while streaming', async () => {
+    const { host, session } = makeHost({ streaming: true });
+
+    dispatchInput(host, '/goal Ship feature X');
+
+    await vi.waitFor(() => {
+      expect(host.showError).toHaveBeenCalledWith(
+        'Cannot /goal while streaming — press Esc or Ctrl-C first.',
+      );
+    });
+    expect(session.createGoal).not.toHaveBeenCalled();
+    expect(host.restoreInputText).toHaveBeenCalledWith('/goal Ship feature X');
+  });
+
+  it('restores the input when the post-creation busy re-check rejects /goal', async () => {
+    const { host, session } = makeHost({ hasSession: false });
+    Object.assign(host, {
+      engineV2: true,
+      // A first prompt starts a turn while the lazy session creation awaits.
+      ensureSession: vi.fn(async () => {
+        host.state.appState.streamingPhase = 'thinking';
+        return session;
+      }),
+    });
+
+    dispatchInput(host, '/goal Ship feature X');
+
+    await vi.waitFor(() => {
+      expect(host.showError).toHaveBeenCalledWith(
+        'Cannot /goal while streaming — press Esc or Ctrl-C first.',
+      );
+    });
+    expect(session.createGoal).not.toHaveBeenCalled();
+    expect(host.restoreInputText).toHaveBeenCalledWith('/goal Ship feature X');
+  });
+
+  it('does not restore over a draft typed while lazy session creation was pending', async () => {
+    const { host, session } = makeHost({ hasSession: false });
+    Object.assign(host, {
+      engineV2: true,
+      ensureSession: vi.fn(async () => {
+        host.state.appState.streamingPhase = 'thinking';
+        // The user kept typing after submitting /goal.
+        vi.mocked(host.state.editor.getText).mockReturnValue('a newer draft');
+        return session;
+      }),
+    });
+
+    dispatchInput(host, '/goal Ship feature X');
+
+    await vi.waitFor(() => {
+      expect(host.showError).toHaveBeenCalledWith(
+        'Cannot /goal while streaming — press Esc or Ctrl-C first.',
+      );
+    });
+    expect(session.createGoal).not.toHaveBeenCalled();
+    expect(host.restoreInputText).not.toHaveBeenCalled();
+  });
+
+  it('restores the input when lazy session creation fails before /goal runs', async () => {
+    const { host, session } = makeHost({ hasSession: false });
+    Object.assign(host, {
+      engineV2: true,
+      ensureSession: vi.fn(async () => undefined),
+    });
+
+    dispatchInput(host, '/goal Ship feature X');
+
+    await vi.waitFor(() => {
+      expect(host.restoreInputText).toHaveBeenCalledWith('/goal Ship feature X');
+    });
+    expect(session.createGoal).not.toHaveBeenCalled();
+  });
+
+  it('does not restore when an editor-replacement panel opened during creation', async () => {
+    const { host, session } = makeHost({ hasSession: false });
+    Object.assign(host, {
+      engineV2: true,
+      ensureSession: vi.fn(async () => {
+        // The user opened a panel (e.g. /help) while creation was pending.
+        Object.assign(host.state, { editorReplacementMounted: true });
+        return undefined;
+      }),
+    });
+
+    dispatchInput(host, '/goal Ship feature X');
+
+    await vi.waitFor(() => {
+      expect(host.state.editorReplacementMounted).toBe(true);
+    });
+    // Allow the post-creation branch to run before asserting.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(session.createGoal).not.toHaveBeenCalled();
+    expect(host.restoreInputText).not.toHaveBeenCalled();
   });
 });
 

@@ -7,7 +7,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { flushTelemetrySync, initializeTelemetry, shutdownTelemetry, track } from '../src';
+import {
+  flushTelemetrySync,
+  initializeTelemetry,
+  setTelemetryModel,
+  shutdownTelemetry,
+  track,
+} from '../src';
 import { isTelemetryDisabledByEnv } from '../src/bootstrap';
 import { TelemetryClient, resetDefaultTelemetryClientForTests } from '../src/client';
 import { installCrashHandlersForClient, setCrashPhase, uninstallCrashHandlers } from '../src/crash';
@@ -404,6 +410,27 @@ describe('EventSink', () => {
 
     expect(transport.retryCount).toBe(1);
   });
+
+  it('applies a reconciled model only to events accepted after setModel', () => {
+    const transport = new RecordingTransport();
+    const sink = makeSink(transport);
+    const event = (id: string): TelemetryEvent => ({
+      event_id: id,
+      device_id: 'dev',
+      session_id: 'ses',
+      event: 'test',
+      timestamp: 1,
+      properties: {},
+    });
+
+    sink.accept(event('e1'));
+    sink.setModel('reconciled-model');
+    sink.accept(event('e2'));
+    sink.flushSync();
+
+    expect(transport.saved[0]?.[0]?.context).toMatchObject({ model: 'kimi-k2' });
+    expect(transport.saved[0]?.[1]?.context).toMatchObject({ model: 'reconciled-model' });
+  });
 });
 
 describe('payload assembly', () => {
@@ -471,10 +498,16 @@ describe('payload assembly', () => {
     expect(() => buildPayload([arrayProperty], 'device-1')).toThrow(/property.list/);
   });
 
-  it('passes null primitive values through and leaves the input event untouched', () => {
+  it('drops null values from the payload and leaves the input event untouched', () => {
     const event = {
       ...sampleEvent('nullable'),
+      device_id: null,
+      session_id: null,
       properties: {
+        empty: null,
+      },
+      context: {
+        version: '1.2.3',
         empty: null,
       },
     };
@@ -485,8 +518,12 @@ describe('payload assembly', () => {
 
     expect(payload.events[0]).toMatchObject({
       event: 'kfc_nullable',
-      property_empty: null,
+      context_version: '1.2.3',
     });
+    expect(payload.events[0]).not.toHaveProperty('device_id');
+    expect(payload.events[0]).not.toHaveProperty('session_id');
+    expect(payload.events[0]).not.toHaveProperty('property_empty');
+    expect(payload.events[0]).not.toHaveProperty('context_empty');
     expect(event.properties).toBe(originalProperties);
     expect(event.context).toBe(originalContext);
     expect(event.event).toBe('nullable');
@@ -549,6 +586,27 @@ describe('AsyncTransport', () => {
     expect(JSON.parse(init.body as string)).toMatchObject({
       user_id: 'kfc_device_id_dev',
     });
+  });
+
+  it('resolves a function endpoint per send, so an in-process switch needs no rebuild', async () => {
+    const fetchImpl = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
+      Promise.resolve(new Response('', { status: 200 })),
+    );
+    let endpoint = 'https://cn.test/events';
+    const transport = new AsyncTransport({
+      homeDir: await tempHome(),
+      deviceId: 'dev',
+      endpoint: () => endpoint,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      retryBackoffsMs: [],
+    });
+
+    await transport.send([sampleEvent()]);
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://cn.test/events');
+
+    endpoint = 'https://global.test/events';
+    await transport.send([sampleEvent()]);
+    expect(fetchImpl.mock.calls[1]?.[0]).toBe('https://global.test/events');
   });
 
   it('retries anonymously on 401 with a token', async () => {
@@ -849,6 +907,54 @@ describe('telemetry bootstrap', () => {
       event: 'kfc_before_init',
       session_id: 'ses',
     });
+  });
+
+  it('forwards a caller-provided endpoint to the transport', async () => {
+    const fetchImpl = vi.fn(async (_input: unknown) => new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchImpl);
+
+    initializeTelemetry({
+      homeDir: await tempHome(),
+      deviceId: 'dev',
+      appName: 'kimi-code-cli',
+      version: '1.2.3',
+      endpoint: 'https://mock.test/events',
+    });
+    track('custom_endpoint');
+    await shutdownTelemetry();
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://mock.test/events');
+  });
+
+  it('reconciles the singleton sink model for subsequently tracked events', async () => {
+    const fetchImpl = vi.fn(async () => new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchImpl);
+
+    initializeTelemetry({
+      homeDir: await tempHome(),
+      deviceId: 'dev',
+      appName: 'kimi-code-cli',
+      version: '1.2.3',
+      model: 'model-a',
+    });
+    track('first');
+    setTelemetryModel('model-b');
+    track('second');
+    // An unresolved (undefined) model leaves the sink untouched.
+    setTelemetryModel(undefined);
+    track('third');
+    await shutdownTelemetry();
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const init = requestInitFrom(fetchImpl);
+    const payload = JSON.parse(init.body as string) as {
+      events: Array<{ event: string; context_model?: string }>;
+    };
+    const byEvent = new Map(payload.events.map((event) => [event.event, event]));
+    expect(byEvent.get('kfc_first')?.context_model).toBe('model-a');
+    expect(byEvent.get('kfc_second')?.context_model).toBe('model-b');
+    expect(byEvent.get('kfc_third')?.context_model).toBe('model-b');
   });
 
   it('flushes the singleton synchronously to disk fallback', async () => {

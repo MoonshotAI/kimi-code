@@ -1,17 +1,3 @@
-/**
- * `sessionIndex` domain — session index contract.
- *
- * `ISessionIndex` is a domain-specific persistence Store: a backend-neutral
- * query facade over the set of persisted sessions (open or closed). It
- * enumerates sessions and derives session identity (`workspaceId`), returning
- * data (`SessionSummary`) or counts — never filesystem paths or live handles.
- * The index is a read model. Backends are deployment-specific (local
- * filesystem today; database / query store on a server). `remove` is the one
- * write: it evicts a deleted session's derived/cached state so `get` stops
- * answering for the id — the authoritative record (the session directory) is
- * deleted by the caller (`sessionLifecycle.delete`).
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Page } from '#/persistence/interface/queryStore';
 
@@ -30,26 +16,57 @@ export interface SessionSummary {
   readonly createdAt: number;
   readonly updatedAt: number;
   readonly archived: boolean;
+  readonly archivedAt?: number;
   readonly custom?: Record<string, unknown>;
+  readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }
 
 export interface SessionListQuery {
   readonly workspaceIds?: readonly string[];
   readonly sessionId?: string;
   readonly includeArchived?: boolean;
-  readonly cursor?: string;
   readonly limit?: number;
   readonly childOf?: string;
+  readonly before?: string;
+  readonly after?: string;
+}
+
+export interface SessionCountQuery {
+  readonly workspaceIds?: readonly string[];
+  readonly includeArchived?: boolean;
+}
+
+export type SessionIndexState = 'uninitialized' | 'preparing' | 'ready' | 'degraded';
+
+export interface SessionIndexStatus {
+  readonly state: SessionIndexState;
+  readonly generation?: number;
+  readonly reason?: string;
+  readonly degradedCount: number;
 }
 
 export interface ISessionIndex {
   readonly _serviceBrand: undefined;
 
-  list(query: SessionListQuery): Promise<Page<SessionSummary>>;
+  prepare(options?: { deadlineMs?: number }): Promise<SessionIndexStatus>;
+  status(): SessionIndexStatus;
   get(id: string): Promise<SessionSummary | undefined>;
-  countActive(workspaceIds: readonly string[]): Promise<number>;
+  listRecent(query: SessionListQuery): Promise<Page<SessionSummary>>;
+  count(query: SessionCountQuery): Promise<number>;
   remove(id: string): Promise<void>;
 }
 
 export const ISessionIndex: ServiceIdentifier<ISessionIndex> =
   createDecorator<ISessionIndex>('sessionIndex');
+
+export interface ISessionIndexMirror {
+  readonly _serviceBrand: undefined;
+
+  record(summary: SessionSummary): void;
+  pending(): readonly SessionSummary[];
+  evict(id: string): Promise<void>;
+  drain(): Promise<void>;
+}
+
+export const ISessionIndexMirror: ServiceIdentifier<ISessionIndexMirror> =
+  createDecorator<ISessionIndexMirror>('sessionIndexMirror');

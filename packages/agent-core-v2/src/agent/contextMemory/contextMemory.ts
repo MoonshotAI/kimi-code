@@ -1,4 +1,5 @@
 import { createDecorator } from "#/_base/di/instantiation";
+import type { WireLineRange } from '#/wire/record';
 
 import type { UndoCut } from './contextOps';
 import type { LoopRecordedEvent } from './loopEventFold';
@@ -10,13 +11,12 @@ export interface ContextCompactionInput {
   readonly compactedCount: number;
   readonly tokensBefore: number;
   readonly tokensAfter?: number;
-  /** Measured output tokens of the compaction LLM exchange (the REAL summary
-   *  size); preferred over the summary-text estimate in the `tokensAfter`
-   *  fallback when present. */
   readonly summaryOutputTokens?: number;
+  readonly requestOverheadTokens?: number;
   readonly keptUserMessageCount?: number;
   readonly keptHeadUserMessageCount?: number;
   readonly droppedCount?: number;
+  readonly wireLines?: WireLineRange;
 }
 
 export interface ContextCompactionResult {
@@ -38,6 +38,8 @@ export interface IAgentContextMemoryService {
   append(...messages: readonly ContextMessage[]): void;
 
   appendLoopEvent(event: LoopRecordedEvent): void;
+
+  publishTrailingRemoval(previous: readonly ContextMessage[]): boolean;
 
   clear(): void;
 

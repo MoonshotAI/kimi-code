@@ -1,22 +1,3 @@
-/**
- * `bootstrap` domain — frozen startup snapshot and composition root.
- *
- * Defines the `IBootstrapService`, the snapshot of the world the process runs
- * in, resolved once at startup and frozen for the process: observed host facts
- * (`platform`, `arch`, `cwd`, `osHomeDir`, `getEnv`, `clientIdentity`), the
- * app path layout (`homeDir`, `configPath`, …), and the host's process-level
- * invocation arguments (`args` — mirroring VS Code's `NativeParsedArgs`
- * carried on the environment service: the host states them once in
- * `BootstrapInput`; downstream services read them here instead of through
- * per-domain runtime-options services). `resolveBootstrapOptions` is
- * the single place that reads `process.env` / `os.homedir()` / invocation
- * input to resolve the snapshot; everything downstream reads from
- * `IBootstrapService` instead of touching `process` directly. Bound at App
- * scope. Also seeds the `IFileSystemStorageService` with a `FileStorageService`
- * rooted at `homeDir` so the byte layer (and every Store above it) persists
- * to disk.
- */
-
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 
@@ -31,47 +12,25 @@ import {
   IFileSystemStorageService,
 } from '#/persistence/interface/storage';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
-import { FileSkillDiscovery } from '#/app/skillCatalog/fileSkillDiscovery';
-import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
+import { FileSkillDiscovery } from '#/features/skill/catalog/fileSkillDiscovery';
+import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
 
-/**
- * Host invocation arguments — process-level overrides the embedding host
- * states once at startup (mirrors VS Code's `NativeParsedArgs` carried on the
- * environment service). Resolved from {@link HostArgsInput} and read via
- * `IBootstrapService.args`.
- */
 export interface HostArgs {
-  /**
-   * Explicit agent definition files for this process (the CLI's
-   * `--agent-file`): loaded as the highest-priority `explicit` agent-profile
-   * source. Undefined means no explicit files.
-   */
   readonly agentFiles?: readonly string[];
-  /**
-   * Explicit skill directories for this process (v1's SDK `skillDirs`): when
-   * non-empty, default user / project skill discovery is skipped and these
-   * directories serve as the user skill source.
-   */
   readonly skillDirs?: readonly string[];
-  /**
-   * Host identity headers applied to outbound provider requests (User-Agent +
-   * `X-Msh-*`, built by the host through `createKimiDefaultHeaders`).
-   * Materialized to `{}` when the host passes none.
-   */
   readonly requestHeaders: Readonly<Record<string, string>>;
-  /** Fills the `${product_name}` slot in the base system-prompt template. */
   readonly displayName?: string;
-  /** Replaces the `${reply_style_guide}` block in the base system prompt. */
   readonly replyStyleGuide?: string;
+  readonly nonInteractive?: boolean;
 }
 
-/** {@link HostArgs} as accepted from the host: `requestHeaders` may be omitted. */
 export interface HostArgsInput {
   readonly agentFiles?: readonly string[];
   readonly skillDirs?: readonly string[];
   readonly requestHeaders?: Readonly<Record<string, string>>;
   readonly displayName?: string;
   readonly replyStyleGuide?: string;
+  readonly nonInteractive?: boolean;
 }
 
 export function resolveHostArgs(input: HostArgsInput | undefined): HostArgs {
@@ -81,6 +40,7 @@ export function resolveHostArgs(input: HostArgsInput | undefined): HostArgs {
     requestHeaders: input?.requestHeaders ?? {},
     displayName: input?.displayName,
     replyStyleGuide: input?.replyStyleGuide,
+    nonInteractive: input?.nonInteractive,
   };
 }
 
@@ -106,8 +66,7 @@ export type PersistenceScopeName =
   | 'store'
   | 'logs'
   | 'cache'
-  | 'credentials'
-  | 'cron';
+  | 'credentials';
 
 export interface IBootstrapService {
   readonly _serviceBrand: undefined;
@@ -119,7 +78,6 @@ export interface IBootstrapService {
   readonly homeDir: string;
   readonly configPath: string;
   readonly clientIdentity: KimiHostIdentity;
-  /** Host invocation arguments; see {@link HostArgs}. */
   readonly args: HostArgs;
   readonly sessionsDir: string;
   readonly blobsDir: string;
@@ -142,10 +100,7 @@ export interface BootstrapInput {
   readonly platform?: NodeJS.Platform;
   readonly arch?: string;
   readonly cwd?: string;
-  /** Required: every process names its host. There is deliberately no default
-      — a fabricated identity would silently misreport the host upstream. */
   readonly clientIdentity: KimiHostIdentity;
-  /** Host invocation arguments; see {@link HostArgsInput}. */
   readonly args?: HostArgsInput;
 }
 
@@ -168,7 +123,12 @@ export function resolveBootstrapOptions(input: BootstrapInput): IBootstrapOption
 }
 
 export function bootstrapSeed(input: BootstrapInput): ScopeSeed {
-  return [[IBootstrapOptions as ServiceIdentifier<unknown>, resolveBootstrapOptions(input)]];
+  return [
+    [
+      IBootstrapOptions as ServiceIdentifier<unknown>,
+      resolveBootstrapOptions(input),
+    ],
+  ];
 }
 
 export interface BootstrapResult {
@@ -178,7 +138,7 @@ export interface BootstrapResult {
 export function bootstrap(input: BootstrapInput, extraSeeds: ScopeSeed = []): BootstrapResult {
   const options = resolveBootstrapOptions(input);
   const app = createAppScope({
-    extra: [...bootstrapSeed(input), ...storageSeed(options), ...skillSeed(), ...extraSeeds],
+    seeds: [...bootstrapSeed(input), ...storageSeed(options), ...skillSeed(), ...extraSeeds],
   });
   return { app };
 }

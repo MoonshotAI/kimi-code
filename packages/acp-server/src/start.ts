@@ -16,9 +16,20 @@ import { Readable, Writable } from 'node:stream';
 import { ndJsonStream, type AgentConnection, type Stream } from '@agentclientprotocol/sdk';
 import {
   bootstrap,
+  drainLogCloses,
+  drainQueryStoreDisposals,
+  drainSessionIndexMirror,
+  drainSessionMetadataWrites,
+  ensureMainAgent,
   getLiveSessionById,
+  IAgentLifecycleService,
+  IAgentRuntimeBindingService,
   IAppendLogStore,
+  IHostEnvironment,
+  IHostProcessService,
   ISessionContext,
+  ISessionIndexMirror,
+  IWorkspaceInstanceManager,
   logSeed,
   resolveConfigPath,
   resolveKimiHome,
@@ -36,9 +47,7 @@ import { acpClientFromContext } from './acp-client';
 // module side effects. `IAcpConnection` is used below to bind the ACP client
 // connection.
 import { IAcpConnection } from './acp-fs';
-// Importing the `acp-terminal` barrel registers the ACP-backed Agent-scope
-// `ISessionProcessRunner` (capability-gated — see the module doc).
-import './acp-terminal';
+import { AcpRuntimeProviderFactory } from './acp-terminal';
 import { AcpServer, type AcpServerOptions, createAcpAgentApp } from './server';
 
 export interface RunAcpServerOptions extends AcpServerOptions {
@@ -133,11 +142,35 @@ export async function runAcpServerWithStream(
   // file IO. The `acp` `IHostFileSystem` reads it lazily via
   // `IAcpConnection.get()`.
   acpConnection.bind(client);
+  const workspaceManager = core.accessor.get(IWorkspaceInstanceManager);
+  const acpRuntimeProvider = new AcpRuntimeProviderFactory(acpConnection, core.accessor.get(IHostEnvironment), core.accessor.get(IHostProcessService));
+  const acpProviderRegistration = await workspaceManager.addProvider(acpRuntimeProvider);
+  const sessionWorkspaces = new Map<string, string>();
   server = new AcpServer(client, klient, acpConnection, {
     agentInfo: opts.agentInfo,
     disableAuth: opts.disableAuth,
     terminalAuthEnv: opts.terminalAuthEnv,
     terminalAuthLegacyCommand: opts.terminalAuthLegacyCommand,
+    slashCommands: opts.slashCommands,
+    bindSessionRuntime: async (sessionId) => {
+      const handle = getLiveSessionById(core.accessor, sessionId);
+      if (handle === undefined) throw new Error(`session ${sessionId} is not live`);
+      const context = handle.accessor.get(ISessionContext);
+      const runtimeId = acpRuntimeProvider.bindSession(context.workspaceId, sessionId, context.cwd);
+      sessionWorkspaces.set(sessionId, context.workspaceId);
+      const agentContext = await ensureMainAgent(handle, { runtimeId });
+      handle.accessor
+        .get(IAgentLifecycleService)
+        .handleOf(agentContext.agentId)!
+        .accessor.get(IAgentRuntimeBindingService)
+        .switch(runtimeId);
+    },
+    unbindSessionRuntime: async (sessionId) => {
+      const workspaceId = sessionWorkspaces.get(sessionId);
+      if (workspaceId === undefined) return;
+      sessionWorkspaces.delete(sessionId);
+      await acpRuntimeProvider.unbindSession(workspaceId, sessionId);
+    },
     // Prompt-image compression persists originals into the session's own
     // media-originals dir (same resolution as kap-server's prompt route):
     // live session scope → `ISessionContext.sessionDir`. A session that is
@@ -150,19 +183,41 @@ export async function runAcpServerWithStream(
     },
   });
 
+  let closePromise: Promise<void> | undefined;
   const close = async (): Promise<void> => {
-    // Detach the klient's event subscriptions first so disposal below cannot
-    // deliver into a torn-down scope.
-    await klient.close();
-    // Flush the append-log write-behind before disposing, so a clean shutdown
-    // never races a pending drain against teardown (and doesn't drop the last
-    // persisted ops). Best-effort: a flush failure must not block disposal.
-    try {
-      await core.accessor.get(IAppendLogStore).flush();
-    } catch {
-      // ignore — disposal proceeds regardless
-    }
-    core.dispose();
+    if (closePromise !== undefined) return closePromise;
+    closePromise = (async () => {
+      // Detach the klient's event subscriptions first so disposal below cannot
+      // deliver into a torn-down scope.
+      await klient.close();
+      // Flush the append-log write-behind before disposing, so a clean shutdown
+      // never races a pending drain against teardown (and doesn't drop the last
+      // persisted ops). Best-effort: a flush failure must not block disposal.
+      const appendLogStore = core.accessor.get(IAppendLogStore);
+      try {
+        await appendLogStore.flush();
+      } catch {
+        // ignore — disposal proceeds regardless
+      }
+      // Same shutdown order as kap-server: settle queued session-metadata
+      // writes, then drain the session-index mirror while the query store is
+      // still open, so a queued summary lands in the read model.
+      await drainSessionMetadataWrites();
+      await core.accessor.get(ISessionIndexMirror).drain();
+      await acpProviderRegistration.dispose();
+      core.dispose();
+      // `core.dispose()` runs the mirror's and the query store's synchronous
+      // `dispose()`, whose drains/closes are asynchronous — await them so an
+      // embedding host that removes homeDir right after close() never races
+      // an in-flight shard close (ENOTEMPTY on teardown). The same window
+      // exists for the append-log retirement flushes released by disposal.
+      await appendLogStore.drainRetirements();
+      await drainSessionIndexMirror();
+      await drainQueryStoreDisposals();
+      await drainSessionMetadataWrites();
+      await drainLogCloses();
+    })();
+    return closePromise;
   };
 
   void conn.closed.then(() => {

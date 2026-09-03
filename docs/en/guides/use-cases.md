@@ -81,7 +81,7 @@ src/parser/markdown.ts currently has almost no tests. Please add a unit test sui
 Extract the repeated "read body → validate → log → respond" pattern in src/handlers into a middleware. Run the tests afterwards to make sure existing behavior is unchanged.
 ```
 
-For multi-file refactors, use Plan mode first to confirm the approach. You can also use `/fork` to create an experimental branch — if you don't like the result, just switch back to the original session.
+For multi-file refactors, use Plan mode first to confirm the approach. You can also `/fork` the session into an experimental branch and switch to it from `/sessions` — forking itself never disrupts the original session, so you can simply switch back if you don't like the result.
 
 ## One-off scripts and automation
 
@@ -99,7 +99,7 @@ Analyze the access logs in logs/ from the past 7 days. For each API path, comput
 Research the main dependency injection options for TypeScript (tsyringe, inversify, awilix). Compare them across three dimensions: API style, decorator requirements, and runtime overhead. Give me a recommendation that fits on one page.
 ```
 
-For batch tasks you know are safe, use `--yolo` or `/yolo` to skip approval prompts, or add pre-approved allowlist rules for specific tools in [Configuration files](../configuration/config-files.md#permission).
+For batch tasks you know are safe, use `--yolo` or `/ask-when-needed` to skip approval prompts, or add pre-approved allowlist rules for specific tools in [Configuration files](../configuration/config-files.md#permission).
 
 ## Scheduled tasks and reminders
 

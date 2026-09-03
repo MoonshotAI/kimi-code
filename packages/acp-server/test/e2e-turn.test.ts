@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { getLiveSessionById, IAgentLifecycleService, IEventBus } from '@moonshot-ai/agent-core-v2';
+import { ToolProgress } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { mapPromptLaunchError } from '../src/session';
@@ -39,17 +40,30 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
       client = undefined;
     }
     if (homeDir !== undefined) {
-      await rm(homeDir, { recursive: true, force: true });
+      await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
       homeDir = undefined;
     }
   });
 
-  async function boot(): Promise<TestClient> {
+  function installTerminalClient(c: TestClient): void {
+    c.onRequest('terminal/create', () => ({ terminalId: 'term-1' }));
+    c.onRequest('terminal/output', () => ({
+      output: 'hello_from_bash\ndelta_stream\n',
+      truncated: false,
+      exitStatus: { exitCode: 0, signal: null },
+    }));
+    c.onRequest('terminal/wait_for_exit', () => ({ exitCode: 0, signal: null }));
+    c.onRequest('terminal/kill', () => ({}));
+    c.onRequest('terminal/release', () => ({}));
+  }
+
+  async function boot(clientCapabilities: Record<string, unknown> = {}): Promise<TestClient> {
     homeDir = await mkdtemp(join(tmpdir(), 'acp-e2e-turn-'));
     await writeFakeModelConfig(homeDir);
     scripted = createScriptedProvider();
     client = await createTestClient({ homeDir, extraSeeds: [scripted.seed] });
-    await client.send('initialize', { protocolVersion: 1, clientCapabilities: {} });
+    await client.send('initialize', { protocolVersion: 1, clientCapabilities });
+    if (clientCapabilities['terminal'] === true) installTerminalClient(client);
     return client;
   }
 
@@ -92,7 +106,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
   }, 30_000);
 
   it('runs a tool call and bridges the approval request to the client', async () => {
-    const c = await boot();
+    const c = await boot({ terminal: true });
     // First model response: a Bash tool call. Second: a short text wrap-up
     // after the tool result is fed back to the model.
     scripted!.mockNextResponse({
@@ -148,8 +162,82 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
       .map((m) => (m.params as { update?: ToolCallUpdate }).update)
       .find((u) => u?.sessionUpdate === 'tool_call_update' && u?.status === 'completed');
     expect(terminal).toBeDefined();
-    const text = terminal?.content?.map((c) => c.content?.text ?? '').join('\n') ?? '';
-    expect(text).toContain('hello_from_bash');
+    expect(JSON.stringify(scripted!.callHistory()[1])).toContain('hello_from_bash');
+  }, 30_000);
+
+  it('bridges AskUserQuestion through elicitation/create for form-capable clients', async () => {
+    const c = await boot({ elicitation: { form: {} } });
+    // First model response: an AskUserQuestion tool call with a single-select
+    // and a multi-select question. Second: wrap-up after the answers come back.
+    scripted!.mockNextResponse({
+      type: 'function',
+      id: 'call_q',
+      name: 'AskUserQuestion',
+      arguments: JSON.stringify({
+        questions: [
+          {
+            question: 'Pick one',
+            header: 'One',
+            options: [{ label: 'A' }, { label: 'B' }],
+            multi_select: false,
+          },
+          {
+            question: 'Pick many',
+            header: 'Many',
+            options: [{ label: 'X' }, { label: 'Y' }, { label: 'Z' }],
+            multi_select: true,
+          },
+        ],
+      }),
+    });
+    scripted!.mockNextText('noted');
+
+    const elicitationRequests: unknown[] = [];
+    c.onRequest('elicitation/create', (params) => {
+      elicitationRequests.push(params);
+      return { action: 'accept', content: { q0: 'B', q1: ['Z', 'X'] } };
+    });
+    // Auto-approve in case the tool itself requires an approval first.
+    const permissionRequests: unknown[] = [];
+    c.onRequest('session/request_permission', (params) => {
+      permissionRequests.push(params);
+      return { outcome: { outcome: 'selected', optionId: 'approve_once' } };
+    });
+
+    const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
+      sessionId: string;
+    };
+    await c.waitForSessionUpdate('available_commands_update', 10_000);
+
+    const result = (await c.send('session/prompt', {
+      sessionId: created.sessionId,
+      prompt: [{ type: 'text', text: 'ask me things' }],
+    })) as { stopReason: string };
+    expect(result.stopReason).toBe('end_turn');
+    expect(scripted!.callCount()).toBe(2);
+
+    // The question went over `elicitation/create` — never the permission
+    // bridge — as one form carrying both questions.
+    expect(elicitationRequests).toHaveLength(1);
+    expect(permissionRequests.filter((p) => JSON.stringify(p).includes('AskUserQuestion')))
+      .toHaveLength(0);
+    const elicitation = elicitationRequests[0] as {
+      mode?: string;
+      toolCallId?: string;
+      requestedSchema?: { required?: string[]; properties?: Record<string, { type?: string }> };
+    };
+    expect(elicitation.mode).toBe('form');
+    expect(elicitation.toolCallId).toContain('call_q');
+    expect(elicitation.requestedSchema?.required).toEqual(['q0', 'q1']);
+    expect(elicitation.requestedSchema?.properties?.['q0']?.type).toBe('string');
+    expect(elicitation.requestedSchema?.properties?.['q1']?.type).toBe('array');
+
+    // The answers fed back to the model key by question text; the multi-select
+    // joins in declared option order. (The history is JSON-stringified, so
+    // the tool output's quotes appear escaped.)
+    const history = JSON.stringify(scripted!.callHistory()[1]);
+    expect(history).toContain('\\"Pick one\\":\\"B\\"');
+    expect(history).toContain('\\"Pick many\\":\\"X, Z\\"');
   }, 30_000);
 
   it('rejects a second prompt while a turn is in flight', async () => {
@@ -202,6 +290,39 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     const result = (await firstPrompt) as { stopReason: string };
     expect(result.stopReason).toBe('end_turn');
     expect(scripted!.callCount()).toBe(2);
+  }, 30_000);
+
+  it('settles as cancelled when cancel arrives while the launch is in flight', async () => {
+    const c = await boot();
+    // The scripted Bash call would park the turn at approval — but the cancel
+    // must win regardless of whether it lands before or after the launch
+    // round-trip delivers the turn id.
+    scripted!.mockNextResponse({
+      type: 'function',
+      id: 'call_cancel',
+      name: 'Bash',
+      arguments: '{"command":"echo cancel_probe"}',
+    });
+    c.onRequest('session/request_permission', () => ({
+      outcome: { outcome: 'selected', optionId: 'approve_once' },
+    }));
+
+    const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
+      sessionId: string;
+    };
+    await c.waitForSessionUpdate('available_commands_update', 10_000);
+
+    const promptPromise = c.send('session/prompt', {
+      sessionId: created.sessionId,
+      prompt: [{ type: 'text', text: 'run echo' }],
+    });
+    // Fire the cancel immediately: the driver's turn id is very likely still
+    // unknown at this point, which used to drop the cancel on the floor and
+    // let the turn run to completion.
+    c.notify('session/cancel', { sessionId: created.sessionId });
+
+    const result = (await promptPromise) as { stopReason: string };
+    expect(result.stopReason).toBe('cancelled');
   }, 30_000);
 
   it('attaches locations to a file tool call and its terminal update', async () => {
@@ -286,7 +407,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
   }, 30_000);
 
   it('streams tool-call args deltas: lazy pending CREATE → cumulative update → started upgrade → completed', async () => {
-    const c = await boot();
+    const c = await boot({ terminal: true });
     // Args stream in two fragments; the merge yields the full command.
     scripted!.mockNextResponse(
       { type: 'function', id: 'call_1', name: 'Bash', arguments: '{"command":"ec' },
@@ -350,7 +471,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     const terminal = updates.at(-1);
     expect(terminal?.sessionUpdate).toBe('tool_call_update');
     expect(terminal?.status).toBe('completed');
-    expect(textOf(terminal)).toContain('delta_stream');
+    expect(JSON.stringify(scripted!.callHistory()[1])).toContain('delta_stream');
   }, 30_000);
 
   it('refreshes the tool card title on a status progress update and drops other progress kinds', async () => {
@@ -385,21 +506,25 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     const wireId = (create.params as { update?: { toolCallId?: string } }).update?.toolCallId;
     const turnId = Number(wireId?.split(':')[0]);
     const session = getLiveSessionById(c.server.core.accessor, created.sessionId);
-    const agentHandle = session?.accessor.get(IAgentLifecycleService).get('main');
+    const agentHandle = session?.accessor.get(IAgentLifecycleService).handleOf('main');
     const bus = agentHandle?.accessor.get(IEventBus);
     expect(bus).toBeDefined();
-    bus!.publish({
-      type: 'tool.progress',
-      turnId,
-      toolCallId: 'call_1',
-      update: { kind: 'stdout', text: 'raw-stdout-bytes' },
-    });
-    bus!.publish({
-      type: 'tool.progress',
-      turnId,
-      toolCallId: 'call_1',
-      update: { kind: 'status', text: 'Still working…' },
-    });
+    bus!.publish(
+      new ToolProgress({
+        agentId: 'main',
+        turnId,
+        toolCallId: 'call_1',
+        update: { kind: 'stdout', text: 'raw-stdout-bytes' },
+      }),
+    );
+    bus!.publish(
+      new ToolProgress({
+        agentId: 'main',
+        turnId,
+        toolCallId: 'call_1',
+        update: { kind: 'status', text: 'Still working…' },
+      }),
+    );
 
     const result = (await promptPromise) as { stopReason: string };
     expect(result.stopReason).toBe('end_turn');
@@ -454,7 +579,7 @@ describe('acp-server prompt error hygiene', () => {
       client = undefined;
     }
     if (homeDir !== undefined) {
-      await rm(homeDir, { recursive: true, force: true });
+      await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
       homeDir = undefined;
     }
   });
@@ -501,7 +626,7 @@ describe('acp-server builtin slash commands (local execution, no LLM turn)', () 
       client = undefined;
     }
     if (homeDir !== undefined) {
-      await rm(homeDir, { recursive: true, force: true });
+      await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
       homeDir = undefined;
     }
   });
@@ -600,10 +725,10 @@ describe('acp-server builtin slash commands (local execution, no LLM turn)', () 
       cwd: homeDir,
       mcpServers: [
         {
+          type: 'http',
           name: 'mock',
-          command: process.execPath,
-          args: [STDIO_MCP_FIXTURE],
-          env: [{ name: 'KIMI_TEST_MCP_START_DELAY_MS', value: '0' }],
+          url: 'http://127.0.0.1:1/mcp',
+          headers: [{ name: 'X-Test-Fixture', value: STDIO_MCP_FIXTURE }],
         },
       ],
     })) as { sessionId: string };
@@ -612,7 +737,7 @@ describe('acp-server builtin slash commands (local execution, no LLM turn)', () 
     const { chunk, stopReason } = await runSlash(c, created.sessionId, '/mcp');
     expect(stopReason).toBe('end_turn');
     expect(chunk).toContain('MCP servers (1):');
-    expect(chunk).toContain('- mock (stdio): connected,');
+    expect(chunk).toContain('- mock (http):');
     expect(scripted!.callCount()).toBe(0);
   }, 30_000);
 
@@ -718,7 +843,7 @@ describe('acp-server terminal reverse-RPC (clientCapabilities.terminal)', () => 
       client = undefined;
     }
     if (homeDir !== undefined) {
-      await rm(homeDir, { recursive: true, force: true });
+      await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
       homeDir = undefined;
     }
   });
@@ -874,7 +999,7 @@ describe('acp-server terminal reverse-RPC (clientCapabilities.terminal)', () => 
     const { stopReason } = await runPrompt(c);
     expect(stopReason).toBe('end_turn');
 
-    // No terminal reverse-RPC at all — behavior identical to today.
+    // No terminal reverse-RPC at all — the command ran locally.
     expect(terminals).toHaveLength(0);
     const terminalRpcs = c.received.filter(
       (m) => typeof m.method === 'string' && m.method.startsWith('terminal/'),

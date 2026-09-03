@@ -12,10 +12,10 @@ export const sessionUsageSchema = z.object({
   output_tokens: z.number().int().nonnegative(),
   cache_read_tokens: z.number().int().nonnegative(),
   cache_creation_tokens: z.number().int().nonnegative(),
-  total_cost_usd: z.number().nonnegative(),
+  total_cost_usd: z.number().nonnegative().optional(),
   context_tokens: z.number().int().nonnegative(),
-  context_limit: z.number().int().nonnegative(),
-  turn_count: z.number().int().nonnegative(),
+  context_limit: z.number().int().nonnegative().optional(),
+  turn_count: z.number().int().nonnegative().optional(),
 });
 
 export type SessionUsage = z.infer<typeof sessionUsageSchema>;
@@ -58,6 +58,8 @@ export const sessionAgentConfigSchema = z.object({
   permission_mode: promptPermissionModeSchema.optional(),
   plan_mode: z.boolean().optional(),
   swarm_mode: z.boolean().optional(),
+  tower_mode: z.boolean().optional(),
+  tower_base: z.string().min(1).optional(),
   goal_objective: z.string().optional(),
   goal_control: z.enum(['pause', 'resume', 'cancel']).optional(),
 });
@@ -102,6 +104,9 @@ export const sessionSchema = z.object({
    *  reason is cancelled/failed). */
   last_turn_reason: z.enum(['completed', 'cancelled', 'failed']).optional(),
   archived: z.boolean().optional(),
+  /** When the session was archived (ISO 8601); absent for sessions archived
+   *  before the field existed — clients fall back to `updated_at`. */
+  archived_at: isoDateTimeSchema.optional(),
   current_prompt_id: z.string().min(1).optional(),
   /** Text of the most recent user prompt, for search/preview. Absent for empty sessions. */
   last_prompt: z.string().optional(),

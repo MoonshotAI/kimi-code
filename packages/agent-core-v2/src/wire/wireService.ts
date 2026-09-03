@@ -1,30 +1,21 @@
-/**
- * `wire` domain — `IWireService` implementation.
- *
- * `WireService` is the sole runtime owner of an Agent wire aggregate. It
- * combines the model reducer engine with the `wire.jsonl` journal protocol,
- * including creation-time sealing, metadata, migrations, atomic healing
- * rewrites, blob dehydration and rehydration plus an ordered post-restore hook.
- * It is bound at Agent scope because the aggregate identity is the Agent
- * identity.
- */
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
-import { BugIndicatingError } from '#/_base/errors/errors';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
-import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Service } from '#/_base/di/service';
+import { ILogService } from '#/_base/log/log';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ContentPart } from '#/kosong/contract/message';
-import { OrderedHookSlot } from '#/hooks';
-import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
-import { StorageError, StorageErrors } from '#/persistence/interface/storage';
+import {
+  type AppendLogTruncation,
+  IAppendLogStore,
+} from '#/persistence/interface/appendLogStore';
+import { IFileSystemStorageService, StorageError, StorageErrors } from '#/persistence/interface/storage';
 
 import { IWireService } from './wire';
 import { WireError, WireErrors } from './errors';
+import { repairWireJournal } from './repair';
 import {
   WIRE_PROTOCOL_VERSION,
   isNewerWireVersion,
@@ -33,198 +24,303 @@ import {
   resolveWireMigrations,
   type WireMigration,
 } from './migration/migration';
-import type { DeepReadonly, ModelDef, PartsTransformer } from './model';
-import { MODEL_CROSS_REDUCERS } from './model';
-import type { Op } from './op';
-import { OP_REGISTRY } from './op';
 import {
   AGENT_WIRE_RECORD_KEY,
   createWireMetadataRecord,
   isWireRecord,
   isWireMetadataRecord,
-  opToWireRecord,
-  wireRecordToPayload,
+  type PartsTransformer,
+  type RecordDehydrator,
   type WireRecord,
 } from './record';
 
-const MAX_DRAIN = 100;
-
-export class CycleError extends WireError {
-  constructor(readonly depth: number, readonly opTypes: readonly string[]) {
-    super(
-      WireErrors.codes.WIRE_CYCLE,
-      `Wire dispatch cascade exceeded MAX_DRAIN (${depth}); possible op cycle`,
-      { details: { depth, opTypes: opTypes.slice(0, 20) } },
-    );
-    this.name = 'CycleError';
-  }
-}
-
-interface ModelInstance {
-  state: any;
-}
-
-interface OpGroup {
-  readonly ops: readonly Op[];
-  readonly silent: boolean;
-}
-
-type RestorePhase = 'new' | 'restoring' | 'ready' | 'failed';
-
-export class WireService extends Disposable implements IWireService {
+export class WireService extends Service implements IWireService {
   declare readonly _serviceBrand: undefined;
 
-  readonly hooks: IWireService['hooks'] = {
-    onDidRestore: new OrderedHookSlot(),
-  };
-
-  private readonly models = new Map<ModelDef<any>, ModelInstance>();
   private readonly wireScope: string;
-
-  private restorePhase: RestorePhase = 'new';
-  private dispatching = false;
-  private queue: Op[] = [];
-  private drainDepth = 0;
+  private lines = 0;
+  private lastClearLine: number | undefined;
+  private readonly agentId: string;
   private persistQueue: Promise<void> | undefined;
+  private pendingRepair:
+    | { readonly records: WireRecord[]; readonly truncation: AppendLogTruncation }
+    | undefined;
+  private persistError: Error | undefined;
 
   constructor(
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAppendLogStore private readonly log: IAppendLogStore,
     @IAgentBlobService private readonly blobService: IAgentBlobService,
-    @IEventBus private readonly eventBus: IEventBus,
+    @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
+    @ILogService private readonly logger: ILogService,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     super();
     this.wireScope = scopeContext.scope();
+    this.agentId = scopeContext.agentId;
     this._register(this.log.acquire(this.wireScope, AGENT_WIRE_RECORD_KEY));
   }
 
-  getModel<S>(model: ModelDef<S>): DeepReadonly<S> {
-    return this.ensureModel(model).state as DeepReadonly<S>;
-  }
-
-  dispatch(...ops: Op[]): void {
-    if (ops.length === 0) return;
-    if (this.dispatching) {
-      this.queue.push(...ops);
-      return;
-    }
-    this.dispatching = true;
-    try {
-      this.execute({ ops, silent: false });
-      while (this.queue.length > 0) {
-        if (++this.drainDepth > MAX_DRAIN) {
-          throw new CycleError(this.drainDepth, this.queue.map((op) => op.type));
-        }
-        this.execute({ ops: this.queue.splice(0), silent: false });
-      }
-    } finally {
-      this.queue.length = 0;
-      this.dispatching = false;
-      this.drainDepth = 0;
-    }
-  }
-
   async seal(): Promise<void> {
-    for await (const record of this.log.read(this.wireScope, AGENT_WIRE_RECORD_KEY)) {
+    const tolerate = { onTruncate: () => {} };
+    for await (const record of this.log.read(this.wireScope, AGENT_WIRE_RECORD_KEY, tolerate)) {
       void record;
       return;
     }
-    this.appendRecord(createWireMetadataRecord());
+    this.appendRecordLow(createWireMetadataRecord());
   }
 
-  async restore(): Promise<void> {
+  appendRecord(record: WireRecord, dehydrate?: RecordDehydrator): void {
     if (
-      this.restorePhase === 'restoring' ||
-      this.restorePhase === 'failed' ||
-      this.restorePhase === 'ready'
+      this.pendingRepair === undefined &&
+      dehydrate === undefined &&
+      this.persistQueue === undefined
     ) {
-      throw new BugIndicatingError(`Agent wire restore called while phase is ${this.restorePhase}`);
+      try {
+        this.appendRecordLow(record);
+      } catch (error) {
+        onUnexpectedError(error);
+      }
+      return;
     }
-    this.restorePhase = 'restoring';
-    try {
-      const source = this.log.read<WireRecord>(this.wireScope, AGENT_WIRE_RECORD_KEY);
-      let migrations: readonly WireMigration[] = [];
-      let rewrittenRecords: WireRecord[] | undefined;
-      let newerWireVersion = false;
-      let recordIndex = 0;
-      let hasRecords = false;
-
-      for await (const candidate of source) {
-        const sourceRecord: unknown = candidate;
-        if (!isWireRecord(sourceRecord)) {
-          this.reportSkippedRecord(undefined, recordIndex, true);
-          recordIndex++;
-          continue;
+    const transform: PartsTransformer = (parts) =>
+      this.blobService.offloadParts(
+        parts as readonly ContentPart[],
+      ) as Promise<readonly unknown[]>;
+    const queued = (this.persistQueue ?? Promise.resolve())
+      .then(async () => {
+        if (this.pendingRepair !== undefined) {
+          await this.repairPendingJournal();
         }
-        if (!hasRecords) {
-          hasRecords = true;
-          if (sourceRecord.type !== 'metadata') {
-            rewrittenRecords = [createWireMetadataRecord()];
-            migrations = [migrateV1_4ToV1_5];
-          } else if (!isWireMetadataRecord(sourceRecord)) {
-            throw new StorageError(
-              StorageErrors.codes.STORAGE_CORRUPTED,
-              'Agent wire metadata is malformed',
-              { details: { scope: this.wireScope, key: AGENT_WIRE_RECORD_KEY } },
-            );
-          } else if (isNewerWireVersion(sourceRecord.protocol_version)) {
-            newerWireVersion = true;
-          } else {
-            migrations = resolveWireMigrations(sourceRecord.protocol_version);
-            if (sourceRecord.protocol_version !== WIRE_PROTOCOL_VERSION) {
-              rewrittenRecords = [];
-            }
+        const output = dehydrate === undefined ? record : await dehydrate(record, transform);
+        this.appendRecordLow(output);
+      })
+      .catch((error: unknown) => onUnexpectedError(error));
+    this.persistQueue = queued;
+    void queued.then(() => {
+      if (this.persistQueue === queued) this.persistQueue = undefined;
+    });
+  }
+
+  async *readJournal(): AsyncIterable<WireRecord> {
+    let truncation: AppendLogTruncation | undefined;
+    const source = this.log.read<WireRecord>(this.wireScope, AGENT_WIRE_RECORD_KEY, {
+      onTruncate: (info) => {
+        truncation = info;
+      },
+    });
+    let migrations: readonly WireMigration[] = [];
+    let rewrittenRecords: WireRecord[] | undefined;
+    let newerWireVersion = false;
+    let recordIndex = 0;
+    let lineCount = 0;
+    let hasRecords = false;
+    let legacyPlanRevisionMigrated = false;
+
+    for await (const candidate of source) {
+      lineCount++;
+      this.lines = lineCount;
+      const sourceRecord: unknown = candidate;
+      if (!isWireRecord(sourceRecord)) {
+        this.reportSkippedRecord(undefined, recordIndex, true);
+        recordIndex++;
+        continue;
+      }
+      if (sourceRecord.type === 'context.clear') this.lastClearLine = lineCount;
+      if (!hasRecords) {
+        hasRecords = true;
+        if (sourceRecord.type !== 'metadata') {
+          rewrittenRecords = [createWireMetadataRecord()];
+          migrations = [migrateV1_4ToV1_5];
+        } else if (!isWireMetadataRecord(sourceRecord)) {
+          throw new StorageError(
+            StorageErrors.codes.STORAGE_CORRUPTED,
+            'Agent wire metadata is malformed',
+            { details: { scope: this.wireScope, key: AGENT_WIRE_RECORD_KEY } },
+          );
+        } else if (isNewerWireVersion(sourceRecord.protocol_version)) {
+          newerWireVersion = true;
+        } else {
+          migrations = resolveWireMigrations(sourceRecord.protocol_version);
+          if (sourceRecord.protocol_version !== WIRE_PROTOCOL_VERSION) {
+            rewrittenRecords = [];
           }
         }
+      }
 
-        const migratedRecord = migrateWireRecord(sourceRecord, migrations);
-        const record =
-          !newerWireVersion && migratedRecord.type === 'metadata'
-            ? { ...migratedRecord, protocol_version: WIRE_PROTOCOL_VERSION }
-            : migratedRecord;
-        rewrittenRecords?.push(record);
-        if (record.type === 'metadata') continue;
-
-        this.replayRecord(record, recordIndex);
+      const migratedRecord = migrateWireRecord(sourceRecord, migrations);
+      const record =
+        !newerWireVersion && migratedRecord.type === 'metadata'
+          ? { ...migratedRecord, protocol_version: WIRE_PROTOCOL_VERSION }
+          : migratedRecord;
+      const normalized = newerWireVersion
+        ? record
+        : this.normalizePlanRevisionRecord(record, recordIndex);
+      if (
+        !newerWireVersion &&
+        normalized !== undefined &&
+        'path' in record &&
+        !('key' in record)
+      ) {
+        legacyPlanRevisionMigrated = true;
+      }
+      if (normalized === undefined) {
+        if (record.type === 'plan.revision') recordIndex++;
+        continue;
+      }
+      rewrittenRecords?.push(normalized);
+      yield normalized;
+      if (normalized.type !== 'metadata') {
         recordIndex++;
       }
+    }
 
-      if (!hasRecords) {
-        rewrittenRecords = [createWireMetadataRecord()];
-      }
-      if (rewrittenRecords !== undefined) {
-        await this.log.rewrite(this.wireScope, AGENT_WIRE_RECORD_KEY, rewrittenRecords);
-      }
+    if (legacyPlanRevisionMigrated && rewrittenRecords === undefined) {
+      rewrittenRecords = await this.rebuildRewriteRecords(migrations, newerWireVersion);
+    }
+    if (!hasRecords) {
+      rewrittenRecords = [createWireMetadataRecord()];
+    }
+    if (truncation !== undefined) {
+      await this.repairJournal(truncation, rewrittenRecords);
+    } else if (rewrittenRecords !== undefined) {
+      await this.log.rewrite(this.wireScope, AGENT_WIRE_RECORD_KEY, rewrittenRecords);
+      this.lines = rewrittenRecords.length;
+      this.lastClearLine = lastContextClearLineOf(rewrittenRecords);
+    }
+  }
 
-      await this.rehydrateModels();
-      this.restorePhase = 'ready';
-      await this.hooks.onDidRestore.run({});
-    } catch (error) {
-      this.restorePhase = 'failed';
+  lineCount(): number {
+    return this.lines;
+  }
+
+  lastContextClearLine(): number | undefined {
+    return this.lastClearLine;
+  }
+
+  journalPath(): string | undefined {
+    return this.storage.pathFor(this.wireScope, AGENT_WIRE_RECORD_KEY);
+  }
+
+  private async repairJournal(
+    truncation: AppendLogTruncation,
+    rewrittenRecords: WireRecord[] | undefined,
+  ): Promise<void> {
+    let records: WireRecord[] = rewrittenRecords ?? [];
+    if (rewrittenRecords === undefined) {
+      const tolerate = { onTruncate: () => {} };
+      for await (const record of this.log.read<WireRecord>(
+        this.wireScope,
+        AGENT_WIRE_RECORD_KEY,
+        tolerate,
+      )) {
+        records.push(record);
+      }
+    }
+    const outcome = await repairWireJournal(
+      {
+        appendLog: this.log,
+        storage: this.storage,
+        log: this.logger,
+        telemetry: this.telemetry,
+      },
+      this.wireScope,
+      AGENT_WIRE_RECORD_KEY,
+      records,
+      truncation,
+    );
+    this.pendingRepair = outcome === 'failed' ? { records, truncation } : undefined;
+    if (outcome !== 'failed') {
+      this.lines = records.length;
+      this.lastClearLine = lastContextClearLineOf(records);
+    }
+  }
+
+  private async repairPendingJournal(): Promise<void> {
+    const pending = this.pendingRepair;
+    if (pending === undefined) return;
+    await this.repairJournal(pending.truncation, pending.records);
+    if (this.pendingRepair !== undefined) {
+      const error = new WireError(
+        WireErrors.codes.RECORDS_WRITE_FAILED,
+        'Wire journal repair did not complete; record was not appended',
+        {
+          details: {
+            scope: this.wireScope,
+            key: AGENT_WIRE_RECORD_KEY,
+            lineNumber: pending.truncation.lineNumber,
+          },
+        },
+      );
+      this.persistError = error;
       throw error;
     }
   }
 
   async flush(): Promise<void> {
     await this.persistQueue;
+    const persistError = this.persistError;
+    this.persistError = undefined;
+    if (persistError !== undefined) throw persistError;
     await this.log.flush();
   }
 
-  private replayRecord(record: WireRecord, index: number): void {
-    const descriptor = OP_REGISTRY.get(record.type);
-    if (descriptor === undefined) {
-      this.reportSkippedRecord(record.type, index);
-      return;
+  private async rebuildRewriteRecords(
+    migrations: readonly WireMigration[],
+    newerWireVersion: boolean,
+  ): Promise<WireRecord[]> {
+    const records: WireRecord[] = [];
+    const tolerate = { onTruncate: () => {} };
+    for await (const candidate of this.log.read<WireRecord>(
+      this.wireScope,
+      AGENT_WIRE_RECORD_KEY,
+      tolerate,
+    )) {
+      if (!isWireRecord(candidate)) continue;
+      const migratedRecord = migrateWireRecord(candidate, migrations);
+      const record =
+        !newerWireVersion && migratedRecord.type === 'metadata'
+          ? { ...migratedRecord, protocol_version: WIRE_PROTOCOL_VERSION }
+          : migratedRecord;
+      const normalized = newerWireVersion
+        ? record
+        : this.normalizePlanRevisionRecord(record, 0, false);
+      if (normalized !== undefined) records.push(normalized);
     }
-    const payload = descriptor.schema.safeParse(wireRecordToPayload(record));
-    if (!payload.success) {
-      this.reportSkippedRecord(record.type, index, true);
-      return;
+    return records;
+  }
+
+  private normalizePlanRevisionRecord(
+    record: WireRecord,
+    index: number,
+    report = true,
+  ): WireRecord | undefined {
+    if (record.type !== 'plan.revision' || 'key' in record) return record;
+    if (!('path' in record) || typeof record['path'] !== 'string') {
+      if (report) {
+        this.telemetry.track2('wire_plan_revision_migrated', {
+          record_type: 'plan.revision',
+          legacy_field: 'path',
+          migration_outcome: 'skipped',
+        });
+        this.reportSkippedRecord(record.type, index, true);
+      }
+      return undefined;
     }
-    this.execute({
-      ops: [{ type: record.type, payload: payload.data, descriptor }],
-      silent: true,
-    });
+    const key = extractLegacyPlanRevisionKey(record['path'], this.agentId);
+    if (report) {
+      this.telemetry.track2('wire_plan_revision_migrated', {
+        record_type: 'plan.revision',
+        legacy_field: 'path',
+        migration_outcome: key === undefined ? 'skipped' : 'migrated',
+      });
+    }
+    if (key === undefined) {
+      if (report) this.reportSkippedRecord(record.type, index, true);
+      return undefined;
+    }
+    const { path: _path, ...rest } = record;
+    return { ...rest, key };
   }
 
   private reportSkippedRecord(type: string | undefined, index: number, malformed = false): void {
@@ -241,88 +337,36 @@ export class WireService extends Disposable implements IWireService {
     );
   }
 
-  private execute(group: OpGroup): void {
-    for (const op of group.ops) {
-      const inst = this.ensureModel(op.descriptor.model);
-      const prev = inst.state;
-      inst.state = Object.freeze(op.descriptor.apply(prev, op.payload));
-      if (!group.silent) {
-        if (op.descriptor.persist !== false) {
-          const record = opToWireRecord(op);
-          this.appendToJournal(record, op.descriptor.model);
-        }
-        const event = op.descriptor.toEvent?.(op.payload, inst.state);
-        if (event !== undefined) {
-          this.eventBus.publish(event as DomainEvent);
-        }
-      }
-      const crossReducers = MODEL_CROSS_REDUCERS.get(op.type);
-      if (crossReducers !== undefined) {
-        for (const entry of crossReducers) {
-          if (entry.model === op.descriptor.model) continue;
-          const crossInst = this.ensureModel(entry.model);
-          crossInst.state = Object.freeze(entry.reducer(crossInst.state, op.payload));
-        }
-      }
-    }
-  }
-
-  private ensureModel<S>(def: ModelDef<S>): ModelInstance {
-    let inst = this.models.get(def);
-    if (inst === undefined) {
-      inst = { state: Object.freeze(def.initial()) };
-      this.models.set(def, inst);
-    }
-    return inst;
-  }
-
-  private appendToJournal(record: WireRecord, model: ModelDef<any>): void {
-    const dehydrate = model.blobs?.dehydrate?.bind(model.blobs);
-    if (dehydrate === undefined && this.persistQueue === undefined) {
-      try {
-        this.appendRecord(record);
-      } catch (error) {
-        onUnexpectedError(error);
-      }
-      return;
-    }
-    const transform: PartsTransformer = (parts) =>
-      this.blobService.offloadParts(
-        parts as readonly ContentPart[],
-      ) as Promise<readonly unknown[]>;
-    const queued = (this.persistQueue ?? Promise.resolve())
-      .then(async () => {
-        let output = record;
-        if (dehydrate !== undefined) {
-          const prepared = dehydrate(record, transform);
-          output = await prepared;
-        }
-        this.appendRecord(output);
-      })
-      .catch((error: unknown) => onUnexpectedError(error));
-    this.persistQueue = queued;
-    void queued.then(() => {
-      if (this.persistQueue === queued) this.persistQueue = undefined;
-    });
-  }
-
-  private appendRecord(record: WireRecord): void {
+  private appendRecordLow(record: WireRecord): void {
     this.log.append(this.wireScope, AGENT_WIRE_RECORD_KEY, record, {
       onError: onUnexpectedError,
     });
+    this.lines += 1;
+    if (record.type === 'context.clear') this.lastClearLine = this.lines;
   }
+}
 
-  private async rehydrateModels(): Promise<void> {
-    const transform: PartsTransformer = (parts) =>
-      this.blobService.loadParts(
-        parts as readonly ContentPart[],
-      ) as Promise<readonly unknown[]>;
-    for (const [def, inst] of this.models) {
-      if (def.blobs?.rehydrate === undefined) continue;
-      const result = def.blobs.rehydrate(inst.state, transform);
-      inst.state = Object.freeze(await result);
-    }
+function lastContextClearLineOf(records: readonly WireRecord[]): number | undefined {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    if (records[index]!.type === 'context.clear') return index + 1;
   }
+  return undefined;
+}
+
+function extractLegacyPlanRevisionKey(path: string, agentId: string): string | undefined {
+  if (path.includes('\\')) return undefined;
+  const segments = path.split('/');
+  if (
+    segments.length < 8 ||
+    segments[0] !== 'sessions' ||
+    segments[3] !== 'agents' ||
+    segments[4] !== agentId ||
+    segments.slice(1, 3).some((segment) => segment.length === 0 || segment === '.' || segment === '..')
+  ) {
+    return undefined;
+  }
+  const key = segments.slice(5).join('/');
+  return /^plan\/[^/]+\/v[0-9]+\.md$/.test(key) ? key : undefined;
 }
 
 registerScopedService(

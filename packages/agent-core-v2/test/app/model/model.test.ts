@@ -1,13 +1,3 @@
-/**
- * `model` domain tests — covers `effectiveModelConfig`, the `models` config
- * section registration + TOML transforms (now owned by the app/kosongConfig
- * persistence wrapper), and the `KIMI_MODEL_*` env overlay.
- *
- * The registry itself (`ModelService`) is a pure in-memory store covered by
- * `test/kosong/model/modelService.test.ts`; persistence through the config
- * bridge is covered by `test/app/kosongConfig/kosongConfigService.test.ts`.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { ConfigRegistry } from '#/app/config/configService';
@@ -23,8 +13,6 @@ import {
 import { type ModelRecord } from '#/kosong/model/model';
 import { effectiveModelConfig } from '#/kosong/model/modelAuth';
 
-// Side-effect registrations: endpoint defaults and the trait-driven-thinking
-// verdict (`drivesThinkingThroughTraits`) answer through the provider-definition registry.
 import '#/kosong/provider/providers/kimi/kimi.contrib';
 import '#/kosong/provider/providers/standard.contrib';
 
@@ -258,10 +246,6 @@ describe('models TOML transforms', () => {
   });
 
   it('deletes on-disk fields the new record carries with an explicit undefined', () => {
-    // A field absent from the new record stays (plain overlay), but a field
-    // present with an explicit undefined value must be dropped from the
-    // merged on-disk raw — spreading `{...raw, ...converted}` would resurrect
-    // it (setDefined deletes from `converted`, never from the merge).
     expect(
       modelsToToml(
         {
@@ -289,7 +273,6 @@ describe('models TOML transforms', () => {
         provider: 'p',
         model: 'm',
         max_context_size: 1000,
-        // Unknown/unmentioned fields keep their old on-disk value.
         beta_api: true,
       },
     });
@@ -378,9 +361,6 @@ describe('kimiModelEnvOverlay', () => {
       { providers: { [ENV_MODEL_PROVIDER_KEY]: { type: 'openai' } } },
     );
 
-    // The registry declares no `defaultBaseUrl` for the canonical vendors
-    // (standard.contrib): construction-time defaults stay inside the bases /
-    // their SDKs, so the overlay leaves baseUrl out — exactly like anthropic.
     expect(effective['providers']).toEqual({
       [ENV_MODEL_PROVIDER_KEY]: { type: 'openai' },
     });

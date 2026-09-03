@@ -1,6 +1,5 @@
-import { execSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
 
 import {
   createKimiHarness,
@@ -20,14 +19,16 @@ import {
 } from '@moonshot-ai/kimi-telemetry';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE } from '#/constant/app';
-import { detectPendingMigration } from '#/migration/index';
+import { detectPendingMigration, resolveLegacySourceHome, sameLegacyPath } from '#/migration/index';
 import type { TuiConfig } from '#/tui/config';
 import { loadTuiConfig, TuiConfigParseError } from '#/tui/config';
 import { CHROME_GUTTER } from '#/tui/constant/rendering';
 import { KimiTUI } from '#/tui/index';
+import { startupTrace } from '#/utils/startup-trace';
 import { currentTheme, getColorPalette } from '#/tui/theme';
 import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 import { restoreTerminalModes } from '#/utils/terminal-restore';
+import { resolveCommandPath } from '#/utils/process/resolve-command';
 
 import type { CLIOptions } from './options';
 import { resolveAgentProfileSelection } from './agent-selection';
@@ -80,13 +81,14 @@ export async function runShell(
     },
     sessionStartedProperties: { yolo: opts.yolo, auto: opts.auto, plan: opts.plan, afk: false },
   };
-  // Experimental agent-core-v2 route (same master switch as `kimi -p`): the
-  // harness is the SDK's v2-backed client, so the whole TUI runs on the
-  // agent-core-v2 engine.
+  // The agent-core-v2 route is the default (same engine gate as `kimi -p`):
+  // the harness is the SDK's v2-backed client, so the whole TUI runs on the
+  // agent-core-v2 engine unless the legacy flag is set.
   const engineV2 = isKimiV2Enabled();
   const harness = engineV2
     ? createKimiHarnessV2(harnessOptions)
     : createKimiHarness(harnessOptions);
+  startupTrace('harness:created');
   log.info('kimi-code starting', {
     version,
     uiMode: CLI_UI_MODE,
@@ -96,17 +98,30 @@ export async function runShell(
   });
 
   await harness.ensureConfigFile();
-  const migrationPlan = await detectPendingMigration({
-    sourceHome: join(homedir(), '.kimi'),
-    targetHome: harness.homeDir,
-    ignoreMarker: runOptions.migrateOnly,
-  });
+  const legacySource = resolveLegacySourceHome(process.env, homedir(), process.cwd());
+  const sourceIsTarget = sameLegacyPath(legacySource.sourceHome, harness.homeDir);
+  if (sourceIsTarget) {
+    process.stderr.write(
+      `  KIMI_SHARE_DIR (${legacySource.sourceHome}) points at the Kimi Code home; legacy migration is disabled. Unset it or point it at the kimi-cli data directory to migrate.\n`,
+    );
+  }
+  const migrationPlan = sourceIsTarget
+    ? null
+    : await detectPendingMigration({
+        sourceHome: legacySource.sourceHome,
+        skillsSourceHome: legacySource.skillsSourceHome,
+        targetHome: harness.homeDir,
+        ignoreMarker: runOptions.migrateOnly,
+      });
   if (runOptions.migrateOnly === true && migrationPlan === null) {
-    process.stdout.write('  Nothing to migrate from ~/.kimi/.\n');
+    if (!sourceIsTarget) {
+      process.stdout.write(`  Nothing to migrate from ${legacySource.sourceHome}.\n`);
+    }
     await harness.close();
     return;
   }
   const config = await harness.getConfig();
+  startupTrace('config:loaded');
   // Config diagnostics (deprecated keys, invalid sections, ...) are surfaced
   // by the TUI itself at `finishStartup` via `showConfigWarningsIfAny` —
   // folded into the dim startup notice they were too easy to miss.
@@ -152,23 +167,34 @@ export async function runShell(
   };
 
   let savedStty: string | undefined;
-  try {
-    // stty operates on the terminal behind stdin, so stdin must be the TTY —
-    // piping /dev/null (ignore) makes stty fail with "not a tty".
-    const saved = execSync('stty -g', {
-      encoding: 'utf8',
-      stdio: ['inherit', 'pipe', 'ignore'],
-    });
-    savedStty = typeof saved === 'string' ? saved.trim() : undefined;
-    execSync('stty -ixon', { stdio: ['inherit', 'ignore', 'ignore'] });
-  } catch {
-    /* ignore */
+  // stty runs before tui.start() reaches the workspace trust gate, so it must
+  // never be resolved by name through PATH: a `.` or empty PATH segment would
+  // let an untrusted checkout plant an `stty` executable and run it pre-trust.
+  // resolveCommandPath returns an absolute path and refuses hits inside the
+  // cwd; when it cannot resolve stty, skip the save/restore entirely — it is
+  // best-effort terminal hygiene, not required for startup.
+  // stty is also POSIX-only, so skip it on Windows instead of relying on the
+  // catch below.
+  const sttyPath = process.platform === 'win32' ? undefined : resolveCommandPath('stty');
+  if (sttyPath !== undefined) {
+    try {
+      // stty operates on the terminal behind stdin, so stdin must be the TTY —
+      // piping /dev/null (ignore) makes stty fail with "not a tty".
+      const saved = execFileSync(sttyPath, ['-g'], {
+        encoding: 'utf8',
+        stdio: ['inherit', 'pipe', 'ignore'],
+      });
+      savedStty = saved.trim();
+      execFileSync(sttyPath, ['-ixon'], { stdio: ['inherit', 'ignore', 'ignore'] });
+    } catch {
+      /* ignore */
+    }
   }
   const restoreStty = (): void => {
-    if (savedStty === undefined) return;
+    if (sttyPath === undefined || savedStty === undefined) return;
     const args = savedStty.split(/\s+/).filter((arg) => arg.length > 0);
     if (args.length === 0) return;
-    spawnSync('stty', args, { stdio: ['inherit', 'ignore', 'ignore'] });
+    spawnSync(sttyPath, args, { stdio: ['inherit', 'ignore', 'ignore'] });
   };
 
   // If we crash without going through KimiTUI.stop(), the terminal is left in
@@ -216,7 +242,7 @@ export async function runShell(
     const sessionId = tui.getCurrentSessionId();
     const hasContent = tui.hasSessionContent();
     setCrashPhase('shutdown');
-    trackLifecycle('exit', { duration_ms: Date.now() - startedAt });
+    trackLifecycle('exit', { duration_ms: Date.now() - startedAt, tui_mode: tui.state.ui.mode });
     await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
     const gutter = ' '.repeat(CHROME_GUTTER);
     process.stdout.write(`${gutter}Bye!\n`);
@@ -243,7 +269,9 @@ export async function runShell(
   };
   try {
     const initStartedAt = Date.now();
+    startupTrace('tui.start:begin');
     await tui.start();
+    startupTrace('tui.start:end');
     const initMs = Date.now() - initStartedAt;
     const startupSessionId = tui.getCurrentSessionId();
     const mcpMs = await tui.getStartupMcpMs();
@@ -252,11 +280,12 @@ export async function runShell(
       config_ms: configMs,
       init_ms: initMs,
       mcp_ms: mcpMs,
+      tui_mode: tui.state.ui.mode,
     });
   } catch (error) {
     removeCrashHandlers();
     setCrashPhase('shutdown');
-    trackLifecycle('exit', { duration_ms: Date.now() - startedAt });
+    trackLifecycle('exit', { duration_ms: Date.now() - startedAt, tui_mode: tui.state.ui.mode });
     await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
     await harness.close();
     throw error;

@@ -16,7 +16,7 @@ describe('acp-server session/close', () => {
       client = undefined;
     }
     if (homeDir !== undefined) {
-      await rm(homeDir, { recursive: true, force: true });
+      await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
       homeDir = undefined;
     }
   });
@@ -47,6 +47,8 @@ describe('acp-server session/close', () => {
       await expect(
         c.send('session/prompt', { sessionId: created.sessionId, prompt: [] }),
       ).rejects.toThrow();
+      await c.close();
+      await expect(c.close()).resolves.toBeUndefined();
     },
     30_000,
   );

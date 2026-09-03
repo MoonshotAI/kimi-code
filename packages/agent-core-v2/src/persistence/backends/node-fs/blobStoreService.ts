@@ -1,12 +1,6 @@
-/**
- * `blobStore` domain — `IBlobStore` implementation.
- *
- * Delegates to the `IFileSystemStorageService` backend with atomic writes. Bound at App
- * scope; child scopes (Session, Agent) inherit the same instance and use
- * scope strings to namespace their data.
- */
+import { LifecycleScope } from '#/app/scopes';
 
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IBlobStore, type BlobReadRange } from '#/persistence/interface/blobStore';
 

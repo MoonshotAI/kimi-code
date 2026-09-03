@@ -42,6 +42,7 @@ function makeHost() {
       getExperimentalFeatures: vi.fn(async () => [
         feature({ enabled: false, source: 'config', configValue: false }),
       ]),
+      reloadSession: vi.fn(async () => session),
     },
     session,
     refreshSlashCommandAutocomplete: vi.fn(),
@@ -50,11 +51,13 @@ function makeHost() {
     restoreEditor: vi.fn(),
     showStatus: vi.fn(),
     showError: vi.fn(),
+    showNotice: vi.fn(),
     track: vi.fn(),
   } as unknown as SlashCommandHost & {
     harness: {
       setConfig: ReturnType<typeof vi.fn>;
       getExperimentalFeatures: ReturnType<typeof vi.fn>;
+      reloadSession: ReturnType<typeof vi.fn>;
     };
     refreshSlashCommandAutocomplete: ReturnType<typeof vi.fn>;
     reloadCurrentSessionView: ReturnType<typeof vi.fn>;
@@ -87,7 +90,8 @@ describe('experimental feature command handlers', () => {
     expect(isExperimentalFlagEnabled('micro_compaction')).toBe(false);
     expect(host.refreshSlashCommandAutocomplete).toHaveBeenCalled();
     expect(host.restoreEditor).toHaveBeenCalled();
-    expect(host.session.reloadSession).toHaveBeenCalledOnce();
+    expect(host.harness.reloadSession).toHaveBeenCalledWith({ id: host.session.id });
+    expect(host.session.reloadSession).not.toHaveBeenCalled();
     expect(host.reloadCurrentSessionView).toHaveBeenCalledWith(
       host.session,
       'Experimental features updated. Session reloaded.',
@@ -95,11 +99,28 @@ describe('experimental feature command handlers', () => {
     expect(host.mountEditorReplacement).not.toHaveBeenCalled();
     expect(host.track).toHaveBeenCalledWith('experimental_features_apply', {
       changed: 1,
+      flags: '',
     });
     expect(host.showStatus).not.toHaveBeenCalledWith(
       'Experimental features updated.',
       darkColors.success,
     );
+  });
+
+  it('reports the post-apply enabled flag set in telemetry', async () => {
+    const host = makeHost();
+    host.harness.getExperimentalFeatures.mockResolvedValue([
+      feature({ id: 'wait_for', enabled: true }),
+      feature({ id: 'subagent_fork', enabled: true }),
+      feature({ id: 'tower', enabled: false }),
+    ]);
+
+    await applyExperimentalFeatureChanges(host, [{ id: 'subagent_fork', enabled: true }]);
+
+    expect(host.track).toHaveBeenCalledWith('experimental_features_apply', {
+      changed: 1,
+      flags: 'subagent_fork,wait_for',
+    });
   });
 
   it('does not write config when there are no drafted changes', async () => {
@@ -112,5 +133,25 @@ describe('experimental feature command handlers', () => {
       'No experimental feature changes to apply.',
       'textMuted',
     );
+  });
+
+  it('notices that tower mode needs a restart when the tower flag changes', async () => {
+    const host = makeHost();
+
+    await applyExperimentalFeatureChanges(host, [{ id: 'tower', enabled: true }]);
+
+    expect(host.showNotice).toHaveBeenCalledWith(
+      'Tower mode takes effect after restarting Kimi Code.',
+    );
+  });
+
+  it('does not show the restart notice for non-tower changes', async () => {
+    const host = makeHost();
+
+    await applyExperimentalFeatureChanges(host, [
+      { id: 'micro_compaction', enabled: false },
+    ]);
+
+    expect(host.showNotice).not.toHaveBeenCalled();
   });
 });

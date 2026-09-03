@@ -139,12 +139,12 @@ describe('TabbedModelSelectorComponent', () => {
       models: { k2: model('Kimi K2', 'managed:kimi-code') },
       currentValue: 'k2',
       currentThinkingEffort: 'off',
-      title: ' Select a secondary model (subagents)',
+      title: ' Choose a model for this task',
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
     const out = strip(titled.render(120).join('\n'));
-    expect(out).toContain('Select a secondary model (subagents)');
+    expect(out).toContain('Choose a model for this task');
     expect(out).not.toContain('Select a model ');
   });
 

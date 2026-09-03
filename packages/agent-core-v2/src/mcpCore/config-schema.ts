@@ -1,11 +1,3 @@
-/**
- * `mcpCore` domain — MCP server configuration schemas.
- *
- * Owns the `McpServerConfig` schema and its transport variants. These describe
- * the shape of MCP server entries as they appear in configuration (whether in
- * `config.toml` or an MCP-specific config file).
- */
-
 import { z } from 'zod';
 
 const StringRecordSchema = z.record(z.string(), z.string());
@@ -28,6 +20,7 @@ export const McpServerStdioConfigSchema = z.object({
   env: StringRecordSchema.optional(),
   cwd: z.string().optional(),
   executor: z.enum(['local', 'kaos']).optional(),
+  runtime_id: z.string().min(1).optional(),
   ...McpServerCommonFields,
 });
 
@@ -37,6 +30,7 @@ export const McpServerHttpConfigSchema = z.object({
   transport: z.literal('http'),
   url: z.string().url(),
   headers: StringRecordSchema.optional(),
+  auth: z.literal('oauth').optional(),
   bearerTokenEnvVar: z.string().min(1).optional(),
   ...McpServerCommonFields,
 });
@@ -47,6 +41,7 @@ export const McpServerSseConfigSchema = z.object({
   transport: z.literal('sse'),
   url: z.string().url(),
   headers: StringRecordSchema.optional(),
+  auth: z.literal('oauth').optional(),
   bearerTokenEnvVar: z.string().min(1).optional(),
   ...McpServerCommonFields,
 });

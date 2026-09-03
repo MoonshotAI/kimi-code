@@ -1,25 +1,5 @@
-/**
- * `workspace` domain — `IWorkspacePersistence` contract.
- *
- * Domain-specific persistence Store for the known-workspaces catalog. It hides
- * the on-disk document layout (`<homeDir>/workspaces.json`, the v1-compatible
- * `{ version, workspaces: { [id]: entry }, deleted_workspace_ids: string[] }`
- * shape) and its serialization concerns (ISO ↔ epoch-ms, record ↔ array)
- * from the workspace service. The generic `IAtomicDocumentStore` it builds on stays
- * schema-agnostic.
- *
- * `deleted_workspace_ids` is the soft-delete tombstone list: ids the user
- * explicitly removed. Tombstoned entries are absent from `workspaces`, but
- * their ids must survive load/save round-trips so the session-index merge
- * never resurrects them.
- *
- * `load()` returns `undefined` to mean "no usable catalog" so the workspace
- * service can trigger a one-shot rebuild from the legacy session index; an
- * empty catalog is a valid, already-materialized state and must NOT trigger a
- * rebuild.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { Event } from '#/_base/event';
 
 import type { Workspace } from './workspace';
 
@@ -43,6 +23,8 @@ export interface WorkspaceCatalog {
 
 export interface IWorkspacePersistence {
   readonly _serviceBrand: undefined;
+
+  readonly onDidChange: Event<void>;
 
   load(): Promise<WorkspaceCatalog | undefined>;
   save(catalog: WorkspaceCatalog): Promise<void>;
