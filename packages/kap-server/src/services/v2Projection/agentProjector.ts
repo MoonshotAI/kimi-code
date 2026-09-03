@@ -1,0 +1,777 @@
+import type {
+  AssistantDeltaMessage,
+  AssistantMessage,
+  ServerMessage,
+  StepMessage,
+  StepRetry,
+  StepUsage,
+  TaskMessage,
+  ThinkingDeltaMessage,
+  ThinkingMessage,
+  TodoItem,
+  TodoMessage,
+  ToolCallMessage,
+  ToolProgressPayload,
+  TurnMessage,
+  TurnOrigin,
+  UserMessage,
+  UserMessageOrigin,
+} from '../../protocol/v2/messages/index';
+
+export interface ProjectionEvent {
+  type: string;
+  time?: number;
+  agentId?: string;
+  [key: string]: unknown;
+}
+
+interface TurnAcc {
+  turnId: string;
+  engineTurnId: number;
+  origin: TurnOrigin;
+  state: 'running' | 'completed';
+  startedAt: string;
+  userSeq: number;
+  promptIds: string[];
+  userMessageId?: string;
+  usageInput: number;
+  usageOutput: number;
+  usageCached: number;
+}
+
+interface PromptAcc {
+  promptId: string;
+  messageId: string;
+  turnId: string;
+  text: string;
+  createdAt: string;
+  status: 'running' | 'completed';
+  queued: boolean;
+  steerHeld: boolean;
+  emitted: boolean;
+  origin?: UserMessageOrigin;
+  attachmentIds?: string[];
+  steeredAt?: string;
+}
+
+interface StepAcc {
+  stepId: string;
+  turnId: string;
+  engineTurnId: number;
+  ordinal: number;
+  state: 'running' | 'completed' | 'interrupted' | 'failed';
+  startedAt: string;
+  usage?: StepUsage;
+  finishReason?: string;
+  retry?: StepRetry;
+  endReason?: string;
+  endMessage?: string;
+  timing?: { llm_first_token_ms?: number; llm_stream_duration_ms?: number };
+  textSeq: { a: number; h: number };
+}
+
+interface TextAcc {
+  kind: 'assistant' | 'thinking';
+  messageId: string;
+  stepKey: string;
+  turnId: string;
+  stepId: string;
+  text: string;
+}
+
+interface ToolAcc {
+  toolCallId: string;
+  turnId: string;
+  stepId: string;
+  name: string;
+  state: 'running' | 'done' | 'error';
+  input?: unknown;
+  inputText?: string;
+  output?: unknown;
+  display?: unknown;
+  error?: string;
+  progress?: ToolProgressPayload;
+  approvalId?: string;
+  taskId?: string;
+  opened: boolean;
+}
+
+interface TaskAcc {
+  taskId: string;
+  message: TaskMessage;
+}
+
+const MAIN_FALLBACK_TIME = 0;
+
+function iso(time: number | undefined): string {
+  return new Date(time ?? MAIN_FALLBACK_TIME).toISOString();
+}
+
+function textFromContent(content: unknown): string {
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((part): part is { type: 'text'; text: string } => {
+      const p = part as { type?: string; text?: unknown };
+      return p?.type === 'text' && typeof p.text === 'string';
+    })
+    .map((part) => part.text)
+    .join('');
+}
+
+function toTurnOrigin(origin: unknown): TurnOrigin {
+  const o = origin as { kind?: string } | undefined;
+  switch (o?.kind) {
+    case 'cron_job': {
+      const c = o as { jobId?: string; cron?: string };
+      return { kind: 'cron', cron_id: c.jobId ?? '', schedule: c.cron };
+    }
+    case 'task':
+      return { kind: 'task', task_id: (o as { taskId?: string }).taskId ?? '' };
+    case 'hook_result':
+      return { kind: 'hook', name: (o as { event?: string }).event };
+    case 'compaction_summary':
+      return { kind: 'compaction' };
+    case 'system_trigger': {
+      const name = (o as { name?: string }).name;
+      if (name === 'goal_continuation') return { kind: 'goal' };
+      return { kind: 'other', name };
+    }
+    case 'user':
+    case undefined:
+      return { kind: 'user' };
+    default:
+      return { kind: 'other', name: o.kind };
+  }
+}
+
+function toUserOrigin(origin: unknown): UserMessageOrigin | undefined {
+  const o = origin as { kind?: string; jobId?: string; cron?: string } | undefined;
+  if (o?.kind === 'cron_job') return { kind: 'cron', cron_id: o.jobId ?? '', schedule: o.cron ?? '' };
+  return undefined;
+}
+
+function toStepUsage(usage: unknown): StepUsage | undefined {
+  const u = usage as
+    | { inputOther?: number; output?: number; inputCacheRead?: number; inputCacheCreation?: number }
+    | undefined;
+  if (!u) return undefined;
+  return {
+    input_other: u.inputOther ?? 0,
+    output: u.output ?? 0,
+    input_cache_read: u.inputCacheRead ?? 0,
+    input_cache_creation: u.inputCacheCreation ?? 0,
+  };
+}
+
+function toToolProgress(update: unknown): ToolProgressPayload {
+  const u = update as
+    | { kind?: ToolProgressPayload['kind']; text?: string; percent?: number; customKind?: string; customData?: unknown }
+    | undefined;
+  return {
+    kind: u?.kind ?? 'custom',
+    text: u?.text,
+    percent: u?.percent,
+    custom_kind: u?.customKind,
+    custom_data: u?.customData,
+  };
+}
+
+export class AgentV2Projector {
+  private maxTurnId = -1;
+  private readonly turns = new Map<number, TurnAcc>();
+  private readonly prompts = new Map<string, PromptAcc>();
+  private readonly queue: string[] = [];
+  private readonly steps = new Map<string, StepAcc>();
+  private currentStep?: StepAcc;
+  private openAssistant?: TextAcc;
+  private openThinking?: TextAcc;
+  private readonly tools = new Map<string, ToolAcc>();
+  private readonly tasks = new Map<string, TaskAcc>();
+  private todoId?: string;
+  private systemSeq = 0;
+
+  constructor(
+    private readonly sessionId: string,
+    private readonly agentId: string,
+  ) {}
+
+  apply(event: ProjectionEvent): ServerMessage[] {
+    const out: ServerMessage[] = [];
+    switch (event.type) {
+      case 'prompt.submitted': this.onPromptSubmitted(event, out); break;
+      case 'prompt.steered': this.onPromptSteered(event, out); break;
+      case 'prompt.started': this.onPromptStarted(event, out); break;
+      case 'prompt.completed': this.onPromptCompleted(event, out); break;
+      case 'prompt.aborted': this.onPromptAborted(event, out); break;
+      case 'turn.started': this.onTurnStarted(event, out); break;
+      case 'turn.ended': this.onTurnEnded(event, out); break;
+      case 'turn.step.started': this.onStepStarted(event, out); break;
+      case 'turn.step.completed': this.onStepCompleted(event, out); break;
+      case 'turn.step.interrupted': this.onStepInterrupted(event, out); break;
+      case 'turn.step.retrying': this.onStepRetrying(event, out); break;
+      case 'assistant.delta': this.onTextDelta(event, 'assistant', out); break;
+      case 'thinking.delta': this.onTextDelta(event, 'thinking', out); break;
+      case 'tool.call.delta': this.onToolCallDelta(event, out); break;
+      case 'tool.call.started': this.onToolCallStarted(event, out); break;
+      case 'tool.progress': this.onToolProgress(event, out); break;
+      case 'tool.result': this.onToolResult(event, out); break;
+      case 'task.started': this.onTaskStarted(event, out); break;
+      case 'task.terminated': this.onTaskTerminated(event, out); break;
+      default: break;
+    }
+    return out;
+  }
+
+  private base(event: ProjectionEvent): { session_id: string; agent_id: string; timestamp: string } {
+    return { session_id: this.sessionId, agent_id: this.agentId, timestamp: iso(event.time) };
+  }
+
+  private protocolTurnId(engineTurnId: number): string {
+    return `t${engineTurnId + 1}`;
+  }
+
+  private onPromptSubmitted(event: ProjectionEvent, out: ServerMessage[]): void {
+    const promptId = event.promptId as string;
+    const status = event.status as 'running' | 'queued';
+    const steerHint = event.steer === true;
+    const content = event.content;
+    const origin = toUserOrigin(event.origin);
+    const text = textFromContent(content);
+    const createdAt = (event.createdAt as string) ?? iso(event.time);
+    if (steerHint) {
+      this.prompts.set(promptId, {
+        promptId,
+        messageId: '',
+        turnId: '',
+        text,
+        createdAt,
+        status: 'running',
+        queued: true,
+        steerHeld: true,
+        emitted: false,
+        origin,
+      });
+      return;
+    }
+    const queued = status === 'queued';
+    if (queued) this.queue.push(promptId);
+    const predictedEngineTurn = this.maxTurnId + this.queue.length + (queued ? 0 : 1);
+    const turnId = this.protocolTurnId(predictedEngineTurn);
+    const seq = this.nextUserSeq(predictedEngineTurn);
+    const messageId = `${turnId}.u${seq}`;
+    const acc: PromptAcc = {
+      promptId,
+      messageId,
+      turnId,
+      text,
+      createdAt,
+      status: 'running',
+      queued,
+      steerHeld: false,
+      emitted: true,
+      origin,
+    };
+    this.prompts.set(promptId, acc);
+    out.push(this.userMessage(acc, event.time));
+  }
+
+  private nextUserSeq(engineTurnId: number): number {
+    const turn = this.turns.get(engineTurnId);
+    if (turn) return turn.userSeq++;
+    let seq = 0;
+    for (const acc of this.prompts.values()) {
+      if (acc.turnId === this.protocolTurnId(engineTurnId)) seq += 1;
+    }
+    return seq;
+  }
+
+  private onPromptSteered(event: ProjectionEvent, out: ServerMessage[]): void {
+    const promptIds = (event.promptIds as string[]) ?? [];
+    const steeredAt = (event.steeredAt as string) ?? iso(event.time);
+    const turn = this.latestTurn();
+    if (!turn) return;
+    const contentText = textFromContent(event.content);
+    for (const promptId of promptIds) {
+      const held = this.prompts.get(promptId);
+      const qi = this.queue.indexOf(promptId);
+      if (qi >= 0) this.queue.splice(qi, 1);
+      const seq = turn.userSeq++;
+      const acc: PromptAcc = {
+        promptId,
+        messageId: `${turn.turnId}.u${seq}`,
+        turnId: turn.turnId,
+        text: held?.text ?? contentText,
+        createdAt: held?.createdAt ?? steeredAt,
+        status: 'running',
+        queued: false,
+        steerHeld: false,
+        emitted: true,
+        origin: held?.origin,
+        steeredAt,
+      };
+      this.prompts.set(promptId, acc);
+      turn.promptIds.push(promptId);
+      out.push(this.userMessage(acc, event.time));
+    }
+  }
+
+  private onPromptStarted(event: ProjectionEvent, out: ServerMessage[]): void {
+    const promptId = event.promptId as string;
+    const acc = this.prompts.get(promptId);
+    if (!acc || !acc.emitted) return;
+    const qi = this.queue.indexOf(promptId);
+    if (qi >= 0) this.queue.splice(qi, 1);
+    if (acc.queued) out.push(this.userMessage(acc, event.time));
+    acc.queued = false;
+  }
+
+  private onPromptCompleted(event: ProjectionEvent, out: ServerMessage[]): void {
+    const acc = this.prompts.get(event.promptId as string);
+    if (!acc || acc.status === 'completed') return;
+    acc.status = 'completed';
+    out.push(this.userMessage(acc, event.time, (event.finishedAt as string) ?? iso(event.time)));
+  }
+
+  private onPromptAborted(event: ProjectionEvent, out: ServerMessage[]): void {
+    const acc = this.prompts.get(event.promptId as string);
+    if (!acc || acc.status === 'completed') return;
+    const qi = this.queue.indexOf(acc.promptId);
+    if (qi >= 0) this.queue.splice(qi, 1);
+    acc.status = 'completed';
+    out.push(this.userMessage(acc, event.time, (event.abortedAt as string) ?? iso(event.time)));
+  }
+
+  private onTurnStarted(event: ProjectionEvent, out: ServerMessage[]): void {
+    const engineTurnId = event.turnId as number;
+    this.maxTurnId = Math.max(this.maxTurnId, engineTurnId);
+    const origin = toTurnOrigin(event.origin);
+    const turn: TurnAcc = {
+      turnId: this.protocolTurnId(engineTurnId),
+      engineTurnId,
+      origin,
+      state: 'running',
+      startedAt: iso(event.time),
+      userSeq: 0,
+      promptIds: [],
+      usageInput: 0,
+      usageOutput: 0,
+      usageCached: 0,
+    };
+    let maxSeq = 0;
+    for (const acc of this.prompts.values()) {
+      if (acc.turnId === turn.turnId) maxSeq += 1;
+    }
+    turn.userSeq = maxSeq;
+    const promptId = event.promptId as string | undefined;
+    if (promptId) {
+      const acc = this.prompts.get(promptId);
+      if (acc) {
+        turn.userMessageId = acc.messageId;
+        turn.promptIds.push(promptId);
+      }
+    }
+    this.turns.set(engineTurnId, turn);
+    out.push(this.turnMessage(turn, event.time));
+  }
+
+  private onTurnEnded(event: ProjectionEvent, out: ServerMessage[]): void {
+    const engineTurnId = event.turnId as number;
+    const turn = this.turns.get(engineTurnId);
+    if (!turn || turn.state === 'completed') return;
+    turn.state = 'completed';
+    this.closeOpenTexts(event.time, out);
+    const usage =
+      turn.usageInput > 0 || turn.usageOutput > 0
+        ? {
+            input_tokens: turn.usageInput,
+            output_tokens: turn.usageOutput,
+            cached_tokens: turn.usageCached > 0 ? turn.usageCached : undefined,
+          }
+        : undefined;
+    const msg: TurnMessage = {
+      type: 'turn',
+      ...this.base(event),
+      turn_id: turn.turnId,
+      ordinal: turn.engineTurnId,
+      state: 'completed',
+      origin: turn.origin,
+      user_message_id: turn.userMessageId,
+      started_at: turn.startedAt,
+      ended_at: iso(event.time),
+      usage,
+      duration_ms: event.durationMs as number | undefined,
+    };
+    out.push(msg);
+    for (const promptId of turn.promptIds) {
+      const acc = this.prompts.get(promptId);
+      if (acc && acc.status !== 'completed') {
+        acc.status = 'completed';
+        out.push(this.userMessage(acc, event.time, iso(event.time)));
+      }
+    }
+  }
+
+  private onStepStarted(event: ProjectionEvent, out: ServerMessage[]): void {
+    const engineTurnId = event.turnId as number;
+    const ordinal = event.step as number;
+    const turnId = this.protocolTurnId(engineTurnId);
+    this.closeOpenTexts(event.time, out);
+    const step: StepAcc = {
+      stepId: `${turnId}.${ordinal}`,
+      turnId,
+      engineTurnId,
+      ordinal,
+      state: 'running',
+      startedAt: iso(event.time),
+      textSeq: { a: 0, h: 0 },
+    };
+    this.steps.set(step.stepId, step);
+    this.currentStep = step;
+    out.push(this.stepMessage(step, event.time));
+  }
+
+  private onStepCompleted(event: ProjectionEvent, out: ServerMessage[]): void {
+    const step = this.currentStep;
+    if (!step || step.state !== 'running') return;
+    this.closeOpenTexts(event.time, out);
+    step.state = 'completed';
+    step.usage = toStepUsage(event.usage);
+    step.finishReason = event.finishReason as string | undefined;
+    const timing = {
+      llm_first_token_ms: event.llmFirstTokenLatencyMs as number | undefined,
+      llm_stream_duration_ms: event.llmStreamDurationMs as number | undefined,
+    };
+    step.timing = timing.llm_first_token_ms !== undefined || timing.llm_stream_duration_ms !== undefined ? timing : undefined;
+    const turn = this.turns.get(step.engineTurnId);
+    if (turn && step.usage) {
+      turn.usageInput += step.usage.input_other + step.usage.input_cache_read + step.usage.input_cache_creation;
+      turn.usageOutput += step.usage.output;
+      turn.usageCached += step.usage.input_cache_read + step.usage.input_cache_creation;
+    }
+    out.push(this.stepMessage(step, event.time));
+    this.currentStep = undefined;
+  }
+
+  private onStepInterrupted(event: ProjectionEvent, out: ServerMessage[]): void {
+    const step = this.currentStep;
+    if (!step || step.state !== 'running') return;
+    this.closeOpenTexts(event.time, out);
+    step.state = 'interrupted';
+    step.endReason = event.reason as string | undefined;
+    step.endMessage = event.message as string | undefined;
+    out.push(this.stepMessage(step, event.time));
+    this.currentStep = undefined;
+  }
+
+  private onStepRetrying(event: ProjectionEvent, out: ServerMessage[]): void {
+    const step = this.currentStep;
+    if (!step) return;
+    step.retry = {
+      failed_attempt: event.failedAttempt as number,
+      next_attempt: event.nextAttempt as number,
+      max_attempts: event.maxAttempts as number,
+      delay_ms: event.delayMs as number,
+      error_name: event.errorName as string,
+      error_message: event.errorMessage as string,
+      status_code: event.statusCode as number | undefined,
+    };
+    out.push(this.stepMessage(step, event.time));
+  }
+
+  private onTextDelta(event: ProjectionEvent, kind: 'assistant' | 'thinking', out: ServerMessage[]): void {
+    const delta = (event.delta as string) ?? '';
+    const step = this.currentStep;
+    if (!step) return;
+    let acc = kind === 'assistant' ? this.openAssistant : this.openThinking;
+    if (!acc || acc.stepKey !== step.stepId) {
+      this.closeOpenTexts(event.time, out);
+      const seq = kind === 'assistant' ? step.textSeq.a++ : step.textSeq.h++;
+      acc = {
+        kind,
+        messageId: `${step.stepId}.${kind === 'assistant' ? 'a' : 'h'}${seq}`,
+        stepKey: step.stepId,
+        turnId: step.turnId,
+        stepId: step.stepId,
+        text: '',
+      };
+      if (kind === 'assistant') this.openAssistant = acc;
+      else this.openThinking = acc;
+      out.push(this.textMessage(acc, 'streaming', event.time));
+    }
+    acc.text += delta;
+    if (kind === 'assistant') {
+      const msg: AssistantDeltaMessage = { type: 'assistant.delta', ...this.base(event), message_id: acc.messageId, text: delta };
+      out.push(msg);
+    } else {
+      const msg: ThinkingDeltaMessage = { type: 'thinking.delta', ...this.base(event), message_id: acc.messageId, text: delta };
+      out.push(msg);
+    }
+  }
+
+  private closeOpenTexts(time: number | undefined, out: ServerMessage[]): void {
+    if (this.openAssistant) {
+      out.push(this.textMessage(this.openAssistant, 'completed', time));
+      this.openAssistant = undefined;
+    }
+    if (this.openThinking) {
+      out.push(this.textMessage(this.openThinking, 'completed', time));
+      this.openThinking = undefined;
+    }
+  }
+
+  private onToolCallDelta(event: ProjectionEvent, out: ServerMessage[]): void {
+    const toolCallId = event.toolCallId as string;
+    const part = (event.argumentsPart as string) ?? '';
+    this.closeOpenTexts(event.time, out);
+    let acc = this.tools.get(toolCallId);
+    if (!acc) {
+      const step = this.currentStep;
+      acc = {
+        toolCallId,
+        turnId: step?.turnId ?? '',
+        stepId: step?.stepId ?? '',
+        name: (event.name as string) ?? '',
+        state: 'running',
+        inputText: '',
+        opened: false,
+      };
+      this.tools.set(toolCallId, acc);
+    }
+    acc.inputText = (acc.inputText ?? '') + part;
+    out.push({
+      type: 'tool_call.delta',
+      ...this.base(event),
+      tool_call_id: toolCallId,
+      input_text: part,
+    });
+  }
+
+  private onToolCallStarted(event: ProjectionEvent, out: ServerMessage[]): void {
+    const toolCallId = event.toolCallId as string;
+    const step = this.currentStep;
+    this.closeOpenTexts(event.time, out);
+    const prev = this.tools.get(toolCallId);
+    const acc: ToolAcc = {
+      toolCallId,
+      turnId: step?.turnId ?? prev?.turnId ?? '',
+      stepId: step?.stepId ?? prev?.stepId ?? '',
+      name: (event.name as string) ?? prev?.name ?? '',
+      state: 'running',
+      input: event.args,
+      inputText: prev?.inputText,
+      display: event.display,
+      opened: true,
+    };
+    this.tools.set(toolCallId, acc);
+    out.push(this.toolCallMessage(acc, event.time));
+  }
+
+  private onToolProgress(event: ProjectionEvent, out: ServerMessage[]): void {
+    const toolCallId = event.toolCallId as string;
+    const progress = toToolProgress(event.update);
+    const acc = this.tools.get(toolCallId);
+    if (acc) acc.progress = progress;
+    out.push({ type: 'tool.progress', ...this.base(event), tool_call_id: toolCallId, progress });
+  }
+
+  private onToolResult(event: ProjectionEvent, out: ServerMessage[]): void {
+    const toolCallId = event.toolCallId as string;
+    const acc = this.tools.get(toolCallId);
+    if (!acc) return;
+    const isError = event.isError === true;
+    acc.state = isError ? 'error' : 'done';
+    acc.output = event.output;
+    if (isError) acc.error = typeof event.output === 'string' ? event.output : JSON.stringify(event.output);
+    out.push(this.toolCallMessage(acc, event.time));
+    if (acc.name === 'TodoWrite' && !isError) {
+      const items = todoItemsFromInput(acc.input);
+      if (items) {
+        this.todoId = this.todoId ?? toolCallId;
+        out.push(this.todoMessage(this.todoId, items, event.time));
+      }
+    }
+  }
+
+  private onTaskStarted(event: ProjectionEvent, out: ServerMessage[]): void {
+    const info = event.info as Record<string, unknown> | undefined;
+    if (!info) return;
+    const taskId = info.taskId as string;
+    const msg: TaskMessage = {
+      type: 'task',
+      ...this.base(event),
+      task_id: taskId,
+      kind: toTaskKind(info.kind as string | undefined),
+      state: (info.status as TaskMessage['state']) ?? 'running',
+      detached: info.detached === true,
+      description: info.description as string | undefined,
+      output_tail: '',
+      started_at: (info.startedAt as string) ?? iso(event.time),
+      model: info.model as string | undefined,
+      thinking_effort: info.thinkingEffort as string | undefined,
+    };
+    this.tasks.set(taskId, { taskId, message: msg });
+    out.push(msg);
+  }
+
+  private onTaskTerminated(event: ProjectionEvent, out: ServerMessage[]): void {
+    const info = event.info as Record<string, unknown> | undefined;
+    if (!info) return;
+    const taskId = info.taskId as string;
+    const prev = this.tasks.get(taskId)?.message;
+    const msg: TaskMessage = {
+      type: 'task',
+      ...this.base(event),
+      task_id: taskId,
+      kind: toTaskKind(info.kind as string | undefined),
+      state: (info.status as TaskMessage['state']) ?? 'completed',
+      detached: prev?.detached ?? info.detached === true,
+      description: (info.description as string | undefined) ?? prev?.description,
+      output_tail: (event.outputTail as string) ?? prev?.output_tail ?? '',
+      started_at: prev?.started_at ?? (info.startedAt as string | undefined),
+      ended_at: (info.endedAt as string) ?? iso(event.time),
+      result_summary: info.resultSummary as string | undefined,
+      error: info.error as string | undefined,
+      state_reason: info.stopReason as string | undefined,
+      usage: toStepUsage(info.usage),
+      model: prev?.model,
+      thinking_effort: prev?.thinking_effort,
+    };
+    this.tasks.set(taskId, { taskId, message: msg });
+    out.push(msg);
+  }
+
+  private latestTurn(): TurnAcc | undefined {
+    return this.turns.get(this.maxTurnId);
+  }
+
+  private userMessage(acc: PromptAcc, time: number | undefined, finishedAt?: string): UserMessage {
+    return {
+      type: 'user',
+      session_id: this.sessionId,
+      agent_id: this.agentId,
+      timestamp: iso(time),
+      message_id: acc.messageId,
+      turn_id: acc.turnId,
+      text: acc.text,
+      status: acc.status,
+      created_at: acc.createdAt,
+      finished_at: acc.status === 'completed' ? (finishedAt ?? iso(time)) : undefined,
+      steered_at: acc.steeredAt,
+      origin: acc.origin,
+      attachment_ids: acc.attachmentIds,
+    };
+  }
+
+  private turnMessage(turn: TurnAcc, time: number | undefined): TurnMessage {
+    return {
+      type: 'turn',
+      session_id: this.sessionId,
+      agent_id: this.agentId,
+      timestamp: iso(time),
+      turn_id: turn.turnId,
+      ordinal: turn.engineTurnId,
+      state: turn.state,
+      origin: turn.origin,
+      user_message_id: turn.userMessageId,
+      started_at: turn.startedAt,
+    };
+  }
+
+  private stepMessage(step: StepAcc, time: number | undefined): StepMessage {
+    return {
+      type: 'step',
+      session_id: this.sessionId,
+      agent_id: this.agentId,
+      timestamp: iso(time),
+      step_id: step.stepId,
+      turn_id: step.turnId,
+      ordinal: step.ordinal,
+      state: step.state,
+      started_at: step.startedAt,
+      ended_at: step.state === 'running' ? undefined : iso(time),
+      usage: step.usage,
+      finish_reason: step.finishReason,
+      timing: step.timing,
+      retry: step.retry,
+      end_reason: step.endReason,
+      end_message: step.endMessage,
+    };
+  }
+
+  private textMessage(acc: TextAcc, status: 'streaming' | 'completed', time: number | undefined): AssistantMessage | ThinkingMessage {
+    return {
+      type: acc.kind,
+      session_id: this.sessionId,
+      agent_id: this.agentId,
+      timestamp: iso(time),
+      message_id: acc.messageId,
+      turn_id: acc.turnId,
+      step_id: acc.stepId,
+      status,
+      text: status === 'streaming' ? '' : acc.text,
+    };
+  }
+
+  private toolCallMessage(acc: ToolAcc, time: number | undefined): ToolCallMessage {
+    return {
+      type: 'tool_call',
+      session_id: this.sessionId,
+      agent_id: this.agentId,
+      timestamp: iso(time),
+      tool_call_id: acc.toolCallId,
+      turn_id: acc.turnId,
+      step_id: acc.stepId,
+      name: acc.name,
+      state: acc.state,
+      input: acc.input,
+      output: acc.output,
+      display: acc.display,
+      error: acc.error,
+      progress: acc.progress,
+      approval_id: acc.approvalId,
+      task_id: acc.taskId,
+    };
+  }
+
+  private todoMessage(todoId: string, items: TodoItem[], time: number | undefined): TodoMessage {
+    return {
+      type: 'todo',
+      session_id: this.sessionId,
+      agent_id: this.agentId,
+      timestamp: iso(time),
+      todo_id: todoId,
+      items,
+      updated_at: iso(time),
+    };
+  }
+
+  protected nextSystemId(): string {
+    this.systemSeq += 1;
+    return `sys_${String(this.systemSeq).padStart(2, '0')}`;
+  }
+}
+
+function toTaskKind(kind: string | undefined): TaskMessage['kind'] {
+  switch (kind) {
+    case 'shell': return 'shell';
+    case 'agent': return 'subagent';
+    case 'tool': return 'tool';
+    default: return 'other';
+  }
+}
+
+function todoItemsFromInput(input: unknown): TodoItem[] | undefined {
+  const todos = (input as { todos?: unknown } | undefined)?.todos;
+  if (!Array.isArray(todos)) return undefined;
+  const items: TodoItem[] = [];
+  for (const entry of todos) {
+    const e = entry as { title?: string; content?: string; status?: string };
+    const title = e.title ?? e.content;
+    if (typeof title !== 'string') return undefined;
+    items.push({
+      title,
+      status: e.status === 'in_progress' || e.status === 'done' ? e.status : 'pending',
+    });
+  }
+  return items;
+}
