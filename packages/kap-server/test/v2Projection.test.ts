@@ -58,11 +58,19 @@ function expectStream(tabId: string, sectionLabel: string, steps: ScriptStep[]):
 }
 
 function expectStreams(tabId: string, sectionLabels: string[], steps: ScriptStep[]): void {
-  const expected = sectionLabels.flatMap((label) => fixtureStream(tabId, label)) as { session_id?: string }[];
+  const expected = sectionLabels
+    .flatMap((label) => fixtureStream(tabId, label))
+    .filter((m) => (m as { type?: string }).type !== 'subscribe' && (m as { type?: string }).type !== 'ack') as {
+    session_id?: string;
+  }[];
   const sessionId = expected.find((m) => typeof m.session_id === 'string')?.session_id ?? 's_01';
   const actual = runScript(sessionId, steps);
   for (const msg of actual) parseServerMessage(msg);
   expect(actual).toEqual(expected);
+}
+
+function expectScenarios(tabId: string, scenarios: { sectionLabel: string; steps: ScriptStep[] }[]): void {
+  for (const { sectionLabel, steps } of scenarios) expectStream(tabId, sectionLabel, steps);
 }
 
 const T = Date.parse('2026-09-03T10:00:00.000Z');
@@ -2252,6 +2260,696 @@ describe('v2Projection × 实例对拍', () => {
           },
           time: B + 4410,
         },
+      },
+    ]);
+  });
+
+  it('injection 三场景', () => {
+    const S = Date.parse('2026-09-03T18:50:00.000Z');
+    const C = Date.parse('2026-09-04T08:59:50.000Z');
+    const K = Date.parse('2026-09-04T10:30:00.000Z');
+    expectScenarios('injection', [
+      {
+        sectionLabel: 'steer（WS）',
+        steps: [
+          {
+            event: {
+              type: 'prompt.submitted',
+              promptId: 'p_01',
+              status: 'running',
+              content: [{ type: 'text', text: '把登录页白屏修一下' }],
+              createdAt: '2026-09-03T18:50:00.000Z',
+              time: S + 10,
+            },
+          },
+          { event: { type: 'turn.started', turnId: 0, promptId: 'p_01', origin: { kind: 'user' }, time: S + 15 } },
+          {
+            facts: {
+              activity: { busy: true, mainTurnActive: true, pendingInteraction: 'none' },
+              agentActivity: { lifecycle: 'ready', turn: { turnId: 0, step: 0, phase: 'running', since: S + 15 } },
+              status: {
+                model: 'kimi-k3-highspeed',
+                contextTokens: 1820,
+                maxContextTokens: 262144,
+                usage: { total: { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 } },
+              },
+              permission: 'manual',
+              time: S + 20,
+            },
+          },
+          { event: { type: 'turn.step.started', turnId: 0, step: 0, time: S + 22 } },
+          { event: { type: 'thinking.delta', turnId: 0, delta: '白屏是 user 为空读 token 导致，加可选链。', time: S + 450 } },
+          { event: { type: 'assistant.delta', turnId: 0, delta: '先修复崩溃点：', time: S + 1050 } },
+          {
+            event: {
+              type: 'tool.call.started',
+              turnId: 0,
+              toolCallId: 'call_01',
+              name: 'Edit',
+              args: { path: 'apps/web/src/views/LoginView.vue', old: 'const token = user.token;', new: 'const token = user?.token;' },
+              time: S + 1500,
+            },
+          },
+          { event: { type: 'tool.result', turnId: 0, toolCallId: 'call_01', output: { applied: true }, time: S + 2000 } },
+          {
+            event: {
+              type: 'turn.step.completed',
+              turnId: 0,
+              step: 0,
+              usage: { inputOther: 2600, output: 64, inputCacheRead: 9800, inputCacheCreation: 0 },
+              finishReason: 'tool_use',
+              time: S + 2100,
+            },
+          },
+          { event: { type: 'turn.step.started', turnId: 0, step: 1, time: S + 2150 } },
+          {
+            event: { type: 'tool.call.started', turnId: 0, toolCallId: 'call_02', name: 'Bash', args: { command: 'pnpm test -- login' }, time: S + 2300 },
+          },
+          {
+            event: {
+              type: 'prompt.submitted',
+              promptId: 'p_02',
+              status: 'queued',
+              steer: true,
+              content: [{ type: 'text', text: '顺便把超时时间也改成 30' }],
+              createdAt: '2026-09-03T18:50:03.000Z',
+              time: S + 3000,
+            },
+          },
+          {
+            event: {
+              type: 'prompt.steered',
+              activePromptId: 'p_01',
+              promptIds: ['p_02'],
+              content: [{ type: 'text', text: '顺便把超时时间也改成 30' }],
+              steeredAt: '2026-09-03T18:50:03.000Z',
+              time: S + 3010,
+            },
+          },
+          {
+            event: {
+              type: 'tool.result',
+              turnId: 0,
+              toolCallId: 'call_02',
+              output: { stdout: 'Test Files  1 passed (1)\n     Tests  6 passed (6)\n', exit_code: 0 },
+              time: S + 4500,
+            },
+          },
+          { event: { type: 'assistant.delta', turnId: 0, delta: '测试通过，白屏修好了。接着把超时改成 30：', time: S + 4900 } },
+          {
+            event: {
+              type: 'tool.call.started',
+              turnId: 0,
+              toolCallId: 'call_03',
+              name: 'Edit',
+              args: { path: 'config/server.toml', old: 'request_timeout = 10', new: 'request_timeout = 30' },
+              time: S + 5300,
+            },
+          },
+          { event: { type: 'tool.result', turnId: 0, toolCallId: 'call_03', output: { applied: true }, time: S + 5700 } },
+          {
+            event: {
+              type: 'assistant.delta',
+              turnId: 0,
+              delta: '都完成了：白屏已修复（测试全绿），超时已改为 30 秒。',
+              time: S + 6100,
+            },
+          },
+          {
+            event: {
+              type: 'turn.step.completed',
+              turnId: 0,
+              step: 1,
+              usage: { inputOther: 3200, output: 118, inputCacheRead: 13600, inputCacheCreation: 0 },
+              finishReason: 'end_turn',
+              time: S + 6400,
+            },
+          },
+          { event: { type: 'turn.ended', turnId: 0, reason: 'completed', durationMs: 6483, time: S + 6500 } },
+          {
+            facts: {
+              activity: { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
+              agentActivity: { lifecycle: 'ready' },
+              status: {
+                contextTokens: 6100,
+                usage: { total: { inputOther: 5800, output: 182, inputCacheRead: 23400, inputCacheCreation: 0 } },
+              },
+              time: S + 6530,
+            },
+          },
+        ],
+      },
+      {
+        sectionLabel: 'cron · 忙时（WS）',
+        steps: [
+          {
+            event: {
+              type: 'prompt.submitted',
+              promptId: 'p_01',
+              status: 'running',
+              turnId: 1,
+              content: [{ type: 'text', text: '重构 auth 模块' }],
+              createdAt: '2026-09-04T08:59:50.000Z',
+              time: C + 10,
+            },
+          },
+          { event: { type: 'turn.started', turnId: 1, promptId: 'p_01', origin: { kind: 'user' }, time: C + 15 } },
+          {
+            facts: {
+              activity: { busy: true, mainTurnActive: true, pendingInteraction: 'none' },
+              agentActivity: { lifecycle: 'ready', turn: { turnId: 1, step: 0, phase: 'running', since: C + 15 } },
+              status: {
+                model: 'kimi-k3-highspeed',
+                contextTokens: 6100,
+                maxContextTokens: 262144,
+                usage: { total: { inputOther: 5800, output: 182, inputCacheRead: 23400, inputCacheCreation: 0 } },
+              },
+              permission: 'manual',
+              time: C + 20,
+            },
+          },
+          { event: { type: 'turn.step.started', turnId: 1, step: 0, time: C + 22 } },
+          { event: { type: 'thinking.delta', turnId: 1, delta: '先拆 session 签发逻辑。', time: C + 450 } },
+          { event: { type: 'assistant.delta', turnId: 1, delta: '先拆 session 签发：', time: C + 1050 } },
+          {
+            event: {
+              type: 'tool.call.started',
+              turnId: 1,
+              toolCallId: 'call_01',
+              name: 'Edit',
+              args: { path: 'apps/web/src/auth/session.ts', old: '…（旧签发逻辑）…', new: '…（拆分后）…' },
+              time: C + 1500,
+            },
+          },
+          {
+            event: {
+              type: 'cron.fired',
+              promptId: 'cron_01_p',
+              origin: { kind: 'cron_job', jobId: 'cron_01', cron: '0 9 * * 1-5', recurring: true, coalescedCount: 0, stale: false },
+              prompt: '跑一遍登录相关测试并汇报结果',
+              time: C + 10000,
+            },
+          },
+          { event: { type: 'tool.result', turnId: 1, toolCallId: 'call_01', output: { applied: true }, time: C + 10500 } },
+          {
+            event: {
+              type: 'turn.step.completed',
+              turnId: 1,
+              step: 0,
+              usage: { inputOther: 3400, output: 96, inputCacheRead: 15000, inputCacheCreation: 0 },
+              finishReason: 'tool_use',
+              time: C + 10600,
+            },
+          },
+          { event: { type: 'turn.step.started', turnId: 1, step: 1, time: C + 10650 } },
+          { event: { type: 'assistant.delta', turnId: 1, delta: '定时任务到点了。先把重构收尾：', time: C + 11000 } },
+          {
+            event: {
+              type: 'tool.call.started',
+              turnId: 1,
+              toolCallId: 'call_02',
+              name: 'Edit',
+              args: { path: 'apps/web/src/auth/index.ts', old: "export * from './session';", new: "export * from './session';\nexport * from './token';" },
+              time: C + 11400,
+            },
+          },
+          { event: { type: 'tool.result', turnId: 1, toolCallId: 'call_02', output: { applied: true }, time: C + 11800 } },
+          { event: { type: 'assistant.delta', turnId: 1, delta: '重构完成。现在执行定时任务——跑登录测试：', time: C + 12200 } },
+          {
+            event: { type: 'tool.call.started', turnId: 1, toolCallId: 'call_03', name: 'Bash', args: { command: 'pnpm test -- login' }, time: C + 12600 },
+          },
+          {
+            event: {
+              type: 'tool.result',
+              turnId: 1,
+              toolCallId: 'call_03',
+              output: { stdout: 'Test Files  1 passed (1)\n     Tests  6 passed (6)\n', exit_code: 0 },
+              time: C + 14600,
+            },
+          },
+          {
+            event: {
+              type: 'assistant.delta',
+              turnId: 1,
+              delta: '都完成了：auth 重构收尾；定时任务已执行——登录测试 6/6 通过。',
+              time: C + 15000,
+            },
+          },
+          {
+            event: {
+              type: 'turn.step.completed',
+              turnId: 1,
+              step: 1,
+              usage: { inputOther: 3600, output: 142, inputCacheRead: 16200, inputCacheCreation: 0 },
+              finishReason: 'end_turn',
+              time: C + 15300,
+            },
+          },
+          { event: { type: 'turn.ended', turnId: 1, reason: 'completed', durationMs: 15383, time: C + 15400 } },
+          {
+            facts: {
+              activity: { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
+              agentActivity: { lifecycle: 'ready' },
+              status: {
+                contextTokens: 10400,
+                usage: { total: { inputOther: 12800, output: 420, inputCacheRead: 38400, inputCacheCreation: 0 } },
+              },
+              time: C + 15420,
+            },
+          },
+        ],
+      },
+      {
+        sectionLabel: 'task 完成 · 忙时（WS）',
+        steps: [
+          {
+            event: {
+              type: 'prompt.submitted',
+              promptId: 'p_01',
+              status: 'running',
+              turnId: 2,
+              content: [{ type: 'text', text: '把登录页按钮改成品牌色' }],
+              createdAt: '2026-09-04T10:30:00.000Z',
+              time: K + 10,
+            },
+          },
+          { event: { type: 'turn.started', turnId: 2, promptId: 'p_01', origin: { kind: 'user' }, time: K + 15 } },
+          {
+            facts: {
+              activity: { busy: true, mainTurnActive: true, pendingInteraction: 'none' },
+              agentActivity: { lifecycle: 'ready', turn: { turnId: 2, step: 0, phase: 'running', since: K + 15 } },
+              status: {
+                model: 'kimi-k3-highspeed',
+                contextTokens: 10400,
+                maxContextTokens: 262144,
+                usage: { total: { inputOther: 12800, output: 420, inputCacheRead: 38400, inputCacheCreation: 0 } },
+              },
+              permission: 'manual',
+              time: K + 20,
+            },
+          },
+          { event: { type: 'turn.step.started', turnId: 2, step: 0, time: K + 22 } },
+          { event: { type: 'thinking.delta', turnId: 2, delta: '改按钮样式，一处 CSS 变量即可。', time: K + 450 } },
+          { event: { type: 'assistant.delta', turnId: 2, delta: '我来改按钮颜色：', time: K + 1050 } },
+          {
+            event: {
+              type: 'tool.call.started',
+              turnId: 2,
+              toolCallId: 'call_01',
+              name: 'Edit',
+              args: { path: 'apps/web/src/styles/theme.css', old: '--btn-primary: #6b7280;', new: '--btn-primary: #4f46e5;' },
+              time: K + 1500,
+            },
+          },
+          {
+            event: {
+              type: 'task.terminated',
+              info: {
+                taskId: 'task_01',
+                kind: 'shell',
+                status: 'completed',
+                description: 'pnpm build',
+                detached: true,
+                startedAt: '2026-09-04T10:30:02.000Z',
+                resultSummary: '构建成功：8 个包全部编译通过',
+              },
+              outputTail: '… build finished successfully …',
+              time: K + 2000,
+            },
+          },
+          { event: { type: 'tool.result', turnId: 2, toolCallId: 'call_01', output: { applied: true }, time: K + 2500 } },
+          {
+            event: {
+              type: 'assistant.delta',
+              turnId: 2,
+              delta: '按钮颜色改好了。顺便说，后台构建也完成了：8 个包全部编译通过。',
+              time: K + 2900,
+            },
+          },
+          {
+            event: {
+              type: 'turn.step.completed',
+              turnId: 2,
+              step: 0,
+              usage: { inputOther: 3100, output: 92, inputCacheRead: 12800, inputCacheCreation: 0 },
+              finishReason: 'end_turn',
+              time: K + 3200,
+            },
+          },
+          { event: { type: 'turn.ended', turnId: 2, reason: 'completed', durationMs: 3283, time: K + 3300 } },
+          {
+            facts: {
+              activity: { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
+              agentActivity: { lifecycle: 'ready' },
+              status: {
+                contextTokens: 11800,
+                usage: { total: { inputOther: 15900, output: 512, inputCacheRead: 51200, inputCacheCreation: 0 } },
+              },
+              time: K + 3320,
+            },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('subagent 四场景', () => {
+    const B = Date.parse('2026-09-03T17:30:00.000Z');
+    const spawnArgs = { description: '审查 LoginView 的白屏修复', agent_type: 'reviewer' };
+    const reviewRefs = [{ agent_id: 'review_01', role: 'child' as const }];
+    const startSteps = (thinkA: string, thinkB: string, say: string): ScriptStep[] => [
+      {
+        event: {
+          type: 'prompt.submitted',
+          promptId: 'p_01',
+          status: 'running',
+          content: [{ type: 'text', text: '白屏修好了，帮我审查一下改动' }],
+          createdAt: '2026-09-03T17:30:00.000Z',
+          time: B + 10,
+        },
+      },
+      { event: { type: 'turn.started', turnId: 0, promptId: 'p_01', origin: { kind: 'user' }, time: B + 15 } },
+      {
+        facts: {
+          activity: { busy: true, mainTurnActive: true, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready', turn: { turnId: 0, step: 0, phase: 'running', since: B + 15 } },
+          status: {
+            model: 'kimi-k3-highspeed',
+            contextTokens: 1820,
+            maxContextTokens: 262144,
+            usage: { total: { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 } },
+          },
+          permission: 'manual',
+          time: B + 20,
+        },
+      },
+      { event: { type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 } },
+      { event: { type: 'thinking.delta', turnId: 0, delta: thinkA, time: B + 450 } },
+      { event: { type: 'thinking.delta', turnId: 0, delta: thinkB, time: B + 580 } },
+      { event: { type: 'assistant.delta', turnId: 0, delta: say, time: B + 1050 } },
+    ];
+    const collectSteps = (at: number): ScriptStep[] => [
+      {
+        event: {
+          type: 'task.terminated',
+          info: { taskId: 'task_01', kind: 'agent', status: 'completed', description: '审查 LoginView 的白屏修复', resultSummary: '审查通过，无回归风险' },
+          outputTail: '审查通过：可选链修复正确，无回归风险。',
+          time: at,
+        },
+      },
+      { event: { type: 'turn.started', turnId: 1, origin: { kind: 'task', taskId: 'task_01' }, time: at + 10 } },
+      {
+        facts: {
+          activity: { busy: true, mainTurnActive: true, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready', turn: { turnId: 1, step: 0, phase: 'running', since: at + 10 } },
+          status: {
+            contextTokens: 4500,
+            usage: { total: { inputOther: 2600, output: 64, inputCacheRead: 9800, inputCacheCreation: 0 } },
+          },
+          time: at + 20,
+        },
+      },
+      { event: { type: 'turn.step.started', turnId: 1, step: 0, time: at + 30 } },
+      { event: { type: 'assistant.delta', turnId: 1, delta: '后台审查完成了：修复正确，无回归风险，可以放心提交。', time: at + 400 } },
+      {
+        event: {
+          type: 'turn.step.completed',
+          turnId: 1,
+          step: 0,
+          usage: { inputOther: 2800, output: 58, inputCacheRead: 10600, inputCacheCreation: 0 },
+          finishReason: 'end_turn',
+          time: at + 700,
+        },
+      },
+      { event: { type: 'turn.ended', turnId: 1, reason: 'completed', durationMs: 787, time: at + 800 } },
+      {
+        facts: {
+          activity: { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready' },
+          status: {
+            contextTokens: 4800,
+            usage: { total: { inputOther: 5400, output: 122, inputCacheRead: 20400, inputCacheCreation: 0 } },
+          },
+          time: at + 810,
+        },
+      },
+    ];
+    expectScenarios('subagent', [
+      {
+        sectionLabel: 'A · 前台（主通道）',
+        steps: [
+          ...startSteps('起个 reviewer 子代理独立审查，', '前台等它出结果。', '我起一个审查子代理，前台等它：'),
+          {
+            event: {
+              type: 'tool.call.started',
+              turnId: 0,
+              toolCallId: 'call_01',
+              name: 'Agent',
+              args: spawnArgs,
+              agentRefs: reviewRefs,
+              time: B + 1500,
+            },
+          },
+          {
+            event: {
+              type: 'tool.result',
+              turnId: 0,
+              toolCallId: 'call_01',
+              output: { report: '审查通过：可选链修复正确，无回归风险。' },
+              time: B + 4000,
+            },
+          },
+          {
+            event: {
+              type: 'turn.step.completed',
+              turnId: 0,
+              step: 0,
+              usage: { inputOther: 2900, output: 72, inputCacheRead: 11000, inputCacheCreation: 0 },
+              finishReason: 'tool_use',
+              time: B + 4100,
+            },
+          },
+          { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 4150 } },
+          {
+            event: {
+              type: 'assistant.delta',
+              turnId: 0,
+              delta: '子代理审查通过：修复正确，无回归风险，可以放心提交。',
+              time: B + 4500,
+            },
+          },
+          {
+            event: {
+              type: 'turn.step.completed',
+              turnId: 0,
+              step: 1,
+              usage: { inputOther: 3100, output: 80, inputCacheRead: 11800, inputCacheCreation: 0 },
+              finishReason: 'end_turn',
+              time: B + 4800,
+            },
+          },
+          { event: { type: 'turn.ended', turnId: 0, reason: 'completed', durationMs: 4883, time: B + 4900 } },
+          {
+            facts: {
+              activity: { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
+              agentActivity: { lifecycle: 'ready' },
+              status: {
+                contextTokens: 6200,
+                usage: { total: { inputOther: 6000, output: 152, inputCacheRead: 22800, inputCacheCreation: 0 } },
+              },
+              time: B + 4920,
+            },
+          },
+        ],
+      },
+      {
+        sectionLabel: 'B · 后台（主通道）',
+        steps: [
+          ...startSteps('起个后台子代理，', '结果回来再汇总。', '我起一个后台审查子代理：'),
+          {
+            event: {
+              type: 'tool.call.started',
+              turnId: 0,
+              toolCallId: 'call_01',
+              name: 'Agent',
+              args: { ...spawnArgs, run_in_background: true },
+              agentRefs: reviewRefs,
+              time: B + 1500,
+            },
+          },
+          { event: { type: 'tool.result', turnId: 0, toolCallId: 'call_01', output: { task_id: 'task_01' }, time: B + 1600 } },
+          {
+            event: {
+              type: 'task.started',
+              info: {
+                taskId: 'task_01',
+                kind: 'agent',
+                status: 'running',
+                description: '审查 LoginView 的白屏修复',
+                detached: true,
+                childAgentId: 'review_01',
+              },
+              time: B + 1610,
+            },
+          },
+          { event: { type: 'assistant.delta', turnId: 0, delta: '子代理在后台审查，完成后我汇总。', time: B + 2000 } },
+          {
+            event: {
+              type: 'turn.step.completed',
+              turnId: 0,
+              step: 0,
+              usage: { inputOther: 2600, output: 64, inputCacheRead: 9800, inputCacheCreation: 0 },
+              finishReason: 'end_turn',
+              time: B + 2300,
+            },
+          },
+          { event: { type: 'turn.ended', turnId: 0, reason: 'completed', durationMs: 2383, time: B + 2400 } },
+          {
+            facts: {
+              activity: { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
+              agentActivity: { lifecycle: 'ready' },
+              status: {
+                contextTokens: 4500,
+                usage: { total: { inputOther: 2600, output: 64, inputCacheRead: 9800, inputCacheCreation: 0 } },
+              },
+              time: B + 2420,
+            },
+          },
+          {
+            event: {
+              type: 'shell.output',
+              taskId: 'task_01',
+              update: { kind: 'stdout', text: '…正在读 LoginView 的改动…' },
+              time: B + 3500,
+            },
+          },
+          ...collectSteps(B + 4100),
+        ],
+      },
+      {
+        sectionLabel: 'C · 前台转后台（主通道）',
+        steps: [
+          ...startSteps('先前台跑着，', '不行再转后台。', '我起一个审查子代理：'),
+          {
+            event: {
+              type: 'tool.call.started',
+              turnId: 0,
+              toolCallId: 'call_01',
+              name: 'Agent',
+              args: spawnArgs,
+              agentRefs: reviewRefs,
+              time: B + 1500,
+            },
+          },
+          {
+            event: {
+              type: 'task.started',
+              info: {
+                taskId: 'task_01',
+                kind: 'agent',
+                status: 'running',
+                description: '审查 LoginView 的白屏修复',
+                detached: true,
+                childAgentId: 'review_01',
+                outputTail: '…正在读 LoginView 的改动…',
+              },
+              time: B + 3500,
+            },
+          },
+          {
+            event: {
+              type: 'tool.result',
+              turnId: 0,
+              toolCallId: 'call_01',
+              output: { detached: true, task_id: 'task_01' },
+              time: B + 3510,
+            },
+          },
+          { event: { type: 'assistant.delta', turnId: 0, delta: '子代理转后台了，完成后我汇总。', time: B + 3800 } },
+          {
+            event: {
+              type: 'turn.step.completed',
+              turnId: 0,
+              step: 0,
+              usage: { inputOther: 2600, output: 64, inputCacheRead: 9800, inputCacheCreation: 0 },
+              finishReason: 'end_turn',
+              time: B + 4100,
+            },
+          },
+          { event: { type: 'turn.ended', turnId: 0, reason: 'completed', durationMs: 4183, time: B + 4200 } },
+          {
+            facts: {
+              activity: { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
+              agentActivity: { lifecycle: 'ready' },
+              status: {
+                contextTokens: 4500,
+                usage: { total: { inputOther: 2600, output: 64, inputCacheRead: 9800, inputCacheCreation: 0 } },
+              },
+              time: B + 4220,
+            },
+          },
+          {
+            event: {
+              type: 'shell.output',
+              taskId: 'task_01',
+              update: { kind: 'stdout', text: '…正在读 LoginView 的改动…' },
+              time: B + 5300,
+            },
+          },
+          ...collectSteps(B + 5900),
+        ],
+      },
+      {
+        sectionLabel: '子代理通道（按需订阅）',
+        steps: [
+          { event: { type: 'turn.started', agentId: 'review_01', turnId: 0, origin: { kind: 'task', taskId: 'task_01' }, time: B + 1600 } },
+          { event: { type: 'turn.step.started', agentId: 'review_01', turnId: 0, step: 0, time: B + 1620 } },
+          { event: { type: 'thinking.delta', agentId: 'review_01', turnId: 0, delta: '先读 LoginView 的改动，', time: B + 2000 } },
+          { event: { type: 'thinking.delta', agentId: 'review_01', turnId: 0, delta: '重点看 token 处理。', time: B + 2200 } },
+          { event: { type: 'assistant.delta', agentId: 'review_01', turnId: 0, delta: '我先读 LoginView 的改动。', time: B + 2800 } },
+          {
+            event: {
+              type: 'tool.call.started',
+              agentId: 'review_01',
+              turnId: 0,
+              toolCallId: 'call_02',
+              name: 'Read',
+              args: { path: 'apps/web/src/views/LoginView.vue' },
+              time: B + 3200,
+            },
+          },
+          {
+            event: {
+              type: 'tool.result',
+              agentId: 'review_01',
+              turnId: 0,
+              toolCallId: 'call_02',
+              output: { content: '<template>…</template>', lines: 214 },
+              time: B + 3800,
+            },
+          },
+          {
+            event: {
+              type: 'subagent.completed',
+              agentId: 'review_01',
+              subagentId: 'review_01',
+              resultSummary: '审查通过：可选链修复正确，无回归风险。',
+              time: B + 4500,
+            },
+          },
+          {
+            event: {
+              type: 'turn.step.completed',
+              agentId: 'review_01',
+              turnId: 0,
+              step: 0,
+              usage: { inputOther: 2200, output: 64, inputCacheRead: 8000, inputCacheCreation: 0 },
+              finishReason: 'end_turn',
+              time: B + 4500,
+            },
+          },
+          { event: { type: 'turn.ended', agentId: 'review_01', turnId: 0, reason: 'completed', durationMs: 2997, time: B + 4600 } },
+        ],
       },
     ]);
   });

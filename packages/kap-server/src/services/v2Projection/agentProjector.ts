@@ -15,6 +15,7 @@ import type {
   ThinkingMessage,
   TodoItem,
   TodoMessage,
+  ToolCallAgentRef,
   ToolCallMessage,
   ToolProgressPayload,
   TurnMessage,
@@ -82,6 +83,8 @@ export interface ProjectionEvent {
   planMode?: unknown;
   version?: unknown;
   snapshot?: unknown;
+  agentRefs?: unknown;
+  resultSummary?: unknown;
   [key: string]: unknown;
 }
 
@@ -170,6 +173,7 @@ interface ToolAcc {
   approvalId?: string;
   taskId?: string;
   todoId?: string;
+  agentRefs?: ToolCallAgentRef[];
   opened: boolean;
 }
 
@@ -193,6 +197,7 @@ interface TaskInfoPayload {
   stopReason?: unknown;
   usage?: unknown;
   outputTail?: unknown;
+  childAgentId?: unknown;
 }
 
 interface InteractionAcc {
@@ -302,6 +307,7 @@ export class AgentV2Projector {
   constructor(
     private readonly sessionId: string,
     private readonly agentId: string,
+    private readonly turnIdPrefix = 't',
   ) {}
 
   apply(event: ProjectionEvent): ServerMessage[] {
@@ -336,6 +342,7 @@ export class AgentV2Projector {
       case 'plan.revision': this.onPlanRevision(event, out); break;
       case 'goal.updated': this.onGoalUpdated(event, out); break;
       case 'cron.fired': this.onCronFired(event, out); break;
+      case 'subagent.completed': this.onSubagentCompleted(event, out); break;
       default: break;
     }
     return out;
@@ -379,7 +386,7 @@ export class AgentV2Projector {
   }
 
   private protocolTurnId(engineTurnId: number): string {
-    return `t${engineTurnId + 1}`;
+    return `${this.turnIdPrefix}${engineTurnId + 1}`;
   }
 
   private onPromptSubmitted(event: ProjectionEvent, out: ServerMessage[]): void {
@@ -429,11 +436,34 @@ export class AgentV2Projector {
   }
 
   private onCronFired(event: ProjectionEvent, out: ServerMessage[]): void {
+    const promptId =
+      (event.promptId as string | undefined) ?? `cron_${(event.origin as { jobId?: string } | undefined)?.jobId ?? ''}`;
+    const turn = this.latestTurn();
+    if (turn && turn.state === 'running') {
+      const seq = turn.userSeq++;
+      const acc: PromptAcc = {
+        promptId,
+        messageId: `${turn.turnId}.u${seq}`,
+        turnId: turn.turnId,
+        text: (event.prompt as string) ?? '',
+        createdAt: iso(event.time),
+        status: 'running',
+        queued: false,
+        steerHeld: false,
+        emitted: true,
+        origin: toUserOrigin(event.origin),
+        steeredAt: iso(event.time),
+      };
+      this.prompts.set(promptId, acc);
+      turn.promptIds.unshift(promptId);
+      out.push(this.userMessage(acc, event.time));
+      return;
+    }
     this.onPromptSubmitted(
       {
         type: 'prompt.submitted',
         time: event.time,
-        promptId: (event.promptId as string | undefined) ?? `cron_${(event.origin as { jobId?: string } | undefined)?.jobId ?? ''}`,
+        promptId,
         status: 'running',
         turnId: event.turnId,
         content: [{ type: 'text', text: (event.prompt as string) ?? '' }],
@@ -754,6 +784,7 @@ export class AgentV2Projector {
       input: event.args,
       inputText: prev?.inputText,
       display: event.display,
+      agentRefs: (event.agentRefs as ToolCallAgentRef[] | undefined) ?? prev?.agentRefs,
       opened: true,
     };
     if (acc.name === 'TodoWrite' && todoItemsFromInput(acc.input) !== undefined) {
@@ -904,11 +935,29 @@ export class AgentV2Projector {
     });
   }
 
+  private onSubagentCompleted(event: ProjectionEvent, out: ServerMessage[]): void {
+    const step = this.currentStep;
+    if (!step) return;
+    this.closeOpenTexts(event.time, out);
+    const seq = step.textSeq.a++;
+    const acc: TextAcc = {
+      kind: 'assistant',
+      messageId: `${step.stepId}.a${seq}`,
+      stepKey: step.stepId,
+      turnId: step.turnId,
+      stepId: step.stepId,
+      text: (event.resultSummary as string) ?? '',
+      announced: true,
+    };
+    out.push(this.textMessage(acc, 'completed', event.time));
+  }
+
   private onShellOutput(event: ProjectionEvent, out: ServerMessage[]): void {
     const taskId = event.taskId as string | undefined;
     if (taskId === undefined) return;
     const prev = this.tasks.get(taskId);
-    if (!prev) return;    const update = event.update as { text?: string } | undefined;
+    if (!prev) return;
+    const update = event.update as { text?: string } | undefined;
     const msg: TaskMessage = {
       ...prev.message,
       timestamp: iso(event.time),
@@ -966,6 +1015,7 @@ export class AgentV2Projector {
       started_at: (info.startedAt as string) ?? iso(event.time),
       model: info.model as string | undefined,
       thinking_effort: info.thinkingEffort as string | undefined,
+      child_agent_id: info.childAgentId as string | undefined,
     };
     this.tasks.set(taskId, { taskId, message: msg });
     out.push(msg);
@@ -993,6 +1043,7 @@ export class AgentV2Projector {
       usage: toStepUsage(info.usage),
       model: prev?.model,
       thinking_effort: prev?.thinking_effort,
+      child_agent_id: (info.childAgentId as string | undefined) ?? prev?.child_agent_id,
     };
     this.tasks.set(taskId, { taskId, message: msg });
     out.push(msg);
@@ -1090,6 +1141,7 @@ export class AgentV2Projector {
       approval_id: acc.approvalId,
       task_id: acc.taskId,
       todo_id: acc.todoId,
+      agent_refs: acc.agentRefs,
     };
   }
 

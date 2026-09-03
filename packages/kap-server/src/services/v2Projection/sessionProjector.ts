@@ -18,7 +18,8 @@ export class SessionV2Projector {
   agentFor(agentId: string): AgentV2Projector {
     let projector = this.agents.get(agentId);
     if (!projector) {
-      projector = new AgentV2Projector(this.sessionId, agentId);
+      const turnIdPrefix = agentId === 'main' || agentId.startsWith('side_') ? 't' : 'r';
+      projector = new AgentV2Projector(this.sessionId, agentId, turnIdPrefix);
       this.agents.set(agentId, projector);
     }
     return projector;
