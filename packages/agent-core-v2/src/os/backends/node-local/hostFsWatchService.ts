@@ -99,7 +99,7 @@ class HostFsWatchHandle implements IHostFsWatchHandle {
       ignoreInitial: true,
       persistent: false,
       followSymlinks: false,
-      depth: options?.recursive === false ? 0 : undefined,
+      depth: options?.depth ?? (options?.recursive === false ? 0 : undefined),
       ignored: options?.ignored ?? DEFAULT_IGNORED,
     });
     this.watcher.on('all', (eventName: string, absPath: string) => {
