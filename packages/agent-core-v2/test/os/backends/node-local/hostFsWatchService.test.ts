@@ -237,6 +237,8 @@ describe('host filesystem change notifications', () => {
 
   it('reports create / modify / delete for a file', async () => {
     root = await mkdtemp(join(tmpdir(), 'hostfswatch-'));
+    const preexisting = join(root, 'pre.txt');
+    await writeFile(preexisting, 'v0');
     const events = await start();
 
     const file = join(root, 'a.txt');
@@ -247,6 +249,7 @@ describe('host filesystem change notifications', () => {
     await rm(file);
     await wait(300);
 
+    expect(events.some((e) => e.path === preexisting)).toBe(false);
     const actions = events.filter((e) => e.path === file).map((e) => e.action);
     expect(actions).toContain('created');
     expect(actions).toContain('modified');
@@ -265,15 +268,22 @@ describe('host filesystem change notifications', () => {
     expect(events.some((e) => e.path.includes('/.git/') || e.path.endsWith('/.git'))).toBe(false);
   });
 
-  it('does not fire for pre-existing files (ignoreInitial)', async () => {
+  it('does not report changes below the configured depth', async () => {
     root = await mkdtemp(join(tmpdir(), 'hostfswatch-'));
-    const preexisting = join(root, 'pre.txt');
-    await writeFile(preexisting, 'v0');
+    const events: HostFsChange[] = [];
+    const svc = new HostFsWatchService();
+    handle = svc.watch(root, { depth: 0 });
+    handle.onDidChange((e) => events.push(e));
+    await handle.ready;
 
-    const events = await start();
+    await mkdir(join(root, 'sub'));
+    await writeFile(join(root, 'top.txt'), 'x');
+    await writeFile(join(root, 'sub', 'nested.txt'), 'x');
     await wait(300);
 
-    expect(events.some((e) => e.path === preexisting)).toBe(false);
+    expect(events.some((e) => e.path === join(root, 'top.txt'))).toBe(true);
+    expect(events.some((e) => e.path === join(root, 'sub'))).toBe(true);
+    expect(events.some((e) => e.path.endsWith('nested.txt'))).toBe(false);
   });
 
   it('stops firing after the handle is disposed', async () => {
