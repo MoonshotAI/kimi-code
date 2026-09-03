@@ -1,5 +1,6 @@
 import type {
   AgentPhase,
+  SessionModes,
   SessionStateMessage,
   SessionStateUsage,
   StepUsage,
@@ -30,8 +31,6 @@ export interface ComposerStatusFact {
   thinkingEffort?: string;
   contextTokens?: number;
   maxContextTokens?: number;
-  planMode?: boolean;
-  swarmMode?: boolean;
   usage?: {
     byModel?: Record<string, unknown>;
     total?: unknown;
@@ -53,6 +52,7 @@ export interface SessionFactsPatch {
   status?: ComposerStatusFact;
   permission?: 'manual' | 'yolo' | 'auto';
   goal?: ComposerGoalFact | null;
+  modes?: SessionModes;
 }
 
 function toStepUsage(usage: unknown): StepUsage | undefined {
@@ -74,6 +74,7 @@ export class SessionStateComposer {
   private status?: ComposerStatusFact;
   private permission?: 'manual' | 'yolo' | 'auto';
   private goal?: ComposerGoalFact | null;
+  private modes?: SessionModes;
   private lastJson?: string;
 
   constructor(private readonly sessionId: string) {}
@@ -84,6 +85,7 @@ export class SessionStateComposer {
     if (patch.status !== undefined) this.status = { ...this.status, ...patch.status };
     if (patch.permission !== undefined) this.permission = patch.permission;
     if (patch.goal !== undefined) this.goal = patch.goal;
+    this.modes = patch.modes;
   }
 
   compose(
@@ -146,13 +148,7 @@ export class SessionStateComposer {
             budget_limit: this.goal.budgetLimit,
           }
         : undefined,
-      modes:
-        this.status?.planMode !== undefined || this.status?.swarmMode !== undefined
-          ? {
-              plan: this.status.planMode !== undefined ? {} : undefined,
-              swarm: this.status.swarmMode ? {} : undefined,
-            }
-          : undefined,
+      modes: this.modes,
     };
     const json = JSON.stringify(msg);
     if (json === this.lastJson) return null;

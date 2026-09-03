@@ -36,7 +36,7 @@ function runScript(sessionId: string, steps: ScriptStep[]): ServerMessage[] {
   const projector = new SessionV2Projector(sessionId);
   const out: ServerMessage[] = [];
   for (const step of steps) {
-    if (step.event) out.push(...projector.applyAgentEvent('main', step.event));
+    if (step.event) out.push(...projector.applyAgentEvent(step.event.agentId ?? 'main', step.event));
     if (step.facts) {
       const { time, ...patch } = step.facts;
       out.push(...projector.applyFacts(patch, time));
@@ -1702,6 +1702,555 @@ describe('v2Projection × 实例对拍', () => {
             usage: { total: { inputOther: 5800, output: 152, inputCacheRead: 23100, inputCacheCreation: 0 } },
           },
           time: B + 46120,
+        },
+      },
+    ]);
+  });
+
+  it('plan 直播流', () => {
+    const B = Date.parse('2026-09-03T17:50:00.000Z');
+    expectStream('plan', '流式（WS）', [
+      {
+        event: {
+          type: 'prompt.submitted',
+          promptId: 'p_01',
+          status: 'running',
+          content: [{ type: 'text', text: '把登录页改造成支持 SSO' }],
+          createdAt: '2026-09-03T17:50:00.000Z',
+          time: B + 10,
+        },
+      },
+      { event: { type: 'turn.started', turnId: 0, promptId: 'p_01', origin: { kind: 'user' }, time: B + 15 } },
+      {
+        facts: {
+          activity: { busy: true, mainTurnActive: true, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready', turn: { turnId: 0, step: 0, phase: 'running', since: B + 15 } },
+          status: {
+            model: 'kimi-k3-highspeed',
+            contextTokens: 1820,
+            maxContextTokens: 262144,
+            usage: { total: { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 } },
+          },
+          permission: 'manual',
+          time: B + 20,
+        },
+      },
+      { event: { type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 } },
+      { event: { type: 'thinking.delta', turnId: 0, delta: '改造涉及多个文件，先进入 plan 模式出方案。', time: B + 450 } },
+      { event: { type: 'assistant.delta', turnId: 0, delta: '这个改造涉及多个文件，我先出方案再动手：', time: B + 1050 } },
+      { event: { type: 'tool.call.started', turnId: 0, toolCallId: 'call_01', name: 'EnterPlanMode', time: B + 1500 } },
+      { event: { type: 'tool.result', turnId: 0, toolCallId: 'call_01', output: { entered: true }, time: B + 1600 } },
+      { event: { type: 'agent.status.updated', planMode: true, time: B + 1610 } },
+      {
+        facts: {
+          activity: { busy: true, mainTurnActive: true, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready', turn: { turnId: 0, step: 0, phase: 'running', since: B + 15 } },
+          status: {
+            contextTokens: 4100,
+            usage: { total: { inputOther: 2200, output: 58, inputCacheRead: 8000, inputCacheCreation: 0 } },
+          },
+          modes: { plan: { version: 0 } },
+          time: B + 1620,
+        },
+      },
+      { event: { type: 'assistant.delta', turnId: 0, delta: 'SSO 改造分四步：1. 接入 OAuth 客户端（`auth/oauth.ts', time: B + 2000 } },
+      { event: { type: 'assistant.delta', turnId: 0, delta: '`）；2. 登录页加 SSO 按钮；3. 新增 `/callback` 路由处理回跳；4. 本地会话与 SSO 会话合并。', time: B + 2300 } },
+      {
+        event: {
+          type: 'plan.revision',
+          id: 'rev_01',
+          version: 1,
+          key: 'plans/sso.md',
+          sha256: 'deadbeef',
+          bytes: 512,
+          summary: 'SSO 改造四步',
+          time: B + 2700,
+        },
+      },
+      {
+        facts: {
+          activity: { busy: true, mainTurnActive: true, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready', turn: { turnId: 0, step: 0, phase: 'running', since: B + 15 } },
+          status: {
+            contextTokens: 4300,
+            usage: { total: { inputOther: 2400, output: 96, inputCacheRead: 8600, inputCacheCreation: 0 } },
+          },
+          modes: { plan: { version: 1, review_path: 'plans/sso.md' } },
+          time: B + 2710,
+        },
+      },
+      {
+        event: {
+          type: 'tool.call.started',
+          turnId: 0,
+          toolCallId: 'call_02',
+          name: 'ExitPlanMode',
+          args: { plan_key: 'plans/sso.md' },
+          time: B + 2900,
+        },
+      },
+      {
+        event: {
+          type: 'permission.approval.requested',
+          id: 'ap_01',
+          turnId: 0,
+          toolCallId: 'call_02',
+          toolName: 'ExitPlanMode',
+          action: '请审查并批准实施方案',
+          toolInput: { plan_key: 'plans/sso.md' },
+          time: B + 2910,
+        },
+      },
+      {
+        facts: {
+          activity: { busy: true, mainTurnActive: true, pendingInteraction: 'approval' },
+          agentActivity: { lifecycle: 'ready', turn: { turnId: 0, step: 0, phase: 'running', since: B + 2910 } },
+          status: {
+            contextTokens: 4300,
+            usage: {
+              currentTurn: { inputOther: 2400, output: 96, inputCacheRead: 8600, inputCacheCreation: 0 },
+              total: { inputOther: 2400, output: 96, inputCacheRead: 8600, inputCacheCreation: 0 },
+            },
+          },
+          time: B + 2920,
+        },
+      },
+      {
+        event: {
+          type: 'permission.approval.resolved',
+          id: 'ap_01',
+          turnId: 0,
+          toolCallId: 'call_02',
+          toolName: 'ExitPlanMode',
+          action: '请审查并批准实施方案',
+          toolInput: { plan_key: 'plans/sso.md' },
+          decision: 'approved',
+          time: B + 5000,
+        },
+      },
+      {
+        facts: {
+          activity: { busy: true, mainTurnActive: true, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready', turn: { turnId: 0, step: 0, phase: 'running', since: B + 15 } },
+          status: {
+            contextTokens: 4300,
+            usage: {
+              currentTurn: { inputOther: 2400, output: 96, inputCacheRead: 8600, inputCacheCreation: 0 },
+              total: { inputOther: 2400, output: 96, inputCacheRead: 8600, inputCacheCreation: 0 },
+            },
+          },
+          time: B + 5010,
+        },
+      },
+      { event: { type: 'tool.result', turnId: 0, toolCallId: 'call_02', output: { approved: true }, time: B + 5020 } },
+      { event: { type: 'agent.status.updated', planMode: false, time: B + 5030 } },
+      {
+        facts: {
+          activity: { busy: true, mainTurnActive: true, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready', turn: { turnId: 0, step: 0, phase: 'running', since: B + 15 } },
+          status: {
+            contextTokens: 4300,
+            usage: { total: { inputOther: 2400, output: 96, inputCacheRead: 8600, inputCacheCreation: 0 } },
+          },
+          time: B + 5040,
+        },
+      },
+      { event: { type: 'assistant.delta', turnId: 0, delta: '开始实施，先接 OAuth 客户端：', time: B + 5400 } },
+      {
+        event: {
+          type: 'tool.call.started',
+          turnId: 0,
+          toolCallId: 'call_03',
+          name: 'Write',
+          args: { path: 'apps/web/src/auth/oauth.ts', content: '…（OAuth 客户端封装）…' },
+          time: B + 5800,
+        },
+      },
+      { event: { type: 'tool.result', turnId: 0, toolCallId: 'call_03', output: { bytes_written: 612 }, time: B + 6300 } },
+      {
+        event: {
+          type: 'turn.step.completed',
+          turnId: 0,
+          step: 0,
+          usage: { inputOther: 2400, output: 96, inputCacheRead: 8600, inputCacheCreation: 0 },
+          finishReason: 'tool_use',
+          time: B + 6400,
+        },
+      },
+      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 6450 } },
+      { event: { type: 'assistant.delta', turnId: 0, delta: '第 1 步完成。继续第 2 步（登录页 SSO 按钮）？', time: B + 6800 } },
+      {
+        event: {
+          type: 'turn.step.completed',
+          turnId: 0,
+          step: 1,
+          usage: { inputOther: 2900, output: 74, inputCacheRead: 11200, inputCacheCreation: 0 },
+          finishReason: 'end_turn',
+          time: B + 7100,
+        },
+      },
+      { event: { type: 'turn.ended', turnId: 0, reason: 'completed', durationMs: 7183, time: B + 7200 } },
+      {
+        facts: {
+          activity: { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready' },
+          status: {
+            contextTokens: 5600,
+            usage: { total: { inputOther: 5300, output: 170, inputCacheRead: 19800, inputCacheCreation: 0 } },
+          },
+          time: B + 7220,
+        },
+      },
+    ]);
+  });
+
+  it('goal 直播流', () => {
+    const B = Date.parse('2026-09-03T18:00:00.000Z');
+    expectStream('goal', '流式（WS）', [
+      {
+        facts: {
+          activity: { busy: true, mainTurnActive: true, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready', turn: { turnId: 0, step: 0, phase: 'running', since: B + 15 } },
+          status: {
+            model: 'kimi-k3-highspeed',
+            contextTokens: 1820,
+            maxContextTokens: 262144,
+            usage: { total: { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 } },
+          },
+          permission: 'manual',
+          goal: {
+            objective: '修复登录页白屏并让登录测试全绿',
+            status: 'active',
+            completionCriterion: 'pnpm test -- login 全部通过',
+            budgetUsed: 0,
+            budgetLimit: 50,
+          },
+          time: B,
+        },
+      },
+      {
+        event: {
+          type: 'turn.started',
+          turnId: 0,
+          promptId: 'p_01',
+          origin: { kind: 'system_trigger', name: 'goal_continuation' },
+          time: B + 15,
+        },
+      },
+      { event: { type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 } },
+      { event: { type: 'thinking.delta', turnId: 0, delta: '先复现定位，再修，最后跑测试验证达标条件。', time: B + 450 } },
+      { event: { type: 'assistant.delta', turnId: 0, delta: '先修复崩溃点：', time: B + 1050 } },
+      {
+        event: {
+          type: 'tool.call.started',
+          turnId: 0,
+          toolCallId: 'call_01',
+          name: 'Edit',
+          args: { path: 'apps/web/src/views/LoginView.vue', old: 'const token = user.token;', new: 'const token = user?.token;' },
+          time: B + 1500,
+        },
+      },
+      { event: { type: 'tool.result', turnId: 0, toolCallId: 'call_01', output: { applied: true }, time: B + 2000 } },
+      {
+        event: {
+          type: 'turn.step.completed',
+          turnId: 0,
+          step: 0,
+          usage: { inputOther: 2600, output: 64, inputCacheRead: 9800, inputCacheCreation: 0 },
+          finishReason: 'tool_use',
+          time: B + 2100,
+        },
+      },
+      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 2150 } },
+      {
+        event: { type: 'tool.call.started', turnId: 0, toolCallId: 'call_02', name: 'Bash', args: { command: 'pnpm test -- login' }, time: B + 2300 },
+      },
+      {
+        event: {
+          type: 'tool.result',
+          turnId: 0,
+          toolCallId: 'call_02',
+          output: { stdout: 'Test Files  1 passed (1)\n     Tests  6 passed (6)\n', exit_code: 0 },
+          time: B + 4300,
+        },
+      },
+      { event: { type: 'assistant.delta', turnId: 0, delta: '目标达成：白屏已修复，登录相关 6 个测试全部通过。', time: B + 4700 } },
+      {
+        facts: {
+          activity: { busy: true, mainTurnActive: true, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready', turn: { turnId: 0, step: 1, phase: 'running', since: B + 15 } },
+          status: {
+            contextTokens: 5400,
+            usage: { total: { inputOther: 5300, output: 140, inputCacheRead: 18600, inputCacheCreation: 0 } },
+          },
+          goal: {
+            objective: '修复登录页白屏并让登录测试全绿',
+            status: 'complete',
+            completionCriterion: 'pnpm test -- login 全部通过',
+            budgetUsed: 3,
+            budgetLimit: 50,
+          },
+          time: B + 4950,
+        },
+      },
+      {
+        event: {
+          type: 'goal.updated',
+          snapshot: {
+            objective: '修复登录页白屏并让登录测试全绿',
+            status: 'complete',
+            completionCriterion: 'pnpm test -- login 全部通过',
+            budgetUsed: 3,
+            budgetLimit: 50,
+          },
+          time: B + 4960,
+        },
+      },
+      {
+        event: {
+          type: 'turn.step.completed',
+          turnId: 0,
+          step: 1,
+          usage: { inputOther: 2700, output: 76, inputCacheRead: 10200, inputCacheCreation: 0 },
+          finishReason: 'end_turn',
+          time: B + 5000,
+        },
+      },
+      { event: { type: 'turn.ended', turnId: 0, reason: 'completed', durationMs: 5083, time: B + 5100 } },
+      {
+        facts: {
+          activity: { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready' },
+          status: {
+            contextTokens: 5400,
+            usage: { total: { inputOther: 5300, output: 140, inputCacheRead: 18600, inputCacheCreation: 0 } },
+          },
+          goal: null,
+          time: B + 5110,
+        },
+      },
+    ]);
+  });
+
+  it('sidechat 直播流', () => {
+    const B = Date.parse('2026-09-03T17:40:00.000Z');
+    expectStream('sidechat', '流式（WS）', [
+      {
+        event: {
+          type: 'prompt.submitted',
+          agentId: 'side_01',
+          promptId: 'p_01',
+          status: 'running',
+          turnId: 1,
+          content: [{ type: 'text', text: '`user?.token` 是啥语法？' }],
+          createdAt: '2026-09-03T17:40:00.000Z',
+          time: B + 10,
+        },
+      },
+      {
+        event: { type: 'turn.started', agentId: 'side_01', turnId: 1, promptId: 'p_01', origin: { kind: 'side' }, time: B + 15 },
+      },
+      {
+        facts: {
+          activity: { busy: true, mainTurnActive: false, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready', turn: { turnId: 1, step: 0, phase: 'running', since: B + 15 } },
+          status: {
+            model: 'kimi-k3-highspeed',
+            contextTokens: 5700,
+            maxContextTokens: 262144,
+            usage: { total: { inputOther: 5500, output: 162, inputCacheRead: 19500, inputCacheCreation: 0 } },
+          },
+          permission: 'manual',
+          time: B + 20,
+        },
+      },
+      { event: { type: 'turn.step.started', agentId: 'side_01', turnId: 1, step: 0, time: B + 22 } },
+      {
+        event: {
+          type: 'assistant.delta',
+          agentId: 'side_01',
+          turnId: 1,
+          delta: '`user?.token` 是可选链：`user` 为 null / undefined 时整个表达式短路为 undefined，',
+          time: B + 500,
+        },
+      },
+      {
+        event: { type: 'assistant.delta', agentId: 'side_01', turnId: 1, delta: '不会再抛 TypeError。昨天的白屏正是缺了它。', time: B + 700 },
+      },
+      {
+        event: {
+          type: 'turn.step.completed',
+          agentId: 'side_01',
+          turnId: 1,
+          step: 0,
+          usage: { inputOther: 2100, output: 48, inputCacheRead: 6000, inputCacheCreation: 0 },
+          finishReason: 'end_turn',
+          time: B + 1000,
+        },
+      },
+      { event: { type: 'turn.ended', agentId: 'side_01', turnId: 1, reason: 'completed', durationMs: 1083, time: B + 1100 } },
+      {
+        facts: {
+          activity: { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready' },
+          status: {
+            contextTokens: 5900,
+            usage: { total: { inputOther: 7600, output: 210, inputCacheRead: 25500, inputCacheCreation: 0 } },
+          },
+          time: B + 1120,
+        },
+      },
+    ]);
+  });
+
+  it('attachment 直播流', () => {
+    const B = Date.parse('2026-09-03T18:20:00.000Z');
+    expectStream('attachment', '流式（WS）', [
+      {
+        event: {
+          type: 'prompt.submitted',
+          promptId: 'p_01',
+          status: 'running',
+          content: [{ type: 'text', text: '看下这个报错截图' }],
+          attachmentIds: ['att_01'],
+          createdAt: '2026-09-03T18:20:00.000Z',
+          time: B + 10,
+        },
+      },
+      { event: { type: 'turn.started', turnId: 0, promptId: 'p_01', origin: { kind: 'user' }, time: B + 15 } },
+      {
+        facts: {
+          activity: { busy: true, mainTurnActive: true, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready', turn: { turnId: 0, step: 0, phase: 'running', since: B + 15 } },
+          status: {
+            model: 'kimi-k3-highspeed',
+            contextTokens: 1820,
+            maxContextTokens: 262144,
+            usage: { total: { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 } },
+          },
+          permission: 'manual',
+          time: B + 20,
+        },
+      },
+      { event: { type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 } },
+      { event: { type: 'thinking.delta', turnId: 0, delta: '截图里是 TypeError，位置在 handleLogin:87。', time: B + 450 } },
+      {
+        event: {
+          type: 'assistant.delta',
+          turnId: 0,
+          delta: '截图显示 `TypeError: Cannot read properties of undefined (reading \'token\')`，',
+          time: B + 1050,
+        },
+      },
+      {
+        event: {
+          type: 'assistant.delta',
+          turnId: 0,
+          delta: '发生在 `LoginView.vue:87` 的 `handleLogin`——`user` 为空时直接读了 `token`。',
+          time: B + 1250,
+        },
+      },
+      {
+        event: {
+          type: 'turn.step.completed',
+          turnId: 0,
+          step: 0,
+          usage: { inputOther: 2600, output: 66, inputCacheRead: 9000, inputCacheCreation: 0 },
+          finishReason: 'end_turn',
+          time: B + 1600,
+        },
+      },
+      { event: { type: 'turn.ended', turnId: 0, reason: 'completed', durationMs: 1683, time: B + 1700 } },
+      {
+        facts: {
+          activity: { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready' },
+          status: {
+            contextTokens: 4500,
+            usage: { total: { inputOther: 2600, output: 66, inputCacheRead: 9000, inputCacheCreation: 0 } },
+          },
+          time: B + 1720,
+        },
+      },
+    ]);
+  });
+
+  it('cron 直播流', () => {
+    const B = Date.parse('2026-09-03T18:40:00.000Z');
+    expectStream('cron', '流式（WS）', [
+      {
+        event: {
+          type: 'cron.fired',
+          promptId: 'p_01',
+          origin: { kind: 'cron_job', jobId: 'cron_01', cron: '0 9 * * 1-5', recurring: true, coalescedCount: 0, stale: false },
+          prompt: '跑一遍登录相关测试并汇报结果',
+          time: B,
+        },
+      },
+      {
+        event: { type: 'turn.started', turnId: 0, promptId: 'p_01', origin: { kind: 'cron_job', jobId: 'cron_01' }, time: B + 15 },
+      },
+      {
+        facts: {
+          activity: { busy: true, mainTurnActive: true, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready', turn: { turnId: 0, step: 0, phase: 'running', since: B + 15 } },
+          status: {
+            model: 'kimi-k3-highspeed',
+            contextTokens: 1820,
+            maxContextTokens: 262144,
+            usage: { total: { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 } },
+          },
+          permission: 'manual',
+          time: B + 20,
+        },
+      },
+      { event: { type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 } },
+      { event: { type: 'thinking.delta', turnId: 0, delta: '定时任务：跑登录测试并汇报。', time: B + 450 } },
+      { event: { type: 'assistant.delta', turnId: 0, delta: '开始执行定时任务：', time: B + 1050 } },
+      {
+        event: { type: 'tool.call.started', turnId: 0, toolCallId: 'call_01', name: 'Bash', args: { command: 'pnpm test -- login' }, time: B + 1500 },
+      },
+      {
+        event: {
+          type: 'tool.result',
+          turnId: 0,
+          toolCallId: 'call_01',
+          output: { stdout: 'Test Files  1 passed (1)\n     Tests  6 passed (6)\n', exit_code: 0 },
+          time: B + 3500,
+        },
+      },
+      {
+        event: {
+          type: 'turn.step.completed',
+          turnId: 0,
+          step: 0,
+          usage: { inputOther: 2400, output: 58, inputCacheRead: 9000, inputCacheCreation: 0 },
+          finishReason: 'tool_use',
+          time: B + 3600,
+        },
+      },
+      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 3650 } },
+      { event: { type: 'assistant.delta', turnId: 0, delta: '定时报告：登录相关 6 个测试全部通过，无异常。', time: B + 4000 } },
+      {
+        event: {
+          type: 'turn.step.completed',
+          turnId: 0,
+          step: 1,
+          usage: { inputOther: 2600, output: 62, inputCacheRead: 9800, inputCacheCreation: 0 },
+          finishReason: 'end_turn',
+          time: B + 4300,
+        },
+      },
+      { event: { type: 'turn.ended', turnId: 0, reason: 'completed', durationMs: 4383, time: B + 4400 } },
+      {
+        facts: {
+          activity: { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready' },
+          status: {
+            contextTokens: 4800,
+            usage: { total: { inputOther: 5000, output: 120, inputCacheRead: 18800, inputCacheCreation: 0 } },
+          },
+          time: B + 4410,
         },
       },
     ]);

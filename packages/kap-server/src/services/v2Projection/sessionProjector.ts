@@ -37,8 +37,11 @@ export class SessionV2Projector {
   }
 
   applyFacts(patch: SessionFactsPatch, time: number): ServerMessage[] {
+    const out: ServerMessage[] = [];
+    for (const agent of this.agents.values()) out.push(...agent.flushOpenTexts(time));
     this.composer.apply(patch);
     const msg = this.composer.compose(time, (turnId, step) => `t${turnId + 1}.${step}`);
-    return msg ? [msg] : [];
+    if (msg) out.push(msg);
+    return out;
   }
 }

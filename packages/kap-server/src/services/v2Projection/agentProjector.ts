@@ -76,6 +76,12 @@ export interface ProjectionEvent {
   turns?: unknown;
   fromTurnId?: unknown;
   taskId?: unknown;
+  attachmentIds?: unknown;
+  prompt?: unknown;
+  summary?: unknown;
+  planMode?: unknown;
+  version?: unknown;
+  snapshot?: unknown;
   [key: string]: unknown;
 }
 
@@ -103,6 +109,7 @@ interface TurnAcc {
   userSeq: number;
   promptIds: string[];
   userMessageId?: string;
+  attachmentIds?: string[];
   usageInput: number;
   usageOutput: number;
 }
@@ -230,6 +237,8 @@ function toTurnOrigin(origin: unknown): TurnOrigin {
       if (name === 'goal_continuation') return { kind: 'goal' };
       return { kind: 'other', name };
     }
+    case 'side':
+      return { kind: 'side' };
     case 'user':
     case undefined:
       return { kind: 'user' };
@@ -286,6 +295,9 @@ export class AgentV2Projector {
   private todoSeq = 0;
   private todoUpdatedAt?: number;
   private systemSeq = 0;
+  private planVersion?: number;
+  private planKey?: string;
+  private planExitApproved?: boolean;
 
   constructor(
     private readonly sessionId: string,
@@ -320,8 +332,18 @@ export class AgentV2Projector {
       case 'compaction.completed': this.onCompactionCompleted(event, out); break;
       case 'context.undone': this.onContextUndone(event, out); break;
       case 'shell.output': this.onShellOutput(event, out); break;
+      case 'agent.status.updated': this.onAgentStatusUpdated(event, out); break;
+      case 'plan.revision': this.onPlanRevision(event, out); break;
+      case 'goal.updated': this.onGoalUpdated(event, out); break;
+      case 'cron.fired': this.onCronFired(event, out); break;
       default: break;
     }
+    return out;
+  }
+
+  flushOpenTexts(time: number | undefined): ServerMessage[] {
+    const out: ServerMessage[] = [];
+    this.closeOpenTexts(time, out);
     return out;
   }
 
@@ -400,9 +422,26 @@ export class AgentV2Projector {
       steerHeld: false,
       emitted: true,
       origin,
+      attachmentIds: event.attachmentIds as string[] | undefined,
     };
     this.prompts.set(promptId, acc);
     out.push(this.userMessage(acc, event.time));
+  }
+
+  private onCronFired(event: ProjectionEvent, out: ServerMessage[]): void {
+    this.onPromptSubmitted(
+      {
+        type: 'prompt.submitted',
+        time: event.time,
+        promptId: (event.promptId as string | undefined) ?? `cron_${(event.origin as { jobId?: string } | undefined)?.jobId ?? ''}`,
+        status: 'running',
+        turnId: event.turnId,
+        content: [{ type: 'text', text: (event.prompt as string) ?? '' }],
+        createdAt: iso(event.time),
+        origin: event.origin,
+      },
+      out,
+    );
   }
 
   private nextUserSeq(engineTurnId: number): number {
@@ -503,10 +542,9 @@ export class AgentV2Projector {
     const promptId = event.promptId as string | undefined;
     if (promptId) {
       const acc = this.prompts.get(promptId);
-      if (acc) {
-        turn.userMessageId = acc.messageId;
-        turn.promptIds.push(promptId);
-      }
+      turn.userMessageId = acc?.messageId ?? promptId;
+      turn.promptIds.push(promptId);
+      turn.attachmentIds = acc?.attachmentIds;
     }
     this.turns.set(engineTurnId, turn);
     out.push(this.turnMessage(turn, event.time));
@@ -533,6 +571,7 @@ export class AgentV2Projector {
       state: 'completed',
       origin: turn.origin,
       user_message_id: turn.userMessageId,
+      attachment_ids: turn.attachmentIds,
       started_at: turn.startedAt,
       ended_at: iso(event.time),
       usage,
@@ -747,6 +786,9 @@ export class AgentV2Projector {
     }
     out.push(this.toolCallMessage(acc, event.time));
     if (!isError && acc.todoId !== undefined) this.todoUpdatedAt = event.time;
+    if (!isError && acc.name === 'ExitPlanMode') {
+      this.planExitApproved = (event.output as { approved?: boolean } | undefined)?.approved;
+    }
   }
 
   private onToolsUpdateStore(event: ProjectionEvent, out: ServerMessage[]): void {
@@ -812,12 +854,61 @@ export class AgentV2Projector {
     });
   }
 
+  private onAgentStatusUpdated(event: ProjectionEvent, out: ServerMessage[]): void {
+    const planMode = event.planMode as boolean | undefined;
+    if (planMode === true) {
+      out.push({
+        type: 'system',
+        ...this.base(event),
+        system_id: this.nextSystemId(),
+        subtype: 'plan.enter',
+        payload: { mode: 'plan' },
+      });
+    } else if (planMode === false) {
+      out.push({
+        type: 'system',
+        ...this.base(event),
+        system_id: this.nextSystemId(),
+        subtype: 'plan.exit',
+        payload: { approved: this.planExitApproved ?? false, version: this.planVersion, key: this.planKey },
+      });
+    }
+  }
+
+  private onPlanRevision(event: ProjectionEvent, out: ServerMessage[]): void {
+    this.closeOpenTexts(event.time, out);
+    this.planVersion = event.version as number | undefined;
+    this.planKey = event.key as string | undefined;
+    out.push({
+      type: 'system',
+      ...this.base(event),
+      system_id: this.nextSystemId(),
+      subtype: 'plan.revision',
+      payload: {
+        version: event.version as number,
+        key: event.key as string | undefined,
+        summary: event.summary as string | undefined,
+      },
+    });
+  }
+
+  private onGoalUpdated(event: ProjectionEvent, out: ServerMessage[]): void {
+    const snapshot = event.snapshot as { status?: string; objective?: string } | null | undefined;
+    if (!snapshot) return;
+    out.push({
+      type: 'system',
+      ...this.base(event),
+      system_id: this.nextSystemId(),
+      subtype: 'goal',
+      payload: { status: snapshot.status as string, objective: snapshot.objective },
+    });
+  }
+
   private onShellOutput(event: ProjectionEvent, out: ServerMessage[]): void {
     const taskId = event.taskId as string | undefined;
     if (taskId === undefined) return;
     const prev = this.tasks.get(taskId);
-    if (!prev) return;
-    const update = event.update as { text?: string } | undefined;
+    if (!prev) return;    const update = event.update as { text?: string } | undefined;
     const msg: TaskMessage = {
       ...prev.message,
       timestamp: iso(event.time),
@@ -940,6 +1031,7 @@ export class AgentV2Projector {
       state: turn.state,
       origin: turn.origin,
       user_message_id: turn.userMessageId,
+      attachment_ids: turn.attachmentIds,
       started_at: turn.startedAt,
     };
   }
