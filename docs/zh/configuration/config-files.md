@@ -98,7 +98,7 @@ timeout = 5
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `default_model` | `string` | — | 默认模型别名，必须在 `models` 中定义 |
-| `default_permission_mode` | `string` | `manual` | 新会话的默认权限模式，可选 `manual`（逐次询问）、`yolo`（自动批准工具操作，Agent 仍可能提问）、`auto`（完全自主，Agent 自己做决定，不再提问） |
+| `default_permission_mode` | `string` | `manual` | 新会话的默认权限模式，可选 `manual`（"Always Ask"：仅自动读取，其余操作逐一向你确认）、`yolo`（"Ask When Needed"：自动完成常规修改和命令；高危操作、提问和计划仍会问你）、`auto`（"Never Ask"：完全不打断，所有操作和判断自动完成，但危险命令仍会被拒绝） |
 | `default_plan_mode` | `boolean` | `false` | 新会话是否默认以 Plan 模式（先出计划再执行）启动 |
 | `merge_all_available_skills` | `boolean` | `true` | 是否合并所有目录中的 Agent Skills |
 | `extra_skill_dirs` | `array<string>` | — | 额外 Skill 搜索目录，叠加到默认目录之上 |
@@ -196,7 +196,9 @@ subagent 默认继承 main agent 正在运行的模型。`[secondary_model]` 节
 
 ### subagent 模型池
 
-该功能目前是实验功能，默认关闭。通过 `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1` 启用，或使用 master `KIMI_CODE_EXPERIMENTAL_FLAG=1`，在包括交互式 TUI 在内的所有启动方式下生效。实验功能关闭时模型池配置不生效：subagent 继承调用方模型，会话启动也会跳过池校验。
+配置后在包括交互式 TUI 在内的所有启动方式下生效。
+
+模型池默认启用，在包括交互式 TUI 在内的所有启动方式下生效。如需禁用，设置 `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=0`（或在 `config.toml` 的 `[experimental]` 下配置 `secondary-model = false`）；禁用期间模型池配置不生效：subagent 继承调用方模型，会话启动也会跳过池校验。
 
 最小配置只有一行——单独写下的 `default_model` 就是只含一个条目的模型池：
 
@@ -479,6 +481,8 @@ api_key = "sk-xxx"
 ## `permission`
 
 `permission` 设置会话启动时自动加载的权限规则，控制 Agent 调用工具时是否需要用户确认。规则用 `[[permission.rules]]` 数组表写出，按顺序匹配，第一条命中即生效。
+
+也可以在 `[permission]` 下设置 `dangerous_command_guard = false` 完全关闭内置危险命令策略（不再触发危险命令审批或 auto 模式拒绝），默认 `true`。环境变量 `KIMI_CODE_DANGEROUS_COMMAND_GUARD=false` 会覆盖文件设置并恢复策略引入前的行为。此开关只适用于已经在 Agent 之外统一命令限权的环境。
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |

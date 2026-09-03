@@ -1,9 +1,10 @@
 import type { AgentTranscriptSnapshot } from '../ops/operation';
 import type { TranscriptAttachment } from '../model/attachment';
-import type { TranscriptFrame } from '../model/frame';
+import type { TranscriptFrame, TranscriptUserOrigin } from '../model/frame';
 import type { TranscriptItem, TranscriptMarker } from '../model/item';
 import type { TurnOrigin } from '../model/turn';
 import { daemonFileRefFromPairingPart } from '../contract/mediaRef';
+import { projectTranscriptUserOrigin } from '../contract/origin';
 
 export type HistoryMediaSource =
   | { readonly kind: 'url'; readonly url: string }
@@ -30,6 +31,7 @@ export interface HistoryToolCall {
 }
 
 export interface HistoryMessage {
+  readonly id?: string;
   readonly role: string;
   readonly content?: readonly HistoryContentPart[];
   readonly toolCalls?: readonly HistoryToolCall[];
@@ -41,6 +43,7 @@ export interface HistoryMessage {
 interface TurnDraft {
   turnId: string;
   ordinal: number;
+  triggerPromptId?: string;
   origin: TurnOrigin;
   prompt?: string;
   attachmentIds?: string[];
@@ -81,6 +84,7 @@ export function groupMessagesIntoSnapshot(
     taskId: string | undefined;
     attachmentIds?: string[];
     promptIds?: readonly string[];
+    origin?: TranscriptUserOrigin;
     steered?: boolean;
   }[] = [];
   let nextOrdinal = 0;
@@ -166,10 +170,16 @@ export function groupMessagesIntoSnapshot(
     if (leftovers.length === 0) return;
     pendingNotificationFrames = pendingNotificationFrames.filter((pending) => !pending.steered);
     for (const pending of leftovers) {
-      const lastStep = turn?.steps.at(-1);
-      if (turn === undefined || lastStep === undefined) {
-        startTurn({ kind: 'user' }, pending.text, pending.attachmentIds);
-        continue;
+      const targetTurn = turn ?? startTurn({ kind: 'user' });
+      let lastStep = targetTurn.steps.at(-1);
+      if (lastStep === undefined) {
+        const ordinal = targetTurn.steps.length + 1;
+        lastStep = {
+          stepId: `${targetTurn.turnId}.${ordinal}`,
+          ordinal,
+          frames: [],
+        };
+        targetTurn.steps.push(lastStep);
       }
       lastStep.frames.push({
         kind: 'text',
@@ -178,17 +188,23 @@ export function groupMessagesIntoSnapshot(
         text: pending.text,
         attachmentIds: pending.attachmentIds,
         promptIds: pending.promptIds,
+        origin: pending.origin,
       });
-      syncTurnItem(items, turn);
+      syncTurnItem(items, targetTurn);
     }
   };
 
-  const startTurn = (origin: TurnOrigin, prompt?: string, attachmentIds?: string[]): TurnDraft => {
+  const startTurn = (
+    origin: TurnOrigin,
+    prompt?: string,
+    attachmentIds?: string[],
+    triggerPromptId?: string,
+  ): TurnDraft => {
     flushSteeredLeftovers();
     const ordinal = nextOrdinal;
     nextOrdinal += 1;
     pendingNotificationFrames = [];
-    turn = { turnId: `t${ordinal}`, ordinal, origin, prompt, attachmentIds, steps: [] };
+    turn = { turnId: `t${ordinal}`, ordinal, triggerPromptId, origin, prompt, attachmentIds, steps: [] };
     items.push(draftToTurnItem(turn));
     return turn;
   };
@@ -244,6 +260,7 @@ export function groupMessagesIntoSnapshot(
           text: opening.text,
           taskId: undefined,
           attachmentIds: opening.attachmentIds,
+          origin: projectTranscriptUserOrigin(message.origin),
           steered: true,
         });
         continue;
@@ -252,7 +269,7 @@ export function groupMessagesIntoSnapshot(
         const opening = isUserSlashPrompt(message) ? foldTurnOpeningInput(message) : undefined;
         pushMarker(markerKey, { text: opening?.text ?? textOf(message), origin: message.origin });
         if (opening !== undefined) {
-          startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
+          startTurn(mapOrigin(message), opening.text, opening.attachmentIds, triggerPromptIdOf(message));
         }
         continue;
       }
@@ -284,11 +301,11 @@ export function groupMessagesIntoSnapshot(
         });
         const callerMessage = { ...message, content: parts.slice(bundled.length) };
         const opening = foldTurnOpeningInput(callerMessage);
-        startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
+        startTurn(mapOrigin(message), opening.text, opening.attachmentIds, triggerPromptIdOf(message));
         continue;
       }
       const opening = foldTurnOpeningInput(message);
-      startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
+      startTurn(mapOrigin(message), opening.text, opening.attachmentIds, triggerPromptIdOf(message));
       continue;
     }
 
@@ -315,6 +332,7 @@ export function groupMessagesIntoSnapshot(
           taskId: pending.taskId,
           attachmentIds: pending.attachmentIds,
           promptIds: pending.promptIds,
+          origin: pending.origin,
         });
       }
       pendingNotificationFrames = [];
@@ -405,6 +423,18 @@ function isUserSlashPrompt(message: HistoryMessage): boolean {
     (origin?.kind === 'skill_activation' || origin?.kind === 'plugin_command') &&
     origin.trigger === 'user-slash'
   );
+}
+
+function triggerPromptIdOf(message: HistoryMessage): string | undefined {
+  if (typeof message.id !== 'string' || message.id.length === 0) return undefined;
+  const origin = message.origin as { kind?: unknown; trigger?: unknown } | undefined;
+  if (origin?.kind === undefined || origin.kind === 'user') return message.id;
+  return (
+    (origin.kind === 'skill_activation' || origin.kind === 'plugin_command') &&
+    origin.trigger === 'user-slash'
+  )
+    ? message.id
+    : undefined;
 }
 
 function mapOrigin(message: HistoryMessage): TurnOrigin {
@@ -498,6 +528,7 @@ function draftToTurnItem(draft: TurnDraft): TranscriptItem {
   return {
     kind: 'turn',
     turnId: draft.turnId,
+    triggerPromptId: draft.triggerPromptId,
     ordinal: draft.ordinal,
     state: 'completed',
     origin: draft.origin,

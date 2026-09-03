@@ -1,5 +1,5 @@
 import { Disposable } from '#/_base/di/lifecycle';
-import type { ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
+import type { IAgentReminderService } from '#/features/reminder/reminderService';
 import type {
   ContextInjectionContext,
   ContextInjectionResult,
@@ -25,7 +25,7 @@ export interface SwarmInjectionOptions {
 export class SwarmInjection extends Disposable {
   constructor(
     private readonly options: SwarmInjectionOptions,
-    injector: ReminderRuntime,
+    injector: IAgentReminderService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
   ) {
     super();

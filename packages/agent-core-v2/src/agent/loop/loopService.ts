@@ -24,7 +24,6 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import type {
   TurnEndedEvent as TurnEndedTelemetryEvent,
   TurnInterruptedEvent,
@@ -56,6 +55,7 @@ import {
   type TurnSeed,
 } from './stepRequest';
 import { StepRequestQueue, type StepRequestBatch } from './stepRequestQueue';
+import { HANDOFF_STEP_KIND } from './handoffStep';
 import {
   AssistantDelta,
   isDisplayablePromptOrigin,
@@ -111,7 +111,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
@@ -465,7 +464,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private startTurn(job: TurnJob): void {
     const origin = job.seed.origin;
     void this.dispatcher.dispatch(
-      new TurnPrompt({ agentId: this.scopeContext.agentId, input: job.seed.input, origin }),
+      new TurnPrompt({
+        agentId: this.scopeContext.agentId,
+        input: job.seed.input,
+        origin,
+        promptId: job.seed.promptId,
+      }),
     );
     job.turn.state = 'running';
     this.activeTurnJob = job;
@@ -473,6 +477,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       new TurnStarted({
         agentId: this.scopeContext.agentId,
         turnId: job.turn.id,
+        promptId: job.seed.promptId,
         origin,
         prompt: isDisplayablePromptOrigin(origin) ? turnPromptText(job.seed.input, origin) : undefined,
         promptAttachments: turnPromptAttachments(job.seed.input, origin),
@@ -486,22 +491,20 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     ready: ReturnType<typeof createControlledPromise<void>>,
   ): Promise<TurnResult> {
     const startedAt = Date.now();
-    this.telemetryContext.set({ turn_id: turn.id });
-    const telemetryContext = this.telemetryContext.get();
-    const turnTelemetry = this.telemetry.withContext(telemetryContext);
-    const { mode, provider_type, protocol } = telemetryContext;
+    this.telemetry.setContext({ turn_id: turn.id });
+    const { mode, provider_type, protocol } = this.telemetry.getContext();
     let thinkingEffort: string | undefined;
     let result: TurnResult | undefined;
     try {
       thinkingEffort = this.llmRequester.prepareTurnConfig(turn.id)?.thinkingEffort;
+      this.telemetry.setContext({ thinking_effort: thinkingEffort });
       const started: TurnStartedTelemetryEvent = {
         turn_id: turn.id,
-        mode,
+        mode: mode ?? 'agent',
         provider_type,
         protocol,
-        thinking_effort: thinkingEffort,
       };
-      turnTelemetry.track2('turn_started', started);
+      this.telemetry.track2('turn_started', started);
       result = await this.run({
         turnId: turn.id,
         signal: turn.signal,
@@ -531,6 +534,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
             error,
             durationMs,
             interruptReason,
+            stopReason: result.type === 'completed' ? result.stopReason : undefined,
           }),
         );
         if (error !== undefined) {
@@ -542,27 +546,26 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           const interrupted: TurnInterruptedEvent = {
             turn_id: turn.id,
             at_step: result.steps,
-            mode,
+            mode: mode ?? 'agent',
             interrupt_reason: interruptReason,
             provider_type,
             protocol,
-            thinking_effort: thinkingEffort,
             trace_id: traceId,
           };
-          turnTelemetry.track2('turn_interrupted', interrupted);
+          this.telemetry.track2('turn_interrupted', interrupted);
         }
       }
       const ended: TurnEndedTelemetryEvent = {
         turn_id: turn.id,
         reason: result?.type ?? 'failed',
         duration_ms: Date.now() - startedAt,
-        mode,
+        mode: mode ?? 'agent',
         provider_type,
         protocol,
-        thinking_effort: thinkingEffort,
         trace_id: traceId,
       };
-      turnTelemetry.track2('turn_ended', ended);
+      this.telemetry.track2('turn_ended', ended);
+      this.telemetry.setContext({ turn_id: undefined, trace_id: undefined, thinking_effort: undefined });
       this.activeRequestTrace = undefined;
       this.lastRequestTraceId = undefined;
       this.pumpTurns();
@@ -669,7 +672,21 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       queue: job?.queue ?? this.standaloneStepQueue,
       steps: 0,
       lastStopReason: undefined,
+      forcedStopReason: undefined,
       current: undefined,
+    };
+  }
+
+  private completedResult(runtime: LoopRuntime): LoopRunResult {
+    const truncated = runtime.lastStopReason === 'truncated';
+    if (runtime.forcedStopReason === undefined) {
+      return { type: 'completed', steps: runtime.steps, truncated };
+    }
+    return {
+      type: 'completed',
+      steps: runtime.steps,
+      truncated,
+      stopReason: runtime.forcedStopReason,
     };
   }
 
@@ -677,16 +694,15 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     runtime.current = undefined;
     runtime.turnSignal.throwIfAborted();
     if (!runtime.queue.hasPendingRequests()) {
-      return {
-        result: {
-          type: 'completed',
-          steps: runtime.steps,
-          truncated: runtime.lastStopReason === 'truncated',
-        },
-      };
+      return { result: this.completedResult(runtime) };
     }
     const maxSteps = this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn;
-    if (maxSteps !== undefined && maxSteps > 0 && runtime.steps >= maxSteps) {
+    if (
+      maxSteps !== undefined &&
+      maxSteps > 0 &&
+      runtime.steps >= maxSteps &&
+      runtime.queue.peekDriverKind() !== HANDOFF_STEP_KIND
+    ) {
       throw createMaxStepsExceededError(maxSteps);
     }
     const batch = runtime.queue.takeNextBatch()!;
@@ -721,6 +737,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }
     runtime.current = undefined;
     runtime.lastStopReason = result.stopReason;
+    if (result.stopTurnReason !== undefined && runtime.forcedStopReason === undefined) {
+      runtime.forcedStopReason = result.stopTurnReason;
+    }
     if (result.stopReason === 'filtered') {
       throw new Error2(ErrorCodes.PROVIDER_FILTERED, 'Provider safety policy blocked the response.', {
         name: 'ProviderFilteredError',
@@ -728,7 +747,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       });
     }
     if (!result.hookStopTurn) return undefined;
-    return { type: 'completed', steps: runtime.steps, truncated: result.stopReason === 'truncated' };
+    return this.completedResult(runtime);
   }
 
   private async handleLoopStepError(
@@ -835,6 +854,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     onStarted: ((step: number) => void) | undefined,
   ): Promise<StepExecutionResult> {
     this.activeRequestTrace = undefined;
+    this.telemetry.setContext({ trace_id: undefined });
     await this.hooks.onWillBeginStep.run({ turnId, step: currentStep, firstStepOfTurn, signal });
     const markStepStarted = this.beginStep(turnId, signal, currentStep, stepUuid, onStarted);
     let stepEndAppended = false;
@@ -855,7 +875,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       }
       this.lastRequestTraceId = request.trace.traceId;
       this.appendResponseContent(turnId, currentStep, stepUuid, response);
-      const finishReason = await this.executeStepTools(
+      const { finishReason, stopTurnReason } = await this.executeStepTools(
         turnId,
         signal,
         currentStep,
@@ -873,7 +893,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         response.usage,
         finishReason,
       );
-      return { stopReason: finishReason, hookStopTurn };
+      return { stopReason: finishReason, hookStopTurn, stopTurnReason };
     } catch (error) {
       if (!stepEndAppended) {
         this.context.appendLoopEvent({
@@ -962,13 +982,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     stepUuid: string,
     response: AgentLLMRequestFinish,
     trace: LLMRequestTrace,
-  ): Promise<FinishReason> {
+  ): Promise<StepToolsOutcome> {
     let finishReason = response.providerFinishReason ?? 'completed';
     if (response.message.toolCalls.length === 0) {
-      return finishReason === 'tool_calls' ? 'other' : finishReason;
+      return { finishReason: finishReason === 'tool_calls' ? 'other' : finishReason };
     }
     const toolCallUuids = new Map<string, string>();
     let stopTurn = false;
+    let stopTurnReason: string | undefined;
     for await (const toolResult of this.toolExecutor.execute(response.message.toolCalls, {
       signal,
       turnId,
@@ -997,10 +1018,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         toolCallId: toolResult.toolCallId,
         result: { output: result.output, isError: result.isError, note: result.note },
       });
-      if (result.stopTurn === true) stopTurn = true;
+      if (result.stopTurn === true) {
+        stopTurn = true;
+        stopTurnReason ??= result.stopTurnReason;
+      }
     }
     finishReason = stopTurn ? 'completed' : 'tool_calls';
-    return finishReason;
+    return { finishReason, stopTurnReason };
   }
 
   private finishStep(
@@ -1233,6 +1257,7 @@ interface LoopRuntime {
   readonly queue: StepRequestQueue;
   steps: number;
   lastStopReason: FinishReason | undefined;
+  forcedStopReason: string | undefined;
   current: StepRuntime | undefined;
 }
 
@@ -1271,6 +1296,12 @@ function interruptReasonFor(
 type StepExecutionResult = {
   readonly stopReason: FinishReason;
   readonly hookStopTurn: boolean;
+  readonly stopTurnReason?: string;
+};
+
+type StepToolsOutcome = {
+  readonly finishReason: FinishReason;
+  readonly stopTurnReason?: string;
 };
 
 type LoopErrorDisposition =

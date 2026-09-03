@@ -30,6 +30,7 @@ import {
   IAgentFullCompactionService,
   IModelOAuthTokens,
   IAgentProfileService,
+  ITelemetryService,
   IAgentToolRegistryService,
   DYNAMIC_TOOL_SCHEMA_VARIANT,
   normalizeAgentProfile,
@@ -38,9 +39,8 @@ import {
   type ToolExecution,
 } from '#/index';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { AgentTodo } from '#/features/todo/todoAgentRuntime';
-import { AgentGoal } from '#/features/goal/goalAgentRuntime';
-import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
+import { IAgentTodoService } from '#/features/todo/todoService';
+import { IAgentGoalService } from '#/features/goal/goalService';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 
 type GenerateFn = NonNullable<TestAgentOptions['generate']>;
@@ -49,7 +49,6 @@ function testAgent(
   ...inputs: readonly (TestAgentServiceOverride | TestAgentOptions)[]
 ): TestAgentContext {
   const context = createTestAgent(...inputs);
-  void context.restoreRuntimes();
   return context;
 }
 
@@ -658,7 +657,7 @@ describe('FullCompaction', () => {
       event: 'compaction_finished',
       properties: expect.objectContaining({
         source: 'manual',
-        tokens_before: 17_863,
+        tokens_before: 17_895,
         retry_count: 1,
         trace_id: 'trace-compact-1',
       }),
@@ -1082,6 +1081,10 @@ describe('FullCompaction', () => {
         agent_id: 'main',
         from: 'compacting',
         trace_id: 'trace-compact-retry',
+        mode: 'agent',
+        model: 'kimi-code',
+        protocol: 'openai',
+        provider_type: 'kimi',
       },
     });
     vi.useRealTimers();
@@ -1125,7 +1128,7 @@ describe('FullCompaction', () => {
       properties: expect.objectContaining({
         agent_id: 'main',
         source: 'manual',
-        tokens_before: 17_863,
+        tokens_before: 17_895,
         duration_ms: expect.any(Number),
         round: 1,
         retry_count: 0,
@@ -1185,7 +1188,7 @@ describe('FullCompaction', () => {
     });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
-    ctx.get(IAgentTelemetryContextService).set({ trace_id: 'trace-turn-1' });
+    ctx.get(ITelemetryService).setContext({ trace_id: 'trace-turn-1' });
     const failed = ctx.once('error');
 
     await ctx.rpc.beginCompaction({});
@@ -1200,7 +1203,7 @@ describe('FullCompaction', () => {
         trace_id: 'trace-mid-stream',
       }),
     });
-    expect(ctx.get(IAgentTelemetryContextService).get().trace_id).toBe('trace-turn-1');
+    expect(ctx.get(ITelemetryService).getContext().trace_id).toBe('trace-turn-1');
     await ctx.expectResumeMatches();
   });
 
@@ -1350,7 +1353,7 @@ describe('FullCompaction', () => {
       event: 'compaction_failed',
       properties: expect.objectContaining({
         source: 'manual',
-        tokens_before: 17_863,
+        tokens_before: 17_895,
         duration_ms: expect.any(Number),
         retry_count: 4,
         error_type: 'APIConnectionError',
@@ -2993,7 +2996,7 @@ describe('FullCompaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    await ctx.resolve(AgentTodo).replace(todos);
+    await ctx.get(IAgentTodoService).replace(todos);
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
 
@@ -3393,8 +3396,8 @@ describe('goal reminder re-injection after full compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    await ctx.restoreRuntimes();
-    await ctx.resolve(AgentGoal).createGoal({ objective: GOAL_OBJECTIVE });
+    await ctx.restorePersisted();
+    await ctx.get(IAgentGoalService).createGoal({ objective: GOAL_OBJECTIVE });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 100);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 950_000);
 
@@ -3415,7 +3418,8 @@ describe('goal reminder re-injection after full compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    await ctx.resolve(AgentGoal).createGoal({ objective: GOAL_OBJECTIVE });
+    await ctx.restorePersisted();
+    await ctx.get(IAgentGoalService).createGoal({ objective: GOAL_OBJECTIVE });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
     const completed = ctx.once('compaction.completed');
@@ -3469,7 +3473,8 @@ describe('goal reminder re-injection after full compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    await ctx.resolve(AgentGoal).createGoal({ objective: GOAL_OBJECTIVE });
+    await ctx.restorePersisted();
+    await ctx.get(IAgentGoalService).createGoal({ objective: GOAL_OBJECTIVE });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
     const completed = ctx.once('compaction.completed');

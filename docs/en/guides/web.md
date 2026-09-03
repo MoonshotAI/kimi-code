@@ -93,3 +93,4 @@ Make sure you started with `--host` (bare is fine), and use the LAN URL from the
 
 - [Server API](../reference/server-api.md) — REST / WebSocket APIs for scripts and third-party integrations (experimental)
 - [kimi command](../reference/kimi-command.md#kimi-web) — all `kimi web` command-line options
+- [Remote Control](./remote-control.md) — remotely view and take over local sessions from any device over the public internet

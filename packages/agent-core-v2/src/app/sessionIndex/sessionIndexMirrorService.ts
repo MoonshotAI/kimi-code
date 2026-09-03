@@ -4,6 +4,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { IntervalTimer } from '#/_base/utils/timer';
 import { IFlagService } from '#/app/flag/flag';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IQueryStore } from '#/persistence/interface/queryStore';
 
 import { ISessionIndexMirror, type SessionSummary } from './sessionIndex';
@@ -36,12 +37,14 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
   private readonly timer = this._register(new IntervalTimer({ unref: true }));
   private flushing: Promise<void> | undefined;
   private consecutiveFailures = 0;
+  private giveUpTracked = false;
   private disposed = false;
   private overflowLogged = false;
 
   constructor(
     @IQueryStore private readonly queryStore: IQueryStore,
     @IFlagService private readonly flags: IFlagService,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
     @ILogService private readonly log: ILogService,
   ) {
     super();
@@ -167,6 +170,7 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
         if (this.pendingMap.get(id) === summary) this.pendingMap.delete(id);
       }
       this.consecutiveFailures = 0;
+      this.giveUpTracked = false;
     } catch (error) {
       this.consecutiveFailures += 1;
       this.log.warn('failed to flush session index mirror chunk', {
@@ -178,6 +182,13 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
         this.log.warn('session index mirror giving up until the next record; reconciliation will heal', {
           pending: this.pendingMap.size,
         });
+        if (!this.giveUpTracked) {
+          this.giveUpTracked = true;
+          this.telemetry.track2('session_index_mirror_give_up', {
+            pending_count: this.pendingMap.size,
+            consecutive_failures: this.consecutiveFailures,
+          });
+        }
       }
     }
   }

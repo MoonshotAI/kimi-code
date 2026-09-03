@@ -7,8 +7,7 @@ import { unwrapErrorCause } from '#/_base/errors/errors';
 import { Error2, ErrorCodes } from '#/errors';
 import { generateHeroSlug } from '#/_base/utils/hero-slug';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { PlanModeInjection } from '#/features/plan/injection/planModeInjection';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -20,7 +19,6 @@ import type {
   BeforeToolExecuteEvent,
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
-import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -53,8 +51,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IBlobStore private readonly blobs: IBlobStore,
-    @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
-    @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
+    @IAgentReminderService reminder: IAgentReminderService,
     @IEventBus eventBus: IEventBus,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ISessionContext private readonly sessionCtx: ISessionContext,
@@ -62,7 +59,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
-    @ITelemetryService telemetry: ITelemetryService,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly agentState: IAgentStateService,
   ) {
     super();
@@ -85,11 +82,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
       }),
     );
 
-    this._register(
-      activateReminderWhenReady(agentLifecycle, this.agentCtx, (reminder) =>
-        new PlanModeInjection(reminder, this, this.context, agentState),
-      ),
-    );
+    this._register(new PlanModeInjection(reminder, this, this.context, agentState));
     this._register(this.registerPlanGuard(toolExecutor));
   }
 
@@ -157,7 +150,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
   }
 
   private restoreTelemetryMode(): void {
-    this.telemetryContext.set({ mode: this.isActive ? 'plan' : 'agent' });
+    this.telemetry.setContext({ mode: this.isActive ? 'plan' : 'agent' });
   }
 
   private createPlanId(): string {
@@ -174,7 +167,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     try {
       await this.ensurePlanDirectory(planFilePath);
       await this.dispatcher.dispatch(new PlanModeEnter({ agentId: this.agentCtx.agentId, id }));
-      this.telemetryContext.set({ mode: 'plan' });
+      this.telemetry.setContext({ mode: 'plan' });
       enterRecorded = true;
       if (createFile) {
         await this.writeEmptyPlanFile(planFilePath);
@@ -189,7 +182,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
 
   cancel(id?: string): void {
     void this.dispatcher.dispatch(new PlanModeCancel({ agentId: this.agentCtx.agentId, id }));
-    this.telemetryContext.set({ mode: 'agent' });
+    this.telemetry.setContext({ mode: 'agent' });
   }
 
   async clear(): Promise<void> {
@@ -200,7 +193,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
 
   exit(id?: string): void {
     void this.dispatcher.dispatch(new PlanModeExit({ agentId: this.agentCtx.agentId, id }));
-    this.telemetryContext.set({ mode: 'agent' });
+    this.telemetry.setContext({ mode: 'agent' });
   }
 
   async recordRevision(): Promise<void> {
@@ -218,7 +211,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
         agentId: this.agentCtx.agentId,
         id,
         version,
-        path: `${scope}/${key}`,
+        key,
         sha256: createHash('sha256').update(bytes).digest('hex'),
         bytes: bytes.byteLength,
       }),

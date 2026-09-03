@@ -15,6 +15,8 @@ export interface ToolDedupeErrorResult extends ExecutableToolErrorResult {
 
 export type ToolDedupeResult = ToolDedupeSuccessResult | ToolDedupeErrorResult;
 
+export const REPEAT_BREAKER_STOP_REASON = 'repeat_breaker';
+
 export interface IAgentToolDedupeService {
   readonly _serviceBrand: undefined;
 }

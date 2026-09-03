@@ -12,12 +12,25 @@ export class GitError extends Error {
   }
 }
 
-export async function git(cwd: string, args: readonly string[]): Promise<string> {
+export interface GitOptions {
+  readonly env?: Readonly<Record<string, string>>;
+}
+
+export async function git(
+  cwd: string,
+  args: readonly string[],
+  options: GitOptions = {},
+): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
       'git',
       [...args],
-      { cwd, timeout: GIT_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 },
+      {
+        cwd,
+        timeout: GIT_TIMEOUT_MS,
+        maxBuffer: 16 * 1024 * 1024,
+        env: options.env === undefined ? process.env : { ...process.env, ...options.env },
+      },
       (error, stdout, stderr) => {
         if (error !== null) {
           reject(new GitError(args, stderr || error.message));
@@ -59,6 +72,52 @@ export async function branchExists(cwd: string, branch: string): Promise<boolean
   return (
     (await tryGit(cwd, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`])) !== null
   );
+}
+
+const ADD_PATHS_CHUNK = 100;
+
+export async function initRepository(cwd: string): Promise<void> {
+  await git(cwd, ['init']);
+}
+
+async function gitCommit(cwd: string, args: readonly string[]): Promise<void> {
+  try {
+    await git(cwd, args);
+  } catch (error) {
+    if (!(error instanceof GitError) || !/identity unknown/.test(error.stderr)) {
+      throw error;
+    }
+    await git(cwd, [
+      '-c',
+      'user.name=Kimi Tower',
+      '-c',
+      'user.email=kimi-tower@localhost',
+      ...args,
+    ]);
+  }
+}
+
+export async function checkoutNewLocalBranch(cwd: string, branch: string): Promise<void> {
+  await git(cwd, ['checkout', '-b', branch]);
+}
+
+export async function commitAllowEmpty(cwd: string, message: string): Promise<void> {
+  await gitCommit(cwd, ['commit', '--allow-empty', '-m', message]);
+}
+
+export async function commitPaths(
+  cwd: string,
+  paths: readonly string[],
+  message: string,
+): Promise<void> {
+  for (let i = 0; i < paths.length; i += ADD_PATHS_CHUNK) {
+    await git(cwd, ['add', '-A', '--', ...paths.slice(i, i + ADD_PATHS_CHUNK)]);
+  }
+  await gitCommit(cwd, ['commit', '-m', message]);
+}
+
+export async function isAncestor(cwd: string, ancestor: string, ref: string): Promise<boolean> {
+  return (await tryGit(cwd, ['merge-base', '--is-ancestor', ancestor, ref])) !== null;
 }
 
 export async function worktreeAdd(

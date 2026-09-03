@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  AgentCron,
-  AgentGoal,
+  IAgentCronService,
+  IAgentGoalService,
   IAgentLifecycleService,
   IAgentPermissionModeService,
   IAgentProfileService,
@@ -23,9 +23,12 @@ import {
   ISessionManager,
   ITelemetryService,
   makeAgentScopeContext,
+  resolveKimiHome,
   type BootstrapInput,
   type Event2,
 } from '@moonshot-ai/agent-core-v2';
+
+import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_USER_AGENT_PRODUCT } from '#/constant/app';
 
 import { runV2Print } from '../../src/cli/v2/run-v2-print';
 
@@ -35,6 +38,11 @@ const mocks = vi.hoisted(() => ({
   createKimiDefaultHeaders: vi.fn(() => ({})),
   resolveKimiHome: vi.fn((homeDir?: string) => homeDir ?? '/tmp/kimi-code-test-home'),
   createKimiDeviceId: vi.fn(() => 'device-1'),
+  initializeTelemetry: vi.fn(),
+  setCrashPhase: vi.fn(),
+  setTelemetryContext: vi.fn(),
+  setTelemetryModel: vi.fn(),
+  shutdownTelemetry: vi.fn(async () => {}),
 }));
 
 vi.mock('@moonshot-ai/agent-core-v2', async (importOriginal) => {
@@ -65,14 +73,22 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
   };
 });
 
-vi.mock('@moonshot-ai/kimi-telemetry', () => ({
-  initializeTelemetry: vi.fn(),
-  setCrashPhase: vi.fn(),
-  shutdownTelemetry: vi.fn(),
-  track: vi.fn(),
-  setTelemetryContext: vi.fn(),
-  withTelemetryContext: vi.fn(() => ({ track: vi.fn() })),
-}));
+vi.mock('@moonshot-ai/kimi-telemetry', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@moonshot-ai/kimi-telemetry')>();
+  return {
+    // Keep the real `shouldEnableTelemetry` so the tests exercise the actual
+    // KIMI_DISABLE_TELEMETRY semantics; only the side-effecting entry points
+    // are stubbed.
+    ...actual,
+    initializeTelemetry: mocks.initializeTelemetry,
+    setCrashPhase: mocks.setCrashPhase,
+    setTelemetryContext: mocks.setTelemetryContext,
+    setTelemetryModel: mocks.setTelemetryModel,
+    shutdownTelemetry: mocks.shutdownTelemetry,
+    track: vi.fn(),
+    withTelemetryContext: vi.fn(() => ({ track: vi.fn() })),
+  };
+});
 
 interface FakeScope {
   readonly id: string;
@@ -128,6 +144,7 @@ function makeFakeHarness() {
   const eventListeners = new Set<(event: Event2<any>) => void>();
   const profileState: { profileName: string | undefined } = { profileName: undefined };
 
+  const goal = { createGoal: vi.fn(), getGoal: vi.fn() };
   const agentServices = new Map<unknown, unknown>([
     [
       IAgentProfileService,
@@ -167,13 +184,13 @@ function makeFakeHarness() {
       },
     ],
     [IAgentTaskService, { list: vi.fn(() => []) }],
+    [IAgentCronService, { getNextFireTime: vi.fn(() => null) }],
+    [IAgentGoalService, goal],
     [
       IAgentScopeContext,
       makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }),
     ],
   ]);
-  const goal = { createGoal: vi.fn(), getGoal: vi.fn() };
-  const cron = { getNextFireTime: vi.fn(() => null) };
   const agent = fakeScope('main', agentServices);
 
   const sessionServices = new Map<unknown, unknown>([
@@ -183,11 +200,6 @@ function makeFakeHarness() {
       {
         list: vi.fn(() => []),
         handleOf: vi.fn(() => agent),
-        resolve: vi.fn((_context: unknown, capability: unknown) => {
-          if (capability === AgentGoal) return goal;
-          if (capability === AgentCron) return cron;
-          throw new Error('unexpected capability');
-        }),
       },
     ],
   ]);
@@ -250,7 +262,7 @@ function makeFakeHarness() {
       ITelemetryService,
       (() => {
         const svc = {
-          setAppender: vi.fn(),
+          addAppender: vi.fn(() => ({ dispose: vi.fn() })),
           setContext: vi.fn(),
           track: vi.fn(),
           track2: vi.fn(),
@@ -269,6 +281,9 @@ describe('runV2Print', () => {
   beforeEach(() => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '1');
     vi.stubEnv('KIMI_MODEL_OUTPUT_FORMAT', '');
+    // Pin the telemetry kill-switch to "unset" so the host environment cannot
+    // flip the default telemetry-on path these tests exercise.
+    vi.stubEnv('KIMI_DISABLE_TELEMETRY', '');
   });
 
   afterEach(() => {
@@ -508,5 +523,94 @@ describe('runV2Print', () => {
     };
     expect(profile.bind).not.toHaveBeenCalled();
     expect(profile.setModel).toHaveBeenCalledWith('new-model');
+  });
+
+  it('honors KIMI_DISABLE_TELEMETRY: no cloud appender and no v1 pipeline', async () => {
+    vi.stubEnv('KIMI_DISABLE_TELEMETRY', '1');
+    const stdout = writer();
+    const stderr = writer();
+    const { app, appServices } = makeFakeHarness();
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
+
+    const telemetry = appServices.get(ITelemetryService) as {
+      addAppender: ReturnType<typeof vi.fn>;
+    };
+    expect(telemetry.addAppender).not.toHaveBeenCalled();
+    expect(mocks.initializeTelemetry).not.toHaveBeenCalled();
+    // The run itself is unaffected: the prompt still renders and cleanup runs.
+    expect(stdout.text()).toContain('hello world');
+    expect(app.dispose).toHaveBeenCalled();
+  });
+
+  it('initializes the v1 telemetry pipeline alongside the cloud appender', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, appServices } = makeFakeHarness();
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
+
+    const telemetry = appServices.get(ITelemetryService) as {
+      addAppender: ReturnType<typeof vi.fn>;
+    };
+    expect(telemetry.addAppender).toHaveBeenCalledTimes(1);
+    expect(mocks.initializeTelemetry).toHaveBeenCalledTimes(1);
+    expect(mocks.initializeTelemetry).toHaveBeenCalledWith({
+      homeDir: resolveKimiHome(),
+      deviceId: 'device-1',
+      appName: CLI_USER_AGENT_PRODUCT,
+      version: '1.2.3-test',
+      uiMode: 'print',
+      model: 'k2',
+      endpoint: expect.any(Function),
+      getAccessToken: expect.any(Function),
+    });
+    // The resolved session id is synced onto the v1 client so crash events and
+    // system metrics carry it; the sink model is reconciled too (same value
+    // here, since the fresh session uses the configured default).
+    expect(mocks.setTelemetryContext).toHaveBeenCalledWith({ sessionId: 'ses_v2' });
+    expect(mocks.setTelemetryModel).toHaveBeenCalledWith('k2');
+    expect(mocks.setCrashPhase).toHaveBeenCalledWith('runtime');
+    expect(mocks.setCrashPhase).toHaveBeenCalledWith('shutdown');
+    expect(mocks.shutdownTelemetry).toHaveBeenCalledWith({
+      timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS,
+    });
+  });
+
+  it('reconciles the v1 sink model with the resumed session model', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, appServices, agentServices } = makeFakeHarness();
+
+    // The resumed session's stored model differs from the configured default.
+    const profile = agentServices.get(IAgentProfileService) as { getModel: () => string };
+    profile.getModel = () => 'resumed-model';
+    const index = appServices.get(ISessionIndex) as { get: ReturnType<typeof vi.fn> };
+    index.get.mockResolvedValue({ id: 'ses_1', cwd: process.cwd() });
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts({ session: 'ses_1' }) as never, '1.2.3-test', { stdout, stderr });
+
+    // The v1 pipeline was initialized up front with the best-known model, so
+    // crash events during session resolution still reach a sink...
+    expect(mocks.initializeTelemetry).toHaveBeenCalledTimes(1);
+    expect(mocks.initializeTelemetry).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'k2' }),
+    );
+    // ...and the sink's model was reconciled to the resumed session's real
+    // model only after the session resolved.
+    expect(mocks.setTelemetryModel).toHaveBeenCalledWith('resumed-model');
+    const initOrder = mocks.initializeTelemetry.mock.invocationCallOrder[0];
+    const reconcileOrder = mocks.setTelemetryModel.mock.invocationCallOrder[0];
+    expect(initOrder).toBeDefined();
+    expect(reconcileOrder).toBeGreaterThan(initOrder!);
   });
 });

@@ -33,7 +33,12 @@ const turnInputShape = {
   origin: z.custom<PromptOrigin>(),
 };
 
-const turnPromptSchema = z.object(turnInputShape);
+const turnPromptSchema = z.object({
+  agentId: z.string(),
+  input: z.custom<readonly ContentPart[]>(),
+  origin: z.custom<PromptOrigin>(),
+  promptId: z.string().optional(),
+});
 
 export class TurnPrompt extends AgentEvent2<z.infer<typeof turnPromptSchema>> {
   static override readonly type = 'turn.prompt';
@@ -44,6 +49,7 @@ export interface TurnPrompt {
   readonly agentId: string;
   readonly input: readonly ContentPart[];
   readonly origin: PromptOrigin;
+  readonly promptId?: string;
 }
 
 const turnSteerSchema = z.object(turnInputShape);
@@ -85,6 +91,7 @@ const turnEndedSchema = z.object({
   reason: z.enum(['completed', 'cancelled', 'failed', 'blocked']),
   error: z.custom<KimiErrorPayload>().optional(),
   durationMs: z.number().optional(),
+  stopReason: z.string().optional(),
 });
 
 export interface TurnEndedPayload {
@@ -94,6 +101,7 @@ export interface TurnEndedPayload {
   readonly error?: KimiErrorPayload;
   readonly durationMs?: number;
   readonly interruptReason?: TurnInterruptReason;
+  readonly stopReason?: string;
 }
 
 export class TurnEnded extends AgentEvent2<TurnEndedPayload> {
@@ -111,6 +119,7 @@ export class TurnEnded extends AgentEvent2<TurnEndedPayload> {
     };
     if (this.error !== undefined) record['error'] = this.error;
     if (this.durationMs !== undefined) record['durationMs'] = this.durationMs;
+    if (this.stopReason !== undefined) record['stopReason'] = this.stopReason;
     record['time'] = this.time;
     return record as SerializedEvent2;
   }

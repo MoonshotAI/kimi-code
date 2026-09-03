@@ -5,8 +5,6 @@ import { join } from 'node:path';
 import type {
   AgentActivityState,
   AgentContext,
-  AgentRuntimeDefinition,
-  RuntimeOf,
   Interaction,
   InteractionKind,
   InteractionPendingChangedEvent,
@@ -19,8 +17,8 @@ import type {
   SessionActivityState,
 } from '@moonshot-ai/agent-core-v2';
 import {
-  AgentInteraction,
   IAgentActivityView,
+  IAgentInteractionService,
   LifecycleScope,
   IAgentLifecycleService,
   IAgentProfileService,
@@ -252,13 +250,6 @@ class FakeLifecycle {
     return kernel;
   }
 
-  resolve<Definition extends AgentRuntimeDefinition<any, any>>(
-    context: AgentContext,
-    definition: Definition,
-  ): RuntimeOf<Definition> {
-    if (definition !== AgentInteraction) throw new Error('unsupported runtime');
-    return this.kernelFor(context.agentId) as RuntimeOf<Definition>;
-  }
   private readonly turnCounters = new Map<string, { dispose(): void }>();
   private createHandlers: Array<(context: AgentContext) => void> = [];
   private disposeHandlers: Array<(context: AgentContext) => void> = [];
@@ -287,6 +278,7 @@ class FakeLifecycle {
     handle.set(IAgentActivityView, {
       state: () => ({ lifecycle: 'ready', background: [] }),
     });
+    handle.set(IAgentInteractionService, this.kernelFor(id));
     const onTurnStarted = handle.bus.subscribe('turn.started', (e) => {
       handle.bus.emit(
         agentEvent('agent.activity.updated', {

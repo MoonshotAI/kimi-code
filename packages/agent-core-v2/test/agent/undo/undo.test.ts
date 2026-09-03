@@ -1,8 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
 import { ContextApplyCompaction } from '#/agent/contextMemory/contextEvents';
 import type { TaskOrigin } from '#/agent/contextMemory/types';
@@ -19,17 +17,17 @@ import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { ContextUndone } from '#/agent/undo/undoService';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IEventBus } from '#/app/event/eventBus';
-import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { ErrorCodes } from '#/errors';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ToolsUpdateStore } from '#/features/todo/todoOps';
-import { AgentTodo } from '#/features/todo/todoAgentRuntime';
+import { IAgentTodoService } from '#/features/todo/todoService';
 import { type ReplayableStateKey } from '#/state/state';
 import { IWireService } from '#/wire/wire';
 
 import { createTestAgent, execEnvServices, telemetryServices, type TestAgentContext } from '../../harness';
 import { createFakeHostFs } from '../../tools/fixtures/fake-exec';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 
 describe('AgentConversationUndoService', () => {
   let ctx: TestAgentContext;
@@ -241,14 +239,7 @@ describe('AgentConversationUndoService', () => {
   it('restores todos to their pre-turn value', async () => {
     setup();
     const undo = ctx.get(IAgentConversationUndoService);
-    const manager = ctx.get(IAgentLifecycleService);
-    const agent = ctx.get(IAgentScopeContext).agentContext;
-    expect(manager.inspect(agent).contributions.find((entry) => entry.id === 'todo')).toMatchObject({
-      id: 'todo',
-      status: 'materialized',
-      state: [],
-      error: undefined,
-    });
+    expect(ctx.get(IAgentTodoService).get()).toEqual([]);
     ctx.appendTurnExchange('u1', 'a1');
     await ctx.dispatcher.dispatch(
       new ToolsUpdateStore({ agentId: 'main', key: 'todo', value: [{ title: 'kept', status: 'pending' }] }),
@@ -260,7 +251,7 @@ describe('AgentConversationUndoService', () => {
 
     await undo.undo(1);
 
-    expect(ctx.resolve(AgentTodo).get()).toEqual([{ title: 'kept', status: 'pending' }]);
+    expect(ctx.get(IAgentTodoService).get()).toEqual([{ title: 'kept', status: 'pending' }]);
   });
 
   it('restores plan mode and its telemetry mirror to their pre-turn value', async () => {
@@ -278,7 +269,7 @@ describe('AgentConversationUndoService', () => {
       await undo.undo(1);
 
       expect(ctx.agentState.get(planKey).active).toBe(false);
-      expect(ctx.get(IAgentTelemetryContextService).get().mode).toBe('agent');
+      expect(ctx.get(ITelemetryService).getContext().mode).toBe('agent');
       expect(restoredModes).toEqual([false]);
     } finally {
       subscription.dispose();
@@ -513,7 +504,14 @@ describe('AgentConversationUndoService', () => {
 
     expect(records).toContainEqual({
       event: 'conversation_undo',
-      properties: { agent_id: 'main', count: 1 },
+      properties: {
+        agent_id: 'main',
+        count: 1,
+        mode: 'agent',
+        model: 'mock-model',
+        protocol: 'openai',
+        provider_type: 'kimi',
+      },
     });
     expect(ctx.context.get().map((m) => m.role)).toEqual(['user', 'assistant']);
   });
@@ -581,7 +579,14 @@ describe('AgentConversationUndoService', () => {
       expect(undone).toEqual([1]);
       expect(records).toContainEqual({
         event: 'conversation_undo',
-        properties: { agent_id: 'main', count: 1 },
+        properties: {
+          agent_id: 'main',
+          count: 1,
+          mode: 'agent',
+          model: 'mock-model',
+          protocol: 'openai',
+          provider_type: 'kimi',
+        },
       });
     } finally {
       subscription.dispose();

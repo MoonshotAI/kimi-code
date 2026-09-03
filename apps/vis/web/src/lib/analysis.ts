@@ -5,7 +5,7 @@
 // needs but the raw record list does not surface:
 //   - per-turn / per-step / per-tool wall-clock duration (from record `time`)
 //   - per-turn token cost (sum of step usages) and cache-hit rate
-//   - context-window fill over time (mirrors agent-core's snapshot formula)
+//   - context-window fill over time (mirrors the engine's snapshot formula)
 //   - tool-result truncation / size / error flags
 //   - tool usage stats (count, error rate, latency)
 //   - idle gaps (large wall-clock gaps between records → waiting)
@@ -50,7 +50,7 @@ export interface StepNode {
   finishReason?: string;
   isError?: boolean;
   usage?: TokenUsage;
-  /** Context-window fill after this step (the agent-core snapshot formula). */
+  /** Context-window fill after this step (the engine's snapshot formula). */
   contextTokens?: number;
   llmFirstTokenLatencyMs?: number;
   llmStreamDurationMs?: number;
@@ -180,7 +180,7 @@ function usageTotal(u: TokenUsage): number {
   return u.inputOther + u.output + u.inputCacheRead + u.inputCacheCreation;
 }
 
-/** Context-window fill after a step, mirroring agent-core ContextMemory. */
+/** Context-window fill after a step, mirroring the engine's token counting. */
 function contextFill(u: TokenUsage): number {
   return u.inputCacheRead + u.inputCacheCreation + u.inputOther + u.output;
 }
@@ -290,23 +290,58 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
         });
         if (contextTokens > peakContext) peakContext = contextTokens;
         break;
+      case 'token_counting.measured':
+      case 'token_counting.truncated':
+      case 'token_counting.rebased':
+      case 'token_counting.turn_recorded':
+        // v2's replacement for `context.update_token_count`: the record's
+        // `tokens` is the agent's current context-window fill.
+        contextTokens = rec.tokens;
+        contextSeries.push({
+          lineNo: entry.lineNo,
+          time: t,
+          turnIndex: current?.index ?? -1,
+          step: -1,
+          contextTokens,
+        });
+        if (contextTokens > peakContext) peakContext = contextTokens;
+        break;
       case 'context.clear':
         contextTokens = 0;
         break;
       case 'context.apply_compaction':
-        contextTokens = rec.tokensAfter;
-        contextSeries.push({ lineNo: entry.lineNo, time: t, turnIndex: current?.index ?? -1, step: -1, contextTokens });
-        if (contextTokens > peakContext) peakContext = contextTokens;
+        // `tokensAfter` is optional in the v2 payload (absent on legacy
+        // variants) — keep the prior count then.
+        if (rec.tokensAfter !== undefined) {
+          contextTokens = rec.tokensAfter;
+          contextSeries.push({ lineNo: entry.lineNo, time: t, turnIndex: current?.index ?? -1, step: -1, contextTokens });
+          if (contextTokens > peakContext) peakContext = contextTokens;
+        }
         break;
 
       case 'config.update': {
+        const cwd = rec.environmentDisclosure?.cwd;
+        const effort = rec.thinkingEffort ?? rec.thinkingLevel;
         const changed: { field: string; value: string }[] = [];
         if (rec.profileName !== undefined) changed.push({ field: 'profile', value: rec.profileName });
         if (rec.modelAlias !== undefined) changed.push({ field: 'model', value: rec.modelAlias });
-        if (rec.thinkingEffort !== undefined) changed.push({ field: 'thinking', value: rec.thinkingEffort });
-        if (rec.cwd !== undefined) changed.push({ field: 'cwd', value: rec.cwd });
+        if (effort !== undefined) changed.push({ field: 'thinking', value: effort });
+        if (cwd !== undefined) changed.push({ field: 'cwd', value: cwd });
         if (rec.systemPrompt !== undefined) changed.push({ field: 'systemPrompt', value: `${rec.systemPrompt.length} chars` });
         if (changed.length > 0) configChanges.push({ lineNo: entry.lineNo, time: t, changed });
+        break;
+      }
+
+      case 'profile.bind': {
+        // v2 writes most initial config state on `profile.bind` rather than
+        // `config.update`.
+        const changed: { field: string; value: string }[] = [];
+        if (rec.profileName !== undefined) changed.push({ field: 'profile', value: rec.profileName });
+        if (rec.modelAlias !== undefined) changed.push({ field: 'model', value: rec.modelAlias });
+        changed.push({ field: 'thinking', value: rec.thinkingEffort });
+        if (rec.environmentDisclosure !== undefined) changed.push({ field: 'cwd', value: rec.environmentDisclosure.cwd });
+        changed.push({ field: 'systemPrompt', value: `${rec.systemPrompt.length} chars` });
+        configChanges.push({ lineNo: entry.lineNo, time: t, changed });
         break;
       }
 
@@ -316,8 +351,10 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
           current ??= startTurn('prompt', entry.lineNo, t, '(no prompt record)', undefined);
           const step: StepNode = {
             uuid: ev.uuid,
-            step: ev.step,
-            turnId: ev.turnId,
+            // `step` / `turnId` are optional on v2 loop events; fall back so
+            // the timeline stays numeric for old and new wires alike.
+            step: ev.step ?? -1,
+            turnId: ev.turnId ?? '',
             beginLineNo: entry.lineNo,
             beginTime: t,
             content: { textChars: 0, thinkChars: 0 },
@@ -348,8 +385,8 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
               if (current) addUsage(current.tokens, ev.usage);
               addUsage(cache, ev.usage);
               // A zero-usage step.end (e.g. a content-filtered response) must
-              // not reset the context-window fill to 0 — agent-core's
-              // ContextMemory keeps the prior snapshot in that case. Carry the
+              // not reset the context-window fill to 0 — the engine's
+              // token counting keeps the prior snapshot in that case. Carry the
               // running value so the chart shows no false drop.
               const fill = contextFill(ev.usage);
               if (fill > 0) {
@@ -361,7 +398,7 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
                 lineNo: entry.lineNo,
                 time: t,
                 turnIndex: current?.index ?? -1,
-                step: ev.step,
+                step: ev.step ?? -1,
                 contextTokens,
               });
             }
@@ -372,7 +409,8 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
             callLineNo: entry.lineNo,
             toolCallId: ev.toolCallId,
             name: ev.name,
-            description: ev.description,
+            // v2 no longer persists `description`; v1 wires still carry it.
+            description: (ev as { description?: string }).description,
             callTime: t,
           };
           toolByCallId.set(ev.toolCallId, node);
@@ -390,7 +428,9 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
         } else if (ev.type === 'tool.result') {
           const node = toolByCallId.get(ev.toolCallId);
           const isError = ev.result.isError === true;
-          const truncated = ev.result.truncated === true;
+          // v1 persisted `truncated` / `message`; v2 persists `note` instead.
+          const result = ev.result as { truncated?: boolean; message?: string; note?: string };
+          const truncated = result.truncated === true;
           const bytes = outputSize(ev.result.output);
           if (node) {
             node.resultLineNo = entry.lineNo;
@@ -398,7 +438,7 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
             node.isError = isError;
             node.truncated = truncated;
             node.outputBytes = bytes;
-            node.resultMessage = ev.result.message;
+            node.resultMessage = result.message ?? result.note;
             if (node.callTime !== undefined && t !== undefined) node.durationMs = t - node.callTime;
             if (isError && current) current.toolErrorCount += 1;
             recordToolStat(toolStatMap, node);

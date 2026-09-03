@@ -1,7 +1,6 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
 import type { TokenUsage } from '#/kosong/contract/usage';
-import type { AgentProfileSummaryPolicy } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type { Turn } from '#/agent/loop/loop';
 import type { Hooks } from '#/hooks';
@@ -19,14 +18,19 @@ export type AgentRunRequest =
 
 export interface RunAgentOptions {
   readonly signal: AbortSignal;
-  readonly summaryPolicy?: AgentProfileSummaryPolicy;
   readonly onReady?: () => void;
+}
+
+export interface AgentRunCompletion {
+  readonly summary: string;
+  readonly usage?: TokenUsage;
+  readonly stopReason?: string;
 }
 
 export interface AgentRunHandle {
   readonly agentId: string;
   readonly turn: Turn;
-  readonly completion: Promise<{ readonly summary: string; readonly usage?: TokenUsage }>;
+  readonly completion: Promise<AgentRunCompletion>;
 }
 
 export interface AgentTaskStartHookContext {

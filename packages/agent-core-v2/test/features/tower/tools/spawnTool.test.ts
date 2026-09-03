@@ -21,6 +21,7 @@ import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
 import { SubagentTask } from '#/agent/tools/agent/subagent-task';
 import { ITowerSpawnTool, type TowerSpawnToolInput } from '#/features/tower/tools/spawn/spawn';
 import { TowerSpawnTool } from '#/features/tower/tools/spawn/spawnTool';
+import { TOWER_MODE_USER_ENABLED_ONLY } from '#/features/tower/tools/support';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
@@ -33,15 +34,16 @@ import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
   SECONDARY_MODEL_SECTION,
 } from '#/session/subagent/configSection';
-import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import {
   ISessionSubagentService,
   type AgentRunHandle,
 } from '#/session/subagent/subagent';
+import type { AgentTaskInfo } from '#/agent/task/types';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../../../agent/agentContext/stubs';
+import { stubFlag } from '../../../app/flag/stubs';
 
 const execFileAsync = promisify(execFile);
 const signal = new AbortController().signal;
@@ -74,9 +76,11 @@ describe('TowerSpawnTool', () => {
   let createAgent: Mock<IAgentLifecycleService['create']>;
   let runAgent: Mock<ISessionSubagentService['run']>;
   let registerTask: Mock<IAgentTaskService['registerTask']>;
+  let taskInfoLookup: (taskId: string) => AgentTaskInfo | undefined;
   let completion: Deferred<{ readonly summary: string }>;
-  let secondaryFlagOn: boolean;
-  let secondaryModel: { readonly model: string; readonly defaultEffort?: string } | undefined;
+  let secondaryModel:
+    | { readonly model: string; readonly defaultEffort?: string; readonly force?: boolean }
+    | undefined;
   let thinkingEnabled: boolean | undefined;
   let modelMeta: Record<string, Partial<Model>>;
   let createdSetMode: Mock<(mode: PermissionMode) => void>;
@@ -101,7 +105,6 @@ describe('TowerSpawnTool', () => {
     gate = { ok: true };
     release = vi.fn();
     completion = deferred();
-    secondaryFlagOn = false;
     secondaryModel = undefined;
     thinkingEnabled = undefined;
     modelMeta = {};
@@ -116,15 +119,20 @@ describe('TowerSpawnTool', () => {
         }) as unknown as AgentRunHandle,
     );
     registerTask = vi.fn(() => 'task-1');
+    taskInfoLookup = () => undefined;
 
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
+    ix.stub(IFlagService, stubFlag(true));
     ix.set(IEventBus, new SyncDescriptor(EventBusService));
     ix.stub(IAgentTowerService, {
       get isActive() {
         return towerActive;
       },
-      enter: () => {},
+      get requestedBase() {
+        return undefined;
+      },
+      enter: () => Promise.resolve({ entered: true as const }),
       exit: () => {},
     } as unknown as IAgentTowerService);
     ix.stub(ITowerRateLimitService, {
@@ -170,7 +178,7 @@ describe('TowerSpawnTool', () => {
       create: createAgent,
     } as unknown as IAgentLifecycleService);
     ix.stub(ISessionSubagentService, { run: runAgent } as unknown as ISessionSubagentService);
-    ix.stub(IAgentTaskService, { registerTask } as unknown as IAgentTaskService);
+    ix.stub(IAgentTaskService, { registerTask, getTask: (taskId: string) => taskInfoLookup(taskId) } as unknown as IAgentTaskService);
     ix.stub(IAgentProfileService, {
       data: () => ({ profileName: 'agent', modelAlias: 'kimi-code', thinkingLevel: 'off' }),
     } as unknown as IAgentProfileService);
@@ -182,9 +190,6 @@ describe('TowerSpawnTool', () => {
             ? { enabled: thinkingEnabled }
             : undefined) as IConfigService['get'],
     });
-    ix.stub(IFlagService, {
-      enabled: (id: string) => id === SECONDARY_MODEL_FLAG_ID && secondaryFlagOn,
-    } as unknown as IFlagService);
     ix.stub(IModelCatalog, {
       get: (alias: string) => ({ id: alias, ...modelMeta[alias] }) as Model,
     } as unknown as IModelCatalog);
@@ -217,10 +222,32 @@ describe('TowerSpawnTool', () => {
     const result = await execute(WORKER_ARGS);
 
     expect(result).toEqual({
-      output: 'tower mode is not active — run TowerInit first',
+      output: TOWER_MODE_USER_ENABLED_ONLY,
       isError: true,
     });
     expect(createAgent).not.toHaveBeenCalled();
+  });
+
+  it('records the death of a worker whose task settled before roster registration finished', async () => {
+    taskInfoLookup = () => ({
+      taskId: 'task-1',
+      kind: 'agent',
+      description: 'tower worker agent-build: Build gemm',
+      status: 'failed',
+      stopReason: 'provider blew up',
+      startedAt: 1,
+      endedAt: 2,
+      agentId: 'agent-7',
+      subagentType: 'tower-worker',
+    });
+
+    const result = await execute(WORKER_ARGS);
+
+    expect(result.isError).toBeFalsy();
+    const state = await store.load();
+    const entry = state.roster.agents.find((agent) => agent.agentId === 'agent-7');
+    expect(entry?.deathStatus).toBe('failed');
+    expect(entry?.deathReason).toBe('provider blew up');
   });
 
   it('rejects non-main callers with the main-agent-only error before any work', async () => {
@@ -317,7 +344,6 @@ describe('TowerSpawnTool', () => {
   });
 
   it('binds the configured secondary model and reports it in the output and activity log', async () => {
-    secondaryFlagOn = true;
     secondaryModel = { model: 'cheap/fast' };
 
     const result = await execute(WORKER_ARGS);
@@ -333,7 +359,6 @@ describe('TowerSpawnTool', () => {
   });
 
   it('passes [secondary_model].default_effort to the spawned worker', async () => {
-    secondaryFlagOn = true;
     secondaryModel = { model: 'cheap/fast', defaultEffort: 'low' };
 
     const result = await execute(WORKER_ARGS);
@@ -346,7 +371,6 @@ describe('TowerSpawnTool', () => {
   });
 
   it('falls back to the bound model default_effort when the section declares none', async () => {
-    secondaryFlagOn = true;
     secondaryModel = { model: 'cheap/fast' };
     modelMeta['cheap/fast'] = {
       capabilities: { ...UNKNOWN_CAPABILITY, thinking: true },
@@ -364,7 +388,6 @@ describe('TowerSpawnTool', () => {
   });
 
   it('leaves thinking unset for global resolution when thinking is disabled', async () => {
-    secondaryFlagOn = true;
     secondaryModel = { model: 'cheap/fast' };
     thinkingEnabled = false;
     modelMeta['cheap/fast'] = {
@@ -382,7 +405,7 @@ describe('TowerSpawnTool', () => {
     });
   });
 
-  it('inherits the tower model when the secondary-model experiment is off', async () => {
+  it('inherits the tower model when no secondary model is configured', async () => {
     const result = await execute(WORKER_ARGS);
 
     expect(result.isError).toBeUndefined();
@@ -392,7 +415,6 @@ describe('TowerSpawnTool', () => {
   });
 
   it('binds reviewers to the tower model even when the secondary model is configured', async () => {
-    secondaryFlagOn = true;
     secondaryModel = { model: 'cheap/fast' };
 
     const result = await execute({
@@ -405,6 +427,23 @@ describe('TowerSpawnTool', () => {
     expect(result.output).toContain('model: kimi-code');
     expect(createAgent).toHaveBeenCalledWith({
       binding: { profile: 'tower-worker', model: 'kimi-code', thinking: 'off' },
+      labels: { parentAgentId: 'main' },
+    });
+  });
+
+  it('binds reviewers to the forced secondary model when it is configured', async () => {
+    secondaryModel = { model: 'cheap/fast', force: true };
+
+    const result = await execute({
+      name: 'reviewer-a',
+      kind: 'reviewer',
+      review_target: 'feat/build-gemm',
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toContain('model: cheap/fast');
+    expect(createAgent).toHaveBeenCalledWith({
+      binding: { profile: 'tower-worker', model: 'cheap/fast', thinking: undefined },
       labels: { parentAgentId: 'main' },
     });
   });
@@ -445,5 +484,61 @@ describe('TowerSpawnTool', () => {
     expect(result.output).toContain('already registered');
     expect(result.output).toContain('Agent(resume="agent-old"');
     expect(createAgent).not.toHaveBeenCalled();
+  });
+
+  it('snapshots base WIP into the worker branch and records the spawn base', async () => {
+    await writeFile(join(repo, 'wip.ts'), 'export const wip = 1;\n');
+
+    const result = await execute(WORKER_ARGS);
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toContain('base snapshot:');
+    const worktreeAbs = join(repo, '.tower/worktrees/wt-1');
+    expect(await readFile(join(worktreeAbs, 'wip.ts'), 'utf8')).toBe('export const wip = 1;\n');
+    expect(runAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: 'agent-7' }),
+      { kind: 'prompt', prompt: expect.stringContaining('snapshot commit') },
+      { signal: expect.any(AbortSignal) },
+    );
+    const mission = (await store.load()).missions.find((m) => m.id === 'M1');
+    expect(mission?.spawnBase).toBeDefined();
+  });
+
+  it('bases the reviewer prompt on the base branch once a rebase drops the snapshot', async () => {
+    await writeFile(join(repo, 'wip.ts'), 'export const wip = 1;\n');
+    const workerResult = await execute(WORKER_ARGS);
+    expect(workerResult.isError).toBeUndefined();
+    const snapshot = (await store.load()).missions.find((m) => m.id === 'M1')?.spawnBase;
+    expect(snapshot).toBeDefined();
+    const worktreeAbs = join(repo, '.tower/worktrees/wt-1');
+
+    await git(repo, 'add', 'wip.ts');
+    await git(repo, 'commit', '-m', 'commit my wip');
+    await git(worktreeAbs, 'rebase', 'main');
+    await expect(
+      git(worktreeAbs, 'merge-base', '--is-ancestor', snapshot!, 'feat/build-gemm'),
+    ).rejects.toThrow();
+
+    const result = await execute({
+      name: 'reviewer-a',
+      kind: 'reviewer',
+      review_target: 'feat/build-gemm',
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(runAgent).toHaveBeenLastCalledWith(
+      expect.objectContaining({ agentId: 'agent-7' }),
+      { kind: 'prompt', prompt: expect.stringContaining('against base "main"') },
+      { signal: expect.any(AbortSignal) },
+    );
+  });
+
+  it('records no spawn base when the base checkout is clean', async () => {
+    const result = await execute(WORKER_ARGS);
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).not.toContain('base snapshot:');
+    const mission = (await store.load()).missions.find((m) => m.id === 'M1');
+    expect(mission?.spawnBase).toBeUndefined();
   });
 });

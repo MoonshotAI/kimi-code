@@ -42,6 +42,8 @@ import type {
   SessionSummary,
   SessionSummaryPage,
   SkillSummary,
+  SuggestFilesInput,
+  SuggestFilesResult,
   TelemetryClient,
   TelemetryContextPatch,
   TelemetryProperties,
@@ -60,6 +62,14 @@ export interface KimiHarnessRuntimeOptions {
   readonly ensureConfigFile: () => Promise<void>;
   readonly onClose: () => void | Promise<void>;
   readonly sessionStartedProperties?: TelemetryProperties;
+  /**
+   * Per-emission companion to `sessionStartedProperties`: evaluated at every
+   * `session_started` call, so values that can change over the process
+   * lifetime (e.g. experimental flag state) stay current. Its keys are
+   * engine-owned: they win over both the static and the per-call
+   * session-scoped properties, and lose only to the canonical harness fields.
+   */
+  readonly sessionStartedDynamicProperties?: () => TelemetryProperties;
   /**
    * Owner-scoped [image] limits for prompt-ingestion compression in the
    * client process (paste-time, ACP prompt conversion). In-process cores
@@ -82,6 +92,7 @@ export class KimiHarness {
   private readonly ensureConfigFileImpl: () => Promise<void>;
   private readonly closeImpl: () => void | Promise<void>;
   private readonly sessionStartedProperties: TelemetryProperties;
+  private readonly sessionStartedDynamicProperties: (() => TelemetryProperties) | undefined;
 
   /**
    * Ingestion-side [image] limits owned by this harness's core; undefined for
@@ -102,6 +113,7 @@ export class KimiHarness {
     this.ensureConfigFileImpl = options.ensureConfigFile;
     this.closeImpl = options.onClose;
     this.sessionStartedProperties = options.sessionStartedProperties ?? {};
+    this.sessionStartedDynamicProperties = options.sessionStartedDynamicProperties;
     this.imageLimits = options.imageLimits;
   }
 
@@ -325,6 +337,15 @@ export class KimiHarness {
   /** Skills visible to a new session in `workDir`, without creating that session. */
   async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {
     return this.rpc.listWorkspaceSkills(workDir);
+  }
+
+  /**
+   * File suggestions for @ mention-style completion under `workDir`, no
+   * session required. `undefined` on the v1 engine, which has no equivalent
+   * capability; callers fall back to their own file search there.
+   */
+  async suggestFiles(workDir: string, input: SuggestFilesInput): Promise<SuggestFilesResult | undefined> {
+    return this.rpc.suggestFiles(workDir, input);
   }
 
   /**
@@ -624,6 +645,7 @@ export class KimiHarness {
     withTelemetryContext(this.telemetry, { sessionId: eventSessionId }).track('session_started', {
       ...this.sessionStartedProperties,
       ...sessionScoped,
+      ...this.sessionStartedDynamicProperties?.(),
       // Canonical fields are owned by the harness and must win over any
       // caller-supplied sessionStartedProperties that happen to share a key.
       // `client_id` is always null here: a single-process host has no

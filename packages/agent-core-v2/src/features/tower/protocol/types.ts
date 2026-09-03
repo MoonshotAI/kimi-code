@@ -10,6 +10,9 @@ export interface TowerRosterEntry {
   readonly worktree?: string;
   readonly branch?: string;
   readonly spawnedAt: string;
+  readonly diedAt?: string;
+  readonly deathStatus?: string;
+  readonly deathReason?: string;
 }
 
 export interface TowerRoster {
@@ -40,6 +43,7 @@ export interface TowerMission {
   scope: string[];
   readonly branch: string;
   readonly worktree: string;
+  spawnBase?: string;
   readonly deps: readonly string[];
   status: TowerMissionStatus;
   owner?: string;

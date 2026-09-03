@@ -13,7 +13,8 @@ import { isAbortError } from '#/_base/utils/abort';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
-import { type AgentRunHandle, ISessionSubagentService } from './subagent';
+import { type AgentRunCompletion, type AgentRunHandle, ISessionSubagentService } from './subagent';
+import type { SubagentModelSource } from './configSection';
 
 export interface SubagentSpawnedPayload {
   readonly subagentId: string;
@@ -79,6 +80,7 @@ export interface AgentRunSpawnedMeta {
   readonly runInBackground?: boolean;
   readonly fork?: boolean;
   readonly model?: string;
+  readonly modelSource?: SubagentModelSource;
   readonly taskId?: string;
 }
 
@@ -125,6 +127,7 @@ export function emitAgentRunSpawned(
     parent_agent_id: requester.id,
     parent_tool_call_id: meta.parentToolCallId ?? '',
     model: meta.model,
+    model_source: meta.modelSource,
   };
   requester.accessor.get(ITelemetryService)?.track2('subagent_created', telemetryEvent);
 }
@@ -133,7 +136,7 @@ export async function mirrorAgentRun(
   requester: IAgentScopeHandle,
   run: AgentRunHandle,
   options: MirrorAgentRunOptions,
-): Promise<{ summary: string; usage?: TokenUsage }> {
+): Promise<AgentRunCompletion> {
   const dispatcher = requester.accessor.get(IEventDispatcher);
   const subagents = requester.accessor.get(ISessionSubagentService);
   const agentLifecycle = requester.accessor.get(IAgentLifecycleService);

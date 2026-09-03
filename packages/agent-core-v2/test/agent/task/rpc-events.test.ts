@@ -322,7 +322,15 @@ describe('AgentTaskService — event emission', () => {
     );
     expect(records).toContainEqual({
       event: 'background_task_created',
-      properties: { agent_id: 'main', task_id: taskId, kind: 'bash' },
+      properties: {
+        agent_id: 'main',
+        task_id: taskId,
+        kind: 'bash',
+        mode: 'agent',
+        model: 'mock-model',
+        protocol: 'openai',
+        provider_type: 'kimi',
+      },
     });
   });
 
@@ -344,7 +352,15 @@ describe('AgentTaskService — event emission', () => {
     );
     expect(records).toContainEqual({
       event: 'background_task_created',
-      properties: { agent_id: 'main', task_id: taskId, kind: 'agent' },
+      properties: {
+        agent_id: 'main',
+        task_id: taskId,
+        kind: 'agent',
+        mode: 'agent',
+        model: 'mock-model',
+        protocol: 'openai',
+        provider_type: 'kimi',
+      },
     });
   });
 

@@ -323,6 +323,8 @@ export class TranscriptService {
         : session.accessor.get(IAgentLifecycleService).handleOf(agentId);
     const status = agent?.accessor.get(IAgentLoopService).status();
     if (status?.state !== 'running' || status.activeTurnId === undefined) return undefined;
+    const promptService = agent?.accessor.get(IAgentPromptService);
+    const activePromptId = promptService?.list().active?.id;
     const ordinal = status.activeTurnId;
     const turnId = `t${ordinal}`;
     const existing = transcript.getTurn(turnId);
@@ -336,6 +338,7 @@ export class TranscriptService {
         turnId,
         ordinal,
         state: 'running',
+        triggerPromptId: existing?.triggerPromptId ?? snapshotTurn?.triggerPromptId ?? activePromptId,
         origin: existing?.origin ?? snapshotTurn?.origin ?? { kind: 'other' },
         prompt: existing?.prompt ?? snapshotTurn?.prompt,
         attachmentIds: existing?.attachmentIds ?? snapshotTurn?.attachmentIds,
@@ -518,7 +521,10 @@ export class TranscriptService {
       messages,
       sawTurnPrompt || steeredContents.size > 0 ? { taskOriginTurnTaskIds, steeredContents } : undefined,
     );
-    const folded = foldWireRecordFacts(projectQuestionInteractionRecords(records, sessionId), base);
+    const folded = foldWireRecordFacts(projectQuestionInteractionRecords(records, sessionId), base, {
+      resolvePlanRevisionKey: (key) =>
+        join(SESSIONS_ROOT, summary.workspaceId, sessionId, AGENTS_DIR, agentId, key),
+    });
     const status = getLiveSessionById(this.deps.core.accessor, sessionId)
       ?.accessor.get(IAgentLifecycleService)
       .handleOf(agentId)
@@ -691,6 +697,7 @@ export function healTurnOps(
     turn: {
       ...header,
       state: liveTurn.state,
+      triggerPromptId: liveTurn.triggerPromptId ?? header.triggerPromptId,
       prompt: liveTurn.prompt ?? header.prompt,
       attachmentIds: liveTurn.attachmentIds ?? header.attachmentIds,
       startedAt: liveTurn.startedAt ?? header.startedAt,

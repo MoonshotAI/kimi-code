@@ -190,6 +190,14 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/sessions/{session_id}/file-history/changes",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{session_id}/file-history/content",
+    ],
+    [
+      "GET",
       "/api/v1/sessions/{session_id}/fs/{*}",
     ],
     [
@@ -483,6 +491,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/workspaces",
+    ],
+    [
+      "POST",
+      "/api/v1/workspaces/{workspace_id}/add-dir",
     ],
     [
       "POST",

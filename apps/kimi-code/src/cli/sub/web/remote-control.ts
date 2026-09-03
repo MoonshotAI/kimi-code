@@ -19,6 +19,8 @@ import { acquireRemoteControlLock } from './remote-control-lock';
 
 export const REMOTE_CONTROL_RELAY_ORIGIN = 'https://code-rc.kimi.com';
 
+export const REMOTE_CONTROL_RELAY_URL_ENV = 'KIMI_CODE_REMOTE_CONTROL_RELAY_URL';
+
 export const REMOTE_CONTROL_FLAG_ENV = 'KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL';
 
 const TRUTHY_ENV_VALUES = new Set(['1', 'true', 'yes', 'on']);
@@ -29,6 +31,13 @@ export function isRemoteControlEnabled(
   const truthy = (key: string): boolean =>
     TRUTHY_ENV_VALUES.has((env[key] ?? '').trim().toLowerCase());
   return truthy('KIMI_CODE_EXPERIMENTAL_FLAG') || truthy(REMOTE_CONTROL_FLAG_ENV);
+}
+
+export function resolveRemoteControlRelayOrigin(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string {
+  const value = env[REMOTE_CONTROL_RELAY_URL_ENV]?.trim();
+  return value === undefined || value.length === 0 ? REMOTE_CONTROL_RELAY_ORIGIN : value;
 }
 
 const MAX_HTTP_HEADER_BYTES = 64 * 1024;
@@ -174,7 +183,7 @@ export function formatRemoteControlStatus(status: RemoteControlStatus): string {
 export function buildRemoteControlUrl(
   deviceId: string,
   sessionId?: string,
-  relayOrigin = REMOTE_CONTROL_RELAY_ORIGIN,
+  relayOrigin = resolveRemoteControlRelayOrigin(),
 ): string {
   const url = new URL(relayOrigin);
   const relayPath = url.pathname.replace(/\/+$/, '');
@@ -291,7 +300,7 @@ export async function startRemoteControl(
   if (token?.refreshToken === undefined || token.refreshToken.length === 0) {
     throw new Error('Remote Control requires a Kimi login. Run `kimi login` first.');
   }
-  const relayOrigin = options.relayOrigin ?? REMOTE_CONTROL_RELAY_ORIGIN;
+  const relayOrigin = options.relayOrigin ?? resolveRemoteControlRelayOrigin();
   const deviceId = createKimiDeviceId(options.homeDir);
   const deviceName = hostname();
   const url = buildRemoteControlUrl(deviceId, undefined, relayOrigin);

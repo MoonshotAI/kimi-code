@@ -1,6 +1,9 @@
 import {
   IAgentLifecycleService,
   IAgentActivityView,
+  IAgentLoopService,
+  IAgentPromptService,
+  IAgentScopeContext,
   IAgentTaskService,
   IEventBus,
   ISessionMetadata,
@@ -92,6 +95,8 @@ export function bindSessionTranscript(
         },
         turn: (turnId) => store.getAgent(agentId)?.getTurn(turnId),
         items: () => store.getAgent(agentId)?.getItems(),
+        resolvePlanRevisionKey: (key) =>
+          agents.handleOf(agentId)?.accessor.get(IAgentScopeContext).scope(key) ?? key,
       });
       const agentHandle = agents.handleOf(agentId);
       if (agentHandle !== undefined) {
@@ -126,6 +131,11 @@ export function bindSessionTranscript(
     const busD = bus.subscribe((event) =>
       applyOps(handle.id, projector.map(event as ProjectorBusEvent)),
     );
+    const loopStatus = handle.accessor.get(IAgentLoopService)?.status();
+    if (loopStatus?.state === 'running' && loopStatus.activeTurnId !== undefined) {
+      const promptId = handle.accessor.get(IAgentPromptService)?.list().active?.id;
+      projector.seedActiveTurn({ turnId: loopStatus.activeTurnId, promptId });
+    }
     const list = agentDisposables.get(handle.id) ?? [];
     list.push(busD);
     agentDisposables.set(handle.id, list);

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'pathe';
 
 import type { IInstantiationService } from '#/_base/di/instantiation';
-import { Disposable } from '#/_base/di/lifecycle';
+import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import {
   createScopedChildHandle,
   type ISessionScopeHandle,
@@ -13,19 +13,28 @@ import { AsyncEmitter, Emitter, type Event, type IWaitUntil } from '#/_base/even
 import { ILogService } from '#/_base/log/log';
 import { drainLogCloses } from '#/_base/log/logService';
 import { DEFAULT_PLAN_MODE_SECTION } from '#/features/plan/configSection';
+import { IAgentFileHistoryService } from '#/features/fileHistory/fileHistory';
+import { FILE_HISTORY_BLOB_PREFIX } from '#/features/fileHistory/fileHistoryService';
+import {
+  dropFileHistorySession,
+  touchForkedFileHistory,
+} from '#/features/fileHistory/fileHistoryRetention';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { LifecycleScope } from '#/app/scopes';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
-import {
-  CHILD_SESSION_KIND,
+import { IFlagService } from '#/app/flag/flag';
+import { CHILD_SESSION_KIND,
   CHILD_SESSION_KIND_KEY,
   ISessionIndex,
   ISessionIndexMirror,
   PARENT_SESSION_ID_KEY,
 } from '#/app/sessionIndex/sessionIndex';
+import { buildSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { bindTelemetryScope } from '#/app/telemetry/telemetryService';
 import { ErrorCodes, Error2, isError2 } from '#/errors';
 import { IHostFileSystem, type HostDirEntry } from '#/os/interface/hostFileSystem';
 import {
@@ -43,12 +52,21 @@ import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
 import { sessionEphemeralMcpServersSeed } from '#/session/mcp/ephemeralMcpServers';
 import { sessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
-import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
+import {
+  ISessionMetadata,
+  SESSION_META_VERSION,
+  type AgentMeta,
+  type SessionMeta,
+} from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionSkillCatalogData } from '#/features/skill/session/skillCatalogData';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
-import { drainSessionMetadataWrites, toEpochMs } from '#/session/sessionMetadata/sessionMetadataService';
+import {
+  drainSessionMetadataWrites,
+  encodeSessionMeta,
+  toEpochMs,
+} from '#/session/sessionMetadata/sessionMetadataService';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
@@ -57,11 +75,8 @@ import {
   type WireRecord,
 } from '#/wire/record';
 import { repairWireJournal } from '#/wire/repair';
-import { IModelCatalog } from '#/kosong/model/catalog';
 import { IModelService } from '#/kosong/model/model';
 import { IProviderService } from '#/kosong/provider/provider';
-import { IFlagService } from '#/app/flag/flag';
-import { assertValidSubagentModelConfig } from '#/session/subagent/configSection';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
@@ -156,6 +171,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IEventService private readonly event: IEventService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IFlagService private readonly flags: IFlagService,
     @IWorkspaceAgentProfileLoader
     private readonly workspaceAgentProfileLoader: IWorkspaceAgentProfileLoader,
     @IExtraAgentProfileLoader
@@ -170,10 +186,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IWorkspaceSkillCatalog private readonly workspaceSkillCatalog: IWorkspaceSkillCatalog,
     @IWorkspaceInstructionsService private readonly workspaceInstructions: IWorkspaceInstructionsService,
     @IWorkspaceMcpService private readonly workspaceMcp: IWorkspaceMcpService,
-    @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IModelService private readonly models: IModelService,
     @IProviderService private readonly providers: IProviderService,
-    @IFlagService private readonly flags: IFlagService,
     onDispose?: () => void,
   ) {
     super();
@@ -224,17 +238,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return handle;
   }
 
-  private async assertSubagentModelPoolPreFlight(): Promise<void> {
-    await Promise.all([this.config.ready, this.models.ready, this.providers.ready]);
-    assertValidSubagentModelConfig(this.config, this.flags, this.modelCatalog);
-  }
-
   private async materializeSession(opts: MaterializeSessionOptions): Promise<ISessionScopeHandle> {
     const workspaceId = this.workspaceId;
     const sessionScope = sessionScopeOf(this.handlerScope, opts.sessionId);
     const sessionDir = sessionDirOf(this.bootstrap.homeDir, this.handlerScope, opts.sessionId);
     const metaScope = sessionScope;
-    await this.assertSubagentModelPoolPreFlight();
+    await Promise.all([this.config.ready, this.models.ready, this.providers.ready]);
     await this.workspaceDirs.ready;
     await this.workspaceDirs.mergeAdditionalDirs(opts.workDir, opts.additionalDirs ?? []);
     const ctx: ISessionContext = {
@@ -247,38 +256,51 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       scope: (subKey?: string): string =>
         subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
     };
-    const handle = createScopedChildHandle(
-      this.instantiation,
-      LifecycleScope.Session,
-      opts.sessionId,
-      {
-        seeds: [
-          ...sessionContextSeed(ctx),
-          [ITelemetryService, this.telemetry.withContext({ sessionId: opts.sessionId })],
-          ...sessionAgentProfileCatalogSeed({
-            _serviceBrand: undefined,
-            workspaceKey: workspaceId,
-          }),
-          [ISessionSkillCatalogData, this.workspaceSkillCatalog.sessionData()],
-          [ISessionInstructionsProvider, this.workspaceInstructions.sessionProvider()],
-          [ISessionMcpHandle, this.workspaceMcp.sessionHandle()],
-          [ISessionWorkspaceInfo, this.workspaceDirs.sessionInfo()],
-          ...sessionEphemeralMcpServersSeed(opts.mcpServers ?? {}),
-        ],
-        configureContainer: (container) => {
-          this._onWillCreateSession.fire({
-            sessionId: opts.sessionId,
-            readSeed: (id) => container.invokeFunction((accessor) => accessor.get(id)),
-            contributeSeed: (id, value) => {
-              container.provide(id, value);
-            },
-            onSessionDispose: (dispose) => {
-              container.anchorKernelEntry(dispose, 'sessionLifecycle:willCreateParticipant');
-            },
-          });
+    const telemetryBinding = bindTelemetryScope(this.telemetry, {
+      session_id: opts.sessionId,
+    });
+    let handle: ISessionScopeHandle;
+    try {
+      handle = createScopedChildHandle(
+        this.instantiation,
+        LifecycleScope.Session,
+        opts.sessionId,
+        {
+          seeds: [
+            ...sessionContextSeed(ctx),
+            [ITelemetryService, telemetryBinding.telemetry],
+            ...sessionAgentProfileCatalogSeed({
+              _serviceBrand: undefined,
+              workspaceKey: workspaceId,
+            }),
+            [ISessionSkillCatalogData, this.workspaceSkillCatalog.sessionData()],
+            [ISessionInstructionsProvider, this.workspaceInstructions.sessionProvider()],
+            [ISessionMcpHandle, this.workspaceMcp.sessionHandle()],
+            [ISessionWorkspaceInfo, this.workspaceDirs.sessionInfo()],
+            ...sessionEphemeralMcpServersSeed(opts.mcpServers ?? {}),
+          ],
+          configureContainer: (container) => {
+            container.anchorKernelEntry(
+              () => telemetryBinding.dispose(),
+              'telemetry:session-context',
+            );
+            this._onWillCreateSession.fire({
+              sessionId: opts.sessionId,
+              readSeed: (id) => container.invokeFunction((accessor) => accessor.get(id)),
+              contributeSeed: (id, value) => {
+                container.provide(id, value);
+              },
+              onSessionDispose: (dispose) => {
+                container.anchorKernelEntry(dispose, 'sessionLifecycle:willCreateParticipant');
+              },
+            });
+          },
         },
-      },
-    ) as ISessionScopeHandle;
+      ) as ISessionScopeHandle;
+    } catch (error) {
+      telemetryBinding.dispose();
+      throw error;
+    }
     try {
       await handle.accessor.get(ISessionMetadata).ready;
       await handle.accessor.get(ISessionToolPolicy).ready;
@@ -310,9 +332,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
   private async announceCreated(event: SessionCreatedEvent): Promise<void> {
     await this._onDidCreateSession.fireAsync(event, NO_ABORT);
-    event.handle.accessor
-      .get(ITelemetryService)
-      .track2('session_started', { resumed: event.source === 'resume' });
+    event.handle.accessor.get(ITelemetryService).track2('session_started', {
+      resumed: event.source === 'resume',
+      experimental_flags: this.flags.exposedIds().toSorted().join(','),
+    });
   }
 
   get(sessionId: string): ISessionScopeHandle | undefined {
@@ -329,7 +352,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const promise = this.doResume(sessionId, opts)
       .catch((error: unknown) => {
         this.telemetry
-          .withContext({ sessionId })
+          .withContext({ session_id: sessionId })
           .track2('session_load_failed', {
             reason: isError2(error) ? error.code : error instanceof Error ? error.name : 'unknown',
           });
@@ -398,6 +421,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     void handle.dispose();
     await drainLogCloses();
     this._onDidCloseSession.fire({ sessionId });
+    this.telemetry.withContext({ session_id: sessionId }).track2('session_ended', { reason: 'exit' });
   }
 
   async archive(sessionId: string): Promise<void> {
@@ -419,6 +443,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     void handle.dispose();
     await drainLogCloses();
     this._onDidArchiveSession.fire({ sessionId });
+    this.telemetry.withContext({ session_id: sessionId }).track2('session_ended', { reason: 'archive' });
   }
 
   async restore(
@@ -447,6 +472,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     }
     await this.hostFs.remove(sessionDirOf(this.bootstrap.homeDir, this.handlerScope, sessionId));
     await this.index.remove(sessionId);
+    await dropFileHistorySession({ docs: this.docs, workspaceId: this.workspaceId, sessionId });
     this.appendLogStore.append('', 'session_index.jsonl', { sessionId, deleted: true });
     await this.appendLogStore.flush();
   }
@@ -462,7 +488,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     }
   }
 
-  async fork(opts: ForkSessionOptions): Promise<ISessionScopeHandle> {
+  async fork(opts: ForkSessionOptions): Promise<SessionMeta> {
     const sourceId = opts.sourceSessionId;
 
     const sourceHandle = this.sessions.get(sourceId);
@@ -485,16 +511,41 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             { details: { sessionId: sourceId } },
           );
         }
+        await agentHandle.accessor.get(IEventDispatcher).flush();
       }
+      await this.appendLogStore.flush();
     }
     assertForkTurnIndex(opts.turnIndex);
 
     let targetId: string | undefined;
-    let target: ISessionScopeHandle | undefined;
     let targetSessionDir: string | undefined;
+    const quiescenceHolds: IDisposable[] = [];
     try {
-      await this.assertSubagentModelPoolPreFlight();
+      if (sourceHandle !== undefined) {
+        const sourceAgents = sourceHandle.accessor.get(IAgentLifecycleService);
+        for (const agent of sourceAgents.list()) {
+          const agentHandle = sourceAgents.handleOf(agent.agentId);
+          if (agentHandle === undefined) continue;
+          const hold = agentHandle.accessor.get(IAgentLoopService).tryAcquireQuiescence();
+          if (hold === undefined) {
+            throw new Error2(
+              ErrorCodes.SESSION_FORK_ACTIVE_TURN,
+              `Session "${sourceId}" cannot be forked while a turn is running or queued, or while another fork is copying it`,
+              { details: { sessionId: sourceId, agentId: agent.agentId } },
+            );
+          }
+          quiescenceHolds.push(hold);
+        }
+      }
       await drainSessionMetadataWrites();
+      if (sourceHandle !== undefined) {
+        const sourceAgents = sourceHandle.accessor.get(IAgentLifecycleService);
+        for (const agent of sourceAgents.list()) {
+          const agentHandle = sourceAgents.handleOf(agent.agentId);
+          if (agentHandle === undefined) continue;
+          await agentHandle.accessor.get(IAgentFileHistoryService).settled();
+        }
+      }
       const sourceMeta =
         sourceHandle !== undefined
           ? await sourceHandle.accessor.get(ISessionMetadata).read()
@@ -521,21 +572,16 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       await this.copySessionFiles(
         sessionDirOf(this.bootstrap.homeDir, this.handlerScope, sourceId),
         targetSessionDir,
+        turnSlice !== undefined,
       );
-
-      target = await this.materializeSession({
-        sessionId: targetId,
-        workDir: this.workspaceContext.cwd,
-      });
-      const targetCtx = target.accessor.get(ISessionContext);
-      const targetMeta = target.accessor.get(ISessionMetadata);
 
       const sourceAgents = sourceMeta?.agents ?? {};
       const agentIds = Object.keys(sourceAgents);
-      const retainedAgentIds: string[] = [];
-      for (const agentId of agentIds) {
-        let slicedRecords: readonly WireRecord[] | undefined;
-        if (turnSlice !== undefined) {
+      let retainedAgentIds: readonly string[] = agentIds;
+      if (turnSlice !== undefined) {
+        const retained: string[] = [];
+        for (const agentId of agentIds) {
+          let slicedRecords: readonly WireRecord[] | undefined;
           if (agentId === MAIN_AGENT_ID) {
             slicedRecords = turnSlice.records;
           } else {
@@ -546,69 +592,93 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             if (subagentRecords.length === 0) continue;
             slicedRecords = subagentRecords;
           }
+          await this.copyAgentWire({
+            sourceHandle,
+            sourceSessionId: sourceId,
+            agentId,
+            targetSessionId: targetId,
+            records: slicedRecords,
+          });
+          retained.push(agentId);
         }
-        await this.copyAgentWire({
-          sourceHandle,
-          sourceSessionId: sourceId,
-          agentId,
-          targetSessionId: targetCtx.sessionId,
-          records: slicedRecords,
-        });
-        retainedAgentIds.push(agentId);
-      }
-
-      if (turnSlice !== undefined) {
+        retainedAgentIds = retained;
         await this.pruneTruncatedForkFiles(targetSessionDir, agentIds, retainedAgentIds);
+      } else {
+        await Promise.all(agentIds.map((agentId) => this.appendForkedMarker(targetId!, agentId)));
+        await this.appendLogStore.flush();
+        await touchForkedFileHistory({
+          docs: this.docs,
+          hostFs: this.hostFs,
+          workspaceId: this.workspaceId,
+          sessionDir: targetSessionDir,
+          sessionId: targetId!,
+        });
       }
 
       const title = opts.title ?? `Fork: ${sourceMeta?.title || sourceId}`;
-
+      const now = Date.now();
+      const agents: Record<string, AgentMeta> = {};
       for (const agentId of retainedAgentIds) {
         const sourceAgent = sourceAgents[agentId]!;
-        await target.accessor.get(IAgentLifecycleService).create({
-          agentId,
+        agents[agentId] = {
+          homedir: join(
+            this.bootstrap.homeDir,
+            agentScopeOf(sessionScopeOf(this.handlerScope, targetId), agentId),
+          ),
+          type: agentId === MAIN_AGENT_ID ? 'main' : 'sub',
+          parentAgentId: agentId === MAIN_AGENT_ID ? undefined : MAIN_AGENT_ID,
           forkedFrom: sourceAgent.forkedFrom,
           labels: labelsFromAgentMeta(sourceAgent),
-        });
+        };
       }
-
-      await targetMeta.update({
+      const meta: SessionMeta = {
+        id: targetId,
+        version: SESSION_META_VERSION,
+        cwd: this.workspaceContext.cwd,
+        createdAt: now,
+        updatedAt: toEpochMs(sourceMeta?.updatedAt) || now,
+        archived: false,
         title,
         titleKind: opts.title !== undefined ? 'custom' : 'replaceable',
         forkedFrom: sourceId,
-        archived: false,
-        updatedAt: toEpochMs(sourceMeta?.updatedAt) || Date.now(),
+        agents,
+        custom: forkCustomMetadata(sourceMeta?.custom, opts.metadata),
         lastPrompt: turnSlice === undefined ? sourceMeta?.lastPrompt : turnSlice.lastPrompt,
         lastTurnReason: sourceMeta?.lastTurnReason,
-        custom: forkCustomMetadata(sourceMeta?.custom, opts.metadata),
-      });
-
+      };
+      await this.docs.set(
+        sessionScopeOf(this.handlerScope, targetId),
+        'state.json',
+        encodeSessionMeta(meta),
+      );
+      this.indexMirror.record(
+        buildSessionSummary({
+          id: targetId,
+          workspaceId: this.workspaceId,
+          cwd: this.workspaceContext.cwd,
+          title,
+          lastPrompt: meta.lastPrompt,
+          createdAt: now,
+          updatedAt: meta.updatedAt,
+          archived: false,
+          custom: meta.custom,
+          lastTurnReason: meta.lastTurnReason,
+        }),
+      );
       await this.appendSessionIndexEntry(targetId, this.workspaceContext.cwd);
-      this._onDidForkSession.fire({
-        sourceSessionId: sourceId,
-        sessionId: targetId,
-        handle: target,
-      });
-      await this.announceCreated({ sessionId: targetId, handle: target, source: 'fork' });
-      return target;
+      this._onDidForkSession.fire({ sourceSessionId: sourceId, sessionId: targetId });
+      return meta;
     } catch (error) {
-      if (targetId !== undefined) {
-        this.sessions.delete(targetId);
-      }
-      if (target !== undefined) {
-        try {
-          void target.dispose();
-        } catch {
-        }
-      }
       if (targetSessionDir !== undefined) {
         await this.hostFs.remove(targetSessionDir).catch(() => {});
       }
       throw error;
+    } finally {
+      for (const hold of quiescenceHolds) hold.dispose();
     }
   }
 
-  async createChild(opts: CreateChildSessionOptions): Promise<ISessionScopeHandle> {
+  async createChild(opts: CreateChildSessionOptions): Promise<SessionMeta> {
     const title =
       opts.title ??
       `Child: ${(await this.resolveSourceTitle(opts.sourceSessionId)) ?? opts.sourceSessionId}`;
@@ -656,6 +726,39 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       AGENT_WIRE_RECORD_KEY,
       records,
     );
+  }
+
+  private async appendForkedMarker(targetSessionId: string, agentId: string): Promise<void> {
+    const scope = agentScopeOf(sessionScopeOf(this.handlerScope, targetSessionId), agentId);
+    const tolerate = { onTruncate: () => {} };
+    let first: WireRecord | undefined;
+    for await (const record of this.appendLogStore.read<WireRecord>(
+      scope,
+      AGENT_WIRE_RECORD_KEY,
+      tolerate,
+    )) {
+      first = record;
+      break;
+    }
+    if (first === undefined) {
+      this.appendLogStore.append(scope, AGENT_WIRE_RECORD_KEY, createWireMetadataRecord());
+      this.appendLogStore.append(scope, AGENT_WIRE_RECORD_KEY, forkedRecord(agentId));
+      return;
+    }
+    if (first.type === 'metadata') {
+      this.appendLogStore.append(scope, AGENT_WIRE_RECORD_KEY, forkedRecord(agentId));
+      return;
+    }
+    const records: WireRecord[] = [createWireMetadataRecord()];
+    for await (const record of this.appendLogStore.read<WireRecord>(
+      scope,
+      AGENT_WIRE_RECORD_KEY,
+      tolerate,
+    )) {
+      records.push(record);
+    }
+    records.push(forkedRecord(agentId));
+    await this.appendLogStore.rewrite(scope, AGENT_WIRE_RECORD_KEY, records);
   }
 
   private async readSourceWireRecords(
@@ -712,11 +815,16 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       const agentDir = join(targetSessionDir, 'agents', agentId);
       removals.push(this.hostFs.remove(join(agentDir, 'tasks')));
       removals.push(this.hostFs.remove(join(agentDir, 'cron')));
+      removals.push(this.hostFs.remove(join(agentDir, FILE_HISTORY_BLOB_PREFIX)));
     }
     await Promise.all(removals);
   }
 
-  private async copySessionFiles(sourceDir: string, targetDir: string): Promise<void> {
+  private async copySessionFiles(
+    sourceDir: string,
+    targetDir: string,
+    excludeWire: boolean,
+  ): Promise<void> {
     let entries: readonly HostDirEntry[];
     try {
       entries = await this.hostFs.readdir(sourceDir);
@@ -724,7 +832,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       if (isMissingFileError(error)) return;
       throw error;
     }
-    await this.copySessionDirEntries(sourceDir, targetDir, entries, '');
+    await this.copySessionDirEntries(sourceDir, targetDir, entries, '', excludeWire);
   }
 
   private async copySessionDirEntries(
@@ -732,12 +840,15 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     targetDir: string,
     entries: readonly HostDirEntry[],
     relBase: string,
+    excludeWire: boolean,
   ): Promise<void> {
+    const fileWrites: Promise<void>[] = [];
     for (const entry of entries) {
       const rel = relBase === '' ? entry.name : `${relBase}/${entry.name}`;
-      if (rel === 'state.json' || rel === 'logs' || rel === 'upcoming-goals.json' || entry.name === AGENT_WIRE_RECORD_KEY) {
+      if (rel === 'state.json' || rel === 'logs' || rel === 'upcoming-goals.json') {
         continue;
       }
+      if (excludeWire && entry.name === AGENT_WIRE_RECORD_KEY) continue;
       if (entry.isSymbolicLink === true) continue;
       const sourcePath = join(sourceDir, entry.name);
       const targetPath = join(targetDir, entry.name);
@@ -750,13 +861,18 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           throw error;
         }
         await this.hostFs.mkdir(targetPath, { recursive: true });
-        await this.copySessionDirEntries(sourcePath, targetPath, children, rel);
+        await this.copySessionDirEntries(sourcePath, targetPath, children, rel, excludeWire);
       } else if (entry.isFile) {
-        const data = await this.hostFs.readBytes(sourcePath);
-        await this.hostFs.mkdir(targetDir, { recursive: true });
-        await this.hostFs.writeBytes(targetPath, data);
+        fileWrites.push(
+          (async () => {
+            const data = await this.hostFs.readBytes(sourcePath);
+            await this.hostFs.mkdir(targetDir, { recursive: true });
+            await this.hostFs.writeBytes(targetPath, data);
+          })(),
+        );
       }
     }
+    await Promise.all(fileWrites);
   }
 
   private async readMetaFromDisk(sessionId: string): Promise<SessionMeta | undefined> {

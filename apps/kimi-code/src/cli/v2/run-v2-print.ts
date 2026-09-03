@@ -19,8 +19,8 @@
 import { readFile } from 'node:fs/promises';
 
 import {
-  AgentCron,
-  AgentGoal,
+  IAgentCronService,
+  IAgentGoalService,
   IAgentLifecycleService,
   IAgentPermissionModeService,
   IAgentProfileService,
@@ -36,7 +36,6 @@ import {
   ITelemetryService,
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
-  agentContextOf,
   applyPrintModeConfigDefaults,
   bootstrap,
   createCloudAppender,
@@ -57,7 +56,19 @@ import {
   type PrintBackgroundMode,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import { createKimiDefaultHeaders, createKimiDeviceId } from '@moonshot-ai/kimi-code-oauth';
+import {
+  createKimiDefaultHeaders,
+  createKimiDeviceId,
+  KIMI_CODE_PROVIDER_NAME,
+} from '@moonshot-ai/kimi-code-oauth';
+import {
+  initializeTelemetry,
+  setCrashPhase,
+  setTelemetryContext,
+  setTelemetryModel,
+  shouldEnableTelemetry,
+  shutdownTelemetry,
+} from '@moonshot-ai/kimi-telemetry';
 import type { GoalUpdated } from '@moonshot-ai/agent-core-v2/features/goal/goalOps';
 import type { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import type {
@@ -79,6 +90,7 @@ import {
   CLI_USER_AGENT_PRODUCT,
   PROMPT_CLEANUP_TIMEOUT_MS,
 } from '#/constant/app';
+import { currentKimiProfile } from '#/utils/region';
 
 import {
   formatGoalSummaryText,
@@ -148,6 +160,7 @@ export async function runV2Print(
       clientIdentity: identity,
       args: {
         requestHeaders: hostHeaders,
+        nonInteractive: true,
         // `--skillsDir` (v1 print parity): explicit skill dirs replace default
         // user / project discovery for this process.
         skillDirs: opts.skillsDirs,
@@ -169,12 +182,13 @@ export async function runV2Print(
   // user left unset are filled, in the memory layer.
   await applyPrintModeConfigDefaults(configService);
   const defaultModel = configService.get<string>('defaultModel') ?? undefined;
-  let telemetryEnabled = true;
+  let configTelemetryEnabled = true;
   try {
-    telemetryEnabled = configService.get('telemetry') !== false;
+    configTelemetryEnabled = configService.get('telemetry') !== false;
   } catch {
-    telemetryEnabled = true;
+    configTelemetryEnabled = true;
   }
+  const telemetryEnabled = shouldEnableTelemetry({ enabled: configTelemetryEnabled });
   for (const diagnostic of configService.diagnostics()) {
     if (diagnostic.severity === 'warning') {
       stderr.write(`Warning: ${diagnostic.message}\n`);
@@ -188,12 +202,14 @@ export async function runV2Print(
   const cleanup = async (): Promise<void> => {
     const pending = (cleanupPromise ??= (async () => {
       removeTerminationCleanup?.();
+      setCrashPhase('shutdown');
       try {
         await restorePermission();
       } finally {
         if (telemetryService !== undefined) {
           await raceWithTimeout(telemetryService.shutdown(), CLI_SHUTDOWN_TIMEOUT_MS);
         }
+        await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS }).catch(() => {});
         app.dispose();
       }
     })());
@@ -206,10 +222,13 @@ export async function runV2Print(
     // `session_load_failed` fire inside create()/resume(), so an appender wired
     // up only after resolveNativeSession() would drop them to the null appender.
     // The model below is the best known up front; a resumed session's real
-    // model is reconciled via setContext once resolved.
+    // model is reconciled once resolved (v2 via setContext, v1 via
+    // setTelemetryModel). The v1 pipeline is initialized here too: the
+    // process-wide crash handlers report through its default client, so its
+    // sink must be attached before the run can crash.
     telemetryService = app.accessor.get(ITelemetryService);
     if (telemetryEnabled) {
-      telemetryService.setAppender(
+      telemetryService.addAppender(
         createCloudAppender(app.accessor, {
           deviceId,
           appName: CLI_USER_AGENT_PRODUCT,
@@ -218,12 +237,28 @@ export async function runV2Print(
           getAccessToken: async () => (await auth.getCachedAccessToken()) ?? null,
         }),
       );
+      // No `first_launch` on the v1 client: the v2 side already tracks it via
+      // `telemetryService.track2` below, so tracking here would double-send.
+      initializeTelemetry({
+        homeDir,
+        deviceId,
+        appName: CLI_USER_AGENT_PRODUCT,
+        version,
+        uiMode: PROMPT_UI_MODE,
+        model: opts.model ?? defaultModel,
+        endpoint: () => currentKimiProfile().telemetryEndpoint,
+        getAccessToken: async () =>
+          (await auth.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME)) ?? null,
+      });
     }
 
     const resolved = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);
     restorePermission = resolved.restorePermission;
 
-    telemetryService.setContext({ sessionId: resolved.session.id, model: resolved.telemetryModel });
+    telemetryService.setContext({ session_id: resolved.session.id, model: resolved.telemetryModel });
+    setTelemetryContext({ sessionId: resolved.session.id });
+    setTelemetryModel(resolved.telemetryModel);
+    setCrashPhase('runtime');
     if (firstLaunch) {
       telemetryService.track2('first_launch');
     }
@@ -253,7 +288,7 @@ export async function runV2Print(
     }
     writeResumeHint(resolved.session.id, outputFormat, stdout, stderr);
 
-    telemetryService.withContext({ sessionId: resolved.session.id }).track2('exit', {
+    telemetryService.withContext({ session_id: resolved.session.id }).track2('exit', {
       duration_ms: Date.now() - startedAt,
     });
   } finally {
@@ -469,12 +504,8 @@ async function runNativeTurn(
     if (result.type === 'completed') {
       const configService = app.accessor.get(IConfigService);
       const taskConfig = resolveAgentTaskConfig(configService);
-      const goalService = session.accessor
-        .get(IAgentLifecycleService)
-        .resolve(agentContextOf(agent), AgentGoal);
-      const cronService = session.accessor
-        .get(IAgentLifecycleService)
-        .resolve(agentContextOf(agent), AgentCron);
+      const goalService = agent.accessor.get(IAgentGoalService);
+      const cronService = agent.accessor.get(IAgentCronService);
       try {
         await applyPrintBackgroundPolicy({
           mode: resolvePrintBackgroundMode(configService),
@@ -527,9 +558,7 @@ async function runNativeGoal(
   stderr: PromptOutput,
 ): Promise<void> {
   requireConfiguredModel(model);
-  const goalService = session.accessor
-    .get(IAgentLifecycleService)
-    .resolve(agentContextOf(agent), AgentGoal);
+  const goalService = agent.accessor.get(IAgentGoalService);
   await goalService.createGoal({
     objective: goal.objective,
     replace: goal.replace,

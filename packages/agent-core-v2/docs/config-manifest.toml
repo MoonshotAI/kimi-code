@@ -278,7 +278,9 @@ merge_all_available_skills = true
 # permission
 #   owner: src/agent/permissionRules/configSection.ts
 #   scope: core
-#   hooks: custom fromToml · custom toToml
+#   hooks: custom fromToml · custom toToml · stripEnv
+#   env:
+#     dangerous_command_guard <- KIMI_CODE_DANGEROUS_COMMAND_GUARD (custom parse)
 # ##########################################################################
 
 [permission]
@@ -287,6 +289,7 @@ merge_all_available_skills = true
   # scope: "turn-override" | "session-runtime" | "project" | "user" (default: "user")
   # pattern: string
   # reason: string
+# dangerous_command_guard: boolean
 
 # ##########################################################################
 # providers
