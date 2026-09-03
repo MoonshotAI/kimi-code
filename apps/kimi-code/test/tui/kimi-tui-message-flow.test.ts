@@ -50,6 +50,7 @@ import {
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 import type { SessionReplayRenderer } from '#/tui/controllers/session-replay';
 import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
+import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
 import { handleFeedbackCommand } from '#/tui/commands/info';
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { openUrl } from '#/utils/open-url';
@@ -8807,5 +8808,91 @@ describe('transcript step and assistant folding', () => {
     // The conclusion stays mounted.
     const lastAssistant = assistants.at(-1)!;
     expect(stripSgr(lastAssistant.render(120).join('\n'))).toContain(`msg-${cycles - 1}`);
+  });
+});
+describe('AI session titles', () => {
+  // The flag snapshot is module state shared by every driver in this file.
+  afterEach(() => {
+    setExperimentalFeatures([]);
+  });
+
+  async function makeTitleDriver(
+    generateSessionTitle: ReturnType<typeof vi.fn>,
+    flagEnabled = true,
+  ): Promise<MessageDriver> {
+    const session = makeSession();
+    const { driver } = await makeDriver(
+      session,
+      {
+        getExperimentalFeatures: vi.fn(async () => [
+          { id: 'auto_session_title', enabled: flagEnabled },
+        ]),
+        generateSessionTitle,
+      },
+      { ...makeStartupInput(), engineV2: true },
+    );
+    // The v2 engine starts session-less and creates on first prompt; the turn
+    // events below stand in for that first prompt.
+    await driver.setSession(session);
+    return driver;
+  }
+
+  it('asks the engine to generate a title when a turn completes', async () => {
+    const generateSessionTitle = vi.fn(async () => 'Wire up the terminal title');
+    const driver = await makeTitleDriver(generateSessionTitle);
+
+    emitTurn(driver, 1);
+
+    await vi.waitFor(() => {
+      expect(generateSessionTitle).toHaveBeenCalledWith({
+        id: 'ses-1',
+        source: 'first_turn',
+      });
+    });
+
+    // A generated title is applied once; later turns must not ask again.
+    emitTurn(driver, 2);
+    expect(generateSessionTitle).toHaveBeenCalledTimes(1);
+  });
+
+  it('stays quiet while the experimental flag is off', async () => {
+    const generateSessionTitle = vi.fn(async () => 'Never requested');
+    const driver = await makeTitleDriver(generateSessionTitle, false);
+
+    emitTurn(driver, 1);
+
+    expect(generateSessionTitle).not.toHaveBeenCalled();
+  });
+
+  it('ignores a cancelled turn', async () => {
+    const generateSessionTitle = vi.fn(async () => 'Never requested');
+    const driver = await makeTitleDriver(generateSessionTitle);
+
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event,
+      vi.fn(),
+    );
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'cancelled' } as Event,
+      vi.fn(),
+    );
+
+    expect(generateSessionTitle).not.toHaveBeenCalled();
+  });
+
+  it('gives up after three unproductive attempts', async () => {
+    // `undefined` is what the engine returns when it declines to generate —
+    // no managed login, or the platform request failed.
+    const generateSessionTitle = vi.fn(async () => undefined);
+    const driver = await makeTitleDriver(generateSessionTitle);
+
+    for (const turnId of [1, 2, 3, 4]) {
+      emitTurn(driver, turnId);
+      await vi.waitFor(() => {
+        expect(generateSessionTitle).toHaveBeenCalledTimes(Math.min(turnId, 3));
+      });
+    }
+
+    expect(generateSessionTitle).toHaveBeenCalledTimes(3);
   });
 });
