@@ -1,6 +1,11 @@
 import type {
+  ApprovalRequest,
+  ApprovalResponsePayload,
   AssistantDeltaMessage,
   AssistantMessage,
+  InteractionMessage,
+  QuestionRequest,
+  QuestionResponsePayload,
   ServerMessage,
   StepMessage,
   StepRetry,
@@ -61,7 +66,32 @@ export interface ProjectionEvent {
   value?: unknown;
   info?: unknown;
   outputTail?: unknown;
+  id?: unknown;
+  toolName?: unknown;
+  action?: unknown;
+  toolInput?: unknown;
+  decision?: unknown;
+  feedback?: unknown;
+  result?: unknown;
+  turns?: unknown;
+  fromTurnId?: unknown;
+  taskId?: unknown;
   [key: string]: unknown;
+}
+
+export interface InteractionPendingRecord {
+  id: string;
+  kind: 'approval' | 'question';
+  toolCallId?: string;
+  request: ApprovalRequest | QuestionRequest;
+  time?: number;
+}
+
+export interface InteractionResolvedRecord {
+  id: string;
+  state: 'approved' | 'rejected' | 'cancelled' | 'answered' | 'dismissed';
+  response?: ApprovalResponsePayload | QuestionResponsePayload;
+  time?: number;
 }
 
 interface TurnAcc {
@@ -155,6 +185,14 @@ interface TaskInfoPayload {
   error?: unknown;
   stopReason?: unknown;
   usage?: unknown;
+  outputTail?: unknown;
+}
+
+interface InteractionAcc {
+  id: string;
+  kind: 'approval' | 'question';
+  toolCallId?: string;
+  request: ApprovalRequest | QuestionRequest;
 }
 
 const MAIN_FALLBACK_TIME = 0;
@@ -243,6 +281,7 @@ export class AgentV2Projector {
   private openThinking?: TextAcc;
   private readonly tools = new Map<string, ToolAcc>();
   private readonly tasks = new Map<string, TaskAcc>();
+  private readonly interactions = new Map<string, InteractionAcc>();
   private todoId?: string;
   private todoSeq = 0;
   private todoUpdatedAt?: number;
@@ -276,9 +315,41 @@ export class AgentV2Projector {
       case 'task.started': this.onTaskStarted(event, out); break;
       case 'task.terminated': this.onTaskTerminated(event, out); break;
       case 'tools.update_store': this.onToolsUpdateStore(event, out); break;
+      case 'permission.approval.requested': this.onApprovalRequested(event, out); break;
+      case 'permission.approval.resolved': this.onApprovalResolved(event, out); break;
+      case 'compaction.completed': this.onCompactionCompleted(event, out); break;
+      case 'context.undone': this.onContextUndone(event, out); break;
+      case 'shell.output': this.onShellOutput(event, out); break;
       default: break;
     }
     return out;
+  }
+
+  applyInteractionPending(record: InteractionPendingRecord): ServerMessage[] {
+    const out: ServerMessage[] = [];
+    this.closeOpenTexts(record.time, out);
+    const acc: InteractionAcc = {
+      id: record.id,
+      kind: record.kind,
+      toolCallId: record.toolCallId,
+      request: record.request,
+    };
+    this.interactions.set(acc.id, acc);
+    out.push(this.interactionMessage(acc, 'pending', record.time));
+    if (acc.toolCallId !== undefined) {
+      const tool = this.tools.get(acc.toolCallId);
+      if (tool) {
+        tool.approvalId = acc.id;
+        out.push(this.toolCallMessage(tool, record.time));
+      }
+    }
+    return out;
+  }
+
+  applyInteractionResolved(record: InteractionResolvedRecord): ServerMessage[] {
+    const acc = this.interactions.get(record.id);
+    if (!acc) return [];
+    return [this.interactionMessage(acc, record.state, record.time, record.response)];
   }
 
   private base(event: ProjectionEvent): { session_id: string; agent_id: string; timestamp: string } {
@@ -314,7 +385,7 @@ export class AgentV2Projector {
     }
     const queued = status === 'queued';
     if (queued) this.queue.push(promptId);
-    const predictedEngineTurn = this.maxTurnId + this.queue.length + (queued ? 0 : 1);
+    const predictedEngineTurn = (event.turnId as number | undefined) ?? this.maxTurnId + this.queue.length + (queued ? 0 : 1);
     const turnId = this.protocolTurnId(predictedEngineTurn);
     const seq = this.nextUserSeq(predictedEngineTurn);
     const messageId = `${turnId}.u${seq}`;
@@ -686,6 +757,108 @@ export class AgentV2Projector {
     out.push(this.todoMessage(this.todoId, items, event.time, this.todoUpdatedAt));
   }
 
+  private onApprovalRequested(event: ProjectionEvent, out: ServerMessage[]): void {
+    out.push(
+      ...this.applyInteractionPending({
+        id: event.id as string,
+        kind: 'approval',
+        toolCallId: event.toolCallId as string,
+        request: { tool_name: event.toolName as string, input: event.toolInput, reason: event.action as string },
+        time: event.time,
+      }),
+    );
+  }
+
+  private onApprovalResolved(event: ProjectionEvent, out: ServerMessage[]): void {
+    const decision = event.decision as string;
+    const state = decision === 'approved' || decision === 'rejected' || decision === 'cancelled' ? decision : 'cancelled';
+    out.push(
+      ...this.applyInteractionResolved({
+        id: event.id as string,
+        state,
+        response: { decision: state, feedback: event.feedback as string | undefined },
+        time: event.time,
+      }),
+    );
+  }
+
+  private onCompactionCompleted(event: ProjectionEvent, out: ServerMessage[]): void {
+    const result = event.result as { tokensBefore?: number; tokensAfter?: number } | undefined;
+    if (!result) return;
+    const turn = this.latestTurn();
+    const through = turn && turn.engineTurnId > 0 ? this.protocolTurnId(turn.engineTurnId - 1) : undefined;
+    out.push({
+      type: 'system',
+      ...this.base(event),
+      system_id: this.nextSystemId(),
+      subtype: 'compaction',
+      payload: {
+        before_tokens: result.tokensBefore as number,
+        after_tokens: result.tokensAfter as number,
+        summarized_through_turn: through,
+      },
+    });
+  }
+
+  private onContextUndone(event: ProjectionEvent, out: ServerMessage[]): void {
+    const fromTurnId = event.fromTurnId as number | undefined;
+    if (fromTurnId === undefined) return;
+    out.push({
+      type: 'system',
+      ...this.base(event),
+      system_id: this.nextSystemId(),
+      subtype: 'undo',
+      payload: { undo_turn_id: this.protocolTurnId(fromTurnId) },
+    });
+  }
+
+  private onShellOutput(event: ProjectionEvent, out: ServerMessage[]): void {
+    const taskId = event.taskId as string | undefined;
+    if (taskId === undefined) return;
+    const prev = this.tasks.get(taskId);
+    if (!prev) return;
+    const update = event.update as { text?: string } | undefined;
+    const msg: TaskMessage = {
+      ...prev.message,
+      timestamp: iso(event.time),
+      output_tail: update?.text ?? prev.message.output_tail,
+    };
+    this.tasks.set(taskId, { taskId, message: msg });
+    out.push(msg);
+  }
+
+  private interactionMessage(
+    acc: InteractionAcc,
+    state: InteractionMessage['state'],
+    time: number | undefined,
+    response?: ApprovalResponsePayload | QuestionResponsePayload,
+  ): InteractionMessage {
+    const base = {
+      session_id: this.sessionId,
+      agent_id: this.agentId,
+      timestamp: iso(time),
+      interaction_id: acc.id,
+      state,
+      tool_call_id: acc.toolCallId,
+    };
+    if (acc.kind === 'approval') {
+      return {
+        type: 'interaction',
+        ...base,
+        kind: 'approval',
+        request: acc.request as ApprovalRequest,
+        response: response as ApprovalResponsePayload | undefined,
+      };
+    }
+    return {
+      type: 'interaction',
+      ...base,
+      kind: 'question',
+      request: acc.request as QuestionRequest,
+      response: response as QuestionResponsePayload | undefined,
+    };
+  }
+
   private onTaskStarted(event: ProjectionEvent, out: ServerMessage[]): void {
     const info = event.info as TaskInfoPayload | undefined;
     if (!info) return;
@@ -698,7 +871,7 @@ export class AgentV2Projector {
       state: (info.status as TaskMessage['state']) ?? 'running',
       detached: info.detached === true,
       description: info.description as string | undefined,
-      output_tail: '',
+      output_tail: (info.outputTail as string) ?? '',
       started_at: (info.startedAt as string) ?? iso(event.time),
       model: info.model as string | undefined,
       thinking_effort: info.thinkingEffort as string | undefined,

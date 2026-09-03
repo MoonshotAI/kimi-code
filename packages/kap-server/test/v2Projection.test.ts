@@ -1,7 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parseServerMessage, type ServerMessage } from '../src/protocol/v2/messages/index';
-import type { ProjectionEvent } from '../src/services/v2Projection/agentProjector';
+import type {
+  InteractionPendingRecord,
+  InteractionResolvedRecord,
+  ProjectionEvent,
+} from '../src/services/v2Projection/agentProjector';
 import { SessionV2Projector } from '../src/services/v2Projection/sessionProjector';
 import type { SessionFactsPatch } from '../src/services/v2Projection/sessionStateComposer';
 
@@ -17,6 +21,7 @@ const FIXTURES = JSON.parse(
 interface ScriptStep {
   event?: ProjectionEvent;
   facts?: SessionFactsPatch & { time: number };
+  interaction?: ({ phase: 'pending' } & InteractionPendingRecord) | ({ phase: 'resolved' } & InteractionResolvedRecord);
 }
 
 function fixtureStream(tabId: string, sectionLabel: string): unknown[] {
@@ -35,6 +40,14 @@ function runScript(sessionId: string, steps: ScriptStep[]): ServerMessage[] {
     if (step.facts) {
       const { time, ...patch } = step.facts;
       out.push(...projector.applyFacts(patch, time));
+    }
+    if (step.interaction) {
+      const i = step.interaction;
+      if (i.phase === 'pending') {
+        out.push(...projector.applyInteractionPending('main', { id: i.id, kind: i.kind, toolCallId: i.toolCallId, request: i.request, time: i.time }));
+      } else {
+        out.push(...projector.applyInteractionResolved('main', { id: i.id, state: i.state, response: i.response, time: i.time }));
+      }
     }
   }
   return out;
@@ -859,6 +872,836 @@ describe('v2Projection × 实例对拍', () => {
             usage: { total: { inputOther: 2400, output: 62, inputCacheRead: 8600, inputCacheCreation: 0 } },
           },
           time: B + 4320,
+        },
+      },
+    ]);
+  });
+
+  it('approval 起跑与批准', () => {
+    const B = Date.parse('2026-09-03T10:00:00.000Z');
+    expectStreams('approval', ['起跑与审批请求（WS）', 'A · 批准（WS）'], [
+      {
+        event: {
+          type: 'prompt.submitted',
+          promptId: 'p_01',
+          status: 'running',
+          content: [{ type: 'text', text: '把登录页崩溃的复现脚本跑一下' }],
+          createdAt: '2026-09-03T10:00:00.000Z',
+          time: B + 10,
+        },
+      },
+      { event: { type: 'turn.started', turnId: 0, promptId: 'p_01', origin: { kind: 'user' }, time: B + 15 } },
+      {
+        facts: {
+          activity: { busy: true, mainTurnActive: true, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready', turn: { turnId: 0, step: 0, phase: 'running', since: B + 15 } },
+          status: {
+            model: 'kimi-k3-highspeed',
+            contextTokens: 1820,
+            maxContextTokens: 262144,
+            usage: { total: { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 } },
+          },
+          permission: 'manual',
+          time: B + 20,
+        },
+      },
+      { event: { type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 } },
+      { event: { type: 'thinking.delta', turnId: 0, delta: '复现脚本在 `scripts/` 下，', time: B + 450 } },
+      { event: { type: 'thinking.delta', turnId: 0, delta: 'node 执行需要审批。', time: B + 580 } },
+      { event: { type: 'assistant.delta', turnId: 0, delta: '我来跑一下复现脚本：', time: B + 1050 } },
+      {
+        event: {
+          type: 'tool.call.delta',
+          turnId: 0,
+          toolCallId: 'call_01',
+          name: 'Bash',
+          argumentsPart: '{"command": "node scripts/repro-login-crash.mjs',
+          time: B + 1300,
+        },
+      },
+      { event: { type: 'tool.call.delta', turnId: 0, toolCallId: 'call_01', argumentsPart: '"}', time: B + 1400 } },
+      {
+        event: {
+          type: 'tool.call.started',
+          turnId: 0,
+          toolCallId: 'call_01',
+          name: 'Bash',
+          args: { command: 'node scripts/repro-login-crash.mjs' },
+          time: B + 1500,
+        },
+      },
+      {
+        event: {
+          type: 'permission.approval.requested',
+          id: 'ap_01',
+          turnId: 0,
+          toolCallId: 'call_01',
+          toolName: 'Bash',
+          action: '运行脚本需要执行权限',
+          toolInput: { command: 'node scripts/repro-login-crash.mjs' },
+          time: B + 1510,
+        },
+      },
+      {
+        facts: {
+          activity: { busy: true, mainTurnActive: true, pendingInteraction: 'approval' },
+          agentActivity: { lifecycle: 'ready', turn: { turnId: 0, step: 0, phase: 'running', since: B + 1510 } },
+          status: {
+            contextTokens: 4280,
+            usage: {
+              currentTurn: { inputOther: 2400, output: 52, inputCacheRead: 8000, inputCacheCreation: 0 },
+              total: { inputOther: 2400, output: 52, inputCacheRead: 8000, inputCacheCreation: 0 },
+            },
+          },
+          time: B + 1520,
+        },
+      },
+      {
+        event: {
+          type: 'permission.approval.resolved',
+          id: 'ap_01',
+          turnId: 0,
+          toolCallId: 'call_01',
+          toolName: 'Bash',
+          action: '运行脚本需要执行权限',
+          toolInput: { command: 'node scripts/repro-login-crash.mjs' },
+          decision: 'approved',
+          time: B + 5100,
+        },
+      },
+      {
+        facts: {
+          activity: { busy: true, mainTurnActive: true, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready', turn: { turnId: 0, step: 0, phase: 'running', since: B + 15 } },
+          status: {
+            contextTokens: 4280,
+            usage: {
+              currentTurn: { inputOther: 2400, output: 52, inputCacheRead: 8000, inputCacheCreation: 0 },
+              total: { inputOther: 2400, output: 52, inputCacheRead: 8000, inputCacheCreation: 0 },
+            },
+          },
+          time: B + 5110,
+        },
+      },
+      {
+        event: {
+          type: 'tool.progress',
+          turnId: 0,
+          toolCallId: 'call_01',
+          update: { kind: 'stdout', text: "TypeError: Cannot read properties of undefined (reading 'token')" },
+          time: B + 5900,
+        },
+      },
+      {
+        event: {
+          type: 'tool.result',
+          turnId: 0,
+          toolCallId: 'call_01',
+          output: { stdout: "TypeError: Cannot read properties of undefined (reading 'token')\n    at handleLogin (LoginView.vue:87)\n", exit_code: 1 },
+          time: B + 6200,
+        },
+      },
+      {
+        event: {
+          type: 'turn.step.completed',
+          turnId: 0,
+          step: 0,
+          usage: { inputOther: 2400, output: 52, inputCacheRead: 8000, inputCacheCreation: 0 },
+          finishReason: 'tool_use',
+          time: B + 6300,
+        },
+      },
+      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 6350 } },
+      { event: { type: 'assistant.delta', turnId: 0, delta: '复现成功，报错和浏览器里看到的一致：', time: B + 6700 } },
+      { event: { type: 'assistant.delta', turnId: 0, delta: '`handleLogin` 读取了 undefined 的 `token` 字段（`LoginView.vue:87`）。', time: B + 6900 } },
+      {
+        event: {
+          type: 'turn.step.completed',
+          turnId: 0,
+          step: 1,
+          usage: { inputOther: 3100, output: 88, inputCacheRead: 12800, inputCacheCreation: 0 },
+          finishReason: 'end_turn',
+          time: B + 7200,
+        },
+      },
+      { event: { type: 'turn.ended', turnId: 0, reason: 'completed', durationMs: 7283, time: B + 7300 } },
+      {
+        facts: {
+          activity: { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready' },
+          status: {
+            contextTokens: 5700,
+            usage: { total: { inputOther: 5500, output: 140, inputCacheRead: 20800, inputCacheCreation: 0 } },
+          },
+          time: B + 7320,
+        },
+      },
+    ]);
+  });
+
+  it('approval 起跑与拒绝', () => {
+    const B = Date.parse('2026-09-03T10:00:00.000Z');
+    expectStreams('approval', ['起跑与审批请求（WS）', 'B · 拒绝（WS）'], [
+      {
+        event: {
+          type: 'prompt.submitted',
+          promptId: 'p_01',
+          status: 'running',
+          content: [{ type: 'text', text: '把登录页崩溃的复现脚本跑一下' }],
+          createdAt: '2026-09-03T10:00:00.000Z',
+          time: B + 10,
+        },
+      },
+      { event: { type: 'turn.started', turnId: 0, promptId: 'p_01', origin: { kind: 'user' }, time: B + 15 } },
+      {
+        facts: {
+          activity: { busy: true, mainTurnActive: true, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready', turn: { turnId: 0, step: 0, phase: 'running', since: B + 15 } },
+          status: {
+            model: 'kimi-k3-highspeed',
+            contextTokens: 1820,
+            maxContextTokens: 262144,
+            usage: { total: { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 } },
+          },
+          permission: 'manual',
+          time: B + 20,
+        },
+      },
+      { event: { type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 } },
+      { event: { type: 'thinking.delta', turnId: 0, delta: '复现脚本在 `scripts/` 下，', time: B + 450 } },
+      { event: { type: 'thinking.delta', turnId: 0, delta: 'node 执行需要审批。', time: B + 580 } },
+      { event: { type: 'assistant.delta', turnId: 0, delta: '我来跑一下复现脚本：', time: B + 1050 } },
+      {
+        event: {
+          type: 'tool.call.delta',
+          turnId: 0,
+          toolCallId: 'call_01',
+          name: 'Bash',
+          argumentsPart: '{"command": "node scripts/repro-login-crash.mjs',
+          time: B + 1300,
+        },
+      },
+      { event: { type: 'tool.call.delta', turnId: 0, toolCallId: 'call_01', argumentsPart: '"}', time: B + 1400 } },
+      {
+        event: {
+          type: 'tool.call.started',
+          turnId: 0,
+          toolCallId: 'call_01',
+          name: 'Bash',
+          args: { command: 'node scripts/repro-login-crash.mjs' },
+          time: B + 1500,
+        },
+      },
+      {
+        event: {
+          type: 'permission.approval.requested',
+          id: 'ap_01',
+          turnId: 0,
+          toolCallId: 'call_01',
+          toolName: 'Bash',
+          action: '运行脚本需要执行权限',
+          toolInput: { command: 'node scripts/repro-login-crash.mjs' },
+          time: B + 1510,
+        },
+      },
+      {
+        facts: {
+          activity: { busy: true, mainTurnActive: true, pendingInteraction: 'approval' },
+          agentActivity: { lifecycle: 'ready', turn: { turnId: 0, step: 0, phase: 'running', since: B + 1510 } },
+          status: {
+            contextTokens: 4280,
+            usage: {
+              currentTurn: { inputOther: 2400, output: 52, inputCacheRead: 8000, inputCacheCreation: 0 },
+              total: { inputOther: 2400, output: 52, inputCacheRead: 8000, inputCacheCreation: 0 },
+            },
+          },
+          time: B + 1520,
+        },
+      },
+      {
+        event: {
+          type: 'permission.approval.resolved',
+          id: 'ap_01',
+          turnId: 0,
+          toolCallId: 'call_01',
+          toolName: 'Bash',
+          action: '运行脚本需要执行权限',
+          toolInput: { command: 'node scripts/repro-login-crash.mjs' },
+          decision: 'rejected',
+          time: B + 5100,
+        },
+      },
+      {
+        facts: {
+          activity: { busy: true, mainTurnActive: true, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready', turn: { turnId: 0, step: 0, phase: 'running', since: B + 15 } },
+          status: {
+            contextTokens: 4280,
+            usage: {
+              currentTurn: { inputOther: 2400, output: 52, inputCacheRead: 8000, inputCacheCreation: 0 },
+              total: { inputOther: 2400, output: 52, inputCacheRead: 8000, inputCacheCreation: 0 },
+            },
+          },
+          time: B + 5110,
+        },
+      },
+      {
+        event: {
+          type: 'tool.result',
+          turnId: 0,
+          toolCallId: 'call_01',
+          output: 'rejected by user',
+          isError: true,
+          time: B + 5200,
+        },
+      },
+      {
+        event: {
+          type: 'turn.step.completed',
+          turnId: 0,
+          step: 0,
+          usage: { inputOther: 2400, output: 52, inputCacheRead: 8000, inputCacheCreation: 0 },
+          finishReason: 'tool_use',
+          time: B + 5300,
+        },
+      },
+      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 5350 } },
+      { event: { type: 'assistant.delta', turnId: 0, delta: '好，那不跑了。', time: B + 5700 } },
+      { event: { type: 'assistant.delta', turnId: 0, delta: '需要我换个方式排查吗——比如直接读 `handleLogin` 的实现？', time: B + 5900 } },
+      {
+        event: {
+          type: 'turn.step.completed',
+          turnId: 0,
+          step: 1,
+          usage: { inputOther: 2900, output: 76, inputCacheRead: 12100, inputCacheCreation: 0 },
+          finishReason: 'end_turn',
+          time: B + 6200,
+        },
+      },
+      { event: { type: 'turn.ended', turnId: 0, reason: 'completed', durationMs: 6283, time: B + 6300 } },
+      {
+        facts: {
+          activity: { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready' },
+          status: {
+            contextTokens: 5500,
+            usage: { total: { inputOther: 5300, output: 128, inputCacheRead: 20100, inputCacheCreation: 0 } },
+          },
+          time: B + 6320,
+        },
+      },
+    ]);
+  });
+
+  it('question 直播流', () => {
+    const B = Date.parse('2026-09-03T14:00:00.000Z');
+    expectStreams('question', ['起跑与提问（WS）', '回答与继续（WS）'], [
+      {
+        event: {
+          type: 'prompt.submitted',
+          promptId: 'p_01',
+          status: 'running',
+          content: [{ type: 'text', text: '把 README 的安装命令更新成 pnpm' }],
+          createdAt: '2026-09-03T14:00:00.000Z',
+          time: B + 10,
+        },
+      },
+      { event: { type: 'turn.started', turnId: 0, promptId: 'p_01', origin: { kind: 'user' }, time: B + 15 } },
+      {
+        facts: {
+          activity: { busy: true, mainTurnActive: true, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready', turn: { turnId: 0, step: 0, phase: 'running', since: B + 15 } },
+          status: {
+            model: 'kimi-k3-highspeed',
+            contextTokens: 1820,
+            maxContextTokens: 262144,
+            usage: { total: { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 } },
+          },
+          permission: 'manual',
+          time: B + 20,
+        },
+      },
+      { event: { type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 } },
+      { event: { type: 'thinking.delta', turnId: 0, delta: '安装命令在快速开始和开发者文档各有一处。', time: B + 450 } },
+      { event: { type: 'thinking.delta', turnId: 0, delta: '范围不明，先问用户。', time: B + 580 } },
+      { event: { type: 'assistant.delta', turnId: 0, delta: 'README 里有两处安装命令，先确认范围：', time: B + 1050 } },
+      {
+        interaction: {
+          phase: 'pending',
+          id: 'q_01',
+          kind: 'question',
+          request: {
+            questions: [
+              { id: 'q1', question: 'README 里有两处安装命令（快速开始、开发者文档），要都更新吗？', options: ['两处都改', '只改快速开始'] },
+            ],
+          },
+          time: B + 1500,
+        },
+      },
+      {
+        facts: {
+          activity: { busy: true, mainTurnActive: true, pendingInteraction: 'question' },
+          agentActivity: { lifecycle: 'ready', turn: { turnId: 0, step: 0, phase: 'running', since: B + 1500 } },
+          status: {
+            contextTokens: 4150,
+            usage: {
+              currentTurn: { inputOther: 2300, output: 48, inputCacheRead: 7600, inputCacheCreation: 0 },
+              total: { inputOther: 2300, output: 48, inputCacheRead: 7600, inputCacheCreation: 0 },
+            },
+          },
+          time: B + 1520,
+        },
+      },
+      {
+        interaction: {
+          phase: 'resolved',
+          id: 'q_01',
+          state: 'answered',
+          response: { answers: { q1: '两处都改' } },
+          time: B + 5100,
+        },
+      },
+      {
+        facts: {
+          activity: { busy: true, mainTurnActive: true, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready', turn: { turnId: 0, step: 0, phase: 'running', since: B + 15 } },
+          status: {
+            contextTokens: 4150,
+            usage: {
+              currentTurn: { inputOther: 2300, output: 48, inputCacheRead: 7600, inputCacheCreation: 0 },
+              total: { inputOther: 2300, output: 48, inputCacheRead: 7600, inputCacheCreation: 0 },
+            },
+          },
+          time: B + 5110,
+        },
+      },
+      {
+        event: {
+          type: 'tool.call.started',
+          turnId: 0,
+          toolCallId: 'call_01',
+          name: 'Edit',
+          args: { path: 'README.md', old: 'npm install && npm run dev', new: 'pnpm install && pnpm dev' },
+          time: B + 5300,
+        },
+      },
+      { event: { type: 'tool.result', turnId: 0, toolCallId: 'call_01', output: { applied: true }, time: B + 5800 } },
+      {
+        event: {
+          type: 'turn.step.completed',
+          turnId: 0,
+          step: 0,
+          usage: { inputOther: 2300, output: 48, inputCacheRead: 7600, inputCacheCreation: 0 },
+          finishReason: 'tool_use',
+          time: B + 5900,
+        },
+      },
+      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 5950 } },
+      {
+        event: {
+          type: 'tool.call.started',
+          turnId: 0,
+          toolCallId: 'call_02',
+          name: 'Edit',
+          args: { path: 'README.md', old: 'npm run build && npm start', new: 'pnpm build && pnpm start' },
+          time: B + 6100,
+        },
+      },
+      { event: { type: 'tool.result', turnId: 0, toolCallId: 'call_02', output: { applied: true }, time: B + 6500 } },
+      {
+        event: {
+          type: 'assistant.delta',
+          turnId: 0,
+          delta: '两处都改好了：快速开始和开发者文档的安装命令已更新为 `pnpm` 版。',
+          time: B + 6900,
+        },
+      },
+      {
+        event: {
+          type: 'turn.step.completed',
+          turnId: 0,
+          step: 1,
+          usage: { inputOther: 2500, output: 62, inputCacheRead: 8800, inputCacheCreation: 0 },
+          finishReason: 'end_turn',
+          time: B + 7200,
+        },
+      },
+      { event: { type: 'turn.ended', turnId: 0, reason: 'completed', durationMs: 7283, time: B + 7300 } },
+      {
+        facts: {
+          activity: { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready' },
+          status: {
+            contextTokens: 4900,
+            usage: { total: { inputOther: 4800, output: 110, inputCacheRead: 16400, inputCacheCreation: 0 } },
+          },
+          time: B + 7320,
+        },
+      },
+    ]);
+  });
+
+  it('background-task 直播流', () => {
+    const B = Date.parse('2026-09-03T16:00:00.000Z');
+    expectStreams('background-task', ['转后台（WS）', '任务完成与新 turn（WS）'], [
+      {
+        event: {
+          type: 'prompt.submitted',
+          promptId: 'p_01',
+          status: 'running',
+          content: [{ type: 'text', text: '跑一下完整构建' }],
+          createdAt: '2026-09-03T16:00:00.000Z',
+          time: B + 10,
+        },
+      },
+      { event: { type: 'turn.started', turnId: 0, promptId: 'p_01', origin: { kind: 'user' }, time: B + 15 } },
+      {
+        facts: {
+          activity: { busy: true, mainTurnActive: true, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready', turn: { turnId: 0, step: 0, phase: 'running', since: B + 15 } },
+          status: {
+            model: 'kimi-k3-highspeed',
+            contextTokens: 1820,
+            maxContextTokens: 262144,
+            usage: { total: { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 } },
+          },
+          permission: 'manual',
+          time: B + 20,
+        },
+      },
+      { event: { type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 } },
+      { event: { type: 'thinking.delta', turnId: 0, delta: '完整构建要几分钟，先跑起来，太久就转后台。', time: B + 450 } },
+      { event: { type: 'assistant.delta', turnId: 0, delta: '我来跑完整构建：', time: B + 1050 } },
+      {
+        event: { type: 'tool.call.started', turnId: 0, toolCallId: 'call_01', name: 'Bash', args: { command: 'pnpm build' }, time: B + 1500 },
+      },
+      {
+        event: {
+          type: 'tool.progress',
+          turnId: 0,
+          toolCallId: 'call_01',
+          update: { kind: 'stdout', text: '… compiling packages (3/8) …' },
+          time: B + 3000,
+        },
+      },
+      {
+        event: {
+          type: 'task.started',
+          info: {
+            taskId: 'task_01',
+            kind: 'shell',
+            status: 'running',
+            description: 'pnpm build',
+            detached: true,
+            outputTail: '… compiling packages (3/8) …',
+          },
+          time: B + 4000,
+        },
+      },
+      {
+        event: {
+          type: 'tool.result',
+          turnId: 0,
+          toolCallId: 'call_01',
+          output: { detached: true, task_id: 'task_01' },
+          time: B + 4010,
+        },
+      },
+      {
+        event: {
+          type: 'turn.step.completed',
+          turnId: 0,
+          step: 0,
+          usage: { inputOther: 2500, output: 58, inputCacheRead: 9200, inputCacheCreation: 0 },
+          finishReason: 'tool_use',
+          time: B + 4100,
+        },
+      },
+      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 4150 } },
+      { event: { type: 'assistant.delta', turnId: 0, delta: '构建量比较大，已转后台跑（task_01），完成后我告诉你。', time: B + 4500 } },
+      {
+        event: {
+          type: 'turn.step.completed',
+          turnId: 0,
+          step: 1,
+          usage: { inputOther: 2700, output: 66, inputCacheRead: 10100, inputCacheCreation: 0 },
+          finishReason: 'end_turn',
+          time: B + 4800,
+        },
+      },
+      { event: { type: 'turn.ended', turnId: 0, reason: 'completed', durationMs: 4883, time: B + 4900 } },
+      {
+        facts: {
+          activity: { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready' },
+          status: {
+            contextTokens: 5300,
+            usage: { total: { inputOther: 5200, output: 124, inputCacheRead: 19300, inputCacheCreation: 0 } },
+          },
+          time: B + 4920,
+        },
+      },
+      {
+        event: {
+          type: 'shell.output',
+          taskId: 'task_01',
+          update: { kind: 'stdout', text: '… packages (8/8) done, writing dist …' },
+          time: B + 450000,
+        },
+      },
+      {
+        event: {
+          type: 'task.terminated',
+          info: { taskId: 'task_01', kind: 'shell', status: 'completed', description: 'pnpm build', resultSummary: '构建成功：8 个包全部编译通过' },
+          outputTail: '… build finished successfully in 7m 56s …',
+          time: B + 478500,
+        },
+      },
+      { event: { type: 'turn.started', turnId: 1, origin: { kind: 'task', taskId: 'task_01' }, time: B + 478600 } },
+      {
+        facts: {
+          activity: { busy: true, mainTurnActive: true, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready', turn: { turnId: 1, step: 0, phase: 'running', since: B + 478600 } },
+          status: {
+            contextTokens: 5300,
+            usage: { total: { inputOther: 5200, output: 124, inputCacheRead: 19300, inputCacheCreation: 0 } },
+          },
+          time: B + 478610,
+        },
+      },
+      { event: { type: 'turn.step.started', turnId: 1, step: 0, time: B + 478620 } },
+      { event: { type: 'assistant.delta', turnId: 1, delta: '构建完成了：8 个包全部编译通过，产物在各自的 `dist/`。', time: B + 479000 } },
+      {
+        event: {
+          type: 'turn.step.completed',
+          turnId: 1,
+          step: 0,
+          usage: { inputOther: 2900, output: 44, inputCacheRead: 12000, inputCacheCreation: 0 },
+          finishReason: 'end_turn',
+          time: B + 479300,
+        },
+      },
+      { event: { type: 'turn.ended', turnId: 1, reason: 'completed', durationMs: 797, time: B + 479400 } },
+      {
+        facts: {
+          activity: { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready' },
+          status: {
+            contextTokens: 5600,
+            usage: { total: { inputOther: 8100, output: 168, inputCacheRead: 31300, inputCacheCreation: 0 } },
+          },
+          time: B + 479410,
+        },
+      },
+    ]);
+  });
+
+  it('compaction 直播流', () => {
+    const B = Date.parse('2026-09-03T16:30:00.000Z');
+    expectStream('compaction', '流式（WS）', [
+      {
+        event: {
+          type: 'prompt.submitted',
+          promptId: 'p_01',
+          status: 'running',
+          turnId: 8,
+          content: [{ type: 'text', text: '接着上面的讨论，把新页面的路由也加上' }],
+          createdAt: '2026-09-03T16:30:00.000Z',
+          time: B + 10,
+        },
+      },
+      { event: { type: 'turn.started', turnId: 8, promptId: 'p_01', origin: { kind: 'user' }, time: B + 15 } },
+      {
+        facts: {
+          activity: { busy: true, mainTurnActive: true, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready', turn: { turnId: 8, step: 0, phase: 'running', since: B + 15 } },
+          status: {
+            model: 'kimi-k3-highspeed',
+            contextTokens: 241000,
+            maxContextTokens: 262144,
+            usage: { total: { inputOther: 20337, output: 4398, inputCacheRead: 128912, inputCacheCreation: 0 } },
+          },
+          permission: 'manual',
+          time: B + 20,
+        },
+      },
+      {
+        event: {
+          type: 'compaction.completed',
+          result: { summary: '前 8 轮讨论摘要', compactedCount: 42, tokensBefore: 241000, tokensAfter: 62000 },
+          time: B + 100,
+        },
+      },
+      {
+        facts: {
+          activity: { busy: true, mainTurnActive: true, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready', turn: { turnId: 8, step: 0, phase: 'running', since: B + 15 } },
+          status: { contextTokens: 62000 },
+          time: B + 110,
+        },
+      },
+      { event: { type: 'turn.step.started', turnId: 8, step: 0, time: B + 120 } },
+      { event: { type: 'thinking.delta', turnId: 8, delta: '路由集中在 router 配置文件，加一条即可。', time: B + 550 } },
+      { event: { type: 'assistant.delta', turnId: 8, delta: '我来加路由：', time: B + 1150 } },
+      {
+        event: {
+          type: 'tool.call.started',
+          turnId: 8,
+          toolCallId: 'call_01',
+          name: 'Edit',
+          args: {
+            path: 'apps/web/src/router.ts',
+            old: "  { path: '/login', component: LoginView },",
+            new: "  { path: '/login', component: LoginView },\n  { path: '/new-page', component: NewPageView },",
+          },
+          time: B + 1500,
+        },
+      },
+      { event: { type: 'tool.result', turnId: 8, toolCallId: 'call_01', output: { applied: true }, time: B + 1900 } },
+      { event: { type: 'assistant.delta', turnId: 8, delta: '加好了：`/new-page` 路由已注册到 `router.ts`。', time: B + 2300 } },
+      {
+        event: {
+          type: 'turn.step.completed',
+          turnId: 8,
+          step: 0,
+          usage: { inputOther: 3100, output: 72, inputCacheRead: 9600, inputCacheCreation: 0 },
+          finishReason: 'end_turn',
+          time: B + 2600,
+        },
+      },
+      { event: { type: 'turn.ended', turnId: 8, reason: 'completed', durationMs: 2683, time: B + 2700 } },
+      {
+        facts: {
+          activity: { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready' },
+          status: {
+            contextTokens: 65200,
+            usage: { total: { inputOther: 20600, output: 4460, inputCacheRead: 129500, inputCacheCreation: 0 } },
+          },
+          time: B + 2720,
+        },
+      },
+    ]);
+  });
+
+  it('undo 直播流', () => {
+    const B = Date.parse('2026-09-03T18:10:00.000Z');
+    expectStream('undo', 'undo（WS）', [
+      { event: { type: 'context.undone', turns: 1, fromTurnId: 0, time: B + 5000 } },
+      {
+        facts: {
+          activity: { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready' },
+          status: {
+            model: 'kimi-k3-highspeed',
+            contextTokens: 5000,
+            maxContextTokens: 262144,
+            usage: { total: { inputOther: 5100, output: 128, inputCacheRead: 17600, inputCacheCreation: 0 } },
+          },
+          permission: 'manual',
+          time: B + 5010,
+        },
+      },
+    ]);
+  });
+
+  it('big-output 直播流', () => {
+    const B = Date.parse('2026-09-03T18:30:00.000Z');
+    expectStream('big-output', '流式（WS）', [
+      {
+        event: {
+          type: 'prompt.submitted',
+          promptId: 'p_01',
+          status: 'running',
+          content: [{ type: 'text', text: '跑一下全量测试' }],
+          createdAt: '2026-09-03T18:30:00.000Z',
+          time: B + 10,
+        },
+      },
+      { event: { type: 'turn.started', turnId: 0, promptId: 'p_01', origin: { kind: 'user' }, time: B + 15 } },
+      {
+        facts: {
+          activity: { busy: true, mainTurnActive: true, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready', turn: { turnId: 0, step: 0, phase: 'running', since: B + 15 } },
+          status: {
+            model: 'kimi-k3-highspeed',
+            contextTokens: 1820,
+            maxContextTokens: 262144,
+            usage: { total: { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 } },
+          },
+          permission: 'manual',
+          time: B + 20,
+        },
+      },
+      { event: { type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 } },
+      { event: { type: 'thinking.delta', turnId: 0, delta: '全量测试输出会很大，截断内联即可。', time: B + 450 } },
+      { event: { type: 'assistant.delta', turnId: 0, delta: '我来跑全量测试：', time: B + 1050 } },
+      {
+        event: { type: 'tool.call.started', turnId: 0, toolCallId: 'call_01', name: 'Bash', args: { command: 'pnpm test --all' }, time: B + 1500 },
+      },
+      {
+        event: {
+          type: 'tool.progress',
+          turnId: 0,
+          toolCallId: 'call_01',
+          update: { kind: 'stdout', text: '… running 43 test files …' },
+          time: B + 20000,
+        },
+      },
+      {
+        event: {
+          type: 'tool.result',
+          turnId: 0,
+          toolCallId: 'call_01',
+          output: {
+            stdout: '…\n ✓ packages/app-core/src/lib/wire.test.ts (42 tests)\n ✗ packages/app-client/src/stores/chat.test.ts (2 failed)\nTest Files  2 failed | 41 passed (43)\n     Tests  2 failed | 386 passed (388)\n',
+            exit_code: 1,
+            truncated: true,
+            total_lines: 4821,
+          },
+          time: B + 45200,
+        },
+      },
+      {
+        event: {
+          type: 'turn.step.completed',
+          turnId: 0,
+          step: 0,
+          usage: { inputOther: 2800, output: 72, inputCacheRead: 11000, inputCacheCreation: 0 },
+          finishReason: 'tool_use',
+          time: B + 45300,
+        },
+      },
+      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 45350 } },
+      {
+        event: {
+          type: 'assistant.delta',
+          turnId: 0,
+          delta: '全量 43 个测试文件：41 通过、2 失败（都在 `app-client` 的 chat store）。',
+          time: B + 45700,
+        },
+      },
+      { event: { type: 'assistant.delta', turnId: 0, delta: '完整日志 4821 行，需要我拉出来定位吗？', time: B + 45800 } },
+      {
+        event: {
+          type: 'turn.step.completed',
+          turnId: 0,
+          step: 1,
+          usage: { inputOther: 3000, output: 80, inputCacheRead: 12100, inputCacheCreation: 0 },
+          finishReason: 'end_turn',
+          time: B + 46000,
+        },
+      },
+      { event: { type: 'turn.ended', turnId: 0, reason: 'completed', durationMs: 46083, time: B + 46100 } },
+      {
+        facts: {
+          activity: { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
+          agentActivity: { lifecycle: 'ready' },
+          status: {
+            contextTokens: 5900,
+            usage: { total: { inputOther: 5800, output: 152, inputCacheRead: 23100, inputCacheCreation: 0 } },
+          },
+          time: B + 46120,
         },
       },
     ]);

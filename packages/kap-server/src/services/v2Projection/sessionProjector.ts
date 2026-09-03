@@ -1,5 +1,10 @@
 import type { ServerMessage } from '../../protocol/v2/messages/index';
-import { AgentV2Projector, type ProjectionEvent } from './agentProjector';
+import {
+  AgentV2Projector,
+  type InteractionPendingRecord,
+  type InteractionResolvedRecord,
+  type ProjectionEvent,
+} from './agentProjector';
 import { SessionStateComposer, type SessionFactsPatch } from './sessionStateComposer';
 
 export class SessionV2Projector {
@@ -21,6 +26,14 @@ export class SessionV2Projector {
 
   applyAgentEvent(agentId: string, event: ProjectionEvent): ServerMessage[] {
     return this.agentFor(agentId).apply(event);
+  }
+
+  applyInteractionPending(agentId: string, record: InteractionPendingRecord): ServerMessage[] {
+    return this.agentFor(agentId).applyInteractionPending(record);
+  }
+
+  applyInteractionResolved(agentId: string, record: InteractionResolvedRecord): ServerMessage[] {
+    return this.agentFor(agentId).applyInteractionResolved(record);
   }
 
   applyFacts(patch: SessionFactsPatch, time: number): ServerMessage[] {
