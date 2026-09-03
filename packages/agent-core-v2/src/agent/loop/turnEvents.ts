@@ -27,7 +27,7 @@ export interface TurnPromptAttachmentFile {
 }
 
 export type TurnPromptAttachment =
-  | { readonly kind: 'image' | 'video' | 'audio'; readonly fileId: string }
+  | { readonly kind: 'image' | 'video' | 'audio'; readonly fileId: string; readonly name?: string }
   | TurnPromptAttachmentFile;
 
 export interface TurnStartedPayload {
@@ -71,10 +71,10 @@ export function turnPromptAttachments(
   for (const part of input) {
     if (part.type === 'image_url') {
       const fileId = promptMediaFileId(part.imageUrl.url, part.imageUrl.id);
-      if (fileId !== undefined) attachments.push({ kind: 'image', fileId });
+      if (fileId !== undefined) attachments.push({ kind: 'image', fileId, name: part.imageUrl.name });
     } else if (part.type === 'video_url') {
       const fileId = promptMediaFileId(part.videoUrl.url, part.videoUrl.id);
-      if (fileId !== undefined) attachments.push({ kind: 'video', fileId });
+      if (fileId !== undefined) attachments.push({ kind: 'video', fileId, name: part.videoUrl.name });
     } else if (part.type === 'audio_url') {
       const fileId = promptMediaFileId(part.audioUrl.url, part.audioUrl.id);
       if (fileId !== undefined) attachments.push({ kind: 'audio', fileId });
