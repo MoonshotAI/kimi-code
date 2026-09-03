@@ -62,6 +62,16 @@ describe('FileStorageService — error translation', () => {
     await expect(svc.delete('scope', 'missing.json')).resolves.toBeUndefined();
   });
 
+  it('treats a regular file in place of a scope directory as missing', async () => {
+    const svc = new FileStorageService(dir);
+    await writeFile(join(dir, 'junk'), 'x');
+    expect(await svc.read('junk', 'state.json')).toBeUndefined();
+    expect(await svc.size('junk', 'state.json')).toBeUndefined();
+    expect(await svc.mtime('junk', 'state.json')).toBeUndefined();
+    expect(await svc.list('junk')).toEqual([]);
+    await expect(svc.delete('junk', 'state.json')).resolves.toBeUndefined();
+  });
+
   it.skipIf(isWin)('translates non-ENOENT failures into StorageError(io_failed)', async () => {
     const svc = new FileStorageService(dir);
     await mkdir(join(dir, 'scope', 'adir'), { recursive: true });

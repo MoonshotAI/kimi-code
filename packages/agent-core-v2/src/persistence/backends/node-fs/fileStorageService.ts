@@ -20,8 +20,9 @@ const WATCH_DEBOUNCE_MS = 150;
 const TORN_READ_RETRIES = 3;
 const TORN_READ_RETRY_DELAY_MS = 15;
 
-function isEnoent(error: unknown): boolean {
-  return (error as NodeJS.ErrnoException).code === 'ENOENT';
+function isMissingEntry(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === 'ENOENT' || code === 'ENOTDIR';
 }
 
 export class FileStorageService implements IFileSystemStorageService {
@@ -42,7 +43,7 @@ export class FileStorageService implements IFileSystemStorageService {
       try {
         bytes = await readFile(filePath);
       } catch (error) {
-        if (isEnoent(error)) return undefined;
+        if (isMissingEntry(error)) return undefined;
         throw toStorageIoError(error, { path: filePath, op: 'read' });
       }
       if (attempt >= TORN_READ_RETRIES) return bytes;
@@ -72,7 +73,7 @@ export class FileStorageService implements IFileSystemStorageService {
         yield chunk as Uint8Array;
       }
     } catch (error) {
-      if (isEnoent(error)) return;
+      if (isMissingEntry(error)) return;
       throw toStorageIoError(error, { path: filePath, op: 'read' });
     }
   }
@@ -144,7 +145,7 @@ export class FileStorageService implements IFileSystemStorageService {
     try {
       entries = await readdir(this.scopePath(scope));
     } catch (error) {
-      if (isEnoent(error)) return [];
+      if (isMissingEntry(error)) return [];
       throw toStorageIoError(error, { path: this.scopePath(scope), op: 'list' });
     }
     return prefix === undefined ? entries : entries.filter((entry) => entry.startsWith(prefix));
@@ -155,7 +156,7 @@ export class FileStorageService implements IFileSystemStorageService {
     try {
       await unlink(filePath);
     } catch (error) {
-      if (isEnoent(error)) return;
+      if (isMissingEntry(error)) return;
       throw toStorageIoError(error, { path: filePath, op: 'delete' });
     }
   }
@@ -165,7 +166,7 @@ export class FileStorageService implements IFileSystemStorageService {
     try {
       return (await stat(filePath)).size;
     } catch (error) {
-      if (isEnoent(error)) return undefined;
+      if (isMissingEntry(error)) return undefined;
       throw toStorageIoError(error, { path: filePath, op: 'stat' });
     }
   }
@@ -175,7 +176,7 @@ export class FileStorageService implements IFileSystemStorageService {
     try {
       return (await stat(filePath)).mtimeMs;
     } catch (error) {
-      if (isEnoent(error)) return undefined;
+      if (isMissingEntry(error)) return undefined;
       throw toStorageIoError(error, { path: filePath, op: 'stat' });
     }
   }
@@ -263,7 +264,7 @@ export class FileStorageService implements IFileSystemStorageService {
       await syncDir(dir);
       this.syncedDirs.add(dir);
     } catch (error) {
-      if (!isEnoent(error)) throw error;
+      if (!isMissingEntry(error)) throw error;
     }
   }
 }
