@@ -1,5 +1,5 @@
 import { watch as fsWatch } from 'node:fs';
-import { basename, isAbsolute, join, relative } from 'node:path';
+import { basename, isAbsolute, join, relative, win32 } from 'node:path';
 
 import { FSWatcher } from 'chokidar';
 
@@ -152,13 +152,16 @@ class SignalWatchHandle implements IHostFsWatchHandle {
   private startNativeLeg(): void {
     if (this.disposed) return;
     try {
-      const watcher = this.runtime.watchNative(this.root, (_eventType, filename) => {
-        if (this.disposed) return;
-        this.retryAttempts = 0;
-        const absPath = resolveNativeSignalPath(this.root, filename);
-        if (absPath !== this.root && this.ignored(absPath)) return;
-        this.fireInvalidation();
-      });
+      const watcher = this.runtime.watchNative(
+        toNativeWatchRoot(this.root, this.runtime.platform),
+        (_eventType, filename) => {
+          if (this.disposed) return;
+          this.retryAttempts = 0;
+          const absPath = resolveNativeSignalPath(this.root, filename);
+          if (absPath !== this.root && this.ignored(absPath)) return;
+          this.fireInvalidation();
+        },
+      );
       watcher.on('error', (error: NodeJS.ErrnoException) => {
         this.onNativeError(watcher, error);
       });
@@ -246,6 +249,10 @@ function useNativeRecursive(
     options.recursive !== false &&
     (platform === 'darwin' || platform === 'win32')
   );
+}
+
+function toNativeWatchRoot(root: string, platform: NodeJS.Platform): string {
+  return platform === 'win32' ? win32.normalize(root) : root;
 }
 
 function resolveNativeSignalPath(root: string, filename: string | null): string {

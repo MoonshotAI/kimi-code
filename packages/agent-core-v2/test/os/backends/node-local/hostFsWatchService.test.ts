@@ -39,6 +39,7 @@ class TestNativeWatcher {
 }
 
 interface TestNativeAttempt {
+  readonly root: string;
   readonly watcher: TestNativeWatcher;
   emit(filename: string | null): void;
 }
@@ -49,7 +50,10 @@ interface TestRetry {
   run(): void;
 }
 
-function signalRig(options?: { readonly synchronousFailures?: number }): {
+function signalRig(options?: {
+  readonly platform?: NodeJS.Platform;
+  readonly synchronousFailures?: number;
+}): {
   readonly service: IHostFsWatchService;
   readonly attempts: TestNativeAttempt[];
   readonly retries: TestRetry[];
@@ -60,14 +64,15 @@ function signalRig(options?: { readonly synchronousFailures?: number }): {
   const retries: TestRetry[] = [];
   let synchronousFailures = options?.synchronousFailures ?? 0;
   const runtime: HostFsWatchRuntime = {
-    platform: 'darwin',
-    watchNative: (_root, listener) => {
+    platform: options?.platform ?? 'darwin',
+    watchNative: (root, listener) => {
       if (synchronousFailures > 0) {
         synchronousFailures -= 1;
         throw Object.assign(new Error('native watch creation failed'), { code: 'EIO' });
       }
       const watcher = new TestNativeWatcher();
       attempts.push({
+        root,
         watcher,
         emit: (filename) => {
           listener('rename', filename);
@@ -153,6 +158,13 @@ describe('host filesystem change notifications', () => {
     rig.attempt(0).emit('skills/demo/SKILL.md');
 
     expect(events).toEqual([{ path: '/repo', action: 'modified', kind: 'directory' }]);
+  });
+
+  it('passes Windows UNC roots to the native watcher with native separators', () => {
+    const rig = signalRig({ platform: 'win32' });
+    handle = rig.service.watch('//server/share/repo', { signal: true });
+
+    expect(rig.attempt(0).root).toBe('\\\\server\\share\\repo');
   });
 
   it('does not invalidate when a native signal path is ignored', () => {
