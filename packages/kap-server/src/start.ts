@@ -44,6 +44,9 @@ import { resolveRequestId } from './request-id';
 import { registerApiV1Routes } from './routes/registerApiV1Routes';
 import { registerApiV2Routes } from './routes/registerApiV2Routes';
 import { registerWebAssetRoutes } from './routes/webAssets';
+import { resolveSessionFacts } from './routes/sessions';
+import { toWireWorkspace } from './routes/workspaces';
+import { MAIN_AGENT_ID } from './transport/mainAgent';
 import {
   createServerLogger,
   type ServerLogger,
@@ -65,6 +68,7 @@ import { FsWatchBridge } from './transport/ws/v1/fsWatchBridge';
 import { registerWsV1, WS_PATH as WS_PATH_V1 } from './transport/ws/v1/registerWsV1';
 import { registerWsV2, WS_PATH_V2 } from './transport/ws/v2/registerWsV2';
 import { liveSessionSourceFor, SessionV2Binder } from './services/v2Projection/binder';
+import { GlobalV2Fanout } from './services/v2Projection/globalFanout';
 import { getServerVersion } from './version';
 import { classify } from './security/bindClassify';
 import {
@@ -462,11 +466,44 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     logger,
   });
 
+  const v2Binder = new SessionV2Binder();
+  const globalFanout = new GlobalV2Fanout(
+    { subscribe: (handler) => core.accessor.get(IEventService).subscribe(handler) },
+    {
+      sessionInfoFor: async (sessionId) => {
+        const summary = await core.accessor.get(ISessionIndex).get(sessionId);
+        if (summary === undefined) return undefined;
+        const facts = resolveSessionFacts(core, sessionId);
+        const binding = v2Binder.peek(sessionId);
+        return {
+          session_id: summary.id,
+          workspace_id: summary.workspaceId,
+          title: summary.title ?? '',
+          status: summary.archived ? 'archived' : 'active',
+          model: facts.model,
+          created_at: new Date(summary.createdAt).toISOString(),
+          updated_at: new Date(summary.updatedAt).toISOString(),
+          turn_count: binding?.projector.agentFor(MAIN_AGENT_ID).turnCount,
+        };
+      },
+      workspaceWireFor: async (workspace) => {
+        if (workspace === null || typeof workspace !== 'object') return undefined;
+        return (await toWireWorkspace(core, workspace as Parameters<typeof toWireWorkspace>[1])) as never;
+      },
+      ensureSessionBinding: (sessionId) => {
+        const source = liveSessionSourceFor(core, sessionId);
+        if (source !== undefined) v2Binder.attach(source);
+      },
+      logger: { warn: (meta, msg) => logger.warn(meta, msg) },
+    },
+  );
+
   const wssV2 = registerWsV2({
-    binder: new SessionV2Binder(),
+    binder: v2Binder,
     registry: connectionRegistry,
     serverId,
     sessionSourceFor: (sessionId) => liveSessionSourceFor(core, sessionId),
+    globalFanout,
     logger: { warn: (meta, msg) => logger.warn(meta, msg) },
   });
 

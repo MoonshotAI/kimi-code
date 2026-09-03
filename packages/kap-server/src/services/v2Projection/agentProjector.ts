@@ -93,6 +93,11 @@ export interface ProjectionEvent {
   contextTokens?: unknown;
   maxContextTokens?: unknown;
   mode?: unknown;
+  hookEvent?: unknown;
+  blocked?: unknown;
+  skillName?: unknown;
+  commandName?: unknown;
+  swarmMode?: unknown;
   [key: string]: unknown;
 }
 
@@ -348,6 +353,10 @@ export class AgentV2Projector {
       case 'permission.approval.resolved': this.onApprovalResolved(event, out); break;
       case 'compaction.completed': this.onCompactionCompleted(event, out); break;
       case 'context.undone': this.onContextUndone(event, out); break;
+      case 'context.clear': this.onContextClear(event, out); break;
+      case 'hook.result': this.onHookResult(event, out); break;
+      case 'skill.activated': this.onSkillActivated(event, out); break;
+      case 'plugin_command.activated': this.onPluginCommandActivated(event, out); break;
       case 'shell.output': this.onShellOutput(event, out); break;
       case 'agent.status.updated': this.onAgentStatusUpdated(event, out); break;
       case 'plan.revision': this.onPlanRevision(event, out); break;
@@ -391,6 +400,10 @@ export class AgentV2Projector {
     if (!acc) return [];
     acc.resolved = true;
     return [this.interactionMessage(acc, record.state, record.time, record.response)];
+  }
+
+  get turnCount(): number {
+    return this.maxTurnId + 1;
   }
 
   recoveryEntities(now: () => number): ServerMessage[] {
@@ -952,6 +965,46 @@ export class AgentV2Projector {
         payload: { approved: this.planExitApproved ?? false, version: this.planVersion, key: this.planKey },
       });
     }
+    const swarmMode = event.swarmMode as boolean | undefined;
+    if (swarmMode === true) {
+      out.push({ type: 'system', ...this.base(event), system_id: this.nextSystemId(), subtype: 'swarm.enter' });
+    } else if (swarmMode === false) {
+      out.push({ type: 'system', ...this.base(event), system_id: this.nextSystemId(), subtype: 'swarm.exit' });
+    }
+  }
+
+  private onContextClear(event: ProjectionEvent, out: ServerMessage[]): void {
+    out.push({ type: 'system', ...this.base(event), system_id: this.nextSystemId(), subtype: 'clear' });
+  }
+
+  private onHookResult(event: ProjectionEvent, out: ServerMessage[]): void {
+    out.push({
+      type: 'system',
+      ...this.base(event),
+      system_id: this.nextSystemId(),
+      subtype: 'hook',
+      payload: { event: event.hookEvent as string | undefined, content: event.content, blocked: event.blocked === true ? true : undefined },
+    });
+  }
+
+  private onSkillActivated(event: ProjectionEvent, out: ServerMessage[]): void {
+    out.push({
+      type: 'system',
+      ...this.base(event),
+      system_id: this.nextSystemId(),
+      subtype: 'skill',
+      payload: { skill_name: event.skillName as string | undefined },
+    });
+  }
+
+  private onPluginCommandActivated(event: ProjectionEvent, out: ServerMessage[]): void {
+    out.push({
+      type: 'system',
+      ...this.base(event),
+      system_id: this.nextSystemId(),
+      subtype: 'notice',
+      payload: { message: event.commandName as string | undefined },
+    });
   }
 
   private onPlanRevision(event: ProjectionEvent, out: ServerMessage[]): void {

@@ -106,6 +106,10 @@ function factsPatchForEvent(event: V2BusEvent): SessionFactsPatch | undefined {
         },
       };
     }
+    case 'profile.bind': {
+      const model = event.model as string | undefined;
+      return model === undefined ? undefined : { status: { model } };
+    }
     case 'permission.set_mode': {
       const mode = event.mode as 'manual' | 'yolo' | 'auto' | undefined;
       return mode === undefined ? undefined : { permission: mode };
@@ -118,6 +122,10 @@ function factsPatchForEvent(event: V2BusEvent): SessionFactsPatch | undefined {
 export class SessionV2Binder {
   private readonly bindings = new Map<string, SessionV2Binding>();
   constructor(private readonly clock: () => number = Date.now) {}
+
+  peek(sessionId: string): SessionV2Binding | undefined {
+    return this.bindings.get(sessionId);
+  }
 
   attach(source: V2SessionSource): SessionV2Binding {
     let binding = this.bindings.get(source.sessionId);

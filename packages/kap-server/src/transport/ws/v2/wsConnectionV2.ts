@@ -5,6 +5,7 @@ import { ErrorCode } from '../../../protocol/error-codes';
 import { clientMessageSchema, serverMessageSchema, type ServerMessage } from '../../../protocol/v2/messages/index';
 import type { IConnectionRegistry } from '../connectionRegistry';
 import type { SessionV2Binder, V2Disposable, V2SessionSource } from '../../../services/v2Projection/binder';
+import type { GlobalV2Fanout } from '../../../services/v2Projection/globalFanout';
 
 export const WS_V2_PROTOCOL_VERSION = 2;
 export const WS_V2_CAPABILITIES = ['step_replay_v1', 'interaction_v1'] as const;
@@ -26,6 +27,7 @@ export interface WsConnectionV2Options {
   readonly sessionSourceFor: (sessionId: string) => V2SessionSource | undefined;
   readonly remoteAddress?: string | null;
   readonly userAgent?: string | null;
+  readonly globalFanout?: GlobalV2Fanout;
   readonly clock?: () => number;
   readonly outboundCapacity?: number;
   readonly inflightWindow?: number;
@@ -58,6 +60,7 @@ export class WsConnectionV2 {
   private closed = false;
   private heartbeatTimer?: ReturnType<typeof setInterval>;
   private lastPongAt: number;
+  private globalTarget?: V2Disposable;
 
   constructor(private readonly opts: WsConnectionV2Options) {
     this.id = ulid();
@@ -80,6 +83,7 @@ export class WsConnectionV2 {
       this.heartbeatTimer.unref?.();
     }
     opts.registry.add(this);
+    this.globalTarget = opts.globalFanout?.addTarget((msg) => this.send(msg));
     this.send({
       type: 'hello',
       protocol_version: WS_V2_PROTOCOL_VERSION,
@@ -229,6 +233,7 @@ export class WsConnectionV2 {
       subscription.sessionMessages?.dispose();
     }
     this.subscriptions.length = 0;
+    this.globalTarget?.dispose();
     this.opts.registry.remove(this.id);
   }
 }

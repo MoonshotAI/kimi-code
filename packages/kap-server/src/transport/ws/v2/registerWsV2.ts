@@ -1,6 +1,7 @@
 import { WebSocketServer } from 'ws';
 
 import type { SessionV2Binder, V2SessionSource } from '../../../services/v2Projection/binder';
+import type { GlobalV2Fanout } from '../../../services/v2Projection/globalFanout';
 import { selectWsBearerProtocol } from '../bearerProtocol';
 import type { IConnectionRegistry } from '../connectionRegistry';
 import { WsConnectionV2, type WsConnectionV2Logger } from './wsConnectionV2';
@@ -12,6 +13,7 @@ export interface RegisterWsV2Options {
   readonly registry: IConnectionRegistry;
   readonly serverId: string;
   readonly sessionSourceFor: (sessionId: string) => V2SessionSource | undefined;
+  readonly globalFanout?: GlobalV2Fanout;
   readonly clock?: () => number;
   readonly outboundCapacity?: number;
   readonly inflightWindow?: number;
@@ -30,6 +32,7 @@ export function registerWsV2(opts: RegisterWsV2Options): WebSocketServer {
       sessionSourceFor: opts.sessionSourceFor,
       remoteAddress: req.socket.remoteAddress ?? null,
       userAgent: req.headers['user-agent'] ?? null,
+      globalFanout: opts.globalFanout,
       clock: opts.clock,
       outboundCapacity: opts.outboundCapacity,
       inflightWindow: opts.inflightWindow,

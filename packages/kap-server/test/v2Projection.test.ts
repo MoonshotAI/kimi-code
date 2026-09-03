@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { parseServerMessage, type ServerMessage } from '../src/protocol/v2/messages/index';
+import { parseServerMessage, type ServerMessage, type SessionInfo, type WorkspaceInfo } from '../src/protocol/v2/messages/index';
 import type {
   InteractionPendingRecord,
   InteractionResolvedRecord,
@@ -8,8 +8,10 @@ import type {
 } from '../src/services/v2Projection/agentProjector';
 import { registerHistoryRoutes, historyResponseSchema } from '../src/routes/history';
 import { liveSessionSourceFor, SessionV2Binder, type SessionV2Binding, type V2SessionSource } from '../src/services/v2Projection/binder';
+import { GlobalV2Fanout, type GlobalV2Event } from '../src/services/v2Projection/globalFanout';
 import { ConnectionRegistry } from '../src/transport/ws/connectionRegistry';
 import { WsConnectionV2 } from '../src/transport/ws/v2/wsConnectionV2';
+import { AgentV2Projector } from '../src/services/v2Projection/agentProjector';
 import { buildColdHistory } from '../src/services/v2Projection/coldHistory';
 import { SessionV2Projector } from '../src/services/v2Projection/sessionProjector';
 import type { SessionFactsPatch } from '../src/services/v2Projection/sessionStateComposer';
@@ -3573,7 +3575,7 @@ interface WsScenario {
   binding: SessionV2Binding;
   buses: Map<string, FakeAgentBus>;
   activity: FakeActivitySource;
-  connect(opts?: { flush?: boolean; outboundCapacity?: number; inflightWindow?: number }): {
+  connect(opts?: { flush?: boolean; outboundCapacity?: number; inflightWindow?: number; globalFanout?: GlobalV2Fanout }): {
     socket: FakeWsSocket;
     frames: () => Record<string, unknown>[];
   };
@@ -3601,6 +3603,7 @@ function makeV2Scenario(opts: { sessionId: string; agentIds?: string[]; clock?: 
         clock: opts.clock ?? Date.now,
         outboundCapacity: connectOpts?.outboundCapacity,
         inflightWindow: connectOpts?.inflightWindow,
+        globalFanout: connectOpts?.globalFanout,
         heartbeatIntervalMs: 0,
       });
       void connection;
@@ -3793,4 +3796,196 @@ describe('WS v2 传输层', () => {
     expect(got.slice(2)).toEqual(expected);
   });
 });
+
+interface FanoutHarness {
+  emit(event: GlobalV2Event): void;
+  frames: ServerMessage[];
+  fanout: GlobalV2Fanout;
+}
+
+function makeFanoutHarness(opts: {
+  sessionInfoFor?: (sessionId: string) => Promise<SessionInfo | undefined>;
+  workspaceWireFor?: (workspace: unknown) => Promise<WorkspaceInfo | undefined>;
+  clock?: () => number;
+}): FanoutHarness {
+  const handlers: ((event: GlobalV2Event) => void)[] = [];
+  const frames: ServerMessage[] = [];
+  const fanout = new GlobalV2Fanout(
+    {
+      subscribe: (handler) => {
+        handlers.push(handler);
+        return { dispose: () => {} };
+      },
+    },
+    {
+      sessionInfoFor: opts.sessionInfoFor ?? (async () => undefined),
+      workspaceWireFor: opts.workspaceWireFor ?? (async () => undefined),
+      clock: opts.clock ?? Date.now,
+    },
+  );
+  fanout.addTarget((msg) => frames.push(msg));
+  return {
+    emit: (event) => {
+      for (const handler of [...handlers]) handler(event);
+    },
+    frames,
+    fanout,
+  };
+}
+
+describe('WS v2 全消息面', () => {
+  it('session-changes 自动标题', async () => {
+    const harness = makeFanoutHarness({
+      sessionInfoFor: async (sessionId) => ({
+        session_id: sessionId,
+        workspace_id: 'ws_01',
+        title: '修复登录页白屏',
+        status: 'active',
+        model: 'kimi-k3-highspeed',
+        created_at: '2026-09-03T16:40:00.000Z',
+        updated_at: '2026-09-03T17:00:06.700Z',
+        turn_count: 1,
+      }),
+    });
+    harness.emit({
+      type: 'session.meta.updated',
+      payload: { sessionId: 's_13', title: '修复登录页白屏', patch: { title: '修复登录页白屏' } },
+      time: Date.parse('2026-09-03T17:00:06.800Z'),
+    });
+    await settle();
+    const expected = fixtureSection('session-changes', '自动标题（WS）');
+    expect(harness.frames.length).toBe(1);
+    parseServerMessage(harness.frames[0]);
+    expect(harness.frames[0]).toEqual(expected[0]);
+  });
+
+  it('session-changes 设置变更', async () => {
+    const scenario = makeV2Scenario({ sessionId: 's_13' });
+    const { buses, activity } = scenario;
+    const { socket } = scenario.connect();
+    const drive = (event: FakeBusEvent) => buses.get('main')!.emit(event);
+    socket.deliver(JSON.stringify({ type: 'subscribe', id: 1, session_id: 's_13' }));
+    activity.set({ busy: false, mainTurnActive: false, pendingInteraction: 'none' });
+    drive({ type: 'agent.activity.updated', lifecycle: 'ready', time: Date.parse('2026-09-03T17:00:00.000Z') });
+    drive({ type: 'agent.status.updated', model: 'kimi-k3-highspeed', contextTokens: 5700, maxContextTokens: 262144, usage: { total: { inputOther: 5500, output: 162, inputCacheRead: 19500, inputCacheCreation: 0 } }, time: Date.parse('2026-09-03T17:00:00.000Z') });
+    await settle();
+    drive({ type: 'profile.bind', model: 'kimi-k3', time: Date.parse('2026-09-03T17:02:10.000Z') });
+    await settle();
+    drive({ type: 'permission.set_mode', mode: 'yolo', time: Date.parse('2026-09-03T17:02:40.000Z') });
+    await settle();
+    const expected = fixtureSection('session-changes', '设置变更（WS）');
+    const states = socket.sent
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((frame) => frame['type'] === 'session.state' && (frame['timestamp'] as string) >= '2026-09-03T17:02:00.000Z');
+    expect(states.length).toBe(2);
+    for (const frame of states) parseServerMessage(frame);
+    expect(states).toEqual(expected);
+  });
+
+  it('global 工作区', async () => {
+    const harness = makeFanoutHarness({
+      workspaceWireFor: async (workspace) => {
+        const ws = workspace as { id: string; root: string; name: string; createdAt: number; lastOpenedAt: number; sessionCount: number };
+        return {
+          id: ws.id,
+          root: ws.root,
+          name: ws.name,
+          created_at: new Date(ws.createdAt).toISOString(),
+          last_opened_at: new Date(ws.lastOpenedAt).toISOString(),
+          session_count: ws.sessionCount,
+        };
+      },
+    });
+    harness.emit({
+      type: 'event.workspace.created',
+      payload: { workspace: { id: 'ws_02', root: '/Users/moonshot/projects/demo', name: 'demo', createdAt: Date.parse('2026-09-03T17:10:00.000Z'), lastOpenedAt: Date.parse('2026-09-03T17:10:00.000Z'), sessionCount: 0 } },
+      time: Date.parse('2026-09-03T17:10:00.010Z'),
+    });
+    harness.emit({
+      type: 'event.workspace.updated',
+      payload: { workspace: { id: 'ws_02', root: '/Users/moonshot/projects/demo', name: 'demo', createdAt: Date.parse('2026-09-03T17:10:00.000Z'), lastOpenedAt: Date.parse('2026-09-03T17:12:00.000Z'), sessionCount: 1 } },
+      time: Date.parse('2026-09-03T17:12:00.010Z'),
+    });
+    await settle();
+    const expected = fixtureSection('global', '工作区（WS）');
+    expect(harness.frames.length).toBe(2);
+    for (const frame of harness.frames) parseServerMessage(frame);
+    expect(harness.frames).toEqual(expected);
+  });
+
+  it('global 全局配置', async () => {
+    const harness = makeFanoutHarness({});
+    harness.emit({
+      type: 'event.config.changed',
+      payload: {
+        changedFields: ['theme'],
+        config: {
+          model: 'kimi-k3-highspeed',
+          theme: 'dark',
+          permission: 'manual',
+          max_turns: 100,
+          providers: { anthropic: { base_url: 'https://api.anthropic.com' } },
+        },
+      },
+      time: Date.parse('2026-09-03T17:15:00.000Z'),
+    });
+    await settle();
+    const expected = fixtureSection('global', '全局配置（WS）');
+    expect(harness.frames.length).toBe(1);
+    parseServerMessage(harness.frames[0]);
+    expect(harness.frames[0]).toEqual(expected[0]);
+  });
+
+  it('global 变更通知（通知型薄帧）', async () => {
+    const harness = makeFanoutHarness({});
+    harness.emit({ type: 'event.model_catalog.changed', payload: { changed: [], unchanged: [], failed: [] }, time: Date.parse('2026-09-03T17:20:00.000Z') });
+    harness.emit({ type: 'event.plugin.changed', payload: {}, time: Date.parse('2026-09-03T17:21:00.000Z') });
+    harness.emit({ type: 'event.capability.changed', payload: { capability_id: 'mcp.github', install: { running: false } }, time: Date.parse('2026-09-03T17:22:00.000Z') });
+    await settle();
+    const expected = fixtureSection('global', '变更通知（WS）');
+    expect(harness.frames.length).toBe(3);
+    for (const frame of harness.frames) parseServerMessage(frame);
+    expect(harness.frames).toEqual(expected);
+  });
+
+  it('全局扇出：未订阅连接同样收到全局帧', async () => {
+    const harness = makeFanoutHarness({});
+    const scenario = makeV2Scenario({ sessionId: 's_15' });
+    const { socket, frames } = scenario.connect({ globalFanout: harness.fanout });
+    harness.emit({ type: 'event.model_catalog.changed', payload: {}, time: Date.parse('2026-09-03T17:20:00.000Z') });
+    await settle();
+    const got = frames();
+    expect(got[0]).toEqual(HELLO_FRAME);
+    expect(got[1]).toEqual({ type: 'model_catalog', timestamp: '2026-09-03T17:20:00.000Z' });
+    void socket;
+  });
+
+  it('system 剩余 subtype：hook / skill / notice / clear / swarm', () => {
+    const projector = new AgentV2Projector('s_x', 'main');
+    const B = Date.parse('2026-09-03T18:00:00.000Z');
+    const out = [
+      ...projector.apply({ type: 'hook.result', hookEvent: 'user_prompt_submit', content: '继续', blocked: false, time: B + 10 }),
+      ...projector.apply({ type: 'skill.activated', skillName: 'review-pr', time: B + 20 }),
+      ...projector.apply({ type: 'plugin_command.activated', commandName: 'compact', time: B + 30 }),
+      ...projector.apply({ type: 'context.clear', time: B + 40 }),
+      ...projector.apply({ type: 'agent.status.updated', swarmMode: true, time: B + 50 }),
+      ...projector.apply({ type: 'agent.status.updated', swarmMode: false, time: B + 60 }),
+    ];
+    for (const msg of out) parseServerMessage(msg);
+    const systems = out as { type: string; subtype: string; system_id: string }[];
+    expect(systems.map((msg) => [msg.type, msg.subtype])).toEqual([
+      ['system', 'hook'],
+      ['system', 'skill'],
+      ['system', 'notice'],
+      ['system', 'clear'],
+      ['system', 'swarm.enter'],
+      ['system', 'swarm.exit'],
+    ]);
+    expect(systems.map((msg) => msg.system_id)).toEqual(['m_01', 'm_02', 'm_03', 'm_04', 'm_05', 'm_06']);
+    expect(out[0]).toMatchObject({ payload: { event: 'user_prompt_submit', content: '继续' } });
+    expect(out[1]).toMatchObject({ payload: { skill_name: 'review-pr' } });
+    expect(out[2]).toMatchObject({ payload: { message: 'compact' } });
+  });
+});
+
 
