@@ -83,8 +83,6 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'task.started',
   'task.terminated',
   'task.waitDelivered',
-  'staleGuard.recorded',
-  'staleGuard.cleared',
   'interaction.request',
   'interaction.resolved',
   'plan.revision',

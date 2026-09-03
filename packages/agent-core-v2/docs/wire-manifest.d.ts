@@ -24,7 +24,7 @@
 // cross-reducers), blobs (the folding states whose blob codec offloads inline
 // media to blob storage), owner (the source file declaring the class).
 
-// Index (62 record types)
+// Index (60 record types)
 //   config.update                      profile                                               src/agent/profile/profileOps.ts
 //   context.append_loop_event          contextMemory, turn                                   src/agent/contextMemory/contextEvents.ts
 //   context.append_message             contextMemory, plan, task.notificationDelivery        src/agent/contextMemory/contextEvents.ts
@@ -62,8 +62,6 @@
 //   prompt.completed                   promptResolution                                      src/agent/prompt/promptService.ts
 //   prompt.steered                     promptResolution                                      src/agent/prompt/promptService.ts
 //   runtime.set_binding                runtimeBinding                                        src/agent/runtimeBinding/runtimeBindingOps.ts
-//   staleGuard.cleared                 staleGuard                                            src/features/staleGuard/staleGuardOps.ts
-//   staleGuard.recorded                staleGuard                                            src/features/staleGuard/staleGuardOps.ts
 //   swarm_mode.enter                   swarm                                                 src/features/swarm/swarmOps.ts
 //   swarm_mode.exit                    contextMemory, swarm                                  src/features/swarm/swarmOps.ts
 //   task.started                       task                                                  src/agent/task/taskOps.ts
@@ -599,24 +597,6 @@ interface RuntimeSetBindingPayload {
 }
 
 /**
- * states: staleGuard
- * owner: src/features/staleGuard/staleGuardOps.ts
- */
-interface StaleGuardClearedPayload {
-  _name: 'staleGuard.cleared';
-}
-
-/**
- * states: staleGuard
- * owner: src/features/staleGuard/staleGuardOps.ts
- */
-interface StaleGuardRecordedPayload {
-  _name: 'staleGuard.recorded';
-  path: string;
-  mtimeMs: number;
-}
-
-/**
  * states: swarm
  * owner: src/features/swarm/swarmOps.ts
  */
@@ -973,8 +953,6 @@ interface WirePayloadMap {
   "prompt.completed": PromptCompletedPayload;
   "prompt.steered": PromptSteeredPayload;
   "runtime.set_binding": RuntimeSetBindingPayload;
-  "staleGuard.cleared": StaleGuardClearedPayload;
-  "staleGuard.recorded": StaleGuardRecordedPayload;
   "swarm_mode.enter": SwarmModeEnterPayload;
   "swarm_mode.exit": SwarmModeExitPayload;
   "task.started": TaskStartedPayload;

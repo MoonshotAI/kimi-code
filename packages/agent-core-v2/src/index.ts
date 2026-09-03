@@ -365,7 +365,6 @@ export * from '#/features/goal/goalService';
 export * from '#/features/goal/goalOps';
 export * from '#/features/goal/types';
 import '#/features/goal/goalFeature';
-import '#/features/staleGuard/staleGuardFeature';
 export * from '#/features/tower/flag';
 export * from '#/features/tower/tower';
 export * from '#/features/tower/towerFeature';
