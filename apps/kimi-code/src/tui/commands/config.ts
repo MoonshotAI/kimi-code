@@ -804,9 +804,9 @@ export async function applyExperimentalFeatureChanges(
     host.refreshSlashCommandAutocomplete();
     host.restoreEditor();
     if (host.session !== undefined) {
-      await host.session.reloadSession();
+      const reloadedSession = await host.harness.reloadSession({ id: host.session.id });
       await host.reloadCurrentSessionView(
-        host.session,
+        reloadedSession,
         'Experimental features updated. Session reloaded.',
       );
     } else {
