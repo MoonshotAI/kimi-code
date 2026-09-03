@@ -205,4 +205,14 @@ wire.jsonl 冷重建 → 按时间排序的实体消息载荷列表（与 WS 同
 - **流式文本**：占位帧（`status: streaming, text: ''`）与首个 delta 同帧时间；终态全量帧与下一事件同帧时间；空 delta 只开占位不发 delta 帧（`announced` 标记）；retry 重置在流文本但 message_id 不变（textSeq 不回退）；kind 切换/工具事件/step 收官都会关闭在流文本。
 - **时间戳纪律**：同一引擎事件产出的全部消息共享事件时间；`started_at` = 实体首帧时间、`ended_at`/`finished_at` = 终态帧时间；实例 fixture 已按此归一化（code-app `scripts/mock-ws-server/normalize-examples.mjs`，含 phase.since 真实 epoch 修正），HTML 为唯一来源、examples.json 为抽取产物、kap-server test/fixtures/v2-examples.json 为 vendor 副本。
 - **tool.result**：error 与 output 互斥（error 帧不带 output）；done 帧清掉残留的 progress。
-- **已知引擎落差**：`turn.step.interrupted` 引擎 payload 无 usage，fixture 有——投影层有就映射，待引擎补齐确认。
+- **已知引擎落差**：`turn.step.interrupted` 引擎 payload 无 usage——已按引擎真相结案（fixture 移除该字段，投影层仅在有值时映射）。
+
+## 10. P2–P4 落地备忘
+
+- **REST 排序**：turn 组（turn 序）→ 组内 turn 封面（仅已结束 turn）→ step 组（step 序：step 封面〔仅已完成〕→ 组内容 wire 序）；turn 级 user（含 steer）挂产生时的 step 组、紧跟封面后。在飞 turn 无封面但其已完成 step 组照常进历史、user 保持 running，`in_flight { turn_id, step_id }` 取最近 step.begin。keyset：`before_turn` 往旧、`after_step` 补尾、默认最新 `page_size` 个 turn 组。
+- **冷折叠**：undo 不删实体（只出 system(undo) marker）；clear/compaction 为 floor（floor 前折叠出默认页、has_more 标记、compaction marker 置顶，`summarized_through_turn` 由当前 turn 序推导）；llm-retry 的失败尝试折叠（同 ordinal step.begin 复兴、started_at 保留首次、正文只留重试后）；REST 不含 todo 实体（恢复载荷的状态实体）。封面帧 `timestamp = 终态记录 time + 5ms`、user `finished_at = prompt.completed/aborted`、文本 ts = 最后 content.part、tool_call ts = result、interaction ts = resolved。10 万行 wire 冷重建 ~240ms。
+- **恢复载荷**（`AgentV2Projector.recoveryEntities`）：在飞 turn 封面 → 当前 step → 在流实体全量（累积 streaming）→ pending interactions → running tasks → 最新 todo → **仅 queued 态 running user**（在飞 turn 的开场 user 不进恢复）→ 重 compose 的 session.state。恢复与直播同一序列、无 replay 标记；`endedAt` 与帧 ts 解耦（断线期间收官、补发时刻重发）。`SessionStateComposer.hasFacts()` 决定空恢复不发 state。
+- **传输**：`/api/v2/ws` 与 v1 并存；hello 即恢复（无游标协商）；ack.code 用 ErrorCode 枚举；hello capabilities 以 fixture 为准（`step_replay_v1` + `interaction_v1`）；有界出站队列（容量 256 / in-flight 64）溢出即 `backpressure_overflow` 断开；心跳用 ws 协议层 ping/pong；每帧过 schema（outboundGuard）。binder facts 合批（同微任务多 patch 只 compose 一次）且不冲刷在流文本（`applyFacts(patch, time, flushTexts=false)`）。
+- **全局扇出**：App 级 `IEventService` → session 索引帧（meta.updated 全量 SessionInfo + changed_fields、created/archived；无 deleted 事件）、workspace 三 subtype（复用 toWireWorkspace）、config 脱敏全量 + changed_fields（脱敏在发布源头 toConfigResponse）、config.warning、model_catalog/plugin/capability 薄通知（客户端 REST 重拉）。未订阅连接也收全局帧。turn_count 取 live 投影器 maxTurnId+1。
+- **system subtype 全谱**：compaction / undo / clear / goal / plan.enter / plan.exit / plan.revision / swarm.enter / swarm.exit / skill / notice / hook / interruption，id 统一 `m_{NN}`。
+- **引擎侧已补**：`prompt.submitted.steer`（submitSteer 标记）、`plan.revision.summary`（首个 markdown 标题）；`cron.fired` 无 promptId——投影层内部合成绑定（按 origin 关联），不改引擎。
