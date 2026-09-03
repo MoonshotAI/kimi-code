@@ -1,13 +1,8 @@
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 
-import { type RunningServer, startServer } from '../src/start';
-import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { WS_BEARER_PROTOCOL_PREFIX } from '../src/transport/ws/bearerProtocol';
+import { sharedServer } from './helpers/sharedServer';
 
 function openWs(url: string, protocols: string | string[]): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
@@ -18,39 +13,24 @@ function openWs(url: string, protocols: string | string[]): Promise<WebSocket> {
 }
 
 describe('server-v2 WS bearer subprotocol', () => {
-  let server: RunningServer | undefined;
-  let home: string | undefined;
-  let wsUrl: string;
   const sockets: WebSocket[] = [];
 
-  beforeEach(async () => {
-    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-ws-bearer-'));
-    server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
-    wsUrl = `ws://127.0.0.1:${server.port}/api/v1/ws`;
-  });
-
-  afterEach(async () => {
+  afterEach(() => {
     for (const ws of sockets.splice(0)) {
       ws.close();
-    }
-    if (server !== undefined) {
-      await server.close();
-      server = undefined;
-    }
-    if (home !== undefined) {
-      await rm(home, { recursive: true, force: true });
-      home = undefined;
     }
   });
 
   it('accepts a valid bearer subprotocol', async () => {
-    const token = server?.authTokenService.getToken() ?? '';
+    const token = sharedServer().token;
+    const wsUrl = `${sharedServer().base.replace(/^http/, 'ws')}/api/v1/ws`;
     const ws = await openWs(wsUrl, `${WS_BEARER_PROTOCOL_PREFIX}${token}`);
     sockets.push(ws);
     expect(ws.protocol).toBe(`${WS_BEARER_PROTOCOL_PREFIX}${token}`);
   });
 
   it('rejects an invalid bearer subprotocol', async () => {
+    const wsUrl = `${sharedServer().base.replace(/^http/, 'ws')}/api/v1/ws`;
     await expect(openWs(wsUrl, `${WS_BEARER_PROTOCOL_PREFIX}wrong-token`)).rejects.toThrow();
   });
 });

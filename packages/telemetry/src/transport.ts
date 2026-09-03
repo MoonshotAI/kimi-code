@@ -265,7 +265,9 @@ export function flattenEvent(event: EnrichedTelemetryEvent): Record<string, Tele
       flattenNested(out, 'context', value);
     } else {
       assertPrimitive(key, value);
-      out[key] = value;
+      if (value !== null) {
+        out[key] = value;
+      }
     }
   }
   return out;
@@ -275,7 +277,9 @@ function flattenNested(target: Record<string, TelemetryPrimitive>, prefix: strin
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return;
   for (const [key, nestedValue] of Object.entries(value)) {
     assertPrimitive(`${prefix}.${key}`, nestedValue);
-    target[`${prefix}_${key}`] = nestedValue;
+    if (nestedValue !== null) {
+      target[`${prefix}_${key}`] = nestedValue;
+    }
   }
 }
 

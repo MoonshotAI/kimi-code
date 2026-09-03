@@ -411,6 +411,29 @@ describe('CloudAppender', () => {
     ).toHaveLength(0);
   });
 
+  it('drops null values from the outbound payload', async () => {
+    const requests: CapturedRequest[] = [];
+    const appender = new CloudAppender(
+      baseOptions({
+        homeDir,
+        deviceId: 'dev123',
+        fetchImpl: makeFetch((req) => {
+          requests.push(req);
+          return okResponse();
+        }),
+      }),
+    );
+
+    appender.track({ event: 'evt', context: {}, properties: { empty: null, keep: 'yes' } });
+    await appender.flush();
+
+    expect(requests).toHaveLength(1);
+    const event = requests[0]?.body.events[0];
+    expect(event?.['property_keep']).toBe('yes');
+    expect(event).not.toHaveProperty('property_empty');
+    expect(event).not.toHaveProperty('session_id');
+  });
+
   it('drops non-primitive properties and reports the violation', async () => {
     const errors: unknown[] = [];
     setUnexpectedErrorHandler((err) => errors.push(err));

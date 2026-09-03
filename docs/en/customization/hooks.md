@@ -17,7 +17,7 @@ The script's response is determined by two things:
 - **Exit code**: `0` means allow, `2` means block, other non-zero values default to allow
 - **Standard output** (stdout): can include explanatory text
 
-Even if the script errors or times out, the CLI **will not interrupt your work** as a result — this "allow on failure" design is called fail-open, preventing hook errors from becoming blockers.
+Even if the script errors or times out, the CLI **will not interrupt your work** as a result. This "allow on failure" design is called fail-open, preventing hook errors from becoming blockers.
 
 ::: warning Note
 Precisely because of fail-open, Hooks are suitable for alerts and lightweight interception, but **should not be used as the sole security barrier**. For truly high-risk operations, rely on permission approvals and manual confirmation.
@@ -43,7 +43,7 @@ All hook rules are written in the `[[hooks]]` array in `~/.kimi-code/config.toml
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `event` | `string` | Yes | Trigger event name; must be one of the entries in the "Event Reference" table below |
+| `event` | `string` | Yes | Trigger event name; must be one of the events in the [event reference](#event-reference) |
 | `matcher` | `string` | No | A regular expression to filter event targets; if omitted, matches all |
 | `command` | `string` | Yes | The shell command to run when triggered |
 | `timeout` | `integer` | No | Timeout in seconds, range 1–600; defaults to 30 seconds |
@@ -52,7 +52,14 @@ All hook rules are written in the `[[hooks]]` array in `~/.kimi-code/config.toml
 
 **When multiple rules match the same event**, all matching hooks run in parallel; multiple rules with identical `command` values run only once.
 
-The working directory for hook commands is the current session's project directory. On non-Windows platforms, hook processes are placed in a separate process group; on timeout, a signal is sent first to give the process a chance to clean up, then it is forcibly terminated.
+The working directory for hook commands is the current session's project directory.
+
+<details>
+<summary>Process group and timeout handling</summary>
+
+On non-Windows platforms, hook processes run in a separate process group; on timeout, the CLI first sends a signal to give the script a chance to clean up, then forcibly terminates it.
+
+</details>
 
 ### Event Data Format
 
@@ -68,7 +75,7 @@ Each time a hook triggers, the CLI passes the following base information to the 
 }
 ```
 
-Specific events will also include additional fields (such as tool name and command content); see the event reference below. All field names use snake_case.
+Specific events will also include additional fields (such as tool name and command content); see the [event reference](#event-reference). All field names use snake_case.
 
 ## Return Values
 
@@ -93,33 +100,33 @@ You can also return a JSON object via stdout to block:
 ```
 
 ::: info Which events support blocking?
-Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) have return values that affect the main flow. All other events are **observation-only events** — they fire and forget; the main flow is unaffected regardless of what the script returns.
+Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) have return values that affect the main flow. All other events are **observation-only events**: they fire and forget, and the main flow is unaffected regardless of what the script returns.
 :::
 
 ## Event Reference
 
 | Event | Matcher matches | Supports blocking? | Description |
 | --- | --- | --- | --- |
-| `UserPromptSubmit` | The text submitted by the user | ✓ | Triggered when the user sends a message; returned text is appended to context; if blocked, the model is not called for this turn |
-| `UserPromptQueued` | The queued prompt text | — | Triggered when a message is queued while a turn is still running; the payload includes `prompt_id`, `prompt`, and `queue_length` (observation only) |
+| `UserPromptSubmit` | The text submitted by the user | ✓ | Triggered when the user sends a message; returned text is appended to context; blocking skips the model call this turn |
+| `UserPromptQueued` | The queued prompt text | — | Triggered when a message is queued while a turn is still running; payload includes `prompt_id`, `prompt`, `queue_length` |
 | `PreToolUse` | Tool name | ✓ | Triggered before a tool call (before permission checks); the tool will not execute if blocked |
-| `Stop` | Empty string | ✓ | Triggered when the model is about to end the current turn; if blocked, a message can be appended to let the model continue |
-| `TurnStarted` | Turn origin kind (e.g. `user`, `task`, `system_trigger`) | — | Triggered when a new turn begins; the payload includes `turn_id`, `origin_kind`, `origin_name`, and `prompt` (observation only) |
-| `PostToolUse` | Tool name | — | Triggered after a tool executes successfully (observation only) |
-| `PostToolUseFailure` | Tool name | — | Triggered after a tool fails or is blocked (observation only) |
-| `PermissionRequest` | Tool name | — | Triggered just before waiting for user approval (observation only) |
-| `PermissionResult` | Tool name | — | Triggered after approval completes (observation only) |
-| `SessionStart` | `startup` or `resume` | — | Triggered after a new session starts or a previous session resumes; the payload includes `source`, `model`, and `profile` |
+| `Stop` | Empty string | ✓ | Triggered when the model is about to end the turn; if blocked, a message can be appended to let the model continue |
+| `TurnStarted` | Turn origin kind (e.g. `user`, `task`, `system_trigger`) | — | Triggered when a new turn begins; payload includes `turn_id`, `origin_kind`, `origin_name`, `prompt` |
+| `PostToolUse` | Tool name | — | Triggered after a tool executes successfully |
+| `PostToolUseFailure` | Tool name | — | Triggered after a tool fails or is blocked |
+| `PermissionRequest` | Tool name | — | Triggered just before waiting for user approval |
+| `PermissionResult` | Tool name | — | Triggered after approval completes |
+| `SessionStart` | `startup` or `resume` | — | Triggered after a session starts or resumes; payload includes `source`, `model`, `profile` |
 | `SessionEnd` | `exit` or `archive` | — | Triggered after a session closes; `archive` means the session was archived rather than exited |
-| `SessionHeartbeat` | Empty string | — | Triggered every 60 seconds while the session is alive; the timer only runs when this event is configured. The payload includes `uptime_ms` (observation only) |
+| `SessionHeartbeat` | Empty string | — | Triggered every 60 seconds while the session is alive; the timer runs only when this event is configured; payload includes `uptime_ms` |
 | `SubagentStart` | Sub-agent name | — | Triggered before a sub-agent starts running |
-| `SubagentStop` | Sub-agent name | — | Triggered after a sub-agent completes successfully (observation only) |
-| `TaskStarted` | Task kind (`agent`, `process`, or `question`) | — | Triggered when a background task starts; the payload includes `task_id`, `description`, and `detached` (observation only) |
-| `StopFailure` | Error type | — | Triggered after the current turn fails due to an error (observation only) |
-| `Interrupt` | Empty string | — | Triggered when the user interrupts the current turn (e.g. pressing Esc); not fired for timeouts or other programmatic aborts. `Stop` does not fire on interrupts, so this event fires instead. The payload includes a `reason` field (observation only) |
+| `SubagentStop` | Sub-agent name | — | Triggered after a sub-agent completes successfully |
+| `TaskStarted` | Task kind (`agent`, `process`, or `question`) | — | Triggered when a background task starts; payload includes `task_id`, `description`, `detached` |
+| `StopFailure` | Error type | — | Triggered after the current turn fails due to an error |
+| `Interrupt` | Empty string | — | Triggered when the user interrupts the turn (e.g. pressing Esc); not fired for timeouts or programmatic aborts; fires in place of `Stop`; payload includes `reason` |
 | `PreCompact` | `manual` or `auto` | — | Triggered before context compaction begins; return values are completely ignored |
-| `PostCompact` | `manual` or `auto` | — | Triggered after context compaction completes (observation only) |
-| `Notification` | Notification type (e.g. `task.completed`) | — | Triggered when a background task status changes (observation only) |
+| `PostCompact` | `manual` or `auto` | — | Triggered after context compaction completes |
+| `Notification` | Notification type (e.g. `task.completed`) | — | Triggered when a background task status changes |
 
 ## Example: Blocking Dangerous Shell Commands
 
@@ -154,7 +161,7 @@ process.stdin.on('end', () => {
 After blocking, Kimi Code CLI writes the blocking reason back into the context, and the model can use this to choose a safer alternative.
 
 ::: warning Note
-This example only demonstrates the blocking mechanism — it is not a production-grade security parser. Real scenarios are better served by whitelists, or a dedicated shell parser to handle quoting, variable expansion, and multi-command sequences.
+This example only demonstrates the blocking mechanism and is not a production-grade security parser. Real scenarios are better served by whitelists, or a dedicated shell parser to handle quoting, variable expansion, and multi-command sequences.
 :::
 
 ## Next steps

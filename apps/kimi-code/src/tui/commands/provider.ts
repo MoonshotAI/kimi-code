@@ -306,18 +306,35 @@ export async function setDefaultModel(
     effort,
     model === undefined ? undefined : effectiveModelForHost(host, model),
   );
+  if (host.session === undefined && host.engineV2) {
+    // A first prompt may still be inside lazy creation: wait it out so the
+    // pick lands on the new session instead of racing its assembly (same
+    // coordination as the /model path).
+    await host.waitForLazyCreation();
+  }
   await host.harness.setConfig({
     defaultModel: alias,
     thinking,
   });
-  await host.authFlow.refreshConfigAfterLogin();
+  // Whether activation made the engine emit model_switch (it reached a live
+  // session AND changed the bound alias — both engines track only an actual
+  // change). Recorded at activation time rather than snapshotted at entry: a
+  // lazy session can come live while the config writes above are pending; a
+  // session created BY activation (v1) or a same-alias rebind does not count
+  // — both bind the model without an engine event.
+  let engineTrackedSwitch = await host.authFlow.refreshConfigAfterLogin();
   // refreshConfigAfterLogin reactivates from the persisted config, so a pick
   // the gate keeps session-only never reaches the runtime — apply it after
   // the refresh, or the persisted value would clobber it.
   if (thinking.effort === undefined && effort !== 'off' && effort !== 'on') {
-    await host.authFlow.activateModelAfterLogin(alias, effort);
+    engineTrackedSwitch =
+      (await host.authFlow.activateModelAfterLogin(alias, effort)) || engineTrackedSwitch;
   }
-  host.track('model_switch', { model: alias });
+  // When the engine never emitted (no live session, or the alias was already
+  // bound), the TUI stays the sole producer for the pick.
+  if (!engineTrackedSwitch) {
+    host.track('model_switch', { model: alias });
+  }
   host.showStatus(`Default model set to ${alias} with thinking ${effort}.`);
 }
 

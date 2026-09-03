@@ -1,6 +1,6 @@
 # Plugins
 
-Plugins package reusable Kimi Code CLI capabilities into installable units — they can add [Agent Skills](./skills.md), custom [agents](./agents.md), automatically load a specified Skill at session start, contribute system-prompt instructions, and declare MCP servers to provide real tool capabilities. They are ideal for sharing workflows with a team, connecting to external services, or installing extensions from the [official plugins](#official-plugins).
+Plugins package reusable Kimi Code CLI capabilities into installable units: they can add [Agent Skills](./skills.md), custom [agents](./agents.md), automatically load a specified Skill at session start, contribute system-prompt instructions, and declare MCP servers to provide real tool capabilities. They are ideal for sharing workflows with a team, connecting to external services, or installing extensions from the [official plugins](#official-plugins).
 
 ## Installation and Management
 
@@ -20,7 +20,7 @@ Common keys:
 | `D` | Remove the selected installed plugin (Installed tab) |
 | `M` | Manage MCP servers for the selected plugin (Installed tab) |
 | `R` | Reload `installed.json` and all manifests (Installed tab) |
-| `Enter` | Installed tab: install the available update, or view details if up to date · Official/Curated tab: install or update · Custom tab: install |
+| `Enter` | Installed: update if available, or view details · Official/Curated: install or update · Custom: install |
 | `I` | View plugin details (Installed tab) |
 | `Esc` | Go back or cancel |
 
@@ -95,13 +95,13 @@ All official plugins share the same installation and upgrade flow:
 Kimi WebBridge installs in two parts: after the steps above, you also need to [install the browser extension](#install-the-browser-extension) before it works.
 :::
 
-Official plugins do not update automatically — when an update is available, you'll be prompted the next time you use the old version. To upgrade, repeat the installation steps above.
+Official plugins do not update automatically. When an update is available, you'll be prompted the next time you use the old version. To upgrade, repeat the installation steps above.
 
 ### Kimi Datasource <Badge type="tip" text="v3.4.0" />
 
-Kimi Datasource is the official Kimi Code data plugin, letting you query financial market data, financial news, macroeconomic indicators, corporate registration records, academic literature, Chinese laws and regulations, and official data from intergovernmental organizations in natural language — no manual API calls or data accounts required.
+Kimi Datasource is the official Kimi Code data plugin, letting you query financial market data, financial news, macroeconomic indicators, corporate registration records, academic literature, Chinese laws and regulations, and official data from intergovernmental organizations in natural language. No manual API calls or data accounts required.
 
-Sources include authoritative institutions and leading databases such as the World Bank, IMF, OECD, FRED, WHO, FAO, the National Bureau of Statistics of China, Wind, S&P Capital IQ, SEC EDGAR, Caixin, Xinhua Finance, and Hundsun Juyuan — all traceable to their original publishers.
+Sources include authoritative institutions and leading databases such as the World Bank, IMF, OECD, FRED, WHO, FAO, the National Bureau of Statistics of China, Wind, S&P Capital IQ, SEC EDGAR, Caixin, Xinhua Finance, and Hundsun Juyuan, all traceable to their original publishers.
 
 You must first complete OAuth login with a Kimi Code account via `/login`; data queries consume your Kimi Code plan quota.
 
@@ -137,7 +137,7 @@ Pull the annual report, standardized financial metrics, top-50 holders, and cons
 :::
 
 ::: details **Financial news and industry data** — Tracking market hotspots or policy moves?
-Query Caixin's market news, bond/fund/futures data, and listed-company supply-chain relationships, plus news, policies, announcements, and market flashes from the Xinhua Finance national financial information platform — authoritative and traceable sources.
+Query Caixin's market news, bond/fund/futures data, and listed-company supply-chain relationships, plus news, policies, announcements, and market flashes from the Xinhua Finance national financial information platform. All sources are authoritative and traceable.
 :::
 
 ::: details **Standards lookup** — Need to check compliance against Chinese standards?
@@ -148,14 +148,14 @@ Look up national (GB), industry, local, and association standards by number or t
 
 | Category | Scope |
 |---|---|
-| Stocks & financial markets | Well-known databases such as Wind, S&P Capital IQ, and SEC EDGAR, covering prices, technical indicators, financials and valuation, and consensus estimates across A-shares, HK, US, and other major markets, plus official filings for 8,000+ US-listed companies |
-| Financial news & industry data | Well-known data platforms such as Caixin and Xinhua Finance, covering market news and flashes, listed-company announcements, regulatory policies, bond/fund/futures data, corporate credit violation records, and listed-company supply-chain relationships |
-| Macroeconomics | Well-known databases such as the World Bank, IMF, OECD, FRED, and China's National Bureau of Statistics, plus official statistics from IGOs such as WHO and FAO, covering 50+ years of time series for 189 countries and China indicators at national/provincial/municipal levels: GDP, trade, population, exchange rates, CPI, balance of payments, GDP forecasts, and more |
-| China standards | National (GB), industry, local, and association standards — numbers, titles, status, and details, with official full-text entry points for some national and public association standards |
-| Corporate data | Business registration, equity chain, legal risk, and related-entity graph for mainland Chinese companies |
-| Academic literature | Millions of papers across physics, mathematics, CS, quantitative finance, economics — including preprints |
-| Legal | Yuandian Legal and other leading legal databases, covering Chinese laws, regulations, and judicial cases — statute search and detail lookup across all authority levels, plus ordinary and authoritative case search |
-| Smart screening | Well-known databases such as Gildata, covering natural-language screening for stocks, funds, and fund managers, plus macro-industry data, research reports, announcements, and news |
+| Stocks & financial markets | Wind, S&P Capital IQ, SEC EDGAR; A-share/HK/US quotes, indicators, financials, valuation, estimates; 8,000+ US-listed filings |
+| Financial news & industry data | Caixin, Xinhua Finance; market news and flashes, company announcements, regulatory policy, bond/fund/futures data, credit-violation records, supply-chain ties |
+| Macroeconomics | World Bank, IMF, OECD, FRED, China's NBS, WHO, FAO; 50+ years, 189 countries; national/provincial/municipal China indicators (GDP, trade, population, exchange rates, CPI, balance of payments) |
+| China standards | National (GB), industry, local, and association standards: IDs, titles, status, details; official full text for some GB and public association standards |
+| Corporate data | Registration, equity chain, legal risk, and related-entity graph for mainland Chinese companies |
+| Academic literature | Millions of papers in physics, mathematics, CS, quantitative finance, economics, including preprints |
+| Legal | Yuandian Legal and other leading legal databases: Chinese laws, regulations, judicial cases; statute search across authority levels; ordinary and authoritative case search |
+| Smart screening | Gildata and other well-known databases: natural-language screening of stocks, funds, and fund managers; macro-industry data, research reports, announcements, news |
 
 #### Billing and limitations
 
@@ -166,7 +166,7 @@ Look up national (GB), industry, local, and association standards by number or t
 
 ### Kimi WebBridge <Badge type="tip" text="v1.11.3" />
 
-Kimi WebBridge lets AI drive your browser directly — not an emulator, not a crawler, but the browser you use every day, with your login sessions and cookies. AI can open pages, read content, click buttons, fill in forms, and take screenshots just like you do, taking repetitive web operations off your hands. See the [Kimi WebBridge site](https://www.kimi.com/features/webbridge) for a product overview.
+Kimi WebBridge lets AI drive your browser directly: not an emulator, not a crawler, but the browser you use every day, with your login sessions and cookies. AI can open pages, read content, click buttons, fill in forms, and take screenshots just like you do, taking repetitive web operations off your hands. See the [Kimi WebBridge site](https://www.kimi.com/features/webbridge) for a product overview.
 
 #### Install the browser extension
 
@@ -195,7 +195,7 @@ Use this when you can't reach the stores:
 
 #### What you can do
 
-- **Web automation**: Just say what you need — AI clicks through pages, fills in forms, reads content, and takes screenshots for you
+- **Web automation**: Just say what you need, and AI clicks through pages, fills in forms, reads content, and takes screenshots for you
 - **Social trending research**: Automatically browse trending topics on X (Twitter), Weibo, and Xiaohongshu, open the top-liked posts one by one to screenshot and extract key viewpoints, then organize everything into a research library with topic suggestions
 - **Job listing collection**: Filter positions on recruiting sites by keyword, city, and job type, and organize titles, links, companies, salaries, and application methods into a table
 - **Competitive analysis**: Batch-question multiple AI products and collect their answers to build side-by-side comparison reports
@@ -207,9 +207,9 @@ Kimi Computer Use lets AI operate your desktop apps directly, clicking, dragging
 
 #### Authorization (macOS)
 
-The first time you use Kimi Computer Use after installation, it shows an authorization window — just follow the prompts:
+The first time you use Kimi Computer Use after installation, it shows an authorization window. Just follow the prompts:
 
-1. Click **Authorize** next to **Accessibility** and **Screen Recording**, and enable both permissions in System Settings — the former lets it perform clicks, typing, and scrolling; the latter lets it read screen content and locate UI elements
+1. Click **Authorize** next to **Accessibility** and **Screen Recording**, and enable both permissions in System Settings: the former lets it perform clicks, typing, and scrolling; the latter lets it read screen content and locate UI elements
 2. Turn on the **Kimi Code** switch under "Connect local agents", then restart Kimi Code for it to take effect
 
 <div style="max-width: 380px; margin: 0 auto;">
@@ -275,20 +275,24 @@ Supported fields:
 | --- | --- |
 | `name` | Required; serves as the plugin id. Must match `[a-z0-9][a-z0-9_-]{0,63}` |
 | `version`, `description`, `keywords`, `author`, `homepage`, `license` | Display metadata |
-| `interface` | Fields shown in `/plugins`: `displayName`, `shortDescription`, `longDescription`, `developerName`, `websiteURL` |
-| `skills` | One or more `./` paths; must be within the plugin root directory. When omitted, the `SKILL.md` in the root directory is treated as a single Skill root |
-| `agents` | One or more `./` paths; must be within the plugin root directory and point to directories containing [agent files](./agents.md#custom-agents). When omitted, the `agents/` directory under the plugin root (if present) is picked up automatically |
+| `interface` | Shown in `/plugins`: `displayName`, `shortDescription`, `longDescription`, `developerName`, `websiteURL` |
+| `skills` | One or more `./` paths within the plugin root; if omitted, root `SKILL.md` is the single Skill root |
+| `agents` | One or more `./` paths within the plugin root, pointing to [agent files](./agents.md#custom-agents); if omitted, `agents/` is auto-discovered |
 | `sessionStart.skill` | Loads the specified plugin Skill into the main Agent when a new or resumed session starts |
 | `skillInstructions` | Additional instructions appended whenever a Skill from this plugin is loaded |
 | `systemPrompt` | Inline instructions contributed to the agent's system prompt while the plugin is enabled |
-| `systemPromptPath` | A `./` path to a UTF-8 text file containing system-prompt instructions; combined after `systemPrompt` when both are present |
+| `systemPromptPath` | A `./` path to a UTF-8 text file; content is appended after `systemPrompt` when both are present |
 | `mcpServers` | MCP server declarations; enabled by default, can be disabled from `/plugins` |
-| `hooks` | Hook rules run on lifecycle events while the plugin is enabled; see [Hooks in Plugins](#hooks-in-plugins) |
-| `commands` | One or more `./` paths pointing to a directory or `.md` file; registers the Markdown files within as slash commands. See [Plugin Slash Commands](#plugin-slash-commands) |
+| `hooks` | Hook rules run on lifecycle events while enabled; see [Hooks in Plugins](#hooks-in-plugins) |
+| `commands` | One or more `./` paths to a directory or `.md` file; registers the Markdown files inside as slash commands. See [Plugin Slash Commands](#plugin-slash-commands) |
 
 Unsupported runtime fields such as `tools`, `apps`, `inject`, and `configFile` appear as diagnostics and are ignored.
 
 ### System-prompt instructions
+
+Plugins inject instructions into the agent's system prompt through the `systemPrompt` and `systemPromptPath` fields. This section covers three parts: writing format and read timing, size limits, and the differences between the two engines.
+
+### Writing format and read timing
 
 Use `systemPrompt` for a short inline instruction, or `systemPromptPath` to keep longer instructions in a file inside the plugin root. If both fields are present, the inline text appears first, followed by the file content. The file content is read when the plugin is installed or reloaded, so edits take effect only after `/plugins reload`. For example:
 
@@ -299,13 +303,24 @@ Use `systemPrompt` for a short inline instruction, or `systemPromptPath` to keep
 }
 ```
 
+The built-in agent prompt includes instructions from enabled plugins automatically. A custom `SYSTEM.md` or agent file owns its template, so include `${plugin_sections}` where plugin-contributed instructions should appear. If the custom template includes `${base_prompt}` and that effective default already contains the plugin block, do not add `${plugin_sections}` again. See [Custom agents and SYSTEM.md](./agents.md#overriding-the-main-agents-system-prompt-with-systemmd) for the complete variable table.
+
+### Size limits
+
+Each field (the inline `systemPrompt` and the `systemPromptPath` file) is limited to 32 KB (UTF-8 bytes): oversized content is ignored and reported in the plugin diagnostics. Across all enabled plugins, one prompt build injects at most 64 KB of instructions; contributions beyond the budget are skipped with a warning, including a single plugin whose inline text and file together exceed that budget.
+
+### Differences between the two engines
+
 System-prompt contributions take effect on both agent engines. The interactive TUI, `kimi -p`, and `kimi web` use the v2 engine by default; setting `KIMI_CODE_LEGACY_FLAG=1` routes the local CLI surfaces to the legacy engine.
 
-Each field — the inline `systemPrompt` and the `systemPromptPath` file — is limited to 32 KB (UTF-8 bytes): oversized content is ignored and reported in the plugin diagnostics. Across all enabled plugins, one prompt build injects at most 64 KB of instructions; contributions beyond the budget are skipped with a warning, including a single plugin whose inline text and file together exceed that budget.
+<details>
+<summary>Instruction refresh behavior under the two engines</summary>
 
-New sessions and newly created agents read the contributions from the plugins currently enabled. An in-flight request keeps its existing system prompt. `/plugins reload` refreshes the plugin skill list and requests prompt rebuilds for live agents; use it when you need the change to converge deliberately before the next turn. On the v2 engine, installing, enabling, disabling, or removing a plugin updates the catalog immediately and a later prompt rebuild — for example after compaction or a tool-policy change — may pick up the new sections. The legacy engine keeps each live session's plugin snapshot until `/plugins reload` or a new session. A resumed session starts from its persisted prompt, and later rebuilds follow the engine-specific behavior above. Toggling a plugin's MCP server does not change system-prompt sections.
+New sessions and newly created agents read the contributions from the plugins currently enabled. An in-flight request keeps its existing system prompt. `/plugins reload` refreshes the plugin skill list and requests prompt rebuilds for live agents; use it when you need the change to converge deliberately before the next turn.
 
-The built-in agent prompt includes instructions from enabled plugins automatically. A custom `SYSTEM.md` or agent file owns its template, so include `${plugin_sections}` where plugin-contributed instructions should appear. If the custom template includes `${base_prompt}` and that effective default already contains the plugin block, do not add `${plugin_sections}` again. See [Custom agents and SYSTEM.md](./agents.md#overriding-the-main-agent-s-system-prompt-with-system-md) for the complete variable table.
+On the v2 engine, installing, enabling, disabling, or removing a plugin updates the catalog immediately, and a later prompt rebuild (for example after compaction or a tool-policy change) may pick up the new sections. The legacy engine keeps each live session's plugin snapshot until `/plugins reload` or a new session. A resumed session starts from its persisted prompt, and later rebuilds follow the engine-specific behavior above. Toggling a plugin's MCP server does not change system-prompt sections.
+
+</details>
 
 ## Plugin Slash Commands
 
@@ -365,9 +380,9 @@ A command file has two parts: an optional **frontmatter** (the metadata between 
 
 ### Running Commands and Passing Arguments
 
-Commands are prefixed with the plugin id (their namespace) and registered as `<plugin>:<command>`, so the command above is actually `/kimi-finance:report` — this keeps same-named commands from different plugins from colliding.
+Commands are prefixed with the plugin id (their namespace) and registered as `<plugin>:<command>`, so the command above is actually `/kimi-finance:report`. This keeps same-named commands from different plugins from colliding.
 
-Whatever you type after the command replaces `$ARGUMENTS` in the body (above, `TSLA` replaces `$ARGUMENTS`). If the body has no `$ARGUMENTS` but you pass arguments anyway, they are not dropped — they are appended to the end of the body as `ARGUMENTS: <what you typed>`.
+Whatever you type after the command replaces `$ARGUMENTS` in the body (above, `TSLA` replaces `$ARGUMENTS`). If the body has no `$ARGUMENTS` but you pass arguments anyway, they are not dropped; they are appended to the end of the body as `ARGUMENTS: <what you typed>`.
 
 ## Skills and Session Start
 
@@ -458,13 +473,13 @@ A plugin can declare hook rules in its manifest that run on lifecycle events whi
 }
 ```
 
-Plugin hooks reuse the same mechanism as global hooks — see [Hooks](./hooks.md) for the event list, the stdin JSON payload, and how exit codes and return values affect the main flow. The differences are:
+Plugin hooks reuse the same mechanism as global hooks. See [Hooks](./hooks.md) for the event list, the stdin JSON payload, and how exit codes and return values affect the main flow. The differences are:
 
 - A plugin's hooks are active only while the plugin is **enabled**; disabling the plugin stops its hooks.
 - Each hook runs with its working directory set to the plugin root, so `command` can use `./` paths inside the plugin.
 - The hook process receives two extra environment variables: `KIMI_CODE_HOME` and `KIMI_PLUGIN_ROOT` (the plugin root directory).
 
-Installing a plugin never runs its hooks by itself — they only fire when their matching event occurs while the plugin is enabled.
+Installing a plugin never runs its hooks by itself. They only fire when their matching event occurs while the plugin is enabled.
 
 ## Security Model
 
@@ -474,3 +489,10 @@ Plugins have a limited loading scope. The following operations do not occur duri
 - All paths must remain within the plugin root directory after symbolic link resolution
 - MCP servers of enabled plugins start after `/reload` or in new sessions and can be disabled at any time from `/plugins`
 - Broken manifests or unsafe paths appear in `/plugins info <id>` diagnostics and do not affect other sessions
+
+## Next steps
+
+- [Agent Skills](./skills.md) — Learn the `SKILL.md` format and write Skills that ship with your plugins
+- [Custom agents](./agents.md) — Agent file format and directory-scope precedence
+- [MCP](./mcp.md) — The schema that MCP server declarations in plugins reuse
+- [Hooks](./hooks.md) — The global hook mechanism that plugin hooks reuse

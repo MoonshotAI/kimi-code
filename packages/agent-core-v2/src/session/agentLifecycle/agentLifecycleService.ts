@@ -19,10 +19,11 @@ import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSe
 import { permissionModeConfiguredKey } from '#/agent/permissionMode/permissionModeOps';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { profileKey } from '#/agent/profile/profileOps';
-import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
+import { hasPinnedPermissionMode } from '#/features/tower/tower';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+import { withSubagentProfile } from '#/session/agentLifecycle/subagentMetadata';
 import {
   agentContextOf,
   IAgentScopeContext,
@@ -193,7 +194,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         type: agentId === 'main' ? 'main' : 'sub',
         parentAgentId: agentId === 'main' ? undefined : 'main',
         forkedFrom: opts.forkedFrom,
-        labels: opts.labels,
+        labels: withSubagentProfile(
+          opts.labels,
+          agentId === 'main' ? undefined : opts.binding?.profile,
+        ),
       });
       this.onDidCreateEmitter.fire(agent);
       didCreate = true;
@@ -263,17 +267,17 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       });
     }
     const source = sourceManaged.handle;
+    const sourceData = source.accessor.get(IAgentProfileService).data();
+    const override = opts?.binding;
     const childContext = await this.create({
       agentId: opts?.agentId,
       runtimeId: source.accessor.get(IAgentRuntimeBindingService).current.runtimeId,
       forkedFrom: source.id,
-      labels: opts?.labels,
+      labels: withSubagentProfile(opts?.labels, override?.profile ?? sourceData.profileName),
     });
     const child = this.requireManaged(childContext).handle;
 
-    const sourceData = source.accessor.get(IAgentProfileService).data();
     const childProfile = child.accessor.get(IAgentProfileService);
-    const override = opts?.binding;
     if (override?.profile !== undefined) {
       await childProfile.bind({
         profile: override.profile,
@@ -314,10 +318,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     for (const managed of this.roster.values()) {
       if (managed.closing || !managed.active) continue;
       const handle = managed.handle;
-      if (
-        handle.accessor.get(IAgentStateService).get(profileKey).profileName ===
-        TOWER_WORKER_PROFILE
-      ) {
+      if (hasPinnedPermissionMode(handle.accessor.get(IAgentStateService).get(profileKey).profileName)) {
         continue;
       }
       handle.accessor.get(IAgentPermissionModeService).setMode(mode);

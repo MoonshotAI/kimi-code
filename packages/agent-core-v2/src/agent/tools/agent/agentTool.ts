@@ -22,6 +22,7 @@ import {
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import {
   ToolAccesses,
   type ExecutableToolContext,
@@ -41,11 +42,18 @@ import {
   withoutDelegatingTargets,
 } from '#/app/agentProfileCatalog/profile-shared';
 import { ILogService } from '#/_base/log/log';
+import { hasPinnedPermissionMode } from '#/features/tower/tower';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { isSubagentMeta, subagentLabels, subagentParentAgentId } from '#/session/agentLifecycle/subagentMetadata';
-import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+import {
+  isSubagentMeta,
+  labelsFromAgentMeta,
+  subagentLabels,
+  subagentParentAgentId,
+  subagentProfileName,
+} from '#/session/agentLifecycle/subagentMetadata';
+import { type AgentMeta, ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
 import { emitAgentRunSpawned, mirrorAgentRun, SubagentStarted } from '#/session/subagent/mirrorAgentRun';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -109,6 +117,7 @@ export class SubagentTool implements ISubagentTool {
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
+    @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
     @ISessionMetadata private readonly sessionMetadata: ISessionMetadata,
     @ILogService private readonly log: ILogService,
     @IConfigService private readonly config: IConfigService,
@@ -232,7 +241,7 @@ export class SubagentTool implements ISubagentTool {
 
     const profileNameForDisplay =
       resumeAgentId !== undefined && resumeAgentId.length > 0
-        ? this.resumeProfileName(resumeAgentId) ?? RESUMED_LABEL
+        ? (await this.resumeProfileName(resumeAgentId)) ?? RESUMED_LABEL
         : (requestedProfileName ??
             (args.fork === true
               ? (this.profile.data().profileName ?? DEFAULT_PROFILE_NAME)
@@ -253,10 +262,10 @@ export class SubagentTool implements ISubagentTool {
     };
   }
 
-  private resumeProfileName(agentId: string): string | undefined {
+  private async resumeProfileName(agentId: string): Promise<string | undefined> {
     const target = this.agentLifecycle.handleOf(agentId);
-    if (target === undefined) return undefined;
-    return target.accessor.get(IAgentProfileService).data().profileName;
+    if (target !== undefined) return target.accessor.get(IAgentProfileService).data().profileName;
+    return subagentProfileName((await this.sessionMetadata.read()).agents?.[agentId]);
   }
 
   private async launch(
@@ -282,13 +291,7 @@ export class SubagentTool implements ISubagentTool {
     let displayModelSource: SubagentModelSource | undefined;
     let promptText = args.prompt;
     if (isResume) {
-      const target = this.agentLifecycle.handleOf(resumeAgentId);
-      if (target === undefined) {
-        throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent instance "${resumeAgentId}" does not exist`, {
-          details: { agentId: resumeAgentId },
-        });
-      }
-      await this.ensureOwnedIdleSubagent(resumeAgentId, target);
+      const target = await this.resolveResumeTarget(resumeAgentId);
       agentId = target.id;
       const resumed = target.accessor.get(IAgentProfileService).data();
       profileName = resumed.profileName ?? RESUMED_LABEL;
@@ -346,12 +349,15 @@ export class SubagentTool implements ISubagentTool {
     };
   }
 
-  private async ensureOwnedIdleSubagent(
-    agentId: string,
-    target: IAgentScopeHandle,
-  ): Promise<void> {
+  private async resolveResumeTarget(agentId: string): Promise<IAgentScopeHandle> {
+    const live = this.agentLifecycle.handleOf(agentId);
     const meta = (await this.sessionMetadata.read()).agents?.[agentId];
-    if (!isSubagentMeta(meta)) {
+    if (meta === undefined && live === undefined) {
+      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent instance "${agentId}" does not exist`, {
+        details: { agentId },
+      });
+    }
+    if (meta === undefined || !isSubagentMeta(meta)) {
       throw new Error2(ErrorCodes.AGENT_NOT_A_SUBAGENT, `Agent instance "${agentId}" is not a subagent`, {
         details: { agentId },
       });
@@ -363,6 +369,7 @@ export class SubagentTool implements ISubagentTool {
         { details: { agentId, callerAgentId: this.callerAgentId } },
       );
     }
+    const target = live ?? (await this.rebuildSubagent(agentId, meta));
     if (target.accessor.get(IAgentLoopService).status().state === 'running') {
       throw new Error2(
         ErrorCodes.AGENT_ALREADY_RUNNING,
@@ -370,6 +377,26 @@ export class SubagentTool implements ISubagentTool {
         { details: { agentId } },
       );
     }
+    return target;
+  }
+
+  private async rebuildSubagent(agentId: string, meta: AgentMeta): Promise<IAgentScopeHandle> {
+    await this.agentLifecycle.create({
+      agentId,
+      labels: labelsFromAgentMeta(meta),
+      forkedFrom: meta.forkedFrom,
+    });
+    const rebuilt = this.agentLifecycle.handleOf(agentId);
+    if (rebuilt === undefined) {
+      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent instance "${agentId}" does not exist`, {
+        details: { agentId },
+      });
+    }
+    if (!hasPinnedPermissionMode(rebuilt.accessor.get(IAgentProfileService).data().profileName)) {
+      rebuilt.accessor.get(IAgentPermissionModeService).setMode(this.permissionMode.mode);
+    }
+    this.log.info('subagent rebuilt for resume', { agentId, callerAgentId: this.callerAgentId });
+    return rebuilt;
   }
 
   private async execution(

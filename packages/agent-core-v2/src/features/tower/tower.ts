@@ -15,6 +15,10 @@ export const TOWER_TOOL_NAMES = [
 
 export const TOWER_WORKER_PROFILE = 'tower-worker';
 
+export function hasPinnedPermissionMode(profileName: string | undefined): boolean {
+  return profileName === TOWER_WORKER_PROFILE;
+}
+
 export const TOWER_FLAG_ID = 'tower';
 
 export type TowerEnterFailure =

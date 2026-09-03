@@ -4,8 +4,15 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
+import {
+  IAgentLifecycleService,
+  IConfigService,
+  MAIN_AGENT_ID,
+  getLiveSessionById,
+  resumeSessionById,
+} from '@moonshot-ai/agent-core-v2';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -236,21 +243,28 @@ describe('transcript contract e2e', () => {
   let llm: MockLlm | undefined;
   let base: string;
 
+  beforeAll(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-transcript-contract-'));
+    server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
+    base = `http://127.0.0.1:${server.port}`;
+  });
+
   afterEach(async () => {
     await llm?.close();
+    llm = undefined;
+  });
+
+  afterAll(async () => {
     await server?.close();
+    server = undefined;
     if (home !== undefined) await rm(home, { recursive: true, force: true });
     home = undefined;
-    server = undefined;
-    llm = undefined;
   });
 
   async function boot(routes: readonly LlmRoute[]): Promise<void> {
     llm = await startMockLlm(routes);
-    home = await mkdtemp(join(tmpdir(), 'kimi-transcript-contract-'));
-    await writeFile(join(home, 'config.toml'), configToml(llm.port), 'utf-8');
-    server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
-    base = `http://127.0.0.1:${server.port}`;
+    await writeFile(join(home!, 'config.toml'), configToml(llm.port), 'utf-8');
+    await server!.core.accessor.get(IConfigService).reload();
   }
 
   const idle = (server: RunningServer, base: string, sid: string) =>
@@ -487,4 +501,83 @@ describe('transcript contract e2e', () => {
     );
     channel.close();
   });
+
+  it('S7: a foreground subagent resumes with its prior context after a server restart', async () => {
+    let childAgentId: string | undefined;
+    let resumedChildRequest: string | undefined;
+    await boot([
+      {
+        match: (body) => body.includes('spawn-child') && !body.includes('"role":"tool"'),
+        respond: () =>
+          sseToolCall(
+            'call_spawn',
+            'Agent',
+            JSON.stringify({ prompt: 'remember the token quartz-7731 and reply with ok', description: 'child' }),
+          ),
+      },
+      {
+        match: (body) =>
+          body.includes('remember the token') && !body.includes('spawn-child') && !body.includes('recall the token'),
+        respond: () => sseText('ok, remembered'),
+      },
+      {
+        match: (body) => body.includes('resume-child') && !body.includes('recall the token'),
+        respond: () =>
+          sseToolCall(
+            'call_resume',
+            'Agent',
+            JSON.stringify({ prompt: 'recall the token', description: 'child again', resume: childAgentId }),
+          ),
+      },
+      {
+        match: (body) => {
+          const hit = body.includes('recall the token') && !body.includes('resume-child');
+          if (hit) resumedChildRequest = body;
+          return hit;
+        },
+        respond: () => sseText('the token is quartz-7731'),
+      },
+      { match: () => true, respond: () => sseText('noted') },
+    ]);
+    const sid = await createSession(server!, base);
+    await submitPrompt(server!, base, sid, 'spawn-child now');
+    await idle(server!, base, sid);
+
+    const liveBefore = getLiveSessionById(server!.core.accessor, sid);
+    expect(liveBefore).toBeDefined();
+    const childIds = liveBefore!.accessor
+      .get(IAgentLifecycleService)
+      .list()
+      .map((agent) => agent.agentId)
+      .filter((id) => id !== MAIN_AGENT_ID);
+    expect(childIds).toHaveLength(1);
+    childAgentId = childIds[0];
+
+    await server!.close();
+    server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home!, logLevel: 'silent' });
+    base = `http://127.0.0.1:${server.port}`;
+
+    const resumed = await resumeSessionById(server.core.accessor, sid);
+    expect(resumed).toBeDefined();
+    const agents = resumed!.accessor.get(IAgentLifecycleService);
+    expect(agents.handleOf(childAgentId!)).toBeUndefined();
+
+    await submitPrompt(server, base, sid, 'resume-child now');
+    await idle(server, base, sid);
+
+    expect(resumedChildRequest).toBeDefined();
+    expect(resumedChildRequest).toContain('quartz-7731');
+    expect(resumedChildRequest).toContain('ok, remembered');
+    expect(agents.handleOf(childAgentId!)).toBeDefined();
+
+    const end = await getTranscript(server, base, sid);
+    const agentFrames = end.items
+      .filter((i) => i.kind === 'turn')
+      .flatMap((t: any) => t.steps)
+      .flatMap((s: any) => s.frames)
+      .filter((f: any) => f.kind === 'tool' && f.name === 'Agent');
+    expect(agentFrames).toHaveLength(2);
+    expect(String(agentFrames[1].output)).toContain(`agent_id: ${childAgentId}`);
+    expect(String(agentFrames[1].output)).toContain('the token is quartz-7731');
+  }, 60000);
 }, 90000);

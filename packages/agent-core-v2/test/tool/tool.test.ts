@@ -101,6 +101,7 @@ import {
 import { executeTool } from '../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../agent/agentContext/stubs';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
+import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
 
 const signal = new AbortController().signal;
 
@@ -1602,6 +1603,48 @@ describe('Agent tool execution contract', () => {
     expect(lifecycle.list).toHaveBeenCalled();
   });
 
+  it('uses the persisted profile of an offline subagent for display and approval rules', async () => {
+    const lifecycle = createAgentLifecycleStub();
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(
+        ISessionMetadata,
+        sessionMetadataStub({
+          'agent-existing': { labels: { parentAgentId: 'main', profileName: 'explore' } },
+        }),
+      ),
+    );
+
+    const execution = await agentTool(context).resolveExecution({
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+    });
+
+    if (execution.isError === true) throw new Error('expected runnable execution');
+    expect(execution.description).toBe('Launching explore agent: Continue work');
+    expect(execution.matchesRule?.('explore')).toBe(true);
+    expect(execution.matchesRule?.('coder')).toBe(false);
+    expect(lifecycle.create).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the generic label when an offline subagent has no persisted profile', async () => {
+    const lifecycle = createAgentLifecycleStub();
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(ISessionMetadata, sessionMetadataStub({ 'agent-existing': subagentMeta() })),
+    );
+
+    const execution = await agentTool(context).resolveExecution({
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+    });
+
+    if (execution.isError === true) throw new Error('expected runnable execution');
+    expect(execution.description).toBe('Launching subagent agent: Continue work');
+  });
+
   it('labels fork launches with the caller profile for display and approval rules', async () => {
     const lifecycle = createAgentLifecycleStub();
     const context = createAgentToolContext(lifecycle, forkFlags());
@@ -2320,6 +2363,178 @@ describe('Agent tool execution contract', () => {
     expect(result.output).toContain('agent_id: agent-existing');
     expect(result.output).toContain('actual_subagent_type: explore');
     expect(result.output).toContain('resumed result');
+  });
+
+  it('rebuilds a persisted subagent that is not live before resuming it', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      runCompletion: async () => ({ summary: 'resumed after restart' }),
+    });
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(
+        ISessionMetadata,
+        sessionMetadataStub({
+          'agent-existing': {
+            type: 'sub',
+            parentAgentId: 'main',
+            forkedFrom: 'main',
+            labels: { parentAgentId: 'main' },
+          },
+        }),
+      ),
+    );
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+    });
+
+    expect(lifecycle.create).toHaveBeenCalledTimes(1);
+    expect(lifecycle.create).toHaveBeenCalledWith({
+      agentId: 'agent-existing',
+      labels: { parentAgentId: 'main' },
+      forkedFrom: 'main',
+    });
+    expect(lifecycle.run).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: 'agent-existing' }),
+      { kind: 'prompt', prompt: 'Continue' },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(result.isError).not.toBe(true);
+    expect(result.output).toContain('agent_id: agent-existing');
+    expect(result.output).toContain('resumed after restart');
+  });
+
+  it('keeps rejecting resume of an agent id that was never persisted', async () => {
+    const lifecycle = createAgentLifecycleStub();
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(ISessionMetadata, sessionMetadataStub({})),
+    );
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-missing',
+    });
+
+    expect(result).toMatchObject({
+      isError: true,
+      output: 'subagent error: Agent instance "agent-missing" does not exist',
+    });
+    expect(lifecycle.create).not.toHaveBeenCalled();
+    expect(lifecycle.run).not.toHaveBeenCalled();
+  });
+
+  it('does not rebuild a persisted subagent owned by another parent', async () => {
+    const lifecycle = createAgentLifecycleStub();
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(
+        ISessionMetadata,
+        sessionMetadataStub({ 'agent-existing': subagentMeta('other') }),
+      ),
+    );
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+    });
+
+    expect(result).toMatchObject({
+      isError: true,
+      output: 'subagent error: Agent instance "agent-existing" does not belong to this parent agent',
+    });
+    expect(lifecycle.create).not.toHaveBeenCalled();
+    expect(lifecycle.run).not.toHaveBeenCalled();
+  });
+
+  it('syncs a rebuilt subagent to the caller permission mode before resuming it', async () => {
+    const setMode = vi.fn();
+    const lifecycle = createAgentLifecycleStub({
+      runCompletion: async () => ({ summary: 'resumed after restart' }),
+      handleServices: new Map<string, ReadonlyMap<unknown, unknown>>([
+        [
+          'agent-existing',
+          new Map<unknown, unknown>([
+            [
+              IAgentPermissionModeService,
+              { _serviceBrand: undefined, mode: 'yolo', setMode, onDidChangeMode: Event.None },
+            ],
+          ]),
+        ],
+      ]),
+    });
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(ISessionMetadata, sessionMetadataStub({ 'agent-existing': subagentMeta() })),
+    );
+    context.get(IAgentPermissionModeService).setMode('auto');
+    expect(context.get(IAgentPermissionModeService).mode).toBe('auto');
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(setMode).toHaveBeenCalledWith('auto');
+    expect(setMode.mock.invocationCallOrder[0]).toBeLessThan(
+      lifecycle.run.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('keeps a rebuilt tower worker on its pinned permission mode', async () => {
+    const setMode = vi.fn();
+    const lifecycle = createAgentLifecycleStub({
+      runCompletion: async () => ({ summary: 'worker resumed' }),
+      handleServices: new Map<string, ReadonlyMap<unknown, unknown>>([
+        [
+          'agent-existing',
+          new Map<unknown, unknown>([
+            [
+              IAgentProfileService,
+              {
+                _serviceBrand: undefined,
+                data: () => ({ profileName: TOWER_WORKER_PROFILE }),
+                update: () => {},
+                republishStatus: () => {},
+                getEffectiveThinkingLevel: () => 'off',
+                getActiveToolNames: () => [],
+                isToolActive: () => false,
+              },
+            ],
+            [
+              IAgentPermissionModeService,
+              { _serviceBrand: undefined, mode: 'auto', setMode, onDidChangeMode: Event.None },
+            ],
+          ]),
+        ],
+      ]),
+    });
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(
+        ISessionMetadata,
+        sessionMetadataStub({
+          'agent-existing': { labels: { parentAgentId: 'main', profileName: TOWER_WORKER_PROFILE } },
+        }),
+      ),
+    );
+    context.get(IAgentPermissionModeService).setMode('manual');
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+    });
+
+    expect(result).toEqual({ output: expect.stringContaining(`actual_subagent_type: ${TOWER_WORKER_PROFILE}`) });
+    expect(setMode).not.toHaveBeenCalled();
+    expect(lifecycle.run).toHaveBeenCalledOnce();
   });
 
   it('rejects direct resume of a non-subagent', async () => {

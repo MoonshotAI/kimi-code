@@ -650,8 +650,8 @@ export class KimiHarness {
       // caller-supplied sessionStartedProperties that happen to share a key.
       // `client_id` is always null here: a single-process host has no
       // per-connection client id (that concept only exists for daemon clients,
-      // see core-impl.ts). Kept as an explicit key so both producers share the
-      // same session_started schema.
+      // see core-impl.ts). Kept as an explicit key so this row carries the
+      // same client-attribution shape as the daemon-client producer there.
       client_id: null,
       client_name: this.identity?.productName ?? null,
       client_version: this.identity?.version ?? null,

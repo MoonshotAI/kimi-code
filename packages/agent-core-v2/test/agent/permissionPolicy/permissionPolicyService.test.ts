@@ -357,6 +357,18 @@ describe('AgentPermissionPolicyService chain', () => {
     },
   );
 
+  it('approves a heredoc command containing a single quote in yolo mode', async () => {
+    mode = 'yolo';
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'gh --body "$(cat <<\'EOF\'\nit\'s\nEOF\n)"', timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'yolo-mode-approve',
+      result: { kind: 'approve' },
+    });
+  });
+
   it.each(['$CMD --force', 'bash -c "echo $HOME"', 'env $FLAGS'])(
     'denies unanalyzable command `%s` in auto mode',
     async (command) => {

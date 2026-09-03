@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { startServer, type RunningServer } from '../src';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -25,7 +25,19 @@ describe('API surface snapshot', () => {
   let home: string | undefined;
   let server: RunningServer | undefined;
 
-  afterEach(async () => {
+  beforeAll(async () => {
+    home = mkdtempSync(join(tmpdir(), 'kimi-server-v2-api-surface-'));
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      debugEndpoints: true,
+    });
+  });
+
+  afterAll(async () => {
     if (server !== undefined) {
       try {
         await server.close();
@@ -40,20 +52,9 @@ describe('API surface snapshot', () => {
   });
 
   it('matches the documented v2 route table and meta endpoints', async () => {
-    home = mkdtempSync(join(tmpdir(), 'kimi-server-v2-api-surface-'));
+    const base = `http://${server!.host}:${server!.port}`;
 
-    server = await startServer({
-      hostIdentity: TEST_HOST_IDENTITY,
-      host: '127.0.0.1',
-      port: 0,
-      homeDir: home,
-      logLevel: 'silent',
-      debugEndpoints: true,
-    });
-
-    const base = `http://${server.host}:${server.port}`;
-
-    const openApiRes = await fetch(`${base}/openapi.json`, { headers: authHeaders(server) } as never);
+    const openApiRes = await fetch(`${base}/openapi.json`, { headers: authHeaders(server as RunningServer) } as never);
     expect(openApiRes.status).toBe(200);
     const openApi = (await openApiRes.json()) as {
       paths?: Record<string, Record<string, unknown>>;
@@ -73,7 +74,7 @@ describe('API surface snapshot', () => {
 
     const meta: Array<[string, string, number]> = [];
     for (const endpoint of META_ENDPOINTS) {
-      const res = await fetch(`${base}${endpoint}`, { headers: authHeaders(server) } as never);
+      const res = await fetch(`${base}${endpoint}`, { headers: authHeaders(server as RunningServer) } as never);
       meta.push(['GET', endpoint, res.status]);
     }
     meta.sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1]) || a[2] - b[2]);
