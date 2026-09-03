@@ -778,6 +778,15 @@ export class SessionEventHandler {
         renderMode: 'markdown',
         content: buildGoalCompletionMessage(event.snapshot),
       });
+      // Clear any leftover todo panel state. The agent typically ends the
+      // final turn with a goal-complete call rather than a TodoList update,
+      // so the last item can still carry `in_progress` and render as `●`
+      // next to the goal completion card. Drop the panel here so completion
+      // is reflected immediately; handleTurnEnd keeps an existing
+      // every-item-done path so a final clean TodoList still clears.
+      if (state.todoPanel.getTodos().length > 0) {
+        this.host.streamingUI.setTodoList([]);
+      }
       state.ui.requestRender();
       return;
     }
