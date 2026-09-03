@@ -522,29 +522,6 @@ describe('AskUserQuestionTool', () => {
     expect(result.output).toContain('Ask the user directly in your text response instead');
   });
 
-  it('treats a cancelled interaction response as a dismissal', async () => {
-    const { tool, telemetryTrack } = makeTool({
-      request: async () => ({ cancelled: true, reason: 'agent_closed' }) as unknown as QuestionResult,
-    });
-
-    const result = await executeTool(tool, {
-      turnId: 0,
-      toolCallId: 'call_cancelled',
-      args: input(),
-      signal,
-    });
-
-    expect(result).toEqual({
-      isError: false,
-      output: JSON.stringify({
-        answers: {},
-        note: 'User dismissed the question without answering.',
-      }),
-    });
-    expect(telemetryTrack).toHaveBeenCalledWith('question_dismissed', expect.anything());
-    expect(telemetryTrack).not.toHaveBeenCalledWith('question_answered', expect.anything());
-  });
-
   describe('background mode', () => {
     function makeSink(abortSignal?: AbortSignal) {
       const outputs: string[] = [];
@@ -623,6 +600,32 @@ describe('AskUserQuestionTool', () => {
 
       expect(request).toHaveBeenCalledTimes(2);
       expect(request.mock.calls[1]![1]).not.toMatchObject({ detached: true });
+    });
+
+    it('settles failed with the tool error when the question cannot be asked', async () => {
+      const { tool, lastRegisteredTask } = makeTool({
+        request: async () => {
+          throw new Error2(CoreErrors.codes.NOT_IMPLEMENTED, 'Client does not support questions');
+        },
+      });
+      await executeTool(tool, {
+        turnId: 0,
+        toolCallId: 'call_bg_unsupported',
+        args: { ...input(), background: true },
+        signal,
+      });
+
+      const { sink, outputs, settlements } = makeSink();
+      await lastRegisteredTask()!.start(sink);
+
+      expect(outputs).toEqual([]);
+      expect(settlements).toEqual([
+        {
+          status: 'failed',
+          stopReason:
+            'The connected client does not support interactive questions. Do NOT call this tool again. Ask the user directly in your text response instead.',
+        },
+      ]);
     });
 
     it('settles killed when the background task is aborted', async () => {

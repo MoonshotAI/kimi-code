@@ -232,7 +232,6 @@ function normalizeQuestionResult(
   result: QuestionResult,
 ): { readonly answers: QuestionAnswers; readonly method?: QuestionAnswerMethod | undefined } | null {
   if (result === null) return null;
-  if (isCancelledResponse(result)) return null;
   if (isQuestionResponse(result)) {
     return {
       answers: result.answers,
@@ -240,11 +239,6 @@ function normalizeQuestionResult(
     };
   }
   return { answers: result };
-}
-
-function isCancelledResponse(result: Exclude<QuestionResult, null>): boolean {
-  const value = result as { readonly cancelled?: unknown; readonly answers?: unknown };
-  return value.cancelled === true && value.answers === undefined;
 }
 
 function isQuestionResponse(result: Exclude<QuestionResult, null>): result is QuestionResponse {

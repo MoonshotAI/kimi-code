@@ -1422,27 +1422,33 @@ function questionNotificationText(
   if (info.status !== 'completed' || output === undefined || !inlinesQuestionAnswer(info, output)) {
     return undefined;
   }
-  if (questionWasAnswered(output.preview)) {
+  const outcome = questionOutcome(output.preview);
+  if (outcome === 'answered') {
     return {
       title: 'Background question answered',
       body: `The user answered "${info.description}".`,
     };
   }
-  return {
-    title: 'Background question dismissed',
-    body: `The user dismissed "${info.description}" without answering.`,
-  };
+  if (outcome === 'dismissed') {
+    return {
+      title: 'Background question dismissed',
+      body: `The user dismissed "${info.description}" without answering.`,
+    };
+  }
+  return undefined;
 }
 
-function questionWasAnswered(output: string): boolean {
+function questionOutcome(output: string): 'answered' | 'dismissed' | undefined {
+  let parsed: unknown;
   try {
-    const parsed: unknown = JSON.parse(output);
-    if (typeof parsed !== 'object' || parsed === null) return false;
-    const answers = (parsed as { readonly answers?: unknown }).answers;
-    return typeof answers === 'object' && answers !== null && Object.keys(answers).length > 0;
+    parsed = JSON.parse(output);
   } catch {
-    return false;
+    return undefined;
   }
+  if (typeof parsed !== 'object' || parsed === null) return undefined;
+  const answers = (parsed as { readonly answers?: unknown }).answers;
+  if (typeof answers !== 'object' || answers === null || Array.isArray(answers)) return undefined;
+  return Object.keys(answers).length > 0 ? 'answered' : 'dismissed';
 }
 
 function renderOutputFileBlock(outputPath: string, outputSizeBytes: number): string {

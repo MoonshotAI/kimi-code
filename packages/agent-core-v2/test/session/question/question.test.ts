@@ -147,12 +147,26 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
 
     interaction.cancelPendingForTurn(3);
 
-    await expect(foreground).resolves.toEqual({ cancelled: true, reason: 'turn_ended' });
+    await expect(foreground).resolves.toBeNull();
     expect(questions.listPending().map((r) => r.id)).toEqual(['q-bg']);
     expect(questions.listPending()[0]?.turnId).toBe(3);
 
     questions.answer('q-bg', { answers: { q_0: 'Yes' } });
     await expect(detached).resolves.toEqual({ answers: { q_0: 'Yes' } });
+  });
+
+  it('resolves a request cancelled by its turn ending as a dismissal', async () => {
+    const interaction = interactions.serviceOf('main');
+    const questions = session.accessor.get(ISessionQuestionService);
+    const resolved: { id: string; response: unknown }[] = [];
+    disposables.add(interaction.onDidResolve((r) => resolved.push(r)));
+
+    const pending = questions.request({ ...makeRequest('q1'), turnId: 2 });
+    interaction.cancelPendingForTurn(2);
+
+    await expect(pending).resolves.toBeNull();
+    expect(resolved).toEqual([{ id: 'q1', response: { cancelled: true, reason: 'turn_ended' } }]);
+    expect(questions.listPending()).toEqual([]);
   });
 
   it('request with a pre-aborted signal resolves null and parks nothing', async () => {

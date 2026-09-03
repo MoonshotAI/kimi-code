@@ -14,6 +14,7 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import {
   type Interaction,
+  type InteractionCancellation,
   type InteractionKind,
   type InteractionPendingChangedEvent,
   type InteractionRequest,
@@ -90,7 +91,7 @@ function cancelTurnPending(
     if (entry.interaction.origin?.turnId !== turnId) continue;
     effects.pending.delete(id);
     rememberResolved(effects, id);
-    const response = { cancelled: true, reason: 'turn_ended' };
+    const response: InteractionCancellation = { cancelled: true, reason: 'turn_ended' };
     entry.resolve(response);
     recordResolved(runtime, id, response);
     effects.resolveEmitter.fire({ id, response });
@@ -119,7 +120,7 @@ const interactionEffects = fromCallback(({
   return () => {
     subscription.dispose();
     for (const entry of input.effects.pending.values()) {
-      entry.resolve({ cancelled: true, reason: 'agent_closed' });
+      entry.resolve({ cancelled: true, reason: 'agent_closed' } satisfies InteractionCancellation);
     }
     input.effects.pending.clear();
     input.effects.changeEmitter.dispose();

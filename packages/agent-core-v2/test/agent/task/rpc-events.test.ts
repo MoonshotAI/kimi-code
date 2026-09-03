@@ -571,6 +571,68 @@ describe('AgentTaskService — notification delivery', () => {
     expect(text).not.toContain('<output-file');
   });
 
+  it('keeps the generic wording for question output that is not an answer payload', async () => {
+    const { agent, ctx, manager } = createAgentTaskService();
+    ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
+    const turnEnd = ctx.untilTurnEnd();
+    const taskId = manager.registerTask(
+      new QuestionBackgroundTask(
+        async () => ({ isError: false, output: 'not an answer payload' }),
+        'Which database?',
+        { questionCount: 1, toolCallId: 'call_q' },
+      ),
+      { detached: true },
+    );
+
+    await manager.wait(taskId);
+
+    await vi.waitFor(() => {
+      expect(notifiedCount(ctx)).toBe(1);
+    });
+    await turnEnd;
+
+    const text = notificationMessageFor(agent, taskId).content[0]!.text;
+    expect(text).toContain('Title: Background question completed');
+    expect(text).toContain('Which database? completed.');
+    expect(text).not.toContain('dismissed');
+    expect(text).toContain('<answer>\nnot an answer payload\n</answer>');
+    expect(text).not.toContain('<output-file');
+  });
+
+  it('reports a failed question task with its reason and no answer block', async () => {
+    const { agent, ctx, manager } = createAgentTaskService();
+    ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
+    const turnEnd = ctx.untilTurnEnd();
+    const taskId = manager.registerTask(
+      new QuestionBackgroundTask(
+        async () => ({
+          isError: true,
+          output: 'The connected client does not support interactive questions.',
+        }),
+        'Which database?',
+        { questionCount: 1, toolCallId: 'call_q' },
+      ),
+      { detached: true },
+    );
+
+    await manager.wait(taskId);
+
+    await vi.waitFor(() => {
+      expect(notifiedCount(ctx)).toBe(1);
+    });
+    await turnEnd;
+
+    const message = notificationMessageFor(agent, taskId);
+    expect(message.origin).toMatchObject({ kind: 'task', taskId, status: 'failed' });
+    const text = message.content[0]!.text;
+    expect(text).toContain('Title: Background question failed');
+    expect(text).toContain(
+      'Which database? failed. Reason: The connected client does not support interactive questions.',
+    );
+    expect(text).not.toContain('<answer>');
+    expect(text).not.toContain('dismissed');
+  });
+
   it('enqueues completed process task notifications into the turn flow', async () => {
     const { agent, ctx, manager } = createAgentTaskService();
     const taskId = registerProcess(manager, immediateProcess(0), 'echo ok', 'shell task');
