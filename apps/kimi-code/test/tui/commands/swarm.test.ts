@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { handleSwarmCommand } from '#/tui/commands/index';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import { currentTheme } from '#/tui/theme';
+import { UNCONFIRMED_FILE_CHANGES_WARNING } from '#/tui/constant/kimi-tui';
 
 const ENTER = '\r';
 const ESCAPE = '\u001B';
@@ -44,6 +45,7 @@ function makeHost(
     requireSession: () => session,
     setAppState: vi.fn((patch: Record<string, unknown>) => Object.assign(host.state.appState, patch)),
     showError: vi.fn(),
+    showNotice: vi.fn(),
     showStatus: vi.fn(),
     mountEditorReplacement: vi.fn(),
     restoreEditor: vi.fn(),
@@ -232,6 +234,8 @@ describe('handleSwarmCommand', () => {
     expect(session.setSwarmMode).toHaveBeenCalledTimes(1);
     expect(host.setAppState).toHaveBeenCalledWith({ permissionMode: 'auto' });
     expect(host.setAppState).toHaveBeenCalledWith({ swarmMode: true });
+    expect(host.showNotice).toHaveBeenCalledWith('Permission mode: Never Ask');
+    expect(host.showStatus).toHaveBeenCalledWith(UNCONFIRMED_FILE_CHANGES_WARNING, 'warning');
     expect(host.state.swarmModeEntry).toBe('task');
     expectSwarmMarker(host, 'Swarm activated');
   });
@@ -251,6 +255,8 @@ describe('handleSwarmCommand', () => {
     expect(session.setPermission).not.toHaveBeenCalled();
     expect(session.setSwarmMode).toHaveBeenCalledWith(true, 'task');
     expect(session.setSwarmMode).toHaveBeenCalledTimes(1);
+    expect(host.showNotice).not.toHaveBeenCalled();
+    expect(host.showStatus).not.toHaveBeenCalledWith(UNCONFIRMED_FILE_CHANGES_WARNING, 'warning');
     expect(host.state.swarmModeEntry).toBe('task');
     expectSwarmMarker(host, 'Swarm activated');
   });
@@ -271,6 +277,8 @@ describe('handleSwarmCommand', () => {
     expect(session.setSwarmMode).toHaveBeenCalledTimes(1);
     expect(host.setAppState).toHaveBeenCalledWith({ permissionMode: 'yolo' });
     expect(host.setAppState).toHaveBeenCalledWith({ swarmMode: true });
+    expect(host.showNotice).toHaveBeenCalledWith('Permission mode: Ask When Needed');
+    expect(host.showStatus).toHaveBeenCalledWith(UNCONFIRMED_FILE_CHANGES_WARNING, 'warning');
     expect(host.state.swarmModeEntry).toBe('task');
     expectSwarmMarker(host, 'Swarm activated');
   });

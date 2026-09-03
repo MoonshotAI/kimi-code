@@ -112,10 +112,7 @@ class TestRuntimeResolver implements IRuntimeResolver {
 
 const PARENT_SYSTEM_PROMPT = 'You are the parity probe parent.';
 const ACTIVE_TOOL_NAMES = ['Agent', 'Bash', 'Read'];
-const CHILD_FINAL_TEXT =
-  'The inherited task is done. This closing summary is intentionally long so that any ' +
-  'profile summary policy with a minimum character threshold considers it adequate and no ' +
-  'extra continuation request is scripted for the child agent turn.';
+const CHILD_FINAL_TEXT = 'The inherited task is done.';
 
 describe('fork subagent first-request parity', () => {
   let ctx: TestAgentContext;

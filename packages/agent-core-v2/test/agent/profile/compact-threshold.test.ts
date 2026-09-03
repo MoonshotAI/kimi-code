@@ -13,8 +13,6 @@ import { IConfigService } from '#/app/config/config';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { IProtocolAdapterRegistry, type Protocol } from '#/kosong/protocol/protocol';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
-import { AgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContextService';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -44,6 +42,7 @@ function createTelemetryStub(): ITelemetryService {
     _serviceBrand: undefined,
     track: () => undefined,
     track2: () => undefined,
+    setContext: () => {},
   } as unknown as ITelemetryService;
 }
 
@@ -166,7 +165,6 @@ function buildHost(key: string): IAgentProfileService {
   host.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   host.stub(ITelemetryService, createTelemetryStub());
   host.stub(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
-  host.stub(IAgentTelemetryContextService, new AgentTelemetryContextService());
   host.stub(IConfigService, createConfigStub());
   host.stub(IModelCatalog, createModelCatalogStub(createTestModel()));
   host.stub(IProtocolAdapterRegistry, createProtocolRegistryStub());
@@ -362,9 +360,9 @@ describe('AgentProfileService.setCompactionTokenBudget telemetry (U11)', () => {
       track2: (event: string, payload: Record<string, unknown>) => {
         track2Calls.push([event, payload]);
       },
+      setContext: () => {},
     } as unknown as ITelemetryService);
     host.stub(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
-    host.stub(IAgentTelemetryContextService, new AgentTelemetryContextService());
     host.stub(IConfigService, createConfigStub());
     host.stub(IModelCatalog, createModelCatalogStub(createTestModel()));
     host.stub(IProtocolAdapterRegistry, createProtocolRegistryStub());
@@ -422,10 +420,11 @@ describe('AgentProfileService.setCompactionTokenBudget telemetry (U11)', () => {
     spySvc.setCompactionTokenBudget(120);
     const matching = track2Calls.filter(([event]) => event === 'compaction_token_budget_override');
     expect(matching.length).toBeGreaterThan(0);
-    const [event, payload] = matching[matching.length - 1];
+    const last = matching[matching.length - 1] as [string, Record<string, unknown>];
+    const [event, payload] = last;
     expect(event).toBe('compaction_token_budget_override');
-    expect(payload.action).toBe('set');
-    expect(payload.tokens).toBe(120_000);
+    expect(payload['action']).toBe('set');
+    expect(payload['tokens']).toBe(120_000);
   });
 
   it('fires compaction_token_budget_override with action: clear on undefined', () => {
@@ -434,9 +433,10 @@ describe('AgentProfileService.setCompactionTokenBudget telemetry (U11)', () => {
     spySvc.setCompactionTokenBudget(undefined);
     const matching = track2Calls.filter(([event]) => event === 'compaction_token_budget_override');
     expect(matching.length).toBeGreaterThanOrEqual(2);
-    const [event, payload] = matching[matching.length - 1];
+    const last = matching[matching.length - 1] as [string, Record<string, unknown>];
+    const [event, payload] = last;
     expect(event).toBe('compaction_token_budget_override');
-    expect(payload.action).toBe('clear');
+    expect(payload['action']).toBe('clear');
   });
 
   it('does not fire compaction_token_budget_override on validation reject', () => {

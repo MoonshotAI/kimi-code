@@ -5,7 +5,6 @@ import { isAbsolute, join, resolve, win32 } from "node:path";
 import {
   detectMigration,
   runMigration,
-  countImportedSessionsNeedingRepair,
   defaultPlansSourceDir,
   shouldSuppressMigration,
   type MigrationPlan,
@@ -278,12 +277,6 @@ export class LegacyMigrationManager {
     const oauthLoginsRequiringRelogin: LegacyMigrationReauthItem[] = [];
     const mcpOauthServersRequiringReauth: LegacyMigrationReauthItem[] = [];
 
-    // Sessions an older migrator left without turn-structure records are
-    // unfinished migration work; a repair need lifts marker suppression.
-    const sessionsNeedingRepair = await countImportedSessionsNeedingRepair(
-      this.targetHome,
-    ).catch(() => 0);
-
     for (const candidate of candidates) {
       const sourceCheck = await checkSourceDirectory(candidate.sourceHome);
       if (sourceCheck === "missing") continue;
@@ -353,7 +346,6 @@ export class LegacyMigrationManager {
 
       if (
         !ignoreMarker &&
-        sessionsNeedingRepair === 0 &&
         shouldSuppressMigration({
           sourceHome: candidate.sourceHome,
           targetHome: this.targetHome,
@@ -365,7 +357,7 @@ export class LegacyMigrationManager {
 
       pending.push({
         preview,
-        plan: { ...plan, sessionsNeedingRepair },
+        plan,
       });
     }
 
@@ -565,8 +557,7 @@ function aggregateTotals(sources: readonly LegacyMigrationSourceResult[]): Legac
     skills += summary.skills.copied;
     planFiles += summary.plans.copied;
     sessions += summary.sessions.sessionsMigrated;
-    alreadyMigratedSessions +=
-      summary.sessions.sessionsAlreadyMigrated + summary.sessions.sessionsRepaired;
+    alreadyMigratedSessions += summary.sessions.sessionsAlreadyMigrated;
     skippedItems +=
       summary.userHistory.skippedExisting +
       summary.skills.skippedExisting +

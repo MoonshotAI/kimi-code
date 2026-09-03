@@ -22,13 +22,6 @@ export interface MigrationPlan {
   readonly detectedMcpOauthServers: readonly string[];
   readonly totalSessions: number; // sum across workdirs (real, post-classify)
   /**
-   * Previously imported sessions under the target home whose wire still lacks
-   * turn-structure records (an old migrator wrote message-only imports).
-   * Filled by callers via `countImportedSessionsNeedingRepair`; a value > 0
-   * means a completed marker must not suppress a repair run.
-   */
-  readonly sessionsNeedingRepair?: number;
-  /**
    * Session storage that detection could see but could not safely inspect.
    * Optional for callers that persisted or constructed an older plan shape.
    */
@@ -143,11 +136,6 @@ export interface SessionsSummary {
   readonly sessionsMigrated: number;
   /** Sessions already imported by a previous run (idempotent re-run). */
   readonly sessionsAlreadyMigrated: number;
-  /**
-   * Previously imported sessions whose wire was repaired in place on this run
-   * (turn-structure records inserted into an old message-only import).
-   */
-  readonly sessionsRepaired: number;
   readonly sessionsSkippedPlaceholder: number;
   readonly sessionsSkippedEmpty: number;
   readonly sessionsSkippedMalformed: number;

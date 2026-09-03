@@ -64,7 +64,6 @@ function createContextStub(): IAgentContextMemoryService {
 function createTelemetryStub(): ITelemetryService {
   return {
     _serviceBrand: undefined,
-    track: () => undefined,
     track2: () => undefined,
   } as unknown as ITelemetryService;
 }
