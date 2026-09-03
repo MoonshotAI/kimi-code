@@ -65,6 +65,7 @@ import {
   initializeTelemetry,
   setCrashPhase,
   setTelemetryContext,
+  setTelemetryModel,
   shouldEnableTelemetry,
   shutdownTelemetry,
 } from '@moonshot-ai/kimi-telemetry';
@@ -221,9 +222,10 @@ export async function runV2Print(
     // `session_load_failed` fire inside create()/resume(), so an appender wired
     // up only after resolveNativeSession() would drop them to the null appender.
     // The model below is the best known up front; a resumed session's real
-    // model is reconciled via setContext once resolved. The v1 pipeline is
-    // initialized here too: the process-wide crash handlers report through its
-    // default client, so its sink must be attached before the run can crash.
+    // model is reconciled once resolved (v2 via setContext, v1 via
+    // setTelemetryModel). The v1 pipeline is initialized here too: the
+    // process-wide crash handlers report through its default client, so its
+    // sink must be attached before the run can crash.
     telemetryService = app.accessor.get(ITelemetryService);
     if (telemetryEnabled) {
       telemetryService.addAppender(
@@ -255,6 +257,7 @@ export async function runV2Print(
 
     telemetryService.setContext({ session_id: resolved.session.id, model: resolved.telemetryModel });
     setTelemetryContext({ sessionId: resolved.session.id });
+    setTelemetryModel(resolved.telemetryModel);
     setCrashPhase('runtime');
     if (firstLaunch) {
       telemetryService.track2('first_launch');

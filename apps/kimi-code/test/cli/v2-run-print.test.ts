@@ -41,6 +41,7 @@ const mocks = vi.hoisted(() => ({
   initializeTelemetry: vi.fn(),
   setCrashPhase: vi.fn(),
   setTelemetryContext: vi.fn(),
+  setTelemetryModel: vi.fn(),
   shutdownTelemetry: vi.fn(async () => {}),
 }));
 
@@ -82,6 +83,7 @@ vi.mock('@moonshot-ai/kimi-telemetry', async (importOriginal) => {
     initializeTelemetry: mocks.initializeTelemetry,
     setCrashPhase: mocks.setCrashPhase,
     setTelemetryContext: mocks.setTelemetryContext,
+    setTelemetryModel: mocks.setTelemetryModel,
     shutdownTelemetry: mocks.shutdownTelemetry,
     track: vi.fn(),
     withTelemetryContext: vi.fn(() => ({ track: vi.fn() })),
@@ -570,12 +572,45 @@ describe('runV2Print', () => {
       getAccessToken: expect.any(Function),
     });
     // The resolved session id is synced onto the v1 client so crash events and
-    // system metrics carry it.
+    // system metrics carry it; the sink model is reconciled too (same value
+    // here, since the fresh session uses the configured default).
     expect(mocks.setTelemetryContext).toHaveBeenCalledWith({ sessionId: 'ses_v2' });
+    expect(mocks.setTelemetryModel).toHaveBeenCalledWith('k2');
     expect(mocks.setCrashPhase).toHaveBeenCalledWith('runtime');
     expect(mocks.setCrashPhase).toHaveBeenCalledWith('shutdown');
     expect(mocks.shutdownTelemetry).toHaveBeenCalledWith({
       timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS,
     });
+  });
+
+  it('reconciles the v1 sink model with the resumed session model', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, appServices, agentServices } = makeFakeHarness();
+
+    // The resumed session's stored model differs from the configured default.
+    const profile = agentServices.get(IAgentProfileService) as { getModel: () => string };
+    profile.getModel = () => 'resumed-model';
+    const index = appServices.get(ISessionIndex) as { get: ReturnType<typeof vi.fn> };
+    index.get.mockResolvedValue({ id: 'ses_1', cwd: process.cwd() });
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts({ session: 'ses_1' }) as never, '1.2.3-test', { stdout, stderr });
+
+    // The v1 pipeline was initialized up front with the best-known model, so
+    // crash events during session resolution still reach a sink...
+    expect(mocks.initializeTelemetry).toHaveBeenCalledTimes(1);
+    expect(mocks.initializeTelemetry).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'k2' }),
+    );
+    // ...and the sink's model was reconciled to the resumed session's real
+    // model only after the session resolved.
+    expect(mocks.setTelemetryModel).toHaveBeenCalledWith('resumed-model');
+    const initOrder = mocks.initializeTelemetry.mock.invocationCallOrder[0];
+    const reconcileOrder = mocks.setTelemetryModel.mock.invocationCallOrder[0];
+    expect(initOrder).toBeDefined();
+    expect(reconcileOrder).toBeGreaterThan(initOrder!);
   });
 });
