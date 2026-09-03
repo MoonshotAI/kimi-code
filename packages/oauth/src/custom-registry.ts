@@ -63,7 +63,7 @@ export interface CustomRegistryProviderEntry {
  * before the upstream rejects with a context-overflow 4xx. Users can override
  * by editing `~/.kimi-code/config.toml`.
  */
-export const CUSTOM_REGISTRY_DEFAULT_MAX_CONTEXT = 131072;
+export const CUSTOM_REGISTRY_DEFAULT_MAX_CONTEXT = 262144;
 export const CUSTOM_REGISTRY_DEFAULT_CAPABILITIES = ['tool_use'] as const;
 
 const ALLOWED_PROVIDER_TYPES: ReadonlySet<CustomRegistryProviderType> = new Set([
