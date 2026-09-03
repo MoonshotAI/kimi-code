@@ -22,6 +22,45 @@ export interface ProjectionEvent {
   type: string;
   time?: number;
   agentId?: string;
+  promptId?: unknown;
+  promptIds?: unknown;
+  status?: unknown;
+  steer?: unknown;
+  content?: unknown;
+  origin?: unknown;
+  createdAt?: unknown;
+  steeredAt?: unknown;
+  finishedAt?: unknown;
+  abortedAt?: unknown;
+  turnId?: unknown;
+  durationMs?: unknown;
+  step?: unknown;
+  usage?: unknown;
+  finishReason?: unknown;
+  llmFirstTokenLatencyMs?: unknown;
+  llmStreamDurationMs?: unknown;
+  reason?: unknown;
+  message?: unknown;
+  failedAttempt?: unknown;
+  nextAttempt?: unknown;
+  maxAttempts?: unknown;
+  delayMs?: unknown;
+  errorName?: unknown;
+  errorMessage?: unknown;
+  statusCode?: unknown;
+  delta?: unknown;
+  toolCallId?: unknown;
+  argumentsPart?: unknown;
+  name?: unknown;
+  args?: unknown;
+  display?: unknown;
+  update?: unknown;
+  output?: unknown;
+  isError?: unknown;
+  key?: unknown;
+  value?: unknown;
+  info?: unknown;
+  outputTail?: unknown;
   [key: string]: unknown;
 }
 
@@ -36,7 +75,6 @@ interface TurnAcc {
   userMessageId?: string;
   usageInput: number;
   usageOutput: number;
-  usageCached: number;
 }
 
 interface PromptAcc {
@@ -77,6 +115,7 @@ interface TextAcc {
   turnId: string;
   stepId: string;
   text: string;
+  announced: boolean;
 }
 
 interface ToolAcc {
@@ -93,12 +132,29 @@ interface ToolAcc {
   progress?: ToolProgressPayload;
   approvalId?: string;
   taskId?: string;
+  todoId?: string;
   opened: boolean;
 }
 
 interface TaskAcc {
   taskId: string;
   message: TaskMessage;
+}
+
+interface TaskInfoPayload {
+  taskId?: unknown;
+  kind?: unknown;
+  status?: unknown;
+  detached?: unknown;
+  description?: unknown;
+  startedAt?: unknown;
+  model?: unknown;
+  thinkingEffort?: unknown;
+  endedAt?: unknown;
+  resultSummary?: unknown;
+  error?: unknown;
+  stopReason?: unknown;
+  usage?: unknown;
 }
 
 const MAIN_FALLBACK_TIME = 0;
@@ -140,7 +196,7 @@ function toTurnOrigin(origin: unknown): TurnOrigin {
     case undefined:
       return { kind: 'user' };
     default:
-      return { kind: 'other', name: o.kind };
+      return { kind: 'other', name: o?.kind };
   }
 }
 
@@ -188,6 +244,8 @@ export class AgentV2Projector {
   private readonly tools = new Map<string, ToolAcc>();
   private readonly tasks = new Map<string, TaskAcc>();
   private todoId?: string;
+  private todoSeq = 0;
+  private todoUpdatedAt?: number;
   private systemSeq = 0;
 
   constructor(
@@ -217,6 +275,7 @@ export class AgentV2Projector {
       case 'tool.result': this.onToolResult(event, out); break;
       case 'task.started': this.onTaskStarted(event, out); break;
       case 'task.terminated': this.onTaskTerminated(event, out); break;
+      case 'tools.update_store': this.onToolsUpdateStore(event, out); break;
       default: break;
     }
     return out;
@@ -334,11 +393,20 @@ export class AgentV2Projector {
 
   private onPromptAborted(event: ProjectionEvent, out: ServerMessage[]): void {
     const acc = this.prompts.get(event.promptId as string);
-    if (!acc || acc.status === 'completed') return;
+    if (!acc) return;
     const qi = this.queue.indexOf(acc.promptId);
     if (qi >= 0) this.queue.splice(qi, 1);
-    acc.status = 'completed';
-    out.push(this.userMessage(acc, event.time, (event.abortedAt as string) ?? iso(event.time)));
+    if (acc.status !== 'completed') {
+      acc.status = 'completed';
+      out.push(this.userMessage(acc, event.time, (event.abortedAt as string) ?? iso(event.time)));
+    }
+    out.push({
+      type: 'system',
+      ...this.base(event),
+      system_id: this.nextSystemId(),
+      subtype: 'interruption',
+      payload: { reason: 'aborted', turn_id: acc.turnId },
+    });
   }
 
   private onTurnStarted(event: ProjectionEvent, out: ServerMessage[]): void {
@@ -355,7 +423,6 @@ export class AgentV2Projector {
       promptIds: [],
       usageInput: 0,
       usageOutput: 0,
-      usageCached: 0,
     };
     let maxSeq = 0;
     for (const acc of this.prompts.values()) {
@@ -385,7 +452,6 @@ export class AgentV2Projector {
         ? {
             input_tokens: turn.usageInput,
             output_tokens: turn.usageOutput,
-            cached_tokens: turn.usageCached > 0 ? turn.usageCached : undefined,
           }
         : undefined;
     const msg: TurnMessage = {
@@ -437,6 +503,7 @@ export class AgentV2Projector {
     step.state = 'completed';
     step.usage = toStepUsage(event.usage);
     step.finishReason = event.finishReason as string | undefined;
+    step.retry = undefined;
     const timing = {
       llm_first_token_ms: event.llmFirstTokenLatencyMs as number | undefined,
       llm_stream_duration_ms: event.llmStreamDurationMs as number | undefined,
@@ -444,9 +511,8 @@ export class AgentV2Projector {
     step.timing = timing.llm_first_token_ms !== undefined || timing.llm_stream_duration_ms !== undefined ? timing : undefined;
     const turn = this.turns.get(step.engineTurnId);
     if (turn && step.usage) {
-      turn.usageInput += step.usage.input_other + step.usage.input_cache_read + step.usage.input_cache_creation;
+      turn.usageInput += step.usage.input_other;
       turn.usageOutput += step.usage.output;
-      turn.usageCached += step.usage.input_cache_read + step.usage.input_cache_creation;
     }
     out.push(this.stepMessage(step, event.time));
     this.currentStep = undefined;
@@ -457,6 +523,7 @@ export class AgentV2Projector {
     if (!step || step.state !== 'running') return;
     this.closeOpenTexts(event.time, out);
     step.state = 'interrupted';
+    step.usage = toStepUsage(event.usage);
     step.endReason = event.reason as string | undefined;
     step.endMessage = event.message as string | undefined;
     out.push(this.stepMessage(step, event.time));
@@ -475,7 +542,19 @@ export class AgentV2Projector {
       error_message: event.errorMessage as string,
       status_code: event.statusCode as number | undefined,
     };
+    this.resetOpenTexts();
     out.push(this.stepMessage(step, event.time));
+  }
+
+  private resetOpenTexts(): void {
+    if (this.openAssistant) {
+      this.openAssistant.text = '';
+      this.openAssistant.announced = false;
+    }
+    if (this.openThinking) {
+      this.openThinking.text = '';
+      this.openThinking.announced = false;
+    }
   }
 
   private onTextDelta(event: ProjectionEvent, kind: 'assistant' | 'thinking', out: ServerMessage[]): void {
@@ -493,12 +572,17 @@ export class AgentV2Projector {
         turnId: step.turnId,
         stepId: step.stepId,
         text: '',
+        announced: false,
       };
       if (kind === 'assistant') this.openAssistant = acc;
       else this.openThinking = acc;
+    }
+    if (!acc.announced) {
       out.push(this.textMessage(acc, 'streaming', event.time));
+      acc.announced = true;
     }
     acc.text += delta;
+    if (delta.length === 0) return;
     if (kind === 'assistant') {
       const msg: AssistantDeltaMessage = { type: 'assistant.delta', ...this.base(event), message_id: acc.messageId, text: delta };
       out.push(msg);
@@ -562,6 +646,10 @@ export class AgentV2Projector {
       display: event.display,
       opened: true,
     };
+    if (acc.name === 'TodoWrite' && todoItemsFromInput(acc.input) !== undefined) {
+      this.todoId = this.todoId ?? this.nextTodoId();
+      acc.todoId = this.todoId;
+    }
     this.tools.set(toolCallId, acc);
     out.push(this.toolCallMessage(acc, event.time));
   }
@@ -580,20 +668,26 @@ export class AgentV2Projector {
     if (!acc) return;
     const isError = event.isError === true;
     acc.state = isError ? 'error' : 'done';
-    acc.output = event.output;
-    if (isError) acc.error = typeof event.output === 'string' ? event.output : JSON.stringify(event.output);
-    out.push(this.toolCallMessage(acc, event.time));
-    if (acc.name === 'TodoWrite' && !isError) {
-      const items = todoItemsFromInput(acc.input);
-      if (items) {
-        this.todoId = this.todoId ?? toolCallId;
-        out.push(this.todoMessage(this.todoId, items, event.time));
-      }
+    acc.progress = undefined;
+    if (isError) {
+      acc.error = typeof event.output === 'string' ? event.output : JSON.stringify(event.output);
+    } else {
+      acc.output = event.output;
     }
+    out.push(this.toolCallMessage(acc, event.time));
+    if (!isError && acc.todoId !== undefined) this.todoUpdatedAt = event.time;
+  }
+
+  private onToolsUpdateStore(event: ProjectionEvent, out: ServerMessage[]): void {
+    if (event.key !== 'todo') return;
+    const items = todoItemsFromList(event.value);
+    if (!items) return;
+    this.todoId = this.todoId ?? this.nextTodoId();
+    out.push(this.todoMessage(this.todoId, items, event.time, this.todoUpdatedAt));
   }
 
   private onTaskStarted(event: ProjectionEvent, out: ServerMessage[]): void {
-    const info = event.info as Record<string, unknown> | undefined;
+    const info = event.info as TaskInfoPayload | undefined;
     if (!info) return;
     const taskId = info.taskId as string;
     const msg: TaskMessage = {
@@ -614,7 +708,7 @@ export class AgentV2Projector {
   }
 
   private onTaskTerminated(event: ProjectionEvent, out: ServerMessage[]): void {
-    const info = event.info as Record<string, unknown> | undefined;
+    const info = event.info as TaskInfoPayload | undefined;
     if (!info) return;
     const taskId = info.taskId as string;
     const prev = this.tasks.get(taskId)?.message;
@@ -730,10 +824,11 @@ export class AgentV2Projector {
       progress: acc.progress,
       approval_id: acc.approvalId,
       task_id: acc.taskId,
+      todo_id: acc.todoId,
     };
   }
 
-  private todoMessage(todoId: string, items: TodoItem[], time: number | undefined): TodoMessage {
+  private todoMessage(todoId: string, items: TodoItem[], time: number | undefined, updatedAt?: number): TodoMessage {
     return {
       type: 'todo',
       session_id: this.sessionId,
@@ -741,13 +836,18 @@ export class AgentV2Projector {
       timestamp: iso(time),
       todo_id: todoId,
       items,
-      updated_at: iso(time),
+      updated_at: iso(updatedAt ?? time),
     };
+  }
+
+  private nextTodoId(): string {
+    this.todoSeq += 1;
+    return `td_${String(this.todoSeq).padStart(2, '0')}`;
   }
 
   protected nextSystemId(): string {
     this.systemSeq += 1;
-    return `sys_${String(this.systemSeq).padStart(2, '0')}`;
+    return `m_${String(this.systemSeq).padStart(2, '0')}`;
   }
 }
 
@@ -761,10 +861,14 @@ function toTaskKind(kind: string | undefined): TaskMessage['kind'] {
 }
 
 function todoItemsFromInput(input: unknown): TodoItem[] | undefined {
-  const todos = (input as { todos?: unknown } | undefined)?.todos;
-  if (!Array.isArray(todos)) return undefined;
+  const i = input as { todos?: unknown; items?: unknown } | undefined;
+  return todoItemsFromList(i?.todos ?? i?.items);
+}
+
+function todoItemsFromList(list: unknown): TodoItem[] | undefined {
+  if (!Array.isArray(list)) return undefined;
   const items: TodoItem[] = [];
-  for (const entry of todos) {
+  for (const entry of list) {
     const e = entry as { title?: string; content?: string; status?: string };
     const title = e.title ?? e.content;
     if (typeof title !== 'string') return undefined;
