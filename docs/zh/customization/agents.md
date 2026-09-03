@@ -79,7 +79,7 @@ extra_agent_dirs = ["~/team-agents", ".agents/team-agents"]
 
 **内置 Agent** 随 CLI 分发，优先级最低。目录中发现的文件不会仅凭同名覆盖内置 Agent；如确需替换，必须在 Frontmatter 中声明 `override: true`。通过 `--agent-file` 加载的文件视为显式启动意图，可以覆盖同名内置 Agent，优先级高于所有目录作用域，且仅对本次启动生效。
 
-另外，`$KIMI_CODE_HOME/SYSTEM.md` 可永久覆盖默认 main agent 的系统提示词，它不参与 Agent 文件发现，优先级交互见 [SYSTEM.md 小节](#用-system-md-覆盖-main-agent-的系统提示词)。
+另外，`$KIMI_CODE_HOME/SYSTEM.md` 可永久覆盖默认 main agent 的系统提示词，它不参与 Agent 文件发现，优先级交互见 [SYSTEM.md 小节](#用-systemmd-覆盖-main-agent-的系统提示词)。
 
 ::: warning 信任模型
 Agent 文件属于提示词配置，而项目级文件来自仓库本身，包括你刚刚 clone、尚不可信的仓库。项目作用域的文件可以完全接管内置 Agent：命名为 `agent.md` 并声明 `override: true` 会替换**默认 main agent 的整个系统提示词**，`coder.md` 加 `override: true` 则会替换默认 subagent 类型。不同于把 `AGENTS.md` 内容作为参考资料注入提示词，override 文件本身就是系统提示词，且不写 `tools` 的文件保留全部工具。在不熟悉的仓库中运行 Kimi Code 之前，请以对待脚本同样的谨慎检查其中的 `.kimi-code/agents/` 与 `.agents/agents/` 目录。
@@ -125,7 +125,7 @@ disallowedTools:
 - 写不全的 `mcp__` 字面量：`mcp__github` 匹配不到任何工具；匹配整个服务器要用 `mcp__github__*`。
 - 任何已注册或内置工具都没有的名字：通常是笔误，如把 `Read` 写成 `read`。
 
-正文即 Agent 的系统提示词，每次构建提示词时都会作为模板渲染。`${var}` 占位符替换为实时上下文值：未知变量保持原样，单独的 `$` 没有特殊含义，上下文中缺失的变量渲染为空字符串。`${base_prompt}` 会在放置它的位置嵌入有效默认系统提示词（内置默认，或存在时为你的 `SYSTEM.md` 覆盖），因此文件可以包裹默认行为而不是替换它。如果文件替换默认提示词后仍要保留已启用 plugin 提供的指令，把 `${plugin_sections}` 放在希望出现这些指令的位置即可。可用变量见 [SYSTEM.md 变量表](#用-system-md-覆盖-main-agent-的系统提示词)。
+正文即 Agent 的系统提示词，每次构建提示词时都会作为模板渲染。`${var}` 占位符替换为实时上下文值：未知变量保持原样，单独的 `$` 没有特殊含义，上下文中缺失的变量渲染为空字符串。`${base_prompt}` 会在放置它的位置嵌入有效默认系统提示词（内置默认，或存在时为你的 `SYSTEM.md` 覆盖），因此文件可以包裹默认行为而不是替换它。如果文件替换默认提示词后仍要保留已启用 plugin 提供的指令，把 `${plugin_sections}` 放在希望出现这些指令的位置即可。可用变量见 [SYSTEM.md 变量表](#用-systemmd-覆盖-main-agent-的系统提示词)。
 
 未知字段会被忽略，新版本写的文件在旧版本上仍可读取。其他 Agent 工具的字段（如 Claude Code 的 `model`、OpenCode 的 `mode`）同样会被忽略。加上 `tools` 的逗号分隔写法和 `name` 缺省回退到文件名，Claude Code 与 OpenCode 风格的 Agent 文件一般可直接加载，只含 `description` 和正文的最小文件可跨工具通用。
 
