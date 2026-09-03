@@ -475,7 +475,7 @@
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_04\",\n  \"timestamp\": \"2026-09-03T11:00:00.020Z\",\n  \"busy\": true,\n  \"main_turn_active\": true,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"turn\",\n  \"phase\": {\n    \"kind\": \"running\",\n    \"turn_id\": 1,\n    \"step\": 0,\n    \"step_id\": \"t2.0\",\n    \"since\": 1788433205610\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"total\": {\n      \"input_other\": 2400,\n      \"output\": 58,\n      \"input_cache_read\": 0,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 2460,\n  \"max_context_tokens\": 262144\n}"
+       "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_04\",\n  \"timestamp\": \"2026-09-03T11:00:00.020Z\",\n  \"busy\": true,\n  \"main_turn_active\": true,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"turn\",\n  \"phase\": {\n    \"kind\": \"running\",\n    \"turn_id\": 1,\n    \"step\": 0,\n    \"step_id\": \"t2.0\",\n    \"since\": 1788433200015\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"total\": {\n      \"input_other\": 2400,\n      \"output\": 58,\n      \"input_cache_read\": 0,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 2460,\n  \"max_context_tokens\": 262144\n}"
       },
       {
        "note": "",
@@ -589,7 +589,7 @@
       },
       {
        "note": "状态实体全量重发（本例只有 session.state）",
-       "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_04\",\n  \"timestamp\": \"2026-09-03T11:00:03.633Z\",\n  \"busy\": true,\n  \"main_turn_active\": true,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"turn\",\n  \"phase\": {\n    \"kind\": \"running\",\n    \"turn_id\": 1,\n    \"step\": 1,\n    \"step_id\": \"t2.1\",\n    \"since\": 1788433205610\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"current_turn\": {\n      \"input_other\": 5700,\n      \"output\": 150,\n      \"input_cache_read\": 20000,\n      \"input_cache_creation\": 0\n    },\n    \"total\": {\n      \"input_other\": 8100,\n      \"output\": 208,\n      \"input_cache_read\": 20000,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 8100,\n  \"max_context_tokens\": 262144\n}"
+       "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_04\",\n  \"timestamp\": \"2026-09-03T11:00:03.633Z\",\n  \"busy\": true,\n  \"main_turn_active\": true,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"turn\",\n  \"phase\": {\n    \"kind\": \"running\",\n    \"turn_id\": 1,\n    \"step\": 1,\n    \"step_id\": \"t2.1\",\n    \"since\": 1788433200015\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"current_turn\": {\n      \"input_other\": 5700,\n      \"output\": 150,\n      \"input_cache_read\": 20000,\n      \"input_cache_creation\": 0\n    },\n    \"total\": {\n      \"input_other\": 8100,\n      \"output\": 208,\n      \"input_cache_read\": 20000,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 8100,\n  \"max_context_tokens\": 262144\n}"
       },
       {
        "note": "恢复完成，后续全是直播",
@@ -659,7 +659,7 @@
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_04\",\n  \"timestamp\": \"2026-09-03T11:00:05.613Z\",\n  \"busy\": true,\n  \"main_turn_active\": true,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"turn\",\n  \"phase\": {\n    \"kind\": \"running\",\n    \"turn_id\": 1,\n    \"step\": 1,\n    \"step_id\": \"t2.1\",\n    \"since\": 1788433205610\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"current_turn\": {\n      \"input_other\": 5850,\n      \"output\": 156,\n      \"input_cache_read\": 20600,\n      \"input_cache_creation\": 0\n    },\n    \"total\": {\n      \"input_other\": 8250,\n      \"output\": 214,\n      \"input_cache_read\": 20600,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 8300,\n  \"max_context_tokens\": 262144\n}"
+       "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_04\",\n  \"timestamp\": \"2026-09-03T11:00:05.613Z\",\n  \"busy\": true,\n  \"main_turn_active\": true,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"turn\",\n  \"phase\": {\n    \"kind\": \"running\",\n    \"turn_id\": 1,\n    \"step\": 1,\n    \"step_id\": \"t2.1\",\n    \"since\": 1788433200015\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"current_turn\": {\n      \"input_other\": 5850,\n      \"output\": 156,\n      \"input_cache_read\": 20600,\n      \"input_cache_creation\": 0\n    },\n    \"total\": {\n      \"input_other\": 8250,\n      \"output\": 214,\n      \"input_cache_read\": 20600,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 8300,\n  \"max_context_tokens\": 262144\n}"
       },
       {
        "note": "本地半截 assistant 被按 id 整体覆盖；直播只剩收官",
@@ -678,7 +678,8 @@
        "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_04\",\n  \"timestamp\": \"2026-09-03T11:00:06.520Z\",\n  \"busy\": false,\n  \"main_turn_active\": false,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"idle\",\n  \"phase\": {\n    \"kind\": \"idle\"\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"total\": {\n      \"input_other\": 8300,\n      \"output\": 218,\n      \"input_cache_read\": 20800,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 8500,\n  \"max_context_tokens\": 262144\n}"
       }
      ],
-     "tail": "<b>要点</b><br>· 断线重连与页面刷新的服务端动作一字不差（§9.3）；唯一差别在 REST：补尾巴用 <code>after_step</code>（这里是 <code>t2.0</code>）而非全量<br>· 本地半截实体被权威版本按 id 整体覆盖——不 diff、不合并<br>· 断线期间丢失的 delta3 / delta4 无人想念：恢复载荷的累积全量已包含（§9.4）<br>· 若断线期间 t2.1 已完成：恢复载荷里没有它，completed 实体出现在 REST 尾巴里，闭环"
+     "tail": "<b>要点</b><br>· 断线重连与页面刷新的服务端动作一字不差（§9.3）；唯一差别在 REST：补尾巴用 <code>after_step</code>（这里是 <code>t2.0</code>）而非全量<br>· 本地半截实体被权威版本按 id 整体覆盖——不 diff、不合并<br>· 断线期间丢失的 delta3 / delta4 无人想念：恢复载荷的累积全量已包含（§9.4）<br>· 若断线期间 t2.1 已完成：恢复载荷里没有它，completed 实体出现在 REST 尾巴里，闭环",
+     "branch_from": "直播"
     }
    ]
   },
@@ -821,7 +822,8 @@
        "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_05\",\n  \"timestamp\": \"2026-09-03T10:00:07.320Z\",\n  \"busy\": false,\n  \"main_turn_active\": false,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"idle\",\n  \"phase\": {\n    \"kind\": \"idle\"\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"total\": {\n      \"input_other\": 5500,\n      \"output\": 140,\n      \"input_cache_read\": 20800,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 5700,\n  \"max_context_tokens\": 262144\n}"
       }
      ],
-     "tail": "<b>要点</b><br>· 批准只改 <code>interaction</code> 的 state 并附 <code>response</code>；<code>request</code> 在终态消息里原样保留——客户端无需缓存 pending 版本<br>· 批准后工具才真正执行：running（待批）→ done（有 <code>output</code>）；待批期间的 tool_call 没有进度、没有输出"
+     "tail": "<b>要点</b><br>· 批准只改 <code>interaction</code> 的 state 并附 <code>response</code>；<code>request</code> 在终态消息里原样保留——客户端无需缓存 pending 版本<br>· 批准后工具才真正执行：running（待批）→ done（有 <code>output</code>）；待批期间的 tool_call 没有进度、没有输出",
+     "branch_from": "起跑"
     },
     {
      "label": "B · 拒绝（WS）",
@@ -840,11 +842,11 @@
       },
       {
        "note": "「被拒」就是本次工具结果，step 照常收官",
-       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_05\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T10:00:05.300Z\",\n  \"step_id\": \"t1.0\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"completed\",\n  \"started_at\": \"2026-09-03T10:00:00.022Z\",\n  \"ended_at\": \"2026-09-03T10:00:06.300Z\",\n  \"usage\": {\n    \"input_other\": 2400,\n    \"output\": 52,\n    \"input_cache_read\": 8000,\n    \"input_cache_creation\": 0\n  },\n  \"finish_reason\": \"tool_use\"\n}"
+       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_05\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T10:00:05.300Z\",\n  \"step_id\": \"t1.0\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"completed\",\n  \"started_at\": \"2026-09-03T10:00:00.022Z\",\n  \"ended_at\": \"2026-09-03T10:00:05.300Z\",\n  \"usage\": {\n    \"input_other\": 2400,\n    \"output\": 52,\n    \"input_cache_read\": 8000,\n    \"input_cache_creation\": 0\n  },\n  \"finish_reason\": \"tool_use\"\n}"
       },
       {
        "note": "带「被拒」结果再调 LLM",
-       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_05\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T10:00:05.350Z\",\n  \"step_id\": \"t1.1\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 1,\n  \"state\": \"running\",\n  \"started_at\": \"2026-09-03T10:00:06.350Z\"\n}"
+       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_05\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T10:00:05.350Z\",\n  \"step_id\": \"t1.1\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 1,\n  \"state\": \"running\",\n  \"started_at\": \"2026-09-03T10:00:05.350Z\"\n}"
       },
       {
        "note": "",
@@ -864,22 +866,23 @@
       },
       {
        "note": "收官序列同 A",
-       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_05\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T10:00:06.200Z\",\n  \"step_id\": \"t1.1\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 1,\n  \"state\": \"completed\",\n  \"started_at\": \"2026-09-03T10:00:06.350Z\",\n  \"ended_at\": \"2026-09-03T10:00:07.200Z\",\n  \"usage\": {\n    \"input_other\": 2900,\n    \"output\": 76,\n    \"input_cache_read\": 12100,\n    \"input_cache_creation\": 0\n  },\n  \"finish_reason\": \"end_turn\"\n}"
+       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_05\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T10:00:06.200Z\",\n  \"step_id\": \"t1.1\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 1,\n  \"state\": \"completed\",\n  \"started_at\": \"2026-09-03T10:00:05.350Z\",\n  \"ended_at\": \"2026-09-03T10:00:06.200Z\",\n  \"usage\": {\n    \"input_other\": 2900,\n    \"output\": 76,\n    \"input_cache_read\": 12100,\n    \"input_cache_creation\": 0\n  },\n  \"finish_reason\": \"end_turn\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_05\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T10:00:06.300Z\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"completed\",\n  \"origin\": {\n    \"kind\": \"user\"\n  },\n  \"started_at\": \"2026-09-03T10:00:00.015Z\",\n  \"ended_at\": \"2026-09-03T10:00:07.300Z\",\n  \"usage\": {\n    \"input_tokens\": 5300,\n    \"output_tokens\": 128\n  },\n  \"duration_ms\": 6283,\n  \"user_message_id\": \"t1.u0\"\n}"
+       "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_05\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T10:00:06.300Z\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"completed\",\n  \"origin\": {\n    \"kind\": \"user\"\n  },\n  \"started_at\": \"2026-09-03T10:00:00.015Z\",\n  \"ended_at\": \"2026-09-03T10:00:06.300Z\",\n  \"usage\": {\n    \"input_tokens\": 5300,\n    \"output_tokens\": 128\n  },\n  \"duration_ms\": 6283,\n  \"user_message_id\": \"t1.u0\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"user\",\n  \"session_id\": \"s_05\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T10:00:06.300Z\",\n  \"message_id\": \"t1.u0\",\n  \"turn_id\": \"t1\",\n  \"status\": \"completed\",\n  \"created_at\": \"2026-09-03T10:00:00.000Z\",\n  \"finished_at\": \"2026-09-03T10:00:07.300Z\",\n  \"text\": \"把登录页崩溃的复现脚本跑一下\"\n}"
+       "json": "{\n  \"type\": \"user\",\n  \"session_id\": \"s_05\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T10:00:06.300Z\",\n  \"message_id\": \"t1.u0\",\n  \"turn_id\": \"t1\",\n  \"status\": \"completed\",\n  \"created_at\": \"2026-09-03T10:00:00.000Z\",\n  \"finished_at\": \"2026-09-03T10:00:06.300Z\",\n  \"text\": \"把登录页崩溃的复现脚本跑一下\"\n}"
       },
       {
        "note": "",
        "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_05\",\n  \"timestamp\": \"2026-09-03T10:00:06.320Z\",\n  \"busy\": false,\n  \"main_turn_active\": false,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"idle\",\n  \"phase\": {\n    \"kind\": \"idle\"\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"total\": {\n      \"input_other\": 5300,\n      \"output\": 128,\n      \"input_cache_read\": 20100,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 5500,\n  \"max_context_tokens\": 262144\n}"
       }
      ],
-     "tail": "<b>要点</b><br>· 拒绝也是终态：<code>rejected</code> + <code>response</code>；tool_call 以 <code>error: \"rejected by user\"</code> 收官、无 <code>output</code><br>· agent 把「被拒」当普通工具结果继续——对话不断流，也不需要任何特殊消息"
+     "tail": "<b>要点</b><br>· 拒绝也是终态：<code>rejected</code> + <code>response</code>；tool_call 以 <code>error: \"rejected by user\"</code> 收官、无 <code>output</code><br>· agent 把「被拒」当普通工具结果继续——对话不断流，也不需要任何特殊消息",
+     "branch_from": "起跑"
     },
     {
      "label": "REST 历史（A）",
@@ -1388,6 +1391,10 @@
       {
        "note": "",
        "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_08\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T14:00:07.300Z\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"completed\",\n  \"origin\": {\n    \"kind\": \"user\"\n  },\n  \"started_at\": \"2026-09-03T14:00:00.015Z\",\n  \"ended_at\": \"2026-09-03T14:00:07.300Z\",\n  \"usage\": {\n    \"input_tokens\": 4800,\n    \"output_tokens\": 110\n  },\n  \"duration_ms\": 7283,\n  \"user_message_id\": \"t1.u0\"\n}"
+      },
+      {
+       "note": "user 消息随 turn 收官（补漏写帧）",
+       "json": "{\n  \"type\": \"user\",\n  \"session_id\": \"s_08\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T14:00:07.300Z\",\n  \"message_id\": \"t1.u0\",\n  \"turn_id\": \"t1\",\n  \"text\": \"把 README 的安装命令更新成 pnpm\",\n  \"status\": \"completed\",\n  \"created_at\": \"2026-09-03T14:00:00.000Z\",\n  \"finished_at\": \"2026-09-03T14:00:07.300Z\"\n}"
       },
       {
        "note": "",
@@ -2091,7 +2098,8 @@
        "json": "{\n  \"type\": \"ack\",\n  \"id\": 1,\n  \"code\": 0\n}"
       }
      ],
-     "tail": "<b>要点</b><br>· 背压策略（§8）：每连接出站**有界**队列，溢出即专用错误码断开；绝不为慢消费者无限堆积<br>· 断开后没有任何状态需要抢救：重连走 §9 恢复（无游标、无协商），与刷新/普通断线同一条服务端路径"
+     "tail": "<b>要点</b><br>· 背压策略（§8）：每连接出站**有界**队列，溢出即专用错误码断开；绝不为慢消费者无限堆积<br>· 断开后没有任何状态需要抢救：重连走 §9 恢复（无游标、无协商），与刷新/普通断线同一条服务端路径",
+     "branch_from": ""
     }
    ]
   },
@@ -2109,19 +2117,19 @@
       },
       {
        "note": "turn 开始",
-       "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:00.015Z\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"running\",\n  \"origin\": {\n    \"kind\": \"user\"\n  },\n  \"started_at\": \"2026-09-03T17:30:00.012Z\",\n  \"user_message_id\": \"t1.u0\"\n}"
+       "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:00.015Z\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"running\",\n  \"origin\": {\n    \"kind\": \"user\"\n  },\n  \"started_at\": \"2026-09-03T17:30:00.015Z\",\n  \"user_message_id\": \"t1.u0\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_16\",\n  \"timestamp\": \"2026-09-03T17:30:00.020Z\",\n  \"busy\": true,\n  \"main_turn_active\": true,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"turn\",\n  \"phase\": {\n    \"kind\": \"running\",\n    \"turn_id\": 0,\n    \"step\": 0,\n    \"step_id\": \"t1.0\",\n    \"since\": 1788509400015\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"total\": {\n      \"input_other\": 0,\n      \"output\": 0,\n      \"input_cache_read\": 0,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 1820,\n  \"max_context_tokens\": 262144\n}"
+       "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_16\",\n  \"timestamp\": \"2026-09-03T17:30:00.020Z\",\n  \"busy\": true,\n  \"main_turn_active\": true,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"turn\",\n  \"phase\": {\n    \"kind\": \"running\",\n    \"turn_id\": 0,\n    \"step\": 0,\n    \"step_id\": \"t1.0\",\n    \"since\": 1788456600015\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"total\": {\n      \"input_other\": 0,\n      \"output\": 0,\n      \"input_cache_read\": 0,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 1820,\n  \"max_context_tokens\": 262144\n}"
       },
       {
        "note": "step 开始，先思考",
-       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:00.022Z\",\n  \"step_id\": \"t1.0\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"running\",\n  \"started_at\": \"2026-09-03T17:30:00.020Z\"\n}"
+       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:00.022Z\",\n  \"step_id\": \"t1.0\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"running\",\n  \"started_at\": \"2026-09-03T17:30:00.022Z\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"thinking\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:00.300Z\",\n  \"message_id\": \"t1.0.h0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"streaming\",\n  \"text\": \"\"\n}"
+       "json": "{\n  \"type\": \"thinking\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:00.450Z\",\n  \"message_id\": \"t1.0.h0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"streaming\",\n  \"text\": \"\"\n}"
       },
       {
        "note": "",
@@ -2133,11 +2141,11 @@
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"thinking\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:00.700Z\",\n  \"message_id\": \"t1.0.h0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"completed\",\n  \"text\": \"起个 reviewer 子代理独立审查，前台等它出结果。\"\n}"
+       "json": "{\n  \"type\": \"thinking\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:01.050Z\",\n  \"message_id\": \"t1.0.h0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"completed\",\n  \"text\": \"起个 reviewer 子代理独立审查，前台等它出结果。\"\n}"
       },
       {
        "note": "过渡正文",
-       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:00.900Z\",\n  \"message_id\": \"t1.0.a0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"streaming\",\n  \"text\": \"\"\n}"
+       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:01.050Z\",\n  \"message_id\": \"t1.0.a0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"streaming\",\n  \"text\": \"\"\n}"
       },
       {
        "note": "",
@@ -2145,7 +2153,7 @@
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:01.200Z\",\n  \"message_id\": \"t1.0.a0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"completed\",\n  \"text\": \"我起一个审查子代理，前台等它：\"\n}"
+       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:01.500Z\",\n  \"message_id\": \"t1.0.a0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"completed\",\n  \"text\": \"我起一个审查子代理，前台等它：\"\n}"
       },
       {
        "note": "派生子代理——前台模式：主 step 阻塞在这条 tool_call 上",
@@ -2157,15 +2165,15 @@
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.100Z\",\n  \"step_id\": \"t1.0\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"completed\",\n  \"started_at\": \"2026-09-03T17:30:00.020Z\",\n  \"ended_at\": \"2026-09-03T17:30:04.095Z\",\n  \"usage\": {\n    \"input_other\": 2900,\n    \"output\": 72,\n    \"input_cache_read\": 11000,\n    \"input_cache_creation\": 0\n  },\n  \"finish_reason\": \"tool_use\"\n}"
+       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.100Z\",\n  \"step_id\": \"t1.0\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"completed\",\n  \"started_at\": \"2026-09-03T17:30:00.022Z\",\n  \"ended_at\": \"2026-09-03T17:30:04.100Z\",\n  \"usage\": {\n    \"input_other\": 2900,\n    \"output\": 72,\n    \"input_cache_read\": 11000,\n    \"input_cache_creation\": 0\n  },\n  \"finish_reason\": \"tool_use\"\n}"
       },
       {
        "note": "带结论再调 LLM",
-       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.150Z\",\n  \"step_id\": \"t1.1\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 1,\n  \"state\": \"running\",\n  \"started_at\": \"2026-09-03T17:30:04.145Z\"\n}"
+       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.150Z\",\n  \"step_id\": \"t1.1\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 1,\n  \"state\": \"running\",\n  \"started_at\": \"2026-09-03T17:30:04.150Z\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.300Z\",\n  \"message_id\": \"t1.1.a0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.1\",\n  \"status\": \"streaming\",\n  \"text\": \"\"\n}"
+       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.500Z\",\n  \"message_id\": \"t1.1.a0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.1\",\n  \"status\": \"streaming\",\n  \"text\": \"\"\n}"
       },
       {
        "note": "",
@@ -2173,19 +2181,19 @@
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.700Z\",\n  \"message_id\": \"t1.1.a0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.1\",\n  \"status\": \"completed\",\n  \"text\": \"子代理审查通过：修复正确，无回归风险，可以放心提交。\"\n}"
+       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.800Z\",\n  \"message_id\": \"t1.1.a0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.1\",\n  \"status\": \"completed\",\n  \"text\": \"子代理审查通过：修复正确，无回归风险，可以放心提交。\"\n}"
       },
       {
        "note": "step / turn / prompt 依次收官，会话回到空闲",
-       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.800Z\",\n  \"step_id\": \"t1.1\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 1,\n  \"state\": \"completed\",\n  \"started_at\": \"2026-09-03T17:30:04.145Z\",\n  \"ended_at\": \"2026-09-03T17:30:04.795Z\",\n  \"usage\": {\n    \"input_other\": 3100,\n    \"output\": 80,\n    \"input_cache_read\": 11800,\n    \"input_cache_creation\": 0\n  },\n  \"finish_reason\": \"end_turn\"\n}"
+       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.800Z\",\n  \"step_id\": \"t1.1\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 1,\n  \"state\": \"completed\",\n  \"started_at\": \"2026-09-03T17:30:04.150Z\",\n  \"ended_at\": \"2026-09-03T17:30:04.800Z\",\n  \"usage\": {\n    \"input_other\": 3100,\n    \"output\": 80,\n    \"input_cache_read\": 11800,\n    \"input_cache_creation\": 0\n  },\n  \"finish_reason\": \"end_turn\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.900Z\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"completed\",\n  \"origin\": {\n    \"kind\": \"user\"\n  },\n  \"started_at\": \"2026-09-03T17:30:00.012Z\",\n  \"ended_at\": \"2026-09-03T17:30:04.895Z\",\n  \"usage\": {\n    \"input_tokens\": 6000,\n    \"output_tokens\": 152\n  },\n  \"duration_ms\": 4883,\n  \"user_message_id\": \"t1.u0\"\n}"
+       "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.900Z\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"completed\",\n  \"origin\": {\n    \"kind\": \"user\"\n  },\n  \"started_at\": \"2026-09-03T17:30:00.015Z\",\n  \"ended_at\": \"2026-09-03T17:30:04.900Z\",\n  \"usage\": {\n    \"input_tokens\": 6000,\n    \"output_tokens\": 152\n  },\n  \"duration_ms\": 4883,\n  \"user_message_id\": \"t1.u0\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"user\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.910Z\",\n  \"message_id\": \"t1.u0\",\n  \"turn_id\": \"t1\",\n  \"text\": \"白屏修好了，帮我审查一下改动\",\n  \"status\": \"completed\",\n  \"created_at\": \"2026-09-03T17:30:00.000Z\",\n  \"finished_at\": \"2026-09-03T17:30:04.895Z\"\n}"
+       "json": "{\n  \"type\": \"user\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.900Z\",\n  \"message_id\": \"t1.u0\",\n  \"turn_id\": \"t1\",\n  \"text\": \"白屏修好了，帮我审查一下改动\",\n  \"status\": \"completed\",\n  \"created_at\": \"2026-09-03T17:30:00.000Z\",\n  \"finished_at\": \"2026-09-03T17:30:04.900Z\"\n}"
       },
       {
        "note": "",
@@ -2203,19 +2211,19 @@
       },
       {
        "note": "turn 开始",
-       "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:00.015Z\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"running\",\n  \"origin\": {\n    \"kind\": \"user\"\n  },\n  \"started_at\": \"2026-09-03T17:30:00.012Z\",\n  \"user_message_id\": \"t1.u0\"\n}"
+       "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:00.015Z\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"running\",\n  \"origin\": {\n    \"kind\": \"user\"\n  },\n  \"started_at\": \"2026-09-03T17:30:00.015Z\",\n  \"user_message_id\": \"t1.u0\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_16\",\n  \"timestamp\": \"2026-09-03T17:30:00.020Z\",\n  \"busy\": true,\n  \"main_turn_active\": true,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"turn\",\n  \"phase\": {\n    \"kind\": \"running\",\n    \"turn_id\": 0,\n    \"step\": 0,\n    \"step_id\": \"t1.0\",\n    \"since\": 1788509400015\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"total\": {\n      \"input_other\": 0,\n      \"output\": 0,\n      \"input_cache_read\": 0,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 1820,\n  \"max_context_tokens\": 262144\n}"
+       "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_16\",\n  \"timestamp\": \"2026-09-03T17:30:00.020Z\",\n  \"busy\": true,\n  \"main_turn_active\": true,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"turn\",\n  \"phase\": {\n    \"kind\": \"running\",\n    \"turn_id\": 0,\n    \"step\": 0,\n    \"step_id\": \"t1.0\",\n    \"since\": 1788456600015\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"total\": {\n      \"input_other\": 0,\n      \"output\": 0,\n      \"input_cache_read\": 0,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 1820,\n  \"max_context_tokens\": 262144\n}"
       },
       {
        "note": "step 开始，先思考",
-       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:00.022Z\",\n  \"step_id\": \"t1.0\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"running\",\n  \"started_at\": \"2026-09-03T17:30:00.020Z\"\n}"
+       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:00.022Z\",\n  \"step_id\": \"t1.0\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"running\",\n  \"started_at\": \"2026-09-03T17:30:00.022Z\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"thinking\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:00.300Z\",\n  \"message_id\": \"t1.0.h0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"streaming\",\n  \"text\": \"\"\n}"
+       "json": "{\n  \"type\": \"thinking\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:00.450Z\",\n  \"message_id\": \"t1.0.h0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"streaming\",\n  \"text\": \"\"\n}"
       },
       {
        "note": "",
@@ -2227,11 +2235,11 @@
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"thinking\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:00.700Z\",\n  \"message_id\": \"t1.0.h0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"completed\",\n  \"text\": \"起个后台子代理，结果回来再汇总。\"\n}"
+       "json": "{\n  \"type\": \"thinking\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:01.050Z\",\n  \"message_id\": \"t1.0.h0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"completed\",\n  \"text\": \"起个后台子代理，结果回来再汇总。\"\n}"
       },
       {
        "note": "过渡正文",
-       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:00.900Z\",\n  \"message_id\": \"t1.0.a0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"streaming\",\n  \"text\": \"\"\n}"
+       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:01.050Z\",\n  \"message_id\": \"t1.0.a0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"streaming\",\n  \"text\": \"\"\n}"
       },
       {
        "note": "",
@@ -2239,7 +2247,7 @@
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:01.200Z\",\n  \"message_id\": \"t1.0.a0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"completed\",\n  \"text\": \"我起一个后台审查子代理：\"\n}"
+       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:01.500Z\",\n  \"message_id\": \"t1.0.a0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"completed\",\n  \"text\": \"我起一个后台审查子代理：\"\n}"
       },
       {
        "note": "`input.run_in_background: true`——调用即后台",
@@ -2251,11 +2259,11 @@
       },
       {
        "note": "`task` 出现并接管（`kind: subagent`、`detached: true`）",
-       "json": "{\n  \"type\": \"task\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:01.610Z\",\n  \"task_id\": \"task_01\",\n  \"kind\": \"subagent\",\n  \"state\": \"running\",\n  \"detached\": true,\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"child_agent_id\": \"review_01\",\n  \"output_tail\": \"\",\n  \"started_at\": \"2026-09-03T17:30:01.500Z\"\n}"
+       "json": "{\n  \"type\": \"task\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:01.610Z\",\n  \"task_id\": \"task_01\",\n  \"kind\": \"subagent\",\n  \"state\": \"running\",\n  \"detached\": true,\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"child_agent_id\": \"review_01\",\n  \"output_tail\": \"\",\n  \"started_at\": \"2026-09-03T17:30:01.610Z\"\n}"
       },
       {
        "note": "主 agent 不受阻，直接继续",
-       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:01.800Z\",\n  \"message_id\": \"t1.0.a1\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"streaming\",\n  \"text\": \"\"\n}"
+       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:02.000Z\",\n  \"message_id\": \"t1.0.a1\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"streaming\",\n  \"text\": \"\"\n}"
       },
       {
        "note": "",
@@ -2263,19 +2271,19 @@
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:02.200Z\",\n  \"message_id\": \"t1.0.a1\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"completed\",\n  \"text\": \"子代理在后台审查，完成后我汇总。\"\n}"
+       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:02.300Z\",\n  \"message_id\": \"t1.0.a1\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"completed\",\n  \"text\": \"子代理在后台审查，完成后我汇总。\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:02.300Z\",\n  \"step_id\": \"t1.0\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"completed\",\n  \"started_at\": \"2026-09-03T17:30:00.020Z\",\n  \"ended_at\": \"2026-09-03T17:30:02.295Z\",\n  \"usage\": {\n    \"input_other\": 2600,\n    \"output\": 64,\n    \"input_cache_read\": 9800,\n    \"input_cache_creation\": 0\n  },\n  \"finish_reason\": \"end_turn\"\n}"
+       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:02.300Z\",\n  \"step_id\": \"t1.0\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"completed\",\n  \"started_at\": \"2026-09-03T17:30:00.022Z\",\n  \"ended_at\": \"2026-09-03T17:30:02.300Z\",\n  \"usage\": {\n    \"input_other\": 2600,\n    \"output\": 64,\n    \"input_cache_read\": 9800,\n    \"input_cache_creation\": 0\n  },\n  \"finish_reason\": \"end_turn\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:02.400Z\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"completed\",\n  \"origin\": {\n    \"kind\": \"user\"\n  },\n  \"started_at\": \"2026-09-03T17:30:00.012Z\",\n  \"ended_at\": \"2026-09-03T17:30:02.395Z\",\n  \"usage\": {\n    \"input_tokens\": 2600,\n    \"output_tokens\": 64\n  },\n  \"duration_ms\": 2383,\n  \"user_message_id\": \"t1.u0\"\n}"
+       "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:02.400Z\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"completed\",\n  \"origin\": {\n    \"kind\": \"user\"\n  },\n  \"started_at\": \"2026-09-03T17:30:00.015Z\",\n  \"ended_at\": \"2026-09-03T17:30:02.400Z\",\n  \"usage\": {\n    \"input_tokens\": 2600,\n    \"output_tokens\": 64\n  },\n  \"duration_ms\": 2383,\n  \"user_message_id\": \"t1.u0\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"user\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:02.410Z\",\n  \"message_id\": \"t1.u0\",\n  \"turn_id\": \"t1\",\n  \"text\": \"白屏修好了，帮我审查一下改动\",\n  \"status\": \"completed\",\n  \"created_at\": \"2026-09-03T17:30:00.000Z\",\n  \"finished_at\": \"2026-09-03T17:30:02.395Z\"\n}"
+       "json": "{\n  \"type\": \"user\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:02.400Z\",\n  \"message_id\": \"t1.u0\",\n  \"turn_id\": \"t1\",\n  \"text\": \"白屏修好了，帮我审查一下改动\",\n  \"status\": \"completed\",\n  \"created_at\": \"2026-09-03T17:30:00.000Z\",\n  \"finished_at\": \"2026-09-03T17:30:02.400Z\"\n}"
       },
       {
        "note": "",
@@ -2283,27 +2291,27 @@
       },
       {
        "note": "几分钟后台进度——`output_tail` 末尾窗口整体重发",
-       "json": "{\n  \"type\": \"task\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:03.500Z\",\n  \"task_id\": \"task_01\",\n  \"kind\": \"subagent\",\n  \"state\": \"running\",\n  \"detached\": true,\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"child_agent_id\": \"review_01\",\n  \"output_tail\": \"…正在读 LoginView 的改动…\",\n  \"started_at\": \"2026-09-03T17:30:01.500Z\"\n}"
+       "json": "{\n  \"type\": \"task\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:03.500Z\",\n  \"task_id\": \"task_01\",\n  \"kind\": \"subagent\",\n  \"state\": \"running\",\n  \"detached\": true,\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"child_agent_id\": \"review_01\",\n  \"output_tail\": \"…正在读 LoginView 的改动…\",\n  \"started_at\": \"2026-09-03T17:30:01.610Z\"\n}"
       },
       {
        "note": "task 到终态（`result_summary` 带审查结论）",
-       "json": "{\n  \"type\": \"task\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.100Z\",\n  \"task_id\": \"task_01\",\n  \"kind\": \"subagent\",\n  \"state\": \"completed\",\n  \"detached\": true,\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"child_agent_id\": \"review_01\",\n  \"output_tail\": \"审查通过：可选链修复正确，无回归风险。\",\n  \"started_at\": \"2026-09-03T17:30:01.500Z\",\n  \"ended_at\": \"2026-09-03T17:30:04.095Z\",\n  \"result_summary\": \"审查通过，无回归风险\"\n}"
+       "json": "{\n  \"type\": \"task\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.100Z\",\n  \"task_id\": \"task_01\",\n  \"kind\": \"subagent\",\n  \"state\": \"completed\",\n  \"detached\": true,\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"child_agent_id\": \"review_01\",\n  \"output_tail\": \"审查通过：可选链修复正确，无回归风险。\",\n  \"started_at\": \"2026-09-03T17:30:01.610Z\",\n  \"ended_at\": \"2026-09-03T17:30:04.100Z\",\n  \"result_summary\": \"审查通过，无回归风险\"\n}"
       },
       {
        "note": "结果回收：`origin: task` 的新 turn（例 12 同款）",
-       "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.110Z\",\n  \"turn_id\": \"t2\",\n  \"ordinal\": 1,\n  \"state\": \"running\",\n  \"origin\": {\n    \"kind\": \"task\",\n    \"task_id\": \"task_01\"\n  },\n  \"started_at\": \"2026-09-03T17:30:04.108Z\"\n}"
+       "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.110Z\",\n  \"turn_id\": \"t2\",\n  \"ordinal\": 1,\n  \"state\": \"running\",\n  \"origin\": {\n    \"kind\": \"task\",\n    \"task_id\": \"task_01\"\n  },\n  \"started_at\": \"2026-09-03T17:30:04.110Z\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_16\",\n  \"timestamp\": \"2026-09-03T17:30:04.120Z\",\n  \"busy\": true,\n  \"main_turn_active\": true,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"turn\",\n  \"phase\": {\n    \"kind\": \"running\",\n    \"turn_id\": 1,\n    \"step\": 0,\n    \"step_id\": \"t2.0\",\n    \"since\": 1788509404108\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"total\": {\n      \"input_other\": 2600,\n      \"output\": 64,\n      \"input_cache_read\": 9800,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 4500,\n  \"max_context_tokens\": 262144\n}"
+       "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_16\",\n  \"timestamp\": \"2026-09-03T17:30:04.120Z\",\n  \"busy\": true,\n  \"main_turn_active\": true,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"turn\",\n  \"phase\": {\n    \"kind\": \"running\",\n    \"turn_id\": 1,\n    \"step\": 0,\n    \"step_id\": \"t2.0\",\n    \"since\": 1788456604110\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"total\": {\n      \"input_other\": 2600,\n      \"output\": 64,\n      \"input_cache_read\": 9800,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 4500,\n  \"max_context_tokens\": 262144\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.130Z\",\n  \"step_id\": \"t2.0\",\n  \"turn_id\": \"t2\",\n  \"ordinal\": 0,\n  \"state\": \"running\",\n  \"started_at\": \"2026-09-03T17:30:04.128Z\"\n}"
+       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.130Z\",\n  \"step_id\": \"t2.0\",\n  \"turn_id\": \"t2\",\n  \"ordinal\": 0,\n  \"state\": \"running\",\n  \"started_at\": \"2026-09-03T17:30:04.130Z\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.300Z\",\n  \"message_id\": \"t2.0.a0\",\n  \"turn_id\": \"t2\",\n  \"step_id\": \"t2.0\",\n  \"status\": \"streaming\",\n  \"text\": \"\"\n}"
+       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.500Z\",\n  \"message_id\": \"t2.0.a0\",\n  \"turn_id\": \"t2\",\n  \"step_id\": \"t2.0\",\n  \"status\": \"streaming\",\n  \"text\": \"\"\n}"
       },
       {
        "note": "",
@@ -2311,22 +2319,23 @@
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.700Z\",\n  \"message_id\": \"t2.0.a0\",\n  \"turn_id\": \"t2\",\n  \"step_id\": \"t2.0\",\n  \"status\": \"completed\",\n  \"text\": \"后台审查完成了：修复正确，无回归风险，可以放心提交。\"\n}"
+       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.800Z\",\n  \"message_id\": \"t2.0.a0\",\n  \"turn_id\": \"t2\",\n  \"step_id\": \"t2.0\",\n  \"status\": \"completed\",\n  \"text\": \"后台审查完成了：修复正确，无回归风险，可以放心提交。\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.800Z\",\n  \"step_id\": \"t2.0\",\n  \"turn_id\": \"t2\",\n  \"ordinal\": 0,\n  \"state\": \"completed\",\n  \"started_at\": \"2026-09-03T17:30:04.128Z\",\n  \"ended_at\": \"2026-09-03T17:30:04.795Z\",\n  \"usage\": {\n    \"input_other\": 2800,\n    \"output\": 58,\n    \"input_cache_read\": 10600,\n    \"input_cache_creation\": 0\n  },\n  \"finish_reason\": \"end_turn\"\n}"
+       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.800Z\",\n  \"step_id\": \"t2.0\",\n  \"turn_id\": \"t2\",\n  \"ordinal\": 0,\n  \"state\": \"completed\",\n  \"started_at\": \"2026-09-03T17:30:04.130Z\",\n  \"ended_at\": \"2026-09-03T17:30:04.800Z\",\n  \"usage\": {\n    \"input_other\": 2800,\n    \"output\": 58,\n    \"input_cache_read\": 10600,\n    \"input_cache_creation\": 0\n  },\n  \"finish_reason\": \"end_turn\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.900Z\",\n  \"turn_id\": \"t2\",\n  \"ordinal\": 1,\n  \"state\": \"completed\",\n  \"origin\": {\n    \"kind\": \"task\",\n    \"task_id\": \"task_01\"\n  },\n  \"started_at\": \"2026-09-03T17:30:04.108Z\",\n  \"ended_at\": \"2026-09-03T17:30:04.895Z\",\n  \"usage\": {\n    \"input_tokens\": 2800,\n    \"output_tokens\": 58\n  },\n  \"duration_ms\": 787\n}"
+       "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.900Z\",\n  \"turn_id\": \"t2\",\n  \"ordinal\": 1,\n  \"state\": \"completed\",\n  \"origin\": {\n    \"kind\": \"task\",\n    \"task_id\": \"task_01\"\n  },\n  \"started_at\": \"2026-09-03T17:30:04.110Z\",\n  \"ended_at\": \"2026-09-03T17:30:04.900Z\",\n  \"usage\": {\n    \"input_tokens\": 2800,\n    \"output_tokens\": 58\n  },\n  \"duration_ms\": 787\n}"
       },
       {
        "note": "",
        "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_16\",\n  \"timestamp\": \"2026-09-03T17:30:04.910Z\",\n  \"busy\": false,\n  \"main_turn_active\": false,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"idle\",\n  \"phase\": {\n    \"kind\": \"idle\"\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"total\": {\n      \"input_other\": 5400,\n      \"output\": 122,\n      \"input_cache_read\": 20400,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 4800,\n  \"max_context_tokens\": 262144\n}"
       }
      ],
-     "tail": "<b>要点</b><br>· 后台 = tool_call 立即 done（<code>task_id</code>）+ <code>task</code> 接管：主 agent 不受阻，t1 当场收官<br>· 结果回收两跳：<code>task completed</code>（<code>result_summary</code>）→ <code>origin: task</code> 新 turn 汇报——与例 12 后台命令完全同款"
+     "tail": "<b>要点</b><br>· 后台 = tool_call 立即 done（<code>task_id</code>）+ <code>task</code> 接管：主 agent 不受阻，t1 当场收官<br>· 结果回收两跳：<code>task completed</code>（<code>result_summary</code>）→ <code>origin: task</code> 新 turn 汇报——与例 12 后台命令完全同款",
+     "branch_from": ""
     },
     {
      "label": "C · 前台转后台（主通道）",
@@ -2337,19 +2346,19 @@
       },
       {
        "note": "turn 开始",
-       "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:00.015Z\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"running\",\n  \"origin\": {\n    \"kind\": \"user\"\n  },\n  \"started_at\": \"2026-09-03T17:30:00.012Z\",\n  \"user_message_id\": \"t1.u0\"\n}"
+       "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:00.015Z\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"running\",\n  \"origin\": {\n    \"kind\": \"user\"\n  },\n  \"started_at\": \"2026-09-03T17:30:00.015Z\",\n  \"user_message_id\": \"t1.u0\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_16\",\n  \"timestamp\": \"2026-09-03T17:30:00.020Z\",\n  \"busy\": true,\n  \"main_turn_active\": true,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"turn\",\n  \"phase\": {\n    \"kind\": \"running\",\n    \"turn_id\": 0,\n    \"step\": 0,\n    \"step_id\": \"t1.0\",\n    \"since\": 1788509400015\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"total\": {\n      \"input_other\": 0,\n      \"output\": 0,\n      \"input_cache_read\": 0,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 1820,\n  \"max_context_tokens\": 262144\n}"
+       "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_16\",\n  \"timestamp\": \"2026-09-03T17:30:00.020Z\",\n  \"busy\": true,\n  \"main_turn_active\": true,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"turn\",\n  \"phase\": {\n    \"kind\": \"running\",\n    \"turn_id\": 0,\n    \"step\": 0,\n    \"step_id\": \"t1.0\",\n    \"since\": 1788456600015\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"total\": {\n      \"input_other\": 0,\n      \"output\": 0,\n      \"input_cache_read\": 0,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 1820,\n  \"max_context_tokens\": 262144\n}"
       },
       {
        "note": "step 开始，先思考",
-       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:00.022Z\",\n  \"step_id\": \"t1.0\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"running\",\n  \"started_at\": \"2026-09-03T17:30:00.020Z\"\n}"
+       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:00.022Z\",\n  \"step_id\": \"t1.0\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"running\",\n  \"started_at\": \"2026-09-03T17:30:00.022Z\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"thinking\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:00.300Z\",\n  \"message_id\": \"t1.0.h0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"streaming\",\n  \"text\": \"\"\n}"
+       "json": "{\n  \"type\": \"thinking\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:00.450Z\",\n  \"message_id\": \"t1.0.h0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"streaming\",\n  \"text\": \"\"\n}"
       },
       {
        "note": "",
@@ -2361,11 +2370,11 @@
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"thinking\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:00.700Z\",\n  \"message_id\": \"t1.0.h0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"completed\",\n  \"text\": \"先前台跑着，不行再转后台。\"\n}"
+       "json": "{\n  \"type\": \"thinking\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:01.050Z\",\n  \"message_id\": \"t1.0.h0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"completed\",\n  \"text\": \"先前台跑着，不行再转后台。\"\n}"
       },
       {
        "note": "过渡正文",
-       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:00.900Z\",\n  \"message_id\": \"t1.0.a0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"streaming\",\n  \"text\": \"\"\n}"
+       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:01.050Z\",\n  \"message_id\": \"t1.0.a0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"streaming\",\n  \"text\": \"\"\n}"
       },
       {
        "note": "",
@@ -2373,7 +2382,7 @@
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:01.200Z\",\n  \"message_id\": \"t1.0.a0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"completed\",\n  \"text\": \"我起一个审查子代理：\"\n}"
+       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:01.500Z\",\n  \"message_id\": \"t1.0.a0\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"completed\",\n  \"text\": \"我起一个审查子代理：\"\n}"
       },
       {
        "note": "前台开始——主 step 阻塞中",
@@ -2381,7 +2390,7 @@
       },
       {
        "note": "用户在等待时点了「转后台」（REST `POST /sessions/s_16/tool_calls/call_01:detach`，不在 WS）。`task` 补发，`started_at` 沿用 tool_call 起点——任务时长连续",
-       "json": "{\n  \"type\": \"task\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:03.500Z\",\n  \"task_id\": \"task_01\",\n  \"kind\": \"subagent\",\n  \"state\": \"running\",\n  \"detached\": true,\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"child_agent_id\": \"review_01\",\n  \"output_tail\": \"…正在读 LoginView 的改动…\",\n  \"started_at\": \"2026-09-03T17:30:01.500Z\"\n}"
+       "json": "{\n  \"type\": \"task\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:03.500Z\",\n  \"task_id\": \"task_01\",\n  \"kind\": \"subagent\",\n  \"state\": \"running\",\n  \"detached\": true,\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"child_agent_id\": \"review_01\",\n  \"output_tail\": \"…正在读 LoginView 的改动…\",\n  \"started_at\": \"2026-09-03T17:30:03.500Z\"\n}"
       },
       {
        "note": "tool_call 以 `detached` 收官，主 step 解阻",
@@ -2389,7 +2398,7 @@
       },
       {
        "note": "主 agent 不受阻，直接继续",
-       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:03.600Z\",\n  \"message_id\": \"t1.0.a1\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"streaming\",\n  \"text\": \"\"\n}"
+       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:03.800Z\",\n  \"message_id\": \"t1.0.a1\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"streaming\",\n  \"text\": \"\"\n}"
       },
       {
        "note": "",
@@ -2397,19 +2406,19 @@
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.000Z\",\n  \"message_id\": \"t1.0.a1\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"completed\",\n  \"text\": \"子代理转后台了，完成后我汇总。\"\n}"
+       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.100Z\",\n  \"message_id\": \"t1.0.a1\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"status\": \"completed\",\n  \"text\": \"子代理转后台了，完成后我汇总。\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.100Z\",\n  \"step_id\": \"t1.0\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"completed\",\n  \"started_at\": \"2026-09-03T17:30:00.020Z\",\n  \"ended_at\": \"2026-09-03T17:30:04.095Z\",\n  \"usage\": {\n    \"input_other\": 2600,\n    \"output\": 64,\n    \"input_cache_read\": 9800,\n    \"input_cache_creation\": 0\n  },\n  \"finish_reason\": \"end_turn\"\n}"
+       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.100Z\",\n  \"step_id\": \"t1.0\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"completed\",\n  \"started_at\": \"2026-09-03T17:30:00.022Z\",\n  \"ended_at\": \"2026-09-03T17:30:04.100Z\",\n  \"usage\": {\n    \"input_other\": 2600,\n    \"output\": 64,\n    \"input_cache_read\": 9800,\n    \"input_cache_creation\": 0\n  },\n  \"finish_reason\": \"end_turn\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.200Z\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"completed\",\n  \"origin\": {\n    \"kind\": \"user\"\n  },\n  \"started_at\": \"2026-09-03T17:30:00.012Z\",\n  \"ended_at\": \"2026-09-03T17:30:04.195Z\",\n  \"usage\": {\n    \"input_tokens\": 2600,\n    \"output_tokens\": 64\n  },\n  \"duration_ms\": 4183,\n  \"user_message_id\": \"t1.u0\"\n}"
+       "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.200Z\",\n  \"turn_id\": \"t1\",\n  \"ordinal\": 0,\n  \"state\": \"completed\",\n  \"origin\": {\n    \"kind\": \"user\"\n  },\n  \"started_at\": \"2026-09-03T17:30:00.015Z\",\n  \"ended_at\": \"2026-09-03T17:30:04.200Z\",\n  \"usage\": {\n    \"input_tokens\": 2600,\n    \"output_tokens\": 64\n  },\n  \"duration_ms\": 4183,\n  \"user_message_id\": \"t1.u0\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"user\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.210Z\",\n  \"message_id\": \"t1.u0\",\n  \"turn_id\": \"t1\",\n  \"text\": \"白屏修好了，帮我审查一下改动\",\n  \"status\": \"completed\",\n  \"created_at\": \"2026-09-03T17:30:00.000Z\",\n  \"finished_at\": \"2026-09-03T17:30:04.195Z\"\n}"
+       "json": "{\n  \"type\": \"user\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.200Z\",\n  \"message_id\": \"t1.u0\",\n  \"turn_id\": \"t1\",\n  \"text\": \"白屏修好了，帮我审查一下改动\",\n  \"status\": \"completed\",\n  \"created_at\": \"2026-09-03T17:30:00.000Z\",\n  \"finished_at\": \"2026-09-03T17:30:04.200Z\"\n}"
       },
       {
        "note": "",
@@ -2417,27 +2426,27 @@
       },
       {
        "note": "几分钟后台进度——`output_tail` 末尾窗口整体重发",
-       "json": "{\n  \"type\": \"task\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:05.300Z\",\n  \"task_id\": \"task_01\",\n  \"kind\": \"subagent\",\n  \"state\": \"running\",\n  \"detached\": true,\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"child_agent_id\": \"review_01\",\n  \"output_tail\": \"…正在读 LoginView 的改动…\",\n  \"started_at\": \"2026-09-03T17:30:01.500Z\"\n}"
+       "json": "{\n  \"type\": \"task\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:05.300Z\",\n  \"task_id\": \"task_01\",\n  \"kind\": \"subagent\",\n  \"state\": \"running\",\n  \"detached\": true,\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"child_agent_id\": \"review_01\",\n  \"output_tail\": \"…正在读 LoginView 的改动…\",\n  \"started_at\": \"2026-09-03T17:30:03.500Z\"\n}"
       },
       {
        "note": "task 到终态（`result_summary` 带审查结论）",
-       "json": "{\n  \"type\": \"task\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:05.900Z\",\n  \"task_id\": \"task_01\",\n  \"kind\": \"subagent\",\n  \"state\": \"completed\",\n  \"detached\": true,\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"child_agent_id\": \"review_01\",\n  \"output_tail\": \"审查通过：可选链修复正确，无回归风险。\",\n  \"started_at\": \"2026-09-03T17:30:01.500Z\",\n  \"ended_at\": \"2026-09-03T17:30:05.895Z\",\n  \"result_summary\": \"审查通过，无回归风险\"\n}"
+       "json": "{\n  \"type\": \"task\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:05.900Z\",\n  \"task_id\": \"task_01\",\n  \"kind\": \"subagent\",\n  \"state\": \"completed\",\n  \"detached\": true,\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"child_agent_id\": \"review_01\",\n  \"output_tail\": \"审查通过：可选链修复正确，无回归风险。\",\n  \"started_at\": \"2026-09-03T17:30:03.500Z\",\n  \"ended_at\": \"2026-09-03T17:30:05.900Z\",\n  \"result_summary\": \"审查通过，无回归风险\"\n}"
       },
       {
        "note": "结果回收：`origin: task` 的新 turn（例 12 同款）",
-       "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:05.910Z\",\n  \"turn_id\": \"t2\",\n  \"ordinal\": 1,\n  \"state\": \"running\",\n  \"origin\": {\n    \"kind\": \"task\",\n    \"task_id\": \"task_01\"\n  },\n  \"started_at\": \"2026-09-03T17:30:05.908Z\"\n}"
+       "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:05.910Z\",\n  \"turn_id\": \"t2\",\n  \"ordinal\": 1,\n  \"state\": \"running\",\n  \"origin\": {\n    \"kind\": \"task\",\n    \"task_id\": \"task_01\"\n  },\n  \"started_at\": \"2026-09-03T17:30:05.910Z\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_16\",\n  \"timestamp\": \"2026-09-03T17:30:05.920Z\",\n  \"busy\": true,\n  \"main_turn_active\": true,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"turn\",\n  \"phase\": {\n    \"kind\": \"running\",\n    \"turn_id\": 1,\n    \"step\": 0,\n    \"step_id\": \"t2.0\",\n    \"since\": 1788509405908\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"total\": {\n      \"input_other\": 2600,\n      \"output\": 64,\n      \"input_cache_read\": 9800,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 4500,\n  \"max_context_tokens\": 262144\n}"
+       "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_16\",\n  \"timestamp\": \"2026-09-03T17:30:05.920Z\",\n  \"busy\": true,\n  \"main_turn_active\": true,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"turn\",\n  \"phase\": {\n    \"kind\": \"running\",\n    \"turn_id\": 1,\n    \"step\": 0,\n    \"step_id\": \"t2.0\",\n    \"since\": 1788456605910\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"total\": {\n      \"input_other\": 2600,\n      \"output\": 64,\n      \"input_cache_read\": 9800,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 4500,\n  \"max_context_tokens\": 262144\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:05.930Z\",\n  \"step_id\": \"t2.0\",\n  \"turn_id\": \"t2\",\n  \"ordinal\": 0,\n  \"state\": \"running\",\n  \"started_at\": \"2026-09-03T17:30:05.928Z\"\n}"
+       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:05.930Z\",\n  \"step_id\": \"t2.0\",\n  \"turn_id\": \"t2\",\n  \"ordinal\": 0,\n  \"state\": \"running\",\n  \"started_at\": \"2026-09-03T17:30:05.930Z\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:06.100Z\",\n  \"message_id\": \"t2.0.a0\",\n  \"turn_id\": \"t2\",\n  \"step_id\": \"t2.0\",\n  \"status\": \"streaming\",\n  \"text\": \"\"\n}"
+       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:06.300Z\",\n  \"message_id\": \"t2.0.a0\",\n  \"turn_id\": \"t2\",\n  \"step_id\": \"t2.0\",\n  \"status\": \"streaming\",\n  \"text\": \"\"\n}"
       },
       {
        "note": "",
@@ -2445,22 +2454,23 @@
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:06.500Z\",\n  \"message_id\": \"t2.0.a0\",\n  \"turn_id\": \"t2\",\n  \"step_id\": \"t2.0\",\n  \"status\": \"completed\",\n  \"text\": \"后台审查完成了：修复正确，无回归风险，可以放心提交。\"\n}"
+       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:06.600Z\",\n  \"message_id\": \"t2.0.a0\",\n  \"turn_id\": \"t2\",\n  \"step_id\": \"t2.0\",\n  \"status\": \"completed\",\n  \"text\": \"后台审查完成了：修复正确，无回归风险，可以放心提交。\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:06.600Z\",\n  \"step_id\": \"t2.0\",\n  \"turn_id\": \"t2\",\n  \"ordinal\": 0,\n  \"state\": \"completed\",\n  \"started_at\": \"2026-09-03T17:30:05.928Z\",\n  \"ended_at\": \"2026-09-03T17:30:06.595Z\",\n  \"usage\": {\n    \"input_other\": 2800,\n    \"output\": 58,\n    \"input_cache_read\": 10600,\n    \"input_cache_creation\": 0\n  },\n  \"finish_reason\": \"end_turn\"\n}"
+       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:06.600Z\",\n  \"step_id\": \"t2.0\",\n  \"turn_id\": \"t2\",\n  \"ordinal\": 0,\n  \"state\": \"completed\",\n  \"started_at\": \"2026-09-03T17:30:05.930Z\",\n  \"ended_at\": \"2026-09-03T17:30:06.600Z\",\n  \"usage\": {\n    \"input_other\": 2800,\n    \"output\": 58,\n    \"input_cache_read\": 10600,\n    \"input_cache_creation\": 0\n  },\n  \"finish_reason\": \"end_turn\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:06.700Z\",\n  \"turn_id\": \"t2\",\n  \"ordinal\": 1,\n  \"state\": \"completed\",\n  \"origin\": {\n    \"kind\": \"task\",\n    \"task_id\": \"task_01\"\n  },\n  \"started_at\": \"2026-09-03T17:30:05.908Z\",\n  \"ended_at\": \"2026-09-03T17:30:06.695Z\",\n  \"usage\": {\n    \"input_tokens\": 2800,\n    \"output_tokens\": 58\n  },\n  \"duration_ms\": 787\n}"
+       "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:06.700Z\",\n  \"turn_id\": \"t2\",\n  \"ordinal\": 1,\n  \"state\": \"completed\",\n  \"origin\": {\n    \"kind\": \"task\",\n    \"task_id\": \"task_01\"\n  },\n  \"started_at\": \"2026-09-03T17:30:05.910Z\",\n  \"ended_at\": \"2026-09-03T17:30:06.700Z\",\n  \"usage\": {\n    \"input_tokens\": 2800,\n    \"output_tokens\": 58\n  },\n  \"duration_ms\": 787\n}"
       },
       {
        "note": "",
        "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_16\",\n  \"timestamp\": \"2026-09-03T17:30:06.710Z\",\n  \"busy\": false,\n  \"main_turn_active\": false,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"idle\",\n  \"phase\": {\n    \"kind\": \"idle\"\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"total\": {\n      \"input_other\": 5400,\n      \"output\": 122,\n      \"input_cache_read\": 20400,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 4800,\n  \"max_context_tokens\": 262144\n}"
       }
      ],
-     "tail": "<b>要点</b><br>· 转后台是运行时转换：tool_call 以 <code>detached + task_id</code> 收官，<code>task</code> 补发且 <code>started_at</code> 沿用 tool_call 起点<br>· 触发者可以是用户手动（本例），也可以是系统超时阈值——与例 12 的 Bash 转后台同一机制"
+     "tail": "<b>要点</b><br>· 转后台是运行时转换：tool_call 以 <code>detached + task_id</code> 收官，<code>task</code> 补发且 <code>started_at</code> 沿用 tool_call 起点<br>· 触发者可以是用户手动（本例），也可以是系统超时阈值——与例 12 的 Bash 转后台同一机制",
+     "branch_from": ""
     },
     {
      "label": "子代理通道（按需订阅）",
@@ -2475,15 +2485,15 @@
       },
       {
        "note": "子代理的完整消息流从此下来——与主通道同型同规则（以 B 模式为例）",
-       "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"review_01\",\n  \"timestamp\": \"2026-09-03T17:30:01.600Z\",\n  \"turn_id\": \"r1\",\n  \"ordinal\": 0,\n  \"state\": \"running\",\n  \"origin\": {\n    \"kind\": \"task\",\n    \"task_id\": \"task_01\"\n  },\n  \"started_at\": \"2026-09-03T17:30:01.598Z\"\n}"
+       "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"review_01\",\n  \"timestamp\": \"2026-09-03T17:30:01.600Z\",\n  \"turn_id\": \"r1\",\n  \"ordinal\": 0,\n  \"state\": \"running\",\n  \"origin\": {\n    \"kind\": \"task\",\n    \"task_id\": \"task_01\"\n  },\n  \"started_at\": \"2026-09-03T17:30:01.600Z\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"review_01\",\n  \"timestamp\": \"2026-09-03T17:30:01.620Z\",\n  \"step_id\": \"r1.0\",\n  \"turn_id\": \"r1\",\n  \"ordinal\": 0,\n  \"state\": \"running\",\n  \"started_at\": \"2026-09-03T17:30:01.618Z\"\n}"
+       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"review_01\",\n  \"timestamp\": \"2026-09-03T17:30:01.620Z\",\n  \"step_id\": \"r1.0\",\n  \"turn_id\": \"r1\",\n  \"ordinal\": 0,\n  \"state\": \"running\",\n  \"started_at\": \"2026-09-03T17:30:01.620Z\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"thinking\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"review_01\",\n  \"timestamp\": \"2026-09-03T17:30:01.800Z\",\n  \"message_id\": \"r1.0.h0\",\n  \"turn_id\": \"r1\",\n  \"step_id\": \"r1.0\",\n  \"status\": \"streaming\",\n  \"text\": \"\"\n}"
+       "json": "{\n  \"type\": \"thinking\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"review_01\",\n  \"timestamp\": \"2026-09-03T17:30:02.000Z\",\n  \"message_id\": \"r1.0.h0\",\n  \"turn_id\": \"r1\",\n  \"step_id\": \"r1.0\",\n  \"status\": \"streaming\",\n  \"text\": \"\"\n}"
       },
       {
        "note": "",
@@ -2495,11 +2505,11 @@
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"thinking\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"review_01\",\n  \"timestamp\": \"2026-09-03T17:30:02.400Z\",\n  \"message_id\": \"r1.0.h0\",\n  \"turn_id\": \"r1\",\n  \"step_id\": \"r1.0\",\n  \"status\": \"completed\",\n  \"text\": \"先读 LoginView 的改动，重点看 token 处理。\"\n}"
+       "json": "{\n  \"type\": \"thinking\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"review_01\",\n  \"timestamp\": \"2026-09-03T17:30:02.800Z\",\n  \"message_id\": \"r1.0.h0\",\n  \"turn_id\": \"r1\",\n  \"step_id\": \"r1.0\",\n  \"status\": \"completed\",\n  \"text\": \"先读 LoginView 的改动，重点看 token 处理。\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"review_01\",\n  \"timestamp\": \"2026-09-03T17:30:02.600Z\",\n  \"message_id\": \"r1.0.a0\",\n  \"turn_id\": \"r1\",\n  \"step_id\": \"r1.0\",\n  \"status\": \"streaming\",\n  \"text\": \"\"\n}"
+       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"review_01\",\n  \"timestamp\": \"2026-09-03T17:30:02.800Z\",\n  \"message_id\": \"r1.0.a0\",\n  \"turn_id\": \"r1\",\n  \"step_id\": \"r1.0\",\n  \"status\": \"streaming\",\n  \"text\": \"\"\n}"
       },
       {
        "note": "",
@@ -2507,7 +2517,7 @@
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"review_01\",\n  \"timestamp\": \"2026-09-03T17:30:03.000Z\",\n  \"message_id\": \"r1.0.a0\",\n  \"turn_id\": \"r1\",\n  \"step_id\": \"r1.0\",\n  \"status\": \"completed\",\n  \"text\": \"我先读 LoginView 的改动。\"\n}"
+       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"review_01\",\n  \"timestamp\": \"2026-09-03T17:30:03.200Z\",\n  \"message_id\": \"r1.0.a0\",\n  \"turn_id\": \"r1\",\n  \"step_id\": \"r1.0\",\n  \"status\": \"completed\",\n  \"text\": \"我先读 LoginView 的改动。\"\n}"
       },
       {
        "note": "",
@@ -2519,18 +2529,19 @@
       },
       {
        "note": "审查结论（这条正文即主通道 `task.result_summary` / 前台 `output.report` 的来源）",
-       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"review_01\",\n  \"timestamp\": \"2026-09-03T17:30:04.200Z\",\n  \"message_id\": \"r1.0.a1\",\n  \"turn_id\": \"r1\",\n  \"step_id\": \"r1.0\",\n  \"status\": \"completed\",\n  \"text\": \"审查通过：可选链修复正确，无回归风险。\"\n}"
+       "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"review_01\",\n  \"timestamp\": \"2026-09-03T17:30:04.500Z\",\n  \"message_id\": \"r1.0.a1\",\n  \"turn_id\": \"r1\",\n  \"step_id\": \"r1.0\",\n  \"status\": \"completed\",\n  \"text\": \"审查通过：可选链修复正确，无回归风险。\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"review_01\",\n  \"timestamp\": \"2026-09-03T17:30:04.500Z\",\n  \"step_id\": \"r1.0\",\n  \"turn_id\": \"r1\",\n  \"ordinal\": 0,\n  \"state\": \"completed\",\n  \"started_at\": \"2026-09-03T17:30:01.618Z\",\n  \"ended_at\": \"2026-09-03T17:30:04.495Z\",\n  \"usage\": {\n    \"input_other\": 2200,\n    \"output\": 64,\n    \"input_cache_read\": 8000,\n    \"input_cache_creation\": 0\n  },\n  \"finish_reason\": \"end_turn\"\n}"
+       "json": "{\n  \"type\": \"step\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"review_01\",\n  \"timestamp\": \"2026-09-03T17:30:04.500Z\",\n  \"step_id\": \"r1.0\",\n  \"turn_id\": \"r1\",\n  \"ordinal\": 0,\n  \"state\": \"completed\",\n  \"started_at\": \"2026-09-03T17:30:01.620Z\",\n  \"ended_at\": \"2026-09-03T17:30:04.500Z\",\n  \"usage\": {\n    \"input_other\": 2200,\n    \"output\": 64,\n    \"input_cache_read\": 8000,\n    \"input_cache_creation\": 0\n  },\n  \"finish_reason\": \"end_turn\"\n}"
       },
       {
        "note": "",
-       "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"review_01\",\n  \"timestamp\": \"2026-09-03T17:30:04.600Z\",\n  \"turn_id\": \"r1\",\n  \"ordinal\": 0,\n  \"state\": \"completed\",\n  \"origin\": {\n    \"kind\": \"task\",\n    \"task_id\": \"task_01\"\n  },\n  \"started_at\": \"2026-09-03T17:30:01.598Z\",\n  \"ended_at\": \"2026-09-03T17:30:04.595Z\",\n  \"usage\": {\n    \"input_tokens\": 2200,\n    \"output_tokens\": 64\n  },\n  \"duration_ms\": 2997\n}"
+       "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"review_01\",\n  \"timestamp\": \"2026-09-03T17:30:04.600Z\",\n  \"turn_id\": \"r1\",\n  \"ordinal\": 0,\n  \"state\": \"completed\",\n  \"origin\": {\n    \"kind\": \"task\",\n    \"task_id\": \"task_01\"\n  },\n  \"started_at\": \"2026-09-03T17:30:01.600Z\",\n  \"ended_at\": \"2026-09-03T17:30:04.600Z\",\n  \"usage\": {\n    \"input_tokens\": 2200,\n    \"output_tokens\": 64\n  },\n  \"duration_ms\": 2997\n}"
       }
      ],
-     "tail": "<b>要点</b><br>· 子通道消息与主通道**同型同规则**：同一套 handleMessage，按 <code>agent_id</code> 落到不同 store / 面板；子代理的 turn 用 <code>origin: task</code> 注明来历<br>· 按需 = 不订阅就没有流量：N 个并行子代理时主通道依然干净；desktop 的 main-only 天然成立（主通道本来就只有 main）<br>· 子通道也有 §9 恢复：订阅时在流 step 回放 + 状态实体重发，与主通道一字不差"
+     "tail": "<b>要点</b><br>· 子通道消息与主通道**同型同规则**：同一套 handleMessage，按 <code>agent_id</code> 落到不同 store / 面板；子代理的 turn 用 <code>origin: task</code> 注明来历<br>· 按需 = 不订阅就没有流量：N 个并行子代理时主通道依然干净；desktop 的 main-only 天然成立（主通道本来就只有 main）<br>· 子通道也有 §9 恢复：订阅时在流 step 回放 + 状态实体重发，与主通道一字不差",
+     "branch_from": ""
     }
    ]
   },
@@ -3460,7 +3471,8 @@
        "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_24\",\n  \"timestamp\": \"2026-09-04T09:00:05.420Z\",\n  \"busy\": false,\n  \"main_turn_active\": false,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"idle\",\n  \"phase\": {\n    \"kind\": \"idle\"\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"total\": {\n      \"input_other\": 12800,\n      \"output\": 420,\n      \"input_cache_read\": 38400,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 10400,\n  \"max_context_tokens\": 262144\n}"
       }
      ],
-     "tail": "<b>要点</b><br>· cron 忙时到点 = <code>user { origin: { kind: \"cron\" } }</code> 挂当前 turn + <code>steered_at</code>——<b>系统发起的 steer</b>，与用户 steer 同一条路径（对照例 24 idle 时开 <code>origin: cron</code> turn）；<code>session.state</code> 不变（<code>main_turn_active</code> 仍 true）<br>· 吸收顺序由 agent 安排（先收手头的 step、再执行 cron 指令）——协议只负责把消息送到，不干预调度"
+     "tail": "<b>要点</b><br>· cron 忙时到点 = <code>user { origin: { kind: \"cron\" } }</code> 挂当前 turn + <code>steered_at</code>——<b>系统发起的 steer</b>，与用户 steer 同一条路径（对照例 24 idle 时开 <code>origin: cron</code> turn）；<code>session.state</code> 不变（<code>main_turn_active</code> 仍 true）<br>· 吸收顺序由 agent 安排（先收手头的 step、再执行 cron 指令）——协议只负责把消息送到，不干预调度",
+     "branch_from": ""
     },
     {
      "label": "task 完成 · 忙时（WS）",
@@ -3546,7 +3558,8 @@
        "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_24\",\n  \"timestamp\": \"2026-09-04T10:30:03.320Z\",\n  \"busy\": false,\n  \"main_turn_active\": false,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"idle\",\n  \"phase\": {\n    \"kind\": \"idle\"\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"total\": {\n      \"input_other\": 15900,\n      \"output\": 512,\n      \"input_cache_read\": 51200,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 11800,\n  \"max_context_tokens\": 262144\n}"
       }
      ],
-     "tail": "<b>要点</b><br>· task 完成在忙时：<code>completed</code> 实体照常下发（它本来就在主通道），不需要任何额外消息；不开 <code>origin: task</code> 新 turn<br>· 结果回收路径只看到达时会话忙闲：idle 开新 turn（例 12），busy 注入当前 turn（本例）——实体消息本身一字不差"
+     "tail": "<b>要点</b><br>· task 完成在忙时：<code>completed</code> 实体照常下发（它本来就在主通道），不需要任何额外消息；不开 <code>origin: task</code> 新 turn<br>· 结果回收路径只看到达时会话忙闲：idle 开新 turn（例 12），busy 注入当前 turn（本例）——实体消息本身一字不差",
+     "branch_from": ""
     }
    ]
   }
