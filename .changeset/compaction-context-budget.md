@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": minor
 ---
 
-Remind the model of its context budget before automatic compaction, and after compaction point it at the session's event log for exact details.
+After compaction, point the model at the session's event log so it can recover exact details of the compacted conversation.

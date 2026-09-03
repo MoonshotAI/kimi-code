@@ -26,10 +26,6 @@ import { stripDynamicToolContext } from '#/agent/toolSelect/dynamicTools';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentTodoService } from '#/features/todo/todoService';
 import { renderTodoList } from '#/features/todo/todoItem';
-import {
-  isContextBudgetReminder,
-  summarizeCompactionAheadFollowUp,
-} from '#/features/contextBudget/contextBudgetReminder';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import type { WireLineRange } from '#/wire/record';
 import { IWireService } from '#/wire/wire';
@@ -52,7 +48,6 @@ import { renderCompactionInstruction } from './compactionInstruction';
 import { renderContextRecoveryPointer } from './contextRecovery';
 import {
   IAgentFullCompactionService,
-  type CompactionBudget,
   type FullCompactionInput,
   type FullCompactionTask,
 } from './fullCompaction';
@@ -246,10 +241,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
   get compacting(): FullCompactionTask | null {
     return this._compacting;
-  }
-
-  budget(): CompactionBudget {
-    return { used: this.tokenCountWithPending(), ...this.strategy.budget() };
   }
 
   cancel(): void {
@@ -652,9 +643,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
       const delays = retryBackoffDelays(MAX_COMPACTION_RETRY_ATTEMPTS);
       let attempt: CompactionAttemptResult | undefined;
-      let historyForModel: readonly ContextMessage[] = stripDynamicToolContext(originalHistory).filter(
-        (message) => !isContextBudgetReminder(message),
-      );
+      let historyForModel: readonly ContextMessage[] = stripDynamicToolContext(originalHistory);
       let droppedCount = 0;
       let overflowShrinkCount = 0;
       let emptyOrTruncatedShrinkCount = 0;
@@ -781,7 +770,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         thinking_effort: thinkingEffort,
         trace_id: attempt.traceId,
         ...usageTelemetry(attempt.usage),
-        ...aheadReminderTelemetry(originalHistory),
       };
       this.telemetry.track2('compaction_finished', properties);
       return result;
@@ -843,29 +831,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   private tokenCountWithPending(): number {
     return this.tokenCounting.get(agentContextOfScope(this.agent)).size;
   }
-}
-
-type CompactionAheadTelemetryProperties = Pick<
-  CompactionFinishedEvent,
-  | 'ahead_reminder_delivered'
-  | 'ahead_steps_count'
-  | 'ahead_write_calls_count'
-  | 'ahead_bash_calls_count'
-  | 'ahead_todo_calls_count'
->;
-
-function aheadReminderTelemetry(
-  history: readonly ContextMessage[],
-): CompactionAheadTelemetryProperties {
-  const followUp = summarizeCompactionAheadFollowUp(history);
-  if (followUp === undefined) return { ahead_reminder_delivered: false };
-  return {
-    ahead_reminder_delivered: true,
-    ahead_steps_count: followUp.stepCount,
-    ahead_write_calls_count: followUp.writeCallCount,
-    ahead_bash_calls_count: followUp.bashCallCount,
-    ahead_todo_calls_count: followUp.todoCallCount,
-  };
 }
 
 function findAPIStatusError(error: unknown): APIStatusError | undefined {
