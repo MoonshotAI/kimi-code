@@ -104,26 +104,44 @@ describe('setDefaultModel', () => {
     expect(host.authFlow.activateModelAfterLogin).not.toHaveBeenCalled();
   });
 
-  it('leaves model_switch to the engine when activation reached a live session', async () => {
+  it('leaves model_switch to the engine when activation changed the bound alias', async () => {
     const { host } = makeHost({ refreshReachedLiveSession: true });
 
     await setDefaultModel(host, 'opus', 'high');
 
-    // refreshConfigAfterLogin routed through session.setModel, which the
-    // engine already tracks — a TUI-side event would double-count the switch.
+    // refreshConfigAfterLogin routed through session.setModel with a changed
+    // alias, which the engine already tracks — a TUI-side event would
+    // double-count the switch.
     expect(host.track).not.toHaveBeenCalled();
   });
 
-  it('leaves model_switch to the engine when a lazy session came live mid-flow', async () => {
-    // The codex race: session-less at entry, but the first prompt's lazy
-    // creation completes while setConfig / the refresh are pending, so the
-    // session-only re-apply lands on the now-live session (engine emits).
+  it('leaves model_switch to the engine when a lazy session came live mid-flow and rebounded', async () => {
+    // Session-less at entry, but the first prompt's lazy creation completes
+    // while setConfig / the refresh are pending, so the session-only re-apply
+    // lands on the now-live session and actually switches its alias (engine
+    // emits).
     const { host } = makeHost({ activateReachedLiveSession: true });
 
     await setDefaultModel(host, 'opus', 'xhigh');
 
     expect(host.authFlow.activateModelAfterLogin).toHaveBeenCalledWith('opus', 'xhigh');
     expect(host.track).not.toHaveBeenCalled();
+  });
+
+  it('emits model_switch when a v1-created session only rebinds the same alias', async () => {
+    // v1 session-less + session-only effort: the refresh creates the session
+    // with the picked model (creation emits nothing), then the re-apply
+    // reaches that live session but its setModel is an alias no-op (no engine
+    // event either) — the TUI must stay the producer for the pick.
+    const { host } = makeHost({
+      refreshReachedLiveSession: false,
+      activateReachedLiveSession: false,
+    });
+
+    await setDefaultModel(host, 'opus', 'xhigh');
+
+    expect(host.authFlow.activateModelAfterLogin).toHaveBeenCalledWith('opus', 'xhigh');
+    expect(host.track).toHaveBeenCalledWith('model_switch', { model: 'opus' });
   });
 
   it('waits for an in-flight lazy creation before activating (v2)', async () => {

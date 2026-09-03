@@ -76,21 +76,26 @@ export class AuthFlowController {
   }
 
   /**
-   * Apply a model pick to the runtime. Returns whether the pick reached an
-   * already-live session: the engine tracks `model_switch` from `setModel`
-   * there, while the session-less paths produce no engine event (v2 defers
-   * creation to the first prompt; v1 binds the model at creation without
-   * one), so callers mirroring the engine's telemetry must stay the producer
-   * for exactly the `false` case.
+   * Apply a model pick to the runtime. Returns whether the activation made
+   * the engine emit `model_switch` — it reached an already-live session AND
+   * changed the bound alias (both engines track the event only on an actual
+   * alias change). `false` when no live session existed (v2 defers creation
+   * to the first prompt; v1 binds the model at creation without an event) or
+   * the alias was already bound, so callers mirroring the engine's telemetry
+   * must stay the producer for exactly those paths. Thinking-effort changes
+   * are orthogonal: the engine's `thinking_toggle` fires from `setThinking`
+   * regardless of this flag.
    */
   async activateModelAfterLogin(model: string, effort?: string): Promise<boolean> {
     const { host } = this;
     if (host.session !== undefined) {
-      await host.session.setModel(model);
+      const session = host.session;
+      const modelChanged = (await session.getStatus()).model !== model;
+      await session.setModel(model);
       if (effort !== undefined) {
-        await host.session.setThinking(effort);
+        await session.setThinking(effort);
       }
-      return true;
+      return modelChanged;
     }
 
     if (host.engineV2) {

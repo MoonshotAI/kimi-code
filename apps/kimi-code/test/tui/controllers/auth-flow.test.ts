@@ -10,6 +10,7 @@ function makeHost(
     engineV2?: boolean;
     withSession?: boolean;
     defaultModel?: string;
+    boundModel?: string;
   } = {},
 ) {
   const appState = {
@@ -23,6 +24,7 @@ function makeHost(
     options.withSession === true
       ? {
           id: 'ses-live',
+          getStatus: vi.fn(async () => ({ model: options.boundModel ?? 'old-model' })),
           setModel: vi.fn(async () => ({ model: 'k2', providerName: 'managed' })),
           setThinking: vi.fn(async () => {}),
         }
@@ -66,39 +68,53 @@ function makeHost(
 }
 
 describe('activateModelAfterLogin', () => {
-  it('applies through setModel and reports a live session when one exists', async () => {
+  it('reports an engine-tracked switch when the pick changes the bound alias', async () => {
     const { host, session } = makeHost({ withSession: true });
     const authFlow = new AuthFlowController(host);
 
-    const reachedLiveSession = await authFlow.activateModelAfterLogin('k2', 'high');
+    const engineTrackedSwitch = await authFlow.activateModelAfterLogin('k2', 'high');
 
-    expect(reachedLiveSession).toBe(true);
+    expect(engineTrackedSwitch).toBe(true);
     expect(session!.setModel).toHaveBeenCalledWith('k2');
     expect(session!.setThinking).toHaveBeenCalledWith('high');
   });
 
-  it('only patches app state and reports no live session on the session-less v2 path', async () => {
+  it('reports no engine switch when the live session already binds the alias', async () => {
+    const { host, session } = makeHost({ withSession: true, boundModel: 'k2' });
+    const authFlow = new AuthFlowController(host);
+
+    // setModel is an alias no-op here, so neither engine emits model_switch —
+    // callers must stay the producer. The effort still goes through
+    // setThinking, whose thinking_toggle is the engine's own event.
+    const engineTrackedSwitch = await authFlow.activateModelAfterLogin('k2', 'high');
+
+    expect(engineTrackedSwitch).toBe(false);
+    expect(session!.setModel).toHaveBeenCalledWith('k2');
+    expect(session!.setThinking).toHaveBeenCalledWith('high');
+  });
+
+  it('only patches app state and reports no engine switch on the session-less v2 path', async () => {
     const { host, appState } = makeHost({ engineV2: true });
     const authFlow = new AuthFlowController(host);
 
-    const reachedLiveSession = await authFlow.activateModelAfterLogin('k2', 'high');
+    const engineTrackedSwitch = await authFlow.activateModelAfterLogin('k2', 'high');
 
-    expect(reachedLiveSession).toBe(false);
+    expect(engineTrackedSwitch).toBe(false);
     expect(host.harness.createSession).not.toHaveBeenCalled();
     expect(appState.model).toBe('k2');
     expect(appState).toMatchObject({ lazySessionThinking: 'high' });
   });
 
-  it('creates the session on the session-less v1 path and still reports no live session', async () => {
+  it('creates the session on the session-less v1 path and still reports no engine switch', async () => {
     const { host } = makeHost();
     const authFlow = new AuthFlowController(host);
 
     // The v1 creation binds the model without an engine model_switch event,
-    // so callers must treat this path as "no live session reached" even
-    // though host.session is defined afterwards.
-    const reachedLiveSession = await authFlow.activateModelAfterLogin('k2', 'high');
+    // so callers must treat this path as "no engine switch" even though
+    // host.session is defined afterwards.
+    const engineTrackedSwitch = await authFlow.activateModelAfterLogin('k2', 'high');
 
-    expect(reachedLiveSession).toBe(false);
+    expect(engineTrackedSwitch).toBe(false);
     expect(host.harness.createSession).toHaveBeenCalledWith(
       expect.objectContaining({ model: 'k2', thinking: 'high' }),
     );
@@ -111,9 +127,9 @@ describe('refreshConfigAfterLogin', () => {
     const { host } = makeHost({ withSession: true });
     const authFlow = new AuthFlowController(host);
 
-    const reachedLiveSession = await authFlow.refreshConfigAfterLogin();
+    const engineTrackedSwitch = await authFlow.refreshConfigAfterLogin();
 
-    expect(reachedLiveSession).toBe(false);
+    expect(engineTrackedSwitch).toBe(false);
   });
 
   it('propagates the activation result for the persisted default model', async () => {

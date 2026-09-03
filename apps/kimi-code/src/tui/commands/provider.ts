@@ -316,23 +316,23 @@ export async function setDefaultModel(
     defaultModel: alias,
     thinking,
   });
-  // Whether activation reached an already-live session (the engine tracks
-  // model_switch from setModel there). Recorded at activation time rather
-  // than snapshotted at entry: a lazy session can come live while the config
-  // writes above are pending, while a session created BY activation (v1)
-  // does not count — creation binds the model without an engine event.
-  let activatedLiveSession = await host.authFlow.refreshConfigAfterLogin();
+  // Whether activation made the engine emit model_switch (it reached a live
+  // session AND changed the bound alias — both engines track only an actual
+  // change). Recorded at activation time rather than snapshotted at entry: a
+  // lazy session can come live while the config writes above are pending; a
+  // session created BY activation (v1) or a same-alias rebind does not count
+  // — both bind the model without an engine event.
+  let engineTrackedSwitch = await host.authFlow.refreshConfigAfterLogin();
   // refreshConfigAfterLogin reactivates from the persisted config, so a pick
   // the gate keeps session-only never reaches the runtime — apply it after
   // the refresh, or the persisted value would clobber it.
   if (thinking.effort === undefined && effort !== 'off' && effort !== 'on') {
-    activatedLiveSession =
-      (await host.authFlow.activateModelAfterLogin(alias, effort)) || activatedLiveSession;
+    engineTrackedSwitch =
+      (await host.authFlow.activateModelAfterLogin(alias, effort)) || engineTrackedSwitch;
   }
-  // Without a live session the engine never sees the pick (v2 defers creation
-  // to the first prompt, v1 binds the model on creation without an event), so
-  // the TUI stays the sole producer for that path.
-  if (!activatedLiveSession) {
+  // When the engine never emitted (no live session, or the alias was already
+  // bound), the TUI stays the sole producer for the pick.
+  if (!engineTrackedSwitch) {
     host.track('model_switch', { model: alias });
   }
   host.showStatus(`Default model set to ${alias} with thinking ${effort}.`);
