@@ -359,7 +359,7 @@ export function scanBalancedStatements(
       continue;
     }
     if (ch === '<') {
-      const heredoc = scanHeredocDelimiter(source, j, end);
+      const heredoc = scanHeredocDelimiter(source, budget, j, end, depth);
       if (heredoc !== null) {
         pendingHeredocs.push(heredoc);
         j = heredoc.end;
@@ -423,11 +423,15 @@ export function scanBalancedStatements(
  *  and backslashes removed (mirroring the parser's extractHeredocSpec),
  *  whether `<<-` strips leading tabs, and the index just past the delimiter
  *  word — or null when this `<` does not open a heredoc with a non-empty
- *  delimiter (`<<<` herestring, another redirect, or malformed input). */
+ *  delimiter (`<<<` herestring, another redirect, or malformed input).
+ *  Substitution syntax inside the delimiter word (`$( )`, `${ }`, `$[ ]`,
+ *  backticks) is scanned wholesale as part of the word. */
 function scanHeredocDelimiter(
   source: string,
+  budget: ParseBudget,
   i: number,
   end: number,
+  depth: number,
 ): { delimiter: string; stripTabs: boolean; end: number } | null {
   if (source[i + 1] !== '<') return null;
   let j = i + 2;
@@ -443,6 +447,24 @@ function scanHeredocDelimiter(
     const ch = source[j]!;
     if (ch === ' ' || ch === '\t' || ch === '\r' || ch === '\n') break;
     if (ch === '&' || ch === '|' || ch === ';' || ch === '(' || ch === ')' || ch === '<' || ch === '>') break;
+    if (ch === '$' && (source[j + 1] === '(' || source[j + 1] === '{' || source[j + 1] === '[')) {
+      const open = source[j + 1]!;
+      const region =
+        open === '('
+          ? scanBalancedStatements(source, budget, j + 1, end, depth + 1)
+          : scanBalanced(source, budget, j + 1, end, open, open === '{' ? '}' : ']', depth + 1);
+      if (!region.balanced) return null;
+      raw += source.slice(j, region.end);
+      j = region.end;
+      continue;
+    }
+    if (ch === '`') {
+      const backtickEnd = skipBacktick(source, budget, j, end);
+      if (backtickEnd >= end) return null;
+      raw += source.slice(j, backtickEnd);
+      j = backtickEnd;
+      continue;
+    }
     if (ch === '\\') {
       if (j + 1 >= end || source[j + 1] === '\n') return null;
       raw += ch + source[j + 1];

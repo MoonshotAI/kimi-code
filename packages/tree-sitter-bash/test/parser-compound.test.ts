@@ -819,7 +819,7 @@ describe('heredocs in substitutions', () => {
     );
   });
 
-  it('still treats << inside comments, arithmetic, subscripts, and conditionals as no heredoc operator', () => {
+  it('handles tricky << contexts inside substitutions (non-redirection contexts and substitution delimiters)', () => {
     expectTree(
       'echo $(echo $((x << 2)))',
       `(program (command (command_name (word "echo")) (command_substitution "$(" (command (command_name (word "echo")) (arithmetic_expansion "$((" (binary_expression (variable_name "x") "<<" (number "2")) "))")) ")")))`,
@@ -839,6 +839,10 @@ describe('heredocs in substitutions', () => {
     expectTree(
       'echo $( [[ x == @(<<EOF) ]]\n)',
       `(program (command (command_name (word "echo")) (command_substitution "$(" (test_command "[[" (binary_expression (word "x") "==" (extglob_pattern "@(<<EOF)")) "]]") ")")))`,
+    );
+    expectTree(
+      'echo $(cat <<$(foo)\nbody\n$(foo)\n)',
+      `(program (command (command_name (word "echo")) (command_substitution "$(" (redirected_statement (command (command_name (word "cat"))) (heredoc_redirect "<<" (heredoc_start "$(foo)") (heredoc_body (heredoc_content "body\\n")) (heredoc_end "$(foo)"))) ")")))`,
     );
     expectTree(
       'echo $(printf foo\\\n#bar)',
