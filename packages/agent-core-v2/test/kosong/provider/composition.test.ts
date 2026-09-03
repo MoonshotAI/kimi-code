@@ -862,40 +862,7 @@ describe('quota-exhausted classification through the real composition (behavior 
 });
 
 describe('reasoning dialect (behavior probes)', () => {
-  it('yields think parts from the `reasoning` wire field', async () => {
-    const provider = registry.createChatProvider({
-      protocol: 'openai',
-      providerType: 'kimi',
-      modelName: 'kimi-k2',
-      apiKey: 'sk-probe',
-    });
-
-    const client = sdkClient(provider) as { chat: { completions: { create: unknown } } };
-    client.chat.completions.create = vi.fn().mockImplementation(() => {
-      async function* chunks(): AsyncIterable<unknown> {
-        yield { id: 'chatcmpl-probe', choices: [{ index: 0, delta: { reasoning: 'hmm' } }] };
-        yield {
-          id: 'chatcmpl-probe',
-          choices: [{ index: 0, delta: { content: 'ok' }, finish_reason: 'stop' }],
-        };
-      }
-      return {
-        withResponse: () =>
-          Promise.resolve({ data: chunks(), response: { headers: new Headers() } }),
-      };
-    });
-
-    const parts: unknown[] = [];
-    for await (const part of await provider.generate('', [], PROBE_HISTORY)) {
-      parts.push(part);
-    }
-    expect(parts).toEqual([
-      { type: 'think', think: 'hmm' },
-      { type: 'text', text: 'ok' },
-    ]);
-  });
-
-  it('echoes thinking under `reasoning` after the endpoint spoke it', async () => {
+  it('yields think parts from the `reasoning` wire field and echoes them under the detected key', async () => {
     const provider = registry.createChatProvider({
       protocol: 'openai',
       providerType: 'kimi',
@@ -920,7 +887,14 @@ describe('reasoning dialect (behavior probes)', () => {
       };
     });
 
-    await drain(await provider.generate('', [], PROBE_HISTORY));
+    const parts: unknown[] = [];
+    for await (const part of await provider.generate('', [], PROBE_HISTORY)) {
+      parts.push(part);
+    }
+    expect(parts).toEqual([
+      { type: 'think', think: 'hmm' },
+      { type: 'text', text: 'ok' },
+    ]);
 
     await drain(await provider.generate('', [], THINK_HISTORY));
 
@@ -929,7 +903,7 @@ describe('reasoning dialect (behavior probes)', () => {
     expect(messages[0]).not.toHaveProperty('reasoning_content');
   });
 
-  it('kimi composition defaults to reasoning_content before any detection', async () => {
+  it('round-trips reasoning_details segments and encrypted state, preferring them over reasoning_content', async () => {
     const provider = registry.createChatProvider({
       protocol: 'openai',
       providerType: 'kimi',
@@ -937,10 +911,144 @@ describe('reasoning dialect (behavior probes)', () => {
       apiKey: 'sk-probe',
     });
 
-    const body = await captureOpenAIBody(provider, undefined, THINK_HISTORY);
+    const captured: Array<Record<string, unknown>> = [];
+    const client = sdkClient(provider) as { chat: { completions: { create: unknown } } };
+    client.chat.completions.create = vi.fn().mockImplementation((params: unknown) => {
+      captured.push(params as Record<string, unknown>);
+      async function* chunks(): AsyncIterable<unknown> {
+        yield {
+          id: 'chatcmpl-probe',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                reasoning_content: '第一段',
+                reasoning_details: [{ index: 0, type: 'summary', summary: '第一段' }],
+              },
+            },
+          ],
+        };
+        yield {
+          id: 'chatcmpl-probe',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                reasoning_details: [
+                  { index: 0, summary: '续' },
+                  { index: 1, type: 'summary', summary: '第二段' },
+                ],
+              },
+            },
+          ],
+        };
+        yield {
+          id: 'chatcmpl-probe',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                reasoning_details: [{ index: 2, type: 'encrypted', encrypted: 'cipher' }],
+              },
+            },
+          ],
+        };
+        yield {
+          id: 'chatcmpl-probe',
+          choices: [{ index: 0, delta: { content: 'ok' }, finish_reason: 'stop' }],
+        };
+      }
+      return {
+        withResponse: () =>
+          Promise.resolve({ data: chunks(), response: { headers: new Headers() } }),
+      };
+    });
 
-    const messages = body['messages'] as Array<Record<string, unknown>>;
-    expect(messages[0]).toMatchObject({ reasoning_content: 'earlier reasoning' });
+    const parts: unknown[] = [];
+    for await (const part of await provider.generate('', [], PROBE_HISTORY)) {
+      parts.push(part);
+    }
+    expect(parts).toEqual([
+      { type: 'think', think: '第一段', detailsIndex: 0 },
+      { type: 'think', think: '续', detailsIndex: 0 },
+      { type: 'think', think: '第二段', detailsIndex: 1 },
+      { type: 'think', think: '', encrypted: 'cipher', detailsIndex: 2 },
+      { type: 'text', text: 'ok' },
+    ]);
+
+    const detailsHistory: Message[] = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'think', think: '第一段续', detailsIndex: 0 },
+          { type: 'think', think: '第二段', detailsIndex: 1 },
+          { type: 'think', think: '', encrypted: 'cipher', detailsIndex: 2 },
+          { type: 'text', text: 'ok' },
+        ],
+        toolCalls: [],
+      },
+      { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+    ];
+    await drain(await provider.generate('', [], detailsHistory));
+
+    const messages = captured[1]?.['messages'] as Array<Record<string, unknown>>;
+    expect(messages[0]).toMatchObject({
+      reasoning_content: '第一段续第二段',
+      reasoning_details: [
+        { type: 'summary', summary: '第一段续' },
+        { type: 'summary', summary: '第二段' },
+        { type: 'encrypted', encrypted: 'cipher' },
+      ],
+    });
+  });
+
+  it('parses reasoning_details from a non-stream response and ignores foreign dialects', async () => {
+    const provider = new OpenAILegacyChatProvider({
+      model: 'gpt-4.1',
+      apiKey: 'sk-probe',
+      stream: false,
+    });
+
+    const client = sdkClient(provider) as { chat: { completions: { create: unknown } } };
+    client.chat.completions.create = vi.fn().mockImplementation(() => {
+      return {
+        withResponse: () =>
+          Promise.resolve({
+            data: {
+              id: 'chatcmpl-probe',
+              choices: [
+                {
+                  index: 0,
+                  message: {
+                    role: 'assistant',
+                    content: 'ok',
+                    reasoning_content: '第一段第二段',
+                    reasoning_details: [
+                      { type: 'summary', summary: '第一段' },
+                      { type: 'summary', summary: '第二段' },
+                      { type: 'encrypted', encrypted: 'cipher' },
+                      { type: 'reasoning.text', text: 'foreign', format: 'unknown' },
+                    ],
+                  },
+                  finish_reason: 'stop',
+                },
+              ],
+            },
+            response: { headers: new Headers() },
+          }),
+      };
+    });
+
+    const parts: unknown[] = [];
+    for await (const part of await provider.generate('', [], PROBE_HISTORY)) {
+      parts.push(part);
+    }
+    expect(parts).toEqual([
+      { type: 'think', think: '第一段', detailsIndex: 0 },
+      { type: 'think', think: '第二段', detailsIndex: 1 },
+      { type: 'think', think: '', encrypted: 'cipher', detailsIndex: 2 },
+      { type: 'text', text: 'ok' },
+    ]);
   });
 
   it('an explicit reasoningKey pins the dialect against detection', async () => {

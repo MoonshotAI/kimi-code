@@ -1210,8 +1210,18 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           }
         }
       },
-      drainInterruptedContent: () =>
-        partialContent.splice(0).filter((part) => !isVacuousContentPart(part)),
+      drainInterruptedContent: () => {
+        const drained = partialContent.splice(0).filter((part) => !isVacuousContentPart(part));
+        let lastCompleteThink = -1;
+        for (const [index, part] of drained.entries()) {
+          if (part.type === 'think' && part.encrypted !== undefined) {
+            lastCompleteThink = index;
+          }
+        }
+        return drained.filter(
+          (part, index) => part.type !== 'think' || index <= lastCompleteThink,
+        );
+      },
     };
   }
 }
