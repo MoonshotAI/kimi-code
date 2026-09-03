@@ -95,6 +95,24 @@ describe('generate() stream normalization', () => {
     expect(result.finishReason).toBe('completed');
     expect(result.usage).toBe(USAGE);
     expect(result.id).toBe('gen-1');
+
+    const segmented = new FakeStreamedMessage([
+      { type: 'think', think: 'first ', detailsIndex: 0 },
+      { type: 'think', think: 'segment', detailsIndex: 0 },
+      { type: 'think', think: 'second segment', detailsIndex: 1 },
+      { type: 'think', think: '', encrypted: 'cipher', detailsIndex: 2 },
+      { type: 'text', text: 'done' },
+    ]);
+    const { provider: segmentedProvider } = createFakeProvider(segmented);
+
+    const segmentedResult = await generate(segmentedProvider, SYSTEM_PROMPT, NO_TOOLS, HISTORY);
+
+    expect(segmentedResult.message.content).toEqual([
+      { type: 'think', think: 'first segment', detailsIndex: 0 },
+      { type: 'think', think: 'second segment', detailsIndex: 1 },
+      { type: 'think', think: '', encrypted: 'cipher', detailsIndex: 2 },
+      { type: 'text', text: 'done' },
+    ]);
   });
 
   it('assembles tool calls from streamed argument deltas by stream index', async () => {
