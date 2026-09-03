@@ -1487,6 +1487,12 @@ export class AgentTranscriptProjector {
       const attachment: TranscriptAttachment = {
         attachmentId: `${stepId}.att${++this.attachmentOrdinal}`,
         mediaType: `${ref.kind}/*`,
+        name:
+          part.type === 'image_url'
+            ? part.imageUrl.name
+            : part.type === 'video_url'
+              ? part.videoUrl.name
+              : undefined,
         source: { kind: 'session_media', fileId: ref.ref.fileId },
       };
       ops.push({ op: 'attachment.upsert', attachment });
