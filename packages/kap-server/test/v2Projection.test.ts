@@ -7,6 +7,9 @@ import type {
   ProjectionEvent,
 } from '../src/services/v2Projection/agentProjector';
 import { registerHistoryRoutes, historyResponseSchema } from '../src/routes/history';
+import { liveSessionSourceFor, SessionV2Binder, type SessionV2Binding, type V2SessionSource } from '../src/services/v2Projection/binder';
+import { ConnectionRegistry } from '../src/transport/ws/connectionRegistry';
+import { WsConnectionV2 } from '../src/transport/ws/v2/wsConnectionV2';
 import { buildColdHistory } from '../src/services/v2Projection/coldHistory';
 import { SessionV2Projector } from '../src/services/v2Projection/sessionProjector';
 import type { SessionFactsPatch } from '../src/services/v2Projection/sessionStateComposer';
@@ -3448,3 +3451,346 @@ describe('v2Projection × REST 历史冷重建', () => {
     expect(reply404.payload).toMatchObject({ code: 40401, data: null, request_id: 'req_02' });
   });
 });
+
+class FakeWsSocket {
+  readonly sent: string[] = [];
+  flush = true;
+  closed = false;
+  closeCalls: { code?: number; reason?: string }[] = [];
+  private readonly handlers = new Map<string, ((...args: unknown[]) => void)[]>();
+
+  on(event: string, handler: (...args: unknown[]) => void): this {
+    const list = this.handlers.get(event) ?? [];
+    list.push(handler);
+    this.handlers.set(event, list);
+    return this;
+  }
+
+  private fire(event: string, ...args: unknown[]): void {
+    for (const handler of [...(this.handlers.get(event) ?? [])]) handler(...args);
+  }
+
+  deliver(data: unknown): void {
+    this.fire('message', data);
+  }
+
+  send(data: string, cb?: () => void): void {
+    this.sent.push(data);
+    if (this.flush && cb) queueMicrotask(cb);
+  }
+
+  ping(): void {}
+
+  close(code?: number, reason?: string): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.closeCalls.push({ code, reason });
+    this.fire('close');
+  }
+}
+
+type FakeBusEvent = { type: string } & Record<string, unknown>;
+
+class FakeAgentBus {
+  private readonly handlers: ((event: FakeBusEvent) => void)[] = [];
+
+  subscribe(handler: (event: FakeBusEvent) => void): { dispose(): void } {
+    this.handlers.push(handler);
+    return {
+      dispose: () => {
+        const index = this.handlers.indexOf(handler);
+        if (index >= 0) this.handlers.splice(index, 1);
+      },
+    };
+  }
+
+  emit(event: FakeBusEvent): void {
+    for (const handler of [...this.handlers]) handler(event);
+  }
+}
+
+interface FakeActivityState {
+  busy: boolean;
+  mainTurnActive: boolean;
+  pendingInteraction: 'none' | 'approval' | 'question';
+}
+
+interface FakeActivitySource {
+  state(): FakeActivityState;
+  set(state: FakeActivityState, time?: number): void;
+}
+
+function makeFakeSession(sessionId: string, agentIds: string[]): {
+  source: V2SessionSource;
+  buses: Map<string, FakeAgentBus>;
+  activity: FakeActivitySource;
+} {
+  const buses = new Map<string, FakeAgentBus>();
+  for (const agentId of agentIds) buses.set(agentId, new FakeAgentBus());
+  let activityState: FakeActivityState = { busy: false, mainTurnActive: false, pendingInteraction: 'none' };
+  const activityListeners = new Set<(state: FakeActivityState, time?: number) => void>();
+  const activity: FakeActivitySource = {
+    state: () => activityState,
+    set: (state, time) => {
+      activityState = state;
+      for (const listener of [...activityListeners]) listener(activityState, time);
+    },
+  };
+  const source: V2SessionSource = {
+    sessionId,
+    agents: () =>
+      agentIds.map((agentId) => ({
+        agentId,
+        bus: { subscribe: (handler: (event: FakeBusEvent) => void) => buses.get(agentId)!.subscribe(handler) },
+        permissionMode: () => 'manual' as const,
+      })),
+    agentFor: (agentId) => {
+      const bus = buses.get(agentId);
+      if (!bus) return undefined;
+      return {
+        agentId,
+        bus: { subscribe: (handler: (event: FakeBusEvent) => void) => bus.subscribe(handler) },
+        permissionMode: () => 'manual' as const,
+      };
+    },
+    activity: {
+      state: () => activityState,
+      onDidChange: (handler: (state: FakeActivityState, time?: number) => void) => {
+        activityListeners.add(handler);
+        return { dispose: () => activityListeners.delete(handler) };
+      },
+    },
+  };
+  return { source, buses, activity };
+}
+
+function stepper(start: number): () => number {
+  let t = start;
+  return () => (t += 1);
+}
+
+interface WsScenario {
+  binding: SessionV2Binding;
+  buses: Map<string, FakeAgentBus>;
+  activity: FakeActivitySource;
+  connect(opts?: { flush?: boolean; outboundCapacity?: number; inflightWindow?: number }): {
+    socket: FakeWsSocket;
+    frames: () => Record<string, unknown>[];
+  };
+}
+
+function makeV2Scenario(opts: { sessionId: string; agentIds?: string[]; clock?: () => number }): WsScenario {
+  const agentIds = opts.agentIds ?? ['main'];
+  const { source, buses, activity } = makeFakeSession(opts.sessionId, agentIds);
+  const binder = new SessionV2Binder(opts.clock ?? Date.now);
+  const binding = binder.attach(source);
+  const registry = new ConnectionRegistry();
+  return {
+    binding,
+    buses,
+    activity,
+    connect: (connectOpts) => {
+      const socket = new FakeWsSocket();
+      if (connectOpts?.flush === false) socket.flush = false;
+      const connection = new WsConnectionV2({
+        socket: socket as never,
+        binder,
+        registry,
+        serverId: 'srv_9f2c',
+        sessionSourceFor: () => source,
+        clock: opts.clock ?? Date.now,
+        outboundCapacity: connectOpts?.outboundCapacity,
+        inflightWindow: connectOpts?.inflightWindow,
+        heartbeatIntervalMs: 0,
+      });
+      void connection;
+      return {
+        socket,
+        frames: () => socket.sent.map((line) => JSON.parse(line) as Record<string, unknown>),
+      };
+    },
+  };
+}
+
+async function settle(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function fixtureSection(tabId: string, label: string): Record<string, unknown>[] {
+  const tab = FIXTURES.tabs.find((t) => t.id === tabId);
+  if (!tab) throw new Error(`tab ${tabId} not found`);
+  const section = tab.sections.find((s) => s.label === label);
+  if (!section) throw new Error(`section ${label} not found in ${tabId}`);
+  return section.items.map((it) => JSON.parse(it.json) as Record<string, unknown>);
+}
+
+const HELLO_FRAME = { type: 'hello', protocol_version: 2, server_id: 'srv_9f2c', capabilities: ['step_replay_v1', 'interaction_v1'] };
+
+describe('WS v2 传输层', () => {
+  it('recovery A：刷新恢复与直播', async () => {
+    const T2 = Date.parse('2026-09-03T11:00:00.000Z');
+    const clock = stepper(T2 + 3627);
+    const scenario = makeV2Scenario({ sessionId: 's_04', clock });
+    const { buses, activity } = scenario;
+    const { socket, frames } = scenario.connect();
+    const drive = (event: FakeBusEvent) => buses.get('main')!.emit(event);
+    activity.set({ busy: true, mainTurnActive: true, pendingInteraction: 'none' });
+    drive({ type: 'prompt.submitted', promptId: 'p_02', status: 'running', turnId: 1, content: [{ type: 'text', text: '我想给 CLI 加一个全局 `--verbose` 选项，加在哪里比较合适？' }], createdAt: '2026-09-03T11:00:00.000Z', time: T2 + 10 });
+    drive({ type: 'turn.started', turnId: 1, promptId: 'p_02', origin: { kind: 'user' }, time: T2 + 15 });
+    drive({ type: 'turn.step.started', turnId: 1, step: 0, time: T2 + 22 });
+    drive({ type: 'tool.call.started', turnId: 1, toolCallId: 'call_01', name: 'Read', args: { path: 'src/cli.ts' }, time: T2 + 1500 });
+    drive({ type: 'tool.result', turnId: 1, toolCallId: 'call_01', output: { content: '…（文件内容，含 parseArgs 实现）…', lines: 86 }, time: T2 + 1900 });
+    drive({ type: 'turn.step.completed', turnId: 1, step: 0, usage: { inputOther: 2800, output: 64, inputCacheRead: 8000, inputCacheCreation: 0 }, finishReason: 'tool_use', time: T2 + 2000 });
+    drive({ type: 'turn.step.started', turnId: 1, step: 1, time: T2 + 2050 });
+    drive({ type: 'assistant.delta', turnId: 1, delta: '建议加在入口的', time: T2 + 2400 });
+    drive({ type: 'assistant.delta', turnId: 1, delta: '全局参数解析处：', time: T2 + 2700 });
+    drive({ type: 'agent.activity.updated', lifecycle: 'ready', turn: { turnId: 1, step: 1, phase: 'running', since: 1788433200015 }, time: T2 + 2060 });
+    drive({ type: 'agent.status.updated', model: 'kimi-k3-highspeed', contextTokens: 8100, maxContextTokens: 262144, usage: { currentTurn: { inputOther: 5700, output: 150, inputCacheRead: 20000, inputCacheCreation: 0 }, total: { inputOther: 8100, output: 208, inputCacheRead: 20000, inputCacheCreation: 0 } }, time: T2 + 2070 });
+    await settle();
+    socket.deliver(JSON.stringify({ type: 'subscribe', id: 1, session_id: 's_04' }));
+    drive({ type: 'assistant.delta', turnId: 1, delta: '`src/cli.ts` 的 `parseArgs` 里注册 `--verbose` 全局选项，', time: T2 + 4100 });
+    drive({ type: 'assistant.delta', turnId: 1, delta: '子命令自动继承；日志模块读到该标志后调到 debug 级别。', time: T2 + 4600 });
+    drive({ type: 'turn.step.completed', turnId: 1, step: 1, usage: { inputOther: 3100, output: 96, inputCacheRead: 12800, inputCacheCreation: 0 }, finishReason: 'end_turn', time: T2 + 5100 });
+    drive({ type: 'turn.ended', turnId: 1, reason: 'completed', durationMs: 5183, time: T2 + 5200 });
+    drive({ type: 'agent.activity.updated', lifecycle: 'ready', time: T2 + 5220 });
+    drive({ type: 'agent.status.updated', contextTokens: 8500, usage: { total: { inputOther: 8300, output: 218, inputCacheRead: 20800, inputCacheCreation: 0 } }, time: T2 + 5220 });
+    activity.set({ busy: false, mainTurnActive: false, pendingInteraction: 'none' }, T2 + 5220);
+    await settle();
+
+    const got = frames();
+    expect(got[0]).toEqual(HELLO_FRAME);
+    const expected = fixtureSection('recovery', 'A · 刷新：WS 恢复与直播').slice(2);
+    for (const frame of got.slice(1)) parseServerMessage(frame);
+    expect(got.slice(1)).toEqual(expected);
+  });
+
+  it('recovery B：重连恢复与收官补发', async () => {
+    const T2 = Date.parse('2026-09-03T11:00:00.000Z');
+    const clock = stepper(T2 + 5607);
+    const scenario = makeV2Scenario({ sessionId: 's_04', clock });
+    const { buses, activity } = scenario;
+    const { socket, frames } = scenario.connect();
+    const drive = (event: FakeBusEvent) => buses.get('main')!.emit(event);
+    activity.set({ busy: true, mainTurnActive: true, pendingInteraction: 'none' });
+    drive({ type: 'prompt.submitted', promptId: 'p_02', status: 'running', turnId: 1, content: [{ type: 'text', text: '我想给 CLI 加一个全局 `--verbose` 选项，加在哪里比较合适？' }], createdAt: '2026-09-03T11:00:00.000Z', time: T2 + 10 });
+    drive({ type: 'turn.started', turnId: 1, promptId: 'p_02', origin: { kind: 'user' }, time: T2 + 15 });
+    drive({ type: 'turn.step.started', turnId: 1, step: 0, time: T2 + 22 });
+    drive({ type: 'tool.call.started', turnId: 1, toolCallId: 'call_01', name: 'Read', args: { path: 'src/cli.ts' }, time: T2 + 1500 });
+    drive({ type: 'tool.result', turnId: 1, toolCallId: 'call_01', output: { content: '…（文件内容，含 parseArgs 实现）…', lines: 86 }, time: T2 + 1900 });
+    drive({ type: 'turn.step.completed', turnId: 1, step: 0, usage: { inputOther: 2800, output: 64, inputCacheRead: 8000, inputCacheCreation: 0 }, finishReason: 'tool_use', time: T2 + 2000 });
+    drive({ type: 'turn.step.started', turnId: 1, step: 1, time: T2 + 2050 });
+    drive({ type: 'assistant.delta', turnId: 1, delta: '建议加在入口的', time: T2 + 2400 });
+    drive({ type: 'assistant.delta', turnId: 1, delta: '全局参数解析处：', time: T2 + 2700 });
+    drive({ type: 'assistant.delta', turnId: 1, delta: '`src/cli.ts` 的 `parseArgs` 里注册 `--verbose` 全局选项，', time: T2 + 4100 });
+    drive({ type: 'assistant.delta', turnId: 1, delta: '子命令自动继承；日志模块读到该标志后调到 debug 级别。', time: T2 + 4600 });
+    drive({ type: 'agent.activity.updated', lifecycle: 'ready', turn: { turnId: 1, step: 1, phase: 'running', since: 1788433200015 }, time: T2 + 2060 });
+    drive({ type: 'agent.status.updated', model: 'kimi-k3-highspeed', contextTokens: 8300, maxContextTokens: 262144, usage: { currentTurn: { inputOther: 5850, output: 156, inputCacheRead: 20600, inputCacheCreation: 0 }, total: { inputOther: 8250, output: 214, inputCacheRead: 20600, inputCacheCreation: 0 } }, time: T2 + 5600 });
+    await settle();
+    socket.deliver(JSON.stringify({ type: 'subscribe', id: 1, session_id: 's_04' }));
+    drive({ type: 'turn.step.completed', turnId: 1, step: 1, usage: { inputOther: 3100, output: 96, inputCacheRead: 12800, inputCacheCreation: 0 }, finishReason: 'end_turn', endedAt: T2 + 5100, time: T2 + 6400 });
+    drive({ type: 'turn.ended', turnId: 1, reason: 'completed', durationMs: 6483, endedAt: T2 + 5200, time: T2 + 6500 });
+    drive({ type: 'agent.activity.updated', lifecycle: 'ready', time: T2 + 6520 });
+    drive({ type: 'agent.status.updated', contextTokens: 8500, usage: { total: { inputOther: 8300, output: 218, inputCacheRead: 20800, inputCacheCreation: 0 } }, time: T2 + 6520 });
+    activity.set({ busy: false, mainTurnActive: false, pendingInteraction: 'none' }, T2 + 6520);
+    await settle();
+
+    const got = frames();
+    expect(got[0]).toEqual(HELLO_FRAME);
+    const expected = fixtureSection('recovery', 'B · 重连：WS 恢复与直播').slice(2);
+    for (const frame of got.slice(1)) parseServerMessage(frame);
+    expect(got.slice(1)).toEqual(expected);
+  });
+
+  it('connection：omit 订阅屏蔽 delta 族', async () => {
+    const B = Date.parse('2026-09-03T17:20:00.000Z');
+    const scenario = makeV2Scenario({ sessionId: 's_15' });
+    const { buses, activity } = scenario;
+    const { socket, frames } = scenario.connect();
+    const drive = (event: FakeBusEvent) => buses.get('main')!.emit(event);
+    socket.deliver(JSON.stringify({ type: 'subscribe', id: 1, session_id: 's_15', omit: ['assistant.delta', 'thinking.delta', 'tool_call.delta'] }));
+    drive({ type: 'prompt.submitted', promptId: 'p_01', status: 'running', content: [{ type: 'text', text: '今天天气怎么样' }], createdAt: '2026-09-03T17:20:00.000Z', time: B + 10 });
+    drive({ type: 'turn.started', turnId: 0, promptId: 'p_01', origin: { kind: 'user' }, time: B + 15 });
+    activity.set({ busy: true, mainTurnActive: true, pendingInteraction: 'none' }, B + 20);
+    drive({ type: 'agent.activity.updated', lifecycle: 'ready', turn: { turnId: 0, step: 0, phase: 'running', since: 1788456000015 }, time: B + 20 });
+    drive({ type: 'agent.status.updated', model: 'kimi-k3-highspeed', contextTokens: 1820, maxContextTokens: 262144, usage: { total: { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 } }, time: B + 20 });
+    await settle();
+    drive({ type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 });
+    drive({ type: 'thinking.delta', turnId: 0, delta: '闲聊类问题，直接友好回答。', time: B + 300 });
+    drive({ type: 'assistant.delta', turnId: 0, delta: '我没法查实时天气——告诉你城市的话，我可以聊聊一般的气候特点。', time: B + 900 });
+    drive({ type: 'turn.step.completed', turnId: 0, step: 0, usage: { inputOther: 1820, output: 28, inputCacheRead: 0, inputCacheCreation: 0 }, finishReason: 'end_turn', time: B + 1400 });
+    drive({ type: 'turn.ended', turnId: 0, reason: 'completed', durationMs: 1483, time: B + 1500 });
+    drive({ type: 'agent.activity.updated', lifecycle: 'ready', time: B + 1520 });
+    drive({ type: 'agent.status.updated', contextTokens: 1870, usage: { total: { inputOther: 1820, output: 28, inputCacheRead: 0, inputCacheCreation: 0 } }, time: B + 1520 });
+    activity.set({ busy: false, mainTurnActive: false, pendingInteraction: 'none' }, B + 1520);
+    await settle();
+
+    const got = frames();
+    expect(got[0]).toEqual(HELLO_FRAME);
+    expect(got[1]).toEqual({ type: 'ack', id: 1, code: 0 });
+    const expected = fixtureSection('connection', 'omit 订阅（WS）').slice(3);
+    for (const frame of got.slice(2)) parseServerMessage(frame);
+    expect(got.slice(2)).toEqual(expected);
+    expect(got.some((frame) => String(frame['type']).endsWith('.delta'))).toBe(false);
+  });
+
+  it('connection：背压溢出断开与重连恢复', async () => {
+    const B = Date.parse('2026-09-03T17:20:00.000Z');
+    const scenario = makeV2Scenario({ sessionId: 's_15' });
+    const first = scenario.connect({ flush: false, outboundCapacity: 2, inflightWindow: 1 });
+    const drive = (event: FakeBusEvent) => scenario.buses.get('main')!.emit(event);
+    first.socket.deliver(JSON.stringify({ type: 'subscribe', id: 1, session_id: 's_15' }));
+    drive({ type: 'prompt.submitted', promptId: 'p_01', status: 'running', content: [{ type: 'text', text: '今天天气怎么样' }], createdAt: '2026-09-03T17:20:00.000Z', time: B + 10 });
+    drive({ type: 'turn.started', turnId: 0, promptId: 'p_01', origin: { kind: 'user' }, time: B + 15 });
+    drive({ type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 });
+    expect(first.socket.closed).toBe(true);
+    const last = JSON.parse(first.socket.sent.at(-1)!) as Record<string, unknown>;
+    expect(last).toEqual({ type: 'error', code: 'backpressure_overflow', msg: 'outbound queue overflow; connection closed, reconnect to resync' });
+
+    const second = scenario.connect();
+    const frames2 = second.frames;
+    expect(frames2()[0]).toEqual(HELLO_FRAME);
+    second.socket.deliver(JSON.stringify({ type: 'subscribe', id: 1, session_id: 's_15' }));
+    expect(frames2()[1]).toEqual({ type: 'ack', id: 1, code: 0 });
+    const recovered = frames2().slice(2);
+    for (const frame of recovered) parseServerMessage(frame);
+    expect(recovered.map((frame) => [frame['type'], frame['step_id'] ?? frame['turn_id'] ?? ''])).toEqual([
+      ['turn', 't1'],
+      ['step', 't1.0'],
+    ]);
+    expect(recovered[1]).toMatchObject({ state: 'running' });
+    const again = scenario.binding.recoveryFor('main').filter((frame) => frame.type !== 'session.state');
+    expect(again.map((frame) => [frame.type, (frame as { step_id?: string }).step_id ?? (frame as { turn_id?: string }).turn_id ?? ''])).toEqual([
+      ['turn', 't1'],
+      ['step', 't1.0'],
+    ]);
+  });
+
+  it('subagent：子代理通道按需订阅', async () => {
+    const B = Date.parse('2026-09-03T17:30:00.000Z');
+    const scenario = makeV2Scenario({ sessionId: 's_16', agentIds: ['main', 'review_01'] });
+    const { buses } = scenario;
+    const { socket, frames } = scenario.connect();
+    const drive = (event: FakeBusEvent) => buses.get('review_01')!.emit(event);
+    socket.deliver(JSON.stringify({ type: 'subscribe', id: 2, session_id: 's_16', agent_id: 'review_01' }));
+    drive({ type: 'turn.started', agentId: 'review_01', turnId: 0, origin: { kind: 'task', taskId: 'task_01' }, time: B + 1600 });
+    drive({ type: 'turn.step.started', agentId: 'review_01', turnId: 0, step: 0, time: B + 1620 });
+    drive({ type: 'thinking.delta', agentId: 'review_01', turnId: 0, delta: '先读 LoginView 的改动，', time: B + 2000 });
+    drive({ type: 'thinking.delta', agentId: 'review_01', turnId: 0, delta: '重点看 token 处理。', time: B + 2200 });
+    drive({ type: 'assistant.delta', agentId: 'review_01', turnId: 0, delta: '我先读 LoginView 的改动。', time: B + 2800 });
+    drive({ type: 'tool.call.started', agentId: 'review_01', turnId: 0, toolCallId: 'call_02', name: 'Read', args: { path: 'apps/web/src/views/LoginView.vue' }, time: B + 3200 });
+    drive({ type: 'tool.result', agentId: 'review_01', turnId: 0, toolCallId: 'call_02', output: { content: '<template>…</template>', lines: 214 }, time: B + 3800 });
+    drive({ type: 'subagent.completed', agentId: 'review_01', subagentId: 'review_01', resultSummary: '审查通过：可选链修复正确，无回归风险。', time: B + 4500 });
+    drive({ type: 'turn.step.completed', agentId: 'review_01', turnId: 0, step: 0, usage: { inputOther: 2200, output: 64, inputCacheRead: 8000, inputCacheCreation: 0 }, finishReason: 'end_turn', time: B + 4500 });
+    drive({ type: 'turn.ended', agentId: 'review_01', turnId: 0, reason: 'completed', durationMs: 2997, time: B + 4600 });
+    await settle();
+
+    const got = frames();
+    expect(got[0]).toEqual(HELLO_FRAME);
+    const section = fixtureSection('subagent', '子代理通道（按需订阅）');
+    expect(got[1]).toEqual(section[1]);
+    const expected = section.slice(2);
+    for (const frame of got.slice(2)) parseServerMessage(frame);
+    expect(got.slice(2)).toEqual(expected);
+  });
+});
+

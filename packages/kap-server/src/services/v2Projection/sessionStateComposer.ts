@@ -79,6 +79,16 @@ export class SessionStateComposer {
 
   constructor(private readonly sessionId: string) {}
 
+  hasFacts(): boolean {
+    return (
+      this.activity?.busy === true ||
+      this.agentActivity?.turn !== undefined ||
+      this.status !== undefined ||
+      this.goal !== undefined ||
+      this.modes !== undefined
+    );
+  }
+
   apply(patch: SessionFactsPatch): void {
     if (patch.activity !== undefined) this.activity = patch.activity;
     if (patch.agentActivity !== undefined) this.agentActivity = patch.agentActivity;

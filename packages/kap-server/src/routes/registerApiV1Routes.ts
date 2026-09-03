@@ -74,6 +74,7 @@ export interface RegisterApiV1RoutesOptions {
   readonly pluginMarketplaceIsDefault: boolean;
   readonly dangerousBypassAuth?: boolean;
   readonly webTitle?: string;
+  readonly serverId?: string;
 }
 
 export async function registerApiV1Routes(
@@ -91,7 +92,7 @@ export async function registerApiV1Routes(
 
       registerMetaRoute(apiV1, {
         serverVersion: opts.serverVersion,
-        serverId: ulid(),
+        serverId: opts.serverId ?? ulid(),
         startedAt: new Date().toISOString(),
         dangerousBypassAuth: opts.dangerousBypassAuth === true,
         webTitle: opts.webTitle,

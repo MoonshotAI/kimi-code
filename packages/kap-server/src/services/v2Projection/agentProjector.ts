@@ -85,6 +85,14 @@ export interface ProjectionEvent {
   snapshot?: unknown;
   agentRefs?: unknown;
   resultSummary?: unknown;
+  lifecycle?: unknown;
+  turn?: unknown;
+  endedAt?: unknown;
+  model?: unknown;
+  thinkingEffort?: unknown;
+  contextTokens?: unknown;
+  maxContextTokens?: unknown;
+  mode?: unknown;
   [key: string]: unknown;
 }
 
@@ -139,6 +147,7 @@ interface StepAcc {
   ordinal: number;
   state: 'running' | 'completed' | 'interrupted' | 'failed';
   startedAt: string;
+  endedAt?: number;
   usage?: StepUsage;
   finishReason?: string;
   retry?: StepRetry;
@@ -205,6 +214,7 @@ interface InteractionAcc {
   kind: 'approval' | 'question';
   toolCallId?: string;
   request: ApprovalRequest | QuestionRequest;
+  resolved?: boolean;
 }
 
 const MAIN_FALLBACK_TIME = 0;
@@ -299,6 +309,7 @@ export class AgentV2Projector {
   private todoId?: string;
   private todoSeq = 0;
   private todoUpdatedAt?: number;
+  private lastTodoItems?: TodoItem[];
   private systemSeq = 0;
   private planVersion?: number;
   private planKey?: string;
@@ -378,7 +389,42 @@ export class AgentV2Projector {
   applyInteractionResolved(record: InteractionResolvedRecord): ServerMessage[] {
     const acc = this.interactions.get(record.id);
     if (!acc) return [];
+    acc.resolved = true;
     return [this.interactionMessage(acc, record.state, record.time, record.response)];
+  }
+
+  recoveryEntities(now: () => number): ServerMessage[] {
+    const out: ServerMessage[] = [];
+    const turn = this.latestTurn();
+    if (turn && turn.state === 'running') {
+      out.push(this.turnMessage(turn, now()));
+      const step = this.currentStep;
+      if (step && step.state === 'running') {
+        out.push(this.stepMessage(step, now()));
+        if (this.openThinking) {
+          out.push({ ...this.textMessage(this.openThinking, 'streaming', now()), text: this.openThinking.text });
+        }
+        if (this.openAssistant) {
+          out.push({ ...this.textMessage(this.openAssistant, 'streaming', now()), text: this.openAssistant.text });
+        }
+        for (const acc of this.tools.values()) {
+          if (acc.stepId === step.stepId && acc.state === 'running') out.push(this.toolCallMessage(acc, now()));
+        }
+      }
+    }
+    for (const acc of this.interactions.values()) {
+      if (!acc.resolved) out.push(this.interactionMessage(acc, 'pending', now()));
+    }
+    for (const task of this.tasks.values()) {
+      if (task.message.state === 'running') out.push({ ...task.message, timestamp: iso(now()) });
+    }
+    if (this.todoId !== undefined && this.lastTodoItems !== undefined) {
+      out.push(this.todoMessage(this.todoId, this.lastTodoItems, now(), this.todoUpdatedAt));
+    }
+    for (const acc of this.prompts.values()) {
+      if (acc.status === 'running' && acc.queued) out.push(this.userMessage(acc, now()));
+    }
+    return out;
   }
 
   private base(event: ProjectionEvent): { session_id: string; agent_id: string; timestamp: string } {
@@ -603,7 +649,7 @@ export class AgentV2Projector {
       user_message_id: turn.userMessageId,
       attachment_ids: turn.attachmentIds,
       started_at: turn.startedAt,
-      ended_at: iso(event.time),
+      ended_at: iso((event.endedAt as number | undefined) ?? event.time),
       usage,
       duration_ms: event.durationMs as number | undefined,
     };
@@ -612,7 +658,7 @@ export class AgentV2Projector {
       const acc = this.prompts.get(promptId);
       if (acc && acc.status !== 'completed') {
         acc.status = 'completed';
-        out.push(this.userMessage(acc, event.time, iso(event.time)));
+        out.push(this.userMessage(acc, event.time, iso((event.endedAt as number | undefined) ?? event.time)));
       }
     }
   }
@@ -641,6 +687,7 @@ export class AgentV2Projector {
     if (!step || step.state !== 'running') return;
     this.closeOpenTexts(event.time, out);
     step.state = 'completed';
+    step.endedAt = (event.endedAt as number | undefined) ?? event.time;
     step.usage = toStepUsage(event.usage);
     step.finishReason = event.finishReason as string | undefined;
     step.retry = undefined;
@@ -663,6 +710,7 @@ export class AgentV2Projector {
     if (!step || step.state !== 'running') return;
     this.closeOpenTexts(event.time, out);
     step.state = 'interrupted';
+    step.endedAt = (event.endedAt as number | undefined) ?? event.time;
     step.endReason = event.reason as string | undefined;
     step.endMessage = event.message as string | undefined;
     out.push(this.stepMessage(step, event.time));
@@ -826,6 +874,7 @@ export class AgentV2Projector {
     const items = todoItemsFromList(event.value);
     if (!items) return;
     this.todoId = this.todoId ?? this.nextTodoId();
+    this.lastTodoItems = items;
     out.push(this.todoMessage(this.todoId, items, event.time, this.todoUpdatedAt));
   }
 
@@ -1097,7 +1146,7 @@ export class AgentV2Projector {
       ordinal: step.ordinal,
       state: step.state,
       started_at: step.startedAt,
-      ended_at: step.state === 'running' ? undefined : iso(time),
+      ended_at: step.state === 'running' ? undefined : iso(step.endedAt ?? time),
       usage: step.usage,
       finish_reason: step.finishReason,
       timing: step.timing,

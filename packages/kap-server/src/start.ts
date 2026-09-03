@@ -31,6 +31,8 @@ import {
   kimiRegionProfile,
   type KimiHostIdentity,
 } from '@moonshot-ai/kimi-code-oauth';
+import { ulid } from 'ulid';
+
 import { createAsyncApiDocument } from './protocol/asyncapi';
 import Fastify, { type FastifyInstance } from 'fastify';
 
@@ -61,6 +63,8 @@ import { SessionEventBroadcaster } from './transport/ws/v1/sessionEventBroadcast
 import type { ConfigWarningItem } from './transport/ws/v1/events';
 import { FsWatchBridge } from './transport/ws/v1/fsWatchBridge';
 import { registerWsV1, WS_PATH as WS_PATH_V1 } from './transport/ws/v1/registerWsV1';
+import { registerWsV2, WS_PATH_V2 } from './transport/ws/v2/registerWsV2';
+import { liveSessionSourceFor, SessionV2Binder } from './services/v2Projection/binder';
 import { getServerVersion } from './version';
 import { classify } from './security/bindClassify';
 import {
@@ -418,6 +422,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
 
   await registerOpenApi();
 
+  const serverId = ulid();
+
   await registerApiV1Routes(app, core, {
     serverVersion,
     hostIdentity: opts.hostIdentity,
@@ -436,13 +442,14 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       (process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'] === undefined ||
         process.env['KIMI_CODE_PLUGIN_MARKETPLACE_FROM_DEV_SERVER'] === '1'),
     onShutdown: () => {
-      void close().catch((err: unknown) => logger.error({ err }, 'server close failed'));
+      void close().catch((error: unknown) => logger.error({ err: error }, 'server close failed'));
     },
     connectionRegistry,
     broadcaster,
     transcriptService,
     dangerousBypassAuth: opts.disableAuth === true,
     webTitle: opts.webTitle,
+    serverId,
   });
 
   await registerApiV2Routes(app, core);
@@ -455,6 +462,14 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     logger,
   });
 
+  const wssV2 = registerWsV2({
+    binder: new SessionV2Binder(),
+    registry: connectionRegistry,
+    serverId,
+    sessionSourceFor: (sessionId) => liveSessionSourceFor(core, sessionId),
+    logger: { warn: (meta, msg) => logger.warn(meta, msg) },
+  });
+
   const handleUpgrade = async (
     req: IncomingMessage,
     socket: Duplex,
@@ -462,7 +477,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   ): Promise<void> => {
     const url = req.url ?? '';
     const isV1 = url === WS_PATH_V1 || url.startsWith(`${WS_PATH_V1}?`);
-    if (!isV1) {
+    const isV2 = url === WS_PATH_V2 || url.startsWith(`${WS_PATH_V2}?`);
+    if (!isV1 && !isV2) {
       socket.destroy();
       return;
     }
@@ -524,7 +540,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     }
 
     (socket as Socket).setNoDelay(true);
-    wssV1.handleUpgrade(req, socket, head, (ws) => wssV1.emit('connection', ws, req));
+    if (isV2) wssV2.handleUpgrade(req, socket, head, (ws) => wssV2.emit('connection', ws, req));
+    else wssV1.handleUpgrade(req, socket, head, (ws) => wssV1.emit('connection', ws, req));
   };
   app.server.on('upgrade', (req, socket, head) => {
     void handleUpgrade(req, socket, head).catch((error: unknown) =>
@@ -534,6 +551,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
 
   app.addHook('onClose', async () => {
     connectionRegistry.closeAll('server shutting down');
+    wssV2.close();
     wssV1.close();
     await broadcaster.close();
   });
