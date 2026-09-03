@@ -636,7 +636,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       const customInstruction = data.instruction?.trim() ?? '';
       const instruction = renderPrompt(compactionInstructionTemplate, {
         custom_instruction_block:
-          customInstruction.length > 0 ? `\nOptional user instruction:\n${customInstruction}\n` : '',
+          customInstruction.length > 0 ? `\nAdditional instructions from the user:\n${customInstruction}\n` : '',
       }).trimEnd();
 
       const delays = retryBackoffDelays(MAX_COMPACTION_RETRY_ATTEMPTS);

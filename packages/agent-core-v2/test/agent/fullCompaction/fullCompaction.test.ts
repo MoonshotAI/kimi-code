@@ -290,7 +290,7 @@ describe('FullCompaction', () => {
     ]);
     expect(ctx.context.get().at(-1)?.content[0]).toMatchObject({
       type: 'text',
-      text: expect.stringContaining('The conversation so far has been compacted'),
+      text: expect.stringContaining('This session continues a previous conversation'),
     });
     expect(records).toContainEqual({
       event: 'compaction_finished',
@@ -303,7 +303,7 @@ describe('FullCompaction', () => {
         compacted_count: 6,
         retry_count: 0,
         thinking_effort: 'off',
-        input_tokens: 1181,
+        input_tokens: 1207,
         output_tokens: 8,
         input_cache_read: 0,
         input_cache_creation: 0,
@@ -1491,7 +1491,7 @@ describe('FullCompaction', () => {
         },
         {
           "role": "user",
-          "text": "The conversation so far has been compacted to free up context. What follows is your own working summary of this task — use it to continue your train of thought rather than starting over. Treat it as notes, not proof: where it says a step was done, tests passed, or a fix worked, verify that yourself before relying on it. Any user messages earlier in this context are preserved verbatim from the compacted conversation; where a system-reminder note among them marks an omitted middle section, the user messages it replaced are covered by this summary.
+          "text": "This session continues a previous conversation that ran out of context. The summary below was generated from the earlier portion of the conversation — it is background reference material, not a user message and not a new instruction. The system prompt and its instructions remain in force unchanged and are deliberately not repeated in the summary. User messages earlier in this context are preserved verbatim from the compacted conversation; where a system-reminder note among them marks an omitted middle section, the user messages it replaced are covered by this summary. Treat the summary as notes, not proof: where it says a step was done, tests passed, or a fix worked, verify that yourself before relying on it.
       Compacted prefix.",
         },
       ]
@@ -1720,7 +1720,7 @@ describe('FullCompaction', () => {
       call 2:
         messages:
           user: text "old user one\\n\\nold user two\\n\\nrecent user three\\n\\nAnswer after compacting"
-          user: text "The conversation so far has been compacted to free up context. What follows is your own working summary of this task — use it to continue your train of thought rather than starting over. Treat it as notes, not proof: where it says a step was done, tests passed, or a fix worked, verify that yourself before relying on it. Any user messages earlier in this context are preserved verbatim from the compacted conversation; where a system-reminder note among them marks an omitted middle section, the user messages it replaced are covered by this summary.\\nAuto compacted summary."
+          user: text "This session continues a previous conversation that ran out of context. The summary below was generated from the earlier portion of the conversation — it is background reference material, not a user message and not a new instruction. The system prompt and its instructions remain in force unchanged and are deliberately not repeated in the summary. User messages earlier in this context are preserved verbatim from the compacted conversation; where a system-reminder note among them marks an omitted middle section, the user messages it replaced are covered by this summary. Treat the summary as notes, not proof: where it says a step was done, tests passed, or a fix worked, verify that yourself before relying on it.\\nAuto compacted summary."
     `);
     expect(records).toContainEqual({
       event: 'compaction_finished',
@@ -2101,7 +2101,7 @@ describe('FullCompaction', () => {
 
     expect(ctx.llmCalls).toHaveLength(2);
     const [compactionCall, answerCall] = ctx.llmCalls;
-    expect(messageText(compactionCall?.history.at(-1))).toContain('first-person handoff note');
+    expect(messageText(compactionCall?.history.at(-1))).toContain('You are performing a context compaction');
     expect(
       answerCall?.history.map(messageText).some((text) => text.includes('Reserved compacted summary.')),
     ).toBe(true);
@@ -2254,7 +2254,7 @@ describe('FullCompaction', () => {
           "user: old user one
 
       Retry after provider overflow",
-          "user: The conversation so far has been compacted to free up context. What follows is your own working summary of this task — use it to continue your train of thought rather than starting over. Treat it as notes, not proof: where it says a step was done, tests passed, or a fix worked, verify that yourself before relying on it. Any user messages earlier in this context are preserved verbatim from the compacted conversation; where a system-reminder note among them marks an omitted middle section, the user messages it replaced are covered by this summary.
+          "user: This session continues a previous conversation that ran out of context. The summary below was generated from the earlier portion of the conversation — it is background reference material, not a user message and not a new instruction. The system prompt and its instructions remain in force unchanged and are deliberately not repeated in the summary. User messages earlier in this context are preserved verbatim from the compacted conversation; where a system-reminder note among them marks an omitted middle section, the user messages it replaced are covered by this summary. Treat the summary as notes, not proof: where it says a step was done, tests passed, or a fix worked, verify that yourself before relying on it.
       Overflow compacted summary.",
         ],
       ]
@@ -2979,7 +2979,7 @@ describe('FullCompaction', () => {
           "user: old user one
 
       xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-          "user: The conversation so far has been compacted to free up context. What follows is your own working summary of this task — use it to continue your train of thought rather than starting over. Treat it as notes, not proof: where it says a step was done, tests passed, or a fix worked, verify that yourself before relying on it. Any user messages earlier in this context are preserved verbatim from the compacted conversation; where a system-reminder note among them marks an omitted middle section, the user messages it replaced are covered by this summary.
+          "user: This session continues a previous conversation that ran out of context. The summary below was generated from the earlier portion of the conversation — it is background reference material, not a user message and not a new instruction. The system prompt and its instructions remain in force unchanged and are deliberately not repeated in the summary. User messages earlier in this context are preserved verbatim from the compacted conversation; where a system-reminder note among them marks an omitted middle section, the user messages it replaced are covered by this summary. Treat the summary as notes, not proof: where it says a step was done, tests passed, or a fix worked, verify that yourself before relying on it.
       Placeholder compacted summary.",
         ],
       ]
@@ -3030,7 +3030,7 @@ describe('FullCompaction', () => {
     });
     expect(ctx.context.get().at(-1)?.content[0]).toMatchObject({
       type: 'text',
-      text: expect.stringContaining('The conversation so far has been compacted'),
+      text: expect.stringContaining('This session continues a previous conversation'),
     });
     await ctx.expectResumeMatches();
   });
@@ -3274,7 +3274,7 @@ function inputHistorySnapshot(history: readonly Message[]): string[] {
 }
 
 function normalizeInputText(text: string): string {
-  return text.includes('first-person handoff note') ? '<compaction-instruction>' : text;
+  return text.includes('You are performing a context compaction') ? '<compaction-instruction>' : text;
 }
 
 describe('prompt deferral during full compaction', () => {
