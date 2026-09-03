@@ -308,7 +308,7 @@ export class EditorKeyboardController {
         host.state.appState.isCompacting
       )
         return;
-      const text = editor.getText().trim();
+      const text = (editor.getExpandedText?.() ?? editor.getText()).trim();
       const editorIsBash = editor.inputMode === 'bash';
 
       // Bash commands (`! …`) are not steerable: they stay queued so they run
