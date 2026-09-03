@@ -213,6 +213,7 @@ export interface SlashCommandHost {
   ): void;
   readonly skillCommandMap: Map<string, string>;
   readonly pluginCommandMap: Map<string, string>;
+  dynamicCommandsReady?: Promise<void>;
 
   // Controller refs
   readonly streamingUI: StreamingUIController;
@@ -226,6 +227,13 @@ export interface SlashCommandHost {
 // ---------------------------------------------------------------------------
 
 export function dispatchInput(host: SlashCommandHost, text: string): void {
+  const pending = host.dynamicCommandsReady;
+  if (pending !== undefined) {
+    void pending.then(() => {
+      dispatchInput(host, text);
+    });
+    return;
+  }
   if (parseSlashInput(text) !== null) {
     // A leading skill command combined with further inline skill tokens
     // (`/skill:a args /skill:b`) is one grouped submission on the v2 engine.

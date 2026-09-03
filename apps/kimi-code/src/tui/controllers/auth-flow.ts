@@ -10,8 +10,6 @@ import {
 
 import { createKimiCodeUserAgent } from '#/cli/version';
 
-import type { SkillListSession } from '../commands';
-
 import { OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE } from '../constant/kimi-tui';
 import {
   refreshAllProviderModels,
@@ -45,8 +43,7 @@ export interface AuthFlowHost {
   readonly sessionEventHandler: SessionEventHandler;
   fetchSessions(): Promise<void>;
   updateTerminalTitle(): void;
-  refreshSkillCommands(session?: SkillListSession): Promise<void>;
-  refreshPluginCommands(session?: Session): Promise<void>;
+  refreshDynamicCommands(session?: Session): Promise<void>;
 }
 
 export class AuthFlowController {
@@ -129,8 +126,7 @@ export class AuthFlowController {
     host.sessionEventHandler.startSubscription();
     void host.fetchSessions();
     host.updateTerminalTitle();
-    void host.refreshSkillCommands(host.session);
-    void host.refreshPluginCommands(host.session);
+    void host.refreshDynamicCommands(host.session);
   }
 
   async refreshConfigAfterLogin(): Promise<void> {

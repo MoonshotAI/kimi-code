@@ -154,6 +154,7 @@ import {
 } from './types';
 import { hasDispose, isExpandable } from './utils/component-capabilities';
 import { isDeadTerminalError } from './utils/dead-terminal';
+import { createDynamicCommandsGate } from './utils/dynamic-commands-gate';
 import { formatErrorMessage } from './utils/event-payload';
 import { pickForegroundTasks } from './utils/foreground-task';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
@@ -320,6 +321,7 @@ export class KimiTUI {
   readonly skillCommandMap = new Map<string, string>();
   private pluginCommands: readonly KimiSlashCommand[] = [];
   readonly pluginCommandMap = new Map<string, string>();
+  dynamicCommandsReady?: Promise<void>;
   private readonly imageStore = new ImageAttachmentStore();
   // Detected lazily in startBackgroundFdAutocomplete() — detection spawns
   // `fd --version`, which must not happen before the workspace trust gate:
@@ -515,6 +517,20 @@ export class KimiTUI {
 
   refreshSlashCommandAutocomplete(): void {
     this.setupAutocomplete();
+  }
+
+  refreshDynamicCommands(session?: Session): Promise<void> {
+    const ready = createDynamicCommandsGate(
+      Promise.all([this.refreshSkillCommands(session), this.refreshPluginCommands(session)]),
+      (warning) => {
+        this.showStatus(warning, 'warning');
+      },
+    );
+    this.dynamicCommandsReady = ready;
+    void ready.finally(() => {
+      if (this.dynamicCommandsReady === ready) this.dynamicCommandsReady = undefined;
+    });
+    return ready;
   }
 
   async refreshSkillCommands(session?: SkillListSession): Promise<void> {
@@ -817,8 +833,7 @@ export class KimiTUI {
     if (this.session !== undefined) {
       this.updateTerminalTitle();
     }
-    void this.refreshSkillCommands(this.session);
-    void this.refreshPluginCommands(this.session);
+    void this.refreshDynamicCommands(this.session);
   }
 
   private async showSessionWarnings(session: Session): Promise<void> {
