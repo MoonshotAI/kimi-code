@@ -38,6 +38,8 @@ export class WireService extends Service implements IWireService {
   declare readonly _serviceBrand: undefined;
 
   private readonly wireScope: string;
+  private lines = 0;
+  private lastClearLine: number | undefined;
   private readonly agentId: string;
   private persistQueue: Promise<void> | undefined;
   private pendingRepair:
@@ -111,16 +113,20 @@ export class WireService extends Service implements IWireService {
     let rewrittenRecords: WireRecord[] | undefined;
     let newerWireVersion = false;
     let recordIndex = 0;
+    let lineCount = 0;
     let hasRecords = false;
     let legacyPlanRevisionMigrated = false;
 
     for await (const candidate of source) {
+      lineCount++;
+      this.lines = lineCount;
       const sourceRecord: unknown = candidate;
       if (!isWireRecord(sourceRecord)) {
         this.reportSkippedRecord(undefined, recordIndex, true);
         recordIndex++;
         continue;
       }
+      if (sourceRecord.type === 'context.clear') this.lastClearLine = lineCount;
       if (!hasRecords) {
         hasRecords = true;
         if (sourceRecord.type !== 'metadata') {
@@ -179,7 +185,21 @@ export class WireService extends Service implements IWireService {
       await this.repairJournal(truncation, rewrittenRecords);
     } else if (rewrittenRecords !== undefined) {
       await this.log.rewrite(this.wireScope, AGENT_WIRE_RECORD_KEY, rewrittenRecords);
+      this.lines = rewrittenRecords.length;
+      this.lastClearLine = lastContextClearLineOf(rewrittenRecords);
     }
+  }
+
+  lineCount(): number {
+    return this.lines;
+  }
+
+  lastContextClearLine(): number | undefined {
+    return this.lastClearLine;
+  }
+
+  journalPath(): string | undefined {
+    return this.storage.pathFor(this.wireScope, AGENT_WIRE_RECORD_KEY);
   }
 
   private async repairJournal(
@@ -210,6 +230,10 @@ export class WireService extends Service implements IWireService {
       truncation,
     );
     this.pendingRepair = outcome === 'failed' ? { records, truncation } : undefined;
+    if (outcome !== 'failed') {
+      this.lines = records.length;
+      this.lastClearLine = lastContextClearLineOf(records);
+    }
   }
 
   private async repairPendingJournal(): Promise<void> {
@@ -317,7 +341,16 @@ export class WireService extends Service implements IWireService {
     this.log.append(this.wireScope, AGENT_WIRE_RECORD_KEY, record, {
       onError: onUnexpectedError,
     });
+    this.lines += 1;
+    if (record.type === 'context.clear') this.lastClearLine = this.lines;
   }
+}
+
+function lastContextClearLineOf(records: readonly WireRecord[]): number | undefined {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    if (records[index]!.type === 'context.clear') return index + 1;
+  }
+  return undefined;
 }
 
 function extractLegacyPlanRevisionKey(path: string, agentId: string): string | undefined {

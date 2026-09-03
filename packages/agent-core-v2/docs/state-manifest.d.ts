@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 82 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 83 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -66,6 +66,7 @@
 //     fullCompaction.consecutiveOverflowCompactions   src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.lastCompactedTokenCount          src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.observedMaxContextTokensByModel  src/agent/fullCompaction/fullCompactionService.ts
+//     fullCompaction.wireRanges                       src/agent/fullCompaction/compactionOps.ts
 //     interruptionReminder                            src/agent/interruptionReminder/interruptionReminderOps.ts
 //     llm.requestTrace                                src/agent/llmRequester/llmRequestOps.ts
 //     llmRequester.emittedThinkingEffortWarnings      src/agent/llmRequester/llmRequesterService.ts
@@ -1176,6 +1177,11 @@ export interface AgentStateSnapshot {
   'fullCompaction': /* CompactionState — packages/agent-core-v2/src/agent/fullCompaction/compactionOps.ts */ {
     readonly phase: /* CompactionPhase — packages/agent-core-v2/src/agent/fullCompaction/compactionOps.ts */ 'completed' | 'cancelled' | 'running' | 'idle';
   };
+  // replayable · durable — folds: ContextApplyCompaction, ContextClear
+  'fullCompaction.wireRanges': readonly /* WireLineRange — packages/agent-core-v2/src/wire/record.ts */ {
+    readonly start: number;
+    readonly end: number;
+  }[];
   // src/agent/fullCompaction/fullCompactionService.ts
   'fullCompaction.activeTurnId': number | undefined;
   'fullCompaction.compactionCountInTurn': number;

@@ -81,6 +81,7 @@ beforeEach(() => {
         _serviceBrand: undefined,
         truncateForModel: (input) => truncateForModel(input),
         isSpillFilePath: () => false,
+        isWireJournalPath: () => false,
       });
       reg.defineInstance(IEventBus, {
         publish: (event: ProtocolEvent) => {

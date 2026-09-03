@@ -45,6 +45,20 @@ describe('ToolResultTruncationService', () => {
   const spillDir = () =>
     join(homeDir, 'sessions/workspace/session/agents/main/tool-results');
 
+  it('recognizes agent event logs under the sessions directory', () => {
+    expect(
+      truncation.isWireJournalPath(join(homeDir, 'sessions/workspace/session/agents/main/wire.jsonl')),
+    ).toBe(true);
+    expect(
+      truncation.isWireJournalPath(join(homeDir, 'sessions/workspace/session/agents/sub-1/wire.jsonl')),
+    ).toBe(true);
+    expect(
+      truncation.isWireJournalPath(join(homeDir, 'sessions/workspace/session/agents/main/notes.jsonl')),
+    ).toBe(false);
+    expect(truncation.isWireJournalPath(join(homeDir, 'blobs/wire.jsonl'))).toBe(false);
+    expect(truncation.isWireJournalPath('/elsewhere/sessions/x/wire.jsonl')).toBe(false);
+  });
+
   const bulk = (ch: string, n: number) => `${ch.repeat(99)}\n`.repeat(n);
 
   it('persists oversized string output and renders a bounded model preview', async () => {

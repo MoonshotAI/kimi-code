@@ -17,6 +17,8 @@ export interface IAgentToolResultTruncationService {
   ): Promise<T>;
 
   isSpillFilePath(path: string): boolean;
+
+  isWireJournalPath(path: string): boolean;
 }
 
 export const IAgentToolResultTruncationService: ServiceIdentifier<
