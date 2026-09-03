@@ -42,6 +42,7 @@ describe('resolveTargetDeps', () => {
     expect(names).toContain('@mariozechner/clipboard');
     expect(names).toContain('@mariozechner/clipboard-darwin-arm64');
     expect(names).toContain('@moonshot-ai/pi-tui');
+    expect(names).toContain('node-pty');
   });
 
   it('picks the right clipboard subpackage per target', () => {
@@ -75,6 +76,42 @@ describe('resolveTargetDeps', () => {
     ]);
   });
 
+  it('encodes node-pty native files and executable modes per target', () => {
+    const linuxPty = resolveTargetDeps('linux-x64').find((d) => d.resolvedName === 'node-pty');
+    expect(linuxPty?.nativeFileRelatives).toEqual([
+      'prebuilds/linux-x64/pty.node',
+      'prebuilds/linux-x64/spawn-helper',
+    ]);
+    expect(linuxPty?.nativeFileModes).toEqual({
+      'prebuilds/linux-x64/spawn-helper': 0o755,
+    });
+    const linuxArmPty = resolveTargetDeps('linux-arm64').find((d) => d.resolvedName === 'node-pty');
+    expect(linuxArmPty?.nativeFileRelatives).toEqual([
+      'prebuilds/linux-arm64/pty.node',
+      'prebuilds/linux-arm64/spawn-helper',
+    ]);
+    expect(linuxArmPty?.nativeFileModes).toEqual({
+      'prebuilds/linux-arm64/spawn-helper': 0o755,
+    });
+
+    const macPty = resolveTargetDeps('darwin-arm64').find((d) => d.resolvedName === 'node-pty');
+    expect(macPty?.nativeFileRelatives).toEqual([
+      'prebuilds/darwin-arm64/pty.node',
+      'prebuilds/darwin-arm64/spawn-helper',
+    ]);
+    expect(macPty?.nativeFileModes).toEqual({
+      'prebuilds/darwin-arm64/spawn-helper': 0o755,
+    });
+
+    const winPty = resolveTargetDeps('win32-x64').find((d) => d.resolvedName === 'node-pty');
+    expect(winPty?.nativeFileRelatives).toContain('prebuilds/win32-x64/conpty.node');
+    expect(winPty?.nativeFileRelatives).toContain('lib/worker/conoutSocketWorker.js');
+    expect(winPty?.nativeFileModes).toEqual({
+      'prebuilds/win32-x64/winpty-agent.exe': 0o755,
+      'prebuilds/win32-x64/conpty/OpenConsole.exe': 0o755,
+    });
+  });
+
   it('throws on unsupported target', () => {
     expect(() => resolveTargetDeps('linux-x64-musl')).toThrow(/unsupported/i);
   });
@@ -96,5 +133,11 @@ describe('nativeDeps registry shape', () => {
     const piTui = nativeDeps.find((d) => d.id === 'pi-tui');
     expect(piTui?.collect).toBe('native-file-only');
     expect(piTui?.parent).toBe(null);
+  });
+
+  it('has node-pty (collect=js-and-native-file, no parent)', () => {
+    const pty = nativeDeps.find((d) => d.id === 'node-pty');
+    expect(pty?.collect).toBe('js-and-native-file');
+    expect(pty?.parent).toBe(null);
   });
 });

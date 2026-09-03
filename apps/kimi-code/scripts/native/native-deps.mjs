@@ -39,6 +39,43 @@ const piTuiNativeFileByTarget = Object.freeze({
   'win32-x64': ['native/win32/prebuilds/win32-x64/win32-console-mode.node'],
 });
 
+const nodePtyWinSidecars = Object.freeze([
+  'pty.node',
+  'conpty.node',
+  'conpty_console_list.node',
+  'winpty.dll',
+  'winpty-agent.exe',
+  'conpty/conpty.dll',
+  'conpty/OpenConsole.exe',
+]);
+
+const nodePtyUnixFiles = Object.freeze(['pty.node', 'spawn-helper']);
+
+const nodePtyNativeFileByTarget = Object.freeze({
+  'darwin-arm64': nodePtyUnixFiles.map((name) => `prebuilds/darwin-arm64/${name}`),
+  'darwin-x64': nodePtyUnixFiles.map((name) => `prebuilds/darwin-x64/${name}`),
+  'linux-arm64': nodePtyUnixFiles.map((name) => `prebuilds/linux-arm64/${name}`),
+  'linux-x64': nodePtyUnixFiles.map((name) => `prebuilds/linux-x64/${name}`),
+  'win32-arm64': [
+    ...nodePtyWinSidecars.map((name) => `prebuilds/win32-arm64/${name}`),
+    'lib/worker/conoutSocketWorker.js',
+  ],
+  'win32-x64': [
+    ...nodePtyWinSidecars.map((name) => `prebuilds/win32-x64/${name}`),
+    'lib/worker/conoutSocketWorker.js',
+  ],
+});
+
+function nodePtyFileModes(target) {
+  const modes = {};
+  for (const relative of nodePtyNativeFileByTarget[target] ?? []) {
+    if (relative.endsWith('/spawn-helper') || relative.endsWith('.exe')) {
+      modes[relative] = 0o755;
+    }
+  }
+  return modes;
+}
+
 export function isSupportedTarget(target) {
   return SUPPORTED_TARGETS.includes(target);
 }
@@ -57,6 +94,8 @@ export function isSupportedTarget(target) {
  *           (used by 'js-and-native-file' and 'native-file-only';
  *           native-files mode auto-scans *.node). 'native-file-only' collects
  *           package.json + these .node files but skips the package entry JS.
+ * @property {(target: string) => Record<string, number>} [nativeFileModes]
+ *           — posix modes keyed by nativeFileRelatives path (e.g. 0o755)
  */
 
 /** @type {readonly NativeDepDescriptor[]} */
@@ -84,6 +123,14 @@ export const nativeDeps = Object.freeze([
     parent: null,
     nativeFileRelatives: (target) => piTuiNativeFileByTarget[target] ?? [],
   },
+  {
+    id: 'node-pty',
+    name: () => 'node-pty',
+    collect: 'js-and-native-file',
+    parent: null,
+    nativeFileRelatives: (target) => nodePtyNativeFileByTarget[target] ?? [],
+    nativeFileModes: (target) => nodePtyFileModes(target),
+  },
 ]);
 
 /**
@@ -99,6 +146,7 @@ export function resolveTargetDeps(target) {
       ...d,
       resolvedName: d.name(target),
       nativeFileRelatives: d.nativeFileRelatives?.(target) ?? [],
+      nativeFileModes: d.nativeFileModes?.(target) ?? {},
       parentName: d.parent ? nativeDeps.find((p) => p.id === d.parent)?.name(target) ?? null : null,
     }));
 }

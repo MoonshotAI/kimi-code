@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, realpathSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import {
@@ -182,10 +182,19 @@ async function collectPackageFiles({
 
   for (const nativeFileRelative of nativeFileRelatives) {
     const nativeFile = resolve(packageRoot, nativeFileRelative);
-    if (!existsSync(nativeFile)) {
-      fail(`Native package ${packageName} does not contain ${nativeFileRelative} at ${packageRoot}`);
+    if (existsSync(nativeFile)) {
+      selected.add(nativeFile);
+      continue;
     }
-    selected.add(nativeFile);
+    const compiledFallback = resolve(packageRoot, 'build/Release', basename(nativeFileRelative));
+    if (existsSync(compiledFallback)) {
+      selected.add(compiledFallback);
+      continue;
+    }
+    if (nativeFileRelative.endsWith('/spawn-helper')) {
+      continue;
+    }
+    fail(`Native package ${packageName} does not contain ${nativeFileRelative} at ${packageRoot}`);
   }
 
   if (includeNativeFiles) {
@@ -204,7 +213,7 @@ async function collectPackageFiles({
   return sorted;
 }
 
-async function packageManifestEntries({ packageName, packageRoot, files, target }) {
+async function packageManifestEntries({ packageName, packageRoot, files, target, fileModes = {} }) {
   const root = `node_modules/${packageName}`;
   const entries = [];
   const assets = {};
@@ -214,10 +223,14 @@ async function packageManifestEntries({ packageName, packageRoot, files, target 
     const packageRelativePath = toPosixPath(relative(packageRoot, file));
     const relativePath = `${root}/${packageRelativePath}`;
     const assetKey = `native/${target}/${relativePath}`;
+    const mode =
+      fileModes[packageRelativePath] ??
+      (packageRelativePath.endsWith('/spawn-helper') ? 0o755 : undefined);
     entries.push({
       assetKey,
       relativePath,
       sha256: sha256(sourceBytes),
+      mode,
     });
     assets[assetKey] = file;
   }
@@ -268,6 +281,7 @@ export async function collectNativeAssets({ appRoot, target }) {
       packageRoot,
       files,
       target,
+      fileModes: dep.nativeFileModes ?? {},
     });
     manifestPackages.push(result.packageManifest);
     Object.assign(assets, result.assets);
