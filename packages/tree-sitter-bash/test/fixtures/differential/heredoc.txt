@@ -633,4 +633,8 @@ echo "$(cat <<-'EOF'
 ===
 @match: echo $(echo $((x << 2)))
 echo $(echo $((x << 2)))
+echo $(echo $[x << 2]
+)
+echo $(printf x # <<EOF
+)
 ===

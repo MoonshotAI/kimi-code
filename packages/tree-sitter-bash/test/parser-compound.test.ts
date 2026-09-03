@@ -819,10 +819,18 @@ describe('heredocs in substitutions', () => {
     );
   });
 
-  it('still treats << inside $( ) arithmetic as left shift', () => {
+  it('still treats << inside comments and arithmetic as no heredoc operator', () => {
     expectTree(
       'echo $(echo $((x << 2)))',
       `(program (command (command_name (word "echo")) (command_substitution "$(" (command (command_name (word "echo")) (arithmetic_expansion "$((" (binary_expression (variable_name "x") "<<" (number "2")) "))")) ")")))`,
+    );
+    expectTree(
+      'echo $(echo $[x << 2]\n)',
+      `(program (command (command_name (word "echo")) (command_substitution "$(" (command (command_name (word "echo")) (arithmetic_expansion "$[" (binary_expression (variable_name "x") "<<" (number "2")) "]")) ")")))`,
+    );
+    expectTree(
+      'echo $(printf x # <<EOF\n)',
+      `(program (command (command_name (word "echo")) (command_substitution "$(" (command (command_name (word "printf")) (word "x")) (comment "# <<EOF") ")")))`,
     );
   });
 });
