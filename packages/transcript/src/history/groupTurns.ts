@@ -338,9 +338,19 @@ export function groupMessagesIntoSnapshot(
       pendingNotificationFrames = [];
       for (const part of message.content ?? []) {
         if (part.type === 'text' && 'text' in part && typeof part.text === 'string' && part.text.length > 0) {
-          step.frames.push({ kind: 'text', frameId: nextFrameId(), role: 'assistant', text: part.text });
+          const last = step.frames.at(-1);
+          if (last !== undefined && last.kind === 'text' && last.role === 'assistant') {
+            step.frames[step.frames.length - 1] = { ...last, text: last.text + part.text };
+          } else {
+            step.frames.push({ kind: 'text', frameId: nextFrameId(), role: 'assistant', text: part.text });
+          }
         } else if (part.type === 'think' && 'think' in part && typeof part.think === 'string' && part.think.length > 0) {
-          step.frames.push({ kind: 'thinking', frameId: nextFrameId(), text: part.think });
+          const last = step.frames.at(-1);
+          if (last !== undefined && last.kind === 'thinking') {
+            step.frames[step.frames.length - 1] = { ...last, text: last.text + part.think };
+          } else {
+            step.frames.push({ kind: 'thinking', frameId: nextFrameId(), text: part.think });
+          }
         }
       }
       for (const call of message.toolCalls ?? []) {
