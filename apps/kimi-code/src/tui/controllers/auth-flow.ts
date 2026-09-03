@@ -75,14 +75,22 @@ export class AuthFlowController {
     this.host.setStartupReady();
   }
 
-  async activateModelAfterLogin(model: string, effort?: string): Promise<void> {
+  /**
+   * Apply a model pick to the runtime. Returns whether the pick reached an
+   * already-live session: the engine tracks `model_switch` from `setModel`
+   * there, while the session-less paths produce no engine event (v2 defers
+   * creation to the first prompt; v1 binds the model at creation without
+   * one), so callers mirroring the engine's telemetry must stay the producer
+   * for exactly the `false` case.
+   */
+  async activateModelAfterLogin(model: string, effort?: string): Promise<boolean> {
     const { host } = this;
     if (host.session !== undefined) {
       await host.session.setModel(model);
       if (effort !== undefined) {
         await host.session.setThinking(effort);
       }
-      return;
+      return true;
     }
 
     if (host.engineV2) {
@@ -96,7 +104,7 @@ export class AuthFlowController {
         patch.lazySessionThinking = effort as ThinkingEffort;
       }
       host.setAppState(patch);
-      return;
+      return false;
     }
 
     const options: MutableCreateSessionOptions = {
@@ -131,9 +139,15 @@ export class AuthFlowController {
     host.updateTerminalTitle();
     void host.refreshSkillCommands(host.session);
     void host.refreshPluginCommands(host.session);
+    return false;
   }
 
-  async refreshConfigAfterLogin(): Promise<void> {
+  /**
+   * Re-read config and reactivate the persisted model after login or a
+   * config-refreshing command. Returns whatever the activation reports (see
+   * {@link activateModelAfterLogin}); `false` when no activation ran.
+   */
+  async refreshConfigAfterLogin(): Promise<boolean> {
     const { host } = this;
     const config = await host.harness.getConfig({ reload: true });
     const availableModels = config.models ?? {};
@@ -148,16 +162,19 @@ export class AuthFlowController {
         await host.hydrateLazyConfigDefaults();
       }
       host.setAppState({ availableModels, availableProviders });
-      return;
+      return false;
     }
 
-    await this.activateModelAfterLogin(defaultModel, thinkingEffortFromConfig(config.thinking));
+    const activated = await this.activateModelAfterLogin(
+      defaultModel,
+      thinkingEffortFromConfig(config.thinking),
+    );
     if (host.session === undefined && host.engineV2) {
       // Session-less v2: also hydrate permission/plan defaults from the
       // refreshed config, same as startup.
       await host.hydrateLazyConfigDefaults();
       host.setAppState({ availableModels, availableProviders });
-      return;
+      return activated;
     }
     const appStatePatch: Partial<AppState> = {
       availableModels,
@@ -166,6 +183,7 @@ export class AuthFlowController {
       maxContextTokens: selected.maxContextSize,
     };
     host.setAppState(appStatePatch);
+    return activated;
   }
 
   async refreshConfigAfterLogout(): Promise<void> {

@@ -306,23 +306,33 @@ export async function setDefaultModel(
     effort,
     model === undefined ? undefined : effectiveModelForHost(host, model),
   );
-  const hadSession = host.session !== undefined;
+  if (host.session === undefined && host.engineV2) {
+    // A first prompt may still be inside lazy creation: wait it out so the
+    // pick lands on the new session instead of racing its assembly (same
+    // coordination as the /model path).
+    await host.waitForLazyCreation();
+  }
   await host.harness.setConfig({
     defaultModel: alias,
     thinking,
   });
-  await host.authFlow.refreshConfigAfterLogin();
+  // Whether activation reached an already-live session (the engine tracks
+  // model_switch from setModel there). Recorded at activation time rather
+  // than snapshotted at entry: a lazy session can come live while the config
+  // writes above are pending, while a session created BY activation (v1)
+  // does not count — creation binds the model without an engine event.
+  let activatedLiveSession = await host.authFlow.refreshConfigAfterLogin();
   // refreshConfigAfterLogin reactivates from the persisted config, so a pick
   // the gate keeps session-only never reaches the runtime — apply it after
   // the refresh, or the persisted value would clobber it.
   if (thinking.effort === undefined && effort !== 'off' && effort !== 'on') {
-    await host.authFlow.activateModelAfterLogin(alias, effort);
+    activatedLiveSession =
+      (await host.authFlow.activateModelAfterLogin(alias, effort)) || activatedLiveSession;
   }
-  // With a live session the engine already tracks model_switch from setModel
-  // (via activateModelAfterLogin); without one the engine never sees the pick
-  // (v2 defers creation to the first prompt, v1 binds the model on creation
-  // without an event), so the TUI stays the sole producer for that path.
-  if (!hadSession) {
+  // Without a live session the engine never sees the pick (v2 defers creation
+  // to the first prompt, v1 binds the model on creation without an event), so
+  // the TUI stays the sole producer for that path.
+  if (!activatedLiveSession) {
     host.track('model_switch', { model: alias });
   }
   host.showStatus(`Default model set to ${alias} with thinking ${effort}.`);
