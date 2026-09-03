@@ -637,4 +637,6 @@ echo $(echo $[x << 2]
 )
 echo $(printf x # <<EOF
 )
+echo $( [[ x == @(<<EOF) ]]
+)
 ===

@@ -819,7 +819,7 @@ describe('heredocs in substitutions', () => {
     );
   });
 
-  it('still treats << inside comments, arithmetic, and subscripts as no heredoc operator', () => {
+  it('still treats << inside comments, arithmetic, subscripts, and conditionals as no heredoc operator', () => {
     expectTree(
       'echo $(echo $((x << 2)))',
       `(program (command (command_name (word "echo")) (command_substitution "$(" (command (command_name (word "echo")) (arithmetic_expansion "$((" (binary_expression (variable_name "x") "<<" (number "2")) "))")) ")")))`,
@@ -835,6 +835,14 @@ describe('heredocs in substitutions', () => {
     expectTree(
       'echo $(a[x<<2]=3\n)',
       `(program (command (command_name (word "echo")) (command_substitution "$(" (variable_assignment (subscript (variable_name "a") "[" (word "x<<2") "]") "=" (number "3")) ")")))`,
+    );
+    expectTree(
+      'echo $( [[ x == @(<<EOF) ]]\n)',
+      `(program (command (command_name (word "echo")) (command_substitution "$(" (test_command "[[" (binary_expression (word "x") "==" (extglob_pattern "@(<<EOF)")) "]]") ")")))`,
+    );
+    expectTree(
+      'echo $(printf foo\\\n#bar)',
+      `(program (command (command_name (word "echo")) (command_substitution "$(" (command (command_name (word "printf")) (word "foo")) (comment "#bar") ")")))`,
     );
   });
 });
