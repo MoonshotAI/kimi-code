@@ -994,7 +994,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       signal,
       turnId,
       trace,
-      onToolCall: ({ toolCallId, name, args }) => {
+      onToolCall: ({ toolCallId, name, args, display }) => {
         const callUuid = randomUUID();
         toolCallUuids.set(toolCallId, callUuid);
         const extras = response.message.toolCalls.find((t) => t.id === toolCallId)?.extras;
@@ -1008,6 +1008,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           name,
           args,
           extras,
+          display,
         });
       },
     })) {

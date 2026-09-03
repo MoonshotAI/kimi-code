@@ -1,28 +1,25 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
-import {
-  ErrorCodes,
-  KimiError,
-  makeErrorPayload,
-  type AgentContextData,
-  type ApprovalRequest,
-  type ApprovalResponse,
-  type BeginGlobalMcpServerAuthResult,
-  type CoreAPI,
-  type Event,
-  type ExperimentalFeatureState,
-  type GetCronTasksResult,
-  type QuestionRequest,
-  type QuestionResult,
-  type RPCMethods,
-  type SDKAPI,
-  type ToolCallRequest,
-  type ToolCallResponse,
-  type SwarmModeTrigger,
-} from '@moonshot-ai/agent-core';
+import type { SwarmModeTrigger } from '@moonshot-ai/agent-core-v2/features/swarm/agent/swarm';
 import type { Kaos } from '@moonshot-ai/kaos';
 
-import type { ApprovalHandler, QuestionHandler } from '#/events';
+import type { AgentContextData } from '#/context';
+import { ErrorCodes, makeErrorPayload } from '#/errors';
+import type {
+  ApprovalHandler,
+  Event,
+  QuestionHandler,
+} from '#/events';
+import type { ExperimentalFeatureState } from '#/flag';
+import type {
+  ApprovalRequest,
+  ApprovalResponse,
+  QuestionRequest,
+  QuestionResult,
+  ToolCallRequest,
+  ToolCallResponse,
+} from '#/interaction';
+import type { BeginGlobalMcpServerAuthResult } from '#/mcp';
 import type {
   AddAdditionalDirInput,
   AddAdditionalDirResult,
@@ -39,6 +36,7 @@ import type {
   ForkSessionInput,
   GenerateSessionTitleInput,
   GetConfigOptions,
+  GetCronTasksResult,
   GlobalMcpServerAuthStatus,
   McpManagedServerInfo,
   McpServerConfig,
@@ -82,17 +80,7 @@ const MAIN_AGENT_ID = 'main';
 export interface SessionPromptRpcInput {
   readonly sessionId: string;
   readonly input: PromptInput;
-  /**
-   * Client-managed session tool denylist (full-replace semantics), forwarded
-   * to engines with profile tool gating. Omit to keep the persisted value;
-   * `[]` clears the client portion.
-   */
   readonly disabledTools?: readonly string[];
-  /**
-   * Client-chosen prompt record id, unique for the Agent's persisted history
-   * and echoed on the consuming turn's `turn.started` (`promptId`). Honored by
-   * the v2 RPC client only.
-   */
   readonly promptId?: string;
 }
 
@@ -169,16 +157,14 @@ export interface SwitchSessionRuntimeRpcInput extends SessionIdRpcInput {
 
 export interface ReconnectMcpServerRpcInput extends SessionIdRpcInput {
   readonly name: string;
-  /**
-   * Optional full replacement config (the "name + full config" channel).
-   * Omitted: the session re-resolves the effective config from the unified
-   * registry instead of reusing the boot-time snapshot. Plugin-contributed
-   * entries reject an explicit config (theirs is read-only).
-   */
   readonly config?: McpServerConfig;
 }
 
-type ResolvedCoreAPI = RPCMethods<CoreAPI>;
+export interface SessionWarningInfo {
+  readonly code: string;
+  readonly message: string;
+  readonly severity: 'info' | 'warning' | 'error';
+}
 
 export abstract class SDKRpcClientBase {
   private readonly interactiveAgentScope = new AsyncLocalStorage<string>();
@@ -194,14 +180,7 @@ export abstract class SDKRpcClientBase {
     return this.interactiveAgentScope.run(agentId, fn);
   }
 
-  protected abstract getRpc(): Promise<ResolvedCoreAPI>;
-
-  async createSession(input: CreateSessionOptions): Promise<SessionSummary> {
-    const rpc = await this.getRpc();
-    const { planMode, ...coreInput } = input;
-    void planMode;
-    return rpc.createSession(coreInput);
-  }
+  abstract createSession(input: CreateSessionOptions): Promise<SessionSummary>;
 
   async createSessionWithKaos(
     input: CreateSessionOptions,
@@ -213,10 +192,7 @@ export abstract class SDKRpcClientBase {
     return this.createSession(input);
   }
 
-  async resumeSession(input: ResumeSessionInput): Promise<ResumedSessionSummary> {
-    const rpc = await this.getRpc();
-    return rpc.resumeSession({ ...input, sessionId: input.id });
-  }
+  abstract resumeSession(input: ResumeSessionInput): Promise<ResumedSessionSummary>;
 
   async resumeSessionWithKaos(
     input: ResumeSessionInput,
@@ -228,885 +204,267 @@ export abstract class SDKRpcClientBase {
     return this.resumeSession(input);
   }
 
-  async reloadSession(input: ReloadSessionRpcInput): Promise<ResumedSessionSummary> {
-    const rpc = await this.getRpc();
-    return rpc.reloadSession({
-      sessionId: input.sessionId,
-      forcePluginSessionStartReminder: input.forcePluginSessionStartReminder,
-    });
-  }
+  abstract reloadSession(input: ReloadSessionRpcInput): Promise<ResumedSessionSummary>;
 
-  async forkSession(input: ForkSessionInput): Promise<SessionSummary> {
-    const rpc = await this.getRpc();
-    return rpc.forkSession({
-      sessionId: input.id,
-      id: input.forkId,
-      title: input.title,
-      metadata: input.metadata,
-      turnIndex: input.turnIndex,
-    });
-  }
+  abstract forkSession(input: ForkSessionInput): Promise<SessionSummary>;
 
-  async closeSession(input: SessionIdRpcInput): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.closeSession({ sessionId: input.sessionId });
-  }
+  abstract closeSession(input: SessionIdRpcInput): Promise<void>;
 
-  async deleteSession(input: SessionIdRpcInput): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.deleteSession({ sessionId: input.sessionId });
-  }
+  abstract deleteSession(input: SessionIdRpcInput): Promise<void>;
 
-  async listSessions(input: ListSessionsOptions = {}): Promise<readonly SessionSummary[]> {
-    const rpc = await this.getRpc();
-    return rpc.listSessions({
-      workDir: input.workDir,
-      sessionId: input.sessionId,
-      includeArchive: input.includeArchived,
-    });
-  }
+  abstract listSessions(input?: ListSessionsOptions): Promise<readonly SessionSummary[]>;
 
-  /**
-   * One keyset page of the session listing (`limit` / `before` in
-   * `ListSessionsOptions`). The base implementation serves the whole filtered
-   * set as a single terminal page — the v1 engine has no paged listing;
-   * `SDKRpcClientV2` overrides this with real index paging.
-   */
-  async listSessionsPage(input: ListSessionsOptions = {}): Promise<SessionSummaryPage> {
-    const items = await this.listSessions(input);
-    return { items, nextCursor: undefined };
-  }
+  abstract listSessionsPage(input?: ListSessionsOptions): Promise<SessionSummaryPage>;
 
-  async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {
-    const rpc = await this.getRpc();
-    return rpc.listWorkspaceSkills({ workDir });
-  }
+  abstract listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]>;
 
-  /**
-   * Workspace-trust state for `workDir`. The v1 engine has no trust concept,
-   * so the base implementation reports an always-trusted workspace and the
-   * trust write is a no-op; only the v2 client overrides these.
-   */
-  async getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo> {
-    void workDir;
-    return { trusted: true, gatedMcpServers: [] };
-  }
+  abstract getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo>;
 
-  async trustWorkspace(workDir: string): Promise<void> {
-    void workDir;
-  }
+  abstract trustWorkspace(workDir: string): Promise<void>;
 
-  async renameSession(input: RenameSessionInput): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.renameSession({
-      sessionId: input.id,
-      title: input.title,
-    });
-  }
+  abstract renameSession(input: RenameSessionInput): Promise<void>;
 
-  /**
-   * v2-only capability (`ISessionTitleService`); the v1 engine has no title
-   * generation, so the base fails loudly and `SDKRpcClientV2` overrides it.
-   */
-  async generateSessionTitle(input: GenerateSessionTitleInput): Promise<string | undefined> {
-    void input;
-    throw new KimiError(
-      ErrorCodes.NOT_IMPLEMENTED,
-      'generateSessionTitle is only available on the agent-core-v2 engine.',
-    );
-  }
+  abstract generateSessionTitle(input: GenerateSessionTitleInput): Promise<string | undefined>;
 
-  async exportSession(input: ExportSessionInput): Promise<ExportSessionResult> {
-    const rpc = await this.getRpc();
-    return rpc.exportSession({
-      sessionId: input.id,
-      outputPath: input.outputPath,
-      includeGlobalLog: input.includeGlobalLog,
-      version: input.version,
-      installSource: input.installSource,
-      shellEnv: input.shellEnv,
-    });
-  }
+  abstract exportSession(input: ExportSessionInput): Promise<ExportSessionResult>;
 
-  async getConfig(input?: GetConfigOptions): Promise<KimiConfig> {
-    const rpc = await this.getRpc();
-    return rpc.getKimiConfig(input ?? {});
-  }
+  abstract getConfig(input?: GetConfigOptions): Promise<KimiConfig>;
 
-  async getConfigDiagnostics(): Promise<ConfigDiagnostics> {
-    const rpc = await this.getRpc();
-    return rpc.getConfigDiagnostics({});
-  }
+  abstract getConfigDiagnostics(): Promise<ConfigDiagnostics>;
 
-  async getExperimentalFeatures(): Promise<readonly ExperimentalFeatureState[]> {
-    const rpc = await this.getRpc();
-    return rpc.getExperimentalFeatures({});
-  }
+  abstract getExperimentalFeatures(): Promise<readonly ExperimentalFeatureState[]>;
 
-  async setConfig(input: KimiConfigPatch): Promise<KimiConfig> {
-    const rpc = await this.getRpc();
-    return rpc.setKimiConfig(input);
-  }
+  abstract setConfig(input: KimiConfigPatch): Promise<KimiConfig>;
 
-  async removeProvider(providerId: string): Promise<KimiConfig> {
-    const rpc = await this.getRpc();
-    return rpc.removeKimiProvider({ providerId });
-  }
+  abstract removeProvider(providerId: string): Promise<KimiConfig>;
 
-  /**
-   * Whether this client can persist several config sections as ONE atomic
-   * write (see {@link replaceConfigSections}). v1 cannot — its config writes
-   * are whole-document merges — so the default is false.
-   */
-  supportsAtomicSectionReplace(): boolean {
-    return false;
-  }
+  abstract supportsAtomicSectionReplace(): boolean;
 
-  /**
-   * Replace several top-level config sections in ONE atomic write: a section
-   * mapped to `undefined` is cleared, sections absent from the record are
-   * left untouched. Unlike {@link setConfig} (a deep-merge that cannot
-   * delete keys), this has replace semantics, so a staged removal can be
-   * expressed by the written record itself.
-   */
-  replaceConfigSections(_sections: Record<string, unknown>): Promise<void> {
-    throw new KimiError(
-      ErrorCodes.NOT_IMPLEMENTED,
-      'This SDK client does not support atomic config section replacement.',
-    );
-  }
+  abstract replaceConfigSections(sections: Record<string, unknown>): Promise<void>;
 
-  /**
-   * Upload media bytes to the engine's daemon file store; pair the returned
-   * meta with `buildDaemonFileUrl` to reference the file from a prompt. Only
-   * the v2 client wires this (through the klient files facade) — the v1
-   * client has no file service and throws `not_implemented`.
-   */
-  uploadFile(_data: Uint8Array, _options: UploadFileOptions): Promise<FileMeta> {
-    throw new KimiError(
-      ErrorCodes.NOT_IMPLEMENTED,
-      'This SDK client does not support file upload.',
-    );
-  }
+  abstract uploadFile(data: Uint8Array, options: UploadFileOptions): Promise<FileMeta>;
 
-  deleteFile(_fileId: string): Promise<void> {
-    throw new KimiError(
-      ErrorCodes.NOT_IMPLEMENTED,
-      'This SDK client does not support file deletion.',
-    );
-  }
+  abstract deleteFile(fileId: string): Promise<void>;
 
-  async listGlobalMcpServers(
-    options: { readonly cwd?: string } = {},
-  ): Promise<readonly McpManagedServerInfo[]> {
-    const rpc = await this.getRpc();
-    return rpc.listGlobalMcpServers({ cwd: options.cwd });
-  }
+  abstract listGlobalMcpServers(options?: {
+    readonly cwd?: string;
+  }): Promise<readonly McpManagedServerInfo[]>;
 
-  async getGlobalMcpServer(
+  abstract getGlobalMcpServer(
     name: string,
-    options: { readonly cwd?: string } = {},
-  ): Promise<McpManagedServerInfo> {
-    const rpc = await this.getRpc();
-    return rpc.getGlobalMcpServer({ name, cwd: options.cwd });
-  }
+    options?: { readonly cwd?: string },
+  ): Promise<McpManagedServerInfo>;
 
-  async listGlobalMcpServerAuthStatuses(
-    options: { readonly cwd?: string; readonly verify?: boolean } = {},
-  ): Promise<readonly GlobalMcpServerAuthStatus[]> {
-    const rpc = await this.getRpc();
-    return rpc.listGlobalMcpServerAuthStatuses({ cwd: options.cwd, verify: options.verify });
-  }
+  abstract listGlobalMcpServerAuthStatuses(options?: {
+    readonly cwd?: string;
+    readonly verify?: boolean;
+  }): Promise<readonly GlobalMcpServerAuthStatus[]>;
 
-  async inspectAppMcpServers(
+  abstract inspectAppMcpServers(
     targets?: readonly McpServerLocator[],
-    options: { readonly cwd?: string } = {},
-  ): Promise<readonly AppMcpServerInspection[]> {
-    const rpc = await this.getRpc();
-    return rpc.inspectAppMcpServers({ targets, cwd: options.cwd });
-  }
+    options?: { readonly cwd?: string },
+  ): Promise<readonly AppMcpServerInspection[]>;
 
-  async addGlobalMcpServer(
+  abstract addGlobalMcpServer(
     server: McpServerConfig,
-    options: { readonly cwd?: string } = {},
-  ): Promise<readonly McpManagedServerInfo[]> {
-    const rpc = await this.getRpc();
-    return rpc.addGlobalMcpServer({ server, cwd: options.cwd });
-  }
+    options?: { readonly cwd?: string },
+  ): Promise<readonly McpManagedServerInfo[]>;
 
-  async updateGlobalMcpServer(
+  abstract updateGlobalMcpServer(
     server: McpServerConfig,
-    options: { readonly cwd?: string } = {},
-  ): Promise<readonly McpManagedServerInfo[]> {
-    const rpc = await this.getRpc();
-    return rpc.updateGlobalMcpServer({ server, cwd: options.cwd });
-  }
+    options?: { readonly cwd?: string },
+  ): Promise<readonly McpManagedServerInfo[]>;
 
-  async removeGlobalMcpServer(
+  abstract removeGlobalMcpServer(
     name: string,
-    options: { readonly cwd?: string } = {},
-  ): Promise<readonly McpManagedServerInfo[]> {
-    const rpc = await this.getRpc();
-    return rpc.removeGlobalMcpServer({ name, cwd: options.cwd });
-  }
+    options?: { readonly cwd?: string },
+  ): Promise<readonly McpManagedServerInfo[]>;
 
-  async beginGlobalMcpServerAuth(
+  abstract beginGlobalMcpServerAuth(
     name: string,
-    options: { readonly cwd?: string } = {},
-  ): Promise<BeginGlobalMcpServerAuthResult> {
-    const rpc = await this.getRpc();
-    return rpc.beginGlobalMcpServerAuth({ name, cwd: options.cwd });
-  }
+    options?: { readonly cwd?: string },
+  ): Promise<BeginGlobalMcpServerAuthResult>;
 
-  async beginMcpServerAuth(
+  abstract beginMcpServerAuth(
     locator: McpServerLocator,
-    options: { readonly cwd?: string } = {},
-  ): Promise<BeginGlobalMcpServerAuthResult> {
-    const rpc = await this.getRpc();
-    return rpc.beginMcpServerAuth({ locator, cwd: options.cwd });
-  }
+    options?: { readonly cwd?: string },
+  ): Promise<BeginGlobalMcpServerAuthResult>;
 
-  async completeGlobalMcpServerAuth(
+  abstract completeGlobalMcpServerAuth(
     input: { readonly flowId: string; readonly timeoutMs?: number },
     signal?: AbortSignal,
-  ): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.completeGlobalMcpServerAuth(input, { signal });
-  }
+  ): Promise<void>;
 
-  async completeMcpServerAuth(
+  abstract completeMcpServerAuth(
     input: { readonly flowId: string; readonly timeoutMs?: number },
     signal?: AbortSignal,
-  ): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.completeMcpServerAuth(input, { signal });
-  }
+  ): Promise<void>;
 
-  async cancelGlobalMcpServerAuth(flowId: string): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.cancelGlobalMcpServerAuth({ flowId });
-  }
+  abstract cancelGlobalMcpServerAuth(flowId: string): Promise<void>;
 
-  async cancelMcpServerAuth(flowId: string): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.cancelMcpServerAuth({ flowId });
-  }
+  abstract cancelMcpServerAuth(flowId: string): Promise<void>;
 
-  async resetGlobalMcpServerAuth(
-    name: string,
-    options: { readonly cwd?: string } = {},
-  ): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.resetGlobalMcpServerAuth({ name, cwd: options.cwd });
-  }
+  abstract resetGlobalMcpServerAuth(name: string, options?: { readonly cwd?: string }): Promise<void>;
 
-  async resetMcpServerAuth(
+  abstract resetMcpServerAuth(
     locator: McpServerLocator,
-    options: { readonly cwd?: string } = {},
-  ): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.resetMcpServerAuth({ locator, cwd: options.cwd });
-  }
+    options?: { readonly cwd?: string },
+  ): Promise<void>;
 
-  async testGlobalMcpServer(
+  abstract testGlobalMcpServer(
     name: string,
-    options: { readonly cwd?: string } = {},
-  ): Promise<McpTestResult> {
-    const rpc = await this.getRpc();
-    return rpc.testGlobalMcpServer({ name, cwd: options.cwd });
-  }
+    options?: { readonly cwd?: string },
+  ): Promise<McpTestResult>;
 
-  /**
-   * Probe a full inline (unsaved) MCP server config — the `server` channel of
-   * the engine's `testGlobalMcpServer`, so nothing has to be persisted first.
-   */
-  async testGlobalMcpServerConfig(
+  abstract testGlobalMcpServerConfig(
     server: McpServerConfig,
-    options: { readonly cwd?: string } = {},
-  ): Promise<McpTestResult> {
-    const rpc = await this.getRpc();
-    return rpc.testGlobalMcpServer({ server, cwd: options.cwd });
-  }
+    options?: { readonly cwd?: string },
+  ): Promise<McpTestResult>;
 
-  async prompt(input: SessionPromptRpcInput): Promise<void> {
-    const agentId = this.interactiveAgentId;
-    const rpc = await this.getRpc();
-    return rpc.prompt({
-      sessionId: input.sessionId,
-      agentId,
-      input: input.input,
-    });
-  }
+  abstract prompt(input: SessionPromptRpcInput): Promise<void>;
 
-  /**
-   * Grouped skill activation + prompt submission. Only the v2 engine
-   * (`SDKRpcClientV2`) implements it; the v1 route has no combined-submission
-   * RPC, so the base fails loudly instead of degrading into N+1 turns.
-   */
-  async promptWithSkills(input: SessionPromptWithSkillsRpcInput): Promise<void> {
-    void input;
-    throw new KimiError(
-      ErrorCodes.NOT_IMPLEMENTED,
-      'promptWithSkills requires the agent-core-v2 engine.',
-    );
-  }
+  abstract promptWithSkills(input: SessionPromptWithSkillsRpcInput): Promise<void>;
 
-  async runShellCommand(input: {
+  abstract runShellCommand(input: {
     sessionId: string;
     command: string;
     commandId?: string;
-  }): Promise<{ stdout: string; stderr: string; isError?: boolean; backgrounded?: boolean }> {
-    const agentId = this.interactiveAgentId;
-    const rpc = await this.getRpc();
-    return rpc.runShellCommand({
-      sessionId: input.sessionId,
-      agentId,
-      command: input.command,
-      commandId: input.commandId,
-    });
-  }
+  }): Promise<{ stdout: string; stderr: string; isError?: boolean; backgrounded?: boolean }>;
 
-  async cancelShellCommand(input: { sessionId: string; commandId: string }): Promise<void> {
-    const agentId = this.interactiveAgentId;
-    const rpc = await this.getRpc();
-    return rpc.cancelShellCommand({
-      sessionId: input.sessionId,
-      agentId,
-      commandId: input.commandId,
-    });
-  }
+  abstract cancelShellCommand(input: { sessionId: string; commandId: string }): Promise<void>;
 
-  async steer(input: SessionPromptRpcInput): Promise<void> {
-    const agentId = this.interactiveAgentId;
-    const rpc = await this.getRpc();
-    return rpc.steer({
-      sessionId: input.sessionId,
-      agentId,
-      input: input.input,
-    });
-  }
+  abstract steer(input: SessionPromptRpcInput): Promise<void>;
 
-  async generateAgentsMd(input: SessionIdRpcInput): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.generateAgentsMd({ sessionId: input.sessionId });
-  }
+  abstract generateAgentsMd(input: SessionIdRpcInput): Promise<void>;
 
-  async getSessionWarnings(input: SessionIdRpcInput) {
-    const rpc = await this.getRpc();
-    return rpc.getSessionWarnings({ sessionId: input.sessionId });
-  }
+  abstract getSessionWarnings(input: SessionIdRpcInput): Promise<readonly SessionWarningInfo[]>;
 
-  async addAdditionalDir(input: AddAdditionalDirInput): Promise<AddAdditionalDirResult> {
-    const rpc = await this.getRpc();
-    return rpc.addAdditionalDir({ sessionId: input.id, path: input.path, persist: input.persist });
-  }
+  abstract addAdditionalDir(input: AddAdditionalDirInput): Promise<AddAdditionalDirResult>;
 
-  async startBtw(input: SessionIdRpcInput): Promise<string> {
-    const agentId = this.interactiveAgentId;
-    const rpc = await this.getRpc();
-    return rpc.startBtw({
-      sessionId: input.sessionId,
-      agentId,
-    });
-  }
+  abstract startBtw(input: SessionIdRpcInput): Promise<string>;
 
-  async cancel(input: SessionIdRpcInput): Promise<void> {
-    const agentId = this.interactiveAgentId;
-    const rpc = await this.getRpc();
-    return rpc.cancel({
-      sessionId: input.sessionId,
-      agentId,
-    });
-  }
+  abstract cancel(input: SessionIdRpcInput): Promise<void>;
 
-  async clearContext(input: SessionIdRpcInput): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.clearContext({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-    });
-  }
+  abstract clearContext(input: SessionIdRpcInput): Promise<void>;
 
-  async importContext(input: ImportContextRpcInput): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.importContext({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-      content: input.content,
-      source: input.source,
-    });
-  }
+  abstract importContext(input: ImportContextRpcInput): Promise<void>;
 
-  async setModel(input: SetSessionModelRpcInput): Promise<SetSessionModelRpcResult> {
-    const rpc = await this.getRpc();
-    return rpc.setModel({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-      model: input.model,
-    });
-  }
+  abstract setModel(input: SetSessionModelRpcInput): Promise<SetSessionModelRpcResult>;
 
-  async setThinking(input: SetSessionThinkingRpcInput): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.setThinking({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-      effort: input.effort,
-    });
-  }
+  abstract setThinking(input: SetSessionThinkingRpcInput): Promise<void>;
 
-  async setPermission(input: SetSessionPermissionRpcInput): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.setPermission({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-      mode: input.mode,
-    });
-  }
+  abstract setPermission(input: SetSessionPermissionRpcInput): Promise<void>;
 
-  async updateSessionMetadata(input: UpdateSessionMetadataRpcInput): Promise<void> {
-    const rpc = await this.getRpc();
-    const current = await rpc.getSessionMetadata({ sessionId: input.sessionId });
-    const metadata = { ...current.custom, ...input.metadata } as JsonObject;
-    await rpc.updateSessionMetadata({
-      sessionId: input.sessionId,
-      metadata: { custom: metadata },
-    });
-  }
+  abstract updateSessionMetadata(input: UpdateSessionMetadataRpcInput): Promise<void>;
 
-  async setPlanMode(input: SetSessionPlanModeRpcInput): Promise<void> {
-    const rpc = await this.getRpc();
-    if (!input.enabled) {
-      return rpc.cancelPlan({
-        sessionId: input.sessionId,
-        agentId: this.interactiveAgentId,
-      });
-    }
-    return rpc.enterPlan({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-    });
-  }
+  abstract setPlanMode(input: SetSessionPlanModeRpcInput): Promise<void>;
 
-  async setSwarmMode(input: SetSessionSwarmModeRpcInput): Promise<void> {
-    if (input.enabled) return this.enterSwarmMode(input);
-    return this.exitSwarmMode(input);
-  }
+  abstract setSwarmMode(input: SetSessionSwarmModeRpcInput): Promise<void>;
 
-  async swarm(input: SessionPromptRpcInput): Promise<void> {
-    await this.enterSwarmMode({ sessionId: input.sessionId, trigger: 'task' });
-    return this.prompt(input);
-  }
+  abstract swarm(input: SessionPromptRpcInput): Promise<void>;
 
-  async setTowerMode(input: SetSessionTowerModeRpcInput): Promise<void> {
-    void input;
-    throw new KimiError(
-      ErrorCodes.NOT_IMPLEMENTED,
-      'setTowerMode is only available on the agent-core-v2 engine.',
-    );
-  }
+  abstract setTowerMode(input: SetSessionTowerModeRpcInput): Promise<void>;
 
-  private async enterSwarmMode(
-    input: SessionIdRpcInput & { readonly trigger: SwarmModeTrigger },
-  ): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.enterSwarm({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-      trigger: input.trigger,
-    });
-  }
+  abstract getPlan(input: SessionIdRpcInput): Promise<SessionPlan>;
 
-  private async exitSwarmMode(input: SessionIdRpcInput): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.exitSwarm({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-    });
-  }
+  abstract clearPlan(input: SessionIdRpcInput): Promise<void>;
 
-  async getPlan(input: SessionIdRpcInput): Promise<SessionPlan> {
-    const rpc = await this.getRpc();
-    return rpc.getPlan({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-    });
-  }
+  abstract compact(input: SessionIdRpcInput & CompactOptions): Promise<void>;
 
-  async clearPlan(input: SessionIdRpcInput): Promise<void> {
-    const rpc = await this.getRpc();
-    await rpc.clearPlan({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-    });
-  }
+  abstract cancelCompaction(input: SessionIdRpcInput): Promise<void>;
 
-  async compact(input: SessionIdRpcInput & CompactOptions): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.beginCompaction({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-      ...(input.instruction !== undefined ? { instruction: input.instruction } : {}),
-    });
-  }
+  abstract getTodos(input: SessionIdRpcInput): Promise<readonly SessionTodoItem[]>;
 
-  async cancelCompaction(input: SessionIdRpcInput): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.cancelCompaction({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-    });
-  }
+  abstract undoHistory(input: SessionIdRpcInput & { count: number }): Promise<void>;
 
-  async getTodos(input: SessionIdRpcInput): Promise<readonly SessionTodoItem[]> {
-    void input;
-    throw new KimiError(
-      ErrorCodes.NOT_IMPLEMENTED,
-      'getTodos is only available on the agent-core-v2 engine.',
-    );
-  }
+  abstract getContext(input: SessionIdRpcInput): Promise<AgentContextData>;
 
-  async undoHistory(input: SessionIdRpcInput & { count: number }): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.undoHistory({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-      count: input.count,
-    });
-  }
+  abstract getUsage(input: SessionIdRpcInput): Promise<SessionUsage>;
 
-  async getContext(input: SessionIdRpcInput): Promise<AgentContextData> {
-    const rpc = await this.getRpc();
-    return rpc.getContext({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-    });
-  }
+  abstract getStatus(input: SessionIdRpcInput): Promise<SessionStatus>;
 
-  async getUsage(input: SessionIdRpcInput): Promise<SessionUsage> {
-    const rpc = await this.getRpc();
-    return rpc.getUsage({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-    });
-  }
+  abstract listSkills(input: SessionIdRpcInput): Promise<readonly SkillSummary[]>;
 
-  async getStatus(input: SessionIdRpcInput): Promise<SessionStatus> {
-    const rpc = await this.getRpc();
-    const agentId = this.interactiveAgentId;
-    const config = await rpc.getConfig({
-      sessionId: input.sessionId,
-      agentId,
-    });
-    const context = await rpc.getContext({
-      sessionId: input.sessionId,
-      agentId,
-    });
-    const permission = await rpc.getPermission({
-      sessionId: input.sessionId,
-      agentId,
-    });
-    const plan = await rpc.getPlan({
-      sessionId: input.sessionId,
-      agentId,
-    });
-    const swarmMode = await rpc.getSwarmMode({
-      sessionId: input.sessionId,
-      agentId,
-    });
-    const usage = await rpc.getUsage({
-      sessionId: input.sessionId,
-      agentId,
-    });
-    const capability = config.modelCapabilities;
-    const maxContextTokens = capability?.max_input_tokens ?? capability?.max_context_tokens ?? 0;
-    const contextTokens = context.tokenCount;
-    // Deliberately unclamped: >100% is the documented overflow signal on this
-    // path, unlike the schema-bounded REST status surfaces which clamp to 1.
-    const contextUsage = maxContextTokens > 0 ? contextTokens / maxContextTokens : 0;
-    const hasUsage =
-      usage.byModel !== undefined || usage.total !== undefined || usage.currentTurn !== undefined;
-    return {
-      model: config.modelAlias ?? config.provider?.model,
-      thinkingEffort: config.thinkingEffort,
-      permission: permission.mode,
-      planMode: plan !== null,
-      swarmMode,
-      contextTokens,
-      maxContextTokens,
-      contextUsage,
-      usage: hasUsage ? usage : undefined,
-    };
-  }
+  abstract listPluginCommands(input: SessionIdRpcInput): Promise<readonly PluginCommandDef[]>;
 
-  async listSkills(input: SessionIdRpcInput): Promise<readonly SkillSummary[]> {
-    const rpc = await this.getRpc();
-    return rpc.listSkills({ sessionId: input.sessionId });
-  }
+  abstract listPluginCommandsGlobal(): Promise<readonly PluginCommandDef[]>;
 
-  async listPluginCommands(input: SessionIdRpcInput): Promise<readonly PluginCommandDef[]> {
-    const rpc = await this.getRpc();
-    return rpc.listPluginCommands({ sessionId: input.sessionId });
-  }
+  abstract suggestFiles(
+    workDir: string,
+    input: SuggestFilesInput,
+  ): Promise<SuggestFilesResult | undefined>;
 
-  /**
-   * App-global plugin command list, no session required. The v1 engine only
-   * exposes plugin commands through a live session, so the base returns an
-   * empty list; the v2 client overrides with the app-global live view.
-   */
-  async listPluginCommandsGlobal(): Promise<readonly PluginCommandDef[]> {
-    return [];
-  }
-
-  /**
-   * Workspace-root file suggestions, no session required. The v1 engine has
-   * no equivalent capability, so the base reports `undefined`; the v2 client
-   * overrides with the workspace handler's fs service.
-   */
-  async suggestFiles(workDir: string, input: SuggestFilesInput): Promise<SuggestFilesResult | undefined> {
-    void workDir;
-    void input;
-    return undefined;
-  }
-
-  async listBackgroundTasks(
+  abstract listBackgroundTasks(
     input: SessionIdRpcInput & { activeOnly?: boolean; limit?: number },
-  ): Promise<readonly BackgroundTaskInfo[]> {
-    const rpc = await this.getRpc();
-    return rpc.getBackground({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-      activeOnly: input.activeOnly,
-      limit: input.limit,
-    });
-  }
+  ): Promise<readonly BackgroundTaskInfo[]>;
 
-  async getBackgroundTaskOutput(
+  abstract getBackgroundTaskOutput(
     input: SessionIdRpcInput & { taskId: string; tail?: number },
-  ): Promise<string> {
-    const rpc = await this.getRpc();
-    return rpc.getBackgroundOutput({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-      taskId: input.taskId,
-      tail: input.tail,
-    });
-  }
+  ): Promise<string>;
 
-  async stopBackgroundTask(
+  abstract stopBackgroundTask(
     input: SessionIdRpcInput & { taskId: string; reason?: string },
-  ): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.stopBackground({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-      taskId: input.taskId,
-      reason: input.reason,
-    });
-  }
+  ): Promise<void>;
 
-  async detachBackgroundTask(
+  abstract detachBackgroundTask(
     input: SessionIdRpcInput & { taskId: string },
-  ): Promise<BackgroundTaskInfo | undefined> {
-    const rpc = await this.getRpc();
-    return rpc.detachBackground({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-      taskId: input.taskId,
-    });
-  }
+  ): Promise<BackgroundTaskInfo | undefined>;
 
-  async waitForBackgroundTasksOnPrint(input: SessionIdRpcInput): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.waitForBackgroundTasksOnPrint({ sessionId: input.sessionId });
-  }
+  abstract waitForBackgroundTasksOnPrint(input: SessionIdRpcInput): Promise<void>;
 
-  async handlePrintMainTurnCompleted(input: SessionIdRpcInput): Promise<'finish' | 'continue'> {
-    const rpc = await this.getRpc();
-    return rpc.handlePrintMainTurnCompleted({ sessionId: input.sessionId });
-  }
+  abstract handlePrintMainTurnCompleted(input: SessionIdRpcInput): Promise<'finish' | 'continue'>;
 
-  async createGoal(input: SessionIdRpcInput & CreateGoalInput): Promise<GoalSnapshot> {
-    const rpc = await this.getRpc();
-    return rpc.createGoal({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-      objective: input.objective,
-      replace: input.replace,
-    });
-  }
+  abstract createGoal(input: SessionIdRpcInput & CreateGoalInput): Promise<GoalSnapshot>;
 
-  async getGoal(input: SessionIdRpcInput): Promise<GoalToolResult> {
-    const rpc = await this.getRpc();
-    return rpc.getGoal({ sessionId: input.sessionId, agentId: this.interactiveAgentId });
-  }
+  abstract getGoal(input: SessionIdRpcInput): Promise<GoalToolResult>;
 
-  async pauseGoal(input: SessionIdRpcInput): Promise<GoalSnapshot> {
-    const rpc = await this.getRpc();
-    return rpc.pauseGoal({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-    });
-  }
+  abstract pauseGoal(input: SessionIdRpcInput): Promise<GoalSnapshot>;
 
-  async resumeGoal(input: SessionIdRpcInput): Promise<GoalSnapshot> {
-    const rpc = await this.getRpc();
-    return rpc.resumeGoal({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-    });
-  }
+  abstract resumeGoal(input: SessionIdRpcInput): Promise<GoalSnapshot>;
 
-  async cancelGoal(input: SessionIdRpcInput): Promise<GoalSnapshot> {
-    const rpc = await this.getRpc();
-    return rpc.cancelGoal({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-    });
-  }
+  abstract cancelGoal(input: SessionIdRpcInput): Promise<GoalSnapshot>;
 
-  async getCronTasks(input: SessionIdRpcInput): Promise<GetCronTasksResult> {
-    const rpc = await this.getRpc();
-    return rpc.getCronTasks({ sessionId: input.sessionId, agentId: this.interactiveAgentId });
-  }
+  abstract getCronTasks(input: SessionIdRpcInput): Promise<GetCronTasksResult>;
 
-  async listMcpServers(input: SessionIdRpcInput): Promise<readonly McpServerInfo[]> {
-    const rpc = await this.getRpc();
-    return rpc.listMcpServers({ sessionId: input.sessionId });
-  }
+  abstract listMcpServers(input: SessionIdRpcInput): Promise<readonly McpServerInfo[]>;
 
-  /**
-   * Workspace-level MCP server list, no session required. The v2 engine owns
-   * one shared connection set per workspace handler, so `/mcp` is inspectable
-   * before the first session exists; the v1 engine only exposes MCP through
-   * a live session and the base returns an empty list.
-   */
-  async listWorkspaceMcpServers(workDir: string): Promise<readonly McpServerInfo[]> {
-    void workDir;
-    return [];
-  }
+  abstract listWorkspaceMcpServers(workDir: string): Promise<readonly McpServerInfo[]>;
 
-  async getMcpStartupMetrics(input: SessionIdRpcInput): Promise<McpStartupMetrics> {
-    const rpc = await this.getRpc();
-    return rpc.getMcpStartupMetrics({ sessionId: input.sessionId });
-  }
+  abstract getMcpStartupMetrics(input: SessionIdRpcInput): Promise<McpStartupMetrics>;
 
-  async reconnectMcpServer(input: ReconnectMcpServerRpcInput): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.reconnectMcpServer({
-      sessionId: input.sessionId,
-      name: input.name,
-      config: input.config,
-    });
-  }
+  abstract reconnectMcpServer(input: ReconnectMcpServerRpcInput): Promise<void>;
 
-  /**
-   * Connect an MCP server in a live session. `persist: true` also writes the
-   * user-level `mcp.json` (the entry becomes a mutable `global` one);
-   * otherwise it stays a session-local `caller` entry.
-   */
-  async addSessionMcpServer(input: {
+  abstract addSessionMcpServer(input: {
     readonly sessionId: string;
     readonly server: McpServerConfig;
     readonly persist?: boolean;
-  }): Promise<McpServerInfo> {
-    const rpc = await this.getRpc();
-    return rpc.addSessionMcpServer({
-      sessionId: input.sessionId,
-      server: input.server,
-      persist: input.persist,
-    });
-  }
+  }): Promise<McpServerInfo>;
 
-  async listPlugins(): Promise<readonly PluginSummary[]> {
-    const rpc = await this.getRpc();
-    return rpc.listPlugins({});
-  }
+  abstract listPlugins(): Promise<readonly PluginSummary[]>;
 
-  async installPlugin(source: string): Promise<PluginSummary> {
-    const rpc = await this.getRpc();
-    return rpc.installPlugin({ source });
-  }
+  abstract installPlugin(source: string): Promise<PluginSummary>;
 
-  async setPluginEnabled(id: string, enabled: boolean): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.setPluginEnabled({ id, enabled });
-  }
+  abstract setPluginEnabled(id: string, enabled: boolean): Promise<void>;
 
-  async setPluginMcpServerEnabled(
-    id: string,
-    server: string,
-    enabled: boolean,
-  ): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.setPluginMcpServerEnabled({ id, server, enabled });
-  }
+  abstract setPluginMcpServerEnabled(id: string, server: string, enabled: boolean): Promise<void>;
 
-  async removePlugin(id: string): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.removePlugin({ id });
-  }
+  abstract removePlugin(id: string): Promise<void>;
 
-  async reloadPlugins(): Promise<ReloadSummary> {
-    const rpc = await this.getRpc();
-    return rpc.reloadPlugins({});
-  }
+  abstract reloadPlugins(): Promise<ReloadSummary>;
 
-  async getPluginInfo(id: string): Promise<PluginInfo> {
-    const rpc = await this.getRpc();
-    return rpc.getPluginInfo({ id });
-  }
+  abstract getPluginInfo(id: string): Promise<PluginInfo>;
 
-  async activateSkill(input: ActivateSkillRpcInput): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.activateSkill({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-      name: input.name,
-      args: input.args,
-    });
-  }
+  abstract activateSkill(input: ActivateSkillRpcInput): Promise<void>;
 
-  async activatePluginCommand(input: ActivatePluginCommandRpcInput): Promise<void> {
-    const rpc = await this.getRpc();
-    return rpc.activatePluginCommand({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-      pluginId: input.pluginId,
-      commandName: input.commandName,
-      args: input.args,
-    });
-  }
+  abstract activatePluginCommand(input: ActivatePluginCommandRpcInput): Promise<void>;
 
-  /**
-   * Contributed commands of the session's interactive agent. The
-   * contributed-command seam exists only in the agent-core-v2 engine, so the
-   * base implementation reports the empty set and rejects runs with a coded
-   * error (same shape as `replaceConfigSections`); only the v2 client
-   * overrides these.
-   */
-  async listCommands(input: SessionIdRpcInput): Promise<readonly AgentCommandInfo[]> {
-    void input;
-    return [];
-  }
+  abstract listCommands(input: SessionIdRpcInput): Promise<readonly AgentCommandInfo[]>;
 
-  async runCommand(input: RunCommandRpcInput): Promise<void> {
-    void input;
-    throw new KimiError(
-      ErrorCodes.NOT_IMPLEMENTED,
-      'This SDK client does not support contributed commands.',
-    );
-  }
+  abstract runCommand(input: RunCommandRpcInput): Promise<void>;
 
-  async getRuntime(input: SessionIdRpcInput): Promise<AgentRuntimeBinding> {
-    void input;
-    throw new KimiError(ErrorCodes.NOT_IMPLEMENTED, 'This SDK client does not support runtimes.');
-  }
+  abstract getRuntime(input: SessionIdRpcInput): Promise<AgentRuntimeBinding>;
 
-  async switchRuntime(input: SwitchSessionRuntimeRpcInput): Promise<AgentRuntimeBinding> {
-    void input;
-    throw new KimiError(ErrorCodes.NOT_IMPLEMENTED, 'This SDK client does not support runtimes.');
-  }
+  abstract switchRuntime(input: SwitchSessionRuntimeRpcInput): Promise<AgentRuntimeBinding>;
 
   onEvent(listener: (event: Event) => void): Unsubscribe {
     this.eventListeners.add(listener);
@@ -1193,31 +551,6 @@ export abstract class SDKRpcClientBase {
       output: `SDK custom tool calls are not supported: ${request.toolCallId}`,
       isError: true,
     };
-  }
-
-}
-
-export class ClientAPI implements SDKAPI {
-  constructor(readonly client: SDKRpcClientBase) {}
-
-  emitEvent(event: Event): void {
-    this.client.receiveEvent(event);
-  }
-
-  requestApproval(
-    request: ApprovalRequest & { sessionId: string; agentId: string },
-  ): Promise<ApprovalResponse> {
-    return this.client.requestApproval(request);
-  }
-
-  requestQuestion(
-    request: QuestionRequest & { sessionId: string; agentId: string },
-  ): Promise<QuestionResult> {
-    return this.client.requestQuestion(request);
-  }
-
-  toolCall(request: ToolCallRequest): Promise<ToolCallResponse> {
-    return this.client.toolCall(request);
   }
 }
 

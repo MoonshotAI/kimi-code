@@ -588,6 +588,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       toolCallId: call.toolCall.id,
       name: call.toolName,
       args,
+      display: displayFields?.display,
     });
   }
 

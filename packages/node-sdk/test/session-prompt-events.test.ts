@@ -1,76 +1,71 @@
-/**
- * Scenario: prompt-driven session behavior, including historical-turn forks.
- * Responsibilities: public SDK events, persisted replay, metadata, and input errors.
- * Wiring: real in-process core/storage with only the remote model provider stubbed.
- * Run: pnpm exec vitest run packages/node-sdk/test/session-prompt-events.test.ts
- */
-import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { KIMI_CODE_PLATFORM } from '@moonshot-ai/kimi-code-oauth';
-import type * as KosongModule from '@moonshot-ai/kosong';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createKimiHarness, createKimiHarnessV2, type Event, type KimiHarness } from '#/index';
+import { createKimiHarness, type Event, type KimiHarness } from '#/index';
 
 import { TEST_IDENTITY } from './test-identity';
+
+const MODEL_URL = 'https://model.example.test/v1/chat/completions';
 
 const fakeProviderState = vi.hoisted(() => ({
   calls: [] as Array<{
     readonly systemPrompt: string;
     readonly history: unknown;
   }>,
-  providerConfigs: [] as unknown[],
   responseText: 'hello from fake provider',
 }));
 
-vi.mock('@moonshot-ai/kosong', async (importOriginal) => {
-  const actual = await importOriginal<typeof KosongModule>();
-  return {
-    ...actual,
-    createProvider: (config: unknown) => {
-      fakeProviderState.providerConfigs.push(config);
-      return {
-        name: 'fake',
-        modelName: 'fake-model',
-        thinkingEffort: null,
-        async generate(systemPrompt: string, _tools: unknown, history: unknown) {
-          fakeProviderState.calls.push({ systemPrompt, history });
-          return {
-            id: 'fake-response',
-            usage: {
-              inputOther: 0,
-              output: 1,
-              inputCacheRead: 0,
-              inputCacheCreation: 0,
-            },
-            finishReason: 'completed',
-            rawFinishReason: 'stop',
-            async *[Symbol.asyncIterator]() {
-              yield { type: 'text', text: fakeProviderState.responseText };
-            },
-          };
-        },
-        withThinking() {
-          return this;
-        },
-      };
-    },
-  };
-});
+function sseChunk(delta: Record<string, unknown>, finishReason: string | null = null): string {
+  return `data: ${JSON.stringify({
+    id: 'chatcmpl-stub',
+    object: 'chat.completion.chunk',
+    created: 0,
+    model: 'fake-model',
+    choices: [{ index: 0, delta, finish_reason: finishReason }],
+  })}`;
+}
+
+function sseBody(text: string): string {
+  return [sseChunk({ role: 'assistant', content: text }), sseChunk({}, 'stop'), 'data: [DONE]']
+    .map((line) => `${line}\n\n`)
+    .join('');
+}
+
+let fetchStub: ReturnType<typeof vi.spyOn> | undefined;
 
 const tempDirs: string[] = [];
 
 beforeEach(() => {
   fakeProviderState.calls.length = 0;
-  fakeProviderState.providerConfigs.length = 0;
   fakeProviderState.responseText = 'hello from fake provider';
+  fetchStub = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (url !== MODEL_URL) {
+      throw new Error(`Unexpected fetch: ${url}`);
+    }
+    const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as {
+      readonly messages?: ReadonlyArray<{ readonly role: string; readonly content: unknown }>;
+    };
+    const messages = body.messages ?? [];
+    const system = messages.find((message) => message.role === 'system');
+    fakeProviderState.calls.push({
+      systemPrompt: typeof system?.content === 'string' ? system.content : '',
+      history: messages,
+    });
+    return new Response(sseBody(fakeProviderState.responseText), {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    });
+  });
 });
 
 afterEach(async () => {
+  fetchStub?.mockRestore();
+  fetchStub = undefined;
   for (const dir of tempDirs.splice(0)) {
     await removeTempDir(dir);
   }
@@ -152,11 +147,6 @@ describe('Session.prompt events', () => {
       await session.prompt('use api_key=secret-value for the request');
       await done;
 
-      const statePath = join(session.summary!.sessionDir, 'state.json');
-      const firstState = JSON.parse(await readFile(statePath, 'utf-8')) as Record<string, unknown>;
-      expect(firstState['title']).toBe('use api_key=[redacted] for the request');
-      expect(firstState['isCustomTitle']).toBe(false);
-      expect(firstState['lastPrompt']).toBe('use api_key=[redacted] for the request');
       expect(events).toContainEqual(
         expect.objectContaining({
           type: 'session.meta.updated',
@@ -173,10 +163,6 @@ describe('Session.prompt events', () => {
       await session.prompt('second prompt');
       await done;
 
-      const secondState = JSON.parse(await readFile(statePath, 'utf-8')) as Record<string, unknown>;
-      expect(secondState['title']).toBe('use api_key=[redacted] for the request');
-      expect(secondState['isCustomTitle']).toBe(false);
-      expect(secondState['lastPrompt']).toBe('second prompt');
       expect(events).toContainEqual(
         expect.objectContaining({
           type: 'session.meta.updated',
@@ -192,9 +178,6 @@ describe('Session.prompt events', () => {
       await done;
       unsubscribe();
 
-      const mediaState = JSON.parse(await readFile(statePath, 'utf-8')) as Record<string, unknown>;
-      expect(mediaState['title']).toBe('use api_key=[redacted] for the request');
-      expect(mediaState['lastPrompt']).toBe('[image]');
       expect(events).toContainEqual(
         expect.objectContaining({
           type: 'session.meta.updated',
@@ -248,14 +231,6 @@ describe('Session.prompt events', () => {
       );
       expect(fakeProviderState.calls[0]?.systemPrompt).toContain('You are Kimi Code CLI');
       expect(fakeProviderState.calls[0]?.systemPrompt).toContain('Available skills');
-      expect(fakeProviderState.providerConfigs[0]).toMatchObject({
-        type: 'kimi',
-        defaultHeaders: expect.objectContaining({
-          'X-Msh-Platform': KIMI_CODE_PLATFORM,
-          'User-Agent': 'kimi-code-cli/0.0.0-test',
-        }),
-      });
-      expect(existsSync(join(homeDir, 'device_id'))).toBe(true);
     } finally {
       await harness.close();
     }
@@ -328,64 +303,22 @@ describe('Session.prompt events', () => {
           type: 'session.meta.updated',
         }),
       );
-      expect(fakeProviderState.calls[0]?.history).toMatchObject([
-        {
-          role: 'user',
-          content: [
-            expect.objectContaining({
-              text: expect.stringContaining('Task requirements:'),
-            }),
-          ],
-        },
-      ]);
-
-      const statePath = join(session.summary!.sessionDir, 'state.json');
-      const state = JSON.parse(await readFile(statePath, 'utf-8')) as Record<string, unknown>;
-      expect(state['lastPrompt']).toBeUndefined();
+      expect(JSON.stringify(fakeProviderState.calls[0]?.history)).toContain('Task requirements:');
     } finally {
       await harness.close();
     }
   });
 
-  it('carries the prompt on the public turn.started event for subagent system triggers (v2 engine)', async () => {
+  it('carries the prompt on the public turn.started event for subagent system triggers', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = createKimiHarnessV2({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
-    const sseChunk = (delta: Record<string, unknown>, finishReason: string | null = null): string =>
-      `data: ${JSON.stringify({
-        id: 'chatcmpl-stub',
-        object: 'chat.completion.chunk',
-        created: 0,
-        model: 'fake-model',
-        choices: [{ index: 0, delta, finish_reason: finishReason }],
-      })}`;
-    const fetchStub = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url === 'https://model.example.test/v1/chat/completions') {
-        const body = [sseChunk({ role: 'assistant', content: 'init done' }), sseChunk({}, 'stop'), 'data: [DONE]']
-          .map((line) => line + '\n\n')
-          .join('');
-        return new Response(body, {
-          status: 200,
-          headers: { 'Content-Type': 'text/event-stream' },
-        });
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
 
     try {
-      await harness.setConfig({
-        providers: {
-          local: { type: 'openai', baseUrl: 'https://model.example.test/v1', apiKey: 'sk-test' },
-        },
-        models: {
-          'fake-model': { provider: 'local', model: 'fake-model', maxContextSize: 262144 },
-        },
-        defaultModel: 'fake-model',
-      });
+      await configureFakeProvider(harness);
       const session = await harness.createSession({ id: 'ses_init_rpc_v2', workDir });
       const events: Event[] = [];
       const unsubscribe = session.onEvent((event) => {
@@ -406,7 +339,6 @@ describe('Session.prompt events', () => {
         }),
       );
     } finally {
-      fetchStub.mockRestore();
       await harness.close();
     }
   });
@@ -511,18 +443,11 @@ describe('Session.prompt events', () => {
       expect(btwHistoryText).toContain('main task context');
       expect(btwHistoryText).toContain('What are you working on right now?');
 
-      const statePath = join(session.summary!.sessionDir, 'state.json');
-      const state = JSON.parse(await readFile(statePath, 'utf-8')) as Record<string, unknown>;
-      expect(state['lastPrompt']).toBe('main task context');
-      expect(state['agents']).toMatchObject({ main: expect.any(Object) });
-      expect(state['agents']).not.toHaveProperty(agentId);
-
       await harness.closeSession(session.id);
       const resumed = await harness.resumeSession({ id: session.id });
       const resumeState = resumed.getResumeState();
       expect(resumeState?.agents).toMatchObject({ main: expect.any(Object) });
       expect(resumeState?.agents).not.toHaveProperty(agentId);
-      expect(resumeState?.sessionMetadata.agents).not.toHaveProperty(agentId);
     } finally {
       await harness.close();
     }
@@ -781,7 +706,8 @@ async function configureFakeProvider(harness: KimiHarness): Promise<void> {
   await harness.setConfig({
     providers: {
       local: {
-        type: 'kimi',
+        type: 'openai',
+        baseUrl: 'https://model.example.test/v1',
         apiKey: 'sk-test',
       },
     },

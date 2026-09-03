@@ -217,11 +217,10 @@ describe('built-in slash command registry', () => {
     expect(resolveSlashCommandAvailability(command!, '')).toBe('always');
   });
 
-  it('gates tower behind the tower experiment and the v2 engine', () => {
+  it('gates tower behind the tower experiment', () => {
     const command = findBuiltInSlashCommand('tower');
     expect(command).toBeDefined();
     expect((command as KimiSlashCommand).experimentalFlag).toBe('tower');
-    expect((command as KimiSlashCommand).requiresEngineV2).toBe(true);
   });
 
   it('keeps every tower subcommand always available, including objectives', () => {

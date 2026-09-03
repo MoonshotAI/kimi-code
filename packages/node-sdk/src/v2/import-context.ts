@@ -1,22 +1,20 @@
 /**
  * v2 import-context construction — pure functions that replicate, byte for
- * byte, the user message v1's `ContextMemory.importContext`
- * (`packages/agent-core/src/agent/context/index.ts`) appends for an
- * `importContext` RPC, plus its validation and overflow rejection.
+ * byte, the user message the legacy v1 engine appended for an `importContext`
+ * RPC, plus its validation and overflow rejection.
  *
- * Why a replica exists: the v2 engine has no import-context capability of its
- * own (nothing under `agent-core-v2` builds this message), but all of its
- * primitives — the same wire `context.append_message` Op, the same token
- * estimator, the same model capabilities — are available, so the SDK composes
- * the v1 behavior on top of them. The wrapper format, the guidance text, and
- * the two XML escapers below are copied from v1 (`agent/core/src/agent/context`
- * and `agent-core/src/utils/xml-escape.ts`); keep them byte-identical with
- * those sources so a v1-written and a v2-written import reduce to the same
- * history.
+ * The v2 engine has no import-context capability of its own (nothing under
+ * `agent-core-v2` builds this message), but all of its primitives — the same
+ * wire `context.append_message` Op, the same token estimator, the same model
+ * capabilities — are available, so the SDK composes the legacy behavior on top
+ * of them. Keep the wrapper format, the guidance text, and the two XML
+ * escapers byte-identical with the legacy v1 output so a v1-written and a
+ * v2-written import reduce to the same history.
  */
-import { ErrorCodes, KimiError } from '@moonshot-ai/agent-core';
 import type { ContextMessage } from '@moonshot-ai/agent-core-v2';
 import { estimateTokensForMessages } from '@moonshot-ai/agent-core-v2/kosong/contract/tokens';
+
+import { ErrorCodes, KimiError } from '#/errors';
 
 /** Byte-identical with v1's `IMPORT_CONTEXT_GUIDANCE`. */
 const IMPORT_CONTEXT_GUIDANCE =

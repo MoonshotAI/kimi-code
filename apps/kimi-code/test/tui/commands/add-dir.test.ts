@@ -193,7 +193,6 @@ describe('handleAddDirCommand', () => {
     // Session-less v2: the path-adding form lazy-creates via ensureSession.
     Object.assign(host, {
       session: undefined,
-      engineV2: true,
       ensureSession: vi.fn(async () => {
         // A first prompt starts a turn while the session is being created.
         host.state.appState.streamingPhase = 'waiting';
