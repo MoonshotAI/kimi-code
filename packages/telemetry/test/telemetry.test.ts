@@ -498,10 +498,16 @@ describe('payload assembly', () => {
     expect(() => buildPayload([arrayProperty], 'device-1')).toThrow(/property.list/);
   });
 
-  it('passes null primitive values through and leaves the input event untouched', () => {
+  it('drops null values from the payload and leaves the input event untouched', () => {
     const event = {
       ...sampleEvent('nullable'),
+      device_id: null,
+      session_id: null,
       properties: {
+        empty: null,
+      },
+      context: {
+        version: '1.2.3',
         empty: null,
       },
     };
@@ -512,8 +518,12 @@ describe('payload assembly', () => {
 
     expect(payload.events[0]).toMatchObject({
       event: 'kfc_nullable',
-      property_empty: null,
+      context_version: '1.2.3',
     });
+    expect(payload.events[0]).not.toHaveProperty('device_id');
+    expect(payload.events[0]).not.toHaveProperty('session_id');
+    expect(payload.events[0]).not.toHaveProperty('property_empty');
+    expect(payload.events[0]).not.toHaveProperty('context_empty');
     expect(event.properties).toBe(originalProperties);
     expect(event.context).toBe(originalContext);
     expect(event.event).toBe('nullable');
