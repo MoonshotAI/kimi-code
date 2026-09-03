@@ -1722,12 +1722,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   override async setSessionModelOverride(input: SetSessionModelOverrideRpcInput): Promise<void> {
     const agent = await this.agentFacade(input.sessionId);
-    agent.setSessionModelOverride(input.kind as SessionModelOverrideKind, input.alias);
+    agent.setSessionModelOverride(input.kind, input.alias);
   }
 
   override async getSessionModelOverride(input: GetSessionModelOverrideRpcInput): Promise<string | undefined> {
     const agent = await this.agentFacade(input.sessionId);
-    return agent.getSessionModelOverride(input.kind as SessionModelOverrideKind);
+    return agent.getSessionModelOverride(input.kind);
   }
 
   override async getAllSessionModelOverrides(input: SessionIdRpcInput): Promise<SessionModelOverrides> {

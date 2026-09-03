@@ -20,6 +20,7 @@ import {
   type ToolCallResponse,
   type SwarmModeTrigger,
 } from '@moonshot-ai/agent-core';
+import type { SessionModelOverrideKind } from '@moonshot-ai/klient/core/facade/agent';
 import type { SessionModelOverrides } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import type { Kaos } from '@moonshot-ai/kaos';
 
@@ -179,12 +180,12 @@ export interface SwitchSessionRuntimeRpcInput extends SessionIdRpcInput {
 }
 
 export interface SetSessionModelOverrideRpcInput extends SessionIdRpcInput {
-  readonly kind: string;
+  readonly kind: SessionModelOverrideKind;
   readonly alias: string | null;
 }
 
 export interface GetSessionModelOverrideRpcInput extends SessionIdRpcInput {
-  readonly kind: string;
+  readonly kind: SessionModelOverrideKind;
 }
 
 export interface ReconnectMcpServerRpcInput extends SessionIdRpcInput {
@@ -680,7 +681,7 @@ export abstract class SDKRpcClientBase {
     );
   }
 
-  getAllSessionModelOverrides(_input: SessionIdRpcInput): Promise<SessionModelOverrides | undefined> {
+  getAllSessionModelOverrides(_input: SessionIdRpcInput): Promise<SessionModelOverrides> {
     throw new KimiError(
       ErrorCodes.NOT_IMPLEMENTED,
       'This SDK client does not support getting session model overrides.',

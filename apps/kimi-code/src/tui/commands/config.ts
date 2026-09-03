@@ -9,6 +9,7 @@ import {
   type SessionSummary,
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
+import type { SessionModelOverrideKind } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 
 import { EditorSelectorComponent } from '../components/dialogs/editor-selector';
 import { EffortSelectorComponent } from '../components/dialogs/effort-selector';
@@ -732,7 +733,7 @@ const SESSION_OVERRIDE_LABELS: Record<string, string> = {
 
 async function applySessionModelOverride(
   host: SlashCommandHost,
-  kind: string,
+  kind: SessionModelOverrideKind,
   alias: string,
 ): Promise<void> {
   const session = host.session;
