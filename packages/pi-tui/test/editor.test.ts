@@ -4053,6 +4053,159 @@ describe("Editor component", () => {
 			assert.match(text, /\[paste #\d+ \+\d+ lines\]/);
 		});
 
+		it("expands the marker when the identical content is pasted onto it again", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const paste = bigPaste("alpha");
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			assert.match(editor.getText(), /\[paste #1 \+12 lines\]/);
+
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			assert.strictEqual(editor.getText(), paste);
+		});
+
+		it("pastes different content normally even when the cursor is on a marker", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.handleInput(`\x1b[200~${bigPaste("alpha")}\x1b[201~`);
+			assert.match(editor.getText(), /\[paste #1/);
+
+			editor.handleInput(`\x1b[200~different\x1b[201~`);
+			const text = editor.getText();
+			assert.ok(text.includes("[paste #1"));
+			assert.ok(text.includes("different"));
+		});
+
+		it("creates a second marker for the identical content when the cursor is not on the first marker", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const paste = bigPaste("alpha");
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			editor.handleInput("x");
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			const text = editor.getText();
+			assert.ok(text.includes("[paste #1"));
+			assert.ok(text.includes("[paste #2"));
+		});
+
+		it("expands the marker when the identical paste arrives split across chunks", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const paste = bigPaste("alpha");
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+
+			const splitAt = Math.floor(paste.length / 2);
+			editor.handleInput(`\x1b[200~${paste.slice(0, splitAt)}`);
+			editor.handleInput(`${paste.slice(splitAt)}\x1b[201~`);
+			assert.strictEqual(editor.getText(), paste);
+		});
+
+		it("expandPasteMarkerAtCursor replaces the marker with its stored content", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const paste = bigPaste("alpha");
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			assert.match(editor.getText(), /\[paste #1/);
+
+			assert.strictEqual(editor.expandPasteMarkerAtCursor(), paste);
+			assert.strictEqual(editor.getText(), paste);
+		});
+
+		it("expandPasteMarkerAtCursor returns undefined when the cursor is not on a marker", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.setText("plain");
+			assert.strictEqual(editor.expandPasteMarkerAtCursor(), undefined);
+			assert.strictEqual(editor.getText(), "plain");
+		});
+
+		it("undo after a second-paste expansion restores the marker and its registry entry", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			let submitted = "";
+			editor.onSubmit = (t) => {
+				submitted = t;
+			};
+
+			const paste = bigPaste("alpha");
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			assert.strictEqual(editor.getText(), paste);
+
+			editor.handleInput("\x1b[45;5u"); // undo: restores marker text
+			assert.ok(editor.getText().includes("[paste #1"));
+			editor.handleInput("\r");
+			assert.strictEqual(submitted, paste);
+		});
+
+		it("expands the marker on re-paste when the stored content carries a synthetic leading space", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.setText("word");
+			// First paste starts with "/" and follows a word character, so the
+			// path-spacing rule prepends a synthetic space to the stored content.
+			const paste = "/p\n".repeat(12).trimEnd();
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			assert.match(editor.getText(), /\[paste #1 \+12 lines\]/);
+
+			// The re-paste lands after "]", gets no synthetic space, and must
+			// still be recognized as identical.
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			assert.strictEqual(editor.getText(), `word ${paste}`);
+		});
+
+		it("does not expand when the re-paste differs by a genuine leading space", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const paste = bigPaste("alpha");
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			assert.match(editor.getText(), /\[paste #1/);
+
+			// A paste that genuinely differs by one leading space is new content,
+			// not the expansion gesture.
+			editor.handleInput(`\x1b[200~ ${paste}\x1b[201~`);
+			const text = editor.getText();
+			assert.ok(text.includes("[paste #1"));
+			assert.ok(text.includes("[paste #2"));
+		});
+
+		it("does not expand when a leading space is genuine on the re-paste of path-starting content", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			// Pasted into the empty editor: no word character before the cursor,
+			// so the stored content carries no synthetic space.
+			const paste = "/p\n".repeat(12).trimEnd();
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			assert.match(editor.getText(), /\[paste #1/);
+
+			// A genuine leading space makes this different content, even though
+			// the unspaced side starts with a path character.
+			editor.handleInput(`\x1b[200~ ${paste}\x1b[201~`);
+			const text = editor.getText();
+			assert.ok(text.includes("[paste #1"));
+			assert.ok(text.includes("[paste #2"));
+		});
+
+		it("expands the marker when the re-paste receives the synthetic leading space", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const paste = "/p\n".repeat(12).trimEnd();
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+
+			// Typing before the marker puts a word character right in front of
+			// it, so this re-paste gets the synthetic space and must still be
+			// recognized as identical.
+			editor.handleInput("\x01");
+			editor.handleInput("word");
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			assert.strictEqual(editor.getText(), `word${paste}`);
+		});
+
+		it("does not expand when the re-paste genuinely carries the space the stored paste synthesized", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.setText("word");
+			// Stored as " /p..." with the synthetic-space flag set.
+			const paste = "/p\n".repeat(12).trimEnd();
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			assert.match(editor.getText(), /\[paste #1/);
+
+			// The new clipboard genuinely starts with " /p..." — different
+			// clipboard content even though the editor text would look equal.
+			editor.handleInput(`\x1b[200~ ${paste}\x1b[201~`);
+			const text = editor.getText();
+			assert.ok(text.includes("[paste #1"));
+			assert.ok(text.includes("[paste #2"));
+		});
+
 		it("treats paste marker as single unit for right arrow", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 			editor.handleInput("A");

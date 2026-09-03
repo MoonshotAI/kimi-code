@@ -229,6 +229,7 @@ interface EditorSnapshot {
 	state: EditorState;
 	pastes: Map<number, string>;
 	pasteCounter: number;
+	pasteSyntheticSpacing: Set<number>;
 }
 
 interface LayoutLine {
@@ -328,6 +329,8 @@ export class Editor implements Component, Focusable {
 	// Paste tracking for large pastes
 	private pastes: Map<number, string> = new Map();
 	private pasteCounter: number = 0;
+	/** Paste ids whose stored content carries a synthetic leading space added by the path-spacing rule. */
+	private pasteSyntheticSpacing: Set<number> = new Set();
 
 	// Bracketed paste mode buffering
 	private pasteBuffer: string = "";
@@ -1132,6 +1135,69 @@ export class Editor implements Component, Focusable {
 		return this.expandPasteMarkers(this.state.lines.join("\n"));
 	}
 
+	/**
+	 * Expand the paste marker under the cursor, replacing it with its stored
+	 * content, and return the canonical clipboard text that produced it (any
+	 * synthetic leading space the path-spacing rule added is stripped — that is
+	 * the value a trailing paste payload should be compared against). The paste
+	 * registry is preserved so undo restores both the marker text and its
+	 * entry. Returns undefined when the cursor is not on a live marker.
+	 */
+	expandPasteMarkerAtCursor(): string | undefined {
+		const currentLine = this.state.lines[this.state.cursorLine] || "";
+		PASTE_MARKER_REGEX.lastIndex = 0;
+		for (const match of currentLine.matchAll(PASTE_MARKER_REGEX)) {
+			const start = match.index;
+			const end = start + match[0].length;
+			if (this.state.cursorCol < start || this.state.cursorCol > end) continue;
+
+			const pasteId = Number(match[1]);
+			const content = this.pastes.get(pasteId);
+			if (content === undefined) return undefined;
+
+			const text = this.getText();
+			const offset =
+				this.state.lines.slice(0, this.state.cursorLine).reduce((sum, l) => sum + l.length + 1, 0) +
+				start;
+			const newText = text.slice(0, offset) + content + text.slice(offset + match[0].length);
+			this.setText(newText, { preservePasteRegistry: true });
+			return this.pasteSyntheticSpacing.has(pasteId) ? content.slice(1) : content;
+		}
+		return undefined;
+	}
+
+	/**
+	 * Second-paste gesture: pasting content identical to what the marker under
+	 * the cursor holds expands that marker instead of inserting a duplicate.
+	 */
+	private expandMarkerForIdenticalPaste(filteredText: string, hadSyntheticSpace: boolean): boolean {
+		const currentLine = this.state.lines[this.state.cursorLine] || "";
+		PASTE_MARKER_REGEX.lastIndex = 0;
+		for (const match of currentLine.matchAll(PASTE_MARKER_REGEX)) {
+			const start = match.index;
+			const end = start + match[0].length;
+			if (this.state.cursorCol < start || this.state.cursorCol > end) continue;
+			if (!this.isSamePasteContent(Number(match[1]), filteredText, hadSyntheticSpace)) return false;
+			return this.expandPasteMarkerAtCursor() !== undefined;
+		}
+		return false;
+	}
+
+	/**
+	 * Identity for the second-paste gesture, compared on the genuine clipboard
+	 * text of both sides: a leading space is stripped only when the synthetic
+	 * flag says the path-spacing rule produced it (recorded per paste id at
+	 * store time, known locally for the incoming paste), so a paste that
+	 * genuinely carries that space never counts as identical.
+	 */
+	private isSamePasteContent(pasteId: number, pasted: string, pastedHadSyntheticSpace: boolean): boolean {
+		const stored = this.pastes.get(pasteId);
+		if (stored === undefined) return false;
+		const storedCanonical = this.pasteSyntheticSpacing.has(pasteId) ? stored.slice(1) : stored;
+		const pastedCanonical = pastedHadSyntheticSpace ? pasted.slice(1) : pasted;
+		return storedCanonical === pastedCanonical;
+	}
+
 	getLines(): string[] {
 		return [...this.state.lines];
 	}
@@ -1152,6 +1218,7 @@ export class Editor implements Component, Focusable {
 		if (!options?.preservePasteRegistry) {
 			this.pastes.clear();
 			this.pasteCounter = 0;
+			this.pasteSyntheticSpacing.clear();
 		}
 		this.setTextInternal(normalized);
 	}
@@ -1177,6 +1244,27 @@ export class Editor implements Component, Focusable {
 	 */
 	private normalizeText(text: string): string {
 		return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\t/g, "    ");
+	}
+
+	/**
+	 * Normalize raw bracketed-paste text the way handlePaste stores it:
+	 * CSI-u Ctrl+<letter> sequences decoded (tmux popups re-encode control
+	 * bytes that way), line endings normalized, tabs expanded, non-printable
+	 * characters filtered. The context-dependent path-spacing adjustment is
+	 * deliberately not part of this.
+	 */
+	canonicalizePastedText(pastedText: string): string {
+		const decodedText = pastedText.replace(/\x1b\[(\d+);5u/g, (match, code) => {
+			const cp = Number(code);
+			if (cp >= 97 && cp <= 122) return String.fromCharCode(cp - 96);
+			if (cp >= 65 && cp <= 90) return String.fromCharCode(cp - 64);
+			return match;
+		});
+		const cleanText = this.normalizeText(decodedText);
+		return cleanText
+			.split("")
+			.filter((char) => char === "\n" || char.charCodeAt(0) >= 32)
+			.join("");
 	}
 
 	/**
@@ -1302,38 +1390,27 @@ export class Editor implements Component, Focusable {
 		this.exitHistoryBrowsing();
 		this.lastAction = null;
 
-		this.pushUndoSnapshot();
-
-		// Some terminals (e.g. tmux popups with extended-keys-format=csi-u) re-encode
-		// control bytes inside bracketed paste as CSI-u Ctrl+<letter> sequences
-		// (ESC [ <codepoint> ; 5 u). Decode those back to their literal byte so the
-		// per-char filter below preserves newlines instead of stripping ESC and
-		// leaking the printable tail (e.g. "[106;5u") into the editor.
-		const decodedText = pastedText.replace(/\x1b\[(\d+);5u/g, (match, code) => {
-			const cp = Number(code);
-			if (cp >= 97 && cp <= 122) return String.fromCharCode(cp - 96);
-			if (cp >= 65 && cp <= 90) return String.fromCharCode(cp - 64);
-			return match;
-		});
-
-		// Clean the pasted text: normalize line endings, expand tabs
-		const cleanText = this.normalizeText(decodedText);
-
-		// Filter out non-printable characters except newlines
-		let filteredText = cleanText
-			.split("")
-			.filter((char) => char === "\n" || char.charCodeAt(0) >= 32)
-			.join("");
+		// Normalize the raw payload (CSI-u decode, line endings, tabs,
+		// non-printables) the same way stored pastes are stored.
+		let filteredText = this.canonicalizePastedText(pastedText);
 
 		// If pasting a file path (starts with /, ~, or .) and the character before
 		// the cursor is a word character, prepend a space for better readability
+		let hadSyntheticSpace = false;
 		if (/^[/~.]/.test(filteredText)) {
 			const currentLine = this.state.lines[this.state.cursorLine] || "";
 			const charBeforeCursor = this.state.cursorCol > 0 ? currentLine[this.state.cursorCol - 1] : "";
 			if (charBeforeCursor && /\w/.test(charBeforeCursor)) {
 				filteredText = ` ${filteredText}`;
+				hadSyntheticSpace = true;
 			}
 		}
+
+		// Re-pasting a marker's exact stored content onto it expands the marker
+		// (second-paste gesture) instead of inserting a duplicate.
+		if (this.expandMarkerForIdenticalPaste(filteredText, hadSyntheticSpace)) return;
+
+		this.pushUndoSnapshot();
 
 		// Split into lines to check for large paste
 		const pastedLines = filteredText.split("\n");
@@ -1345,6 +1422,7 @@ export class Editor implements Component, Focusable {
 			this.pasteCounter++;
 			const pasteId = this.pasteCounter;
 			this.pastes.set(pasteId, filteredText);
+			if (hadSyntheticSpace) this.pasteSyntheticSpacing.add(pasteId);
 
 			// Insert marker like "[paste #1 +123 lines]" or "[paste #1 1234 chars]"
 			const marker =
@@ -1408,6 +1486,7 @@ export class Editor implements Component, Focusable {
 		this.state = { lines: [""], cursorLine: 0, cursorCol: 0 };
 		this.pastes.clear();
 		this.pasteCounter = 0;
+		this.pasteSyntheticSpacing.clear();
 		this.exitHistoryBrowsing();
 		this.scrollOffset = 0;
 		this.undoStack.clear();
@@ -1438,6 +1517,7 @@ export class Editor implements Component, Focusable {
 				// This contains the id part e.g 4 from [paste #4 +123 lines]
 				const targetId = Number(isPastedSegmented[1]);
 				this.pastes.delete(targetId);
+				this.pasteSyntheticSpacing.delete(targetId);
 				this.pasteCounter--;
 
 				// Shift registry entries down in ascending id order, independent
@@ -1447,6 +1527,7 @@ export class Editor implements Component, Focusable {
 				for (const id of higherIds) {
 					this.pastes.set(id - 1, this.pastes.get(id)!);
 					this.pastes.delete(id);
+					if (this.pasteSyntheticSpacing.delete(id)) this.pasteSyntheticSpacing.add(id - 1);
 				}
 
 				// Renumber markers with ids greater than the removed one.
@@ -2154,7 +2235,12 @@ export class Editor implements Component, Focusable {
 	}
 
 	private pushUndoSnapshot(): void {
-		this.undoStack.push({ state: this.state, pastes: this.pastes, pasteCounter: this.pasteCounter });
+		this.undoStack.push({
+			state: this.state,
+			pastes: this.pastes,
+			pasteCounter: this.pasteCounter,
+			pasteSyntheticSpacing: this.pasteSyntheticSpacing,
+		});
 	}
 
 	private undo(): void {
@@ -2164,6 +2250,7 @@ export class Editor implements Component, Focusable {
 		Object.assign(this.state, snapshot.state);
 		this.pastes = snapshot.pastes;
 		this.pasteCounter = snapshot.pasteCounter;
+		this.pasteSyntheticSpacing = snapshot.pasteSyntheticSpacing;
 		this.lastAction = null;
 		this.preferredVisualCol = null;
 		if (this.onChange) {

@@ -474,7 +474,20 @@ describe('CustomEditor paste marker expansion', () => {
     editor.handleInput(`${PASTE_START}${content}${PASTE_END}`);
   }
 
-  it('expands paste marker when bracketed paste arrives while cursor is on marker', () => {
+  it('expands the marker when the identical content is pasted onto it again', () => {
+    const editor = makeEditor();
+    const longText = 'line\n'.repeat(15).trimEnd();
+    simulateLargePaste(editor, longText);
+
+    expect(editor.getText()).toMatch(/\[paste #1 \+15 lines\]/);
+
+    simulateLargePaste(editor, longText);
+
+    expect(editor.getText()).not.toContain('[paste #');
+    expect(editor.getText()).toContain(longText);
+  });
+
+  it('pastes different content normally even when the cursor is on a marker', () => {
     const editor = makeEditor();
     const longText = 'line\n'.repeat(15).trimEnd();
     simulateLargePaste(editor, longText);
@@ -483,8 +496,8 @@ describe('CustomEditor paste marker expansion', () => {
 
     simulateLargePaste(editor, 'anything');
 
-    expect(editor.getText()).not.toContain('[paste #');
-    expect(editor.getText()).toContain(longText);
+    expect(editor.getText()).toContain('[paste #1');
+    expect(editor.getText()).toContain('anything');
   });
 
   it('does not expand when cursor is not on a paste marker', () => {
@@ -516,7 +529,7 @@ describe('CustomEditor paste marker expansion', () => {
     expect(editor.getText()).toContain('[paste #1');
     expect(editor.getText()).toContain('[paste #2');
 
-    simulateLargePaste(editor, 'anything');
+    simulateLargePaste(editor, text2);
 
     expect(editor.getText()).toContain('[paste #1');
     expect(editor.getText()).not.toContain('[paste #2');
@@ -545,28 +558,28 @@ describe('CustomEditor paste marker expansion', () => {
     const markerText = editor.getText();
     expect(markerText).toMatch(/\[paste #1/);
 
-    simulateLargePaste(editor, 'anything');
+    simulateLargePaste(editor, longText);
     expect(editor.getText()).toContain(longText);
 
     // Undo (Ctrl+-) restores both the marker text and its paste-registry entry.
     editor.handleInput('\x1b[45;5u');
     expect(editor.getText()).toContain('[paste #1');
 
-    simulateLargePaste(editor, 'anything');
+    simulateLargePaste(editor, longText);
     expect(editor.getText()).not.toContain('[paste #');
     expect(editor.getText()).toContain(longText);
   });
 
-  it('suppresses multi-chunk bracketed paste data after marker expansion', () => {
+  it('expands the marker when the identical paste arrives split across chunks', () => {
     const editor = makeEditor();
     const longText = 'line\n'.repeat(15).trimEnd();
     simulateLargePaste(editor, longText);
 
-    editor.handleInput(`${PASTE_START}chunk1`);
-    editor.handleInput(`chunk2${PASTE_END}`);
+    const splitAt = Math.floor(longText.length / 2);
+    editor.handleInput(`${PASTE_START}${longText.slice(0, splitAt)}`);
+    editor.handleInput(`${longText.slice(splitAt)}${PASTE_END}`);
 
-    expect(editor.getText()).not.toContain('chunk1');
-    expect(editor.getText()).not.toContain('chunk2');
+    expect(editor.getText()).not.toContain('[paste #');
     expect(editor.getText()).toContain(longText);
   });
 
@@ -580,12 +593,153 @@ describe('CustomEditor paste marker expansion', () => {
     editor.handleInput('\u001B[20');
     editor.handleInput('1~');
 
-    expect(editor.getText()).toContain(longText);
-    expect(editor.getText()).not.toContain('data');
+    expect(editor.getText()).toContain('[paste #1');
+    expect(editor.getText()).toContain('data');
 
     // Verify editor is not stuck — next keystrokes should work normally
     editor.handleInput('x');
     expect(editor.getText()).toContain('x');
+  });
+
+  it('swallows the bracketed-paste payload that trails a paste-key expansion', () => {
+    const editor = makeEditor();
+    const longText = 'line\n'.repeat(15).trimEnd();
+    simulateLargePaste(editor, longText);
+
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+    expect(editor.getText()).toBe(longText);
+
+    // Terminals that forward the clipboard as bracketed paste alongside the
+    // keystroke deliver this payload next — it must not re-paste.
+    editor.handleInput(`${PASTE_START}${longText}${PASTE_END}`);
+    expect(editor.getText()).toBe(longText);
+  });
+
+  it('swallows a trailing payload that arrives split across chunks', () => {
+    const editor = makeEditor();
+    const longText = 'line\n'.repeat(15).trimEnd();
+    simulateLargePaste(editor, longText);
+
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+    expect(editor.getText()).toBe(longText);
+
+    const splitAt = Math.floor(longText.length / 2);
+    editor.handleInput(`${PASTE_START}${longText.slice(0, splitAt)}`);
+    editor.handleInput(`${longText.slice(splitAt)}${PASTE_END}`);
+    expect(editor.getText()).toBe(longText);
+
+    // Verify editor is not stuck — next keystrokes should work normally
+    editor.handleInput('x');
+    expect(editor.getText()).toContain('x');
+  });
+
+  it('lets a standalone paste through after the suppression window expires', () => {
+    vi.useFakeTimers();
+    try {
+      const editor = makeEditor();
+      const longText = 'line\n'.repeat(15).trimEnd();
+      simulateLargePaste(editor, longText);
+
+      editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+      expect(editor.getText()).toBe(longText);
+
+      vi.setSystemTime(Date.now() + 1500);
+      simulateLargePaste(editor, longText);
+      expect(editor.getText()).toContain('[paste #2');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('pastes an in-window payload whose content differs from the expansion', () => {
+    const editor = makeEditor();
+    const longText = 'line\n'.repeat(15).trimEnd();
+    simulateLargePaste(editor, longText);
+
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+    expect(editor.getText()).toBe(longText);
+
+    // A different clipboard arriving inside the suppression window is not the
+    // terminal's echo — it must be pasted, not swallowed.
+    simulateLargePaste(editor, 'anything');
+    expect(editor.getText()).toContain('anything');
+  });
+
+  it('swallows a trailing payload whose raw form differs only by normalization', () => {
+    const editor = makeEditor();
+    const raw = Array.from({ length: 12 }, () => 'a\tb').join('\r\n');
+    simulateLargePaste(editor, raw);
+    const normalized = raw.replace(/\r\n/g, '\n').replace(/\t/g, '    ');
+    expect(editor.getText()).toMatch(/\[paste #1/);
+
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+    expect(editor.getText()).toBe(normalized);
+
+    // The terminal echoes the raw clipboard (CRLF + tabs), not the normalized
+    // stored form — it is still the same payload and must be swallowed.
+    simulateLargePaste(editor, raw);
+    expect(editor.getText()).toBe(normalized);
+  });
+
+  it('swallows the trailing payload when the expansion carried a synthetic leading space', () => {
+    const editor = makeEditor();
+    editor.handleInput('word');
+    const paste = '/p\n'.repeat(12).trimEnd();
+    simulateLargePaste(editor, paste);
+    expect(editor.getText()).toMatch(/\[paste #1/);
+
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+    expect(editor.getText()).toBe(`word ${paste}`);
+
+    // The stored form gained a synthetic leading space at store time; the
+    // echoed raw payload has none and must still be recognized as the echo.
+    simulateLargePaste(editor, paste);
+    expect(editor.getText()).toBe(`word ${paste}`);
+  });
+
+  it('forwards input bytes batched after the swallowed payload', () => {
+    const editor = makeEditor();
+    const longText = 'line\n'.repeat(15).trimEnd();
+    simulateLargePaste(editor, longText);
+
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+    expect(editor.getText()).toBe(longText);
+
+    // The terminal batches the echoed payload and a subsequent keystroke into
+    // one chunk — the payload is swallowed but the keystroke must survive.
+    editor.handleInput(`${PASTE_START}${longText}${PASTE_END}x`);
+    expect(editor.getText()).toBe(`${longText}x`);
+  });
+
+  it('does not swallow a payload that follows a new paste gesture', () => {
+    const editor = makeEditor();
+    const longText = 'line\n'.repeat(15).trimEnd();
+    simulateLargePaste(editor, longText);
+
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+    expect(editor.getText()).toBe(longText);
+
+    // A second paste-key press (no marker under the cursor now) starts a new
+    // gesture and invalidates the first gesture's pending suppression, so this
+    // payload is pasted instead of being mistaken for the first echo.
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+    simulateLargePaste(editor, longText);
+    expect(editor.getText()).toContain('[paste #2');
+  });
+
+  it('does not swallow a same-content paste after intervening input', () => {
+    const editor = makeEditor();
+    const longText = 'line\n'.repeat(15).trimEnd();
+    simulateLargePaste(editor, longText);
+
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+    expect(editor.getText()).toBe(longText);
+
+    // Intervening input proves a later payload is not the immediate echo of
+    // the expansion, so it pastes normally instead of being swallowed.
+    editor.handleInput('y');
+    simulateLargePaste(editor, longText);
+    expect(editor.getText()).toContain('[paste #2');
   });
 
   it('falls back to the text paste path when the image paste handler rejects', async () => {

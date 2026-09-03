@@ -15,6 +15,7 @@ import {
 
 import { currentTheme } from '#/tui/theme';
 import { createEditorTheme } from '#/tui/theme/pi-tui-theme';
+import { BRACKET_PASTE_END, BRACKET_PASTE_START, PASTE_PAYLOAD_SUPPRESS_MS } from '#/tui/constant/paste';
 import { printableChar } from '#/tui/utils/printable-key';
 
 import { extractAtPrefix } from './file-mention-provider';
@@ -23,10 +24,6 @@ import { WrappingSelectList } from './wrapping-select-list';
 
 // oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match ANSI SGR escape sequences
 const ANSI_SGR = /\u001B\[[0-9;]*m/g;
-
-const PASTE_MARKER_RE = /\[paste #(\d+)(?: (?:\+\d+ lines|\d+ chars))?\]/g;
-const BRACKET_PASTE_START = '\u001B[200~';
-const BRACKET_PASTE_END = '\u001B[201~';
 
 // Kitty keyboard protocol CSI-u sequence: ESC [ keycode ; modifier[:eventType] u.
 // We intentionally match only the simple two-field form — enough to rewrite
@@ -162,6 +159,9 @@ export class CustomEditor extends Editor {
 
   private consumingPaste = false;
   private consumeBuffer = '';
+  private suppressPastePayloadUntil = 0;
+  /** Content restored by the latest paste-key expansion, while its trailing payload is pending. */
+  private pendingExpandedContent: string | undefined;
   /** Serialize paste callbacks so Enter/typing cannot overtake an image paste. */
   private pasteInFlight = false;
   private readonly pasteInputQueue: string[] = [];
@@ -230,30 +230,30 @@ export class CustomEditor extends Editor {
     this.onInputModeChange?.(mode);
   }
 
-  private expandPasteMarkerAtCursor(): boolean {
-    const { line, col } = this.getCursor();
-    const lines = this.getLines();
-    const currentLine = lines[line] ?? '';
-
-    for (const match of currentLine.matchAll(PASTE_MARKER_RE)) {
-      const start = match.index;
-      const end = start + match[0].length;
-      if (col < start || col > end) continue;
-
-      const pasteId = Number(match[1]);
-      const pastes = (this as unknown as { pastes: Map<number, string> }).pastes;
-      const content = pastes.get(pasteId);
-      if (content === undefined) return false;
-
-      const text = this.getText();
-      const offset = lines.slice(0, line).reduce((sum, l) => sum + l.length + 1, 0) + start;
-      const newText = text.slice(0, offset) + content + text.slice(offset + match[0].length);
-      // Keep the paste registry intact: the text still holds other live markers
-      // whose entries a plain setText would drop (upstream resets the registry).
-      this.setText(newText, { preservePasteRegistry: true });
-      return true;
+  /**
+   * A bracketed-paste payload that arrived right after a paste-key expansion:
+   * swallow it when it really is the content just expanded (a terminal echo of
+   * the same gesture); replay it into pi-tui's normal paste path when it is
+   * genuinely different clipboard content.
+   */
+  private handleTrailingPayload(payload: string): void {
+    const expected = this.pendingExpandedContent;
+    this.pendingExpandedContent = undefined;
+    if (expected === undefined) return;
+    const start = payload.indexOf(BRACKET_PASTE_START) + BRACKET_PASTE_START.length;
+    const end = payload.indexOf(BRACKET_PASTE_END, start);
+    const content = end === -1 ? payload.slice(start) : payload.slice(start, end);
+    const suffix = end === -1 ? '' : payload.slice(end + BRACKET_PASTE_END.length);
+    if (this.canonicalizePastedText(content) !== expected) {
+      this.handleInput(payload);
+      return;
     }
-    return false;
+    // The payload itself is swallowed, but bytes the terminal batched after it
+    // are real input and must go through the normal pipeline (pending state is
+    // already cleared, so this cannot re-enter the suppression path).
+    if (suffix.length > 0) {
+      this.handleInput(suffix);
+    }
   }
 
   private hasAutocompleteActivity(): boolean {
@@ -382,25 +382,41 @@ export class CustomEditor extends Editor {
       this.onNonEscapeInput?.();
     }
 
-    // When a paste marker was just expanded, discard the trailing bracketed
-    // paste data that the terminal sends alongside the Ctrl-V keystroke.
+    // Some terminals deliver the Ctrl-V keystroke and the clipboard's
+    // bracketed-paste payload together. After a paste-key expansion the
+    // payload must be swallowed once — but only when its content really is
+    // what the expansion just restored, so an unrelated in-window paste
+    // survives; standalone pastes keep flowing to pi-tui's identical-content
+    // check.
     if (this.consumingPaste) {
       this.consumeBuffer += normalized;
       if (this.consumeBuffer.includes(BRACKET_PASTE_END)) {
+        const payload = this.consumeBuffer;
         this.consumingPaste = false;
         this.consumeBuffer = '';
+        this.handleTrailingPayload(payload);
       }
+      return;
+    }
+    if (
+      normalized.includes(BRACKET_PASTE_START) &&
+      this.pendingExpandedContent !== undefined &&
+      Date.now() < this.suppressPastePayloadUntil
+    ) {
+      this.suppressPastePayloadUntil = 0;
+      if (!normalized.includes(BRACKET_PASTE_END)) {
+        this.consumingPaste = true;
+        this.consumeBuffer = normalized;
+        return;
+      }
+      this.handleTrailingPayload(normalized);
       return;
     }
 
-    // If a bracketed paste arrives while the cursor sits on an existing
-    // paste marker, expand that marker instead of pasting new content.
-    if (normalized.includes(BRACKET_PASTE_START) && this.expandPasteMarkerAtCursor()) {
-      if (!normalized.includes(BRACKET_PASTE_END)) {
-        this.consumingPaste = true;
-      }
-      return;
-    }
+    // Any intervening input proves a later payload is no longer the immediate
+    // echo of the expansion — disarm the pending suppression. The paste-key
+    // branch below re-arms it on a successful expansion.
+    this.pendingExpandedContent = undefined;
 
     // Paste image binding — platform-aware:
     //   Windows terminals reserve Ctrl-V for their own paste handling
@@ -410,7 +426,16 @@ export class CustomEditor extends Editor {
     //   normal paste path so text from the clipboard still works.
     const pasteKey = process.platform === 'win32' ? 'alt+v' : Key.ctrl('v');
     if (matchesKey(normalized, pasteKey)) {
-      if (this.expandPasteMarkerAtCursor()) {
+      // A new paste gesture invalidates any unconsumed pending payload from
+      // the previous one, so it cannot swallow this gesture's real payload.
+      this.pendingExpandedContent = undefined;
+      const expanded = this.expandPasteMarkerAtCursor();
+      if (expanded !== undefined) {
+        // Terminals that also forward the clipboard as bracketed paste will
+        // deliver that payload next — swallow it only if it really is the
+        // content just expanded.
+        this.pendingExpandedContent = expanded;
+        this.suppressPastePayloadUntil = Date.now() + PASTE_PAYLOAD_SUPPRESS_MS;
         return;
       }
       if (this.onPasteImage !== undefined) {
