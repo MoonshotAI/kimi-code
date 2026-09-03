@@ -79,6 +79,7 @@ function goalContinuationStarts(events: readonly Event2<any>[]): readonly Event2
 
 describe('server-v2 /api/v1/sessions', () => {
   let server: RunningServer | undefined;
+  let baselineServer: RunningServer | undefined;
   let home: string | undefined;
   let base: string;
 
@@ -92,12 +93,17 @@ describe('server-v2 /api/v1/sessions', () => {
       logLevel: 'silent',
       debugEndpoints: true,
     });
+    baselineServer = server;
     base = `http://127.0.0.1:${server.port}`;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
+    if (server !== baselineServer) {
+      await restartWithFreshHome();
+      baselineServer = server;
+    }
   });
 
   afterAll(async () => {
