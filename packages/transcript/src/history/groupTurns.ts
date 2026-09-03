@@ -401,7 +401,11 @@ function notificationFrameText(text: string): string {
   const bodyLines = lines.slice(bodyStart);
   const childStart = bodyLines.findIndex((line) => {
     const trimmed = line.trimStart();
-    return trimmed.startsWith('<output-file') || trimmed.startsWith('<output-preview');
+    return (
+      trimmed.startsWith('<output-file') ||
+      trimmed.startsWith('<output-preview') ||
+      trimmed.startsWith('<answer')
+    );
   });
   const body = (childStart === -1 ? bodyLines : bodyLines.slice(0, childStart)).join('\n').trim();
   if (title.length > 0 && body.length > 0) return `${title}\n${body}`;

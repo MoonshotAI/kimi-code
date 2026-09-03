@@ -22,13 +22,19 @@ export class SessionQuestionService implements ISessionQuestionService {
 
   constructor(@IAgentLifecycleService private readonly agents: IAgentLifecycleService) {}
 
-  request(req: QuestionRequest, options?: { signal?: AbortSignal; agentId?: string }): Promise<QuestionResult> {
+  request(
+    req: QuestionRequest,
+    options?: { signal?: AbortSignal; agentId?: string; detached?: boolean },
+  ): Promise<QuestionResult> {
     const id = requestId(req);
     const pending = requestSessionInteraction<QuestionRequest, QuestionResult>(this.agents, {
       id,
       kind: 'question',
       payload: req,
-      origin: { turnId: req.turnId, agentId: options?.agentId },
+      origin: {
+        turnId: options?.detached === true ? undefined : req.turnId,
+        agentId: options?.agentId,
+      },
     });
 
     const signal = options?.signal;

@@ -17,6 +17,7 @@ import {
   type SubagentHandle,
 } from '#/agent/tools/agent/subagent-task';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
+import { QuestionBackgroundTask } from '#/agent/tools/ask-user-question/question-background-task';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IEventBus } from '#/app/event/eventBus';
 import type { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
@@ -501,6 +502,73 @@ describe('AgentTaskService — notification delivery', () => {
     expect(text).toContain('agent task completed.');
     expect(text).toContain('<output-file');
     expect(text).not.toContain('final subagent summary');
+  });
+
+  it('inlines the answer in completed question task notifications', async () => {
+    const { agent, ctx, manager } = createAgentTaskService();
+    ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
+    const turnEnd = ctx.untilTurnEnd();
+    const answer = JSON.stringify({ answers: { 'Which database?': 'Postgres' } });
+    const taskId = manager.registerTask(
+      new QuestionBackgroundTask(
+        async () => ({ isError: false, output: answer }),
+        'Which database?',
+        { questionCount: 1, toolCallId: 'call_q' },
+      ),
+      { detached: true },
+    );
+
+    await manager.wait(taskId);
+
+    await vi.waitFor(() => {
+      expect(notifiedCount(ctx)).toBe(1);
+    });
+    await turnEnd;
+
+    const message = notificationMessageFor(agent, taskId);
+    expect(message.origin).toEqual({
+      kind: 'task',
+      taskId,
+      status: 'completed',
+      notificationId: `task:${taskId}:completed`,
+    });
+    const text = message.content[0]!.text;
+    expect(text).toContain('Title: Background question answered');
+    expect(text).toContain('The user answered "Which database?".');
+    expect(text).toContain(`<answer>\n${answer}\n</answer>`);
+    expect(text).not.toContain('<output-file');
+    expect(text).not.toContain('<output-preview');
+  });
+
+  it('reports a dismissed question task without an output file', async () => {
+    const { agent, ctx, manager } = createAgentTaskService();
+    ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
+    const turnEnd = ctx.untilTurnEnd();
+    const dismissed = JSON.stringify({
+      answers: {},
+      note: 'User dismissed the question without answering.',
+    });
+    const taskId = manager.registerTask(
+      new QuestionBackgroundTask(
+        async () => ({ isError: false, output: dismissed }),
+        'Which database?',
+        { questionCount: 1, toolCallId: 'call_q' },
+      ),
+      { detached: true },
+    );
+
+    await manager.wait(taskId);
+
+    await vi.waitFor(() => {
+      expect(notifiedCount(ctx)).toBe(1);
+    });
+    await turnEnd;
+
+    const text = notificationMessageFor(agent, taskId).content[0]!.text;
+    expect(text).toContain('Title: Background question dismissed');
+    expect(text).toContain('The user dismissed "Which database?" without answering.');
+    expect(text).toContain(`<answer>\n${dismissed}\n</answer>`);
+    expect(text).not.toContain('<output-file');
   });
 
   it('enqueues completed process task notifications into the turn flow', async () => {

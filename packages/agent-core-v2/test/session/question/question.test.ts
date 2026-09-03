@@ -136,6 +136,25 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
     await expect(main).resolves.toBeNull();
   });
 
+  it('a detached request is not bound to the asking turn', async () => {
+    const interaction = interactions.serviceOf('main');
+    const questions = session.accessor.get(ISessionQuestionService);
+
+    const foreground = questions.request({ ...makeRequest('q-fg'), turnId: 3 });
+    const detached = questions.request({ ...makeRequest('q-bg'), turnId: 3 }, { detached: true });
+    expect(interaction.listPending().find((i) => i.id === 'q-fg')?.origin.turnId).toBe(3);
+    expect(interaction.listPending().find((i) => i.id === 'q-bg')?.origin.turnId).toBeUndefined();
+
+    interaction.cancelPendingForTurn(3);
+
+    await expect(foreground).resolves.toEqual({ cancelled: true, reason: 'turn_ended' });
+    expect(questions.listPending().map((r) => r.id)).toEqual(['q-bg']);
+    expect(questions.listPending()[0]?.turnId).toBe(3);
+
+    questions.answer('q-bg', { answers: { q_0: 'Yes' } });
+    await expect(detached).resolves.toEqual({ answers: { q_0: 'Yes' } });
+  });
+
   it('request with a pre-aborted signal resolves null and parks nothing', async () => {
     const questions = session.accessor.get(ISessionQuestionService);
     const controller = new AbortController();

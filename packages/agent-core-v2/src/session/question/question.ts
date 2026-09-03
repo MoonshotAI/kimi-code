@@ -38,7 +38,7 @@ export interface ISessionQuestionService {
 
   request(
     req: QuestionRequest,
-    options?: { signal?: AbortSignal; agentId?: string },
+    options?: { signal?: AbortSignal; agentId?: string; detached?: boolean },
   ): Promise<QuestionResult>;
   enqueue(req: QuestionRequest): QuestionRequest & { readonly id: string };
   answer(id: string, result: QuestionResult): void;

@@ -634,6 +634,32 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(frame).toMatchObject({ text: 'Background agent completed\ninspect done.' });
   });
 
+  it('stops folded notification text before an inline answer block', () => {
+    const xml = [
+      '<notification id="task:question-1:completed" category="task" type="task.completed" source_kind="background_task" source_id="question-1">',
+      'Title: Background question answered',
+      'Severity: info',
+      'The user answered "Which database?".',
+      '<answer>',
+      '{"answers":{"Which database?":"Postgres"}}',
+      '</answer>',
+      '</notification>',
+    ].join('\n');
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'run' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'go' }], toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: xml }], toolCalls: [], origin: { kind: 'task', taskId: 'question-1' } as { kind: string } },
+        { role: 'assistant', content: [{ type: 'text', text: 'done' }], toolCalls: [] },
+      ],
+      { taskOriginTurnTaskIds: new Set() },
+    );
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    const frame = turn.steps.flatMap((step) => step.frames).find((f) => f.kind === 'text' && f.role === 'user');
+    expect(frame).toMatchObject({ text: 'Background question answered\nThe user answered "Which database?".' });
+  });
+
   it('buffers a folded notification that arrives before the first step into that step', () => {
     const xml = [
       '<notification id="task:task-9:completed" category="task" type="task.completed" source_kind="background_task" source_id="task-9">',

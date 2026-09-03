@@ -345,7 +345,7 @@ describe('AskUserQuestionTool', () => {
           },
         ],
       },
-      { signal, agentId: 'main' },
+      { signal, agentId: 'main', detached: false },
     );
     expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
       answered: 1,
@@ -381,7 +381,7 @@ describe('AskUserQuestionTool', () => {
           }),
         ],
       }),
-      { signal, agentId: 'main' },
+      { signal, agentId: 'main', detached: false },
     );
   });
 
@@ -522,6 +522,29 @@ describe('AskUserQuestionTool', () => {
     expect(result.output).toContain('Ask the user directly in your text response instead');
   });
 
+  it('treats a cancelled interaction response as a dismissal', async () => {
+    const { tool, telemetryTrack } = makeTool({
+      request: async () => ({ cancelled: true, reason: 'agent_closed' }) as unknown as QuestionResult,
+    });
+
+    const result = await executeTool(tool, {
+      turnId: 0,
+      toolCallId: 'call_cancelled',
+      args: input(),
+      signal,
+    });
+
+    expect(result).toEqual({
+      isError: false,
+      output: JSON.stringify({
+        answers: {},
+        note: 'User dismissed the question without answering.',
+      }),
+    });
+    expect(telemetryTrack).toHaveBeenCalledWith('question_dismissed', expect.anything());
+    expect(telemetryTrack).not.toHaveBeenCalledWith('question_answered', expect.anything());
+  });
+
   describe('background mode', () => {
     function makeSink(abortSignal?: AbortSignal) {
       const outputs: string[] = [];
@@ -549,9 +572,13 @@ describe('AskUserQuestionTool', () => {
       });
 
       expect(result.isError).toBe(false);
-      expect(result.output).toContain('task_id: q_test_task_id');
-      expect(result.output).toContain('automatic_notification: true');
-      expect(result.output).toContain('human_shell_hint: The pending question is also visible in the client UI.');
+      expect(result.output).toBe(
+        [
+          'task_id: q_test_task_id',
+          'status: running',
+          'next_step: Continue your work; the answer arrives automatically in a later message. Use TaskStop only to cancel the question.',
+        ].join('\n'),
+      );
       expect(registerTask).toHaveBeenCalledOnce();
       expect(registerTask.mock.calls[0]![1]).toMatchObject({ detached: true });
       expect(getTask).toHaveBeenCalledWith('q_test_task_id');
@@ -574,6 +601,28 @@ describe('AskUserQuestionTool', () => {
 
       expect(outputs).toEqual([JSON.stringify({ answers: { Postgres: true } })]);
       expect(settlements).toEqual([{ status: 'completed' }]);
+    });
+
+    it('detaches the background question from the asking turn', async () => {
+      const { tool, request, lastRegisteredTask } = makeTool();
+      await executeTool(tool, {
+        turnId: 4,
+        toolCallId: 'call_bg_detached',
+        args: { ...input(), background: true },
+        signal,
+      });
+
+      const { sink } = makeSink();
+      await lastRegisteredTask()!.start(sink);
+
+      expect(request).toHaveBeenCalledOnce();
+      expect(request.mock.calls[0]![0]).toMatchObject({ turnId: 4, toolCallId: 'call_bg_detached' });
+      expect(request.mock.calls[0]![1]).toMatchObject({ detached: true });
+
+      await executeTool(tool, { turnId: 4, toolCallId: 'call_fg', args: input(), signal });
+
+      expect(request).toHaveBeenCalledTimes(2);
+      expect(request.mock.calls[1]![1]).not.toMatchObject({ detached: true });
     });
 
     it('settles killed when the background task is aborted', async () => {
