@@ -40,7 +40,18 @@ function makeRefreshHost(initial: KimiConfig): {
     return structuredClone(persisted);
   });
   const setConfig = vi.fn(async (patch: Partial<KimiConfig>) => {
-    persisted = { ...persisted, ...patch };
+    const next = { ...persisted };
+    if (patch.providers !== undefined) {
+      next.providers = { ...persisted.providers, ...patch.providers };
+    }
+    if (patch.models !== undefined) {
+      next.models = { ...persisted.models, ...patch.models };
+    }
+    for (const [key, value] of Object.entries(patch)) {
+      if (key === 'providers' || key === 'models') continue;
+      (next as Record<string, unknown>)[key] = value;
+    }
+    persisted = next;
     return structuredClone(persisted);
   });
   return {

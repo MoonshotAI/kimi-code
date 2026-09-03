@@ -96,7 +96,9 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
   }
 
   notifyConfigChanged(): void {
-    this.cache.clear();
+    for (const id of this.cache.keys()) {
+      if (this.models.get(id) !== undefined) this.cache.delete(id);
+    }
   }
 
   get(id: string): Model {

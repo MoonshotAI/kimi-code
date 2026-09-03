@@ -517,7 +517,7 @@ describe('ModelCatalog caching and config-event invalidation', () => {
     }
   });
 
-  it('drops the cache when a watched config section changes', async () => {
+  it('drops the cache on edits but keeps entries whose model was removed', async () => {
     const { host, catalog, models, providers } = createHost(kimiSections);
     try {
       const before = catalog.get('k1');
@@ -528,6 +528,10 @@ describe('ModelCatalog caching and config-event invalidation', () => {
 
       await providers.set('kimi', { type: 'kimi', apiKey: 'sk-2', baseUrl: 'https://other.example.test/v1' });
       expect(catalog.get('k1').baseUrl).toBe('https://other.example.test/v1');
+
+      const updated = catalog.get('k1');
+      await models.delete('k1');
+      expect(catalog.get('k1')).toBe(updated);
     } finally {
       host.dispose();
     }

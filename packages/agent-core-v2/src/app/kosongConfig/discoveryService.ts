@@ -25,6 +25,7 @@ import { getProviderDefinition } from '#/kosong/provider/providerDefinition';
 
 import {
   DEFAULT_MODEL_SECTION,
+  DEFAULT_PROVIDER_SECTION,
   MODELS_SECTION,
   PROVIDERS_SECTION,
   THINKING_SECTION,
@@ -142,10 +143,11 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
   }
 
   private buildRefreshHost(exclusion: StaticExclusion, userAgent: string): RefreshProviderHost {
+    const pendingRemovals = new Set<string>();
     return {
       getConfig: async () => this.readUserConfigShape(exclusion),
-      removeProvider: (providerId) => this.shapeWithoutProvider(providerId),
-      setConfig: (patch) => this.applyRefreshPatch(patch, exclusion),
+      removeProvider: (providerId) => this.queueProviderRemoval(pendingRemovals, providerId),
+      setConfig: (patch) => this.applyRefreshPatch(patch, pendingRemovals),
       resolveOAuthToken: (providerName, oauthRef) => this.resolveOAuthToken(providerName, oauthRef),
       userAgent,
     };
@@ -173,7 +175,11 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
     };
   }
 
-  private shapeWithoutProvider(providerId: string): Promise<ManagedKimiConfigShape> {
+  private queueProviderRemoval(
+    pendingRemovals: Set<string>,
+    providerId: string,
+  ): Promise<ManagedKimiConfigShape> {
+    pendingRemovals.add(providerId);
     const current = this.readUserConfigShape();
     const providers = current.providers as Record<string, ProviderConfig>;
     const restProviders = Object.fromEntries(
@@ -192,57 +198,54 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
 
   private async applyRefreshPatch(
     patch: ManagedKimiConfigShape,
-    exclusion: StaticExclusion,
+    pendingRemovals: Set<string>,
   ): Promise<ManagedKimiConfigShape> {
-    const userProviders =
+    await this.config.reload();
+    const removals = [...pendingRemovals];
+    pendingRemovals.clear();
+    const removed = new Set(removals);
+    const providers =
       this.config.inspect<Record<string, ProviderConfig>>(PROVIDERS_SECTION).userValue ?? {};
-    const userModels =
+    const models =
       this.config.inspect<Record<string, ModelRecord>>(MODELS_SECTION).userValue ?? {};
     const sections: Record<string, unknown> = {};
-    if (patch.providers !== undefined) {
-      sections[PROVIDERS_SECTION] = {
-        ...exclusion.providers,
-        ...patch.providers,
-      };
+    if (removals.length > 0 || patch.providers !== undefined) {
+      const nextProviders: Record<string, unknown> = Object.fromEntries(
+        Object.entries(providers).filter(([id]) => !removed.has(id)),
+      );
+      if (patch.providers !== undefined) Object.assign(nextProviders, patch.providers);
+      sections[PROVIDERS_SECTION] = nextProviders;
     }
-    if (patch.models !== undefined) {
-      sections[MODELS_SECTION] = {
-        ...exclusion.models,
-        ...(patch.models as Record<string, ModelRecord>),
-      };
+    if (removals.length > 0 || patch.models !== undefined) {
+      const nextModels: Record<string, unknown> = Object.fromEntries(
+        Object.entries(models).filter(
+          ([, record]) => record.provider === undefined || !removed.has(record.provider),
+        ),
+      );
+      if (patch.models !== undefined) Object.assign(nextModels, patch.models);
+      sections[MODELS_SECTION] = nextModels;
     }
-    const restoreDefault = exclusion.defaultModel !== undefined;
     if ('defaultModel' in patch) {
-      sections[DEFAULT_MODEL_SECTION] = restoreDefault
-        ? exclusion.defaultModel
-        : patch.defaultModel;
+      sections[DEFAULT_MODEL_SECTION] = patch.defaultModel;
+    } else if (removals.length > 0) {
+      const defaultModel = this.config.inspect<string>(DEFAULT_MODEL_SECTION).userValue;
+      if (defaultModel !== undefined && removed.has(models[defaultModel]?.provider ?? '')) {
+        sections[DEFAULT_MODEL_SECTION] = undefined;
+      }
     }
     if ('thinking' in patch) {
-      sections[THINKING_SECTION] = restoreDefault ? exclusion.thinking : patch.thinking;
+      sections[THINKING_SECTION] = patch.thinking;
+    }
+    if ('defaultProvider' in patch) {
+      sections[DEFAULT_PROVIDER_SECTION] = patch['defaultProvider'];
+    } else if (removals.length > 0) {
+      const defaultProvider = this.config.inspect<string>(DEFAULT_PROVIDER_SECTION).userValue;
+      if (defaultProvider !== undefined && removed.has(defaultProvider)) {
+        sections[DEFAULT_PROVIDER_SECTION] = undefined;
+      }
     }
     await this.config.replaceSections(sections);
-    return {
-      providers:
-        patch.providers !== undefined
-          ? ({ ...exclusion.providers, ...patch.providers } as ManagedKimiConfigShape['providers'])
-          : (userProviders as ManagedKimiConfigShape['providers']),
-      models:
-        patch.models !== undefined
-          ? ({ ...exclusion.models, ...patch.models } as ManagedKimiConfigShape['models'])
-          : (userModels as ManagedKimiConfigShape['models']),
-      defaultModel:
-        'defaultModel' in patch
-          ? restoreDefault
-            ? exclusion.defaultModel
-            : patch.defaultModel
-          : this.config.inspect<string>(DEFAULT_MODEL_SECTION).userValue,
-      thinking:
-        'thinking' in patch
-          ? restoreDefault
-            ? exclusion.thinking
-            : patch.thinking
-          : this.config.inspect<ManagedKimiConfigShape['thinking']>(THINKING_SECTION).userValue,
-    };
+    return this.readUserConfigShape();
   }
 
   private async resolveOAuthToken(

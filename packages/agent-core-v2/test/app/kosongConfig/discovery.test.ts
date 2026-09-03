@@ -639,69 +639,53 @@ describe('refreshProviderModels defaultModel self-heal', () => {
     }
   });
 
-  it('keeps a default model the user selected while the catalog fetch was in flight', async () => {
-    const twoModels = {
-      'kimi-code/kimi-k2': {
-        provider: KIMI_CODE_PROVIDER_NAME,
-        model: 'kimi-k2',
-        maxContextSize: 131072,
-        capabilities: ['thinking', 'tool_use'],
-        displayName: 'Kimi K2',
-      },
-      'kimi-code/kimi-k3': {
-        provider: KIMI_CODE_PROVIDER_NAME,
-        model: 'kimi-k3',
-        maxContextSize: 131072,
-        capabilities: ['thinking', 'tool_use'],
-        displayName: 'Kimi K3',
-      },
-    };
-    const { host, config, discovery, events } = await createHost(
+  it('keeps user writes that landed while the catalog fetch was in flight', async () => {
+    const { host, config, discovery, models } = await createHost(
       {
         providers: managedProviders,
-        models: twoModels,
+        models: managedModels,
       },
       stubOAuthService(stubTokenProvider(['access-token'])),
     );
     try {
       vi.stubGlobal(
         'fetch',
-        vi.fn(
-          async () => {
-            await config.set('defaultModel', 'kimi-code/kimi-k3');
-            return new Response(
-              JSON.stringify({
-                data: [
-                  {
-                    id: 'kimi-k2',
-                    context_length: 131072,
-                    supports_reasoning: true,
-                    display_name: 'Kimi K2',
-                  },
-                  {
-                    id: 'kimi-k3',
-                    context_length: 131072,
-                    supports_reasoning: true,
-                    display_name: 'Kimi K3',
-                  },
-                ],
-              }),
-              { status: 200, headers: { 'Content-Type': 'application/json' } },
-            );
-          },
-        ),
+        vi.fn(async () => {
+          await config.set('defaultModel', 'kimi-code/kimi-k3');
+          await config.set('models', {
+            'other/keep': { provider: 'other', model: 'keep', maxContextSize: 1000 },
+          });
+          return new Response(
+            JSON.stringify({
+              data: [
+                {
+                  id: 'kimi-k2',
+                  context_length: 131072,
+                  supports_reasoning: true,
+                  display_name: 'Kimi K2',
+                },
+                {
+                  id: 'kimi-k3',
+                  context_length: 131072,
+                  supports_reasoning: true,
+                  display_name: 'Kimi K3',
+                },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          );
+        }),
       );
-      const replaceSections = vi.spyOn(config, 'replaceSections');
       const result = await discovery.refreshProviderModels({ scope: 'all' });
 
-      expect(result).toEqual({
-        changed: [],
-        unchanged: [KIMI_CODE_PROVIDER_NAME],
-        failed: [],
-      });
-      expect(replaceSections).not.toHaveBeenCalled();
-      expect(events.published).toEqual([]);
+      expect(result.failed).toEqual([]);
+      expect(result.changed).toEqual([
+        { provider_id: KIMI_CODE_PROVIDER_NAME, provider_name: 'Kimi Code', added: 1, removed: 0 },
+      ]);
       expect(config.get<string>('defaultModel')).toBe('kimi-code/kimi-k3');
+      const modelRecords = models.list();
+      expect(modelRecords['kimi-code/kimi-k3']).toBeDefined();
+      expect(modelRecords['other/keep']).toBeDefined();
     } finally {
       host.dispose();
     }
