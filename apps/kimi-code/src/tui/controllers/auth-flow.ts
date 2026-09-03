@@ -1,6 +1,5 @@
 import {
   removeProviderFromConfig,
-  type CreateSessionOptions,
   type KimiConfig,
   type KimiHarness,
   type OAuthRef,
@@ -10,8 +9,6 @@ import {
 
 import { createKimiCodeUserAgent } from '#/cli/version';
 
-import type { SkillListSession } from '../commands';
-
 import { OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE } from '../constant/kimi-tui';
 import {
   refreshAllProviderModels,
@@ -20,33 +17,18 @@ import {
   type RefreshResult,
 } from '../utils/refresh-providers';
 import { thinkingEffortFromConfig } from '../utils/thinking-config';
-import type { SessionEventHandler } from './session-event-handler';
 import type { AppState, KimiTUIOptions } from '../types';
-import type { TUIState } from '../tui-state';
-
-type MutableCreateSessionOptions = {
-  -readonly [P in keyof CreateSessionOptions]: CreateSessionOptions[P];
-};
 
 export interface AuthFlowHost {
-  state: TUIState;
   session: Session | undefined;
   readonly harness: KimiHarness;
   readonly options: KimiTUIOptions;
-  readonly engineV2: boolean;
 
   setAppState(patch: Partial<AppState>): void;
   setStartupReady(): void;
   resetSessionRuntime(): void;
-  setSession(session: Session): Promise<void>;
-  syncRuntimeState(session?: Session): Promise<void>;
   appendStartupNotice(extra: string): void;
   hydrateLazyConfigDefaults(): Promise<void>;
-  readonly sessionEventHandler: SessionEventHandler;
-  fetchSessions(): Promise<void>;
-  updateTerminalTitle(): void;
-  refreshSkillCommands(session?: SkillListSession): Promise<void>;
-  refreshPluginCommands(session?: Session): Promise<void>;
 }
 
 export class AuthFlowController {
@@ -79,12 +61,11 @@ export class AuthFlowController {
    * Apply a model pick to the runtime. Returns whether the activation made
    * the engine emit `model_switch` — it reached an already-live session AND
    * changed the bound alias (both engines track the event only on an actual
-   * alias change). `false` when no live session existed (v2 defers creation
-   * to the first prompt; v1 binds the model at creation without an event) or
-   * the alias was already bound, so callers mirroring the engine's telemetry
-   * must stay the producer for exactly those paths. Thinking-effort changes
-   * are orthogonal: the engine's `thinking_toggle` fires from `setThinking`
-   * regardless of this flag.
+   * alias change). `false` when no live session existed (session creation is
+   * deferred to the first prompt) or the alias was already bound, so callers
+   * mirroring the engine's telemetry must stay the producer for exactly
+   * those paths. Thinking-effort changes are orthogonal: the engine's
+   * `thinking_toggle` fires from `setThinking` regardless of this flag.
    */
   async activateModelAfterLogin(model: string, effort?: string): Promise<boolean> {
     const { host } = this;
@@ -98,52 +79,16 @@ export class AuthFlowController {
       return modelChanged;
     }
 
-    if (host.engineV2) {
-      // Lazy session creation (v2 engine): configure the model only; the
-      // session is created on the first message. The effort is carried as the
-      // first session's thinking override so a session-only choice (Alt+S)
-      // made before any session exists is applied on creation.
-      const patch: Partial<AppState> = { model };
-      if (effort !== undefined) {
-        patch.thinkingEffort = effort as ThinkingEffort;
-        patch.lazySessionThinking = effort as ThinkingEffort;
-      }
-      host.setAppState(patch);
-      return false;
+    // Lazy session creation (v2 engine): configure the model only; the
+    // session is created on the first message. The effort is carried as the
+    // first session's thinking override so a session-only choice (Alt+S)
+    // made before any session exists is applied on creation.
+    const patch: Partial<AppState> = { model };
+    if (effort !== undefined) {
+      patch.thinkingEffort = effort as ThinkingEffort;
+      patch.lazySessionThinking = effort as ThinkingEffort;
     }
-
-    const options: MutableCreateSessionOptions = {
-      workDir: host.state.appState.workDir,
-      model,
-      thinking: effort,
-      permission: host.options.startup.auto
-        ? 'auto'
-        : host.options.startup.yolo
-          ? 'yolo'
-          : undefined,
-      planMode: host.state.appState.planMode ? true : undefined,
-      // The post-login session is still the startup session: carry the
-      // --agent/--agent-file binding resolved at launch.
-      agentProfile: host.options.startup.agentProfile,
-      agentFiles: host.options.startup.agentFiles?.length
-        ? [...host.options.startup.agentFiles]
-        : undefined,
-    };
-    if (host.state.appState.additionalDirs.length > 0) {
-      options.additionalDirs = [...host.state.appState.additionalDirs];
-    }
-    const session = await host.harness.createSession(options);
-    await host.setSession(session);
-    host.setAppState({
-      sessionId: session.id,
-      sessionTitle: session.summary?.title ?? null,
-    });
-    await host.syncRuntimeState(session);
-    host.sessionEventHandler.startSubscription();
-    void host.fetchSessions();
-    host.updateTerminalTitle();
-    void host.refreshSkillCommands(host.session);
-    void host.refreshPluginCommands(host.session);
+    host.setAppState(patch);
     return false;
   }
 
@@ -161,7 +106,7 @@ export class AuthFlowController {
     const selected = defaultModel !== undefined ? availableModels[defaultModel] : undefined;
 
     if (defaultModel === undefined || selected === undefined) {
-      if (host.session === undefined && host.engineV2) {
+      if (host.session === undefined) {
         // Session-less v2: hydrate permission/plan defaults even without a
         // default model.
         await host.hydrateLazyConfigDefaults();
@@ -174,7 +119,7 @@ export class AuthFlowController {
       defaultModel,
       thinkingEffortFromConfig(config.thinking),
     );
-    if (host.session === undefined && host.engineV2) {
+    if (host.session === undefined) {
       // Session-less v2: also hydrate permission/plan defaults from the
       // refreshed config, same as startup.
       await host.hydrateLazyConfigDefaults();

@@ -3,14 +3,14 @@ import type {
   ApprovalResponse,
   QuestionRequest,
   QuestionResult,
-} from '@moonshot-ai/agent-core';
+} from '#/interaction';
 
-// Event union plus shared fields/payloads used across event families.
-export type { KimiErrorPayload, Event } from '@moonshot-ai/agent-core';
+export type { KimiErrorPayload } from '#/errors';
 
-export { MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE } from '@moonshot-ai/agent-core';
+export type { Event } from '@moonshot-ai/protocol';
 
-// Session lifecycle/status events and their status payload.
+export { MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE } from '@moonshot-ai/protocol';
+
 export type {
   AgentStatusUpdatedEvent,
   SessionMetaUpdatedEvent,
@@ -20,9 +20,8 @@ export type {
   ErrorEvent,
   WarningEvent,
   UsageStatus,
-} from '@moonshot-ai/agent-core';
+} from '@moonshot-ai/protocol';
 
-// Turn and step lifecycle events plus the turn-ending reason enum.
 export type {
   TurnStartedEvent,
   TurnEndedEvent,
@@ -31,45 +30,37 @@ export type {
   TurnStepRetryingEvent,
   TurnStepInterruptedEvent,
   TurnEndReason,
-} from '@moonshot-ai/agent-core';
+} from '@moonshot-ai/protocol';
 
-// Streaming content and hook-result events.
 export type {
   AssistantDeltaEvent,
   HookResultEvent,
   ThinkingDeltaEvent,
-} from '@moonshot-ai/agent-core';
+} from '@moonshot-ai/protocol';
 
-// Tool-call events and incremental progress payloads.
 export type {
   ToolCallStartedEvent,
   ToolCallDeltaEvent,
   ToolProgressEvent,
   ToolResultEvent,
-  ToolCallRequest,
-  ToolCallResponse,
   ToolUpdate,
   McpOAuthAuthorizationUrlUpdateData,
-} from '@moonshot-ai/agent-core';
+} from '@moonshot-ai/protocol';
 
-// MCP tool-list and server status events.
+export type { ToolCallRequest, ToolCallResponse } from '#/interaction';
+
 export type {
   ToolListUpdatedEvent,
   ToolListUpdatedReason,
   McpServerStatusEvent,
   McpServerStatusPayload,
-} from '@moonshot-ai/agent-core';
+} from '@moonshot-ai/protocol';
 
-// Approval reverse-RPC request and response/display payloads.
-export type {
-  ApprovalRequest,
-  ApprovalDecision,
-  ApprovalScope,
-  ApprovalResponse,
-  ToolInputDisplay,
-} from '@moonshot-ai/agent-core';
+export type { ApprovalRequest, ApprovalScope } from '#/interaction';
+export type { ApprovalDecision, ApprovalResponse } from '#/interaction';
 
-// Question reverse-RPC request and answer payloads.
+export type { ToolInputDisplay } from '@moonshot-ai/protocol';
+
 export type {
   QuestionRequest,
   QuestionItem,
@@ -78,34 +69,30 @@ export type {
   QuestionAnswers,
   QuestionResponse,
   QuestionResult,
-} from '@moonshot-ai/agent-core';
+} from '#/interaction';
 
-// Subagent lifecycle events.
 export type {
   SubagentSpawnedEvent,
   SubagentStartedEvent,
   SubagentSuspendedEvent,
   SubagentCompletedEvent,
   SubagentFailedEvent,
-} from '@moonshot-ai/agent-core';
+} from '@moonshot-ai/protocol';
 
-// Compaction lifecycle events and compaction result payload.
 export type {
   CompactionStartedEvent,
   CompactionBlockedEvent,
   CompactionCancelledEvent,
   CompactionCompletedEvent,
   CompactionResult,
-} from '@moonshot-ai/agent-core';
+} from '@moonshot-ai/protocol';
 
-// Background task lifecycle events emitted by the BPM. Covers both
-// bash (`bash-*`) and agent (`agent-*`) tasks under one wire format.
 export type {
   BackgroundTaskStartedEvent,
   BackgroundTaskTerminatedEvent,
-} from '@moonshot-ai/agent-core';
+} from '@moonshot-ai/protocol';
 
-export type { CronFiredEvent } from '@moonshot-ai/agent-core';
+export type { CronFiredEvent } from '@moonshot-ai/protocol';
 
 export type MaybePromise<T> = T | Promise<T>;
 

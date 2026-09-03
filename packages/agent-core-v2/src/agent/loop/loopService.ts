@@ -877,6 +877,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           name: event.name,
           args: event.args,
           extras,
+          display: event.display,
         });
         return;
       }

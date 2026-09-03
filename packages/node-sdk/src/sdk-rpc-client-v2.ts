@@ -5,12 +5,6 @@
  * memory transport, so every call crosses the same contract validation and
  * JSON round-trip as the networked transports.
  *
- * Migration model: the base class still carries the v1 method surface. Any
- * method not yet overridden here falls through to `getRpc()`, which fails
- * loudly with `not_implemented` — migrated methods are the ones overridden
- * below. Once every method is migrated, the v1 `getRpc()` dependency (and
- * the v1 core) goes away entirely.
- *
  * Migrated so far:
  * - `getExperimentalFeatures` → `klient.global.flags.list()`
  * - `listWorkspaceSkills` → not covered by the klient facade, so it goes
@@ -41,7 +35,7 @@
  *   per-agent snapshot: the live slices are read from the restored agent
  *   scope (profile / permission / swarm services + the klient agent facade),
  *   while `replay` and `toolStore` are folded from each agent's `wire.jsonl`
- *   through the v1 engine's own restore pipeline
+ *   by the engine's `foldWireRecords`
  *   (`src/v2/resume-replay.ts`) — `includeSubagents` and `replayTurnLimit`
  *   included.
  * - `setModel` / `setPermission` / `setPlanMode` / `getPlan` / `clearPlan` /
@@ -137,19 +131,6 @@
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import {
-  ensureConfigFile,
-  ErrorCodes,
-  HookDefSchema,
-  isKimiErrorCode,
-  KimiError,
-  limitAgentReplayByTurns,
-  noopTelemetryClient,
-  type AgentContextData,
-  type BeginGlobalMcpServerAuthResult,
-  type ExperimentalFeatureState,
-  type KimiErrorCode,
-} from '@moonshot-ai/agent-core';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { McpConnectionManager } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
 import { loadMcpServers } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
@@ -249,7 +230,14 @@ import { createKlient } from '@moonshot-ai/klient/memory';
 import { assertKimiHostIdentity, createKimiDefaultHeaders } from '@moonshot-ai/kimi-code-oauth';
 
 import { KimiAuthFacade } from '#/auth';
+import { ensureConfigFile, HookDefSchema } from '#/config/index';
+import type { AgentContextData } from '#/context';
+import { ErrorCodes, isKimiErrorCode, KimiError, type KimiErrorCode } from '#/errors';
+import type { ExperimentalFeatureState } from '#/flag';
 import { KimiHarness } from '#/kimi-harness';
+import type { BeginGlobalMcpServerAuthResult } from '#/mcp';
+import { limitAgentReplayByTurns } from '#/replay';
+import { noopTelemetryClient } from '#/telemetry';
 import {
   SDKRpcClientBase,
   type ActivatePluginCommandRpcInput,
@@ -566,7 +554,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   /**
    * Drop the engine's own `session_started` from telemetry forwarding. Called
-   * by `createKimiHarnessV2` at assembly time: the harness emits that event
+   * by `createKimiHarness` at assembly time: the harness emits that event
    * for every session it opens (create / resume / reload / fork) with the
    * richer client-attribution schema, so the engine's
    * `{resumed, experimental_flags}` copy would double-count every open.
@@ -607,13 +595,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   get engineAccessor(): ServicesAccessor {
     return this.app.accessor;
-  }
-
-  protected getRpc(): Promise<never> {
-    throw new KimiError(
-      ErrorCodes.NOT_IMPLEMENTED,
-      'This SDK method is not wired to agent-core-v2 yet.',
-    );
   }
 
   override async getExperimentalFeatures(): Promise<readonly ExperimentalFeatureState[]> {
@@ -1088,7 +1069,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * agent scope (profile / permission / swarm services and the klient agent
    * facade for context / plan / usage / background tasks), while `replay` and
    * `toolStore` are folded from the agent's `wire.jsonl` by
-   * {@link foldAgentWireReplay} (v2 has no replay builder of its own).
+   * {@link foldAgentWireReplay} over the engine's `foldWireRecords`.
    * `warning` stays undefined — v2's resume has no migration-warning channel.
    */
   private async resumedSessionSummary(
@@ -1424,19 +1405,23 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return this.runSessionAccessAll(
       input.forkId === undefined ? [input.id] : [input.id, input.forkId],
       async () => {
-        const program = await programForSession(this.engineAccessor, input.id);
-        if (program === undefined) throw SDKRpcClientV2.sessionNotFound(input.id);
-        const meta = await this.engineAccessor.get(ISessionManager).fork({
-          sourceSessionId: input.id,
-          newSessionId: input.forkId,
-          title: input.title,
-          metadata: input.metadata,
-          turnIndex: input.turnIndex,
-        });
-        const handle = await resumeSessionById(this.engineAccessor, meta.id);
-        if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(meta.id);
-        this.wireSession(handle);
-        return this.resumedSessionSummary(handle);
+        try {
+          const program = await programForSession(this.engineAccessor, input.id);
+          if (program === undefined) throw SDKRpcClientV2.sessionNotFound(input.id);
+          const meta = await this.engineAccessor.get(ISessionManager).fork({
+            sourceSessionId: input.id,
+            newSessionId: input.forkId,
+            title: input.title,
+            metadata: input.metadata,
+            turnIndex: input.turnIndex,
+          });
+          const handle = await resumeSessionById(this.engineAccessor, meta.id);
+          if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(meta.id);
+          this.wireSession(handle);
+          return await this.resumedSessionSummary(handle);
+        } catch (error) {
+          throw restateEngineError(error);
+        }
       },
     );
   }
@@ -2438,7 +2423,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * The engine's management plane throws `Error2`; the SDK's public error
    * contract is `KimiError` (what `isKimiError` branches on, and what the v1
    * client throws for the same failures). Restate so both engines surface
-   * the identical class — see `restateMcpManagementError`.
+   * the identical class — see `restateEngineError`.
    */
   private async mcpManagement<T>(
     call: (management: IMcpManagementService) => Promise<T>,
@@ -2446,7 +2431,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     try {
       return await call(this.engineAccessor.get(IMcpManagementService));
     } catch (error) {
-      throw restateMcpManagementError(error);
+      throw restateEngineError(error);
     }
   }
 
@@ -2729,12 +2714,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 }
 
-export function createKimiHarnessV2(options: KimiHarnessOptions): KimiHarness {
+export function createKimiHarness(options: KimiHarnessOptions): KimiHarness {
   const rpc = new SDKRpcClientV2(options);
-  // The harness below emits session_started for every session it opens with
-  // the richer client-attribution schema; drop the engine's thinner copy from
-  // forwarding so each open is counted once. Direct SDKRpcClientV2 consumers
-  // keep the engine row.
   rpc.suppressEngineSessionStarted();
   return new KimiHarness(rpc, {
     identity: rpc.identity,
@@ -2745,8 +2726,6 @@ export function createKimiHarnessV2(options: KimiHarnessOptions): KimiHarness {
     telemetry: rpc.telemetry,
     ensureConfigFile: () => rpc.ensureConfigFile(),
     onClose: () => rpc.close(),
-    // v1-core-owned ingestion limits; the v2 engine has no equivalent yet, so
-    // ingestion falls back to env / built-in defaults like daemon-client hosts.
     imageLimits: undefined,
     sessionStartedProperties: options.sessionStartedProperties,
     sessionStartedDynamicProperties: () => ({
@@ -2774,7 +2753,7 @@ function normalizeRequiredWorkDir(operation: string, workDir: string): string {
  * mint a `KimiError` that `toKimiErrorPayload` cannot serialize (its
  * `KIMI_ERROR_INFO` lookup throws on undeclared codes).
  */
-function restateMcpManagementError(error: unknown): unknown {
+function restateEngineError(error: unknown): unknown {
   if (!isError2(error)) return error;
   const code: KimiErrorCode = isKimiErrorCode(error.code) ? error.code : ErrorCodes.INTERNAL;
   return new KimiError(code, error.message, {

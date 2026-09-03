@@ -4,6 +4,7 @@ import type { FinishReason } from '#human/llm/finish-reason';
 import { createToolMessage } from '#/llm-adapter/contract/message';
 import type { ContentPart, ToolCall } from '#human/llm/message';
 import type { TokenUsage } from '#human/llm/usage';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import type { ContextMessage } from './types';
 import { isVacuousContentPart } from './vacuousContent';
@@ -50,6 +51,7 @@ export type LoopRecordedEvent =
       readonly name: string;
       readonly args?: unknown;
       readonly extras?: Record<string, unknown>;
+      readonly display?: ToolInputDisplay;
       readonly uuid?: string;
       readonly turnId?: string;
       readonly step?: number;
@@ -68,7 +70,7 @@ export type LoopRecordedEvent =
 export interface LoopEventFoldSink {
   openAssistant(time: number | undefined): void;
   appendOpenContent(part: ContentPart): void;
-  appendOpenToolCall(call: ToolCall): void;
+  appendOpenToolCall(call: ToolCall, display?: ToolInputDisplay): void;
   dropOpenAssistant(): void;
   sealOpenAssistant(): void;
   pushToolMessage(message: ContextMessage, time: number | undefined): void;
@@ -173,7 +175,7 @@ function createLoopEventFoldWithState(
             arguments: event.args === undefined ? null : JSON.stringify(event.args),
             ...(event.extras !== undefined ? { extras: event.extras } : {}),
           };
-          sink.appendOpenToolCall(call);
+          sink.appendOpenToolCall(call, event.display);
           pending.add(event.toolCallId);
           openHasToolCalls = true;
           return;
@@ -286,8 +288,15 @@ function createImmutableFoldSink(initial: readonly ContextMessage[]): ImmutableF
     appendOpenContent: (part) => {
       updateOpen((message) => ({ ...message, content: [...message.content, part] }));
     },
-    appendOpenToolCall: (call) => {
-      updateOpen((message) => ({ ...message, toolCalls: [...message.toolCalls, call] }));
+    appendOpenToolCall: (call, display) => {
+      updateOpen((message) => ({
+        ...message,
+        toolCalls: [...message.toolCalls, call],
+        toolCallDisplays:
+          display === undefined
+            ? message.toolCallDisplays
+            : { ...message.toolCallDisplays, [call.id]: display },
+      }));
     },
     dropOpenAssistant: () => {
       if (openIndex === -1) return;

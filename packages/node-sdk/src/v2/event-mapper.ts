@@ -14,7 +14,7 @@
  * `IEventService` (`session.meta.updated`) is unwrapped from its
  * `{type, payload}` envelope.
  */
-import type { Event } from '@moonshot-ai/agent-core';
+import type { Event } from '@moonshot-ai/protocol';
 import type { Event2 } from '@moonshot-ai/agent-core-v2';
 
 /**

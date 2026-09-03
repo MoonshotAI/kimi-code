@@ -10,12 +10,14 @@ import type {
 import type { ToolCall } from '#human/llm/message';
 import type { OrderedHookSlot } from '#/hooks';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import type { ToolSource } from '#/tool/toolContract';
 
 export interface ToolCallStartedPayload {
   readonly toolCallId: string;
   readonly name: string;
   readonly args: unknown;
+  readonly display?: ToolInputDisplay;
 }
 
 export interface ToolExecutorExecuteOptions {

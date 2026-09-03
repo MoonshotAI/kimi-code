@@ -63,7 +63,6 @@
       # -------------------------------------------------------------------
       workspacePaths = [
         ./packages/acp-server
-        ./packages/agent-core
         ./packages/agent-core-v2
         ./packages/kap-server
         ./packages/kaos
@@ -89,7 +88,6 @@
 
       workspaceNames = [
         "@moonshot-ai/acp-server"
-        "@moonshot-ai/agent-core"
         "@moonshot-ai/agent-core-v2"
         "@moonshot-ai/kap-server"
         "@moonshot-ai/kaos"
@@ -160,7 +158,7 @@
               inherit (finalAttrs) pname version src pnpmWorkspaces;
               inherit pnpm;
               fetcherVersion = 3;
-              hash = "sha256-y7bnf/mLJ6oDYF6Pcf7Tws5kAzFD7Tkl8AQBYyksaRE=";
+              hash = "sha256-iZs9Fgk5nokW4CQRmNYL3GO+v+MdjT6M7uCqBEu32zg=";
             };
 
             nativeBuildInputs = [

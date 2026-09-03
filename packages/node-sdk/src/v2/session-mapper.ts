@@ -9,7 +9,6 @@
  *   where the v1 `SessionMeta` keeps ISO strings and `workDir`.
  * Everything else is a field rename (`custom` ↔ `metadata`).
  */
-import type { AgentMeta, SessionMeta } from '@moonshot-ai/agent-core';
 import type {
   AgentMeta as V2AgentMeta,
   SessionMeta as V2SessionMeta,
@@ -18,14 +17,13 @@ import type {
 
 import { resolve, win32 } from 'node:path';
 
+import type { AgentMeta, SessionMeta } from '#/replay';
 import type { JsonObject, SessionSummary } from '#/types';
 
 /**
- * Mirror of v1's `normalizeWorkDir` (`agent-core/session/store/workdir-key`):
  * Windows-shaped paths resolve through `win32` and fold to forward slashes,
- * everything else resolves against the process cwd. Duplicated here because
- * the SDK test config aliases `@moonshot-ai/agent-core` to its index, which
- * blocks the deep import — keep it byte-identical to the v1 original.
+ * everything else resolves against the process cwd. Byte-identical with the
+ * legacy v1 `normalizeWorkDir` so stored workdir keys stay stable.
  */
 export function normalizeWorkDir(workDir: string): string {
   if (/^[A-Za-z]:[\\/]/.test(workDir) || /^[\\/]{2}[^\\/]+[\\/][^\\/]+/.test(workDir)) {

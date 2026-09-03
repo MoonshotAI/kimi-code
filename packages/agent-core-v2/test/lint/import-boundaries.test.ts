@@ -6,38 +6,10 @@ const at = (domain: string, file: string): string => `${SRC_ROOT}/${domain}/${fi
 const atHuman = (sub: string, file: string): string => `${SRC_ROOT}/human/${sub}/${file}`;
 const atAdapter = (sub: string, file: string): string => `${SRC_ROOT}/llm-adapter/${sub}/${file}`;
 
-const V1 = ['@moonshot-ai', 'agent-core'].join('/');
 const KOSONG_IMPORT = ['#', 'kosong', 'contract', 'message'].join('/');
 const KOSONG_SELF_IMPORT = ['@moonshot-ai/agent-core-v2', 'kosong', 'contract', 'message'].join('/');
 
 describe('check-import-boundaries', () => {
-  it('flags a direct import of v1 (@moonshot-ai/agent-core)', () => {
-    const violations = checkSource(
-      `import { KimiCore } from '${V1}';`,
-      at('loop', 'loop.ts'),
-    );
-    expect(violations).toHaveLength(1);
-    expect(violations[0]?.message).toMatch(/v2 must not import v1/);
-  });
-
-  it('flags a v1 subpath import', () => {
-    const violations = checkSource(
-      `import { Session } from '${V1}/session';`,
-      at('loop', 'loop.ts'),
-    );
-    expect(violations).toHaveLength(1);
-    expect(violations[0]?.message).toMatch(/v2 must not import v1/);
-  });
-
-  it('flags a v1 import in test code', () => {
-    const violations = checkSource(
-      `import { Session } from '${V1}/session';`,
-      `${SRC_ROOT}/../test/agent/loop/loop.test.ts`,
-    );
-    expect(violations).toHaveLength(1);
-    expect(violations[0]?.message).toMatch(/v2 must not import v1/);
-  });
-
   it('flags a literal #/kosong/ import (the deleted kernel)', () => {
     const violations = checkSource(
       `import { Foo } from '${KOSONG_IMPORT}';`,

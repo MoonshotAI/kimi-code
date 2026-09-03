@@ -402,7 +402,7 @@ async function performModelSwitch(
   persist: boolean,
 ): Promise<void> {
   let session = host.session;
-  if (session === undefined && host.engineV2) {
+  if (session === undefined) {
     // A first prompt may still be inside lazy creation: wait it out so the
     // switch lands on the new session instead of being overwritten by its
     // assembly.
@@ -805,9 +805,6 @@ async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMod
   try {
     if (host.session !== undefined) {
       await host.session.setPermission(mode);
-    } else if (!host.engineV2) {
-      host.showError(NO_ACTIVE_SESSION_MESSAGE);
-      return;
     }
     // v2 session-less: the chosen mode is recorded in appState and passed to
     // the lazy-created session.

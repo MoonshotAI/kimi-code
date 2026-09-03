@@ -12,7 +12,6 @@ const HUMAN_ROOT = join(SRC_ROOT, 'human');
 const ADAPTER_ROOT = join(SRC_ROOT, 'llm-adapter');
 const LOOP_MACHINE_ADAPTER_ROOT = join(SRC_ROOT, 'agent/loop/machine');
 
-const V1_PACKAGE = '@moonshot-ai/agent-core';
 const SELF_PACKAGE_PREFIX = '@moonshot-ai/agent-core-v2/';
 const KOSONG_PATH_RE = /(?:^|\/)kosong(?:\/|$)/;
 
@@ -97,15 +96,6 @@ export function checkSource(source, absFile) {
     const specifier = match[1] ?? match[2];
     if (!specifier) continue;
     const line = source.slice(0, match.index).split('\n').length;
-
-    if (specifier === V1_PACKAGE || specifier.startsWith(`${V1_PACKAGE}/`)) {
-      violations.push({
-        file: absFile,
-        line,
-        message: `v2 must not import v1 (${specifier})`,
-      });
-      continue;
-    }
 
     if (KOSONG_PATH_RE.test(specifier)) {
       violations.push({

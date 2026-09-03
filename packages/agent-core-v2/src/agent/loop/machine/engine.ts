@@ -3,6 +3,7 @@ import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecuto
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { ModelRequestTiming } from '#/llm-adapter/model/model-requester';
 import type { ToolInfo, ToolResult as AgentToolResult, ToolUpdate as AgentToolUpdate } from '#/tool/toolContract';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { createAgentMachine } from '#human/agent/machine';
 import { createTurnMachine, type AssistantEntry, type HistoryMessage } from '#human/agent/turn';
 import type { LlmErrorMessage } from '#human/llm/errors';
@@ -79,6 +80,7 @@ export type MachineEngineEvent =
       readonly toolCallId: string;
       readonly name: string;
       readonly args: unknown;
+      readonly display?: ToolInputDisplay;
     }
   | { readonly type: 'toolUpdate'; readonly toolCallId: string; readonly update: ToolUpdate }
   | { readonly type: 'toolAsync'; readonly toolCallId: string; readonly text: string }
@@ -203,6 +205,7 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
         toolCallId: payload.toolCallId,
         name: payload.name,
         args: payload.args,
+        display: payload.display,
       });
     },
     onToolResult: options.onToolResult,
