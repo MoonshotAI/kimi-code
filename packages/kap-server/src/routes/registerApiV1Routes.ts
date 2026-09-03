@@ -19,6 +19,7 @@ import { registerFileHistoryRoutes } from './fileHistory';
 import { registerFilesRoutes } from './files';
 import { registerFsRoutes } from './fs';
 import { registerGuiStoreRoutes } from './guiStore';
+import { registerHistoryRoutes } from './history';
 import { registerMessagesRoutes } from './messages';
 import type { IGuiStoreService } from '../services/guiStore/guiStore';
 import { registerDebugRoutes } from '../transport/registerDebugRoutes';
@@ -191,6 +192,9 @@ export async function registerApiV1Routes(
       registerTranscriptRoutes(apiV1 as unknown as Parameters<typeof registerTranscriptRoutes>[0], {
         core,
         transcriptService: opts.transcriptService,
+      });
+      registerHistoryRoutes(apiV1 as unknown as Parameters<typeof registerHistoryRoutes>[0], {
+        transcript: opts.transcriptService,
       });
       if (opts.enableShutdown !== false) {
         registerShutdownRoutes(apiV1 as unknown as Parameters<typeof registerShutdownRoutes>[0], {

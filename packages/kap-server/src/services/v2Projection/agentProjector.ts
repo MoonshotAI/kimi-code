@@ -213,7 +213,7 @@ function iso(time: number | undefined): string {
   return new Date(time ?? MAIN_FALLBACK_TIME).toISOString();
 }
 
-function textFromContent(content: unknown): string {
+export function textFromContent(content: unknown): string {
   if (!Array.isArray(content)) return '';
   return content
     .filter((part): part is { type: 'text'; text: string } => {
@@ -224,7 +224,7 @@ function textFromContent(content: unknown): string {
     .join('');
 }
 
-function toTurnOrigin(origin: unknown): TurnOrigin {
+export function toTurnOrigin(origin: unknown): TurnOrigin {
   const o = origin as { kind?: string } | undefined;
   switch (o?.kind) {
     case 'cron_job': {
@@ -252,13 +252,13 @@ function toTurnOrigin(origin: unknown): TurnOrigin {
   }
 }
 
-function toUserOrigin(origin: unknown): UserMessageOrigin | undefined {
+export function toUserOrigin(origin: unknown): UserMessageOrigin | undefined {
   const o = origin as { kind?: string; jobId?: string; cron?: string } | undefined;
   if (o?.kind === 'cron_job') return { kind: 'cron', cron_id: o.jobId ?? '', schedule: o.cron ?? '' };
   return undefined;
 }
 
-function toStepUsage(usage: unknown): StepUsage | undefined {
+export function toStepUsage(usage: unknown): StepUsage | undefined {
   const u = usage as
     | { inputOther?: number; output?: number; inputCacheRead?: number; inputCacheCreation?: number }
     | undefined;
@@ -663,7 +663,6 @@ export class AgentV2Projector {
     if (!step || step.state !== 'running') return;
     this.closeOpenTexts(event.time, out);
     step.state = 'interrupted';
-    step.usage = toStepUsage(event.usage);
     step.endReason = event.reason as string | undefined;
     step.endMessage = event.message as string | undefined;
     out.push(this.stepMessage(step, event.time));
@@ -1168,7 +1167,7 @@ export class AgentV2Projector {
   }
 }
 
-function toTaskKind(kind: string | undefined): TaskMessage['kind'] {
+export function toTaskKind(kind: string | undefined): TaskMessage['kind'] {
   switch (kind) {
     case 'shell': return 'shell';
     case 'agent': return 'subagent';
@@ -1177,12 +1176,12 @@ function toTaskKind(kind: string | undefined): TaskMessage['kind'] {
   }
 }
 
-function todoItemsFromInput(input: unknown): TodoItem[] | undefined {
+export function todoItemsFromInput(input: unknown): TodoItem[] | undefined {
   const i = input as { todos?: unknown; items?: unknown } | undefined;
   return todoItemsFromList(i?.todos ?? i?.items);
 }
 
-function todoItemsFromList(list: unknown): TodoItem[] | undefined {
+export function todoItemsFromList(list: unknown): TodoItem[] | undefined {
   if (!Array.isArray(list)) return undefined;
   const items: TodoItem[] = [];
   for (const entry of list) {

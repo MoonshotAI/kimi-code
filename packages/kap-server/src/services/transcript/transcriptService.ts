@@ -422,8 +422,27 @@ export class TranscriptService {
     this.dispatchOps(sessionId, { agentId, ops });
   }
 
-  async readColdRoster(sessionId: string): Promise<AgentDescriptor[] | undefined> {
+  async readColdWireRecords(sessionId: string, agentId: string = MAIN_AGENT_ID): Promise<ContextRecord[] | undefined> {
     const summary = await this.deps.core.accessor.get(ISessionIndex).get(sessionId);
+    if (summary === undefined) return undefined;
+    const wirePath = join(
+      this.deps.homeDir,
+      SESSIONS_ROOT,
+      summary.workspaceId,
+      sessionId,
+      AGENTS_DIR,
+      agentId,
+      WIRE_FILE,
+    );
+    try {
+      return await readWireRecords(wirePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    }
+  }
+
+  async readColdRoster(sessionId: string): Promise<AgentDescriptor[] | undefined> {    const summary = await this.deps.core.accessor.get(ISessionIndex).get(sessionId);
     if (summary === undefined) return undefined;
     let meta: SessionMeta;
     try {

@@ -6,6 +6,8 @@ import type {
   InteractionResolvedRecord,
   ProjectionEvent,
 } from '../src/services/v2Projection/agentProjector';
+import { registerHistoryRoutes, historyResponseSchema } from '../src/routes/history';
+import { buildColdHistory } from '../src/services/v2Projection/coldHistory';
 import { SessionV2Projector } from '../src/services/v2Projection/sessionProjector';
 import type { SessionFactsPatch } from '../src/services/v2Projection/sessionStateComposer';
 
@@ -651,7 +653,6 @@ describe('v2Projection × 实例对拍', () => {
           turnId: 1,
           step: 0,
           reason: 'aborted by user',
-          usage: { inputOther: 2200, output: 35, inputCacheRead: 6000, inputCacheCreation: 0 },
           time: B + 8610,
         },
       },
@@ -2952,5 +2953,498 @@ describe('v2Projection × 实例对拍', () => {
         ],
       },
     ]);
+  });
+});
+
+interface ColdRec {
+  type: string;
+  time?: number;
+  [key: string]: unknown;
+}
+
+function rec(type: string, fields: Record<string, unknown>, time: number): ColdRec {
+  return { type, ...fields, time };
+}
+
+function loop(event: Record<string, unknown>, time: number): ColdRec {
+  return { type: 'context.append_loop_event', event, time };
+}
+
+function begin(uuid: string, turn: number, step: number, time: number): ColdRec {
+  return loop({ type: 'step.begin', uuid, turnId: String(turn), step }, time);
+}
+
+function end(uuid: string, finishReason: string, usage: unknown, time: number): ColdRec {
+  return loop({ type: 'step.end', uuid, finishReason, usage }, time);
+}
+
+function fail(uuid: string, time: number): ColdRec {
+  return loop({ type: 'step.end', uuid, finishReason: 'error' }, time);
+}
+
+function think(uuid: string, text: string, time: number): ColdRec {
+  return loop({ type: 'content.part', stepUuid: uuid, part: { type: 'think', think: text } }, time);
+}
+
+function say(uuid: string, text: string, time: number): ColdRec {
+  return loop({ type: 'content.part', stepUuid: uuid, part: { type: 'text', text } }, time);
+}
+
+function call(uuid: string, toolCallId: string, name: string, args: unknown, time: number): ColdRec {
+  return loop({ type: 'tool.call', stepUuid: uuid, toolCallId, name, args }, time);
+}
+
+function result(toolCallId: string, output: unknown, time: number, isError?: boolean): ColdRec {
+  return loop({ type: 'tool.result', toolCallId, result: { output, isError } }, time);
+}
+
+function usageOf(inputOther: number, output: number, inputCacheRead = 0): Record<string, number> {
+  return { inputOther, output, inputCacheRead, inputCacheCreation: 0 };
+}
+
+function promptAccepted(promptId: string, createdAt: string, time: number): ColdRec {
+  return rec('prompt.accepted', { promptId, createdAt }, time);
+}
+
+const USER_ORIGIN = { kind: 'user' } as const;
+
+function turnPrompt(promptId: string, text: string, time: number, origin: unknown = USER_ORIGIN): ColdRec {
+  return rec('turn.prompt', { input: [{ type: 'text', text }], origin, promptId }, time);
+}
+
+function promptCompleted(promptId: string, finishedAt: string, time: number): ColdRec {
+  return rec('prompt.completed', { promptId, finishedAt, reason: 'completed' }, time);
+}
+
+function queryFromRequest(request: string): { beforeTurn?: string; afterStep?: string; pageSize?: number } {
+  const url = new URL(request, 'http://localhost');
+  const query: { beforeTurn?: string; afterStep?: string; pageSize?: number } = {};
+  const beforeTurn = url.searchParams.get('before_turn');
+  const afterStep = url.searchParams.get('after_step');
+  const pageSize = url.searchParams.get('page_size');
+  if (beforeTurn) query.beforeTurn = beforeTurn;
+  if (afterStep) query.afterStep = afterStep;
+  if (pageSize) query.pageSize = Number(pageSize);
+  return query;
+}
+
+function expectRestHistory(tabId: string, sectionLabel: string, records: ColdRec[]): void {
+  const tab = FIXTURES.tabs.find((t) => t.id === tabId);
+  if (!tab) throw new Error(`tab ${tabId} not found`);
+  const section = tab.sections.find((s) => s.label === sectionLabel) as
+    | (FixtureTab['sections'][number] & { request?: string })
+    | undefined;
+  if (!section?.request) throw new Error(`REST section ${sectionLabel} not found in ${tabId}`);
+  const responses = section.items.map((it) => JSON.parse(it.json) as Record<string, unknown>);
+  const sessionId = (responses[0] as { session_id?: string }).session_id ?? 's_01';
+  const page = buildColdHistory(sessionId, 'main', records, queryFromRequest(section.request));
+  for (const msg of page.items) parseServerMessage(msg);
+  expect(page).toEqual(responses[0]);
+  const secondNote = section.items[1]?.note;
+  if (responses[1] !== undefined && secondNote) {
+    const match = /GET\s+(\/\S+)/.exec(secondNote);
+    if (!match) throw new Error(`no request line in note of ${tabId}/${sectionLabel}#1`);
+    const page2 = buildColdHistory(sessionId, 'main', records, queryFromRequest(match[1]!));
+    for (const msg of page2.items) parseServerMessage(msg);
+    expect(page2).toEqual(responses[1]);
+  }
+}
+
+describe('v2Projection × REST 历史冷重建', () => {
+  it('basic REST 历史', () => {
+    const B = Date.parse('2026-09-03T10:00:00.000Z');
+    expectRestHistory('basic', 'REST 历史', [
+      promptAccepted('p_01', '2026-09-03T10:00:00.000Z', B + 10),
+      turnPrompt('p_01', '你好', B + 12),
+      begin('s1', 0, 0, B + 20),
+      think('s1', '用户在打招呼，', B + 450),
+      think('s1', '简短回应即可。', B + 700),
+      say('s1', '你好！', B + 1050),
+      say('s1', '有什么可以帮你的？', B + 1300),
+      end('s1', 'end_turn', usageOf(1820, 24), B + 1395),
+      rec('turn.ended', { turnId: 0, reason: 'completed', durationMs: 1483 }, B + 1495),
+      promptCompleted('p_01', '2026-09-03T10:00:01.500Z', B + 1500),
+    ]);
+  });
+
+  it('tool REST 历史', () => {
+    const B = Date.parse('2026-09-03T11:00:00.000Z');
+    expectRestHistory('tool', 'REST 历史', [
+      promptAccepted('p_01', '2026-09-03T11:00:00.000Z', B + 10),
+      turnPrompt('p_01', '执行一下 ls', B + 12),
+      begin('s1', 0, 0, B + 20),
+      think('s1', '用户想看当前目录内容，用 Bash 执行 ls。', B + 600),
+      say('s1', '好的，执行 `ls`：', B + 800),
+      call('s1', 'call_01', 'Bash', { command: 'ls' }, B + 1150),
+      result('call_01', { stdout: 'apps\ndocs\npackages\npnpm-workspace.yaml\n', exit_code: 0 }, B + 1600),
+      end('s1', 'tool_use', usageOf(2100, 96), B + 1695),
+      begin('s2', 0, 1, B + 1895),
+      say('s2', '当前目录下有 4 个条目：', B + 2250),
+      say('s2', '`apps`、`docs`、`packages` 和 `pnpm-workspace.yaml`。', B + 2500),
+      end('s2', 'end_turn', usageOf(2240, 58), B + 2595),
+      rec('turn.ended', { turnId: 0, reason: 'completed', durationMs: 2683 }, B + 2695),
+      promptCompleted('p_01', '2026-09-03T11:00:02.700Z', B + 2700),
+    ]);
+  });
+
+  it('multi-tool REST 历史', () => {
+    const B = Date.parse('2026-09-03T12:00:00.000Z');
+    expectRestHistory('multi-tool', 'REST 历史', [
+      promptAccepted('p_01', '2026-09-03T12:00:00.000Z', B + 10),
+      turnPrompt('p_01', '写一个 hello.py 打印当前时间，加个 shebang，然后跑一下', B + 12),
+      begin('s1', 0, 0, B + 20),
+      think('s1', '先 Write 创建脚本，再 Edit 加 shebang，最后 Bash 运行。', B + 600),
+      say('s1', '我来创建 `hello.py`：', B + 800),
+      call('s1', 'call_01', 'Write', { path: 'hello.py', content: 'from datetime import datetime\nprint(datetime.now())\n' }, B + 1100),
+      result('call_01', { bytes_written: 52 }, B + 1400),
+      end('s1', 'tool_use', usageOf(2400, 130), B + 1495),
+      begin('s2', 0, 1, B + 1695),
+      say('s2', '补上 shebang：', B + 2000),
+      call('s2', 'call_02', 'Edit', { path: 'hello.py', old: 'from datetime import datetime', new: '#!/usr/bin/env python3\nfrom datetime import datetime' }, B + 2200),
+      result('call_02', { applied: true }, B + 2400),
+      end('s2', 'tool_use', usageOf(2580, 74), B + 2495),
+      begin('s3', 0, 2, B + 2695),
+      say('s3', '跑一下验证：', B + 2900),
+      call('s3', 'call_03', 'Bash', { command: 'python3 hello.py' }, B + 3100),
+      result('call_03', { stdout: '2026-09-03 12:00:03.587201\n', exit_code: 0 }, B + 3600),
+      end('s3', 'tool_use', usageOf(2720, 66), B + 3695),
+      begin('s4', 0, 3, B + 3895),
+      say('s4', '完成。`hello.py` 已创建并加上 shebang，', B + 4100),
+      say('s4', '运行输出当前时间，一切正常。', B + 4200),
+      end('s4', 'end_turn', usageOf(2830, 62), B + 4295),
+      rec('turn.ended', { turnId: 0, reason: 'completed', durationMs: 4383 }, B + 4395),
+      promptCompleted('p_01', '2026-09-03T12:00:04.400Z', B + 4400),
+    ]);
+  });
+
+  it('todo REST 历史', () => {
+    const B = Date.parse('2026-09-03T12:00:00.000Z');
+    const todos1 = [
+      { title: '查看登录页代码，定位白屏原因', status: 'in_progress' },
+      { title: '修复崩溃', status: 'pending' },
+      { title: '跑测试验证', status: 'pending' },
+    ];
+    const todos2 = [
+      { title: '查看登录页代码，定位白屏原因', status: 'done' },
+      { title: '修复崩溃', status: 'in_progress' },
+      { title: '跑测试验证', status: 'pending' },
+    ];
+    const todos3 = [
+      { title: '查看登录页代码，定位白屏原因', status: 'done' },
+      { title: '修复崩溃', status: 'done' },
+      { title: '跑测试验证', status: 'in_progress' },
+    ];
+    const todos4 = [
+      { title: '查看登录页代码，定位白屏原因', status: 'done' },
+      { title: '修复崩溃', status: 'done' },
+      { title: '跑测试验证', status: 'done' },
+    ];
+    expectRestHistory('todo', 'REST 历史', [
+      promptAccepted('p_01', '2026-09-03T12:00:00.000Z', B + 10),
+      turnPrompt('p_01', '登录页点登录直接白屏，修一下', B + 12),
+      begin('s1', 0, 0, B + 20),
+      think('s1', '白屏一般是运行时错误。分三步：', B + 450),
+      think('s1', '定位、修复、验证。', B + 700),
+      say('s1', '我分三步处理：', B + 1200),
+      call('s1', 'call_01', 'TodoWrite', { items: todos1 }, B + 1300),
+      result('call_01', { updated: true }, B + 1350),
+      call('s1', 'call_02', 'Read', { path: 'apps/web/src/views/LoginView.vue' }, B + 1500),
+      result('call_02', { content: '<template>…（文件内容）…</template>', lines: 214 }, B + 2200),
+      call('s1', 'call_03', 'TodoWrite', { items: todos2 }, B + 2300),
+      result('call_03', { updated: true }, B + 2350),
+      call('s1', 'call_04', 'Edit', { path: 'apps/web/src/views/LoginView.vue', old: 'const token = user.token;', new: 'const token = user?.token;' }, B + 2500),
+      result('call_04', { applied: true }, B + 3000),
+      end('s1', 'tool_use', usageOf(2900, 78, 10000), B + 3095),
+      begin('s2', 0, 1, B + 3145),
+      call('s2', 'call_05', 'TodoWrite', { items: todos3 }, B + 3300),
+      result('call_05', { updated: true }, B + 3350),
+      call('s2', 'call_06', 'Bash', { command: 'pnpm test -- login' }, B + 3500),
+      result('call_06', { stdout: 'Test Files  1 passed (1)\n     Tests  6 passed (6)\n', exit_code: 0 }, B + 5500),
+      call('s2', 'call_07', 'TodoWrite', { items: todos4 }, B + 5600),
+      result('call_07', { updated: true }, B + 5650),
+      say('s2', '修好了：`handleLogin` 在 `user` 为空时直接读 `token` 导致白屏，', B + 6000),
+      say('s2', '已加可选链判空；登录相关 6 个测试全部通过。', B + 6500),
+      end('s2', 'end_turn', usageOf(2600, 84, 9500), B + 6595),
+      rec('turn.ended', { turnId: 0, reason: 'completed', durationMs: 6683 }, B + 6695),
+      promptCompleted('p_01', '2026-09-03T12:00:06.695Z', B + 6695),
+    ]);
+  });
+
+  it('queue-abort REST 历史', () => {
+    const B = Date.parse('2026-09-03T11:00:00.000Z');
+    expectRestHistory('queue-abort', 'REST 历史', [
+      promptAccepted('p_01', '2026-09-03T11:00:00.000Z', B + 10),
+      turnPrompt('p_01', '跑一下测试套件', B + 12),
+      begin('s1', 0, 0, B + 20),
+      think('s1', '测试命令免审批，直接跑。', B + 700),
+      say('s1', '我来跑测试：', B + 1200),
+      call('s1', 'call_01', 'Bash', { command: 'pnpm test' }, B + 1500),
+      result('call_01', { stdout: 'Test Files  1 failed | 3 passed (4)\n     Tests  2 failed | 18 passed (20)\n', exit_code: 1 }, B + 6000),
+      end('s1', 'tool_use', usageOf(2600, 60, 9000), B + 6095),
+      begin('s2', 0, 1, B + 6145),
+      say('s2', '测试跑完了：18 通过、2 失败。', B + 6700),
+      end('s2', 'end_turn', usageOf(2800, 40, 11000), B + 6795),
+      rec('turn.ended', { turnId: 0, reason: 'completed', durationMs: 6883 }, B + 6895),
+      promptCompleted('p_01', '2026-09-03T11:00:06.895Z', B + 6895),
+      promptAccepted('p_02', '2026-09-03T11:00:04.000Z', B + 4010),
+      turnPrompt('p_02', '把失败的用例列出来', B + 6928),
+      begin('s3', 1, 0, B + 6948),
+      think('s3', '从刚才的输出里挑失败用例即可，', B + 7250),
+      think('s3', '不用重跑。', B + 7550),
+      say('s3', '失败的两个用例都在 `auth` 目录下：', B + 7900),
+      say('s3', '`login.spec.ts` 的「过期 token 应跳转登录页」、', B + 8600),
+      rec('turn.step.interrupted', { turnId: 1, step: 0, reason: 'aborted by user' }, B + 8605),
+      rec('turn.ended', { turnId: 1, reason: 'cancelled' }, B + 8615),
+      promptCompleted('p_02', '2026-09-03T11:00:08.615Z', B + 8615),
+      rec('prompt.aborted', { promptId: 'p_02', abortedAt: '2026-09-03T11:00:08.640Z' }, B + 8640),
+    ]);
+  });
+
+  it('question REST 历史', () => {
+    const B = Date.parse('2026-09-03T14:00:00.000Z');
+    expectRestHistory('question', 'REST 历史', [
+      promptAccepted('p_01', '2026-09-03T14:00:00.000Z', B + 10),
+      turnPrompt('p_01', '把 README 的安装命令更新成 pnpm', B + 12),
+      begin('s1', 0, 0, B + 20),
+      think('s1', '安装命令在快速开始和开发者文档各有一处。', B + 450),
+      think('s1', '范围不明，先问用户。', B + 700),
+      say('s1', 'README 里有两处安装命令，先确认范围：', B + 1200),
+      rec('interaction.request', {
+        id: 'q_01',
+        kind: 'question',
+        request: {
+          questions: [
+            { id: 'q1', question: 'README 里有两处安装命令（快速开始、开发者文档），要都更新吗？', options: ['两处都改', '只改快速开始'] },
+          ],
+        },
+      }, B + 1500),
+      rec('interaction.resolved', { id: 'q_01', response: { answers: { q1: '两处都改' } } }, B + 5100),
+      call('s1', 'call_01', 'Edit', { path: 'README.md', old: 'npm install && npm run dev', new: 'pnpm install && pnpm dev' }, B + 5300),
+      result('call_01', { applied: true }, B + 5800),
+      end('s1', 'tool_use', usageOf(2300, 48, 7600), B + 5895),
+      begin('s2', 0, 1, B + 5945),
+      call('s2', 'call_02', 'Edit', { path: 'README.md', old: 'npm run build && npm start', new: 'pnpm build && pnpm start' }, B + 6100),
+      result('call_02', { applied: true }, B + 6500),
+      say('s2', '两处都改好了：快速开始和开发者文档的安装命令已更新为 `pnpm` 版。', B + 7100),
+      end('s2', 'end_turn', usageOf(2500, 62, 8800), B + 7195),
+      rec('turn.ended', { turnId: 0, reason: 'completed', durationMs: 7283 }, B + 7295),
+      promptCompleted('p_01', '2026-09-03T14:00:07.295Z', B + 7295),
+    ]);
+  });
+
+  it('tool-error REST 历史', () => {
+    const B = Date.parse('2026-09-03T15:00:00.000Z');
+    expectRestHistory('tool-error', 'REST 历史', [
+      promptAccepted('p_01', '2026-09-03T15:00:00.000Z', B + 10),
+      turnPrompt('p_01', '把配置里的超时时间改成 30 秒', B + 12),
+      begin('s1', 0, 0, B + 20),
+      think('s1', '超时配置在 config/server.toml，直接 Edit。', B + 700),
+      say('s1', '我来改超时配置：', B + 1200),
+      call('s1', 'call_01', 'Edit', { path: 'config/server.toml', old: 'timeout = 10', new: 'timeout = 30' }, B + 1500),
+      result('call_01', 'old_string 在文件中未找到', B + 1900, true),
+      end('s1', 'tool_use', usageOf(2300, 46, 7200), B + 1995),
+      begin('s2', 0, 1, B + 2045),
+      say('s2', '没匹配上，我先看下文件实际内容：', B + 2600),
+      call('s2', 'call_02', 'Read', { path: 'config/server.toml' }, B + 2800),
+      result('call_02', { content: '[server]\nrequest_timeout = 10\n…', lines: 18 }, B + 3200),
+      call('s2', 'call_03', 'Edit', { path: 'config/server.toml', old: 'request_timeout = 10', new: 'request_timeout = 30' }, B + 3400),
+      result('call_03', { applied: true }, B + 3800),
+      say('s2', '改好了：超时配置项是 `request_timeout`（不是 `timeout`），已从 10 改为 30。', B + 4400),
+      end('s2', 'end_turn', usageOf(2800, 82, 10400), B + 4495),
+      rec('turn.ended', { turnId: 0, reason: 'completed', durationMs: 4583 }, B + 4595),
+      promptCompleted('p_01', '2026-09-03T15:00:04.595Z', B + 4595),
+    ]);
+  });
+
+  it('llm-retry REST 历史', () => {
+    const B = Date.parse('2026-09-03T15:30:00.000Z');
+    expectRestHistory('llm-retry', 'REST 历史', [
+      promptAccepted('p_01', '2026-09-03T15:30:00.000Z', B + 10),
+      turnPrompt('p_01', '总结一下这个项目的目录结构', B + 12),
+      begin('s1', 0, 0, B + 20),
+      fail('s1', B + 500),
+      begin('s2', 0, 0, B + 2950),
+      think('s2', '先列顶层目录，', B + 2950),
+      think('s2', '再按功能分组说明。', B + 3300),
+      say('s2', '项目分四块：`apps/` 三个端（desktop、web、auth-login）、', B + 3700),
+      say('s2', '`packages/` 八个共享包、`scripts/` 构建发布脚本、`docs/` 设计文档。', B + 4100),
+      end('s2', 'end_turn', usageOf(2400, 62, 8600), B + 4195),
+      rec('turn.ended', { turnId: 0, reason: 'completed', durationMs: 4283 }, B + 4295),
+      promptCompleted('p_01', '2026-09-03T15:30:04.295Z', B + 4295),
+    ]);
+  });
+
+  it('background-task REST 历史', () => {
+    const B = Date.parse('2026-09-03T16:00:00.000Z');
+    expectRestHistory('background-task', 'REST 历史', [
+      promptAccepted('p_01', '2026-09-03T16:00:00.000Z', B + 10),
+      turnPrompt('p_01', '跑一下完整构建', B + 12),
+      begin('s1', 0, 0, B + 20),
+      think('s1', '完整构建要几分钟，先跑起来，太久就转后台。', B + 700),
+      say('s1', '我来跑完整构建：', B + 1200),
+      call('s1', 'call_01', 'Bash', { command: 'pnpm build' }, B + 1500),
+      rec('task.started', { info: { taskId: 'task_01', kind: 'shell', status: 'running', description: 'pnpm build', detached: true } }, B + 1500),
+      result('call_01', { detached: true, task_id: 'task_01' }, B + 4010),
+      end('s1', 'tool_use', usageOf(2500, 58, 9200), B + 4095),
+      begin('s2', 0, 1, B + 4145),
+      say('s2', '构建量比较大，已转后台跑（task_01），完成后我告诉你。', B + 4700),
+      end('s2', 'end_turn', usageOf(2700, 66, 10100), B + 4795),
+      rec('turn.ended', { turnId: 0, reason: 'completed', durationMs: 4883 }, B + 4895),
+      promptCompleted('p_01', '2026-09-03T16:00:04.895Z', B + 4895),
+      rec('task.terminated', {
+        info: { taskId: 'task_01', kind: 'shell', status: 'completed', description: 'pnpm build', resultSummary: '构建成功：8 个包全部编译通过', endedAt: '2026-09-03T16:07:58.495Z' },
+        outputTail: '… build finished successfully in 7m 56s …',
+      }, B + 478500),
+      rec('turn.prompt', { input: [{ type: 'text', text: '后台构建完成' }], origin: { kind: 'task', taskId: 'task_01' }, promptId: 'p_02' }, B + 478598),
+      begin('s3', 1, 0, B + 478618),
+      say('s3', '构建完成了：8 个包全部编译通过，产物在各自的 `dist/`。', B + 479200),
+      end('s3', 'end_turn', usageOf(2900, 44, 12000), B + 479295),
+      rec('turn.ended', { turnId: 1, reason: 'completed', durationMs: 797 }, B + 479395),
+    ]);
+  });
+
+  it('compaction REST 历史', () => {
+    const B = Date.parse('2026-09-03T16:30:00.000Z');
+    const records: ColdRec[] = [];
+    for (let i = 0; i < 8; i++) {
+      records.push(
+        rec('turn.prompt', { input: [{ type: 'text', text: `第 ${i + 1} 轮讨论` }], origin: { kind: 'user' }, promptId: `old_${i}` }, B - 20000 + i * 1000),
+        rec('turn.ended', { turnId: i, reason: 'completed', durationMs: 900 }, B - 19500 + i * 1000),
+      );
+    }
+    records.push(
+      promptAccepted('p_01', '2026-09-03T16:30:00.000Z', B + 10),
+      turnPrompt('p_01', '接着上面的讨论，把新页面的路由也加上', B + 12),
+      rec('context.apply_compaction', { summary: '前 8 轮讨论摘要', compactedCount: 40, tokensBefore: 241000, tokensAfter: 62000 }, B + 100),
+      begin('s1', 8, 0, B + 118),
+      think('s1', '路由集中在 router 配置文件，加一条即可。', B + 800),
+      say('s1', '我来加路由：', B + 1300),
+      call('s1', 'call_01', 'Edit', {
+        path: 'apps/web/src/router.ts',
+        old: "  { path: '/login', component: LoginView },",
+        new: "  { path: '/login', component: LoginView },\n  { path: '/new-page', component: NewPageView },",
+      }, B + 1500),
+      result('call_01', { applied: true }, B + 1900),
+      say('s1', '加好了：`/new-page` 路由已注册到 `router.ts`。', B + 2500),
+      end('s1', 'end_turn', usageOf(3100, 72, 9600), B + 2595),
+      rec('turn.ended', { turnId: 8, reason: 'completed', durationMs: 2683 }, B + 2695),
+      promptCompleted('p_01', '2026-09-03T16:30:02.695Z', B + 2695),
+    );
+    expectRestHistory('compaction', 'REST 历史', records);
+  });
+
+  it('undo REST 历史', () => {
+    const B = Date.parse('2026-09-03T18:10:00.000Z');
+    expectRestHistory('undo', 'REST 历史', [
+      promptAccepted('p_01', '2026-09-03T18:10:00.000Z', B + 10),
+      turnPrompt('p_01', '把配置里的超时改成 30 秒', B + 12),
+      begin('s1', 0, 0, B + 20),
+      think('s1', '超时配置在 config/server.toml，直接 Edit。', B + 700),
+      say('s1', '我来改超时配置：', B + 1200),
+      call('s1', 'call_01', 'Edit', { path: 'config/server.toml', old: 'request_timeout = 10', new: 'request_timeout = 30' }, B + 1500),
+      result('call_01', { applied: true }, B + 1800),
+      say('s1', '改好了：`request_timeout` 已从 10 改为 30。', B + 4400),
+      end('s1', 'end_turn', usageOf(5100, 128, 17600), B + 4495),
+      rec('turn.ended', { turnId: 0, reason: 'completed', durationMs: 4583 }, B + 4595),
+      promptCompleted('p_01', '2026-09-03T18:10:04.595Z', B + 4595),
+      rec('context.undo', { count: 1 }, B + 4990),
+      rec('context.undone', { turns: 1, fromTurnId: 0 }, B + 5000),
+    ]);
+  });
+
+  it('approval REST 历史（A）', () => {
+    const B = Date.parse('2026-09-03T10:00:00.000Z');
+    expectRestHistory('approval', 'REST 历史（A）', [
+      promptAccepted('p_01', '2026-09-03T10:00:00.000Z', B + 10),
+      turnPrompt('p_01', '把登录页崩溃的复现脚本跑一下', B + 12),
+      begin('s1', 0, 0, B + 20),
+      think('s1', '复现脚本在 `scripts/` 下，node 执行需要审批。', B + 700),
+      say('s1', '我来跑一下复现脚本：', B + 1200),
+      call('s1', 'call_01', 'Bash', { command: 'node scripts/repro-login-crash.mjs' }, B + 1500),
+      rec('interaction.request', {
+        id: 'ap_01',
+        kind: 'approval',
+        toolCallId: 'call_01',
+        request: { tool_name: 'Bash', input: { command: 'node scripts/repro-login-crash.mjs' }, reason: '运行脚本需要执行权限' },
+      }, B + 1510),
+      rec('interaction.resolved', { id: 'ap_01', response: { decision: 'approved' } }, B + 5100),
+      result('call_01', { stdout: "TypeError: Cannot read properties of undefined (reading 'token')\n    at handleLogin (LoginView.vue:87)\n", exit_code: 1 }, B + 6200),
+      end('s1', 'tool_use', usageOf(2400, 52, 8000), B + 6295),
+      begin('s2', 0, 1, B + 6345),
+      say('s2', '复现成功，报错和浏览器里看到的一致：`handleLogin` 读取了 undefined 的 `token` 字段（`LoginView.vue:87`）。', B + 7100),
+      end('s2', 'end_turn', usageOf(3100, 88, 12800), B + 7195),
+      rec('turn.ended', { turnId: 0, reason: 'completed', durationMs: 7283 }, B + 7295),
+      promptCompleted('p_01', '2026-09-03T10:00:07.295Z', B + 7295),
+    ]);
+  });
+
+  it('recovery REST 历史与补尾巴', () => {
+    const T1 = Date.parse('2026-09-03T10:30:00.000Z');
+    const T2 = Date.parse('2026-09-03T11:00:00.000Z');
+    const records: ColdRec[] = [
+      promptAccepted('p_01', '2026-09-03T10:30:00.000Z', T1 + 10),
+      turnPrompt('p_01', '这个 CLI 的入口文件是哪个？', T1 + 12),
+      begin('s1', 0, 0, T1 + 20),
+      think('s1', '入口是 src/cli.ts，顺带说明参数解析与子命令分发。', T1 + 800),
+      say('s1', '入口是 `src/cli.ts`：全局参数在这里解析，再分发到 `build`、`dev`、`test` 三个子命令。', T1 + 1400),
+      end('s1', 'end_turn', usageOf(2400, 58), T1 + 1495),
+      rec('turn.ended', { turnId: 0, reason: 'completed', durationMs: 1603 }, T1 + 1615),
+      promptCompleted('p_01', '2026-09-03T10:30:01.615Z', T1 + 1615),
+      promptAccepted('p_02', '2026-09-03T11:00:00.000Z', T2 + 10),
+      turnPrompt('p_02', '我想给 CLI 加一个全局 `--verbose` 选项，加在哪里比较合适？', T2 + 12),
+      begin('s2', 1, 0, T2 + 20),
+      think('s2', '先读入口文件的参数解析部分，再给方案建议。', T2 + 700),
+      say('s2', '我看一下 `src/cli.ts` 的参数解析实现：', T2 + 1200),
+      call('s2', 'call_01', 'Read', { path: 'src/cli.ts' }, T2 + 1500),
+      result('call_01', { content: '…（文件内容，含 parseArgs 实现）…', lines: 86 }, T2 + 1900),
+      end('s2', 'tool_use', usageOf(2800, 64, 8000), T2 + 1995),
+      begin('s3', 1, 1, T2 + 2050),
+      say('s3', '建议加在 `parseArgs` 的全局区，', T2 + 2300),
+    ];
+    expectRestHistory('recovery', 'A · 刷新：REST 历史', records);
+    expectRestHistory('recovery', 'B · 重连：REST 补尾巴', records);
+  });
+
+  it('history 路由：注册、响应包络、schema 校验与 404', async () => {
+    const B = Date.parse('2026-09-03T10:00:00.000Z');
+    const records: ColdRec[] = [
+      promptAccepted('p_01', '2026-09-03T10:00:00.000Z', B + 10),
+      turnPrompt('p_01', '你好', B + 12),
+      begin('s1', 0, 0, B + 20),
+      think('s1', '用户在打招呼，', B + 450),
+      think('s1', '简短回应即可。', B + 700),
+      say('s1', '你好！', B + 1050),
+      say('s1', '有什么可以帮你的？', B + 1300),
+      end('s1', 'end_turn', usageOf(1820, 24), B + 1395),
+      rec('turn.ended', { turnId: 0, reason: 'completed', durationMs: 1483 }, B + 1495),
+      promptCompleted('p_01', '2026-09-03T10:00:01.500Z', B + 1500),
+    ];
+    const captureHost = () => {
+      const captured: { path?: string; handler?: (req: unknown, reply: unknown) => Promise<void> } = {};
+      const app = {
+        get(path: string, _options: unknown, handler: (req: unknown, reply: unknown) => Promise<void>) {
+          captured.path = path;
+          captured.handler = handler;
+        },
+      };
+      return { app: app as Parameters<typeof registerHistoryRoutes>[0], captured };
+    };
+    const { app, captured } = captureHost();
+    registerHistoryRoutes(app, { transcript: { readColdWireRecords: async () => records } });
+    expect(captured.path).toBe('/sessions/:session_id/history');
+    const handler = captured.handler!;
+    const reply = { payload: undefined as unknown, send(p: unknown) { this.payload = p; return p; } };
+    await handler({ id: 'req_01', params: { session_id: 's_01' }, query: { page_size: 50 } }, reply);
+    const tab = FIXTURES.tabs.find((t) => t.id === 'basic')!;
+    const restSection = tab.sections.find((s) => s.label === 'REST 历史')!;
+    const expected = JSON.parse(restSection.items[0]!.json) as Record<string, unknown>;
+    expect(reply.payload).toEqual({ code: 0, msg: 'success', data: expected, request_id: 'req_01' });
+    expect(historyResponseSchema.parse((reply.payload as { data: unknown }).data)).toEqual(expected);
+
+    const { app: app404, captured: captured404 } = captureHost();
+    registerHistoryRoutes(app404, { transcript: { readColdWireRecords: async () => undefined } });
+    const reply404 = { payload: undefined as unknown, send(p: unknown) { this.payload = p; return p; } };
+    await captured404.handler!({ id: 'req_02', params: { session_id: 's_xx' }, query: {} }, reply404);
+    expect(reply404.payload).toMatchObject({ code: 40401, data: null, request_id: 'req_02' });
   });
 });
