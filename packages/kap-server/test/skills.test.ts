@@ -10,7 +10,7 @@ import {
   activateSkillResultSchema,
   listSkillsResponseSchema,
 } from '../src/protocol/rest-skill';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -37,13 +37,13 @@ describe('server-v2 /api/v1 skills', () => {
   let home: string | undefined;
   let base: string;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-skills-'));
     server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
     base = `http://127.0.0.1:${server.port}`;
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -402,7 +402,7 @@ describe('server-v2 /api/v1 skills', () => {
       expect(body.code).toBe(40415);
 
       const sessionTree = await readdir(join(home as string, 'sessions'), { recursive: true });
-      expect(sessionTree.filter((entry) => entry.includes('attachments'))).toEqual([]);
+      expect(sessionTree.filter((entry) => entry.includes(id) && entry.includes('attachments'))).toEqual([]);
     });
   });
 

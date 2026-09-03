@@ -22,6 +22,7 @@
     "build": "tsdown",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
+    "test:bench": "vitest run --config vitest.bench.config.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {

@@ -4,10 +4,11 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
 import {
   IAgentLifecycleService,
+  IConfigService,
   MAIN_AGENT_ID,
   getLiveSessionById,
   resumeSessionById,
@@ -242,21 +243,28 @@ describe('transcript contract e2e', () => {
   let llm: MockLlm | undefined;
   let base: string;
 
+  beforeAll(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-transcript-contract-'));
+    server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
+    base = `http://127.0.0.1:${server.port}`;
+  });
+
   afterEach(async () => {
     await llm?.close();
+    llm = undefined;
+  });
+
+  afterAll(async () => {
     await server?.close();
+    server = undefined;
     if (home !== undefined) await rm(home, { recursive: true, force: true });
     home = undefined;
-    server = undefined;
-    llm = undefined;
   });
 
   async function boot(routes: readonly LlmRoute[]): Promise<void> {
     llm = await startMockLlm(routes);
-    home = await mkdtemp(join(tmpdir(), 'kimi-transcript-contract-'));
-    await writeFile(join(home, 'config.toml'), configToml(llm.port), 'utf-8');
-    server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
-    base = `http://127.0.0.1:${server.port}`;
+    await writeFile(join(home!, 'config.toml'), configToml(llm.port), 'utf-8');
+    await server!.core.accessor.get(IConfigService).reload();
   }
 
   const idle = (server: RunningServer, base: string, sid: string) =>

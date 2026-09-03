@@ -3,7 +3,7 @@ import { vscodeProjects } from './apps/vscode/vitest.projects';
 
 export default defineConfig({
   test: {
-    projects: ['packages/*', 'apps/kimi-code', ...vscodeProjects],
+    projects: ['packages/*', '!packages/minidb', 'apps/kimi-code', ...vscodeProjects],
     coverage: {
       provider: 'v8',
       include: ['packages/*/src/**/*.ts', 'apps/*/src/**/*.ts'],

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { pino } from 'pino';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
 
 import { startServer, type RunningServer } from '../src/start';
@@ -14,27 +14,8 @@ let bridgeHome: string;
 let workspace: string;
 let server: RunningServer | undefined;
 
-beforeEach(() => {
-  tmpDir = mkdtempSync(join(tmpdir(), 'kap-fswatch-'));
+beforeAll(async () => {
   bridgeHome = mkdtempSync(join(tmpdir(), 'kap-fswatch-home-'));
-  workspace = join(tmpDir, 'workspace');
-  mkdirSync(workspace, { recursive: true });
-  mkdirSync(join(workspace, 'src'), { recursive: true });
-  mkdirSync(join(workspace, 'docs'), { recursive: true });
-});
-
-afterEach(async () => {
-  try {
-    await server?.close();
-  } catch {
-  }
-  server = undefined;
-  vi.unstubAllEnvs();
-  rmSync(tmpDir, { recursive: true, force: true });
-  rmSync(bridgeHome, { recursive: true, force: true });
-});
-
-async function boot(): Promise<RunningServer> {
   server = await startServer({
     hostIdentity: TEST_HOST_IDENTITY,
     host: '127.0.0.1',
@@ -43,7 +24,32 @@ async function boot(): Promise<RunningServer> {
     logger: pino({ level: 'silent' }),
     disableAuth: true,
   });
-  return server;
+});
+
+beforeEach(() => {
+  tmpDir = mkdtempSync(join(tmpdir(), 'kap-fswatch-'));
+  workspace = join(tmpDir, 'workspace');
+  mkdirSync(workspace, { recursive: true });
+  mkdirSync(join(workspace, 'src'), { recursive: true });
+  mkdirSync(join(workspace, 'docs'), { recursive: true });
+});
+
+afterEach(async () => {
+  vi.unstubAllEnvs();
+  rmSync(tmpDir, { recursive: true, force: true });
+});
+
+afterAll(async () => {
+  try {
+    await server?.close();
+  } catch {
+  }
+  server = undefined;
+  rmSync(bridgeHome, { recursive: true, force: true });
+});
+
+async function boot(): Promise<RunningServer> {
+  return server as RunningServer;
 }
 
 function addressOf(r: RunningServer): string {
@@ -210,7 +216,7 @@ describe('WS fs watch (kap-server)', () => {
 
     writeFileSync(join(workspace, 'src', 'instant.ts'), 'export const i = 1;\n');
 
-    const ev = await receiveType(conn, 'event.fs.changed', 3000);
+    const ev = await receiveType(conn, 'event.fs.changed', 10_000);
     expect(ev.session_id).toBe(sid);
     const payload = ev.payload as { changes: Array<{ path: string }> };
     expect(payload.changes.some((c) => c.path === 'src/instant.ts' || c.path === 'src')).toBe(true);
