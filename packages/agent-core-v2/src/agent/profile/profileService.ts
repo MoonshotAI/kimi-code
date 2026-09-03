@@ -58,6 +58,8 @@ import type {
   ProfileServiceOptions,
   ProfileSetModelResult,
   ProfileUpdateData,
+  SessionModelOverrideKind,
+  SessionModelOverrides,
 } from './profile';
 import {
   COMPACTION_TRIGGER_RATIO_MAX,
@@ -145,6 +147,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   private compactionTriggerRatioOverride: number | undefined;
   private compactionTokenBudgetOverride: number | undefined;
+  private sessionModelOverrides: SessionModelOverrides = {};
 
   private frozenSkillListing: string | undefined;
   private frozenPluginSections: string | undefined;
@@ -432,6 +435,23 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   getEffectiveCompactionTokenBudget(): number | undefined {
     const loopControl = this.config.get<LoopControl>('loopControl');
     return this.compactionTokenBudgetOverride ?? (loopControl as { compactionTokenBudget?: number } | undefined)?.compactionTokenBudget;
+  }
+
+  setSessionModelOverride(kind: SessionModelOverrideKind, alias: string | undefined): void {
+    if (alias === undefined) {
+      const { [kind]: _removed, ...rest } = this.sessionModelOverrides;
+      this.sessionModelOverrides = rest;
+    } else {
+      this.sessionModelOverrides = { ...this.sessionModelOverrides, [kind]: alias };
+    }
+  }
+
+  getSessionModelOverride(kind: SessionModelOverrideKind): string | undefined {
+    return this.sessionModelOverrides[kind];
+  }
+
+  getAllSessionModelOverrides(): SessionModelOverrides {
+    return this.sessionModelOverrides;
   }
 
   private assertThinkingEffortSupported(

@@ -446,3 +446,51 @@ describe('AgentProfileService.setCompactionTokenBudget telemetry (U11)', () => {
     expect(matching.length).toBe(0);
   });
 });
+
+describe('AgentProfileService session model overrides', () => {
+  const overrideKinds = [
+    'visual',
+    'compaction',
+    'compactionSecondary',
+    'fallback',
+    'fallbackSecondary',
+    'substitute',
+    'secondary',
+  ] as const;
+
+  it('starts with no overrides', () => {
+    expect(svc.getAllSessionModelOverrides()).toEqual({});
+    for (const kind of overrideKinds) {
+      expect(svc.getSessionModelOverride(kind)).toBeUndefined();
+    }
+  });
+
+  it('stores and returns each override by kind', () => {
+    for (const kind of overrideKinds) {
+      svc.setSessionModelOverride(kind, `model-for-${kind}`);
+      expect(svc.getSessionModelOverride(kind)).toBe(`model-for-${kind}`);
+    }
+    const all = svc.getAllSessionModelOverrides();
+    for (const kind of overrideKinds) {
+      expect(all[kind as keyof typeof all]).toBe(`model-for-${kind}`);
+    }
+  });
+
+  it('clears an override when set to undefined', () => {
+    svc.setSessionModelOverride('visual', 'visual-a');
+    expect(svc.getSessionModelOverride('visual')).toBe('visual-a');
+    svc.setSessionModelOverride('visual', undefined);
+    expect(svc.getSessionModelOverride('visual')).toBeUndefined();
+    expect(svc.getAllSessionModelOverrides()).toEqual({});
+  });
+
+  it('overrides of different kinds are independent', () => {
+    svc.setSessionModelOverride('compaction', 'compact-a');
+    svc.setSessionModelOverride('compactionSecondary', 'compact-secondary-a');
+    expect(svc.getSessionModelOverride('compaction')).toBe('compact-a');
+    expect(svc.getSessionModelOverride('compactionSecondary')).toBe('compact-secondary-a');
+    svc.setSessionModelOverride('compaction', undefined);
+    expect(svc.getSessionModelOverride('compaction')).toBeUndefined();
+    expect(svc.getSessionModelOverride('compactionSecondary')).toBe('compact-secondary-a');
+  });
+});

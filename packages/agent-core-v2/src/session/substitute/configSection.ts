@@ -61,7 +61,11 @@ export function resolveSubstituteModel(
 export function resolveSubstituteModelAlias(
   config: IConfigService,
   flags: IFlagService,
+  overrides?: { substituteAlias?: string },
 ): string | undefined {
+  if (overrides?.substituteAlias !== undefined) {
+    return overrides.substituteAlias;
+  }
   return resolveSubstituteModel(config, flags)?.defaultModel;
 }
 

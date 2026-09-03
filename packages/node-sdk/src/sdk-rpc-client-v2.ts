@@ -244,7 +244,9 @@ import {
   type ServicesAccessor,
   type SessionSummary as V2SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
+import type { SessionModelOverrides } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import type { AgentHandle, Klient } from '@moonshot-ai/klient';
+import type { SessionModelOverrideKind } from '@moonshot-ai/klient/core/facade/agent';
 import { createKlient } from '@moonshot-ai/klient/memory';
 import { assertKimiHostIdentity, createKimiDefaultHeaders } from '@moonshot-ai/kimi-code-oauth';
 
@@ -264,6 +266,8 @@ import {
   type SessionPromptWithSkillsRpcInput,
   type SetSessionModelRpcInput,
   type SetSessionModelRpcResult,
+  type SetSessionModelOverrideRpcInput,
+  type GetSessionModelOverrideRpcInput,
   type SetSessionCompactionTriggerRatioRpcInput,
   type SetSessionCompactionTokenBudgetRpcInput,
   type SetSessionPermissionRpcInput,
@@ -1714,6 +1718,21 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async setModel(input: SetSessionModelRpcInput): Promise<SetSessionModelRpcResult> {
     const agent = await this.agentFacade(input.sessionId);
     return agent.setModel(input.model);
+  }
+
+  override async setSessionModelOverride(input: SetSessionModelOverrideRpcInput): Promise<void> {
+    const agent = await this.agentFacade(input.sessionId);
+    agent.setSessionModelOverride(input.kind as SessionModelOverrideKind, input.alias);
+  }
+
+  override async getSessionModelOverride(input: GetSessionModelOverrideRpcInput): Promise<string | undefined> {
+    const agent = await this.agentFacade(input.sessionId);
+    return agent.getSessionModelOverride(input.kind as SessionModelOverrideKind);
+  }
+
+  override async getAllSessionModelOverrides(input: SessionIdRpcInput): Promise<SessionModelOverrides> {
+    const agent = await this.agentFacade(input.sessionId);
+    return agent.getAllSessionModelOverrides();
   }
 
   /**

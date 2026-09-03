@@ -23,7 +23,11 @@ export interface CompactionBinding {
 export function resolveCompactionModel(
   config: IConfigService,
   flags: IFlagService,
+  overrides?: { compactionAlias?: string },
 ): CompactionModelConfig | undefined {
+  if (overrides?.compactionAlias !== undefined) {
+    return { model: overrides.compactionAlias } as CompactionModelConfig;
+  }
   if (!flags.enabled(COMPACTION_MODEL_FLAG_ID)) return undefined;
   return config.get<CompactionModelConfig | undefined>(COMPACTION_MODEL_SECTION);
 }
@@ -31,7 +35,11 @@ export function resolveCompactionModel(
 export function resolveCompactionSecondaryModel(
   config: IConfigService,
   flags: IFlagService,
+  overrides?: { compactionSecondaryAlias?: string },
 ): string | undefined {
+  if (overrides?.compactionSecondaryAlias !== undefined) {
+    return overrides.compactionSecondaryAlias;
+  }
   return resolveCompactionModel(config, flags)?.secondaryModel;
 }
 
@@ -39,7 +47,15 @@ export function resolveCompactionBinding(
   config: IConfigService,
   flags: IFlagService,
   own: { modelAlias: string; thinkingLevel: string },
+  overrides?: { compactionAlias?: string },
 ): CompactionBinding {
+  const overrideAlias = overrides?.compactionAlias;
+  if (overrideAlias !== undefined) {
+    return {
+      model: overrideAlias,
+      displayModel: compactionDisplayModel(config, overrideAlias),
+    };
+  }
   const compaction = resolveCompactionModel(config, flags);
   const pointer = compaction?.model ?? compaction?.defaultModel;
   if (compaction !== undefined && pointer !== undefined) {
@@ -64,8 +80,9 @@ export function compactionModelBindingFor(
   config: IConfigService,
   flags: IFlagService,
   own: { modelAlias: string; thinkingLevel: string },
+  overrides?: { compactionAlias?: string },
 ): CompactionBinding {
-  return resolveCompactionBinding(config, flags, own);
+  return resolveCompactionBinding(config, flags, own, overrides);
 }
 
 export function compactionDisplayModel(config: IConfigService, boundAlias: string): string {

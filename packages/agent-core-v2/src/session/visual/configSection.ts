@@ -33,7 +33,15 @@ export function resolveVisualBinding(
   flags: IFlagService,
   own: { modelAlias: string; thinkingLevel: string },
   requested?: VisualModelChoice,
+  overrides?: { visualAlias?: string },
 ): { model: string; thinking?: string; displayModel: string } {
+  const overrideAlias = overrides?.visualAlias;
+  if (overrideAlias !== undefined) {
+    return {
+      model: overrideAlias,
+      displayModel: visualDisplayModel(config, overrideAlias),
+    };
+  }
   const visual = resolveVisualModel(config, flags);
   const pointer = visual?.model ?? visual?.defaultModel;
   if (requested !== 'primary' && visual !== undefined && pointer !== undefined) {

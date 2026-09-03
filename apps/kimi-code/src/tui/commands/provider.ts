@@ -32,7 +32,7 @@ import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model
 import { DEFAULT_OAUTH_PROVIDER_NAME } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import { thinkingEffortToConfig } from '../utils/thinking-config';
-import { effectiveModelForHost } from './config';
+import { effectiveModelForHost, performModelSwitch } from './config';
 import {
   promptApiKey,
   promptBaseUrl,
@@ -444,6 +444,10 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
         host.showError(`Set default model failed: ${formatErrorMessage(error)}`);
       });
     },
+    onSessionOnlySelect: ({ alias, thinking }) => {
+      host.restoreEditor();
+      void performModelSwitch(host, alias, thinking, false);
+    },
     onCancel: () => {
       host.restoreEditor();
     },
@@ -550,6 +554,10 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
       void setDefaultModel(host, alias, thinking).catch((error: unknown) => {
         host.showError(`Set default model failed: ${formatErrorMessage(error)}`);
       });
+    },
+    onSessionOnlySelect: ({ alias, thinking }) => {
+      host.restoreEditor();
+      void performModelSwitch(host, alias, thinking, false);
     },
     onCancel: () => {
       host.restoreEditor();
