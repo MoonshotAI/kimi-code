@@ -180,10 +180,12 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
         this.log.warn('session index mirror giving up until the next record; reconciliation will heal', {
           pending: this.pendingMap.size,
         });
-        this.telemetry.track2('session_index_mirror_give_up', {
-          pending_count: this.pendingMap.size,
-          consecutive_failures: this.consecutiveFailures,
-        });
+        if (this.consecutiveFailures === MAX_CONSECUTIVE_FAILURES) {
+          this.telemetry.track2('session_index_mirror_give_up', {
+            pending_count: this.pendingMap.size,
+            consecutive_failures: this.consecutiveFailures,
+          });
+        }
       }
     }
   }
