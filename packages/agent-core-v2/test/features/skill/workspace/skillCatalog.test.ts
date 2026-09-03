@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 import { join } from 'pathe';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { createScopedChildHandle } from '#/_base/di/scope';
@@ -17,12 +17,6 @@ import { IPluginService } from '#/app/plugin/plugin';
 import { PluginService } from '#/app/plugin/pluginService';
 import type { PluginReloadEvent } from '#/app/plugin/types';
 import { IProviderService } from '#/llm-adapter/provider/provider';
-import {
-  IHostFsWatchService,
-  type HostFsChange,
-  type HostFsWatchOptions,
-  type IHostFsWatchHandle,
-} from '#/os/interface/hostFsWatch';
 import { IAppStateService } from '#/app/state/appState';
 import { AppStateService } from '#/app/state/appStateService';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
@@ -52,13 +46,38 @@ import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
 import { FileSkillDiscovery } from '#/features/skill/catalog/fileSkillDiscovery';
 import type { SkillRoot } from '#/features/skill/catalog/types';
 import { ILogService } from '#/_base/log/log';
-import { HostFsWatchService } from '#/os/backends/node-local/hostFsWatchService';
+import type { WatchChange, WatchOptions } from '#human/utils/watch';
 
 import { stubBootstrap } from '../../../app/bootstrap/stubs';
 import { stubFlag } from '../../../app/flag/stubs';
 import { stubSkill } from '../catalog/stubs';
 import { stubProviderService } from '../../../app/provider/stubs';
 import { stubLog } from '../../../_base/log/stubs';
+
+const watchMockState = vi.hoisted(() => ({
+  mode: 'inert' as 'inert' | 'real',
+  calls: [] as { path: string; options?: WatchOptions }[],
+  factory: undefined as undefined | ((path: string, options?: WatchOptions) => unknown),
+}));
+
+vi.mock('#human/utils/watch', async (importOriginal) => {
+  const original = await importOriginal<typeof import('#human/utils/watch')>();
+  return {
+    ...original,
+    watch: (path: string, options?: WatchOptions) => {
+      watchMockState.calls.push({ path, options });
+      if (watchMockState.factory !== undefined) {
+        return watchMockState.factory(path, options) as ReturnType<typeof original.watch>;
+      }
+      if (watchMockState.mode === 'real') return original.watch(path, options);
+      return {
+        ready: Promise.resolve(),
+        onDidChange: () => ({ dispose: () => {} }),
+        dispose: () => {},
+      };
+    },
+  };
+});
 
 const bootstrapStub = stubBootstrap('/home');
 
@@ -148,22 +167,6 @@ function workspaceContextStub(workDir: string): IWorkspaceContext {
   };
 }
 
-function fsWatchStub(
-  onWatch?: (options: HostFsWatchOptions | undefined) => void,
-): IHostFsWatchService {
-  return {
-    _serviceBrand: undefined,
-    watch: (_path, options): IHostFsWatchHandle => {
-      onWatch?.(options);
-      return {
-        ready: Promise.resolve(),
-        onDidChange: Event.None as Event<HostFsChange>,
-        dispose: () => {},
-      };
-    },
-  };
-}
-
 function makeHost(
   store: ISkillDiscovery,
   ws: IWorkspaceContext,
@@ -178,7 +181,6 @@ function makeHost(
     stubPair(IBootstrapService, stubBootstrap('/home', {}, { skillDirs: explicitDirs })),
     stubPair(IConfigService, config),
     stubPair(IPluginService, pluginStub(pluginRoots, pluginReloadEmitter)),
-    stubPair(IHostFsWatchService, fsWatchStub()),
   ]);
   const workspaceHandle = createScopedChildHandle(host.app.instantiation, 'program', 'w1', {
     seeds: [stubPair(IWorkspaceContext, ws)],
@@ -230,6 +232,9 @@ async function withSkillCatalogWorkspace(
 
 describe('WorkspaceSkillCatalogService', () => {
   beforeEach(() => {
+    watchMockState.mode = 'inert';
+    watchMockState.calls = [];
+    watchMockState.factory = undefined;
     _clearScopedRegistryForTests();
     registerScopedService(LifecycleScope.App, IBuiltinSkillSource, BuiltinSkillSource);
     registerScopedService(LifecycleScope.App, IUserFileSkillSource, UserFileSkillSource);
@@ -393,7 +398,6 @@ describe('WorkspaceSkillCatalogService', () => {
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, config),
       stubPair(IPluginService, pluginStub()),
-      stubPair(IHostFsWatchService, fsWatchStub()),
     ]);
     const workspace = host.child('program', 'w1', [stubPair(IWorkspaceContext, ws)]);
 
@@ -430,7 +434,6 @@ describe('WorkspaceSkillCatalogService', () => {
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, config),
       stubPair(IPluginService, pluginStub()),
-      stubPair(IHostFsWatchService, fsWatchStub()),
     ]);
     const workspace = host.child('program', 'w1', [stubPair(IWorkspaceContext, ws)]);
 
@@ -650,7 +653,6 @@ describe('WorkspaceSkillCatalogService', () => {
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, configStub()),
       stubPair(IPluginService, pluginStub()),
-      stubPair(IHostFsWatchService, fsWatchStub()),
     ]);
     const workspace = host.child('program', 'w1', [
       stubPair(IWorkspaceContext, ws),
@@ -708,7 +710,6 @@ describe('WorkspaceSkillCatalogService', () => {
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, configStub()),
       stubPair(IPluginService, pluginService),
-      stubPair(IHostFsWatchService, fsWatchStub()),
     ]);
     const workspace = host.child('program', 'w1', [
       stubPair(IWorkspaceContext, ws),
@@ -768,7 +769,6 @@ describe('WorkspaceSkillCatalogService', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(IConfigService, configStub()),
       stubPair(IProviderService, stubProviderService()),
-      stubPair(IHostFsWatchService, fsWatchStub()),
     ]);
     const ws = workspaceContextStub('/work');
     const workspace = host.child('program', 'w1', [
@@ -829,8 +829,8 @@ describe('WorkspaceSkillCatalogService', () => {
     const replacementReady = deferred<void>();
     const replacementStarted = deferred<void>();
 
-    class TestWatchHandle implements IHostFsWatchHandle {
-      readonly changes = new Emitter<HostFsChange>();
+    class TestWatchHandle {
+      readonly changes = new Emitter<WatchChange>();
       readonly onDidChange = this.changes.event;
       disposed = false;
 
@@ -843,16 +843,13 @@ describe('WorkspaceSkillCatalogService', () => {
     }
 
     const handles: TestWatchHandle[] = [];
-    const watchService: IHostFsWatchService = {
-      _serviceBrand: undefined,
-      watch: () => {
-        const handle = new TestWatchHandle(
-          handles.length === 0 ? Promise.resolve() : replacementReady.promise,
-        );
-        handles.push(handle);
-        if (handles.length === 2) replacementStarted.resolve(undefined);
-        return handle;
-      },
+    watchMockState.factory = () => {
+      const handle = new TestWatchHandle(
+        handles.length === 0 ? Promise.resolve() : replacementReady.promise,
+      );
+      handles.push(handle);
+      if (handles.length === 2) replacementStarted.resolve(undefined);
+      return handle;
     };
     let scans = 0;
     const discovery: ISkillDiscovery = {
@@ -879,7 +876,6 @@ describe('WorkspaceSkillCatalogService', () => {
       stubPair(ISkillDiscovery, discovery),
       stubPair(IBootstrapService, bootstrapStub),
       stubPair(IConfigService, configStub()),
-      stubPair(IHostFsWatchService, watchService),
     ]);
     const workspace = host.child('program', 'w1', [
       stubPair(IWorkspaceContext, workspaceContextStub(workDir)),
@@ -910,6 +906,7 @@ describe('WorkspaceSkillCatalogService', () => {
   });
 
   it('rescans the workspace-root source when a project skill file changes on disk', async () => {
+    watchMockState.mode = 'real';
     const workDir = await mkdtemp(join(tmpdir(), 'skill-watch-'));
     const host = createScopedTestHost([
       stubPair(IFlagService, stubFlag(true)),
@@ -918,7 +915,6 @@ describe('WorkspaceSkillCatalogService', () => {
       stubPair(IPluginService, pluginStub()),
       stubPair(ILogService, stubLog()),
       stubPair(ISkillDiscovery, new FileSkillDiscovery(stubLog())),
-      stubPair(IHostFsWatchService, new HostFsWatchService()),
     ]);
     const workspace = host.child('program', 'w1', [
       stubPair(IWorkspaceContext, workspaceContextStub(workDir)),
@@ -966,7 +962,6 @@ describe('WorkspaceSkillCatalogService', () => {
     await writeFile(runtimeFile, 'x', 'utf8');
     const watchedSkillDir = await realpath(skillDir);
     const watchedRuntimeFile = await realpath(runtimeFile);
-    let ignored: ((path: string) => boolean) | undefined;
     const host = createScopedTestHost([
       stubPair(IFlagService, stubFlag(true)),
       stubPair(IBootstrapService, bootstrapStub),
@@ -974,12 +969,6 @@ describe('WorkspaceSkillCatalogService', () => {
       stubPair(IPluginService, pluginStub()),
       stubPair(ILogService, stubLog()),
       stubPair(ISkillDiscovery, new FileSkillDiscovery(stubLog())),
-      stubPair(
-        IHostFsWatchService,
-        fsWatchStub((options) => {
-          ignored = options?.ignored;
-        }),
-      ),
     ]);
     const workspace = host.child('program', 'w1', [
       stubPair(IWorkspaceContext, workspaceContextStub(workDir)),
@@ -989,6 +978,7 @@ describe('WorkspaceSkillCatalogService', () => {
       const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
       await catalog.load();
 
+      const ignored = watchMockState.calls.at(-1)?.options?.ignored;
       expect(ignored?.(join(watchedSkillDir, 'SKILL.md'))).toBe(false);
       expect(ignored?.(watchedRuntimeFile)).toBe(true);
     } finally {
@@ -1062,6 +1052,7 @@ describe('WorkspaceSkillCatalogService', () => {
   });
 
   it('rescans when a skill under a dot directory appears on disk', async () => {
+    watchMockState.mode = 'real';
     const workDir = await mkdtemp(join(tmpdir(), 'skill-watch-dot-'));
     const host = createScopedTestHost([
       stubPair(IFlagService, stubFlag(true)),
@@ -1070,7 +1061,6 @@ describe('WorkspaceSkillCatalogService', () => {
       stubPair(IPluginService, pluginStub()),
       stubPair(ILogService, stubLog()),
       stubPair(ISkillDiscovery, new FileSkillDiscovery(stubLog())),
-      stubPair(IHostFsWatchService, new HostFsWatchService()),
     ]);
     const workspace = host.child('program', 'w1', [
       stubPair(IWorkspaceContext, workspaceContextStub(workDir)),

@@ -26,6 +26,7 @@ const HUMAN_VOCABULARY = new Set([
   'llm/requester/requester',
   'llm/toolCallIdNormalizer',
   'llm-kimi/trait',
+  'utils/watch',
 ]);
 
 const V2_ONLY_FIRST_SEGMENTS = new Set([

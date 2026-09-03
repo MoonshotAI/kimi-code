@@ -282,7 +282,6 @@ describe('AgentLifecycleService', () => {
         [...atomicDocs.keys()]
           .filter((key) => key.startsWith(`${scope}/${prefix}`))
           .map((key) => key.slice(scope.length + 1)),
-      watch: () => Event.None as Event<void>,
       acquire: () => ({ dispose: () => {} }),
     };
     ix.stub(IAtomicDocumentStore, atomicDocsStore);

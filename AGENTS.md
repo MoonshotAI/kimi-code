@@ -55,6 +55,7 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
   - YES: `interface Options { user?: User }`
   - NO: `interface Options { user?: User | undefined }`
 - Internal methods with only a single parameter should not be turned into options objects just for stylistic uniformity.
+- Split functions only along abstraction levels: each function reads as one level of narrative (Step-down Rule), and a wrapper that adds no new abstraction level — especially one with a single call site — is inlined instead of extracted.
 - Except for a package's `index.ts`, other `index.ts` files should prefer `export * from './module';`.
 - Do not add too many new test files. Prefer adding tests to the existing test file of the corresponding component or module.
 - When a test fails because of a user modification, default to fixing the test first; do not change the implementation to satisfy an old test unless the implementation truly has a bug.

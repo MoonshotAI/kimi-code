@@ -59,7 +59,6 @@ import {
 import { extractWsBearerToken } from './transport/ws/bearerProtocol';
 import { SessionEventBroadcaster } from './transport/ws/v1/sessionEventBroadcaster';
 import type { ConfigWarningItem } from './transport/ws/v1/events';
-import { FsWatchBridge } from './transport/ws/v1/fsWatchBridge';
 import { registerWsV1, WS_PATH as WS_PATH_V1 } from './transport/ws/v1/registerWsV1';
 import { getServerVersion } from './version';
 import { classify } from './security/bindClassify';
@@ -310,7 +309,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       await drainSessionMetadataWrites();
       await core.accessor.get(ISessionIndexMirror).drain();
       await core.accessor.get(IMcpOAuthService).shutdown();
-      fsWatchBridge.dispose();
       const appendLogStore = core.accessor.get(IAppendLogStore);
       core.dispose();
       await appendLogStore.drainRetirements();
@@ -338,7 +336,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     logger,
     transcriptService,
   });
-  const fsWatchBridge = new FsWatchBridge({ core, logger });
 
   const configService = core.accessor.get(IConfigService);
   const publishConfigWarnings = (diagnostics: readonly ConfigDiagnostic[]): void => {
@@ -450,7 +447,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     validateCredential,
     registry: connectionRegistry,
     broadcaster,
-    fsWatchBridge,
     logger,
   });
 

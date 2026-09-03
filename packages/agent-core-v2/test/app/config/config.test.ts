@@ -24,7 +24,6 @@ import { createDecorator, type ProvideHandle } from '#/_base/di/instantiation';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
 import { TestInstantiationService } from '#/_base/di/test';
-import { Event } from '#/_base/event';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import {
   type ConfigSchema,
@@ -2794,16 +2793,10 @@ describe('ConfigService replaceSections', () => {
 });
 
 describe('ConfigService persistence guards', () => {
-  class SilentStorage extends InMemoryStorageService {
-    override watch(): Event<void> {
-      return Event.None as Event<void>;
-    }
-  }
-
   async function createGuardedConfig(toml: string, env: NodeJS.ProcessEnv = {}) {
     const disposables = new DisposableStore();
     const ix = disposables.add(new TestInstantiationService());
-    const storage = new SilentStorage();
+    const storage = new InMemoryStorageService();
     await storage.write('', 'config.toml', new TextEncoder().encode(toml));
     ix.stub(ILogService, stubLog());
     ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg-guards', env));

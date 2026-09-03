@@ -148,7 +148,6 @@ import {
   IAgentPermissionModeService,
   IAgentPermissionRulesService,
   IHostFileSystem,
-  IHostFsWatchService,
   IHostProcessService,
   ISessionBtwService,
   ISessionContext,
@@ -1310,7 +1309,6 @@ export class AgentTestContext {
               this.root.accessor.get(IHostEnvironment),
               this.root.accessor.get(IHostFileSystem),
               this.root.accessor.get(IHostProcessService),
-              this.root.accessor.get(IHostFsWatchService),
               this.root.accessor.get(IHostTerminalService),
             );
             reg.defineInstance<IAgentRuntimeService>(IAgentRuntimeService, {

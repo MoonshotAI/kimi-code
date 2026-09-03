@@ -2365,7 +2365,6 @@ Clients send JSON frames `{ "type", "id"?, "payload" }`; every request frame get
 | `unsubscribe` | `{ session_ids }` | Drop session subscriptions |
 | `subscribe_v2` | `{ session_id, transcript, transcript_since? }` | Subscribe to transcript streams (the only transcript channel); `transcript` sets per-agent grades |
 | `unsubscribe_v2` | `{ session_id, agent_ids? }` | Detach transcript streams; omitting `agent_ids` means the whole session |
-| `watch_fs_add` / `watch_fs_remove` | `{ session_id, paths, recursive? }` | Subscribe to / unsubscribe from file-change notifications (`event.fs.changed`) |
 | `client_hello` | `{ client_id }` | Handshake frame; the remaining fields are legacy compatibility |
 
 ### Events

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 
+import { join, normalize } from 'pathe';
 import { parse as parseToml } from 'smol-toml';
 
 import { type CollectionView } from '#/_base/di/collection';
@@ -7,10 +8,12 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
+import { TimeoutTimer } from '#/_base/utils/timer';
 import { BugIndicatingError, Error2, ErrorCodes, onUnexpectedError } from '#/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ILogService } from '#/_base/log/log';
 import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { watch } from '#human/utils/watch';
 
 import {
   type AnyEnvBindings,
@@ -52,6 +55,7 @@ import {
 import { planConfigWriteback } from './tomlWriteback';
 
 const CONFIG_SCOPE = '';
+const WATCH_DEBOUNCE_MS = 150;
 
 type GetEnv = (name: string) => string | undefined;
 
@@ -301,6 +305,7 @@ export class ConfigService extends Disposable implements IConfigService {
   readonly ready: Promise<void>;
 
   private stateChain: Promise<unknown> = Promise.resolve();
+  private readonly watchDebounce = this._register(new TimeoutTimer());
 
   private rawSnake: ResolvedConfig = {};
   private raw: ResolvedConfig = {};
@@ -331,9 +336,15 @@ export class ConfigService extends Disposable implements IConfigService {
       await migrateThinkingEffortMaxToHigh(this.documentStore, configKey, homeDir);
       await this.load('load');
     })();
+    const configFile = join(homeDir, configKey);
+    const handle = watch(homeDir, { depth: 0 });
+    this._register(handle);
     this._register(
-      this.documentStore.watch(CONFIG_SCOPE, this.configKey)(() => {
-        void this.reload();
+      handle.onDidChange((change) => {
+        if (normalize(change.path) !== normalize(configFile)) return;
+        this.watchDebounce.cancelAndSet(() => {
+          void this.reload();
+        }, WATCH_DEBOUNCE_MS);
       }),
     );
   }

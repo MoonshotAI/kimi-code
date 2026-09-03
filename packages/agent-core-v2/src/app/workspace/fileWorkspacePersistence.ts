@@ -1,9 +1,14 @@
+import { dirname, join, normalize } from 'pathe';
+
 import { LifecycleScope } from '#/app/scopes';
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
+import { TimeoutTimer } from '#/_base/utils/timer';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { watch } from '#human/utils/watch';
 
 import type { Workspace } from './workspace';
 import {
@@ -16,18 +21,29 @@ import {
 const WORKSPACE_CATALOG_VERSION = 1;
 const WORKSPACE_CATALOG_SCOPE = '';
 const WORKSPACE_CATALOG_KEY = 'workspaces.json';
+const WATCH_DEBOUNCE_MS = 150;
 
 export class FileWorkspacePersistence extends Disposable implements IWorkspacePersistence {
   declare readonly _serviceBrand: undefined;
 
   private readonly changeEmitter = this._register(new Emitter<void>());
   readonly onDidChange: Event<void> = this.changeEmitter.event;
+  private readonly watchDebounce = this._register(new TimeoutTimer());
 
-  constructor(@IAtomicDocumentStore private readonly docs: IAtomicDocumentStore) {
+  constructor(
+    @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
+  ) {
     super();
+    const catalogFile = join(this.bootstrap.homeDir, WORKSPACE_CATALOG_KEY);
+    const handle = watch(dirname(catalogFile), { depth: 0 });
+    this._register(handle);
     this._register(
-      this.docs.watch(WORKSPACE_CATALOG_SCOPE, WORKSPACE_CATALOG_KEY)(() => {
-        this.changeEmitter.fire();
+      handle.onDidChange((change) => {
+        if (normalize(change.path) !== normalize(catalogFile)) return;
+        this.watchDebounce.cancelAndSet(() => {
+          this.changeEmitter.fire();
+        }, WATCH_DEBOUNCE_MS);
       }),
     );
   }
