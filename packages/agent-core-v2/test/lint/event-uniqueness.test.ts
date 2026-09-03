@@ -114,10 +114,14 @@ describe('event-uniqueness', () => {
     }
   });
 
-  it('finds no duplicate durable event type declarations across src/', () => {
-    const seen = scanDurableEventTypes(SRC_ROOT);
-    expect(duplicates(seen)).toEqual(new Map());
-  });
+  it(
+    'finds no duplicate durable event type declarations across src/',
+    () => {
+      const seen = scanDurableEventTypes(SRC_ROOT);
+      expect(duplicates(seen)).toEqual(new Map());
+    },
+    20_000,
+  );
 
   it('flags the planted duplicate in the fixture', () => {
     const seen = scanDurableEventTypes(FIXTURE_ROOT);

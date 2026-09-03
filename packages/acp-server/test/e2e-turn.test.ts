@@ -29,6 +29,21 @@ const STDIO_MCP_FIXTURE = fileURLToPath(
   new URL('../../agent-core-v2/test/mcpCore/fixtures/mock-stdio-server.mjs', import.meta.url),
 );
 
+/**
+ * Best-effort recursive removal of a test's temp home dir. `fs.rm`'s
+ * recursive cleanup can transiently ENOTEMPTY/EBUSY right after a file
+ * handle (or, for the MCP-fixture tests, a child process pipe) in the
+ * directory closes but the OS hasn't fully released the deletion yet —
+ * retry with Node's own linear-backoff defaults. Always returns `undefined`
+ * so call sites can just reassign: `homeDir = await cleanupHomeDir(homeDir);`.
+ */
+async function cleanupHomeDir(homeDir: string | undefined): Promise<string | undefined> {
+  if (homeDir !== undefined) {
+    await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+  return undefined;
+}
+
 describe('acp-server real prompt turn (scripted LLM)', () => {
   let homeDir: string | undefined;
   let client: TestClient | undefined;
@@ -39,10 +54,8 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
       await client.close();
       client = undefined;
     }
-    if (homeDir !== undefined) {
-      await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-      homeDir = undefined;
-    }
+
+    homeDir = await cleanupHomeDir(homeDir);
   });
 
   function installTerminalClient(c: TestClient): void {
@@ -578,10 +591,8 @@ describe('acp-server prompt error hygiene', () => {
       await client.close();
       client = undefined;
     }
-    if (homeDir !== undefined) {
-      await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-      homeDir = undefined;
-    }
+
+    homeDir = await cleanupHomeDir(homeDir);
   });
 
   it('a launch failure settles as a fixed internalError and never leaks the engine message', async () => {
@@ -625,10 +636,8 @@ describe('acp-server builtin slash commands (local execution, no LLM turn)', () 
       await client.close();
       client = undefined;
     }
-    if (homeDir !== undefined) {
-      await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-      homeDir = undefined;
-    }
+
+    homeDir = await cleanupHomeDir(homeDir);
   });
 
   async function boot(): Promise<TestClient> {
@@ -842,10 +851,8 @@ describe('acp-server terminal reverse-RPC (clientCapabilities.terminal)', () => 
       await client.close();
       client = undefined;
     }
-    if (homeDir !== undefined) {
-      await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-      homeDir = undefined;
-    }
+
+    homeDir = await cleanupHomeDir(homeDir);
   });
 
   interface FakeTerminal {

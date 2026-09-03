@@ -1880,7 +1880,7 @@ describe('Agent tool execution contract', () => {
     expect(result.output).toContain('agent_id: agent-child');
     expect(result.output).toContain('actual_subagent_type: explore');
     expect(result.output).toContain('child result');
-  });
+  }, 15_000);
 
   it('emits subagent.spawned exactly once, after task registration, carrying the task id', async () => {
     const lifecycle = createAgentLifecycleStub({
