@@ -247,4 +247,25 @@ describe('SessionIndexMirror', () => {
     for (let i = 0; i < 6; i++) await mirror.drain();
     expect(giveUps()).toHaveLength(2);
   });
+
+  it('tracks the give-up event when unpublished flushes precede a throwing one', async () => {
+    const records: TelemetryRecord[] = [];
+    build(true, recordingTelemetry(records));
+
+    mirror.record(summary('a'));
+    for (let i = 0; i < 5; i++) await mirror.drain();
+    expect(records).toEqual([]);
+
+    await publishGeneration();
+    queryStore.batch = async () => {
+      throw new Error('injected flush failure');
+    };
+    for (let i = 0; i < 3; i++) await mirror.drain();
+    const giveUps = records.filter((record) => record.event === 'session_index_mirror_give_up');
+    expect(giveUps).toHaveLength(1);
+    expect(giveUps[0]?.properties).toMatchObject({
+      pending_count: 1,
+      consecutive_failures: 6,
+    });
+  });
 });
