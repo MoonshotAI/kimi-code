@@ -41,6 +41,12 @@ export const imageSourceSchema = z.discriminatedUnion('kind', [
     data: z.string().min(1),
   }),
   z.object({ kind: z.literal('file'), file_id: z.string().min(1) }),
+  // Stored prompt/message projections address the Session-owned canonical
+  // copy; `file` remains the transient upload form accepted on submission.
+  z.object({ kind: z.literal('session_media'), file_id: z.string().min(1) }),
+  // Zero-copy attach of a server-local absolute path (desktop clients); the
+  // daemon validates and reads the file in place — local runtime only.
+  z.object({ kind: z.literal('path'), path: z.string().min(1) }),
 ]);
 export type ImageSource = z.infer<typeof imageSourceSchema>;
 
@@ -50,20 +56,43 @@ export const imageContentSchema = z.object({
 });
 export type ImageContent = z.infer<typeof imageContentSchema>;
 
-// Video uses the same source shape as image (url / base64 / uploaded file id).
+// Video uses the same source shape as image (url / base64 / uploaded or Session media id).
 export const videoContentSchema = z.object({
   type: z.literal('video'),
   source: imageSourceSchema,
 });
 export type VideoContent = z.infer<typeof videoContentSchema>;
 
-export const fileContentSchema = z.object({
-  type: z.literal('file'),
-  file_id: z.string().min(1),
-  name: z.string(),
-  media_type: z.string().min(1),
-  size: z.number().int().nonnegative(),
-});
+// A file part either references an uploaded file (`file_id`, with the
+// client-supplied metadata) or attaches a server-local absolute `path`
+// (zero-copy; the daemon fills name/media_type/size from stat).
+export const fileContentSchema = z
+  .object({
+    type: z.literal('file'),
+    file_id: z.string().min(1).optional(),
+    path: z.string().min(1).optional(),
+    name: z.string().optional(),
+    media_type: z.string().min(1).optional(),
+    size: z.number().int().nonnegative().optional(),
+  })
+  .superRefine((part, ctx) => {
+    const hasFileId = part.file_id !== undefined;
+    const hasPath = part.path !== undefined;
+    if (hasFileId === hasPath) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'exactly one of file_id or path is required',
+        path: hasFileId ? ['path'] : ['file_id'],
+      });
+      return;
+    }
+    if (hasPath) return;
+    for (const key of ['name', 'media_type', 'size'] as const) {
+      if (part[key] === undefined) {
+        ctx.addIssue({ code: 'custom', message: `${key} is required with file_id`, path: [key] });
+      }
+    }
+  });
 export type FileContent = z.infer<typeof fileContentSchema>;
 
 export const thinkingContentSchema = z.object({

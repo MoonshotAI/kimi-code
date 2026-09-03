@@ -89,6 +89,14 @@ describe('messageContentSchema variants', () => {
     expect(parsed.source.kind).toBe('file');
   });
 
+  it('parses session-owned media source from stored history', () => {
+    const parsed = imageContentSchema.parse({
+      type: 'image',
+      source: { kind: 'session_media', file_id: 'file_image_01' },
+    });
+    expect(parsed.source.kind).toBe('session_media');
+  });
+
   it('parses file content', () => {
     const parsed = fileContentSchema.parse({
       type: 'file',
@@ -98,6 +106,31 @@ describe('messageContentSchema variants', () => {
       size: 12345,
     });
     expect(parsed.size).toBe(12345);
+  });
+
+  it('parses file content by server-local path', () => {
+    const parsed = fileContentSchema.parse({ type: 'file', path: '/data/doc.pdf' });
+    expect(parsed.path).toBe('/data/doc.pdf');
+    const parsedSource = imageContentSchema.parse({
+      type: 'image',
+      source: { kind: 'path', path: '/data/pic.png' },
+    });
+    expect(parsedSource.source.kind).toBe('path');
+  });
+
+  it('rejects file content with both file_id and path, or neither', () => {
+    expect(
+      fileContentSchema.safeParse({
+        type: 'file',
+        file_id: 'file_01',
+        path: '/data/doc.pdf',
+        name: 'doc.pdf',
+        media_type: 'application/pdf',
+        size: 1,
+      }).success,
+    ).toBe(false);
+    expect(fileContentSchema.safeParse({ type: 'file' }).success).toBe(false);
+    expect(fileContentSchema.safeParse({ type: 'file', file_id: 'file_01' }).success).toBe(false);
   });
 
   it('parses thinking content', () => {

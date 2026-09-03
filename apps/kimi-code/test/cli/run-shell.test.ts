@@ -4,6 +4,7 @@ import type { createKimiDeviceId as createKimiDeviceIdFn } from '@moonshot-ai/ki
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { runShell } from '#/cli/run-shell';
+import { refreshKimiRegion } from '#/utils/region';
 
 import { captureProcessWrite, ExitCalled, mockProcessExit } from '../helpers/process';
 
@@ -151,7 +152,8 @@ vi.mock('../../src/tui/theme/detect', () => ({
   detectTerminalTheme: mocks.detectTerminalTheme,
 }));
 
-vi.mock('../../src/migration/index', () => ({
+vi.mock('../../src/migration/index', async (importOriginal) => ({
+  ...(await importOriginal()),
   detectPendingMigration: mocks.detectPendingMigration,
 }));
 
@@ -167,11 +169,16 @@ vi.mock('../../src/utils/process/resolve-command', () => ({
 describe('runShell', () => {
   beforeEach(() => {
     vi.stubEnv('KIMI_CODE_LEGACY_FLAG', '1');
+    // Pin region to cn: the telemetry endpoint assertion below must not
+    // follow the dev machine's own login/marker state.
+    vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://auth.kimi.com');
+    refreshKimiRegion();
   });
 
   afterEach(() => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
+    refreshKimiRegion();
     mocks.harnessGetConfig.mockResolvedValue({
       providers: {},
       defaultModel: 'k2',
@@ -331,8 +338,14 @@ describe('runShell', () => {
       uiMode: 'shell',
       model: 'k2',
       sessionId: undefined,
+      endpoint: expect.any(Function),
       getAccessToken: expect.any(Function),
     });
+    // The endpoint resolver defers to the active region profile at flush time.
+    const telemetryOptions = mocks.initializeTelemetry.mock.calls[0]![0] as {
+      endpoint: () => string;
+    };
+    expect(telemetryOptions.endpoint()).toBe('https://telemetry-logs.kimi.com/v1/event');
     expect(mocks.setCrashPhase).toHaveBeenCalledWith('runtime');
 
     const [, harness, startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
@@ -968,5 +981,20 @@ describe('runShell', () => {
       ),
     ).rejects.toThrow('Invalid configuration');
     expect(mocks.tuiStart).not.toHaveBeenCalled();
+  });
+
+  it('refuses migration when KIMI_SHARE_DIR resolves to the Kimi Code home', async () => {
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      await withEnv({ KIMI_SHARE_DIR: '/tmp/kimi-code-test-home' }, async () => {
+        await runShell(minimalCliOptions, '1.2.3-test', { migrateOnly: true });
+      });
+      expect(mocks.detectPendingMigration).not.toHaveBeenCalled();
+      expect(mocks.harnessClose).toHaveBeenCalledOnce();
+      expect(mocks.tuiStart).not.toHaveBeenCalled();
+      expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('KIMI_SHARE_DIR'));
+    } finally {
+      stderrSpy.mockRestore();
+    }
   });
 });

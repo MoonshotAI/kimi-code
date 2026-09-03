@@ -1,16 +1,3 @@
-/**
- * The v1 wire `Message` shape — the legacy REST/streaming message format served
- * on the `messages`, `snapshot`, and `sessions` (`:undo`) surfaces, and accepted
- * on the `prompts` submission surface. Owned by kap-server: the engine speaks
- * only the native `ContextMessage`, and `services/messages/messageProjection`
- * projects it into this shape at the edge.
- *
- * Media sources come in three kinds: `url`, `base64`, and `file` (a daemon
- * upload id). The `url` kind optionally pairs an `id` — the provider-issued
- * file id behind a reference such as `ms://…` — forwarded on the wire when
- * the provider keys media by id.
- */
-
 import { z } from 'zod';
 
 import { isoDateTimeSchema } from '@moonshot-ai/agent-core-v2/_base/utils/isoDateTime';
@@ -52,6 +39,8 @@ export const imageSourceSchema = z.discriminatedUnion('kind', [
     data: z.string().min(1),
   }),
   z.object({ kind: z.literal('file'), file_id: z.string().min(1) }),
+  z.object({ kind: z.literal('session_media'), file_id: z.string().min(1) }),
+  z.object({ kind: z.literal('path'), path: z.string().min(1) }),
 ]);
 export type ImageSource = z.infer<typeof imageSourceSchema>;
 
@@ -67,13 +56,33 @@ export const videoContentSchema = z.object({
 });
 export type VideoContent = z.infer<typeof videoContentSchema>;
 
-export const fileContentSchema = z.object({
-  type: z.literal('file'),
-  file_id: z.string().min(1),
-  name: z.string(),
-  media_type: z.string().min(1),
-  size: z.number().int().nonnegative(),
-});
+export const fileContentSchema = z
+  .object({
+    type: z.literal('file'),
+    file_id: z.string().min(1).optional(),
+    path: z.string().min(1).optional(),
+    name: z.string().optional(),
+    media_type: z.string().min(1).optional(),
+    size: z.number().int().nonnegative().optional(),
+  })
+  .superRefine((part, ctx) => {
+    const hasFileId = part.file_id !== undefined;
+    const hasPath = part.path !== undefined;
+    if (hasFileId === hasPath) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'exactly one of file_id or path is required',
+        path: hasFileId ? ['path'] : ['file_id'],
+      });
+      return;
+    }
+    if (hasPath) return;
+    for (const key of ['name', 'media_type', 'size'] as const) {
+      if (part[key] === undefined) {
+        ctx.addIssue({ code: 'custom', message: `${key} is required with file_id`, path: [key] });
+      }
+    }
+  });
 export type FileContent = z.infer<typeof fileContentSchema>;
 
 export const thinkingContentSchema = z.object({

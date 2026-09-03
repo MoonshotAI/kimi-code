@@ -1,9 +1,3 @@
-/**
- *   GET  /v1/sessions/{session_id}/skills
- *   POST /v1/sessions/{session_id}/skills/{skill_name}:activate
- *     Body: `{ args?: string, attachments?: (ImageContent|VideoContent|FileContent)[] }`
- */
-
 import { z } from 'zod';
 
 import { fileContentSchema, imageContentSchema, videoContentSchema } from './message';
@@ -14,10 +8,6 @@ export const listSkillsResponseSchema = z.object({
 });
 export type ListSkillsResponse = z.infer<typeof listSkillsResponseSchema>;
 
-/**
- * Attachment parts accepted on skill activation — the media/file subset of
- * the prompt submission's `MessageContent` (text stays in `args`).
- */
 export const activateSkillAttachmentSchema = z.discriminatedUnion('type', [
   imageContentSchema,
   videoContentSchema,
@@ -26,13 +16,7 @@ export const activateSkillAttachmentSchema = z.discriminatedUnion('type', [
 export type ActivateSkillAttachment = z.infer<typeof activateSkillAttachmentSchema>;
 
 export const activateSkillRequestSchema = z.object({
-  /** Raw argument string appended after the slash command, e.g. `/review --fix` → `--fix`. */
   args: z.string().optional(),
-  /**
-   * Attachments carried into the skill turn's user message, in the same wire
-   * shape as prompt content. They are resolved by the shared prompt media
-   * pipeline and appended after the rendered skill prompt text part.
-   */
   attachments: z.array(activateSkillAttachmentSchema).optional(),
 });
 export type ActivateSkillRequest = z.infer<typeof activateSkillRequestSchema>;

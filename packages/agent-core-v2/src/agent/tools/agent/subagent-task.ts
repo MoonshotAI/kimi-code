@@ -1,33 +1,30 @@
-/**
- * `agent/tools/agent` — the background-task embodiment of a subagent run.
- *
- * Wraps a `SubagentHandle` as an `AgentTask` so the run registers in the
- * owning agent's task store (a foreground run may detach into it later):
- * aborts flow through the task signal, completion settles the task and
- * appends the result as its output. `toInfo` also carries the display-facing
- * facts (subagent type, normalized model alias, effective thinking effort)
- * onto the task record, which the spawned-event / snapshot / REST surfaces
- * read back after a client reload.
- */
-
 import type { TokenUsage } from '#/kosong/contract/usage';
+import type { SubagentModelSource } from '#/session/subagent/configSection';
 
 import { isAbortError } from '#/_base/utils/abort';
+import { ErrorCodes, isError2 } from '#/errors';
+import { REPEAT_BREAKER_STOP_REASON } from '#/agent/toolDedupe/toolDedupe';
 import {
   type AgentTask,
   type AgentTaskInfoBase,
   type AgentTaskSink,
 } from '#/agent/task/types';
 
+const REPEAT_BREAKER_SETTLE_REASON =
+  'stopped by the repeat breaker after issuing the same tool call repeatedly; its output is a handoff, not a finished result';
+
 type SubagentCompletion = {
   readonly result: string;
   readonly usage?: TokenUsage;
+  readonly stopReason?: string;
 };
 
 export type SubagentHandle = {
   readonly agentId: string;
   readonly profileName: string;
+  readonly parentToolCallId?: string;
   readonly model?: string;
+  readonly modelSource?: SubagentModelSource;
   readonly thinkingEffort?: string;
   readonly completion: Promise<SubagentCompletion>;
 };
@@ -36,8 +33,10 @@ export interface SubagentTaskInfo extends AgentTaskInfoBase {
   readonly kind: 'agent';
   readonly agentId?: string;
   readonly subagentType?: string;
+  readonly parentToolCallId?: string;
   readonly model?: string;
   readonly thinkingEffort?: string;
+  readonly stopCode?: string;
 }
 
 declare module '#/agent/task/types' {
@@ -48,6 +47,19 @@ declare module '#/agent/task/types' {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function stopCodeOf(error: unknown): string | undefined {
+  if (!isError2(error)) return undefined;
+  if (error.code === ErrorCodes.AGENT_NO_FINAL_MESSAGE) {
+    const stopReason = error.details?.['stopReason'];
+    if (typeof stopReason === 'string') return stopReason;
+  }
+  return error.code;
+}
+
+function completedSettleReason(stopReason: string | undefined): string | undefined {
+  return stopReason === REPEAT_BREAKER_STOP_REASON ? REPEAT_BREAKER_SETTLE_REASON : undefined;
 }
 
 export function createSubagentExecutor(
@@ -84,8 +96,10 @@ export class SubagentTask implements AgentTask {
   readonly idPrefix: string = 'agent';
   readonly agentId: string;
   readonly subagentType: string;
+  readonly parentToolCallId?: string;
   readonly model?: string;
   readonly thinkingEffort?: string;
+  private stopCode: string | undefined;
 
   constructor(
     private readonly handle: SubagentHandle,
@@ -94,6 +108,7 @@ export class SubagentTask implements AgentTask {
   ) {
     this.agentId = handle.agentId;
     this.subagentType = handle.profileName;
+    this.parentToolCallId = handle.parentToolCallId;
     this.model = handle.model;
     this.thinkingEffort = handle.thinkingEffort;
   }
@@ -110,13 +125,18 @@ export class SubagentTask implements AgentTask {
 
     try {
       const outcome = await this.handle.completion;
+      this.stopCode = outcome.stopReason;
       sink.appendOutput(outcome.result);
-      await sink.settle({ status: 'completed' });
+      await sink.settle({
+        status: 'completed',
+        stopReason: completedSettleReason(outcome.stopReason),
+      });
     } catch (error: unknown) {
       if (sink.signal.aborted && (isAbortError(error) || error === sink.signal.reason)) {
         await sink.settle({ status: 'killed' });
         return;
       }
+      this.stopCode = stopCodeOf(error);
       await sink.settle({ status: 'failed', stopReason: errorMessage(error) });
     } finally {
       sink.signal.removeEventListener('abort', requestAbort);
@@ -129,8 +149,10 @@ export class SubagentTask implements AgentTask {
       kind: 'agent',
       agentId: this.agentId,
       subagentType: this.subagentType,
+      parentToolCallId: this.parentToolCallId,
       model: this.model,
       thinkingEffort: this.thinkingEffort,
+      stopCode: this.stopCode,
     };
   }
 }

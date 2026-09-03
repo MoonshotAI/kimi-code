@@ -79,7 +79,7 @@ Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元——可以
 
 官方插件是 Kimi 官方维护的 plugin 和内置产品能力，目前有以下三种：
 
-- **[Kimi Datasource](#kimi-datasource)**：用自然语言查询金融行情、宏观经济、企业工商、学术文献和法律法规
+- **[Kimi Datasource](#kimi-datasource)**：用自然语言查询金融行情、财经资讯、宏观经济、企业工商、学术文献、法律法规和国际组织官方数据
 - **[Kimi WebBridge](#kimi-webbridge)**：让 AI 直接操控你自己的浏览器，完成各类网页操作
 - **[Kimi Computer Use](#kimi-computer-use)**：让 AI 操作你的桌面应用（macOS 和 Windows）
 
@@ -97,9 +97,11 @@ Kimi WebBridge 分两步安装：完成上述步骤后，还需要[安装浏览�
 
 官方插件更新后会在使用旧版时提示更新，不会自动更新，要升级到新版本，重复上述安装步骤即可。
 
-### Kimi Datasource <Badge type="tip" text="v3.3.0" />
+### Kimi Datasource <Badge type="tip" text="v3.4.0" />
 
-Kimi Datasource 是 Kimi Code 官方数据插件，让你用自然语言直接查询金融行情、宏观经济、企业工商、学术文献和中国法律法规，无需手动调用接口或申请数据账号。
+Kimi Datasource 是 Kimi Code 官方数据插件，让你用自然语言直接查询金融行情、财经资讯、宏观经济、企业工商、学术文献、中国法律法规和国际组织官方数据，无需手动调用接口或申请数据账号。
+
+数据来源包括世界银行、IMF、OECD、FRED、WHO、FAO、国家统计局、Wind、S&P Capital IQ、SEC EDGAR、财新、新华财经、恒生聚源等权威机构与知名数据库，信源可溯源。
 
 使用前需先通过 `/login` 完成 Kimi Code 账号 OAuth 登录，数据查询会消耗你的 Kimi Code 套餐额度。
 
@@ -110,27 +112,49 @@ Kimi Datasource 是 Kimi Code 官方数据插件，让你用自然语言直接�
 
 #### 能做什么
 
-**实时量化研究**：盯着茅台想做个量化分析？一句话拉取近三年的每日收盘价、MACD 和 KDJ 信号，直接出结论，不用找第三方数据平台。
+::: details **实时量化研究** — 想盯着茅台做个量化分析？
+一句话拉取近三年的每日收盘价、MACD 和 KDJ 信号，直接出结论，不用找第三方数据平台。
+:::
 
-**跨国宏观对比**：研究中印越产业转移？基于世界银行 50 年历史数据，一次查询拿到三国 GDP 增速、贸易额、人口结构的完整时间序列对比。
+::: details **跨国宏观对比** — 研究中印越产业转移？
+基于世界银行 50 年历史数据，一次查询拿到三国 GDP 增速、贸易额、人口结构的完整时间序列对比。
+:::
 
-**合同前风险排查**：签合同前五分钟才想起来要查对方背景？输入公司名，立刻拿到工商注册信息、股权穿透、司法纠纷和失信记录，当场决策。
+::: details **合同前风险排查** — 签合同前五分钟才想起来查对方背景？
+输入公司名，立刻拿到工商注册信息、股权穿透、司法纠纷和失信记录，当场决策。
+:::
 
-**文献综述加速**：写论文要梳理 RLHF 领域的研究脉络？直接列出高引论文、主要作者和核心结论，综述提纲半小时内成型。
+::: details **文献综述加速** — 写论文要梳理 RLHF 领域的研究脉络？
+直接列出高引论文、主要作者和核心结论，综述提纲半小时内成型。
+:::
 
-**法律条文速查**：碰上居住权的合同纠纷，拿不准法条？一句话定位《民法典》相关条文原文、效力级别和时效性，再顺手拉几个相近判例佐证，不用翻法规库。
+::: details **法律条文速查** — 碰上居住权合同纠纷想确认法条？
+一句话定位《民法典》相关条文原文、效力级别和时效性，再顺手拉几个相近判例佐证，不用翻法规库。
+:::
 
-**机构级美股研究**：写美股深度报告？一句话拉出年报原文、标准化财务指标、前 50 大股东和分析师一致预期，不用在多个数据终端之间来回切。
+::: details **机构级美股研究** — 要写一份美股深度报告？
+一句话拉出年报原文、标准化财务指标、前 50 大股东和分析师一致预期，不用在多个数据终端之间来回切。
+:::
+
+::: details **财经资讯与行业数据** — 想追市场热点或政策动向？
+直接查询财新的市场资讯、债券基金期货数据与上市公司产业链关系，以及新华财经国家金融信息平台的资讯、政策、公告与市场快讯，信源权威可溯源。
+:::
+
+::: details **标准查询** — 查合规要对照国标？
+按标准号或主题查询国标、行标、地标和团标的编号、状态与全文入口。
+:::
 
 #### 数据覆盖
 
 | 类别 | 覆盖范围 |
 |---|---|
 | 股票与金融市场 | Wind、S&P Capital IQ、SEC EDGAR 等知名数据库，能力涵盖 A 股、港股、美股等主要市场的行情、技术指标、财报估值、分析师预期，以及 8,000+ 美股上市公司的官方披露文件 |
-| 宏观经济 | 世界银行、IMF 等知名数据库，能力涵盖全球 189 个国家 50 年以上的时间序列：GDP、贸易、人口、汇率、CPI、国际收支、GDP 预测等 |
+| 财经资讯与行业数据 | 财新、新华财经等知名数据平台，能力涵盖市场资讯与快讯、上市公司公告、监管政策、债券基金期货数据、企业失信记录、上市公司产业链关系 |
+| 宏观经济 | 世界银行、IMF、OECD、FRED、国家统计局等知名数据库及 WHO、FAO 等国际组织官方统计，能力涵盖全球 189 个国家 50 年以上时间序列与中国全国/省/市指标：GDP、贸易、人口、汇率、CPI、国际收支、GDP 预测等 |
+| 中国标准 | 国家标准（GB）、行业标准、地方标准和团体标准的编号、名称、发布状态与详情，部分国标和公开团标提供官方全文入口 |
 | 企业数据 | 中国大陆境内企业工商信息、股权穿透、司法风险、关联图谱 |
 | 学术文献 | 物理、数学、计算机、金融、经济等领域百万量级论文，支持预印本查询 |
-| 法律法规 | 中国法律法规与司法案例：各效力层次的法规检索与详情，普通及权威判例检索 |
+| 法律法规 | 元典智库等知名法律数据库，能力涵盖中国法律法规与司法案例：各效力层次的法规检索与详情，普通及权威判例检索 |
 | 智能筛选 | 恒生聚源等知名数据库，能力涵盖自然语言选股、选基金、选基金经理，以及宏观行业数据、研报、公告与新闻 |
 
 #### 计费与限制
@@ -254,7 +278,7 @@ Plugin 是一个带 manifest 的目录或 zip 文件。Manifest 可以放在以�
 | `interface` | 在 `/plugins` 中展示的字段：`displayName`、`shortDescription`、`longDescription`、`developerName`、`websiteURL` |
 | `skills` | 一个或多个 `./` 路径，必须位于 plugin 根目录内。省略时根目录的 `SKILL.md` 被当作单个 Skill root |
 | `agents` | 一个或多个 `./` 路径，必须位于 plugin 根目录内，指向含有 [Agent 文件](./agents.md#自定义-agent)的目录。省略时根下的 `agents/` 目录（若存在）被自动采用 |
-| `sessionStart.skill` | 在新会话或恢复会话开始时，把指定 plugin Skill 加载到主 Agent |
+| `sessionStart.skill` | 在新会话或恢复会话开始时，把指定 plugin Skill 加载到 main agent |
 | `skillInstructions` | 每次加载此 plugin 的 Skill 时一并附带的额外说明 |
 | `systemPrompt` | plugin 启用期间提供给 Agent 系统提示词的内联指令 |
 | `systemPromptPath` | 指向 UTF-8 文本文件的 `./` 路径；同时设置 `systemPrompt` 时，文件内容拼接在内联指令之后 |
@@ -281,7 +305,7 @@ Plugin 是一个带 manifest 的目录或 zip 文件。Manifest 可以放在以�
 
 新会话和新建 Agent 会读取当前已启用 plugin 的指令。正在进行的请求会继续使用已有的系统提示词。`/plugins reload` 会刷新 plugin Skill 列表，并请求重建活跃 Agent 的提示词；如果需要让变更在下一轮前明确收敛，请使用这个命令。在 v2 引擎中，安装、启用、禁用或移除 plugin 会立即更新 catalog，后续的提示词重建（例如压缩上下文或修改工具策略后）可能会读取新的指令。legacy 引擎会让每个活跃 session 保留自己的 plugin 快照，直到 `/plugins reload` 或创建新 session。从磁盘恢复的 session 会先使用持久化的提示词，后续重建再遵循对应引擎的行为。切换 plugin 的 MCP server 不会改变系统提示词指令。
 
-内置 Agent 提示词会自动包含已启用 plugin 的指令。自定义 `SYSTEM.md` 或 Agent 文件完全拥有自己的模板，因此应在希望出现 plugin 指令的位置加入 `${plugin_sections}`。如果自定义模板包含 `${base_prompt}`，且该有效默认提示词已经包含 plugin 块，就不要再重复加入 `${plugin_sections}`。完整变量表见 [自定义 Agent 与 SYSTEM.md](./agents.md#用-system-md-覆盖主-agent-的系统提示词)。
+内置 Agent 提示词会自动包含已启用 plugin 的指令。自定义 `SYSTEM.md` 或 Agent 文件完全拥有自己的模板，因此应在希望出现 plugin 指令的位置加入 `${plugin_sections}`。如果自定义模板包含 `${base_prompt}`，且该有效默认提示词已经包含 plugin 块，就不要再重复加入 `${plugin_sections}`。完整变量表见 [自定义 Agent 与 SYSTEM.md](./agents.md#用-system-md-覆盖-main-agent-的系统提示词)。
 
 ## 插件斜杠命令
 
@@ -359,13 +383,13 @@ my-plugin/
       SKILL.md
 ```
 
-`sessionStart.skill` 在会话启动时把一个 plugin Skill 加载到主 Agent，适合放置初始化说明、工作流规则，或把其他工具中的术语映射到 Kimi Code CLI。它只注入文本，不执行代码。
+`sessionStart.skill` 在会话启动时把一个 plugin Skill 加载到 main agent，适合放置初始化说明、工作流规则，或把其他工具中的术语映射到 Kimi Code CLI。它只注入文本，不执行代码。
 
 无论 Skill 通过哪种方式加载（`sessionStart.skill`、`/skill:<name>` 或模型自动调用），`skillInstructions` 都会随该 plugin 的 Skill 一起出现。
 
 ## 插件 Agent
 
-Plugin 可以携带自定义 Agent：在 manifest 的 `agents` 字段里声明一个或多个 `./` 目录（或直接在 plugin 根下放置 `agents/` 目录），其中的 Agent 文件与[自定义 Agent](./agents.md#自定义-agent) 格式相同，会在 plugin 启用期间作为子 Agent 被主 Agent 自动发现和委派。
+Plugin 可以携带自定义 Agent：在 manifest 的 `agents` 字段里声明一个或多个 `./` 目录（或直接在 plugin 根下放置 `agents/` 目录），其中的 Agent 文件与[自定义 Agent](./agents.md#自定义-agent) 格式相同，会在 plugin 启用期间作为 subagent 被 main agent 自动发现和委派。
 
 ```text
 my-plugin/

@@ -5,10 +5,9 @@ import { fileURLToPath } from 'node:url';
 
 import {
   IOAuthToolkit,
-  ISessionLifecycleService,
+  ISessionManager,
   ISessionMcpHandle,
-  IWorkspaceDirs,
-  IWorkspaceLifecycleService,
+  IWorkspaceInstanceManager,
 } from '@moonshot-ai/agent-core-v2';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -93,11 +92,11 @@ describe('acp-server session lifecycle', () => {
   async function sessionMcpEntries(
     c: TestClient,
     sessionId: string,
-  ): Promise<readonly { readonly name: string; readonly status: string }[]> {
-    const handler = await c.server.core.accessor
-      .get(IWorkspaceLifecycleService)
-      .handlerFor({ root: homeDir! });
-    const handle = handler.accessor.get(ISessionLifecycleService).get(sessionId);
+  ): Promise<readonly { readonly name: string; readonly status: string; readonly error?: string }[]> {
+    await c.server.core.accessor
+      .get(IWorkspaceInstanceManager)
+      .getOrCreate({ root: homeDir! });
+    const handle = c.server.core.accessor.get(ISessionManager).get(sessionId);
     expect(handle).toBeDefined();
     const mcp = handle!.accessor.get(ISessionMcpHandle);
     await mcp.ready;
@@ -355,10 +354,10 @@ describe('acp-server session lifecycle', () => {
 
       // The workspace handler merges create-time dirs into its
       // (ephemeral) additional-dir set.
-      const handler = await c.server.core.accessor
-        .get(IWorkspaceLifecycleService)
-        .handlerFor({ root: homeDir! });
-      const dirs = handler.accessor.get(IWorkspaceDirs);
+      const workspace = await c.server.core.accessor
+        .get(IWorkspaceInstanceManager)
+        .getOrCreate({ root: homeDir! });
+      const dirs = workspace.program.dirs;
       await dirs.ready;
       expect(dirs.additionalDirs).toContain(extraDir);
     },

@@ -7,21 +7,16 @@ import { InstantiationService } from '#/_base/di/instantiationService';
 import { Service } from '#/_base/di/service';
 import { ServiceCollection } from '#/_base/di/serviceCollection';
 import { Emitter } from '#/_base/event';
-import { type DomainEvent, IEventService } from '#/app/event/event';
+import { IEventService } from '#/app/event/event';
+import type { Event2 } from '#/app/event/event2';
 import { EventService } from '#/app/event/eventService';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
-import { DI_UNIT_CHANGED_EVENT } from '#/debug/debugCascade';
+import { DI_UNIT_CHANGED_EVENT, DiUnitChanged } from '#/debug/debugCascade';
 import { DebugCascadeService } from '#/debug/debugCascadeService';
 import { DebugGraphService } from '#/debug/debugGraphService';
 import { DebugLedgerService } from '#/debug/debugLedgerService';
 import { DebugEventsService } from '#/features/debugEvents/debugEventsService';
-
-declare module '#/app/event/eventBus' {
-  interface DomainEventMap {
-    'debug.test': { v: number };
-  }
-}
 
 
 interface IRoot {
@@ -72,14 +67,14 @@ class Fold extends Service implements IFold {
 
 class FakeEventService implements IEventService {
   declare readonly _serviceBrand: undefined;
-  private readonly emitter = new Emitter<DomainEvent>();
+  private readonly emitter = new Emitter<Event2>();
   readonly onDidPublish = this.emitter.event;
-  readonly published: DomainEvent[] = [];
-  publish(event: DomainEvent): void {
+  readonly published: Event2[] = [];
+  publish(event: Event2): void {
     this.published.push(event);
     this.emitter.fire(event);
   }
-  subscribe(handler: (event: DomainEvent) => void) {
+  subscribe(handler: (event: Event2) => void) {
     return this.emitter.event(handler);
   }
 }
@@ -268,18 +263,20 @@ describe('debug domain — IDebugCascadeService', () => {
     const rootEvents = events.published.filter(
       (event) => event.type === DI_UNIT_CHANGED_EVENT,
     );
-    expect(rootEvents).toContainEqual({
-      type: DI_UNIT_CHANGED_EVENT,
-      payload: { scope: 'app', token: 'debug-root', state: 'Active', error: undefined },
-    });
+    expect(rootEvents).toContainEqual(
+      expect.objectContaining({
+        type: DI_UNIT_CHANGED_EVENT,
+        payload: { scope: 'app', token: 'debug-root', state: 'Active', error: undefined },
+      }),
+    );
 
     const ws = app.createChild(new ServiceCollection()) as InstantiationService;
     ws.debugLabel = 'workspace:late';
     ws.provide(IMid, new SyncDescriptor(Mid));
     const wsEvents = events.published.filter(
-      (event) =>
+      (event): event is DiUnitChanged =>
         event.type === DI_UNIT_CHANGED_EVENT &&
-        (event.payload as { scope?: string }).scope === 'app/workspace:late',
+        (event as DiUnitChanged).payload.scope === 'app/workspace:late',
     );
     expect(wsEvents.length).toBeGreaterThan(0);
 

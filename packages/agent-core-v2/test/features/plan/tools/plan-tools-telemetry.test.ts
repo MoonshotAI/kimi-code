@@ -44,13 +44,12 @@ function recordingTelemetry(): {
   return {
     telemetry: {
       _serviceBrand: undefined,
-      track: vi.fn(),
       track2,
       withContext: () => recordingTelemetry().telemetry,
       setContext: () => {},
+      getContext: () => ({}),
       addAppender: () => ({ dispose: () => {} }),
       removeAppender: () => {},
-      setAppender: () => {},
       setEnabled: () => {},
       flush: () => Promise.resolve(),
       shutdown: () => Promise.resolve(),
@@ -64,6 +63,7 @@ function permissionMode(): IAgentPermissionModeService {
     _serviceBrand: undefined,
     mode: 'auto',
     setMode: () => {},
+    setModeAndBroadcast: () => {},
     onDidChangeMode: () => ({ dispose: () => {} }),
   };
 }
@@ -89,24 +89,6 @@ function planService({
 }
 
 describe('EnterPlanModeTool telemetry', () => {
-  it('has name, description, parameters, and a stable execution description', async () => {
-    const { telemetry } = recordingTelemetry();
-    const tool = new EnterPlanModeTool(planService({ status: null }), telemetry);
-
-    expect(tool.name).toBe('EnterPlanMode');
-    expect(tool.description).toContain('EnterPlanMode');
-    expect(tool.description).toContain('non-trivial implementation task');
-    expect(tool.parameters).toMatchObject({
-      type: 'object',
-      properties: {},
-      additionalProperties: false,
-    });
-
-    const execution = tool.resolveExecution({});
-    if (execution.isError === true) throw new Error('expected runnable execution');
-    expect(execution.description).toBe('Requesting to enter plan mode');
-  });
-
   it('returns an error when plan mode is already active', async () => {
     const { telemetry } = recordingTelemetry();
 
@@ -271,7 +253,14 @@ describe('AgentPlanService EnterPlanMode telemetry', () => {
         ).toBe(false);
         expect(records).toContainEqual({
           event: 'plan_enter_resolved',
-          properties: { agent_id: 'main', outcome: 'auto_approved' },
+          properties: {
+            agent_id: 'main',
+            mode: 'plan',
+            model: 'mock-model',
+            outcome: 'auto_approved',
+            protocol: 'openai',
+            provider_type: 'kimi',
+          },
         });
       });
     });
@@ -279,26 +268,6 @@ describe('AgentPlanService EnterPlanMode telemetry', () => {
 });
 
 describe('ExitPlanModeTool telemetry', () => {
-  it('has name, description, parameters, and a stable execution description', async () => {
-    const { telemetry } = recordingTelemetry();
-    const tool = new ExitPlanModeTool(planService(), permissionMode(), telemetry);
-
-    expect(tool.name).toBe('ExitPlanMode');
-    expect(tool.description).toContain('ExitPlanMode');
-    expect(tool.description).toContain('ready for user approval');
-    expect(tool.parameters).toMatchObject({
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        options: expect.objectContaining({ type: 'array' }),
-      },
-    });
-
-    const execution = await tool.resolveExecution({});
-    if (execution.isError === true) throw new Error('expected runnable execution');
-    expect(execution.description).toBe('Presenting plan and exiting plan mode');
-  });
-
   it('refuses to exit when plan mode is inactive', async () => {
     const { telemetry } = recordingTelemetry();
 

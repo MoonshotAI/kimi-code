@@ -3,14 +3,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { SECONDARY_DERIVED_MODEL_ID } from '#/app/kosongConfig/secondaryModelOverlay';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ModelRecord } from '#/kosong/model/model';
 import {
   configServices,
   createTestAgent,
+  InMemoryWireRecordPersistence,
   llmGenerateServices,
   modelProviderOptionServices,
   telemetryServices,
+  wireRecordPersistenceServices,
   type TestAgentContext,
 } from '../../harness';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
@@ -120,24 +122,7 @@ describe('ConfigState model capabilities', () => {
     });
   });
 
-  it('reports the recipe base alias when bound to the derived secondary entry', () => {
-    kimiConfig = {
-      providers: {},
-      secondaryModel: { model: 'provider/secondary', defaultEffort: 'low' },
-    } as TestKimiConfig;
-
-    profile.update({ modelAlias: SECONDARY_DERIVED_MODEL_ID });
-
-    const statuses = ctx.allEvents.filter((entry) => entry.event === 'agent.status.updated');
-    const last = statuses.at(-1)?.args as { model?: string };
-    expect(last.model).toBe('provider/secondary');
-  });
-
   it('omits maxContextTokens when the bound model no longer resolves', () => {
-    // `update` accepts an alias without validating resolvability; a model entry
-    // removed from config afterwards lands in the same state. The capabilities
-    // then fall back to UNKNOWN_CAPABILITY, whose 0 means "unknown" — the
-    // status event must drop the field rather than publish 0.
     profile.update({ modelAlias: 'ghost/model' });
 
     const statuses = ctx.allEvents.filter((entry) => entry.event === 'agent.status.updated');
@@ -174,8 +159,94 @@ describe('ConfigState model capabilities', () => {
 
     expect(records).toContainEqual({
       event: 'thinking_toggle',
-      properties: { agent_id: 'main', enabled: true, effort: 'low', from: 'off' },
+      properties: {
+        agent_id: 'main',
+        enabled: true,
+        effort: 'low',
+        from: 'off',
+        mode: 'agent',
+        model: 'kimi-code/kimi-for-coding',
+        protocol: 'openai',
+        provider_type: 'kimi',
+      },
     });
+  });
+
+  it('writes the bound model into the ambient telemetry context', () => {
+    kimiConfig = {
+      providers: {
+        kimi: {
+          type: 'kimi',
+          apiKey: 'test-key',
+          baseUrl: 'https://api.example.test/v1',
+        },
+      },
+      models: {
+        'kimi-code/kimi-for-coding': {
+          provider: 'kimi',
+          model: 'kimi-for-coding',
+          maxContextSize: 1_000_000,
+        },
+      },
+    };
+
+    profile.update({ modelAlias: 'kimi-code/kimi-for-coding' });
+
+    expect(ctx.get(ITelemetryService).getContext()).toMatchObject({
+      model: 'kimi-code/kimi-for-coding',
+      provider_type: 'kimi',
+      protocol: 'openai',
+    });
+  });
+
+  it('keeps the alias as ambient model when the bound model does not resolve', () => {
+    profile.update({ modelAlias: 'ghost/model' });
+
+    expect(ctx.get(ITelemetryService).getContext()).toMatchObject({
+      model: 'ghost/model',
+    });
+  });
+
+  it('restores the ambient model after a cold resume', async () => {
+    kimiConfig = {
+      providers: {
+        kimi: {
+          type: 'kimi',
+          apiKey: 'test-key',
+          baseUrl: 'https://api.example.test/v1',
+        },
+      },
+      models: {
+        'kimi-code/kimi-for-coding': {
+          provider: 'kimi',
+          model: 'kimi-for-coding',
+          maxContextSize: 1_000_000,
+        },
+      },
+    };
+    const resumedRecords: TelemetryRecord[] = [];
+    const resumed = createTestAgent(
+      { autoConfigure: false },
+      configServices(() => kimiConfig),
+      llmGenerateServices((...args) => generate(...args)),
+      telemetryServices(recordingTelemetry(resumedRecords)),
+      wireRecordPersistenceServices(
+        new InMemoryWireRecordPersistence([
+          { type: 'config.update', agentId: 'main', modelAlias: 'kimi-code/kimi-for-coding' },
+        ]),
+      ),
+    );
+    try {
+      await resumed.restorePersisted();
+
+      expect(resumed.get(ITelemetryService).getContext()).toMatchObject({
+        model: 'kimi-code/kimi-for-coding',
+        provider_type: 'kimi',
+        protocol: 'openai',
+      });
+    } finally {
+      await resumed.dispose();
+    }
   });
 
   it('does not infer Kimi capabilities from the provider catalogue', () => {
@@ -460,11 +531,11 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
     expect(ctx.allEvents).toContainEqual({
       type: '[rpc]',
       event: 'warning',
-      args: {
+      args: expect.objectContaining({
         code: 'anthropic-thinking-effort-not-listed',
         message:
           'Thinking effort "high" is not listed for model "compatible-model" (known: max). The configured value will be sent unchanged to the Anthropic-compatible backend.',
-      },
+      }),
     });
   });
 

@@ -1,12 +1,3 @@
-/**
- * `kosong/provider` domain — Chat Completions stream tool-call buffering.
- *
- * Shared mechanics for the OpenAI-family bases: folds streamed
- * `delta.tool_calls` entries into buffered per-index tool calls, emitting a
- * `function` header once a concrete name arrives and `tool_call_part` deltas
- * for subsequent argument chunks.
- */
-
 import type { StreamedMessagePart, ToolCall } from '#/kosong/contract/message';
 
 export interface ChatCompletionStreamToolFunctionDelta {

@@ -1,16 +1,3 @@
-/**
- * `InMemoryStorageService` — `IFileSystemStorageService` backed by in-memory maps.
- *
- * Not auto-registered: the Storage-layer backend is a deployment choice that
- * the composition root must provide. `bootstrap()` seeds a per-token
- * `FileStorageService` (rooted at `bootstrap.homeDir`) for production; the
- * test harness seeds this in-memory backend so tests keep a durable-enough
- * default. A scope that seeds neither backend will fail to resolve the storage
- * tokens on first use.
- *
- * `append` concatenates into the same key slot `write` replaces.
- */
-
 import {
   DisposableStore,
   combinedDisposable,
@@ -36,6 +23,7 @@ export class InMemoryStorageService implements IFileSystemStorageService {
 
   private readonly scopes = new Map<string, Map<string, Uint8Array>>();
   private readonly watchers = new Map<string, WatchEntry>();
+  private readonly mtimes = new Map<string, number>();
 
   async read(scope: string, key: string): Promise<Uint8Array | undefined> {
     return this.scopes.get(scope)?.get(key);
@@ -61,9 +49,11 @@ export class InMemoryStorageService implements IFileSystemStorageService {
     scope: string,
     key: string,
     data: Uint8Array,
-    _options: StorageWriteOptions = {},
+    options: StorageWriteOptions = {},
   ): Promise<void> {
+    options.signal?.throwIfAborted();
     this.bucket(scope).set(key, data);
+    this.mtimes.set(this.watchKey(scope, key), Date.now());
     this.notifyWatchers(scope, key);
   }
 
@@ -71,14 +61,16 @@ export class InMemoryStorageService implements IFileSystemStorageService {
     scope: string,
     key: string,
     source: AsyncIterable<Uint8Array>,
-    _options: StorageWriteOptions = {},
+    options: StorageWriteOptions = {},
   ): Promise<void> {
     const chunks: Uint8Array[] = [];
     let total = 0;
     for await (const chunk of source) {
+      options.signal?.throwIfAborted();
       chunks.push(chunk);
       total += chunk.byteLength;
     }
+    options.signal?.throwIfAborted();
     const merged = new Uint8Array(total);
     let offset = 0;
     for (const chunk of chunks) {
@@ -86,6 +78,7 @@ export class InMemoryStorageService implements IFileSystemStorageService {
       offset += chunk.byteLength;
     }
     this.bucket(scope).set(key, merged);
+    this.mtimes.set(this.watchKey(scope, key), Date.now());
     this.notifyWatchers(scope, key);
   }
 
@@ -99,6 +92,7 @@ export class InMemoryStorageService implements IFileSystemStorageService {
     const existing = bucket.get(key);
     if (existing === undefined) {
       bucket.set(key, data);
+      this.mtimes.set(this.watchKey(scope, key), Date.now());
       this.notifyWatchers(scope, key);
       return;
     }
@@ -106,6 +100,7 @@ export class InMemoryStorageService implements IFileSystemStorageService {
     merged.set(existing, 0);
     merged.set(data, existing.byteLength);
     bucket.set(key, merged);
+    this.mtimes.set(this.watchKey(scope, key), Date.now());
     this.notifyWatchers(scope, key);
   }
 
@@ -118,7 +113,20 @@ export class InMemoryStorageService implements IFileSystemStorageService {
 
   async delete(scope: string, key: string): Promise<void> {
     this.scopes.get(scope)?.delete(key);
+    this.mtimes.delete(this.watchKey(scope, key));
     this.notifyWatchers(scope, key);
+  }
+
+  async size(scope: string, key: string): Promise<number | undefined> {
+    return this.scopes.get(scope)?.get(key)?.byteLength;
+  }
+
+  async mtime(scope: string, key: string): Promise<number | undefined> {
+    return this.mtimes.get(this.watchKey(scope, key));
+  }
+
+  pathFor(_scope: string, _key: string): undefined {
+    return undefined;
   }
 
   watch(scope: string, key: string): Event<void> {

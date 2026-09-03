@@ -2,9 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   WIRE_PROTOCOL_VERSION,
-  CHECKPOINTED_MODELS,
+  EVENT2_REGISTRY,
   IAgentContextMemoryService,
-  IAgentTokenCountingService,
   IAgentGoalService,
   type ContextMessage,
   type WireRecord,
@@ -18,16 +17,25 @@ import {
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
+import {
+  ContextAppendMessage,
+  ContextApplyCompaction,
+  ContextClear,
+  ContextUndo,
+} from '#/agent/contextMemory/contextEvents';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { todoSet, TodoModel } from '#/session/todo/todoOps';
-import { OP_REGISTRY } from '#/wire/op';
-import { MODEL_CROSS_REDUCERS } from '#/wire/model';
-import { IWireService } from '#/wire/wire';
+import { TokenCountingMeasured } from '#/agent/tokenCounting/tokenCountingOps';
+import { TurnStepInterrupted } from '#/agent/loop/turnEvents';
+import { TurnStepRetrying } from '#/agent/stepRetry/stepRetryService';
+import { ToolsUpdateStore } from '#/features/todo/todoOps';
+import { IEventDispatcher } from '#/state/eventDispatcher';
+import type { Event2Class } from '#/app/event/event2';
 import { AGENT_WIRE_RECORD_KEY } from '#/wire/record';
-import { registerTestAgentWire, restoreTestAgentWire } from './wire/stubs';
+import { attachTodoService, registerTestAgentWire, registerTestEventDispatcher, restoreTestEventDispatcher } from './wire/stubs';
+import { BUILTIN_REPLAYABLE_STATE_KEYS } from './state/builtinReplayableKeys';
 
 const V1_RECORD_TYPES: ReadonlySet<string> = new Set([
   'metadata',
@@ -70,21 +78,42 @@ const V2_ONLY_RECORD_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
+  'tower_mode.enter',
+  'tower_mode.exit',
   'task.started',
   'task.terminated',
+  'task.waitDelivered',
+  'staleGuard.recorded',
+  'staleGuard.cleared',
   'interaction.request',
   'interaction.resolved',
   'plan.revision',
+  'file_history.tracked',
+  'file_history.checkpoint',
   'interruptionReminder.recorded',
   'plugin.session_start',
+  'runtime.set_binding',
   'turn.ended',
+  'prompt.accepted',
+  'prompt.aborted',
+  'prompt.completed',
+  'prompt.steered',
+  'token_counting.measured',
+  'token_counting.truncated',
+  'token_counting.rebased',
+  'cron.add',
+  'cron.delete',
+  'cron.cursor',
+  'token_counting.turn_recorded',
+  'turn.step.retrying',
+  'turn.step.interrupted',
 ]);
 
 describe('v1 wire vocabulary', () => {
   const SCOPE = 'wire';
 
   let disposables: DisposableStore;
-  let wire: IWireService;
+  let dispatcher: IEventDispatcher;
   let log: IAppendLogStore;
 
   beforeEach(() => {
@@ -93,13 +122,14 @@ describe('v1 wire vocabulary', () => {
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     log = ix.get(IAppendLogStore);
-    wire = registerTestAgentWire(ix, SCOPE, { log });
+    registerTestAgentWire(ix, SCOPE, { log });
+    dispatcher = registerTestEventDispatcher(ix);
   });
 
   afterEach(() => disposables.dispose());
 
   async function readRecords(): Promise<WireRecord[]> {
-    await wire.flush();
+    await dispatcher.flush();
     const out: WireRecord[] = [];
     for await (const record of log.read<WireRecord>(SCOPE, AGENT_WIRE_RECORD_KEY)) {
       out.push(record);
@@ -107,21 +137,22 @@ describe('v1 wire vocabulary', () => {
     return out;
   }
 
-  it('every persisted op type is a known (v1 or v2) record type', () => {
-    for (const [type, descriptor] of OP_REGISTRY) {
-      if (descriptor.persist === false) continue;
+  it('every durable event type is a known (v1 or v2) record type', () => {
+    for (const type of EVENT2_REGISTRY.keys()) {
       expect(
         V1_RECORD_TYPES.has(type) ||
           V2_ONLY_RECORD_TYPES.has(type) ||
           V2_RECORD_TYPES.has(type),
-        `op "${type}" persists an unregistered record type`,
+        `event "${type}" persists an unregistered record type`,
       ).toBe(true);
     }
   });
 
   it('stamps persisted records with time, except the metadata envelope', async () => {
-    await wire.restore();
-    wire.dispatch(todoSet({ key: 'todo', value: [{ title: 'x', status: 'pending' }] }));
+    await dispatcher.restore();
+    await dispatcher.dispatch(
+      new ToolsUpdateStore({ agentId: 'test-agent', key: 'todo', value: [{ title: 'x', status: 'pending' }] }),
+    );
 
     const records = await readRecords();
     expect(records).toEqual([
@@ -132,6 +163,7 @@ describe('v1 wire vocabulary', () => {
       },
       {
         type: 'tools.update_store',
+        agentId: 'test-agent',
         key: 'todo',
         value: [{ title: 'x', status: 'pending' }],
         time: expect.any(Number),
@@ -139,9 +171,84 @@ describe('v1 wire vocabulary', () => {
     ]);
   });
 
+  it('persists step retrying and interrupted records with full payloads and replays them safely', async () => {
+    await dispatcher.restore();
+    await dispatcher.dispatch(
+      new TurnStepRetrying({
+        agentId: 'test-agent',
+        turnId: 1,
+        step: 2,
+        failedAttempt: 1,
+        nextAttempt: 2,
+        maxAttempts: 10,
+        delayMs: 500,
+        errorName: 'APIStatusError',
+        errorMessage: 'Overloaded',
+        statusCode: 429,
+      }),
+    );
+    await dispatcher.dispatch(
+      new TurnStepInterrupted({
+        agentId: 'test-agent',
+        turnId: 1,
+        step: 2,
+        reason: 'error',
+        message: 'boom',
+      }),
+    );
+    const records = await readRecords();
+    expect(records).toEqual([
+      {
+        type: 'metadata',
+        protocol_version: WIRE_PROTOCOL_VERSION,
+        created_at: expect.any(Number),
+      },
+      {
+        type: 'turn.step.retrying',
+        agentId: 'test-agent',
+        turnId: 1,
+        step: 2,
+        failedAttempt: 1,
+        nextAttempt: 2,
+        maxAttempts: 10,
+        delayMs: 500,
+        errorName: 'APIStatusError',
+        errorMessage: 'Overloaded',
+        statusCode: 429,
+        time: expect.any(Number),
+      },
+      {
+        type: 'turn.step.interrupted',
+        agentId: 'test-agent',
+        turnId: 1,
+        step: 2,
+        reason: 'error',
+        message: 'boom',
+        time: expect.any(Number),
+      },
+    ]);
+
+    const store = new DisposableStore();
+    disposables.add(store);
+    const ix2 = store.add(new TestInstantiationService());
+    ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    const log2 = ix2.get(IAppendLogStore);
+    registerTestAgentWire(ix2, SCOPE, { log: log2 });
+    const fresh = registerTestEventDispatcher(ix2);
+
+    await restoreTestEventDispatcher(fresh, log2, SCOPE, records);
+
+    const replayed: WireRecord[] = [];
+    for await (const record of log2.read<WireRecord>(SCOPE, AGENT_WIRE_RECORD_KEY)) {
+      replayed.push(record);
+    }
+    expect(replayed).toEqual(records);
+  });
+
   it('round-trips the todo list through the persisted tools.update_store record', async () => {
-    wire.dispatch(
-      todoSet({ key: 'todo', value: [{ title: 'restore me', status: 'in_progress' }] }),
+    await dispatcher.dispatch(
+      new ToolsUpdateStore({ agentId: 'test-agent', key: 'todo', value: [{ title: 'restore me', status: 'in_progress' }] }),
     );
     const records = await readRecords();
 
@@ -151,37 +258,45 @@ describe('v1 wire vocabulary', () => {
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     const log2 = ix2.get(IAppendLogStore);
-    const fresh = registerTestAgentWire(ix2, SCOPE, { log: log2 });
+    registerTestAgentWire(ix2, SCOPE, { log: log2 });
+    const fresh = registerTestEventDispatcher(ix2);
+    const todo = attachTodoService(ix2);
+    store.add({ dispose: () => { todo.dispose(); } });
 
-    await restoreTestAgentWire(fresh, log2, SCOPE, records);
+    await restoreTestEventDispatcher(fresh, log2, SCOPE, records);
 
-    expect(fresh.getModel(TodoModel).current).toEqual([
+    expect(todo.get()).toEqual([
       { title: 'restore me', status: 'in_progress' },
     ]);
   });
 });
 
 describe('conversation-time checkpoint registration', () => {
-  const CHECKPOINT_EXEMPT_MODELS: ReadonlySet<string> = new Set([
+  const CHECKPOINT_EXEMPT_STATES: ReadonlySet<string> = new Set([
     'goalForkNotice',
+    'turn',
   ]);
-  const CONTEXT_OPS = [
-    'context.append_message',
-    'context.apply_compaction',
-    'context.clear',
-    'context.undo',
+  const CONTEXT_OWNER_STATE = 'contextMemory';
+  const CONTEXT_EVENTS: readonly Event2Class[] = [
+    ContextAppendMessage,
+    ContextApplyCompaction,
+    ContextClear,
+    ContextUndo,
   ];
 
-  it('registers every context-reacting model as checkpointed or explicitly exempt', () => {
+  it('registers every context-reacting state as checkpointed or explicitly exempt', () => {
     const violations: string[] = [];
     let entries = 0;
-    for (const opType of CONTEXT_OPS) {
-      for (const entry of MODEL_CROSS_REDUCERS.get(opType) ?? []) {
-        entries += 1;
-        if (CHECKPOINTED_MODELS.includes(entry.model)) continue;
-        if (CHECKPOINT_EXEMPT_MODELS.has(entry.model.name)) continue;
-        violations.push(`${entry.model.name} (on ${opType})`);
-      }
+    const undoable = BUILTIN_REPLAYABLE_STATE_KEYS.filter(
+      (key) => key.replayable.undoable !== undefined,
+    );
+    for (const key of BUILTIN_REPLAYABLE_STATE_KEYS) {
+      if (key.name === CONTEXT_OWNER_STATE) continue;
+      if (!CONTEXT_EVENTS.some((cls) => key.replayable.folds.has(cls))) continue;
+      entries += 1;
+      if (undoable.includes(key)) continue;
+      if (CHECKPOINT_EXEMPT_STATES.has(key.name)) continue;
+      violations.push(key.name);
     }
     expect(entries).toBeGreaterThan(0);
     expect(violations).toEqual([]);
@@ -190,7 +305,7 @@ describe('conversation-time checkpoint registration', () => {
 
 describe('AgentRecords persistence metadata', () => {
   let context: IAgentContextMemoryService;
-  let tokenCounting: IAgentTokenCountingService;
+  let tokenCounting: TestAgentContext['tokenCounting'];
   let ctx: TestAgentContext;
   let expectResumeMatches: boolean;
   let persistence: RecordingInMemoryWireRecordPersistence;
@@ -200,7 +315,7 @@ describe('AgentRecords persistence metadata', () => {
     persistence = new RecordingInMemoryWireRecordPersistence();
     ctx = createTestAgent({ persistence, autoConfigure: false });
     context = ctx.get(IAgentContextMemoryService);
-    tokenCounting = ctx.get(IAgentTokenCountingService);
+    tokenCounting = ctx.tokenCounting;
   });
 
   afterEach(async () => {
@@ -430,7 +545,7 @@ describe('AgentRecords persistence metadata', () => {
     expect(context.get()).toHaveLength(0);
   });
 
-  it('preconstructs context size restore handlers during runtime activation', async () => {
+  it('keeps context size tracking live across runtime restore', async () => {
     await ctx.restore([
       { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
       {
@@ -440,11 +555,6 @@ describe('AgentRecords persistence metadata', () => {
           content: [{ type: 'text', text: 'restored prompt' }],
           toolCalls: [],
         },
-      },
-      {
-        type: 'token_counting.measured',
-        length: 1,
-        tokens: 42,
       },
       {
         type: 'usage.record',
@@ -460,6 +570,14 @@ describe('AgentRecords persistence metadata', () => {
     ]);
 
     expect(context.get()).toHaveLength(1);
+    const restored = tokenCounting.get();
+    expect(restored.measured).toBe(0);
+    expect(restored.size).toBe(restored.estimated);
+    expect(restored.size).toBeGreaterThan(0);
+
+    await ctx.dispatcher.dispatch(
+      new TokenCountingMeasured({ agentId: 'main', length: 1, tokens: 42 }),
+    );
     expect(tokenCounting.get()).toEqual({
       size: 42,
       measured: 42,

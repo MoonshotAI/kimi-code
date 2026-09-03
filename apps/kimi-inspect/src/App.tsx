@@ -4,9 +4,10 @@
  * event streams was removed server-side, so Service panels and the pending
  * interactions card fetch on demand and the sidebar polls.
  * Layout: header / icon rail / view. The `chat` view is a strip of the
- * left sidebar (workspaces + sessions), the session pane (session Services
- * / State tabs), the chat column, and the right dock (`RightPanel`) merging
- * the transcript audit and the agent inspector under Audit / Agent tabs;
+ * left sidebar (a workspace → session tree), the chat column, and the
+ * right dock (`RightPanel`) merging the transcript audit, the agent
+ * inspector, and the session pane under Audit / Agent / State / Session
+ * tabs;
  * the `models` view is the full-width model catalog; the `services` view is
  * the full-width app-scope Service reflection (`AppServicesView`); the
  * `workspace` view is the workspace-scope counterpart
@@ -18,8 +19,7 @@
  * chat timeline.
  */
 
-import { ISessionIndex } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
-import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/workspace/sessionLifecycle/sessionLifecycle';
+import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
 import { useEffect, useState } from 'react';
 
 import type { AuditTrail } from './audit/trail';
@@ -27,12 +27,12 @@ import { AppServicesView } from './components/AppServicesView';
 import { BashParserView } from './components/BashParserView';
 import { ChatView, type ChatJump } from './components/ChatView';
 import { DiInspectionView } from './components/DiInspectionView';
+import { FsSuggestView } from './components/FsSuggestView';
 import { ModelCatalogView } from './components/ModelCatalogView';
 import { NavRail, type AppView } from './components/NavRail';
 import { RightPanel } from './components/RightPanel';
 import { SearchView } from './components/SearchView';
 import { ServerSwitcher } from './components/ServerSwitcher';
-import { SessionPane } from './components/SessionPane';
 import { Sidebar } from './components/Sidebar';
 import { WorkspaceServicesView } from './components/WorkspaceServicesView';
 import { useConnection } from './connection';
@@ -61,14 +61,10 @@ export function App() {
     setReady(false);
     setResumeError(null);
     klient
-      .core(ISessionIndex)
-      .get(sessionId)
-      .then((summary) => {
-        if (summary === undefined) throw new Error(`session ${sessionId} does not exist`);
-        return klient
-          .workspace(summary.workspaceId)
-          .service(ISessionLifecycleService)
-          .resume(sessionId);
+      .core(ISessionManager)
+      .resume(sessionId)
+      .then((session) => {
+        if (session === undefined) throw new Error(`session ${sessionId} does not exist`);
       })
       .then(() => {
         if (!cancelled) setReady(true);
@@ -122,6 +118,8 @@ export function App() {
           <AppServicesView />
         ) : view === 'workspace' ? (
           <WorkspaceServicesView />
+        ) : view === 'suggest' ? (
+          <FsSuggestView />
         ) : view === 'bash' ? (
           <BashParserView />
         ) : view === 'di' ? (
@@ -138,7 +136,6 @@ export function App() {
         ) : (
           <>
             <Sidebar activeSessionId={sessionId} onSelectSession={setSessionId} />
-            <SessionPane sessionId={sessionId} ready={ready} />
             {resumeError !== null ? (
               <div className="flex flex-1 items-center justify-center p-6 text-center text-[12px] text-red-400">
                 Failed to open session: {errorMessage(resumeError)}

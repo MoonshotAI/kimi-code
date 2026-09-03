@@ -1,33 +1,3 @@
-/**
- * `di` domain — cascade engine + wait scheduler (L2), one per container, with
- * tree-wide orchestration (D9: cascades propagate along instance edges across
- * scopes).
- *
- * The dependency graph, request queue, in-flight set, and settle waiters are
- * shared by the whole scope tree (`CascadeTree`, owned by the root). Every
- * change (provide / unprovide / update) runs as a single transaction
- * orchestrated by the engine of the scope where the change was submitted:
- * ① compute the contagion set from the tree-global graph;
- * ② broadcast WillCascade to the orchestrator's abort hook (bounded wait,
- *    then forced; failures are best-effort, never a veto);
- * ③ tear the contagion set down in global reverse topological order, serially
- *    (each scope's engine executes its own units; Active → Unloading →
- *    Pending, or removed for an unprovided token; a descendant scope that dies
- *    mid-transaction is skipped idempotently);
- * ④ apply the change in its own scope (a replace never passes through the
- *    waiting area);
- * ⑤ recheck the waiting area across scopes and rebuild satisfied units in
- *    global topological order;
- * ⑥ append the transaction to the orchestrator's history ring.
- *
- * Requests serialize through the tree queue; requests queued together merge
- * their contagion sets (deduped by scope+token) into one transaction. This is
- * one transaction across the tree but not a distributed transaction: a single
- * orchestrator, a deterministic order, local execution per scope. Like the
- * Ledger, the engine has a sync fast path: with no async abort wait and no
- * async disposers, a transaction completes within the tick.
- */
-
 import { onUnexpectedError } from '../errors/unexpectedError';
 import { Emitter, type Event } from '../event';
 import { isPromiseLike } from '../lifecycle/disposer';
@@ -48,7 +18,6 @@ export type UnitActivation = 'eager' | 'ondemand';
 
 export interface CascadeChange {
   readonly action: CascadeAction;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly token: ServiceIdentifier<any>;
   readonly descriptor?: SyncDescriptor<unknown>;
   readonly instance?: unknown;
@@ -96,37 +65,25 @@ export interface CascadeEngineOptions {
 }
 
 export interface CascadeHost {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   isRegistered(token: ServiceIdentifier<any>): boolean;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ownerScopeOf(token: ServiceIdentifier<any>): object | undefined;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   isMaterialized(token: ServiceIdentifier<any>): boolean;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   materialize(token: ServiceIdentifier<any>): unknown;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   retire(token: ServiceIdentifier<any>): void | Promise<void>;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   applyProvide(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     token: ServiceIdentifier<any>,
     descriptor: SyncDescriptor<unknown>,
     config: unknown,
   ): number;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   applyProvideInstance(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     token: ServiceIdentifier<any>,
     instance: unknown,
     config: unknown,
   ): number;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   applyUnprovide(token: ServiceIdentifier<any>): void;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   recipeOf(token: ServiceIdentifier<any>): SyncDescriptor<unknown> | undefined;
   dependenciesOf(
     recipe: SyncDescriptor<unknown>,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ): Array<ServiceIdentifier<any>>;
 }
 
@@ -225,19 +182,17 @@ export class CascadeTree {
 
 export class CascadeEngine {
   private readonly _units = new Map<
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ServiceIdentifier<any>,
     UnitRecord
   >();
   private readonly _pendingIndex = new Map<
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ServiceIdentifier<any>,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     Set<ServiceIdentifier<any>>
   >();
   private readonly _history: CascadeHistoryEntry[] = [];
   private _historySeq = 0;
   private _disposed = false;
+  private _activationSuspended = 0;
   private readonly _onDidChangeUnitState = new Emitter<UnitStateChange>();
   readonly onDidChangeUnitState: Event<UnitStateChange> = this._onDidChangeUnitState.event;
   private readonly _onDidCascade = new Emitter<CascadeHistoryEntry>();
@@ -256,28 +211,23 @@ export class CascadeEngine {
     this._options = { ...this._options, ...options };
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   stateOf(token: ServiceIdentifier<any>): UnitState | undefined {
     return this._units.get(token)?.state;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   activationOf(token: ServiceIdentifier<any>): UnitActivation | undefined {
     return this._units.get(token)?.activation;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   materializable(token: ServiceIdentifier<any>): boolean {
     return this._host.recipeOf(token) !== undefined;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   failureOf(token: ServiceIdentifier<any>): unknown {
     const unit = this._units.get(token);
     return unit?.state === 'Failed' ? unit.error : undefined;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   isInFlight(token: ServiceIdentifier<any>): boolean {
     const owner = this._host.ownerScopeOf(token) ?? this._scope;
     return this._tree.inFlightHas({ scope: owner, token });
@@ -335,7 +285,6 @@ export class CascadeEngine {
     });
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   update(token: ServiceIdentifier<any>, reason?: string): Promise<void> {
     return this.submit({
       action: 'update',
@@ -355,8 +304,43 @@ export class CascadeEngine {
     });
   }
 
+  suspendActivation(): void {
+    this._activationSuspended++;
+  }
+
+  resumeActivation(): void {
+    if (this._activationSuspended === 0) {
+      return;
+    }
+    this._activationSuspended--;
+    if (this._activationSuspended > 0 || this._disposed) {
+      return;
+    }
+    const rebuilt: string[] = [];
+    const failed: string[] = [];
+    this._recheckTreeFixpoint(rebuilt, failed);
+  }
+
+  private _recheckTreeFixpoint(rebuilt: string[], failed: string[]): void {
+    const enginesInOrder = [...this._tree.engines]
+      .filter((engine) => !engine._disposed)
+      .sort((a, b) => a._scope.cascadeDepth - b._scope.cascadeDepth);
+    for (;;) {
+      let progress = false;
+      for (const engine of enginesInOrder) {
+        const before = rebuilt.length + failed.length;
+        engine._recheckForCascade(rebuilt, failed);
+        if (rebuilt.length + failed.length > before) {
+          progress = true;
+        }
+      }
+      if (!progress) {
+        break;
+      }
+    }
+  }
+
   resolveWhenAvailable<T>(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     token: ServiceIdentifier<any>,
     timeoutMs?: number,
   ): Promise<T> {
@@ -387,7 +371,6 @@ export class CascadeEngine {
     });
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   observedMaterialization(token: ServiceIdentifier<any>): void {
     const unit = this._units.get(token);
     if (unit !== undefined && unit.state === 'Pending') {
@@ -415,9 +398,7 @@ export class CascadeEngine {
     this._onDidCascade.dispose();
   }
 
-
   _teardownForCascade(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     token: ServiceIdentifier<any>,
     tornDown: string[],
     parkAsPending: boolean,
@@ -435,7 +416,7 @@ export class CascadeEngine {
   }
 
   _recheckForCascade(rebuilt: string[], failed: string[]): void {
-    if (this._disposed) {
+    if (this._disposed || this._activationSuspended > 0) {
       return;
     }
     this._recheckPending(rebuilt, failed);
@@ -466,7 +447,6 @@ export class CascadeEngine {
         break;
     }
   }
-
 
   private _pump(): void {
     if (this._tree.running) {
@@ -504,7 +484,6 @@ export class CascadeEngine {
       finish(error);
     }
   }
-
 
   private _transact(batch: QueuedRequest[]): void | Promise<void> {
     const changes = mergeBatch(batch);
@@ -615,22 +594,7 @@ export class CascadeEngine {
       for (const { engine, change } of changes) {
         engine._applyChangeForCascade(change);
       }
-      const enginesInOrder = [...this._tree.engines]
-        .filter((engine) => !engine._disposed)
-        .sort((a, b) => a._scope.cascadeDepth - b._scope.cascadeDepth);
-      for (;;) {
-        let progress = false;
-        for (const engine of enginesInOrder) {
-          const before = rebuilt.length + failed.length;
-          engine._recheckForCascade(rebuilt, failed);
-          if (rebuilt.length + failed.length > before) {
-            progress = true;
-          }
-        }
-        if (!progress) {
-          break;
-        }
-      }
+      this._recheckTreeFixpoint(rebuilt, failed);
       this._pushHistory({
         seq: ++this._historySeq,
         reason,
@@ -656,8 +620,6 @@ export class CascadeEngine {
     return undefined;
   }
 
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private _unitFor(token: ServiceIdentifier<any>): UnitRecord {
     let unit = this._units.get(token);
     if (unit === undefined) {
@@ -669,7 +631,6 @@ export class CascadeEngine {
   }
 
   private _setUnitState(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     token: ServiceIdentifier<any>,
     unit: UnitRecord,
     state: UnitState,
@@ -687,7 +648,6 @@ export class CascadeEngine {
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private _markPending(
     token: ServiceIdentifier<any>,
     activation?: UnitActivation,
@@ -706,7 +666,6 @@ export class CascadeEngine {
   private _recheckPending(rebuilt: string[], failed: string[]): void {
     for (;;) {
       this._pendingIndex.clear();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const satisfied: ServiceIdentifier<any>[] = [];
       for (const [token, unit] of this._units) {
         if (unit.state !== 'Pending') continue;
@@ -747,7 +706,6 @@ export class CascadeEngine {
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private _activate(token: ServiceIdentifier<any>, rebuilt: string[], failed: string[]): void {
     const unit = this._unitFor(token);
     this._setUnitState(token, unit, 'Activating', undefined);
@@ -762,7 +720,6 @@ export class CascadeEngine {
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private _missingDeps(token: ServiceIdentifier<any>): Array<ServiceIdentifier<any>> {
     const recipe = this._host.recipeOf(token);
     if (recipe === undefined) {
@@ -773,7 +730,6 @@ export class CascadeEngine {
       .filter((dep) => !this._isAvailable(dep));
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private _isAvailable(dep: ServiceIdentifier<any>): boolean {
     if (!this._host.isRegistered(dep)) {
       return false;

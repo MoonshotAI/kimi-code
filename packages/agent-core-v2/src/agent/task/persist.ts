@@ -1,22 +1,3 @@
-/**
- * `task` domain — `AgentTaskPersistence`, the per-agent task
- * persistence helper.
- *
- * Persists task state (`<taskId>.json`) and raw task output (`output.log`)
- * through the `storage` access-pattern stores (`IAtomicDocumentStore` for
- * atomic whole-document state, `IFileSystemStorageService` byte primitives for ordered
- * output append), addressed under the owning agent's storage scope
- * (`<sessionScope>/agents/<agentId>/tasks/…`) so the domain never touches the
- * filesystem and each agent reads back exactly its own records — v1's
- * per-agent `<sessionDir>/agents/<id>/tasks/` layout. An optional read-only
- * fallback keeps the previous v2 session-level task root readable during the
- * layout transition; primary agent keys and output files always win, while
- * every write remains rooted at the owning agent. Task ids are validated
- * against the `{prefix}-{8 hex}` shape before use as path segments
- * (path-traversal and legacy `bg_<hex>` guard), and legacy snake_case records
- * are normalized to the current shape on read. Not scope-bound.
- */
-
 import { join } from 'pathe';
 
 import { BugIndicatingError } from '#/errors';

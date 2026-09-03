@@ -1,25 +1,4 @@
-/**
- * `sessionIndex` domain (L2) — authoritative session-metadata scanning.
- *
- * Reads the persisted session set through the `storage` access-pattern
- * stores, rooted at the `sessionsDir` path layout fact from `bootstrap`. The
- * directory tree `<sessionsDir>/<workspaceId>/<sessionId>/` is the
- * authoritative index: workspace and session ids are enumerated via
- * `IFileSystemStorageService.list`, and each session's metadata document is
- * read via `IAtomicDocumentStore` to build its summary.
- *
- * The session metadata document lives at `<sessionDir>/state.json`, a layout
- * shared by v1 and v2; the `version` field distinguishes them (`2` = v2,
- * epoch-ms timestamps; absent = v1, ISO-string timestamps). The reader also
- * falls back to the legacy `<sessionDir>/session-meta/state.json` path for v2
- * sessions written before the layouts were unified. Both timestamp
- * representations are normalized to epoch ms.
- *
- * These helpers serve the index's authoritative fallback (legacy path), the
- * projector's full scans, and reconciliation — pure functions over injected
- * stores, owning no state themselves.
- */
-
+import { SESSION_INDEX_KEY, SESSION_INDEX_SCOPE } from '#/app/workspace/workspaceAlias';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
@@ -27,6 +6,7 @@ import { CHILD_SESSION_KIND, CHILD_SESSION_KIND_KEY, type SessionSummary } from 
 
 const META_SCOPE = 'session-meta';
 const META_KEY = 'state.json';
+const MTIME_SCAN_CONCURRENCY = 16;
 
 export function parseTime(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -54,9 +34,6 @@ export function recoverCwd(meta: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
-/** The single construction path for summaries — field order is fixed so a
- *  stored summary deep-compares equal to a fresh projection of the same
- *  metadata document. */
 export function buildSessionSummary(fields: {
   id: string;
   workspaceId: string;
@@ -97,9 +74,6 @@ export function summaryMatchesChildOf(
   );
 }
 
-/** Deep-enough equality for reconciliation: the projection-relevant fields,
- *  with `custom` compared structurally (both sides are JSON-round-tripped
- *  values built by `buildSessionSummary`, so key order is stable). */
 export function summaryEquals(a: SessionSummary, b: SessionSummary): boolean {
   return (
     a.id === b.id &&
@@ -179,8 +153,6 @@ async function readMeta(
   }
 }
 
-/** Bounded-concurrency map: resolves every item through `fn`, dropping
- *  `undefined` results, with at most `concurrency` calls in flight. */
 export async function mapBounded<T, R>(
   items: readonly T[],
   concurrency: number,
@@ -197,4 +169,33 @@ export async function mapBounded<T, R>(
   });
   await Promise.all(workers);
   return out;
+}
+
+export async function sessionStateMaxMtime(
+  storage: IFileSystemStorageService,
+  sessionsScope: string,
+  workspaceId: string,
+  sessionId: string,
+): Promise<number> {
+  const base = `${sessionsScope}/${workspaceId}/${sessionId}`;
+  const direct = await storage.mtime(base, META_KEY);
+  const nested = await storage.mtime(`${base}/${META_SCOPE}`, META_KEY);
+  return Math.max(direct ?? 0, nested ?? 0);
+}
+
+export async function scanSessionsMaxMtime(
+  storage: IFileSystemStorageService,
+  sessionsScope: string,
+): Promise<number> {
+  let max = (await storage.mtime(SESSION_INDEX_SCOPE, SESSION_INDEX_KEY)) ?? 0;
+  for (const workspaceId of await listWorkspaceIds(storage, sessionsScope)) {
+    const sessionIds = await listSessionIds(storage, sessionsScope, workspaceId);
+    const mtimes = await mapBounded(sessionIds, MTIME_SCAN_CONCURRENCY, (sessionId) =>
+      sessionStateMaxMtime(storage, sessionsScope, workspaceId, sessionId),
+    );
+    for (const mtime of mtimes) {
+      if (mtime > max) max = mtime;
+    }
+  }
+  return max;
 }

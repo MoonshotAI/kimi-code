@@ -1,7 +1,3 @@
-/**
- * `mcpCore` domain — SSE transport MCP client.
- */
-
 import { ErrorCodes, Error2 } from '#/errors';
 import type { McpServerSseConfig } from './config-schema';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -19,6 +15,7 @@ import {
   type UnexpectedCloseReason,
 } from './client-shared';
 import { buildMcpRemoteHeaders } from './client-remote';
+import { createMcpOAuthFetch } from './oauth/provider';
 import type { MCPClient, MCPToolDefinition, MCPToolResult } from './types';
 
 export interface SseMcpClientOptions {
@@ -51,7 +48,7 @@ export class SseMcpClient implements MCPClient {
 
     this.transport = new SSEClientTransport(new URL(config.url), {
       requestInit: headers !== undefined ? { headers } : undefined,
-      fetch: options.fetch,
+      fetch: createMcpOAuthFetch(options.oauthProvider, options.fetch),
       authProvider: options.oauthProvider,
     });
     this.client = new Client({

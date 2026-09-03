@@ -40,13 +40,12 @@ function planService(): IAgentPlanService {
 function recordingTelemetry(): ITelemetryService {
   return {
     _serviceBrand: undefined,
-    track: vi.fn(),
     track2: vi.fn(),
     withContext: () => recordingTelemetry(),
     setContext: () => {},
+    getContext: () => ({}),
     addAppender: () => ({ dispose: () => {} }),
     removeAppender: () => {},
-    setAppender: () => {},
     setEnabled: () => {},
     flush: () => Promise.resolve(),
     shutdown: () => Promise.resolve(),
@@ -58,6 +57,7 @@ function permissionMode(mode: PermissionMode = 'auto'): IAgentPermissionModeServ
     _serviceBrand: undefined,
     mode,
     setMode: () => {},
+    setModeAndBroadcast: () => {},
     onDidChangeMode: () => ({ dispose: () => {} }),
   };
 }

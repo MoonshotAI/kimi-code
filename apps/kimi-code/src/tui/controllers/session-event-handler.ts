@@ -119,6 +119,8 @@ export interface SessionEventHost {
   updateTerminalTitle(): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
   shiftQueuedMessage(): QueuedMessage | undefined;
+  handleTurnStarted?(event: TurnStartedEvent): void;
+  handleTurnEnded?(event: TurnEndedEvent): void;
   readonly btwPanelController: BtwPanelController;
   readonly tasksBrowserController: TasksBrowserController;
 }
@@ -319,6 +321,7 @@ export class SessionEventHandler {
   // ---------------------------------------------------------------------------
 
   private handleTurnBegin(event: TurnStartedEvent): void {
+    this.host.handleTurnStarted?.(event);
     this.currentTurnHasAssistantText = false;
     if (event.origin?.kind === 'plugin_command') {
       this.pluginCommandTurns.set(String(event.turnId), event.origin.pluginId);
@@ -356,6 +359,7 @@ export class SessionEventHandler {
   }
 
   private handleTurnEnd(event: TurnEndedEvent, sendQueued: (item: QueuedMessage) => void): void {
+    this.host.handleTurnEnded?.(event);
     this.host.streamingUI.flushNow();
     this.clearStepRetry();
     if (event.reason === 'cancelled') {
@@ -595,6 +599,7 @@ export class SessionEventHandler {
       turnId: String(event.turnId),
       renderMode: 'markdown',
       content: formatHookResultMarkdown(event),
+      hookResult: true,
     });
     this.host.patchLivePane({
       mode: 'idle',
@@ -658,7 +663,7 @@ export class SessionEventHandler {
     const tc = this.host.streamingUI.getToolComponent(event.toolCallId);
     if (tc === undefined) return;
     if (event.update.kind === 'status') {
-      tc.appendProgress(text);
+      tc.appendProgress(text, { replace: event.update.replace === true });
       return;
     }
     if (event.update.kind === 'stdout' || event.update.kind === 'stderr') {
@@ -707,11 +712,23 @@ export class SessionEventHandler {
       this.host.state.appState.swarmMode &&
       this.host.state.swarmModeEntry === 'task';
     const patch: Partial<AppState> = {};
-    if (event.contextUsage !== undefined) patch.contextUsage = event.contextUsage;
     if (event.contextTokens !== undefined) patch.contextTokens = event.contextTokens;
     if (event.maxContextTokens !== undefined) patch.maxContextTokens = event.maxContextTokens;
+    if (event.contextUsage !== undefined) {
+      patch.contextUsage = event.contextUsage;
+    } else if (event.contextTokens !== undefined || event.maxContextTokens !== undefined) {
+      // v2 status events carry contextTokens/maxContextTokens but never
+      // contextUsage. Recompute the ratio from the post-patch token counts so
+      // it cannot go stale and drift from them — the footer and the /usage
+      // panel bar render this ratio while their texts recompute from the
+      // counts, so a stale ratio shows as a bar/percentage mismatch.
+      const tokens = patch.contextTokens ?? this.host.state.appState.contextTokens;
+      const max = patch.maxContextTokens ?? this.host.state.appState.maxContextTokens;
+      patch.contextUsage = max > 0 ? tokens / max : 0;
+    }
     if (event.planMode !== undefined) patch.planMode = event.planMode;
     if (event.swarmMode !== undefined) patch.swarmMode = event.swarmMode;
+    if (event.towerMode !== undefined) patch.towerMode = event.towerMode;
     if (event.permission !== undefined) {
       patch.permissionMode = event.permission;
     }

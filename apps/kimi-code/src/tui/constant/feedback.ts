@@ -13,7 +13,7 @@ export {
   FEEDBACK_ISSUE_URL,
   FEEDBACK_TELEMETRY_EVENT,
   FEEDBACK_VERSION_PREFIX,
-  KIMI_CODE_SIGNUP_URL,
+  kimiCodeSignupUrl,
 } from '#/constant/app';
 
 export const FEEDBACK_STATUS_SUBMITTING = 'Submitting feedback…';

@@ -1,40 +1,3 @@
-/**
- * Cold-path fact fold: enrich a base snapshot (the turn tree built by
- * `groupMessagesIntoSnapshot`) with the durable facts carried by the
- * non-`context.*` wire records — tasks, interactions, todos, turn ends, and
- * the goal/plan/swarm meta.
- *
- * This is the second half of the cold rebuild: the engine persists these
- * records next to the context messages in the same `wire.jsonl`, and the live
- * path projects their events into global entities and timeline markers, so a
- * restart must be able to rebuild them from the records alone. The fold is
- * last-wins in record order, mirroring the live upsert semantics.
- *
- * Known limitations, accepted by design:
- *  - markers and taskrefs cannot be placed at their exact mid-timeline
- *    position (the base items carry no timestamps to interleave with), so
- *    they append IN RECORD ORDER at the END of the base items with an
- *    accurate `at` (record time). Entity state is complete.
- *  - turn end facts (terminal state / durationMs / error message) are
- *    rebuilt from the persisted `turn.ended` records when the journal
- *    carries them, with engine turn ids mapped to grouping ordinals
- *    through the replayed turn clock (hidden retry turns and cancelled
- *    queued reservations shift the ordinals); journals written before
- *    those records existed keep the grouping default (`completed`).
- *  - live-only detail is never backfilled: step usage / finishReason /
- *    timing / retry, tool inputText / progress, and task resultSummary /
- *    error / stateReason / usage exist only on live engine events — the
- *    persisted records do not carry them.
- *  - prompts are NOT cold-rebuilt: the wire journal has no prompt records
- *    (`prompt.submitted/completed/aborted/steered` are in-memory eventBus
- *    events of the engine's prompt service, never persisted as Ops), so a
- *    cold snapshot always carries `prompts: []`.
- *
- * The input type is structural so the engine's `WireRecord` is directly
- * assignable without a dependency from this package onto the engine (same
- * idiom as `HistoryMessage` in `groupTurns`).
- */
-
 import type { TranscriptInteraction } from '../model/interaction';
 import type { TranscriptItem, TranscriptMarker, TranscriptTaskRef } from '../model/item';
 import type { GoalMeta, GoalStatus, TranscriptMeta } from '../model/meta';
@@ -49,18 +12,11 @@ export interface HistoryWireRecord {
   readonly [key: string]: unknown;
 }
 
-// ---------------------------------------------------------------------------
-// Record payload shapes (structural reads of the engine op payloads — see
-// `agent-core-v2` goal/plan/swarm/todo/task/interaction ops).
-// ---------------------------------------------------------------------------
-
-/** `tools.update_store` payload. */
 interface UpdateStorePayload {
   readonly key?: unknown;
   readonly value?: unknown;
 }
 
-/** `goal.create` / `goal.update` payload (the GoalState source fields). */
 interface GoalPayload {
   readonly objective?: unknown;
   readonly completionCriterion?: unknown;
@@ -69,7 +25,6 @@ interface GoalPayload {
   readonly budgetLimits?: { readonly tokenBudget?: unknown };
 }
 
-/** `task.started` / `task.terminated` `info` (`AgentTaskInfo`). */
 interface TaskInfoPayload {
   readonly taskId?: unknown;
   readonly kind?: unknown;
@@ -81,7 +36,6 @@ interface TaskInfoPayload {
   readonly endedAt?: unknown;
 }
 
-/** `interaction.request` payload. */
 interface InteractionRequestPayload {
   readonly id?: unknown;
   readonly kind?: unknown;
@@ -89,22 +43,20 @@ interface InteractionRequestPayload {
   readonly request?: unknown;
 }
 
-/** `interaction.resolved` payload. */
 interface InteractionResolvedPayload {
   readonly id?: unknown;
   readonly response?: unknown;
 }
 
-/** `plan.revision` payload (a versioned, reference-style plan content record). */
 interface PlanRevisionPayload {
   readonly id?: unknown;
   readonly version?: unknown;
+  readonly key?: unknown;
   readonly path?: unknown;
   readonly sha256?: unknown;
   readonly bytes?: unknown;
 }
 
-/** `turn.ended` payload (the loop's terminal turn record). */
 interface TurnEndedPayload {
   readonly turnId?: unknown;
   readonly reason?: unknown;
@@ -112,9 +64,26 @@ interface TurnEndedPayload {
   readonly durationMs?: unknown;
 }
 
-/** `turn.prompt` / `turn.cancel` payloads (the loop's turn-clock records). */
+interface TurnStepInterruptedPayload {
+  readonly turnId?: unknown;
+  readonly step?: unknown;
+  readonly reason?: unknown;
+  readonly message?: unknown;
+}
+
 interface TurnPromptPayload {
   readonly origin?: unknown;
+  readonly promptId?: unknown;
+}
+interface ContextUndoPayload {
+  readonly count?: unknown;
+}
+interface ContextAppendMessagePayload {
+  readonly message?: {
+    readonly id?: unknown;
+    readonly role?: unknown;
+    readonly origin?: unknown;
+  };
 }
 interface TurnCancelPayload {
   readonly turnId?: unknown;
@@ -122,14 +91,6 @@ interface TurnCancelPayload {
   readonly reason?: unknown;
 }
 
-/**
- * Mirror of groupTurns' turn-opening rules, applied to `turn.prompt`
- * origins: whether the turn opens a visible transcript item. The engine
- * opens a real turn a transcript never shows for retry turns
- * (`RetryStepRequest` — origin `retry`, no context messages); hidden
- * mid-turn origins never produce `turn.prompt` records at all, but are
- * classified here anyway for completeness.
- */
 function isVisibleTurnOrigin(origin: unknown): boolean {
   const kind = (origin as { kind?: unknown } | undefined)?.kind;
   if (kind === 'system_trigger') {
@@ -140,11 +101,39 @@ function isVisibleTurnOrigin(origin: unknown): boolean {
     return (origin as { trigger?: unknown } | undefined)?.trigger === 'user-slash';
   }
   if (kind === 'injection' || kind === 'retry' || kind === 'compaction_summary') return false;
-  // user / cron / task / hook / shell_command / unknown kinds open visible turns.
   return true;
 }
 
-/** Engine task kinds (`AgentTaskInfoByKind`: process / agent / question) → transcript kinds. */
+function isUndoAnchorTurnOrigin(origin: unknown): boolean {
+  const payload = origin as { kind?: unknown; trigger?: unknown } | undefined;
+  if (payload?.kind === undefined || payload.kind === 'user') return true;
+  return (
+    (payload.kind === 'skill_activation' || payload.kind === 'plugin_command') &&
+    payload.trigger === 'user-slash'
+  );
+}
+
+function turnOriginKind(origin: unknown): TranscriptTurn['origin']['kind'] {
+  const payload = origin as { kind?: unknown; taskId?: unknown } | undefined;
+  switch (payload?.kind) {
+    case 'user':
+    case 'shell_command':
+      return 'user';
+    case 'cron_job':
+    case 'cron_missed':
+      return 'cron';
+    case 'task':
+    case 'background_task':
+      return typeof payload.taskId === 'string' ? 'task' : 'other';
+    case 'hook_result':
+      return 'hook';
+    case 'compaction_summary':
+      return 'compaction';
+    default:
+      return 'other';
+  }
+}
+
 function mapTaskKind(kind: unknown): TranscriptTask['kind'] {
   switch (kind) {
     case 'process':
@@ -167,7 +156,6 @@ const TASK_STATES = new Set<TranscriptTask['state']>([
 
 const GOAL_STATUSES = new Set<GoalStatus>(['active', 'paused', 'blocked', 'complete']);
 
-/** Interaction terminal state — mirrors the live path's `mapInteractionEndState`. */
 function mapInteractionEndState(
   kind: TranscriptInteraction['interactionKind'],
   response: unknown,
@@ -180,7 +168,6 @@ function mapInteractionEndState(
   return 'cancelled';
 }
 
-/** Turn terminal state — mirrors the live path's `mapTurnEndState` (`blocked` folds into `failed`). */
 function mapTurnEndReason(reason: unknown): TranscriptTurn['state'] | undefined {
   switch (reason) {
     case 'completed':
@@ -195,14 +182,12 @@ function mapTurnEndReason(reason: unknown): TranscriptTurn['state'] | undefined 
   }
 }
 
-/** The transcript turn carries only the terminal error's message. */
 function readTurnErrorMessage(error: unknown): string | undefined {
   if (error === null || typeof error !== 'object') return undefined;
   const message = (error as { message?: unknown }).message;
   return typeof message === 'string' ? message : undefined;
 }
 
-/** Epoch-ms record times become ISO `at` stamps; ISO strings pass through. */
 function recordTimeIso(record: HistoryWireRecord): string | undefined {
   const time: unknown = record.time;
   if (typeof time === 'number' && Number.isFinite(time)) return new Date(time).toISOString();
@@ -216,13 +201,11 @@ function epochMsToIso(value: unknown): string | undefined {
     : undefined;
 }
 
-/** The record payload (everything but the envelope fields), carried on markers. */
 function payloadOf(record: HistoryWireRecord): Record<string, unknown> {
   const { type: _type, time: _time, ...payload } = record;
   return payload;
 }
 
-/** Mirror of the engine's `readTodoItems`: keep only well-formed entries. */
 function readTodoItems(raw: unknown): TodoItem[] {
   if (!Array.isArray(raw)) return [];
   const items: TodoItem[] = [];
@@ -239,22 +222,21 @@ function readTodoItems(raw: unknown): TodoItem[] {
 export function foldWireRecordFacts(
   records: Iterable<HistoryWireRecord>,
   base: AgentTranscriptSnapshot,
+  options?: { readonly resolvePlanRevisionKey?: (key: string) => string },
 ): AgentTranscriptSnapshot {
   const tasks = new Map<string, TranscriptTask>();
   const interactions = new Map<string, TranscriptInteraction>();
-  /** Latest `turn.ended` record per engine turn id (last-wins). */
   const endedTurns = new Map<number, HistoryWireRecord>();
-  /**
-   * Turn-clock replay (mirrors the loop's TurnModel): engine turn ids are
-   * assigned to `turn.prompt` records in order, skipping queued-then-
-   * cancelled reservations. Turns whose origin opens no visible transcript
-   * item (retry turns) make engine ids drift from the grouping ordinals.
-   */
+  const interruptedSteps = new Map<number, Map<number, HistoryWireRecord>>();
+  const turnPromptIds = new Map<number, string>();
+  const turnOrigins = new Map<number, unknown>();
   let nextTurnId = 0;
   const cancelledTurnIds = new Set<number>();
   const hiddenTurnIds = new Set<number>();
+  const undoAnchors: { firstRawTurnId: number }[] = [];
+  const pendingUndoAnchorTurnIds: number[] = [];
+  let undoAnchorFloor = 0;
   const skipCancelledTurnIds = (): void => {
-    // A skipped reservation never starts: no prompt, no messages, no item.
     while (cancelledTurnIds.delete(nextTurnId)) {
       hiddenTurnIds.add(nextTurnId);
       nextTurnId += 1;
@@ -264,15 +246,12 @@ export function foldWireRecordFacts(
   let goal: GoalMeta | undefined;
   let goalTouched = false;
   let planActive: boolean | undefined;
-  /** Latest folded `plan.revision` reference; feeds the active plan badge. */
   let planRevision: { readonly reviewPath?: string; readonly version?: number } | undefined;
   let swarmActive: boolean | undefined;
+  let towerActive: boolean | undefined;
 
-  /** Markers/taskrefs generated by the fold, appended after the base items. */
   const appended: TranscriptItem[] = [];
   const activeCancelTurnIds = new Set<number>();
-  // Marker ids continue the base's `m<N>` numbering (groupTurns uses the same
-  // namespace); taskref ids dedupe against refs the base already carries.
   let markerSeq = 0;
   const usedRefIds = new Set<string>();
   for (const item of base.items) {
@@ -308,12 +287,9 @@ export function foldWireRecordFacts(
         typeof status === 'string' && TASK_STATES.has(status as TranscriptTask['state'])
           ? (status as TranscriptTask['state'])
           : (prev?.state ?? 'running'),
-      // Legacy records omit the flag and are treated as detached (mirrors the
-      // live `info.detached ?? prev?.detached ?? true`).
       detached: typeof info.detached === 'boolean' ? info.detached : (prev?.detached ?? true),
       description: typeof info.description === 'string' ? info.description : prev?.description,
       agentId: typeof info.agentId === 'string' ? info.agentId : prev?.agentId,
-      // `task.terminated` records may carry the captured output tail.
       outputTail:
         typeof record['outputTail'] === 'string'
           ? record['outputTail']
@@ -352,8 +328,6 @@ export function foldWireRecordFacts(
       case 'goal.create': {
         const payload = record as GoalPayload;
         goalTouched = true;
-        // Mirrors the model's `apply`: a create always lands active with zero
-        // usage; budget limits arrive via `goal.update`.
         goal = {
           objective: typeof payload.objective === 'string' ? payload.objective : '',
           status: 'active',
@@ -406,15 +380,23 @@ export function foldWireRecordFacts(
       }
       case 'plan.revision': {
         const payload = record as PlanRevisionPayload;
-        // A revision is submitted while plan mode is active; it refines the
-        // badge with the offloaded plan file reference, and the exit/cancel
-        // record still clears the badge afterwards (the marker stays).
+        const path =
+          typeof payload.key === 'string'
+            ? (options?.resolvePlanRevisionKey?.(payload.key) ?? payload.key)
+            : typeof payload.path === 'string'
+              ? payload.path
+              : undefined;
         planActive = true;
         planRevision = {
-          reviewPath: typeof payload.path === 'string' ? payload.path : undefined,
+          reviewPath: path,
           version: typeof payload.version === 'number' ? payload.version : undefined,
         };
-        pushMarker('plan.revision', record);
+        if (path === undefined) {
+          pushMarker('plan.revision', record);
+        } else {
+          const { key: _key, ...rest } = record;
+          pushMarker('plan.revision', { ...rest, path });
+        }
         break;
       }
       case 'swarm_mode.enter': {
@@ -425,6 +407,14 @@ export function foldWireRecordFacts(
       case 'swarm_mode.exit': {
         swarmActive = false;
         pushMarker('swarm.exit', record);
+        break;
+      }
+      case 'tower_mode.enter': {
+        towerActive = true;
+        break;
+      }
+      case 'tower_mode.exit': {
+        towerActive = false;
         break;
       }
       case 'task.started':
@@ -457,10 +447,59 @@ export function foldWireRecordFacts(
         pushMarker('interruption', record);
         break;
       }
+      case 'context.undo': {
+        const count = (record as ContextUndoPayload).count;
+        if (typeof count !== 'number' || !Number.isSafeInteger(count) || count <= 0) break;
+        let firstUndoneTurnId: number | undefined;
+        for (let i = 0; i < count && undoAnchors.length > undoAnchorFloor; i++) {
+          const anchor = undoAnchors.pop();
+          if (anchor !== undefined) firstUndoneTurnId = anchor.firstRawTurnId;
+        }
+        if (firstUndoneTurnId !== undefined) {
+          for (let turnId = firstUndoneTurnId; turnId < nextTurnId; turnId++) {
+            hiddenTurnIds.add(turnId);
+          }
+        }
+        break;
+      }
+      case 'context.clear':
+      case 'context.apply_compaction': {
+        undoAnchorFloor = undoAnchors.length;
+        break;
+      }
+      case 'context.append_message': {
+        const message = (record as ContextAppendMessagePayload).message;
+        if (message?.role !== 'user' || !isUndoAnchorTurnOrigin(message.origin)) break;
+        const matchingIndex =
+          typeof message.id === 'string'
+            ? pendingUndoAnchorTurnIds.findIndex(
+                (turnId) => turnPromptIds.get(turnId) === message.id,
+              )
+            : -1;
+        const legacyIndex =
+          matchingIndex < 0 && typeof message.id === 'string'
+            ? pendingUndoAnchorTurnIds.findIndex((turnId) => !turnPromptIds.has(turnId))
+            : -1;
+        const matchedTurnId =
+          matchingIndex >= 0
+            ? pendingUndoAnchorTurnIds.splice(matchingIndex, 1)[0]
+            : legacyIndex >= 0
+              ? pendingUndoAnchorTurnIds.splice(legacyIndex, 1)[0]
+              : typeof message.id !== 'string'
+                ? pendingUndoAnchorTurnIds.shift()
+                : undefined;
+        if (
+          matchedTurnId !== undefined &&
+          !turnPromptIds.has(matchedTurnId) &&
+          typeof message.id === 'string'
+        ) {
+          turnPromptIds.set(matchedTurnId, message.id);
+        }
+        undoAnchors.push({ firstRawTurnId: matchedTurnId ?? nextTurnId });
+        break;
+      }
       case 'interaction.request': {
         const payload = record as InteractionRequestPayload;
-        // The live path projects only approvals/questions (`user_tool`
-        // requests never become transcript entities).
         if (payload.kind !== 'approval' && payload.kind !== 'question') break;
         if (typeof payload.id !== 'string') break;
         const requestToolCallId = (payload.request as { toolCallId?: unknown } | undefined)
@@ -494,14 +533,39 @@ export function foldWireRecordFacts(
       }
       case 'turn.ended': {
         const payload = record as TurnEndedPayload;
-        if (typeof payload.turnId === 'number') endedTurns.set(payload.turnId, record);
+        if (typeof payload.turnId === 'number') {
+          endedTurns.set(payload.turnId, record);
+          const pendingIndex = pendingUndoAnchorTurnIds.indexOf(payload.turnId);
+          if (pendingIndex >= 0) pendingUndoAnchorTurnIds.splice(pendingIndex, 1);
+        }
+        break;
+      }
+      case 'turn.step.interrupted': {
+        const payload = record as TurnStepInterruptedPayload;
+        if (
+          typeof payload.turnId !== 'number' ||
+          typeof payload.step !== 'number' ||
+          typeof payload.reason !== 'string'
+        ) {
+          break;
+        }
+        let steps = interruptedSteps.get(payload.turnId);
+        if (steps === undefined) {
+          steps = new Map();
+          interruptedSteps.set(payload.turnId, steps);
+        }
+        steps.set(payload.step, record);
         break;
       }
       case 'turn.prompt': {
         skipCancelledTurnIds();
         const turnId = nextTurnId;
         nextTurnId += 1;
-        if (!isVisibleTurnOrigin((record as TurnPromptPayload).origin)) hiddenTurnIds.add(turnId);
+        const payload = record as TurnPromptPayload;
+        turnOrigins.set(turnId, payload.origin);
+        if (typeof payload.promptId === 'string') turnPromptIds.set(turnId, payload.promptId);
+        if (isUndoAnchorTurnOrigin(payload.origin)) pendingUndoAnchorTurnIds.push(turnId);
+        if (!isVisibleTurnOrigin(payload.origin)) hiddenTurnIds.add(turnId);
         break;
       }
       default:
@@ -509,39 +573,142 @@ export function foldWireRecordFacts(
     }
   }
 
-  // A request without a resolve means the process died while the interaction
-  // was pending — crash == cancelled (never rebuild a ghost pending).
   for (const [id, entity] of interactions) {
     if (entity.state === 'pending') {
       interactions.set(id, { ...entity, state: 'cancelled' });
     }
   }
 
-  // `turn.ended` records rewrite the matching base turn items. An engine
-  // turn id maps to the grouping ordinal `id - (hidden ids below it)`:
-  // hidden turns (retry turns, queued-then-cancelled reservations) consume
-  // an engine id without opening a visible item. Their own end records map
-  // nowhere and are dropped; ids with no matching item are ignored (e.g.
-  // turns compacted out of the message history). One residual gap,
-  // accepted: a turn that ends between `turn.prompt` and its first context
-  // message leaves no message trace and still shifts the ordinals behind it.
+  const baseTurns = base.items.filter((item): item is TranscriptTurn => item.kind === 'turn');
+  const ordinalByPromptId = new Map(
+    baseTurns.flatMap((turn) =>
+      turn.triggerPromptId === undefined ? [] : [[turn.triggerPromptId, turn.ordinal] as const],
+    ),
+  );
+  const claimedOrdinals = new Set<number>();
+  const ordinalByRawTurnId = new Map<number, number>();
+  const claimBaseOrdinal = (
+    predicate: (turn: TranscriptTurn) => boolean = () => true,
+  ): number | undefined => {
+    const turn = baseTurns.find(
+      (candidate) =>
+        !claimedOrdinals.has(candidate.ordinal) &&
+        predicate(candidate),
+    );
+    if (turn === undefined) return undefined;
+    claimedOrdinals.add(turn.ordinal);
+    return turn.ordinal;
+  };
+  const lastRawTurnId = Math.max(nextTurnId - 1, ...endedTurns.keys(), ...interruptedSteps.keys());
+  const rawTurnIds = Array.from(
+    { length: lastRawTurnId + 1 },
+    (_, turnId) => turnId,
+  ).filter((turnId) => !hiddenTurnIds.has(turnId));
+  for (const turnId of rawTurnIds) {
+    const promptId = turnPromptIds.get(turnId);
+    const matchedOrdinal = promptId === undefined ? undefined : ordinalByPromptId.get(promptId);
+    if (matchedOrdinal !== undefined && !claimedOrdinals.has(matchedOrdinal)) {
+      claimedOrdinals.add(matchedOrdinal);
+      ordinalByRawTurnId.set(turnId, matchedOrdinal);
+    }
+  }
+  for (const turnId of rawTurnIds) {
+    if (ordinalByRawTurnId.has(turnId)) continue;
+    const origin = turnOrigins.get(turnId);
+    const strictOrigin = turnOrigins.has(turnId) && !isUndoAnchorTurnOrigin(origin);
+    if (!strictOrigin) continue;
+    const fallbackOrdinal = claimBaseOrdinal(
+      (candidate) =>
+        candidate.triggerPromptId === undefined &&
+        candidate.origin.kind === turnOriginKind(origin),
+    );
+    if (fallbackOrdinal !== undefined) ordinalByRawTurnId.set(turnId, fallbackOrdinal);
+  }
+  for (const turnId of rawTurnIds) {
+    if (ordinalByRawTurnId.has(turnId)) continue;
+    const promptId = turnPromptIds.get(turnId);
+    const origin = turnOrigins.get(turnId);
+    const strictOrigin = turnOrigins.has(turnId) && !isUndoAnchorTurnOrigin(origin);
+    if (promptId === undefined || strictOrigin) continue;
+    const emptyPromptOrdinal = claimBaseOrdinal(
+      (candidate) =>
+        candidate.triggerPromptId === undefined && candidate.origin.kind === 'other',
+    );
+    if (emptyPromptOrdinal !== undefined) {
+      ordinalByRawTurnId.set(turnId, emptyPromptOrdinal);
+    }
+  }
+  for (const turnId of rawTurnIds) {
+    if (ordinalByRawTurnId.has(turnId)) continue;
+    const promptId = turnPromptIds.get(turnId);
+    const origin = turnOrigins.get(turnId);
+    const strictOrigin = turnOrigins.has(turnId) && !isUndoAnchorTurnOrigin(origin);
+    if (promptId !== undefined || strictOrigin) continue;
+    const fallbackOrdinal = claimBaseOrdinal();
+    if (fallbackOrdinal !== undefined) ordinalByRawTurnId.set(turnId, fallbackOrdinal);
+  }
+
   const endedByOrdinal = new Map<number, HistoryWireRecord>();
   for (const [turnId, record] of endedTurns) {
-    if (hiddenTurnIds.has(turnId)) continue;
-    let hidden = 0;
-    for (const id of hiddenTurnIds) if (id < turnId) hidden += 1;
-    endedByOrdinal.set(turnId - hidden, record);
+    const ordinal = ordinalByRawTurnId.get(turnId);
+    if (ordinal !== undefined) endedByOrdinal.set(ordinal, record);
+  }
+
+  const interruptedByOrdinal = new Map<number, Map<number, HistoryWireRecord>>();
+  for (const [turnId, steps] of interruptedSteps) {
+    const ordinal = ordinalByRawTurnId.get(turnId);
+    if (ordinal !== undefined) interruptedByOrdinal.set(ordinal, steps);
   }
 
   const items =
-    endedByOrdinal.size > 0
+    endedByOrdinal.size > 0 || interruptedByOrdinal.size > 0
       ? base.items.map((item) => {
           if (item.kind !== 'turn') return item;
           const record = endedByOrdinal.get(item.ordinal);
-          if (record === undefined) return item;
+          const interrupted = interruptedByOrdinal.get(item.ordinal);
+          if (record === undefined && interrupted === undefined) return item;
+          const steps = ((): TranscriptTurn['steps'] => {
+            if (interrupted === undefined) return item.steps;
+            const hitOrdinals = new Set<number>();
+            const patched = item.steps.map((step) => {
+              const hit = interrupted.get(step.ordinal);
+              if (hit === undefined) return step;
+              const stepPayload = hit as TurnStepInterruptedPayload;
+              if (typeof stepPayload.reason !== 'string') return step;
+              hitOrdinals.add(step.ordinal);
+              return {
+                ...step,
+                state: 'interrupted' as const,
+                endedAt: recordTimeIso(hit) ?? step.endedAt,
+                endReason: stepPayload.reason,
+                endMessage:
+                  typeof stepPayload.message === 'string' ? stepPayload.message : undefined,
+              };
+            });
+            for (const [stepOrdinal, hit] of interrupted) {
+              if (hitOrdinals.has(stepOrdinal)) continue;
+              const stepPayload = hit as TurnStepInterruptedPayload;
+              if (typeof stepPayload.reason !== 'string') continue;
+              patched.push({
+                kind: 'step',
+                stepId: `${item.turnId}.${stepOrdinal}`,
+                turnId: item.turnId,
+                ordinal: stepOrdinal,
+                state: 'interrupted',
+                frames: [],
+                endedAt: recordTimeIso(hit),
+                endReason: stepPayload.reason,
+                endMessage:
+                  typeof stepPayload.message === 'string' ? stepPayload.message : undefined,
+              });
+            }
+            return patched.toSorted((a, b) => a.ordinal - b.ordinal);
+          })();
+          if (record === undefined) return { ...item, steps };
           const payload = record as TurnEndedPayload;
           return {
             ...item,
+            steps,
             state: mapTurnEndReason(payload.reason) ?? item.state,
             endedAt: recordTimeIso(record) ?? item.endedAt,
             durationMs:
@@ -551,17 +718,13 @@ export function foldWireRecordFacts(
         })
       : base.items;
 
-  const modesTouched = planActive !== undefined || swarmActive !== undefined;
+  const modesTouched = planActive !== undefined || swarmActive !== undefined || towerActive !== undefined;
   const meta: TranscriptMeta = {
     ...base.meta,
     goal: goalTouched ? goal : base.meta.goal,
     modes: modesTouched
       ? {
           ...base.meta.modes,
-          // The plan badge carries the latest revision reference when
-          // `plan.revision` records exist; without them (older sessions) it
-          // stays the bare `{}` the live path projects. Same for the swarm
-          // trigger.
           plan:
             planActive === undefined
               ? base.meta.modes?.plan
@@ -569,6 +732,7 @@ export function foldWireRecordFacts(
                 ? (planRevision ?? {})
                 : undefined,
           swarm: swarmActive === undefined ? base.meta.modes?.swarm : swarmActive ? {} : undefined,
+          tower: towerActive === undefined ? base.meta.modes?.tower : towerActive ? {} : undefined,
         }
       : base.meta.modes,
   };

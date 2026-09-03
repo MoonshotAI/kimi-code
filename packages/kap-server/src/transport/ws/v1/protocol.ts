@@ -1,15 +1,6 @@
-/**
- * `/api/v1/ws` wire frame builders — thin wrappers around the v1 wire message
- * shapes (see the local `protocol/ws-control` catalog), ported from v1
- * (`packages/server/src/ws/protocol.ts`).
- *
- * Outbound payloads go straight to `JSON.stringify` — no Zod re-validation.
- */
-
 export interface ServerHelloPayload {
   ws_connection_id: string;
   protocol_version: number;
-  /** Server heartbeat cadence — a `ping` frame arrives at least this often. */
   heartbeat_ms: number;
   max_event_buffer_size: number;
   capabilities: {

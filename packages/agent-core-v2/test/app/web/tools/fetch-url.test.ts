@@ -1,12 +1,3 @@
-/**
- * FetchURL / LocalFetchURLProvider abort-signal plumbing.
- *
- * Locks in that the `AbortSignal` carried on `ExecutableToolContext` is
- * forwarded all the way to the underlying `fetch` so an in-flight request
- * is actually cancelled (not merely raced by the executor), and that the
- * tool re-throws aborts so the executor can classify user cancellation.
- */
-
 import { lookup } from 'node:dns/promises';
 
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
@@ -129,10 +120,6 @@ describe('FetchURLTool output note', () => {
 });
 
 describe('FetchURLTool backend resolution', () => {
-  // Agent creation constructs the tool; the backend must not materialize
-  // until a call needs it. The service documents that each getUrlFetcher()
-  // call re-reads config and login state, and a construction-time read would
-  // race the identity freeze during a fast bootstrap.
   it('resolves the fetcher per invocation, never at construction', async () => {
     const fetch = vi
       .fn<UrlFetcher['fetch']>()

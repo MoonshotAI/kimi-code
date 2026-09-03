@@ -45,6 +45,22 @@ export type SkillSource = 'project' | 'user' | 'extra' | 'builtin';
 
 export interface UserPromptOrigin {
   readonly kind: 'user';
+  /**
+   * Skill activations bundled into this prompt: the rendered skill blocks
+   * precede the caller's parts in the message content, and every activation
+   * is listed here so resume / replay can rebuild the per-skill view from
+   * the single bundled message.
+   */
+  readonly skillActivations?: readonly BundledSkillActivation[];
+}
+
+export interface BundledSkillActivation {
+  readonly activationId: string;
+  readonly skillName: string;
+  readonly skillArgs?: string;
+  readonly skillType?: string;
+  readonly skillPath?: string;
+  readonly skillSource?: SkillSource;
 }
 
 export interface SkillActivationOrigin {
@@ -213,6 +229,7 @@ export interface GoalChange {
 
 export type KimiErrorCode =
   | 'config.invalid'
+  | 'config.persist_blocked'
   | 'session.not_found'
   | 'session.already_exists'
   | 'session.id_invalid'
@@ -294,6 +311,7 @@ export type KimiErrorCode =
   | 'request.invalid'
   | 'request.work_dir_required'
   | 'request.prompt_input_empty'
+  | 'prompt.id_conflict'
   | 'prompt.not_found'
   | 'prompt.already_completed'
   | 'session.busy'
@@ -427,6 +445,12 @@ export interface ToolUpdate {
   readonly percent?: number;
   readonly customKind?: string;
   readonly customData?: unknown;
+  /**
+   * When true, hosts replace this tool call's previous live status block
+   * instead of appending a new row — for periodic "still working" updates
+   * whose predecessors are stale the moment they are emitted.
+   */
+  readonly replace?: boolean;
 }
 
 export const MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE = 'mcp.oauth.authorization_url';
@@ -443,6 +467,14 @@ export interface McpOAuthAuthorizationUrlUpdateData {
 }
 
 export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'blocked';
+
+export type TurnInterruptReason =
+  | 'user_cancelled'
+  | 'aborted'
+  | 'max_steps'
+  | 'error'
+  | 'filtered'
+  | 'blocked';
 
 export type AgentPhase =
   | { readonly kind: 'idle' }
@@ -516,6 +548,7 @@ export interface AgentStatusUpdatedEvent {
   readonly contextUsage?: number;
   readonly planMode?: boolean;
   readonly swarmMode?: boolean;
+  readonly towerMode?: boolean;
   readonly permission?: PermissionMode;
   readonly usage?: UsageStatus;
   readonly phase?: AgentPhase;
@@ -578,6 +611,20 @@ export interface ConfigChangedEvent {
   readonly config: ConfigResponse;
 }
 
+export interface ConfigWarningItem {
+  readonly domain?: string;
+  readonly message: string;
+}
+
+/**
+ * Pushed when the daemon's config validation produces warnings (deprecated
+ * keys, unknown fields). Bare global fan-out alongside `event.config.changed`.
+ */
+export interface ConfigWarningEvent {
+  readonly type: 'event.config.warning';
+  readonly warnings: readonly ConfigWarningItem[];
+}
+
 /**
  * Pushed when the daemon refreshes provider model metadata (manual or
  * scheduled) and the effective catalog changed. Carries the per-provider
@@ -589,6 +636,30 @@ export interface ModelCatalogChangedEvent {
   readonly changed: readonly ProviderRefreshChange[];
   readonly unchanged: readonly string[];
   readonly failed: readonly ProviderRefreshFailure[];
+}
+
+/**
+ * Plugin set mutation (install / enable / disable / remove from any client).
+ * Bare global fan-out — clients re-read the plugins REST surface.
+ */
+export interface PluginChangedEvent {
+  readonly type: 'event.plugin.changed';
+}
+
+/**
+ * Capability install progress transition, fanned out globally. Clients update
+ * the row live and re-read the capability once it settles (`running: false`).
+ */
+export interface CapabilityChangedEvent {
+  readonly type: 'event.capability.changed';
+  readonly capability_id: string;
+  readonly install: {
+    readonly running: boolean;
+    readonly step?: string;
+    readonly percent?: number;
+    readonly error?: string;
+    readonly note?: string;
+  };
 }
 
 export interface GoalUpdatedEvent {
@@ -626,19 +697,36 @@ export interface WarningEvent {
   readonly code?: string;
 }
 
+/** A prompt-carried transcript attachment: a session-media reference or a typed file attachment. */
+export type TurnPromptAttachment =
+  | { readonly kind: 'image' | 'video' | 'audio'; readonly fileId: string }
+  | {
+      readonly kind: 'file';
+      readonly name: string;
+      readonly mediaType: string;
+      readonly size: number;
+      readonly path: string;
+    };
+
 export interface TurnStartedEvent {
   readonly type: 'turn.started';
   readonly turnId: number;
   readonly origin: PromptOrigin;
   readonly prompt?: string;
+  /** The prompt record id when the turn was opened by a prompt submission. */
+  readonly promptId?: string;
+  /** Session-media references and file attachments carried by the prompt (transcript attachments). */
+  readonly promptAttachments?: readonly TurnPromptAttachment[];
 }
 
 export interface TurnEndedEvent {
   readonly type: 'turn.ended';
+  readonly time?: number;
   readonly turnId: number;
   readonly reason: TurnEndReason;
   readonly error?: KimiErrorPayload;
   readonly durationMs?: number;
+  readonly interruptReason?: TurnInterruptReason;
 }
 
 export interface TurnStepStartedEvent {
@@ -805,6 +893,11 @@ export interface SubagentSpawnedEvent {
   /** The child's effective thinking effort at spawn (same vocabulary as
    *  `agent.status.updated`). Optional for cross-version tolerance. */
   readonly thinkingEffort?: string;
+  /** Background-task id the run registered under in the caller's task store.
+   *  Emitted after task registration, so cancel/status actions can bind to
+   *  the task store without waiting for `task.started`. Optional for
+   *  cross-version tolerance (older producers never send it). */
+  readonly taskId?: string;
 }
 
 export interface SubagentStartedEvent {
@@ -947,7 +1040,10 @@ export type AgentEvent =
   | SessionWorkChangedEvent
   | SessionStatusChangedEvent
   | ConfigChangedEvent
+  | ConfigWarningEvent
   | ModelCatalogChangedEvent
+  | PluginChangedEvent
+  | CapabilityChangedEvent
   | GoalUpdatedEvent
   | SkillActivatedEvent
   | PluginCommandActivatedEvent
@@ -1016,8 +1112,18 @@ export const permissionModeSchema = z.enum(['manual', 'yolo', 'auto']) satisfies
 
 export const skillSourceSchema = z.enum(['project', 'user', 'extra', 'builtin']) satisfies z.ZodType<SkillSource>;
 
+export const bundledSkillActivationSchema = z.object({
+  activationId: z.string(),
+  skillName: z.string(),
+  skillArgs: z.string().optional(),
+  skillType: z.string().optional(),
+  skillPath: z.string().optional(),
+  skillSource: skillSourceSchema.optional(),
+}) satisfies z.ZodType<BundledSkillActivation>;
+
 export const userPromptOriginSchema = z.object({
   kind: z.literal('user'),
+  skillActivations: z.array(bundledSkillActivationSchema).optional(),
 }) satisfies z.ZodType<UserPromptOrigin>;
 
 export const skillActivationOriginSchema = z.object({
@@ -1181,6 +1287,7 @@ export const goalChangeSchema = z.object({
 
 export const kimiErrorCodeSchema = z.enum([
   'config.invalid',
+  'config.persist_blocked',
   'session.not_found',
   'session.already_exists',
   'session.id_invalid',
@@ -1262,6 +1369,7 @@ export const kimiErrorCodeSchema = z.enum([
   'request.invalid',
   'request.work_dir_required',
   'request.prompt_input_empty',
+  'prompt.id_conflict',
   'prompt.not_found',
   'prompt.already_completed',
   'session.busy',
@@ -1378,6 +1486,7 @@ export const toolUpdateSchema = z.object({
   percent: z.number().optional(),
   customKind: z.string().optional(),
   customData: z.unknown().optional(),
+  replace: z.boolean().optional(),
 }) satisfies z.ZodType<ToolUpdate>;
 
 export const mcpOAuthAuthorizationUrlUpdateDataSchema = z.object({
@@ -1387,6 +1496,8 @@ export const mcpOAuthAuthorizationUrlUpdateDataSchema = z.object({
 }) satisfies z.ZodType<McpOAuthAuthorizationUrlUpdateData>;
 
 export const turnEndReasonSchema = z.enum(['completed', 'cancelled', 'failed', 'blocked']) satisfies z.ZodType<TurnEndReason>;
+
+export const turnInterruptReasonSchema = z.enum(['user_cancelled', 'aborted', 'max_steps', 'error', 'filtered', 'blocked']) satisfies z.ZodType<TurnInterruptReason>;
 
 export const agentPhaseSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('idle') }),
@@ -1461,6 +1572,7 @@ export const agentStatusUpdatedEventSchema = z.object({
   contextUsage: z.number().optional(),
   planMode: z.boolean().optional(),
   swarmMode: z.boolean().optional(),
+  towerMode: z.boolean().optional(),
   permission: permissionModeSchema.optional(),
   usage: usageStatusSchema.optional(),
   phase: agentPhaseSchema.optional(),
@@ -1515,12 +1627,38 @@ export const configChangedEventSchema = z.object({
   config: configResponseSchema,
 }) satisfies z.ZodType<ConfigChangedEvent>;
 
+export const configWarningEventSchema = z.object({
+  type: z.literal('event.config.warning'),
+  warnings: z.array(
+    z.object({
+      domain: z.string().optional(),
+      message: z.string(),
+    }),
+  ),
+}) satisfies z.ZodType<ConfigWarningEvent>;
+
 export const modelCatalogChangedEventSchema = z.object({
   type: z.literal('event.model_catalog.changed'),
   changed: z.array(providerRefreshChangeSchema),
   unchanged: z.array(z.string().min(1)),
   failed: z.array(providerRefreshFailureSchema),
 }) satisfies z.ZodType<ModelCatalogChangedEvent>;
+
+export const pluginChangedEventSchema = z.object({
+  type: z.literal('event.plugin.changed'),
+}) satisfies z.ZodType<PluginChangedEvent>;
+
+export const capabilityChangedEventSchema = z.object({
+  type: z.literal('event.capability.changed'),
+  capability_id: z.string().min(1),
+  install: z.object({
+    running: z.boolean(),
+    step: z.string().optional(),
+    percent: z.number().optional(),
+    error: z.string().optional(),
+    note: z.string().optional(),
+  }),
+}) satisfies z.ZodType<CapabilityChangedEvent>;
 
 export const goalUpdatedEventSchema = z.object({
   type: z.literal('goal.updated'),
@@ -1562,14 +1700,31 @@ export const turnStartedEventSchema = z.object({
   turnId: z.number(),
   origin: promptOriginSchema,
   prompt: z.string().optional(),
+  promptId: z.string().optional(),
+  promptAttachments: z
+    .array(
+      z.union([
+        z.object({ kind: z.enum(['image', 'video', 'audio']), fileId: z.string() }),
+        z.object({
+          kind: z.literal('file'),
+          name: z.string(),
+          mediaType: z.string(),
+          size: z.number(),
+          path: z.string(),
+        }),
+      ]),
+    )
+    .optional(),
 }) satisfies z.ZodType<TurnStartedEvent>;
 
 export const turnEndedEventSchema = z.object({
   type: z.literal('turn.ended'),
+  time: z.number().optional(),
   turnId: z.number(),
   reason: turnEndReasonSchema,
   error: kimiErrorPayloadSchema.optional(),
   durationMs: z.number().optional(),
+  interruptReason: turnInterruptReasonSchema.optional(),
 }) satisfies z.ZodType<TurnEndedEvent>;
 
 export const turnStepStartedEventSchema = z.object({
@@ -1706,6 +1861,7 @@ export const subagentSpawnedEventSchema = z.object({
   runInBackground: z.boolean(),
   model: z.string().optional(),
   thinkingEffort: z.string().optional(),
+  taskId: z.string().optional(),
 }) satisfies z.ZodType<SubagentSpawnedEvent>;
 
 export const subagentStartedEventSchema = z.object({
@@ -1845,7 +2001,11 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   workspaceDeletedEventSchema,
   sessionWorkChangedEventSchema,
   sessionStatusChangedEventSchema,
+  configChangedEventSchema,
+  configWarningEventSchema,
   modelCatalogChangedEventSchema,
+  pluginChangedEventSchema,
+  capabilityChangedEventSchema,
   goalUpdatedEventSchema,
   skillActivatedEventSchema,
   pluginCommandActivatedEventSchema,
@@ -1921,6 +2081,10 @@ export const VOLATILE_EVENT_TYPES = [
   'shell.started',
   'shell.completed',
   'agent.status.updated',
+  // Live-only capability install progress (per-chunk ticks); kap-server
+  // classifies it volatile (never journaled), so shared-protocol clients must
+  // not treat it as durable/replayable either.
+  'event.capability.changed',
 ] as const satisfies readonly AgentEvent['type'][];
 
 export type VolatileEventType = (typeof VOLATILE_EVENT_TYPES)[number];

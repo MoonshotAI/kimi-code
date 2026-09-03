@@ -112,8 +112,8 @@ Hook 命令的工作目录是当前会话的项目目录。非 Windows 平台上
 | `SessionStart` | `startup` 或 `resume` | — | 新会话启动或历史会话恢复后触发；payload 含 `source`、`model` 和 `profile` |
 | `SessionEnd` | `exit` 或 `archive` | — | 会话关闭后触发；`archive` 表示会话被归档而非退出 |
 | `SessionHeartbeat` | 空字符串 | — | 会话存活期间每 60 秒触发一次；仅当配置了本事件时计时器才会运行。payload 含 `uptime_ms`（观察用） |
-| `SubagentStart` | 子 Agent 名称 | — | 子 Agent 开始运行前触发 |
-| `SubagentStop` | 子 Agent 名称 | — | 子 Agent 成功完成后触发（观察用） |
+| `SubagentStart` | subagent 名称 | — | subagent 开始运行前触发 |
+| `SubagentStop` | subagent 名称 | — | subagent 成功完成后触发（观察用） |
 | `TaskStarted` | 任务类型（`agent`、`process` 或 `question`） | — | 后台任务启动时触发；payload 含 `task_id`、`description` 和 `detached`（观察用） |
 | `StopFailure` | 错误类型 | — | 本轮因错误失败后触发（观察用） |
 | `Interrupt` | 空字符串 | — | 用户中断本轮时触发（例如按下 Esc）；超时或其他程序性中断不会触发。中断时 `Stop` 不会触发，由本事件替代。payload 含 `reason` 字段（观察用） |
@@ -160,4 +160,4 @@ process.stdin.on('end', () => {
 ## 下一步
 
 - [配置](#配置) — `[[hooks]]` 在 `config.toml` 中的完整字段声明
-- [Agent 与子 Agent](./agents.md) — 利用 `SubagentStop` 事件在子 Agent 完成后触发通知
+- [Agent 与 subagent](./agents.md) — 利用 `SubagentStop` 事件在 subagent 完成后触发通知

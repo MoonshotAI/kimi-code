@@ -17,7 +17,7 @@ Custom themes can override the tokens below. The `dark` and `light` columns show
 | `border` | `#5A5A5A` | `#737373` | Pane and editor borders, Markdown horizontal rule |
 | `borderFocus` | `#E8A838` | `#92660A` | Focus / attention border, currently only the approval panel |
 | `success` | `#4EC87E` | `#0E7A38` | Success state. `✓`, "enabled", completed |
-| `warning` | `#E8A838` | `#92660A` | Warning state. auto/yolo badges, stale markers, Plan mode hint |
+| `warning` | `#E8A838` | `#92660A` | Warning state. Ask When Needed/Never Ask badges, stale markers, Plan mode hint |
 | `error` | `#E85454` | `#B91C1C` | Error state. Error messages, failed tool output |
 | `diffAdded` | `#4EC87E` | `#0E7A38` | Diff added lines |
 | `diffRemoved` | `#E85454` | `#B91C1C` | Diff removed lines |

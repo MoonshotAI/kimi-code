@@ -1,18 +1,8 @@
-/**
- * `workspace` domain — `FileWorkspacePersistence` implementation.
- *
- * File backend of `IWorkspacePersistence`. Persists the catalog as a single
- * v1-compatible `workspaces.json` document at the storage root
- * (`<homeDir>/workspaces.json`, via `scope = ''`) through the
- * `IAtomicDocumentStore` access-pattern Store. The `deleted_workspace_ids`
- * tombstone list round-trips with the catalog so soft deletions survive
- * regardless of which engine (v1 or v2) last wrote the file. Bound at App
- * scope.
- */
-
 import { LifecycleScope } from '#/app/scopes';
 
+import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Emitter, type Event } from '#/_base/event';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 
 import type { Workspace } from './workspace';
@@ -27,10 +17,20 @@ const WORKSPACE_CATALOG_VERSION = 1;
 const WORKSPACE_CATALOG_SCOPE = '';
 const WORKSPACE_CATALOG_KEY = 'workspaces.json';
 
-export class FileWorkspacePersistence implements IWorkspacePersistence {
+export class FileWorkspacePersistence extends Disposable implements IWorkspacePersistence {
   declare readonly _serviceBrand: undefined;
 
-  constructor(@IAtomicDocumentStore private readonly docs: IAtomicDocumentStore) {}
+  private readonly changeEmitter = this._register(new Emitter<void>());
+  readonly onDidChange: Event<void> = this.changeEmitter.event;
+
+  constructor(@IAtomicDocumentStore private readonly docs: IAtomicDocumentStore) {
+    super();
+    this._register(
+      this.docs.watch(WORKSPACE_CATALOG_SCOPE, WORKSPACE_CATALOG_KEY)(() => {
+        this.changeEmitter.fire();
+      }),
+    );
+  }
 
   async load(): Promise<WorkspaceCatalog | undefined> {
     const file = await this.docs.get<PersistedWorkspaceFile>(
@@ -82,6 +82,7 @@ export class FileWorkspacePersistence implements IWorkspacePersistence {
       deleted_workspace_ids: [...catalog.deletedIds],
     };
     await this.docs.set(WORKSPACE_CATALOG_SCOPE, WORKSPACE_CATALOG_KEY, file);
+    this.changeEmitter.fire();
   }
 }
 

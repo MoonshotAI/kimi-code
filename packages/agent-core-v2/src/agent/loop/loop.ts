@@ -75,6 +75,7 @@ export type LoopRunResult =
       readonly type: 'completed';
       readonly steps: number;
       readonly truncated: boolean;
+      readonly stopReason?: string;
     }
   | {
       readonly type: 'failed';
@@ -146,6 +147,8 @@ export interface IAgentLoopService {
   status(): AgentLoopStatus;
 
   cancel(turnId?: number, reason?: unknown): boolean;
+
+  cancelFromUser(turnId?: number): void;
 
   tryAcquireQuiescence(): IDisposable | undefined;
 

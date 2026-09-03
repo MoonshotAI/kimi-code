@@ -1,6 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
 
 import {
   createKimiHarness,
@@ -20,7 +19,7 @@ import {
 } from '@moonshot-ai/kimi-telemetry';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE } from '#/constant/app';
-import { detectPendingMigration } from '#/migration/index';
+import { detectPendingMigration, resolveLegacySourceHome, sameLegacyPath } from '#/migration/index';
 import type { TuiConfig } from '#/tui/config';
 import { loadTuiConfig, TuiConfigParseError } from '#/tui/config';
 import { CHROME_GUTTER } from '#/tui/constant/rendering';
@@ -99,13 +98,25 @@ export async function runShell(
   });
 
   await harness.ensureConfigFile();
-  const migrationPlan = await detectPendingMigration({
-    sourceHome: join(homedir(), '.kimi'),
-    targetHome: harness.homeDir,
-    ignoreMarker: runOptions.migrateOnly,
-  });
+  const legacySource = resolveLegacySourceHome(process.env, homedir(), process.cwd());
+  const sourceIsTarget = sameLegacyPath(legacySource.sourceHome, harness.homeDir);
+  if (sourceIsTarget) {
+    process.stderr.write(
+      `  KIMI_SHARE_DIR (${legacySource.sourceHome}) points at the Kimi Code home; legacy migration is disabled. Unset it or point it at the kimi-cli data directory to migrate.\n`,
+    );
+  }
+  const migrationPlan = sourceIsTarget
+    ? null
+    : await detectPendingMigration({
+        sourceHome: legacySource.sourceHome,
+        skillsSourceHome: legacySource.skillsSourceHome,
+        targetHome: harness.homeDir,
+        ignoreMarker: runOptions.migrateOnly,
+      });
   if (runOptions.migrateOnly === true && migrationPlan === null) {
-    process.stdout.write('  Nothing to migrate from ~/.kimi/.\n');
+    if (!sourceIsTarget) {
+      process.stdout.write(`  Nothing to migrate from ${legacySource.sourceHome}.\n`);
+    }
     await harness.close();
     return;
   }

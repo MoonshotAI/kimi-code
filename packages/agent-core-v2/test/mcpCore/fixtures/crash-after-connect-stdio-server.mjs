@@ -9,7 +9,8 @@ const stderrBanner = process.env['KIMI_TEST_MCP_STDERR'];
 
 function exitWithBanner() {
   if (stderrBanner !== undefined) {
-    process.stderr.write(`${stderrBanner}\n`);
+    process.stderr.write(`${stderrBanner}\n`, () => process.exit(exitCode));
+    return;
   }
   process.exit(exitCode);
 }

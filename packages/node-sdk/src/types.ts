@@ -16,11 +16,20 @@ export type JsonObject = { readonly [key: string]: JsonValue };
 
 export type Unsubscribe = () => void;
 
+export interface AgentRuntimeBinding {
+  readonly workspaceId: string;
+  readonly runtimeId: string;
+}
+
 export type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
 
 export type {
   AgentReplayRecord,
   AgentBackgroundTaskInfo,
+  AppMcpServerAuthState,
+  AppMcpServerConfig,
+  AppMcpServerDescriptor,
+  AppMcpServerInspection,
   BackgroundConfig,
   BackgroundTaskInfo,
   BackgroundTaskStatus,
@@ -44,7 +53,10 @@ export type {
   KimiConfig,
   KimiConfigPatch,
   LoopControl,
+  McpManagedServerInfo,
   McpServerInfo,
+  McpServerLocator,
+  McpServerSource,
   McpStartupMetrics,
   ModelAlias,
   MoonshotServiceConfig,
@@ -101,6 +113,40 @@ export interface WorkspaceTrustInfo {
   readonly gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[];
 }
 
+/**
+ * File-suggestion query against a workspace root, no session required. Only
+ * meaningful on the agent-core-v2 engine; the v1 engine has no equivalent
+ * and reports `undefined`.
+ */
+export interface SuggestFilesInput {
+  readonly query: string;
+  readonly limit?: number;
+}
+
+export interface SuggestFilesItem {
+  readonly path: string;
+  readonly name: string;
+  readonly kind: 'file' | 'directory' | 'symlink';
+  /** Matched-character offsets into `path`, for mention-style highlighting. */
+  readonly matchPositions: readonly number[];
+}
+
+export interface SuggestFilesResult {
+  readonly items: readonly SuggestFilesItem[];
+  readonly truncated: boolean;
+}
+
+/** Metadata of one upload in the engine's daemon file store. */
+export type { FileMeta } from '@moonshot-ai/agent-core-v2/app/file/fileService';
+
+/** Input for `uploadFile`: the upload's display name and MIME type. */
+export interface UploadFileOptions {
+  readonly name: string;
+  readonly mimeType?: string;
+  /** Optional daemon-side TTL for staging uploads. */
+  readonly expiresInSec?: number;
+}
+
 export interface CreateGoalInput {
   readonly objective: string;
   readonly replace?: boolean;
@@ -110,6 +156,11 @@ export type TextPromptPart = Extract<ContentPart, { type: 'text' }>;
 export type PromptPart = Extract<ContentPart, { type: 'text' | 'image_url' | 'video_url' }>;
 
 export type PromptInput = readonly PromptPart[];
+
+export interface PromptSkillActivation {
+  readonly name: string;
+  readonly args?: string;
+}
 
 export interface KimiHarnessOptions {
   readonly identity?: KimiHostIdentity | undefined;
@@ -158,6 +209,14 @@ export interface CreateSessionOptions {
 export interface RenameSessionInput {
   readonly id: string;
   readonly title: string;
+}
+
+export interface GenerateSessionTitleInput {
+  readonly id: string;
+  /** Regenerate even when the session already has a generated/custom title. */
+  readonly force?: boolean;
+  /** Conversation excerpt to generate from (default `user_prompts`). */
+  readonly source?: 'user_prompts' | 'first_turn' | 'digest';
 }
 
 export interface ResumeSessionInput {
@@ -228,6 +287,10 @@ export interface ListSessionsOptions {
   readonly workDir?: string;
   readonly sessionId?: string;
   /**
+   * Include archived sessions in the listing. Defaults to non-archived only.
+   */
+  readonly includeArchived?: boolean;
+  /**
    * Maximum number of summaries in one page. Only consulted by
    * `listSessionsPage`; plain `listSessions` always returns the whole
    * filtered set.
@@ -253,6 +316,7 @@ export interface AuthenticateMcpServerOptions {
   ) => void | boolean | PromiseLike<void | boolean>;
   readonly signal?: AbortSignal;
   readonly timeoutMs?: number;
+  readonly cwd?: string;
 }
 
 export interface TestMcpServerOptions {
@@ -275,6 +339,13 @@ export interface PlanInfo {
 
 export type SessionPlan = PlanInfo | null;
 
+export type SessionTodoStatus = 'pending' | 'in_progress' | 'done';
+
+export interface SessionTodoItem {
+  readonly title: string;
+  readonly status: SessionTodoStatus;
+}
+
 export interface TokenUsage {
   readonly inputOther: number;
   readonly output: number;
@@ -293,16 +364,28 @@ export interface SessionStatus {
   readonly thinkingEffort: string;
   readonly permission: PermissionMode;
   readonly planMode: boolean;
-  readonly swarmMode?: boolean | undefined;
+  readonly swarmMode?: boolean;
+  readonly towerMode?: boolean;
   readonly contextTokens: number;
   readonly maxContextTokens: number;
   readonly contextUsage: number;
   readonly usage?: SessionUsage;
 }
 
+/**
+ * The engine's canonical title state: `replaceable` (a prompt-derived easy
+ * title auto generation may overwrite), `generated` (an auto-generated title
+ * already landed), `custom` (a user-set title that is never overwritten).
+ * Only populated by the v2 engine on live / resumed sessions (read off the
+ * metadata document); v1 backends leave it undefined, and the v2 list path
+ * does not project it.
+ */
+export type SessionTitleKind = 'replaceable' | 'generated' | 'custom';
+
 export interface SessionSummary {
   readonly id: string;
   readonly title?: string | undefined;
+  readonly titleKind?: SessionTitleKind;
   readonly lastPrompt?: string;
   readonly workDir: string;
   readonly sessionDir: string;
