@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -1250,6 +1250,77 @@ describe('SessionEventBroadcaster', () => {
       },
     });
     expect(globalView.deliveries).toEqual(['immediate']);
+  });
+
+  it('fans out event.session.deleted to every connection, including for cold sessions', async () => {
+    const globalView = collectingTarget();
+    bc.addGlobalTarget(globalView.target);
+
+    eventBus.emit({
+      type: 'event.session.deleted',
+      payload: { sessionId: 'cold-1', workspaceId: 'wd_cold' },
+    });
+
+    await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+    expect(globalView.envelopes[0]).toMatchObject({
+      type: 'event.session.deleted',
+      session_id: '__global__',
+      payload: {
+        type: 'event.session.deleted',
+        agentId: 'main',
+        sessionId: 'cold-1',
+        workspace_id: 'wd_cold',
+      },
+    });
+    expect(globalView.deliveries).toEqual(['immediate']);
+  });
+
+  it('purges cached state and the journal when a materialized session is deleted', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    const view = collectingTarget();
+    expect(await bc.subscribe('s1', view.target)).toBe(true);
+
+    main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    await bc.getCursor('s1');
+    await vi.waitFor(async () => {
+      await access(join(dir, 's1.jsonl'));
+    });
+
+    sessions.delete('s1');
+    eventBus.emit({
+      type: 'event.session.deleted',
+      payload: { sessionId: 's1', workspaceId: 'wd_1' },
+    });
+
+    await vi.waitFor(async () => {
+      await expect(access(join(dir, 's1.jsonl'))).rejects.toThrow();
+    });
+    expect(await bc.subscribe('s1', collectingTarget().target)).toBe(false);
+  });
+
+  it('still fans out event.session.deleted when the journal cleanup fails', async () => {
+    const globalView = collectingTarget();
+    bc.addGlobalTarget(globalView.target);
+    await mkdir(join(dir, 'cold-2.jsonl'));
+
+    eventBus.emit({
+      type: 'event.session.deleted',
+      payload: { sessionId: 'cold-2', workspaceId: 'wd_cold' },
+    });
+
+    await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+    expect(globalView.envelopes[0]).toMatchObject({
+      type: 'event.session.deleted',
+      session_id: '__global__',
+      payload: {
+        type: 'event.session.deleted',
+        agentId: 'main',
+        sessionId: 'cold-2',
+        workspace_id: 'wd_cold',
+      },
+    });
   });
 
   it('fans out event.workspace.created/updated with the wire workspace shape', async () => {

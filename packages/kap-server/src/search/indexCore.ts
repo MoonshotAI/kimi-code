@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { open, readFile, readdir, rm, stat } from 'node:fs/promises';
-import { join, relative } from 'node:path';
+import { appendFile, mkdir, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { dirname, join, relative } from 'node:path';
 
 import {
   LockError,
@@ -34,6 +34,7 @@ import {
 import { analyzeWireLine, type StepEffect, type TurnEffect } from './wireExtract.ts';
 
 const TEXT_INDEX_NAME = 'body';
+const DELETED_LEDGER_HORIZON_MS = 24 * 60 * 60 * 1000;
 const TRI_INDEX_NAME = 'tri';
 const WIRE_FILENAME = 'wire.jsonl';
 
@@ -239,6 +240,92 @@ export class SearchIndexCore {
     return this.options.log;
   }
 
+  private get deletedLedgerPath(): string {
+    return join(this.indexDir, 'deleted-sessions.jsonl');
+  }
+
+  private get deletedLedgerSnapshotPath(): string {
+    return join(this.indexDir, 'deleted-sessions.snapshot.json');
+  }
+
+  private parseDeletedLedgerLines(raw: string, into: Map<string, number>): void {
+    for (const line of raw.split('\n')) {
+      if (line.length === 0) continue;
+      if (line.startsWith('-')) {
+        into.delete(line.slice(1).split('\t')[0]!);
+        continue;
+      }
+      const [id, at] = line.split('\t');
+      if (id !== undefined && id.length > 0) into.set(id, Number(at ?? 0));
+    }
+  }
+
+  private async readDeletedLedger(): Promise<Map<string, number>> {
+    const ledger = new Map<string, number>();
+    let watermark = 0;
+    try {
+      const snapshot: unknown = JSON.parse(await readFile(this.deletedLedgerSnapshotPath, 'utf8'));
+      if (typeof snapshot === 'object' && snapshot !== null) {
+        const w = (snapshot as { watermark?: unknown }).watermark;
+        if (typeof w === 'number') watermark = w;
+        const entries = (snapshot as { entries?: unknown }).entries;
+        if (Array.isArray(entries)) {
+          for (const entry of entries) {
+            if (Array.isArray(entry) && typeof entry[0] === 'string') {
+              ledger.set(entry[0], typeof entry[1] === 'number' ? entry[1] : 0);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    const stats = await stat(this.deletedLedgerPath).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    });
+    if (stats !== null && stats.size > watermark) {
+      const handle = await open(this.deletedLedgerPath, 'r');
+      try {
+        const length = stats.size - watermark;
+        const buffer = Buffer.alloc(length);
+        await handle.read(buffer, 0, length, watermark);
+        this.parseDeletedLedgerLines(buffer.toString('utf8'), ledger);
+      } finally {
+        await handle.close();
+      }
+    }
+    return ledger;
+  }
+
+  private async writeDeletedLedgerSnapshot(
+    keepIds: Set<string>,
+    ledger: Map<string, number>,
+  ): Promise<void> {
+    const stats = await stat(this.deletedLedgerPath).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    });
+    const horizon = Date.now() - DELETED_LEDGER_HORIZON_MS;
+    const entries = [...ledger]
+      .filter(([id, at]) => keepIds.has(id) || at >= horizon)
+      .map(([id, at]) => [id, at]);
+    await writeFile(
+      this.deletedLedgerSnapshotPath,
+      JSON.stringify({ watermark: stats?.size ?? 0, entries }),
+      'utf8',
+    );
+  }
+
+  private async appendDeletedLedger(sessionId: string): Promise<void> {
+    await mkdir(dirname(this.deletedLedgerPath), { recursive: true });
+    await appendFile(this.deletedLedgerPath, `${sessionId}\t${Date.now()}\n`, 'utf8');
+  }
+
+  private async retractDeletedLedger(sessionId: string): Promise<void> {
+    await appendFile(this.deletedLedgerPath, `-${sessionId}\t${Date.now()}\n`, 'utf8');
+  }
+
   ensureOpen(): Promise<void> {
     this.openPromise ??= this.openDb().then(
       () => {
@@ -438,6 +525,15 @@ export class SearchIndexCore {
     return { ...outcome, lockToken: this.lockToken, lifecycle: this.lifecycleState() };
   }
 
+  async deleteSession(sessionId: string): Promise<void> {
+    if (this.disposed) return;
+    await this.appendDeletedLedger(sessionId);
+    await this.ensureOpen();
+    const db = this.db;
+    if (!db || db.readOnly || this.disposed) return;
+    await this.deleteSessionDocs(db, sessionId);
+  }
+
   private async runSync(sessions: readonly SyncSessionInput[]): Promise<CoreSyncPassOutcome> {
     if (this.disposed) return { noop: true, sessions: 0, documents: 0 };
     this.syncReplaced = false;
@@ -453,6 +549,40 @@ export class SearchIndexCore {
       if (this.disposed) return { noop: true, sessions: 0, documents: 0 };
       const sessionId = row.key.slice(SESSION_META_PREFIX.length);
       if (!currentIds.has(sessionId)) await this.deleteSessionDocs(db, sessionId);
+    }
+
+    let deletedLedger: Map<string, number>;
+    try {
+      deletedLedger = await this.readDeletedLedger();
+    } catch (error) {
+      this.log.warn('global search: failed to read the session deletion ledger; skipping its purge this pass', {
+        error: errorMessage(error),
+      });
+      deletedLedger = new Map();
+    }
+    const summaryById = new Map(sessions.map((s) => [s.id, s]));
+    const retractedIds = new Set<string>();
+    for (const [sessionId, deletedAt] of deletedLedger) {
+      if (this.disposed) return { noop: true, sessions: 0, documents: 0 };
+      const incarnation = summaryById.get(sessionId);
+      if (incarnation !== undefined && incarnation.updatedAt > deletedAt) {
+        await this.retractDeletedLedger(sessionId);
+        retractedIds.add(sessionId);
+        continue;
+      }
+      await this.deleteSessionDocs(db, sessionId);
+    }
+    if (deletedLedger.size > 0) {
+      try {
+        const keepIds = new Set(
+          [...deletedLedger.keys()].filter((id) => currentIds.has(id) && !retractedIds.has(id)),
+        );
+        await this.writeDeletedLedgerSnapshot(keepIds, deletedLedger);
+      } catch (error) {
+        this.log.warn('global search: failed to compact the session deletion ledger', {
+          error: errorMessage(error),
+        });
+      }
     }
 
     let indexed = 0;
@@ -865,7 +995,23 @@ export class SearchIndexCore {
     const boundary = page.kind === 'keyset' ? page.boundary : undefined;
     const matched = matchDocs(q, candidates, boundary, budget);
     incomplete ??= matched.incomplete;
-    const { pageRows, hasMore } = paginateRows(q, page, matched.rows);
+    let deletedLedger: Map<string, number>;
+    try {
+      deletedLedger = await this.readDeletedLedger();
+    } catch (error) {
+      throw new GlobalSearchError(
+        'index_unavailable',
+        `failed to read the session deletion ledger: ${errorMessage(error)}`,
+      );
+    }
+    const visibleRows =
+      deletedLedger.size === 0
+        ? matched.rows
+        : matched.rows.filter((row) => {
+            const sep = row.key.indexOf('/');
+            return sep <= 0 || !deletedLedger.has(row.key.slice(0, sep));
+          });
+    const { pageRows, hasMore } = paginateRows(q, page, visibleRows);
     return {
       kind: 'page',
       rows: pageRows,

@@ -165,6 +165,10 @@ export class SearchWorkerHost {
     return this.call('status');
   }
 
+  async deleteSession(sessionId: string): Promise<void> {
+    await this.call('deleteSession', { sessionId });
+  }
+
   async killWorkerForTest(): Promise<void> {
     const worker = this.worker;
     if (worker === null) return;

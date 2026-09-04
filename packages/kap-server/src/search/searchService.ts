@@ -101,6 +101,7 @@ export interface IGlobalSearchService {
   readonly _serviceBrand: undefined;
   search(query: GlobalSearchQuery): Promise<GlobalSearchPage>;
   reindex(): Promise<{ sessions: number; documents: number }>;
+  deleteSession(sessionId: string): Promise<void>;
   status(): Promise<{
     sessions: number;
     documents: number;
@@ -163,6 +164,7 @@ export interface SearchBackend {
   refresh(): Promise<unknown>;
   reindex(): Promise<unknown>;
   status(): Promise<CoreStatus>;
+  deleteSession(sessionId: string): Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -207,6 +209,10 @@ export class InlineSearchBackend implements SearchBackend {
 
   status(): Promise<CoreStatus> {
     return this.core.status();
+  }
+
+  deleteSession(sessionId: string): Promise<void> {
+    return this.core.deleteSession(sessionId);
   }
 
   dispose(): Promise<void> {
@@ -260,6 +266,22 @@ export class GlobalSearchService implements IGlobalSearchService {
 
   setLiveTranscriptSource(source: LiveTranscriptSource): void {
     this.liveSource = source;
+  }
+
+  async deleteSession(sessionId: string): Promise<void> {
+    if (this.disposed) return;
+    this.summaries.delete(sessionId);
+    try {
+      await this.syncPromise?.catch(() => {});
+      await this.backend.deleteSession(sessionId);
+      this.requestSync();
+    } catch (error) {
+      this.log.warn('global search: failed to purge a deleted session from the index', {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
   }
 
   private get indexDir(): string {

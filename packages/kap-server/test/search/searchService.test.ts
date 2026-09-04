@@ -298,6 +298,77 @@ describe('GlobalSearchService', () => {
     expect(injected.items).toEqual([]);
   });
 
+  it('purges a deleted session from the index immediately via deleteSession', async () => {
+    const s1 = summary('s1', '删除测试', T1);
+    await writeWire(home!, 's1', 'main', [userLine('即将被删除的苹果', T1)]);
+    const service = track(makeService(home!, staticIndex([s1])));
+    await service.reindex();
+    expect((await service.search({ query: '苹果' })).items.length).toBeGreaterThan(0);
+
+    await service.deleteSession('s1');
+
+    expect((await service.search({ query: '苹果' })).items).toEqual([]);
+  });
+
+  it('keeps a deleted session out of search results even if a stale sync re-indexes it', async () => {
+    const s1 = summary('s1', '删除测试', T1);
+    await writeWire(home!, 's1', 'main', [userLine('即将被删除的苹果', T1)]);
+    const service = track(makeService(home!, staticIndex([s1])));
+    await service.reindex();
+    expect((await service.search({ query: '苹果' })).items.length).toBeGreaterThan(0);
+
+    await service.deleteSession('s1');
+    await settleSync(service);
+
+    expect((await service.search({ query: '苹果' })).items).toEqual([]);
+  });
+
+  it('records concurrent deletions without losing tombstones', async () => {
+    const s1 = summary('s1', '删除测试一', T1);
+    const s2 = summary('s2', '删除测试二', T1);
+    await writeWire(home!, 's1', 'main', [userLine('第一个苹果', T1)]);
+    await writeWire(home!, 's2', 'main', [userLine('第二个苹果', T1)]);
+    const service = track(makeService(home!, staticIndex([s1, s2])));
+    await service.reindex();
+    expect((await service.search({ query: '苹果' })).items.length).toBe(2);
+
+    await Promise.all([service.deleteSession('s1'), service.deleteSession('s2')]);
+
+    expect((await service.search({ query: '苹果' })).items).toEqual([]);
+  });
+
+  it('fails the search instead of serving deleted content when the ledger is unreadable', async () => {
+    const s1 = summary('s1', '删除测试', T1);
+    await writeWire(home!, 's1', 'main', [userLine('即将被删除的苹果', T1)]);
+    const service = track(makeService(home!, staticIndex([s1])));
+    await service.reindex();
+    await service.deleteSession('s1');
+    await rm(join(home!, 'search-index', 'deleted-sessions.jsonl'), { force: true });
+    await mkdir(join(home!, 'search-index', 'deleted-sessions.jsonl'));
+
+    await expect(service.search({ query: '苹果' })).rejects.toThrow();
+  });
+
+  it('lifts the tombstone when the session id is recreated with a newer incarnation', async () => {
+    const s1 = summary('s1', '旧会话', T1);
+    await writeWire(home!, 's1', 'main', [userLine('旧苹果', T1)]);
+    const first = track(makeService(home!, staticIndex([s1])));
+    await first.reindex();
+    await first.dispose();
+
+    await appendFile(join(home!, 'search-index', 'deleted-sessions.jsonl'), 's1\t1000\n', 'utf8');
+    const s1v2 = summary('s1', '新会话', T2);
+    await writeWire(home!, 's1', 'main', [userLine('新香蕉', T2)]);
+    const second = track(makeService(home!, staticIndex([s1v2])));
+    await settleSync(second);
+
+    expect((await second.search({ query: '香蕉' })).items.length).toBe(1);
+    const snapshot = JSON.parse(
+      await readFile(join(home!, 'search-index', 'deleted-sessions.snapshot.json'), 'utf8'),
+    ) as { entries: Array<[string, number]> };
+    expect(snapshot.entries.some(([id]) => id === 's1')).toBe(false);
+  });
+
   it('hits session titles as title docs', async () => {
     const s1 = summary('s1', '季度总结报告', T1);
     await writeWire(home!, 's1', 'main', [userLine('随便说点什么', T1)]);

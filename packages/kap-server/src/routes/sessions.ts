@@ -32,6 +32,7 @@ import {
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
+import { IGlobalSearchService } from '../search/searchService';
 import { ErrorCode } from '../protocol/error-codes';
 import { pageResponseSchema } from '../protocol/pagination';
 import { toProtocolMessage } from '../services/messages/messageProjection';
@@ -41,6 +42,7 @@ import {
   compactSessionResponseSchema,
   createSessionChildRequestSchema,
   createSessionRequestSchema,
+  deleteSessionResponseSchema,
   forkSessionRequestSchema,
   getSessionGoalResponseSchema,
   listSessionChildrenResponseSchema,
@@ -606,6 +608,7 @@ export function registerSessionsRoutes(
           sessionAbortResponseSchema,
           startBtwSessionResponseSchema,
           archiveSessionResponseSchema,
+          deleteSessionResponseSchema,
         ]),
       },
       errors: {
@@ -854,7 +857,15 @@ export function registerSessionsRoutes(
   );
 }
 
-type SessionAction = 'fork' | 'compact' | 'undo' | 'abort' | 'btw' | 'restore' | 'archive';
+type SessionAction =
+  | 'fork'
+  | 'compact'
+  | 'undo'
+  | 'abort'
+  | 'btw'
+  | 'restore'
+  | 'archive'
+  | 'delete';
 
 interface SessionActionExtra {
   readonly core: Scope;
@@ -875,6 +886,7 @@ const sessionActions: ActionTable<SessionAction, SessionActionExtra> = {
   btw: { handle: btwSessionAction },
   restore: { handle: restoreSessionAction },
   archive: { handle: archiveSessionAction },
+  delete: { handle: deleteSessionAction },
 };
 
 async function forkSessionAction(
@@ -988,6 +1000,20 @@ async function archiveSessionAction(ctx: SessionActionCtx): Promise<void> {
   await setSessionArchived(core.accessor, id, true);
   requestLog(req)?.info({ session_id: id, action: 'archive' }, 'session action completed');
   reply.send(okEnvelope({ archived: true }, req.id));
+}
+
+async function deleteSessionAction(ctx: SessionActionCtx): Promise<void> {
+  const { core, req, reply, id } = ctx;
+  try {
+    await core.accessor.get(ISessionManager).delete(id);
+  } catch (error) {
+    if (!isError2(error) || error.code !== ErrorCodes.SESSION_NOT_FOUND) throw error;
+    await core.accessor.get(IGlobalSearchService).deleteSession(id);
+    throw error;
+  }
+  await core.accessor.get(IGlobalSearchService).deleteSession(id);
+  requestLog(req)?.info({ session_id: id, action: 'delete' }, 'session action completed');
+  reply.send(okEnvelope({ deleted: true }, req.id));
 }
 
 export interface SessionWireFields {

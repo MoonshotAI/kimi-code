@@ -97,7 +97,7 @@ import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { PLUGIN_SKILL_SOURCE_ID } from '#/features/skill/catalog/skillSource';
 
 import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressing';
-import { SessionArchived } from './sessionLifecycleEvents';
+import { SessionArchived, SessionDeleted } from './sessionLifecycleEvents';
 import {
   assertForkTurnIndex,
   sliceMainRecordsAtTurn,
@@ -475,6 +475,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await dropFileHistorySession({ docs: this.docs, workspaceId: this.workspaceId, sessionId });
     this.appendLogStore.append('', 'session_index.jsonl', { sessionId, deleted: true });
     await this.appendLogStore.flush();
+    this.event.publish(
+      new SessionDeleted({
+        payload: { sessionId, workspaceId: this.workspaceContext.workspaceId },
+      }),
+    );
   }
 
   private async announceWillClose(event: SessionWillCloseEvent): Promise<void> {

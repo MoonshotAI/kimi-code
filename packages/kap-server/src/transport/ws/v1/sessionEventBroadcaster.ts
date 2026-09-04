@@ -1,3 +1,4 @@
+import { open, rm } from 'node:fs/promises';
 import type {
   AgentActivityState,
   ApprovalResponse,
@@ -138,9 +139,64 @@ export class SessionEventBroadcaster {
   private readonly globalTargets = new Set<BroadcastTarget>();
   private readonly diEventTargets = new Set<BroadcastTarget>();
   private readonly pendingStates = new Map<string, Promise<SessionState | undefined>>();
+  private readonly journalRemovalAttempts = new Map<string, { attempt: number; epoch?: string }>();
   private readonly maxBufferSize: number;
   private readonly coreEventSubscription: IDisposable;
   private closed = false;
+
+  private async journalEpoch(sessionId: string): Promise<string | undefined> {
+    try {
+      const handle = await open(sessionJournalPath(this.opts.eventsDir, sessionId), 'r');
+      try {
+        const buffer = Buffer.alloc(4096);
+        const { bytesRead } = await handle.read(buffer, 0, 4096, 0);
+        const firstLine = buffer.toString('utf8', 0, bytesRead).split('\n', 1)[0] ?? '';
+        if (firstLine.length === 0) return undefined;
+        const epoch = (JSON.parse(firstLine) as { epoch?: unknown }).epoch;
+        return typeof epoch === 'string' ? epoch : undefined;
+      } finally {
+        await handle.close();
+      }
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async removeSessionJournal(sessionId: string): Promise<void> {
+    try {
+      await rm(sessionJournalPath(this.opts.eventsDir, sessionId), { force: true });
+      this.journalRemovalAttempts.delete(sessionId);
+    } catch (error: unknown) {
+      if (this.closed) return;
+      const tracked = this.journalRemovalAttempts.get(sessionId);
+      const epoch = tracked?.epoch ?? (await this.journalEpoch(sessionId));
+      if (tracked?.epoch !== undefined) {
+        const current = await this.journalEpoch(sessionId);
+        if (current !== tracked.epoch) {
+          this.journalRemovalAttempts.delete(sessionId);
+          return;
+        }
+      }
+      const attempt = (tracked?.attempt ?? 0) + 1;
+      this.journalRemovalAttempts.set(sessionId, { attempt, epoch });
+      if (attempt >= 4) {
+        this.opts.logger?.error?.(
+          { sessionId, err: String(error) },
+          'session journal could not be removed after repeated attempts',
+        );
+        this.journalRemovalAttempts.delete(sessionId);
+        return;
+      }
+      this.opts.logger?.warn(
+        { sessionId, attempt, err: String(error) },
+        'session journal removal failed; retrying',
+      );
+      const timer = setTimeout(() => {
+        void this.removeSessionJournal(sessionId);
+      }, attempt * 5_000);
+      timer.unref?.();
+    }
+  }
 
   constructor(
     private readonly opts: {
@@ -638,6 +694,37 @@ export class SessionEventBroadcaster {
         sessionId: payload.sessionId,
       } as Event).catch((error: unknown) =>
         this.logDispatchError(GLOBAL_SESSION_ID, 'event.session.archived', error),
+      );
+      return;
+    }
+    if (event.type === 'event.session.deleted') {
+      const payload = sessionDeletedPayload(corePayload);
+      if (payload === undefined) return;
+      void (async () => {
+        try {
+          const pending = this.pendingStates.get(payload.sessionId);
+          if (pending !== undefined) await pending.catch(() => undefined);
+          const state = this.sessions.get(payload.sessionId);
+          if (state !== undefined) {
+            this.sessions.delete(payload.sessionId);
+            await disposeSessionState(state);
+          }
+          this.opts.transcriptService?.dropSession(payload.sessionId);
+          await this.removeSessionJournal(payload.sessionId);
+        } catch (error: unknown) {
+          this.opts.logger?.warn(
+            { sessionId: payload.sessionId, err: String(error) },
+            'session deletion cleanup failed; dispatching event.session.deleted anyway',
+          );
+        }
+        await this.dispatchGlobal({
+          type: 'event.session.deleted',
+          workspace_id: payload.workspaceId,
+          agentId: 'main',
+          sessionId: payload.sessionId,
+        } as Event);
+      })().catch((error: unknown) =>
+        this.logDispatchError(GLOBAL_SESSION_ID, 'event.session.deleted', error),
       );
       return;
     }
@@ -1352,6 +1439,20 @@ function sessionCreatedPayload(
 }
 
 function sessionArchivedPayload(
+  payload: unknown,
+): { sessionId: string; workspaceId: string } | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const candidate = payload as { sessionId?: unknown; workspaceId?: unknown };
+  if (typeof candidate.sessionId !== 'string' || candidate.sessionId.length === 0) {
+    return undefined;
+  }
+  if (typeof candidate.workspaceId !== 'string' || candidate.workspaceId.length === 0) {
+    return undefined;
+  }
+  return { sessionId: candidate.sessionId, workspaceId: candidate.workspaceId };
+}
+
+function sessionDeletedPayload(
   payload: unknown,
 ): { sessionId: string; workspaceId: string } | undefined {
   if (typeof payload !== 'object' || payload === null) return undefined;

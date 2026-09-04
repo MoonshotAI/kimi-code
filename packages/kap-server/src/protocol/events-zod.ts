@@ -584,6 +584,11 @@ export const sessionArchivedEventSchema = z.object({
   workspace_id: z.string().min(1),
 });
 
+export const sessionDeletedEventSchema = z.object({
+  type: z.literal('event.session.deleted'),
+  workspace_id: z.string().min(1),
+});
+
 export const workspaceCreatedEventSchema = z.object({
   type: z.literal('event.workspace.created'),
   workspace: workspaceSchema,
@@ -1055,6 +1060,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   sessionMetaUpdatedEventSchema,
   sessionCreatedEventSchema,
   sessionArchivedEventSchema,
+  sessionDeletedEventSchema,
   workspaceCreatedEventSchema,
   workspaceUpdatedEventSchema,
   workspaceDeletedEventSchema,
