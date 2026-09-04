@@ -17,7 +17,7 @@ import {
 import { serverMessageSchema, type ServerMessage } from '../../protocol/v2/messages/index';
 import type { ProjectionEvent } from './agentProjector';
 import { SessionV2Projector } from './sessionProjector';
-import type { SessionFactsPatch } from './sessionStateComposer';
+import type { ComposerTurnFact, SessionFactsPatch } from './sessionStateComposer';
 
 export interface V2Disposable {
   dispose(): void;
@@ -84,8 +84,11 @@ function factsPatchForEvent(event: V2BusEvent): SessionFactsPatch | undefined {
     }
     case 'agent.activity.updated': {
       const lifecycle = event.lifecycle as 'ready' | 'disposed' | undefined;
-      const turn = event.turn as SessionFactsPatch['agentActivity'] extends { turn?: infer T } ? T : never;
+      const turn = event.turn as ComposerTurnFact | undefined;
       if (lifecycle === undefined) return undefined;
+      if (turn !== undefined && typeof turn.step === 'number') {
+        return { agentActivity: { lifecycle, turn: { ...turn, step: Math.max(0, turn.step - 1) } } };
+      }
       return { agentActivity: { lifecycle, turn } };
     }
     case 'goal.updated': {

@@ -678,7 +678,7 @@ export class AgentV2Projector {
 
   private onStepStarted(event: ProjectionEvent, out: ServerMessage[]): void {
     const engineTurnId = event.turnId as number;
-    const ordinal = event.step as number;
+    const ordinal = (event.step as number) - 1;
     const turnId = this.protocolTurnId(engineTurnId);
     this.closeOpenTexts(event.time, out);
     const step: StepAcc = {
@@ -835,13 +835,14 @@ export class AgentV2Projector {
     const step = this.currentStep;
     this.closeOpenTexts(event.time, out);
     const prev = this.tools.get(toolCallId);
+    const normalized = normalizeTodoToolCall((event.name as string) ?? prev?.name ?? '', event.args);
     const acc: ToolAcc = {
       toolCallId,
       turnId: step?.turnId ?? prev?.turnId ?? '',
       stepId: step?.stepId ?? prev?.stepId ?? '',
-      name: (event.name as string) ?? prev?.name ?? '',
+      name: normalized.name,
       state: 'running',
-      input: event.args,
+      input: normalized.input,
       inputText: prev?.inputText,
       display: event.display,
       agentRefs: (event.agentRefs as ToolCallAgentRef[] | undefined) ?? prev?.agentRefs,
@@ -1276,6 +1277,12 @@ export function toTaskKind(kind: string | undefined): TaskMessage['kind'] {
     case 'tool': return 'tool';
     default: return 'other';
   }
+}
+
+export function normalizeTodoToolCall(name: string, input: unknown): { name: string; input: unknown } {
+  if (name !== 'TodoList') return { name, input };
+  const todos = (input as { todos?: unknown } | undefined)?.todos;
+  return { name: 'TodoWrite', input: todos === undefined ? input : { items: todos } };
 }
 
 export function todoItemsFromInput(input: unknown): TodoItem[] | undefined {

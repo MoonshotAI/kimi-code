@@ -7,6 +7,7 @@ import type {
   UserMessageOrigin,
 } from '../../protocol/v2/messages/index';
 import {
+  normalizeTodoToolCall,
   textFromContent,
   toStepUsage,
   toTaskKind,
@@ -318,7 +319,7 @@ export function buildColdHistory(
           const parsed = typeof event.turnId === 'string' ? Number.parseInt(event.turnId, 10) : undefined;
           const turn = (parsed !== undefined && Number.isInteger(parsed) ? turnByOrdinal(parsed) : undefined) ?? latestTurn();
           if (!turn) break;
-          const ordinal = typeof event.step === 'number' ? event.step : turn.steps.length;
+          const ordinal = typeof event.step === 'number' ? event.step - 1 : turn.steps.length;
           const open = turn.steps.at(-1);
           if (open && open.endTime === undefined && !open.interrupted) {
             if (open.dropped && ordinal === open.ordinal) {
@@ -392,10 +393,11 @@ export function buildColdHistory(
           sealOpenText(step);
           const toolCallId = event.toolCallId;
           if (!toolCallId) break;
+          const normalized = normalizeTodoToolCall(event.name ?? '', event.args);
           const acc: ToolAcc = {
             toolCallId,
-            name: event.name ?? '',
-            input: event.args,
+            name: normalized.name,
+            input: normalized.input,
             callTime: time,
             agentRefs: event.extras?.['agentRefs'] as ToolCallAgentRef[] | undefined,
           };
@@ -422,7 +424,7 @@ export function buildColdHistory(
         const turn = ordinal !== undefined ? turnByOrdinal(ordinal) : latestTurn();
         if (!turn) break;
         const stepOrdinal = asTime(record.step);
-        const step = turn.steps.find((candidate) => candidate.ordinal === stepOrdinal) ?? turn.steps.at(-1);
+        const step = turn.steps.find((candidate) => candidate.ordinal === (stepOrdinal === undefined ? undefined : stepOrdinal - 1)) ?? turn.steps.at(-1);
         if (!step) break;
         sealOpenText(step);
         step.dropped = false;

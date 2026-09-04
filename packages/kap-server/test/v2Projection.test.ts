@@ -118,7 +118,7 @@ describe('v2Projection × 实例对拍', () => {
           time: T + 20,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 0, time: T + 22 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: T + 22 } },
       { event: { type: 'thinking.delta', turnId: 0, delta: '用户在打招呼，', time: T + 420 } },
       { event: { type: 'thinking.delta', turnId: 0, delta: '简短回应即可。', time: T + 580 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '你好！', time: T + 1050 } },
@@ -127,7 +127,7 @@ describe('v2Projection × 实例对拍', () => {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 0,
+          step: 1,
           usage: { inputOther: 1820, output: 24, inputCacheRead: 0, inputCacheCreation: 0 },
           finishReason: 'end_turn',
           time: T + 1400,
@@ -176,7 +176,7 @@ describe('v2Projection × 实例对拍', () => {
           time: B + 20,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 22 } },
       { event: { type: 'thinking.delta', turnId: 0, delta: '用户想看当前目录内容，用 Bash 执行 ls。', time: B + 420 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '好的，执行 `ls`：', time: B + 800 } },
       { event: { type: 'tool.call.delta', turnId: 0, toolCallId: 'call_01', name: 'Bash', argumentsPart: '{"command": "ls', time: B + 1000 } },
@@ -195,20 +195,20 @@ describe('v2Projection × 实例对拍', () => {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 0,
+          step: 1,
           usage: { inputOther: 2100, output: 96, inputCacheRead: 0, inputCacheCreation: 0 },
           finishReason: 'tool_use',
           time: B + 1700,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 1900 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 2, time: B + 1900 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '当前目录下有 4 个条目：', time: B + 2250 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '`apps`、`docs`、`packages` 和 `pnpm-workspace.yaml`。', time: B + 2400 } },
       {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 1,
+          step: 2,
           usage: { inputOther: 2240, output: 58, inputCacheRead: 0, inputCacheCreation: 0 },
           finishReason: 'end_turn',
           time: B + 2600,
@@ -257,7 +257,7 @@ describe('v2Projection × 实例对拍', () => {
           time: B + 18,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 22 } },
       { event: { type: 'thinking.delta', turnId: 0, delta: '先 Write 创建脚本，再 Edit 加 shebang，最后 Bash 运行。', time: B + 420 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '我来创建 `hello.py`：', time: B + 750 } },
       {
@@ -285,13 +285,13 @@ describe('v2Projection × 实例对拍', () => {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 0,
+          step: 1,
           usage: { inputOther: 2400, output: 130, inputCacheRead: 0, inputCacheCreation: 0 },
           finishReason: 'tool_use',
           time: B + 1500,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 1700 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 2, time: B + 1700 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '补上 shebang：', time: B + 1950 } },
       {
         event: {
@@ -318,13 +318,13 @@ describe('v2Projection × 实例对拍', () => {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 1,
+          step: 2,
           usage: { inputOther: 2580, output: 74, inputCacheRead: 0, inputCacheCreation: 0 },
           finishReason: 'tool_use',
           time: B + 2500,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 2, time: B + 2700 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 3, time: B + 2700 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '跑一下验证：', time: B + 2850 } },
       {
         event: {
@@ -352,20 +352,20 @@ describe('v2Projection × 实例对拍', () => {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 2,
+          step: 3,
           usage: { inputOther: 2720, output: 66, inputCacheRead: 0, inputCacheCreation: 0 },
           finishReason: 'tool_use',
           time: B + 3700,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 3, time: B + 3900 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 4, time: B + 3900 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '完成。`hello.py` 已创建并加上 shebang，', time: B + 4100 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '运行输出当前时间，一切正常。', time: B + 4150 } },
       {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 3,
+          step: 4,
           usage: { inputOther: 2830, output: 62, inputCacheRead: 0, inputCacheCreation: 0 },
           finishReason: 'end_turn',
           time: B + 4300,
@@ -434,7 +434,7 @@ describe('v2Projection × 实例对拍', () => {
           time: B + 20,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 22 } },
       { event: { type: 'thinking.delta', turnId: 0, delta: '白屏一般是运行时错误。分三步：', time: B + 450 } },
       { event: { type: 'thinking.delta', turnId: 0, delta: '定位、修复、验证。', time: B + 580 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '我分三步处理：', time: B + 1050 } },
@@ -478,13 +478,13 @@ describe('v2Projection × 实例对拍', () => {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 0,
+          step: 1,
           usage: { inputOther: 2900, output: 78, inputCacheRead: 10000, inputCacheCreation: 0 },
           finishReason: 'tool_use',
           time: B + 3100,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 3150 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 2, time: B + 3150 } },
       { event: { type: 'tool.call.started', turnId: 0, toolCallId: 'call_05', name: 'TodoWrite', args: { items: todos3 }, time: B + 3300 } },
       { event: { type: 'tool.result', turnId: 0, toolCallId: 'call_05', output: { updated: true }, time: B + 3350 } },
       { event: { type: 'tools.update_store', key: 'todo', value: todos3, time: B + 3360 } },
@@ -509,7 +509,7 @@ describe('v2Projection × 实例对拍', () => {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 1,
+          step: 2,
           usage: { inputOther: 2600, output: 84, inputCacheRead: 9500, inputCacheCreation: 0 },
           finishReason: 'end_turn',
           time: B + 6600,
@@ -558,7 +558,7 @@ describe('v2Projection × 实例对拍', () => {
           time: B + 20,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 22 } },
       { event: { type: 'thinking.delta', turnId: 0, delta: '测试命令免审批，直接跑。', time: B + 450 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '我来跑测试：', time: B + 1050 } },
       {
@@ -615,19 +615,19 @@ describe('v2Projection × 实例对拍', () => {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 0,
+          step: 1,
           usage: { inputOther: 2600, output: 60, inputCacheRead: 9000, inputCacheCreation: 0 },
           finishReason: 'tool_use',
           time: B + 6100,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 6150 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 2, time: B + 6150 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '测试跑完了：18 通过、2 失败。', time: B + 6500 } },
       {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 1,
+          step: 2,
           usage: { inputOther: 2800, output: 40, inputCacheRead: 11000, inputCacheCreation: 0 },
           finishReason: 'end_turn',
           time: B + 6800,
@@ -647,7 +647,7 @@ describe('v2Projection × 实例对拍', () => {
           time: B + 6940,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 1, step: 0, time: B + 6950 } },
+      { event: { type: 'turn.step.started', turnId: 1, step: 1, time: B + 6950 } },
       { event: { type: 'thinking.delta', turnId: 1, delta: '从刚才的输出里挑失败用例即可，', time: B + 7250 } },
       { event: { type: 'thinking.delta', turnId: 1, delta: '不用重跑。', time: B + 7400 } },
       { event: { type: 'assistant.delta', turnId: 1, delta: '失败的两个用例都在 `auth` 目录下：', time: B + 7900 } },
@@ -656,7 +656,7 @@ describe('v2Projection × 实例对拍', () => {
         event: {
           type: 'turn.step.interrupted',
           turnId: 1,
-          step: 0,
+          step: 1,
           reason: 'aborted by user',
           time: B + 8610,
         },
@@ -705,7 +705,7 @@ describe('v2Projection × 实例对拍', () => {
           time: B + 20,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 22 } },
       { event: { type: 'thinking.delta', turnId: 0, delta: '超时配置在 config/server.toml，直接 Edit。', time: B + 450 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '我来改超时配置：', time: B + 1050 } },
       {
@@ -732,13 +732,13 @@ describe('v2Projection × 实例对拍', () => {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 0,
+          step: 1,
           usage: { inputOther: 2300, output: 46, inputCacheRead: 7200, inputCacheCreation: 0 },
           finishReason: 'tool_use',
           time: B + 2000,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 2050 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 2, time: B + 2050 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '没匹配上，我先看下文件实际内容：', time: B + 2400 } },
       {
         event: {
@@ -782,7 +782,7 @@ describe('v2Projection × 实例对拍', () => {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 1,
+          step: 2,
           usage: { inputOther: 2800, output: 82, inputCacheRead: 10400, inputCacheCreation: 0 },
           finishReason: 'end_turn',
           time: B + 4500,
@@ -831,13 +831,13 @@ describe('v2Projection × 实例对拍', () => {
           time: B + 20,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 22 } },
       { event: { type: 'thinking.delta', turnId: 0, delta: '', time: B + 300 } },
       {
         event: {
           type: 'turn.step.retrying',
           turnId: 0,
-          step: 0,
+          step: 1,
           failedAttempt: 1,
           nextAttempt: 2,
           maxAttempts: 3,
@@ -870,7 +870,7 @@ describe('v2Projection × 实例对拍', () => {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 0,
+          step: 1,
           usage: { inputOther: 2400, output: 62, inputCacheRead: 8600, inputCacheCreation: 0 },
           finishReason: 'end_turn',
           time: B + 4200,
@@ -919,7 +919,7 @@ describe('v2Projection × 实例对拍', () => {
           time: B + 20,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 22 } },
       { event: { type: 'thinking.delta', turnId: 0, delta: '复现脚本在 `scripts/` 下，', time: B + 450 } },
       { event: { type: 'thinking.delta', turnId: 0, delta: 'node 执行需要审批。', time: B + 580 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '我来跑一下复现脚本：', time: B + 1050 } },
@@ -1019,20 +1019,20 @@ describe('v2Projection × 实例对拍', () => {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 0,
+          step: 1,
           usage: { inputOther: 2400, output: 52, inputCacheRead: 8000, inputCacheCreation: 0 },
           finishReason: 'tool_use',
           time: B + 6300,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 6350 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 2, time: B + 6350 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '复现成功，报错和浏览器里看到的一致：', time: B + 6700 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '`handleLogin` 读取了 undefined 的 `token` 字段（`LoginView.vue:87`）。', time: B + 6900 } },
       {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 1,
+          step: 2,
           usage: { inputOther: 3100, output: 88, inputCacheRead: 12800, inputCacheCreation: 0 },
           finishReason: 'end_turn',
           time: B + 7200,
@@ -1081,7 +1081,7 @@ describe('v2Projection × 实例对拍', () => {
           time: B + 20,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 22 } },
       { event: { type: 'thinking.delta', turnId: 0, delta: '复现脚本在 `scripts/` 下，', time: B + 450 } },
       { event: { type: 'thinking.delta', turnId: 0, delta: 'node 执行需要审批。', time: B + 580 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '我来跑一下复现脚本：', time: B + 1050 } },
@@ -1173,20 +1173,20 @@ describe('v2Projection × 实例对拍', () => {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 0,
+          step: 1,
           usage: { inputOther: 2400, output: 52, inputCacheRead: 8000, inputCacheCreation: 0 },
           finishReason: 'tool_use',
           time: B + 5300,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 5350 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 2, time: B + 5350 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '好，那不跑了。', time: B + 5700 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '需要我换个方式排查吗——比如直接读 `handleLogin` 的实现？', time: B + 5900 } },
       {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 1,
+          step: 2,
           usage: { inputOther: 2900, output: 76, inputCacheRead: 12100, inputCacheCreation: 0 },
           finishReason: 'end_turn',
           time: B + 6200,
@@ -1235,7 +1235,7 @@ describe('v2Projection × 实例对拍', () => {
           time: B + 20,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 22 } },
       { event: { type: 'thinking.delta', turnId: 0, delta: '安装命令在快速开始和开发者文档各有一处。', time: B + 450 } },
       { event: { type: 'thinking.delta', turnId: 0, delta: '范围不明，先问用户。', time: B + 580 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: 'README 里有两处安装命令，先确认范围：', time: B + 1050 } },
@@ -1304,13 +1304,13 @@ describe('v2Projection × 实例对拍', () => {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 0,
+          step: 1,
           usage: { inputOther: 2300, output: 48, inputCacheRead: 7600, inputCacheCreation: 0 },
           finishReason: 'tool_use',
           time: B + 5900,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 5950 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 2, time: B + 5950 } },
       {
         event: {
           type: 'tool.call.started',
@@ -1334,7 +1334,7 @@ describe('v2Projection × 实例对拍', () => {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 1,
+          step: 2,
           usage: { inputOther: 2500, output: 62, inputCacheRead: 8800, inputCacheCreation: 0 },
           finishReason: 'end_turn',
           time: B + 7200,
@@ -1383,7 +1383,7 @@ describe('v2Projection × 实例对拍', () => {
           time: B + 20,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 22 } },
       { event: { type: 'thinking.delta', turnId: 0, delta: '完整构建要几分钟，先跑起来，太久就转后台。', time: B + 450 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '我来跑完整构建：', time: B + 1050 } },
       {
@@ -1425,19 +1425,19 @@ describe('v2Projection × 实例对拍', () => {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 0,
+          step: 1,
           usage: { inputOther: 2500, output: 58, inputCacheRead: 9200, inputCacheCreation: 0 },
           finishReason: 'tool_use',
           time: B + 4100,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 4150 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 2, time: B + 4150 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '构建量比较大，已转后台跑（task_01），完成后我告诉你。', time: B + 4500 } },
       {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 1,
+          step: 2,
           usage: { inputOther: 2700, output: 66, inputCacheRead: 10100, inputCacheCreation: 0 },
           finishReason: 'end_turn',
           time: B + 4800,
@@ -1483,13 +1483,13 @@ describe('v2Projection × 实例对拍', () => {
           time: B + 478610,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 1, step: 0, time: B + 478620 } },
+      { event: { type: 'turn.step.started', turnId: 1, step: 1, time: B + 478620 } },
       { event: { type: 'assistant.delta', turnId: 1, delta: '构建完成了：8 个包全部编译通过，产物在各自的 `dist/`。', time: B + 479000 } },
       {
         event: {
           type: 'turn.step.completed',
           turnId: 1,
-          step: 0,
+          step: 1,
           usage: { inputOther: 2900, output: 44, inputCacheRead: 12000, inputCacheCreation: 0 },
           finishReason: 'end_turn',
           time: B + 479300,
@@ -1554,7 +1554,7 @@ describe('v2Projection × 实例对拍', () => {
           time: B + 110,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 8, step: 0, time: B + 120 } },
+      { event: { type: 'turn.step.started', turnId: 8, step: 1, time: B + 120 } },
       { event: { type: 'thinking.delta', turnId: 8, delta: '路由集中在 router 配置文件，加一条即可。', time: B + 550 } },
       { event: { type: 'assistant.delta', turnId: 8, delta: '我来加路由：', time: B + 1150 } },
       {
@@ -1577,7 +1577,7 @@ describe('v2Projection × 实例对拍', () => {
         event: {
           type: 'turn.step.completed',
           turnId: 8,
-          step: 0,
+          step: 1,
           usage: { inputOther: 3100, output: 72, inputCacheRead: 9600, inputCacheCreation: 0 },
           finishReason: 'end_turn',
           time: B + 2600,
@@ -1647,7 +1647,7 @@ describe('v2Projection × 实例对拍', () => {
           time: B + 20,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 22 } },
       { event: { type: 'thinking.delta', turnId: 0, delta: '全量测试输出会很大，截断内联即可。', time: B + 450 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '我来跑全量测试：', time: B + 1050 } },
       {
@@ -1680,13 +1680,13 @@ describe('v2Projection × 实例对拍', () => {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 0,
+          step: 1,
           usage: { inputOther: 2800, output: 72, inputCacheRead: 11000, inputCacheCreation: 0 },
           finishReason: 'tool_use',
           time: B + 45300,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 45350 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 2, time: B + 45350 } },
       {
         event: {
           type: 'assistant.delta',
@@ -1700,7 +1700,7 @@ describe('v2Projection × 实例对拍', () => {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 1,
+          step: 2,
           usage: { inputOther: 3000, output: 80, inputCacheRead: 12100, inputCacheCreation: 0 },
           finishReason: 'end_turn',
           time: B + 46000,
@@ -1749,7 +1749,7 @@ describe('v2Projection × 实例对拍', () => {
           time: B + 20,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 22 } },
       { event: { type: 'thinking.delta', turnId: 0, delta: '改造涉及多个文件，先进入 plan 模式出方案。', time: B + 450 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '这个改造涉及多个文件，我先出方案再动手：', time: B + 1050 } },
       { event: { type: 'tool.call.started', turnId: 0, toolCallId: 'call_01', name: 'EnterPlanMode', time: B + 1500 } },
@@ -1885,19 +1885,19 @@ describe('v2Projection × 实例对拍', () => {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 0,
+          step: 1,
           usage: { inputOther: 2400, output: 96, inputCacheRead: 8600, inputCacheCreation: 0 },
           finishReason: 'tool_use',
           time: B + 6400,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 6450 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 2, time: B + 6450 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '第 1 步完成。继续第 2 步（登录页 SSO 按钮）？', time: B + 6800 } },
       {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 1,
+          step: 2,
           usage: { inputOther: 2900, output: 74, inputCacheRead: 11200, inputCacheCreation: 0 },
           finishReason: 'end_turn',
           time: B + 7100,
@@ -1951,7 +1951,7 @@ describe('v2Projection × 实例对拍', () => {
           time: B + 15,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 22 } },
       { event: { type: 'thinking.delta', turnId: 0, delta: '先复现定位，再修，最后跑测试验证达标条件。', time: B + 450 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '先修复崩溃点：', time: B + 1050 } },
       {
@@ -1969,13 +1969,13 @@ describe('v2Projection × 实例对拍', () => {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 0,
+          step: 1,
           usage: { inputOther: 2600, output: 64, inputCacheRead: 9800, inputCacheCreation: 0 },
           finishReason: 'tool_use',
           time: B + 2100,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 2150 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 2, time: B + 2150 } },
       {
         event: { type: 'tool.call.started', turnId: 0, toolCallId: 'call_02', name: 'Bash', args: { command: 'pnpm test -- login' }, time: B + 2300 },
       },
@@ -2024,7 +2024,7 @@ describe('v2Projection × 实例对拍', () => {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 1,
+          step: 2,
           usage: { inputOther: 2700, output: 76, inputCacheRead: 10200, inputCacheCreation: 0 },
           finishReason: 'end_turn',
           time: B + 5000,
@@ -2078,7 +2078,7 @@ describe('v2Projection × 实例对拍', () => {
           time: B + 20,
         },
       },
-      { event: { type: 'turn.step.started', agentId: 'side_01', turnId: 1, step: 0, time: B + 22 } },
+      { event: { type: 'turn.step.started', agentId: 'side_01', turnId: 1, step: 1, time: B + 22 } },
       {
         event: {
           type: 'assistant.delta',
@@ -2096,7 +2096,7 @@ describe('v2Projection × 实例对拍', () => {
           type: 'turn.step.completed',
           agentId: 'side_01',
           turnId: 1,
-          step: 0,
+          step: 1,
           usage: { inputOther: 2100, output: 48, inputCacheRead: 6000, inputCacheCreation: 0 },
           finishReason: 'end_turn',
           time: B + 1000,
@@ -2146,7 +2146,7 @@ describe('v2Projection × 实例对拍', () => {
           time: B + 20,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 22 } },
       { event: { type: 'thinking.delta', turnId: 0, delta: '截图里是 TypeError，位置在 handleLogin:87。', time: B + 450 } },
       {
         event: {
@@ -2168,7 +2168,7 @@ describe('v2Projection × 实例对拍', () => {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 0,
+          step: 1,
           usage: { inputOther: 2600, output: 66, inputCacheRead: 9000, inputCacheCreation: 0 },
           finishReason: 'end_turn',
           time: B + 1600,
@@ -2218,7 +2218,7 @@ describe('v2Projection × 实例对拍', () => {
           time: B + 20,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 22 } },
       { event: { type: 'thinking.delta', turnId: 0, delta: '定时任务：跑登录测试并汇报。', time: B + 450 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '开始执行定时任务：', time: B + 1050 } },
       {
@@ -2237,19 +2237,19 @@ describe('v2Projection × 实例对拍', () => {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 0,
+          step: 1,
           usage: { inputOther: 2400, output: 58, inputCacheRead: 9000, inputCacheCreation: 0 },
           finishReason: 'tool_use',
           time: B + 3600,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 3650 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 2, time: B + 3650 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: '定时报告：登录相关 6 个测试全部通过，无异常。', time: B + 4000 } },
       {
         event: {
           type: 'turn.step.completed',
           turnId: 0,
-          step: 1,
+          step: 2,
           usage: { inputOther: 2600, output: 62, inputCacheRead: 9800, inputCacheCreation: 0 },
           finishReason: 'end_turn',
           time: B + 4300,
@@ -2303,7 +2303,7 @@ describe('v2Projection × 实例对拍', () => {
               time: S + 20,
             },
           },
-          { event: { type: 'turn.step.started', turnId: 0, step: 0, time: S + 22 } },
+          { event: { type: 'turn.step.started', turnId: 0, step: 1, time: S + 22 } },
           { event: { type: 'thinking.delta', turnId: 0, delta: '白屏是 user 为空读 token 导致，加可选链。', time: S + 450 } },
           { event: { type: 'assistant.delta', turnId: 0, delta: '先修复崩溃点：', time: S + 1050 } },
           {
@@ -2321,13 +2321,13 @@ describe('v2Projection × 实例对拍', () => {
             event: {
               type: 'turn.step.completed',
               turnId: 0,
-              step: 0,
+              step: 1,
               usage: { inputOther: 2600, output: 64, inputCacheRead: 9800, inputCacheCreation: 0 },
               finishReason: 'tool_use',
               time: S + 2100,
             },
           },
-          { event: { type: 'turn.step.started', turnId: 0, step: 1, time: S + 2150 } },
+          { event: { type: 'turn.step.started', turnId: 0, step: 2, time: S + 2150 } },
           {
             event: { type: 'tool.call.started', turnId: 0, toolCallId: 'call_02', name: 'Bash', args: { command: 'pnpm test -- login' }, time: S + 2300 },
           },
@@ -2385,7 +2385,7 @@ describe('v2Projection × 实例对拍', () => {
             event: {
               type: 'turn.step.completed',
               turnId: 0,
-              step: 1,
+              step: 2,
               usage: { inputOther: 3200, output: 118, inputCacheRead: 13600, inputCacheCreation: 0 },
               finishReason: 'end_turn',
               time: S + 6400,
@@ -2434,7 +2434,7 @@ describe('v2Projection × 实例对拍', () => {
               time: C + 20,
             },
           },
-          { event: { type: 'turn.step.started', turnId: 1, step: 0, time: C + 22 } },
+          { event: { type: 'turn.step.started', turnId: 1, step: 1, time: C + 22 } },
           { event: { type: 'thinking.delta', turnId: 1, delta: '先拆 session 签发逻辑。', time: C + 450 } },
           { event: { type: 'assistant.delta', turnId: 1, delta: '先拆 session 签发：', time: C + 1050 } },
           {
@@ -2461,13 +2461,13 @@ describe('v2Projection × 实例对拍', () => {
             event: {
               type: 'turn.step.completed',
               turnId: 1,
-              step: 0,
+              step: 1,
               usage: { inputOther: 3400, output: 96, inputCacheRead: 15000, inputCacheCreation: 0 },
               finishReason: 'tool_use',
               time: C + 10600,
             },
           },
-          { event: { type: 'turn.step.started', turnId: 1, step: 1, time: C + 10650 } },
+          { event: { type: 'turn.step.started', turnId: 1, step: 2, time: C + 10650 } },
           { event: { type: 'assistant.delta', turnId: 1, delta: '定时任务到点了。先把重构收尾：', time: C + 11000 } },
           {
             event: {
@@ -2505,7 +2505,7 @@ describe('v2Projection × 实例对拍', () => {
             event: {
               type: 'turn.step.completed',
               turnId: 1,
-              step: 1,
+              step: 2,
               usage: { inputOther: 3600, output: 142, inputCacheRead: 16200, inputCacheCreation: 0 },
               finishReason: 'end_turn',
               time: C + 15300,
@@ -2554,7 +2554,7 @@ describe('v2Projection × 实例对拍', () => {
               time: K + 20,
             },
           },
-          { event: { type: 'turn.step.started', turnId: 2, step: 0, time: K + 22 } },
+          { event: { type: 'turn.step.started', turnId: 2, step: 1, time: K + 22 } },
           { event: { type: 'thinking.delta', turnId: 2, delta: '改按钮样式，一处 CSS 变量即可。', time: K + 450 } },
           { event: { type: 'assistant.delta', turnId: 2, delta: '我来改按钮颜色：', time: K + 1050 } },
           {
@@ -2596,7 +2596,7 @@ describe('v2Projection × 实例对拍', () => {
             event: {
               type: 'turn.step.completed',
               turnId: 2,
-              step: 0,
+              step: 1,
               usage: { inputOther: 3100, output: 92, inputCacheRead: 12800, inputCacheCreation: 0 },
               finishReason: 'end_turn',
               time: K + 3200,
@@ -2649,7 +2649,7 @@ describe('v2Projection × 实例对拍', () => {
           time: B + 20,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 22 } },
       { event: { type: 'thinking.delta', turnId: 0, delta: thinkA, time: B + 450 } },
       { event: { type: 'thinking.delta', turnId: 0, delta: thinkB, time: B + 580 } },
       { event: { type: 'assistant.delta', turnId: 0, delta: say, time: B + 1050 } },
@@ -2675,13 +2675,13 @@ describe('v2Projection × 实例对拍', () => {
           time: at + 20,
         },
       },
-      { event: { type: 'turn.step.started', turnId: 1, step: 0, time: at + 30 } },
+      { event: { type: 'turn.step.started', turnId: 1, step: 1, time: at + 30 } },
       { event: { type: 'assistant.delta', turnId: 1, delta: '后台审查完成了：修复正确，无回归风险，可以放心提交。', time: at + 400 } },
       {
         event: {
           type: 'turn.step.completed',
           turnId: 1,
-          step: 0,
+          step: 1,
           usage: { inputOther: 2800, output: 58, inputCacheRead: 10600, inputCacheCreation: 0 },
           finishReason: 'end_turn',
           time: at + 700,
@@ -2729,13 +2729,13 @@ describe('v2Projection × 实例对拍', () => {
             event: {
               type: 'turn.step.completed',
               turnId: 0,
-              step: 0,
+              step: 1,
               usage: { inputOther: 2900, output: 72, inputCacheRead: 11000, inputCacheCreation: 0 },
               finishReason: 'tool_use',
               time: B + 4100,
             },
           },
-          { event: { type: 'turn.step.started', turnId: 0, step: 1, time: B + 4150 } },
+          { event: { type: 'turn.step.started', turnId: 0, step: 2, time: B + 4150 } },
           {
             event: {
               type: 'assistant.delta',
@@ -2748,7 +2748,7 @@ describe('v2Projection × 实例对拍', () => {
             event: {
               type: 'turn.step.completed',
               turnId: 0,
-              step: 1,
+              step: 2,
               usage: { inputOther: 3100, output: 80, inputCacheRead: 11800, inputCacheCreation: 0 },
               finishReason: 'end_turn',
               time: B + 4800,
@@ -2803,7 +2803,7 @@ describe('v2Projection × 实例对拍', () => {
             event: {
               type: 'turn.step.completed',
               turnId: 0,
-              step: 0,
+              step: 1,
               usage: { inputOther: 2600, output: 64, inputCacheRead: 9800, inputCacheCreation: 0 },
               finishReason: 'end_turn',
               time: B + 2300,
@@ -2876,7 +2876,7 @@ describe('v2Projection × 实例对拍', () => {
             event: {
               type: 'turn.step.completed',
               turnId: 0,
-              step: 0,
+              step: 1,
               usage: { inputOther: 2600, output: 64, inputCacheRead: 9800, inputCacheCreation: 0 },
               finishReason: 'end_turn',
               time: B + 4100,
@@ -2909,7 +2909,7 @@ describe('v2Projection × 实例对拍', () => {
         sectionLabel: '子代理通道（按需订阅）',
         steps: [
           { event: { type: 'turn.started', agentId: 'review_01', turnId: 0, origin: { kind: 'task', taskId: 'task_01' }, time: B + 1600 } },
-          { event: { type: 'turn.step.started', agentId: 'review_01', turnId: 0, step: 0, time: B + 1620 } },
+          { event: { type: 'turn.step.started', agentId: 'review_01', turnId: 0, step: 1, time: B + 1620 } },
           { event: { type: 'thinking.delta', agentId: 'review_01', turnId: 0, delta: '先读 LoginView 的改动，', time: B + 2000 } },
           { event: { type: 'thinking.delta', agentId: 'review_01', turnId: 0, delta: '重点看 token 处理。', time: B + 2200 } },
           { event: { type: 'assistant.delta', agentId: 'review_01', turnId: 0, delta: '我先读 LoginView 的改动。', time: B + 2800 } },
@@ -2948,7 +2948,7 @@ describe('v2Projection × 实例对拍', () => {
               type: 'turn.step.completed',
               agentId: 'review_01',
               turnId: 0,
-              step: 0,
+              step: 1,
               usage: { inputOther: 2200, output: 64, inputCacheRead: 8000, inputCacheCreation: 0 },
               finishReason: 'end_turn',
               time: B + 4500,
@@ -3061,7 +3061,7 @@ describe('v2Projection × REST 历史冷重建', () => {
     expectRestHistory('basic', 'REST 历史', [
       promptAccepted('p_01', '2026-09-03T10:00:00.000Z', B + 10),
       turnPrompt('p_01', '你好', B + 12),
-      begin('s1', 0, 0, B + 20),
+      begin('s1', 0, 1, B + 20),
       think('s1', '用户在打招呼，', B + 450),
       think('s1', '简短回应即可。', B + 700),
       say('s1', '你好！', B + 1050),
@@ -3077,13 +3077,13 @@ describe('v2Projection × REST 历史冷重建', () => {
     expectRestHistory('tool', 'REST 历史', [
       promptAccepted('p_01', '2026-09-03T11:00:00.000Z', B + 10),
       turnPrompt('p_01', '执行一下 ls', B + 12),
-      begin('s1', 0, 0, B + 20),
+      begin('s1', 0, 1, B + 20),
       think('s1', '用户想看当前目录内容，用 Bash 执行 ls。', B + 600),
       say('s1', '好的，执行 `ls`：', B + 800),
       call('s1', 'call_01', 'Bash', { command: 'ls' }, B + 1150),
       result('call_01', { stdout: 'apps\ndocs\npackages\npnpm-workspace.yaml\n', exit_code: 0 }, B + 1600),
       end('s1', 'tool_use', usageOf(2100, 96), B + 1695),
-      begin('s2', 0, 1, B + 1895),
+      begin('s2', 0, 2, B + 1895),
       say('s2', '当前目录下有 4 个条目：', B + 2250),
       say('s2', '`apps`、`docs`、`packages` 和 `pnpm-workspace.yaml`。', B + 2500),
       end('s2', 'end_turn', usageOf(2240, 58), B + 2595),
@@ -3097,23 +3097,23 @@ describe('v2Projection × REST 历史冷重建', () => {
     expectRestHistory('multi-tool', 'REST 历史', [
       promptAccepted('p_01', '2026-09-03T12:00:00.000Z', B + 10),
       turnPrompt('p_01', '写一个 hello.py 打印当前时间，加个 shebang，然后跑一下', B + 12),
-      begin('s1', 0, 0, B + 20),
+      begin('s1', 0, 1, B + 20),
       think('s1', '先 Write 创建脚本，再 Edit 加 shebang，最后 Bash 运行。', B + 600),
       say('s1', '我来创建 `hello.py`：', B + 800),
       call('s1', 'call_01', 'Write', { path: 'hello.py', content: 'from datetime import datetime\nprint(datetime.now())\n' }, B + 1100),
       result('call_01', { bytes_written: 52 }, B + 1400),
       end('s1', 'tool_use', usageOf(2400, 130), B + 1495),
-      begin('s2', 0, 1, B + 1695),
+      begin('s2', 0, 2, B + 1695),
       say('s2', '补上 shebang：', B + 2000),
       call('s2', 'call_02', 'Edit', { path: 'hello.py', old: 'from datetime import datetime', new: '#!/usr/bin/env python3\nfrom datetime import datetime' }, B + 2200),
       result('call_02', { applied: true }, B + 2400),
       end('s2', 'tool_use', usageOf(2580, 74), B + 2495),
-      begin('s3', 0, 2, B + 2695),
+      begin('s3', 0, 3, B + 2695),
       say('s3', '跑一下验证：', B + 2900),
       call('s3', 'call_03', 'Bash', { command: 'python3 hello.py' }, B + 3100),
       result('call_03', { stdout: '2026-09-03 12:00:03.587201\n', exit_code: 0 }, B + 3600),
       end('s3', 'tool_use', usageOf(2720, 66), B + 3695),
-      begin('s4', 0, 3, B + 3895),
+      begin('s4', 0, 4, B + 3895),
       say('s4', '完成。`hello.py` 已创建并加上 shebang，', B + 4100),
       say('s4', '运行输出当前时间，一切正常。', B + 4200),
       end('s4', 'end_turn', usageOf(2830, 62), B + 4295),
@@ -3147,7 +3147,7 @@ describe('v2Projection × REST 历史冷重建', () => {
     expectRestHistory('todo', 'REST 历史', [
       promptAccepted('p_01', '2026-09-03T12:00:00.000Z', B + 10),
       turnPrompt('p_01', '登录页点登录直接白屏，修一下', B + 12),
-      begin('s1', 0, 0, B + 20),
+      begin('s1', 0, 1, B + 20),
       think('s1', '白屏一般是运行时错误。分三步：', B + 450),
       think('s1', '定位、修复、验证。', B + 700),
       say('s1', '我分三步处理：', B + 1200),
@@ -3160,7 +3160,7 @@ describe('v2Projection × REST 历史冷重建', () => {
       call('s1', 'call_04', 'Edit', { path: 'apps/web/src/views/LoginView.vue', old: 'const token = user.token;', new: 'const token = user?.token;' }, B + 2500),
       result('call_04', { applied: true }, B + 3000),
       end('s1', 'tool_use', usageOf(2900, 78, 10000), B + 3095),
-      begin('s2', 0, 1, B + 3145),
+      begin('s2', 0, 2, B + 3145),
       call('s2', 'call_05', 'TodoWrite', { items: todos3 }, B + 3300),
       result('call_05', { updated: true }, B + 3350),
       call('s2', 'call_06', 'Bash', { command: 'pnpm test -- login' }, B + 3500),
@@ -3180,25 +3180,25 @@ describe('v2Projection × REST 历史冷重建', () => {
     expectRestHistory('queue-abort', 'REST 历史', [
       promptAccepted('p_01', '2026-09-03T11:00:00.000Z', B + 10),
       turnPrompt('p_01', '跑一下测试套件', B + 12),
-      begin('s1', 0, 0, B + 20),
+      begin('s1', 0, 1, B + 20),
       think('s1', '测试命令免审批，直接跑。', B + 700),
       say('s1', '我来跑测试：', B + 1200),
       call('s1', 'call_01', 'Bash', { command: 'pnpm test' }, B + 1500),
       result('call_01', { stdout: 'Test Files  1 failed | 3 passed (4)\n     Tests  2 failed | 18 passed (20)\n', exit_code: 1 }, B + 6000),
       end('s1', 'tool_use', usageOf(2600, 60, 9000), B + 6095),
-      begin('s2', 0, 1, B + 6145),
+      begin('s2', 0, 2, B + 6145),
       say('s2', '测试跑完了：18 通过、2 失败。', B + 6700),
       end('s2', 'end_turn', usageOf(2800, 40, 11000), B + 6795),
       rec('turn.ended', { turnId: 0, reason: 'completed', durationMs: 6883 }, B + 6895),
       promptCompleted('p_01', '2026-09-03T11:00:06.895Z', B + 6895),
       promptAccepted('p_02', '2026-09-03T11:00:04.000Z', B + 4010),
       turnPrompt('p_02', '把失败的用例列出来', B + 6928),
-      begin('s3', 1, 0, B + 6948),
+      begin('s3', 1, 1, B + 6948),
       think('s3', '从刚才的输出里挑失败用例即可，', B + 7250),
       think('s3', '不用重跑。', B + 7550),
       say('s3', '失败的两个用例都在 `auth` 目录下：', B + 7900),
       say('s3', '`login.spec.ts` 的「过期 token 应跳转登录页」、', B + 8600),
-      rec('turn.step.interrupted', { turnId: 1, step: 0, reason: 'aborted by user' }, B + 8605),
+      rec('turn.step.interrupted', { turnId: 1, step: 1, reason: 'aborted by user' }, B + 8605),
       rec('turn.ended', { turnId: 1, reason: 'cancelled' }, B + 8615),
       promptCompleted('p_02', '2026-09-03T11:00:08.615Z', B + 8615),
       rec('prompt.aborted', { promptId: 'p_02', abortedAt: '2026-09-03T11:00:08.640Z' }, B + 8640),
@@ -3210,7 +3210,7 @@ describe('v2Projection × REST 历史冷重建', () => {
     expectRestHistory('question', 'REST 历史', [
       promptAccepted('p_01', '2026-09-03T14:00:00.000Z', B + 10),
       turnPrompt('p_01', '把 README 的安装命令更新成 pnpm', B + 12),
-      begin('s1', 0, 0, B + 20),
+      begin('s1', 0, 1, B + 20),
       think('s1', '安装命令在快速开始和开发者文档各有一处。', B + 450),
       think('s1', '范围不明，先问用户。', B + 700),
       say('s1', 'README 里有两处安装命令，先确认范围：', B + 1200),
@@ -3227,7 +3227,7 @@ describe('v2Projection × REST 历史冷重建', () => {
       call('s1', 'call_01', 'Edit', { path: 'README.md', old: 'npm install && npm run dev', new: 'pnpm install && pnpm dev' }, B + 5300),
       result('call_01', { applied: true }, B + 5800),
       end('s1', 'tool_use', usageOf(2300, 48, 7600), B + 5895),
-      begin('s2', 0, 1, B + 5945),
+      begin('s2', 0, 2, B + 5945),
       call('s2', 'call_02', 'Edit', { path: 'README.md', old: 'npm run build && npm start', new: 'pnpm build && pnpm start' }, B + 6100),
       result('call_02', { applied: true }, B + 6500),
       say('s2', '两处都改好了：快速开始和开发者文档的安装命令已更新为 `pnpm` 版。', B + 7100),
@@ -3242,13 +3242,13 @@ describe('v2Projection × REST 历史冷重建', () => {
     expectRestHistory('tool-error', 'REST 历史', [
       promptAccepted('p_01', '2026-09-03T15:00:00.000Z', B + 10),
       turnPrompt('p_01', '把配置里的超时时间改成 30 秒', B + 12),
-      begin('s1', 0, 0, B + 20),
+      begin('s1', 0, 1, B + 20),
       think('s1', '超时配置在 config/server.toml，直接 Edit。', B + 700),
       say('s1', '我来改超时配置：', B + 1200),
       call('s1', 'call_01', 'Edit', { path: 'config/server.toml', old: 'timeout = 10', new: 'timeout = 30' }, B + 1500),
       result('call_01', 'old_string 在文件中未找到', B + 1900, true),
       end('s1', 'tool_use', usageOf(2300, 46, 7200), B + 1995),
-      begin('s2', 0, 1, B + 2045),
+      begin('s2', 0, 2, B + 2045),
       say('s2', '没匹配上，我先看下文件实际内容：', B + 2600),
       call('s2', 'call_02', 'Read', { path: 'config/server.toml' }, B + 2800),
       result('call_02', { content: '[server]\nrequest_timeout = 10\n…', lines: 18 }, B + 3200),
@@ -3266,9 +3266,9 @@ describe('v2Projection × REST 历史冷重建', () => {
     expectRestHistory('llm-retry', 'REST 历史', [
       promptAccepted('p_01', '2026-09-03T15:30:00.000Z', B + 10),
       turnPrompt('p_01', '总结一下这个项目的目录结构', B + 12),
-      begin('s1', 0, 0, B + 20),
+      begin('s1', 0, 1, B + 20),
       fail('s1', B + 500),
-      begin('s2', 0, 0, B + 2950),
+      begin('s2', 0, 1, B + 2950),
       think('s2', '先列顶层目录，', B + 2950),
       think('s2', '再按功能分组说明。', B + 3300),
       say('s2', '项目分四块：`apps/` 三个端（desktop、web、auth-login）、', B + 3700),
@@ -3284,14 +3284,14 @@ describe('v2Projection × REST 历史冷重建', () => {
     expectRestHistory('background-task', 'REST 历史', [
       promptAccepted('p_01', '2026-09-03T16:00:00.000Z', B + 10),
       turnPrompt('p_01', '跑一下完整构建', B + 12),
-      begin('s1', 0, 0, B + 20),
+      begin('s1', 0, 1, B + 20),
       think('s1', '完整构建要几分钟，先跑起来，太久就转后台。', B + 700),
       say('s1', '我来跑完整构建：', B + 1200),
       call('s1', 'call_01', 'Bash', { command: 'pnpm build' }, B + 1500),
       rec('task.started', { info: { taskId: 'task_01', kind: 'shell', status: 'running', description: 'pnpm build', detached: true } }, B + 1500),
       result('call_01', { detached: true, task_id: 'task_01' }, B + 4010),
       end('s1', 'tool_use', usageOf(2500, 58, 9200), B + 4095),
-      begin('s2', 0, 1, B + 4145),
+      begin('s2', 0, 2, B + 4145),
       say('s2', '构建量比较大，已转后台跑（task_01），完成后我告诉你。', B + 4700),
       end('s2', 'end_turn', usageOf(2700, 66, 10100), B + 4795),
       rec('turn.ended', { turnId: 0, reason: 'completed', durationMs: 4883 }, B + 4895),
@@ -3301,7 +3301,7 @@ describe('v2Projection × REST 历史冷重建', () => {
         outputTail: '… build finished successfully in 7m 56s …',
       }, B + 478500),
       rec('turn.prompt', { input: [{ type: 'text', text: '后台构建完成' }], origin: { kind: 'task', taskId: 'task_01' }, promptId: 'p_02' }, B + 478598),
-      begin('s3', 1, 0, B + 478618),
+      begin('s3', 1, 1, B + 478618),
       say('s3', '构建完成了：8 个包全部编译通过，产物在各自的 `dist/`。', B + 479200),
       end('s3', 'end_turn', usageOf(2900, 44, 12000), B + 479295),
       rec('turn.ended', { turnId: 1, reason: 'completed', durationMs: 797 }, B + 479395),
@@ -3321,7 +3321,7 @@ describe('v2Projection × REST 历史冷重建', () => {
       promptAccepted('p_01', '2026-09-03T16:30:00.000Z', B + 10),
       turnPrompt('p_01', '接着上面的讨论，把新页面的路由也加上', B + 12),
       rec('context.apply_compaction', { summary: '前 8 轮讨论摘要', compactedCount: 40, tokensBefore: 241000, tokensAfter: 62000 }, B + 100),
-      begin('s1', 8, 0, B + 118),
+      begin('s1', 8, 1, B + 118),
       think('s1', '路由集中在 router 配置文件，加一条即可。', B + 800),
       say('s1', '我来加路由：', B + 1300),
       call('s1', 'call_01', 'Edit', {
@@ -3343,7 +3343,7 @@ describe('v2Projection × REST 历史冷重建', () => {
     expectRestHistory('undo', 'REST 历史', [
       promptAccepted('p_01', '2026-09-03T18:10:00.000Z', B + 10),
       turnPrompt('p_01', '把配置里的超时改成 30 秒', B + 12),
-      begin('s1', 0, 0, B + 20),
+      begin('s1', 0, 1, B + 20),
       think('s1', '超时配置在 config/server.toml，直接 Edit。', B + 700),
       say('s1', '我来改超时配置：', B + 1200),
       call('s1', 'call_01', 'Edit', { path: 'config/server.toml', old: 'request_timeout = 10', new: 'request_timeout = 30' }, B + 1500),
@@ -3362,7 +3362,7 @@ describe('v2Projection × REST 历史冷重建', () => {
     expectRestHistory('approval', 'REST 历史（A）', [
       promptAccepted('p_01', '2026-09-03T10:00:00.000Z', B + 10),
       turnPrompt('p_01', '把登录页崩溃的复现脚本跑一下', B + 12),
-      begin('s1', 0, 0, B + 20),
+      begin('s1', 0, 1, B + 20),
       think('s1', '复现脚本在 `scripts/` 下，node 执行需要审批。', B + 700),
       say('s1', '我来跑一下复现脚本：', B + 1200),
       call('s1', 'call_01', 'Bash', { command: 'node scripts/repro-login-crash.mjs' }, B + 1500),
@@ -3375,7 +3375,7 @@ describe('v2Projection × REST 历史冷重建', () => {
       rec('interaction.resolved', { id: 'ap_01', response: { decision: 'approved' } }, B + 5100),
       result('call_01', { stdout: "TypeError: Cannot read properties of undefined (reading 'token')\n    at handleLogin (LoginView.vue:87)\n", exit_code: 1 }, B + 6200),
       end('s1', 'tool_use', usageOf(2400, 52, 8000), B + 6295),
-      begin('s2', 0, 1, B + 6345),
+      begin('s2', 0, 2, B + 6345),
       say('s2', '复现成功，报错和浏览器里看到的一致：`handleLogin` 读取了 undefined 的 `token` 字段（`LoginView.vue:87`）。', B + 7100),
       end('s2', 'end_turn', usageOf(3100, 88, 12800), B + 7195),
       rec('turn.ended', { turnId: 0, reason: 'completed', durationMs: 7283 }, B + 7295),
@@ -3389,7 +3389,7 @@ describe('v2Projection × REST 历史冷重建', () => {
     const records: ColdRec[] = [
       promptAccepted('p_01', '2026-09-03T10:30:00.000Z', T1 + 10),
       turnPrompt('p_01', '这个 CLI 的入口文件是哪个？', T1 + 12),
-      begin('s1', 0, 0, T1 + 20),
+      begin('s1', 0, 1, T1 + 20),
       think('s1', '入口是 src/cli.ts，顺带说明参数解析与子命令分发。', T1 + 800),
       say('s1', '入口是 `src/cli.ts`：全局参数在这里解析，再分发到 `build`、`dev`、`test` 三个子命令。', T1 + 1400),
       end('s1', 'end_turn', usageOf(2400, 58), T1 + 1495),
@@ -3397,13 +3397,13 @@ describe('v2Projection × REST 历史冷重建', () => {
       promptCompleted('p_01', '2026-09-03T10:30:01.615Z', T1 + 1615),
       promptAccepted('p_02', '2026-09-03T11:00:00.000Z', T2 + 10),
       turnPrompt('p_02', '我想给 CLI 加一个全局 `--verbose` 选项，加在哪里比较合适？', T2 + 12),
-      begin('s2', 1, 0, T2 + 20),
+      begin('s2', 1, 1, T2 + 20),
       think('s2', '先读入口文件的参数解析部分，再给方案建议。', T2 + 700),
       say('s2', '我看一下 `src/cli.ts` 的参数解析实现：', T2 + 1200),
       call('s2', 'call_01', 'Read', { path: 'src/cli.ts' }, T2 + 1500),
       result('call_01', { content: '…（文件内容，含 parseArgs 实现）…', lines: 86 }, T2 + 1900),
       end('s2', 'tool_use', usageOf(2800, 64, 8000), T2 + 1995),
-      begin('s3', 1, 1, T2 + 2050),
+      begin('s3', 1, 2, T2 + 2050),
       say('s3', '建议加在 `parseArgs` 的全局区，', T2 + 2300),
     ];
     expectRestHistory('recovery', 'A · 刷新：REST 历史', records);
@@ -3415,7 +3415,7 @@ describe('v2Projection × REST 历史冷重建', () => {
     const records: ColdRec[] = [
       promptAccepted('p_01', '2026-09-03T10:00:00.000Z', B + 10),
       turnPrompt('p_01', '你好', B + 12),
-      begin('s1', 0, 0, B + 20),
+      begin('s1', 0, 1, B + 20),
       think('s1', '用户在打招呼，', B + 450),
       think('s1', '简短回应即可。', B + 700),
       say('s1', '你好！', B + 1050),
@@ -3640,20 +3640,20 @@ describe('WS v2 传输层', () => {
     activity.set({ busy: true, mainTurnActive: true, pendingInteraction: 'none' });
     drive({ type: 'prompt.submitted', promptId: 'p_02', status: 'running', turnId: 1, content: [{ type: 'text', text: '我想给 CLI 加一个全局 `--verbose` 选项，加在哪里比较合适？' }], createdAt: '2026-09-03T11:00:00.000Z', time: T2 + 10 });
     drive({ type: 'turn.started', turnId: 1, promptId: 'p_02', origin: { kind: 'user' }, time: T2 + 15 });
-    drive({ type: 'turn.step.started', turnId: 1, step: 0, time: T2 + 22 });
+    drive({ type: 'turn.step.started', turnId: 1, step: 1, time: T2 + 22 });
     drive({ type: 'tool.call.started', turnId: 1, toolCallId: 'call_01', name: 'Read', args: { path: 'src/cli.ts' }, time: T2 + 1500 });
     drive({ type: 'tool.result', turnId: 1, toolCallId: 'call_01', output: { content: '…（文件内容，含 parseArgs 实现）…', lines: 86 }, time: T2 + 1900 });
-    drive({ type: 'turn.step.completed', turnId: 1, step: 0, usage: { inputOther: 2800, output: 64, inputCacheRead: 8000, inputCacheCreation: 0 }, finishReason: 'tool_use', time: T2 + 2000 });
-    drive({ type: 'turn.step.started', turnId: 1, step: 1, time: T2 + 2050 });
+    drive({ type: 'turn.step.completed', turnId: 1, step: 1, usage: { inputOther: 2800, output: 64, inputCacheRead: 8000, inputCacheCreation: 0 }, finishReason: 'tool_use', time: T2 + 2000 });
+    drive({ type: 'turn.step.started', turnId: 1, step: 2, time: T2 + 2050 });
     drive({ type: 'assistant.delta', turnId: 1, delta: '建议加在入口的', time: T2 + 2400 });
     drive({ type: 'assistant.delta', turnId: 1, delta: '全局参数解析处：', time: T2 + 2700 });
-    drive({ type: 'agent.activity.updated', lifecycle: 'ready', turn: { turnId: 1, step: 1, phase: 'running', since: 1788433200015 }, time: T2 + 2060 });
+    drive({ type: 'agent.activity.updated', lifecycle: 'ready', turn: { turnId: 1, step: 2, phase: 'running', since: 1788433200015 }, time: T2 + 2060 });
     drive({ type: 'agent.status.updated', model: 'kimi-k3-highspeed', contextTokens: 8100, maxContextTokens: 262144, usage: { currentTurn: { inputOther: 5700, output: 150, inputCacheRead: 20000, inputCacheCreation: 0 }, total: { inputOther: 8100, output: 208, inputCacheRead: 20000, inputCacheCreation: 0 } }, time: T2 + 2070 });
     await settle();
     socket.deliver(JSON.stringify({ type: 'subscribe', id: 1, session_id: 's_04' }));
     drive({ type: 'assistant.delta', turnId: 1, delta: '`src/cli.ts` 的 `parseArgs` 里注册 `--verbose` 全局选项，', time: T2 + 4100 });
     drive({ type: 'assistant.delta', turnId: 1, delta: '子命令自动继承；日志模块读到该标志后调到 debug 级别。', time: T2 + 4600 });
-    drive({ type: 'turn.step.completed', turnId: 1, step: 1, usage: { inputOther: 3100, output: 96, inputCacheRead: 12800, inputCacheCreation: 0 }, finishReason: 'end_turn', time: T2 + 5100 });
+    drive({ type: 'turn.step.completed', turnId: 1, step: 2, usage: { inputOther: 3100, output: 96, inputCacheRead: 12800, inputCacheCreation: 0 }, finishReason: 'end_turn', time: T2 + 5100 });
     drive({ type: 'turn.ended', turnId: 1, reason: 'completed', durationMs: 5183, time: T2 + 5200 });
     drive({ type: 'agent.activity.updated', lifecycle: 'ready', time: T2 + 5220 });
     drive({ type: 'agent.status.updated', contextTokens: 8500, usage: { total: { inputOther: 8300, output: 218, inputCacheRead: 20800, inputCacheCreation: 0 } }, time: T2 + 5220 });
@@ -3677,20 +3677,20 @@ describe('WS v2 传输层', () => {
     activity.set({ busy: true, mainTurnActive: true, pendingInteraction: 'none' });
     drive({ type: 'prompt.submitted', promptId: 'p_02', status: 'running', turnId: 1, content: [{ type: 'text', text: '我想给 CLI 加一个全局 `--verbose` 选项，加在哪里比较合适？' }], createdAt: '2026-09-03T11:00:00.000Z', time: T2 + 10 });
     drive({ type: 'turn.started', turnId: 1, promptId: 'p_02', origin: { kind: 'user' }, time: T2 + 15 });
-    drive({ type: 'turn.step.started', turnId: 1, step: 0, time: T2 + 22 });
+    drive({ type: 'turn.step.started', turnId: 1, step: 1, time: T2 + 22 });
     drive({ type: 'tool.call.started', turnId: 1, toolCallId: 'call_01', name: 'Read', args: { path: 'src/cli.ts' }, time: T2 + 1500 });
     drive({ type: 'tool.result', turnId: 1, toolCallId: 'call_01', output: { content: '…（文件内容，含 parseArgs 实现）…', lines: 86 }, time: T2 + 1900 });
-    drive({ type: 'turn.step.completed', turnId: 1, step: 0, usage: { inputOther: 2800, output: 64, inputCacheRead: 8000, inputCacheCreation: 0 }, finishReason: 'tool_use', time: T2 + 2000 });
-    drive({ type: 'turn.step.started', turnId: 1, step: 1, time: T2 + 2050 });
+    drive({ type: 'turn.step.completed', turnId: 1, step: 1, usage: { inputOther: 2800, output: 64, inputCacheRead: 8000, inputCacheCreation: 0 }, finishReason: 'tool_use', time: T2 + 2000 });
+    drive({ type: 'turn.step.started', turnId: 1, step: 2, time: T2 + 2050 });
     drive({ type: 'assistant.delta', turnId: 1, delta: '建议加在入口的', time: T2 + 2400 });
     drive({ type: 'assistant.delta', turnId: 1, delta: '全局参数解析处：', time: T2 + 2700 });
     drive({ type: 'assistant.delta', turnId: 1, delta: '`src/cli.ts` 的 `parseArgs` 里注册 `--verbose` 全局选项，', time: T2 + 4100 });
     drive({ type: 'assistant.delta', turnId: 1, delta: '子命令自动继承；日志模块读到该标志后调到 debug 级别。', time: T2 + 4600 });
-    drive({ type: 'agent.activity.updated', lifecycle: 'ready', turn: { turnId: 1, step: 1, phase: 'running', since: 1788433200015 }, time: T2 + 2060 });
+    drive({ type: 'agent.activity.updated', lifecycle: 'ready', turn: { turnId: 1, step: 2, phase: 'running', since: 1788433200015 }, time: T2 + 2060 });
     drive({ type: 'agent.status.updated', model: 'kimi-k3-highspeed', contextTokens: 8300, maxContextTokens: 262144, usage: { currentTurn: { inputOther: 5850, output: 156, inputCacheRead: 20600, inputCacheCreation: 0 }, total: { inputOther: 8250, output: 214, inputCacheRead: 20600, inputCacheCreation: 0 } }, time: T2 + 5600 });
     await settle();
     socket.deliver(JSON.stringify({ type: 'subscribe', id: 1, session_id: 's_04' }));
-    drive({ type: 'turn.step.completed', turnId: 1, step: 1, usage: { inputOther: 3100, output: 96, inputCacheRead: 12800, inputCacheCreation: 0 }, finishReason: 'end_turn', endedAt: T2 + 5100, time: T2 + 6400 });
+    drive({ type: 'turn.step.completed', turnId: 1, step: 2, usage: { inputOther: 3100, output: 96, inputCacheRead: 12800, inputCacheCreation: 0 }, finishReason: 'end_turn', endedAt: T2 + 5100, time: T2 + 6400 });
     drive({ type: 'turn.ended', turnId: 1, reason: 'completed', durationMs: 6483, endedAt: T2 + 5200, time: T2 + 6500 });
     drive({ type: 'agent.activity.updated', lifecycle: 'ready', time: T2 + 6520 });
     drive({ type: 'agent.status.updated', contextTokens: 8500, usage: { total: { inputOther: 8300, output: 218, inputCacheRead: 20800, inputCacheCreation: 0 } }, time: T2 + 6520 });
@@ -3714,13 +3714,13 @@ describe('WS v2 传输层', () => {
     drive({ type: 'prompt.submitted', promptId: 'p_01', status: 'running', content: [{ type: 'text', text: '今天天气怎么样' }], createdAt: '2026-09-03T17:20:00.000Z', time: B + 10 });
     drive({ type: 'turn.started', turnId: 0, promptId: 'p_01', origin: { kind: 'user' }, time: B + 15 });
     activity.set({ busy: true, mainTurnActive: true, pendingInteraction: 'none' }, B + 20);
-    drive({ type: 'agent.activity.updated', lifecycle: 'ready', turn: { turnId: 0, step: 0, phase: 'running', since: 1788456000015 }, time: B + 20 });
+    drive({ type: 'agent.activity.updated', lifecycle: 'ready', turn: { turnId: 0, step: 1, phase: 'running', since: 1788456000015 }, time: B + 20 });
     drive({ type: 'agent.status.updated', model: 'kimi-k3-highspeed', contextTokens: 1820, maxContextTokens: 262144, usage: { total: { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 } }, time: B + 20 });
     await settle();
-    drive({ type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 });
+    drive({ type: 'turn.step.started', turnId: 0, step: 1, time: B + 22 });
     drive({ type: 'thinking.delta', turnId: 0, delta: '闲聊类问题，直接友好回答。', time: B + 300 });
     drive({ type: 'assistant.delta', turnId: 0, delta: '我没法查实时天气——告诉你城市的话，我可以聊聊一般的气候特点。', time: B + 900 });
-    drive({ type: 'turn.step.completed', turnId: 0, step: 0, usage: { inputOther: 1820, output: 28, inputCacheRead: 0, inputCacheCreation: 0 }, finishReason: 'end_turn', time: B + 1400 });
+    drive({ type: 'turn.step.completed', turnId: 0, step: 1, usage: { inputOther: 1820, output: 28, inputCacheRead: 0, inputCacheCreation: 0 }, finishReason: 'end_turn', time: B + 1400 });
     drive({ type: 'turn.ended', turnId: 0, reason: 'completed', durationMs: 1483, time: B + 1500 });
     drive({ type: 'agent.activity.updated', lifecycle: 'ready', time: B + 1520 });
     drive({ type: 'agent.status.updated', contextTokens: 1870, usage: { total: { inputOther: 1820, output: 28, inputCacheRead: 0, inputCacheCreation: 0 } }, time: B + 1520 });
@@ -3744,7 +3744,7 @@ describe('WS v2 传输层', () => {
     first.socket.deliver(JSON.stringify({ type: 'subscribe', id: 1, session_id: 's_15' }));
     drive({ type: 'prompt.submitted', promptId: 'p_01', status: 'running', content: [{ type: 'text', text: '今天天气怎么样' }], createdAt: '2026-09-03T17:20:00.000Z', time: B + 10 });
     drive({ type: 'turn.started', turnId: 0, promptId: 'p_01', origin: { kind: 'user' }, time: B + 15 });
-    drive({ type: 'turn.step.started', turnId: 0, step: 0, time: B + 22 });
+    drive({ type: 'turn.step.started', turnId: 0, step: 1, time: B + 22 });
     expect(first.socket.closed).toBe(true);
     const last = JSON.parse(first.socket.sent.at(-1)!) as Record<string, unknown>;
     expect(last).toEqual({ type: 'error', code: 'backpressure_overflow', msg: 'outbound queue overflow; connection closed, reconnect to resync' });
@@ -3776,14 +3776,14 @@ describe('WS v2 传输层', () => {
     const drive = (event: FakeBusEvent) => buses.get('review_01')!.emit(event);
     socket.deliver(JSON.stringify({ type: 'subscribe', id: 2, session_id: 's_16', agent_id: 'review_01' }));
     drive({ type: 'turn.started', agentId: 'review_01', turnId: 0, origin: { kind: 'task', taskId: 'task_01' }, time: B + 1600 });
-    drive({ type: 'turn.step.started', agentId: 'review_01', turnId: 0, step: 0, time: B + 1620 });
+    drive({ type: 'turn.step.started', agentId: 'review_01', turnId: 0, step: 1, time: B + 1620 });
     drive({ type: 'thinking.delta', agentId: 'review_01', turnId: 0, delta: '先读 LoginView 的改动，', time: B + 2000 });
     drive({ type: 'thinking.delta', agentId: 'review_01', turnId: 0, delta: '重点看 token 处理。', time: B + 2200 });
     drive({ type: 'assistant.delta', agentId: 'review_01', turnId: 0, delta: '我先读 LoginView 的改动。', time: B + 2800 });
     drive({ type: 'tool.call.started', agentId: 'review_01', turnId: 0, toolCallId: 'call_02', name: 'Read', args: { path: 'apps/web/src/views/LoginView.vue' }, time: B + 3200 });
     drive({ type: 'tool.result', agentId: 'review_01', turnId: 0, toolCallId: 'call_02', output: { content: '<template>…</template>', lines: 214 }, time: B + 3800 });
     drive({ type: 'subagent.completed', agentId: 'review_01', subagentId: 'review_01', resultSummary: '审查通过：可选链修复正确，无回归风险。', time: B + 4500 });
-    drive({ type: 'turn.step.completed', agentId: 'review_01', turnId: 0, step: 0, usage: { inputOther: 2200, output: 64, inputCacheRead: 8000, inputCacheCreation: 0 }, finishReason: 'end_turn', time: B + 4500 });
+    drive({ type: 'turn.step.completed', agentId: 'review_01', turnId: 0, step: 1, usage: { inputOther: 2200, output: 64, inputCacheRead: 8000, inputCacheCreation: 0 }, finishReason: 'end_turn', time: B + 4500 });
     drive({ type: 'turn.ended', agentId: 'review_01', turnId: 0, reason: 'completed', durationMs: 2997, time: B + 4600 });
     await settle();
 
