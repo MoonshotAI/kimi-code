@@ -33,6 +33,7 @@ export function toWireInteractionRequest(
       tool_name: toolName,
       input: toolArgs ?? p['input'],
       reason: typeof reason === 'string' ? reason : undefined,
+      display: p['display'],
     };
   }
   const questions = p['questions'];

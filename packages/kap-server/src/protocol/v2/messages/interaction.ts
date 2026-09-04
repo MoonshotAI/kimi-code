@@ -5,6 +5,7 @@ export const approvalRequestSchema = z.object({
   tool_name: z.string(),
   input: z.unknown().optional(),
   reason: z.string().optional(),
+  display: z.unknown().optional(),
 });
 export type ApprovalRequest = z.infer<typeof approvalRequestSchema>;
 

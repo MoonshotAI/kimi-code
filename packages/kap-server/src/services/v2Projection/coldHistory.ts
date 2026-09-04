@@ -717,6 +717,10 @@ export function buildColdHistory(
       }
       for (const tool of step.toolCalls) {
         const isError = tool.isError === true;
+        const display =
+          tool.approvalId === undefined
+            ? undefined
+            : (interactions.get(tool.approvalId)?.request as { display?: unknown } | undefined)?.display;
         content.push({
           time: tool.callTime ?? 0,
           msg: {
@@ -732,6 +736,7 @@ export function buildColdHistory(
             input: tool.input,
             output: isError ? undefined : tool.output,
             error: isError ? (typeof tool.output === 'string' ? tool.output : JSON.stringify(tool.output)) : undefined,
+            display,
             approval_id: tool.approvalId,
             todo_id: tool.todoId,
             agent_refs: tool.agentRefs,

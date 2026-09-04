@@ -2700,15 +2700,15 @@
             },
             {
               "note": "方案就绪，调 `ExitPlanMode` 提交计划等批准",
-              "json": "{\n  \"type\": \"tool_call\",\n  \"session_id\": \"s_18\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:50:02.900Z\",\n  \"tool_call_id\": \"call_02\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"name\": \"ExitPlanMode\",\n  \"state\": \"running\",\n  \"input\": {\n    \"plan_key\": \"plans/sso.md\"\n  }\n}"
+              "json": "{\n  \"type\": \"tool_call\",\n  \"session_id\": \"s_18\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:50:02.900Z\",\n  \"tool_call_id\": \"call_02\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"name\": \"ExitPlanMode\",\n  \"state\": \"running\",\n  \"input\": {\n    \"plan_key\": \"plans/sso.md\"\n  },\n  \"display\": {\n    \"kind\": \"plan_review\",\n    \"plan\": \"## 目标\\n\\n接入 SSO 登录，改造涉及多个文件。\",\n    \"path\": \"plans/sso.md\"\n  }\n}"
             },
             {
               "note": "提交计划 = 一次审批：用户审方案",
-              "json": "{\n  \"type\": \"interaction\",\n  \"session_id\": \"s_18\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:50:02.910Z\",\n  \"interaction_id\": \"ap_01\",\n  \"kind\": \"approval\",\n  \"state\": \"pending\",\n  \"tool_call_id\": \"call_02\",\n  \"request\": {\n    \"tool_name\": \"ExitPlanMode\",\n    \"input\": {\n      \"plan_key\": \"plans/sso.md\"\n    },\n    \"reason\": \"请审查并批准实施方案\"\n  }\n}"
+              "json": "{\n  \"type\": \"interaction\",\n  \"session_id\": \"s_18\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:50:02.910Z\",\n  \"interaction_id\": \"ap_01\",\n  \"kind\": \"approval\",\n  \"state\": \"pending\",\n  \"tool_call_id\": \"call_02\",\n  \"request\": {\n    \"tool_name\": \"ExitPlanMode\",\n    \"input\": {\n      \"plan_key\": \"plans/sso.md\"\n    },\n    \"reason\": \"请审查并批准实施方案\",\n    \"display\": {\n      \"kind\": \"plan_review\",\n      \"plan\": \"## 目标\\n\\n接入 SSO 登录，改造涉及多个文件。\",\n      \"path\": \"plans/sso.md\"\n    }\n  }\n}"
             },
             {
               "note": "`approval_id` 回链（提交计划 = 一次审批）",
-              "json": "{\n  \"type\": \"tool_call\",\n  \"session_id\": \"s_18\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:50:02.910Z\",\n  \"tool_call_id\": \"call_02\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"name\": \"ExitPlanMode\",\n  \"state\": \"running\",\n  \"input\": {\n    \"plan_key\": \"plans/sso.md\"\n  },\n  \"approval_id\": \"ap_01\"\n}"
+              "json": "{\n  \"type\": \"tool_call\",\n  \"session_id\": \"s_18\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:50:02.910Z\",\n  \"tool_call_id\": \"call_02\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"name\": \"ExitPlanMode\",\n  \"state\": \"running\",\n  \"input\": {\n    \"plan_key\": \"plans/sso.md\"\n  },\n  \"display\": {\n    \"kind\": \"plan_review\",\n    \"plan\": \"## 目标\\n\\n接入 SSO 登录，改造涉及多个文件。\",\n    \"path\": \"plans/sso.md\"\n  },\n  \"approval_id\": \"ap_01\"\n}"
             },
             {
               "note": "",
@@ -2716,7 +2716,7 @@
             },
             {
               "note": "用户点「允许，按计划执行」（REST `POST /sessions/s_18/approvals/ap_01:decide`，不在 WS）",
-              "json": "{\n  \"type\": \"interaction\",\n  \"session_id\": \"s_18\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:50:05.000Z\",\n  \"interaction_id\": \"ap_01\",\n  \"kind\": \"approval\",\n  \"state\": \"approved\",\n  \"tool_call_id\": \"call_02\",\n  \"request\": {\n    \"tool_name\": \"ExitPlanMode\",\n    \"input\": {\n      \"plan_key\": \"plans/sso.md\"\n    },\n    \"reason\": \"请审查并批准实施方案\"\n  },\n  \"response\": {\n    \"decision\": \"approved\"\n  }\n}"
+              "json": "{\n  \"type\": \"interaction\",\n  \"session_id\": \"s_18\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:50:05.000Z\",\n  \"interaction_id\": \"ap_01\",\n  \"kind\": \"approval\",\n  \"state\": \"approved\",\n  \"tool_call_id\": \"call_02\",\n  \"request\": {\n    \"tool_name\": \"ExitPlanMode\",\n    \"input\": {\n      \"plan_key\": \"plans/sso.md\"\n    },\n    \"reason\": \"请审查并批准实施方案\",\n    \"display\": {\n      \"kind\": \"plan_review\",\n      \"plan\": \"## 目标\\n\\n接入 SSO 登录，改造涉及多个文件。\",\n      \"path\": \"plans/sso.md\"\n    }\n  },\n  \"response\": {\n    \"decision\": \"approved\"\n  }\n}"
             },
             {
               "note": "",
@@ -2724,7 +2724,7 @@
             },
             {
               "note": "",
-              "json": "{\n  \"type\": \"tool_call\",\n  \"session_id\": \"s_18\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:50:05.020Z\",\n  \"tool_call_id\": \"call_02\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"name\": \"ExitPlanMode\",\n  \"state\": \"done\",\n  \"input\": {\n    \"plan_key\": \"plans/sso.md\"\n  },\n  \"output\": {\n    \"approved\": true\n  },\n  \"approval_id\": \"ap_01\"\n}"
+              "json": "{\n  \"type\": \"tool_call\",\n  \"session_id\": \"s_18\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:50:05.020Z\",\n  \"tool_call_id\": \"call_02\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"name\": \"ExitPlanMode\",\n  \"state\": \"done\",\n  \"input\": {\n    \"plan_key\": \"plans/sso.md\"\n  },\n  \"output\": {\n    \"approved\": true\n  },\n  \"display\": {\n    \"kind\": \"plan_review\",\n    \"plan\": \"## 目标\\n\\n接入 SSO 登录，改造涉及多个文件。\",\n    \"path\": \"plans/sso.md\"\n  },\n  \"approval_id\": \"ap_01\"\n}"
             },
             {
               "note": "退出标记出模式",

@@ -915,7 +915,7 @@ export class AgentV2Projector {
         id: event.id as string,
         kind: 'approval',
         toolCallId: event.toolCallId as string,
-        request: { tool_name: event.toolName as string, input: event.toolInput, reason: event.action as string },
+        request: { tool_name: event.toolName as string, input: event.toolInput, reason: event.action as string, display: event.display },
         time: event.time,
       }),
     );
