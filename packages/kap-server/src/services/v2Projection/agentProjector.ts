@@ -11,6 +11,7 @@ import type {
   StepRetry,
   StepUsage,
   TaskMessage,
+  TaskNotificationPayload,
   ThinkingDeltaMessage,
   ThinkingMessage,
   TodoItem,
@@ -143,6 +144,7 @@ interface PromptAcc {
   origin?: UserMessageOrigin;
   attachmentIds?: string[];
   steeredAt?: string;
+  notification?: TaskNotificationPayload;
 }
 
 interface StepAcc {
@@ -268,8 +270,9 @@ export function toTurnOrigin(origin: unknown): TurnOrigin {
 }
 
 export function toUserOrigin(origin: unknown): UserMessageOrigin | undefined {
-  const o = origin as { kind?: string; jobId?: string; cron?: string } | undefined;
+  const o = origin as { kind?: string; jobId?: string; cron?: string; taskId?: string } | undefined;
   if (o?.kind === 'cron_job') return { kind: 'cron', cron_id: o.jobId ?? '', schedule: o.cron ?? '' };
+  if (o?.kind === 'task') return { kind: 'task', task_id: o.taskId ?? '' };
   return undefined;
 }
 
@@ -348,6 +351,7 @@ export class AgentV2Projector {
       case 'tool.result': this.onToolResult(event, out); break;
       case 'task.started': this.onTaskStarted(event, out); break;
       case 'task.terminated': this.onTaskTerminated(event, out); break;
+      case 'task.notified': this.onTaskNotified(event, out); break;
       case 'tools.update_store': this.onToolsUpdateStore(event, out); break;
       case 'permission.approval.requested': this.onApprovalRequested(event, out); break;
       case 'permission.approval.resolved': this.onApprovalResolved(event, out); break;
@@ -531,6 +535,60 @@ export class AgentV2Projector {
       },
       out,
     );
+  }
+
+  private onTaskNotified(event: ProjectionEvent, out: ServerMessage[]): void {
+    const title = (event.title as string) ?? '';
+    const body = (event.body as string) ?? '';
+    const taskId = (event.sourceId as string) ?? '';
+    const notification: TaskNotificationPayload = {
+      title,
+      body,
+      severity: event.severity as string | undefined,
+      type: event.notificationType as string | undefined,
+      source_kind: event.sourceKind as string | undefined,
+      source_id: taskId || undefined,
+      agent_id: event.sourceAgentId as string | undefined,
+    };
+    const text = `${title}\n${body}`.trim();
+    const turn = this.latestTurn();
+    if (turn && turn.state === 'running') {
+      const seq = turn.userSeq++;
+      const acc: PromptAcc = {
+        promptId: `task_${taskId}`,
+        messageId: `${turn.turnId}.u${seq}`,
+        turnId: turn.turnId,
+        text,
+        createdAt: iso(event.time),
+        status: 'completed',
+        queued: false,
+        steerHeld: false,
+        emitted: true,
+        origin: { kind: 'task', task_id: taskId },
+        notification,
+      };
+      this.prompts.set(acc.promptId, acc);
+      out.push(this.userMessage(acc, event.time));
+      return;
+    }
+    const engineTurnId = this.maxTurnId + 1;
+    const turnId = this.protocolTurnId(engineTurnId);
+    const seq = this.nextUserSeq(engineTurnId);
+    const acc: PromptAcc = {
+      promptId: `task_${taskId}`,
+      messageId: `${turnId}.u${seq}`,
+      turnId,
+      text,
+      createdAt: iso(event.time),
+      status: 'completed',
+      queued: false,
+      steerHeld: false,
+      emitted: true,
+      origin: { kind: 'task', task_id: taskId },
+      notification,
+    };
+    this.prompts.set(acc.promptId, acc);
+    out.push(this.userMessage(acc, event.time));
   }
 
   private nextUserSeq(engineTurnId: number): number {
@@ -1192,6 +1250,7 @@ export class AgentV2Projector {
       steered_at: acc.steeredAt,
       origin: acc.origin,
       attachment_ids: acc.attachmentIds,
+      notification: acc.notification,
     };
   }
 

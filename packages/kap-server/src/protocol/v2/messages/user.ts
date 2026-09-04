@@ -4,8 +4,20 @@ import { timelineBaseFields } from './base';
 export const userMessageOriginSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('cron'), cron_id: z.string(), schedule: z.string() }),
   z.object({ kind: z.literal('channel'), channel_id: z.string() }),
+  z.object({ kind: z.literal('task'), task_id: z.string() }),
 ]);
 export type UserMessageOrigin = z.infer<typeof userMessageOriginSchema>;
+
+export const taskNotificationPayloadSchema = z.object({
+  title: z.string(),
+  body: z.string(),
+  severity: z.string().optional(),
+  type: z.string().optional(),
+  source_kind: z.string().optional(),
+  source_id: z.string().optional(),
+  agent_id: z.string().optional(),
+});
+export type TaskNotificationPayload = z.infer<typeof taskNotificationPayloadSchema>;
 
 export const skillActivationSchema = z.object({
   skill_name: z.string(),
@@ -27,5 +39,6 @@ export const userMessageSchema = z.object({
   finished_at: z.string().optional(),
   steered_at: z.string().optional(),
   origin: userMessageOriginSchema.optional(),
+  notification: taskNotificationPayloadSchema.optional(),
 });
 export type UserMessage = z.infer<typeof userMessageSchema>;

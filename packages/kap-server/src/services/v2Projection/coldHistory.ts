@@ -2,6 +2,7 @@ import type {
   ServerMessage,
   StepUsage,
   TaskMessage,
+  TaskNotificationPayload,
   ToolCallAgentRef,
   TurnOrigin,
   UserMessageOrigin,
@@ -139,6 +140,7 @@ interface UserAcc {
   acceptedTime?: number;
   steeredAt?: string;
   origin?: UserMessageOrigin;
+  notification?: TaskNotificationPayload;
   sortTime?: number;
 }
 
@@ -184,7 +186,32 @@ function asText(value: unknown): string | undefined {
 }
 
 function isDisplayableTurnOrigin(origin: TurnOrigin): boolean {
-  return origin.kind === 'user' || origin.kind === 'cron' || origin.kind === 'side';
+  return origin.kind === 'user' || origin.kind === 'cron' || origin.kind === 'side' || origin.kind === 'task';
+}
+
+function parseNotificationXmlText(text: string): TaskNotificationPayload | undefined {
+  const match = text.match(/^<notification\s+([^>]*)>\n?/);
+  if (!match) return undefined;
+  const attrs = match[1]!;
+  const attr = (name: string): string | undefined => attrs.match(new RegExp(`${name}="([^"]*)"`))?.[1];
+  const rest = text.slice(match[0].length).replace(/\n?<\/notification>\s*$/, '');
+  let title = '';
+  let severity: string | undefined;
+  const bodyLines: string[] = [];
+  for (const line of rest.split('\n')) {
+    if (line.startsWith('Title: ')) title = line.slice('Title: '.length);
+    else if (line.startsWith('Severity: ')) severity = line.slice('Severity: '.length);
+    else bodyLines.push(line);
+  }
+  return {
+    title,
+    body: bodyLines.join('\n').replace(/^\n+|\n+$/g, ''),
+    severity,
+    type: attr('type'),
+    source_kind: attr('source_kind'),
+    source_id: attr('source_id'),
+    agent_id: attr('agent_id'),
+  };
 }
 
 interface LoopEventPayload {
@@ -268,13 +295,16 @@ export function buildColdHistory(
         };
         turns.push(turn);
         if (isDisplayableTurnOrigin(origin)) {
+          const rawText = textFromContent(record.input);
+          const notification = origin.kind === 'task' ? parseNotificationXmlText(rawText) : undefined;
           turn.users.push({
             turn,
             promptId: turn.promptId,
             seq: 0,
-            text: textFromContent(record.input),
+            text: notification ? `${notification.title}\n${notification.body}`.trim() : rawText,
             acceptedTime: time,
             origin: toUserOrigin(originValue),
+            notification,
           });
         }
         break;
@@ -282,13 +312,17 @@ export function buildColdHistory(
       case 'turn.steer': {
         const turn = latestTurn();
         if (!turn) break;
+        const origin = toUserOrigin(record.origin);
+        const rawText = textFromContent(record.input);
+        const notification = origin?.kind === 'task' ? parseNotificationXmlText(rawText) : undefined;
         turn.users.push({
           turn,
           seq: turn.users.length,
-          text: textFromContent(record.input),
+          text: notification ? `${notification.title}\n${notification.body}`.trim() : rawText,
           acceptedTime: time,
           steeredAt: iso(time),
-          origin: toUserOrigin(record.origin),
+          origin,
+          notification,
           sortTime: time,
         });
         turn.lastRecordIndex = recordIndex;
@@ -586,6 +620,7 @@ export function buildColdHistory(
       finished_at: finishedAt,
       steered_at: user.steeredAt,
       origin: user.origin,
+      notification: user.notification,
     } as ServerMessage;
   };
 

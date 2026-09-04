@@ -1471,6 +1471,18 @@ describe('v2Projection × 实例对拍', () => {
           time: B + 478500,
         },
       },
+      {
+        event: {
+          type: 'task.notified',
+          title: '后台构建完成',
+          body: '构建成功：8 个包全部编译通过',
+          severity: 'info',
+          notificationType: 'task.completed',
+          sourceKind: 'background_task',
+          sourceId: 'task_01',
+          time: B + 478510,
+        },
+      },
       { event: { type: 'turn.started', turnId: 1, origin: { kind: 'task', taskId: 'task_01' }, time: B + 478600 } },
       {
         facts: {
@@ -2585,6 +2597,18 @@ describe('v2Projection × 实例对拍', () => {
               time: K + 2000,
             },
           },
+          {
+            event: {
+              type: 'task.notified',
+              title: '后台任务完成',
+              body: '构建成功：8 个包全部编译通过',
+              severity: 'info',
+              notificationType: 'task.completed',
+              sourceKind: 'background_task',
+              sourceId: 'task_01',
+              time: K + 2010,
+            },
+          },
           { event: { type: 'tool.result', turnId: 2, toolCallId: 'call_01', output: { applied: true }, time: K + 2500 } },
           {
             event: {
@@ -3335,7 +3359,11 @@ describe('v2Projection × REST 历史冷重建', () => {
         info: { taskId: 'task_01', kind: 'shell', status: 'completed', description: 'pnpm build', resultSummary: '构建成功：8 个包全部编译通过', endedAt: '2026-09-03T16:07:58.495Z' },
         outputTail: '… build finished successfully in 7m 56s …',
       }, B + 478500),
-      rec('turn.prompt', { input: [{ type: 'text', text: '后台构建完成' }], origin: { kind: 'task', taskId: 'task_01' }, promptId: 'p_02' }, B + 478598),
+      rec('turn.prompt', {
+        input: [{ type: 'text', text: '<notification id="task:task_01:completed" category="task" type="task.completed" source_kind="background_task" source_id="task_01">\nTitle: 后台构建完成\nSeverity: info\n构建成功：8 个包全部编译通过\n</notification>' }],
+        origin: { kind: 'task', taskId: 'task_01' },
+        promptId: 'p_02',
+      }, B + 478598),
       begin('s3', 1, 1, B + 478618),
       say('s3', '构建完成了：8 个包全部编译通过，产物在各自的 `dist/`。', B + 479200),
       end('s3', 'end_turn', usageOf(2900, 44, 12000), B + 479295),
