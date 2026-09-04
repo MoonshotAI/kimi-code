@@ -348,6 +348,7 @@ describe('AgentLifecycleService', () => {
       }),
       cancel: loopCancel,
       settled: loopSettled,
+      tryAcquireQuiescence: vi.fn(() => ({ dispose: vi.fn() })),
     } as unknown as IAgentLoopService);
     promptDrain = vi.fn<IAgentPromptService['drain']>(async () => {});
     ix.stub(IAgentPromptService, {
@@ -539,6 +540,52 @@ describe('AgentLifecycleService', () => {
     queueIdle = true;
     await removal;
     expect(flush).toHaveBeenCalled();
+  });
+
+  it('remove re-cancels a prompt that finishes launching during the removal', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+    const promptService = svc.handleOf('main')!.accessor.get(IAgentPromptService) as unknown as {
+      list: ReturnType<typeof vi.fn>;
+    };
+    let phase: 'launching' | 'active' | 'empty' = 'launching';
+    promptService.list = vi.fn(() => {
+      if (phase === 'launching') return { launching: true, active: undefined, pending: [] };
+      if (phase === 'active') return { launching: false, active: { id: 'p1' }, pending: [] };
+      return { launching: false, active: undefined, pending: [] };
+    });
+    const dispatcher = svc.handleOf('main')!.accessor.get(IEventDispatcher);
+    const flush = vi.spyOn(dispatcher, 'flush');
+    const removal = svc.remove(svc.get('main')!);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(flush).not.toHaveBeenCalled();
+    phase = 'active';
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(flush).not.toHaveBeenCalled();
+    phase = 'empty';
+    await removal;
+    expect(flush).toHaveBeenCalled();
+    expect(promptDrain.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('remove holds a quiescence guard across the flush and disposal', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+    const handle = svc.handleOf('main')!;
+    const loop = handle.accessor.get(IAgentLoopService) as unknown as {
+      tryAcquireQuiescence: ReturnType<typeof vi.fn>;
+    };
+    const guardDispose = vi.fn();
+    loop.tryAcquireQuiescence = vi.fn(() => ({ dispose: guardDispose }));
+    const dispatcher = handle.accessor.get(IEventDispatcher);
+    const flush = vi.spyOn(dispatcher, 'flush');
+    const dispose = vi.spyOn(handle, 'dispose');
+    await svc.remove(svc.get('main')!);
+    expect(flush).toHaveBeenCalled();
+    expect(loop.tryAcquireQuiescence).toHaveBeenCalled();
+    expect(guardDispose.mock.invocationCallOrder[0]).toBeGreaterThan(
+      dispose.mock.invocationCallOrder[0]!,
+    );
   });
 
   it('remove keeps the lifecycle context active through async scope teardown', async () => {

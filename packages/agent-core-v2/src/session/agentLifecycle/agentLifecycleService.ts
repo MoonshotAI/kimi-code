@@ -369,16 +369,17 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const compactionSettled = compaction?.promise.catch(() => undefined) ?? Promise.resolve();
     const reason = abortError('Agent removed');
     const prompt = handle.accessor.get(IAgentPromptService);
-    for (const turnId of loop.status().pendingTurnIds) {
-      loop.cancel(turnId, reason);
-    }
-    loop.cancel(undefined, reason);
     if (compaction !== null && !compaction.abortController.signal.aborted) {
       compaction.abortController.abort(reason);
     }
-    await Promise.all([loop.settled(), compactionSettled, prompt.drain(reason)]);
     const promptIdleDeadline = Date.now() + REMOVE_PROMPT_QUIESCE_TIMEOUT_MS;
+    let releaseQuiescence: (() => void) | undefined;
     for (;;) {
+      for (const turnId of loop.status().pendingTurnIds) {
+        loop.cancel(turnId, reason);
+      }
+      loop.cancel(undefined, reason);
+      await Promise.all([loop.settled(), compactionSettled, prompt.drain(reason)]);
       let idle = true;
       try {
         const snapshot = prompt.list();
@@ -387,12 +388,27 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       } catch {
         idle = true;
       }
-      if (idle || Date.now() >= promptIdleDeadline) break;
+      if (idle) {
+        try {
+          const guard = loop.tryAcquireQuiescence();
+          if (guard !== undefined) {
+            releaseQuiescence = () => guard.dispose();
+            break;
+          }
+        } catch {
+          break;
+        }
+      }
+      if (Date.now() >= promptIdleDeadline) break;
       await new Promise((resolve) => setTimeout(resolve, REMOVE_PROMPT_QUIESCE_POLL_MS));
     }
-    await handle.accessor.get(IEventDispatcher).flush().catch(onUnexpectedError);
-    managed.killSpace();
-    await handle.dispose();
+    try {
+      await handle.accessor.get(IEventDispatcher).flush().catch(onUnexpectedError);
+      managed.killSpace();
+      await handle.dispose();
+    } finally {
+      releaseQuiescence?.();
+    }
     if (this.roster.get(agent.agentId) === managed) this.roster.delete(agent.agentId);
     this.onDidCloseEmitter.fire(agent);
   }
