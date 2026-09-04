@@ -59,6 +59,9 @@ import {
 
 let nextAgentId = 0;
 
+const REMOVE_PROMPT_QUIESCE_TIMEOUT_MS = 3_000;
+const REMOVE_PROMPT_QUIESCE_POLL_MS = 10;
+
 export class AgentLifecycleService extends Disposable implements IAgentLifecycleService {
   declare readonly _serviceBrand: undefined;
   private readonly roster = new Map<string, ManagedAgent>();
@@ -374,6 +377,19 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       compaction.abortController.abort(reason);
     }
     await Promise.all([loop.settled(), compactionSettled, prompt.drain(reason)]);
+    const promptIdleDeadline = Date.now() + REMOVE_PROMPT_QUIESCE_TIMEOUT_MS;
+    for (;;) {
+      let idle = true;
+      try {
+        const snapshot = prompt.list();
+        idle =
+          !snapshot.launching && snapshot.active === undefined && snapshot.pending.length === 0;
+      } catch {
+        idle = true;
+      }
+      if (idle || Date.now() >= promptIdleDeadline) break;
+      await new Promise((resolve) => setTimeout(resolve, REMOVE_PROMPT_QUIESCE_POLL_MS));
+    }
     await handle.accessor.get(IEventDispatcher).flush().catch(onUnexpectedError);
     managed.killSpace();
     await handle.dispose();

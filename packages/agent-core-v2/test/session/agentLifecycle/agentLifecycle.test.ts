@@ -353,6 +353,7 @@ describe('AgentLifecycleService', () => {
     ix.stub(IAgentPromptService, {
       _serviceBrand: undefined,
       drain: promptDrain,
+      list: () => ({ launching: false, active: undefined, pending: [] }),
     } as unknown as IAgentPromptService);
     ix.stub(ITelemetryService, {
       _serviceBrand: undefined,
@@ -515,6 +516,28 @@ describe('AgentLifecycleService', () => {
     const dispatcher = svc.handleOf('main')!.accessor.get(IEventDispatcher);
     const flush = vi.spyOn(dispatcher, 'flush');
     await svc.remove(svc.get('main')!);
+    expect(flush).toHaveBeenCalled();
+  });
+
+  it('remove waits for the prompt queue to go idle before flushing', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+    const promptService = svc.handleOf('main')!.accessor.get(IAgentPromptService) as unknown as {
+      list: ReturnType<typeof vi.fn>;
+    };
+    let queueIdle = false;
+    promptService.list = vi.fn(() =>
+      queueIdle
+        ? { launching: false, active: undefined, pending: [] }
+        : { launching: false, active: { id: 'p1' }, pending: [] },
+    );
+    const dispatcher = svc.handleOf('main')!.accessor.get(IEventDispatcher);
+    const flush = vi.spyOn(dispatcher, 'flush');
+    const removal = svc.remove(svc.get('main')!);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(flush).not.toHaveBeenCalled();
+    queueIdle = true;
+    await removal;
     expect(flush).toHaveBeenCalled();
   });
 
