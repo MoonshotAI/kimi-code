@@ -66,3 +66,26 @@ describe('ReadGroupComponent hasHiddenContent', () => {
     expect(makeGroup().hasHiddenContent()).toBe(true);
   });
 });
+
+describe('ReadGroupComponent header on a narrow terminal', () => {
+  function failedRead(id: string, path: string): ToolCallComponent {
+    return new ToolCallComponent(
+      { id, name: 'Read', args: { path } },
+      { tool_call_id: id, output: 'ENOENT: no such file or directory', is_error: true },
+    );
+  }
+
+  it('keeps the failure count visible when the row is cut', () => {
+    const group = new ReadGroupComponent(undefined);
+    group.attach('ok', readCall('ok', 'src/very/deeply/nested/directory/alpha-component.ts', 120));
+    group.attach('bad', failedRead('bad', 'src/very/deeply/nested/directory/missing.ts'));
+
+    const wide = rows(group, 120);
+    expect(wide[0]).toContain('Read 2 files · 120 lines · 1 failed');
+
+    const narrow = rows(group, 26);
+    expect(visibleWidth(narrow[0]!)).toBeLessThanOrEqual(26);
+    expect(narrow[0]!.endsWith('1 failed')).toBe(true);
+    expect(narrow[0]).not.toContain('lines');
+  });
+});
