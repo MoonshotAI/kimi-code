@@ -154,6 +154,23 @@ function normalizeQuery(input: GlobalSearchQuery, maxQueryTerms: number): Normal
   };
 }
 
+function validateQuery(query: NormalizedQuery): void {
+  if (query.mode !== 'literal') return;
+  const literalLength = Array.from(query.literalQuery ?? '').length;
+  if (literalLength < 2) {
+    throw new GlobalSearchError(
+      'invalid_query',
+      'literal queries need at least 2 characters (after Unicode normalization)',
+    );
+  }
+  if (literalLength > MAX_LITERAL_QUERY_CHARS) {
+    throw new GlobalSearchError(
+      'invalid_query',
+      `literal queries are limited to ${MAX_LITERAL_QUERY_CHARS} characters`,
+    );
+  }
+}
+
 export interface SearchBackend {
   beginClose(): void;
   lifecycleSnapshot(): CoreLifecycleReport;
@@ -389,6 +406,7 @@ export class GlobalSearchService implements IGlobalSearchService {
 
   async search(input: GlobalSearchQuery): Promise<GlobalSearchPage> {
     const q = normalizeQuery(input, this.maxQueryTerms);
+    validateQuery(q);
     const sessionId = q.container?.sessionId;
     const liveStore = sessionId !== undefined ? this.liveSource?.forSessionLive(sessionId) : undefined;
     if (liveStore !== undefined && sessionId !== undefined) {
@@ -545,22 +563,6 @@ export class GlobalSearchService implements IGlobalSearchService {
     q: NormalizedQuery,
     pageToken: string | undefined,
   ): Promise<GlobalSearchPage> {
-    if (q.mode === 'literal') {
-      const literalLength = Array.from(q.literalQuery ?? '').length;
-      if (literalLength < 2) {
-        throw new GlobalSearchError(
-          'invalid_query',
-          'literal queries need at least 2 characters (after Unicode normalization)',
-        );
-      }
-      if (literalLength > MAX_LITERAL_QUERY_CHARS) {
-        throw new GlobalSearchError(
-          'invalid_query',
-          `literal queries are limited to ${MAX_LITERAL_QUERY_CHARS} characters`,
-        );
-      }
-    }
-
     let result: CoreSearchResult;
     try {
       result = await this.backend.search({ q, pageToken, budgets: this.budgets() });
