@@ -658,7 +658,7 @@ export class AgentV2Projector {
 
   private onTurnSteer(event: ProjectionEvent, out: ServerMessage[]): void {
     const origin = toUserOrigin(event.origin);
-    if (origin?.kind !== 'skill') return;
+    if (origin?.kind !== 'skill' || origin.trigger !== 'user-slash') return;
     const text = textFromContent(event.input);
     const steeredAt = iso(event.time);
     const activationId = (event.origin as { activationId?: string } | undefined)?.activationId;

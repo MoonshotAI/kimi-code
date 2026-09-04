@@ -324,6 +324,7 @@ export function buildColdHistory(
         const turn = latestTurn();
         if (!turn) break;
         const origin = toUserOrigin(record.origin);
+        if (origin?.kind === 'skill' && origin.trigger !== 'user-slash') break;
         const rawText = textFromContent(record.input);
         const notification = origin?.kind === 'task' ? parseNotificationXmlText(rawText) : undefined;
         turn.users.push({
