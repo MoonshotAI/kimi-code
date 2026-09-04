@@ -41,6 +41,7 @@ import {
   compactSessionResponseSchema,
   createSessionChildRequestSchema,
   createSessionRequestSchema,
+  deleteSessionResponseSchema,
   forkSessionRequestSchema,
   getSessionGoalResponseSchema,
   listSessionChildrenResponseSchema,
@@ -594,6 +595,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           sessionAbortResponseSchema,
           startBtwSessionResponseSchema,
           archiveSessionResponseSchema,
+          deleteSessionResponseSchema,
         ]),
       },
       errors: {
@@ -844,7 +846,15 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
   );
 }
 
-type SessionAction = 'fork' | 'compact' | 'undo' | 'abort' | 'btw' | 'restore' | 'archive';
+type SessionAction =
+  | 'fork'
+  | 'compact'
+  | 'undo'
+  | 'abort'
+  | 'btw'
+  | 'restore'
+  | 'archive'
+  | 'delete';
 
 interface SessionActionExtra {
   readonly core: Scope;
@@ -865,6 +875,7 @@ const sessionActions: ActionTable<SessionAction, SessionActionExtra> = {
   btw: { handle: btwSessionAction },
   restore: { handle: restoreSessionAction },
   archive: { handle: archiveSessionAction },
+  delete: { handle: deleteSessionAction },
 };
 
 async function forkSessionAction(
@@ -980,6 +991,13 @@ async function archiveSessionAction(ctx: SessionActionCtx): Promise<void> {
   await setSessionArchived(core.accessor, id, true);
   requestLog(req)?.info({ session_id: id, action: 'archive' }, 'session action completed');
   reply.send(okEnvelope({ archived: true }, req.id));
+}
+
+async function deleteSessionAction(ctx: SessionActionCtx): Promise<void> {
+  const { core, req, reply, id } = ctx;
+  await core.accessor.get(ISessionManager).delete(id);
+  requestLog(req)?.info({ session_id: id, action: 'delete' }, 'session action completed');
+  reply.send(okEnvelope({ deleted: true }, req.id));
 }
 
 export interface SessionWireFields {

@@ -905,6 +905,66 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(body.code).toBe(40401);
   });
 
+  it('deletes a session via :delete and publishes event.session.deleted', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const id = created.body.data.id;
+    const workspaceId = created.body.data.workspace_id;
+
+    const events: Event2<any>[] = [];
+    const sub = (server as RunningServer).core.accessor
+      .get(IEventService)
+      .subscribe((event) => events.push(event));
+    try {
+      const deleted = await postJson<{ deleted: boolean }>(`/api/v1/sessions/${id}:delete`);
+      expect(deleted.body.code).toBe(0);
+      expect(deleted.body.data).toEqual({ deleted: true });
+
+      const got = await getJson<null>(`/api/v1/sessions/${id}`);
+      expect(got.body.code).toBe(40401);
+
+      expect(
+        events
+          .filter((event) => event.type === 'event.session.deleted')
+          .map((event) => (event as { readonly payload?: unknown }).payload),
+      ).toEqual([{ sessionId: id, workspaceId }]);
+    } finally {
+      sub.dispose();
+    }
+  });
+
+  it('deletes a cold session via :delete and publishes event.session.deleted', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const id = created.body.data.id;
+    const workspaceId = created.body.data.workspace_id;
+    await closeSessionById((server as RunningServer).core.accessor, id);
+    expect(getLiveSessionById((server as RunningServer).core.accessor, id)).toBeUndefined();
+
+    const events: Event2<any>[] = [];
+    const sub = (server as RunningServer).core.accessor
+      .get(IEventService)
+      .subscribe((event) => events.push(event));
+    try {
+      const deleted = await postJson<{ deleted: boolean }>(`/api/v1/sessions/${id}:delete`);
+      expect(deleted.body.code).toBe(0);
+      expect(deleted.body.data).toEqual({ deleted: true });
+
+      expect(
+        events
+          .filter((event) => event.type === 'event.session.deleted')
+          .map((event) => (event as { readonly payload?: unknown }).payload),
+      ).toEqual([{ sessionId: id, workspaceId }]);
+    } finally {
+      sub.dispose();
+    }
+  });
+
+  it('returns 40401 when deleting a missing session', async () => {
+    const { body } = await postJson<null>('/api/v1/sessions/sess_missing:delete');
+    expect(body.code).toBe(40401);
+  });
+
   it('cold-loads a persisted session on :undo instead of 40401', async () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });

@@ -1260,6 +1260,29 @@ describe('SessionEventBroadcaster', () => {
     expect(globalView.deliveries).toEqual(['immediate']);
   });
 
+  it('fans out event.session.deleted to every connection, including for cold sessions', async () => {
+    const globalView = collectingTarget();
+    bc.addGlobalTarget(globalView.target);
+
+    eventBus.emit({
+      type: 'event.session.deleted',
+      payload: { sessionId: 'cold-1', workspaceId: 'wd_cold' },
+    });
+
+    await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+    expect(globalView.envelopes[0]).toMatchObject({
+      type: 'event.session.deleted',
+      session_id: '__global__',
+      payload: {
+        type: 'event.session.deleted',
+        agentId: 'main',
+        sessionId: 'cold-1',
+        workspace_id: 'wd_cold',
+      },
+    });
+    expect(globalView.deliveries).toEqual(['immediate']);
+  });
+
   it('fans out event.workspace.created/updated with the wire workspace shape', async () => {
     const globalView = collectingTarget();
     bc.addGlobalTarget(globalView.target);
