@@ -800,10 +800,17 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   async stopAllOnExit(reason: string): Promise<readonly AgentTaskInfo[]> {
     if (this.keepAliveOnExit()) return [];
     const active = this.list(true);
-    await Promise.all(
+    await Promise.allSettled(
       active
         .filter((task) => task.detached === true)
-        .map((task) => this.suppressTerminalNotification(task.taskId)),
+        .map((task) =>
+          this.suppressTerminalNotification(task.taskId).catch((error: unknown) => {
+            this.log.error('terminal notification suppression failed', {
+              taskId: task.taskId,
+              error,
+            });
+          }),
+        ),
     );
     return this.stopAll(reason);
   }

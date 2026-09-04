@@ -544,6 +544,28 @@ describe('AgentTaskService', () => {
     });
   });
 
+  it('stopAllOnExit still stops tasks when suppression persistence fails', async () => {
+    let writes = 0;
+    ix.stub(IAtomicDocumentStore, {
+      get: async () => undefined,
+      set: async () => {
+        writes += 1;
+        if (writes === 1) throw new Error('disk full');
+      },
+      delete: async () => {},
+      list: async () => [],
+    });
+    const svc = ix.get(IAgentTaskService);
+    const first = svc.registerTask(fakeProcessTask());
+    const second = svc.registerTask(fakeProcessTask());
+
+    const stopped = await svc.stopAllOnExit('Session closed');
+
+    expect(stopped.map((info) => info.taskId).toSorted()).toEqual([first, second].toSorted());
+    expect(svc.getTask(first)?.status).toBe('killed');
+    expect(svc.getTask(second)?.status).toBe('killed');
+  });
+
   it('stopAllOnExit leaves tasks running when keepAliveOnExit is set', async () => {
     stubTaskConfig({ keepAliveOnExit: true });
     const svc = ix.get(IAgentTaskService);
