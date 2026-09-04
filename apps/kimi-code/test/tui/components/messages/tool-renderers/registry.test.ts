@@ -595,3 +595,19 @@ describe('Edit and Write results render the same way in both states', () => {
     expect(expanded).toBe(collapsed);
   });
 });
+
+describe('a search the tool cut short before any row', () => {
+  it('shows the Glob timeout notice instead of an exact-looking empty result', () => {
+    const renderer = pickResultRenderer('Glob');
+    const out = strip(
+      joinRender(
+        renderer(
+          call('Glob', { pattern: '**/*.ts' }),
+          result('Glob timed out after 60s; partial results returned.'),
+          ctx,
+        ),
+      ),
+    );
+    expect(out).toBe('  Glob timed out after 60s; partial results returned.');
+  });
+});

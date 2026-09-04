@@ -37,6 +37,7 @@ import { TruncatedHeaderLine, type HeaderContent } from './truncated-header-line
 import { ShellExecutionComponent } from './shell-execution';
 import { countNonEmptyLines, pickChip } from './tool-renderers/chip';
 import { buildGoalToolHeader, parseGoalToolOutput } from './tool-renderers/goal';
+import { parseReadMediaOutput } from './tool-renderers/media';
 import { computeWriteStats } from './tool-renderers/chip';
 import { nonEmptyLines, outcomeLine } from './tool-renderers/outcome';
 import { TruncatedOutputComponent } from './tool-renderers/truncated';
@@ -820,8 +821,14 @@ export class ToolCallComponent extends Container {
     if (result.output.trimStart().startsWith('<system-reminder>')) return false;
     if (result.is_error === true) return nonEmptyLines(result.output).length > RESULT_PREVIEW_LINES;
     switch (name) {
-      case 'Read':
       case 'ReadMediaFile':
+        // A media envelope renders its body only when expanded; anything else
+        // falls back to the generic renderer and its line-count rule.
+        return (
+          parseReadMediaOutput(result.output) !== null ||
+          nonEmptyLines(result.output).length > OUTCOME_MAX_LINES
+        );
+      case 'Read':
       case 'FetchURL':
       case 'WebSearch':
       case 'Think':

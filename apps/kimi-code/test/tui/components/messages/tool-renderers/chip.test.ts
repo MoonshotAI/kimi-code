@@ -403,3 +403,24 @@ describe('Grep chip when -C overrides -A/-B', () => {
     ).toBe('3 matches across 2 files');
   });
 });
+
+describe('chips for a search the tool cut short before any row', () => {
+  it('stay silent so the notice row is not contradicted by an exact-looking count', () => {
+    expect(
+      chipFor(
+        'Glob',
+        { pattern: '**/*.ts' },
+        result('Glob timed out after 60s; partial results returned.'),
+      ),
+    ).toBe('');
+    expect(
+      chipFor(
+        'Grep',
+        { pattern: 'foo' },
+        result(
+          '[Output truncated at 1048576 bytes of rg output — the result set is incomplete. Narrow the pattern, path, or glob filters and re-run to recover complete results.]',
+        ),
+      ),
+    ).toBe('');
+  });
+});

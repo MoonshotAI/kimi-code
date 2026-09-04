@@ -370,21 +370,33 @@ export class FooterComponent implements Component {
         ' '.repeat(pad) +
         chalk.hex(colors.text)(contextText);
     } else {
-      const leftPad = Math.max(0, width - contextWidth);
-      line2 = ' '.repeat(leftPad) + chalk.hex(colors.text)(contextText);
+      // A status_line.command owns line 1 outright, so the ctrl+o hint moves
+      // down here; the transient and warning hints above take precedence.
+      const shortcut = customLine !== null ? this.expandShortcut() : null;
+      const left =
+        shortcut !== null && visibleWidth(shortcut) + 1 + contextWidth <= width
+          ? chalk.hex(colors.textDim)(shortcut)
+          : '';
+      const leftPad = Math.max(0, width - visibleWidth(left) - contextWidth);
+      line2 = left + ' '.repeat(leftPad) + chalk.hex(colors.text)(contextText);
     }
 
     return [truncateToWidth(line1, width), truncateToWidth(line2, width)];
   }
 
   /** The fixed ctrl+o hint plus the first rotating tip that still fits beside it. */
-  private buildRightText(tips: readonly string[], remaining: number, colors: ColorPalette): string {
+  /** `ctrl+o expand` / `ctrl+o collapse`, or null when there is nothing to toggle. */
+  private expandShortcut(): string | null {
     const hint = this.expandHintProvider?.() ?? null;
-    if (hint === null) {
+    return hint === null ? null : `ctrl+o ${hint}`;
+  }
+
+  private buildRightText(tips: readonly string[], remaining: number, colors: ColorPalette): string {
+    const shortcut = this.expandShortcut();
+    if (shortcut === null) {
       const tip = tips.find((candidate) => visibleWidth(candidate) <= remaining);
       return tip === undefined ? '' : chalk.hex(colors.textMuted)(tip);
     }
-    const shortcut = `ctrl+o ${hint}`;
     for (const tip of tips) {
       if (visibleWidth(`${shortcut}${TIP_SEPARATOR}${tip}`) <= remaining) {
         return (

@@ -110,7 +110,9 @@ const bashChip: ChipProvider = (_toolCall, result) => {
 const grepChip: ChipProvider = (toolCall, result) => {
   const stats = parseGrepOutput(toolCall, result.output);
   // A paginated count-mode page past the last row still carries the totals.
-  if (stats.files === 0) return 'no matches';
+  // A search the tool cut short before any row is not an empty result; the
+  // glance shows the notice instead and the chip stays out of its way.
+  if (stats.files === 0) return stats.partial ? '' : 'no matches';
   if (stats.mode === 'files_with_matches') return pluralize(stats.files, 'file', undefined, stats.partial);
   if (stats.matches === null) return pluralize(stats.files, 'file', undefined, stats.partial);
   const matches = pluralize(stats.matches, 'match', 'matches', stats.partial);
@@ -123,7 +125,7 @@ const grepChip: ChipProvider = (toolCall, result) => {
 
 const globChip: ChipProvider = (_toolCall, result) => {
   const { entries, partial } = parseGlobOutput(result.output);
-  if (entries.length === 0) return 'no files';
+  if (entries.length === 0) return partial ? '' : 'no files';
   return pluralize(entries.length, 'file', undefined, partial);
 };
 

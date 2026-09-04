@@ -25,10 +25,13 @@ interface Glance {
   readonly moreCount: number;
 }
 
+// `'fallback'` hands the result to the generic renderer: a search the tool cut
+// short before any row is only its notice, which beats an exact-looking
+// empty glance.
 type GlanceFn = (
   toolCall: Parameters<ResultRenderer>[0],
   result: Parameters<ResultRenderer>[1],
-) => Glance | null;
+) => Glance | null | 'fallback';
 
 function withGlance(glance: GlanceFn | null): ResultRenderer {
   return (toolCall, result, ctx) => {
@@ -45,6 +48,7 @@ function withGlance(glance: GlanceFn | null): ResultRenderer {
     // the raw output.
     if (glance !== null) {
       const parts = glance(toolCall, result);
+      if (parts === 'fallback') return renderTruncated(toolCall, result, ctx);
       if (parts !== null) {
         const tail = parts.moreCount > 0 ? `, +${String(parts.moreCount)} more` : '';
         out.push(
@@ -73,11 +77,16 @@ function sampleList(labels: readonly string[], total = labels.length): Glance | 
 // not just the page.
 const grepGlance: GlanceFn = (toolCall, result) => {
   const stats = parseGrepOutput(toolCall, result.output);
+  if (stats.partial && stats.entries.length === 0) return 'fallback';
   const labels = stats.entries.map((entry) => entry.label);
   return sampleList(labels, Math.max(labels.length, stats.total));
 };
 
-const globGlance: GlanceFn = (_toolCall, result) => sampleList(parseGlobOutput(result.output).entries);
+const globGlance: GlanceFn = (_toolCall, result) => {
+  const { entries, partial } = parseGlobOutput(result.output);
+  if (partial && entries.length === 0) return 'fallback';
+  return sampleList(entries);
+};
 
 // ── Exports ──────────────────────────────────────────────────────────
 

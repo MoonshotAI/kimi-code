@@ -275,3 +275,22 @@ describe('FooterComponent ctrl+o hint', () => {
     footer.dispose();
   });
 });
+
+describe('FooterComponent ctrl+o hint with a status_line command', () => {
+  it('moves the hint to line 2 when a command owns line 1', async () => {
+    const footer = new FooterComponent({
+      ...appState,
+      statusLine: { items: null, command: 'printf "my-custom-status"' },
+    });
+    footer.setExpandHintProvider(() => 'expand');
+    footer.render(120);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    const [line1, line2] = footer.render(120).map((line) => line.replaceAll(/\[[0-9;]*m/g, ''));
+    expect(line1).toContain('my-custom-status');
+    expect(line1).not.toContain('ctrl+o');
+    expect(line2).toContain('ctrl+o expand');
+    expect(line2).toContain('context:');
+    footer.dispose();
+  });
+});

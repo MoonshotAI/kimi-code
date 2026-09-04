@@ -2528,3 +2528,27 @@ describe('ToolCallComponent hasHiddenContent at the Edit preview cap', () => {
     over.dispose();
   });
 });
+
+describe('ToolCallComponent hasHiddenContent for ReadMediaFile', () => {
+  function mediaCard(output: string): ToolCallComponent {
+    return new ToolCallComponent(
+      { id: 'call_media', name: 'ReadMediaFile', args: { path: '/tmp/a.png' } },
+      { tool_call_id: 'call_media', output, is_error: false },
+    );
+  }
+
+  it('is true for a media envelope and follows the line-count rule for anything else', () => {
+    const envelope = JSON.stringify([
+      { type: 'text', text: '<image path="/tmp/a.png">' },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,iVBORw0KGgo=' } },
+      { type: 'text', text: '</image>' },
+    ]);
+    const media = mediaCard(envelope);
+    expect(media.hasHiddenContent()).toBe(true);
+    media.dispose();
+
+    const plain = mediaCard('unsupported format\nfalling back to text');
+    expect(plain.hasHiddenContent()).toBe(false);
+    plain.dispose();
+  });
+});
