@@ -109,6 +109,9 @@ export const DEFAULT_PRODUCT_NAME = 'Kimi Code CLI';
 export const DEFAULT_REPLY_STYLE_GUIDE =
   "Your text replies render as Markdown in the user's terminal. Keep structure light and shallow — deep nesting, large tables, and heavy headings read poorly there. Cite code locations as `path/to/file.ts:42` so the user can navigate to them. Do not use emoji unless the user does first or asks for it.";
 
+export const NOTIFY_USER_GUIDANCE =
+  'The `NotifyUser` tool is your channel to the user while you work — use it early and often. The user cannot see your reasoning or your tool calls, only these updates, so send one as soon as you have a plan for a non-trivial task, whenever a phase concludes, before any long-running step, the moment you find something the user should know, and when you are stuck. Err on the side of sending: a user who knows what you are doing can correct you early, while silence reads as being lost.';
+
 const ADDITIONAL_DIRS_SECTION_PROSE =
   'The following directories have been added to the workspace. You can read, write, search, and glob files in these directories as part of your workspace scope.';
 
@@ -135,6 +138,7 @@ export function systemPromptVars(
     role_additional: '',
     product_name: context.productName ?? DEFAULT_PRODUCT_NAME,
     reply_style_guide: context.replyStyleGuide ?? DEFAULT_REPLY_STYLE_GUIDE,
+    notify_user_guidance: context.notifyUserActive === true ? ` ${NOTIFY_USER_GUIDANCE}` : '',
     os: context.osKind ?? '',
     windows_notes: context.osKind === 'Windows' ? `\n\n${WINDOWS_NOTES}\n\n` : '',
     shell: shellName.length > 0 ? `${shellName} (\`${shellPath}\`)` : '',

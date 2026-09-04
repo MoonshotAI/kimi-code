@@ -30,6 +30,8 @@ function makeHost() {
       setStep: vi.fn(),
       flushNow: vi.fn(),
       resetToolUi: vi.fn(),
+      clearNotifyPanel: vi.fn(),
+      markNotifyPanelEnded: vi.fn(),
       finalizeTurn: vi.fn(),
       finalizeLiveTextBuffers: vi.fn(),
       completeToolResult: vi.fn(),

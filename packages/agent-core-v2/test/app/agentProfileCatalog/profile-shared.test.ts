@@ -511,3 +511,13 @@ describe('withoutDelegatingTargets', () => {
     ]);
   });
 });
+
+describe('systemPromptVars notify_user_guidance', () => {
+  it('injects the NotifyUser guidance only when the context marks the tool active', () => {
+    const active = systemPromptVars({ notifyUserActive: true }, { skillActive: false });
+    expect(active['notify_user_guidance']).toMatch(/^ The `NotifyUser` tool is your channel/);
+
+    expect(systemPromptVars({ notifyUserActive: false }, { skillActive: false })['notify_user_guidance']).toBe('');
+    expect(systemPromptVars({}, { skillActive: false })['notify_user_guidance']).toBe('');
+  });
+});

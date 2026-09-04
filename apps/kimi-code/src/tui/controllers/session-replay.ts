@@ -330,6 +330,10 @@ export class SessionReplayRenderer {
     const origin = backgroundOrigin(message);
     if (origin !== undefined) {
       this.flushAssistant(context);
+      // A task notification opens a new turn live (`turn.started` with a
+      // background-task origin), which closes the update panel; replay folds
+      // it into the previous turn for grouping but must still close the panel.
+      this.host.streamingUI.clearNotifyPanel();
       this.renderBackgroundTaskNotification(context, origin);
       return;
     }
@@ -378,6 +382,8 @@ export class SessionReplayRenderer {
       return;
     }
     if (message.origin?.kind === 'cron_job') {
+      // Same as above: a cron fire starts a turn live and closes the panel.
+      this.host.streamingUI.clearNotifyPanel();
       this.renderCronJob(context, message);
       return;
     }
@@ -490,6 +496,10 @@ export class SessionReplayRenderer {
     context.turnIndex += 1;
     context.stepIndex = 0;
     context.currentTurnId = `replay:${String(context.turnIndex)}`;
+    // Mirror the live `turn.started` path: a new turn closes the previous
+    // turn's update panel, so resume never shows updates from an older turn
+    // when the latest one had none.
+    this.host.streamingUI.clearNotifyPanel();
     this.applyStepContext(context);
   }
 

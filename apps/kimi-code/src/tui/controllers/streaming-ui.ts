@@ -6,7 +6,7 @@ import { currentWorkingTip } from '../components/chrome/working-tips';
 import { CompactionComponent } from '../components/dialogs/compaction';
 import { ReadGroupComponent } from '../components/messages/read-group';
 import { ThinkingComponent } from '../components/messages/thinking';
-import { ToolCallComponent } from '../components/messages/tool-call';
+import { extractPartialStringField, ToolCallComponent } from '../components/messages/tool-call';
 import { STREAMING_UI_FLUSH_MS } from '../constant/streaming';
 import { hasDispose } from '../utils/component-capabilities';
 import { appendStreamingArgsPreview, parseStreamingArgs } from '../utils/event-payload';
@@ -63,6 +63,8 @@ export class StreamingUIController {
     { name?: string; argumentsText: string; startedAtMs: number }
   >();
   private _pendingToolComponents = new Map<string, ToolCallComponent>();
+  /** Turn whose NotifyUser updates the panel currently shows. */
+  private _notifyPanelTurnId: string | undefined = undefined;
   private _pendingAgentGroup: {
     readonly turnId: string | undefined;
     readonly step: number;
@@ -314,6 +316,7 @@ export class StreamingUIController {
     const existingComponent = this._pendingToolComponents.get(toolCall.id);
     if (existingComponent !== undefined) {
       existingComponent.updateToolCall(toolCall);
+      this.syncNotifyPanel(toolCall);
     } else if (existing === undefined) {
       this.finalizeLiveTextBuffers('tool');
       if (toolCall.name !== 'Agent' && toolCall.name !== 'AgentSwarm') {
@@ -376,6 +379,9 @@ export class StreamingUIController {
       if (component !== undefined) {
         component.updateToolCall(toolCall);
       }
+      // The half-streamed update never reached the user; do not leave it
+      // in the panel as if it had.
+      if (toolCall.name === 'NotifyUser') this.dropNotifyEntry(toolCall.id);
       count += 1;
     }
     this._streamingToolCallArguments.clear();
@@ -394,6 +400,9 @@ export class StreamingUIController {
     this._currentStep = 0;
     this._streamingToolCallArguments.clear();
     this.pendingToolCallFlushIds.clear();
+    // Replayed updates belong to a finished turn: keep them for the user to
+    // read on resume, but dimmed like any ended turn.
+    this.markNotifyPanelEnded();
     this.host.state.ui.requestRender();
   }
 
@@ -409,7 +418,11 @@ export class StreamingUIController {
   }
 
   disposeAndClearPendingToolComponents(): void {
-    for (const component of this._pendingToolComponents.values()) {
+    for (const [toolCallId, component] of this._pendingToolComponents) {
+      // A NotifyUser call still pending here never got a result — the step
+      // was interrupted or the turn ended around it — so its optimistic panel
+      // entry was never delivered and must not survive as a finished update.
+      if (component.toolCallView.name === 'NotifyUser') this.dropNotifyEntry(toolCallId);
       if (hasDispose(component)) component.dispose();
     }
     this._pendingToolComponents.clear();
@@ -660,6 +673,7 @@ export class StreamingUIController {
 
   onToolCallStart(toolCall: ToolCallBlockData): void {
     if (toolCall.name === 'AskUserQuestion') return;
+    this.syncNotifyPanel(toolCall);
 
     const { state } = this.host;
     const tc = new ToolCallComponent(
@@ -698,6 +712,12 @@ export class StreamingUIController {
     const { state } = this.host;
     const matchedCall = this._activeToolCalls.get(toolCallId);
     const tc = this._pendingToolComponents.get(toolCallId);
+    // A denied or failed NotifyUser call never reached the user: the
+    // executor emits tool.call.started before the permission veto, so the
+    // message was mounted optimistically and must come back out.
+    if (result.is_error === true && (matchedCall?.name ?? tc?.toolCallView.name) === 'NotifyUser') {
+      this.dropNotifyEntry(toolCallId);
+    }
     if (tc) {
       tc.setResult(result);
       this._pendingToolComponents.delete(toolCallId);
@@ -726,6 +746,55 @@ export class StreamingUIController {
     state.todoPanelContainer.clear();
     if (!state.todoPanel.isEmpty()) {
       state.todoPanelContainer.addChild(state.todoPanel);
+    }
+    state.ui.requestRender();
+  }
+
+  /** Close the update panel (next user turn, session reset, `/clear`). */
+  clearNotifyPanel(): void {
+    const { state } = this.host;
+    this._notifyPanelTurnId = undefined;
+    if (state.notifyPanel.isEmpty() && state.notifyPanelContainer.children.length === 0) return;
+    state.notifyPanel.clear();
+    state.notifyPanelContainer.clear();
+    state.ui.requestRender();
+  }
+
+  /** The turn ended: keep the updates on screen for the reply, dim the title. */
+  markNotifyPanelEnded(): void {
+    const { state } = this.host;
+    if (state.notifyPanel.isEmpty()) return;
+    state.notifyPanel.setEnded(true);
+    state.ui.requestRender();
+  }
+
+  /** Take one call's update out of the panel; unmount the panel when that was the last one. */
+  private dropNotifyEntry(toolCallId: string): void {
+    const { state } = this.host;
+    if (!state.notifyPanel.remove(toolCallId)) return;
+    if (state.notifyPanel.isEmpty()) state.notifyPanelContainer.clear();
+    state.ui.requestRender();
+  }
+
+  /**
+   * Mirror a `NotifyUser` call into the update panel. Runs on every tool
+   * call update, so the panel follows the `message` argument while it is
+   * still streaming and settles on the final args. A call from a different
+   * turn than the panel's current one (replay, or a turn whose start event
+   * was not seen) replaces the panel wholesale — the panel never mixes turns.
+   */
+  private syncNotifyPanel(toolCall: ToolCallBlockData): void {
+    if (toolCall.name !== 'NotifyUser') return;
+    const message = notifyMessageOf(toolCall);
+    if (message === undefined || message.trim().length === 0) return;
+    const { state } = this.host;
+    if (this._notifyPanelTurnId !== toolCall.turnId) {
+      state.notifyPanel.clear();
+      this._notifyPanelTurnId = toolCall.turnId;
+    }
+    state.notifyPanel.upsert(toolCall.id, message);
+    if (state.notifyPanelContainer.children.length === 0) {
+      state.notifyPanelContainer.addChild(state.notifyPanel);
     }
     state.ui.requestRender();
   }
@@ -786,6 +855,7 @@ export class StreamingUIController {
     const existingComponent = this._pendingToolComponents.get(id);
     if (existingComponent !== undefined) {
       existingComponent.updateToolCall(toolCall);
+      this.syncNotifyPanel(toolCall);
     } else if (toolCall.name !== 'Agent' && toolCall.name !== 'AgentSwarm') {
       this.onToolCallStart(toolCall);
     }
@@ -907,4 +977,16 @@ export class StreamingUIController {
     group.attach(solo.toolCallView.id, solo);
     return group;
   }
+}
+
+/**
+ * The `message` a NotifyUser call carries: the final args once they landed,
+ * or the partially streamed string while the arguments are still arriving.
+ */
+function notifyMessageOf(toolCall: ToolCallBlockData): string | undefined {
+  if (toolCall.streamingArguments !== undefined) {
+    return extractPartialStringField(toolCall.streamingArguments, 'message');
+  }
+  const message = toolCall.args['message'];
+  return typeof message === 'string' ? message : undefined;
 }

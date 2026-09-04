@@ -1,3 +1,4 @@
+import type { Event } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
 import { SessionEventHandler } from '#/tui/controllers/session-event-handler';
@@ -8,10 +9,11 @@ function makeHost() {
     state: {
       appState: {
         sessionId: 's1',
-        streamingPhase: 'waiting',
-        isCompacting: true,
+        streamingPhase: 'idle',
+        isCompacting: false,
         model: 'kimi-model',
         permissionMode: 'auto',
+        stepRetry: null,
       },
       queuedMessages: [],
       queuedMessageDispatchPending: false,
@@ -26,19 +28,15 @@ function makeHost() {
     sessionEventUnsubscribe: undefined,
     streamingUI: {
       setTurnId: vi.fn(),
+      setStep: vi.fn(),
       flushNow: vi.fn(),
       resetToolUi: vi.fn(),
       clearNotifyPanel: vi.fn(),
       markNotifyPanelEnded: vi.fn(),
       finalizeTurn: vi.fn(),
-      hasActiveTurn: vi.fn(() => false),
-      hasThinkingDraft: vi.fn(() => false),
-      flushThinkingToTranscript: vi.fn(),
-      appendAssistantDelta: vi.fn(),
-      scheduleFlush: vi.fn(),
-      beginCompaction: vi.fn(),
-      endCompaction: vi.fn(),
-      cancelCompaction: vi.fn(),
+      finalizeLiveTextBuffers: vi.fn(),
+      completeToolResult: vi.fn(),
+      getTurnContext: vi.fn(() => ({ turnId: '1', step: 0 })),
     },
     requireSession: vi.fn(),
     setAppState: vi.fn((patch: Record<string, unknown>) =>
@@ -46,6 +44,8 @@ function makeHost() {
     ),
     patchLivePane: vi.fn(),
     resetLivePane: vi.fn(),
+    updateActivityPane: vi.fn(),
+    updateQueueDisplay: vi.fn(),
     showError: vi.fn(),
     showStatus: vi.fn(),
     showNotice: vi.fn(),
@@ -61,39 +61,63 @@ function makeHost() {
     sendQueuedMessage: vi.fn(),
     shiftQueuedMessage: vi.fn(),
     btwPanelController: { routeEvent: vi.fn(() => false) },
-    surveyController: { notifyCompactionFinished: vi.fn() },
     tasksBrowserController: {},
   };
   return { host: host as any };
 }
 
-const compactionCompleted = {
-  type: 'compaction.completed',
-  sessionId: 's1',
-  agentId: 'main',
-  result: { summary: 'summary', tokensBefore: 100, tokensAfter: 10, compactedCount: 1 },
-} as const;
+function turnStarted(origin: Record<string, unknown>): Event {
+  return {
+    sessionId: 's1',
+    agentId: 'main',
+    type: 'turn.started',
+    turnId: 1,
+    origin,
+  } as unknown as Event;
+}
 
-const compactionCancelled = {
-  type: 'compaction.cancelled',
-  sessionId: 's1',
-  agentId: 'main',
-} as const;
+function turnEnded(): Event {
+  return {
+    sessionId: 's1',
+    agentId: 'main',
+    type: 'turn.ended',
+    turnId: 1,
+    reason: 'completed',
+  } as unknown as Event;
+}
 
-describe('SessionEventHandler compaction cache bookkeeping', () => {
-  it('records activity and resets the cache-break baseline after a completed compaction', () => {
+describe('SessionEventHandler — update panel lifecycle', () => {
+  it('closes the panel when a user turn starts', () => {
     const { host } = makeHost();
     const handler = new SessionEventHandler(host);
-    handler.handleEvent(compactionCompleted, vi.fn());
-    expect(host.recordSessionActivity).toHaveBeenCalledOnce();
-    expect(host.noteCompactionFinished).toHaveBeenCalledOnce();
+
+    handler.handleEvent(turnStarted({ kind: 'user' }), vi.fn());
+
+    expect(host.streamingUI.clearNotifyPanel).toHaveBeenCalledOnce();
+    expect(host.streamingUI.markNotifyPanelEnded).not.toHaveBeenCalled();
   });
 
-  it('keeps both baselines after a cancelled compaction (context was not cut)', () => {
+  it('closes the panel on a cron-fired turn too, so it reopens fresh', () => {
     const { host } = makeHost();
     const handler = new SessionEventHandler(host);
-    handler.handleEvent(compactionCancelled, vi.fn());
-    expect(host.noteCompactionFinished).not.toHaveBeenCalled();
-    expect(host.recordSessionActivity).not.toHaveBeenCalled();
+
+    handler.handleEvent(
+      turnStarted({ kind: 'cron_job', jobId: 'j1', cron: '* * * * *', recurring: true }),
+      vi.fn(),
+    );
+
+    expect(host.streamingUI.clearNotifyPanel).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the panel but marks it ended when the turn ends', () => {
+    const { host } = makeHost();
+    const handler = new SessionEventHandler(host);
+
+    handler.handleEvent(turnStarted({ kind: 'user' }), vi.fn());
+    host.streamingUI.clearNotifyPanel.mockClear();
+    handler.handleEvent(turnEnded(), vi.fn());
+
+    expect(host.streamingUI.markNotifyPanelEnded).toHaveBeenCalledOnce();
+    expect(host.streamingUI.clearNotifyPanel).not.toHaveBeenCalled();
   });
 });

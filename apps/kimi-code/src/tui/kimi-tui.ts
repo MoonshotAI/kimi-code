@@ -1127,6 +1127,7 @@ export class KimiTUI {
     ui.addChild(this.state.transcriptContainer);
     ui.addChild(this.state.activityContainer);
     ui.addChild(this.state.todoPanelContainer);
+    ui.addChild(this.state.notifyPanelContainer);
     ui.addChild(this.state.queueContainer);
     ui.addChild(this.state.btwPanelContainer);
     ui.addChild(this.state.surveyContainer);
@@ -1167,6 +1168,7 @@ export class KimiTUI {
     main.addChild(this.state.transcriptContainer);
     main.addChild(this.state.activityContainer);
     main.addChild(this.state.todoPanelContainer);
+    main.addChild(this.state.notifyPanelContainer);
     main.addChild(this.state.queueContainer);
     main.addChild(this.state.btwPanelContainer);
     main.addChild(this.state.surveyContainer);
@@ -2615,6 +2617,7 @@ export class KimiTUI {
     this.btwPanelController.clear();
     this.state.footer.setBackgroundCounts({ bashTasks: 0, agentTasks: 0 });
     this.streamingUI.setTodoList([]);
+    this.streamingUI.clearNotifyPanel();
     this.streamingUI.setTurnId(undefined);
     this.setAppState({ mcpServersSummary: null });
     this.streamingUI.setStep(0);
@@ -2957,6 +2960,7 @@ export class KimiTUI {
     this.clearTerminalInlineImages();
     this.state.todoPanel.clear();
     this.state.todoPanelContainer.clear();
+    this.streamingUI.clearNotifyPanel();
     const stagingFileIds = this.imageStore.clear();
     this.staging.deleteStaged(stagingFileIds);
     this.renderWelcome();
@@ -3486,6 +3490,12 @@ export class KimiTUI {
   toggleTodoPanelExpansion(): void {
     this.state.todoPanel.toggleExpanded();
     this.state.ui.requestRender();
+  }
+
+  cycleNotifyPanelPage(): boolean {
+    if (!this.state.notifyPanel.nextPage()) return false;
+    this.state.ui.requestRender();
+    return true;
   }
 
   private async detachRunningShellCommand(): Promise<void> {

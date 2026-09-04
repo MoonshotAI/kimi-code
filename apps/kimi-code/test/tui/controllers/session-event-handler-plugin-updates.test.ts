@@ -11,6 +11,8 @@ function makeHost() {
     setTurnId: vi.fn(),
     flushNow: vi.fn(),
     resetToolUi: vi.fn(),
+    clearNotifyPanel: vi.fn(),
+    markNotifyPanelEnded: vi.fn(),
     setStep: vi.fn(),
     finalizeTurn: vi.fn(),
     getTurnContext: vi.fn(() => ({ turnId: 1, step: 0 })),

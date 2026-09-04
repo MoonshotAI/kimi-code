@@ -315,6 +315,54 @@ describe('ToolCallComponent', () => {
     });
   });
 
+  describe('NotifyUser card', () => {
+    const message = 'Login module is clean.\n\nThe bug must be in **session expiry**.';
+
+    it('collapses to a header with the first line and expands to the full message', () => {
+      const component = new ToolCallComponent(
+        { id: 'call_notify', name: 'NotifyUser', args: { message } },
+        { tool_call_id: 'call_notify', output: 'Update shown to the user.', is_error: false },
+      );
+
+      const collapsed = component.render(100).map(strip).filter((line) => line.trim().length > 0);
+      expect(collapsed).toHaveLength(1);
+      expect(collapsed[0]).toContain('Sent you an update');
+      expect(collapsed[0]).toContain('Login module is clean.');
+      expect(collapsed[0]).not.toContain('session expiry');
+      expect(collapsed[0]).not.toContain('Update shown');
+
+      component.setExpanded(true);
+      const expanded = strip(component.render(100).join('\n'));
+      expect(expanded).toContain('session expiry');
+      expect(expanded).not.toContain('Update shown');
+    });
+
+    it('labels the in-flight call as sending', () => {
+      const component = new ToolCallComponent(
+        { id: 'call_notify_live', name: 'NotifyUser', args: {}, streamingArguments: '{"mess' },
+        undefined,
+      );
+      expect(strip(component.render(100).join('\n'))).toContain('Sending you an update');
+    });
+
+    it('marks a call whose arguments were cut off by max_tokens', () => {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_notify_cut',
+          name: 'NotifyUser',
+          args: {},
+          streamingArguments: '{"message": "half an upd',
+          truncated: true,
+        },
+        undefined,
+      );
+      const out = strip(component.render(100).join('\n'));
+      expect(out).toContain('Update cut off');
+      expect(out).not.toContain('Sending you an update');
+      expect(out).toContain('call never executed');
+    });
+  });
+
   describe('collapsed header width', () => {
     it('truncates a long Bash header to the terminal width instead of wrapping', () => {
       const command = `pnpm exec vitest run ${'test/very/long/path/'.repeat(6)}spec.test.ts --reporter=verbose`;
@@ -330,6 +378,21 @@ describe('ToolCallComponent', () => {
         expect(rows[0]).toContain('Ran a command');
         expect(rows[0]).toContain('…');
       }
+    });
+
+    it('truncates a long NotifyUser preview the same way', () => {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_notify_narrow',
+          name: 'NotifyUser',
+          args: { message: `Plan: ${'inspect the parser, '.repeat(8)}then run the suite.` },
+        },
+        { tool_call_id: 'call_notify_narrow', output: 'Update shown to the user.', is_error: false },
+      );
+      const rows = component.render(50).map(strip).filter((line) => line.trim().length > 0);
+      expect(rows).toHaveLength(1);
+      expect(visibleWidth(rows[0]!)).toBeLessThanOrEqual(50);
+      expect(rows[0]).toContain('Sent you an update');
     });
 
     it('hands back the same header array while the header is unchanged', () => {

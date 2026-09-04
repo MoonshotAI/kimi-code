@@ -21,6 +21,8 @@ function makeStreamingUIStub() {
     flushNow: vi.fn(),
     setTodoList: vi.fn(),
     resetToolUi: vi.fn(),
+    clearNotifyPanel: vi.fn(),
+    markNotifyPanelEnded: vi.fn(),
     finalizeTurn: vi.fn(),
   };
 }

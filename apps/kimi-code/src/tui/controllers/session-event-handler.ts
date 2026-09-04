@@ -331,6 +331,9 @@ export class SessionEventHandler {
     }
     this.clearAgentSwarmProgress();
     this.host.streamingUI.resetToolUi();
+    // A new turn closes the previous turn's update panel; the first
+    // NotifyUser call of this turn reopens it.
+    this.host.streamingUI.clearNotifyPanel();
     this.host.streamingUI.setStep(0);
     this.host.patchLivePane({
       mode: 'waiting',
@@ -383,6 +386,7 @@ export class SessionEventHandler {
       this.host.streamingUI.setTodoList([]);
     }
     this.host.streamingUI.resetToolUi();
+    this.host.streamingUI.markNotifyPanelEnded();
     this.host.streamingUI.finalizeTurn(sendQueued);
     this.host.recordSessionActivity();
     this.renderPendingModelBlockedFallback();
