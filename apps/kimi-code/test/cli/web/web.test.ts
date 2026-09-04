@@ -656,6 +656,8 @@ describe('shared parsers stay strict', () => {
     const { parsePort } = await import('#/cli/sub/web/shared');
     expect(() => parsePort('99999', '--port', 58627)).toThrow(/invalid --port/);
     expect(() => parsePort('-1', '--port', 58627)).toThrow(/invalid --port/);
+    expect(() => parsePort('123abc', '--port', 58627)).toThrow(/invalid --port/);
+    expect(() => parsePort('1.5', '--port', 58627)).toThrow(/invalid --port/);
     expect(parsePort(undefined, '--port', 58627)).toBe(58627);
     expect(parsePort('8080', '--port', 58627)).toBe(8080);
   });
