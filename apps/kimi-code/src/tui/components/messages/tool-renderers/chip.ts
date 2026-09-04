@@ -98,11 +98,14 @@ const bashChip: ChipProvider = (_toolCall, result) => {
 };
 
 // Grep's default mode lists files, so the chip counts what the mode
-// returns: files, or matches and the files they fall in.
+// returns: files, or matches and the files they fall in. Unnumbered content
+// with context flags mixes match and context rows, so only the file count
+// is exact there.
 const grepChip: ChipProvider = (toolCall, result) => {
   const stats = parseGrepOutput(toolCall, result.output);
   if (stats.entries.length === 0) return 'no matches';
   if (stats.mode === 'files_with_matches') return pluralize(stats.files, 'file');
+  if (stats.matches === null) return pluralize(stats.files, 'file');
   const matches = pluralize(stats.matches, 'match', 'matches');
   return stats.files === 1
     ? `${matches} in 1 file`

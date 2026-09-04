@@ -82,6 +82,21 @@ describe('chip registry', () => {
     ).toBe('5 matches across 2 files');
   });
 
+  it('Grep chip counts files only when unnumbered content rows can be context', () => {
+    // `-n: false` with context flags: match and context rows are both
+    // `path:text` (the backend separates fields with ':' unconditionally),
+    // so an exact match count is unknowable and the chip falls back to files.
+    const unnumberedContext = { pattern: 'foo', output_mode: 'content', '-n': false, '-C': 1 };
+    expect(
+      chipFor('Grep', unnumberedContext, result('src/a.ts:import x\nsrc/a.ts:foo\nsrc/b.ts:foo')),
+    ).toBe('2 files');
+    // Without context flags every row is a match, so the count stays exact.
+    const unnumbered = { pattern: 'foo', output_mode: 'content', '-n': false };
+    expect(chipFor('Grep', unnumbered, result('src/a.ts:foo\nsrc/a.ts:bar\nsrc/b.ts:foo'))).toBe(
+      '3 matches across 2 files',
+    );
+  });
+
   it('Grep chip leaves the notices out of the count', () => {
     expect(chipFor('Grep', { pattern: 'foo' }, result(''))).toBe('no matches');
     expect(chipFor('Grep', { pattern: 'foo' }, result('No matches found'))).toBe('no matches');
@@ -96,6 +111,27 @@ describe('chip registry', () => {
 
   it('Glob chip leaves the empty-result sentence out of the count', () => {
     expect(chipFor('Glob', { pattern: '*.ts' }, result('No matches found'))).toBe('no files');
+  });
+
+  it('Glob chip leaves the backend diagnostics out of the count', () => {
+    expect(
+      chipFor(
+        'Glob',
+        { pattern: '**/*.ts' },
+        result(
+          [
+            'Glob timed out after 60s; partial results returned.',
+            '[stdout truncated at 65536 bytes; results may be incomplete — use a more specific pattern]',
+            'Glob completed with warnings; some directories could not be read: EACCES /root',
+            '[Truncated at 200 matches — use a more specific pattern]',
+            'Only the first 200 matches are returned.',
+            'a.ts',
+            'b.ts',
+            'Found 200 matches',
+          ].join('\n'),
+        ),
+      ),
+    ).toBe('2 files');
   });
 
   it('Glob chip shows file count', () => {

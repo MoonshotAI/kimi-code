@@ -110,4 +110,17 @@ describe('TruncatedHeaderLine', () => {
     line.setText(segments('ls -la', 'head'));
     expect(line.render(80)).not.toBe(first);
   });
+
+  it('reports whether the last render cut the row', () => {
+    const command =
+      'git log --oneline -5 origin/main -- apps/kimi-code/test/tui/kimi-tui-message-flow.test.ts';
+    const line = new TruncatedHeaderLine(segments(command, 'head'));
+    expect(line.wasTruncated()).toBe(false);
+    line.render(160);
+    expect(line.wasTruncated()).toBe(false);
+    line.render(60);
+    expect(line.wasTruncated()).toBe(true);
+    line.render(160);
+    expect(line.wasTruncated()).toBe(false);
+  });
 });

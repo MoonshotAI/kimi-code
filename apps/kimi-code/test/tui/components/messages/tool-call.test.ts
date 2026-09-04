@@ -2272,4 +2272,32 @@ describe('ToolCallComponent hasHiddenContent', () => {
     expect(component.hasHiddenContent()).toBe(false);
     component.dispose();
   });
+
+  it('counts a width-cut outcome row as hidden at that width', () => {
+    const longLine = 'x'.repeat(120);
+    const component = card('Bash', { command: 'ls' }, `${longLine}\nshort`);
+    // Two lines are shown whole, so by line count nothing is hidden…
+    expect(component.hasHiddenContent()).toBe(false);
+    // …but at 40 columns the first row is cut and ctrl+o reveals it wrapped.
+    component.render(40);
+    expect(component.hasHiddenContent()).toBe(true);
+    component.render(200);
+    expect(component.hasHiddenContent()).toBe(false);
+    component.dispose();
+  });
+
+  it('counts a width-cut Bash command header as hidden, but not a cut key argument', () => {
+    const bash = card('Bash', { command: `echo ${'a'.repeat(150)}` }, 'ok');
+    bash.render(40);
+    // The full command renders in the body once expanded.
+    expect(bash.hasHiddenContent()).toBe(true);
+    bash.dispose();
+
+    const generic = card('TaskOutput', { task_id: `bg-${'x'.repeat(150)}` }, 'ok');
+    generic.render(40);
+    // The output is shown whole and a cut header argument is not what ctrl+o
+    // reveals for a generic tool.
+    expect(generic.hasHiddenContent()).toBe(false);
+    generic.dispose();
+  });
 });

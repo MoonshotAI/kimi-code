@@ -575,6 +575,8 @@ export class ToolCallComponent extends Container {
   private readonly markdownTheme = createMarkdownTheme();
   /** Memo for hasHiddenContent(); reset whenever the body is rebuilt or live output grows. */
   private hiddenContent: boolean | undefined = undefined;
+  /** Width-dependent half of hasHiddenContent(); recomputed on every render. */
+  private truncatedAtLastRender = false;
   private result: ToolResultBlockData | undefined;
   private ui: TUI | undefined;
   private planPath: string | undefined;
@@ -730,6 +732,17 @@ export class ToolCallComponent extends Container {
       i++;
     }
 
+    // An outcome row cut to this width hides the remainder of a long line,
+    // which ctrl+o reveals wrapped. The header (child 1) is excluded — a cut
+    // key argument is not what ctrl+o reveals for most tools; Bash is the
+    // exception, its full command renders in the body once expanded.
+    this.truncatedAtLastRender = this.children.some(
+      (child, index) =>
+        child instanceof TruncatedHeaderLine &&
+        (index !== 1 || this.toolCall.name === 'Bash') &&
+        child.wasTruncated(),
+    );
+
     if (allReused) {
       return cache!.lines;
     }
@@ -770,7 +783,7 @@ export class ToolCallComponent extends Container {
    */
   hasHiddenContent(): boolean {
     this.hiddenContent ??= this.computeHiddenContent();
-    return this.hiddenContent;
+    return this.hiddenContent || this.truncatedAtLastRender;
   }
 
   private computeHiddenContent(): boolean {

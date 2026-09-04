@@ -114,18 +114,35 @@ function fitFlex(flex: HeaderFlex, width: number): string {
   return flex.keep === 'tail' ? keepTail(flex.text, width) : keepHead(flex.text, width);
 }
 
-export function renderHeaderContent(content: HeaderContent, width: number): string {
+function layoutHeaderContent(
+  content: HeaderContent,
+  width: number,
+): { line: string; truncated: boolean } {
   const safeWidth = Math.max(1, width);
-  if (typeof content === 'string') return truncateToWidth(content, safeWidth, TRUNCATION_ELLIPSIS);
+  if (typeof content === 'string') {
+    return {
+      line: truncateToWidth(content, safeWidth, TRUNCATION_ELLIPSIS),
+      truncated: visibleWidth(content) > safeWidth,
+    };
+  }
   const { head, flex, tail } = content;
   const style = flex.style ?? ((text: string) => text);
   const available = safeWidth - visibleWidth(head) - visibleWidth(tail);
   // Below two cells there is no room for even an ellipsis plus one character
   // of the middle: give up on the layout and cut the whole row from the end.
   if (available < 2) {
-    return truncateToWidth(`${head}${style(flex.text)}${tail}`, safeWidth, TRUNCATION_ELLIPSIS);
+    const row = `${head}${style(flex.text)}${tail}`;
+    return {
+      line: truncateToWidth(row, safeWidth, TRUNCATION_ELLIPSIS),
+      truncated: visibleWidth(row) > safeWidth,
+    };
   }
-  return `${head}${style(fitFlex(flex, available))}${tail}`;
+  const fitted = fitFlex(flex, available);
+  return { line: `${head}${style(fitted)}${tail}`, truncated: fitted !== flex.text };
+}
+
+export function renderHeaderContent(content: HeaderContent, width: number): string {
+  return layoutHeaderContent(content, width).line;
 }
 
 function sameContent(a: HeaderContent, b: HeaderContent): boolean {
@@ -143,7 +160,9 @@ export class TruncatedHeaderLine implements Component {
   // The card and the gutter container reuse a child's output by array
   // identity, so an unchanged header must hand back the same array — a fresh
   // one per frame would defeat both caches on every paint.
-  private cache: { content: HeaderContent; width: number; lines: string[] } | undefined;
+  private cache:
+    | { content: HeaderContent; width: number; lines: string[]; truncated: boolean }
+    | undefined;
 
   constructor(private content: HeaderContent) {}
 
@@ -157,13 +176,23 @@ export class TruncatedHeaderLine implements Component {
     this.cache = undefined;
   }
 
+  /**
+   * Whether the last render cut any part of the row — an outcome row cut to
+   * the terminal width hides the remainder of a long line, which ctrl+o
+   * reveals wrapped. Drives the footer's ctrl+o hint.
+   */
+  wasTruncated(): boolean {
+    return this.cache?.truncated ?? false;
+  }
+
   render(width: number): string[] {
     const cache = this.cache;
     if (cache !== undefined && cache.content === this.content && cache.width === width) {
       return cache.lines;
     }
-    const lines = [renderHeaderContent(this.content, width)];
-    this.cache = { content: this.content, width, lines };
+    const { line, truncated } = layoutHeaderContent(this.content, width);
+    const lines = [line];
+    this.cache = { content: this.content, width, lines, truncated };
     return lines;
   }
 }
