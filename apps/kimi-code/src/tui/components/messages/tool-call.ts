@@ -852,6 +852,11 @@ export class ToolCallComponent extends Container {
           parseGoalToolOutput(result.output) === undefined &&
           nonEmptyLines(result.output).length > OUTCOME_MAX_LINES
         );
+      case 'Edit':
+      case 'Write':
+        // The result body renders the same way in both states (the call
+        // preview is checked above), so only the preview can hide content.
+        return false;
       case 'SetGoalBudget':
       case 'UpdateGoal':
       case 'AgentSwarm':

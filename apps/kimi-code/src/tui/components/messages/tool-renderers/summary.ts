@@ -16,7 +16,7 @@ import { OUTCOME_GLANCE_SAMPLES, OUTCOME_ROW_INDENT } from '#/tui/constant/rende
 import { currentTheme } from '#/tui/theme';
 
 import { parseGlobOutput, parseGrepOutput } from './grep-output';
-import { outcomeRow } from './outcome';
+import { outcomeRow, outcomeRows } from './outcome';
 import { renderTruncated } from './truncated';
 import { isSpilledToolOutput, type ResultRenderer } from './types';
 
@@ -87,8 +87,18 @@ export const readSummary: ResultRenderer = withGlance(null);
 export const fetchSummary: ResultRenderer = withGlance(null);
 export const webSearchSummary: ResultRenderer = withGlance(null);
 export const thinkSummary: ResultRenderer = withGlance(null);
-export const editSummary: ResultRenderer = withGlance(null);
-export const writeSummary: ResultRenderer = withGlance(null);
+
+// Edit and Write acknowledge success with one line the card already tells
+// (`Replaced N occurrences in path`, `Wrote N bytes to path`): the header
+// carries the path, the chip the size, and the call preview the change. Any
+// other successful output (`No changes to make…`) is worth a row, shown the
+// same way in both states so ctrl+o has nothing to add.
+const FILE_CHANGE_ACK = /^(?:Replaced \d+ occurrences? in |(?:Wrote|Appended) \d+ bytes to )/;
+export const fileChangeSummary: ResultRenderer = (toolCall, result, ctx) => {
+  if (result.is_error) return renderTruncated(toolCall, result, ctx);
+  if (FILE_CHANGE_ACK.test(result.output)) return [];
+  return outcomeRows(result.output, 'first');
+};
 
 // Tools that benefit from inline path samples below the chip.
 export const grepSummary: ResultRenderer = withGlance(grepGlance);

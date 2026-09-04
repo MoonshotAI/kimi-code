@@ -16,14 +16,13 @@ import { shellExecutionResultRenderer } from '../shell-execution';
 import { goalSummary } from './goal';
 import { waitForSummary } from './wait-for';
 import {
-  editSummary,
   fetchSummary,
+  fileChangeSummary,
   globSummary,
   grepSummary,
   readSummary,
   thinkSummary,
   webSearchSummary,
-  writeSummary,
 } from './summary';
 import { renderTruncated } from './truncated';
 import type { ResultRenderer } from './types';
@@ -57,9 +56,9 @@ export function pickResultRenderer(toolName: string): ResultRenderer {
     case 'Think':
       return thinkSummary;
     case 'Edit':
-      return editSummary;
+      return fileChangeSummary;
     case 'Write':
-      return writeSummary;
+      return fileChangeSummary;
     case 'CreateGoal':
     case 'GetGoal':
     case 'SetGoalBudget':

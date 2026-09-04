@@ -257,7 +257,7 @@ describe('tool-result registry', () => {
   it('Write renders no body when collapsed', () => {
     const renderer = pickResultRenderer('Write');
     const out = joinRender(
-      renderer(call('Write', { path: 'a.txt', content: 'a\nb\n' }), result('Wrote'), ctx),
+      renderer(call('Write', { path: 'a.txt', content: 'a\nb\n' }), result('Wrote 4 bytes to a.txt'), ctx),
     );
     expect(out.trim()).toBe('');
   });
@@ -566,5 +566,32 @@ describe('Grep glance on a paginated content result', () => {
       ),
     );
     expect(out).toBe('  src/a.ts:1, src/a.ts:9, src/b.ts:2, +997 more');
+  });
+});
+
+describe('Edit and Write results render the same way in both states', () => {
+  it('drops the success acknowledgement even when expanded', () => {
+    const renderer = pickResultRenderer('Edit');
+    const out = joinRender(
+      renderer(
+        call('Edit', { path: 'foo.ts', old_string: 'a', new_string: 'b' }),
+        result('Replaced 1 occurrence in foo.ts'),
+        expandedCtx,
+      ),
+    );
+    expect(out.trim()).toBe('');
+    const write = pickResultRenderer('Write');
+    expect(
+      joinRender(write(call('Write', { path: 'a.txt', content: 'a' }), result('Appended 1 bytes to a.txt'), expandedCtx)).trim(),
+    ).toBe('');
+  });
+
+  it('keeps any other successful output as an outcome row in both states', () => {
+    const renderer = pickResultRenderer('Edit');
+    const output = 'No changes to make: old_string and new_string are exactly the same.';
+    const collapsed = strip(joinRender(renderer(call('Edit', { path: 'foo.ts' }), result(output), ctx)));
+    const expanded = strip(joinRender(renderer(call('Edit', { path: 'foo.ts' }), result(output), expandedCtx)));
+    expect(collapsed).toBe(`  ${output}`);
+    expect(expanded).toBe(collapsed);
   });
 });
