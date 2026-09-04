@@ -947,6 +947,22 @@ describe('FileSessionIndex (read model)', () => {
     expect(await store.count({ workspaceIds: [workspaceId] })).toBe(2);
   });
 
+  it('ignores non-directory junk entries (e.g. .DS_Store) in a workspace directory', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
+    await fsp.writeFile(join(sessionsDir, workspaceId, '.DS_Store'), 'junk');
+
+    const store = build();
+    const status = await store.prepare();
+    expect(status).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+
+    const page = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items.map((s) => s.id)).toEqual(['a']);
+    expect(await store.count({ workspaceIds: [workspaceId] })).toBe(1);
+
+    await store.reconcileNow();
+    expect(store.status().state).toBe('ready');
+  });
+
   it('the first read kicks one initial projection and shares its authoritative scan', async () => {
     await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 3 });
     await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 2 });
