@@ -139,14 +139,7 @@ export class DangerousCommandAskPermissionPolicyService implements PermissionPol
       }
       return { kind: 'ask', reason: { dangerous_command: verdict.command } };
     }
-    if (auto) {
-      return {
-        kind: 'deny',
-        reason: { unanalyzable_command: true },
-        message:
-          'This Bash command could not be analyzed and is blocked in auto permission mode. Rewrite it with a literal command name and arguments, or ask the user to run it themselves.',
-      };
-    }
+    if (auto) return undefined;
     return { kind: 'ask', reason: { unanalyzable_command: true } };
   }
 }

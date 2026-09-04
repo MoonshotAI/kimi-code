@@ -370,7 +370,7 @@ describe('AgentPermissionPolicyService chain', () => {
   });
 
   it.each(['$CMD --force', 'bash -c "echo $HOME"', 'env $FLAGS'])(
-    'denies unanalyzable command `%s` in auto mode',
+    'approves unanalyzable command `%s` in auto mode',
     async (command) => {
       mode = 'auto';
 
@@ -378,8 +378,8 @@ describe('AgentPermissionPolicyService chain', () => {
         toolName: 'Bash',
         args: { command, timeout: 60 },
       })).resolves.toMatchObject({
-        policyName: 'dangerous-command-ask',
-        result: { kind: 'deny', reason: { unanalyzable_command: true } },
+        policyName: 'auto-mode-approve',
+        result: { kind: 'approve' },
       });
     },
   );
