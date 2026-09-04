@@ -226,6 +226,12 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
   const configChanges: ConfigChange[] = [];
 
   let current: TurnNode | null = null;
+  let pendingSteer: {
+    lineNo: number;
+    time: number | undefined;
+    text: string;
+    originKind: string | undefined;
+  } | null = null;
   let contextTokens = 0;
   let peakContext = 0;
   let firstTime: number | undefined;
@@ -281,11 +287,20 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
 
     switch (rec.type) {
       case 'turn.prompt':
+        pendingSteer = null;
         current = startTurn('prompt', entry.lineNo, t, firstText(rec.input), rec.origin?.kind);
         break;
       case 'turn.steer':
         if (current === null || current.outcome !== undefined) {
+          pendingSteer = null;
           current = startTurn('steer', entry.lineNo, t, firstText(rec.input), rec.origin?.kind);
+        } else {
+          pendingSteer = {
+            lineNo: entry.lineNo,
+            time: t,
+            text: firstText(rec.input),
+            originKind: rec.origin?.kind,
+          };
         }
         break;
       case 'turn.cancel':
@@ -378,13 +393,34 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
       case 'context.append_loop_event': {
         const ev = rec.event;
         if (ev.type === 'step.begin') {
-          if (current === null || current.outcome !== undefined) {
-            current = startTurn('prompt', entry.lineNo, t, '(no prompt record)', undefined);
-          }
           const parsedTurnId =
             ev.turnId === undefined ? undefined : Number.parseInt(ev.turnId, 10);
-          if (parsedTurnId !== undefined && Number.isInteger(parsedTurnId)) {
-            current.turnId ??= parsedTurnId;
+          const validTurnId =
+            parsedTurnId !== undefined && Number.isInteger(parsedTurnId)
+              ? parsedTurnId
+              : undefined;
+          let turn: TurnNode | null = current;
+          if (
+            turn === null ||
+            turn.outcome !== undefined ||
+            (validTurnId !== undefined &&
+              turn.turnId !== undefined &&
+              turn.turnId !== validTurnId)
+          ) {
+            turn = pendingSteer === null
+              ? startTurn('prompt', entry.lineNo, t, '(no prompt record)', undefined)
+              : startTurn(
+                  'steer',
+                  pendingSteer.lineNo,
+                  pendingSteer.time,
+                  pendingSteer.text,
+                  pendingSteer.originKind,
+                );
+          }
+          pendingSteer = null;
+          current = turn;
+          if (validTurnId !== undefined) {
+            turn.turnId ??= validTurnId;
           }
           const step: StepNode = {
             uuid: ev.uuid,
@@ -398,8 +434,8 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
             toolCalls: [],
           };
           stepByUuid.set(ev.uuid, step);
-          current.steps.push(step);
-          current.startTime ??= t;
+          turn.steps.push(step);
+          turn.startTime ??= t;
         } else if (ev.type === 'step.end') {
           const step = stepByUuid.get(ev.uuid);
           if (step) {

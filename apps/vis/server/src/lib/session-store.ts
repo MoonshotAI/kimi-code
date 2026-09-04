@@ -35,12 +35,7 @@ interface StateJson {
   // top-level `parentAgentId` is a fixed 'main' placeholder for sub agents);
   // v1 wrote them top-level. Read labels first, top-level as fallback —
   // the same order the engine itself uses.
-  agents?: Record<string, {
-    type?: 'main' | 'sub' | 'independent';
-    parentAgentId?: string | null;
-    swarmItem?: string;
-    labels?: { parentAgentId?: string; swarmItem?: string; profileName?: string };
-  } | null>;
+  agents?: Record<string, unknown>;
   custom?: Record<string, unknown>;
 }
 
@@ -290,7 +285,8 @@ async function inventoryAgents(sessionDir: string, state: StateJson): Promise<Ag
     // A type-corrupt entry (e.g. `{ "main": null }`) must not throw on the
     // field dereferences below; skip it so the empty-inventory fallback in
     // readImportedDetail can recover the agent from disk instead.
-    if (typeof meta !== 'object' || meta === null) continue;
+    if (!isRecord(meta)) continue;
+    const labels = isRecord(meta['labels']) ? meta['labels'] : undefined;
     const wirePath = join(sessionDir, 'agents', id, 'wire.jsonl');
     const exists = await pathExists(wirePath);
     let readable = exists;
@@ -308,14 +304,18 @@ async function inventoryAgents(sessionDir: string, state: StateJson): Promise<Ag
     }
     result.push({
       agentId: id,
-      type: meta.type ?? (id === 'main' ? 'main' : 'sub'),
-      parentAgentId: meta.labels?.parentAgentId ?? meta.parentAgentId ?? null,
-      profileName: meta.labels?.profileName ?? null,
+      type: normalizeAgentType(meta['type'], id),
+      parentAgentId:
+        normalizeNonEmptyString(labels?.['parentAgentId']) ??
+        normalizeNonEmptyString(meta['parentAgentId']),
+      profileName: normalizeNonEmptyString(labels?.['profileName']),
       homedir: join(sessionDir, 'agents', id),
       wireExists: readable,
       wireRecordCount: info.count,
       wireProtocolVersion: info.protocolVersion,
-      swarmItem: meta.labels?.swarmItem ?? meta.swarmItem ?? null,
+      swarmItem:
+        normalizeNonEmptyString(labels?.['swarmItem']) ??
+        normalizeNonEmptyString(meta['swarmItem']),
     });
   }
   return result.sort((a, b) => compareAgentIds(a.agentId, b.agentId));
@@ -374,19 +374,25 @@ async function scanWire(path: string): Promise<{ count: number; protocolVersion:
   let protocolVersion: string | null = null;
   for await (const line of rl) {
     if (line.length === 0) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) continue;
+    const record = parsed as Record<string, unknown>;
+    if (typeof record['type'] !== 'string') continue;
     if (protocolVersion === null) {
-      let parsed: { type?: unknown; protocol_version?: unknown };
-      try {
-        parsed = JSON.parse(line) as typeof parsed;
-      } catch {
-        throw new Error(`wire metadata is not valid JSON at line 1`);
-      }
-      if (parsed.type !== 'metadata') {
+      if (record['type'] !== 'metadata') {
         protocolVersion = '1.4';
-      } else if (typeof parsed.protocol_version !== 'string') {
-        throw new TypeError(`wire metadata is malformed on line 1`);
       } else {
-        protocolVersion = parsed.protocol_version;
+        const version = record['protocol_version'];
+        const createdAt = record['created_at'];
+        if (typeof version !== 'string' || typeof createdAt !== 'number') {
+          throw new TypeError('wire metadata is malformed');
+        }
+        protocolVersion = version;
       }
     }
     count += 1;
@@ -395,6 +401,24 @@ async function scanWire(path: string): Promise<{ count: number; protocolVersion:
     throw new Error('wire file is empty');
   }
   return { count, protocolVersion };
+}
+
+function normalizeAgentType(
+  value: unknown,
+  agentId: string,
+): AgentInfo['type'] {
+  if (value === 'main' || value === 'sub' || value === 'independent') return value;
+  return agentId === 'main' ? 'main' : 'sub';
+}
+
+function normalizeNonEmptyString(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function recoverWorkDir(state: StateJson, preferred: string): string {
