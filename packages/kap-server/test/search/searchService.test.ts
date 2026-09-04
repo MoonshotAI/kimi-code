@@ -363,8 +363,10 @@ describe('GlobalSearchService', () => {
     await settleSync(second);
 
     expect((await second.search({ query: '香蕉' })).items.length).toBe(1);
-    const ledgerRaw = await readFile(join(home!, 'search-index', 'deleted-sessions.jsonl'), 'utf8');
-    expect(ledgerRaw).not.toContain('s1\t1000');
+    const snapshot = JSON.parse(
+      await readFile(join(home!, 'search-index', 'deleted-sessions.snapshot.json'), 'utf8'),
+    ) as { entries: Array<[string, number]> };
+    expect(snapshot.entries.some(([id]) => id === 's1')).toBe(false);
   });
 
   it('hits session titles as title docs', async () => {

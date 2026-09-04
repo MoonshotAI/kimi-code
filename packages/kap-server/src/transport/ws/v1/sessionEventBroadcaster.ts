@@ -1,4 +1,4 @@
-import { rm } from 'node:fs/promises';
+import { open, rm } from 'node:fs/promises';
 import type {
   AgentActivityState,
   ApprovalResponse,
@@ -139,10 +139,28 @@ export class SessionEventBroadcaster {
   private readonly globalTargets = new Set<BroadcastTarget>();
   private readonly diEventTargets = new Set<BroadcastTarget>();
   private readonly pendingStates = new Map<string, Promise<SessionState | undefined>>();
-  private readonly journalRemovalAttempts = new Map<string, number>();
+  private readonly journalRemovalAttempts = new Map<string, { attempt: number; epoch?: string }>();
   private readonly maxBufferSize: number;
   private readonly coreEventSubscription: IDisposable;
   private closed = false;
+
+  private async journalEpoch(sessionId: string): Promise<string | undefined> {
+    try {
+      const handle = await open(sessionJournalPath(this.opts.eventsDir, sessionId), 'r');
+      try {
+        const buffer = Buffer.alloc(4096);
+        const { bytesRead } = await handle.read(buffer, 0, 4096, 0);
+        const firstLine = buffer.toString('utf8', 0, bytesRead).split('\n', 1)[0] ?? '';
+        if (firstLine.length === 0) return undefined;
+        const epoch = (JSON.parse(firstLine) as { epoch?: unknown }).epoch;
+        return typeof epoch === 'string' ? epoch : undefined;
+      } finally {
+        await handle.close();
+      }
+    } catch {
+      return undefined;
+    }
+  }
 
   private async removeSessionJournal(sessionId: string): Promise<void> {
     try {
@@ -150,8 +168,17 @@ export class SessionEventBroadcaster {
       this.journalRemovalAttempts.delete(sessionId);
     } catch (error: unknown) {
       if (this.closed) return;
-      const attempt = (this.journalRemovalAttempts.get(sessionId) ?? 0) + 1;
-      this.journalRemovalAttempts.set(sessionId, attempt);
+      const tracked = this.journalRemovalAttempts.get(sessionId);
+      const epoch = tracked?.epoch ?? (await this.journalEpoch(sessionId));
+      if (tracked?.epoch !== undefined) {
+        const current = await this.journalEpoch(sessionId);
+        if (current !== tracked.epoch) {
+          this.journalRemovalAttempts.delete(sessionId);
+          return;
+        }
+      }
+      const attempt = (tracked?.attempt ?? 0) + 1;
+      this.journalRemovalAttempts.set(sessionId, { attempt, epoch });
       if (attempt >= 4) {
         this.opts.logger?.error?.(
           { sessionId, err: String(error) },

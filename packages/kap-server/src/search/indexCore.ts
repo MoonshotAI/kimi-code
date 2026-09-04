@@ -34,6 +34,7 @@ import {
 import { analyzeWireLine, type StepEffect, type TurnEffect } from './wireExtract.ts';
 
 const TEXT_INDEX_NAME = 'body';
+const DELETED_LEDGER_HORIZON_MS = 24 * 60 * 60 * 1000;
 const TRI_INDEX_NAME = 'tri';
 const WIRE_FILENAME = 'wire.jsonl';
 
@@ -243,28 +244,77 @@ export class SearchIndexCore {
     return join(this.indexDir, 'deleted-sessions.jsonl');
   }
 
-  private async readDeletedLedgerRaw(): Promise<string> {
-    try {
-      return await readFile(this.deletedLedgerPath, 'utf8');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return '';
-      throw error;
+  private get deletedLedgerSnapshotPath(): string {
+    return join(this.indexDir, 'deleted-sessions.snapshot.json');
+  }
+
+  private parseDeletedLedgerLines(raw: string, into: Map<string, number>): void {
+    for (const line of raw.split('\n')) {
+      if (line.length === 0) continue;
+      if (line.startsWith('-')) {
+        into.delete(line.slice(1).split('\t')[0]!);
+        continue;
+      }
+      const [id, at] = line.split('\t');
+      if (id !== undefined && id.length > 0) into.set(id, Number(at ?? 0));
     }
   }
 
   private async readDeletedLedger(): Promise<Map<string, number>> {
-    const raw = await this.readDeletedLedgerRaw();
     const ledger = new Map<string, number>();
-    for (const line of raw.split('\n')) {
-      if (line.length === 0) continue;
-      if (line.startsWith('-')) {
-        ledger.delete(line.slice(1).split('\t')[0]!);
-        continue;
+    let watermark = 0;
+    try {
+      const snapshot: unknown = JSON.parse(await readFile(this.deletedLedgerSnapshotPath, 'utf8'));
+      if (typeof snapshot === 'object' && snapshot !== null) {
+        const w = (snapshot as { watermark?: unknown }).watermark;
+        if (typeof w === 'number') watermark = w;
+        const entries = (snapshot as { entries?: unknown }).entries;
+        if (Array.isArray(entries)) {
+          for (const entry of entries) {
+            if (Array.isArray(entry) && typeof entry[0] === 'string') {
+              ledger.set(entry[0], typeof entry[1] === 'number' ? entry[1] : 0);
+            }
+          }
+        }
       }
-      const [id, at] = line.split('\t');
-      if (id !== undefined && id.length > 0) ledger.set(id, Number(at ?? 0));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    const stats = await stat(this.deletedLedgerPath).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    });
+    if (stats !== null && stats.size > watermark) {
+      const handle = await open(this.deletedLedgerPath, 'r');
+      try {
+        const length = stats.size - watermark;
+        const buffer = Buffer.alloc(length);
+        await handle.read(buffer, 0, length, watermark);
+        this.parseDeletedLedgerLines(buffer.toString('utf8'), ledger);
+      } finally {
+        await handle.close();
+      }
     }
     return ledger;
+  }
+
+  private async writeDeletedLedgerSnapshot(
+    keepIds: Set<string>,
+    ledger: Map<string, number>,
+  ): Promise<void> {
+    const stats = await stat(this.deletedLedgerPath).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    });
+    const horizon = Date.now() - DELETED_LEDGER_HORIZON_MS;
+    const entries = [...ledger]
+      .filter(([id, at]) => keepIds.has(id) || at >= horizon)
+      .map(([id, at]) => [id, at]);
+    await writeFile(
+      this.deletedLedgerSnapshotPath,
+      JSON.stringify({ watermark: stats?.size ?? 0, entries }),
+      'utf8',
+    );
   }
 
   private async appendDeletedLedger(sessionId: string): Promise<void> {
@@ -502,9 +552,7 @@ export class SearchIndexCore {
     }
 
     let deletedLedger: Map<string, number>;
-    let deletedLedgerRawBefore = '';
     try {
-      deletedLedgerRawBefore = await this.readDeletedLedgerRaw();
       deletedLedger = await this.readDeletedLedger();
     } catch (error) {
       this.log.warn('global search: failed to read the session deletion ledger; skipping its purge this pass', {
@@ -526,19 +574,10 @@ export class SearchIndexCore {
     }
     if (deletedLedger.size > 0) {
       try {
-        const initialLines = new Set(deletedLedgerRawBefore.split('\n').filter((l) => l.length > 0));
-        const appended = (await this.readDeletedLedgerRaw())
-          .split('\n')
-          .filter((line) => line.length > 0 && !initialLines.has(line));
-        const retained = [...deletedLedger]
-          .filter(([id]) => currentIds.has(id) && !retractedIds.has(id))
-          .map(([id, at]) => `${id}\t${at}`);
-        const kept = [...retained, ...appended];
-        await writeFile(
-          this.deletedLedgerPath,
-          kept.length > 0 ? `${kept.join('\n')}\n` : '',
-          'utf8',
+        const keepIds = new Set(
+          [...deletedLedger.keys()].filter((id) => currentIds.has(id) && !retractedIds.has(id)),
         );
+        await this.writeDeletedLedgerSnapshot(keepIds, deletedLedger);
       } catch (error) {
         this.log.warn('global search: failed to compact the session deletion ledger', {
           error: errorMessage(error),
