@@ -232,3 +232,56 @@ describe('FooterComponent line-2 hints', () => {
     expect(stripAnsi(footer.render(120)[1] ?? '')).not.toContain('Goal objective is too long');
   });
 });
+
+describe('FooterComponent managed-usage block', () => {
+  function stripAnsi(text: string): string {
+    return text.replaceAll(/\[[0-9;]*m/g, '');
+  }
+
+  function lines(width: number, state: AppState): string[] {
+    return new FooterComponent(state).render(width).map(stripAnsi);
+  }
+
+  const fixedSnapshot = {
+    fetchedAt: new Date('2026-09-04T12:00:00Z').getTime(),
+    summary: { label: 'Weekly limit', used: 73, limit: 100 },
+    limits: [
+      { label: '5h limit', used: 30, limit: 100 },
+      { label: 'Weekly limit', used: 73, limit: 100 },
+    ],
+  };
+
+  it('renders the first quota row on line 2, the rest below, then the updated stamp', () => {
+    const out = lines(120, { ...appState, managedUsage: fixedSnapshot });
+
+    // line 2 holds the first quota row.
+    expect(out[1]).toContain('5h limit');
+    // remaining row(s) + the "Plan usage · updated …" stamp follow.
+    expect(out.length).toBeGreaterThanOrEqual(4);
+    expect(out.some((l) => l.includes('Weekly limit'))).toBe(true);
+    expect(out[out.length - 1]).toMatch(/Plan usage.*updated \d{2}:\d{2}:\d{2}/);
+  });
+
+  it('still renders every quota row while a warning hint occupies line 2', () => {
+    const footer = new FooterComponent({ ...appState, managedUsage: fixedSnapshot });
+    footer.setWarningHint('Goal objective is too long');
+
+    const out = footer.render(120).map(stripAnsi);
+
+    // line 2 is the hint (no quota).
+    expect(out[1]).toContain('Goal objective is too long');
+    // The 5h row must NOT disappear from the block just because line 2 is
+    // taken by the hint.
+    expect(out.some((l) => l.includes('5h limit'))).toBe(true);
+    expect(out.some((l) => l.includes('Weekly limit'))).toBe(true);
+    expect(out[out.length - 1]).toMatch(/Plan usage.*updated \d{2}:\d{2}:\d{2}/);
+  });
+
+  it('falls back to the plain line 2 when no snapshot is published', () => {
+    const footer = new FooterComponent(appState);
+    const out = footer.render(120).map(stripAnsi);
+
+    expect(out).toHaveLength(2);
+    expect(out[1]).not.toMatch(/Plan usage|limit/);
+  });
+});

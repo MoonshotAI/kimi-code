@@ -363,6 +363,7 @@ export class FooterComponent implements Component {
     );
     const contextWidth = visibleWidth(contextText);
     let line2: string;
+    let line2ConsumedQuotaRow = false;
     const hint = this.transientHint ?? this.warningHint;
     if (hint) {
       const maxHintWidth = Math.max(0, width - contextWidth - 1);
@@ -386,13 +387,14 @@ export class FooterComponent implements Component {
         const shown = truncateToWidth(content, Math.max(0, width - contextWidth - 1));
         const pad = Math.max(0, width - visibleWidth(shown) - contextWidth);
         line2 = shown + ' '.repeat(pad) + chalk.hex(colors.text)(contextText);
+        line2ConsumedQuotaRow = true;
       }
     }
 
     return [
       truncateToWidth(line1, width),
       truncateToWidth(line2, width),
-      ...this.renderUsageLines(width, usage),
+      ...this.renderUsageLines(width, usage, line2ConsumedQuotaRow),
     ];
   }
 
@@ -429,13 +431,20 @@ export class FooterComponent implements Component {
   }
 
   /**
-   * Remaining quota rows (after the first on line 2), then the "Plan usage ·
-   * updated HH:MM:SS" stamp at the bottom. Empty array when no usage block.
+   * Quota rows after line 2, then the "Plan usage · updated HH:MM:SS" stamp
+   * at the bottom. When a hint occupies line 2 the first quota row is still
+   * shown here (and `line2ConsumedQuotaRow` is false) so the 5h limit never
+   * disappears for the lifetime of a warning. Empty array when no usage block.
    */
-  private renderUsageLines(width: number, usage: UsageBlock | null): string[] {
+  private renderUsageLines(
+    width: number,
+    usage: UsageBlock | null,
+    line2ConsumedQuotaRow: boolean,
+  ): string[] {
     if (usage === null) return [];
     const colors = currentTheme.palette;
-    const lines = usage.rows.slice(1).map((row) => this.renderUsageRow(row, usage.labelWidth));
+    const rows = line2ConsumedQuotaRow ? usage.rows.slice(1) : usage.rows;
+    const lines = rows.map((row) => this.renderUsageRow(row, usage.labelWidth));
     lines.push(
       chalk.hex(colors.primary).bold('Plan usage') +
         chalk.hex(colors.textMuted)(` · updated ${formatClockTime(usage.fetchedAt)}`),
@@ -546,7 +555,6 @@ export class FooterComponent implements Component {
 
   private statusLinePayload(): StatusLinePayload {
     const state = this.state;
-    const usage = state.managedUsage;
     return {
       model: modelDisplayName(state),
       cwd: state.workDir,
@@ -558,14 +566,7 @@ export class FooterComponent implements Component {
       maxContextTokens: state.maxContextTokens,
       sessionId: state.sessionId,
       version: state.version,
-      managedUsage:
-        usage !== undefined && usage !== null
-          ? {
-              summary: usage.summary,
-              limits: usage.limits,
-              fetchedAt: usage.fetchedAt,
-            }
-          : null,
+      managedUsage: state.managedUsage ?? null,
     };
   }
 

@@ -10,41 +10,22 @@
  * clears it; unchanged snapshots are not re-published. Model / model-list
  * changes are pushed in via `refreshNow()` instead of being discovered by a
  * fast tick, so the timer only ever runs at the fetch cadence.
+ *
+ * Concurrent fetches are coalesced by a monotonically-increasing `generation`
+ * counter: each `refresh()` call captures the current generation before the
+ * `await`, and only publishes its response if the counter has not moved. A
+ * provider switch (`refreshNow()`) bumps the counter, which silently drops any
+ * response still in flight from the previous provider — preventing stale
+ * managed-usage data from leaking into a now non-managed state.
  */
 
-import { formatDuration } from '@moonshot-ai/kimi-code-oauth';
 import type { KimiHarness } from '@moonshot-ai/kimi-code-sdk';
 
 import { isManagedUsageProvider } from '../constant/kimi-tui';
 import type { AppState, ManagedUsageSnapshot } from '../types';
+import { usageRowLabel, usageRowResetHint, type ManagedUsageRow } from '../../utils/usage/usage-format';
 
 const FETCH_INTERVAL_MS = 60_000;
-
-/**
- * Build a human-readable label for a managed-usage row, matching the style
- * used by the /usage panel: "5h limit", "Weekly limit", etc.
- */
-function usageRowLabel(row: { readonly name?: string; readonly window?: { unit: string; duration: number } }): string {
-  const w = row.window;
-  if (w !== undefined) {
-    if (w.unit === 'week') return 'Weekly limit';
-    return `${String(w.duration)}${w.unit[0] ?? ''} limit`;
-  }
-  return row.name ?? 'Limit';
-}
-
-/**
- * Relative-time reset hint, e.g. "resets in 2h 30m". Returns undefined when
- * the timestamp is missing or unparseable.
- */
-function usageRowResetHint(resetAt: string | undefined): string | undefined {
-  if (resetAt === undefined) return undefined;
-  const parsed = Date.parse(resetAt);
-  if (!Number.isFinite(parsed)) return undefined;
-  const diffSec = Math.floor((parsed - Date.now()) / 1000);
-  if (diffSec <= 0) return 'reset';
-  return `resets in ${formatDuration(diffSec)}`;
-}
 
 export interface ManagedUsagePollerOptions {
   readonly harness: KimiHarness;
@@ -57,7 +38,9 @@ export interface ManagedUsagePoller {
   /**
    * Force an immediate refresh, bypassing the fetch-interval throttle. Called
    * when the model or model list changes, so a provider switch shows up right
-   * away instead of waiting out the current interval.
+   away instead of waiting out the current interval. Concurrent with an in-flight
+   * fetch: the in-flight response is discarded by the generation bump so the
+   * new provider's data lands first.
    */
   refreshNow(): void;
   dispose(): void;
@@ -66,11 +49,11 @@ export interface ManagedUsagePoller {
 export function createManagedUsagePoller(
   options: ManagedUsagePollerOptions,
 ): ManagedUsagePoller {
-  let inFlight = false;
   let lastFetchedAt = 0;
   let lastProviderKey: string | null = null;
   let lastPublishedJson = '';
   let disposed = false;
+  let generation = 0;
 
   async function refresh(): Promise<void> {
     const state = options.getState();
@@ -85,6 +68,10 @@ export function createManagedUsagePoller(
       // switching back refetches immediately instead of waiting out the
       // fetch interval.
       lastProviderKey = null;
+      // Bump the generation so any response still in flight from a prior
+      // managed provider is discarded and cannot republish into this
+      // non-managed state.
+      generation++;
       if (lastPublishedJson !== '') {
         lastPublishedJson = '';
         options.onUpdate(null);
@@ -94,30 +81,21 @@ export function createManagedUsagePoller(
 
     const now = Date.now();
     if (providerKey === lastProviderKey && now - lastFetchedAt < FETCH_INTERVAL_MS) return;
-    if (inFlight) return;
 
-    inFlight = true;
+    // Capture the generation at fetch start. Any later refresh() (interval
+    // tick or refreshNow()) bumps this counter, which after the await tells
+    // us our response belongs to a stale generation and must not publish.
+    const myGeneration = ++generation;
+
     lastProviderKey = providerKey;
     try {
       const res = await options.harness.auth.getManagedUsage(providerKey);
-      if (disposed || res.kind === 'error') return;
+      if (disposed || generation !== myGeneration) return;
+      if (res.kind === 'error') return;
 
       const snapshot: ManagedUsageSnapshot = {
-        summary:
-          res.summary !== null && res.summary !== undefined
-            ? {
-                label: usageRowLabel(res.summary),
-                used: res.summary.used,
-                limit: res.summary.limit,
-                resetHint: usageRowResetHint(res.summary.resetAt),
-              }
-            : null,
-        limits: res.limits.map((row) => ({
-          label: usageRowLabel(row),
-          used: row.used,
-          limit: row.limit,
-          resetHint: usageRowResetHint(row.resetAt),
-        })),
+        summary: res.summary !== null && res.summary !== undefined ? toRow(res.summary) : null,
+        limits: res.limits.map(toRow),
         fetchedAt: Date.now(),
       };
 
@@ -129,10 +107,11 @@ export function createManagedUsagePoller(
     } catch {
       // Keep the previous snapshot on failure.
     } finally {
-      // Throttle every outcome — success, API error, and network failure — to
-      // one fetch per interval, so a broken network never spins a fast retry.
-      lastFetchedAt = Date.now();
-      inFlight = false;
+      if (generation === myGeneration) {
+        // Throttle only on the winning generation so a superseded fetch
+        // does not push the throttle forward and starve the new request.
+        lastFetchedAt = Date.now();
+      }
     }
   }
 
@@ -152,5 +131,14 @@ export function createManagedUsagePoller(
       disposed = true;
       clearInterval(timer);
     },
+  };
+}
+
+function toRow(row: ManagedUsageRow): ManagedUsageSnapshot['limits'][number] {
+  return {
+    label: usageRowLabel(row),
+    used: row.used,
+    limit: row.limit,
+    resetHint: usageRowResetHint(row),
   };
 }
