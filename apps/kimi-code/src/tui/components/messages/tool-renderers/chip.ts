@@ -91,8 +91,10 @@ const readChip: ChipProvider = (_toolCall, result) =>
 
 // A collapsed Bash card shows its output whole when it fits the outcome
 // rows; once one line stands in for the rest, the chip counts the hidden
-// lines, not the total.
+// lines, not the total. A failed command keeps its multi-line preview, whose
+// own trailer already counts what is left, so the chip stays out of its way.
 const bashChip: ChipProvider = (_toolCall, result) => {
+  if (result.is_error === true) return '';
   const lines = countNonEmptyLines(result.output);
   return lines <= OUTCOME_MAX_LINES ? '' : pluralize(lines - 1, 'more line');
 };

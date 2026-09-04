@@ -574,7 +574,10 @@ export class ToolCallComponent extends Container {
   private expanded = false;
   private toolCall: ToolCallBlockData;
   private readonly markdownTheme = createMarkdownTheme();
-  /** Memo for hasHiddenContent(); reset whenever the body is rebuilt or live output grows. */
+  /**
+   * Memo for hasHiddenContent(); reset whenever the body or the result-driven
+   * content is rebuilt, or live output grows.
+   */
   private hiddenContent: boolean | undefined = undefined;
   /** Width-dependent half of hasHiddenContent(); recomputed on every render. */
   private truncatedAtLastRender = false;
@@ -789,6 +792,10 @@ export class ToolCallComponent extends Container {
 
   private computeHiddenContent(): boolean {
     const { name, args } = this.toolCall;
+    // A solo Agent card with subagent state never renders its result body and
+    // its subagent block is a fixed-height window either way, so ctrl+o
+    // changes nothing there.
+    if (this.isSingleSubagentView()) return false;
     if (name === 'Bash' && str(args['command']).includes('\n')) return true;
     const { result } = this;
     if (result === undefined) return nonEmptyLines(this.liveOutput).length > 1;
@@ -1680,6 +1687,7 @@ export class ToolCallComponent extends Container {
   }
 
   private rebuildContent(): void {
+    this.hiddenContent = undefined;
     while (this.children.length > this.callPreviewEndIndex) {
       this.children.pop();
     }

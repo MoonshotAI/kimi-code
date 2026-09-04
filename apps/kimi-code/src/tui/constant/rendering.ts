@@ -32,6 +32,9 @@ export const OUTCOME_ROW_INDENT = '  ';
 // Non-empty output lines a collapsed tool card shows in full before it falls
 // back to one telling outcome row.
 export const OUTCOME_MAX_LINES = 3;
+// Path samples a collapsed Grep/Glob card lists in its glance row before
+// counting the rest as "+N more".
+export const OUTCOME_GLANCE_SAMPLES = 3;
 
 // Cap on the step-retry detail line under the waiting spinner, so huge
 // provider error bodies (occasionally whole HTML error pages) can't flood

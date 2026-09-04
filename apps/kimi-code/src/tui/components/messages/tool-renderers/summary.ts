@@ -12,15 +12,13 @@
 import type { Component } from '@moonshot-ai/pi-tui';
 import { Text } from '@moonshot-ai/pi-tui';
 
-import { OUTCOME_ROW_INDENT } from '#/tui/constant/rendering';
+import { OUTCOME_GLANCE_SAMPLES, OUTCOME_ROW_INDENT } from '#/tui/constant/rendering';
 import { currentTheme } from '#/tui/theme';
 
 import { parseGlobOutput, parseGrepOutput } from './grep-output';
 import { outcomeRow } from './outcome';
 import { renderTruncated } from './truncated';
 import type { ResultRenderer } from './types';
-
-const GLANCE_SAMPLES = 3;
 
 interface Glance {
   readonly samples: string;
@@ -61,7 +59,7 @@ function withGlance(glance: GlanceFn | null): ResultRenderer {
 
 function sampleList(labels: readonly string[]): Glance | null {
   if (labels.length === 0) return null;
-  const samples = labels.slice(0, GLANCE_SAMPLES);
+  const samples = labels.slice(0, OUTCOME_GLANCE_SAMPLES);
   return { samples: samples.join(', '), moreCount: labels.length - samples.length };
 }
 

@@ -2337,3 +2337,20 @@ describe('ToolCallComponent hasHiddenContent', () => {
     ).toBe(false);
   });
 });
+
+describe('ToolCallComponent hasHiddenContent for a solo subagent card', () => {
+  it('is false because the fixed subagent window never changes with ctrl+o', () => {
+    const component = new ToolCallComponent(
+      { id: 'call_agent', name: 'Agent', args: { description: 'explore' } },
+      undefined,
+    );
+    component.onSubagentSpawned({ agentId: 'sub_1', agentName: 'explore', runInBackground: false });
+    component.setResult({
+      tool_call_id: 'call_agent',
+      output: 'line 1\nline 2\nline 3\nline 4\nline 5',
+      is_error: false,
+    });
+    expect(component.hasHiddenContent()).toBe(false);
+    component.dispose();
+  });
+});

@@ -229,3 +229,23 @@ describe('Bash chip', () => {
     expect(chip(call, { tool_call_id: 'tc', output: '', is_error: false })).toBe('');
   });
 });
+
+describe('Bash chip on a failed command', () => {
+  it('stays silent so the error preview trailer owns the hidden-line count', () => {
+    const chip = pickChip('Bash')!;
+    const call = { id: 'tc', name: 'Bash', args: { command: 'ls' } };
+    expect(chip(call, { tool_call_id: 'tc', output: 'a\nb\nc\nd\ne', is_error: true })).toBe('');
+  });
+});
+
+describe('Grep chip without line numbers', () => {
+  it('counts every row as a match but each file once', () => {
+    expect(
+      chipFor(
+        'Grep',
+        { pattern: 'foo', output_mode: 'content', '-n': false },
+        result('a.ts:foo\na.ts:foo again\nb.ts:foo'),
+      ),
+    ).toBe('3 matches across 2 files');
+  });
+});

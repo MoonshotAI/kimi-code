@@ -20,6 +20,7 @@ export interface GrepEntry {
 
 export interface GrepStats {
   readonly mode: GrepMode;
+  /** Glance samples in output order; unnumbered content rows collapse to one entry per file. */
   readonly entries: readonly GrepEntry[];
   /**
    * What the mode counts: files in `files_with_matches`, matching lines in
@@ -87,23 +88,26 @@ export function parseGrepOutput(toolCall: ToolCallBlockData, output: string): Gr
   const countable = numbered || !hasContext;
   const entries: GrepEntry[] = [];
   const paths = new Set<string>();
+  let rows = 0;
   for (const line of lines) {
-    let path: string;
-    let label: string;
     if (numbered) {
-      const [, matchPath, lineNumber] = CONTENT_MATCH.exec(line) ?? [];
-      if (matchPath === undefined || lineNumber === undefined) continue;
-      path = matchPath;
-      label = `${path}:${lineNumber}`;
-    } else {
-      const idx = line.indexOf(':');
-      path = idx > 0 ? line.slice(0, idx) : line;
-      label = path;
+      const [, path, lineNumber] = CONTENT_MATCH.exec(line) ?? [];
+      if (path === undefined || lineNumber === undefined) continue;
+      rows++;
+      paths.add(path);
+      entries.push({ path, label: `${path}:${lineNumber}` });
+      continue;
     }
-    entries.push({ path, label });
+    // Unnumbered rows are labelled by their path alone, so the glance lists
+    // each file once instead of repeating it per match or context row.
+    const idx = line.indexOf(':');
+    const path = idx > 0 ? line.slice(0, idx) : line;
+    rows++;
+    if (paths.has(path)) continue;
     paths.add(path);
+    entries.push({ path, label: path });
   }
-  return { mode, entries, matches: countable ? entries.length : null, files: paths.size };
+  return { mode, entries, matches: countable ? rows : null, files: paths.size };
 }
 
 export function parseGlobOutput(output: string): string[] {

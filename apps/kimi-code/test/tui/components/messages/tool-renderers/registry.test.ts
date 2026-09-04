@@ -456,3 +456,35 @@ describe('tool-result registry', () => {
     expect(out).toContain('Task not found: bash-x');
   });
 });
+
+describe('outcome rows', () => {
+  function plain(text: string): string {
+    return text.replaceAll(/\[[0-9;]*m/g, '');
+  }
+
+  it('lists each file once in an unnumbered Grep glance', () => {
+    const renderer = pickResultRenderer('Grep');
+    const out = plain(
+      joinRender(
+        renderer(
+          call('Grep', { pattern: 'foo', output_mode: 'content', '-n': false }),
+          result('a.ts:foo\na.ts:foo again\nb.ts:foo'),
+          ctx,
+        ),
+      ),
+    );
+    expect(out).toBe('  a.ts, b.ts');
+  });
+
+  it('strips terminal colours from an outcome row', () => {
+    const renderer = pickResultRenderer('Bash');
+    const rows = renderer(
+      call('Bash', { command: 'pnpm test' }),
+      result('[31mFAIL[0m src/a.test.ts'),
+      ctx,
+    ).flatMap((component) => component.render(100));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).not.toContain('[31m');
+    expect(plain(rows[0] ?? '')).toBe('  FAIL src/a.test.ts');
+  });
+});
