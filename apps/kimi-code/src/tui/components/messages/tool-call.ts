@@ -37,6 +37,7 @@ import { TruncatedHeaderLine, type HeaderContent } from './truncated-header-line
 import { ShellExecutionComponent } from './shell-execution';
 import { countNonEmptyLines, pickChip } from './tool-renderers/chip';
 import { buildGoalToolHeader, parseGoalToolOutput } from './tool-renderers/goal';
+import { searchCutShort } from './tool-renderers/grep-output';
 import { parseReadMediaOutput } from './tool-renderers/media';
 import { computeWriteStats } from './tool-renderers/chip';
 import { nonEmptyLines, outcomeLine } from './tool-renderers/outcome';
@@ -828,12 +829,18 @@ export class ToolCallComponent extends Container {
           parseReadMediaOutput(result.output) !== null ||
           nonEmptyLines(result.output).length > OUTCOME_MAX_LINES
         );
+      case 'Grep':
+      case 'Glob':
+        // A search cut short before any row shows only the tool's notice, the
+        // same way in both states; every other result hides its body.
+        return (
+          !searchCutShort(this.toolCall, result.output) ||
+          nonEmptyLines(result.output).length > OUTCOME_MAX_LINES
+        );
       case 'Read':
       case 'FetchURL':
       case 'WebSearch':
       case 'Think':
-      case 'Grep':
-      case 'Glob':
         return true;
       case 'ExitPlanMode':
         // An approved plan is fully rendered by the call preview and the

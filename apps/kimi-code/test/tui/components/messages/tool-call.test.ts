@@ -2552,3 +2552,21 @@ describe('ToolCallComponent hasHiddenContent for ReadMediaFile', () => {
     plain.dispose();
   });
 });
+
+describe('ToolCallComponent hasHiddenContent for a search cut short before any row', () => {
+  it('is false, since the notice renders the same way in both states', () => {
+    const glob = new ToolCallComponent(
+      { id: 'call_glob', name: 'Glob', args: { pattern: '**/*.ts' } },
+      { tool_call_id: 'call_glob', output: 'Glob timed out after 60s; partial results returned.', is_error: false },
+    );
+    expect(glob.hasHiddenContent()).toBe(false);
+    glob.dispose();
+
+    const grep = new ToolCallComponent(
+      { id: 'call_grep', name: 'Grep', args: { pattern: 'foo' } },
+      { tool_call_id: 'call_grep', output: 'a.ts\nGrep timed out after 30s; partial results returned.', is_error: false },
+    );
+    expect(grep.hasHiddenContent()).toBe(true);
+    grep.dispose();
+  });
+});

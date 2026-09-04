@@ -62,7 +62,7 @@ const COUNT_SUMMARY = /^Found (\d+) total (?:non-sensitive )?occurrences? across
 const PAGINATION_TOTAL = /^Results truncated to \d+ lines \(total: (\d+)/m;
 // Notices that mark the result set itself as incomplete, as opposed to merely paginated.
 const INCOMPLETE =
-  /^(?:\[Output truncated at \d+ bytes|Grep timed out after |Glob timed out after |\[stdout truncated at |\[Truncated at \d+ matches|Only the first \d+ matches)/m;
+  /^(?:\[Output truncated at \d+ bytes|Grep timed out after |Glob timed out after |Glob completed with warnings|\[stdout truncated at |\[Truncated at \d+ matches|Only the first \d+ matches)/m;
 
 // `path:line:text`; context lines use `-` separators and are not matches.
 const CONTENT_MATCH = /^(.+?):(\d+):/;
@@ -178,4 +178,18 @@ export function parseGrepOutput(toolCall: ToolCallBlockData, output: string): Gr
 
 export function parseGlobOutput(output: string): GlobStats {
   return { entries: resultLines(output), partial: INCOMPLETE.test(output) };
+}
+
+/**
+ * Whether a Grep or Glob result is only the tool's notice: the search was cut
+ * short (timeout, output cap, unreadable directories) before any row. Such a
+ * card shows the notice as a plain outcome row, the same way in both states.
+ */
+export function searchCutShort(toolCall: ToolCallBlockData, output: string): boolean {
+  if (toolCall.name === 'Glob') {
+    const { entries, partial } = parseGlobOutput(output);
+    return partial && entries.length === 0;
+  }
+  const stats = parseGrepOutput(toolCall, output);
+  return stats.partial && stats.entries.length === 0;
 }

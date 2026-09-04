@@ -283,7 +283,7 @@ describe('Grep chip on paginated and unusual output', () => {
           'Glob completed with warnings; some directories could not be read: rg: /x: Permission denied (os error 13)\nrg: /y: Permission denied (os error 13)\na.ts\nb.ts',
         ),
       ),
-    ).toBe('2 files');
+    ).toBe('2+ files'); // unreadable directories make the count a lower bound
   });
 });
 
@@ -422,5 +422,17 @@ describe('chips for a search the tool cut short before any row', () => {
         ),
       ),
     ).toBe('');
+  });
+});
+
+describe('Glob chip with unreadable directories', () => {
+  it('reads as a lower bound, since part of the tree was skipped', () => {
+    expect(
+      chipFor(
+        'Glob',
+        { pattern: '**/*.ts' },
+        result('Glob completed with warnings; some directories could not be read: rg: /x: Permission denied\na.ts\nb.ts'),
+      ),
+    ).toBe('2+ files');
   });
 });

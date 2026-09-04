@@ -15,7 +15,7 @@ import { Text } from '@moonshot-ai/pi-tui';
 import { OUTCOME_GLANCE_SAMPLES, OUTCOME_ROW_INDENT } from '#/tui/constant/rendering';
 import { currentTheme } from '#/tui/theme';
 
-import { parseGlobOutput, parseGrepOutput } from './grep-output';
+import { parseGlobOutput, parseGrepOutput, searchCutShort } from './grep-output';
 import { outcomeRow, outcomeRows } from './outcome';
 import { renderTruncated } from './truncated';
 import { isSpilledToolOutput, type ResultRenderer } from './types';
@@ -76,16 +76,15 @@ function sampleList(labels: readonly string[], total = labels.length): Glance | 
 // out. A paginated result counts "+N more" against the tool-reported total,
 // not just the page.
 const grepGlance: GlanceFn = (toolCall, result) => {
+  if (searchCutShort(toolCall, result.output)) return 'fallback';
   const stats = parseGrepOutput(toolCall, result.output);
-  if (stats.partial && stats.entries.length === 0) return 'fallback';
   const labels = stats.entries.map((entry) => entry.label);
   return sampleList(labels, Math.max(labels.length, stats.total));
 };
 
-const globGlance: GlanceFn = (_toolCall, result) => {
-  const { entries, partial } = parseGlobOutput(result.output);
-  if (partial && entries.length === 0) return 'fallback';
-  return sampleList(entries);
+const globGlance: GlanceFn = (toolCall, result) => {
+  if (searchCutShort(toolCall, result.output)) return 'fallback';
+  return sampleList(parseGlobOutput(result.output).entries);
 };
 
 // ── Exports ──────────────────────────────────────────────────────────
