@@ -235,10 +235,10 @@ describe('built-in slash command registry', () => {
     expect(resolveSlashCommandAvailability(command!, 'Ship feature X')).toBe('always');
   });
 
-  it('gates remote-control behind the remote-control experiment, always available', () => {
+  it('registers remote-control as always available', () => {
     const command = findBuiltInSlashCommand('remote-control');
     expect(command).toBeDefined();
-    expect((command as KimiSlashCommand).experimentalFlag).toBe('remote-control');
+    expect((command as KimiSlashCommand).experimentalFlag).toBeUndefined();
     expect(resolveSlashCommandAvailability(command!, '')).toBe('always');
   });
 

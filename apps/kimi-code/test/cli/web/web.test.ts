@@ -412,7 +412,6 @@ describe('`kimi web` opens the browser', () => {
   });
 
   it('rejects Remote Control on a non-loopback host', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL', '1');
     const { handleWebCommand } = await import('#/cli/sub/web/run');
     const { runner } = makeRunner();
     const { stdout, stderr } = makeIo();
@@ -425,32 +424,11 @@ describe('`kimi web` opens the browser', () => {
     ).rejects.toThrow('--remote-control requires a loopback host.');
   });
 
-  it('rejects --remote-control while the experimental flag is off', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL', '0');
-    const { handleWebCommand } = await import('#/cli/sub/web/run');
-    const { runner } = makeRunner();
-    const { stdout, stderr } = makeIo();
-
-    await expect(
-      handleWebCommand(
-        { remoteControl: true, open: false },
-        { startServerForeground: runner, openUrl: vi.fn(), stdout, stderr },
-      ),
-    ).rejects.toThrow('--remote-control is experimental:');
-  });
-
-  it('hides --remote-control from help unless the experimental flag is on', () => {
-    const remoteControlOption = () =>
-      makeProgram()
-        .commands.find((command) => command.name() === 'web')!
-        .options.find((option) => option.long === '--remote-control');
-
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL', '0');
-    expect(remoteControlOption()?.hidden).toBe(true);
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL', '1');
-    expect(remoteControlOption()?.hidden).toBe(false);
+  it('shows --remote-control in help', () => {
+    const remoteControlOption = makeProgram()
+      .commands.find((command) => command.name() === 'web')!
+      .options.find((option) => option.long === '--remote-control');
+    expect(remoteControlOption?.hidden).toBeFalsy();
   });
 });
 
@@ -471,17 +449,11 @@ describe('kimi rc', () => {
     expect(longs).not.toContain('--remote-control');
   });
 
-  it('hides `rc` from help unless the experimental flag is on', () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL', '0');
-    expect(makeProgram().helpInformation()).not.toContain('rc|remote');
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL', '1');
+  it('shows `rc` in help', () => {
     expect(makeProgram().helpInformation()).toContain('rc|remote');
   });
 
   it('forces Remote Control for both `rc` and `remote`', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL', '0');
     for (const name of ['rc', 'remote']) {
       const program = makeProgram();
       let stderr = '';
@@ -493,14 +465,13 @@ describe('kimi rc', () => {
         .spyOn(process, 'exit')
         .mockImplementation(() => undefined as never);
       try {
-        await program.parseAsync(['node', 'kimi', name]);
+        await program.parseAsync(['node', 'kimi', name, '--host', '0.0.0.0']);
       } finally {
         errSpy.mockRestore();
         exitSpy.mockRestore();
       }
-      // The flag-off experimental error proves remoteControl was forced before
-      // the runner could start.
-      expect(stderr).toContain('--remote-control is experimental:');
+      // The loopback check only runs when remoteControl was forced on.
+      expect(stderr).toContain('--remote-control requires a loopback host.');
     }
   });
 });

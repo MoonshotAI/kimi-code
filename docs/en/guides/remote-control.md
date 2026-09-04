@@ -2,8 +2,6 @@
 
 Start Kimi Code CLI with remote control enabled by running `kimi rc` in a terminal — it generates a link that can remotely control this machine. Scan the QR code with your phone to open the link, or visit it directly on another device. After opening the link, log in with the same Kimi account as in your local Kimi Code CLI to check on task progress, handle approvals, continue conversations, or start new sessions. Tasks always run on your machine — the web page is just a remote window.
 
-> Remote Control is currently an experimental feature and requires an environment variable to enable; the interface and behavior are subject to the final release.
-
 ## Getting started
 
 ### Prerequisites
@@ -13,19 +11,6 @@ Before turning on Remote Control, make sure your machine meets the following con
 - **Kimi Code CLI installed**: see [Getting started](../guides/getting-started.md)
 - **Logged in to your Kimi account with a paid membership**: Remote Control requires a paid membership and is not available to free users
 - **Machine stays awake and online**: Remote Control depends on a persistent connection between your machine and the Kimi service; remote sessions are unavailable after shutdown, sleep, or network loss
-- **Experimental flag enabled**: set the environment variable with `export` (or use `KIMI_CODE_EXPERIMENTAL_FLAG=1` to enable all experimental features):
-
-  ```sh
-  export KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL=1
-  # or enable all experimental features
-  export KIMI_CODE_EXPERIMENTAL_FLAG=1
-  ```
-
-  The `export` above only applies to the current terminal session. If you use Remote Control regularly, persist it in your shell configuration file (e.g. `~/.zshrc`):
-
-  ```sh
-  echo 'export KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL=1' >> ~/.zshrc
-  ```
 
 ### Step 1: Start Remote Control
 
