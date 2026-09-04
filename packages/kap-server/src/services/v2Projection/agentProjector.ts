@@ -1156,54 +1156,7 @@ export class AgentV2Projector {
     });
   }
 
-  private onSkillActivated(event: ProjectionEvent, out: ServerMessage[]): void {
-    if (event.trigger === 'user-slash') return;
-    const origin = toUserOrigin({
-      kind: 'skill_activation',
-      skillName: event.skillName,
-      skillArgs: event.skillArgs,
-      trigger: event.trigger,
-    });
-    const name = (event.skillName as string) ?? '';
-    const args = (event.skillArgs as string | undefined) ?? '';
-    const text = args.length > 0 ? `${name} ${args}` : name;
-    const turn = this.latestTurn();
-    if (turn && turn.state === 'running') {
-      const seq = turn.userSeq++;
-      const acc: PromptAcc = {
-        promptId: `skill_${(event.activationId as string) ?? seq}`,
-        messageId: `${turn.turnId}.u${seq}`,
-        turnId: turn.turnId,
-        text,
-        createdAt: iso(event.time),
-        status: 'completed',
-        queued: false,
-        steerHeld: false,
-        emitted: true,
-        origin,
-      };
-      this.prompts.set(acc.promptId, acc);
-      out.push(this.userMessage(acc, event.time));
-      return;
-    }
-    const engineTurnId = this.maxTurnId + 1;
-    const turnId = this.protocolTurnId(engineTurnId);
-    const seq = this.nextUserSeq(engineTurnId);
-    const acc: PromptAcc = {
-      promptId: `skill_${(event.activationId as string) ?? seq}`,
-      messageId: `${turnId}.u${seq}`,
-      turnId,
-      text,
-      createdAt: iso(event.time),
-      status: 'completed',
-      queued: false,
-      steerHeld: false,
-      emitted: true,
-      origin,
-    };
-    this.prompts.set(acc.promptId, acc);
-    out.push(this.userMessage(acc, event.time));
-  }
+  private onSkillActivated(_event: ProjectionEvent, _out: ServerMessage[]): void {}
 
   private onPluginCommandActivated(event: ProjectionEvent, out: ServerMessage[]): void {
     out.push({
