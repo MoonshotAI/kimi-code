@@ -29,7 +29,6 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { renderCompactionInstruction } from '#/agent/fullCompaction/compactionInstruction';
-import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
 import {
   IAgentFullCompactionService,
@@ -3128,15 +3127,6 @@ describe('FullCompaction context recovery pointer', () => {
     });
   }
 
-  function reminderMessage(variant: string, text: string): ContextMessage {
-    return {
-      role: 'user',
-      content: [{ type: 'text', text: `<system-reminder>${text}</system-reminder>` }],
-      toolCalls: [],
-      origin: { kind: 'injection', variant },
-    };
-  }
-
   it('appends the journal location and window line ranges to the model-facing note', async () => {
     const ctx = recoveryAgent(appService(IFileSystemStorageService, locatedStorage(JOURNAL_HOME)));
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
@@ -3241,86 +3231,6 @@ describe('FullCompaction context recovery pointer', () => {
     expect(withFooterTokens - bareTokens).toBe(
       withFooter.get(ISessionTokenCountingService).estimateText(footer),
     );
-  });
-
-  it('keeps context budget reminders out of the summarizer request', async () => {
-    const ctx = recoveryAgent();
-    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
-    ctx.context.append(
-      reminderMessage('context_budget', 'BUDGET-REMINDER-TEXT'),
-      reminderMessage('compaction_ahead', 'AHEAD-REMINDER-TEXT'),
-    );
-    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 40);
-
-    await compactOnce(ctx, 'Compacted summary.');
-
-    const request = JSON.stringify(ctx.lastLlmInput().input.history);
-    expect(request).toContain('old user one');
-    expect(request).toContain('recent assistant two');
-    expect(request).not.toContain('BUDGET-REMINDER-TEXT');
-    expect(request).not.toContain('AHEAD-REMINDER-TEXT');
-  });
-
-  it('reports what the agent did after the compaction-ahead reminder', async () => {
-    const records: TelemetryRecord[] = [];
-    const ctx = recoveryAgent({ telemetry: recordingTelemetry(records) });
-    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
-    ctx.context.append(
-      reminderMessage('compaction_ahead', 'AHEAD-REMINDER-TEXT'),
-      {
-        role: 'assistant',
-        content: [{ type: 'text', text: 'persisting state' }],
-        toolCalls: [
-          { type: 'function', id: 'call_write', name: 'Write', arguments: '{}' },
-          { type: 'function', id: 'call_bash', name: 'Bash', arguments: '{}' },
-        ],
-      },
-      { role: 'tool', content: [{ type: 'text', text: 'ok' }], toolCalls: [], toolCallId: 'call_write' },
-      { role: 'tool', content: [{ type: 'text', text: 'ok' }], toolCalls: [], toolCallId: 'call_bash' },
-    );
-    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 40);
-
-    await compactOnce(ctx, 'Compacted summary.');
-
-    expect(records).toContainEqual({
-      event: 'compaction_finished',
-      properties: expect.objectContaining({
-        ahead_reminder_delivered: true,
-        ahead_steps_count: 2,
-        ahead_write_calls_count: 1,
-        ahead_bash_calls_count: 1,
-        ahead_todo_calls_count: 0,
-      }),
-    });
-  });
-
-  it('reports that no compaction-ahead reminder was delivered when none was', async () => {
-    const records: TelemetryRecord[] = [];
-    const ctx = recoveryAgent({ telemetry: recordingTelemetry(records) });
-    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
-    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 40);
-
-    await compactOnce(ctx, 'Compacted summary.');
-
-    const finished = records.find((record) => record.event === 'compaction_finished');
-    expect(finished?.properties).toMatchObject({ ahead_reminder_delivered: false });
-    expect(finished?.properties).not.toHaveProperty('ahead_steps_count');
-  });
-
-  it('exposes the live compaction budget from the numbers that drive auto compaction', () => {
-    const ctx = recoveryAgent();
-    ctx.appendExchange(1, 'old user one', 'old assistant one', 1_000);
-
-    const budget = ctx.get(IAgentFullCompactionService).budget();
-
-    expect(budget).toEqual({
-      used: ctx.get(ISessionTokenCountingService).get(ctx.agentContext).size,
-      maxSize: 256_000,
-      triggerRatio: 0.85,
-      reservedContextSize: 50_000,
-      triggerTokens: 206_000,
-    });
-    expect(budget.used).toBeGreaterThan(0);
   });
 
   it('tells the summarizer a recovery pointer follows the note', () => {

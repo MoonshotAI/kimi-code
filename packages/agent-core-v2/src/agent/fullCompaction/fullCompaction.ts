@@ -2,7 +2,6 @@ import type {
   CompactionResult,
   CompactionSource,
 } from './types';
-import type { CompactionTriggerBudget } from './strategy';
 import { createDecorator } from "#/_base/di/instantiation";
 import type { Event } from '#/_base/event';
 import type { Hooks } from '#/hooks';
@@ -10,10 +9,6 @@ import type { Hooks } from '#/hooks';
 export interface FullCompactionInput {
   readonly source: CompactionSource;
   readonly instruction?: string;
-}
-
-export interface CompactionBudget extends CompactionTriggerBudget {
-  readonly used: number;
 }
 
 export interface FullCompactionTask {
@@ -30,7 +25,6 @@ export interface IAgentFullCompactionService {
   readonly compacting: FullCompactionTask | null;
   begin(input: FullCompactionInput): boolean;
   cancel(): void;
-  budget(): CompactionBudget;
 
   readonly hooks: Hooks<{
     onWillCompact: FullCompactionTask;
