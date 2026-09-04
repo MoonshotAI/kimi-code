@@ -60,6 +60,7 @@ import {
 import { resolveAgentTaskConfig } from './configSection';
 import { AgentTaskPersistence } from './persist';
 import { taskKey, TaskNotified, TaskStarted, TaskTerminated, TaskWaitDelivered } from './taskOps';
+import { pidAlive } from '#/agent/task/pidAlive';
 import { formatTaskList } from '#/agent/tools/task/task-list/taskListTool';
 import '#/agent/tools/task/task-output/taskOutputTool';
 import '#/agent/tools/task/task-stop/taskStopTool';
@@ -946,6 +947,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     const persistence = this.persistence;
     for (const [taskId, info] of this.ghosts) {
       if (TERMINAL_STATUSES.has(info.status)) continue;
+      if (info.kind === 'process' && pidAlive(info.pid)) continue;
       const updated: AgentTaskInfo = {
         ...info,
         status: 'lost',
