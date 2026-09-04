@@ -349,6 +349,24 @@ describe('GlobalSearchService', () => {
     await expect(service.search({ query: '苹果' })).rejects.toThrow();
   });
 
+  it('lifts the tombstone when the session id is recreated with a newer incarnation', async () => {
+    const s1 = summary('s1', '旧会话', T1);
+    await writeWire(home!, 's1', 'main', [userLine('旧苹果', T1)]);
+    const first = track(makeService(home!, staticIndex([s1])));
+    await first.reindex();
+    await first.dispose();
+
+    await appendFile(join(home!, 'search-index', 'deleted-sessions.jsonl'), 's1\t1000\n', 'utf8');
+    const s1v2 = summary('s1', '新会话', T2);
+    await writeWire(home!, 's1', 'main', [userLine('新香蕉', T2)]);
+    const second = track(makeService(home!, staticIndex([s1v2])));
+    await settleSync(second);
+
+    expect((await second.search({ query: '香蕉' })).items.length).toBe(1);
+    const ledgerRaw = await readFile(join(home!, 'search-index', 'deleted-sessions.jsonl'), 'utf8');
+    expect(ledgerRaw).not.toContain('s1\t1000');
+  });
+
   it('hits session titles as title docs', async () => {
     const s1 = summary('s1', '季度总结报告', T1);
     await writeWire(home!, 's1', 'main', [userLine('随便说点什么', T1)]);

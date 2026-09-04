@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { appendFile, mkdir, open, readFile, readdir, rm, stat } from 'node:fs/promises';
+import { appendFile, mkdir, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 
 import {
@@ -243,19 +243,37 @@ export class SearchIndexCore {
     return join(this.indexDir, 'deleted-sessions.jsonl');
   }
 
-  private async readDeletedLedger(): Promise<Set<string>> {
+  private async readDeletedLedgerRaw(): Promise<string> {
     try {
-      const raw = await readFile(this.deletedLedgerPath, 'utf8');
-      return new Set(raw.split('\n').filter((line) => line.length > 0));
+      return await readFile(this.deletedLedgerPath, 'utf8');
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return new Set();
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return '';
       throw error;
     }
   }
 
+  private async readDeletedLedger(): Promise<Map<string, number>> {
+    const raw = await this.readDeletedLedgerRaw();
+    const ledger = new Map<string, number>();
+    for (const line of raw.split('\n')) {
+      if (line.length === 0) continue;
+      if (line.startsWith('-')) {
+        ledger.delete(line.slice(1).split('\t')[0]!);
+        continue;
+      }
+      const [id, at] = line.split('\t');
+      if (id !== undefined && id.length > 0) ledger.set(id, Number(at ?? 0));
+    }
+    return ledger;
+  }
+
   private async appendDeletedLedger(sessionId: string): Promise<void> {
     await mkdir(dirname(this.deletedLedgerPath), { recursive: true });
-    await appendFile(this.deletedLedgerPath, `${sessionId}\n`, 'utf8');
+    await appendFile(this.deletedLedgerPath, `${sessionId}\t${Date.now()}\n`, 'utf8');
+  }
+
+  private async retractDeletedLedger(sessionId: string): Promise<void> {
+    await appendFile(this.deletedLedgerPath, `-${sessionId}\t${Date.now()}\n`, 'utf8');
   }
 
   ensureOpen(): Promise<void> {
@@ -483,18 +501,49 @@ export class SearchIndexCore {
       if (!currentIds.has(sessionId)) await this.deleteSessionDocs(db, sessionId);
     }
 
-    let deletedLedger: Set<string>;
+    let deletedLedger: Map<string, number>;
+    let deletedLedgerRawBefore = '';
     try {
+      deletedLedgerRawBefore = await this.readDeletedLedgerRaw();
       deletedLedger = await this.readDeletedLedger();
     } catch (error) {
       this.log.warn('global search: failed to read the session deletion ledger; skipping its purge this pass', {
         error: errorMessage(error),
       });
-      deletedLedger = new Set();
+      deletedLedger = new Map();
     }
-    for (const sessionId of deletedLedger) {
+    const summaryById = new Map(sessions.map((s) => [s.id, s]));
+    const retractedIds = new Set<string>();
+    for (const [sessionId, deletedAt] of deletedLedger) {
       if (this.disposed) return { noop: true, sessions: 0, documents: 0 };
+      const incarnation = summaryById.get(sessionId);
+      if (incarnation !== undefined && incarnation.updatedAt > deletedAt) {
+        await this.retractDeletedLedger(sessionId);
+        retractedIds.add(sessionId);
+        continue;
+      }
       await this.deleteSessionDocs(db, sessionId);
+    }
+    if (deletedLedger.size > 0) {
+      try {
+        const initialLines = new Set(deletedLedgerRawBefore.split('\n').filter((l) => l.length > 0));
+        const appended = (await this.readDeletedLedgerRaw())
+          .split('\n')
+          .filter((line) => line.length > 0 && !initialLines.has(line));
+        const retained = [...deletedLedger]
+          .filter(([id]) => currentIds.has(id) && !retractedIds.has(id))
+          .map(([id, at]) => `${id}\t${at}`);
+        const kept = [...retained, ...appended];
+        await writeFile(
+          this.deletedLedgerPath,
+          kept.length > 0 ? `${kept.join('\n')}\n` : '',
+          'utf8',
+        );
+      } catch (error) {
+        this.log.warn('global search: failed to compact the session deletion ledger', {
+          error: errorMessage(error),
+        });
+      }
     }
 
     let indexed = 0;
@@ -907,7 +956,7 @@ export class SearchIndexCore {
     const boundary = page.kind === 'keyset' ? page.boundary : undefined;
     const matched = matchDocs(q, candidates, boundary, budget);
     incomplete ??= matched.incomplete;
-    let deletedLedger: Set<string>;
+    let deletedLedger: Map<string, number>;
     try {
       deletedLedger = await this.readDeletedLedger();
     } catch (error) {

@@ -139,9 +139,37 @@ export class SessionEventBroadcaster {
   private readonly globalTargets = new Set<BroadcastTarget>();
   private readonly diEventTargets = new Set<BroadcastTarget>();
   private readonly pendingStates = new Map<string, Promise<SessionState | undefined>>();
+  private readonly journalRemovalAttempts = new Map<string, number>();
   private readonly maxBufferSize: number;
   private readonly coreEventSubscription: IDisposable;
   private closed = false;
+
+  private async removeSessionJournal(sessionId: string): Promise<void> {
+    try {
+      await rm(sessionJournalPath(this.opts.eventsDir, sessionId), { force: true });
+      this.journalRemovalAttempts.delete(sessionId);
+    } catch (error: unknown) {
+      if (this.closed) return;
+      const attempt = (this.journalRemovalAttempts.get(sessionId) ?? 0) + 1;
+      this.journalRemovalAttempts.set(sessionId, attempt);
+      if (attempt >= 4) {
+        this.opts.logger?.error?.(
+          { sessionId, err: String(error) },
+          'session journal could not be removed after repeated attempts',
+        );
+        this.journalRemovalAttempts.delete(sessionId);
+        return;
+      }
+      this.opts.logger?.warn(
+        { sessionId, attempt, err: String(error) },
+        'session journal removal failed; retrying',
+      );
+      const timer = setTimeout(() => {
+        void this.removeSessionJournal(sessionId);
+      }, attempt * 5_000);
+      timer.unref?.();
+    }
+  }
 
   constructor(
     private readonly opts: {
@@ -655,7 +683,7 @@ export class SessionEventBroadcaster {
             await disposeSessionState(state);
           }
           this.opts.transcriptService?.dropSession(payload.sessionId);
-          await rm(sessionJournalPath(this.opts.eventsDir, payload.sessionId), { force: true });
+          await this.removeSessionJournal(payload.sessionId);
         } catch (error: unknown) {
           this.opts.logger?.warn(
             { sessionId: payload.sessionId, err: String(error) },
