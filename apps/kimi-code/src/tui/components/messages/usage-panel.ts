@@ -6,7 +6,6 @@
 
 import type { Component } from '@moonshot-ai/pi-tui';
 import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
-import { formatDuration } from '@moonshot-ai/kimi-code-oauth';
 import type { SessionUsage, TokenUsage } from '@moonshot-ai/kimi-code-sdk';
 
 import {
@@ -15,6 +14,9 @@ import {
   renderProgressBar,
   safeUsageRatio,
   usagePercent,
+  usageRowLabel,
+  usageRowResetHint,
+  type ManagedUsageRow,
 } from '#/utils/usage/usage-format';
 import { currentTheme } from '#/tui/theme';
 import type { ColorToken } from '#/tui/theme';
@@ -24,38 +26,6 @@ const SIDE_PADDING = 1;
 const BOX_OVERHEAD = LEFT_MARGIN + 2 + 2 * SIDE_PADDING;
 
 type Colorize = (text: string) => string;
-
-export interface ManagedUsageWindow {
-  readonly duration: number;
-  readonly unit: 'minute' | 'hour' | 'day' | 'week';
-}
-
-export interface ManagedUsageRow {
-  readonly name?: string;
-  readonly window?: ManagedUsageWindow;
-  readonly used: number;
-  readonly limit: number;
-  readonly resetAt?: string;
-}
-
-function usageRowLabel(row: ManagedUsageRow): string {
-  const window = row.window;
-  if (window !== undefined) {
-    if (window.unit === 'week') return 'Weekly limit';
-    return `${String(window.duration)}${window.unit[0] ?? ''} limit`;
-  }
-  return row.name ?? 'Limit';
-}
-
-function usageRowResetHint(row: ManagedUsageRow): string | undefined {
-  const resetAt = row.resetAt;
-  if (resetAt === undefined) return undefined;
-  const parsed = Date.parse(resetAt);
-  if (!Number.isFinite(parsed)) return undefined;
-  const diffSec = Math.floor((parsed - Date.now()) / 1000);
-  if (diffSec <= 0) return 'reset';
-  return `resets in ${formatDuration(diffSec)}`;
-}
 
 export interface BoosterWalletInfo {
   readonly balanceCents: number;

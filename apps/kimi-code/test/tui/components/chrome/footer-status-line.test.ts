@@ -133,6 +133,51 @@ describe('FooterComponent status_line items', () => {
 
     expect(plain(footer.render(120)[0]!).trim()).toBe('');
   });
+
+  it('renders the usage badge when the slot is selected and a snapshot is present', () => {
+    const state: AppState = {
+      ...baseState,
+      statusLine: { items: ['usage'], command: null },
+      managedUsage: {
+        summary: { label: 'Weekly limit', used: 73, limit: 100 },
+        limits: [{ label: '5h limit', used: 30, limit: 100 }],
+        fetchedAt: 0,
+      },
+    };
+    const footer = new FooterComponent(state);
+
+    expect(plain(footer.render(120)[0]!)).toContain('Weekly limit: 73%');
+  });
+
+  it('skips the usage badge when the slot is not in items', () => {
+    const state: AppState = {
+      ...baseState,
+      statusLine: { items: ['model', 'cwd'], command: null },
+      managedUsage: {
+        summary: { label: 'Weekly limit', used: 73, limit: 100 },
+        limits: [{ label: '5h limit', used: 30, limit: 100 }],
+        fetchedAt: 0,
+      },
+    };
+    const footer = new FooterComponent(state);
+
+    expect(plain(footer.render(120)[0]!)).not.toContain('Weekly limit');
+  });
+
+  it('skips the usage badge when the snapshot has no summary', () => {
+    const state: AppState = {
+      ...baseState,
+      statusLine: { items: ['usage'], command: null },
+      managedUsage: {
+        summary: null,
+        limits: [{ label: '5h limit', used: 30, limit: 100 }],
+        fetchedAt: 0,
+      },
+    };
+    const footer = new FooterComponent(state);
+
+    expect(plain(footer.render(120)[0]!)).not.toMatch(/\d+%/);
+  });
 });
 
 describe('runStatusLineCommand', () => {

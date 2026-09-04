@@ -5,6 +5,48 @@
  * command itself chalks the colour afterwards.
  */
 
+import { formatDuration } from '@moonshot-ai/kimi-code-oauth';
+
+export interface ManagedUsageWindow {
+  readonly duration: number;
+  readonly unit: 'minute' | 'hour' | 'day' | 'week';
+}
+
+export interface ManagedUsageRow {
+  readonly name?: string;
+  readonly window?: ManagedUsageWindow;
+  readonly used: number;
+  readonly limit: number;
+  readonly resetAt?: string;
+}
+
+/**
+ * Build a human-readable label for a managed-usage row, matching the style
+ * used by the /usage panel: "5h limit", "Weekly limit", etc.
+ */
+export function usageRowLabel(row: ManagedUsageRow): string {
+  const w = row.window;
+  if (w !== undefined) {
+    if (w.unit === 'week') return 'Weekly limit';
+    return `${String(w.duration)}${w.unit[0] ?? ''} limit`;
+  }
+  return row.name ?? 'Limit';
+}
+
+/**
+ * Relative-time reset hint, e.g. "resets in 2h 30m". Returns undefined when
+ * the timestamp is missing or unparseable.
+ */
+export function usageRowResetHint(row: ManagedUsageRow): string | undefined {
+  const resetAt = row.resetAt;
+  if (resetAt === undefined) return undefined;
+  const parsed = Date.parse(resetAt);
+  if (!Number.isFinite(parsed)) return undefined;
+  const diffSec = Math.floor((parsed - Date.now()) / 1000);
+  if (diffSec <= 0) return 'reset';
+  return `resets in ${formatDuration(diffSec)}`;
+}
+
 /**
  * Format a token count in 1024-based units: context sizes are powers of
  * two, so 262144 reads as "256k", not "262.1k". k values at or above

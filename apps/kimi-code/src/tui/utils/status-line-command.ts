@@ -10,6 +10,8 @@
 
 import { spawn } from 'node:child_process';
 
+import type { ManagedUsageSnapshot } from '../types';
+
 export const STATUS_LINE_COMMAND_TIMEOUT_MS = 300;
 export const STATUS_LINE_RERUN_INTERVAL_MS = 1_000;
 export const STATUS_LINE_MAX_CAPTURE_BYTES = 65_536;
@@ -25,6 +27,7 @@ export interface StatusLinePayload {
   maxContextTokens: number;
   sessionId: string;
   version: string;
+  managedUsage?: ManagedUsageSnapshot | null;
 }
 
 export function runStatusLineCommand(

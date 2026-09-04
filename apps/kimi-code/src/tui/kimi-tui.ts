@@ -123,6 +123,10 @@ import { AuthFlowController } from './controllers/auth-flow';
 import { BtwPanelController } from './controllers/btw-panel';
 import { ClipboardImageHintController } from './controllers/clipboard-image-hint';
 import { EditorKeyboardController } from './controllers/editor-keyboard';
+import {
+  createManagedUsagePoller,
+  type ManagedUsagePoller,
+} from './controllers/managed-usage-poller';
 import { SessionEventHandler } from './controllers/session-event-handler';
 import { SessionReplayRenderer } from './controllers/session-replay';
 import { StagingLeaseTracker, type StagingLease } from './controllers/staging-leases';
@@ -387,6 +391,9 @@ export class KimiTUI {
 
   /** Timer that auto-clears the one-shot "moved to background" footer hint. */
   private detachHintClearTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** Polls managed-usage (plan quota) data for the footer `usage` slot. */
+  private managedUsagePoller: ManagedUsagePoller | null = null;
 
   // The currently-mounted approval panel, if any. Kept so the full-screen
   // preview viewer can restore focus to the exact same instance (and its
@@ -1009,6 +1016,8 @@ export class KimiTUI {
     this.disposeTranscriptChildren();
     this.editorKeyboard.dispose();
     this.surveyController.dispose();
+    this.managedUsagePoller?.dispose();
+    this.managedUsagePoller = null;
     this.state.footer.dispose();
     for (const dispose of this.reverseRpcDisposers) {
       dispose();
@@ -1147,9 +1156,17 @@ export class KimiTUI {
       // Dock sizing contract: the footer may shrink to 1 row under extreme
       // height pressure, but never disappears (see createTUIState).
       dock.addChild(footerWrap, { shrink: 1, minSize: 1 });
-      return;
+    } else {
+      this.state.ui.addChild(footerWrap);
     }
-    this.state.ui.addChild(footerWrap);
+    // The poller mounts in both layouts — fullscreen (dock) included.
+    this.managedUsagePoller = createManagedUsagePoller({
+      harness: this.harness,
+      getState: () => this.state.appState,
+      onUpdate: (snapshot) => {
+        this.setAppState({ managedUsage: snapshot });
+      },
+    });
   }
 
   // Fullscreen exit: leave the alternate screen with the frame preserved,
@@ -2159,6 +2176,11 @@ export class KimiTUI {
     const busyChanged = 'streamingPhase' in patch || 'isCompacting' in patch;
     Object.assign(this.state.appState, patch);
     if ('planMode' in patch) this.updateEditorBorderHighlight();
+    if ('model' in patch || 'availableModels' in patch) {
+      // The model's provider decides whether quota polling applies — and a
+      // late-loading model list can resolve the provider key after mount.
+      this.managedUsagePoller?.refreshNow();
+    }
     this.state.footer.setState(this.state.appState);
     this.updateActivityPane();
     if (busyChanged) {
