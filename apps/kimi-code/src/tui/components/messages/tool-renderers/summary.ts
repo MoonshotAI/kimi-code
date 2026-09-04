@@ -57,17 +57,22 @@ function withGlance(glance: GlanceFn | null): ResultRenderer {
   };
 }
 
-function sampleList(labels: readonly string[]): Glance | null {
+function sampleList(labels: readonly string[], total = labels.length): Glance | null {
   if (labels.length === 0) return null;
   const samples = labels.slice(0, OUTCOME_GLANCE_SAMPLES);
-  return { samples: samples.join(', '), moreCount: labels.length - samples.length };
+  return { samples: samples.join(', '), moreCount: total - samples.length };
 }
 
 // Path samples in the shape the mode returns — `path`, `path:line` (the
 // matched text is dropped), or `path:count` — with the tool's notices left
-// out.
-const grepGlance: GlanceFn = (toolCall, result) =>
-  sampleList(parseGrepOutput(toolCall, result.output).entries.map((entry) => entry.label));
+// out. In files and count mode every entry is a file, so a paginated result
+// counts "+N more" against the tool's total file count, not just the page.
+const grepGlance: GlanceFn = (toolCall, result) => {
+  const stats = parseGrepOutput(toolCall, result.output);
+  const labels = stats.entries.map((entry) => entry.label);
+  const total = stats.mode === 'content' ? labels.length : Math.max(labels.length, stats.files);
+  return sampleList(labels, total);
+};
 
 const globGlance: GlanceFn = (_toolCall, result) => sampleList(parseGlobOutput(result.output));
 

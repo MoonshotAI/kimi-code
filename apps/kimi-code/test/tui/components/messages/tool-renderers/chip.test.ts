@@ -106,7 +106,7 @@ describe('chip registry', () => {
         { pattern: 'foo' },
         result('a.ts\nb.ts\nResults truncated to 2 lines (total: 9). Use offset=2 to see more.'),
       ),
-    ).toBe('2 files');
+    ).toBe('9 files');
   });
 
   it('Glob chip leaves the empty-result sentence out of the count', () => {
@@ -247,5 +247,41 @@ describe('Grep chip without line numbers', () => {
         result('a.ts:foo\na.ts:foo again\nb.ts:foo'),
       ),
     ).toBe('3 matches across 2 files');
+  });
+});
+
+describe('Grep chip on paginated and unusual output', () => {
+  it('uses the count-mode summary total instead of the current page', () => {
+    expect(
+      chipFor(
+        'Grep',
+        { pattern: 'foo', output_mode: 'count_matches', head_limit: 2 },
+        result(
+          'Found 40 total occurrences across 12 files.\nResults truncated to 2 lines (total: 12). Use offset=2 to see more.\na.ts:3\nb.ts:2',
+        ),
+      ),
+    ).toBe('40 matches across 12 files');
+  });
+
+  it('keeps a Windows drive letter inside the path of an unnumbered content row', () => {
+    expect(
+      chipFor(
+        'Grep',
+        { pattern: 'foo', output_mode: 'content', '-n': false },
+        result('C:/outside/a.ts:foo\nC:/outside/b.ts:foo'),
+      ),
+    ).toBe('2 matches across 2 files');
+  });
+
+  it('leaves the continuation lines of a Glob traversal warning out of the file count', () => {
+    expect(
+      chipFor(
+        'Glob',
+        { pattern: '**/*.ts' },
+        result(
+          'Glob completed with warnings; some directories could not be read: rg: /x: Permission denied (os error 13)\nrg: /y: Permission denied (os error 13)\na.ts\nb.ts',
+        ),
+      ),
+    ).toBe('2 files');
   });
 });

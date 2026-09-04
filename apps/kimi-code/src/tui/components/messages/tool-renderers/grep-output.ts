@@ -29,19 +29,28 @@ export interface GrepStats {
    * context flags are indistinguishable from context rows.
    */
   readonly matches: number | null;
+  /** Files in the whole result set when the tool reported a total (paginated results), else the files seen. */
   readonly files: number;
 }
 
 // Lines the tools add around the results: the empty-result sentence, the
 // count-mode summary, and the pagination / filtering / timeout notices.
-// Glob prepends its own diagnostics (timeout, truncation, read warnings)
-// and appends an exact-cap count line.
+// Glob prepends its own diagnostics (timeout, truncation, read warnings whose
+// ripgrep stderr continues on `rg:` lines) and appends an exact-cap count line.
 const NOTICE =
-  /^(?:No matches found|No non-sensitive matches found|Found \d+ total (?:non-sensitive )?occurrences? across |Found \d+ matches$|Filtered \d+ sensitive file|Results truncated to \d+ lines|\[Output truncated at \d+ bytes|Grep timed out after |Glob timed out after |Glob completed with warnings|\[stdout truncated at |\[Truncated at |Only the first )/;
+  /^(?:No matches found|No non-sensitive matches found|Found \d+ total (?:non-sensitive )?occurrences? across |Found \d+ matches$|Filtered \d+ sensitive file|Results truncated to \d+ lines|\[Output truncated at \d+ bytes|Grep timed out after |Glob timed out after |Glob completed with warnings|\[stdout truncated at |\[Truncated at |Only the first |rg: )/;
+
+// Totals the tool reports for the whole result set when it paginates: the
+// count-mode summary covers every file, and the pagination notice's total is
+// the full line count — the file count in files mode.
+const COUNT_SUMMARY = /^Found (\d+) total (?:non-sensitive )?occurrences? across (\d+) files?\.$/m;
+const PAGINATION_TOTAL = /^Results truncated to \d+ lines \(total: (\d+)/m;
 
 // `path:line:text`; context lines use `-` separators and are not matches.
 const CONTENT_MATCH = /^(.+?):(\d+):/;
 const COUNT_LINE = /^(.+):(\d+)$/;
+// A Windows drive letter carries its own colon; the separator search skips it.
+const DRIVE_PREFIX = /^[A-Za-z]:[\\/]/;
 
 function resultLines(output: string): string[] {
   if (output.length === 0) return [];
@@ -61,7 +70,9 @@ export function parseGrepOutput(toolCall: ToolCallBlockData, output: string): Gr
 
   if (mode === 'files_with_matches') {
     const entries = lines.map((path) => ({ path, label: path }));
-    return { mode, entries, matches: entries.length, files: entries.length };
+    const total = PAGINATION_TOTAL.exec(output)?.[1];
+    const files = total === undefined ? entries.length : Number(total);
+    return { mode, entries, matches: files, files };
   }
 
   if (mode === 'count_matches') {
@@ -72,6 +83,10 @@ export function parseGrepOutput(toolCall: ToolCallBlockData, output: string): Gr
       if (path === undefined || count === undefined) continue;
       entries.push({ path, label: line });
       matches += Number(count);
+    }
+    const [, totalMatches, totalFiles] = COUNT_SUMMARY.exec(output) ?? [];
+    if (totalMatches !== undefined && totalFiles !== undefined) {
+      return { mode, entries, matches: Number(totalMatches), files: Number(totalFiles) };
     }
     return { mode, entries, matches, files: entries.length };
   }
@@ -100,7 +115,7 @@ export function parseGrepOutput(toolCall: ToolCallBlockData, output: string): Gr
     }
     // Unnumbered rows are labelled by their path alone, so the glance lists
     // each file once instead of repeating it per match or context row.
-    const idx = line.indexOf(':');
+    const idx = line.indexOf(':', DRIVE_PREFIX.test(line) ? 2 : 0);
     const path = idx > 0 ? line.slice(0, idx) : line;
     rows++;
     if (paths.has(path)) continue;

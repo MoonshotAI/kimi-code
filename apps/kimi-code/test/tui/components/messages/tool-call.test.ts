@@ -2354,3 +2354,51 @@ describe('ToolCallComponent hasHiddenContent for a solo subagent card', () => {
     component.dispose();
   });
 });
+
+describe('ToolCallComponent hasHiddenContent for width-cut and background results', () => {
+  function card(
+    name: string,
+    args: Record<string, unknown>,
+    output: string,
+    isError = false,
+  ): ToolCallComponent {
+    return new ToolCallComponent(
+      { id: 'tc', name, args },
+      { tool_call_id: 'tc', output, is_error: isError },
+    );
+  }
+
+  it('follows the line-count rule for a background question', () => {
+    const legacyBlock = [
+      'task_id: question-aaaaaaaa',
+      'description: Which database?',
+      'status: running',
+      'automatic_notification: true',
+      'next_step: Continue your current work.',
+      'next_step: Use TaskOutput for a snapshot.',
+      'next_step: Use TaskStop only to cancel.',
+      'human_shell_hint: The pending question is also visible in /tasks.',
+    ].join('\n');
+    expect(card('AskUserQuestion', { background: true }, legacyBlock).hasHiddenContent()).toBe(true);
+    const shortBlock = 'task_id: question-aaaaaaaa\nstatus: running\nnext_step: Continue your work.';
+    expect(card('AskUserQuestion', { background: true }, shortBlock).hasHiddenContent()).toBe(false);
+    expect(card('AskUserQuestion', {}, legacyBlock).hasHiddenContent()).toBe(false);
+  });
+
+  it('treats a failure whose one long line wraps past the preview as hidden, and keeps that while expanded', () => {
+    const longError = `Error: ${'x'.repeat(200)}`;
+    const bash = card('Bash', { command: 'ls' }, longError, true);
+    expect(bash.hasHiddenContent()).toBe(false);
+    bash.render(40);
+    expect(bash.hasHiddenContent()).toBe(true);
+    bash.setExpanded(true);
+    bash.render(40);
+    expect(bash.hasHiddenContent()).toBe(true);
+    bash.dispose();
+
+    const generic = card('SomethingUnknown', {}, longError, true);
+    generic.render(40);
+    expect(generic.hasHiddenContent()).toBe(true);
+    generic.dispose();
+  });
+});

@@ -39,6 +39,7 @@ import { countNonEmptyLines, pickChip } from './tool-renderers/chip';
 import { buildGoalToolHeader } from './tool-renderers/goal';
 import { computeWriteStats } from './tool-renderers/chip';
 import { nonEmptyLines, outcomeLine } from './tool-renderers/outcome';
+import { TruncatedOutputComponent } from './tool-renderers/truncated';
 import { isGenericToolResult, pickResultRenderer } from './tool-renderers/registry';
 import { buildWaitForHeader } from './tool-renderers/wait-for';
 
@@ -579,7 +580,7 @@ export class ToolCallComponent extends Container {
    * content is rebuilt, or live output grows.
    */
   private hiddenContent: boolean | undefined = undefined;
-  /** Width-dependent half of hasHiddenContent(); recomputed on every render. */
+  /** Width-dependent half of hasHiddenContent(); recomputed on every collapsed render. */
   private truncatedAtLastRender = false;
   private result: ToolResultBlockData | undefined;
   private ui: TUI | undefined;
@@ -736,16 +737,22 @@ export class ToolCallComponent extends Container {
       i++;
     }
 
-    // An outcome row cut to this width hides the remainder of a long line,
-    // which ctrl+o reveals wrapped. The header (child 1) is excluded — a cut
-    // key argument is not what ctrl+o reveals for most tools; Bash is the
-    // exception, its full command renders in the body once expanded.
-    this.truncatedAtLastRender = this.children.some(
-      (child, index) =>
-        child instanceof TruncatedHeaderLine &&
-        (index !== 1 || this.toolCall.name === 'Bash') &&
-        child.wasTruncated(),
-    );
+    // An outcome row cut to this width hides the remainder of a long line, and
+    // an error preview cut to its row cap hides the rest of a wrapped error;
+    // ctrl+o reveals both. The header (child 1) is excluded — a cut key
+    // argument is not what ctrl+o reveals for most tools; Bash is the
+    // exception, its full command renders in the body once expanded. The
+    // value is kept while expanded so the footer can still offer collapse.
+    if (!this.expanded) {
+      this.truncatedAtLastRender = this.children.some(
+        (child, index) =>
+          (child instanceof TruncatedHeaderLine &&
+            (index !== 1 || this.toolCall.name === 'Bash') &&
+            child.wasTruncated()) ||
+          ((child instanceof TruncatedOutputComponent || child instanceof ShellExecutionComponent) &&
+            child.wasTruncated()),
+      );
+    }
 
     if (allReused) {
       return cache!.lines;
@@ -834,10 +841,17 @@ export class ToolCallComponent extends Container {
           !isExitPlanModeOutcomeOutput(result.output) &&
           nonEmptyLines(result.output).length > OUTCOME_MAX_LINES
         );
+      case 'AskUserQuestion':
+        // A foreground question renders its answers in an expansion-independent
+        // view; a background one returns a metadata block through the generic
+        // renderer and follows the line-count rule (the legacy engine's block
+        // runs past the outcome rows).
+        return (
+          args['background'] === true && nonEmptyLines(result.output).length > OUTCOME_MAX_LINES
+        );
       case 'AgentSwarm':
       case 'TodoList':
       case 'EnterPlanMode':
-      case 'AskUserQuestion':
         return false;
       default:
         return nonEmptyLines(result.output).length > OUTCOME_MAX_LINES;

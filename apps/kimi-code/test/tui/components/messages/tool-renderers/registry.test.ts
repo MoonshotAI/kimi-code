@@ -488,3 +488,35 @@ describe('outcome rows', () => {
     expect(plain(rows[0] ?? '')).toBe('  FAIL src/a.test.ts');
   });
 });
+
+describe('Grep glance on paginated and Windows output', () => {
+  it('counts "+N more" against the tool-reported file total of a paginated result', () => {
+    const renderer = pickResultRenderer('Grep');
+    const out = strip(
+      joinRender(
+        renderer(
+          call('Grep', { pattern: 'foo', head_limit: 4 }),
+          result(
+            'a.ts\nb.ts\nc.ts\nd.ts\nResults truncated to 4 lines (total: 10). Use offset=4 to see more.',
+          ),
+          ctx,
+        ),
+      ),
+    );
+    expect(out).toBe('  a.ts, b.ts, c.ts, +7 more');
+  });
+
+  it('keeps a Windows drive letter in an unnumbered content glance', () => {
+    const renderer = pickResultRenderer('Grep');
+    const out = strip(
+      joinRender(
+        renderer(
+          call('Grep', { pattern: 'foo', output_mode: 'content', '-n': false }),
+          result('C:/outside/a.ts:foo\nC:/outside/b.ts:foo'),
+          ctx,
+        ),
+      ),
+    );
+    expect(out).toBe('  C:/outside/a.ts, C:/outside/b.ts');
+  });
+});

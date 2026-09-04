@@ -32,6 +32,8 @@ export class TruncatedOutputComponent implements Component {
   private readonly indent: number;
   private readonly expandHint: boolean;
   private readonly tail: boolean;
+  /** Whether the last collapsed render cut rows; kept while expanded so the footer can still offer collapse. */
+  private truncatedAtLastRender = false;
 
   constructor(
     output: string,
@@ -77,8 +79,14 @@ export class TruncatedOutputComponent implements Component {
     return ' '.repeat(indentWidth) + currentTheme.dim(truncateToWidth(hint, hintWidth, '…'));
   }
 
+  /** Whether the collapsed preview last cut rows away, which ctrl+o reveals. */
+  wasTruncated(): boolean {
+    return this.truncatedAtLastRender;
+  }
+
   render(width: number): string[] {
     const contentLines = this.textComponent.render(width);
+    if (!this.expanded) this.truncatedAtLastRender = contentLines.length > this.maxLines;
 
     if (this.expanded || contentLines.length <= this.maxLines) {
       return contentLines;

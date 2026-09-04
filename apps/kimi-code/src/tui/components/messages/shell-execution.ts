@@ -69,6 +69,13 @@ export class ShellExecutionComponent extends Container {
       }),
     );
   }
+
+  /** Whether the collapsed result preview last cut rows away; drives the footer's ctrl+o hint. */
+  wasTruncated(): boolean {
+    return this.children.some(
+      (child) => child instanceof TruncatedOutputComponent && child.wasTruncated(),
+    );
+  }
 }
 
 export const shellExecutionResultRenderer: ResultRenderer = (
