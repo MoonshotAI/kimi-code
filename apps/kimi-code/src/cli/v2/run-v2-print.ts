@@ -927,21 +927,20 @@ function collectSessionAgentHandles(
 }
 
 /**
- * Drain every session agent's prompt queue, cancel queued and active turns,
- * then wait for the loops to go idle and the prompt queues to empty. A
- * termination signal can arrive mid-turn: without this, the turn's
- * cancellation and closing records would only be produced by dispose()'s
- * asynchronous teardown — after the wire flush, and after process.exit.
- * Draining and cancelling are no-ops on idle agents, so the normal
- * (completed/failed turn) exit pays nothing here.
+ * Stop every session agent's task producers, drain prompt queues, cancel
+ * queued and active turns, then wait for the loops to go idle and the prompt
+ * queues to empty. A termination signal can arrive mid-turn: without this,
+ * the turn's cancellation and closing records would only be produced by
+ * dispose()'s asynchronous teardown — after the wire flush, and after
+ * process.exit. Stopping and draining are no-ops on idle agents, so the
+ * normal (completed/failed turn) exit pays nothing here.
  *
  * On success returns a release function: every loop is left holding a
- * quiescence guard so late producers (a background-task completion or a cron
- * fire, both of which enqueue straight into the loop, bypassing the prompt
- * queue) cannot start a new turn — and new records — after the prompt
- * queues read empty. The caller holds the release across the wire flush and
- * disposal. Returns undefined when quiescence could not be reached within
- * the caller's bound.
+ * quiescence guard so late producers (a cron fire enqueues straight into the
+ * loop, bypassing the prompt queue) cannot start a new turn — and new
+ * records — after the prompt queues read empty. The caller holds the release
+ * across the wire flush and disposal. Returns undefined when quiescence
+ * could not be reached within the caller's bound.
  */
 async function quiesceSessionAgents(
   session: ISessionScopeHandle,
@@ -965,6 +964,20 @@ async function quiesceSessionAgents(
       return [];
     }
   });
+  // Task producers bypass the prompt queue and the loop guard below: their
+  // termination records are dispatched straight to the wire (and disposal
+  // would force-stop them after the flush). Stop them up front — settling a
+  // task dispatches its termination record now, so the flush can persist it
+  // (mirrors AgentLifecycleService.remove()).
+  await Promise.allSettled(
+    handles.flatMap((handle) => {
+      try {
+        return [handle.accessor.get(IAgentTaskService).stopAllOnExit('Session closed')];
+      } catch {
+        return [];
+      }
+    }),
+  );
   // Repeat until a full pass finds every queue empty and every loop freezable:
   // a prompt can surface after one pass already ran — from startNext's launch
   // window (the prompt left `pending` and is not yet `active`, so drain could

@@ -187,7 +187,7 @@ function makeFakeHarness() {
         list: vi.fn(() => ({ launching: false, active: undefined, pending: [] })),
       },
     ],
-    [IAgentTaskService, { list: vi.fn(() => []) }],
+    [IAgentTaskService, { list: vi.fn(() => []), stopAllOnExit: vi.fn(async () => []) }],
     [IAgentCronService, { getNextFireTime: vi.fn(() => null) }],
     [IAgentGoalService, goal],
     [IEventDispatcher, { flush: vi.fn(async () => {}) }],
@@ -836,6 +836,13 @@ describe('runV2Print', () => {
     });
     const guardDispose = vi.fn();
     loop.tryAcquireQuiescence = vi.fn(() => ({ dispose: guardDispose }));
+    const taskService = agentServices.get(IAgentTaskService) as {
+      stopAllOnExit: ReturnType<typeof vi.fn>;
+    };
+    taskService.stopAllOnExit = vi.fn(async () => {
+      if (!order.includes('stop')) order.push('stop');
+      return [];
+    });
     const dispatcher = agentServices.get(IEventDispatcher) as {
       flush: ReturnType<typeof vi.fn>;
     };
@@ -908,14 +915,14 @@ describe('runV2Print', () => {
     // the loop to have flushed if it were not actually waiting on the queue.
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(promptService.drain).toHaveBeenCalled();
-    expect(order).toEqual(['cancel', 'settled']);
+    expect(order).toEqual(['stop', 'cancel', 'settled']);
     promptPhase = 'active';
     await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(order).toEqual(['cancel', 'settled']);
+    expect(order).toEqual(['stop', 'cancel', 'settled']);
     promptPhase = 'empty';
     await sigintRun;
 
-    expect(order).toEqual(['cancel', 'settled', 'flush', 'exit:130']);
+    expect(order).toEqual(['stop', 'cancel', 'settled', 'flush', 'exit:130']);
     // Producers stay frozen across the flush and disposal: the guard taken
     // during quiesce is only released after app.dispose().
     expect(loop.tryAcquireQuiescence).toHaveBeenCalled();
