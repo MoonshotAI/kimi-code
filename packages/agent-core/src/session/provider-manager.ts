@@ -307,11 +307,13 @@ function toKosongProviderConfig(
         // receive the unified `User-Agent` (no `X-Msh-*` device identity),
         // matching the other non-Kimi transports. Provider `customHeaders`
         // still win on conflict.
-        ...defaultHeadersField(
-          provider.type === 'kimi' && modelProtocol === 'anthropic'
-            ? { ...envCustomHeaders, ...kimiRequestHeaders, ...provider.customHeaders }
-            : { ...envCustomHeaders, ...kimiUserAgentHeader(kimiRequestHeaders), ...provider.customHeaders },
-        ),
+        ...defaultHeadersField({
+          ...(provider.type === 'kimi' && modelProtocol === 'anthropic'
+            ? { ...envCustomHeaders, ...kimiRequestHeaders }
+            : { ...envCustomHeaders, ...kimiUserAgentHeader(kimiRequestHeaders) }),
+          ...(promptCacheKey !== undefined ? { 'x-opencode-session': promptCacheKey } : {}),
+          ...provider.customHeaders,
+        }),
       };
     }
     case 'openai':
@@ -333,6 +335,7 @@ function toKosongProviderConfig(
         ...defaultHeadersField({
           ...envCustomHeaders,
           ...kimiUserAgentHeader(kimiRequestHeaders),
+          ...(promptCacheKey !== undefined ? { 'x-opencode-session': promptCacheKey } : {}),
           ...provider.customHeaders,
         }),
       };
@@ -346,6 +349,7 @@ function toKosongProviderConfig(
         ...defaultHeadersField({
           ...envCustomHeaders,
           ...kimiRequestHeaders,
+          ...(promptCacheKey !== undefined ? { 'x-opencode-session': promptCacheKey } : {}),
           ...provider.customHeaders,
         }),
       };
@@ -359,6 +363,7 @@ function toKosongProviderConfig(
         ...defaultHeadersField({
           ...envCustomHeaders,
           ...kimiUserAgentHeader(kimiRequestHeaders),
+          ...(promptCacheKey !== undefined ? { 'x-opencode-session': promptCacheKey } : {}),
           ...provider.customHeaders,
         }),
       };
@@ -376,6 +381,7 @@ function toKosongProviderConfig(
         ...defaultHeadersField({
           ...envCustomHeaders,
           ...kimiUserAgentHeader(kimiRequestHeaders),
+          ...(promptCacheKey !== undefined ? { 'x-opencode-session': promptCacheKey } : {}),
           ...provider.customHeaders,
         }),
       };
@@ -399,6 +405,7 @@ function toKosongProviderConfig(
         ...defaultHeadersField({
           ...envCustomHeaders,
           ...kimiUserAgentHeader(kimiRequestHeaders),
+          ...(promptCacheKey !== undefined ? { 'x-opencode-session': promptCacheKey } : {}),
           ...provider.customHeaders,
         }),
       };
