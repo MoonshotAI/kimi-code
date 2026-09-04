@@ -71,6 +71,7 @@ export function groupMessagesIntoSnapshot(
   options?: {
     readonly taskOriginTurnTaskIds?: ReadonlySet<string>;
     readonly steeredContents?: ReadonlyMap<string, ReadonlyMap<string, number>>;
+    readonly steeredPromptIds?: readonly (readonly string[] | undefined)[];
   },
 ): AgentTranscriptSnapshot {
   const items: TranscriptItem[] = [];
@@ -78,6 +79,8 @@ export function groupMessagesIntoSnapshot(
   const steeredContents = new Map(
     [...(options?.steeredContents ?? [])].map(([key, byKind]) => [key, new Map(byKind)]),
   );
+  const steeredPromptIds = options?.steeredPromptIds ?? [];
+  let steeredPromptIdIndex = 0;
   let turn: TurnDraft | undefined;
   let pendingNotificationFrames: {
     text: string;
@@ -225,6 +228,16 @@ export function groupMessagesIntoSnapshot(
     if (!isTaskOrigin) prevNonTaskRole = message.role;
 
     if (message.role === 'user') {
+      const contentKey = JSON.stringify(message.content ?? []);
+      const steerKind = originKind ?? 'user';
+      const steeredByKind = steeredContents.get(contentKey);
+      const steeredRemaining = steeredByKind?.get(steerKind) ?? 0;
+      const matchedSteer = steeredByKind !== undefined && steeredRemaining > 0;
+      const steeredPromptId = matchedSteer ? steeredPromptIds[steeredPromptIdIndex] : undefined;
+      if (matchedSteer) {
+        steeredByKind.set(steerKind, steeredRemaining - 1);
+        steeredPromptIdIndex += 1;
+      }
       if (originKind !== undefined && HIDDEN_USER_ORIGINS.has(originKind)) {
         if (opensOwnTurn(message)) {
           const opening =
@@ -240,12 +253,7 @@ export function groupMessagesIntoSnapshot(
         pushMarker(markerKey, { text: textOf(message), origin: message.origin });
         continue;
       }
-      const contentKey = JSON.stringify(message.content ?? []);
-      const steerKind = originKind ?? 'user';
-      const steeredByKind = steeredContents.get(contentKey);
-      const steeredRemaining = steeredByKind?.get(steerKind) ?? 0;
-      if (steeredByKind !== undefined && steeredRemaining > 0) {
-        steeredByKind.set(steerKind, steeredRemaining - 1);
+      if (matchedSteer) {
         const bundled = bundledSkillActivations(message);
         const parts = message.content ?? [];
         bundled.forEach((activation, index) => {
@@ -260,6 +268,7 @@ export function groupMessagesIntoSnapshot(
           text: opening.text,
           taskId: undefined,
           attachmentIds: opening.attachmentIds,
+          promptIds: steeredPromptId,
           origin: projectTranscriptUserOrigin(message.origin),
           steered: true,
         });

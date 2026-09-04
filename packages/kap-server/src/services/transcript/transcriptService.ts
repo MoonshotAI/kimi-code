@@ -469,28 +469,76 @@ export class TranscriptService {
     }
     const messages = [...reduceContextTranscript(records).entries];
     const taskOriginTurnTaskIds = new Set<string>();
-    const steeredContents = new Map<string, Map<string, number>>();
-    const anchorStack: { taskIdsSnapshot: Set<string> }[] = [];
+    let steeredContents = new Map<string, Map<string, number>>();
+    const steeredPromptIds: (readonly string[] | undefined)[] = [];
+    const pendingSteerPromptIds: (readonly string[])[] = [];
+    const anchorStack: {
+      taskIdsSnapshot: Set<string>;
+      steeredSnapshot: Map<string, Map<string, number>>;
+      pendingSteerCount: number;
+      steeredIdsCount: number;
+    }[] = [];
     let anchorFloor = 0;
+    let floorSteerState:
+      | {
+          steeredSnapshot: Map<string, Map<string, number>>;
+          pendingSteerCount: number;
+          steeredIdsCount: number;
+        }
+      | undefined;
     let sawTurnPrompt = false;
     for (const record of records) {
       if (record.type === 'context.undo') {
         const count = typeof record['count'] === 'number' ? (record['count'] as number) : 0;
+        let poppedAny = false;
         for (let i = 0; i < count && anchorStack.length > anchorFloor; i++) {
           const popped = anchorStack.pop()!;
+          poppedAny = true;
           taskOriginTurnTaskIds.clear();
           for (const id of popped.taskIdsSnapshot) taskOriginTurnTaskIds.add(id);
+        }
+        if (poppedAny) {
+          const top =
+            anchorStack.length > anchorFloor ? anchorStack[anchorStack.length - 1] : undefined;
+          pendingSteerPromptIds.length = top?.pendingSteerCount ?? floorSteerState?.pendingSteerCount ?? 0;
+          steeredPromptIds.length = top?.steeredIdsCount ?? floorSteerState?.steeredIdsCount ?? 0;
+          steeredContents = new Map(
+            [...(top?.steeredSnapshot ?? floorSteerState?.steeredSnapshot ?? [])].map(
+              ([key, byKind]) => [key, new Map(byKind)],
+            ),
+          );
         }
         continue;
       }
       if (record.type === 'context.clear') {
         anchorFloor = anchorStack.length;
+        floorSteerState = {
+          steeredSnapshot: new Map(
+            [...steeredContents].map(([key, byKind]) => [key, new Map(byKind)]),
+          ),
+          pendingSteerCount: pendingSteerPromptIds.length,
+          steeredIdsCount: steeredPromptIds.length,
+        };
         continue;
       }
       if (record.type === 'context.append_message') {
         const message = (record as { message?: ContextMessage }).message;
         if (message !== undefined && isUndoAnchor(message)) {
-          anchorStack.push({ taskIdsSnapshot: new Set(taskOriginTurnTaskIds) });
+          anchorStack.push({
+            taskIdsSnapshot: new Set(taskOriginTurnTaskIds),
+            steeredSnapshot: new Map(
+              [...steeredContents].map(([key, byKind]) => [key, new Map(byKind)]),
+            ),
+            pendingSteerCount: pendingSteerPromptIds.length,
+            steeredIdsCount: steeredPromptIds.length,
+          });
+        }
+        continue;
+      }
+      if (record.type === 'prompt.steered') {
+        const promptIds = record['promptIds'];
+        if (Array.isArray(promptIds) && promptIds.every((id) => typeof id === 'string')) {
+          pendingSteerPromptIds.push(promptIds as readonly string[]);
         }
         continue;
       }
@@ -503,6 +551,11 @@ export class TranscriptService {
           const byKind = steeredContents.get(key) ?? new Map<string, number>();
           byKind.set(kind, (byKind.get(kind) ?? 0) + 1);
           steeredContents.set(key, byKind);
+          steeredPromptIds.push(
+            kind === 'user' && pendingSteerPromptIds.length > 0
+              ? pendingSteerPromptIds.shift()
+              : undefined,
+          );
         }
         continue;
       }
@@ -519,7 +572,9 @@ export class TranscriptService {
     }
     const base = groupMessagesIntoSnapshot(
       messages,
-      sawTurnPrompt || steeredContents.size > 0 ? { taskOriginTurnTaskIds, steeredContents } : undefined,
+      sawTurnPrompt || steeredContents.size > 0
+        ? { taskOriginTurnTaskIds, steeredContents, steeredPromptIds }
+        : undefined,
     );
     const folded = foldWireRecordFacts(projectQuestionInteractionRecords(records, sessionId), base, {
       resolvePlanRevisionKey: (key) =>

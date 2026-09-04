@@ -548,6 +548,51 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     });
   });
 
+  it('stamps the folded steer frame with the prompt ids from the steer queue', () => {
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: 'steered in' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] },
+      ],
+      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), new Map([['user', 1]])]]), steeredPromptIds: [['prompt_a']] },
+    );
+
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.steps[1]?.frames[0]).toMatchObject({
+      kind: 'text',
+      role: 'user',
+      text: 'steered in',
+      promptIds: ['prompt_a'],
+    });
+  });
+
+  it('pairs repeated steers of identical content with their prompt ids in order', () => {
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: 'same' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: 'same' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'noted again' }], toolCalls: [] },
+      ],
+      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'same' }]), new Map([['user', 2]])]]), steeredPromptIds: [['prompt_a'], ['prompt_b']] },
+    );
+
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    const steerFrames = turn.steps.flatMap((step) =>
+      step.frames.filter((frame) => frame.kind === 'text' && frame.role === 'user'),
+    );
+    expect(steerFrames.map((frame) => frame.kind === 'text' && frame.role === 'user' ? frame.promptIds : undefined)).toEqual([
+      ['prompt_a'],
+      ['prompt_b'],
+    ]);
+  });
+
   it('keeps a trailing steered message visible by appending it to the last step', () => {
     const snapshot = groupMessagesIntoSnapshot(
       [
