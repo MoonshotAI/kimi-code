@@ -701,6 +701,11 @@ export function buildColdHistory(
       } as ServerMessage);
     }
     const visibleSteps = turn.steps.filter((step) => !step.dropped && (step.endTime !== undefined || step.interrupted));
+    const timedUsers = turn.users
+      .filter((candidate) => candidate.sortTime !== undefined)
+      .slice()
+      .sort((a, b) => (a.sortTime ?? 0) - (b.sortTime ?? 0));
+    let timedUserCursor = 0;
     let openingUsersPlaced = false;
     for (const step of visibleSteps) {
       const stepId = `${turnId}.${step.ordinal}`;
@@ -746,13 +751,13 @@ export function buildColdHistory(
         }
         openingUsersPlaced = true;
       }
-      for (const user of turn.users.filter(
-        (candidate) =>
-          candidate.sortTime !== undefined &&
-          (candidate.sortTime ?? 0) >= (step.beginTime ?? 0) &&
-          (step.endTime === undefined || (candidate.sortTime ?? 0) <= step.endTime),
-      )) {
-        content.push({ time: user.sortTime ?? 0, msg: userMessageFor(user, turnId) });
+      while (timedUserCursor < timedUsers.length) {
+        const user = timedUsers[timedUserCursor]!;
+        const userTime = user.sortTime ?? 0;
+        const isLastStep = step === visibleSteps[visibleSteps.length - 1];
+        if (!isLastStep && step.endTime !== undefined && userTime > step.endTime) break;
+        content.push({ time: userTime, msg: userMessageFor(user, turnId) });
+        timedUserCursor += 1;
       }
       for (const text of step.texts) {
         content.push({
