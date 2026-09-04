@@ -37,7 +37,7 @@ import type { RunnableToolExecution } from '#/tool/toolContract';
 import { createFakeHostFs } from '../../tools/fixtures/fake-exec';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
 import { registerTestAgentWire, registerTestEventDispatcher, testWireScope } from '../../wire/stubs';
-import { createTestAgent } from '../../harness';
+import { createTestAgent, homeDirServices } from '../../harness';
 
 const SCOPE = 'wire';
 const KEY = 'file-history-test';
@@ -486,9 +486,10 @@ describe('AgentFileHistoryService', () => {
 describe('file history through real scripted turns', () => {
   it('checkpoints edits across turns and serves exact per-turn changes', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'file-history-e2e-'));
+    const home = await mkdtemp(join(tmpdir(), 'file-history-home-'));
     const file = join(dir, 'notes.txt');
     await writeFile(file, 'alpha\nbeta\n');
-    const ctx = createTestAgent();
+    const ctx = createTestAgent(homeDirServices(home));
     try {
       await ctx.rpc.setPermission({ mode: 'yolo' });
 
@@ -536,9 +537,14 @@ describe('file history through real scripted turns', () => {
         { path: file, status: 'modified', additions: 1, deletions: 1 },
       ]);
       expect(await service.changes(1)).toEqual([]);
+
+      expect(await service.turnRecorded(0)).toBe(true);
+      expect(await service.turnRecorded(1)).toBe(false);
+      expect(await service.turnRecorded(99)).toBe(false);
     } finally {
       await ctx.dispose();
       await rm(dir, { recursive: true, force: true });
+      await rm(home, { recursive: true, force: true });
     }
   });
 
