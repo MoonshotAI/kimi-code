@@ -804,7 +804,7 @@ export class ToolCallComponent extends Container {
     // its subagent block is a fixed-height window either way, so ctrl+o
     // changes nothing there.
     if (this.isSingleSubagentView()) return false;
-    if (name === 'Bash' && str(args['command']).includes('\n')) return true;
+    if (this.callPreviewHidesContent()) return true;
     const { result } = this;
     if (result === undefined) return nonEmptyLines(this.liveOutput).length > 1;
     if (result.output.length === 0) return false;
@@ -819,21 +819,6 @@ export class ToolCallComponent extends Container {
       case 'Grep':
       case 'Glob':
         return true;
-      case 'Edit': {
-        const oldStr = str(args['old_string']);
-        const newStr = str(args['new_string']);
-        if (oldStr.length === 0 && newStr.length === 0) return false;
-        // Mirror buildCallPreview exactly: context rows and inter-hunk
-        // separators also consume the preview cap, so counting only
-        // added/removed rows undercounts changes in distant hunks.
-        const filePath = str(args['file_path'] ?? args['path']);
-        return (
-          renderDiffLinesClustered(oldStr, newStr, filePath, { contextLines: 3 }).length >
-          COMMAND_PREVIEW_LINES
-        );
-      }
-      case 'Write':
-        return computeWriteStats(args).lines > COMMAND_PREVIEW_LINES;
       case 'ExitPlanMode':
         // An approved plan is fully rendered by the call preview and the
         // outcome body is expansion-independent; only a non-outcome result
@@ -856,6 +841,37 @@ export class ToolCallComponent extends Container {
         return false;
       default:
         return nonEmptyLines(result.output).length > OUTCOME_MAX_LINES;
+    }
+  }
+
+  /**
+   * Whether the args-driven call preview keeps content out of the collapsed
+   * card whatever the result: a multi-line Bash command shows only its first
+   * line in the header, and the Edit diff and Write content previews are
+   * capped, so a failed call can still have more to show behind ctrl+o.
+   */
+  private callPreviewHidesContent(): boolean {
+    const { name, args } = this.toolCall;
+    switch (name) {
+      case 'Bash':
+        return str(args['command']).includes('\n');
+      case 'Edit': {
+        const oldStr = str(args['old_string']);
+        const newStr = str(args['new_string']);
+        if (oldStr.length === 0 && newStr.length === 0) return false;
+        // Mirror buildCallPreview exactly: context rows and inter-hunk
+        // separators also consume the preview cap, so counting only
+        // added/removed rows undercounts changes in distant hunks.
+        const filePath = str(args['file_path'] ?? args['path']);
+        return (
+          renderDiffLinesClustered(oldStr, newStr, filePath, { contextLines: 3 }).length >
+          COMMAND_PREVIEW_LINES
+        );
+      }
+      case 'Write':
+        return computeWriteStats(args).lines > COMMAND_PREVIEW_LINES;
+      default:
+        return false;
     }
   }
 

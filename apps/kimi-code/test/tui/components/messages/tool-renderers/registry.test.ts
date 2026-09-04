@@ -550,3 +550,21 @@ describe('spilled tool output', () => {
     );
   });
 });
+
+describe('Grep glance on a paginated content result', () => {
+  it('counts "+N more" against the tool-reported match total', () => {
+    const renderer = pickResultRenderer('Grep');
+    const out = strip(
+      joinRender(
+        renderer(
+          call('Grep', { pattern: 'foo', output_mode: 'content', head_limit: 3 }),
+          result(
+            'src/a.ts:1:foo\nsrc/a.ts:9:foo\nsrc/b.ts:2:foo\nResults truncated to 3 lines (total: 1000). Use offset=3 to see more.',
+          ),
+          ctx,
+        ),
+      ),
+    );
+    expect(out).toBe('  src/a.ts:1, src/a.ts:9, src/b.ts:2, +997 more');
+  });
+});

@@ -23,6 +23,11 @@ export interface GrepStats {
   /** Glance samples in output order; unnumbered content rows collapse to one entry per file. */
   readonly entries: readonly GrepEntry[];
   /**
+   * Entries in the whole result set — the tool-reported total when the
+   * result is paginated — which the glance counts its "+N more" against.
+   */
+  readonly total: number;
+  /**
    * What the mode counts: files in `files_with_matches`, matching lines in
    * `content`, the summed per-file counts in `count_matches`. `null` when the
    * count is not derivable from the text: unnumbered content rows with
@@ -31,6 +36,8 @@ export interface GrepStats {
   readonly matches: number | null;
   /** Files in the whole result set when the tool reported a total (paginated results), else the files seen. */
   readonly files: number;
+  /** True when a paginated content result only shows the files on its page, so `files` is a lower bound. */
+  readonly filesPartial: boolean;
 }
 
 // Lines the tools add around the results: the empty-result sentence, the
@@ -72,7 +79,7 @@ export function parseGrepOutput(toolCall: ToolCallBlockData, output: string): Gr
     const entries = lines.map((path) => ({ path, label: path }));
     const total = PAGINATION_TOTAL.exec(output)?.[1];
     const files = total === undefined ? entries.length : Number(total);
-    return { mode, entries, matches: files, files };
+    return { mode, entries, total: files, matches: files, files, filesPartial: false };
   }
 
   if (mode === 'count_matches') {
@@ -86,9 +93,16 @@ export function parseGrepOutput(toolCall: ToolCallBlockData, output: string): Gr
     }
     const [, totalMatches, totalFiles] = COUNT_SUMMARY.exec(output) ?? [];
     if (totalMatches !== undefined && totalFiles !== undefined) {
-      return { mode, entries, matches: Number(totalMatches), files: Number(totalFiles) };
+      return {
+        mode,
+        entries,
+        total: Number(totalFiles),
+        matches: Number(totalMatches),
+        files: Number(totalFiles),
+        filesPartial: false,
+      };
     }
-    return { mode, entries, matches, files: entries.length };
+    return { mode, entries, total: entries.length, matches, files: entries.length, filesPartial: false };
   }
 
   // Content mode: with line numbers (the default) only `path:line:` rows are
@@ -122,7 +136,18 @@ export function parseGrepOutput(toolCall: ToolCallBlockData, output: string): Gr
     paths.add(path);
     entries.push({ path, label: path });
   }
-  return { mode, entries, matches: countable ? rows : null, files: paths.size };
+  // Without context flags every paginated row is a match, so the tool's
+  // total is the exact match count; the files beyond the page stay unknown.
+  const paginatedTotal = countable ? PAGINATION_TOTAL.exec(output)?.[1] : undefined;
+  const matches = countable ? (paginatedTotal === undefined ? rows : Number(paginatedTotal)) : null;
+  return {
+    mode,
+    entries,
+    total: numbered && matches !== null ? matches : paths.size,
+    matches,
+    files: paths.size,
+    filesPartial: paginatedTotal !== undefined,
+  };
 }
 
 export function parseGlobOutput(output: string): string[] {

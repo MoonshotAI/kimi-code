@@ -308,3 +308,24 @@ describe('Bash chip and whitespace-only rows', () => {
     );
   });
 });
+
+describe('Grep chip on paginated content results', () => {
+  const page = 'src/a.ts:1:foo\nsrc/a.ts:9:foo\nsrc/b.ts:2:foo';
+  const notice = 'Results truncated to 3 lines (total: 1000). Use offset=3 to see more.';
+
+  it('reports the tool total and leaves the files out, since only the page is known', () => {
+    expect(
+      chipFor('Grep', { pattern: 'foo', output_mode: 'content', head_limit: 3 }, result(`${page}\n${notice}`)),
+    ).toBe('1000 matches');
+  });
+
+  it('still counts only the page files when context rows make matches uncountable', () => {
+    expect(
+      chipFor(
+        'Grep',
+        { pattern: 'foo', output_mode: 'content', '-n': false, '-C': 1, head_limit: 3 },
+        result(`src/a.ts:foo\nsrc/a.ts:bar\nsrc/b.ts:foo\n${notice}`),
+      ),
+    ).toBe('2 files');
+  });
+});

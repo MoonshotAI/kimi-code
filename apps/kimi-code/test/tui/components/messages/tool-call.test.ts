@@ -2427,3 +2427,30 @@ describe('ToolCallComponent with spilled tool output', () => {
     component.dispose();
   });
 });
+
+describe('ToolCallComponent hasHiddenContent with a capped call preview', () => {
+  const twelveLines = Array.from({ length: 12 }, (_, i) => `line ${String(i + 1)}`).join('\n');
+
+  it('counts a capped Write preview as hidden even when the call failed with a short error', () => {
+    const failed = new ToolCallComponent(
+      { id: 'call_write', name: 'Write', args: { path: 'a.txt', content: twelveLines } },
+      { tool_call_id: 'call_write', output: 'Permission denied', is_error: true },
+    );
+    expect(failed.hasHiddenContent()).toBe(true);
+    failed.dispose();
+
+    const running = new ToolCallComponent(
+      { id: 'call_write_running', name: 'Write', args: { path: 'a.txt', content: twelveLines } },
+      undefined,
+    );
+    expect(running.hasHiddenContent()).toBe(true);
+    running.dispose();
+
+    const short = new ToolCallComponent(
+      { id: 'call_write_short', name: 'Write', args: { path: 'a.txt', content: 'one\ntwo' } },
+      { tool_call_id: 'call_write_short', output: 'Permission denied', is_error: true },
+    );
+    expect(short.hasHiddenContent()).toBe(false);
+    short.dispose();
+  });
+});

@@ -113,6 +113,8 @@ const grepChip: ChipProvider = (toolCall, result) => {
   if (stats.mode === 'files_with_matches') return pluralize(stats.files, 'file');
   if (stats.matches === null) return pluralize(stats.files, 'file');
   const matches = pluralize(stats.matches, 'match', 'matches');
+  // A paginated content result only shows the files on its page.
+  if (stats.filesPartial) return matches;
   return stats.files === 1
     ? `${matches} in 1 file`
     : `${matches} across ${pluralize(stats.files, 'file')}`;
