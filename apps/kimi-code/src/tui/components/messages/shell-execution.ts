@@ -6,7 +6,7 @@ import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 
 import type { ResultRenderer } from './tool-renderers/types';
 import { PREVIEW_LINES } from './tool-renderers/types';
-import { lastNonEmptyLine, outcomeLine } from './tool-renderers/outcome';
+import { outcomeRows } from './tool-renderers/outcome';
 import { TruncatedOutputComponent } from './tool-renderers/truncated';
 
 export interface ShellExecutionOptions {
@@ -20,8 +20,6 @@ export interface ShellExecutionOptions {
    * even when the header preview was truncated.
    */
   readonly commandPreviewLines?: number;
-  readonly resultPreviewLines?: number;
-  readonly tailOutput?: boolean;
   readonly expandHint?: boolean;
 }
 
@@ -34,13 +32,7 @@ export class ShellExecutionComponent extends Container {
     }
 
     if (options.result !== undefined) {
-      this.addResultPreview(
-        options.result,
-        options.expanded ?? false,
-        options.resultPreviewLines ?? PREVIEW_LINES,
-        options.tailOutput ?? false,
-        options.expandHint ?? true,
-      );
+      this.addResultPreview(options.result, options.expanded ?? false, options.expandHint ?? true);
     }
   }
 
@@ -64,8 +56,6 @@ export class ShellExecutionComponent extends Container {
   private addResultPreview(
     result: ToolResultBlockData,
     expanded: boolean,
-    previewLines: number,
-    tailOutput: boolean,
     expandHint: boolean,
   ): void {
     if (!result.output) return;
@@ -73,8 +63,7 @@ export class ShellExecutionComponent extends Container {
       new TruncatedOutputComponent(result.output, {
         expanded,
         isError: result.is_error ?? false,
-        maxLines: previewLines,
-        tail: tailOutput,
+        maxLines: PREVIEW_LINES,
         expandHint,
         color: 'textMuted',
       }),
@@ -87,13 +76,11 @@ export const shellExecutionResultRenderer: ResultRenderer = (
   result: ToolResultBlockData,
   ctx,
 ): Component[] => {
-  // Collapsed: the command's last output line is the card's outcome row
-  // (most commands conclude on their last line); the rest waits for ctrl+o.
-  // A failing command keeps its multi-line preview so the error is visible.
-  if (!ctx.expanded && result.is_error !== true) {
-    const last = lastNonEmptyLine(result.output);
-    return last === undefined ? [] : [outcomeLine(last)];
-  }
+  // Collapsed: short output is shown whole; longer output contributes its
+  // last line (most commands conclude on their last line) and the rest waits
+  // for ctrl+o. A failing command keeps its multi-line preview so the error
+  // is visible.
+  if (!ctx.expanded && result.is_error !== true) return outcomeRows(result.output, 'last');
   // Result only. The command preview is owned by ToolCallComponent's
   // buildCallPreview across the whole lifecycle (streaming, running, and
   // done); rendering it here too would duplicate the command once the result

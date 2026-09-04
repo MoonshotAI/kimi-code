@@ -53,12 +53,49 @@ describe('chip registry', () => {
     expect(chipFor('Read', { path: 'a.ts' }, result('1\tfoo'))).toBe('1 line');
   });
 
-  it('Grep chip shows match count', () => {
-    expect(chipFor('Grep', { pattern: 'foo' }, result('a.ts\nb.ts\nc.ts'))).toBe('3 matches');
+  it('Grep chip counts files in the default files_with_matches mode', () => {
+    expect(chipFor('Grep', { pattern: 'foo' }, result('a.ts\nb.ts\nc.ts'))).toBe('3 files');
+    expect(chipFor('Grep', { pattern: 'foo' }, result('a.ts'))).toBe('1 file');
   });
 
-  it('Grep chip says "no matches" on empty result', () => {
+  it('Grep chip counts matches and their files in content mode', () => {
+    const content = { pattern: 'foo', output_mode: 'content' };
+    expect(chipFor('Grep', content, result('src/a.ts:1:foo\nsrc/a.ts:9:foo\nsrc/b.ts:2:foo'))).toBe(
+      '3 matches across 2 files',
+    );
+    expect(chipFor('Grep', content, result('src/a.ts:1:foo\nsrc/a.ts:9:foo'))).toBe(
+      '2 matches in 1 file',
+    );
+    // Context lines and group separators are not matches.
+    expect(
+      chipFor('Grep', content, result('src/a.ts-1-import x\nsrc/a.ts:2:foo\n--\nsrc/b.ts:5:foo')),
+    ).toBe('2 matches across 2 files');
+  });
+
+  it('Grep chip sums the per-file counts in count_matches mode', () => {
+    expect(
+      chipFor(
+        'Grep',
+        { pattern: 'foo', output_mode: 'count_matches' },
+        result('Found 5 total occurrences across 2 files.\nsrc/a.ts:3\nsrc/b.ts:2'),
+      ),
+    ).toBe('5 matches across 2 files');
+  });
+
+  it('Grep chip leaves the notices out of the count', () => {
     expect(chipFor('Grep', { pattern: 'foo' }, result(''))).toBe('no matches');
+    expect(chipFor('Grep', { pattern: 'foo' }, result('No matches found'))).toBe('no matches');
+    expect(
+      chipFor(
+        'Grep',
+        { pattern: 'foo' },
+        result('a.ts\nb.ts\nResults truncated to 2 lines (total: 9). Use offset=2 to see more.'),
+      ),
+    ).toBe('2 files');
+  });
+
+  it('Glob chip leaves the empty-result sentence out of the count', () => {
+    expect(chipFor('Glob', { pattern: '*.ts' }, result('No matches found'))).toBe('no files');
   });
 
   it('Glob chip shows file count', () => {
@@ -144,11 +181,13 @@ describe('computeEditStats', () => {
 });
 
 describe('Bash chip', () => {
-  it('counts the non-empty output lines and stays silent for no output', () => {
+  it('counts the output lines once they outgrow the collapsed card', () => {
     const chip = pickChip('Bash')!;
     const call = { id: 'tc', name: 'Bash', args: { command: 'ls' } };
-    expect(chip(call, { tool_call_id: 'tc', output: 'a\n\nb\nc\n', is_error: false })).toBe('3 lines');
-    expect(chip(call, { tool_call_id: 'tc', output: 'only', is_error: false })).toBe('1 line');
+    expect(chip(call, { tool_call_id: 'tc', output: 'a\n\nb\nc\nd\n', is_error: false })).toBe('4 lines');
+    // Up to three lines are shown whole on the collapsed card, so no chip.
+    expect(chip(call, { tool_call_id: 'tc', output: 'a\n\nb\nc\n', is_error: false })).toBe('');
+    expect(chip(call, { tool_call_id: 'tc', output: 'only', is_error: false })).toBe('');
     expect(chip(call, { tool_call_id: 'tc', output: '', is_error: false })).toBe('');
   });
 });

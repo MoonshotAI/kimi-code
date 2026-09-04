@@ -232,3 +232,46 @@ describe('FooterComponent line-2 hints', () => {
     expect(stripAnsi(footer.render(120)[1] ?? '')).not.toContain('Goal objective is too long');
   });
 });
+
+describe('FooterComponent ctrl+o hint', () => {
+  function plain(text: string): string {
+    return text.replaceAll(/\[[0-9;]*m/g, '');
+  }
+  function line1(footer: FooterComponent, width = 160): string {
+    return plain(footer.render(width)[0] ?? '');
+  }
+
+  it('shows no hint while there is no tool output to toggle', () => {
+    const footer = new FooterComponent(appState);
+    footer.setExpandHintProvider(() => null);
+    expect(line1(footer)).not.toContain('ctrl+o');
+    footer.dispose();
+  });
+
+  it('offers expand while collapsed output exists and collapse once it is shown', () => {
+    const footer = new FooterComponent(appState);
+    let hint: 'expand' | 'collapse' | null = 'expand';
+    footer.setExpandHintProvider(() => hint);
+    expect(line1(footer)).toContain('ctrl+o expand');
+    hint = 'collapse';
+    expect(line1(footer)).toContain('ctrl+o collapse');
+    footer.dispose();
+  });
+
+  it('keeps the hint and drops the rotating tip when only one of them fits', () => {
+    // Same left-hand slots without the tips: measures the space the hint competes for.
+    const noTips = new FooterComponent({
+      ...appState,
+      statusLine: { items: ['mode', 'model', 'cwd'], command: null },
+    });
+    const leftWidth = plain(noTips.render(200)[0] ?? '').trimEnd().length;
+    noTips.dispose();
+
+    const footer = new FooterComponent(appState);
+    footer.setExpandHintProvider(() => 'expand');
+    const narrow = line1(footer, leftWidth + 2 + 'ctrl+o expand'.length);
+    expect(narrow.endsWith('ctrl+o expand')).toBe(true);
+    expect(narrow).not.toContain(' | ');
+    footer.dispose();
+  });
+});

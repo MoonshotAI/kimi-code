@@ -3,7 +3,7 @@ import { Text, truncateToWidth, type Component } from '@moonshot-ai/pi-tui';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
 
-import { firstNonEmptyLine, outcomeLine } from './outcome';
+import { outcomeRows } from './outcome';
 import type { ResultRenderer } from './types';
 import { PREVIEW_LINES } from './types';
 
@@ -101,16 +101,13 @@ export class TruncatedOutputComponent implements Component {
   }
 }
 
-// Collapsed cards show the header plus one outcome row: a successful result
-// contributes its first non-empty line, the rest waits for the global ctrl+o
-// expand; errors always keep their multi-line preview so a failure is never
-// reduced to a single line.
+// Collapsed cards show the header plus the outcome rows: a successful result
+// is shown whole when short, otherwise contributes its first non-empty line,
+// and the rest waits for the global ctrl+o expand; errors always keep their
+// multi-line preview so a failure is never reduced to a single line.
 export const renderTruncated: ResultRenderer = (_toolCall, result, ctx) => {
   if (!result.output) return [];
-  if (!ctx.expanded && result.is_error !== true) {
-    const first = firstNonEmptyLine(result.output);
-    return first === undefined ? [] : [outcomeLine(first)];
-  }
+  if (!ctx.expanded && result.is_error !== true) return outcomeRows(result.output, 'first');
   return [
     new TruncatedOutputComponent(result.output, {
       expanded: ctx.expanded,

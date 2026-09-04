@@ -155,7 +155,7 @@ import {
   type TUIStartupOptions,
   type TUIStartupState,
 } from './types';
-import { hasDispose, isExpandable } from './utils/component-capabilities';
+import { hasDispose, hasHiddenContent, isExpandable } from './utils/component-capabilities';
 import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
 import { pickForegroundTasks } from './utils/foreground-task';
@@ -190,6 +190,7 @@ import {
 } from './utils/transcript-component-metadata';
 import { nextTranscriptId } from './utils/transcript-id';
 import {
+  expandCutoffIndex,
   TRANSCRIPT_EXPAND_TURNS,
   TRANSCRIPT_HYSTERESIS,
   TRANSCRIPT_KEEP_RECENT_ASSISTANT,
@@ -457,6 +458,7 @@ export class KimiTUI {
     this.engineV2 = startupInput.engineV2 ?? false;
     this.startupNotice = startupInput.startupNotice;
     this.state = createTUIState(tuiOptions);
+    this.state.footer.setExpandHintProvider(() => this.toolOutputExpandHint());
     this.uninstallRainbowDance = installRainbowDance(() => {
       this.state.ui.requestRender();
     });
@@ -3453,24 +3455,39 @@ export class KimiTUI {
     );
   }
 
-  toggleToolOutputExpansion(): void {
-    this.state.toolOutputExpanded = !this.state.toolOutputExpanded;
-    const children = this.state.transcriptContainer.children;
-
-    // A component is expandable only if it sits at or after the start of the
-    // (totalTurns - expandTurns)-th turn — i.e. it belongs to one of the most
-    // recent `expandTurns` turns. Position-based so it also covers streaming
-    // components that have no entry in the metadata map.
+  /**
+   * Index of the first transcript child ctrl+o may expand: a component is
+   * expandable only if it sits at or after the start of the
+   * (totalTurns - expandTurns)-th turn, i.e. it belongs to one of the most
+   * recent `expandTurns` turns. Position-based so it also covers streaming
+   * components that have no entry in the metadata map.
+   */
+  private expandCutoff(children: readonly Component[]): number {
     const boundaries: number[] = [];
     for (let i = 0; i < children.length; i++) {
       if (this.isTurnBoundaryComponent(children[i]!)) boundaries.push(i);
     }
-    const expandCutoff =
-      TRANSCRIPT_EXPAND_TURNS <= 0
-        ? children.length
-        : boundaries.length > TRANSCRIPT_EXPAND_TURNS
-          ? boundaries[boundaries.length - TRANSCRIPT_EXPAND_TURNS]!
-          : 0;
+    return expandCutoffIndex(children.length, boundaries, TRANSCRIPT_EXPAND_TURNS);
+  }
+
+  /**
+   * What the footer's ctrl+o hint should offer: `expand` while a card in the
+   * expandable window keeps content out of its collapsed form, `collapse`
+   * once the toggle shows it, `null` when ctrl+o would change nothing.
+   */
+  private toolOutputExpandHint(): 'expand' | 'collapse' | null {
+    const children = this.state.transcriptContainer.children;
+    const cutoff = this.expandCutoff(children);
+    for (let i = children.length - 1; i >= cutoff; i--) {
+      if (hasHiddenContent(children[i])) return this.state.toolOutputExpanded ? 'collapse' : 'expand';
+    }
+    return null;
+  }
+
+  toggleToolOutputExpansion(): void {
+    this.state.toolOutputExpanded = !this.state.toolOutputExpanded;
+    const children = this.state.transcriptContainer.children;
+    const expandCutoff = this.expandCutoff(children);
 
     for (let i = 0; i < children.length; i++) {
       const child = children[i]!;

@@ -66,6 +66,11 @@ export class ReadGroupComponent extends Container {
     this.flushRender();
   }
 
+  /** The per-file bodies only render while expanded, so any attached Read is hidden content. */
+  hasHiddenContent(): boolean {
+    return this.entries.length > 0;
+  }
+
   /**
    * Borrows a standalone `ToolCallComponent` into the group as a hidden state
    * container. Snapshot changes trigger throttled refreshes. Re-attaching the

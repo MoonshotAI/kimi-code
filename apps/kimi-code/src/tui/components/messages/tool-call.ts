@@ -36,7 +36,8 @@ import { TruncatedHeaderLine, type HeaderContent } from './truncated-header-line
 import { ShellExecutionComponent } from './shell-execution';
 import { countNonEmptyLines, pickChip } from './tool-renderers/chip';
 import { buildGoalToolHeader } from './tool-renderers/goal';
-import { lastNonEmptyLine, outcomeLine } from './tool-renderers/outcome';
+import { computeEditStats, computeWriteStats } from './tool-renderers/chip';
+import { lastNonEmptyLine, nonEmptyLines, OUTCOME_MAX_LINES, outcomeLine } from './tool-renderers/outcome';
 import { isGenericToolResult, pickResultRenderer } from './tool-renderers/registry';
 import { buildWaitForHeader } from './tool-renderers/wait-for';
 
@@ -572,6 +573,8 @@ export class ToolCallComponent extends Container {
   private expanded = false;
   private toolCall: ToolCallBlockData;
   private readonly markdownTheme = createMarkdownTheme();
+  /** Memo for hasHiddenContent(); reset whenever the body is rebuilt or live output grows. */
+  private hiddenContent: boolean | undefined = undefined;
   private result: ToolResultBlockData | undefined;
   private ui: TUI | undefined;
   private planPath: string | undefined;
@@ -759,6 +762,50 @@ export class ToolCallComponent extends Container {
     this.rebuildBody();
   }
 
+  /**
+   * Whether ctrl+o would reveal anything this card keeps out of its collapsed
+   * form. Mirrors the collapsed rules of buildCallPreview and the result
+   * renderers (short output shown whole, bodies that only render expanded);
+   * the footer reads it to decide whether to advertise ctrl+o.
+   */
+  hasHiddenContent(): boolean {
+    this.hiddenContent ??= this.computeHiddenContent();
+    return this.hiddenContent;
+  }
+
+  private computeHiddenContent(): boolean {
+    const { name, args } = this.toolCall;
+    if (name === 'Bash' && str(args['command']).includes('\n')) return true;
+    const { result } = this;
+    if (result === undefined) return nonEmptyLines(this.liveOutput).length > 1;
+    if (result.output.length === 0) return false;
+    if (result.output.trimStart().startsWith('<system-reminder>')) return false;
+    if (result.is_error === true) return nonEmptyLines(result.output).length > RESULT_PREVIEW_LINES;
+    switch (name) {
+      case 'Read':
+      case 'ReadMediaFile':
+      case 'FetchURL':
+      case 'WebSearch':
+      case 'Think':
+      case 'Grep':
+      case 'Glob':
+        return true;
+      case 'Edit': {
+        const stats = computeEditStats(args);
+        return stats.added + stats.removed > COMMAND_PREVIEW_LINES;
+      }
+      case 'Write':
+        return computeWriteStats(args).lines > COMMAND_PREVIEW_LINES;
+      case 'AgentSwarm':
+      case 'TodoList':
+      case 'EnterPlanMode':
+      case 'AskUserQuestion':
+        return false;
+      default:
+        return nonEmptyLines(result.output).length > OUTCOME_MAX_LINES;
+    }
+  }
+
   setResult(result: ToolResultBlockData): void {
     this.result = result;
     // Result supersedes any live progress chatter; the result body is the
@@ -825,8 +872,9 @@ export class ToolCallComponent extends Container {
   appendLiveOutput(text: string): void {
     if (this.result !== undefined || text.length === 0) return;
     this.liveOutput += text;
+    this.hiddenContent = undefined;
     if (this.liveOutput.length > MAX_LIVE_OUTPUT_CHARS) {
-      this.liveOutput = `[...truncated]\n${this.liveOutput.slice(
+      this.liveOutput = `[…truncated]\n${this.liveOutput.slice(
         this.liveOutput.length - MAX_LIVE_OUTPUT_CHARS,
       )}`;
     }
@@ -1528,7 +1576,7 @@ export class ToolCallComponent extends Container {
     }
 
     if (toolCall.name === 'Bash') {
-      // The collapsed card is this header plus one outcome row, so the header
+      // The collapsed card is this header plus its outcome rows, so the header
       // carries the command's first line; the full command and its output only
       // render in the body once expanded (ctrl+o). Wording mirrors the other label-only
       // headers (e.g. AskUserQuestion): the whole label takes the tone colour.
@@ -1612,6 +1660,7 @@ export class ToolCallComponent extends Container {
   }
 
   private rebuildBody(): void {
+    this.hiddenContent = undefined;
     while (this.children.length > 2) {
       this.children.pop();
     }
@@ -1672,10 +1721,7 @@ export class ToolCallComponent extends Container {
           output: this.liveOutput,
           is_error: false,
         },
-        expanded: this.expanded,
-        resultPreviewLines: RESULT_PREVIEW_LINES,
-        tailOutput: true,
-        expandHint: false,
+        expanded: true,
       }),
     );
   }

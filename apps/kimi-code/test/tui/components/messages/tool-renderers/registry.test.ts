@@ -149,13 +149,34 @@ describe('tool-result registry', () => {
     const out = strip(
       joinRender(
         renderer(
-          call('Grep', { pattern: 'foo' }),
+          call('Grep', { pattern: 'foo', output_mode: 'content' }),
           result('src/a.ts:42:    foo()\nsrc/b.ts:7:foo'),
           expandedCtx,
         ),
       ),
     );
     expect(out).toContain('src/a.ts:42, src/b.ts:7');
+  });
+
+  it('Grep glance skips the count_matches summary line', () => {
+    const renderer = pickResultRenderer('Grep');
+    const out = strip(
+      joinRender(
+        renderer(
+          call('Grep', { pattern: 'foo', output_mode: 'count_matches' }),
+          result('Found 5 total occurrences across 2 files.\nsrc/a.ts:3\nsrc/b.ts:2'),
+          ctx,
+        ),
+      ),
+    );
+    expect(out).toBe('  src/a.ts:3, src/b.ts:2');
+  });
+
+  it('shows a short unknown-tool output whole while collapsed', () => {
+    const renderer = pickResultRenderer('SomethingUnknown');
+    expect(strip(joinRender(renderer(call('SomethingUnknown'), result('a\nb'), ctx)))).toBe(
+      '  a\n  b',
+    );
   });
 
   it('Grep with empty result renders nothing in collapsed state', () => {

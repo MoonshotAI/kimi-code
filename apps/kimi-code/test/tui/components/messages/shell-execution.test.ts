@@ -121,7 +121,7 @@ describe('ShellExecutionComponent', () => {
         },
         {
           tool_call_id: 'call_1',
-          output: 'first\nsecond\n\nTests 12 passed\n\n',
+          output: 'first\nsecond\nthird\n\nTests 12 passed\n\n',
           is_error: false,
         },
         { expanded: false },
@@ -129,6 +129,16 @@ describe('ShellExecutionComponent', () => {
 
       const rendered = components.flatMap((c) => c.render(100)).map(strip);
       expect(rendered).toEqual(['  Tests 12 passed']);
+    });
+
+    it('shows a short result whole while collapsed', () => {
+      const components = shellExecutionResultRenderer(
+        { id: 'call_1', name: 'Bash', args: { command: 'git status --short' } },
+        { tool_call_id: 'call_1', output: ' M src/a.ts\n?? src/b.ts\n', is_error: false },
+        { expanded: false },
+      );
+      const rendered = components.flatMap((c) => c.render(100)).map(strip);
+      expect(rendered).toEqual(['   M src/a.ts', '  ?? src/b.ts']);
     });
 
     it('renders no outcome row for a successful result without output', () => {

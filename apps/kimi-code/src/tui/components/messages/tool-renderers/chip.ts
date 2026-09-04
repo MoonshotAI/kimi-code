@@ -12,7 +12,9 @@ import { computeDiffLines } from '#/tui/components/media/diff-preview';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 
 import { goalStatusChip } from './goal';
+import { parseGlobOutput, parseGrepOutput } from './grep-output';
 import { readMediaChip } from './media';
+import { OUTCOME_MAX_LINES } from './outcome';
 import { strArg } from './types';
 import { waitForChip } from './wait-for';
 
@@ -87,21 +89,27 @@ const writeChip: ChipProvider = (toolCall) => formatWriteChip(computeWriteStats(
 const readChip: ChipProvider = (_toolCall, result) =>
   pluralize(countNonEmptyLines(result.output), 'line');
 
-// The collapsed Bash card shows only the command and the last output line,
-// so the line count is what tells the user there is more behind ctrl+o.
+// A collapsed Bash card shows its output whole when it fits the outcome
+// rows, so the chip only appears once there is more behind ctrl+o.
 const bashChip: ChipProvider = (_toolCall, result) => {
   const lines = countNonEmptyLines(result.output);
-  return lines === 0 ? '' : pluralize(lines, 'line');
+  return lines <= OUTCOME_MAX_LINES ? '' : pluralize(lines, 'line');
 };
 
-const grepChip: ChipProvider = (_toolCall, result) => {
-  const matches = countNonEmptyLines(result.output);
-  if (matches === 0) return 'no matches';
-  return pluralize(matches, 'match', 'matches');
+// Grep's default mode lists files, so the chip counts what the mode
+// returns: files, or matches and the files they fall in.
+const grepChip: ChipProvider = (toolCall, result) => {
+  const stats = parseGrepOutput(toolCall, result.output);
+  if (stats.entries.length === 0) return 'no matches';
+  if (stats.mode === 'files_with_matches') return pluralize(stats.files, 'file');
+  const matches = pluralize(stats.matches, 'match', 'matches');
+  return stats.files === 1
+    ? `${matches} in 1 file`
+    : `${matches} across ${pluralize(stats.files, 'file')}`;
 };
 
 const globChip: ChipProvider = (_toolCall, result) => {
-  const files = countNonEmptyLines(result.output);
+  const files = parseGlobOutput(result.output).length;
   if (files === 0) return 'no files';
   return pluralize(files, 'file');
 };

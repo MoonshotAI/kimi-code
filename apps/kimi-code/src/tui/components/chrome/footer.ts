@@ -34,6 +34,9 @@ import {
   usagePercentFromRatio,
 } from '#/utils/usage/usage-format';
 
+/** What the footer's fixed ctrl+o hint offers: expand collapsed tool output, or collapse it again. */
+export type ToolOutputExpandHint = 'expand' | 'collapse';
+
 const DEFAULT_STATUS_LINE_ITEMS = ['mode', 'goal', 'model', 'tasks', 'cwd', 'git'] as const;
 
 const MAX_CWD_SEGMENTS = 3;
@@ -196,6 +199,7 @@ export class FooterComponent implements Component {
   private gitCacheWorkDir: string;
   private transientHint: string | null = null;
   private warningHint: string | null = null;
+  private expandHintProvider: (() => ToolOutputExpandHint | null) | null = null;
   private goalSnapshotKey: string | null = null;
   private goalObservedAtMs = Date.now();
   private goalTimer: ReturnType<typeof setInterval> | null = null;
@@ -272,6 +276,16 @@ export class FooterComponent implements Component {
   }
 
   /**
+   * Source of the fixed `ctrl+o expand` / `ctrl+o collapse` hint on line 1:
+   * `expand` while the transcript holds collapsed tool output ctrl+o can
+   * reveal, `collapse` once it is shown, `null` when there is nothing to
+   * toggle. Read on every render so it tracks the transcript exactly.
+   */
+  setExpandHintProvider(provider: () => ToolOutputExpandHint | null): void {
+    this.expandHintProvider = provider;
+  }
+
+  /**
    * Sync both background-task badges with live counts. Each non-zero
    * count produces its own bracketed badge on line 1; zeros hide them
    * independently.
@@ -311,26 +325,24 @@ export class FooterComponent implements Component {
       const leftLine = left.join('  ');
       const leftWidth = visibleWidth(leftLine);
 
-      // Rotating hint tips stay on the right unless they were given an
-      // inline slot in items (rendered above at their configured position)
-      // or the user dropped 'tips' from items.
-      let tipText = '';
+      // The right side holds the fixed ctrl+o hint (while the transcript has
+      // tool output to expand or collapse) and the rotating tips, unless the
+      // tips were given an inline slot in items or dropped from items. The
+      // hint never rotates and wins over a tip that no longer fits.
       const tipsInline = order.includes('tips');
       const showTips = !tipsInline && (configured === null || configured.includes('tips'));
+      const tipCandidates: string[] = [];
       if (showTips) {
         const { primary, pair } = tipsForIndex(currentTipIndex());
-        const gap = 2;
-        const remaining = Math.max(0, width - leftWidth - gap);
-        if (pair && visibleWidth(pair) <= remaining) {
-          tipText = pair;
-        } else if (primary && visibleWidth(primary) <= remaining) {
-          tipText = primary;
-        }
+        if (pair) tipCandidates.push(pair);
+        if (primary) tipCandidates.push(primary);
       }
+      const remaining = Math.max(0, width - leftWidth - 2);
+      const rightText = this.buildRightText(tipCandidates, remaining, colors);
 
-      if (tipText) {
-        const pad = width - leftWidth - visibleWidth(tipText);
-        line1 = leftLine + ' '.repeat(Math.max(0, pad)) + chalk.hex(colors.textMuted)(tipText);
+      if (rightText.length > 0) {
+        const pad = width - leftWidth - visibleWidth(rightText);
+        line1 = leftLine + ' '.repeat(Math.max(0, pad)) + rightText;
       } else if (leftWidth <= width) {
         line1 = leftLine;
       } else {
@@ -363,6 +375,24 @@ export class FooterComponent implements Component {
     }
 
     return [truncateToWidth(line1, width), truncateToWidth(line2, width)];
+  }
+
+  /** The fixed ctrl+o hint plus the first rotating tip that still fits beside it. */
+  private buildRightText(tips: readonly string[], remaining: number, colors: ColorPalette): string {
+    const hint = this.expandHintProvider?.() ?? null;
+    if (hint === null) {
+      const tip = tips.find((candidate) => visibleWidth(candidate) <= remaining);
+      return tip === undefined ? '' : chalk.hex(colors.textMuted)(tip);
+    }
+    const shortcut = `ctrl+o ${hint}`;
+    for (const tip of tips) {
+      if (visibleWidth(`${shortcut}${TIP_SEPARATOR}${tip}`) <= remaining) {
+        return (
+          chalk.hex(colors.textDim)(shortcut) + chalk.hex(colors.textMuted)(`${TIP_SEPARATOR}${tip}`)
+        );
+      }
+    }
+    return visibleWidth(shortcut) <= remaining ? chalk.hex(colors.textDim)(shortcut) : '';
   }
 
   /**

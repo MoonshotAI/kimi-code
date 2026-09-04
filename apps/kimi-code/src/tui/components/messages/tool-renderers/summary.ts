@@ -1,10 +1,9 @@
 /**
- * Summary-style renderers — produce optional inline-glance content for
- * tools whose raw output is high-volume but low-information (Grep,
- * Glob). The numeric summary (line counts, exit codes, sizes) lives in
- * the header chip (see chip.ts), so every tool here renders the glance
- * line as the collapsed card's outcome row; the raw output only appears
- * when the global expand toggle is on.
+ * Summary-style renderers — produce an inline glance for tools whose raw
+ * output is high-volume but low-information (Grep, Glob). The numeric
+ * summary (line counts, sizes) lives in the header chip (see chip.ts); the
+ * glance is the collapsed card's outcome row, and the raw output only
+ * appears when the global expand toggle is on.
  *
  * Errors always fall through to the truncated renderer so the user
  * sees the actual error message, not a synthetic summary.
@@ -12,8 +11,10 @@
 
 import type { Component } from '@moonshot-ai/pi-tui';
 import { Text } from '@moonshot-ai/pi-tui';
-import chalk from 'chalk';
 
+import { currentTheme } from '#/tui/theme';
+
+import { parseGlobOutput, parseGrepOutput } from './grep-output';
 import { outcomeLine } from './outcome';
 import { renderTruncated } from './truncated';
 import type { ResultRenderer } from './types';
@@ -35,48 +36,31 @@ function withGlance(glance: GlanceFn | null): ResultRenderer {
     if (glance !== null) {
       const line = glance(toolCall, result);
       if (line.length > 0) {
-        out.push(ctx.expanded ? new Text(`  ${chalk.dim(line)}`, 0, 0) : outcomeLine(line));
+        out.push(ctx.expanded ? new Text(`  ${currentTheme.dim(line)}`, 0, 0) : outcomeLine(line));
       }
     }
     if (ctx.expanded && result.output.length > 0) {
-      out.push(new Text(chalk.dim(result.output), 4, 0));
+      out.push(new Text(currentTheme.dim(result.output), 4, 0));
     }
     return out;
   };
 }
 
-function nonEmptyLines(text: string): string[] {
-  if (text.length === 0) return [];
-  return text.split('\n').filter((line) => line.length > 0);
-}
-
-// Strip a trailing `:line:col:text` so the glance shows the file path
-// only, even when grep is in `content` mode (`src/foo.ts:42:    foo()`).
-function pathFromGrepLine(line: string): string {
-  const idx = line.indexOf(':');
-  if (idx <= 0) return line;
-  const second = line.indexOf(':', idx + 1);
-  if (second <= 0) return line;
-  return line.slice(0, second);
-}
-
-const grepGlance: GlanceFn = (_toolCall, result) => {
-  const lines = nonEmptyLines(result.output);
-  if (lines.length === 0) return '';
-  const samples = lines.slice(0, GLANCE_SAMPLES).map(pathFromGrepLine);
-  const remaining = lines.length - samples.length;
+function sampleList(labels: readonly string[]): string {
+  if (labels.length === 0) return '';
+  const samples = labels.slice(0, GLANCE_SAMPLES);
+  const remaining = labels.length - samples.length;
   const tail = remaining > 0 ? `, +${String(remaining)} more` : '';
   return `${samples.join(', ')}${tail}`;
-};
+}
 
-const globGlance: GlanceFn = (_toolCall, result) => {
-  const lines = nonEmptyLines(result.output);
-  if (lines.length === 0) return '';
-  const samples = lines.slice(0, GLANCE_SAMPLES);
-  const remaining = lines.length - samples.length;
-  const tail = remaining > 0 ? `, +${String(remaining)} more` : '';
-  return `${samples.join(', ')}${tail}`;
-};
+// Path samples in the shape the mode returns — `path`, `path:line` (the
+// matched text is dropped), or `path:count` — with the tool's notices left
+// out.
+const grepGlance: GlanceFn = (toolCall, result) =>
+  sampleList(parseGrepOutput(toolCall, result.output).entries.map((entry) => entry.label));
+
+const globGlance: GlanceFn = (_toolCall, result) => sampleList(parseGlobOutput(result.output));
 
 // ── Exports ──────────────────────────────────────────────────────────
 

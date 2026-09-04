@@ -59,3 +59,10 @@ describe('ReadGroupComponent', () => {
     }
   });
 });
+
+describe('ReadGroupComponent hasHiddenContent', () => {
+  it('is true once a Read is attached, since the file bodies only render expanded', () => {
+    expect(new ReadGroupComponent(undefined).hasHiddenContent()).toBe(false);
+    expect(makeGroup().hasHiddenContent()).toBe(true);
+  });
+});

@@ -277,13 +277,17 @@ describe('ToolCallComponent', () => {
         undefined,
       );
 
-      component.setResult({ tool_call_id: 'call_bash_done', output: 'done', is_error: false });
+      component.setResult({
+        tool_call_id: 'call_bash_done',
+        output: 'step a\nstep b\nstep c\ndone',
+        is_error: false,
+      });
 
       const collapsed = component.render(100).map(strip).filter((line) => line.trim().length > 0);
       expect(collapsed).toHaveLength(2);
       expect(collapsed[0]).toContain('Ran a command');
       expect(collapsed[0]).toContain('$ echo step1…');
-      expect(collapsed[0]).toContain('· 1 line');
+      expect(collapsed[0]).toContain('· 4 lines');
       expect(collapsed[1]).toBe('  done');
 
       component.setExpanded(true);
@@ -357,7 +361,7 @@ describe('ToolCallComponent', () => {
         'git log --oneline -5 origin/main -- apps/kimi-code/test/tui/kimi-tui-message-flow.test.ts';
       const component = new ToolCallComponent(
         { id: 'call_bash_wide', name: 'Bash', args: { command } },
-        { tool_call_id: 'call_bash_wide', output: 'ok', is_error: false },
+        { tool_call_id: 'call_bash_wide', output: 'ok\nok\nok\nok', is_error: false },
       );
       // The command is the flexible middle segment: on a wide terminal it is
       // shown in full, on a narrow one it is cut with an ellipsis before the chip.
@@ -370,7 +374,7 @@ describe('ToolCallComponent', () => {
       expect(narrow).toHaveLength(2);
       expect(visibleWidth(narrow[0]!)).toBeLessThanOrEqual(70);
       // The command is cut to the remaining width; the line-count chip survives.
-      expect(narrow[0]).toMatch(/\$ git log .*… · 1 line$/);
+      expect(narrow[0]).toMatch(/\$ git log .*… · 4 lines$/);
     });
 
     it('keeps the file name of a long Read path on a narrow terminal', () => {
@@ -841,9 +845,10 @@ describe('ToolCallComponent', () => {
 
     const collapsed = strip(component.render(100).join('\n'));
     expect(collapsed).toContain('Started background question');
-    // The outcome row carries the result's first line: the task id.
+    // Three lines of output fit the collapsed card whole.
     expect(collapsed).toContain('task_id: question-aaaaaaaa');
-    expect(collapsed).not.toContain('description: Which database?');
+    expect(collapsed).toContain('description: Which database?');
+    expect(collapsed).toContain('status: running');
     expect(collapsed).not.toContain('Collected your answers');
 
     component.setExpanded(true);
@@ -2222,5 +2227,48 @@ describe('ToolCallComponent', () => {
 
       component.dispose();
     });
+  });
+});
+
+describe('ToolCallComponent hasHiddenContent', () => {
+  function card(
+    name: string,
+    args: Record<string, unknown>,
+    output?: string,
+    isError = false,
+  ): ToolCallComponent {
+    return new ToolCallComponent(
+      { id: 'tc', name, args },
+      output === undefined ? undefined : { tool_call_id: 'tc', output, is_error: isError },
+    );
+  }
+
+  it('is false while a short Bash result is shown whole and true once lines are folded', () => {
+    expect(card('Bash', { command: 'ls' }, 'a\nb\nc').hasHiddenContent()).toBe(false);
+    expect(card('Bash', { command: 'ls' }, 'a\nb\nc\nd').hasHiddenContent()).toBe(true);
+  });
+
+  it('counts a multi-line command as hidden because only its first line is in the header', () => {
+    expect(card('Bash', { command: 'echo a\necho b' }, 'ok').hasHiddenContent()).toBe(true);
+  });
+
+  it('treats bodies that only render when expanded as hidden', () => {
+    expect(card('Read', { path: 'a.ts' }, '1\tfoo').hasHiddenContent()).toBe(true);
+    expect(card('Grep', { pattern: 'x' }, 'a.ts').hasHiddenContent()).toBe(true);
+  });
+
+  it('is false for a short failure preview and for suppressed bodies', () => {
+    expect(card('Bash', { command: 'ls' }, 'boom', true).hasHiddenContent()).toBe(false);
+    expect(card('AskUserQuestion', {}, 'a\nb\nc\nd\ne').hasHiddenContent()).toBe(false);
+  });
+
+  it('follows the live output while running and the result once it lands', () => {
+    const component = card('Bash', { command: 'ls' });
+    expect(component.hasHiddenContent()).toBe(false);
+    component.appendLiveOutput('one\ntwo\n');
+    expect(component.hasHiddenContent()).toBe(true);
+    component.setResult({ tool_call_id: 'tc', output: 'one\ntwo', is_error: false });
+    expect(component.hasHiddenContent()).toBe(false);
+    component.dispose();
   });
 });

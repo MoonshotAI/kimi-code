@@ -123,3 +123,18 @@ export function turnsToTrim(
   }
   return toRemove;
 }
+
+/**
+ * Index of the first transcript child ctrl+o may expand: the start of the
+ * (turns - expandTurns)-th turn, given the child indexes of the turn
+ * boundaries. `expandTurns <= 0` disables expanding (the cutoff is past the
+ * last child); fewer boundaries than `expandTurns` means everything expands.
+ */
+export function expandCutoffIndex(
+  childCount: number,
+  boundaries: readonly number[],
+  expandTurns: number,
+): number {
+  if (expandTurns <= 0) return childCount;
+  return boundaries.length > expandTurns ? boundaries[boundaries.length - expandTurns]! : 0;
+}
