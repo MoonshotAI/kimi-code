@@ -1,4 +1,7 @@
 import { execFileSync } from 'node:child_process';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import type { createKimiDeviceId as createKimiDeviceIdFn } from '@moonshot-ai/kimi-code-oauth';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -167,6 +170,8 @@ vi.mock('../../src/utils/process/resolve-command', () => ({
 }));
 
 describe('runShell', () => {
+  const tempDirs: string[] = [];
+
   beforeEach(() => {
     vi.stubEnv('KIMI_CODE_LEGACY_FLAG', '1');
     // Pin region to cn: the telemetry endpoint assertion below must not
@@ -175,7 +180,10 @@ describe('runShell', () => {
     refreshKimiRegion();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    for (const dir of tempDirs.splice(0)) {
+      await rm(dir, { recursive: true, force: true });
+    }
     vi.clearAllMocks();
     vi.unstubAllEnvs();
     refreshKimiRegion();
@@ -464,6 +472,39 @@ describe('runShell', () => {
 
     expect(mocks.kimiHarnessConstructor).toHaveBeenCalledWith(
       expect.objectContaining({ skillDirs: ['/skills'] }),
+    );
+  });
+
+  // `--agent-file` registers the file for the whole launch, and the v2 engine
+  // reads explicit agent files from the process bootstrap the harness sets up —
+  // so the flag has to reach the harness, not only the startup session. Runs on
+  // the default (v2) route, which is the one that reads the option.
+  it('forwards agentFiles from CLI options to the v2 harness', async () => {
+    stubTuiStartup();
+    const agentDir = await mkdtemp(join(tmpdir(), 'kimi-code-agent-'));
+    tempDirs.push(agentDir);
+    const agentFile = join(agentDir, 'reviewer.md');
+    await writeFile(
+      agentFile,
+      '---\nname: reviewer\ndescription: Reviews code.\n---\n\nReview the requested change.\n',
+      'utf-8',
+    );
+
+    await withEnv(
+      { KIMI_CODE_LEGACY_FLAG: undefined, KIMI_CODE_EXPERIMENTAL_FLAG: undefined },
+      async () => {
+        await runShell({ ...minimalCliOptions, agentFiles: [agentFile] }, '1.2.3-test');
+      },
+    );
+
+    expect(mocks.kimiHarnessV2Constructor).toHaveBeenCalledWith(
+      expect.objectContaining({ agentFiles: [agentFile] }),
+    );
+    // The startup session still selects the profile that file defines.
+    expect(mocks.kimiTuiConstructor).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ agentProfile: 'reviewer' }),
     );
   });
 

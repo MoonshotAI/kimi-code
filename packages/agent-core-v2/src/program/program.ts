@@ -151,6 +151,16 @@ export class Program {
   get trust(): IWorkspaceTrust { return this.requireGeneration().trust; }
   get skills(): IWorkspaceSkillCatalog { return this.requireGeneration().skills; }
   get agentProfiles(): IWorkspaceAgentProfileLoader { return this.requireGeneration().agentProfiles; }
+  get agentProfilesReady(): Promise<void> {
+    const generation = this.requireGeneration();
+    return Promise.all([
+      generation.agentProfiles.ready,
+      generation.extraAgentProfiles.ready,
+      generation.explicitAgentProfiles.ready,
+      generation.userAgentProfiles.ready,
+      generation.pluginAgentProfiles.ready,
+    ]).then(() => {});
+  }
   get sessionControllerGeneration(): string { return this.requireGeneration().id; }
 
   createSessionController(): SessionLifecycleService {

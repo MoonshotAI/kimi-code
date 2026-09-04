@@ -169,6 +169,19 @@ export interface KimiHarnessOptions {
   readonly autoLoadConfig?: boolean | undefined;
   readonly uiMode?: string;
   readonly skillDirs?: readonly string[];
+  /**
+   * Explicit agent files (`--agent-file`) registered at the highest catalog
+   * priority. Registration is per harness, not per session: a session selects
+   * one of the profiles they define through
+   * {@link CreateSessionOptions.agentProfile}, and the profiles stay in the
+   * catalog for every later session this harness creates. Two harnesses in one
+   * process therefore have separate catalogs.
+   *
+   * `createKimiHarnessV2` only: the legacy harness ignores this option and
+   * takes explicit files per session through
+   * {@link CreateSessionOptions.agentFiles} instead.
+   */
+  readonly agentFiles?: readonly string[];
   readonly telemetry?: TelemetryClient | undefined;
   readonly onOAuthRefresh?: ((outcome: OAuthRefreshOutcome) => void) | undefined;
   readonly sessionStartedProperties?: TelemetryProperties;
@@ -187,12 +200,22 @@ export interface CreateSessionOptions {
   readonly additionalDirs?: readonly string[];
   /**
    * Main-agent profile name (`--agent`): a builtin profile or one defined by
-   * an agentfile discovered from the user/project agent directories.
+   * an agent file discovered from the user/project agent directories.
+   *
+   * Naming one is explicit intent, so unlike a session that takes whatever
+   * default it is given, it never degrades: a name the workspace catalog does
+   * not have is rejected before anything is created — as a `KimiError` with
+   * `agent.not_found`, on both engines — and a home with no configured model
+   * rejects with `model.not_configured` rather than leaving the main agent
+   * unbound the way a profile-less create does.
    */
   readonly agentProfile?: string;
   /**
-   * Explicit agentfiles (`--agent-file`) loaded for this session with the
-   * highest precedence; an invalid file fails session creation.
+   * Explicit agent files (`--agent-file`) loaded for this session with the
+   * highest precedence; an invalid file fails session creation. The v2 engine
+   * registers explicit files per harness rather than per session, so hosts on
+   * that engine pass them through {@link KimiHarnessOptions.agentFiles} and
+   * select the resulting profile here with {@link agentProfile}.
    */
   readonly agentFiles?: readonly string[];
   readonly sessionStartedProperties?: TelemetryProperties;

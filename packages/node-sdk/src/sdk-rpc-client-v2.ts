@@ -177,6 +177,7 @@ import {
   IAgentPermissionModeService,
   IAgentPermissionRulesService,
   IAgentPluginCommandService,
+  IAgentProfileRegistry,
   IAgentProfileService,
   IAgentReminderService,
   IAgentSkillService,
@@ -192,6 +193,7 @@ import {
   IFlagService,
   IHostEnvironment,
   IHostFileSystem,
+  ILogService,
   IMcpManagementService,
   IMcpOAuthService,
   IModelService,
@@ -243,6 +245,7 @@ import {
   type Scope,
   type ServicesAccessor,
   type SessionSummary as V2SessionSummary,
+  type WorkspaceInstance,
 } from '@moonshot-ai/agent-core-v2';
 import type { AgentHandle, Klient } from '@moonshot-ai/klient';
 import { createKlient } from '@moonshot-ai/klient/memory';
@@ -359,6 +362,19 @@ export interface SDKRpcClientV2Options {
    * source. Passed into the engine through `BootstrapInput.args.skillDirs`.
    */
   readonly skillDirs?: readonly string[];
+  /**
+   * Explicit agent files (the CLI's `--agent-file`): loaded at the highest
+   * catalog priority for every workspace this client hosts, on top of the
+   * discovered user / project / plugin agent roots. Passed into the engine
+   * through `BootstrapInput.args.agentFiles`, which is where the
+   * workspace-scoped explicit loader reads them from — a session selects one
+   * of the profiles they define with `createSession`'s `agentProfile`.
+   *
+   * The scope is this client's own engine bootstrap, not the OS process: a
+   * second client in the same process bootstraps its own engine and sees none
+   * of these files.
+   */
+  readonly agentFiles?: readonly string[];
   readonly telemetry?: TelemetryClient;
   readonly onOAuthRefresh?: (outcome: OAuthRefreshOutcome) => void;
   readonly uiMode?: string;
@@ -461,6 +477,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
           // `--skills-dir` (v1 parity): explicit skill dirs replace default
           // user / project discovery for every session this client hosts.
           skillDirs: options.skillDirs,
+          // `--agent-file` (v1 parity): explicit agent definition files, added
+          // to every workspace catalog at the highest priority. Passed through
+          // unresolved — the engine expands `~` and resolves relative paths
+          // against the workspace root, mirroring `skillDirs`.
+          agentFiles: options.agentFiles,
         },
       },
       [...logSeed(resolveLoggingConfig({ homeDir: this.homeDir, env: process.env }))],
@@ -1008,6 +1029,26 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
+   * v1's rejection for a `createSession` profile name the catalog does not
+   * have (`resolveMainAgentProfile`): a `KimiError` carrying
+   * `agent.not_found`. The v2 engine raises its own `ProfileError` with
+   * `profile.unknown` instead, and that class is not exported from this
+   * package — `isKimiError` is an `instanceof KimiError` test, so a consumer
+   * that switches engines would stop recognizing the failure entirely. Both
+   * routes by which {@link createSession} can learn the name is unusable (the
+   * pre-create catalog check, and a bind that loses the race behind it) answer
+   * with this instead. Only that SDK surface is translated: the klient facade
+   * and kap-server keep speaking the engine's own error vocabulary.
+   */
+  private static agentProfileNotFound(profileName: string, available: string): KimiError {
+    return new KimiError(
+      ErrorCodes.AGENT_NOT_FOUND,
+      `Agent profile "${profileName}" was not found. Available profiles: ${available}`,
+      { details: { profile: profileName, available } },
+    );
+  }
+
+  /**
    * v1's persist-add project guard ported to the workspace loader. This read
    * deliberately includes the project layer even while the workspace is
    * untrusted: a user-level write must not create a shadow that springs into
@@ -1032,9 +1073,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   /**
    * Attach the event/interaction wiring to a freshly materialized session
-   * (idempotent). Unwiring needs no call site of its own: every close path
-   * goes through the engine's lifecycle close, whose `onDidCloseSession`
-   * subscription (constructor) drops the wiring.
+   * (idempotent). Unwiring needs one call site of its own — {@link
+   * createSession}'s rollback, which unwires ahead of its delete; every other
+   * close path goes through the engine's lifecycle close, whose
+   * `onDidCloseSession` subscription (constructor) drops the wiring.
    */
   private wireSession(handle: ISessionScopeHandle): void {
     if (this.sessionWirings.has(handle.id)) return;
@@ -1316,6 +1358,14 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * deliberately NOT `strictThinking`, and the v2-only create-time rejections
    * that still leak through (unknown alias → `config.invalid`, no configured
    * default model → `model.not_configured`) are pinned in the parity tests.
+   *
+   * `agentProfile` (`--agent`, and the profile an `--agent-file` defines) joins
+   * that same bind rather than the engine's own `mainAgentBinding`, because
+   * binding inside `create` would run before the session is wired and drop the
+   * warnings the bind publishes. Binding that late is also why the name is
+   * checked against the workspace catalog first (see
+   * {@link assertProfileInWorkspaceCatalog}) and why a bind that still fails
+   * takes the session with it.
    */
   override async createSession(input: CreateSessionOptions): Promise<SessionSummary> {
     // An explicit id takes the per-session queue so the check-then-create
@@ -1340,23 +1390,100 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         );
       }
     }
-    const handle = await this.engineAccessor.get(ISessionManager).create({
+    if (input.agentProfile !== undefined) {
+      // `getOrCreate` keys the instance off the workspace id the root encodes
+      // to, and is what `ISessionManager.create` calls with the same root a
+      // line later, so the catalog inspected here is the one the session is
+      // about to be created in. It takes no lease of its own — the generation
+      // refcount belongs to the session controller `create` asks for.
+      await this.assertProfileInWorkspaceCatalog(
+        await this.engineAccessor.get(IWorkspaceInstanceManager).getOrCreate({ root: workDir }),
+        input.agentProfile,
+      );
+    }
+    const sessions = this.engineAccessor.get(ISessionManager);
+    const handle = await sessions.create({
       sessionId: input.id,
       workDir,
       additionalDirs: input.additionalDirs,
     });
-    // Wired before the optional main-agent materialization so a profile-bind
-    // warning (oversized AGENTS.md) reaches the listeners like v1's create.
+    // Wired before the main-agent materialization so the warnings the bind
+    // publishes — an oversized AGENTS.md, and the tool patterns a profile's
+    // `tools` / `disallowedTools` match nothing with — reach the listeners
+    // like v1's create. The agent event bus has no replay, and the
+    // tool-pattern warning is emitted once per pattern, so a bind that runs
+    // before this line loses them for good.
     this.wireSession(handle);
     if (
       input.model !== undefined ||
       input.thinking !== undefined ||
-      input.permission !== undefined
+      input.permission !== undefined ||
+      input.agentProfile !== undefined
     ) {
-      const agent = await this.materializeMainAgent(handle, {
-        model: input.model,
-        thinking: input.thinking,
-      });
+      let agent: IAgentScopeHandle;
+      try {
+        agent = await this.materializeMainAgent(handle, {
+          model: input.model,
+          thinking: input.thinking,
+          profile: input.agentProfile,
+        });
+      } catch (error) {
+        // An explicit `agentProfile` states what this session is FOR, so any
+        // bind that fails to honor it takes the session with it — the unknown
+        // name that raced the check above, an unknown model alias
+        // (`config.invalid`), a home with no configured model at all
+        // (`model.not_configured`). Without a profile those two keep the
+        // session they have always left behind: that is pre-existing behavior
+        // the parity tests pin, and widening the rollback to it is a separate
+        // change from this one.
+        if (input.agentProfile !== undefined) {
+          // Ahead of the delete: `close` drops the handle from the engine's
+          // session map before disposal fires `onDidCloseSession`, so a delete
+          // that throws midway would otherwise strand this session's wiring
+          // here for good.
+          this.unwireSession(handle.id);
+          const log = this.engineAccessor.get(ILogService);
+          // `delete` resolves by id, not by handle, so roll back only while
+          // that id still resolves to the handle this call created. The
+          // per-session queue an explicit id takes serializes this whole path
+          // against another create/close of the same id, and a generated id
+          // has no contenders, so a mismatch is not reachable through this
+          // client's own surface; the engine's `create` still registers its
+          // handle with no duplicate-id guard of its own (only `fork` checks),
+          // so the identity test stays as the thing that keeps a rollback from
+          // ever taking a session this call did not create.
+          if (sessions.get(handle.id) === handle) {
+            await sessions.delete(handle.id).catch((rollbackError: unknown) => {
+              // The bind failure stays the caller's error; a rollback that
+              // itself fails leaves a session on disk and in the index, which
+              // is only ever visible in the log.
+              log.error(
+                `rollback of session "${handle.id}" after a failed "${input.agentProfile}" profile bind failed`,
+                { error: String(rollbackError) },
+              );
+            });
+          } else {
+            log.error(
+              `session "${handle.id}" was replaced by a concurrent create; leaving it in place rather than rolling back another session`,
+            );
+          }
+          // The name passed the pre-create check and was gone by the time the
+          // bind ran (a catalog reload in between). Rare, but it is the same
+          // failure the caller would have got a moment earlier, so it must not
+          // arrive wearing a different type — translate it like the check does.
+          if (
+            error instanceof ProfileError &&
+            error.code === ProfileErrors.codes.PROFILE_UNKNOWN
+          ) {
+            const available = error.details?.['available'];
+            throw SDKRpcClientV2.agentProfileNotFound(
+              input.agentProfile,
+              typeof available === 'string' ? available : '',
+            );
+          }
+        }
+        throw error;
+      }
       if (input.permission !== undefined) {
         agent.accessor.get(IAgentPermissionModeService).setMode(input.permission);
       }
@@ -1367,6 +1494,65 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     // v1 returns the caller's metadata verbatim on create (not the merged
     // custom map a later listing would report), so override it here too.
     return { ...(await this.liveSessionSummary(handle)), metadata: input.metadata };
+  }
+
+  /**
+   * Reject a main-agent profile the workspace cannot serve BEFORE any session
+   * exists. `ISessionManager.create` announces the finished session as its last
+   * step — the `SessionStart` external hook and the `session_started` fact — so
+   * a profile rejected by the later bind would have already run the user's hook
+   * commands and recorded a start for a session about to be rolled back (and
+   * the rollback then runs `SessionEnd` on top). v1 resolves the requested
+   * profile against its catalog before its store write for the same reason.
+   *
+   * The v2 merged catalog only exists at Session scope, so the question is
+   * asked one level up: await the workspace program's `agentProfilesReady` —
+   * the same five loaders session materialization awaits, which the program
+   * owns and this package cannot reach one by one — then fold the App-scope
+   * registry down to the records this workspace sees. Presence of the NAME is
+   * the whole test — the Session catalog's merge only ever chooses between
+   * same-name candidates (its one skip, a non-`override` file shadowing a
+   * builtin, falls back to that builtin), so a name any visible record
+   * contributes always resolves to some profile there. The bind stays authoritative: this only moves the
+   * failure earlier, and {@link createSession}'s rollback still covers the
+   * check→bind race.
+   *
+   * INVARIANT this rests on: every source of agent profiles is registry-visible
+   * by the time a session is created. True of all six loaders today. A future
+   * contribution point that registers lazily, without the `workspaceKey` this
+   * fold filters on, or outside the program's `agentProfilesReady` set, would
+   * be invisible here and make the check reject a profile the bind would have
+   * accepted — extend the fold with it rather than leaving the rejection to be
+   * discovered at runtime.
+   */
+  private async assertProfileInWorkspaceCatalog(
+    workspace: WorkspaceInstance,
+    profileName: string,
+  ): Promise<void> {
+    try {
+      await workspace.program.agentProfilesReady;
+    } catch {
+      // A loader that failed — or a workspace with no runtime generation to
+      // load one — is the engine's error to raise, not this check's: `create`
+      // awaits the same five and rejects with it, and its own failure path
+      // reloads the explicit loader so the next attempt re-reads the file.
+      // Reporting "unknown profile" off a half-loaded catalog would be a lie.
+      return;
+    }
+    const workspaceKey = workspace.id;
+    const available = new Set<string>();
+    for (const entry of this.engineAccessor.get(IAgentProfileRegistry).entries()) {
+      // Global records (builtin) plus this workspace's own; another
+      // workspace's user/project/explicit files are not in this catalog.
+      if (entry.workspaceKey !== undefined && entry.workspaceKey !== workspaceKey) continue;
+      for (const profile of entry.contribution.profiles) available.add(profile.name);
+    }
+    if (available.has(profileName)) return;
+    // v1's shape, not the engine's — see {@link agentProfileNotFound}. The
+    // `available` list is a human-readable hint rather than a contract, and its
+    // order does differ from the engine's (registry order here, merged-map
+    // order there, which puts builtins first).
+    throw SDKRpcClientV2.agentProfileNotFound(profileName, [...available].join(', '));
   }
 
   /**
@@ -1666,14 +1852,19 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * The session's materialized main agent with v1's eager default binding
    * applied: a freshly created agent whose profile is still unbound gets the
    * default profile + configured default model (the same bind kap-server's
-   * prompt route performs on first use). A home with no configured model
-   * leaves the agent unbound instead of failing — v1's model-less session
-   * reads (`model: undefined`, `'off'` thinking, zero capabilities) map onto
-   * the unbound state exactly.
+   * prompt route performs on first use). With no binding requested, a home
+   * with no configured model leaves the agent unbound instead of failing —
+   * v1's model-less session reads (`model: undefined`, `'off'` thinking, zero
+   * capabilities) map onto the unbound state exactly. A caller that DID
+   * request one gets the rejection instead, since there is no unbound state
+   * that honors it: `binding.profile` selects a profile (`--agent` /
+   * `--agent-file`) and an unknown name raises the catalog's own
+   * `profile.unknown` — which {@link createSession} restates as v1's
+   * `agent.not_found` before it reaches an SDK caller.
    */
   private async materializeMainAgent(
     session: ISessionScopeHandle,
-    binding?: { readonly model?: string; readonly thinking?: string },
+    binding?: { readonly model?: string; readonly thinking?: string; readonly profile?: string },
   ): Promise<IAgentScopeHandle> {
     await this.modelReady;
     const context = await ensureMainAgent(session);
@@ -1685,7 +1876,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     if (binding !== undefined || profile.data().profileName === undefined) {
       try {
         await profile.bind({
-          profile: DEFAULT_AGENT_PROFILE_NAME,
+          profile: binding?.profile ?? DEFAULT_AGENT_PROFILE_NAME,
           model: binding?.model,
           thinking: binding?.thinking,
         });

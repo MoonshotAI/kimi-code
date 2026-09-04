@@ -36,17 +36,20 @@ import { foldAgentWireReplay } from '#/v2/resume-replay';
 import {
   drainQueryStoreDisposals,
   drainSessionIndexMirror,
+  ensureMainAgent,
   Error2,
   getLiveSessionById,
   HostProcessError,
   IAgentTodoService,
   IAgentLifecycleService,
+  IAgentProfileService,
   IAgentTowerService,
   IHostRequestHeaders,
   IMcpManagementService,
   IMcpOAuthService,
   ISessionManager,
   OsProcessErrors,
+  type ProfileData,
 } from '@moonshot-ai/agent-core-v2';
 
 import { McpOAuthService } from '../../agent-core/src/mcp/oauth/service';
@@ -878,6 +881,267 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  it('binds the requested agentProfile on the session it creates', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    await writeTestModelConfig(homeDir);
+    // Discoverable through the project agent root, so only the selection
+    // (`--agent`) is under test here, not the explicit-file registration.
+    await writeReviewerAgent(join(workDir, '.kimi-code', 'agents'));
+
+    const rpc = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      const summary = await rpc.createSession({
+        workDir,
+        model: TEST_MODEL,
+        agentProfile: 'reviewer',
+      });
+      expect(await mainAgentProfile(rpc, summary.id)).toMatchObject({
+        profileName: 'reviewer',
+      });
+    } finally {
+      await rpc.close();
+    }
+  });
+
+  it('accepts an agentProfile discovered from the user agent root', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    await writeTestModelConfig(homeDir);
+    // The user loader, rather than the project or explicit one the other tests
+    // use: the pre-create catalog check has to see every profile source, so
+    // each one it can reject over is worth exercising.
+    await writeReviewerAgent(join(homeDir, 'agents'));
+
+    const rpc = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      const summary = await rpc.createSession({
+        workDir,
+        model: TEST_MODEL,
+        agentProfile: 'reviewer',
+      });
+      expect(await mainAgentProfile(rpc, summary.id)).toMatchObject({
+        profileName: 'reviewer',
+      });
+    } finally {
+      await rpc.close();
+    }
+  });
+
+  it('creates nothing at all for an unknown agentProfile', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    await writeTestModelConfig(homeDir);
+
+    const records: TelemetryRecord[] = [];
+    const rpc = new SDKRpcClientV2({
+      homeDir,
+      identity: TEST_IDENTITY,
+      telemetry: recordingTelemetry(records),
+    });
+    const started = (): number => records.filter((r) => r.event === 'session_started').length;
+    try {
+      // A control session first, so the absences asserted below are real ones
+      // and not a telemetry client that never receives anything.
+      await rpc.createSession({ id: 'session_control', workDir, model: TEST_MODEL });
+      expect(started()).toBe(1);
+
+      // The v1 contract for this option, pinned in create-session-transport's
+      // "does not persist a session record when the requested agent profile is
+      // missing": a KimiError with `agent.not_found`. The v2 engine's own
+      // ProfileError is not exported from this package and `isKimiError` is an
+      // instanceof test, so surfacing it raw would strand SDK consumers.
+      await expect(
+        rpc.createSession({
+          id: 'session_missing_agent_profile',
+          workDir,
+          model: TEST_MODEL,
+          agentProfile: 'missing-agent',
+        }),
+      ).rejects.toMatchObject({
+        name: 'KimiError',
+        code: ErrorCodes.AGENT_NOT_FOUND,
+        message: expect.stringContaining('missing-agent'),
+      });
+
+      // Session creation announces the finished session as its last step — the
+      // SessionStart hook and this fact — so a name rejected only once the bind
+      // runs would have fired both for a session that never survived the call.
+      expect(started()).toBe(1);
+      const listed = await rpc.listSessions({ workDir });
+      expect(listed.map((session) => session.id)).toEqual(['session_control']);
+      // Nothing on disk either, so the id is free.
+      await expect(
+        rpc.createSession({ id: 'session_missing_agent_profile', workDir, model: TEST_MODEL }),
+      ).resolves.toMatchObject({ id: 'session_missing_agent_profile' });
+    } finally {
+      await rpc.close();
+    }
+  });
+
+  it('rolls the session back when an explicitly selected profile cannot be bound', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    await writeTestModelConfig(homeDir);
+    await writeReviewerAgent(join(workDir, '.kimi-code', 'agents'));
+
+    const rpc = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      // The profile resolves, so the catalog check passes and the bind is
+      // reached — and then fails on the model alias. The session the caller
+      // asked to run `reviewer` on must not outlive that failure.
+      await expect(
+        rpc.createSession({
+          id: 'session_reviewer_bad_model',
+          workDir,
+          model: 'no-such-model',
+          agentProfile: 'reviewer',
+        }),
+      ).rejects.toMatchObject({ code: ErrorCodes.CONFIG_INVALID });
+      expect(await rpc.listSessions({ workDir })).toEqual([]);
+    } finally {
+      await rpc.close();
+    }
+  });
+
+  it('rejects an explicitly selected profile on a home with no model configured', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    // No config.toml at all. Without a profile the main agent is left unbound
+    // (v1's model-less session, pinned in the parity suite); an explicit
+    // `agentProfile` has no such degraded state to fall back to, so it fails.
+    await writeReviewerAgent(join(workDir, '.kimi-code', 'agents'));
+
+    const rpc = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await expect(
+        rpc.createSession({
+          id: 'session_reviewer_no_model',
+          workDir,
+          agentProfile: 'reviewer',
+        }),
+      ).rejects.toMatchObject({ code: ErrorCodes.MODEL_NOT_CONFIGURED });
+      expect(await rpc.listSessions({ workDir })).toEqual([]);
+    } finally {
+      await rpc.close();
+    }
+  });
+
+  it('registers agentFiles (--agent-file) from outside every discovery root', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const explicitDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-explicit-'));
+    tempDirs.push(explicitDir);
+    await writeTestModelConfig(homeDir);
+    // Outside every discovery root: the profile can only reach the catalog
+    // through the explicit `agentFiles` registration.
+    const agentFile = await writeReviewerAgent(explicitDir);
+
+    const rpc = new SDKRpcClientV2({
+      homeDir,
+      identity: TEST_IDENTITY,
+      agentFiles: [agentFile],
+    });
+    try {
+      const summary = await rpc.createSession({
+        workDir,
+        model: TEST_MODEL,
+        agentProfile: 'reviewer',
+      });
+      const profile = await mainAgentProfile(rpc, summary.id);
+      expect(profile.profileName).toBe('reviewer');
+      // The file's body is what the bound profile renders as its prompt.
+      expect(profile.systemPrompt).toContain('Review the requested change.');
+    } finally {
+      await rpc.close();
+    }
+  });
+
+  it('shadows a same-name builtin profile with the explicit agent file, for later sessions too', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const explicitDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-explicit-'));
+    tempDirs.push(explicitDir);
+    await writeTestModelConfig(homeDir);
+    // Deliberately named after the builtin default profile: `--agent-file` is
+    // explicit launch intent and outranks every other source, so it replaces
+    // the builtin for the whole launch — including sessions created later,
+    // which bind that same name as their default.
+    const agentFile = join(explicitDir, 'agent.md');
+    await writeFile(
+      agentFile,
+      '---\nname: agent\ndescription: Overrides the builtin default.\n---\n\nShadowed default prompt.\n',
+      'utf-8',
+    );
+
+    const rpc = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY, agentFiles: [agentFile] });
+    try {
+      const first = await rpc.createSession({
+        workDir,
+        model: TEST_MODEL,
+        agentProfile: 'agent',
+      });
+      expect((await mainAgentProfile(rpc, first.id)).systemPrompt).toContain(
+        'Shadowed default prompt.',
+      );
+      // A session created later selects no profile at all, so it binds the
+      // default by name — which the explicit file now owns.
+      const later = await rpc.createSession({ workDir, model: TEST_MODEL });
+      expect((await mainAgentProfile(rpc, later.id)).systemPrompt).toContain(
+        'Shadowed default prompt.',
+      );
+    } finally {
+      await rpc.close();
+    }
+  });
+
+  it('delivers the profile-bind warnings of an explicitly selected agent file', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    const explicitDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-explicit-'));
+    tempDirs.push(explicitDir);
+    await writeTestModelConfig(homeDir);
+    // `Reed` is a typo no registered tool answers to, so binding this profile
+    // publishes a `tool-pattern-no-match` warning. The agent event bus has no
+    // replay and the warning fires once per pattern, so it only reaches a
+    // listener if the bind runs after the session is wired.
+    const agentFile = join(explicitDir, 'typo-tools.md');
+    await writeFile(
+      agentFile,
+      '---\nname: typo-tools\ndescription: Has a misspelled tool.\ntools:\n  - Reed\n---\n\nBody.\n',
+      'utf-8',
+    );
+
+    const rpc = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY, agentFiles: [agentFile] });
+    const warnings: string[] = [];
+    const unsubscribe = rpc.onEvent((event) => {
+      if (event.type === 'warning') warnings.push(event.message);
+    });
+    try {
+      await rpc.createSession({ workDir, model: TEST_MODEL, agentProfile: 'typo-tools' });
+      expect(warnings.some((message) => message.includes('Reed'))).toBe(true);
+    } finally {
+      unsubscribe();
+      await rpc.close();
+    }
+  });
+
   it('serves the plugin catalog from the v2 engine on an empty home', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);
@@ -1556,4 +1820,44 @@ async function writeSkill(dir: string, name: string): Promise<void> {  await mkd
     `---\nname: ${name}\ndescription: Skill ${name} for the escape-hatch test\n---\n\nBody of ${name}.\n`,
     'utf-8',
   );
+}
+
+const TEST_MODEL = 'kimi-test-model';
+
+async function writeTestModelConfig(homeDir: string): Promise<void> {
+  await writeFile(
+    join(homeDir, 'config.toml'),
+    `
+[providers.local]
+type = "kimi"
+base_url = "https://example.test/v1"
+api_key = "sk-test"
+
+[models."${TEST_MODEL}"]
+provider = "local"
+model = "${TEST_MODEL}"
+max_context_size = 1000
+`,
+    'utf-8',
+  );
+}
+
+/** Writes the `reviewer` agent file into `dir` and returns its path. */
+async function writeReviewerAgent(dir: string): Promise<string> {
+  await mkdir(dir, { recursive: true });
+  const path = join(dir, 'reviewer.md');
+  await writeFile(
+    path,
+    '---\nname: reviewer\ndescription: Reviews code.\n---\n\nReview the requested change.\n',
+    'utf-8',
+  );
+  return path;
+}
+
+/** The profile the session's main agent is actually bound to. */
+async function mainAgentProfile(rpc: SDKRpcClientV2, sessionId: string): Promise<ProfileData> {
+  const session = getLiveSessionById(rpc.engineAccessor, sessionId);
+  expect(session).toBeDefined();
+  const agent = await ensureMainAgent(session!);
+  return agent.accessor.get(IAgentProfileService).data();
 }
