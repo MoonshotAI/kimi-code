@@ -142,4 +142,44 @@ describe('analyzeWire', () => {
     expect(a.summary.peakContextTokens).toBe(42);
     expect(a.contextSeries.map((point) => point.contextTokens)).toEqual([42]);
   });
+
+  it('keeps steering inside the active turn and folds the durable turn outcome', () => {
+    line = 0;
+    const a = analyzeWire([
+      e({ type: 'turn.prompt', input: [{ type: 'text', text: 'start' }], origin: { kind: 'user' } }, 1000),
+      loop({ type: 'step.begin', uuid: 's1', turnId: '7', step: 0 }, 1100),
+      loop({ type: 'content.part', stepUuid: 's1', part: { type: 'think', think: 'reasoning' } }, 1150),
+      e({ type: 'turn.steer', input: [{ type: 'text', text: 'one more thing' }], origin: { kind: 'user' } }, 1200),
+      loop({ type: 'step.end', uuid: 's1', turnId: '7', step: 0, finishReason: 'end_turn' }, 1400),
+      e({ type: 'turn.ended', agentId: 'main', turnId: 7, reason: 'completed', durationMs: 450, stopReason: 'repeat_breaker' }, 1500),
+      e({ type: 'token_counting.turn_recorded', agentId: 'main', turnId: 7, length: 2, tokens: 50 }, 1501),
+      e({ type: 'turn.prompt', input: [{ type: 'text', text: 'next' }], origin: { kind: 'user' } }, 3000),
+    ]);
+
+    expect(a.turns).toHaveLength(2);
+    expect(a.turns[0]).toMatchObject({
+      turnId: 7,
+      endTime: 1500,
+      durationMs: 450,
+      outcome: 'completed',
+      stopReason: 'repeat_breaker',
+    });
+    expect(a.turns[0]!.steps[0]!.content.thinkChars).toBe(9);
+    expect(a.turns[1]!.waitBeforeMs).toBe(1500);
+    expect(a.contextSeries.at(-1)?.turnIndex).toBe(0);
+    expect(a.summary.activeMs).toBe(450);
+  });
+
+  it('marks persisted error step endings as errors', () => {
+    line = 0;
+    const analysis = analyzeWire([
+      e({ type: 'turn.prompt', input: [{ type: 'text', text: 'start' }], origin: { kind: 'user' } }, 1000),
+      loop({ type: 'step.begin', uuid: 's1', turnId: '3', step: 0 }, 1100),
+      loop({ type: 'step.end', uuid: 's1', turnId: '3', step: 0, finishReason: 'error' }, 1200),
+      e({ type: 'turn.ended', agentId: 'main', turnId: 3, reason: 'failed' }, 1250),
+    ]);
+
+    expect(analysis.turns[0]?.steps[0]?.isError).toBe(true);
+    expect(analysis.turns[0]?.outcome).toBe('failed');
+  });
 });

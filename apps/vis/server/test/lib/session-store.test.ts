@@ -94,20 +94,34 @@ describe('session-store', () => {
     expect(sessions[0]!.mainWireRecordCount).toBe(0);
   });
 
-  it('marks a session broken_main_wire when the wire metadata header is malformed', async () => {
+  it('treats a headerless v1.4 wire as recoverable', async () => {
     const { home, sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
     cleanup = c;
     const { writeFile } = await import('node:fs/promises');
     const { join } = await import('node:path');
     const wirePath = join(sessionDir, 'agents', 'main', 'wire.jsonl');
-    // First line is not a `metadata` record — list health used to stay
-    // 'ok' while readAgentWire would fail on open.
     await writeFile(
       wirePath,
       '{"type":"config.update","cwd":"/x","time":1}\n',
     );
     const sessions = await listSessions(home);
     expect(sessions).toHaveLength(1);
+    expect(sessions[0]!.health).toBe('ok');
+    expect(sessions[0]!.wireProtocolVersion).toBe('1.4');
+  });
+
+  it('marks a session broken_main_wire when a metadata record is malformed', async () => {
+    const { home, sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
+    cleanup = c;
+    const { writeFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    await writeFile(
+      join(sessionDir, 'agents', 'main', 'wire.jsonl'),
+      '{"type":"metadata","created_at":1}\n',
+    );
+
+    const sessions = await listSessions(home);
+
     expect(sessions[0]!.health).toBe('broken_main_wire');
   });
 
@@ -281,6 +295,24 @@ describe('session-store', () => {
     expect(summary!.updatedAt).toBe(state.updatedAt);
   });
 
+  it('recovers the workDir from v2 state when the append index is unavailable', async () => {
+    const { home, sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
+    cleanup = c;
+    const { readFile, rm, writeFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const statePath = join(sessionDir, 'state.json');
+    const state = JSON.parse(await readFile(statePath, 'utf8'));
+    state.cwd = '/workspace/from-state';
+    await writeFile(statePath, JSON.stringify(state));
+    await rm(join(home, 'session_index.jsonl'));
+
+    const [summary] = await listSessions(home);
+    const detail = await readSessionDetail(home, 'session_fixture');
+
+    expect(summary!.workDir).toBe('/workspace/from-state');
+    expect(detail!.workDir).toBe('/workspace/from-state');
+  });
+
   it('surfaces swarmItem from state.json onto AgentInfo (null when absent)', async () => {
     const { home, sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
     cleanup = c;
@@ -311,7 +343,11 @@ describe('session-store', () => {
     state.agents['agent-1'] = {
       type: 'sub',
       parentAgentId: 'main',
-      labels: { parentAgentId: 'agent-0', swarmItem: 'batch item' },
+      labels: {
+        parentAgentId: 'agent-0',
+        swarmItem: 'batch item',
+        profileName: 'explore',
+      },
     };
     await writeFile(statePath, JSON.stringify(state));
 
@@ -320,6 +356,7 @@ describe('session-store', () => {
     const nested = d!.agents.find((a) => a.agentId === 'agent-1')!;
     expect(nested.parentAgentId).toBe('agent-0');
     expect(nested.swarmItem).toBe('batch item');
+    expect(nested.profileName).toBe('explore');
     // agent-0 has no labels — the top-level v1 fields still apply.
     const flat = d!.agents.find((a) => a.agentId === 'agent-0')!;
     expect(flat.parentAgentId).toBe('main');

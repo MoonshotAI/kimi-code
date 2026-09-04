@@ -22,6 +22,8 @@ export function isSafeAgentId(id: string): boolean {
 interface StateJson {
   createdAt?: string | number;
   updatedAt?: string | number;
+  cwd?: string;
+  workDir?: string;
   title?: string;
   isCustomTitle?: boolean;
   lastPrompt?: string;
@@ -34,10 +36,10 @@ interface StateJson {
   // v1 wrote them top-level. Read labels first, top-level as fallback —
   // the same order the engine itself uses.
   agents?: Record<string, {
-    type: 'main' | 'sub' | 'independent';
+    type?: 'main' | 'sub' | 'independent';
     parentAgentId?: string | null;
     swarmItem?: string;
-    labels?: { parentAgentId?: string; swarmItem?: string };
+    labels?: { parentAgentId?: string; swarmItem?: string; profileName?: string };
   } | null>;
   custom?: Record<string, unknown>;
 }
@@ -90,7 +92,15 @@ export async function readSessionDetail(home: string, sessionId: string): Promis
   }
   if (state.custom?.['imported_from_kimi_cli'] === true) return null;
   const agents = await inventoryAgents(sessionDir, state);
-  return { sessionId, sessionDir, workDir, state, agents, imported: false, importMeta: null };
+  return {
+    sessionId,
+    sessionDir,
+    workDir: recoverWorkDir(state, workDir),
+    state,
+    agents,
+    imported: false,
+    importMeta: null,
+  };
 }
 
 /** Detail for an imported bundle. Same readers as a local session, but the
@@ -117,7 +127,15 @@ async function readImportedDetail(home: string, importId: string): Promise<Sessi
   if (agents.length === 0) {
     agents = await discoverAgentsFromDisk(sessionDir);
   }
-  return { sessionId: importId, sessionDir, workDir, state, agents, imported: true, importMeta: meta };
+  return {
+    sessionId: importId,
+    sessionDir,
+    workDir: recoverWorkDir(state, workDir),
+    state,
+    agents,
+    imported: true,
+    importMeta: meta,
+  };
 }
 
 /** Fallback inventory used when `state.json` is unreadable: walk
@@ -154,6 +172,7 @@ async function discoverAgentsFromDisk(sessionDir: string): Promise<AgentInfo[]> 
       agentId: id,
       type: id === 'main' ? 'main' : 'independent',
       parentAgentId: null,
+      profileName: null,
       homedir: join(agentsDir, id),
       wireExists: readable,
       wireRecordCount: info.count,
@@ -205,7 +224,7 @@ async function tryReadSummary(
   return {
     sessionId,
     sessionDir,
-    workDir,
+    workDir: recoverWorkDir(state, workDir),
     title: state.title ?? null,
     lastPrompt: state.lastPrompt ?? null,
     isCustomTitle: state.isCustomTitle ?? false,
@@ -289,8 +308,9 @@ async function inventoryAgents(sessionDir: string, state: StateJson): Promise<Ag
     }
     result.push({
       agentId: id,
-      type: meta.type,
+      type: meta.type ?? (id === 'main' ? 'main' : 'sub'),
       parentAgentId: meta.labels?.parentAgentId ?? meta.parentAgentId ?? null,
+      profileName: meta.labels?.profileName ?? null,
       homedir: join(sessionDir, 'agents', id),
       wireExists: readable,
       wireRecordCount: info.count,
@@ -355,19 +375,19 @@ async function scanWire(path: string): Promise<{ count: number; protocolVersion:
   for await (const line of rl) {
     if (line.length === 0) continue;
     if (protocolVersion === null) {
-      // Strict: the first non-empty line MUST be a well-formed
-      // `metadata` record. Otherwise the list-view health would say
-      // "ok" while the wire-reader rejects the file on open.
       let parsed: { type?: unknown; protocol_version?: unknown };
       try {
         parsed = JSON.parse(line) as typeof parsed;
       } catch {
         throw new Error(`wire metadata is not valid JSON at line 1`);
       }
-      if (parsed.type !== 'metadata' || typeof parsed.protocol_version !== 'string') {
-        throw new Error(`wire is missing a metadata header on line 1`);
+      if (parsed.type !== 'metadata') {
+        protocolVersion = '1.4';
+      } else if (typeof parsed.protocol_version !== 'string') {
+        throw new TypeError(`wire metadata is malformed on line 1`);
+      } else {
+        protocolVersion = parsed.protocol_version;
       }
-      protocolVersion = parsed.protocol_version;
     }
     count += 1;
   }
@@ -375,6 +395,14 @@ async function scanWire(path: string): Promise<{ count: number; protocolVersion:
     throw new Error('wire file is empty');
   }
   return { count, protocolVersion };
+}
+
+function recoverWorkDir(state: StateJson, preferred: string): string {
+  if (preferred.length > 0) return preferred;
+  if (typeof state.cwd === 'string' && state.cwd.length > 0) return state.cwd;
+  if (typeof state.workDir === 'string' && state.workDir.length > 0) return state.workDir;
+  const customCwd = state.custom?.['cwd'];
+  return typeof customCwd === 'string' && customCwd.length > 0 ? customCwd : '';
 }
 
 function parseTs(input: string | number | undefined): number {

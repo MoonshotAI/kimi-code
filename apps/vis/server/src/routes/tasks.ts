@@ -7,7 +7,7 @@ import {
   isSafeTaskId,
   listBackgroundTasks,
   readTaskOutput,
-  taskOutputSizeBytes,
+  taskOutputMetadata,
 } from '../lib/task-store';
 
 /** Default output-log window size: 256 KiB. Large enough to show a whole
@@ -19,9 +19,9 @@ const MAX_OUTPUT_LIMIT = 4 * 1024 * 1024;
 export function tasksRoute(home: string = KIMI_CODE_HOME): Hono {
   const r = new Hono();
 
-  // List background tasks (process / agent / question) for a session. Tasks are
-  // persisted under each spawning agent's homedir (`<homedir>/tasks`), NOT the
-  // session root, so aggregate across every agent in the session.
+  // List background tasks (process / agent / question) for a session. Current
+  // tasks live under each spawning agent's homedir; the main agent also falls
+  // back to the legacy session-root tasks directory.
   r.get('/:id/tasks', async (c) => {
     const id = c.req.param('id');
     const detail = await readSessionDetail(home, id);
@@ -30,10 +30,16 @@ export function tasksRoute(home: string = KIMI_CODE_HOME): Hono {
     }
     const entries: BackgroundTaskEntry[] = [];
     for (const agent of detail.agents) {
-      const tasks = await listBackgroundTasks(agent.homedir);
+      const fallbackDir = agent.agentId === 'main' ? detail.sessionDir : undefined;
+      const tasks = await listBackgroundTasks(agent.homedir, fallbackDir);
       for (const task of tasks) {
-        const outputSizeBytes = await taskOutputSizeBytes(agent.homedir, task.taskId);
-        entries.push({ task, agentId: agent.agentId, outputSizeBytes, outputExists: outputSizeBytes > 0 });
+        const output = await taskOutputMetadata(agent.homedir, task.taskId, fallbackDir);
+        entries.push({
+          task,
+          agentId: agent.agentId,
+          outputSizeBytes: output.size,
+          outputExists: output.exists,
+        });
       }
     }
     // Newest first across all agents.
@@ -58,17 +64,24 @@ export function tasksRoute(home: string = KIMI_CODE_HOME): Hono {
     if (!detail) {
       return c.json({ error: 'session not found', code: 'NOT_FOUND' }, 404);
     }
-    // Prefer the agent whose log actually has bytes; otherwise any agent's dir
-    // yields the same empty window. An explicit ?agent= short-circuits the scan.
+    // Prefer the agent whose log exists, including an empty log. An explicit
+    // ?agent= short-circuits the scan. The main agent also reads the legacy
+    // session-root tasks directory as its fallback.
     const hinted = c.req.query('agent');
-    let dir = detail.agents.find((a) => a.agentId === hinted)?.homedir ?? detail.agents[0]?.homedir ?? detail.sessionDir;
-    for (const agent of detail.agents) {
-      if ((await taskOutputSizeBytes(agent.homedir, taskId)) > 0) {
-        dir = agent.homedir;
-        break;
+    const hintedAgent = detail.agents.find((agent) => agent.agentId === hinted);
+    let owner = hintedAgent ?? detail.agents[0];
+    if (hintedAgent === undefined) {
+      for (const agent of detail.agents) {
+        const fallbackDir = agent.agentId === 'main' ? detail.sessionDir : undefined;
+        if ((await taskOutputMetadata(agent.homedir, taskId, fallbackDir)).exists) {
+          owner = agent;
+          break;
+        }
       }
     }
-    const window = await readTaskOutput(dir, taskId, offset, limit);
+    const dir = owner?.homedir ?? detail.sessionDir;
+    const fallbackDir = owner?.agentId === 'main' ? detail.sessionDir : undefined;
+    const window = await readTaskOutput(dir, taskId, offset, limit, fallbackDir);
     return c.json({
       sessionId: id,
       taskId,

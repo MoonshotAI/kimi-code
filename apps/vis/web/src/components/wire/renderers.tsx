@@ -67,6 +67,97 @@ export const WIRE_RENDERERS: RendererMap = {
     }),
   },
 
+  'file_history.checkpoint': {
+    tone: 'lifecycle',
+    label: 'files·checkpoint',
+    headline: (r) => {
+      const phase = r.phase ?? 'start';
+      const count = Object.keys(r.entries).length;
+      return {
+        main: (
+          <span className="flex items-center gap-2 min-w-0">
+            <Mono>turn {r.turnId}</Mono>
+            <Dim>
+              {count} file{count === 1 ? '' : 's'}
+            </Dim>
+          </span>
+        ),
+        right: (
+          <Pill tone={phase === 'end' ? 'success' : 'lifecycle'} variant="outline">
+            {phase}
+          </Pill>
+        ),
+      };
+    },
+    detail: (r) => (
+      <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
+        <FieldRow label="turnId">
+          <span className="text-[var(--color-sev-info)]">{r.turnId}</span>
+        </FieldRow>
+        <FieldRow label="phase">
+          <Mono>{r.phase ?? 'start'}</Mono>
+        </FieldRow>
+        <FieldRow label="entries" wide>
+          <JsonViewer value={r.entries} defaultOpenDepth={2} />
+        </FieldRow>
+      </div>
+    ),
+  },
+
+  'file_history.tracked': {
+    tone: 'tools',
+    label: 'file·tracked',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>turn {r.turnId}</Mono>
+          <Dim className="truncate">{r.path}</Dim>
+        </span>
+      ),
+      right: (
+        <Pill tone={r.entry.key === null ? 'info' : 'tools'} variant="outline">
+          {r.entry.key === null ? 'new' : `v${r.entry.version}`}
+        </Pill>
+      ),
+    }),
+    detail: (r) => (
+      <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
+        <FieldRow label="turnId">
+          <span className="text-[var(--color-sev-info)]">{r.turnId}</span>
+        </FieldRow>
+        <FieldRow label="path" wide>
+          <Mono className="break-all">{r.path}</Mono>
+        </FieldRow>
+        <FieldRow label="version">
+          <span className="text-[var(--color-sev-info)]">{r.entry.version}</span>
+        </FieldRow>
+        <FieldRow label="snapshotKey" wide>
+          {r.entry.key === null ? <Dim>(file did not exist)</Dim> : <Mono>{r.entry.key}</Mono>}
+        </FieldRow>
+        {r.entry.contentHash !== undefined ? (
+          <FieldRow label="contentHash" wide>
+            <Mono className="break-all">{r.entry.contentHash}</Mono>
+          </FieldRow>
+        ) : null}
+        {r.entry.size !== undefined ? (
+          <FieldRow label="size">
+            <span className="text-[var(--color-sev-info)]">{r.entry.size}b</span>
+          </FieldRow>
+        ) : null}
+        {r.entry.mtimeMs !== undefined ? (
+          <FieldRow label="mtime">
+            <Mono>{new Date(r.entry.mtimeMs).toLocaleString()}</Mono>
+          </FieldRow>
+        ) : null}
+        {r.entry.oversize === true ? (
+          <FieldRow label="oversize">
+            <Pill tone="warning" variant="outline">true</Pill>
+          </FieldRow>
+        ) : null}
+      </div>
+    ),
+  },
+
   forked: {
     tone: 'lifecycle',
     label: 'fork',
@@ -285,11 +376,21 @@ export const WIRE_RENDERERS: RendererMap = {
             </Dim>
           </span>
         ),
+        right:
+          r.wireLines === undefined ? undefined : (
+            <Mono>
+              L{r.wireLines.start}–{r.wireLines.end}
+            </Mono>
+          ),
       };
     },
     detail: (r) => {
       const summaryText = compactionSummaryText(r);
       const compactedCount = r.compactedCount ?? ('count' in r ? r.count : 0);
+      const contextSummary =
+        'contextSummary' in r && typeof r.contextSummary === 'string'
+          ? r.contextSummary
+          : undefined;
       return (
         <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
           <FieldRow label="summary" wide>
@@ -297,6 +398,17 @@ export const WIRE_RENDERERS: RendererMap = {
               <pre className="whitespace-pre-wrap break-words text-fg-1">{summaryText}</pre>
             </SizePreview>
           </FieldRow>
+          {contextSummary !== undefined && contextSummary !== summaryText ? (
+            <FieldRow label="contextSummary" wide>
+              <SizePreview
+                label="contextSummary"
+                sizeBytes={contextSummary.length}
+                preview={contextSummary}
+              >
+                <pre className="whitespace-pre-wrap break-words text-fg-1">{contextSummary}</pre>
+              </SizePreview>
+            </FieldRow>
+          ) : null}
           <FieldRow label="compactedCount">
             <span className="text-[var(--color-sev-info)]">{compactedCount}</span>
           </FieldRow>
@@ -306,6 +418,33 @@ export const WIRE_RENDERERS: RendererMap = {
           <FieldRow label="tokensAfter">
             <span className="text-[var(--color-sev-info)]">{r.tokensAfter ?? '(n/a)'}</span>
           </FieldRow>
+          {r.summaryOutputTokens !== undefined ? (
+            <FieldRow label="summaryOutputTokens">
+              <span className="text-[var(--color-sev-info)]">{r.summaryOutputTokens}</span>
+            </FieldRow>
+          ) : null}
+          {r.keptUserMessageCount !== undefined ? (
+            <FieldRow label="keptUserMessages">
+              <span className="text-[var(--color-sev-info)]">{r.keptUserMessageCount}</span>
+            </FieldRow>
+          ) : null}
+          {r.keptHeadUserMessageCount !== undefined ? (
+            <FieldRow label="keptHeadMessages">
+              <span className="text-[var(--color-sev-info)]">{r.keptHeadUserMessageCount}</span>
+            </FieldRow>
+          ) : null}
+          {r.droppedCount !== undefined ? (
+            <FieldRow label="droppedCount">
+              <span className="text-[var(--color-sev-info)]">{r.droppedCount}</span>
+            </FieldRow>
+          ) : null}
+          {r.wireLines !== undefined ? (
+            <FieldRow label="wireLines">
+              <Mono>
+                {r.wireLines.start}–{r.wireLines.end}
+              </Mono>
+            </FieldRow>
+          ) : null}
         </div>
       );
     },
@@ -819,10 +958,18 @@ export const WIRE_RENDERERS: RendererMap = {
       main: (
         <span className="flex items-center gap-2 min-w-0">
           <Mono>turn {r.turnId}</Mono>
-          <Pill tone={r.reason === 'completed' ? 'success' : 'warning'} variant="soft">
+          <Pill
+            tone={r.reason === 'completed' ? 'success' : r.reason === 'failed' ? 'error' : 'warning'}
+            variant="soft"
+          >
             {r.reason}
           </Pill>
           {r.durationMs !== undefined ? <Dim>{r.durationMs}ms</Dim> : null}
+          {r.stopReason !== undefined ? (
+            <span className="truncate text-fg-3" title={r.stopReason}>
+              {truncate(r.stopReason, 80)}
+            </span>
+          ) : null}
         </span>
       ),
     }),

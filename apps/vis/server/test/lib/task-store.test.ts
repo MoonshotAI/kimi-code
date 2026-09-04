@@ -8,6 +8,7 @@ import {
   isSafeTaskId,
   listBackgroundTasks,
   readTaskOutput,
+  taskOutputMetadata,
   taskOutputSizeBytes,
 } from '../../src/lib/task-store';
 
@@ -118,6 +119,33 @@ describe('task-store', () => {
     expect(await listBackgroundTasks(sessionDir)).toEqual([]);
   });
 
+  it('falls back to session-root tasks for main and lets primary keys shadow fallback', async () => {
+    const { sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
+    cleanup = c;
+    const mainDir = join(sessionDir, 'agents', 'main');
+
+    await writeTask(sessionDir, 'bash-aaaaaaaa.json', {
+      taskId: 'bash-aaaaaaaa', kind: 'process', description: 'fallback shadowed',
+      command: 'fallback', pid: 1, exitCode: 0, status: 'completed',
+      detached: true, startedAt: 100, endedAt: 200,
+    });
+    await writeTask(sessionDir, 'bash-bbbbbbbb.json', {
+      taskId: 'bash-bbbbbbbb', kind: 'process', description: 'fallback visible',
+      command: 'fallback', pid: 2, exitCode: 0, status: 'completed',
+      detached: true, startedAt: 200, endedAt: 300,
+    });
+    await mkdir(join(mainDir, 'tasks'), { recursive: true });
+    await writeFile(join(mainDir, 'tasks', 'bash-aaaaaaaa.json'), '{ broken');
+    await writeTask(mainDir, 'bash-cccccccc.json', {
+      taskId: 'bash-cccccccc', kind: 'process', description: 'primary visible',
+      command: 'primary', pid: 3, exitCode: 0, status: 'completed',
+      detached: true, startedAt: 300, endedAt: 400,
+    });
+
+    const tasks = await listBackgroundTasks(mainDir, sessionDir);
+    expect(tasks.map((task) => task.taskId)).toEqual(['bash-cccccccc', 'bash-bbbbbbbb']);
+  });
+
   it('reads output.log byte windows with size + eof', async () => {
     const { sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
     cleanup = c;
@@ -143,6 +171,39 @@ describe('task-store', () => {
     cleanup = c;
     const w = await readTaskOutput(sessionDir, 'bash-00000000', 0, 100);
     expect(w).toMatchObject({ size: 0, content: '', eof: true });
+  });
+
+  it('falls back to session-root output and treats an empty primary log as present', async () => {
+    const { sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
+    cleanup = c;
+    const mainDir = join(sessionDir, 'agents', 'main');
+    const fallbackOutputDir = join(sessionDir, 'tasks', 'bash-12345678');
+    await mkdir(fallbackOutputDir, { recursive: true });
+    await writeFile(join(fallbackOutputDir, 'output.log'), 'legacy output');
+
+    expect(await taskOutputMetadata(mainDir, 'bash-12345678', sessionDir)).toEqual({
+      exists: true,
+      size: 13,
+    });
+    expect(await readTaskOutput(mainDir, 'bash-12345678', 0, 100, sessionDir)).toMatchObject({
+      size: 13,
+      content: 'legacy output',
+      eof: true,
+    });
+
+    const primaryOutputDir = join(mainDir, 'tasks', 'bash-12345678');
+    await mkdir(primaryOutputDir, { recursive: true });
+    await writeFile(join(primaryOutputDir, 'output.log'), '');
+
+    expect(await taskOutputMetadata(mainDir, 'bash-12345678', sessionDir)).toEqual({
+      exists: true,
+      size: 0,
+    });
+    expect(await readTaskOutput(mainDir, 'bash-12345678', 0, 100, sessionDir)).toMatchObject({
+      size: 0,
+      content: '',
+      eof: true,
+    });
   });
 
   it('isSafeTaskId guards traversal', () => {
