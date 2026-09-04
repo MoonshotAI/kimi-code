@@ -317,17 +317,21 @@ function messageToGoogleGenAI(message: Message): GoogleContent {
 }
 
 /**
- * Convert a tool message into a list of Google GenAI parts.
+ * Convert a tool message into Google GenAI parts.
  *
- * Returns a `functionResponse` part carrying the text output, followed by
- * independent media parts (`inlineData` / `fileData`) for any image/audio/video
- * content in the tool result. This preserves multimodal tool outputs so the
- * next Gemini/Vertex turn can see them — returning only the text would silently
- * drop media and break tool chains that rely on images or audio.
+ * Returns a `functionResponse` part carrying the text output plus media parts
+ * (`inlineData` / `fileData`) for any image/audio/video content in the tool
+ * result. With `nestMedia`, media is nested inside `functionResponse.parts` —
+ * the Gemini 3+ multimodal function response contract — otherwise media is
+ * emitted as sibling parts, the pre-Gemini-3 shape. This preserves multimodal
+ * tool outputs so the next Gemini/Vertex turn can see them — returning only the
+ * text would silently drop media and break tool chains that rely on images or
+ * audio.
  */
 function toolMessageToFunctionResponseParts(
   message: Message,
   toolNameById: Map<string, string>,
+  nestMedia: boolean,
 ): GooglePart[] {
   if (message.role !== 'tool') {
     throw new ChatProviderError('Expected a tool message.');
@@ -363,14 +367,18 @@ function toolMessageToFunctionResponseParts(
     functionResponse: {
       name: toolCallIdToName(message.toolCallId, toolNameById),
       response: { output: textOutput },
-      parts: [],
+      parts: nestMedia ? mediaParts : [],
     },
   };
 
-  return [functionResponsePart, ...mediaParts];
+  return nestMedia ? [functionResponsePart] : [functionResponsePart, ...mediaParts];
 }
 
-export function messagesToGoogleGenAIContents(messages: Message[]): GoogleContent[] {
+export function messagesToGoogleGenAIContents(
+  messages: Message[],
+  options: { nestMediaInFunctionResponse?: boolean } = {},
+): GoogleContent[] {
+  const { nestMediaInFunctionResponse = false } = options;
   const contents: GoogleContent[] = [];
   const toolNameById = new Map<string, string>();
 
@@ -463,11 +471,11 @@ export function messagesToGoogleGenAIContents(messages: Message[]): GoogleConten
         }
 
         // Pack all tool results into a single user Content.
-        // Each tool result may expand to multiple parts (functionResponse +
-        // media parts for image/audio/video outputs).
+        // Each tool result yields one functionResponse part; media is either
+        // nested inside its `parts` (Gemini 3+) or emitted as sibling parts.
         const parts: GooglePart[] = [];
         for (const toolMsg of sortedToolMessages) {
-          parts.push(...toolMessageToFunctionResponseParts(toolMsg, toolNameById));
+          parts.push(...toolMessageToFunctionResponseParts(toolMsg, toolNameById, nestMediaInFunctionResponse));
         }
         contents.push({ role: 'user', parts });
         i = j;
@@ -480,7 +488,11 @@ export function messagesToGoogleGenAIContents(messages: Message[]): GoogleConten
 
     if (message.role === 'tool') {
       // Tool message without preceding assistant message
-      const parts: GooglePart[] = toolMessageToFunctionResponseParts(message, toolNameById);
+      const parts: GooglePart[] = toolMessageToFunctionResponseParts(
+        message,
+        toolNameById,
+        nestMediaInFunctionResponse,
+      );
       contents.push({ role: 'user', parts });
       i += 1;
       continue;
@@ -858,7 +870,9 @@ export class GoogleGenAIChatProvider implements ChatProvider {
       throw createAbortError();
     }
 
-    const contents = messagesToGoogleGenAIContents(history);
+    const contents = messagesToGoogleGenAIContents(history, {
+      nestMediaInFunctionResponse: this._model.includes('gemini-3'),
+    });
 
     const config: Record<string, unknown> = {
       ...this._generationKwargs,

@@ -279,6 +279,7 @@ function messageToGoogleGenAI(message: Message): GoogleContent {
 function toolMessageToFunctionResponseParts(
   message: Message,
   toolNameById: Map<string, string>,
+  nestMedia: boolean,
 ): GooglePart[] {
   if (message.role !== 'tool') {
     throw new ChatProviderError('Expected a tool message.');
@@ -312,14 +313,18 @@ function toolMessageToFunctionResponseParts(
     functionResponse: {
       name: toolCallIdToName(message.toolCallId, toolNameById),
       response: { output: textOutput },
-      parts: [],
+      parts: nestMedia ? mediaParts : [],
     },
   };
 
-  return [functionResponsePart, ...mediaParts];
+  return nestMedia ? [functionResponsePart] : [functionResponsePart, ...mediaParts];
 }
 
-export function messagesToGoogleGenAIContents(messages: Message[]): GoogleContent[] {
+export function messagesToGoogleGenAIContents(
+  messages: Message[],
+  options: { nestMediaInFunctionResponse?: boolean } = {},
+): GoogleContent[] {
+  const { nestMediaInFunctionResponse = false } = options;
   const contents: GoogleContent[] = [];
   const toolNameById = new Map<string, string>();
 
@@ -396,7 +401,7 @@ export function messagesToGoogleGenAIContents(messages: Message[]): GoogleConten
 
         const parts: GooglePart[] = [];
         for (const toolMsg of sortedToolMessages) {
-          parts.push(...toolMessageToFunctionResponseParts(toolMsg, toolNameById));
+          parts.push(...toolMessageToFunctionResponseParts(toolMsg, toolNameById, nestMediaInFunctionResponse));
         }
         contents.push({ role: 'user', parts });
         i = j;
@@ -408,7 +413,11 @@ export function messagesToGoogleGenAIContents(messages: Message[]): GoogleConten
     }
 
     if (message.role === 'tool') {
-      const parts: GooglePart[] = toolMessageToFunctionResponseParts(message, toolNameById);
+      const parts: GooglePart[] = toolMessageToFunctionResponseParts(
+        message,
+        toolNameById,
+        nestMediaInFunctionResponse,
+      );
       contents.push({ role: 'user', parts });
       i += 1;
       continue;
@@ -747,7 +756,9 @@ export class GoogleGenAIChatProvider implements ChatProvider {
       throw createAbortError();
     }
 
-    const contents = messagesToGoogleGenAIContents(history);
+    const contents = messagesToGoogleGenAIContents(history, {
+      nestMediaInFunctionResponse: this._model.includes('gemini-3'),
+    });
 
     let kwargs: GoogleGenAIGenerationKwargs = { ...this._generationKwargs };
 
