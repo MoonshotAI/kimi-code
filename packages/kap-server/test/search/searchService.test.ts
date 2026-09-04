@@ -337,6 +337,18 @@ describe('GlobalSearchService', () => {
     expect((await service.search({ query: '苹果' })).items).toEqual([]);
   });
 
+  it('fails the search instead of serving deleted content when the ledger is unreadable', async () => {
+    const s1 = summary('s1', '删除测试', T1);
+    await writeWire(home!, 's1', 'main', [userLine('即将被删除的苹果', T1)]);
+    const service = track(makeService(home!, staticIndex([s1])));
+    await service.reindex();
+    await service.deleteSession('s1');
+    await rm(join(home!, 'search-index', 'deleted-sessions.jsonl'), { force: true });
+    await mkdir(join(home!, 'search-index', 'deleted-sessions.jsonl'));
+
+    await expect(service.search({ query: '苹果' })).rejects.toThrow();
+  });
+
   it('hits session titles as title docs', async () => {
     const s1 = summary('s1', '季度总结报告', T1);
     await writeWire(home!, 's1', 'main', [userLine('随便说点什么', T1)]);

@@ -996,7 +996,13 @@ async function archiveSessionAction(ctx: SessionActionCtx): Promise<void> {
 
 async function deleteSessionAction(ctx: SessionActionCtx): Promise<void> {
   const { core, req, reply, id } = ctx;
-  await core.accessor.get(ISessionManager).delete(id);
+  try {
+    await core.accessor.get(ISessionManager).delete(id);
+  } catch (error) {
+    if (!isError2(error) || error.code !== ErrorCodes.SESSION_NOT_FOUND) throw error;
+    await core.accessor.get(IGlobalSearchService).deleteSession(id);
+    throw error;
+  }
   await core.accessor.get(IGlobalSearchService).deleteSession(id);
   requestLog(req)?.info({ session_id: id, action: 'delete' }, 'session action completed');
   reply.send(okEnvelope({ deleted: true }, req.id));

@@ -247,8 +247,9 @@ export class SearchIndexCore {
     try {
       const raw = await readFile(this.deletedLedgerPath, 'utf8');
       return new Set(raw.split('\n').filter((line) => line.length > 0));
-    } catch {
-      return new Set();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return new Set();
+      throw error;
     }
   }
 
@@ -482,7 +483,15 @@ export class SearchIndexCore {
       if (!currentIds.has(sessionId)) await this.deleteSessionDocs(db, sessionId);
     }
 
-    const deletedLedger = await this.readDeletedLedger();
+    let deletedLedger: Set<string>;
+    try {
+      deletedLedger = await this.readDeletedLedger();
+    } catch (error) {
+      this.log.warn('global search: failed to read the session deletion ledger; skipping its purge this pass', {
+        error: errorMessage(error),
+      });
+      deletedLedger = new Set();
+    }
     for (const sessionId of deletedLedger) {
       if (this.disposed) return { noop: true, sessions: 0, documents: 0 };
       await this.deleteSessionDocs(db, sessionId);
@@ -898,7 +907,15 @@ export class SearchIndexCore {
     const boundary = page.kind === 'keyset' ? page.boundary : undefined;
     const matched = matchDocs(q, candidates, boundary, budget);
     incomplete ??= matched.incomplete;
-    const deletedLedger = await this.readDeletedLedger();
+    let deletedLedger: Set<string>;
+    try {
+      deletedLedger = await this.readDeletedLedger();
+    } catch (error) {
+      throw new GlobalSearchError(
+        'index_unavailable',
+        `failed to read the session deletion ledger: ${errorMessage(error)}`,
+      );
+    }
     const visibleRows =
       deletedLedger.size === 0
         ? matched.rows
