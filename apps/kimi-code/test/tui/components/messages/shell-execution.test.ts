@@ -128,7 +128,34 @@ describe('ShellExecutionComponent', () => {
       );
 
       const rendered = components.flatMap((c) => c.render(100)).map(strip);
-      expect(rendered).toEqual(['  Tests 12 passed']);
+      expect(rendered).toEqual(['  … Tests 12 passed']);
+    });
+
+    it('identifies a background task by its first metadata line while collapsed', () => {
+      const components = shellExecutionResultRenderer(
+        {
+          id: 'call_1',
+          name: 'Bash',
+          args: { command: 'npm run build', run_in_background: true },
+        },
+        {
+          tool_call_id: 'call_1',
+          output: [
+            'task_id: bash-abc123',
+            'pid: 12345',
+            'description: npm run build',
+            'status: running',
+            'automatic_notification: true',
+            'next_step: The completion arrives automatically in a later turn.',
+            'human_shell_hint: The task is visible in the background-task panel.',
+          ].join('\n'),
+          is_error: false,
+        },
+        { expanded: false },
+      );
+
+      const rendered = components.flatMap((c) => c.render(100)).map(strip);
+      expect(rendered).toEqual(['  task_id: bash-abc123 …']);
     });
 
     it('shows a short result whole while collapsed', () => {

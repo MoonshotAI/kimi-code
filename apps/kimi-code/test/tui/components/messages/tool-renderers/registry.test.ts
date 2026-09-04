@@ -58,12 +58,12 @@ function goalOutput(overrides: Record<string, unknown> = {}): string {
 }
 
 describe('tool-result registry', () => {
-  it('falls back to truncated renderer for unknown tools: header-only collapsed, full when expanded', () => {
+  it('falls back to truncated renderer for unknown tools: first line marked, full when expanded', () => {
     const renderer = pickResultRenderer('SomethingUnknown');
     const collapsed = strip(
       joinRender(renderer(call('SomethingUnknown'), result('\na\nb\nc\nd\ne'), ctx)),
     );
-    expect(collapsed).toBe('  a');
+    expect(collapsed).toBe('  a …');
 
     const expanded = strip(
       joinRender(renderer(call('SomethingUnknown'), result('a\nb\nc\nd\ne'), expandedCtx)),
@@ -86,10 +86,10 @@ describe('tool-result registry', () => {
     expect(out).toContain('… (2 more lines, ctrl+o to expand)');
   });
 
-  it('uses the shell renderer for Bash: last line collapsed, raw output expanded', () => {
+  it('uses the shell renderer for Bash: marked last line collapsed, raw output expanded', () => {
     const renderer = pickResultRenderer('Bash');
     expect(strip(joinRender(renderer(call('Bash'), result('one\ntwo\nthree\nfour'), ctx)))).toBe(
-      '  four',
+      '  … four',
     );
     const out = strip(
       joinRender(renderer(call('Bash'), result('one\ntwo\nthree\nfour'), expandedCtx)),
@@ -127,6 +127,23 @@ describe('tool-result registry', () => {
       ),
     );
     expect(out).toBe('  src/a.ts, src/b.ts, src/c.ts, +2 more');
+  });
+
+  it('keeps the "+N more" count when the glance samples overflow the width', () => {
+    const renderer = pickResultRenderer('Grep');
+    const out = strip(
+      joinRender(
+        renderer(
+          call('Grep', { pattern: 'foo' }),
+          result('src/aaaa.ts\nsrc/bbbb.ts\nsrc/cccc.ts\nsrc/dddd.ts\nsrc/eeee.ts'),
+          ctx,
+        ),
+        40,
+      ),
+    );
+    // The samples are cut to fit; the count in the fixed tail always survives.
+    expect(out.endsWith(', +2 more')).toBe(true);
+    expect(out).toContain('…');
   });
 
   it('Grep glance lists path samples above the raw output when expanded', () => {

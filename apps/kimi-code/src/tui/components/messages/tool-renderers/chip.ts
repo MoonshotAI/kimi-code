@@ -90,10 +90,11 @@ const readChip: ChipProvider = (_toolCall, result) =>
   pluralize(countNonEmptyLines(result.output), 'line');
 
 // A collapsed Bash card shows its output whole when it fits the outcome
-// rows, so the chip only appears once there is more behind ctrl+o.
+// rows; once one line stands in for the rest, the chip counts the hidden
+// lines, not the total.
 const bashChip: ChipProvider = (_toolCall, result) => {
   const lines = countNonEmptyLines(result.output);
-  return lines <= OUTCOME_MAX_LINES ? '' : pluralize(lines, 'line');
+  return lines <= OUTCOME_MAX_LINES ? '' : pluralize(lines - 1, 'more line');
 };
 
 // Grep's default mode lists files, so the chip counts what the mode

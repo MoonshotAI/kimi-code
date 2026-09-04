@@ -74,6 +74,31 @@ describe('renderHeaderContent', () => {
     expect(visibleWidth(line)).toBeLessThanOrEqual(12);
     expect(line.endsWith('…')).toBe(true);
   });
+
+  it('keeps ANSI escape sequences atomic and zero-width when cutting', () => {
+    const colored = '\x1b[32mabcdef\x1b[0mghijkl';
+    // 2 (head) + 5 for the middle: the whole opening sequence plus 4 visible
+    // cells, then the ellipsis. The sequence is never split or measured.
+    const line = renderHeaderContent(
+      { head: 'H ', flex: { text: colored, keep: 'head' }, tail: '' },
+      7,
+    );
+    expect(line).toBe('H \x1b[32mabcd…');
+    expect(visibleWidth(line)).toBeLessThanOrEqual(7);
+  });
+
+  it('cuts a huge argument without walking it whole', () => {
+    const huge = `prefix-${'x'.repeat(200_000)}-suffix`;
+    const head = strip(renderHeaderContent(segments(huge, 'head', ''), 40));
+    expect(head.startsWith('● Ran a command · $ prefix-xxx')).toBe(true);
+    expect(head.endsWith('…')).toBe(true);
+    expect(visibleWidth(head)).toBeLessThanOrEqual(40);
+
+    const tail = strip(renderHeaderContent(segments(huge, 'tail', ''), 40));
+    expect(tail).toContain('$ …');
+    expect(tail.endsWith('-suffix')).toBe(true);
+    expect(visibleWidth(tail)).toBeLessThanOrEqual(40);
+  });
 });
 
 describe('TruncatedHeaderLine', () => {

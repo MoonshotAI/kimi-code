@@ -181,10 +181,12 @@ describe('computeEditStats', () => {
 });
 
 describe('Bash chip', () => {
-  it('counts the output lines once they outgrow the collapsed card', () => {
+  it('counts the hidden output lines once they outgrow the collapsed card', () => {
     const chip = pickChip('Bash')!;
     const call = { id: 'tc', name: 'Bash', args: { command: 'ls' } };
-    expect(chip(call, { tool_call_id: 'tc', output: 'a\n\nb\nc\nd\n', is_error: false })).toBe('4 lines');
+    // One outcome line stands in for the rest, so the chip counts what is hidden.
+    expect(chip(call, { tool_call_id: 'tc', output: 'a\n\nb\nc\nd\n', is_error: false })).toBe('3 more lines');
+    expect(chip(call, { tool_call_id: 'tc', output: 'a\nb\nc\nd\ne', is_error: false })).toBe('4 more lines');
     // Up to three lines are shown whole on the collapsed card, so no chip.
     expect(chip(call, { tool_call_id: 'tc', output: 'a\n\nb\nc\n', is_error: false })).toBe('');
     expect(chip(call, { tool_call_id: 'tc', output: 'only', is_error: false })).toBe('');

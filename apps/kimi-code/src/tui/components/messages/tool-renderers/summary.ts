@@ -12,31 +12,44 @@
 import type { Component } from '@moonshot-ai/pi-tui';
 import { Text } from '@moonshot-ai/pi-tui';
 
+import { OUTCOME_ROW_INDENT } from '#/tui/constant/rendering';
 import { currentTheme } from '#/tui/theme';
 
 import { parseGlobOutput, parseGrepOutput } from './grep-output';
-import { outcomeLine } from './outcome';
+import { outcomeRow } from './outcome';
 import { renderTruncated } from './truncated';
 import type { ResultRenderer } from './types';
 
 const GLANCE_SAMPLES = 3;
 
+interface Glance {
+  readonly samples: string;
+  readonly moreCount: number;
+}
+
 type GlanceFn = (
   toolCall: Parameters<ResultRenderer>[0],
   result: Parameters<ResultRenderer>[1],
-) => string;
+) => Glance | null;
 
 function withGlance(glance: GlanceFn | null): ResultRenderer {
   return (toolCall, result, ctx) => {
     if (result.is_error) return renderTruncated(toolCall, result, ctx);
 
     const out: Component[] = [];
-    // The glance is the collapsed card's outcome row (one width-truncated
-    // line); the raw output only follows once expanded.
+    // Collapsed: the glance is the card's outcome row — path samples in the
+    // flexible middle and the "+N more" count in the fixed tail, so a width
+    // cut drops samples, never the count. Expanded: one joined line above
+    // the raw output.
     if (glance !== null) {
-      const line = glance(toolCall, result);
-      if (line.length > 0) {
-        out.push(ctx.expanded ? new Text(`  ${currentTheme.dim(line)}`, 0, 0) : outcomeLine(line));
+      const parts = glance(toolCall, result);
+      if (parts !== null) {
+        const tail = parts.moreCount > 0 ? `, +${String(parts.moreCount)} more` : '';
+        out.push(
+          ctx.expanded
+            ? new Text(`  ${currentTheme.dim(`${parts.samples}${tail}`)}`, 0, 0)
+            : outcomeRow(OUTCOME_ROW_INDENT, parts.samples, tail),
+        );
       }
     }
     if (ctx.expanded && result.output.length > 0) {
@@ -46,12 +59,10 @@ function withGlance(glance: GlanceFn | null): ResultRenderer {
   };
 }
 
-function sampleList(labels: readonly string[]): string {
-  if (labels.length === 0) return '';
+function sampleList(labels: readonly string[]): Glance | null {
+  if (labels.length === 0) return null;
   const samples = labels.slice(0, GLANCE_SAMPLES);
-  const remaining = labels.length - samples.length;
-  const tail = remaining > 0 ? `, +${String(remaining)} more` : '';
-  return `${samples.join(', ')}${tail}`;
+  return { samples: samples.join(', '), moreCount: labels.length - samples.length };
 }
 
 // Path samples in the shape the mode returns — `path`, `path:line` (the

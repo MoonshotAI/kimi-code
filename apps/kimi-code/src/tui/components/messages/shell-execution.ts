@@ -78,9 +78,13 @@ export const shellExecutionResultRenderer: ResultRenderer = (
 ): Component[] => {
   // Collapsed: short output is shown whole; longer output contributes its
   // last line (most commands conclude on their last line) and the rest waits
-  // for ctrl+o. A failing command keeps its multi-line preview so the error
-  // is visible.
-  if (!ctx.expanded && result.is_error !== true) return outcomeRows(result.output, 'last');
+  // for ctrl+o. A background or detached start returns a metadata block
+  // (task_id first, internal next_step/human_shell_hint lines last), so it
+  // shows its first line to identify the task instead of the trailing hint.
+  // A failing command keeps its multi-line preview so the error is visible.
+  if (!ctx.expanded && result.is_error !== true) {
+    return outcomeRows(result.output, result.output.startsWith('task_id:') ? 'first' : 'last');
+  }
   // Result only. The command preview is owned by ToolCallComponent's
   // buildCallPreview across the whole lifecycle (streaming, running, and
   // done); rendering it here too would duplicate the command once the result

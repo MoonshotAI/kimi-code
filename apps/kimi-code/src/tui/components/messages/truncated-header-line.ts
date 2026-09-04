@@ -14,7 +14,7 @@
 import type { Component } from '@moonshot-ai/pi-tui';
 import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 
-const ELLIPSIS = '…';
+import { TRUNCATION_ELLIPSIS } from '#/tui/constant/rendering';
 
 export interface HeaderFlex {
   /** Plain text; `style` is applied after the cut so the ellipsis is styled too. */
@@ -35,54 +35,95 @@ export type HeaderContent = string | HeaderSegments;
 // hand here: pi-tui's truncateToWidth wraps its ellipsis in a reset sequence,
 // which would break the caller's styling around it.
 
-/** Grapheme clusters, so an emoji or a combining sequence is never split by a cut. */
-function graphemes(text: string): string[] {
-  return Array.from(new Intl.Segmenter().segment(text), (segment) => segment.segment);
+// ANSI escape sequences (CSI, OSC) — tool output can carry them — are
+// zero-width atomic units: a cut must neither count their bytes toward the
+// budget nor split a sequence in half and leak a malformed one.
+const ANSI_ESCAPE_PATTERN = /\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))/g;
+
+interface TextUnit {
+  readonly text: string;
+  readonly width: number;
+}
+
+/** Grapheme clusters and whole escape sequences, in order; escape sequences measure zero width. */
+function* textUnits(text: string): Generator<TextUnit> {
+  const segmenter = new Intl.Segmenter();
+  let offset = 0;
+  for (const match of text.matchAll(ANSI_ESCAPE_PATTERN)) {
+    if (match.index > offset) {
+      for (const segment of segmenter.segment(text.slice(offset, match.index))) {
+        yield { text: segment.segment, width: visibleWidth(segment.segment) };
+      }
+    }
+    yield { text: match[0], width: 0 };
+    offset = match.index + match[0].length;
+  }
+  for (const segment of segmenter.segment(text.slice(offset))) {
+    yield { text: segment.segment, width: visibleWidth(segment.segment) };
+  }
 }
 
 /** Keep the start of `text` up to a trailing ellipsis, within `width` cells. */
 function keepHead(text: string, width: number): string {
-  const budget = width - visibleWidth(ELLIPSIS);
+  const budget = width - visibleWidth(TRUNCATION_ELLIPSIS);
   let out = '';
   let used = 0;
-  for (const cluster of graphemes(text)) {
-    const clusterWidth = visibleWidth(cluster);
-    if (used + clusterWidth > budget) break;
-    out += cluster;
-    used += clusterWidth;
+  let truncated = false;
+  // Lazy iteration: only about one row of clusters is ever walked, so a huge
+  // argument (a base64 payload in an MCP call) costs nothing here.
+  for (const unit of textUnits(text)) {
+    if (used + unit.width > budget) {
+      truncated = true;
+      break;
+    }
+    out += unit.text;
+    used += unit.width;
   }
-  return `${out}${ELLIPSIS}`;
+  return truncated ? `${out}${TRUNCATION_ELLIPSIS}` : out;
 }
 
 /** Keep the end of `text` behind a leading ellipsis, within `width` cells. */
 function keepTail(text: string, width: number): string {
-  const budget = width - visibleWidth(ELLIPSIS);
+  const budget = width - visibleWidth(TRUNCATION_ELLIPSIS);
+  // One cell needs at most one code unit of payload; the window adds headroom
+  // only for zero-width escape sequences, so the segmented slice stays
+  // bounded by the terminal width instead of the whole argument.
+  const windowed = text.length > budget + 64 ? text.slice(-(budget + 64)) : text;
+  const units = [...textUnits(windowed)];
+  // The window edge may have split a grapheme or an escape sequence; drop
+  // whatever partial unit it left behind the leading ellipsis.
+  if (windowed.length < text.length) units.shift();
   let out = '';
   let used = 0;
-  for (const cluster of graphemes(text).toReversed()) {
-    const clusterWidth = visibleWidth(cluster);
-    if (used + clusterWidth > budget) break;
-    out = cluster + out;
-    used += clusterWidth;
+  let truncated = windowed.length < text.length;
+  for (const unit of units.toReversed()) {
+    if (used + unit.width > budget) {
+      truncated = true;
+      break;
+    }
+    out = unit.text + out;
+    used += unit.width;
   }
-  return `${ELLIPSIS}${out}`;
+  return truncated ? `${TRUNCATION_ELLIPSIS}${out}` : out;
 }
 
 function fitFlex(flex: HeaderFlex, width: number): string {
-  if (visibleWidth(flex.text) <= width) return flex.text;
+  // Two cells per code unit is the worst case (wide chars), so beyond twice
+  // the width a cut is certain and the whole string is never measured.
+  if (flex.text.length <= width * 2 && visibleWidth(flex.text) <= width) return flex.text;
   return flex.keep === 'tail' ? keepTail(flex.text, width) : keepHead(flex.text, width);
 }
 
 export function renderHeaderContent(content: HeaderContent, width: number): string {
   const safeWidth = Math.max(1, width);
-  if (typeof content === 'string') return truncateToWidth(content, safeWidth, ELLIPSIS);
+  if (typeof content === 'string') return truncateToWidth(content, safeWidth, TRUNCATION_ELLIPSIS);
   const { head, flex, tail } = content;
   const style = flex.style ?? ((text: string) => text);
   const available = safeWidth - visibleWidth(head) - visibleWidth(tail);
   // Below two cells there is no room for even an ellipsis plus one character
   // of the middle: give up on the layout and cut the whole row from the end.
   if (available < 2) {
-    return truncateToWidth(`${head}${style(flex.text)}${tail}`, safeWidth, ELLIPSIS);
+    return truncateToWidth(`${head}${style(flex.text)}${tail}`, safeWidth, TRUNCATION_ELLIPSIS);
   }
   return `${head}${style(fitFlex(flex, available))}${tail}`;
 }

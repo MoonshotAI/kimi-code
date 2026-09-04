@@ -157,14 +157,14 @@ describe('ToolCallComponent', () => {
       },
     );
 
-    // Collapsed: the header (command + line-count chip) plus one outcome row
-    // holding the last output line; the rest waits for ctrl+o.
+    // Collapsed: the header (command + hidden-line chip) plus one outcome row
+    // holding the last output line, marked as standing in for the rest.
     const collapsedLines = component.render(100).map(strip).filter((line) => line.trim().length > 0);
     expect(collapsedLines).toHaveLength(2);
     expect(collapsedLines[0]).toContain('Ran a command');
     expect(collapsedLines[0]).toContain('$ printf output');
-    expect(collapsedLines[0]).toContain('· 5 lines');
-    expect(collapsedLines[1]).toBe('  line5');
+    expect(collapsedLines[0]).toContain('· 4 more lines');
+    expect(collapsedLines[1]).toBe('  … line5');
 
     component.setExpanded(true);
 
@@ -209,13 +209,14 @@ describe('ToolCallComponent', () => {
     component.appendLiveOutput('line1\n');
     component.appendLiveOutput('line2\n');
 
-    // Collapsed: the header plus the newest live line as the outcome row, so
-    // progress stays visible; the whole live tail waits for ctrl+o.
+    // Collapsed: the header plus the newest live line as the outcome row,
+    // marked as standing in for the lines above it; the whole live tail waits
+    // for ctrl+o.
     const rows = component.render(100).map(strip).filter((line) => line.trim().length > 0);
     expect(rows).toHaveLength(2);
     expect(rows[0]).toContain('Running a command');
     expect(rows[0]).toContain('$ printf output');
-    expect(rows[1]).toBe('  line2');
+    expect(rows[1]).toBe('  … line2');
 
     component.setExpanded(true);
     const expanded = strip(component.render(100).join('\n'));
@@ -287,8 +288,8 @@ describe('ToolCallComponent', () => {
       expect(collapsed).toHaveLength(2);
       expect(collapsed[0]).toContain('Ran a command');
       expect(collapsed[0]).toContain('$ echo step1…');
-      expect(collapsed[0]).toContain('· 4 lines');
-      expect(collapsed[1]).toBe('  done');
+      expect(collapsed[0]).toContain('· 3 more lines');
+      expect(collapsed[1]).toBe('  … done');
 
       component.setExpanded(true);
       // The command is owned by buildCallPreview, so it appears exactly once —
@@ -373,8 +374,8 @@ describe('ToolCallComponent', () => {
       const narrow = component.render(70).map(strip).filter((line) => line.trim().length > 0);
       expect(narrow).toHaveLength(2);
       expect(visibleWidth(narrow[0]!)).toBeLessThanOrEqual(70);
-      // The command is cut to the remaining width; the line-count chip survives.
-      expect(narrow[0]).toMatch(/\$ git log .*… · 4 lines$/);
+      // The command is cut to the remaining width; the hidden-line chip survives.
+      expect(narrow[0]).toMatch(/\$ git log .*… · 3 more lines$/);
     });
 
     it('keeps the file name of a long Read path on a narrow terminal', () => {

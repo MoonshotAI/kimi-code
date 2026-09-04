@@ -37,7 +37,7 @@ import { ShellExecutionComponent } from './shell-execution';
 import { countNonEmptyLines, pickChip } from './tool-renderers/chip';
 import { buildGoalToolHeader } from './tool-renderers/goal';
 import { computeEditStats, computeWriteStats } from './tool-renderers/chip';
-import { lastNonEmptyLine, nonEmptyLines, OUTCOME_MAX_LINES, outcomeLine } from './tool-renderers/outcome';
+import { nonEmptyLines, OUTCOME_MAX_LINES, outcomeLine } from './tool-renderers/outcome';
 import { isGenericToolResult, pickResultRenderer } from './tool-renderers/registry';
 import { buildWaitForHeader } from './tool-renderers/wait-for';
 
@@ -1710,8 +1710,13 @@ export class ToolCallComponent extends Container {
     // command runs, so progress stays visible; the result's last line takes
     // the same row once it lands. ctrl+o shows the whole live tail.
     if (!this.expanded) {
-      const latest = lastNonEmptyLine(this.liveOutput);
-      if (latest !== undefined) this.addChild(outcomeLine(latest));
+      const lines = nonEmptyLines(this.liveOutput);
+      const latest = lines.at(-1);
+      // With earlier output above it, the newest line carries the same
+      // leading ellipsis the finished card's last-line row uses.
+      if (latest !== undefined) {
+        this.addChild(outcomeLine(latest, lines.length > 1 ? 'above' : undefined));
+      }
       return;
     }
     this.addChild(
