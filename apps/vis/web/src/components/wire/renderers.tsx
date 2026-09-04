@@ -52,6 +52,87 @@ function compactionSummaryText(r: AgentRecordOf<'context.apply_compaction'>): st
   return ('contextSummary' in r ? r.contextSummary : undefined) ?? '';
 }
 
+type UnknownObject = Record<string, unknown>;
+
+function asObject(value: unknown): UnknownObject | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as UnknownObject)
+    : undefined;
+}
+
+function valuePreview(value: unknown): string {
+  if (value === null) return 'null';
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    typeof value === 'bigint'
+  ) {
+    return String(value);
+  }
+  if (value === undefined) return 'undefined';
+  try {
+    const serialized = JSON.stringify(value);
+    return serialized === undefined ? `[${typeof value}]` : truncate(serialized, 80);
+  } catch {
+    return '[unserializable]';
+  }
+}
+
+function invalidValue(value: unknown): string {
+  return value === undefined ? '(missing)' : `(invalid: ${valuePreview(value)})`;
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === 'string' ? value : invalidValue(value);
+}
+
+function numberValue(value: unknown): string {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? String(value)
+    : invalidValue(value);
+}
+
+function checkpointPhase(value: unknown): { label: string; tone: PillTone } {
+  if (value === undefined || value === 'start') return { label: 'start', tone: 'lifecycle' };
+  if (value === 'end') return { label: 'end', tone: 'success' };
+  return { label: invalidValue(value), tone: 'warning' };
+}
+
+function trackedStatus(value: unknown): { label: string; tone: PillTone } {
+  const entry = asObject(value);
+  if (entry === undefined) return { label: 'entry unavailable', tone: 'warning' };
+  if (entry.oversize === true) return { label: 'oversize', tone: 'warning' };
+  if (entry.oversize !== undefined && typeof entry.oversize !== 'boolean') {
+    return { label: 'invalid entry', tone: 'warning' };
+  }
+  if (entry.key === null) return { label: 'new', tone: 'info' };
+  if (typeof entry.key !== 'string') return { label: 'invalid entry', tone: 'warning' };
+  if (typeof entry.version !== 'number' || !Number.isFinite(entry.version)) {
+    return { label: 'invalid version', tone: 'warning' };
+  }
+  return { label: `v${entry.version}`, tone: 'tools' };
+}
+
+function snapshotKey(entry: UnknownObject | undefined): { label: string; dim: boolean } {
+  if (entry === undefined) return { label: '(entry unavailable)', dim: true };
+  if (entry.oversize === true) return { label: '(not captured: oversized)', dim: true };
+  if (entry.key === null) return { label: '(file did not exist)', dim: true };
+  if (typeof entry.key === 'string') return { label: entry.key, dim: false };
+  return { label: invalidValue(entry.key), dim: true };
+}
+
+function sizeValue(value: unknown): string {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? `${value}b`
+    : invalidValue(value);
+}
+
+function timestampValue(value: unknown): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return invalidValue(value);
+  return new Date(value).toLocaleString();
+}
+
 export const WIRE_RENDERERS: RendererMap = {
   metadata: {
     tone: 'meta',
@@ -71,91 +152,120 @@ export const WIRE_RENDERERS: RendererMap = {
     tone: 'lifecycle',
     label: 'files·checkpoint',
     headline: (r) => {
-      const phase = r.phase ?? 'start';
-      const count = Object.keys(r.entries).length;
+      const record = r as unknown as UnknownObject;
+      const phase = checkpointPhase(record.phase);
+      const entries = asObject(record.entries);
+      const count = entries === undefined ? undefined : Object.keys(entries).length;
       return {
         main: (
           <span className="flex items-center gap-2 min-w-0">
-            <Mono>turn {r.turnId}</Mono>
+            <Mono>turn {numberValue(record.turnId)}</Mono>
             <Dim>
-              {count} file{count === 1 ? '' : 's'}
+              {count === undefined
+                ? 'entries unavailable'
+                : `${count} file${count === 1 ? '' : 's'}`}
             </Dim>
           </span>
         ),
         right: (
-          <Pill tone={phase === 'end' ? 'success' : 'lifecycle'} variant="outline">
-            {phase}
+          <Pill tone={phase.tone} variant="outline">
+            {phase.label}
           </Pill>
         ),
       };
     },
-    detail: (r) => (
-      <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
-        <FieldRow label="turnId">
-          <span className="text-[var(--color-sev-info)]">{r.turnId}</span>
-        </FieldRow>
-        <FieldRow label="phase">
-          <Mono>{r.phase ?? 'start'}</Mono>
-        </FieldRow>
-        <FieldRow label="entries" wide>
-          <JsonViewer value={r.entries} defaultOpenDepth={2} />
-        </FieldRow>
-      </div>
-    ),
+    detail: (r) => {
+      const record = r as unknown as UnknownObject;
+      const phase = checkpointPhase(record.phase);
+      return (
+        <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
+          <FieldRow label="turnId">
+            <span className="text-[var(--color-sev-info)]">{numberValue(record.turnId)}</span>
+          </FieldRow>
+          <FieldRow label="phase">
+            <Mono>{phase.label}</Mono>
+          </FieldRow>
+          <FieldRow label="entries" wide>
+            <JsonViewer value={record.entries} defaultOpenDepth={2} />
+          </FieldRow>
+        </div>
+      );
+    },
   },
 
   'file_history.tracked': {
     tone: 'tools',
     label: 'file·tracked',
-    headline: (r) => ({
-      main: (
-        <span className="flex items-center gap-2 min-w-0">
-          <Mono>turn {r.turnId}</Mono>
-          <Dim className="truncate">{r.path}</Dim>
-        </span>
-      ),
-      right: (
-        <Pill tone={r.entry.key === null ? 'info' : 'tools'} variant="outline">
-          {r.entry.key === null ? 'new' : `v${r.entry.version}`}
-        </Pill>
-      ),
-    }),
-    detail: (r) => (
-      <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
-        <FieldRow label="turnId">
-          <span className="text-[var(--color-sev-info)]">{r.turnId}</span>
-        </FieldRow>
-        <FieldRow label="path" wide>
-          <Mono className="break-all">{r.path}</Mono>
-        </FieldRow>
-        <FieldRow label="version">
-          <span className="text-[var(--color-sev-info)]">{r.entry.version}</span>
-        </FieldRow>
-        <FieldRow label="snapshotKey" wide>
-          {r.entry.key === null ? <Dim>(file did not exist)</Dim> : <Mono>{r.entry.key}</Mono>}
-        </FieldRow>
-        {r.entry.contentHash !== undefined ? (
-          <FieldRow label="contentHash" wide>
-            <Mono className="break-all">{r.entry.contentHash}</Mono>
+    headline: (r) => {
+      const record = r as unknown as UnknownObject;
+      const status = trackedStatus(record.entry);
+      return {
+        main: (
+          <span className="flex items-center gap-2 min-w-0">
+            <Mono>turn {numberValue(record.turnId)}</Mono>
+            <Dim className="truncate">{stringValue(record.path)}</Dim>
+          </span>
+        ),
+        right: (
+          <Pill tone={status.tone} variant="outline">
+            {status.label}
+          </Pill>
+        ),
+      };
+    },
+    detail: (r) => {
+      const record = r as unknown as UnknownObject;
+      const entry = asObject(record.entry);
+      const key = snapshotKey(entry);
+      const malformedOversize =
+        entry !== undefined &&
+        entry.oversize !== undefined &&
+        typeof entry.oversize !== 'boolean';
+      return (
+        <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
+          <FieldRow label="turnId">
+            <span className="text-[var(--color-sev-info)]">{numberValue(record.turnId)}</span>
           </FieldRow>
-        ) : null}
-        {r.entry.size !== undefined ? (
-          <FieldRow label="size">
-            <span className="text-[var(--color-sev-info)]">{r.entry.size}b</span>
+          <FieldRow label="path" wide>
+            <Mono className="break-all">{stringValue(record.path)}</Mono>
           </FieldRow>
-        ) : null}
-        {r.entry.mtimeMs !== undefined ? (
-          <FieldRow label="mtime">
-            <Mono>{new Date(r.entry.mtimeMs).toLocaleString()}</Mono>
+          <FieldRow label="version">
+            <span className="text-[var(--color-sev-info)]">
+              {entry === undefined ? '(entry unavailable)' : numberValue(entry.version)}
+            </span>
           </FieldRow>
-        ) : null}
-        {r.entry.oversize === true ? (
-          <FieldRow label="oversize">
-            <Pill tone="warning" variant="outline">true</Pill>
+          <FieldRow label="snapshotKey" wide>
+            {key.dim ? <Dim>{key.label}</Dim> : <Mono>{key.label}</Mono>}
           </FieldRow>
-        ) : null}
-      </div>
-    ),
+          {entry !== undefined && entry.contentHash !== undefined ? (
+            <FieldRow label="contentHash" wide>
+              <Mono className="break-all">{stringValue(entry.contentHash)}</Mono>
+            </FieldRow>
+          ) : null}
+          {entry !== undefined && entry.size !== undefined ? (
+            <FieldRow label="size">
+              <span className="text-[var(--color-sev-info)]">{sizeValue(entry.size)}</span>
+            </FieldRow>
+          ) : null}
+          {entry !== undefined && entry.mtimeMs !== undefined ? (
+            <FieldRow label="mtime">
+              <Mono>{timestampValue(entry.mtimeMs)}</Mono>
+            </FieldRow>
+          ) : null}
+          {entry?.oversize === true ? (
+            <FieldRow label="oversize">
+              <Pill tone="warning" variant="outline">
+                true
+              </Pill>
+            </FieldRow>
+          ) : malformedOversize ? (
+            <FieldRow label="oversize">
+              <Dim>{invalidValue(entry.oversize)}</Dim>
+            </FieldRow>
+          ) : null}
+        </div>
+      );
+    },
   },
 
   forked: {
