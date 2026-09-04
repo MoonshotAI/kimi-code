@@ -1,21 +1,17 @@
 /**
- * Audit trail for the chat view's transcript channel.
+ * Audit trail for the chat view's message-protocol channel.
  *
- * A pure observer: the chat pipeline (REST loads, WS frames, user actions)
- * calls the `record*` methods AFTER applying each step to the real
- * `TranscriptChatStore`, passing the resulting immutable `AgentState`
- * reference. Replaying the trail is therefore free — every entry already
- * holds the exact state the store had at that point, ready for the
- * timeline slider and the structural diff.
+ * A pure observer: the chat pipeline (REST history loads, WS messages, user
+ * actions) calls the `record*` methods AFTER applying each step to the real
+ * `ChatStore`, passing the resulting immutable `ChatState` reference.
+ * Replaying the trail is therefore free — every entry already holds the
+ * exact state the store had at that point, ready for the timeline slider
+ * and the structural diff.
  */
 
-import type {
-  AgentState,
-  AgentTranscriptSnapshot,
-  TranscriptOperation,
-} from '@moonshot-ai/transcript';
+import type { ServerMessage } from '@moonshot-ai/kap-server/protocol';
 
-import type { TranscriptPage } from '../transcript/api';
+import type { ChatState } from '../transcript/store';
 
 export const AUDIT_TRAIL_MAX_ENTRIES = 5000;
 
@@ -25,52 +21,51 @@ interface AuditEntryBase {
   /** Local record time (ISO). */
   readonly at: string;
   /** Store state right after this entry was applied (immutable reference). */
-  readonly state: AgentState;
+  readonly state: ChatState;
   /** One-line summary for the timeline list. */
   readonly summary: string;
 }
 
 export interface RestAuditEntry extends AuditEntryBase {
   readonly kind: 'rest';
-  readonly request: { readonly beforeTurn?: string | undefined; readonly pageSize: number };
-  readonly appliedAs: 'replace' | 'prepend';
-  readonly page: TranscriptPage;
+  readonly request: {
+    readonly beforeTurn?: string | undefined;
+    readonly afterStep?: string | undefined;
+    readonly pageSize: number;
+  };
+  /** replace = newest page (initial/refresh); prepend = older page; tail = after_step catch-up. */
+  readonly mode: 'replace' | 'prepend' | 'tail';
+  readonly messageCount: number;
+  readonly inFlight?: { turn_id: string; step_id: string } | undefined;
 }
 
-export interface OpsAuditEntry extends AuditEntryBase {
-  readonly kind: 'ops';
-  /** Envelope timestamp (server send time) when present. */
-  readonly envelopeAt?: string | undefined;
-  readonly ops: readonly TranscriptOperation[];
-  /** live = applied immediately; buffered = held during a REST refresh; flushed = replayed after one; catchup = fetched via the ops catch-up endpoint after a seq gap. */
-  readonly delivery: 'live' | 'buffered' | 'flushed' | 'catchup';
-}
-
-export interface ResetAuditEntry extends AuditEntryBase {
-  readonly kind: 'reset';
-  readonly envelopeAt?: string | undefined;
-  readonly snapshot: AgentTranscriptSnapshot;
-  readonly hasMoreOlder: boolean;
+export interface WsAuditEntry extends AuditEntryBase {
+  readonly kind: 'ws';
+  /** The raw server message as applied to the store (entity, delta, or state). */
+  readonly message: ServerMessage;
 }
 
 export interface EventAuditEntry extends AuditEntryBase {
   readonly kind: 'event';
-  readonly event: 'ack-refresh' | 'resync' | 'gap' | 'prompt' | 'cancel';
+  readonly event:
+    | 'ack'
+    | 'ack-error'
+    | 'reconnect'
+    | 'catchup-refresh'
+    | 'protocol-error'
+    | 'invalid-frame'
+    | 'prompt'
+    | 'cancel'
+    | 'older-error';
   readonly detail?: string | undefined;
 }
 
-export type AuditEntry = RestAuditEntry | OpsAuditEntry | ResetAuditEntry | EventAuditEntry;
+export type AuditEntry = RestAuditEntry | WsAuditEntry | EventAuditEntry;
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
 /** Entry payload accepted by `push` (index/at are filled in there). */
 type AuditEntryInput = DistributiveOmit<AuditEntry, 'index' | 'at'>;
-
-function summarizeOps(ops: readonly TranscriptOperation[]): string {
-  const counts = new Map<string, number>();
-  for (const op of ops) counts.set(op.op, (counts.get(op.op) ?? 0) + 1);
-  return [...counts.entries()].map(([name, n]) => (n > 1 ? `${name}×${n}` : name)).join(', ');
-}
 
 export class AuditTrail {
   private entryList: AuditEntry[] = [];
@@ -91,68 +86,61 @@ export class AuditTrail {
 
   recordRest(
     request: RestAuditEntry['request'],
-    appliedAs: RestAuditEntry['appliedAs'],
-    page: TranscriptPage,
-    state: AgentState,
+    mode: RestAuditEntry['mode'],
+    messageCount: number,
+    inFlight: RestAuditEntry['inFlight'],
+    state: ChatState,
   ): void {
-    const cursor = request.beforeTurn !== undefined ? `?before_turn=${request.beforeTurn}` : '';
+    const cursor =
+      request.beforeTurn !== undefined
+        ? `?before_turn=${request.beforeTurn}`
+        : request.afterStep !== undefined
+          ? `?after_step=${request.afterStep}`
+          : '';
+    const flight = inFlight !== undefined ? ` (in_flight ${inFlight.step_id})` : '';
     this.push({
       kind: 'rest',
       request,
-      appliedAs,
-      page,
+      mode,
+      messageCount,
+      inFlight,
       state,
-      summary: `GET transcript${cursor} → ${page.items.length} items (${appliedAs})`,
+      summary: `GET history${cursor} → ${messageCount} messages (${mode})${flight}`,
     });
   }
 
-  recordOps(
-    ops: readonly TranscriptOperation[],
-    delivery: OpsAuditEntry['delivery'],
-    envelopeAt: string | undefined,
-    state: AgentState,
-  ): void {
+  recordWs(message: ServerMessage, state: ChatState): void {
     this.push({
-      kind: 'ops',
-      ops,
-      delivery,
-      envelopeAt,
+      kind: 'ws',
+      message,
       state,
-      summary: `${ops.length} ops (${summarizeOps(ops)}) [${delivery}]`,
-    });
-  }
-
-  recordReset(
-    snapshot: AgentTranscriptSnapshot,
-    hasMoreOlder: boolean,
-    envelopeAt: string | undefined,
-    state: AgentState,
-  ): void {
-    this.push({
-      kind: 'reset',
-      snapshot,
-      hasMoreOlder,
-      envelopeAt,
-      state,
-      summary: `reset snapshot (${snapshot.items.length} items) — ignored by chat store`,
+      summary: summarizeMessage(message),
     });
   }
 
   recordEvent(
     event: EventAuditEntry['event'],
     detail: string | undefined,
-    state: AgentState,
+    state: ChatState,
   ): void {
     const label =
-      event === 'ack-refresh'
-        ? 'subscribe ack → REST refresh'
-        : event === 'resync'
-          ? 'resync_required → REST refresh'
-          : event === 'gap'
-            ? 'append gap → REST refresh'
-            : event === 'prompt'
-              ? 'prompt sent'
-              : 'cancel sent';
+      event === 'ack'
+        ? 'subscribe ack → after_step catch-up'
+        : event === 'ack-error'
+          ? 'subscribe ack error'
+          : event === 'reconnect'
+            ? 'socket dropped → reconnecting'
+            : event === 'catchup-refresh'
+              ? 'catch-up anchor gone → full refresh'
+              : event === 'protocol-error'
+                ? 'protocol error frame'
+                : event === 'invalid-frame'
+                  ? 'invalid frame (server bug)'
+                  : event === 'prompt'
+                    ? 'prompt sent'
+                    : event === 'cancel'
+                      ? 'cancel sent'
+                      : 'older-page load failed';
     this.push({
       kind: 'event',
       event,
@@ -171,5 +159,40 @@ export class AuditTrail {
         : this.entryList;
     this.entryList = [...kept, full];
     for (const listener of this.listeners) listener();
+  }
+}
+
+function summarizeMessage(message: ServerMessage): string {
+  switch (message.type) {
+    case 'turn':
+      return `turn ${message.turn_id} (${message.state})`;
+    case 'step':
+      return `step ${message.step_id} (${message.state})`;
+    case 'user':
+      return `user ${message.message_id}`;
+    case 'assistant':
+    case 'thinking':
+      return `${message.type} ${message.message_id} (${message.status})`;
+    case 'assistant.delta':
+    case 'thinking.delta':
+      return `${message.type} ${message.message_id} +${message.text.length}ch`;
+    case 'tool_call':
+      return `tool_call ${message.name} ${message.tool_call_id} (${message.state})`;
+    case 'tool_call.delta':
+      return `tool_call.delta ${message.tool_call_id} +${message.input_text.length}ch`;
+    case 'tool.progress':
+      return `tool.progress ${message.tool_call_id} (${message.progress.kind})`;
+    case 'system':
+      return `system(${message.subtype}) ${message.system_id}`;
+    case 'interaction':
+      return `interaction ${message.interaction_id} (${message.kind}/${message.state})`;
+    case 'task':
+      return `task ${message.task_id} (${message.kind}/${message.state})`;
+    case 'todo':
+      return `todo ${message.todo_id} (${message.items.length} items)`;
+    case 'session.state':
+      return `session.state (${message.activity}${message.busy ? ', busy' : ''})`;
+    default:
+      return message.type;
   }
 }

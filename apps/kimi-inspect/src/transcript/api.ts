@@ -1,282 +1,125 @@
 /**
- * REST client for the transcript page endpoint:
- * `GET {baseUrl}/api/v1/sessions/{sessionId}/transcript`.
+ * REST client for the history endpoint of the message protocol:
+ * `GET {baseUrl}/api/v1/sessions/{sessionId}/history`.
  *
- * This is the ONLY source of full transcript state: the initial load fetches
- * the newest page, a full refresh re-reads page by page from the tail
- * backwards, and "load earlier" pages further with a `before_turn` cursor.
- * (The WS channel, by contrast, carries incremental `transcript.ops` only.)
+ * This is the ONLY source of persisted (completed) timeline state: the
+ * initial load fetches the newest page, "load earlier" pages further with a
+ * `before_turn` cursor, and a reconnect catch-up pages forward from an
+ * `after_step` cursor. The in-flight step's entities arrive over the WS
+ * recovery payload instead (idempotent replace-by-id at the seam).
  *
- * Pages are turn-segment slices keyed by a turn-id cursor (`before_turn`
- * pages towards older turns). The response is validated with the
- * package-owned `transcriptResponseSchema` — the schema is the single source
- * of truth for the wire shape, local code consumes the domain model types.
+ * Pages are flat entity-message slices (`{ messages, in_flight? }`,
+ * time-ordered, same schemas as the WS stream). There is deliberately no
+ * has-more flag: a page shorter than `page_size` is the end in that
+ * direction, an empty page is definitive.
  */
 
-import {
-  transcriptOpsCatchupResponseSchema,
-  transcriptPlanResponseSchema,
-  transcriptResponseSchema,
-  type AttachmentSource,
-  type TranscriptAttachment,
-  type TranscriptInteraction,
-  type TranscriptItem,
-  type TranscriptMeta,
-  type TranscriptOperation,
-  type TranscriptTask,
-  type TranscriptTodo,
-} from '@moonshot-ai/transcript';
+import { historyResponseSchema, type HistoryMessage } from '@moonshot-ai/kap-server/protocol';
 
-type StoredAttachmentSource = Extract<AttachmentSource, { kind: 'file' | 'session_media' }>;
+export const HISTORY_PAGE_SIZE = 500;
 
-export interface FetchTranscriptAttachmentOptions {
+export interface HistoryPage {
+  readonly messages: readonly HistoryMessage[];
+  /** Current streaming position of a live session; absent for idle/cold ones. */
+  readonly inFlight?: { turn_id: string; step_id: string };
+}
+
+export interface FetchHistoryPageOptions {
   readonly baseUrl: string;
   readonly token?: string;
   readonly sessionId: string;
-  readonly source: StoredAttachmentSource;
-  readonly fetchImpl?: typeof fetch;
-}
-
-export function transcriptAttachmentUrl(
-  baseUrl: string,
-  sessionId: string,
-  source: AttachmentSource,
-): string {
-  if (source.kind === 'url') return source.url;
-  if (source.kind === 'file') {
-    return `${baseUrl}/api/v1/files/${encodeURIComponent(source.fileId)}`;
-  }
-  return `${baseUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/media/${encodeURIComponent(source.fileId)}`;
-}
-
-export async function fetchTranscriptAttachment(
-  opts: FetchTranscriptAttachmentOptions,
-): Promise<Blob> {
-  const headers: Record<string, string> = {};
-  if (opts.token !== undefined && opts.token !== '') {
-    headers['authorization'] = `Bearer ${opts.token}`;
-  }
-  const doFetch = opts.fetchImpl ?? fetch;
-  const res = await doFetch(
-    transcriptAttachmentUrl(opts.baseUrl, opts.sessionId, opts.source),
-    { headers },
-  );
-  if (!res.ok) throw new Error(`attachment download failed (${res.status})`);
-  return res.blob();
-}
-
-/** One transcript page as merged by the chat store. */
-export interface TranscriptPage {
-  readonly items: readonly TranscriptItem[];
-  /** `has_more` in the query direction — more older turns exist. */
-  readonly hasMoreOlder: boolean;
-  /** Global, unpaginated state (every response carries the current whole). */
-  readonly tasks: readonly TranscriptTask[];
-  readonly interactions: readonly TranscriptInteraction[];
-  readonly attachments: readonly TranscriptAttachment[];
-  readonly todos: readonly TranscriptTodo[];
-  readonly meta: TranscriptMeta;
-  readonly pendingInteractions: readonly string[];
-  /** Op-batch watermark (state includes every batch with seq <= N); absent on legacy servers. */
-  readonly seq?: number | undefined;
-}
-
-/** One turn per page: fine-grained paging — the viewport grows a turn at a time. */
-export const TRANSCRIPT_PAGE_SIZE = 1;
-
-export interface FetchTranscriptPageOptions {
-  readonly baseUrl: string;
-  readonly token?: string | undefined;
-  readonly sessionId: string;
   readonly agentId: string;
-  /** Turn-id cursor; when set, fetches up to `pageSize` segments strictly older. */
-  readonly beforeTurn?: string | undefined;
-  readonly pageSize?: number | undefined;
+  /** Turn-id cursor; fetches up to `pageSize` messages strictly older than that turn. */
+  readonly beforeTurn?: string;
+  /** Step-id cursor; fetches up to `pageSize` messages strictly newer than that step. */
+  readonly afterStep?: string;
+  readonly pageSize?: number;
   /** Injectable for tests. */
   readonly fetchImpl?: typeof fetch;
 }
 
-export async function fetchTranscriptPage(
-  opts: FetchTranscriptPageOptions,
-): Promise<TranscriptPage> {
+export async function fetchHistoryPage(opts: FetchHistoryPageOptions): Promise<HistoryPage> {
   const params = new URLSearchParams({
     agent_id: opts.agentId,
-    page_size: String(opts.pageSize ?? TRANSCRIPT_PAGE_SIZE),
+    page_size: String(opts.pageSize ?? HISTORY_PAGE_SIZE),
   });
   if (opts.beforeTurn !== undefined) params.set('before_turn', opts.beforeTurn);
+  if (opts.afterStep !== undefined) params.set('after_step', opts.afterStep);
   const headers: Record<string, string> = {};
   if (opts.token !== undefined && opts.token !== '') {
     headers['authorization'] = `Bearer ${opts.token}`;
   }
   const doFetch = opts.fetchImpl ?? fetch;
   const res = await doFetch(
-    `${opts.baseUrl}/api/v1/sessions/${encodeURIComponent(opts.sessionId)}/transcript?${params.toString()}`,
+    `${opts.baseUrl}/api/v1/sessions/${encodeURIComponent(opts.sessionId)}/history?${params.toString()}`,
     { headers },
   );
   const envelope = (await res.json()) as { code: number; msg: string; data: unknown };
   if (envelope.code !== 0) {
-    throw new Error(`transcript page failed (${envelope.code}): ${envelope.msg}`);
+    throw new Error(`history page failed (${envelope.code}): ${envelope.msg}`);
   }
-  const parsed = transcriptResponseSchema.safeParse(envelope.data);
+  const parsed = historyResponseSchema.safeParse(envelope.data);
   if (!parsed.success) {
-    throw new Error('transcript page: unexpected response shape');
+    throw new Error('history page: unexpected response shape');
   }
-  const items: readonly TranscriptItem[] = parsed.data.items;
-  const tasks: readonly TranscriptTask[] = parsed.data.tasks;
-  const interactions: readonly TranscriptInteraction[] = parsed.data.interactions;
-  const attachments: readonly TranscriptAttachment[] = parsed.data.attachments;
-  const todos: readonly TranscriptTodo[] = parsed.data.todos;
-  return {
-    items,
-    hasMoreOlder: parsed.data.has_more,
-    tasks,
-    interactions,
-    attachments,
-    todos,
-    meta: parsed.data.meta,
-    pendingInteractions: parsed.data.pending_interactions,
-    seq: parsed.data.seq,
-  };
-}
-
-// ---------------------------------------------------------------- ops catch-up
-
-/** One sequenced op batch from the catch-up endpoint. */
-export interface TranscriptOpBatch {
-  readonly seq: number;
-  readonly ops: readonly TranscriptOperation[];
-}
-
-export interface TranscriptOpsCatchup {
-  readonly batches: readonly TranscriptOpBatch[];
-  readonly latestSeq: number;
-  /** False = the journal cannot cover `sinceSeq`; the caller must full-refresh. */
-  readonly complete: boolean;
-}
-
-export interface FetchTranscriptOpsOptions {
-  readonly baseUrl: string;
-  readonly token?: string | undefined;
-  readonly sessionId: string;
-  readonly agentId: string;
-  /** Return journaled batches with seq strictly greater than this watermark. */
-  readonly sinceSeq: number;
-  /** Injectable for tests. */
-  readonly fetchImpl?: typeof fetch;
+  return { messages: parsed.data.messages, inFlight: parsed.data.in_flight };
 }
 
 /**
- * Point-to-point catch-up: `GET .../transcript/ops?agent_id=&since_seq=N`.
- * Available on sequenced servers; a 404/envelope error means the server
- * predates the endpoint and the caller should fall back to a full refresh.
+ * Read the agent's WHOLE history (newest page + `before_turn` paging to the
+ * beginning) in timeline order. On-demand debug reads only (plan lookup) —
+ * the chat channel pages lazily instead.
  */
-export async function fetchTranscriptOps(
-  opts: FetchTranscriptOpsOptions,
-): Promise<TranscriptOpsCatchup> {
-  const params = new URLSearchParams({
-    agent_id: opts.agentId,
-    since_seq: String(opts.sinceSeq),
-  });
-  const headers: Record<string, string> = {};
-  if (opts.token !== undefined && opts.token !== '') {
-    headers['authorization'] = `Bearer ${opts.token}`;
-  }
-  const doFetch = opts.fetchImpl ?? fetch;
-  const res = await doFetch(
-    `${opts.baseUrl}/api/v1/sessions/${encodeURIComponent(opts.sessionId)}/transcript/ops?${params.toString()}`,
-    { headers },
-  );
-  const envelope = (await res.json()) as { code: number; msg: string; data: unknown };
-  if (envelope.code !== 0) {
-    throw new Error(`transcript ops failed (${envelope.code}): ${envelope.msg}`);
-  }
-  const parsed = transcriptOpsCatchupResponseSchema.safeParse(envelope.data);
-  if (!parsed.success) {
-    throw new Error('transcript ops: unexpected response shape');
-  }
-  return {
-    batches: parsed.data.batches,
-    latestSeq: parsed.data.latest_seq,
-    complete: parsed.data.complete,
-  };
-}
-
-// ------------------------------------------------------------------ plan lookup
-
-/** The review round-trip of one ExitPlanMode call, from the plan endpoint. */
-export interface TranscriptPlanReview {
-  readonly state: 'pending' | 'approved' | 'rejected' | 'cancelled';
-  readonly selectedOption?: string | undefined;
-  readonly feedback?: string | undefined;
-}
-
-/** Plan information of one ExitPlanMode tool call (`GET .../transcript/plan`). */
-export interface TranscriptPlanInfo {
-  readonly toolCallId: string;
-  readonly turnId: string;
-  /** Which fact the content was projected from server-side. */
-  readonly source: 'interaction' | 'display' | 'output';
-  readonly plan: string;
-  readonly path?: string | undefined;
-  readonly options?: readonly { label: string; description?: string | undefined }[] | undefined;
-  readonly review?: TranscriptPlanReview | undefined;
-}
-
-export interface FetchTranscriptPlanOptions {
+export async function fetchFullHistory(opts: {
   readonly baseUrl: string;
-  readonly token?: string | undefined;
+  readonly token?: string;
   readonly sessionId: string;
   readonly agentId: string;
-  /** Narrow the read to one ExitPlanMode call; omitted lists every plan of the agent. */
-  readonly toolCallId?: string | undefined;
-  /** Injectable for tests. */
+  readonly pageSize?: number;
   readonly fetchImpl?: typeof fetch;
+}): Promise<readonly HistoryMessage[]> {
+  const pageSize = opts.pageSize ?? HISTORY_PAGE_SIZE;
+  const messages: HistoryMessage[] = [];
+  const seen = new Set<string>();
+  let beforeTurn: string | undefined;
+  for (;;) {
+    const page = await fetchHistoryPage({ ...opts, beforeTurn, pageSize });
+    if (page.messages.length === 0) break;
+    const fresh: HistoryMessage[] = [];
+    for (const message of page.messages) {
+      const key = historyEntityKey(message);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      fresh.push(message);
+    }
+    messages.unshift(...fresh);
+    if (page.messages.length < pageSize) break;
+    const oldest = page.messages.find((message) => 'turn_id' in message)?.turn_id;
+    if (oldest === undefined || oldest === beforeTurn) break;
+    beforeTurn = oldest;
+  }
+  return messages;
 }
 
-/**
- * Plan lookup: `GET .../transcript/plan?agent_id=[&tool_call_id=]`, in
- * timeline order. With `toolCallId` set, a 40416 envelope means the tool
- * call does not exist or is not an ExitPlanMode call (the message says
- * which).
- */
-export async function fetchTranscriptPlan(
-  opts: FetchTranscriptPlanOptions,
-): Promise<TranscriptPlanInfo[]> {
-  const params = new URLSearchParams({ agent_id: opts.agentId });
-  if (opts.toolCallId !== undefined && opts.toolCallId !== '') {
-    params.set('tool_call_id', opts.toolCallId);
+function historyEntityKey(message: HistoryMessage): string {
+  switch (message.type) {
+    case 'turn':
+      return `turn:${message.turn_id}`;
+    case 'step':
+      return `step:${message.step_id}`;
+    case 'user':
+    case 'assistant':
+    case 'thinking':
+      return `${message.type}:${message.message_id}`;
+    case 'tool_call':
+      return `tool_call:${message.tool_call_id}`;
+    case 'system':
+      return `system:${message.system_id}`;
+    case 'interaction':
+      return `interaction:${message.interaction_id}`;
+    case 'task':
+      return `task:${message.task_id}`;
+    case 'todo':
+      return `todo:${message.todo_id}`;
   }
-  const headers: Record<string, string> = {};
-  if (opts.token !== undefined && opts.token !== '') {
-    headers['authorization'] = `Bearer ${opts.token}`;
-  }
-  const doFetch = opts.fetchImpl ?? fetch;
-  const res = await doFetch(
-    `${opts.baseUrl}/api/v1/sessions/${encodeURIComponent(opts.sessionId)}/transcript/plan?${params.toString()}`,
-    { headers },
-  );
-  const envelope = (await res.json()) as { code: number; msg: string; data: unknown };
-  if (envelope.code !== 0) {
-    throw new Error(`transcript plan failed (${envelope.code}): ${envelope.msg}`);
-  }
-  const parsed = transcriptPlanResponseSchema.safeParse(envelope.data);
-  if (!parsed.success) {
-    throw new Error('transcript plan: unexpected response shape');
-  }
-  return parsed.data.plans.map((entry) => ({
-    toolCallId: entry.tool_call_id,
-    turnId: entry.turn_id,
-    source: entry.source,
-    plan: entry.plan,
-    path: entry.path,
-    options: entry.options,
-    review:
-      entry.review === undefined
-        ? undefined
-        : {
-            state: entry.review.state,
-            selectedOption: entry.review.selected_option,
-            feedback: entry.review.feedback,
-          },
-  }));
 }
