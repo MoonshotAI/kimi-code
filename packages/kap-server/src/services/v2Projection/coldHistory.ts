@@ -328,6 +328,26 @@ export function buildColdHistory(
         turn.lastRecordIndex = recordIndex;
         break;
       }
+      case 'context.append_message': {
+        const message = asRecord(record.message);
+        const origin = toUserOrigin(message?.['origin']);
+        if (origin?.kind !== 'task') break;
+        const turn = latestTurn();
+        if (!turn) break;
+        const rawText = textFromContent(message?.['content']);
+        const notification = parseNotificationXmlText(rawText);
+        turn.users.push({
+          turn,
+          seq: turn.users.length,
+          text: notification ? `${notification.title}\n${notification.body}`.trim() : rawText,
+          acceptedTime: time,
+          origin,
+          notification,
+          sortTime: time,
+        });
+        turn.lastRecordIndex = recordIndex;
+        break;
+      }
       case 'prompt.completed':
       case 'prompt.aborted': {
         const promptId = asText(record.promptId);
