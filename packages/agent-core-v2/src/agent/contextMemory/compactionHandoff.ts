@@ -8,6 +8,7 @@ export const COMPACTION_SUMMARY_PREFIX = summaryPrefixTemplate.trimEnd();
 export const COMPACT_USER_MESSAGE_MAX_TOKENS = 20_000;
 export const COMPACT_USER_MESSAGE_HEAD_TOKENS = 2_000;
 export const COMPACTION_ELISION_VARIANT = 'compaction_elision';
+export const COMPACTION_CONTINUATION_VARIANT = 'compaction_continuation';
 
 type MessageLike = ContextMessage;
 
@@ -113,7 +114,11 @@ export function buildContextCompactionShape(
     keptUserMessageCount,
     keptHeadUserMessageCount,
     droppedCount: input.droppedCount,
-    messages: [...keptMessages, createCompactionSummaryMessage(contextSummary)],
+    messages: [
+      ...keptMessages,
+      createCompactionSummaryMessage(contextSummary),
+      createCompactionContinuationMessage(),
+    ],
   };
 }
 
@@ -143,6 +148,21 @@ export function createCompactionElisionMessage(omittedTokens: number): ContextMe
 export function buildCompactionElisionText(omittedTokens: number): string {
   return wrapSystemReminder(
     `Some of this conversation's user messages were omitted here during compaction: the messages above this note are the oldest user input, the messages below are the most recent, and roughly ${String(omittedTokens)} tokens in between were dropped. The omitted content is covered by the compaction summary at the end of the conversation.`,
+  );
+}
+
+export function createCompactionContinuationMessage(): ContextMessage {
+  return {
+    role: 'user',
+    content: [{ type: 'text', text: buildCompactionContinuationText() }],
+    toolCalls: [],
+    origin: { kind: 'injection', variant: COMPACTION_CONTINUATION_VARIANT },
+  };
+}
+
+export function buildCompactionContinuationText(): string {
+  return wrapSystemReminder(
+    'Context compaction is complete — resume from the latest user message; if a turn was in flight when compaction began, finish that turn first.',
   );
 }
 

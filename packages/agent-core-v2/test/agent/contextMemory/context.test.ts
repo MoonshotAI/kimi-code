@@ -787,8 +787,9 @@ describe('Agent context', () => {
       );
 
       expect(shape.tokensAfter).toBe(0);
-      expect(shape.messages.map((m) => m.role)).toEqual(['user', 'user']);
+      expect(shape.messages.map((m) => m.role)).toEqual(['user', 'user', 'user']);
       expect(shape.messages[1]?.origin?.kind).toBe('compaction_summary');
+      expect(shape.messages[2]?.origin).toEqual({ kind: 'injection', variant: 'compaction_continuation' });
     });
 
     it('prefers the measured summary output tokens over the text estimate', () => {
