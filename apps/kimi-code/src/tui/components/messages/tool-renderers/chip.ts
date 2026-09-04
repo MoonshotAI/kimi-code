@@ -9,12 +9,12 @@
  */
 
 import { computeDiffLines } from '#/tui/components/media/diff-preview';
+import { OUTCOME_MAX_LINES } from '#/tui/constant/rendering';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 
 import { goalStatusChip } from './goal';
 import { parseGlobOutput, parseGrepOutput } from './grep-output';
 import { readMediaChip } from './media';
-import { OUTCOME_MAX_LINES } from './outcome';
 import { strArg } from './types';
 import { waitForChip } from './wait-for';
 

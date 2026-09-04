@@ -2300,4 +2300,40 @@ describe('ToolCallComponent hasHiddenContent', () => {
     expect(generic.hasHiddenContent()).toBe(false);
     generic.dispose();
   });
+
+  it('is false for an ExitPlanMode outcome card and true for a non-outcome result', () => {
+    const approved = [
+      'Exited plan mode. Selected approach: rebuild the parser',
+      '',
+      '## Approved Plan:',
+      '1. read the grammar',
+      '2. port the tests',
+      '3. run the suite',
+    ].join('\n');
+    // The plan is fully rendered by the call preview and the outcome body is
+    // expansion-independent, so ctrl+o would change nothing.
+    expect(card('ExitPlanMode', {}, approved).hasHiddenContent()).toBe(false);
+    // A non-outcome result (an error message) still counts by lines.
+    expect(card('ExitPlanMode', {}, 'a\nb\nc\nd').hasHiddenContent()).toBe(true);
+  });
+
+  it('counts an Edit with distant hunks as hidden when the clustered preview overflows', () => {
+    const lines = Array.from({ length: 30 }, (_, i) => `line${String(i + 1)}`);
+    const oldStr = lines.join('\n');
+    const distant = [...lines];
+    distant[0] = 'line1 changed';
+    distant[29] = 'line30 changed';
+    // Two changed rows far apart: context rows and the inter-hunk separator
+    // push the clustered preview past the cap even though added+removed is 2.
+    expect(
+      card('Edit', { file_path: 'a.ts', old_string: oldStr, new_string: distant.join('\n') }, 'ok').hasHiddenContent(),
+    ).toBe(true);
+
+    const nearby = [...lines];
+    nearby[0] = 'line1 changed';
+    nearby[1] = 'line2 changed';
+    expect(
+      card('Edit', { file_path: 'a.ts', old_string: oldStr, new_string: nearby.join('\n') }, 'ok').hasHiddenContent(),
+    ).toBe(false);
+  });
 });

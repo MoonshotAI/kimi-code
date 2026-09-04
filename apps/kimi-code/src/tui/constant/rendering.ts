@@ -29,6 +29,9 @@ export const TRUNCATION_ELLIPSIS = '…';
 // Left indent of a collapsed tool card's outcome rows, aligning them with
 // the message-body indent.
 export const OUTCOME_ROW_INDENT = '  ';
+// Non-empty output lines a collapsed tool card shows in full before it falls
+// back to one telling outcome row.
+export const OUTCOME_MAX_LINES = 3;
 
 // Cap on the step-retry detail line under the waiting spinner, so huge
 // provider error bodies (occasionally whole HTML error pages) can't flood

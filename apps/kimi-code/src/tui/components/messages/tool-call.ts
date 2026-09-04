@@ -13,6 +13,7 @@ import {
   BRAILLE_SPINNER_FRAMES,
   BRAILLE_SPINNER_INTERVAL_MS,
   COMMAND_PREVIEW_LINES,
+  OUTCOME_MAX_LINES,
   RESULT_PREVIEW_LINES,
   THINKING_PREVIEW_LINES,
 } from '#/tui/constant/rendering';
@@ -36,8 +37,8 @@ import { TruncatedHeaderLine, type HeaderContent } from './truncated-header-line
 import { ShellExecutionComponent } from './shell-execution';
 import { countNonEmptyLines, pickChip } from './tool-renderers/chip';
 import { buildGoalToolHeader } from './tool-renderers/goal';
-import { computeEditStats, computeWriteStats } from './tool-renderers/chip';
-import { nonEmptyLines, OUTCOME_MAX_LINES, outcomeLine } from './tool-renderers/outcome';
+import { computeWriteStats } from './tool-renderers/chip';
+import { nonEmptyLines, outcomeLine } from './tool-renderers/outcome';
 import { isGenericToolResult, pickResultRenderer } from './tool-renderers/registry';
 import { buildWaitForHeader } from './tool-renderers/wait-for';
 
@@ -804,11 +805,28 @@ export class ToolCallComponent extends Container {
       case 'Glob':
         return true;
       case 'Edit': {
-        const stats = computeEditStats(args);
-        return stats.added + stats.removed > COMMAND_PREVIEW_LINES;
+        const oldStr = str(args['old_string']);
+        const newStr = str(args['new_string']);
+        if (oldStr.length === 0 && newStr.length === 0) return false;
+        // Mirror buildCallPreview exactly: context rows and inter-hunk
+        // separators also consume the preview cap, so counting only
+        // added/removed rows undercounts changes in distant hunks.
+        const filePath = str(args['file_path'] ?? args['path']);
+        return (
+          renderDiffLinesClustered(oldStr, newStr, filePath, { contextLines: 3 }).length >
+          COMMAND_PREVIEW_LINES
+        );
       }
       case 'Write':
         return computeWriteStats(args).lines > COMMAND_PREVIEW_LINES;
+      case 'ExitPlanMode':
+        // An approved plan is fully rendered by the call preview and the
+        // outcome body is expansion-independent; only a non-outcome result
+        // (an error message) can have more to show behind ctrl+o.
+        return (
+          !isExitPlanModeOutcomeOutput(result.output) &&
+          nonEmptyLines(result.output).length > OUTCOME_MAX_LINES
+        );
       case 'AgentSwarm':
       case 'TodoList':
       case 'EnterPlanMode':

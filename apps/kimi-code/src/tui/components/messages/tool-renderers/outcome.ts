@@ -9,13 +9,10 @@
 
 import type { Component } from '@moonshot-ai/pi-tui';
 
-import { OUTCOME_ROW_INDENT, TRUNCATION_ELLIPSIS } from '#/tui/constant/rendering';
+import { OUTCOME_MAX_LINES, OUTCOME_ROW_INDENT, TRUNCATION_ELLIPSIS } from '#/tui/constant/rendering';
 import { currentTheme } from '#/tui/theme';
 
 import { TruncatedHeaderLine } from '../truncated-header-line';
-
-/** Non-empty output lines a collapsed card shows in full before it falls back to one. */
-export const OUTCOME_MAX_LINES = 3;
 
 // One shared reference so the line's render cache survives rebuilds (segment
 // styles are compared by identity); the palette is read at call time.
