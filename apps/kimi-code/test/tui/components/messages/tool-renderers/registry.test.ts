@@ -520,3 +520,33 @@ describe('Grep glance on paginated and Windows output', () => {
     expect(out).toBe('  C:/outside/a.ts, C:/outside/b.ts');
   });
 });
+
+const SPILLED_OUTPUT = [
+  'Tool output exceeded 50000 characters; the full output was saved to a file.',
+  'tool_name: Grep',
+  'tool_call_id: call_1',
+  'output_size_chars: 61234',
+  'output_path: /tmp/kimi/tool-output.txt',
+  'next_step: Use Read with output_path to page through the saved output, or Grep to search it.',
+  '',
+  '[preview: chars [0, 20)]',
+  'src/a.ts\nsrc/b.ts',
+].join('\n');
+
+describe('spilled tool output', () => {
+  it('shows the Grep envelope as a plain outcome row instead of parsing it as results', () => {
+    const renderer = pickResultRenderer('Grep');
+    const out = strip(joinRender(renderer(call('Grep', { pattern: 'foo' }), result(SPILLED_OUTPUT), ctx)));
+    expect(out).toBe(
+      '  Tool output exceeded 50000 characters; the full output was saved to a file. …',
+    );
+  });
+
+  it('leads a spilled Bash result with the envelope line rather than the preview tail', () => {
+    const renderer = pickResultRenderer('Bash');
+    const out = strip(joinRender(renderer(call('Bash', { command: 'cat big.log' }), result(SPILLED_OUTPUT), ctx)));
+    expect(out).toBe(
+      '  Tool output exceeded 50000 characters; the full output was saved to a file. …',
+    );
+  });
+});

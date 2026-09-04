@@ -40,6 +40,7 @@ import { buildGoalToolHeader } from './tool-renderers/goal';
 import { computeWriteStats } from './tool-renderers/chip';
 import { nonEmptyLines, outcomeLine } from './tool-renderers/outcome';
 import { TruncatedOutputComponent } from './tool-renderers/truncated';
+import { isSpilledToolOutput } from './tool-renderers/types';
 import { isGenericToolResult, pickResultRenderer } from './tool-renderers/registry';
 import { buildWaitForHeader } from './tool-renderers/wait-for';
 
@@ -1692,6 +1693,8 @@ export class ToolCallComponent extends Container {
   }
 
   private buildHeaderChip(result: ToolResultBlockData): string {
+    // The truncation envelope of an oversized result is not countable data.
+    if (isSpilledToolOutput(result.output)) return '';
     const provider = pickChip(this.toolCall.name);
     if (provider === undefined) return '';
     const text = provider(this.toolCall, result);

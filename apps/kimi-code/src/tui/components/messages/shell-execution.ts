@@ -5,7 +5,7 @@ import { currentTheme } from '#/tui/theme';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 
 import type { ResultRenderer } from './tool-renderers/types';
-import { PREVIEW_LINES } from './tool-renderers/types';
+import { isSpilledToolOutput, PREVIEW_LINES } from './tool-renderers/types';
 import { outcomeRows } from './tool-renderers/outcome';
 import { TruncatedOutputComponent } from './tool-renderers/truncated';
 
@@ -87,10 +87,14 @@ export const shellExecutionResultRenderer: ResultRenderer = (
   // last line (most commands conclude on their last line) and the rest waits
   // for ctrl+o. A background or detached start returns a metadata block
   // (task_id first, internal next_step/human_shell_hint lines last), so it
-  // shows its first line to identify the task instead of the trailing hint.
+  // shows its first line to identify the task instead of the trailing hint;
+  // an oversized result's truncation envelope likewise leads with the line
+  // that says the output was saved to a file.
   // A failing command keeps its multi-line preview so the error is visible.
   if (!ctx.expanded && result.is_error !== true) {
-    return outcomeRows(result.output, result.output.startsWith('task_id:') ? 'first' : 'last');
+    const leadsWithMetadata =
+      result.output.startsWith('task_id:') || isSpilledToolOutput(result.output);
+    return outcomeRows(result.output, leadsWithMetadata ? 'first' : 'last');
   }
   // Result only. The command preview is owned by ToolCallComponent's
   // buildCallPreview across the whole lifecycle (streaming, running, and

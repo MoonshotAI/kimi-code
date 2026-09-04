@@ -2402,3 +2402,28 @@ describe('ToolCallComponent hasHiddenContent for width-cut and background result
     generic.dispose();
   });
 });
+
+describe('ToolCallComponent with spilled tool output', () => {
+  it('drops the chip and shows the envelope line for an oversized Read', () => {
+    const envelope = [
+      'Tool output exceeded 50000 characters; the full output was saved to a file.',
+      'tool_name: Read',
+      'tool_call_id: call_read_big',
+      'output_size_chars: 90000',
+      'output_path: /tmp/kimi/tool-output.txt',
+      'next_step: Use Read with output_path to page through the saved output, or Grep to search it.',
+      '',
+      '[preview: chars [0, 10)]',
+      '1\tline one',
+    ].join('\n');
+    const component = new ToolCallComponent(
+      { id: 'call_read_big', name: 'Read', args: { path: 'big.log' } },
+      { tool_call_id: 'call_read_big', output: envelope, is_error: false },
+    );
+    const rows = component.render(120).map(strip).filter((line) => line.trim().length > 0);
+    expect(rows[0]).toContain('Used Read (big.log)');
+    expect(rows[0]).not.toContain('lines');
+    expect(rows[1]).toContain('Tool output exceeded 50000 characters');
+    component.dispose();
+  });
+});

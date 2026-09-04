@@ -18,7 +18,7 @@ import { currentTheme } from '#/tui/theme';
 import { parseGlobOutput, parseGrepOutput } from './grep-output';
 import { outcomeRow } from './outcome';
 import { renderTruncated } from './truncated';
-import type { ResultRenderer } from './types';
+import { isSpilledToolOutput, type ResultRenderer } from './types';
 
 interface Glance {
   readonly samples: string;
@@ -32,7 +32,11 @@ type GlanceFn = (
 
 function withGlance(glance: GlanceFn | null): ResultRenderer {
   return (toolCall, result, ctx) => {
-    if (result.is_error) return renderTruncated(toolCall, result, ctx);
+    // A spilled result is the truncation envelope, not data: its first line
+    // tells the user the output was saved to a file.
+    if (result.is_error || isSpilledToolOutput(result.output)) {
+      return renderTruncated(toolCall, result, ctx);
+    }
 
     const out: Component[] = [];
     // Collapsed: the glance is the card's outcome row — path samples in the

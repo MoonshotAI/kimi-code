@@ -285,3 +285,26 @@ describe('Grep chip on paginated and unusual output', () => {
     ).toBe('2 files');
   });
 });
+
+describe('Grep chip on an empty count-mode page', () => {
+  it('keeps the summary totals when the offset is past the last row', () => {
+    expect(
+      chipFor(
+        'Grep',
+        { pattern: 'foo', output_mode: 'count_matches', offset: 12 },
+        result('Found 40 total occurrences across 12 files.'),
+      ),
+    ).toBe('40 matches across 12 files');
+  });
+});
+
+describe('Bash chip and whitespace-only rows', () => {
+  it('counts rows the way the outcome rows do, so blank separators never claim hidden lines', () => {
+    const chip = pickChip('Bash')!;
+    const call = { id: 'tc', name: 'Bash', args: { command: 'ls' } };
+    expect(chip(call, { tool_call_id: 'tc', output: 'a\n   \nb\nc', is_error: false })).toBe('');
+    expect(chip(call, { tool_call_id: 'tc', output: 'a\n   \nb\nc\nd', is_error: false })).toBe(
+      '3 more lines',
+    );
+  });
+});

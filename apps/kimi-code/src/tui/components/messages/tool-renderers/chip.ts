@@ -15,6 +15,7 @@ import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 import { goalStatusChip } from './goal';
 import { parseGlobOutput, parseGrepOutput } from './grep-output';
 import { readMediaChip } from './media';
+import { nonEmptyLines } from './outcome';
 import { strArg } from './types';
 import { waitForChip } from './wait-for';
 
@@ -95,7 +96,9 @@ const readChip: ChipProvider = (_toolCall, result) =>
 // own trailer already counts what is left, so the chip stays out of its way.
 const bashChip: ChipProvider = (_toolCall, result) => {
   if (result.is_error === true) return '';
-  const lines = countNonEmptyLines(result.output);
+  // Counted the way the outcome rows are, so whitespace-only rows neither
+  // count as hidden nor leave the chip claiming more than the card holds.
+  const lines = nonEmptyLines(result.output).length;
   return lines <= OUTCOME_MAX_LINES ? '' : pluralize(lines - 1, 'more line');
 };
 
@@ -105,7 +108,8 @@ const bashChip: ChipProvider = (_toolCall, result) => {
 // is exact there.
 const grepChip: ChipProvider = (toolCall, result) => {
   const stats = parseGrepOutput(toolCall, result.output);
-  if (stats.entries.length === 0) return 'no matches';
+  // A paginated count-mode page past the last row still carries the totals.
+  if (stats.files === 0) return 'no matches';
   if (stats.mode === 'files_with_matches') return pluralize(stats.files, 'file');
   if (stats.matches === null) return pluralize(stats.files, 'file');
   const matches = pluralize(stats.matches, 'match', 'matches');
