@@ -212,26 +212,14 @@ export async function runV2Print(
       setCrashPhase('shutdown');
       try {
         await restorePermission();
-        // A termination signal can arrive mid-turn: drain pending prompts,
-        // cancel any queued/active turns, and wait for every agent's loops
-        // and prompt queues to quiesce first, so the turn's cancellation and
-        // closing records exist before the flush below drains the journals.
-        // No-op when every agent is already idle.
+        // A termination signal can arrive mid-turn: cancel turns and wait for idle agents first.
         await raceWithTimeout(quiesceAgents(), CLI_SHUTDOWN_TIMEOUT_MS).catch(() => {});
       } finally {
         try {
-          // The shutdown phases are independent of each other; run them
-          // concurrently so their individual allowances cannot sum past the
-          // outer PROMPT_CLEANUP_TIMEOUT_MS bound and let the caller's
-          // process.exit cut off the tail (app.dispose included).
+          // Concurrent so the phases' allowances cannot sum past PROMPT_CLEANUP_TIMEOUT_MS.
           await Promise.all([
-            // The turn's tail records (step.end / turn.ended / prompt.completed)
-            // are dispatched fire-and-forget and reach the journal only through
-            // the wire service's async persist queue. Without an explicit flush,
-            // a cleanup that returns fast (e.g. telemetry disabled) lets
-            // process.exit cut off that queue before the records land on disk.
-            // Best-effort: a persist failure was already reported where the
-            // append failed.
+            // The turn's tail records reach the journal only via the wire's
+            // async persist queue; process.exit must not cut off that queue.
             raceWithTimeout(flushWires(), CLI_SHUTDOWN_TIMEOUT_MS).catch(() => {}),
             telemetryService !== undefined
               ? raceWithTimeout(telemetryService.shutdown(), CLI_SHUTDOWN_TIMEOUT_MS)
@@ -240,9 +228,7 @@ export async function runV2Print(
           ]);
           app.dispose();
         } finally {
-          // Quiescence guards stay held across the flush and disposal so a
-          // late background-task completion or cron fire cannot start a new
-          // turn (and new records) after the journals were drained.
+          // Keep producers frozen until the journals are drained and disposed.
           releaseQuiescence?.();
         }
       }
@@ -907,12 +893,7 @@ function countPendingBackgroundTasks(session: ISessionScopeHandle): number {
   return count;
 }
 
-/**
- * Every agent handle in the session. The main agent handle is included
- * explicitly: `IAgentLifecycleService` skips `closing` agents, but a closing
- * agent's in-flight turn and already-dispatched tail records still deserve to
- * land on disk.
- */
+/** Every agent handle in the session; the main agent is included explicitly since the lifecycle list skips `closing` agents. */
 function collectSessionAgentHandles(
   session: ISessionScopeHandle,
   mainAgent: IAgentScopeHandle,
@@ -927,20 +908,8 @@ function collectSessionAgentHandles(
 }
 
 /**
- * Stop every session agent's task producers, drain prompt queues, cancel
- * queued and active turns, then wait for the loops to go idle and the prompt
- * queues to empty. A termination signal can arrive mid-turn: without this,
- * the turn's cancellation and closing records would only be produced by
- * dispose()'s asynchronous teardown — after the wire flush, and after
- * process.exit. Stopping and draining are no-ops on idle agents, so the
- * normal (completed/failed turn) exit pays nothing here.
- *
- * On success returns a release function: every loop is left holding a
- * quiescence guard so late producers (a cron fire enqueues straight into the
- * loop, bypassing the prompt queue) cannot start a new turn — and new
- * records — after the prompt queues read empty. The caller holds the release
- * across the wire flush and disposal. Returns undefined when quiescence
- * could not be reached within the caller's bound.
+ * Stop producers, drain prompts, and cancel turns so closing records exist
+ * before the wire flush; returns a release holding a guard per loop.
  */
 async function quiesceSessionAgents(
   session: ISessionScopeHandle,
@@ -959,16 +928,12 @@ async function quiesceSessionAgents(
     try {
       return [handle.accessor.get(IAgentLoopService)];
     } catch {
-      // A torn-down agent scope has no loop to quiesce; the wire flush below
-      // still covers its already-dispatched records.
+      // A torn-down agent scope has no loop to quiesce.
       return [];
     }
   });
-  // Task producers bypass the prompt queue and the loop guard below: their
-  // termination records are dispatched straight to the wire (and disposal
-  // would force-stop them after the flush). Stop them up front — settling a
-  // task dispatches its termination record now, so the flush can persist it
-  // (mirrors AgentLifecycleService.remove()).
+  // Task producers bypass the prompt queue and dispatch termination records
+  // straight to the wire; stop them first so the flush can persist those.
   await Promise.allSettled(
     handles.flatMap((handle) => {
       try {
@@ -978,14 +943,8 @@ async function quiesceSessionAgents(
       }
     }),
   );
-  // Repeat until a full pass finds every queue empty and every loop freezable:
-  // a prompt can surface after one pass already ran — from startNext's launch
-  // window (the prompt left `pending` and is not yet `active`, so drain could
-  // not see it) or from a cancelled turn's settle chain. The snapshot covers
-  // all three states; the loop reports idle (releaseActiveTurn) before the
-  // prompt-settle chain dispatches the final record, and settle() clears the
-  // active prompt and dispatches that record in one synchronous block, so an
-  // empty snapshot proves it was already queued for the wire flush.
+  // Repeat until every queue is empty and every loop freezable: a prompt can
+  // still surface from the launch window or a cancelled turn's settle chain.
   for (;;) {
     await Promise.allSettled(promptServices.map((service) => service.drain()));
     for (const loop of loops) {
@@ -1033,11 +992,7 @@ async function quiesceSessionAgents(
   }
 }
 
-/**
- * Flush every session agent's wire journal. Each flush settles independently:
- * one agent's broken journal must not cut the wait short for the others (the
- * caller proceeds to `process.exit`).
- */
+/** Flush every session agent's wire journal; each flush settles independently. */
 async function flushSessionWires(
   session: ISessionScopeHandle,
   mainAgent: IAgentScopeHandle,

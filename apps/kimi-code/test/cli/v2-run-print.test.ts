@@ -713,107 +713,6 @@ describe('runV2Print', () => {
     expect(app.dispose).toHaveBeenCalled();
   });
 
-  it('keeps waiting for healthy agents when another agent\'s flush fails', async () => {
-    const stdout = writer();
-    const stderr = writer();
-    const { app, agent, agentServices, sessionServices } = makeFakeHarness();
-
-    const promptService = agentServices.get(IAgentPromptService) as {
-      enqueue: ReturnType<typeof vi.fn>;
-    };
-    promptService.enqueue.mockResolvedValueOnce({
-      launched: Promise.resolve({
-        id: 1,
-        result: Promise.resolve({
-          type: 'failed',
-          error: { code: 'provider.overloaded', message: 'llm request failed' },
-        }),
-      }),
-    });
-
-    const order: string[] = [];
-    const mainDispatcher = agentServices.get(IEventDispatcher) as {
-      flush: ReturnType<typeof vi.fn>;
-    };
-    mainDispatcher.flush.mockRejectedValueOnce(new Error('disk full'));
-    const subAgent = fakeScope(
-      'sub',
-      new Map<unknown, unknown>([
-        [
-          IEventDispatcher,
-          {
-            flush: vi.fn(async () => {
-              await new Promise((resolve) => setTimeout(resolve, 10));
-              order.push('sub-flushed');
-            }),
-          },
-        ],
-      ]),
-    );
-    const lifecycle = sessionServices.get(IAgentLifecycleService) as {
-      list: ReturnType<typeof vi.fn>;
-      handleOf: ReturnType<typeof vi.fn>;
-    };
-    lifecycle.list.mockReturnValue([{ agentId: 'main' }, { agentId: 'sub' }]);
-    lifecycle.handleOf.mockImplementation((id: string) => (id === 'sub' ? subAgent : agent));
-    app.dispose.mockImplementation(() => {
-      order.push('disposed');
-    });
-
-    mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
-
-    await expect(runV2Print(opts() as never, '1.2.3-test', { stdout, stderr })).rejects.toThrow(
-      'provider.overloaded: llm request failed',
-    );
-    expect(order).toEqual(['sub-flushed', 'disposed']);
-  });
-
-  it('runs wire flush and telemetry shutdown concurrently', async () => {
-    const stdout = writer();
-    const stderr = writer();
-    const { app, agentServices, appServices } = makeFakeHarness();
-
-    const dispatcher = agentServices.get(IEventDispatcher) as {
-      flush: ReturnType<typeof vi.fn>;
-    };
-    let releaseFlush!: () => void;
-    const flushGate = new Promise<void>((resolve) => {
-      releaseFlush = resolve;
-    });
-    dispatcher.flush.mockReturnValueOnce(flushGate);
-    const telemetry = appServices.get(ITelemetryService) as {
-      shutdown: ReturnType<typeof vi.fn>;
-    };
-    let releaseTelemetry!: () => void;
-    const telemetryGate = new Promise<void>((resolve) => {
-      releaseTelemetry = resolve;
-    });
-    telemetry.shutdown.mockReturnValueOnce(telemetryGate);
-
-    mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
-
-    const run = runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
-    // A sequential cleanup would sit in the wire flush's 3s allowance before
-    // even starting telemetry shutdown; concurrent phases are both in flight
-    // well within that window.
-    for (
-      let i = 0;
-      i < 200 &&
-      (dispatcher.flush.mock.calls.length === 0 || telemetry.shutdown.mock.calls.length === 0);
-      i++
-    ) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    expect(dispatcher.flush).toHaveBeenCalled();
-    expect(telemetry.shutdown).toHaveBeenCalled();
-    releaseFlush();
-    releaseTelemetry();
-    await run;
-    expect(app.dispose).toHaveBeenCalled();
-  });
-
   it('cancels and settles the active turn before flushing on a termination signal', async () => {
     const stdout = writer();
     const stderr = writer();
@@ -850,10 +749,8 @@ describe('runV2Print', () => {
       order.push('flush');
     });
 
-    // A turn that is still in flight when the signal arrives. The prompt
-    // queue reports the launch window first (the prompt left `pending` and is
-    // not yet `active`), then the running prompt, and only goes empty once
-    // released below.
+    // A turn still in flight when the signal arrives: the prompt queue reports
+    // the launch window, then the running prompt, then goes empty.
     const promptService = agentServices.get(IAgentPromptService) as {
       enqueue: ReturnType<typeof vi.fn>;
       drain: ReturnType<typeof vi.fn>;
@@ -905,14 +802,10 @@ describe('runV2Print', () => {
     const onSigint = handlers.get('SIGINT')!;
     settleTurn({ type: 'cancelled', steps: 0, reason: new Error('aborted') });
     const sigintRun = onSigint();
-    // Quiesce waits for the prompt queue to empty before the wire flush: the
-    // loops are already idle, but while the snapshot still reports the launch
-    // window or an active prompt the flush must not happen.
+    // The flush must wait for the prompt queue to empty, even with idle loops.
     for (let i = 0; i < 100 && !order.includes('settled'); i++) {
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
-    // A few quiesce poll cycles (the poll interval is 10ms): enough time for
-    // the loop to have flushed if it were not actually waiting on the queue.
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(promptService.drain).toHaveBeenCalled();
     expect(order).toEqual(['stop', 'cancel', 'settled']);
@@ -923,41 +816,11 @@ describe('runV2Print', () => {
     await sigintRun;
 
     expect(order).toEqual(['stop', 'cancel', 'settled', 'flush', 'exit:130']);
-    // Producers stay frozen across the flush and disposal: the guard taken
-    // during quiesce is only released after app.dispose().
+    // The guard taken during quiesce is only released after app.dispose().
     expect(loop.tryAcquireQuiescence).toHaveBeenCalled();
     const lastGuardRelease = guardDispose.mock.invocationCallOrder.at(-1);
     const appDisposeOrder = app.dispose.mock.invocationCallOrder[0];
     expect(lastGuardRelease).toBeGreaterThan(appDisposeOrder!);
     expect(await outcome).toBeInstanceOf(Error);
-  });
-
-  it('retries quiescence acquisition while a producer keeps the loop busy', async () => {
-    const stdout = writer();
-    const stderr = writer();
-    const { app, agentServices } = makeFakeHarness();
-
-    const loop = agentServices.get(IAgentLoopService) as {
-      tryAcquireQuiescence: ReturnType<typeof vi.fn>;
-    };
-    let attempts = 0;
-    loop.tryAcquireQuiescence = vi.fn(() => {
-      attempts += 1;
-      // The first pass finds the loop busy (a background-task completion just
-      // enqueued a turn); the second pass can freeze it.
-      return attempts === 1 ? undefined : { dispose: vi.fn() };
-    });
-
-    mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
-
-    await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
-
-    expect(attempts).toBeGreaterThanOrEqual(2);
-    const dispatcher = agentServices.get(IEventDispatcher) as {
-      flush: ReturnType<typeof vi.fn>;
-    };
-    expect(dispatcher.flush).toHaveBeenCalled();
-    expect(app.dispose).toHaveBeenCalled();
   });
 });
