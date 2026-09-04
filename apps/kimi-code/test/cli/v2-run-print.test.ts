@@ -756,4 +756,49 @@ describe('runV2Print', () => {
     );
     expect(order).toEqual(['sub-flushed', 'disposed']);
   });
+
+  it('runs wire flush and telemetry shutdown concurrently', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agentServices, appServices } = makeFakeHarness();
+
+    const dispatcher = agentServices.get(IEventDispatcher) as {
+      flush: ReturnType<typeof vi.fn>;
+    };
+    let releaseFlush!: () => void;
+    const flushGate = new Promise<void>((resolve) => {
+      releaseFlush = resolve;
+    });
+    dispatcher.flush.mockReturnValueOnce(flushGate);
+    const telemetry = appServices.get(ITelemetryService) as {
+      shutdown: ReturnType<typeof vi.fn>;
+    };
+    let releaseTelemetry!: () => void;
+    const telemetryGate = new Promise<void>((resolve) => {
+      releaseTelemetry = resolve;
+    });
+    telemetry.shutdown.mockReturnValueOnce(telemetryGate);
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    const run = runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
+    // A sequential cleanup would sit in the wire flush's 3s allowance before
+    // even starting telemetry shutdown; concurrent phases are both in flight
+    // well within that window.
+    for (
+      let i = 0;
+      i < 200 &&
+      (dispatcher.flush.mock.calls.length === 0 || telemetry.shutdown.mock.calls.length === 0);
+      i++
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(dispatcher.flush).toHaveBeenCalled();
+    expect(telemetry.shutdown).toHaveBeenCalled();
+    releaseFlush();
+    releaseTelemetry();
+    await run;
+    expect(app.dispose).toHaveBeenCalled();
+  });
 });

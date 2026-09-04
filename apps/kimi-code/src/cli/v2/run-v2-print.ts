@@ -207,18 +207,25 @@ export async function runV2Print(
       setCrashPhase('shutdown');
       try {
         await restorePermission();
-        // The turn's tail records (step.end / turn.ended / prompt.completed) are
-        // dispatched fire-and-forget and reach the journal only through the wire
-        // service's async persist queue. Without an explicit flush, a cleanup
-        // that returns fast (e.g. telemetry disabled) lets process.exit cut off
-        // that queue before the records land on disk. Best-effort: a persist
-        // failure was already reported where the append failed.
-        await raceWithTimeout(flushWires(), CLI_SHUTDOWN_TIMEOUT_MS).catch(() => {});
       } finally {
-        if (telemetryService !== undefined) {
-          await raceWithTimeout(telemetryService.shutdown(), CLI_SHUTDOWN_TIMEOUT_MS);
-        }
-        await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS }).catch(() => {});
+        // The shutdown phases are independent of each other; run them
+        // concurrently so their individual allowances cannot sum past the
+        // outer PROMPT_CLEANUP_TIMEOUT_MS bound and let the caller's
+        // process.exit cut off the tail (app.dispose included).
+        await Promise.all([
+          // The turn's tail records (step.end / turn.ended / prompt.completed)
+          // are dispatched fire-and-forget and reach the journal only through
+          // the wire service's async persist queue. Without an explicit flush,
+          // a cleanup that returns fast (e.g. telemetry disabled) lets
+          // process.exit cut off that queue before the records land on disk.
+          // Best-effort: a persist failure was already reported where the
+          // append failed.
+          raceWithTimeout(flushWires(), CLI_SHUTDOWN_TIMEOUT_MS).catch(() => {}),
+          telemetryService !== undefined
+            ? raceWithTimeout(telemetryService.shutdown(), CLI_SHUTDOWN_TIMEOUT_MS)
+            : Promise.resolve(),
+          shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS }).catch(() => {}),
+        ]);
         app.dispose();
       }
     })());
