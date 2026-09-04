@@ -95,11 +95,12 @@ export function buildContextCompactionShape(
     ? [...selection.head, ...selection.tail]
     : [...selection.head, elisionMessage, ...selection.tail];
   const contextSummary = input.contextSummary ?? input.summary;
+  const continuationMessage = createCompactionContinuationMessage();
   const tokensAfter =
     input.tokensAfter ??
     (input.requestOverheadTokens ?? 0) +
       (input.summaryOutputTokens ?? estimate.text(contextSummary)) +
-      estimate.messages(keptMessages);
+      estimate.messages([...keptMessages, continuationMessage]);
   const keptUserMessageCount =
     input.keptUserMessageCount ?? selection.head.length + selection.tail.length;
   const keptHeadUserMessageCount =
@@ -117,7 +118,7 @@ export function buildContextCompactionShape(
     messages: [
       ...keptMessages,
       createCompactionSummaryMessage(contextSummary),
-      createCompactionContinuationMessage(),
+      continuationMessage,
     ],
   };
 }

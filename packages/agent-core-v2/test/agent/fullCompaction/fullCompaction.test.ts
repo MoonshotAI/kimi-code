@@ -1782,7 +1782,7 @@ describe('FullCompaction', () => {
       properties: expect.objectContaining({
         source: 'auto',
         tokens_before: 6_169,
-        tokens_after: 6_153,
+        tokens_after: 6_199,
         compacted_count: 7,
         retry_count: 0,
       }),
