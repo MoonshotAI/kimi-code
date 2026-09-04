@@ -9,7 +9,7 @@ import { extractImageCompressionCaptions } from '#/agent/media/image-compress';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { newMessageId } from '#/agent/contextMemory/messageId';
-import { USER_PROMPT_ORIGIN, type ContextMessage } from '#/agent/contextMemory/types';
+import { USER_PROMPT_ORIGIN, type ContextMessage, type PromptOrigin } from '#/agent/contextMemory/types';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService, type Turn, type TurnResult } from '#/agent/loop/loop';
 import { TurnSteer } from '#/agent/loop/turnOps';
@@ -158,6 +158,7 @@ export interface PromptSubmittedPayload {
   readonly content: ContentPart[];
   readonly createdAt: string;
   readonly steer?: boolean;
+  readonly origin?: PromptOrigin;
 }
 
 export class PromptSubmitted extends AgentEvent2<PromptSubmittedPayload> {
@@ -572,7 +573,7 @@ export class AgentPromptService implements IAgentPromptService {
   }
   private publishSubmitted(record: Record, status: 'running' | 'queued'): void {
     if ((record.message.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') return;
-    void this.dispatcher.dispatch(new PromptSubmitted({ agentId: this.scopeContext.agentId, promptId: record.id, userMessageId: record.userMessageId, status, content: stripBundledSkillBlocks(record.message), createdAt: record.createdAt, steer: record.steerIntended ? true : undefined }));
+    void this.dispatcher.dispatch(new PromptSubmitted({ agentId: this.scopeContext.agentId, promptId: record.id, userMessageId: record.userMessageId, status, content: stripBundledSkillBlocks(record.message), createdAt: record.createdAt, steer: record.steerIntended ? true : undefined, origin: record.message.origin }));
   }
   private publishStarted(record: Record): void {
     if ((record.message.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') return;

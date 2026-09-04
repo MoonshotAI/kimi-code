@@ -780,6 +780,28 @@ export class AgentV2Projector {
       turn.attachmentIds = acc?.attachmentIds;
     }
     this.turns.set(engineTurnId, turn);
+    if (maxSeq === 0 && heldAcc === undefined) {
+      const userOrigin = toUserOrigin(event.origin);
+      if (userOrigin !== undefined) {
+        const seq = turn.userSeq++;
+        const openingAcc: PromptAcc = {
+          promptId: `turn_${turn.turnId}`,
+          messageId: `${turn.turnId}.u${seq}`,
+          turnId: turn.turnId,
+          text: (event.prompt as string) ?? '',
+          createdAt: iso(event.time),
+          status: 'running',
+          queued: false,
+          steerHeld: false,
+          emitted: true,
+          origin: userOrigin,
+          skillActivations: toSkillActivations(event.origin),
+        };
+        this.prompts.set(openingAcc.promptId, openingAcc);
+        turn.userMessageId = openingAcc.messageId;
+        heldAcc = openingAcc;
+      }
+    }
     out.push(this.turnMessage(turn, event.time));
     if (heldAcc) out.push(this.userMessage(heldAcc, event.time));
   }
