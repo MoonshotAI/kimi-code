@@ -26,7 +26,7 @@ function chipFor(name: string, args: Record<string, unknown>, out: ToolResultBlo
 
 describe('chip registry', () => {
   it('Bash has no chip (exit code is not surfaced)', () => {
-    expect(pickChip('Bash')).toBeUndefined();
+    expect(pickChip('AskUserQuestion')).toBeUndefined();
   });
 
   it('Edit chip shows +N -M from args diff', () => {
@@ -53,12 +53,86 @@ describe('chip registry', () => {
     expect(chipFor('Read', { path: 'a.ts' }, result('1\tfoo'))).toBe('1 line');
   });
 
-  it('Grep chip shows match count', () => {
-    expect(chipFor('Grep', { pattern: 'foo' }, result('a.ts\nb.ts\nc.ts'))).toBe('3 matches');
+  it('Grep chip counts files in the default files_with_matches mode', () => {
+    expect(chipFor('Grep', { pattern: 'foo' }, result('a.ts\nb.ts\nc.ts'))).toBe('3 files');
+    expect(chipFor('Grep', { pattern: 'foo' }, result('a.ts'))).toBe('1 file');
   });
 
-  it('Grep chip says "no matches" on empty result', () => {
+  it('Grep chip counts matches and their files in content mode', () => {
+    const content = { pattern: 'foo', output_mode: 'content' };
+    expect(chipFor('Grep', content, result('src/a.ts:1:foo\nsrc/a.ts:9:foo\nsrc/b.ts:2:foo'))).toBe(
+      '3 matches across 2 files',
+    );
+    expect(chipFor('Grep', content, result('src/a.ts:1:foo\nsrc/a.ts:9:foo'))).toBe(
+      '2 matches in 1 file',
+    );
+    // Context lines and group separators are not matches.
+    expect(
+      chipFor('Grep', content, result('src/a.ts-1-import x\nsrc/a.ts:2:foo\n--\nsrc/b.ts:5:foo')),
+    ).toBe('2 matches across 2 files');
+  });
+
+  it('Grep chip sums the per-file counts in count_matches mode', () => {
+    expect(
+      chipFor(
+        'Grep',
+        { pattern: 'foo', output_mode: 'count_matches' },
+        result('Found 5 total occurrences across 2 files.\nsrc/a.ts:3\nsrc/b.ts:2'),
+      ),
+    ).toBe('5 matches across 2 files');
+  });
+
+  it('Grep chip counts files only when unnumbered content rows can be context', () => {
+    // `-n: false` with context flags: match and context rows are both
+    // `path:text` (the backend separates fields with ':' unconditionally),
+    // so an exact match count is unknowable and the chip falls back to files.
+    const unnumberedContext = { pattern: 'foo', output_mode: 'content', '-n': false, '-C': 1 };
+    expect(
+      chipFor('Grep', unnumberedContext, result('src/a.ts:import x\nsrc/a.ts:foo\nsrc/b.ts:foo')),
+    ).toBe('2 files');
+    // Without context flags every row is a match, so the count stays exact.
+    const unnumbered = { pattern: 'foo', output_mode: 'content', '-n': false };
+    expect(chipFor('Grep', unnumbered, result('src/a.ts:foo\nsrc/a.ts:bar\nsrc/b.ts:foo'))).toBe(
+      '3 matches across 2 files',
+    );
+  });
+
+  it('Grep chip leaves the notices out of the count', () => {
     expect(chipFor('Grep', { pattern: 'foo' }, result(''))).toBe('no matches');
+    expect(chipFor('Grep', { pattern: 'foo' }, result('No matches found'))).toBe('no matches');
+    expect(
+      chipFor(
+        'Grep',
+        { pattern: 'foo' },
+        result('a.ts\nb.ts\nResults truncated to 2 lines (total: 9). Use offset=2 to see more.'),
+      ),
+    ).toBe('9 files');
+  });
+
+  it('Glob chip leaves the empty-result sentence out of the count', () => {
+    expect(chipFor('Glob', { pattern: '*.ts' }, result('No matches found'))).toBe('no files');
+  });
+
+  it('Glob chip leaves the backend diagnostics out of the count', () => {
+    expect(
+      chipFor(
+        'Glob',
+        { pattern: '**/*.ts' },
+        result(
+          [
+            'Glob timed out after 60s; partial results returned.',
+            '[stdout truncated at 65536 bytes; results may be incomplete — use a more specific pattern]',
+            'Glob completed with warnings; some directories could not be read: EACCES /root',
+            '[Truncated at 200 matches — use a more specific pattern]',
+            'Only the first 200 matches are returned.',
+            'a.ts',
+            'b.ts',
+            'Found 200 matches',
+          ].join('\n'),
+        ),
+      ),
+      // The timeout and cap notices mark the set incomplete: the count is a lower bound.
+    ).toBe('2+ files');
   });
 
   it('Glob chip shows file count', () => {
@@ -140,5 +214,225 @@ describe('computeEditStats', () => {
     const stats = computeEditStats({ old_string: '', new_string: 'x\ny\nz' });
     expect(stats.added).toBe(3);
     expect(stats.removed).toBe(0);
+  });
+});
+
+describe('Bash chip', () => {
+  it('counts the hidden output lines once they outgrow the collapsed card', () => {
+    const chip = pickChip('Bash')!;
+    const call = { id: 'tc', name: 'Bash', args: { command: 'ls' } };
+    // One outcome line stands in for the rest, so the chip counts what is hidden.
+    expect(chip(call, { tool_call_id: 'tc', output: 'a\n\nb\nc\nd\n', is_error: false })).toBe('3 more lines');
+    expect(chip(call, { tool_call_id: 'tc', output: 'a\nb\nc\nd\ne', is_error: false })).toBe('4 more lines');
+    // Up to three lines are shown whole on the collapsed card, so no chip.
+    expect(chip(call, { tool_call_id: 'tc', output: 'a\n\nb\nc\n', is_error: false })).toBe('');
+    expect(chip(call, { tool_call_id: 'tc', output: 'only', is_error: false })).toBe('');
+    expect(chip(call, { tool_call_id: 'tc', output: '', is_error: false })).toBe('');
+  });
+});
+
+describe('Bash chip on a failed command', () => {
+  it('stays silent so the error preview trailer owns the hidden-line count', () => {
+    const chip = pickChip('Bash')!;
+    const call = { id: 'tc', name: 'Bash', args: { command: 'ls' } };
+    expect(chip(call, { tool_call_id: 'tc', output: 'a\nb\nc\nd\ne', is_error: true })).toBe('');
+  });
+});
+
+describe('Grep chip without line numbers', () => {
+  it('counts every row as a match but each file once', () => {
+    expect(
+      chipFor(
+        'Grep',
+        { pattern: 'foo', output_mode: 'content', '-n': false },
+        result('a.ts:foo\na.ts:foo again\nb.ts:foo'),
+      ),
+    ).toBe('3 matches across 2 files');
+  });
+});
+
+describe('Grep chip on paginated and unusual output', () => {
+  it('uses the count-mode summary total instead of the current page', () => {
+    expect(
+      chipFor(
+        'Grep',
+        { pattern: 'foo', output_mode: 'count_matches', head_limit: 2 },
+        result(
+          'Found 40 total occurrences across 12 files.\nResults truncated to 2 lines (total: 12). Use offset=2 to see more.\na.ts:3\nb.ts:2',
+        ),
+      ),
+    ).toBe('40 matches across 12 files');
+  });
+
+  it('keeps a Windows drive letter inside the path of an unnumbered content row', () => {
+    expect(
+      chipFor(
+        'Grep',
+        { pattern: 'foo', output_mode: 'content', '-n': false },
+        result('C:/outside/a.ts:foo\nC:/outside/b.ts:foo'),
+      ),
+    ).toBe('2 matches across 2 files');
+  });
+
+  it('leaves the continuation lines of a Glob traversal warning out of the file count', () => {
+    expect(
+      chipFor(
+        'Glob',
+        { pattern: '**/*.ts' },
+        result(
+          'Glob completed with warnings; some directories could not be read: rg: /x: Permission denied (os error 13)\nrg: /y: Permission denied (os error 13)\na.ts\nb.ts',
+        ),
+      ),
+    ).toBe('2+ files'); // unreadable directories make the count a lower bound
+  });
+});
+
+describe('Grep chip on an empty count-mode page', () => {
+  it('keeps the summary totals when the offset is past the last row', () => {
+    expect(
+      chipFor(
+        'Grep',
+        { pattern: 'foo', output_mode: 'count_matches', offset: 12 },
+        result('Found 40 total occurrences across 12 files.'),
+      ),
+    ).toBe('40 matches across 12 files');
+  });
+});
+
+describe('Bash chip and whitespace-only rows', () => {
+  it('counts rows the way the outcome rows do, so blank separators never claim hidden lines', () => {
+    const chip = pickChip('Bash')!;
+    const call = { id: 'tc', name: 'Bash', args: { command: 'ls' } };
+    expect(chip(call, { tool_call_id: 'tc', output: 'a\n   \nb\nc', is_error: false })).toBe('');
+    expect(chip(call, { tool_call_id: 'tc', output: 'a\n   \nb\nc\nd', is_error: false })).toBe(
+      '3 more lines',
+    );
+  });
+});
+
+describe('Grep chip on paginated content results', () => {
+  const page = 'src/a.ts:1:foo\nsrc/a.ts:9:foo\nsrc/b.ts:2:foo';
+  const notice = 'Results truncated to 3 lines (total: 1000). Use offset=3 to see more.';
+
+  it('reports the tool total and leaves the files out, since only the page is known', () => {
+    expect(
+      chipFor('Grep', { pattern: 'foo', output_mode: 'content', head_limit: 3 }, result(`${page}\n${notice}`)),
+    ).toBe('1000 matches');
+  });
+
+  it('still counts only the page files when context rows make matches uncountable', () => {
+    expect(
+      chipFor(
+        'Grep',
+        { pattern: 'foo', output_mode: 'content', '-n': false, '-C': 1, head_limit: 3 },
+        result(`src/a.ts:foo\nsrc/a.ts:bar\nsrc/b.ts:foo\n${notice}`),
+      ),
+    ).toBe('2 files');
+  });
+});
+
+describe('Grep and Glob chips on an incomplete result set', () => {
+  it('marks the counts as lower bounds when Grep timed out or hit its output cap', () => {
+    expect(
+      chipFor(
+        'Grep',
+        { pattern: 'foo' },
+        result(
+          'a.ts\nb.ts\nGrep timed out after 30s; partial results returned. Narrow the path, glob, or pattern and retry for complete results.',
+        ),
+      ),
+    ).toBe('2+ files');
+    expect(
+      chipFor(
+        'Grep',
+        { pattern: 'foo', output_mode: 'count_matches' },
+        result(
+          'Found 40 total occurrences across 12 files.\na.ts:30\nb.ts:10\n[Output truncated at 1048576 bytes of rg output — the result set is incomplete. Narrow the pattern, path, or glob filters and re-run to recover complete results.]',
+        ),
+      ),
+    ).toBe('40+ matches across 12+ files');
+  });
+
+  it('marks a capped Glob result the same way', () => {
+    expect(
+      chipFor(
+        'Glob',
+        { pattern: '**/*.ts' },
+        result(
+          '[Truncated at 1000 matches — use a more specific pattern]\nOnly the first 1000 matches are returned.\na.ts\nb.ts',
+        ),
+      ),
+    ).toBe('2+ files');
+  });
+});
+
+describe('Grep chip on paginated numbered content with context rows', () => {
+  it('counts the page rows instead of the pagination total, which includes context rows', () => {
+    expect(
+      chipFor(
+        'Grep',
+        { pattern: 'foo', output_mode: 'content', '-C': 1, head_limit: 4 },
+        result(
+          'src/a.ts-1-import x\nsrc/a.ts:2:foo\nsrc/a.ts-3-export y\n--\nResults truncated to 4 lines (total: 12). Use offset=4 to see more.',
+        ),
+      ),
+    ).toBe('1 match in 1 file');
+  });
+});
+
+describe('Grep chip with a zero-valued context flag', () => {
+  it('keeps the exact match count, since -C 0 asks for no context rows', () => {
+    expect(
+      chipFor(
+        'Grep',
+        { pattern: 'foo', output_mode: 'content', '-n': false, '-C': 0 },
+        result('src/a.ts:foo\nsrc/a.ts:foo again\nsrc/b.ts:foo'),
+      ),
+    ).toBe('3 matches across 2 files');
+  });
+});
+
+describe('Grep chip when -C overrides -A/-B', () => {
+  it('follows the effective flag, since a defined -C makes the backend drop -A and -B', () => {
+    expect(
+      chipFor(
+        'Grep',
+        { pattern: 'foo', output_mode: 'content', '-n': false, '-C': 0, '-A': 2 },
+        result('src/a.ts:foo\nsrc/a.ts:foo again\nsrc/b.ts:foo'),
+      ),
+    ).toBe('3 matches across 2 files');
+  });
+});
+
+describe('chips for a search the tool cut short before any row', () => {
+  it('stay silent so the notice row is not contradicted by an exact-looking count', () => {
+    expect(
+      chipFor(
+        'Glob',
+        { pattern: '**/*.ts' },
+        result('Glob timed out after 60s; partial results returned.'),
+      ),
+    ).toBe('');
+    expect(
+      chipFor(
+        'Grep',
+        { pattern: 'foo' },
+        result(
+          '[Output truncated at 1048576 bytes of rg output — the result set is incomplete. Narrow the pattern, path, or glob filters and re-run to recover complete results.]',
+        ),
+      ),
+    ).toBe('');
+  });
+});
+
+describe('Glob chip with unreadable directories', () => {
+  it('reads as a lower bound, since part of the tree was skipped', () => {
+    expect(
+      chipFor(
+        'Glob',
+        { pattern: '**/*.ts' },
+        result('Glob completed with warnings; some directories could not be read: rg: /x: Permission denied\na.ts\nb.ts'),
+      ),
+    ).toBe('2+ files');
   });
 });

@@ -3,8 +3,9 @@
  *
  * Each tool name maps to a `ResultRenderer` that turns the tool's
  * `ToolResultBlockData` into renderable Components. Tools without an
- * explicit entry fall through to `renderTruncated` (the original
- * 3-line + ctrl+o behavior).
+ * explicit entry fall through to `renderTruncated` (short output shown whole
+ * when collapsed, otherwise its first line; full output on ctrl+o; errors
+ * always previewed).
  *
  * Keep this dispatch flat — tool names live next to the renderer they
  * choose, so adding a new tool means appending one case.
@@ -15,14 +16,13 @@ import { shellExecutionResultRenderer } from '../shell-execution';
 import { goalSummary } from './goal';
 import { waitForSummary } from './wait-for';
 import {
-  editSummary,
   fetchSummary,
+  fileChangeSummary,
   globSummary,
   grepSummary,
   readSummary,
   thinkSummary,
   webSearchSummary,
-  writeSummary,
 } from './summary';
 import { renderTruncated } from './truncated';
 import type { ResultRenderer } from './types';
@@ -56,9 +56,9 @@ export function pickResultRenderer(toolName: string): ResultRenderer {
     case 'Think':
       return thinkSummary;
     case 'Edit':
-      return editSummary;
+      return fileChangeSummary;
     case 'Write':
-      return writeSummary;
+      return fileChangeSummary;
     case 'CreateGoal':
     case 'GetGoal':
     case 'SetGoalBudget':

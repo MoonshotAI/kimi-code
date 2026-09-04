@@ -13,6 +13,7 @@ import {
   BRAILLE_SPINNER_FRAMES,
   BRAILLE_SPINNER_INTERVAL_MS,
   COMMAND_PREVIEW_LINES,
+  OUTCOME_MAX_LINES,
   RESULT_PREVIEW_LINES,
   THINKING_PREVIEW_LINES,
 } from '#/tui/constant/rendering';
@@ -32,9 +33,16 @@ import { formatTokenCount } from '#/utils/usage/usage-format';
 
 import { agentSwarmResultSummaryFromOutput } from './agent-swarm-progress';
 import { PlanBoxComponent } from './plan-box';
+import { TruncatedHeaderLine, type HeaderContent } from './truncated-header-line';
 import { ShellExecutionComponent } from './shell-execution';
 import { countNonEmptyLines, pickChip } from './tool-renderers/chip';
-import { buildGoalToolHeader } from './tool-renderers/goal';
+import { buildGoalToolHeader, parseGoalToolOutput } from './tool-renderers/goal';
+import { searchCutShort } from './tool-renderers/grep-output';
+import { parseReadMediaOutput } from './tool-renderers/media';
+import { computeWriteStats } from './tool-renderers/chip';
+import { nonEmptyLines, outcomeLine } from './tool-renderers/outcome';
+import { TruncatedOutputComponent } from './tool-renderers/truncated';
+import { isSpilledToolOutput } from './tool-renderers/types';
 import { isGenericToolResult, pickResultRenderer } from './tool-renderers/registry';
 import { buildWaitForHeader } from './tool-renderers/wait-for';
 
@@ -49,6 +57,10 @@ const STREAMING_PROGRESS_INTERVAL_MS = 1000;
 const PROGRESS_URL_RE = /https?:\/\/\S+/g;
 const ABORTED_MARK = '⊘';
 const MAX_LIVE_OUTPUT_CHARS = 50_000;
+// One shared reference: the header line compares segment styles by identity
+// to keep its render cache across rebuilds, and the palette is read at call
+// time so theme switches still apply.
+const dimHeaderStyle = (text: string): string => currentTheme.dim(text);
 
 /** Delay before a long-running foreground Bash/Agent card advertises Ctrl+B. */
 const DETACH_HINT_DELAY_MS = 10_000;
@@ -400,24 +412,47 @@ function makeWorkspaceRelativePath(filePath: string, workspaceDir: string | unde
   return relativePath;
 }
 
-function formatKeyArgument(
+function displayKeyArgument(
   toolName: string,
   key: string,
   value: string,
   workspaceDir: string | undefined,
 ): string {
-  const displayValue =
-    toolName === 'Read' && PATH_KEYS.has(key)
-      ? makeWorkspaceRelativePath(value, workspaceDir)
-      : value;
-  return truncateArgValue(key, displayValue);
+  return toolName === 'Read' && PATH_KEYS.has(key)
+    ? makeWorkspaceRelativePath(value, workspaceDir)
+    : value;
 }
 
+/**
+ * The header's key argument, untruncated: the width-aware header line sizes
+ * it to the terminal. `keep` says which end must survive a cut — paths keep
+ * their file name, everything else keeps its start.
+ */
+export interface KeyArgument {
+  readonly text: string;
+  readonly keep: 'head' | 'tail';
+}
+
+/**
+ * Capped variant for contexts without a width-aware header (subagent
+ * summaries, the activity viewer): the first {@link MAX_ARG_LENGTH}
+ * characters, keeping a path's file name.
+ */
 export function extractKeyArgument(
   toolName: string,
   args: Record<string, unknown>,
   workspaceDir?: string,
 ): string | null {
+  const detail = extractKeyArgumentDetail(toolName, args, workspaceDir);
+  if (detail === null) return null;
+  return truncateArgValue(detail.keep === 'tail' ? 'path' : 'value', detail.text);
+}
+
+export function extractKeyArgumentDetail(
+  toolName: string,
+  args: Record<string, unknown>,
+  workspaceDir?: string,
+): KeyArgument | null {
   const keyMap: Record<string, string[]> = {
     Bash: ['command'],
     Read: ['path', 'file_path'],
@@ -445,7 +480,7 @@ export function extractKeyArgument(
     if (args['include_ignored'] === true) {
       summary += ' · include ignored';
     }
-    return truncateArgValue('pattern', summary);
+    return { text: summary, keep: 'head' };
   }
 
   const candidates = keyMap[toolName] ?? Object.keys(args);
@@ -455,7 +490,10 @@ export function extractKeyArgument(
       const firstLine = val.split('\n')[0] ?? val;
       const displayValue =
         toolName === 'Bash' && val.includes('\n') ? `${firstLine}…` : firstLine;
-      return formatKeyArgument(toolName, key, displayValue, workspaceDir);
+      return {
+        text: displayKeyArgument(toolName, key, displayValue, workspaceDir),
+        keep: PATH_KEYS.has(key) ? 'tail' : 'head',
+      };
     }
   }
   return null;
@@ -540,6 +578,13 @@ export class ToolCallComponent extends Container {
   private expanded = false;
   private toolCall: ToolCallBlockData;
   private readonly markdownTheme = createMarkdownTheme();
+  /**
+   * Memo for hasHiddenContent(); reset whenever the body or the result-driven
+   * content is rebuilt, or live output grows.
+   */
+  private hiddenContent: boolean | undefined = undefined;
+  /** Width-dependent half of hasHiddenContent(); recomputed on every collapsed render. */
+  private truncatedAtLastRender = false;
   private result: ToolResultBlockData | undefined;
   private ui: TUI | undefined;
   private planPath: string | undefined;
@@ -551,7 +596,7 @@ export class ToolCallComponent extends Container {
    * the plan body even without a `## Approved Plan:` marker.
    */
   private currentPlan: string | undefined;
-  private headerText: Text;
+  private headerText: TruncatedHeaderLine;
   private callPreviewEndIndex = 0;
 
   // ── Subagent state ───────────────────────────────────────────────
@@ -655,7 +700,7 @@ export class ToolCallComponent extends Container {
     this.applySubagentReplay(toolCall.subagent);
 
     this.addChild(new Spacer(1));
-    this.headerText = new Text(this.buildHeader(), 0, 0);
+    this.headerText = new TruncatedHeaderLine(this.buildHeader());
     this.addChild(this.headerText);
     this.buildCallPreview();
     this.callPreviewEndIndex = this.children.length;
@@ -695,6 +740,24 @@ export class ToolCallComponent extends Container {
       i++;
     }
 
+    // An outcome row cut to this width hides the remainder of a long line, and
+    // an error preview cut to its row cap hides the rest of a wrapped error;
+    // ctrl+o reveals both. The header (child 1) is excluded — a cut key
+    // argument is not what ctrl+o reveals for most tools; Bash is the
+    // exception, its full command renders in the body once expanded. The
+    // value is kept while expanded so the footer can still offer collapse.
+    if (!this.expanded) {
+      this.truncatedAtLastRender = this.children.some(
+        (child, index) =>
+          (child instanceof TruncatedHeaderLine &&
+            (index !== 1 ||
+              (this.toolCall.name === 'Bash' && this.toolCall.truncated !== true)) &&
+            child.wasTruncated()) ||
+          ((child instanceof TruncatedOutputComponent || child instanceof ShellExecutionComponent) &&
+            child.wasTruncated()),
+      );
+    }
+
     if (allReused) {
       return cache!.lines;
     }
@@ -725,6 +788,132 @@ export class ToolCallComponent extends Container {
     // children and would leave the call preview stuck at its initial
     // collapsed size.
     this.rebuildBody();
+  }
+
+  /**
+   * Whether ctrl+o would reveal anything this card keeps out of its collapsed
+   * form. Mirrors the collapsed rules of buildCallPreview and the result
+   * renderers (short output shown whole, bodies that only render expanded);
+   * the footer reads it to decide whether to advertise ctrl+o.
+   */
+  hasHiddenContent(): boolean {
+    this.hiddenContent ??= this.computeHiddenContent();
+    return this.hiddenContent || this.truncatedAtLastRender;
+  }
+
+  /** Whether the global ctrl+o toggle currently has this card expanded. */
+  isExpanded(): boolean {
+    return this.expanded;
+  }
+
+  private computeHiddenContent(): boolean {
+    const { name, args } = this.toolCall;
+    // A solo Agent card with subagent state never renders its result body and
+    // its subagent block is a fixed-height window either way, so ctrl+o
+    // changes nothing there.
+    if (this.isSingleSubagentView()) return false;
+    // Arguments cut off by max_tokens: the card shows a fixed "call never
+    // executed" note in place of any preview, so there is nothing to expand.
+    if (this.toolCall.truncated === true && this.result === undefined) return false;
+    if (this.callPreviewHidesContent()) return true;
+    const { result } = this;
+    if (result === undefined) return nonEmptyLines(this.liveOutput).length > 1;
+    if (result.output.length === 0) return false;
+    if (result.output.trimStart().startsWith('<system-reminder>')) return false;
+    if (result.is_error === true) return nonEmptyLines(result.output).length > RESULT_PREVIEW_LINES;
+    switch (name) {
+      case 'ReadMediaFile':
+        // A media envelope renders its body only when expanded; anything else
+        // falls back to the generic renderer and its line-count rule.
+        return (
+          parseReadMediaOutput(result.output) !== null ||
+          nonEmptyLines(result.output).length > OUTCOME_MAX_LINES
+        );
+      case 'Grep':
+      case 'Glob':
+        // A search cut short before any row shows only the tool's notice, the
+        // same way in both states; every other result hides its body.
+        return (
+          !searchCutShort(this.toolCall, result.output) ||
+          nonEmptyLines(result.output).length > OUTCOME_MAX_LINES
+        );
+      case 'Read':
+      case 'FetchURL':
+      case 'WebSearch':
+      case 'Think':
+        return true;
+      case 'ExitPlanMode':
+        // An approved plan is fully rendered by the call preview and the
+        // outcome body is expansion-independent; only a non-outcome result
+        // (an error message) can have more to show behind ctrl+o.
+        return (
+          !isExitPlanModeOutcomeOutput(result.output) &&
+          nonEmptyLines(result.output).length > OUTCOME_MAX_LINES
+        );
+      case 'AskUserQuestion':
+        // A foreground question renders its answers in an expansion-independent
+        // view; a background one returns a metadata block through the generic
+        // renderer and follows the line-count rule (the legacy engine's block
+        // runs past the outcome rows).
+        return (
+          args['background'] === true && nonEmptyLines(result.output).length > OUTCOME_MAX_LINES
+        );
+      case 'CreateGoal':
+      case 'GetGoal':
+        // A parsed goal renders the same fixed snapshot in both states; only an
+        // unparsable result falls back to the line-count rule.
+        return (
+          parseGoalToolOutput(result.output) === undefined &&
+          nonEmptyLines(result.output).length > OUTCOME_MAX_LINES
+        );
+      case 'Edit':
+      case 'Write':
+        // The result body renders the same way in both states (the call
+        // preview is checked above), so only the preview can hide content.
+        return false;
+      case 'SetGoalBudget':
+      case 'UpdateGoal':
+      case 'AgentSwarm':
+      case 'TodoList':
+      case 'EnterPlanMode':
+        return false;
+      default:
+        return nonEmptyLines(result.output).length > OUTCOME_MAX_LINES;
+    }
+  }
+
+  /**
+   * Whether the args-driven call preview keeps content out of the collapsed
+   * card whatever the result: a multi-line Bash command shows only its first
+   * line in the header, and the Edit diff and Write content previews are
+   * capped, so a failed call can still have more to show behind ctrl+o.
+   */
+  private callPreviewHidesContent(): boolean {
+    const { name, args } = this.toolCall;
+    switch (name) {
+      case 'Bash':
+        return str(args['command']).includes('\n');
+      case 'Edit': {
+        const oldStr = str(args['old_string']);
+        const newStr = str(args['new_string']);
+        if (oldStr.length === 0 && newStr.length === 0) return false;
+        // Mirror buildCallPreview exactly by rendering both ways: the cap
+        // applies to body rows at cluster boundaries under a header row, so
+        // the capped render differs from the full one only when it cut rows
+        // (its trailer then replaces them).
+        const filePath = str(args['file_path'] ?? args['path']);
+        const full = renderDiffLinesClustered(oldStr, newStr, filePath, { contextLines: 3 });
+        const capped = renderDiffLinesClustered(oldStr, newStr, filePath, {
+          contextLines: 3,
+          maxLines: COMMAND_PREVIEW_LINES,
+        });
+        return capped.length !== full.length || capped.at(-1) !== full.at(-1);
+      }
+      case 'Write':
+        return computeWriteStats(args).lines > COMMAND_PREVIEW_LINES;
+      default:
+        return false;
+    }
   }
 
   setResult(result: ToolResultBlockData): void {
@@ -793,8 +982,9 @@ export class ToolCallComponent extends Container {
   appendLiveOutput(text: string): void {
     if (this.result !== undefined || text.length === 0) return;
     this.liveOutput += text;
+    this.hiddenContent = undefined;
     if (this.liveOutput.length > MAX_LIVE_OUTPUT_CHARS) {
-      this.liveOutput = `[...truncated]\n${this.liveOutput.slice(
+      this.liveOutput = `[…truncated]\n${this.liveOutput.slice(
         this.liveOutput.length - MAX_LIVE_OUTPUT_CHARS,
       )}`;
     }
@@ -1442,7 +1632,7 @@ export class ToolCallComponent extends Container {
     this.ui?.requestRender();
   }
 
-  private buildHeader(): string {
+  private buildHeader(): HeaderContent {
     const { toolCall, result } = this;
     const isFinished = result !== undefined;
     const isError = result?.is_error ?? false;
@@ -1496,17 +1686,26 @@ export class ToolCallComponent extends Container {
     }
 
     if (toolCall.name === 'Bash') {
-      // The command itself is rendered in the body (with a `$` prompt), so the
-      // header only names the action — repeating the command in parentheses
-      // would duplicate the body. Wording mirrors the other label-only headers
-      // (e.g. AskUserQuestion): the whole label takes the tone colour.
+      // The collapsed card is this header plus its outcome rows, so the header
+      // carries the command's first line; the full command and its output only
+      // render in the body once expanded (ctrl+o). Wording mirrors the other label-only
+      // headers (e.g. AskUserQuestion): the whole label takes the tone colour.
       if (isTruncated) {
         return `${bullet}${currentTheme.fg('error', 'Truncated')} ${currentTheme.boldFg('primary', 'Bash')}`;
       }
       const label = isFinished ? 'Ran a command' : 'Running a command';
       const tone = isError ? 'error' : 'primary';
+      const command = extractKeyArgumentDetail(toolCall.name, toolCall.args, this.workspaceDir);
       const chipStr = isFinished && result !== undefined ? this.buildHeaderChip(result) : '';
-      return `${bullet}${currentTheme.boldFg(tone, label)}${chipStr}`;
+      const head = `${bullet}${currentTheme.boldFg(tone, label)}`;
+      if (command === null) return `${head}${chipStr}`;
+      // The command takes whatever width the label and the chip leave over,
+      // so it fills a wide terminal and the chip survives a narrow one.
+      return {
+        head: `${head}${currentTheme.dim(' · $ ')}`,
+        flex: { text: command.text, style: dimHeaderStyle, keep: 'head' },
+        tail: chipStr,
+      };
     }
 
     const goalHeader = buildGoalToolHeader({
@@ -1530,7 +1729,7 @@ export class ToolCallComponent extends Container {
     }
 
     const verb = isFinished ? 'Used' : isTruncated ? 'Truncated' : 'Using';
-    const keyArg = extractKeyArgument(toolCall.name, toolCall.args, this.workspaceDir);
+    const keyArg = extractKeyArgumentDetail(toolCall.name, toolCall.args, this.workspaceDir);
     const decoded = decodeMcpToolName(toolCall.name);
     const verbStyled = isTruncated
       ? currentTheme.fg('error', verb)
@@ -1539,13 +1738,20 @@ export class ToolCallComponent extends Container {
       decoded !== null
         ? `${currentTheme.boldFg('primary', decoded.toolName)}${currentTheme.dim(` · MCP/${decoded.serverName}`)}`
         : currentTheme.boldFg('primary', toolCall.name);
-    const argStr = keyArg ? currentTheme.dim(` (${keyArg})`) : '';
     let chipStr = '';
     if (isFinished && result) chipStr = this.buildHeaderChip(result);
-    return `${bullet}${verbStyled} ${toolLabel}${argStr}${chipStr}`;
+    const head = `${bullet}${verbStyled} ${toolLabel}`;
+    if (keyArg === null) return `${head}${chipStr}`;
+    return {
+      head: `${head}${currentTheme.dim(' (')}`,
+      flex: { text: keyArg.text, style: dimHeaderStyle, keep: keyArg.keep },
+      tail: `${currentTheme.dim(')')}${chipStr}`,
+    };
   }
 
   private buildHeaderChip(result: ToolResultBlockData): string {
+    // The truncation envelope of an oversized result is not countable data.
+    if (isSpilledToolOutput(result.output)) return '';
     const provider = pickChip(this.toolCall.name);
     if (provider === undefined) return '';
     const text = provider(this.toolCall, result);
@@ -1555,6 +1761,7 @@ export class ToolCallComponent extends Container {
   }
 
   private rebuildContent(): void {
+    this.hiddenContent = undefined;
     while (this.children.length > this.callPreviewEndIndex) {
       this.children.pop();
     }
@@ -1566,6 +1773,7 @@ export class ToolCallComponent extends Container {
   }
 
   private rebuildBody(): void {
+    this.hiddenContent = undefined;
     while (this.children.length > 2) {
       this.children.pop();
     }
@@ -1611,6 +1819,19 @@ export class ToolCallComponent extends Container {
   private buildLiveOutputBlock(): void {
     if (this.result !== undefined) return;
     if (this.liveOutput.length === 0) return;
+    // Collapsed: the newest output line is the card's outcome row while the
+    // command runs, so progress stays visible; the result's last line takes
+    // the same row once it lands. ctrl+o shows the whole live tail.
+    if (!this.expanded) {
+      const lines = nonEmptyLines(this.liveOutput);
+      const latest = lines.at(-1);
+      // With earlier output above it, the newest line carries the same
+      // leading ellipsis the finished card's last-line row uses.
+      if (latest !== undefined) {
+        this.addChild(outcomeLine(latest, lines.length > 1 ? 'above' : undefined));
+      }
+      return;
+    }
     this.addChild(
       new ShellExecutionComponent({
         result: {
@@ -1618,10 +1839,7 @@ export class ToolCallComponent extends Container {
           output: this.liveOutput,
           is_error: false,
         },
-        expanded: this.expanded,
-        resultPreviewLines: RESULT_PREVIEW_LINES,
-        tailOutput: true,
-        expandHint: false,
+        expanded: true,
       }),
     );
   }
@@ -2044,21 +2262,19 @@ export class ToolCallComponent extends Container {
         this.addChild(new Text(line, 2, 0));
       }
     } else if (name === 'Bash') {
-      // Surface the command in the body across the whole lifecycle — while
-      // streaming, running, and after the result lands. Keeping the collapsed
-      // command preview here (instead of yielding to the result renderer once
-      // the result lands) avoids a height collapse when a multi-line command
-      // finishes with short output: the command block stays put and only the
-      // live-output tail swaps for the result. Owned solely by buildCallPreview
-      // so the command never renders twice; shellExecutionResultRenderer
-      // renders the result only.
+      // Collapsed: the header already carries the command's first line, so no
+      // command body is added; the outcome row comes from the live tail or the
+      // result renderer. Expanded: the full command, across the whole lifecycle.
+      // Owned solely by buildCallPreview so the command never renders twice;
+      // shellExecutionResultRenderer renders the result only.
+      if (!this.expanded) return;
       const command = str(this.toolCall.args['command']);
       if (command.length === 0) return;
       this.addChild(
         new ShellExecutionComponent({
           command,
           showCommand: true,
-          commandPreviewLines: this.expanded ? undefined : COMMAND_PREVIEW_LINES,
+          commandPreviewLines: undefined,
         }),
       );
     }
@@ -2117,14 +2333,14 @@ export class ToolCallComponent extends Container {
       this.addChild(new Text(currentTheme.dim(progress), 2, 0));
       return;
     }
-    if (name === 'Bash') {
+    if (name === 'Bash' && this.expanded) {
       const cmd = extractPartialStringField(previewText, 'command');
       if (cmd === undefined || cmd.length === 0) return;
       this.addChild(
         new ShellExecutionComponent({
           command: cmd,
           showCommand: true,
-          commandPreviewLines: this.expanded ? undefined : COMMAND_PREVIEW_LINES,
+          commandPreviewLines: undefined,
         }),
       );
     }

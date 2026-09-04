@@ -128,6 +128,7 @@ interface MessageDriver {
   };
   init(): Promise<boolean>;
   handleUserInput(text: string): void;
+  toggleToolOutputExpansion(): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
   persistInputHistory(text: string): Promise<void>;
   sendQueuedMessage(session: unknown, item: QueuedMessage): void;
@@ -8659,6 +8660,81 @@ describe('transcript step and assistant folding', () => {
 
     const lastAssistant = assistants.at(-1)!;
     expect(stripSgr(lastAssistant.render(120).join('\n'))).toContain(`msg-${cycles - 1}`);
+  });
+});
+
+describe('footer ctrl+o hint', () => {
+  function emitBashResult(driver: MessageDriver, toolCallId: string, output: string): void {
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId,
+        name: 'Bash',
+        args: { command: 'pnpm test' },
+      } as Event,
+      vi.fn(),
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.result',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId,
+        output,
+        isError: undefined,
+      } as Event,
+      vi.fn(),
+    );
+  }
+
+  function renderFooterLine1(driver: MessageDriver): string {
+    return stripSgr(driver.state.footer.render(160)[0] ?? '');
+  }
+
+  it('offers expand while a card hides output and collapse once it is shown', async () => {
+    const { driver } = await makeDriver();
+    expect(renderFooterLine1(driver)).not.toContain('ctrl+o');
+
+    emitBashResult(driver, 'call_bash', ['line1', 'line2', 'line3', 'line4', 'Tests 5 passed'].join('\n'));
+    expect(renderFooterLine1(driver)).toContain('ctrl+o expand');
+
+    driver.toggleToolOutputExpansion();
+    expect(renderFooterLine1(driver)).toContain('ctrl+o collapse');
+
+    driver.toggleToolOutputExpansion();
+    expect(renderFooterLine1(driver)).toContain('ctrl+o expand');
+  });
+
+  it('stays silent when every card shows its whole output', async () => {
+    const { driver } = await makeDriver();
+    emitBashResult(driver, 'call_bash', ['line1', 'line2', 'line3'].join('\n'));
+    expect(renderFooterLine1(driver)).not.toContain('ctrl+o');
+  });
+
+  it('keeps the collapse hint for an expanded card that slid out of the expansion window', async () => {
+    const { driver } = await makeDriver();
+    emitBashResult(driver, 'call_bash', ['line1', 'line2', 'line3', 'line4', 'Tests 5 passed'].join('\n'));
+    driver.toggleToolOutputExpansion();
+    expect(renderFooterLine1(driver)).toContain('ctrl+o collapse');
+
+    // Four later user turns move the expanded card before the three-turn
+    // cutoff; nothing collapses it, and ctrl+o would still visibly collapse it.
+    for (let i = 0; i < 4; i++) {
+      driver.appendTranscriptEntry({
+        id: `later-${String(i)}`,
+        kind: 'user',
+        renderMode: 'plain',
+        content: `next ${String(i)}`,
+      });
+    }
+    expect(renderFooterLine1(driver)).toContain('ctrl+o collapse');
+
+    driver.toggleToolOutputExpansion();
+    expect(renderFooterLine1(driver)).not.toContain('ctrl+o');
   });
 });
 
