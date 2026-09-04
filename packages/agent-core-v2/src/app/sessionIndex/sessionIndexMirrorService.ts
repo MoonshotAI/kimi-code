@@ -3,8 +3,9 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { IntervalTimer } from '#/_base/utils/timer';
-import { IFlagService } from '#/app/flag/flag';
+import { IConfigService } from '#/app/config/config';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { databaseBaseEnabled } from '#/persistence/configSection';
 import { IQueryStore } from '#/persistence/interface/queryStore';
 
 import { ISessionIndexMirror, type SessionSummary } from './sessionIndex';
@@ -16,8 +17,6 @@ import {
   withRecencyField,
   type SessionWorkspaceCounts,
 } from './sessionIndexModel';
-
-const READ_MODEL_FLAG = 'persistence_minidb_readmodel';
 
 const FLUSH_INTERVAL_MS = 100;
 const FLUSH_BATCH_SIZE = 500;
@@ -43,7 +42,7 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
 
   constructor(
     @IQueryStore private readonly queryStore: IQueryStore,
-    @IFlagService private readonly flags: IFlagService,
+    @IConfigService private readonly config: IConfigService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ILogService private readonly log: ILogService,
   ) {
@@ -59,7 +58,7 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
   }
 
   record(summary: SessionSummary): void {
-    if (this.disposed || !this.flags.enabled(READ_MODEL_FLAG)) return;
+    if (this.disposed || !databaseBaseEnabled(this.config)) return;
     if (this.pendingMap.size >= MAX_PENDING && !this.pendingMap.has(summary.id)) {
       if (!this.overflowLogged) {
         this.overflowLogged = true;

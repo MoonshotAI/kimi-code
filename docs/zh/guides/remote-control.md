@@ -2,8 +2,6 @@
 
 在终端里使用 `kimi rc` 命令启动 Kimi Code CLI 并开启远程控制后，会自动生成一个可以远程控制本机的链接。你可以使用手机扫描二维码打开链接，或在其他设备上直接访问该链接。打开链接后，登录和本地 Kimi Code CLI 中相同的 Kimi 账号，就能远程查看任务进度、处理权限确认、继续对话，或新建会话。任务始终在本机执行，网页只是一个远程窗口。
 
-> 远程控制（Remote Control）目前是实验性功能，需要通过环境变量开启，界面与行为以最终发布版本为准。
-
 ## 开始使用
 
 ### 使用前准备
@@ -13,19 +11,6 @@
 - **已安装 Kimi Code CLI**：安装见 [开始使用](../guides/getting-started.md)
 - **已登录 Kimi 账号且为付费会员**：远程控制需要会员权限，免费用户无法使用
 - **本机保持唤醒并联网**：远程控制依赖本机与 Kimi 服务保持连接，关机、休眠或断网后远程会话不可用
-- **已开启实验开关**：用 `export` 设置环境变量（或用 `KIMI_CODE_EXPERIMENTAL_FLAG=1` 开启全部实验特性）：
-
-  ```sh
-  export KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL=1
-  # 或者开启全部实验特性
-  export KIMI_CODE_EXPERIMENTAL_FLAG=1
-  ```
-
-  上面的 `export` 只对当前终端会话有效。如果经常使用，建议写入 shell 配置文件（如 `~/.zshrc`）持久化：
-
-  ```sh
-  echo 'export KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL=1' >> ~/.zshrc
-  ```
 
 ### 第一步：启动远程控制
 

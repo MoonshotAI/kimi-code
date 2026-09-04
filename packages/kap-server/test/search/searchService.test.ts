@@ -7,11 +7,12 @@ import { Worker } from 'node:worker_threads';
 
 import type {
   IBootstrapService,
-  IFlagService,
+  IConfigService,
   ILogService,
   ISessionIndex,
   SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
+import { DATABASE_SECTION } from '@moonshot-ai/agent-core-v2';
 import { MiniDb } from '@moonshot-ai/minidb';
 import { TranscriptStore, type TranscriptOperation } from '@moonshot-ai/transcript';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -21,7 +22,6 @@ import {
   GlobalSearchError,
   GlobalSearchService,
   InlineSearchBackend,
-  SEARCH_WORKER_FLAG_ID,
   drainGlobalSearchDisposals,
   type LiveTranscriptSource,
   type SearchBackend,
@@ -125,20 +125,21 @@ const noopLog = {
   debug: () => {},
 } as unknown as ILogService;
 
-function makeFlags(workerEnabled: boolean): IFlagService {
+function makeConfig(searchEnabled: boolean): IConfigService {
   return {
-    enabled: (id: string) => id === SEARCH_WORKER_FLAG_ID && workerEnabled,
-  } as unknown as IFlagService;
+    ready: Promise.resolve(),
+    get: (domain: string) => (domain === DATABASE_SECTION ? { search: searchEnabled } : undefined),
+  } as unknown as IConfigService;
 }
 
 function makeService(home: string, index: ISessionIndex): GlobalSearchService {
-  const service = new GlobalSearchService(index, makeBootstrap(home), noopLog, makeFlags(true));
+  const service = new GlobalSearchService(index, makeBootstrap(home), noopLog, makeConfig(true));
   service.syncDebounceMs = 0;
   return service;
 }
 
 function makeInlineService(home: string, index: ISessionIndex): GlobalSearchService {
-  const service = new GlobalSearchService(index, makeBootstrap(home), noopLog, makeFlags(false));
+  const service = new GlobalSearchService(index, makeBootstrap(home), noopLog, makeConfig(false));
   service.syncDebounceMs = 0;
   return service;
 }
@@ -185,6 +186,10 @@ function syncInput(homeDir: string, s: SessionSummary): SyncSessionInput {
 
 function syncNow(service: GlobalSearchService): Promise<void> {
   return (service as unknown as { ensureSyncStarted(): Promise<void> }).ensureSyncStarted();
+}
+
+function settleBackend(service: GlobalSearchService): Promise<unknown> {
+  return (service as unknown as { ensureBackend(): Promise<unknown> }).ensureBackend();
 }
 
 async function settleSync(service: GlobalSearchService): Promise<void> {
@@ -1390,6 +1395,7 @@ describe('GlobalSearchService', () => {
       const s1 = summary('s1', 'heal', T1);
       await writeWire(home!, 's1', 'main', [userLine('苹果 heal', T1)]);
       const service = track(makeInlineService(home!, staticIndex([s1])));
+      await settleBackend(service);
 
       const core = coreOf(service);
       const origOpen = core.openSearchDb;
@@ -2091,7 +2097,7 @@ describe('GlobalSearchService', () => {
         makeSessionIndex(async () => ({ items: sessions, nextCursor: undefined })),
         makeBootstrap(home!),
         log,
-        makeFlags(false),
+        makeConfig(false),
       );
       service.syncDebounceMs = 0;
       track(service);
@@ -2136,7 +2142,7 @@ describe('GlobalSearchService', () => {
       await writer.reindex();
 
       const { log, warnings } = recordingLog();
-      const reader = new GlobalSearchService(staticIndex([s1]), makeBootstrap(home!), log, makeFlags(false));
+      const reader = new GlobalSearchService(staticIndex([s1]), makeBootstrap(home!), log, makeConfig(false));
       reader.syncDebounceMs = 0;
       track(reader);
       await syncNow(reader);
@@ -2171,7 +2177,7 @@ describe('GlobalSearchService', () => {
           makeSessionIndex(async () => ({ items: sessions, nextCursor: undefined })),
           makeBootstrap(root),
           noopLog,
-          makeFlags(false),
+          makeConfig(false),
         );
         service.syncDebounceMs = 0;
         track(service);
@@ -2771,6 +2777,7 @@ describe('search lifecycle diagnostics (stage 5)', () => {
     const s1 = summary('s1', 'open 失败', T1);
     await writeWire(home!, 's1', 'main', [userLine('苹果 open-failure', T1)]);
     const service = track(makeInlineService(home!, staticIndex([s1])));
+    await settleBackend(service);
     const core = coreOf(service) as unknown as { openSearchDb(): Promise<unknown> };
     core.openSearchDb = async () => {
       throw new Error('disk gone');
@@ -2798,7 +2805,7 @@ describe('search lifecycle diagnostics (stage 5)', () => {
     await writeFile(join(home!, 'search-index', 'db.textindexes.json'), 'not json {{{', 'utf8');
 
     const { log, warnings } = recordingLog();
-    const second = new GlobalSearchService(staticIndex([s1]), makeBootstrap(home!), log, makeFlags(false));
+    const second = new GlobalSearchService(staticIndex([s1]), makeBootstrap(home!), log, makeConfig(false));
     track(second);
     second.syncDebounceMs = 0;
     await settleSync(second);
@@ -2849,6 +2856,7 @@ describe('search lifecycle diagnostics (stage 5)', () => {
     const s1 = summary('s1', '单次打开', T1);
     await writeWire(home!, 's1', 'main', [userLine('苹果 single-open', T1)]);
     const service = track(makeInlineService(home!, staticIndex([s1])));
+    await settleBackend(service);
     const core = coreOf(service) as unknown as { openSearchDb(): Promise<unknown> };
     const originalOpen = core.openSearchDb.bind(core);
     let openCalls = 0;

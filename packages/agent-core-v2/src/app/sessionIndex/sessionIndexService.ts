@@ -4,10 +4,11 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { IntervalTimer } from '#/_base/utils/timer';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IFlagService } from '#/app/flag/flag';
+import { IConfigService } from '#/app/config/config';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { SessionIndexDegradedEvent } from '#/app/telemetry/events';
 import { isError2 } from '#/errors';
+import { databaseBaseEnabled } from '#/persistence/configSection';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import {
   IQueryStore,
@@ -48,7 +49,6 @@ import {
   summaryMatchesChildOf,
 } from './sessionIndexSource';
 
-const READ_MODEL_FLAG = 'persistence_minidb_readmodel';
 const RECONCILE_INTERVAL_MS = 60_000;
 const DEGRADED_RETRY_MS = 5_000;
 const TIE_REPAIR_LIMIT = 1_000;
@@ -89,7 +89,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
     @IQueryStore private readonly queryStore: IQueryStore,
-    @IFlagService private readonly flags: IFlagService,
+    @IConfigService private readonly config: IConfigService,
     @ISessionIndexMirror private readonly mirror: ISessionIndexMirror,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ILogService private readonly log: ILogService,
@@ -648,7 +648,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   }
 
   private readModelEnabled(): boolean {
-    return this.flags.enabled(READ_MODEL_FLAG);
+    return databaseBaseEnabled(this.config);
   }
 }
 

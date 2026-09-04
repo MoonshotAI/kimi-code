@@ -198,7 +198,7 @@ function bootstrap(): void {
   );
   // Same pattern for the global-search worker: extracted from the SEA blob so
   // the search index runs off the main thread; a failure leaves the search
-  // surface degraded (the `search_worker` flag restores the inline host).
+  // surface degraded ([database] search = false restores the inline host).
   const searchWorkerInstall = installKapSearchWorker();
   startupTrace(
     searchWorkerInstall.status === 'installed'

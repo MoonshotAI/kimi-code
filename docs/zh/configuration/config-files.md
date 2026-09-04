@@ -441,6 +441,17 @@ disabled = ["EnterPlanMode", "ExitPlanMode", "mcp__github__*"]
 
 `max_edge_px` 可被环境变量 `KIMI_IMAGE_MAX_EDGE_PX` 覆盖，`read_byte_budget` 可被 `KIMI_IMAGE_READ_BYTE_BUDGET` 覆盖，优先级均高于配置文件。
 
+## `database`
+
+`database` 控制会话索引和全局搜索背后的嵌入式存储引擎。两个字段默认值都是 `true`，设为 `false` 时回退到旧有行为。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `base` | `boolean` | `true` | 会话索引使用基于 minidb 的读模型；`false` 回退为直接读取会话元数据 |
+| `search` | `boolean` | `true` | 在独立 worker 线程中运行全局搜索索引；`false` 在服务器进程内运行 |
+
+`base` 可被环境变量 `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` 覆盖，`search` 可被 `KIMI_CODE_SEARCH_WORKER` 覆盖，优先级均高于配置文件。
+
 <!--
 ## `experimental`
 

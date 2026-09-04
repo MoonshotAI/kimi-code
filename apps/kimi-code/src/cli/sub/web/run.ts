@@ -39,8 +39,6 @@ import { type NetworkAddress } from './networks';
 import {
   formatRemoteControlOutput,
   formatRemoteControlStatus,
-  isRemoteControlEnabled,
-  REMOTE_CONTROL_FLAG_ENV,
   startRemoteControl,
   type RemoteControlHandle,
   type RemoteControlOptions,
@@ -170,10 +168,8 @@ export function buildWebCommand(
     withServerOptions.addOption(
       new Option(
         '--rc, --remote-control',
-        'Expose the web UI through Kimi Remote Control (experimental).',
-      )
-        .default(false)
-        .hideHelp(!isRemoteControlEnabled()),
+        'Expose the web UI through Kimi Remote Control.',
+      ).default(false),
     );
   }
   return withServerOptions
@@ -195,11 +191,6 @@ export async function handleWebCommand(
   deps: WebCommandDeps = DEFAULT_WEB_COMMAND_DEPS,
 ): Promise<void> {
   const parsed = parseServerOptions(opts);
-  if (opts.remoteControl === true && !isRemoteControlEnabled()) {
-    throw new Error(
-      `--remote-control is experimental: set ${REMOTE_CONTROL_FLAG_ENV}=1 (or KIMI_CODE_EXPERIMENTAL_FLAG=1) to enable it.`,
-    );
-  }
   if (opts.remoteControl === true && parsed.dangerousBypassAuth) {
     throw new Error('--remote-control cannot be combined with --dangerous-bypass-auth.');
   }
