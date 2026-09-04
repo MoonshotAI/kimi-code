@@ -201,6 +201,7 @@ export async function runV2Print(
 
   let restorePermission = async (): Promise<void> => {};
   let quiesceAgents = async (): Promise<void> => {};
+  let releaseQuiescence: (() => void) | undefined;
   let flushWires = async (): Promise<void> => {};
   let removeTerminationCleanup: (() => void) | undefined;
   let cleanupPromise: Promise<void> | undefined;
@@ -218,25 +219,32 @@ export async function runV2Print(
         // No-op when every agent is already idle.
         await raceWithTimeout(quiesceAgents(), CLI_SHUTDOWN_TIMEOUT_MS).catch(() => {});
       } finally {
-        // The shutdown phases are independent of each other; run them
-        // concurrently so their individual allowances cannot sum past the
-        // outer PROMPT_CLEANUP_TIMEOUT_MS bound and let the caller's
-        // process.exit cut off the tail (app.dispose included).
-        await Promise.all([
-          // The turn's tail records (step.end / turn.ended / prompt.completed)
-          // are dispatched fire-and-forget and reach the journal only through
-          // the wire service's async persist queue. Without an explicit flush,
-          // a cleanup that returns fast (e.g. telemetry disabled) lets
-          // process.exit cut off that queue before the records land on disk.
-          // Best-effort: a persist failure was already reported where the
-          // append failed.
-          raceWithTimeout(flushWires(), CLI_SHUTDOWN_TIMEOUT_MS).catch(() => {}),
-          telemetryService !== undefined
-            ? raceWithTimeout(telemetryService.shutdown(), CLI_SHUTDOWN_TIMEOUT_MS)
-            : Promise.resolve(),
-          shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS }).catch(() => {}),
-        ]);
-        app.dispose();
+        try {
+          // The shutdown phases are independent of each other; run them
+          // concurrently so their individual allowances cannot sum past the
+          // outer PROMPT_CLEANUP_TIMEOUT_MS bound and let the caller's
+          // process.exit cut off the tail (app.dispose included).
+          await Promise.all([
+            // The turn's tail records (step.end / turn.ended / prompt.completed)
+            // are dispatched fire-and-forget and reach the journal only through
+            // the wire service's async persist queue. Without an explicit flush,
+            // a cleanup that returns fast (e.g. telemetry disabled) lets
+            // process.exit cut off that queue before the records land on disk.
+            // Best-effort: a persist failure was already reported where the
+            // append failed.
+            raceWithTimeout(flushWires(), CLI_SHUTDOWN_TIMEOUT_MS).catch(() => {}),
+            telemetryService !== undefined
+              ? raceWithTimeout(telemetryService.shutdown(), CLI_SHUTDOWN_TIMEOUT_MS)
+              : Promise.resolve(),
+            shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS }).catch(() => {}),
+          ]);
+          app.dispose();
+        } finally {
+          // Quiescence guards stay held across the flush and disposal so a
+          // late background-task completion or cron fire cannot start a new
+          // turn (and new records) after the journals were drained.
+          releaseQuiescence?.();
+        }
       }
     })());
     await raceWithTimeout(pending, PROMPT_CLEANUP_TIMEOUT_MS);
@@ -280,7 +288,9 @@ export async function runV2Print(
 
     const resolved = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);
     restorePermission = resolved.restorePermission;
-    quiesceAgents = () => quiesceSessionAgents(resolved.session, resolved.agent);
+    quiesceAgents = async () => {
+      releaseQuiescence = await quiesceSessionAgents(resolved.session, resolved.agent);
+    };
     flushWires = () => flushSessionWires(resolved.session, resolved.agent);
 
     telemetryService.setContext({ session_id: resolved.session.id, model: resolved.telemetryModel });
@@ -924,11 +934,19 @@ function collectSessionAgentHandles(
  * asynchronous teardown — after the wire flush, and after process.exit.
  * Draining and cancelling are no-ops on idle agents, so the normal
  * (completed/failed turn) exit pays nothing here.
+ *
+ * On success returns a release function: every loop is left holding a
+ * quiescence guard so late producers (a background-task completion or a cron
+ * fire, both of which enqueue straight into the loop, bypassing the prompt
+ * queue) cannot start a new turn — and new records — after the prompt
+ * queues read empty. The caller holds the release across the wire flush and
+ * disposal. Returns undefined when quiescence could not be reached within
+ * the caller's bound.
  */
 async function quiesceSessionAgents(
   session: ISessionScopeHandle,
   mainAgent: IAgentScopeHandle,
-): Promise<void> {
+): Promise<(() => void) | undefined> {
   const handles = collectSessionAgentHandles(session, mainAgent);
   const promptServices = handles.flatMap((handle) => {
     try {
@@ -947,11 +965,11 @@ async function quiesceSessionAgents(
       return [];
     }
   });
-  // Repeat until a full pass finds every queue empty: a prompt can surface
-  // after one pass already ran — from startNext's launch window (the prompt
-  // left `pending` and is not yet `active`, so drain could not see it) or
-  // from a cancelled turn's settle chain. The snapshot covers all three
-  // states; the loop reports idle (releaseActiveTurn) before the
+  // Repeat until a full pass finds every queue empty and every loop freezable:
+  // a prompt can surface after one pass already ran — from startNext's launch
+  // window (the prompt left `pending` and is not yet `active`, so drain could
+  // not see it) or from a cancelled turn's settle chain. The snapshot covers
+  // all three states; the loop reports idle (releaseActiveTurn) before the
   // prompt-settle chain dispatches the final record, and settle() clears the
   // active prompt and dispatches that record in one synchronous block, so an
   // empty snapshot proves it was already queued for the wire flush.
@@ -962,6 +980,22 @@ async function quiesceSessionAgents(
       loop.cancel();
     }
     await Promise.allSettled(loops.map((loop) => loop.settled()));
+    const guards: { dispose(): void }[] = [];
+    let frozen = true;
+    for (const loop of loops) {
+      let guard: { dispose(): void } | undefined;
+      try {
+        guard = loop.tryAcquireQuiescence();
+      } catch {
+        // A disposed loop cannot accept new submissions; it needs no guard.
+        continue;
+      }
+      if (guard === undefined) {
+        frozen = false;
+        break;
+      }
+      guards.push(guard);
+    }
     const busy = promptServices.some((service) => {
       try {
         const snapshot = service.list();
@@ -974,7 +1008,12 @@ async function quiesceSessionAgents(
         return false;
       }
     });
-    if (!busy) return;
+    if (frozen && !busy) {
+      return () => {
+        for (const guard of guards) guard.dispose();
+      };
+    }
+    for (const guard of guards) guard.dispose();
     await new Promise((resolve) => {
       setTimeout(resolve, PROMPT_QUIESCE_POLL_MS);
     });

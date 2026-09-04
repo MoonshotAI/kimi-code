@@ -197,6 +197,7 @@ function makeFakeHarness() {
         status: vi.fn(() => ({ state: 'idle', pendingTurnIds: [] })),
         cancel: vi.fn(() => false),
         settled: vi.fn(async () => {}),
+        tryAcquireQuiescence: vi.fn(() => ({ dispose: vi.fn() })),
       },
     ],
     [
@@ -823,6 +824,7 @@ describe('runV2Print', () => {
       status: ReturnType<typeof vi.fn>;
       cancel: ReturnType<typeof vi.fn>;
       settled: ReturnType<typeof vi.fn>;
+      tryAcquireQuiescence: ReturnType<typeof vi.fn>;
     };
     loop.status.mockReturnValue({ state: 'running', pendingTurnIds: [] });
     loop.cancel.mockImplementation(() => {
@@ -832,6 +834,8 @@ describe('runV2Print', () => {
     loop.settled = vi.fn(async () => {
       if (!order.includes('settled')) order.push('settled');
     });
+    const guardDispose = vi.fn();
+    loop.tryAcquireQuiescence = vi.fn(() => ({ dispose: guardDispose }));
     const dispatcher = agentServices.get(IEventDispatcher) as {
       flush: ReturnType<typeof vi.fn>;
     };
@@ -912,6 +916,41 @@ describe('runV2Print', () => {
     await sigintRun;
 
     expect(order).toEqual(['cancel', 'settled', 'flush', 'exit:130']);
+    // Producers stay frozen across the flush and disposal: the guard taken
+    // during quiesce is only released after app.dispose().
+    expect(loop.tryAcquireQuiescence).toHaveBeenCalled();
+    const lastGuardRelease = guardDispose.mock.invocationCallOrder.at(-1);
+    const appDisposeOrder = app.dispose.mock.invocationCallOrder[0];
+    expect(lastGuardRelease).toBeGreaterThan(appDisposeOrder!);
     expect(await outcome).toBeInstanceOf(Error);
+  });
+
+  it('retries quiescence acquisition while a producer keeps the loop busy', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agentServices } = makeFakeHarness();
+
+    const loop = agentServices.get(IAgentLoopService) as {
+      tryAcquireQuiescence: ReturnType<typeof vi.fn>;
+    };
+    let attempts = 0;
+    loop.tryAcquireQuiescence = vi.fn(() => {
+      attempts += 1;
+      // The first pass finds the loop busy (a background-task completion just
+      // enqueued a turn); the second pass can freeze it.
+      return attempts === 1 ? undefined : { dispose: vi.fn() };
+    });
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
+
+    expect(attempts).toBeGreaterThanOrEqual(2);
+    const dispatcher = agentServices.get(IEventDispatcher) as {
+      flush: ReturnType<typeof vi.fn>;
+    };
+    expect(dispatcher.flush).toHaveBeenCalled();
+    expect(app.dispose).toHaveBeenCalled();
   });
 });
