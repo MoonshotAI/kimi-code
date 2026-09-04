@@ -362,6 +362,82 @@ describe('OpenAILegacyChatProvider', () => {
       });
     });
 
+    it('preserves canonical Kimi-native tool call ids (self-hosted Kimi behind an OpenAI endpoint)', async () => {
+      // Self-hosted Kimi (litellm / vLLM / SGLang / Azure) is configured as an `openai`
+      // provider. Kimi-K2 requires its native id format `functions.<name>:<idx>` echoed back
+      // verbatim; sanitizing it to `functions_Bash_0` makes the model reason without emitting a
+      // tool call. The test above pins the complementary case: a non-canonical id is still
+      // rewritten for cross-provider safety.
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Run bash' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            {
+              type: 'function',
+              id: 'functions.Bash:0',
+              name: 'Bash',
+              arguments: '{"command":"pwd"}',
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: '/tmp' }],
+          toolCallId: 'functions.Bash:0',
+          toolCalls: [],
+        },
+      ];
+
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['messages']).toEqual([
+        { role: 'user', content: 'Run bash' },
+        {
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              type: 'function',
+              id: 'functions.Bash:0',
+              function: { name: 'Bash', arguments: '{"command":"pwd"}' },
+            },
+          ],
+        },
+        { role: 'tool', content: '/tmp', tool_call_id: 'functions.Bash:0' },
+      ]);
+    });
+
+    it('preserves a canonical id whose length exceeds the policy maxLength (chat tool_call.id is uncapped)', async () => {
+      // The chat policy carries maxLength: 64, but that cap is for sanitized non-canonical ids —
+      // the chat `tool_call.id` itself has no length limit (OpenAI's 64-char cap is on the function
+      // name). A long MCP tool name plus a multi-digit idx yields a 77-char canonical id that must
+      // still round-trip verbatim, or the very regression this fixes would reappear for such ids.
+      const longName = 'mcp__github__'.padEnd(64, 'x');
+      expect(longName).toHaveLength(64);
+      const longId = `functions.${longName}:12`;
+      expect(longId.length).toBeGreaterThan(64);
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'go' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [{ type: 'function', id: longId, name: longName, arguments: '{}' }],
+        },
+        { role: 'tool', content: [{ type: 'text', text: 'ok' }], toolCallId: longId, toolCalls: [] },
+      ];
+
+      const body = await captureRequestBody(provider, '', [], history);
+      const messages = body['messages'] as Record<string, unknown>[];
+      const assistant = messages[1]!;
+      const toolCalls = assistant['tool_calls'] as Record<string, unknown>[];
+      expect(toolCalls[0]!['id']).toBe(longId);
+      expect(messages[2]!['tool_call_id']).toBe(longId);
+    });
+
     it('tool call with image result keeps the tool result textual and reattaches images as user input', async () => {
       // OpenAI Chat Completions `tool` messages only accept text content.
       // Even when toolMessageConversion is unset, a tool result containing

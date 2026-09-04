@@ -40,7 +40,7 @@ import {
 } from './request-auth';
 import {
   normalizeToolCallIdsForProvider,
-  sanitizeToolCallId,
+  sanitizeToolCallIdPreservingNative,
   type ToolCallIdPolicy,
 } from './tool-call-id';
 export interface KimiOptions {
@@ -86,7 +86,7 @@ export interface ExtraBody {
   [key: string]: unknown;
 }
 const KIMI_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
-  normalize: (id) => sanitizeToolCallId(id, 64),
+  normalize: (id) => sanitizeToolCallIdPreservingNative(id, 64),
   maxLength: 64,
 };
 interface OpenAIMessage {

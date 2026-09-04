@@ -782,6 +782,46 @@ describe('OpenAIResponsesChatProvider', () => {
       });
     });
 
+    it('preserves canonical Kimi-native tool call ids (self-hosted Kimi behind an OpenAI Responses endpoint)', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Run bash' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            {
+              type: 'function',
+              id: 'functions.Bash:0',
+              name: 'Bash',
+              arguments: '{"command":"pwd"}',
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: '/tmp' }],
+          toolCallId: 'functions.Bash:0',
+          toolCalls: [],
+        },
+      ];
+
+      const body = await captureRequestBody(provider, '', [], history);
+      const input = body['input'] as unknown[];
+
+      expect(input[1]).toEqual({
+        arguments: '{"command":"pwd"}',
+        call_id: 'functions.Bash:0',
+        name: 'Bash',
+        type: 'function_call',
+      });
+      expect(input[2]).toEqual({
+        call_id: 'functions.Bash:0',
+        output: [{ type: 'input_text', text: '/tmp' }],
+        type: 'function_call_output',
+      });
+    });
+
     it('assistant with reasoning (ThinkPart with encrypted)', async () => {
       const provider = createProvider();
       const history: Message[] = [

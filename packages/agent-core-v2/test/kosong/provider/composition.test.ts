@@ -622,6 +622,7 @@ async function captureGoogleBody(
 async function captureResponsesBody(
   provider: ChatProvider,
   options?: GenerateOptions,
+  history: Message[] = PROBE_HISTORY,
 ): Promise<Record<string, unknown>> {
   let captured: Record<string, unknown> | undefined;
   const client = sdkClient(provider) as { responses: { create: unknown } };
@@ -629,7 +630,7 @@ async function captureResponsesBody(
     captured = params as Record<string, unknown>;
     return Promise.resolve(responsesEventStream());
   });
-  await drain(await provider.generate('', [], PROBE_HISTORY, options));
+  await drain(await provider.generate('', [], history, options));
   if (captured === undefined) throw new Error('expected responses.create to be called');
   return captured;
 }
@@ -655,6 +656,114 @@ describe('per-turn intent wire encoding (behavior probes)', () => {
     expect(body['max_completion_tokens']).toBe(5000);
     expect(body).not.toHaveProperty('max_tokens');
     expect(body).not.toHaveProperty('reasoning_effort');
+  });
+
+  it('preserves a canonical Kimi-native tool call id end-to-end through the composed Kimi provider', async () => {
+    const provider = registry.createChatProvider({
+      protocol: 'openai',
+      providerType: 'kimi',
+      modelName: 'kimi-k2',
+      apiKey: 'sk-probe',
+    });
+
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'Run bash' }], toolCalls: [] },
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [
+          { type: 'function', id: 'functions.Bash:0', name: 'Bash', arguments: '{"command":"pwd"}' },
+        ],
+      },
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: '/tmp' }],
+        toolCallId: 'functions.Bash:0',
+        toolCalls: [],
+      },
+    ];
+
+    const body = await captureOpenAIBody(provider, undefined, history);
+    const messages = body['messages'] as Array<Record<string, unknown>>;
+    const assistant = messages.find((m) => m['role'] === 'assistant');
+    const toolResult = messages.find((m) => m['role'] === 'tool');
+    if (assistant === undefined || toolResult === undefined) {
+      throw new Error('expected assistant and tool messages on the wire');
+    }
+
+    const [toolCall] = assistant['tool_calls'] as Array<Record<string, unknown>>;
+    expect(toolCall?.['id']).toBe('functions.Bash:0');
+    expect(toolResult['tool_call_id']).toBe('functions.Bash:0');
+  });
+
+  it('sanitizes a non-canonical historical tool call id through the composed Kimi provider', async () => {
+    const provider = registry.createChatProvider({
+      protocol: 'openai',
+      providerType: 'kimi',
+      modelName: 'kimi-k2',
+      apiKey: 'sk-probe',
+    });
+
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'Run bash' }], toolCalls: [] },
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [
+          { type: 'function', id: 'Bash:7', name: 'Bash', arguments: '{"command":"pwd"}' },
+        ],
+      },
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: '/tmp' }],
+        toolCallId: 'Bash:7',
+        toolCalls: [],
+      },
+    ];
+
+    const body = await captureOpenAIBody(provider, undefined, history);
+    const messages = body['messages'] as Array<Record<string, unknown>>;
+    const assistant = messages.find((m) => m['role'] === 'assistant');
+    const toolResult = messages.find((m) => m['role'] === 'tool');
+    if (assistant === undefined || toolResult === undefined) {
+      throw new Error('expected assistant and tool messages on the wire');
+    }
+
+    const [toolCall] = assistant['tool_calls'] as Array<Record<string, unknown>>;
+    expect(toolCall?.['id']).toBe('Bash_7');
+    expect(toolResult['tool_call_id']).toBe('Bash_7');
+  });
+
+  it('preserves a canonical Kimi-native tool call id through OpenAIResponsesChatProvider.generate()', async () => {
+    const provider = new OpenAIResponsesChatProvider({ model: 'kimi-k2', apiKey: 'sk-probe' });
+
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'Run bash' }], toolCalls: [] },
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [
+          { type: 'function', id: 'functions.Bash:0', name: 'Bash', arguments: '{"command":"pwd"}' },
+        ],
+      },
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: '/tmp' }],
+        toolCallId: 'functions.Bash:0',
+        toolCalls: [],
+      },
+    ];
+
+    const body = await captureResponsesBody(provider, undefined, history);
+    const input = body['input'] as Array<Record<string, unknown>>;
+    const call = input.find((i) => i['type'] === 'function_call');
+    const output = input.find((i) => i['type'] === 'function_call_output');
+    if (call === undefined || output === undefined) {
+      throw new Error('expected function_call and function_call_output items on the wire');
+    }
+
+    expect(call['call_id']).toBe('functions.Bash:0');
+    expect(output['call_id']).toBe('functions.Bash:0');
   });
 
   it('encodes cacheKey on plain OpenAI as the native prompt_cache_key', async () => {
