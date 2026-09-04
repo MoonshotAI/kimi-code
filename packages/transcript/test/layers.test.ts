@@ -829,8 +829,9 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         role: 'user',
         content: [
           { type: 'text', text: 'what is this? [Image #1]' },
-          { type: 'image', source: { kind: 'base64', media_type: 'image/png', data: 'aGVsbG8=' } },
-          { type: 'image', source: { kind: 'url', url: 'https://example.com/pic.png' } },
+          { type: 'image', source: { kind: 'base64', media_type: 'image/png', data: 'aGVsbG8=' }, name: 'inline.png' },
+          { type: 'image', source: { kind: 'url', url: 'https://example.com/pic.png' }, name: 'remote.png' },
+          { type: 'image', source: { kind: 'file', file_id: 'file_8' }, name: 'stored.png' },
           { type: 'file', file_id: 'file_9', name: 'notes.txt', media_type: 'text/plain', size: 128 },
         ],
         toolCalls: [],
@@ -839,25 +840,32 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
       { role: 'assistant', content: [{ type: 'text', text: 'a screenshot' }], toolCalls: [] },
     ]);
 
-    expect(snapshot.attachments).toHaveLength(3);
+    expect(snapshot.attachments).toHaveLength(4);
     expect(snapshot.attachments[0]).toMatchObject({
       attachmentId: 'att_1',
       mediaType: 'image/png',
+      name: 'inline.png',
       source: undefined,
     });
     expect(snapshot.attachments[1]).toMatchObject({
       attachmentId: 'att_2',
+      name: 'remote.png',
       source: { kind: 'url', url: 'https://example.com/pic.png' },
     });
     expect(snapshot.attachments[2]).toMatchObject({
       attachmentId: 'att_3',
+      name: 'stored.png',
+      source: { kind: 'file', fileId: 'file_8' },
+    });
+    expect(snapshot.attachments[3]).toMatchObject({
+      attachmentId: 'att_4',
       mediaType: 'text/plain',
       name: 'notes.txt',
       source: { kind: 'file', fileId: 'file_9' },
     });
     const firstTurn = snapshot.items[0];
     if (firstTurn?.kind !== 'turn') throw new Error('expected turn');
-    expect(firstTurn.attachmentIds).toEqual(['att_1', 'att_2', 'att_3']);
+    expect(firstTurn.attachmentIds).toEqual(['att_1', 'att_2', 'att_3', 'att_4']);
   });
 
   it('folds origin file attachments on the opening user message into path-sourced entities', () => {
@@ -938,7 +946,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         content: [
           {
             type: 'video_url',
-            videoUrl: { url: 'kimi-file://file_1' },
+            videoUrl: { url: 'kimi-file://file_1', name: 'clip.mp4' },
           } as HistoryContentPart,
         ],
         toolCalls: [],
@@ -950,7 +958,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
           { type: 'text', text: 'what is this?' },
           {
             type: 'image_url',
-            imageUrl: { url: 'kimi-file://file_2?path=%2Fcache%2Fshot.png' },
+            imageUrl: { url: 'kimi-file://file_2?path=%2Fcache%2Fshot.png', name: 'shot.png' },
           } as HistoryContentPart,
         ],
         toolCalls: [],
@@ -962,11 +970,13 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
       {
         attachmentId: 'att_1',
         mediaType: 'video/*',
+        name: 'clip.mp4',
         source: { kind: 'session_media', fileId: 'file_1' },
       },
       {
         attachmentId: 'att_2',
         mediaType: 'image/*',
+        name: 'shot.png',
         source: { kind: 'session_media', fileId: 'file_2' },
       },
     ]);

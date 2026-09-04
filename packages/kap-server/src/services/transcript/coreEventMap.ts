@@ -366,7 +366,7 @@ export class AgentTranscriptProjector {
     origin: unknown;
     prompt?: string;
     promptAttachments?: readonly (
-      | { kind: 'image' | 'video' | 'audio'; fileId: string }
+      | { kind: 'image' | 'video' | 'audio'; fileId: string; name?: string }
       | { kind: 'file'; name: string; mediaType: string; size: number; path: string }
     )[];
   }): TranscriptOperation[] {
@@ -386,6 +386,7 @@ export class AgentTranscriptProjector {
           : {
               attachmentId: `${turnId}.att${attachmentIds.length + 1}`,
               mediaType: `${input.kind}/*`,
+              name: input.name,
               source: { kind: 'session_media', fileId: input.fileId },
             };
       ops.push({ op: 'attachment.upsert', attachment });
@@ -1486,6 +1487,12 @@ export class AgentTranscriptProjector {
       const attachment: TranscriptAttachment = {
         attachmentId: `${stepId}.att${++this.attachmentOrdinal}`,
         mediaType: `${ref.kind}/*`,
+        name:
+          part.type === 'image_url'
+            ? part.imageUrl.name
+            : part.type === 'video_url'
+              ? part.videoUrl.name
+              : undefined,
         source: { kind: 'session_media', fileId: ref.ref.fileId },
       };
       ops.push({ op: 'attachment.upsert', attachment });

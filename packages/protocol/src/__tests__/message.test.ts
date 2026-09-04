@@ -53,8 +53,10 @@ describe('messageContentSchema variants', () => {
     const parsed = imageContentSchema.parse({
       type: 'image',
       source: { kind: 'url', url: 'https://example.com/a.png' },
+      name: 'a.png',
     });
     expect(parsed.source.kind).toBe('url');
+    expect(parsed.name).toBe('a.png');
   });
 
   it('parses image base64 source', () => {
@@ -85,8 +87,10 @@ describe('messageContentSchema variants', () => {
     const parsed = videoContentSchema.parse({
       type: 'video',
       source: { kind: 'file', file_id: 'file_video_01' },
+      name: 'clip.mp4',
     });
     expect(parsed.source.kind).toBe('file');
+    expect(parsed.name).toBe('clip.mp4');
   });
 
   it('parses session-owned media source from stored history', () => {
