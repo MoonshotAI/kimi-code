@@ -65,7 +65,7 @@ export interface PromptLaunchResult {
 
 export interface PromptReservation extends IDisposable {
   readonly id: string;
-  submit(message: ContextMessage): Promise<PromptHandle>;
+  submit(message: ContextMessage, opts?: { steer?: boolean }): Promise<PromptHandle>;
 }
 
 export const promptAdmission = Symbol('promptAdmission');

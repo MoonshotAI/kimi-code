@@ -279,7 +279,7 @@ export class AgentPromptService implements IAgentPromptService {
     let submitted = false;
     return {
       id,
-      submit: async (message) => {
+      submit: async (message, opts) => {
         if (submitted) throw new Error2(ErrorCodes.REQUEST_INVALID, 'prompt reservation already submitted');
         submitted = true;
         this.reservedPromptIds.delete(id);
@@ -290,7 +290,7 @@ export class AgentPromptService implements IAgentPromptService {
             content: stripBundledSkillBlocks(message),
           }),
         );
-        return this.enqueue({ id, message });
+        return this.enqueue({ id, message }, opts);
       },
       dispose: () => {
         this.reservedPromptIds.delete(id);
