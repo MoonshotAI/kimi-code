@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { open, readFile, readdir, rm, stat } from 'node:fs/promises';
-import { join, relative } from 'node:path';
+import { mkdir, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { dirname, join, relative } from 'node:path';
 
 import {
   LockError,
@@ -239,6 +239,29 @@ export class SearchIndexCore {
     return this.options.log;
   }
 
+  private get deletedLedgerPath(): string {
+    return join(this.indexDir, 'deleted-sessions.json');
+  }
+
+  private async readDeletedLedger(): Promise<Set<string>> {
+    try {
+      const parsed: unknown = JSON.parse(await readFile(this.deletedLedgerPath, 'utf8'));
+      if (!Array.isArray(parsed)) return new Set();
+      return new Set(parsed.filter((entry): entry is string => typeof entry === 'string'));
+    } catch {
+      return new Set();
+    }
+  }
+
+  private async appendDeletedLedger(sessionId: string): Promise<void> {
+    const ledger = await this.readDeletedLedger();
+    if (ledger.has(sessionId)) return;
+    ledger.add(sessionId);
+    const capped = [...ledger].slice(-500);
+    await mkdir(dirname(this.deletedLedgerPath), { recursive: true });
+    await writeFile(this.deletedLedgerPath, JSON.stringify(capped), 'utf8');
+  }
+
   ensureOpen(): Promise<void> {
     this.openPromise ??= this.openDb().then(
       () => {
@@ -440,6 +463,7 @@ export class SearchIndexCore {
 
   async deleteSession(sessionId: string): Promise<void> {
     if (this.disposed) return;
+    await this.appendDeletedLedger(sessionId);
     await this.ensureOpen();
     const db = this.db;
     if (!db || db.readOnly || this.disposed) return;
@@ -461,6 +485,12 @@ export class SearchIndexCore {
       if (this.disposed) return { noop: true, sessions: 0, documents: 0 };
       const sessionId = row.key.slice(SESSION_META_PREFIX.length);
       if (!currentIds.has(sessionId)) await this.deleteSessionDocs(db, sessionId);
+    }
+
+    const deletedLedger = await this.readDeletedLedger();
+    for (const sessionId of deletedLedger) {
+      if (this.disposed) return { noop: true, sessions: 0, documents: 0 };
+      await this.deleteSessionDocs(db, sessionId);
     }
 
     let indexed = 0;
@@ -873,7 +903,15 @@ export class SearchIndexCore {
     const boundary = page.kind === 'keyset' ? page.boundary : undefined;
     const matched = matchDocs(q, candidates, boundary, budget);
     incomplete ??= matched.incomplete;
-    const { pageRows, hasMore } = paginateRows(q, page, matched.rows);
+    const deletedLedger = await this.readDeletedLedger();
+    const visibleRows =
+      deletedLedger.size === 0
+        ? matched.rows
+        : matched.rows.filter((row) => {
+            const sep = row.key.indexOf('/');
+            return sep <= 0 || !deletedLedger.has(row.key.slice(0, sep));
+          });
+    const { pageRows, hasMore } = paginateRows(q, page, visibleRows);
     return {
       kind: 'page',
       rows: pageRows,

@@ -272,7 +272,9 @@ export class GlobalSearchService implements IGlobalSearchService {
     if (this.disposed) return;
     this.summaries.delete(sessionId);
     try {
+      await this.syncPromise?.catch(() => {});
       await this.backend.deleteSession(sessionId);
+      this.requestSync();
     } catch (error) {
       this.log.warn('global search: failed to purge a deleted session from the index', {
         sessionId,

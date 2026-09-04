@@ -310,6 +310,19 @@ describe('GlobalSearchService', () => {
     expect((await service.search({ query: '苹果' })).items).toEqual([]);
   });
 
+  it('keeps a deleted session out of search results even if a stale sync re-indexes it', async () => {
+    const s1 = summary('s1', '删除测试', T1);
+    await writeWire(home!, 's1', 'main', [userLine('即将被删除的苹果', T1)]);
+    const service = track(makeService(home!, staticIndex([s1])));
+    await service.reindex();
+    expect((await service.search({ query: '苹果' })).items.length).toBeGreaterThan(0);
+
+    await service.deleteSession('s1');
+    await settleSync(service);
+
+    expect((await service.search({ query: '苹果' })).items).toEqual([]);
+  });
+
   it('hits session titles as title docs', async () => {
     const s1 = summary('s1', '季度总结报告', T1);
     await writeWire(home!, 's1', 'main', [userLine('随便说点什么', T1)]);
