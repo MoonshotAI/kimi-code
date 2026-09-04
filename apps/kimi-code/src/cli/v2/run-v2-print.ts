@@ -124,6 +124,8 @@ import {
 const PROMPT_UI_MODE = 'print';
 /** Re-check `goalActive` at least this often while waiting for goal turns. */
 const GOAL_WAIT_POLL_MS = 250;
+/** Re-check each agent's prompt queue while waiting for it to drain at exit. */
+const PROMPT_QUIESCE_POLL_MS = 10;
 /**
  * Slack on top of a scheduled cron fire time while waiting for the steered
  * turn: covers the 1s tick poll interval plus fire → inject → turn-launch
@@ -200,7 +202,6 @@ export async function runV2Print(
   let restorePermission = async (): Promise<void> => {};
   let quiesceAgents = async (): Promise<void> => {};
   let flushWires = async (): Promise<void> => {};
-  const promptCompletions: Promise<unknown>[] = [];
   let removeTerminationCleanup: (() => void) | undefined;
   let cleanupPromise: Promise<void> | undefined;
   let telemetryService: ITelemetryService | undefined;
@@ -211,10 +212,10 @@ export async function runV2Print(
       try {
         await restorePermission();
         // A termination signal can arrive mid-turn: drain pending prompts,
-        // cancel any queued/active turns, and let the loops and prompt
-        // completions settle first, so the turn's cancellation and closing
-        // records exist before the flush below drains the journals. No-op
-        // when every loop is already idle.
+        // cancel any queued/active turns, and wait for every agent's loops
+        // and prompt queues to quiesce first, so the turn's cancellation and
+        // closing records exist before the flush below drains the journals.
+        // No-op when every agent is already idle.
         await raceWithTimeout(quiesceAgents(), CLI_SHUTDOWN_TIMEOUT_MS).catch(() => {});
       } finally {
         // The shutdown phases are independent of each other; run them
@@ -279,10 +280,7 @@ export async function runV2Print(
 
     const resolved = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);
     restorePermission = resolved.restorePermission;
-    quiesceAgents = async () => {
-      await quiesceSessionAgents(resolved.session, resolved.agent);
-      await Promise.allSettled(promptCompletions);
-    };
+    quiesceAgents = () => quiesceSessionAgents(resolved.session, resolved.agent);
     flushWires = () => flushSessionWires(resolved.session, resolved.agent);
 
     telemetryService.setContext({ session_id: resolved.session.id, model: resolved.telemetryModel });
@@ -293,9 +291,6 @@ export async function runV2Print(
       telemetryService.track2('first_launch');
     }
 
-    const trackPromptCompletion = (completion: Promise<unknown>): void => {
-      promptCompletions.push(completion);
-    };
     const goalCreate = parseHeadlessGoalCreate(opts.prompt!);
     if (goalCreate !== undefined) {
       await runNativeGoal(
@@ -307,7 +302,6 @@ export async function runV2Print(
         outputFormat,
         stdout,
         stderr,
-        trackPromptCompletion,
       );
     } else {
       await runNativeTurn(
@@ -318,7 +312,6 @@ export async function runV2Print(
         outputFormat,
         stdout,
         stderr,
-        trackPromptCompletion,
       );
     }
     writeResumeHint(resolved.session.id, outputFormat, stdout, stderr);
@@ -493,7 +486,6 @@ async function runNativeTurn(
   outputFormat: PromptOutputFormat,
   stdout: PromptOutput,
   stderr: PromptOutput,
-  trackPromptCompletion?: (completion: Promise<unknown>) => void,
 ): Promise<void> {
   const writer: PromptTurnWriter =
     outputFormat === 'stream-json'
@@ -519,11 +511,6 @@ async function runNativeTurn(
         origin: { kind: 'user' },
       },
     });
-    // The cleanup's quiesce phase awaits every registered completion before
-    // flushing: `prompt.completed` is dispatched from the prompt-settle chain
-    // that runs after the loop reports idle, so loop idleness alone does not
-    // guarantee the record exists yet.
-    trackPromptCompletion?.(handle.completion);
     const turn = await handle.launched;
     if (turn === undefined) {
       // A prompt blocked by an onBeforeSubmitPrompt hook never launches a turn.
@@ -597,7 +584,6 @@ async function runNativeGoal(
   outputFormat: PromptOutputFormat,
   stdout: PromptOutput,
   stderr: PromptOutput,
-  trackPromptCompletion?: (completion: Promise<unknown>) => void,
 ): Promise<void> {
   requireConfiguredModel(model);
   const goalService = agent.accessor.get(IAgentGoalService);
@@ -615,16 +601,7 @@ async function runNativeGoal(
     }
   });
   try {
-    await runNativeTurn(
-      app,
-      session,
-      agent,
-      goal.objective,
-      outputFormat,
-      stdout,
-      stderr,
-      trackPromptCompletion,
-    );
+    await runNativeTurn(app, session, agent, goal.objective, outputFormat, stdout, stderr);
   } finally {
     subscription.dispose();
     const snapshot = completedSnapshot ?? goalService.getGoal().goal;
@@ -941,25 +918,27 @@ function collectSessionAgentHandles(
 
 /**
  * Drain every session agent's prompt queue, cancel queued and active turns,
- * then wait for the loops to go idle. A termination signal can arrive
- * mid-turn: without this, the turn's cancellation and closing records would
- * only be produced by dispose()'s asynchronous teardown — after the wire
- * flush, and after process.exit. Draining and cancelling are no-ops on idle
- * agents, so the normal (completed/failed turn) exit pays nothing here.
+ * then wait for the loops to go idle and the prompt queues to empty. A
+ * termination signal can arrive mid-turn: without this, the turn's
+ * cancellation and closing records would only be produced by dispose()'s
+ * asynchronous teardown — after the wire flush, and after process.exit.
+ * Draining and cancelling are no-ops on idle agents, so the normal
+ * (completed/failed turn) exit pays nothing here.
  */
 async function quiesceSessionAgents(
   session: ISessionScopeHandle,
   mainAgent: IAgentScopeHandle,
 ): Promise<void> {
   const handles = collectSessionAgentHandles(session, mainAgent);
-  for (const handle of handles) {
+  const promptServices = handles.flatMap((handle) => {
     try {
-      await handle.accessor.get(IAgentPromptService).drain();
+      return [handle.accessor.get(IAgentPromptService)];
     } catch {
-      // A torn-down agent scope has no prompt service to drain; the loop
-      // cancellation below still applies.
+      // A torn-down agent scope has no prompt service to drain or observe.
+      return [];
     }
-  }
+  });
+  await Promise.allSettled(promptServices.map((service) => service.drain()));
   const loops = handles.flatMap((handle) => {
     try {
       return [handle.accessor.get(IAgentLoopService)];
@@ -974,6 +953,24 @@ async function quiesceSessionAgents(
     loop.cancel();
   }
   await Promise.allSettled(loops.map((loop) => loop.settled()));
+  // The loop reports idle (releaseActiveTurn) before the prompt-settle chain
+  // dispatches the final prompt.completed; settle() clears the active prompt
+  // and dispatches the record in one synchronous block, so an empty queue
+  // snapshot proves the record was already queued for the wire flush.
+  for (;;) {
+    const busy = promptServices.some((service) => {
+      try {
+        const snapshot = service.list();
+        return snapshot.active !== undefined || snapshot.pending.length > 0;
+      } catch {
+        return false;
+      }
+    });
+    if (!busy) return;
+    await new Promise((resolve) => {
+      setTimeout(resolve, PROMPT_QUIESCE_POLL_MS);
+    });
+  }
 }
 
 /**

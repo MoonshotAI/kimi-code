@@ -184,6 +184,7 @@ function makeFakeHarness() {
           };
         }),
         drain: vi.fn(async () => {}),
+        list: vi.fn(() => ({ active: undefined, pending: [] })),
       },
     ],
     [IAgentTaskService, { list: vi.fn(() => []) }],
@@ -838,14 +839,15 @@ describe('runV2Print', () => {
       order.push('flush');
     });
 
-    // A turn that is still in flight when the signal arrives; its prompt
-    // completion stays pending until released below.
+    // A turn that is still in flight when the signal arrives; its prompt queue
+    // stays non-empty (the prompt-settle chain has not run) until released
+    // below.
     const promptService = agentServices.get(IAgentPromptService) as {
       enqueue: ReturnType<typeof vi.fn>;
       drain: ReturnType<typeof vi.fn>;
+      list: ReturnType<typeof vi.fn>;
     };
     let settleTurn!: (result: unknown) => void;
-    let releaseCompletion!: () => void;
     promptService.enqueue.mockResolvedValueOnce({
       launched: Promise.resolve({
         id: 1,
@@ -853,10 +855,13 @@ describe('runV2Print', () => {
           settleTurn = resolve;
         }),
       }),
-      completion: new Promise<void>((resolve) => {
-        releaseCompletion = resolve;
-      }),
     });
+    let promptsBusy = true;
+    promptService.list = vi.fn(() =>
+      promptsBusy
+        ? { active: { id: 'p1' }, pending: [] }
+        : { active: undefined, pending: [] },
+    );
 
     const handlers = new Map<string, () => Promise<void>>();
     const fakeProcess = {
@@ -884,15 +889,18 @@ describe('runV2Print', () => {
     const onSigint = handlers.get('SIGINT')!;
     settleTurn({ type: 'cancelled', steps: 0, reason: new Error('aborted') });
     const sigintRun = onSigint();
-    // Quiesce awaits the prompt completion before the wire flush: while the
-    // completion is still pending, the loops are already idle but the flush
-    // must not have happened.
+    // Quiesce waits for the prompt queue to empty before the wire flush: the
+    // loops are already idle, but while the snapshot still reports an active
+    // prompt the flush must not happen.
     for (let i = 0; i < 100 && !order.includes('settled'); i++) {
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
+    // A few quiesce poll cycles (the poll interval is 10ms): enough time for
+    // the loop to have flushed if it were not actually waiting on the queue.
+    await new Promise((resolve) => setTimeout(resolve, 30));
     expect(promptService.drain).toHaveBeenCalled();
     expect(order).toEqual(['cancel', 'settled']);
-    releaseCompletion();
+    promptsBusy = false;
     await sigintRun;
 
     expect(order).toEqual(['cancel', 'settled', 'flush', 'exit:130']);
