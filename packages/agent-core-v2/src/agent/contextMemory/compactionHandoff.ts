@@ -8,6 +8,7 @@ export const COMPACTION_SUMMARY_PREFIX = summaryPrefixTemplate.trimEnd();
 export const COMPACT_USER_MESSAGE_MAX_TOKENS = 20_000;
 export const COMPACT_USER_MESSAGE_HEAD_TOKENS = 2_000;
 export const COMPACTION_ELISION_VARIANT = 'compaction_elision';
+export const COMPACTION_CONTINUATION_VARIANT = 'compaction_continuation';
 
 type MessageLike = ContextMessage;
 
@@ -42,6 +43,7 @@ export interface ContextCompactionShapeInput {
   readonly keptUserMessageCount?: number;
   readonly keptHeadUserMessageCount?: number;
   readonly droppedCount?: number;
+  readonly hasContinuation?: boolean;
   readonly legacyTail?: boolean;
 }
 
@@ -54,6 +56,7 @@ export interface ContextCompactionShape {
   readonly keptUserMessageCount: number;
   readonly keptHeadUserMessageCount?: number;
   readonly droppedCount?: number;
+  readonly hasContinuation: boolean;
   readonly messages: readonly ContextMessage[];
 }
 
@@ -76,6 +79,7 @@ export function buildContextCompactionShape(
       tokensAfter: input.tokensAfter ?? estimate.messages(messages),
       keptUserMessageCount: 0,
       droppedCount: input.droppedCount,
+      hasContinuation: false,
       messages,
     };
   }
@@ -94,11 +98,17 @@ export function buildContextCompactionShape(
     ? [...selection.head, ...selection.tail]
     : [...selection.head, elisionMessage, ...selection.tail];
   const contextSummary = input.contextSummary ?? input.summary;
+  const continuationMessage =
+    input.hasContinuation === false ? undefined : createCompactionContinuationMessage();
   const tokensAfter =
     input.tokensAfter ??
     (input.requestOverheadTokens ?? 0) +
       (input.summaryOutputTokens ?? estimate.text(contextSummary)) +
-      estimate.messages(keptMessages);
+      estimate.messages(
+        continuationMessage === undefined
+          ? keptMessages
+          : [...keptMessages, continuationMessage],
+      );
   const keptUserMessageCount =
     input.keptUserMessageCount ?? selection.head.length + selection.tail.length;
   const keptHeadUserMessageCount =
@@ -113,7 +123,11 @@ export function buildContextCompactionShape(
     keptUserMessageCount,
     keptHeadUserMessageCount,
     droppedCount: input.droppedCount,
-    messages: [...keptMessages, createCompactionSummaryMessage(contextSummary)],
+    hasContinuation: continuationMessage !== undefined,
+    messages:
+      continuationMessage === undefined
+        ? [...keptMessages, createCompactionSummaryMessage(contextSummary)]
+        : [...keptMessages, createCompactionSummaryMessage(contextSummary), continuationMessage],
   };
 }
 
@@ -143,6 +157,21 @@ export function createCompactionElisionMessage(omittedTokens: number): ContextMe
 export function buildCompactionElisionText(omittedTokens: number): string {
   return wrapSystemReminder(
     `Some of this conversation's user messages were omitted here during compaction: the messages above this note are the oldest user input, the messages below are the most recent, and roughly ${String(omittedTokens)} tokens in between were dropped. The omitted content is covered by the compaction summary at the end of the conversation.`,
+  );
+}
+
+export function createCompactionContinuationMessage(): ContextMessage {
+  return {
+    role: 'user',
+    content: [{ type: 'text', text: buildCompactionContinuationText() }],
+    toolCalls: [],
+    origin: { kind: 'injection', variant: COMPACTION_CONTINUATION_VARIANT },
+  };
+}
+
+export function buildCompactionContinuationText(): string {
+  return wrapSystemReminder(
+    'Context compaction is complete — continue the work that was in progress when it began.',
   );
 }
 

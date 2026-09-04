@@ -15,6 +15,7 @@ import {
   ContextUndo,
 } from '#/agent/contextMemory/contextEvents';
 import { contextMemoryKey } from '#/agent/contextMemory/contextOps';
+import { buildCompactionContinuationText } from '#/agent/contextMemory/compactionHandoff';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IEventBus } from '#/app/event/eventBus';
@@ -364,6 +365,7 @@ describe('AgentContextMemoryService (wire-backed)', () => {
         tokensBefore: 100,
         tokensAfter: 20,
         keptUserMessageCount: 2,
+        hasContinuation: true,
       },
     ];
 
@@ -376,10 +378,18 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     );
 
     const model = replay.agentState.get(contextMemoryKey);
-    expect(model.map((message) => message.role)).toEqual(['user', 'user', 'user']);
-    expect(model.map(textOf)).toEqual(['old user', 'recent user', 'model-facing summary']);
+    expect(model.map((message) => message.role)).toEqual(['user', 'user', 'user', 'user']);
+    expect(model.map(textOf)).toEqual([
+      'old user',
+      'recent user',
+      'model-facing summary',
+      buildCompactionContinuationText(),
+    ]);
     expect(model[2]).toMatchObject({
       origin: { kind: 'compaction_summary' },
+    });
+    expect(model[3]).toMatchObject({
+      origin: { kind: 'injection', variant: 'compaction_continuation' },
     });
   });
 

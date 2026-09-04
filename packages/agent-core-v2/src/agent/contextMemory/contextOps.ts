@@ -142,6 +142,7 @@ export function readContextCompactionShapeInput(
     keptUserMessageCount,
     keptHeadUserMessageCount: readOptionalNumber(fields, 'keptHeadUserMessageCount'),
     droppedCount: readOptionalNumber(fields, 'droppedCount'),
+    hasContinuation: readOptionalBoolean(fields, 'hasContinuation') ?? false,
     legacyTail: readOptionalBoolean(fields, 'legacyTail') ?? keptUserMessageCount === undefined,
   };
 }

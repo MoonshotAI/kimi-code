@@ -60,7 +60,7 @@ function compaction(
     compactedCount,
     tokensBefore: 1000,
     tokensAfter: 100,
-    ...(keptUserMessageCount === undefined ? {} : { keptUserMessageCount }),
+    ...(keptUserMessageCount === undefined ? {} : { keptUserMessageCount, hasContinuation: true }),
     ...(keptHeadUserMessageCount === undefined ? {} : { keptHeadUserMessageCount }),
   };
 }
@@ -109,7 +109,7 @@ describe('reduceContextTranscript', () => {
       compaction('SUM', 3, 1),
       appendMessage(userMessage('u4')),
     ]);
-    expect(result.foldedLength).toBe(3);
+    expect(result.foldedLength).toBe(4);
   });
 
   it('accounts for the elision marker when the record kept a head segment', () => {
@@ -119,7 +119,7 @@ describe('reduceContextTranscript', () => {
       ...assistantStep('s1', 'a1'),
       compaction('SUM', 3, 2, 1),
     ]);
-    expect(result.foldedLength).toBe(4);
+    expect(result.foldedLength).toBe(5);
   });
 
   it('carries the originating wire record time per entry', () => {
@@ -159,7 +159,7 @@ describe('reduceContextTranscript', () => {
     ]);
     expect(texts(result)).toEqual(['message A', 'reply A', 'summary text']);
     expect(result.entries.map((m) => m.role)).toEqual(['user', 'assistant', 'user']);
-    expect(result.foldedLength).toBe(2);
+    expect(result.foldedLength).toBe(3);
   });
 
   it('undo without compaction keeps the earlier exchange intact', () => {
@@ -388,9 +388,10 @@ describe('live fold parity', () => {
     ];
     const live = foldLive(records);
     const transcript = reduceContextTranscript(records);
-    expect(live).toHaveLength(5);
+    expect(live).toHaveLength(6);
     expect(transcript.foldedLength).toBe(live.length);
     expect(live[2]!.origin).toEqual({ kind: 'compaction_summary' });
+    expect(live[3]!.origin).toEqual({ kind: 'injection', variant: 'compaction_continuation' });
   });
 
   it('settles a frame left open by a failed attempt when compaction lands mid-fold', () => {
@@ -403,7 +404,7 @@ describe('live fold parity', () => {
     ];
     const live = foldLive(records);
     const transcript = reduceContextTranscript(records);
-    expect(live.map((m) => m.role)).toEqual(['user', 'user', 'assistant']);
+    expect(live.map((m) => m.role)).toEqual(['user', 'user', 'user', 'assistant']);
     expect(texts(transcript)).toEqual(['u1', 'a1', 'SUM', 'a3']);
     expect(transcript.foldedLength).toBe(live.length);
   });
