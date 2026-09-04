@@ -276,7 +276,7 @@ function makeFakeHarness() {
     ],
   ]);
   const app = fakeScope('app', appServices);
-  return { app, agent, session, agentServices, appServices, profileState };
+  return { app, agent, session, agentServices, sessionServices, appServices, profileState };
 }
 
 describe('runV2Print', () => {
@@ -699,5 +699,61 @@ describe('runV2Print', () => {
       'provider.overloaded: llm request failed',
     );
     expect(app.dispose).toHaveBeenCalled();
+  });
+
+  it('keeps waiting for healthy agents when another agent\'s flush fails', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agent, agentServices, sessionServices } = makeFakeHarness();
+
+    const promptService = agentServices.get(IAgentPromptService) as {
+      enqueue: ReturnType<typeof vi.fn>;
+    };
+    promptService.enqueue.mockResolvedValueOnce({
+      launched: Promise.resolve({
+        id: 1,
+        result: Promise.resolve({
+          type: 'failed',
+          error: { code: 'provider.overloaded', message: 'llm request failed' },
+        }),
+      }),
+    });
+
+    const order: string[] = [];
+    const mainDispatcher = agentServices.get(IEventDispatcher) as {
+      flush: ReturnType<typeof vi.fn>;
+    };
+    mainDispatcher.flush.mockRejectedValueOnce(new Error('disk full'));
+    const subAgent = fakeScope(
+      'sub',
+      new Map<unknown, unknown>([
+        [
+          IEventDispatcher,
+          {
+            flush: vi.fn(async () => {
+              await new Promise((resolve) => setTimeout(resolve, 10));
+              order.push('sub-flushed');
+            }),
+          },
+        ],
+      ]),
+    );
+    const lifecycle = sessionServices.get(IAgentLifecycleService) as {
+      list: ReturnType<typeof vi.fn>;
+      handleOf: ReturnType<typeof vi.fn>;
+    };
+    lifecycle.list.mockReturnValue([{ agentId: 'main' }, { agentId: 'sub' }]);
+    lifecycle.handleOf.mockImplementation((id: string) => (id === 'sub' ? subAgent : agent));
+    app.dispose.mockImplementation(() => {
+      order.push('disposed');
+    });
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await expect(runV2Print(opts() as never, '1.2.3-test', { stdout, stderr })).rejects.toThrow(
+      'provider.overloaded: llm request failed',
+    );
+    expect(order).toEqual(['sub-flushed', 'disposed']);
   });
 });

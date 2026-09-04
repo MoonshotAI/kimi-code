@@ -883,6 +883,8 @@ function countPendingBackgroundTasks(session: ISessionScopeHandle): number {
  * Flush every session agent's wire journal. The main agent handle is included
  * explicitly: `IAgentLifecycleService` skips `closing` agents, but a closing
  * agent's already-dispatched tail records still deserve to land on disk.
+ * Each flush settles independently: one agent's broken journal must not cut
+ * the wait short for the others (the caller proceeds to `process.exit`).
  */
 async function flushSessionWires(
   session: ISessionScopeHandle,
@@ -894,7 +896,7 @@ async function flushSessionWires(
     const handle = agentManager.handleOf(agent.agentId);
     if (handle !== undefined) handles.add(handle);
   }
-  await Promise.all(
+  await Promise.allSettled(
     [...handles].map((handle) => handle.accessor.get(IEventDispatcher).flush()),
   );
 }
@@ -931,11 +933,11 @@ async function drainBackgroundTasks(
         allWaiters.push(waiter);
       }
     }
-    if (suppressions.length > 0) await Promise.all(suppressions);
+    if (suppressions.length > 0) await Promise.allSettled(suppressions);
     if (activeCount === 0 || batch.length === 0) break;
-    await Promise.all(batch);
+    await Promise.allSettled(batch);
   }
-  if (allWaiters.length > 0) await Promise.all(allWaiters);
+  if (allWaiters.length > 0) await Promise.allSettled(allWaiters);
 }
 
 function formatNativeTurnFailure(result: LoopRunResult): string {
