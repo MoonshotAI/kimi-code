@@ -87,18 +87,30 @@ function isFsError(error: unknown): boolean {
   return error instanceof Error && typeof (error as NodeJS.ErrnoException).code === 'string';
 }
 
-export async function assertPromptSessionMediaRefs(
+export async function resolvePromptSessionMediaRefs(
   content: WireContent,
   store: ISessionMediaStore,
-): Promise<void> {
+): Promise<WireContent> {
+  const resolved: WireContent = [];
+  let changed = false;
   for (const part of content) {
     if (
       (part.type !== 'image' && part.type !== 'video') ||
       part.source.kind !== 'session_media'
-    ) continue;
+    ) {
+      resolved.push(part);
+      continue;
+    }
     const file = await store.open(part.source.file_id);
     if (file === undefined) throw fileNotFoundError(part.source.file_id);
+    if (part.name === undefined) {
+      resolved.push({ ...part, name: file.name });
+      changed = true;
+    } else {
+      resolved.push(part);
+    }
   }
+  return changed ? resolved : content;
 }
 
 export function contentToCoreParts(content: WireContent): ContentPart[] {
@@ -172,10 +184,10 @@ export async function resolvePromptMediaFiles(
         );
         if (!isModelAcceptedImageMime(effectiveMime)) {
           const bytes = Buffer.from(part.source.data, 'base64');
-          const name = `image.${imageExtensionForMime(effectiveMime)}`;
+          const name = part.name ?? `image.${imageExtensionForMime(effectiveMime)}`;
           const persisted = await persistAttachmentBytes(
             bytes,
-            `${createHash('sha256').update(bytes).digest('hex').slice(0, 32)}-${name}`,
+            `${createHash('sha256').update(bytes).digest('hex').slice(0, 32)}-${sanitizeAttachmentName(name)}`,
             await resolveAttachmentsDir(),
           );
           content.push({
@@ -289,7 +301,7 @@ export async function resolvePromptMediaFiles(
           if (isFsError(error)) throw fileNotFoundError(sourcePath);
           throw error;
         });
-        const name = basename(sourcePath);
+        const name = part.name ?? basename(sourcePath);
         const declared = pathMediaMime(sourcePath, data, 'image');
         if (!declared.startsWith('image/')) {
           throw new Error2('validation.failed', `${sourcePath} is ${declared}, not an image`);
@@ -379,20 +391,21 @@ export async function resolvePromptMediaFiles(
         let mediaType = file.meta.media_type;
         mediaType = resolveEffectiveImageMime(mediaType, data);
         if (!isModelAcceptedImageMime(mediaType)) {
+          const name = part.name ?? file.meta.name;
           const persisted = await persistAttachmentBytes(
             data,
-            `${file.meta.id}-${sanitizeAttachmentName(file.meta.name)}`,
+            `${file.meta.id}-${sanitizeAttachmentName(name)}`,
             await resolveAttachmentsDir(),
           );
           content.push({
             type: 'text',
             text: persisted === null
-              ? buildUnsupportedImageNotice(mediaType, file.meta.name)
-              : buildAttachedFileNotice(file.meta.name, mediaType, file.meta.size, persisted),
+              ? buildUnsupportedImageNotice(mediaType, name)
+              : buildAttachedFileNotice(name, mediaType, file.meta.size, persisted),
           });
           if (persisted !== null) {
             attachments.push({
-              name: file.meta.name,
+              name,
               mediaType,
               size: file.meta.size,
               path: persisted,

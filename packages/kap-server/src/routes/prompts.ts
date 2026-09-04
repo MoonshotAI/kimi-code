@@ -52,10 +52,10 @@ import { errEnvelope, okEnvelope } from '../envelope';
 import {
   assertPromptFileRefs,
   assertPromptPathRefs,
-  assertPromptSessionMediaRefs,
   contentHasPathRefs,
   contentToCoreParts,
   resolvePromptMediaFiles,
+  resolvePromptSessionMediaRefs,
   type PromptMediaPreparation,
 } from '../lib/promptMedia';
 import { requestLog } from '../lib/requestLog';
@@ -243,7 +243,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             req.body.skills,
           );
         }
-        await assertPromptSessionMediaRefs(
+        const resolvedSessionMedia = await resolvePromptSessionMediaRefs(
           req.body.content,
           session.accessor.get(ISessionMediaStore),
         );
@@ -259,7 +259,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
 
         const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
         preparedMedia = await resolvePromptMediaFiles(
-          req.body.content,
+          resolvedSessionMedia,
           core.accessor.get(IFileService),
           core.accessor.get(IBootstrapService).cacheDir,
           {
