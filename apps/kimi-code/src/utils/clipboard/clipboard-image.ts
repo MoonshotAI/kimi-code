@@ -309,11 +309,16 @@ function readClipboardImageViaXclip(): ClipboardImage | null {
  * Linux clipboard. PowerShell reaches the Windows clipboard directly;
  * we round-trip via a temp PNG because binary stdout is unreliable
  * across the WSL interop boundary.
+ *
+ * WinForms Clipboard APIs require a single-threaded apartment — without
+ * `-STA`, `GetImage()` silently returns $null under `powershell.exe`
+ * (default MTA), so Ctrl+V appeared to do nothing in WSL (see #2425).
+ * Prefer the PNG clipboard format when present; fall back to GetImage().
  */
-function readClipboardImageViaPowerShell(): ClipboardImage | null {
+function readClipboardImageViaPowerShell(run: RunCommand): ClipboardImage | null {
   const tmpFile = join(tmpdir(), `kimi-wsl-clip-${randomUUID()}.png`);
   try {
-    const winPathResult = runCommand('wslpath', ['-w', tmpFile], {
+    const winPathResult = run('wslpath', ['-w', tmpFile], {
       timeoutMs: DEFAULT_LIST_TIMEOUT_MS,
     });
     if (!winPathResult.ok) return null;
@@ -324,14 +329,33 @@ function readClipboardImageViaPowerShell(): ClipboardImage | null {
       'Add-Type -AssemblyName System.Windows.Forms',
       'Add-Type -AssemblyName System.Drawing',
       '$path = $env:KIMI_WSL_CLIPBOARD_IMAGE_PATH',
-      '$img = [System.Windows.Forms.Clipboard]::GetImage()',
-      "if ($img) { $img.Save($path, [System.Drawing.Imaging.ImageFormat]::Png); Write-Output 'ok' } else { Write-Output 'empty' }",
-    ].join('; ');
+      '$ok = $false',
+      '$obj = [System.Windows.Forms.Clipboard]::GetDataObject()',
+      "if ($obj -and $obj.GetDataPresent('PNG')) {",
+      "  $stream = $obj.GetData('PNG')",
+      '  if ($stream -is [System.IO.MemoryStream]) {',
+      "    [System.IO.File]::WriteAllBytes($path, $stream.ToArray()); $ok = $true",
+      '  }',
+      '}',
+      'if (-not $ok) {',
+      '  $img = [System.Windows.Forms.Clipboard]::GetImage()',
+      '  if ($img) {',
+      '    $img.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)',
+      '    $ok = $true',
+      '  }',
+      '}',
+      "if ($ok) { Write-Output 'ok' } else { Write-Output 'empty' }",
+    ].join('\n');
 
-    const result = runCommand('powershell.exe', ['-NoProfile', '-Command', psScript], {
-      timeoutMs: DEFAULT_POWERSHELL_TIMEOUT_MS,
-      env: { ...process.env, KIMI_WSL_CLIPBOARD_IMAGE_PATH: winPath },
-    });
+    // `-STA` is required for WinForms clipboard access from powershell.exe.
+    const result = run(
+      'powershell.exe',
+      ['-STA', '-NoProfile', '-NonInteractive', '-Command', psScript],
+      {
+        timeoutMs: DEFAULT_POWERSHELL_TIMEOUT_MS,
+        env: { ...process.env, KIMI_WSL_CLIPBOARD_IMAGE_PATH: winPath },
+      },
+    );
     if (!result.ok) return null;
     if (result.stdout.toString('utf-8').trim() !== 'ok') return null;
 
@@ -424,7 +448,7 @@ export async function readClipboardMedia(options?: {
       image = readClipboardImageViaWlPaste() ?? readClipboardImageViaXclip();
     }
     if (image === null && wsl) {
-      image = readClipboardImageViaPowerShell();
+      image = readClipboardImageViaPowerShell(run);
     }
     if (image === null && !wayland) {
       const nativeFileMedia = await readClipboardFileMediaViaNativeText(clip);

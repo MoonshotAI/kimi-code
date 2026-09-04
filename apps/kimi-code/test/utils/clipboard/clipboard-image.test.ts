@@ -135,6 +135,76 @@ describe('readClipboardMedia', () => {
     expect(getImageBinary).not.toHaveBeenCalled();
   });
 
+  it('reads a WSL clipboard image through powershell.exe -STA (WinForms requires STA)', async () => {
+    const imageBytes = png(8, 8);
+    let linuxTmpPath = '';
+    const runCommand = vi.fn((command: string, args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
+      if (command === 'wslpath') {
+        linuxTmpPath = args[1] ?? '';
+        return { ok: true, stdout: Buffer.from('C:\\Users\\test\\AppData\\Local\\Temp\\kimi.png') };
+      }
+      if (command === 'powershell.exe') {
+        const script = args[args.indexOf('-Command') + 1] ?? '';
+        expect(args).toContain('-STA');
+        expect(args).toContain('-NoProfile');
+        expect(args).toContain('-NonInteractive');
+        expect(args).toContain('-Command');
+        expect(options?.env?.['KIMI_WSL_CLIPBOARD_IMAGE_PATH']).toBe(
+          'C:\\Users\\test\\AppData\\Local\\Temp\\kimi.png',
+        );
+        expect(script).not.toContain('{;');
+        expect(script).not.toContain('};');
+        // PowerShell writes via the Windows path; under WSL that is the same inode
+        // as the Linux temp file created before wslpath.
+        writeFileSync(linuxTmpPath, imageBytes);
+        return { ok: true, stdout: Buffer.from('ok\n') };
+      }
+      // wl-paste / xclip miss on WSL so the PowerShell fallback runs.
+      return { ok: false, stdout: Buffer.alloc(0) };
+    });
+
+    const media = await readClipboardMedia({
+      platform: 'linux',
+      env: { WSL_DISTRO_NAME: 'Ubuntu' },
+      clipboard: fakeClipboard({}),
+      runCommand,
+    });
+
+    expect(media).toEqual({
+      kind: 'image',
+      bytes: imageBytes,
+      mimeType: 'image/png',
+    });
+    expect(runCommand).toHaveBeenCalledWith(
+      'powershell.exe',
+      expect.arrayContaining(['-STA', '-NoProfile', '-NonInteractive', '-Command']),
+      expect.objectContaining({
+        env: expect.objectContaining({ KIMI_WSL_CLIPBOARD_IMAGE_PATH: expect.any(String) }),
+      }),
+    );
+  });
+
+  it('returns null when the WSL PowerShell clipboard fallback reports empty', async () => {
+    const runCommand = vi.fn((command: string) => {
+      if (command === 'wslpath') {
+        return { ok: true, stdout: Buffer.from('C:\\Temp\\kimi.png') };
+      }
+      if (command === 'powershell.exe') {
+        return { ok: true, stdout: Buffer.from('empty\n') };
+      }
+      return { ok: false, stdout: Buffer.alloc(0) };
+    });
+
+    const media = await readClipboardMedia({
+      platform: 'linux',
+      env: { WSL_DISTRO_NAME: 'Ubuntu' },
+      clipboard: fakeClipboard({}),
+      runCommand,
+    });
+
+    expect(media).toBeNull();
+  });
+
   it('rejects pasted videos larger than 100 MB', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'kimi-code-clip-'));
     try {
