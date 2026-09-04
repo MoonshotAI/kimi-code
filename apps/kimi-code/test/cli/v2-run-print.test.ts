@@ -8,6 +8,7 @@ import {
   IAgentCronService,
   IAgentGoalService,
   IAgentLifecycleService,
+  IAgentLoopService,
   IAgentPermissionModeService,
   IAgentProfileService,
   IAgentPromptService,
@@ -188,6 +189,14 @@ function makeFakeHarness() {
     [IAgentCronService, { getNextFireTime: vi.fn(() => null) }],
     [IAgentGoalService, goal],
     [IEventDispatcher, { flush: vi.fn(async () => {}) }],
+    [
+      IAgentLoopService,
+      {
+        status: vi.fn(() => ({ state: 'idle', pendingTurnIds: [] })),
+        cancel: vi.fn(() => false),
+        settled: vi.fn(async () => {}),
+      },
+    ],
     [
       IAgentScopeContext,
       makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }),
@@ -800,5 +809,76 @@ describe('runV2Print', () => {
     releaseTelemetry();
     await run;
     expect(app.dispose).toHaveBeenCalled();
+  });
+
+  it('cancels and settles the active turn before flushing on a termination signal', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agentServices } = makeFakeHarness();
+
+    const order: string[] = [];
+    const loop = agentServices.get(IAgentLoopService) as {
+      status: ReturnType<typeof vi.fn>;
+      cancel: ReturnType<typeof vi.fn>;
+      settled: ReturnType<typeof vi.fn>;
+    };
+    loop.status.mockReturnValue({ state: 'running', pendingTurnIds: [] });
+    loop.cancel.mockImplementation(() => {
+      order.push('cancel');
+      return true;
+    });
+    loop.settled = vi.fn(async () => {
+      order.push('settled');
+    });
+    const dispatcher = agentServices.get(IEventDispatcher) as {
+      flush: ReturnType<typeof vi.fn>;
+    };
+    dispatcher.flush = vi.fn(async () => {
+      order.push('flush');
+    });
+
+    // A turn that is still in flight when the signal arrives.
+    const promptService = agentServices.get(IAgentPromptService) as {
+      enqueue: ReturnType<typeof vi.fn>;
+    };
+    let settleTurn!: (result: unknown) => void;
+    promptService.enqueue.mockResolvedValueOnce({
+      launched: Promise.resolve({
+        id: 1,
+        result: new Promise((resolve) => {
+          settleTurn = resolve;
+        }),
+      }),
+    });
+
+    const handlers = new Map<string, () => Promise<void>>();
+    const fakeProcess = {
+      once: (signal: string, handler: () => Promise<void>) => {
+        handlers.set(signal, handler);
+      },
+      off: () => {},
+      exit: vi.fn((code?: number) => {
+        order.push(`exit:${code}`);
+      }),
+    };
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    const run = runV2Print(opts() as never, '1.2.3-test', {
+      stdout,
+      stderr,
+      process: fakeProcess as never,
+    });
+    const outcome = run.catch((error: unknown) => error);
+    for (let i = 0; i < 100 && !handlers.has('SIGINT'); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const onSigint = handlers.get('SIGINT')!;
+    settleTurn({ type: 'cancelled', steps: 0, reason: new Error('aborted') });
+    await onSigint();
+
+    expect(order).toEqual(['cancel', 'settled', 'flush', 'exit:130']);
+    expect(await outcome).toBeInstanceOf(Error);
   });
 });

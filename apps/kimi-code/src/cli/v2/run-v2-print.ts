@@ -22,6 +22,7 @@ import {
   IAgentCronService,
   IAgentGoalService,
   IAgentLifecycleService,
+  IAgentLoopService,
   IAgentPermissionModeService,
   IAgentProfileService,
   IAgentPromptService,
@@ -197,6 +198,7 @@ export async function runV2Print(
   }
 
   let restorePermission = async (): Promise<void> => {};
+  let quiesceAgents = async (): Promise<void> => {};
   let flushWires = async (): Promise<void> => {};
   let removeTerminationCleanup: (() => void) | undefined;
   let cleanupPromise: Promise<void> | undefined;
@@ -207,6 +209,11 @@ export async function runV2Print(
       setCrashPhase('shutdown');
       try {
         await restorePermission();
+        // A termination signal can arrive mid-turn: cancel any queued/active
+        // turns and let the loops go idle first, so the turn's cancellation
+        // and closing records exist before the flush below drains the
+        // journals. No-op when every loop is already idle.
+        await raceWithTimeout(quiesceAgents(), CLI_SHUTDOWN_TIMEOUT_MS).catch(() => {});
       } finally {
         // The shutdown phases are independent of each other; run them
         // concurrently so their individual allowances cannot sum past the
@@ -270,6 +277,7 @@ export async function runV2Print(
 
     const resolved = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);
     restorePermission = resolved.restorePermission;
+    quiesceAgents = () => quiesceSessionAgents(resolved.session, resolved.agent);
     flushWires = () => flushSessionWires(resolved.session, resolved.agent);
 
     telemetryService.setContext({ session_id: resolved.session.id, model: resolved.telemetryModel });
@@ -887,24 +895,65 @@ function countPendingBackgroundTasks(session: ISessionScopeHandle): number {
 }
 
 /**
- * Flush every session agent's wire journal. The main agent handle is included
+ * Every agent handle in the session. The main agent handle is included
  * explicitly: `IAgentLifecycleService` skips `closing` agents, but a closing
- * agent's already-dispatched tail records still deserve to land on disk.
- * Each flush settles independently: one agent's broken journal must not cut
- * the wait short for the others (the caller proceeds to `process.exit`).
+ * agent's in-flight turn and already-dispatched tail records still deserve to
+ * land on disk.
  */
-async function flushSessionWires(
+function collectSessionAgentHandles(
   session: ISessionScopeHandle,
   mainAgent: IAgentScopeHandle,
-): Promise<void> {
+): IAgentScopeHandle[] {
   const agentManager = session.accessor.get(IAgentLifecycleService);
   const handles = new Set<IAgentScopeHandle>([mainAgent]);
   for (const agent of agentManager.list()) {
     const handle = agentManager.handleOf(agent.agentId);
     if (handle !== undefined) handles.add(handle);
   }
+  return [...handles];
+}
+
+/**
+ * Cancel every session agent's queued and active turns, then wait for the
+ * loops to go idle. A termination signal can arrive mid-turn: without this,
+ * the turn's cancellation and closing records would only be produced by
+ * dispose()'s asynchronous teardown — after the wire flush, and after
+ * process.exit. Cancelling is a no-op on idle loops, so the normal
+ * (completed/failed turn) exit pays nothing here.
+ */
+async function quiesceSessionAgents(
+  session: ISessionScopeHandle,
+  mainAgent: IAgentScopeHandle,
+): Promise<void> {
+  const loops = collectSessionAgentHandles(session, mainAgent).flatMap((handle) => {
+    try {
+      return [handle.accessor.get(IAgentLoopService)];
+    } catch {
+      // A torn-down agent scope has no loop to quiesce; the wire flush below
+      // still covers its already-dispatched records.
+      return [];
+    }
+  });
+  for (const loop of loops) {
+    for (const turnId of loop.status().pendingTurnIds) loop.cancel(turnId);
+    loop.cancel();
+  }
+  await Promise.allSettled(loops.map((loop) => loop.settled()));
+}
+
+/**
+ * Flush every session agent's wire journal. Each flush settles independently:
+ * one agent's broken journal must not cut the wait short for the others (the
+ * caller proceeds to `process.exit`).
+ */
+async function flushSessionWires(
+  session: ISessionScopeHandle,
+  mainAgent: IAgentScopeHandle,
+): Promise<void> {
   await Promise.allSettled(
-    [...handles].map((handle) => handle.accessor.get(IEventDispatcher).flush()),
+    collectSessionAgentHandles(session, mainAgent).map((handle) =>
+      handle.accessor.get(IEventDispatcher).flush(),
+    ),
   );
 }
 
