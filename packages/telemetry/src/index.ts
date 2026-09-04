@@ -42,7 +42,7 @@ export async function shutdownTelemetry(
   await shutdown(options);
 }
 
-export { initializeTelemetry, shouldEnableTelemetry } from './bootstrap';
+export { initializeTelemetry, isTelemetryDisabledByEnv, shouldEnableTelemetry } from './bootstrap';
 export type { TelemetryBootstrapOptions } from './bootstrap';
 
 export { installCrashHandlers, setCrashPhase } from './crash';

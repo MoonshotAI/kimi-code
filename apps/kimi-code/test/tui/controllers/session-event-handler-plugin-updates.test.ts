@@ -59,6 +59,7 @@ function makeHost() {
     shiftQueuedMessage: vi.fn(),
     btwPanelController: { routeEvent: vi.fn(() => false) },
     tasksBrowserController: {},
+    surveyController: { notifyToolCallStarted: vi.fn() },
   };
   return { host: host as never, streamingUI };
 }

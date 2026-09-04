@@ -6,6 +6,7 @@
  * these helpers.
  */
 
+import { mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { appendFile, link, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
@@ -71,6 +72,22 @@ export async function writeJsonFile<T>(
     await rename(tmpPath, filePath);
   } catch (error) {
     await unlink(tmpPath).catch(() => {});
+    throw error;
+  }
+}
+
+export function writeJsonFileSync<T>(filePath: string, schema: z.ZodType<T>, value: T): void {
+  assertNonConfigWrite(filePath);
+  const parsed = schema.parse(value);
+  mkdirSync(dirname(filePath), { recursive: true });
+  const tmpPath = tempPathFor(filePath);
+  try {
+    writeFileSync(tmpPath, `${JSON.stringify(parsed, null, 2)}\n`, 'utf-8');
+    renameSync(tmpPath, filePath);
+  } catch (error) {
+    try {
+      unlinkSync(tmpPath);
+    } catch {}
     throw error;
   }
 }

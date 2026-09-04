@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -50,6 +50,7 @@ import {
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 import type { SessionReplayRenderer } from '#/tui/controllers/session-replay';
 import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
+import type { SurveyController } from '#/tui/controllers/survey-controller';
 import { handleFeedbackCommand } from '#/tui/commands/info';
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { openUrl } from '#/utils/open-url';
@@ -95,19 +96,12 @@ vi.mock('../../src/feedback/archive', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/feedback/archive')>();
   return {
     ...actual,
-    // Wrap the real implementation so archive packaging keeps working in the
-    // other tests; individual tests can reject it to simulate an unwritable
-    // cache dir.
     createFeedbackArchivePath: vi.fn(actual.createFeedbackArchivePath),
   };
 });
 
-// /feedback opens GitHub Issues in a browser when submission fails — stub it
-// out so the test suite never spawns a browser window.
 vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
 
-// Clipboard access spawns platform tools (pbcopy/wl-copy …) and emits OSC 52 —
-// stub it out so the suite never touches the real clipboard or stdout.
 vi.mock('#/utils/clipboard/clipboard-text', () => ({
   copyTextToClipboard: vi.fn(async () => 'native'),
 }));
@@ -123,6 +117,7 @@ function stripSgr(text: string): string {
 
 interface MessageDriver {
   state: TUIState;
+  surveyController: SurveyController;
   streamingUI: StreamingUIController;
   sessionReplay: SessionReplayRenderer;
   pluginCommandMap: Map<string, string>;
@@ -321,8 +316,6 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     }),
     getExperimentalFeatures: vi.fn(async () => []),
     auth: {
-      // /feedback gates on the OAuth token rather than the active model, so
-      // the default mock is a signed-in user; signed-out cases override this.
       status: vi.fn(async () => ({
         providers: [{ providerName: 'managed:kimi-code', hasToken: true }],
       })),
@@ -340,8 +333,6 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     },
     ...overrides,
   };
-  // The TUI lists sessions through keyset pages; derive the page mock from
-  // the (possibly overridden) full-list mock unless a test overrides paging.
   if (!('listSessionsPage' in harness)) {
     const listSessions = harness.listSessions as (input?: {
       workDir?: string;
@@ -551,7 +542,6 @@ describe('KimiTUI message flow', () => {
     };
     const { driver, harness } = await makeDriver(session, {}, startupInput);
 
-    // Startup stays session-less on the v2 engine.
     expect(harness.createSession).not.toHaveBeenCalled();
     expect(driver.state.appState.sessionId).toBe('');
     expect(driver.state.appState.model).toBe('k2');
@@ -614,13 +604,10 @@ describe('KimiTUI message flow', () => {
       },
       startupInput,
     );
-    // `makeDriver` stops after init(); the skill command list is refreshed in
-    // finishStartup, so resolve it here to exercise the workspace-level path.
     await (
       driver as unknown as { refreshSkillCommands(): Promise<void> }
     ).refreshSkillCommands();
 
-    // Startup resolves skill commands from the workspace, no session needed.
     expect(harness.createSession).not.toHaveBeenCalled();
 
     driver.handleUserInput('/skill:my-skill');
@@ -876,9 +863,6 @@ describe('KimiTUI message flow', () => {
     await (
       driver as unknown as { refreshSkillCommands(): Promise<void> }
     ).refreshSkillCommands();
-    // Materialize the lazy session first: an active goal only exists inside a
-    // live session, and lazy creation would refresh (and clear) the goal
-    // snapshot set up below.
     await (driver as unknown as { ensureSession(): Promise<unknown> }).ensureSession();
     driver.state.appState.goal = makeActiveGoalSnapshot();
 
@@ -965,7 +949,6 @@ describe('KimiTUI message flow', () => {
     await vi.waitFor(() => {
       expect(driver.state.appState.streamingPhase).toBe('idle');
     });
-    // A rejected group leaves no local undo anchor the engine never recorded.
     expect(driver.state.transcriptEntries.filter((entry) => entry.kind === 'user')).toHaveLength(0);
   });
 
@@ -1073,8 +1056,6 @@ describe('KimiTUI message flow', () => {
 
     const turns = groupTurns(driver.state.transcriptEntries);
     expect(turns).toHaveLength(3);
-    // The hook result is projected inside the bundle's window (after the
-    // skill cards, before the prompt), matching the live event order.
     expect(turns[1]!.entries.map((entry) => entry.kind)).toEqual([
       'skill_activation',
       'skill_activation',
@@ -1083,8 +1064,6 @@ describe('KimiTUI message flow', () => {
       'assistant',
     ]);
     expect(turns[1]!.entries[2]!.hookResult).toBe(true);
-    // The user entry shows only the caller's own text — the rendered skill
-    // blocks the engine prepended to the content are stripped.
     expect(turns[1]!.entries[3]!.content).toBe('please /skill:review and /skill:security');
     expect(
       turns[1]!.entries.slice(0, 2).map((entry) => entry.bundledWithPrompt),
@@ -1215,8 +1194,6 @@ describe('KimiTUI message flow', () => {
       driver as unknown as { refreshSkillCommands(): Promise<void> }
     ).refreshSkillCommands();
 
-    // Hold the RPC open so the skill.activated event can land mid-flight,
-    // exactly how the in-process wiring delivers it during the call.
     let release!: () => void;
     const heldPrompt = new Promise<void>((resolve) => {
       release = resolve;
@@ -1259,8 +1236,6 @@ describe('KimiTUI message flow', () => {
     };
     const { driver, harness } = await makeDriver(session, {}, startupInput);
 
-    // Hold the first createSession open so both triggers land inside the
-    // in-flight window.
     let resolveCreate!: (s: ReturnType<typeof makeSession>) => void;
     harness.createSession.mockImplementationOnce(
       () => new Promise((resolve) => { resolveCreate = resolve; }),
@@ -1286,8 +1261,6 @@ describe('KimiTUI message flow', () => {
     };
     const { driver, harness } = await makeDriver(lazySession, {}, startupInput);
 
-    // Hold the lazy createSession open so it is still in flight when /new
-    // arrives (triggered directly, without a prompt starting a turn).
     let resolveCreate!: (s: ReturnType<typeof makeSession>) => void;
     harness.createSession
       .mockImplementationOnce(
@@ -1301,13 +1274,11 @@ describe('KimiTUI message flow', () => {
     });
 
     driver.handleUserInput('/new');
-    // /new must not race a second createSession while the lazy one is held.
     await new Promise((resolve) => setImmediate(resolve));
     expect(harness.createSession).toHaveBeenCalledTimes(1);
 
     resolveCreate(lazySession);
     await pending;
-    // No turn started, so /new proceeds after the wait.
     await vi.waitFor(() => {
       expect(harness.createSession).toHaveBeenCalledTimes(2);
       expect(driver.getCurrentSessionId()).toBe('ses-new');
@@ -1323,8 +1294,6 @@ describe('KimiTUI message flow', () => {
     };
     const { driver, harness } = await makeDriver(lazySession, {}, startupInput);
 
-    // Hold the lazy createSession open so the first prompt is still pending
-    // when /new arrives.
     let resolveCreate!: (s: ReturnType<typeof makeSession>) => void;
     harness.createSession.mockImplementationOnce(
       () => new Promise((resolve) => { resolveCreate = resolve; }),
@@ -1337,8 +1306,6 @@ describe('KimiTUI message flow', () => {
     driver.handleUserInput('/new');
 
     resolveCreate(lazySession);
-    // The prompt continuation starts its turn first; /new (idle-only) must
-    // then be blocked instead of switching away from the active session.
     await vi.waitFor(() => {
       expect(lazySession.prompt).toHaveBeenCalledWith('hello', { promptId: undefined });
       expect(stripSgr(renderTranscript(driver))).toContain('Cannot /new while streaming');
@@ -1375,8 +1342,6 @@ describe('KimiTUI message flow', () => {
       startupInput,
     );
 
-    // Hold the lazy createSession open so the first prompt is still pending
-    // when the effort switch arrives.
     let resolveCreate!: (s: ReturnType<typeof makeSession>) => void;
     harness.createSession.mockImplementationOnce(
       () => new Promise((resolve) => { resolveCreate = resolve; }),
@@ -1389,8 +1354,6 @@ describe('KimiTUI message flow', () => {
     driver.handleUserInput('/effort low');
 
     resolveCreate(lazySession);
-    // The prompt starts its turn first; the switch must then be rejected
-    // instead of being silently overwritten by the session assembly.
     await vi.waitFor(() => {
       expect(lazySession.prompt).toHaveBeenCalledWith('hello', { promptId: undefined });
       expect(stripSgr(renderTranscript(driver))).toContain('Cannot switch models while streaming');
@@ -1414,7 +1377,6 @@ describe('KimiTUI message flow', () => {
       startupInput,
     );
 
-    // Trigger the lazy creation directly, without a prompt starting a turn.
     let resolveCreate!: (s: ReturnType<typeof makeSession>) => void;
     harness.createSession.mockImplementationOnce(
       () => new Promise((resolve) => { resolveCreate = resolve; }),
@@ -1426,8 +1388,6 @@ describe('KimiTUI message flow', () => {
     });
 
     driver.handleUserInput('/effort low');
-    // While the creation is held the switch must wait, not write pending
-    // state that the assembly would overwrite.
     await new Promise((resolve) => setImmediate(resolve));
     expect(driver.state.appState.thinkingEffort).toBe('high');
 
@@ -1455,8 +1415,6 @@ describe('KimiTUI message flow', () => {
       startupInput,
     );
 
-    // Hold the lazy createSession open so the first prompt is still pending
-    // when the picker selection arrives.
     let resolveCreate!: (s: ReturnType<typeof makeSession>) => void;
     harness.createSession.mockImplementationOnce(
       () => new Promise((resolve) => { resolveCreate = resolve; }),
@@ -1472,8 +1430,6 @@ describe('KimiTUI message flow', () => {
     picker.handleInput('\r');
 
     resolveCreate(lazySession);
-    // The prompt starts its turn first; the switch must then be rejected
-    // instead of being overwritten when the lazy creation completes.
     await vi.waitFor(() => {
       expect(lazySession.prompt).toHaveBeenCalledWith('hello', { promptId: undefined });
       expect(stripSgr(renderTranscript(driver))).toContain('Cannot switch sessions while streaming');
@@ -1491,7 +1447,6 @@ describe('KimiTUI message flow', () => {
     };
     const { driver, harness } = await makeDriver(session, {}, startupInput);
 
-    // Alt+S session-only thinking before any session exists.
     await (
       driver as unknown as {
         authFlow: { activateModelAfterLogin(model: string, effort?: string): Promise<void> };
@@ -1528,11 +1483,8 @@ describe('KimiTUI message flow', () => {
       startupInput,
     );
 
-    // The footer shows the config default…
     expect(driver.state.appState.planMode).toBe(true);
 
-    // …but the create call must not repeat it: the v2 engine applies
-    // defaultPlanMode at create time, and re-entering plan mode throws.
     driver.handleUserInput('hello');
 
     await vi.waitFor(() => {
@@ -1572,7 +1524,6 @@ describe('KimiTUI message flow', () => {
     };
     const { driver } = await makeDriver(session, {}, startupInput);
 
-    // A prompt and a bash command both trigger the same in-flight creation.
     driver.handleUserInput('hello');
     driver.state.appState.inputMode = 'bash';
     driver.state.editor.inputMode = 'bash';
@@ -1581,7 +1532,6 @@ describe('KimiTUI message flow', () => {
     await vi.waitFor(() => {
       expect(session.prompt).toHaveBeenCalledWith('hello', { promptId: undefined });
     });
-    // The shell command must be queued, not run concurrently with the prompt.
     expect(runShellCommand).not.toHaveBeenCalled();
     expect(driver.state.queuedMessages).toEqual([
       { text: 'ls', agentId: 'main', mode: 'bash' },
@@ -1593,8 +1543,6 @@ describe('KimiTUI message flow', () => {
     const startupInput: KimiTUIStartupInput = {
       ...makeStartupInput(),
       engineV2: true,
-      // No model configured: /settings must still open so the user can fix
-      // local editor/theme/update settings before picking a model.
       cliOptions: { ...makeStartupInput().cliOptions },
     };
     const { driver, harness } = await makeDriver(session, {}, startupInput);
@@ -1631,15 +1579,12 @@ describe('KimiTUI message flow', () => {
       driver as unknown as { refreshSkillCommands(): Promise<void> }
     ).refreshSkillCommands();
 
-    // A prompt and a skill command both trigger the same in-flight creation.
     driver.handleUserInput('hello');
     driver.handleUserInput('/skill:my-skill');
 
     await vi.waitFor(() => {
       expect(session.prompt).toHaveBeenCalledWith('hello', { promptId: undefined });
     });
-    // The skill activation must be blocked, not run concurrently with the
-    // prompt's turn.
     expect(session.activateSkill).not.toHaveBeenCalled();
     expect(harness.createSession).toHaveBeenCalledTimes(1);
   });
@@ -1650,7 +1595,6 @@ describe('KimiTUI message flow', () => {
     const startupInput: KimiTUIStartupInput = {
       ...makeStartupInput(),
       engineV2: true,
-      // No model configured: /plugins must still work via the app-global API.
       cliOptions: { ...makeStartupInput().cliOptions },
     };
     const { driver, harness } = await makeDriver(session, { listPlugins }, startupInput);
@@ -1669,7 +1613,6 @@ describe('KimiTUI message flow', () => {
     const startupInput: KimiTUIStartupInput = {
       ...makeStartupInput(),
       engineV2: true,
-      // No model configured: the read-only form must still work.
       cliOptions: { ...makeStartupInput().cliOptions },
     };
     const { driver, harness } = await makeDriver(session, {}, startupInput);
@@ -1758,7 +1701,6 @@ describe('KimiTUI message flow', () => {
     const getConfig = vi.fn(
       async (): Promise<{ models: Record<string, unknown>; defaultModel?: string }> => ({
         models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
-        // Initially no default model configured.
       }),
     );
     const startupInput: KimiTUIStartupInput = {
@@ -1769,8 +1711,6 @@ describe('KimiTUI message flow', () => {
     const { driver, harness } = await makeDriver(session, { getConfig }, startupInput);
     expect(driver.state.appState.model).toBe('');
 
-    // A default model is added externally, then /reload runs before the first
-    // prompt — the lazy defaults must be refreshed, not left stale.
     getConfig.mockResolvedValue({
       models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
       defaultModel: 'k2',
@@ -1802,8 +1742,6 @@ describe('KimiTUI message flow', () => {
     expect(driver.state.appState.model).toBe('k2');
     expect(driver.state.appState.maxContextTokens).toBe(100);
 
-    // The default model is removed externally, then /reload runs — the
-    // hydrated value must not survive as a stale explicit model.
     getConfig.mockResolvedValue({
       models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
     });
@@ -1850,8 +1788,6 @@ describe('KimiTUI message flow', () => {
     await vi.waitFor(() => {
       expect(harness.createSession).toHaveBeenCalledTimes(1);
     });
-    // The engine already applied defaultPlanMode at create; the command must
-    // notice the active plan mode instead of re-entering (which would throw).
     expect(session.setPlanMode).not.toHaveBeenCalled();
     expect(driver.state.appState.planMode).toBe(true);
   });
@@ -1879,8 +1815,6 @@ describe('KimiTUI message flow', () => {
     const { driver } = await makeDriver(session, { getConfig }, startupInput);
     expect(driver.state.appState.permissionMode).toBe('auto');
 
-    // The elevated default is removed externally, then /reload runs — a stale
-    // elevated mode must not reach the first lazy-created session.
     getConfig.mockResolvedValue({
       models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
       defaultModel: 'k2',
@@ -1895,7 +1829,6 @@ describe('KimiTUI message flow', () => {
   it('does not pass --plan when config already applies default plan mode (v2 engine)', async () => {
     const session = makeSession({
       id: 'ses-lazy',
-      // The engine applied the config default at create.
       getStatus: vi.fn(async () => ({
         model: 'k2',
         thinkingEffort: 'off',
@@ -1928,8 +1861,6 @@ describe('KimiTUI message flow', () => {
     await vi.waitFor(() => {
       expect(session.prompt).toHaveBeenCalledWith('hello', { promptId: undefined });
     });
-    // The engine applies the config default at create; repeating --plan would
-    // re-enter plan mode and throw, so it must not be passed again.
     expect(harness.createSession).toHaveBeenCalledWith(
       expect.objectContaining({ planMode: undefined }),
     );
@@ -1941,7 +1872,6 @@ describe('KimiTUI message flow', () => {
     const startupInput: KimiTUIStartupInput = {
       ...makeStartupInput(),
       engineV2: true,
-      // No model configured: read-only views must still open.
       cliOptions: { ...makeStartupInput().cliOptions },
     };
     const { driver, harness } = await makeDriver(session, {}, startupInput);
@@ -1991,8 +1921,6 @@ describe('KimiTUI message flow', () => {
     };
     const { driver, harness } = await makeDriver(session, {}, startupInput);
 
-    // Hold the post-create assembly open inside setPermission: the session is
-    // assigned but setup is not finished yet.
     let resolvePermission!: () => void;
     session.setPermission.mockImplementationOnce(
       () => new Promise<void>((resolve) => { resolvePermission = resolve; }),
@@ -2004,8 +1932,6 @@ describe('KimiTUI message flow', () => {
       expect(session.setPermission).toHaveBeenCalled();
     });
 
-    // A second trigger must wait for the assembly instead of dispatching
-    // against the half-initialized session.
     const second = ensure.call(driver);
     let secondResolved = false;
     void second.then(() => {
@@ -3174,8 +3100,6 @@ command = "vim"
     const attachment = imageStore.addVideo('video/mp4', '/tmp/clip.mp4');
     imageStore.completeVideo(attachment, { fileId: 'file-v1' });
 
-    // The paste was uploaded to the daemon file store, so the submission
-    // carries a bare `kimi-file://` reference — no local cache copy.
     driver.handleUserInput(`watch ${attachment.placeholder}`);
 
     const parts = vi.mocked(session.prompt).mock.calls[0]?.[0] as
@@ -3191,8 +3115,6 @@ command = "vim"
 
     emitTurn(driver, 1);
 
-    // The engine materialized its own session copy at intake, so the staged
-    // upload is garbage once the consuming turn ends.
     await vi.waitFor(() => {
       expect(harness.deleteFile).toHaveBeenCalledWith('file-v1');
     });
@@ -3261,8 +3183,6 @@ command = "vim"
         { type: 'text', text: 'describe ' },
         { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
       ],
-      // Staged media rides with a client-chosen prompt id so the consuming
-      // turn's `turn.started` can bind the lease exactly.
       { promptId: expect.any(String) },
     );
     expect(driver.state.transcriptEntries).toEqual([
@@ -3305,10 +3225,6 @@ command = "vim"
 
     driver.handleUserInput(attachment.placeholder);
 
-    // The lease is created at extraction, before the session exists: lazy
-    // creation runs setSession mid-dispatch, and the first prompt's lease
-    // must survive it — the engine's intake only reads the upload once the
-    // prompt lands.
     await vi.waitFor(() => {
       expect(session.prompt).toHaveBeenCalledWith(
         [{ type: 'image_url', imageUrl: { url: 'kimi-file://file-lazy' } }],
@@ -3330,15 +3246,9 @@ command = "vim"
     const attachment = stagedImage(imageStore, 'file-dismissed');
     const text = `describe ${attachment.placeholder}`;
 
-    // Simulate a cache-hint interception dismissed back into the editor: the
-    // submit's extraction is stashed, then restored with recall semantics
-    // (retain consumed, staged upload kept for the restored draft).
     const extraction = extractMediaAttachments(text, imageStore);
     driver.recallStashedMedia(extraction);
 
-    // The restored draft resubmits and re-retains; the consuming turn must
-    // still delete the daemon upload — a retain leaked by the dismissal would
-    // keep the count above zero and pin the upload until its TTL.
     driver.handleUserInput(text);
 
     expect(session.prompt).toHaveBeenCalledOnce();
@@ -3355,9 +3265,6 @@ command = "vim"
     const { driver, session } = await makeDriver();
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
     const attachment = imageStore.addImage(new Uint8Array([0xaa, 0xbb]), 'image/png', 1, 1);
-    // Simulate a paste whose background ingestion is still uploading when the
-    // user hits Enter: the send path waits for it instead of dispatching the
-    // inline fallback.
     let finishIngestion!: () => void;
     attachment.pending = new Promise<void>((resolve) => {
       finishIngestion = () => {
@@ -3401,8 +3308,6 @@ command = "vim"
     expect(stripSgr(renderTranscript(driver))).toContain('Failed to send: session closed');
     expect(harness.deleteFile).toHaveBeenCalledWith('file-reject');
 
-    // The released lease must not be claimed or deleted again by later turn
-    // events or by session close.
     emitTurn(driver, 1);
     await driver.closeSession('test');
     expect(harness.deleteFile).toHaveBeenCalledTimes(1);
@@ -3412,9 +3317,6 @@ command = "vim"
     const { driver, session, harness } = await makeDriver();
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
     const attachment = stagedImage(imageStore, 'file-goal');
-    // The goal driver's continuation turn (origin system_trigger — it never
-    // claims leases through handleTurnStarted) is streaming when the queued
-    // steer dispatch lands.
     driver.state.appState.goal = makeActiveGoalSnapshot();
     driver.state.appState.streamingPhase = 'waiting';
     driver.streamingUI.setTurnId('7');
@@ -3532,7 +3434,6 @@ command = "vim"
     ]);
     expect(harness.track).toHaveBeenCalledWith('input_queue', undefined);
 
-    // Turn ends: the drain re-enters sendSkillActivation, which now fires.
     driver.state.appState.streamingPhase = 'idle';
     const queued = driver.state.queuedMessages[0]!;
     driver.state.queuedMessages = [];
@@ -3937,8 +3838,6 @@ command = "vim"
         { type: 'text', text: 'describe ' },
         { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
       ],
-      // Staged media rides with a client-chosen prompt id so the consuming
-      // turn's `turn.started` can bind the lease exactly.
       { promptId: expect.any(String) },
     );
   });
@@ -4025,8 +3924,6 @@ command = "vim"
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
     const attachment = stagedImage(imageStore, 'file-shared');
 
-    // One message referencing the same image twice retains it once; a second
-    // queued message retains it again — two retains total.
     driver.handleUserInput(`compare ${attachment.placeholder} with ${attachment.placeholder}`);
     driver.handleUserInput(`and ${attachment.placeholder}`);
     const [first, second] = driver.state.queuedMessages;
@@ -4034,8 +3931,6 @@ command = "vim"
     driver.sendQueuedMessage(session, first!);
     emitTurn(driver, 1);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    // The first turn consumed the only retain its submission held; the second
-    // queued message's retain keeps the upload alive.
     expect(harness.deleteFile).not.toHaveBeenCalled();
 
     driver.sendQueuedMessage(session, second!);
@@ -4060,13 +3955,9 @@ command = "vim"
     const recalled = driver.recallLastQueued();
     expect(recalled?.text).toContain(attachment.placeholder);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    // Recalled, not discarded: the daemon upload stays staged for the
-    // restored draft.
     expect(harness.deleteFile).not.toHaveBeenCalled();
     expect(attachment.fileId).toBe('file-recall');
 
-    // Re-queueing the restored draft reuses the daemon-ref form, and the
-    // consuming turn's end releases the upload exactly once.
     driver.handleUserInput(recalled!.text);
     const requeued = driver.state.queuedMessages[0]!;
     expect(requeued.parts).toContainEqual({
@@ -4095,9 +3986,6 @@ command = "vim"
 
     const recalled = driver.recallLastQueued();
     expect(recalled?.text).toContain(attachment.placeholder);
-    // The recall consumed the retain but kept the upload, so resubmitting
-    // the restored draft re-extracts the same daemon reference — a vanished
-    // original source cannot lose the media.
     expect(attachment.fileId).toBe('file-v1');
     expect(harness.deleteFile).not.toHaveBeenCalled();
 
@@ -4138,9 +4026,6 @@ command = "vim"
 
     driver.state.editor.onCtrlS?.();
 
-    // normalizePromptInput rejects whitespace-only text parts, so the
-    // item separator must not become a standalone `{type:'text',text:'\n\n'}`
-    // between two image parts.
     expect(session.steer).toHaveBeenCalledWith([imagePart(first.bytes), imagePart(second.bytes)]);
   });
 
@@ -4167,9 +4052,6 @@ command = "vim"
 
     driver.state.editor.onCtrlS?.();
 
-    // The historical '\n\n' item separator merges into the following text
-    // part (legal for normalizePromptInput) instead of vanishing after a
-    // media part.
     expect(session.steer).toHaveBeenCalledWith([
       { type: 'text', text: 'look ' },
       { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
@@ -4207,8 +4089,6 @@ command = "vim"
     const session = makeSession();
     const { driver } = await makeDriver(session);
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    // The pasted video's source file vanished before submit — the cache copy
-    // throws, and it must surface as a TUI error, not an unhandled rejection.
     const missing = imageStore.addVideo('video/quicktime', '/tmp/kimi-missing-source.mov');
 
     (
@@ -4260,7 +4140,6 @@ command = "vim"
     const { driver } = await makeDriver();
     driver.state.appState.streamingPhase = 'waiting';
     driver.state.queuedMessages = [{ text: 'ls', agentId: 'main', mode: 'bash' }];
-    // After a bash command is queued the editor is reset to prompt mode.
     driver.state.editor.inputMode = 'prompt';
     driver.state.appState.inputMode = 'prompt';
 
@@ -5144,8 +5023,11 @@ command = "vim"
     const transcript = stripSgr(renderTranscript(driver));
     const panel = stripSgr(renderBtwPanel(driver));
     const rootChildren = driver.state.ui.children;
-    expect(rootChildren.indexOf(driver.state.btwPanelContainer)).toBe(
+    expect(rootChildren.indexOf(driver.state.surveyContainer)).toBe(
       rootChildren.indexOf(driver.state.editorContainer) - 1,
+    );
+    expect(rootChildren.indexOf(driver.state.btwPanelContainer)).toBe(
+      rootChildren.indexOf(driver.state.surveyContainer) - 1,
     );
     expect(transcript).toContain('main answer after btw');
     expect(transcript).not.toContain('side answer');
@@ -5613,8 +5495,6 @@ command = "vim"
     driver.state.appState.maxContextTokens = 1_000_000;
     driver.state.appState.contextUsage = 0.74;
 
-    // v2 token-counting events carry contextTokens only; the ratio must be
-    // recomputed or the footer and /usage bar keep showing the stale value.
     driver.sessionEventHandler.handleEvent(
       {
         type: 'agent.status.updated',
@@ -5635,7 +5515,6 @@ command = "vim"
     driver.state.appState.maxContextTokens = 256_000;
     driver.state.appState.contextUsage = 180_000 / 256_000;
 
-    // v2 profile events carry maxContextTokens only (e.g. a model switch).
     driver.sessionEventHandler.handleEvent(
       {
         type: 'agent.status.updated',
@@ -6343,7 +6222,6 @@ command = "vim"
     const sendQueued = vi.fn();
     driver.state.appState.thinkingEffort = 'high';
 
-    // Same level as the main session — still shown (level info is level info).
     driver.sessionEventHandler.handleEvent(
       {
         type: 'subagent.spawned',
@@ -6952,7 +6830,6 @@ command = "vim"
     });
     const { driver } = await makeDriver(session);
 
-    // Official sources skip the trust prompt, so the install runs immediately.
     driver.handleUserInput(
       '/plugins install https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
     );
@@ -6992,8 +6869,6 @@ command = "vim"
     confirm.handleInput('\u001B[B'); // switch from "Exit" to "Trust and install"
     confirm.handleInput('\r');
 
-    // The manifest id matches a billed plugin, but a local-path install is
-    // not the official quota-consuming build.
     await vi.waitFor(() => {
       const transcript = stripSgr(renderTranscript(driver));
       expect(transcript).toContain('Installed Kimi Datasource');
@@ -7051,12 +6926,9 @@ command = "vim"
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginsPanelComponent);
     });
     const panel = driver.state.editorContainer.children[0] as PluginsPanelComponent;
-    // Official loads its catalog lazily; wait for the entry to render before install.
     await vi.waitFor(() => {
       expect(stripSgr(panel.render(120).join('\n'))).toContain('Kimi Datasource');
     });
-    // The pinned Kimi WebBridge row leads the Official tab, so move down to
-    // the Kimi Datasource entry before installing.
     panel.handleInput('\u001B[B');
     panel.handleInput('\r');
 
@@ -7071,7 +6943,6 @@ command = "vim"
       expect(transcript).toContain('Run /new or /reload to apply plugin changes.');
       expect(transcript).not.toContain('Note: This plugin consumes your quota.');
     });
-    // Installing closes the panel so the success notice / reload tip is visible.
     await vi.waitFor(() => {
       expect(driver.state.editorContainer.children[0]).toBe(driver.state.editor);
     });
@@ -7112,8 +6983,6 @@ command = "vim"
     });
     panel.handleInput('\r');
 
-    // The panel must not get stuck on the one-way "Installing…" view; it should
-    // return to the list so the user can retry.
     await vi.waitFor(() => {
       const rendered = stripSgr(panel.render(120).join('\n'));
       expect(rendered).toContain('Kimi Datasource');
@@ -7142,7 +7011,6 @@ command = "vim"
     const session = makeSession();
     const { driver } = await makeDriver(session);
 
-    // Passing the marketplace path opens the panel directly on the Third-party tab.
     driver.handleUserInput(`/plugins marketplace ${marketplacePath}`);
 
     await vi.waitFor(() => {
@@ -7211,8 +7079,6 @@ command = "vim"
     confirm.handleInput('\u001B[B'); // switch from "Exit" to "Trust and install"
     confirm.handleInput('\r');
 
-    // The failed install must return the user to the marketplace panel so they
-    // can retry, rather than dropping them back at the editor.
     await vi.waitFor(() => {
       expect(driver.state.editorContainer.children[0]).toBe(panel);
     });
@@ -7265,8 +7131,6 @@ command = "vim"
       await vi.waitFor(() => {
         expect(stripSgr(panel.render(120).join('\n'))).toContain('Kimi Datasource');
       });
-      // The pinned Kimi WebBridge row leads the Official tab, so move down to
-      // the Kimi Datasource entry before installing.
       panel.handleInput('\u001B[B');
       panel.handleInput('\r');
 
@@ -7296,7 +7160,6 @@ command = "vim"
     try {
       driver.handleUserInput('/plugins');
 
-      // The panel opens immediately on the Installed tab — no marketplace fetch.
       await vi.waitFor(() => {
         expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginsPanelComponent);
       });
@@ -7308,7 +7171,6 @@ command = "vim"
           'Marketplace unavailable: fetch failed',
         );
       });
-      // The panel stays mounted; the failure does not close /plugins.
       expect(driver.state.editorContainer.children[0]).toBe(panel);
     } finally {
       vi.stubGlobal('fetch', originalFetch);
@@ -7346,8 +7208,6 @@ command = "vim"
     const panel = driver.state.editorContainer.children[0] as PluginsPanelComponent;
     panel.handleInput(' ');
 
-    // Toggling refreshes the panel in place: it must not flash back to the
-    // editor between the keypress and the refreshed panel mounting.
     expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginsPanelComponent);
 
     await vi.waitFor(() => {
@@ -7544,8 +7404,6 @@ command = "vim"
     expect(filteredOutput).toContain('Search: tu');
     expect(filteredOutput).toContain('Kimi Turbo');
     expect(filteredOutput).not.toContain('Kimi K2');
-    // Turbo is a thinking-capable model that is not the active one, so it
-    // defaults to thinking on — selecting it applies thinking without a toggle.
     (picker as TabbedModelSelectorComponent).handleInput('\r');
 
     await vi.waitFor(() => {
@@ -7593,7 +7451,6 @@ command = "vim"
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(TabbedModelSelectorComponent);
     });
     const picker = driver.state.editorContainer.children[0];
-    // /model turbo preselects turbo; Alt+S applies it to the current session only.
     (picker as TabbedModelSelectorComponent).handleInput(`${ESC}s`);
 
     await vi.waitFor(() => {
@@ -7731,8 +7588,6 @@ command = "vim"
           },
         },
         defaultModel: 'k2',
-        // No persisted effort: re-confirming the shown level must not turn the
-        // runtime default into a stored preference.
         thinking: { enabled: true },
       })),
       setConfig,
@@ -7804,8 +7659,6 @@ command = "vim"
     });
     (driver.state.editorContainer.children[0] as TabbedModelSelectorComponent).handleInput('\r');
 
-    // The effort matches the value shown when the picker opened, so the patch
-    // carries no effort key; the stored preference stays as-is via the merge.
     await vi.waitFor(() => {
       expect(setConfig).toHaveBeenCalledWith({
         defaultModel: 'turbo',
@@ -7845,8 +7698,6 @@ command = "vim"
           },
         },
         defaultModel: 'k2',
-        // A previously stored effort keeps the runtime below the delivered
-        // max default, so picking max is an explicit change.
         thinking: { enabled: true, effort: 'high' },
       })),
       setConfig,
@@ -7867,9 +7718,6 @@ command = "vim"
   });
 
   it('keeps an xhigh pick session-only for a Claude model via the profile inference', async () => {
-    // claude-opus-4-7 declares no efforts; the Anthropic profile inference
-    // supplies [low, medium, high, xhigh, max] and resolves the default to
-    // 'high', so an xhigh pick ranks above the persistence ceiling.
     let switched = false;
     const session = makeSession({
       getStatus: vi.fn(async () => ({
@@ -8184,7 +8032,6 @@ command = "vim"
 
       driver.handleUserInput('/fork');
 
-      // cmd.exe's `cd` does not switch drives; pushd works in cmd + PowerShell.
       await vi.waitFor(() => {
         expect(copyTextToClipboard).toHaveBeenCalledWith(
           'pushd "D:\\proj" && kimi --resume "ses-fork"',
@@ -8270,11 +8117,9 @@ command = "vim"
     );
     driver.streamingUI.flushNow();
 
-    // Nothing to render: no component, and the phase is not hijacked into thinking.
     expect(driver.streamingUI.hasActiveThinkingComponent()).toBe(false);
     expect(driver.state.appState.streamingPhase).toBe('waiting');
 
-    // Real thinking text after the whitespace still starts thinking normally.
     driver.sessionEventHandler.handleEvent(
       {
         type: 'thinking.delta',
@@ -8294,9 +8139,6 @@ command = "vim"
   it('does not create a thinking component for whitespace-only thinking on session replay', async () => {
     const { driver } = await makeDriver();
 
-    // Session replay flushes stored thinking verbatim through onThinkingUpdate
-    // (see SessionReplayRenderer.flushAssistant), so a persisted whitespace-only
-    // think part must not become a bare bullet line.
     driver.streamingUI.onThinkingUpdate(' ');
     driver.streamingUI.onThinkingEnd();
 
@@ -8307,7 +8149,6 @@ command = "vim"
       ),
     ).toHaveLength(0);
 
-    // Real stored thinking still replays normally.
     driver.streamingUI.onThinkingUpdate('visible reasoning');
     driver.streamingUI.onThinkingEnd();
 
@@ -8317,7 +8158,6 @@ command = "vim"
   it('keeps the waiting moon spinner while reasoning streams only empty (encrypted) thinking deltas', async () => {
     const { driver } = await makeDriver();
 
-    // Turn begins -> waiting mode shows the moon spinner.
     driver.sessionEventHandler.handleEvent(
       {
         type: 'turn.started',
@@ -8330,7 +8170,6 @@ command = "vim"
     expect(driver.state.appState.streamingPhase).toBe('waiting');
     expect(driver.state.livePane.mode).toBe('waiting');
 
-    // Encrypted reasoning: thinking.delta events whose visible text is empty.
     for (let i = 0; i < 3; i++) {
       driver.sessionEventHandler.handleEvent(
         {
@@ -8343,15 +8182,12 @@ command = "vim"
       );
     }
 
-    // The moon must stay up: still waiting, no orphan thinking component, and
-    // the activity pane still renders a moon frame (no blank, spinner-less gap).
     expect(driver.state.appState.streamingPhase).toBe('waiting');
     expect(driver.state.livePane.mode).toBe('waiting');
     expect(driver.streamingUI.hasActiveThinkingComponent()).toBe(false);
     const activity = stripSgr(renderActivity(driver));
     expect(MOON_SPINNER_FRAMES.some((frame) => activity.includes(frame))).toBe(true);
 
-    // Real thinking text finally arrives -> transition into thinking mode.
     driver.sessionEventHandler.handleEvent(
       {
         type: 'thinking.delta',
@@ -8642,7 +8478,6 @@ describe('/effort support_efforts override', () => {
       getConfig: vi.fn(async () => ({
         providers: {},
         models: {
-          // v2 flat model shape: no named provider, inline endpoint + protocol.
           k2: {
             model: 'compatible-claude-model',
             baseUrl: 'https://anthropic.example.test',
@@ -8756,7 +8591,6 @@ describe('transcript step and assistant folding', () => {
     expect(summaryText).toContain(`call ${cycles - TRANSCRIPT_KEEP_RECENT_STEPS} tools`);
     expect(summaryText).toContain(`${cycles - TRANSCRIPT_KEEP_RECENT_ASSISTANT} messages`);
 
-    // Folding drops mounted components only; every transcript entry is kept.
     const assistantEntries = driver.state.transcriptEntries.filter(
       (entry) => entry.kind === 'assistant',
     );
@@ -8780,7 +8614,6 @@ describe('transcript step and assistant folding', () => {
     const cycles = 10;
     driveSteps(driver, cycles);
 
-    // Below the active-turn caps, nothing folds while the turn is live.
     let children = driver.state.transcriptContainer.children;
     expect(
       children.filter((child) => child instanceof AssistantMessageComponent),
@@ -8806,11 +8639,335 @@ describe('transcript step and assistant folding', () => {
     const summaryText = stripSgr(summaries[0]!.render(120).join('\n'));
     expect(summaryText).toContain(`${cycles - TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED} messages`);
 
-    // Steps below the step cap are untouched by the completed-turn fold.
     expect(children.filter((child) => child instanceof ToolCallComponent)).toHaveLength(cycles);
 
-    // The conclusion stays mounted.
     const lastAssistant = assistants.at(-1)!;
     expect(stripSgr(lastAssistant.render(120).join('\n'))).toContain(`msg-${cycles - 1}`);
+  });
+});
+
+describe('KimiTUI session rating survey', () => {
+  it('runs the end-to-end rating flow after five user turns', async () => {
+    vi.useFakeTimers();
+    const homeDir = await makeTempHome();
+    process.env['KIMI_CODE_HOME'] = homeDir;
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    try {
+      const { driver, harness } = await makeDriver();
+      vi.useRealTimers();
+      await vi.waitFor(() => {
+        expect((driver.surveyController as unknown as { cooldownReady: boolean }).cooldownReady).toBe(true);
+      });
+      vi.useFakeTimers();
+      harness.track.mockClear();
+
+      for (let turn = 1; turn <= 4; turn++) emitTurn(driver, turn);
+      vi.advanceTimersByTime(600_000);
+      vi.advanceTimersByTime(2_000);
+      expect(driver.state.surveyContainer.children).toHaveLength(0);
+
+      emitTurn(driver, 5, () => {
+        driver.sessionEventHandler.handleEvent(
+          {
+            type: 'tool.call.started',
+            agentId: 'main',
+            sessionId: 'ses-1',
+            turnId: 5,
+            toolCallId: 'call_1',
+            name: 'Read',
+            args: { path: 'a.ts' },
+          } as Event,
+          () => {},
+        );
+        driver.sessionEventHandler.handleEvent(
+          {
+            type: 'agent.status.updated',
+            agentId: 'main',
+            sessionId: 'ses-1',
+            contextTokens: 4321,
+            usage: {
+              total: { inputOther: 100, output: 20, inputCacheRead: 30, inputCacheCreation: 10 },
+            },
+          } as Event,
+          () => {},
+        );
+      });
+      vi.advanceTimersByTime(2_000);
+      const docked = stripSgr(driver.state.surveyContainer.render(120).join('\n'));
+      expect(docked).toContain('How is Kimi doing this session? (optional)');
+      expect(docked).toContain('1: Bad  2: Fine  3: Good  0: Dismiss');
+      expect(harness.track).toHaveBeenCalledTimes(1);
+      expect(harness.track).toHaveBeenCalledWith('feedback_survey', {
+        event_type: 'appeared',
+        appearance_id: expect.any(String),
+        appearance_index: 1,
+        response: undefined,
+        current_model: 'k2',
+        user_turn_count: 5,
+        cumulative_tokens: 160,
+        virtual_context_tokens: 4321,
+        tool_call_count: 1,
+        compaction_count: 0,
+        permission_mode: 'manual',
+        thinking_effort: 'off',
+        config_probability: 0.005,
+        config_on_for_models: '*',
+        config_min_time_before_feedback_ms: 600_000,
+        config_min_user_turns_before_feedback: 5,
+        config_min_time_between_feedback_ms: 3_600_000,
+        config_min_user_turns_between_feedback: 10,
+        config_min_time_between_global_feedback_ms: 100_000_000,
+        config_long_context_survey_threshold: 200_000,
+        config_long_context_probability: 0.2,
+        config_long_context_trigger_mode: 'cumulative',
+      });
+      const appearanceId = (
+        harness.track.mock.calls[0]![1] as { appearance_id: string }
+      ).appearance_id;
+
+      driver.state.editor.handleInput('1');
+      vi.advanceTimersByTime(400);
+      expect(harness.track).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(600);
+      driver.state.editor.setText('');
+      driver.state.editor.handleInput('1');
+      vi.advanceTimersByTime(400);
+      expect(driver.state.editor.getText()).toBe('');
+      expect(stripSgr(driver.state.surveyContainer.render(120).join('\n'))).toContain(
+        'Feedback: Bad · [escape: undo]',
+      );
+      expect(harness.track).toHaveBeenCalledTimes(1);
+
+      driver.state.editor.handleInput('');
+      vi.advanceTimersByTime(3_000);
+      expect(harness.track).toHaveBeenCalledTimes(1);
+      expect(stripSgr(driver.state.surveyContainer.render(120).join('\n'))).toContain(
+        'How is Kimi doing this session? (optional)',
+      );
+
+      driver.state.editor.setText('');
+      driver.state.editor.handleInput('3');
+      vi.advanceTimersByTime(400);
+      vi.advanceTimersByTime(3_000);
+      const responded = harness.track.mock.calls
+        .filter(
+          (call) =>
+            call[0] === 'feedback_survey' &&
+            (call[1] as { event_type?: string }).event_type === 'responded',
+        )
+        .map((call) => call[1] as { response?: string; appearance_id: string });
+      expect(responded.map((call) => call.response)).toEqual(['good']);
+      expect(responded.map((call) => call.appearance_id)).toEqual([appearanceId]);
+
+      expect(stripSgr(driver.state.surveyContainer.render(120).join('\n'))).toContain(
+        'Thanks for your feedback!',
+      );
+      vi.advanceTimersByTime(5_000);
+      expect(driver.state.surveyContainer.children).toHaveLength(0);
+
+      vi.useRealTimers();
+      const stateFile = join(homeDir, 'feedback-survey-state.json');
+      await vi.waitFor(() => {
+        expect(existsSync(stateFile)).toBe(true);
+      });
+      const persisted = JSON.parse(await readFile(stateFile, 'utf-8')) as {
+        version: number;
+        last_shown_time: number;
+      };
+      expect(persisted.version).toBe(1);
+      expect(typeof persisted.last_shown_time).toBe('number');
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('shows the long-context survey once cumulative tokens cross the threshold', async () => {
+    vi.useFakeTimers();
+    const homeDir = await makeTempHome();
+    process.env['KIMI_CODE_HOME'] = homeDir;
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    try {
+      const { driver, harness } = await makeDriver();
+      vi.useRealTimers();
+      await vi.waitFor(() => {
+        expect((driver.surveyController as unknown as { cooldownReady: boolean }).cooldownReady).toBe(true);
+      });
+      vi.useFakeTimers();
+      harness.track.mockClear();
+
+      emitTurn(driver, 1, () => {
+        driver.sessionEventHandler.handleEvent(
+          {
+            type: 'agent.status.updated',
+            agentId: 'main',
+            sessionId: 'ses-1',
+            contextTokens: 1500,
+            usage: {
+              total: {
+                inputOther: 150_000,
+                output: 20_000,
+                inputCacheRead: 25_000,
+                inputCacheCreation: 10_000,
+              },
+            },
+          } as Event,
+          () => {},
+        );
+      });
+      vi.advanceTimersByTime(2_000);
+
+      expect(stripSgr(driver.state.surveyContainer.render(120).join('\n'))).toContain(
+        'How is Kimi doing this session? (optional)',
+      );
+      expect(harness.track).toHaveBeenCalledTimes(1);
+      expect(harness.track).toHaveBeenCalledWith(
+        'long_context_survey',
+        expect.objectContaining({
+          event_type: 'appeared',
+          appearance_index: 1,
+          user_turn_count: 1,
+          cumulative_tokens: 205_000,
+          virtual_context_tokens: 1500,
+          config_long_context_survey_threshold: 200_000,
+          config_long_context_probability: 0.2,
+          config_long_context_trigger_mode: 'cumulative',
+        }),
+      );
+
+      vi.useRealTimers();
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
+      expect(existsSync(join(homeDir, 'feedback-survey-state.json'))).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('ignores non-user turns for the survey warmup', async () => {
+    vi.useFakeTimers();
+    process.env['KIMI_CODE_HOME'] = await makeTempHome();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    try {
+      const { driver } = await makeDriver();
+      vi.useRealTimers();
+      await vi.waitFor(() => {
+        expect((driver.surveyController as unknown as { cooldownReady: boolean }).cooldownReady).toBe(true);
+      });
+      vi.useFakeTimers();
+      const emit = (event: Event) => {
+        driver.sessionEventHandler.handleEvent(event, () => {});
+      };
+      const cronOrigin = {
+        kind: 'cron_job',
+        jobId: 'job-42',
+        cron: '*/5 * * * *',
+        recurring: true,
+        coalescedCount: 1,
+        stale: false,
+      };
+
+      vi.advanceTimersByTime(600_000);
+      for (let turn = 1; turn <= 5; turn++) {
+        emit({ type: 'turn.started', agentId: 'main', turnId: turn, origin: cronOrigin } as Event);
+        emit({ type: 'turn.ended', agentId: 'main', turnId: turn, reason: 'completed' } as Event);
+      }
+      vi.advanceTimersByTime(2_000);
+      expect(driver.state.surveyContainer.children).toHaveLength(0);
+
+      for (let turn = 6; turn <= 10; turn++) emitTurn(driver, turn);
+      vi.advanceTimersByTime(2_000);
+      expect(driver.state.surveyContainer.children).not.toHaveLength(0);
+
+      vi.useRealTimers();
+      await vi.waitFor(() => {
+        expect(existsSync(join(process.env['KIMI_CODE_HOME']!, 'feedback-survey-state.json'))).toBe(
+          true,
+        );
+      });
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('counts user-slash skill and plugin command turns toward the survey warmup', async () => {
+    vi.useFakeTimers();
+    process.env['KIMI_CODE_HOME'] = await makeTempHome();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    try {
+      const { driver } = await makeDriver();
+      vi.useRealTimers();
+      await vi.waitFor(() => {
+        expect((driver.surveyController as unknown as { cooldownReady: boolean }).cooldownReady).toBe(true);
+      });
+      vi.useFakeTimers();
+      const emit = (event: Event) => {
+        driver.sessionEventHandler.handleEvent(event, () => {});
+      };
+
+      vi.advanceTimersByTime(600_000);
+      for (let turn = 1; turn <= 5; turn++) {
+        emit({
+          type: 'turn.started',
+          agentId: 'main',
+          turnId: turn,
+          origin: {
+            kind: 'skill_activation',
+            activationId: `a${turn}`,
+            skillName: 'review',
+            trigger: 'model-tool',
+          },
+        } as Event);
+        emit({ type: 'turn.ended', agentId: 'main', turnId: turn, reason: 'completed' } as Event);
+      }
+      vi.advanceTimersByTime(2_000);
+      expect(driver.state.surveyContainer.children).toHaveLength(0);
+
+      for (let turn = 6; turn <= 8; turn++) {
+        emit({
+          type: 'turn.started',
+          agentId: 'main',
+          turnId: turn,
+          origin: {
+            kind: 'skill_activation',
+            activationId: `a${turn}`,
+            skillName: 'review',
+            trigger: 'user-slash',
+          },
+        } as Event);
+        emit({ type: 'turn.ended', agentId: 'main', turnId: turn, reason: 'completed' } as Event);
+      }
+      for (let turn = 9; turn <= 10; turn++) {
+        emit({
+          type: 'turn.started',
+          agentId: 'main',
+          turnId: turn,
+          origin: {
+            kind: 'plugin_command',
+            activationId: `p${turn}`,
+            pluginId: 'fmt',
+            commandName: 'fmt',
+            trigger: 'user-slash',
+          },
+        } as Event);
+        emit({ type: 'turn.ended', agentId: 'main', turnId: turn, reason: 'completed' } as Event);
+      }
+      vi.advanceTimersByTime(2_000);
+      expect(driver.state.surveyContainer.children).not.toHaveLength(0);
+
+      vi.useRealTimers();
+      await vi.waitFor(() => {
+        expect(existsSync(join(process.env['KIMI_CODE_HOME']!, 'feedback-survey-state.json'))).toBe(
+          true,
+        );
+      });
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
   });
 });

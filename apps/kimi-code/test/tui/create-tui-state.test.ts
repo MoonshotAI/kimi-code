@@ -58,6 +58,7 @@ describe('createTUIState', () => {
     expect(state.activityContainer).toBeDefined();
     expect(state.todoPanelContainer).toBeDefined();
     expect(state.queueContainer).toBeDefined();
+    expect(state.surveyContainer).toBeDefined();
     expect(state.editorContainer).toBeDefined();
     expect(state.editor).toBeDefined();
     expect(state.footer).toBeDefined();
@@ -129,6 +130,7 @@ describe('createTUIState', () => {
       state.todoPanelContainer,
       state.queueContainer,
       state.btwPanelContainer,
+      state.surveyContainer,
       state.editorContainer,
     ]);
 
