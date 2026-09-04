@@ -45,9 +45,49 @@ export const EditInputSchema = z.object({
     .boolean()
     .optional()
     .describe('Set true only when every occurrence of old_string should be replaced.'),
+  allow_large_delete: z
+    .boolean()
+    .optional()
+    .describe(
+      'Set true only when intentionally deleting a multi-line span with an empty (or whitespace-only) new_string. Omit for normal edits.',
+    ),
 });
 
 export type EditInput = z.Infer<typeof EditInputSchema>;
+
+/** Multi-line empty replacements without an explicit opt-in are refused (see #2427). */
+const LARGE_DELETE_MIN_OLD_LINES = 3;
+
+export function countEditLines(text: string): number {
+  if (text.length === 0) return 0;
+  let lines = 1;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (char === '\n' || (char === '\r' && text[i + 1] !== '\n')) lines++;
+  }
+  return lines;
+}
+
+export function isOversizedEmptyDeletion(oldString: string, newString: string): boolean {
+  return newString.trim().length === 0 && countEditLines(oldString) >= LARGE_DELETE_MIN_OLD_LINES;
+}
+
+function oversizedDeletionMessage(path: string): string {
+  return (
+    `Refusing a multi-line deletion in ${path}: new_string is empty (or whitespace-only) while ` +
+    `old_string spans ${String(LARGE_DELETE_MIN_OLD_LINES)}+ lines. Read the file again, then either ` +
+    `replace with the intended new content, delete fewer lines at a time, or set allow_large_delete=true ` +
+    `if you intentionally want to remove that entire span.`
+  );
+}
+
+function notFoundMessage(path: string): string {
+  return (
+    `old_string not found in ${path}, the file contents may be out of date. ` +
+    `Read the full file (or a large enough region covering the edit) with the Read tool before retrying — ` +
+    `do not keep retrying Edit from a short 30–50 line window.\n`
+  );
+}
 
 function replaceOnceLiteral(content: string, oldString: string, newString: string): string {
   const index = content.indexOf(oldString);
@@ -100,6 +140,13 @@ export class EditTool implements BuiltinTool<EditInput> {
       };
     }
 
+    if (
+      args.allow_large_delete !== true &&
+      isOversizedEmptyDeletion(args.old_string, args.new_string)
+    ) {
+      return { isError: true, output: oversizedDeletionMessage(args.path) };
+    }
+
     try {
       const raw = await this.kaos.readText(safePath);
       const modelView = toModelTextView(raw);
@@ -117,8 +164,7 @@ export class EditTool implements BuiltinTool<EditInput> {
         }
 
         if (count === 0) {
-          return { isError: true, output: `old_string not found in ${args.path}, the file contents may be out of date. Please use the Read Tool to reload the content.
-` };
+          return { isError: true, output: notFoundMessage(args.path) };
         }
         if (count > 1) {
           return {
@@ -140,8 +186,7 @@ export class EditTool implements BuiltinTool<EditInput> {
       const parts = content.split(args.old_string);
       const replacementCount = parts.length - 1;
       if (replacementCount === 0) {
-        return { isError: true, output: `old_string not found in ${args.path}, the file contents may be out of date. Please use the Read Tool to reload the content.
-` };
+        return { isError: true, output: notFoundMessage(args.path) };
       }
 
       const newContent = parts.join(args.new_string);

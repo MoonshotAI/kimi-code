@@ -345,6 +345,84 @@ describe('EditTool', () => {
     expect(writeText).toHaveBeenCalledWith('/tmp/e.txt', 'Hello !');
   });
 
+  it('refuses multi-line empty deletions unless allow_large_delete is set', async () => {
+    const writeText = vi.fn().mockResolvedValue(0);
+    const file = ['# Practice Phase', '', 'body line', '', 'more'].join('\n');
+    const tool = new EditTool(
+      createFakeKaos({
+        readText: vi.fn().mockResolvedValue(file),
+        writeText,
+      }),
+      PERMISSIVE_WORKSPACE,
+    );
+
+    const refused = await executeTool(
+      tool,
+      context({
+        path: '/tmp/skill.md',
+        old_string: '# Practice Phase\n\nbody line',
+        new_string: '',
+      }),
+    );
+    expect(refused).toMatchObject({ isError: true });
+    expect(refused.output).toContain('Refusing a multi-line deletion');
+    expect(refused.output).toContain('allow_large_delete=true');
+    expect(writeText).not.toHaveBeenCalled();
+
+    const allowed = await executeTool(
+      tool,
+      context({
+        path: '/tmp/skill.md',
+        old_string: '# Practice Phase\n\nbody line',
+        new_string: '',
+        allow_large_delete: true,
+      }),
+    );
+    expect(allowed.output).toContain('Replaced 1 occurrence');
+    expect(writeText).toHaveBeenCalledWith('/tmp/skill.md', '\n\nmore');
+  });
+
+  it('counts lone carriage returns when guarding multi-line deletions', async () => {
+    const writeText = vi.fn().mockResolvedValue(0);
+    const tool = new EditTool(
+      createFakeKaos({
+        readText: vi.fn().mockResolvedValue('first\rsecond\rthird\rtail'),
+        writeText,
+      }),
+      PERMISSIVE_WORKSPACE,
+    );
+
+    const result = await executeTool(
+      tool,
+      context({ path: '/tmp/cr.txt', old_string: 'first\rsecond\rthird', new_string: '' }),
+    );
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('Refusing a multi-line deletion');
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it('tells the model to reread a large region when old_string is missing', async () => {
+    const writeText = vi.fn().mockResolvedValue(0);
+    const tool = new EditTool(
+      createFakeKaos({
+        readText: vi.fn().mockResolvedValue('alpha beta'),
+        writeText,
+      }),
+      PERMISSIVE_WORKSPACE,
+    );
+
+    const result = await executeTool(
+      tool,
+      context({ path: '/tmp/a.txt', old_string: 'delta', new_string: 'gamma' }),
+    );
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('large enough region');
+    expect(result.output).toContain('30–50 line window');
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
   it('allows absolute edits outside the workspace under default policy', async () => {
     const writeText = vi.fn().mockResolvedValue(0);
     const tool = new EditTool(

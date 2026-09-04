@@ -103,6 +103,7 @@ export class EditTool implements IEditTool {
       old_string: args.old_string,
       new_string: args.new_string,
       replace_all: args.replace_all ?? false,
+      allow_large_delete: args.allow_large_delete,
     }, fs);
     if (!result.ok) {
       return { isError: true, output: result.error };
