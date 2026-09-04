@@ -17,6 +17,7 @@ import {
   IBootstrapService,
   IConfigService,
   IEventBus,
+  IEventDispatcher,
   IFileSystemStorageService,
   IOAuthToolkit,
   ISessionIndex,
@@ -186,6 +187,7 @@ function makeFakeHarness() {
     [IAgentTaskService, { list: vi.fn(() => []) }],
     [IAgentCronService, { getNextFireTime: vi.fn(() => null) }],
     [IAgentGoalService, goal],
+    [IEventDispatcher, { flush: vi.fn(async () => {}) }],
     [
       IAgentScopeContext,
       makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }),
@@ -612,5 +614,90 @@ describe('runV2Print', () => {
     const reconcileOrder = mocks.setTelemetryModel.mock.invocationCallOrder[0];
     expect(initOrder).toBeDefined();
     expect(reconcileOrder).toBeGreaterThan(initOrder!);
+  });
+
+  it('flushes the wire journal before disposing the app', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agentServices } = makeFakeHarness();
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
+
+    const dispatcher = agentServices.get(IEventDispatcher) as {
+      flush: ReturnType<typeof vi.fn>;
+    };
+    expect(dispatcher.flush).toHaveBeenCalled();
+    const flushOrder = dispatcher.flush.mock.invocationCallOrder[0];
+    const disposeOrder = app.dispose.mock.invocationCallOrder[0];
+    expect(flushOrder).toBeDefined();
+    expect(disposeOrder).toBeGreaterThan(flushOrder!);
+  });
+
+  it('flushes the wire journal when the turn fails', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agentServices } = makeFakeHarness();
+
+    const promptService = agentServices.get(IAgentPromptService) as {
+      enqueue: ReturnType<typeof vi.fn>;
+    };
+    promptService.enqueue.mockResolvedValueOnce({
+      launched: Promise.resolve({
+        id: 1,
+        result: Promise.resolve({
+          type: 'failed',
+          error: { code: 'provider.overloaded', message: 'llm request failed' },
+        }),
+      }),
+    });
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await expect(runV2Print(opts() as never, '1.2.3-test', { stdout, stderr })).rejects.toThrow(
+      'provider.overloaded: llm request failed',
+    );
+
+    const dispatcher = agentServices.get(IEventDispatcher) as {
+      flush: ReturnType<typeof vi.fn>;
+    };
+    expect(dispatcher.flush).toHaveBeenCalled();
+    const flushOrder = dispatcher.flush.mock.invocationCallOrder[0];
+    const disposeOrder = app.dispose.mock.invocationCallOrder[0];
+    expect(disposeOrder).toBeGreaterThan(flushOrder!);
+  });
+
+  it('does not let a wire flush failure mask the turn outcome', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agentServices } = makeFakeHarness();
+
+    const promptService = agentServices.get(IAgentPromptService) as {
+      enqueue: ReturnType<typeof vi.fn>;
+    };
+    promptService.enqueue.mockResolvedValueOnce({
+      launched: Promise.resolve({
+        id: 1,
+        result: Promise.resolve({
+          type: 'failed',
+          error: { code: 'provider.overloaded', message: 'llm request failed' },
+        }),
+      }),
+    });
+    const dispatcher = agentServices.get(IEventDispatcher) as {
+      flush: ReturnType<typeof vi.fn>;
+    };
+    dispatcher.flush.mockRejectedValueOnce(new Error('disk full'));
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await expect(runV2Print(opts() as never, '1.2.3-test', { stdout, stderr })).rejects.toThrow(
+      'provider.overloaded: llm request failed',
+    );
+    expect(app.dispose).toHaveBeenCalled();
   });
 });

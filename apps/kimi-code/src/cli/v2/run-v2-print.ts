@@ -30,6 +30,7 @@ import {
   IBootstrapService,
   IConfigService,
   IEventBus,
+  IEventDispatcher,
   IOAuthToolkit,
   ISessionIndex,
   ISessionManager,
@@ -196,6 +197,7 @@ export async function runV2Print(
   }
 
   let restorePermission = async (): Promise<void> => {};
+  let flushWires = async (): Promise<void> => {};
   let removeTerminationCleanup: (() => void) | undefined;
   let cleanupPromise: Promise<void> | undefined;
   let telemetryService: ITelemetryService | undefined;
@@ -205,6 +207,13 @@ export async function runV2Print(
       setCrashPhase('shutdown');
       try {
         await restorePermission();
+        // The turn's tail records (step.end / turn.ended / prompt.completed) are
+        // dispatched fire-and-forget and reach the journal only through the wire
+        // service's async persist queue. Without an explicit flush, a cleanup
+        // that returns fast (e.g. telemetry disabled) lets process.exit cut off
+        // that queue before the records land on disk. Best-effort: a persist
+        // failure was already reported where the append failed.
+        await raceWithTimeout(flushWires(), CLI_SHUTDOWN_TIMEOUT_MS).catch(() => {});
       } finally {
         if (telemetryService !== undefined) {
           await raceWithTimeout(telemetryService.shutdown(), CLI_SHUTDOWN_TIMEOUT_MS);
@@ -254,6 +263,7 @@ export async function runV2Print(
 
     const resolved = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);
     restorePermission = resolved.restorePermission;
+    flushWires = () => flushSessionWires(resolved.session, resolved.agent);
 
     telemetryService.setContext({ session_id: resolved.session.id, model: resolved.telemetryModel });
     setTelemetryContext({ sessionId: resolved.session.id });
@@ -867,6 +877,26 @@ function countPendingBackgroundTasks(session: ISessionScopeHandle): number {
     count += handle.accessor.get(IAgentTaskService).list(true).length;
   }
   return count;
+}
+
+/**
+ * Flush every session agent's wire journal. The main agent handle is included
+ * explicitly: `IAgentLifecycleService` skips `closing` agents, but a closing
+ * agent's already-dispatched tail records still deserve to land on disk.
+ */
+async function flushSessionWires(
+  session: ISessionScopeHandle,
+  mainAgent: IAgentScopeHandle,
+): Promise<void> {
+  const agentManager = session.accessor.get(IAgentLifecycleService);
+  const handles = new Set<IAgentScopeHandle>([mainAgent]);
+  for (const agent of agentManager.list()) {
+    const handle = agentManager.handleOf(agent.agentId);
+    if (handle !== undefined) handles.add(handle);
+  }
+  await Promise.all(
+    [...handles].map((handle) => handle.accessor.get(IEventDispatcher).flush()),
+  );
 }
 
 async function drainBackgroundTasks(
