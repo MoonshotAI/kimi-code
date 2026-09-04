@@ -662,7 +662,6 @@ describe('v2Projection × 实例对拍', () => {
         },
       },
       { event: { type: 'turn.ended', turnId: 1, reason: 'cancelled', time: B + 8620 } },
-      { event: { type: 'prompt.aborted', promptId: 'p_02', abortedAt: '2026-09-03T11:00:08.640Z', time: B + 8640 } },
       {
         facts: {
           activity: { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
@@ -671,9 +670,10 @@ describe('v2Projection × 实例对拍', () => {
             contextTokens: 6500,
             usage: { total: { inputOther: 7600, output: 135, inputCacheRead: 26000, inputCacheCreation: 0 } },
           },
-          time: B + 8650,
+          time: B + 8640,
         },
       },
+      { event: { type: 'prompt.aborted', promptId: 'p_02', abortedAt: '2026-09-03T11:00:08.650Z', time: B + 8650 } },
     ]);
   });
 

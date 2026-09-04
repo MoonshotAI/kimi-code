@@ -1077,12 +1077,12 @@
        "json": "{\n  \"type\": \"user\",\n  \"session_id\": \"s_06\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T11:00:08.620Z\",\n  \"message_id\": \"t2.u0\",\n  \"turn_id\": \"t2\",\n  \"status\": \"completed\",\n  \"created_at\": \"2026-09-03T11:00:04.000Z\",\n  \"finished_at\": \"2026-09-03T11:00:08.620Z\",\n  \"text\": \"把失败的用例列出来\"\n}"
       },
       {
-       "note": "时间线上的「已停止」标记（创建即完整）",
-       "json": "{\n  \"type\": \"system\",\n  \"session_id\": \"s_06\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T11:00:08.640Z\",\n  \"payload\": {\n    \"reason\": \"aborted\",\n    \"turn_id\": \"t2\"\n  },\n  \"system_id\": \"m_01\",\n  \"subtype\": \"interruption\"\n}"
+       "note": "会话回到空闲（activity 先于 prompt.aborted 结算）",
+       "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_06\",\n  \"timestamp\": \"2026-09-03T11:00:08.640Z\",\n  \"busy\": false,\n  \"main_turn_active\": false,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"idle\",\n  \"phase\": {\n    \"kind\": \"idle\"\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"total\": {\n      \"input_other\": 7600,\n      \"output\": 135,\n      \"input_cache_read\": 26000,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 6500,\n  \"max_context_tokens\": 262144\n}"
       },
       {
-       "note": "",
-       "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_06\",\n  \"timestamp\": \"2026-09-03T11:00:08.650Z\",\n  \"busy\": false,\n  \"main_turn_active\": false,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"idle\",\n  \"phase\": {\n    \"kind\": \"idle\"\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"total\": {\n      \"input_other\": 7600,\n      \"output\": 135,\n      \"input_cache_read\": 26000,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 6500,\n  \"max_context_tokens\": 262144\n}"
+       "note": "会话回到空闲（activity 先于 prompt.aborted 结算）",
+       "json": "{\n  \"type\": \"system\",\n  \"session_id\": \"s_06\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T11:00:08.650Z\",\n  \"payload\": {\n    \"reason\": \"aborted\",\n    \"turn_id\": \"t2\"\n  },\n  \"system_id\": \"m_01\",\n  \"subtype\": \"interruption\"\n}"
       }
      ],
      "tail": "<b>要点</b><br>· 中断 = 两处终态 + 一条系统标注：<code>step: interrupted</code> / <code>turn: completed</code> / <code>user: completed</code> + <code>system(interruption)</code>（取消原因全在它身上）<br>· 内容类消息无论正常完成还是中断，都以 <code>completed</code> 收官（权威终态）——被中断的 assistant 半截文本落盘，刷新后仍在<br>· abort 操作针对 <code>message_id</code>：运行中的发送被 abort 时，其 turn / step 一并收官"
