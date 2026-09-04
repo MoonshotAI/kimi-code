@@ -14,7 +14,6 @@ const {
 } = __pluginsCommandInternals;
 
 function fakeHost(overrides: {
-  engineV2?: boolean;
   capabilityStatus?: () => Promise<{
     state?: string;
     steps?: readonly unknown[];
@@ -30,7 +29,6 @@ function fakeHost(overrides: {
     overrides.capabilityStatus ??
     (() => Promise.resolve({ state: 'ready', steps: [], install: { running: false } }));
   const host = {
-    engineV2: overrides.engineV2 ?? false,
     // Session-less (lazy session): plugin and capability calls fall back to
     // the harness facade.
     session: undefined,
@@ -108,36 +106,29 @@ describe('plugins command capability surface', () => {
     resetCapabilitiesCache();
   });
 
-  it('routes built-in entries through capabilities only on v2', () => {
-    const v2 = fakeHost({ engineV2: true });
+  it('routes built-in entries through capabilities', () => {
     expect(
-      isCapabilityEntry(v2.host, { id: 'kimi-cu', source: 'capability:kimi-cu', builtIn: true } as never),
+      isCapabilityEntry({ id: 'kimi-cu', source: 'capability:kimi-cu', builtIn: true } as never),
     ).toBe(true);
     expect(
-      isCapabilityEntry(v2.host, {
+      isCapabilityEntry({
         id: 'kimi-webbridge',
         source: 'capability:kimi-webbridge',
         builtIn: true,
       } as never),
     ).toBe(true);
     expect(
-      isCapabilityEntry(v2.host, { id: 'kimi-cu', source: 'https://example.test/plugin.zip' } as never),
+      isCapabilityEntry({ id: 'kimi-cu', source: 'https://example.test/plugin.zip' } as never),
     ).toBe(false);
     // A forged capability: source without the parser-proof flag is a plain row.
-    expect(
-      isCapabilityEntry(v2.host, { id: 'kimi-cu', source: 'capability:kimi-cu' } as never),
-    ).toBe(false);
-
-    const v1 = fakeHost({});
-    expect(
-      isCapabilityEntry(v1.host, { id: 'kimi-cu', source: 'capability:kimi-cu', builtIn: true } as never),
-    ).toBe(false);
+    expect(isCapabilityEntry({ id: 'kimi-cu', source: 'capability:kimi-cu' } as never)).toBe(
+      false,
+    );
   });
 
   it('logs progress without replacing the generic installing label', async () => {
     let calls = 0;
     const { host } = fakeHost({
-      engineV2: true,
       capabilityStatus: () => {
         calls += 1;
         if (calls === 1) {
@@ -157,7 +148,7 @@ describe('plugins command capability surface', () => {
   });
 
   it('removePlugin notes that capability runtimes are left untouched', async () => {
-    const { host, statuses } = fakeHost({ engineV2: true });
+    const { host, statuses } = fakeHost({});
     await removePlugin(host, 'kimi-cu');
     expect(statuses.some((s) => s.includes('Removed kimi-cu'))).toBe(true);
     expect(statuses.some((s) => s.includes('runtime binaries were left untouched'))).toBe(true);
@@ -167,7 +158,7 @@ describe('plugins command capability surface', () => {
   });
 
   it('keeps the runtime note for the Windows backing plugin id', async () => {
-    const { host, statuses } = fakeHost({ engineV2: true });
+    const { host, statuses } = fakeHost({});
     await removePlugin(host, 'kimi-cu-win');
     expect(statuses.some((s) => s.includes('Removed kimi-cu-win'))).toBe(true);
     expect(statuses.some((s) => s.includes('runtime binaries were left untouched'))).toBe(true);
@@ -192,13 +183,13 @@ describe('plugins command capability surface', () => {
   });
 
   it('removePlugin stays quiet for non-capability plugins', async () => {
-    const { host, statuses } = fakeHost({ engineV2: true });
+    const { host, statuses } = fakeHost({});
     await removePlugin(host, 'superpowers');
     expect(statuses.some((s) => s.includes('runtime binaries'))).toBe(false);
   });
 
   it('starts a capability install only when none is running', async () => {
-    const idle = fakeHost({ engineV2: true });
+    const idle = fakeHost({});
     await installCapabilityFromPanel(
       idle.host,
       fakePanel().panel,
@@ -210,7 +201,6 @@ describe('plugins command capability surface', () => {
   it('follows an in-progress capability install instead of restarting it', async () => {
     let calls = 0;
     const { host, installCapability, statuses } = fakeHost({
-      engineV2: true,
       capabilityStatus: () => {
         calls += 1;
         // The pre-check sees the running install; the poll then sees it settle.
@@ -237,7 +227,7 @@ describe('plugins command capability surface', () => {
 
   it('renders visible clickable store URLs after WebBridge installs in a hyperlink-capable terminal', async () => {
     setCapabilities({ images: null, trueColor: true, hyperlinks: true });
-    const { host, statuses, notices, transcriptEntries } = fakeHost({ engineV2: true });
+    const { host, statuses, notices, transcriptEntries } = fakeHost({});
 
     await installCapabilityFromPanel(
       host,
@@ -264,7 +254,7 @@ describe('plugins command capability surface', () => {
 
   it('renders full store URLs after WebBridge installs in a terminal without hyperlinks', async () => {
     setCapabilities({ images: null, trueColor: true, hyperlinks: false });
-    const { host, transcriptEntries } = fakeHost({ engineV2: true });
+    const { host, transcriptEntries } = fakeHost({});
 
     await installCapabilityFromPanel(
       host,
@@ -285,7 +275,7 @@ describe('plugins command capability surface', () => {
 
   it('separates the WebBridge install result from its setup steps with one blank line', async () => {
     setCapabilities({ images: null, trueColor: true, hyperlinks: true });
-    const { host, transcriptEntries } = fakeHost({ engineV2: true });
+    const { host, transcriptEntries } = fakeHost({});
 
     await installCapabilityFromPanel(
       host,
@@ -317,7 +307,6 @@ describe('plugins command capability surface', () => {
 
   it('shows the engine error when a background capability install fails', async () => {
     const { host, statuses } = fakeHost({
-      engineV2: true,
       capabilityStatus: () =>
         Promise.resolve({
           state: 'not_installed',
@@ -340,7 +329,6 @@ describe('plugins command capability surface', () => {
 
   it('shows required permissions once after installation instead of exposing step details', async () => {
     const { host, statuses } = fakeHost({
-      engineV2: true,
       capabilityStatus: () => Promise.resolve({
         id: 'kimi-cu',
         state: 'partial',

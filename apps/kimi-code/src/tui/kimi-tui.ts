@@ -222,8 +222,6 @@ export interface KimiTUIStartupInput {
   readonly migrationPlan?: MigrationPlan | null;
   /** When true, run only the migration screen, then exit (the `kimi migrate` command). */
   readonly migrateOnly?: boolean;
-  /** agent-core-v2 engine; enables the startup workspace-trust prompt. */
-  readonly engineV2?: boolean;
   readonly telemetryDisabled?: boolean;
 }
 
@@ -361,8 +359,6 @@ export class KimiTUI {
   private readonly migrationPlan: MigrationPlan | null;
   private readonly migrateOnly: boolean;
   private readonly telemetryDisabled: boolean;
-  /** Whether the harness runs on the agent-core-v2 engine (lazy session creation). */
-  readonly engineV2: boolean;
   private startupNotice: string | undefined;
   private lastActivityMode: string | undefined;
   private currentLoadingTip: { kind: LoadingTipKind; tip: string | undefined } | undefined =
@@ -454,7 +450,6 @@ export class KimiTUI {
     this.migrationPlan = startupInput.migrationPlan ?? null;
     this.migrateOnly = startupInput.migrateOnly ?? false;
     this.telemetryDisabled = startupInput.telemetryDisabled ?? false;
-    this.engineV2 = startupInput.engineV2 ?? false;
     this.startupNotice = startupInput.startupNotice;
     this.state = createTUIState(tuiOptions);
     this.uninstallRainbowDance = installRainbowDance(() => {
@@ -497,10 +492,8 @@ export class KimiTUI {
   // =========================================================================
 
   private getSlashCommands(): readonly KimiSlashCommand[] {
-    const builtins = sortSlashCommands(BUILTIN_SLASH_COMMANDS).filter(
-      (command) =>
-        isExperimentalFlagEnabled(command.experimentalFlag) &&
-        (!command.requiresEngineV2 || this.engineV2),
+    const builtins = sortSlashCommands(BUILTIN_SLASH_COMMANDS).filter((command) =>
+      isExperimentalFlagEnabled(command.experimentalFlag),
     );
     return [...builtins, ...this.skillCommands, ...this.pluginCommands];
   }
@@ -550,18 +543,10 @@ export class KimiTUI {
       // v2 engine: skills live on the workspace handler, not the session, so
       // they are available before the first (lazy) session is created — the
       // workspace catalog is the same merged view a session would serve.
-      if (this.engineV2) {
-        try {
-          const skills = await this.harness.listWorkspaceSkills(this.state.appState.workDir);
-          this.applySkillCommands(skills);
-          return;
-        } catch {
-          return;
-        }
-      }
-      this.skillCommands = [];
-      this.skillCommandMap.clear();
-      this.setupAutocomplete();
+      try {
+        const skills = await this.harness.listWorkspaceSkills(this.state.appState.workDir);
+        this.applySkillCommands(skills);
+      } catch {}
       return;
     }
 
@@ -588,18 +573,10 @@ export class KimiTUI {
     if (session === undefined) {
       // v2 engine: the enabled plugin commands are an app-global live view,
       // available before the first (lazy) session is created.
-      if (this.engineV2) {
-        try {
-          const defs = await this.harness.listPluginCommands();
-          this.applyPluginCommands(defs);
-          return;
-        } catch {
-          return;
-        }
-      }
-      this.pluginCommands = [];
-      this.pluginCommandMap.clear();
-      this.setupAutocomplete();
+      try {
+        const defs = await this.harness.listPluginCommands();
+        this.applyPluginCommands(defs);
+      } catch {}
       return;
     }
 
@@ -947,7 +924,7 @@ export class KimiTUI {
             );
           }
         }
-      } else if (this.engineV2) {
+      } else {
         // Lazy session creation (v2 engine): start session-less and create the
         // session on the first message. Startup flags are carried in appState
         // and applied when that session is created; until then the footer
@@ -955,8 +932,6 @@ export class KimiTUI {
         // time (model, permission, plan mode, thinking effort, context cap).
         await this.hydrateLazyConfigDefaults();
         this.appendStartupNotice(SESSIONLESS_STARTUP_NOTICE);
-      } else {
-        session = await this.harness.createSession(createSessionOptions);
       }
       if (session !== undefined && shouldReplayHistory) {
         await this.applyStartupModesToResumedSession(session);
@@ -970,9 +945,6 @@ export class KimiTUI {
       return false;
     }
 
-    if (!this.engineV2 && session === undefined) {
-      throw new Error('Startup session was not initialized.');
-    }
     if (session !== undefined) {
       await this.setSession(session);
       await this.syncRuntimeState(session);
@@ -1229,10 +1201,6 @@ export class KimiTUI {
   private async runShellCommandFromInput(command: string): Promise<void> {
     let session = this.session;
     if (session === undefined) {
-      if (!this.engineV2) {
-        this.showError('No active session for shell command.');
-        return;
-      }
       session = await this.ensureSession();
       if (session === undefined) return;
       // A concurrent first message may have started a prompt while this lazy
@@ -1432,11 +1400,6 @@ export class KimiTUI {
     }
     let session = this.session;
     if (session === undefined) {
-      if (!this.engineV2) {
-        this.showError(LLM_NOT_SET_MESSAGE);
-        this.staging.release(stagingLease);
-        return;
-      }
       session = await this.ensureSession();
       if (session === undefined) {
         this.staging.release(stagingLease);
@@ -2271,10 +2234,9 @@ export class KimiTUI {
     // creation / `/new` before the first session) on v2, pass only the
     // explicit CLI --plan intent — and only when the engine is not already
     // applying `defaultPlanMode` at create time (sessionLifecycleService),
-    // since re-entering an active plan mode throws. On v1 (which never
-    // pre-fills plan mode from config), keep the historical appState value.
+    // since re-entering an active plan mode throws.
     const explicitPlanMode =
-      this.session !== undefined || !this.engineV2
+      this.session !== undefined
         ? this.state.appState.planMode
         : this.options.startup.plan && this.state.appState.configDefaultPlanMode !== true;
     const options: MutableCreateSessionOptions = {
@@ -3518,7 +3480,7 @@ export class KimiTUI {
     stream.component.finishBackgrounded();
     stream.entry.content = 'Moved to background.';
     this.shellOutputStreams.delete(commandId);
-    // The backgrounded command's notification turn (started by agent-core via
+    // The backgrounded command's notification turn (started by the engine via
     // appendSystemReminderAndNotify) owns the streaming phase and drains the
     // queue when it completes, so we intentionally leave both untouched here.
     this.showDetachHint('Moved to background. /tasks to view.');
@@ -3809,7 +3771,6 @@ export class KimiTUI {
    * caller must not start it again).
    */
   private async maybeRunWorkspaceTrustPrompt(): Promise<boolean> {
-    if (!this.engineV2) return false;
     const workDir = this.state.appState.workDir;
     let info: WorkspaceTrustInfo;
     try {

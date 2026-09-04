@@ -5,36 +5,7 @@ import { SRC_ROOT, checkSource } from '../../scripts/check-import-boundaries.mjs
 const at = (domain: string, file: string): string => `${SRC_ROOT}/${domain}/${file}`;
 const atKosong = (sub: string, file: string): string => `${SRC_ROOT}/kosong/${sub}/${file}`;
 
-const V1 = ['@moonshot-ai', 'agent-core'].join('/');
-
 describe('check-import-boundaries', () => {
-  it('flags a direct import of v1 (@moonshot-ai/agent-core)', () => {
-    const violations = checkSource(
-      `import { KimiCore } from '${V1}';`,
-      at('loop', 'loop.ts'),
-    );
-    expect(violations).toHaveLength(1);
-    expect(violations[0]?.message).toMatch(/v2 must not import v1/);
-  });
-
-  it('flags a v1 subpath import', () => {
-    const violations = checkSource(
-      `import { Session } from '${V1}/session';`,
-      at('loop', 'loop.ts'),
-    );
-    expect(violations).toHaveLength(1);
-    expect(violations[0]?.message).toMatch(/v2 must not import v1/);
-  });
-
-  it('flags a v1 import in test code', () => {
-    const violations = checkSource(
-      `import { Session } from '${V1}/session';`,
-      `${SRC_ROOT}/../test/agent/loop/loop.test.ts`,
-    );
-    expect(violations).toHaveLength(1);
-    expect(violations[0]?.message).toMatch(/v2 must not import v1/);
-  });
-
   it('allows arbitrary cross-domain imports outside kosong', () => {
     const violations = checkSource(
       `import { IAgentLoopService } from '#/agent/loop/loop';`,

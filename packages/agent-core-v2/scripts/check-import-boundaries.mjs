@@ -9,7 +9,6 @@ const PKG_ROOT = resolve(__dirname, '..');
 export const SRC_ROOT = join(PKG_ROOT, 'src');
 const TEST_ROOT = join(PKG_ROOT, 'test');
 
-const V1_PACKAGE = '@moonshot-ai/agent-core';
 const SELF_PACKAGE_PREFIX = '@moonshot-ai/agent-core-v2/';
 
 const SCOPE_DIRS = new Set(['app', 'workspace', 'session', 'agent', 'persistence', 'os', 'kosong']);
@@ -101,15 +100,6 @@ export function checkSource(source, absFile) {
     const specifier = match[1] ?? match[2];
     if (!specifier) continue;
     const line = source.slice(0, match.index).split('\n').length;
-
-    if (specifier === V1_PACKAGE || specifier.startsWith(`${V1_PACKAGE}/`)) {
-      violations.push({
-        file: absFile,
-        line,
-        message: `v2 must not import v1 (${specifier})`,
-      });
-      continue;
-    }
 
     if (!inSrc) continue;
     const targetAbs = resolveIntraV2(specifier, absFile);

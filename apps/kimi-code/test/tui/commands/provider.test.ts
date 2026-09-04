@@ -17,7 +17,6 @@ function makeHost(
   options: {
     refreshReachedLiveSession?: boolean;
     activateReachedLiveSession?: boolean;
-    engineV2?: boolean;
   } = {},
 ) {
   const appState = {
@@ -36,7 +35,6 @@ function makeHost(
   };
   const host = {
     state: { appState },
-    engineV2: options.engineV2 === true,
     waitForLazyCreation: vi.fn(async () => {}),
     harness: {
       setConfig: vi.fn(async () => ({})),
@@ -145,7 +143,7 @@ describe('setDefaultModel', () => {
   });
 
   it('waits for an in-flight lazy creation before activating (v2)', async () => {
-    const { host } = makeHost({ engineV2: true });
+    const { host } = makeHost();
 
     await setDefaultModel(host, 'opus', 'high');
 

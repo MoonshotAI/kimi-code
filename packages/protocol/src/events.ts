@@ -433,7 +433,7 @@ export interface CompactionResult {
   /**
    * Oldest messages trimmed from the summarizer input when the compaction
    * request overflowed the model window; not covered by the produced summary.
-   * Mirrors agent-core's `CompactionResult.droppedCount`; optional for backward
+   * Mirrors agent-core-v2's `CompactionResult.droppedCount`; optional for backward
    * compatibility.
    */
   readonly droppedCount?: number;

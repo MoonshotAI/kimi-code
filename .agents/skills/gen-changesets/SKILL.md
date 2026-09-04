@@ -5,7 +5,7 @@ description: Use when generating changesets in the kimi-code repository — deci
 
 # Generate Changesets
 
-The only user-facing published package is the CLI: `@moonshot-ai/kimi-code`. All other `@moonshot-ai/*` packages (sdk, agent-core, kosong, kaos, oauth, telemetry, and so on) are internal.
+The only user-facing published package is the CLI: `@moonshot-ai/kimi-code`. All other `@moonshot-ai/*` packages (sdk, kosong, kaos, oauth, telemetry, and so on) are internal.
 
 ## 1. Whether to Write
 

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DOUBLE_ESC_WINDOW_MS, NO_ACTIVE_SESSION_MESSAGE } from '#/tui/constant/kimi-tui';
+import { DOUBLE_ESC_WINDOW_MS } from '#/tui/constant/kimi-tui';
 import {
   EditorKeyboardController,
   type EditorKeyboardHost,
@@ -410,7 +410,7 @@ describe('EditorKeyboardController input changes', () => {
 });
 
 describe('EditorKeyboardController Shift-Tab plan toggle', () => {
-  function createShiftTabHarness(options: { sessionless?: boolean; engineV2?: boolean } = {}) {
+  function createShiftTabHarness(options: { sessionless?: boolean } = {}) {
     const editor: Record<string, ((...args: never[]) => unknown) | undefined> = {
       setHistoryFilter: vi.fn() as unknown as (...args: never[]) => unknown,
     };
@@ -427,7 +427,6 @@ describe('EditorKeyboardController Shift-Tab plan toggle', () => {
         ui: { requestRender: vi.fn() },
       },
       session: options.sessionless ? undefined : { cancel: vi.fn(async () => {}) },
-      engineV2: options.engineV2 ?? false,
       ensureSession,
       handlePlanToggle,
       track,
@@ -449,21 +448,9 @@ describe('EditorKeyboardController Shift-Tab plan toggle', () => {
     expect(handlePlanToggle).toHaveBeenCalledWith(true);
   });
 
-  it('reports no active session on v1 when session-less', () => {
-    const { onShiftTab, showError, handlePlanToggle } = createShiftTabHarness({
-      sessionless: true,
-    });
-
-    onShiftTab();
-
-    expect(showError).toHaveBeenCalledWith(NO_ACTIVE_SESSION_MESSAGE);
-    expect(handlePlanToggle).not.toHaveBeenCalled();
-  });
-
   it('lazy-creates the session before toggling on v2 when session-less', async () => {
     const { onShiftTab, ensureSession, handlePlanToggle, track } = createShiftTabHarness({
       sessionless: true,
-      engineV2: true,
     });
 
     onShiftTab();
@@ -479,7 +466,6 @@ describe('EditorKeyboardController Shift-Tab plan toggle', () => {
   it('does not toggle when the lazy creation fails on v2', async () => {
     const { onShiftTab, ensureSession, handlePlanToggle } = createShiftTabHarness({
       sessionless: true,
-      engineV2: true,
     });
     ensureSession.mockResolvedValue(undefined);
 
@@ -500,7 +486,6 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
   function createCtrlSHarness(options: {
     editorText: string;
     queued: Array<Record<string, unknown>>;
-    engineV2?: boolean;
     skillCommandMap?: Map<string, string>;
   }) {
     const steerMessage = vi.fn();
@@ -524,7 +509,6 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
         ui: { requestRender: vi.fn() },
       },
       session: { id: 's1' },
-      engineV2: options.engineV2 ?? false,
       skillCommandMap: options.skillCommandMap ?? new Map(),
       steerMessage,
       steerSkillActivation,
@@ -662,7 +646,6 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
     const { host, setText, steerMessage, onCtrlS } = createCtrlSHarness({
       editorText: 'check /skill:review',
       queued: [{ text: 'plain note', agentId: 'main' }],
-      engineV2: true,
       skillCommandMap: new Map([['skill:review', 'review']]),
     });
 

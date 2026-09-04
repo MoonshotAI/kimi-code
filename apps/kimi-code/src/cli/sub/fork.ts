@@ -8,7 +8,6 @@ import {
 } from '@moonshot-ai/kimi-telemetry';
 import {
   createKimiHarness,
-  createKimiHarnessV2,
   type KimiHarness,
   type SessionSummary,
   type TelemetryClient,
@@ -18,7 +17,6 @@ import type { Command } from 'commander';
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE } from '#/constant/app';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from '#/cli/telemetry';
 import { createKimiCodeHostIdentity } from '#/cli/version';
-import { isKimiV2Enabled } from '../experimental-v2';
 
 interface WritableLike {
   write(chunk: string): boolean;
@@ -121,7 +119,7 @@ function createDefaultForkDeps(overrides: Partial<ForkDeps> = {}): ForkDeps & {
   };
   const getHarness = (): KimiHarness => {
     const currentTelemetryBootstrap = getTelemetryBootstrap();
-    harness ??= (isKimiV2Enabled() ? createKimiHarnessV2 : createKimiHarness)({
+    harness ??= createKimiHarness({
       homeDir: currentTelemetryBootstrap.homeDir,
       identity,
       telemetry: telemetryClient,
