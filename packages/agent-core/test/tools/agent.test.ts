@@ -124,16 +124,31 @@ describe('AgentTool', () => {
     expect(properties).not.toHaveProperty('timeout');
   });
 
-  it('explains the fixed background subagent timeout', () => {
+  it('explains the resolved background subagent timeout (default 2 hours)', () => {
     const host = mockSubagentHost({ spawn: vi.fn() });
     const tool = agentTool(host);
 
-    expect(tool.description).toContain('fixed 30-minute timeout');
+    expect(tool.description).toContain('2 hours timeout by default');
+    expect(tool.description).not.toContain('fixed 2-hour timeout');
+    expect(tool.description).not.toContain('fixed 30-minute timeout');
     expect(tool.description).not.toContain('operator-configured background timeout');
     expect(tool.description).not.toContain('no time limit');
     // Background guidance must steer foreground-by-default, so the model doesn't
     // background-launch a result it needs and then block waiting on it.
     expect(tool.description).toContain('Default to a foreground subagent');
+  });
+
+  it('renders a custom resolved timeout and no-timeout configuration in the description', () => {
+    const host = mockSubagentHost({ spawn: vi.fn() });
+    const custom = agentTool(host, createBackgroundManager().manager, undefined, {
+      subagentTimeoutMs: 30 * 60 * 1000,
+    });
+    expect(custom.description).toContain('30 minutes timeout by default');
+
+    const unlimited = agentTool(host, createBackgroundManager().manager, undefined, {
+      subagentTimeoutMs: 0,
+    });
+    expect(unlimited.description).toContain('Subagents have no timeout in this session');
   });
 
   it('exposes a primary/secondary model parameter in the JSON schema when the experiment is enabled', () => {

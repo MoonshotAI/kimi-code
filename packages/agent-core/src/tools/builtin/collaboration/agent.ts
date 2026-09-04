@@ -147,7 +147,16 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       subagents,
       options?.showModelPreferences ?? false,
     );
-    const baseDescription = `${AGENT_DESCRIPTION_BASE}\n\n${
+    const timeoutMs = this.subagentTimeoutMs ?? DEFAULT_SUBAGENT_TIMEOUT_MS;
+    const timeoutNote =
+      timeoutMs === 0
+        ? 'Subagents have no timeout in this session. If one is interrupted, resume the same agent instead of starting over.'
+        : `Subagents use a ${formatSubagentTimeoutDescription(timeoutMs)} timeout by default (overridable via config/env). If one times out, resume the same agent instead of starting over.`;
+    const descriptionBase = AGENT_DESCRIPTION_BASE.replace(
+      '__SUBAGENT_TIMEOUT_NOTE__',
+      timeoutNote,
+    );
+    const baseDescription = `${descriptionBase}\n\n${
       this.allowBackground ? AGENT_BACKGROUND_DESCRIPTION : AGENT_BACKGROUND_DISABLED_DESCRIPTION
     }`;
     const sections = [baseDescription];
