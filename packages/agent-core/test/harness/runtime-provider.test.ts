@@ -732,6 +732,55 @@ describe('resolveRuntimeProvider Kimi request headers', () => {
     });
   });
 
+  it('includes x-opencode-session in defaultHeaders when promptCacheKey is set (Kimi provider)', () => {
+    const resolved = resolveRuntimeProvider({
+      config: BASE_CONFIG,
+      promptCacheKey: 'session-test-abc',
+      kimiRequestHeaders: TEST_KIMI_HEADERS,
+    });
+
+    expect(resolved.provider.defaultHeaders).toHaveProperty('x-opencode-session', 'session-test-abc');
+  });
+
+  it('includes x-opencode-session in defaultHeaders when promptCacheKey is set (OpenAI provider)', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        defaultModel: 'gpt-alias',
+        providers: { openai: { type: 'openai', apiKey: 'sk-openai' } },
+        models: { 'gpt-alias': { provider: 'openai', model: 'gpt-runtime', maxContextSize: 200000 } },
+      },
+      promptCacheKey: 'session-test-abc',
+      kimiRequestHeaders: TEST_KIMI_HEADERS,
+    });
+
+    expect(resolved.provider.defaultHeaders).toHaveProperty('x-opencode-session', 'session-test-abc');
+  });
+
+  it('omits x-opencode-session when no promptCacheKey is set', () => {
+    const resolved = resolveRuntimeProvider({ config: BASE_CONFIG });
+
+    expect('defaultHeaders' in resolved.provider).toBe(false);
+  });
+
+  it('does not leak x-opencode-session to provider.customHeaders if customHeaders defines it', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          'managed:kimi-code': {
+            type: 'kimi',
+            apiKey: 'test-key',
+            baseUrl: 'https://api.example/v1',
+            customHeaders: { 'x-opencode-session': 'custom-override' },
+          },
+        },
+      },
+      promptCacheKey: 'session-test-abc',
+    });
+
+    expect(resolved.provider.defaultHeaders?.['x-opencode-session']).toBe('custom-override');
+  });
+
   it('applies only the User-Agent from kimiRequestHeaders to non-Kimi providers', () => {
     const resolved = resolveRuntimeProvider({
       config: {
