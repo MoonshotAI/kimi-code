@@ -1,3 +1,10 @@
+/**
+ * Scenario: LocalKaos process execution and lifecycle management.
+ * Responsibilities: stream I/O, exit status, wait semantics, and process cleanup.
+ * Wiring: real local child processes and streams; no process boundary is stubbed.
+ * Run: pnpm exec vitest run packages/kaos/test/e2e/process-lifecycle.test.ts
+ */
+
 import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -91,6 +98,18 @@ describe('e2e: process lifecycle', () => {
       const exitCode = await proc.wait();
       expect(exitCode).toBe(42);
       expect(proc.exitCode).toBe(42);
+    });
+
+    it('allows wait-before-read when stdout exceeds the prefetch limit', async () => {
+      const outputBytes = 1024 * 1024;
+      const proc = await kaos.exec(
+        'node',
+        '-e',
+        `process.stdout.write(Buffer.alloc(${String(outputBytes)}, 0x61))`,
+      );
+
+      await expect(proc.wait()).resolves.toBe(0);
+      await expect(streamToBuffer(proc.stdout)).resolves.toHaveLength(outputBytes);
     });
   });
 
