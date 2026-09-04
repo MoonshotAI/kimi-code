@@ -183,6 +183,7 @@ function makeFakeHarness() {
             }),
           };
         }),
+        drain: vi.fn(async () => {}),
       },
     ],
     [IAgentTaskService, { list: vi.fn(() => []) }],
@@ -837,17 +838,23 @@ describe('runV2Print', () => {
       order.push('flush');
     });
 
-    // A turn that is still in flight when the signal arrives.
+    // A turn that is still in flight when the signal arrives; its prompt
+    // completion stays pending until released below.
     const promptService = agentServices.get(IAgentPromptService) as {
       enqueue: ReturnType<typeof vi.fn>;
+      drain: ReturnType<typeof vi.fn>;
     };
     let settleTurn!: (result: unknown) => void;
+    let releaseCompletion!: () => void;
     promptService.enqueue.mockResolvedValueOnce({
       launched: Promise.resolve({
         id: 1,
         result: new Promise((resolve) => {
           settleTurn = resolve;
         }),
+      }),
+      completion: new Promise<void>((resolve) => {
+        releaseCompletion = resolve;
       }),
     });
 
@@ -876,7 +883,17 @@ describe('runV2Print', () => {
     }
     const onSigint = handlers.get('SIGINT')!;
     settleTurn({ type: 'cancelled', steps: 0, reason: new Error('aborted') });
-    await onSigint();
+    const sigintRun = onSigint();
+    // Quiesce awaits the prompt completion before the wire flush: while the
+    // completion is still pending, the loops are already idle but the flush
+    // must not have happened.
+    for (let i = 0; i < 100 && !order.includes('settled'); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(promptService.drain).toHaveBeenCalled();
+    expect(order).toEqual(['cancel', 'settled']);
+    releaseCompletion();
+    await sigintRun;
 
     expect(order).toEqual(['cancel', 'settled', 'flush', 'exit:130']);
     expect(await outcome).toBeInstanceOf(Error);
