@@ -198,6 +198,13 @@ function isDisplayableTurnOrigin(origin: TurnOrigin): boolean {
   );
 }
 
+function userDisplayText(input: unknown, origin: unknown): string {
+  const parts = Array.isArray(input) ? input : [];
+  const o = origin as { kind?: string; skillActivations?: unknown[] } | undefined;
+  const bundled = o?.kind === 'user' ? (o.skillActivations?.length ?? 0) : 0;
+  return textFromContent(parts.slice(bundled));
+}
+
 function parseNotificationXmlText(text: string): TaskNotificationPayload | undefined {
   const match = text.match(/^<notification\s+([^>]*)>\n?/);
   if (!match) return undefined;
@@ -305,7 +312,7 @@ export function buildColdHistory(
         };
         turns.push(turn);
         if (isDisplayableTurnOrigin(origin)) {
-          const rawText = textFromContent(record.input);
+          const rawText = userDisplayText(record.input, originValue);
           const notification = origin.kind === 'task' ? parseNotificationXmlText(rawText) : undefined;
           turn.users.push({
             turn,
