@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, open, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 
 import {
@@ -240,26 +240,21 @@ export class SearchIndexCore {
   }
 
   private get deletedLedgerPath(): string {
-    return join(this.indexDir, 'deleted-sessions.json');
+    return join(this.indexDir, 'deleted-sessions.jsonl');
   }
 
   private async readDeletedLedger(): Promise<Set<string>> {
     try {
-      const parsed: unknown = JSON.parse(await readFile(this.deletedLedgerPath, 'utf8'));
-      if (!Array.isArray(parsed)) return new Set();
-      return new Set(parsed.filter((entry): entry is string => typeof entry === 'string'));
+      const raw = await readFile(this.deletedLedgerPath, 'utf8');
+      return new Set(raw.split('\n').filter((line) => line.length > 0));
     } catch {
       return new Set();
     }
   }
 
   private async appendDeletedLedger(sessionId: string): Promise<void> {
-    const ledger = await this.readDeletedLedger();
-    if (ledger.has(sessionId)) return;
-    ledger.add(sessionId);
-    const capped = [...ledger].slice(-500);
     await mkdir(dirname(this.deletedLedgerPath), { recursive: true });
-    await writeFile(this.deletedLedgerPath, JSON.stringify(capped), 'utf8');
+    await appendFile(this.deletedLedgerPath, `${sessionId}\n`, 'utf8');
   }
 
   ensureOpen(): Promise<void> {

@@ -323,6 +323,20 @@ describe('GlobalSearchService', () => {
     expect((await service.search({ query: '苹果' })).items).toEqual([]);
   });
 
+  it('records concurrent deletions without losing tombstones', async () => {
+    const s1 = summary('s1', '删除测试一', T1);
+    const s2 = summary('s2', '删除测试二', T1);
+    await writeWire(home!, 's1', 'main', [userLine('第一个苹果', T1)]);
+    await writeWire(home!, 's2', 'main', [userLine('第二个苹果', T1)]);
+    const service = track(makeService(home!, staticIndex([s1, s2])));
+    await service.reindex();
+    expect((await service.search({ query: '苹果' })).items.length).toBe(2);
+
+    await Promise.all([service.deleteSession('s1'), service.deleteSession('s2')]);
+
+    expect((await service.search({ query: '苹果' })).items).toEqual([]);
+  });
+
   it('hits session titles as title docs', async () => {
     const s1 = summary('s1', '季度总结报告', T1);
     await writeWire(home!, 's1', 'main', [userLine('随便说点什么', T1)]);

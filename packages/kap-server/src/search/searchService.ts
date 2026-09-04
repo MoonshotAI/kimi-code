@@ -280,6 +280,7 @@ export class GlobalSearchService implements IGlobalSearchService {
         sessionId,
         error: error instanceof Error ? error.message : String(error),
       });
+      throw error;
     }
   }
 
