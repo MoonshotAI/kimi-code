@@ -16,6 +16,7 @@ export const taskNotificationPayloadSchema = z.object({
   source_kind: z.string().optional(),
   source_id: z.string().optional(),
   agent_id: z.string().optional(),
+  raw: z.string().optional(),
 });
 export type TaskNotificationPayload = z.infer<typeof taskNotificationPayloadSchema>;
 

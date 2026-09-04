@@ -549,6 +549,7 @@ export class AgentV2Projector {
       source_kind: event.sourceKind as string | undefined,
       source_id: taskId || undefined,
       agent_id: event.sourceAgentId as string | undefined,
+      raw: event.raw as string | undefined,
     };
     const text = `${title}\n${body}`.trim();
     const turn = this.latestTurn();

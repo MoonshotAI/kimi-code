@@ -65,6 +65,7 @@ export interface AgentTaskNotificationContext {
   readonly sourceKind: string;
   readonly sourceId: string;
   readonly sourceAgentId?: string;
+  readonly raw?: string;
 }
 
 export interface AgentTaskWaitDelivery {

@@ -211,6 +211,7 @@ function parseNotificationXmlText(text: string): TaskNotificationPayload | undef
     source_kind: attr('source_kind'),
     source_id: attr('source_id'),
     agent_id: attr('agent_id'),
+    raw: text,
   };
 }
 

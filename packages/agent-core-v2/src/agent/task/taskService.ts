@@ -1302,6 +1302,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
         sourceKind: notification.source_kind,
         sourceId: notification.source_id,
         sourceAgentId: typeof notification.agent_id === 'string' ? notification.agent_id : undefined,
+        raw: renderNotificationXml(notification),
       }),
     );
   }
