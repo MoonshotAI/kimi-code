@@ -13,7 +13,7 @@ import {
   userCancellationReason,
 } from '#/_base/utils/abort';
 import { setClampedTimeout } from '#/_base/utils/timer';
-import { escapeXml, escapeXmlAttr } from '#/_base/utils/xml-escape';
+import { escapeXml, escapeXmlAttr, escapeXmlTags } from '#/_base/utils/xml-escape';
 import { IEventBus } from '#/app/event/eventBus';
 import { Error2, ErrorCodes } from '#/errors';
 import { z } from 'zod';
@@ -163,6 +163,7 @@ const SIGTERM_GRACE_MS = 5_000;
 const TASK_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
 const SESSION_CLOSED_REASON = 'Session closed';
 const NOTIFICATION_FALLBACK_PREVIEW_BYTES = 3_000;
+const QUESTION_ANSWER_INLINE_BYTES = 16_000;
 const ACTIVE_BACKGROUND_TASK_INJECTION_VARIANT = 'background_task_status';
 const TASK_RESUME_TERMINATION_VARIANT = 'task_resume_termination';
 const ACTIVE_BACKGROUND_TASK_GUIDANCE = [
@@ -1260,10 +1261,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     try {
       let output = emptyOutputSnapshot();
       try {
-        output = await this.getOutputSnapshot(info.taskId, 0);
-        if (!output.fullOutputAvailable) {
-          output = await this.getOutputSnapshot(info.taskId, NOTIFICATION_FALLBACK_PREVIEW_BYTES);
-        }
+        output = await this.notificationOutputSnapshot(info);
       } catch (error) {
         this.log.error('task notification output read failed; delivering without output', {
           taskId: info.taskId,
@@ -1275,10 +1273,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       if (this.deliveredNotificationKeys.has(key)) return undefined;
       if (this.hasDeliveredNotification(key)) return undefined;
       this.scheduledNotificationKeys.add(key);
-      const notification = buildAgentTaskNotification(
-        info,
-        agentTaskNotificationChildren(output),
-      );
+      const notification = buildAgentTaskNotification(info, output);
       const content = [
         {
           type: 'text',
@@ -1289,6 +1284,15 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     } finally {
       this.buildingNotificationKeys.delete(key);
     }
+  }
+
+  private async notificationOutputSnapshot(info: AgentTaskInfo): Promise<AgentTaskOutputSnapshot> {
+    if (info.kind === 'question') {
+      return this.getOutputSnapshot(info.taskId, QUESTION_ANSWER_INLINE_BYTES);
+    }
+    const persisted = await this.getOutputSnapshot(info.taskId, 0);
+    if (persisted.fullOutputAvailable) return persisted;
+    return this.getOutputSnapshot(info.taskId, NOTIFICATION_FALLBACK_PREVIEW_BYTES);
   }
 
   private fireNotificationHook(notification: AgentTaskNotification): void {
@@ -1389,13 +1393,62 @@ function emptyOutputSnapshot(): AgentTaskOutputSnapshot {
 }
 
 function agentTaskNotificationChildren(
-  output: AgentTaskOutputSnapshot,
+  info: AgentTaskInfo,
+  output: AgentTaskOutputSnapshot | undefined,
 ): readonly string[] | undefined {
+  if (output === undefined) return undefined;
+  if (inlinesQuestionAnswer(info, output)) {
+    return output.preview.length === 0 ? undefined : [renderAnswerBlock(output.preview)];
+  }
   if (output.fullOutputAvailable && output.outputPath !== undefined) {
     return [renderOutputFileBlock(output.outputPath, output.outputSizeBytes)];
   }
   if (output.preview.length === 0) return undefined;
   return [renderOutputPreviewBlock(output)];
+}
+
+function inlinesQuestionAnswer(info: AgentTaskInfo, output: AgentTaskOutputSnapshot): boolean {
+  return info.kind === 'question' && !output.truncated;
+}
+
+function renderAnswerBlock(answer: string): string {
+  return ['<answer>', escapeXmlTags(answer), '</answer>'].join('\n');
+}
+
+function questionNotificationText(
+  info: AgentTaskInfo,
+  output: AgentTaskOutputSnapshot | undefined,
+): { readonly title: string; readonly body: string } | undefined {
+  if (info.status !== 'completed' || output === undefined || !inlinesQuestionAnswer(info, output)) {
+    return undefined;
+  }
+  const outcome = questionOutcome(output.preview);
+  if (outcome === 'answered') {
+    return {
+      title: 'Background question answered',
+      body: `The user answered "${info.description}".`,
+    };
+  }
+  if (outcome === 'dismissed') {
+    return {
+      title: 'Background question dismissed',
+      body: `The user dismissed "${info.description}" without answering.`,
+    };
+  }
+  return undefined;
+}
+
+function questionOutcome(output: string): 'answered' | 'dismissed' | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return undefined;
+  const answers = (parsed as { readonly answers?: unknown }).answers;
+  if (typeof answers !== 'object' || answers === null || Array.isArray(answers)) return undefined;
+  return Object.keys(answers).length > 0 ? 'answered' : 'dismissed';
 }
 
 function renderOutputFileBlock(outputPath: string, outputSizeBytes: number): string {
@@ -1504,8 +1557,9 @@ function buildAgentTaskNotificationBody(info: AgentTaskInfo): string {
 
 function buildAgentTaskNotification(
   info: AgentTaskInfo,
-  children?: readonly string[],
+  output?: AgentTaskOutputSnapshot,
 ): AgentTaskNotification {
+  const question = questionNotificationText(info, output);
   return {
     id: taskNotificationId(info.taskId, info.status),
     category: 'task',
@@ -1513,10 +1567,10 @@ function buildAgentTaskNotification(
     source_kind: 'background_task',
     source_id: info.taskId,
     agent_id: info.kind === 'agent' ? info.agentId : undefined,
-    title: `Background ${info.kind} ${info.status}`,
+    title: question?.title ?? `Background ${info.kind} ${info.status}`,
     severity: info.status === 'completed' ? 'info' : 'warning',
-    body: buildAgentTaskNotificationBody(info),
-    children,
+    body: question?.body ?? buildAgentTaskNotificationBody(info),
+    children: agentTaskNotificationChildren(info, output),
   };
 }
 

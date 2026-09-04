@@ -15,12 +15,10 @@ import { TurnEnded } from '#/agent/loop/turnOps';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import { IEventBus, type ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
-import type { IFlagService } from '#/app/flag/flag';
 import { IAgentFileHistoryService } from '#/features/fileHistory/fileHistory';
 import { AgentFileHistoryService, countLineDiff } from '#/features/fileHistory/fileHistoryService';
 import { displacedCheckpoints } from '#/features/fileHistory/fileHistoryOps';
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { FILE_HISTORY_FLAG_ENV } from '#/features/fileHistory/flag';
 import type { ToolCall } from '#/kosong/contract/message';
 import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -39,7 +37,7 @@ import type { RunnableToolExecution } from '#/tool/toolContract';
 import { createFakeHostFs } from '../../tools/fixtures/fake-exec';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
 import { registerTestAgentWire, registerTestEventDispatcher, testWireScope } from '../../wire/stubs';
-import { createTestAgent } from '../../harness';
+import { createTestAgent, homeDirServices } from '../../harness';
 
 const SCOPE = 'wire';
 const KEY = 'file-history-test';
@@ -56,7 +54,6 @@ describe('AgentFileHistoryService', () => {
   let blobs: IBlobStore;
   let scopeCtx: IAgentScopeContext;
   let files: Map<string, Uint8Array>;
-  let flagEnabled: boolean;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -79,7 +76,6 @@ describe('AgentFileHistoryService', () => {
     executorEvents = stubToolExecutorEvents();
     blobs = new BlobStoreService(new InMemoryStorageService());
     files = new Map();
-    flagEnabled = true;
   });
 
   afterEach(() => {
@@ -119,7 +115,6 @@ describe('AgentFileHistoryService', () => {
       agentId === scopeCtx.agentId
         ? scopeCtx
         : makeAgentScopeContext({ agentId, agentScope: testWireScope(SCOPE, KEY) });
-    const flags = { enabled: () => flagEnabled } as unknown as IFlagService;
     const workspace = {
       workDir: WORK_DIR,
       additionalDirs: [],
@@ -138,7 +133,6 @@ describe('AgentFileHistoryService', () => {
         executorEvents.executor,
         eventBus,
         ix.get(IEventDispatcher),
-        flags,
         stubRuntime(),
             blobs,
           workspace,
@@ -312,19 +306,6 @@ describe('AgentFileHistoryService', () => {
     ]);
   });
 
-  it('does nothing while the flag is off', async () => {
-    flagEnabled = false;
-    const service = createService();
-    setFile('/ws/a.txt', 'content\n');
-
-    startTurn(1);
-    await fireEdit(service, '/ws/a.txt', 1);
-    await service.settled();
-
-    const state = service.history();
-    expect(state.checkpoints).toEqual([]);
-    expect(state.tracked).toEqual([]);
-  });
 
   it('excludes user edits between turns via the end-of-turn checkpoint', async () => {
     const service = createService();
@@ -349,25 +330,6 @@ describe('AgentFileHistoryService', () => {
     expect(await service.contentAt(2, 'a.txt')).toBeUndefined();
   });
 
-  it('guards reads once the flag is turned off after data was recorded', async () => {
-    const service = createService();
-    setFile('/ws/a.txt', 'content\n');
-
-    startTurn(1);
-    await fireEdit(service, '/ws/a.txt', 1);
-    setFile('/ws/a.txt', 'changed\n');
-    endTurn(1);
-    startTurn(2);
-    await service.settled();
-    expect(await service.changes(1)).toEqual([
-      { path: 'a.txt', status: 'modified', additions: 1, deletions: 1 },
-    ]);
-    expect((await service.contentAt(1, 'a.txt'))?.content).toBe('content\n');
-
-    flagEnabled = false;
-    expect(await service.changes(1)).toEqual([]);
-    expect(await service.contentAt(1, 'a.txt')).toBeUndefined();
-  });
 
   it('reports an over-budget modified file as oversize with no counts', async () => {
     const service = createService();
@@ -472,6 +434,28 @@ describe('AgentFileHistoryService', () => {
     expect(await service.turnRecorded(3)).toBe(false);
   });
 
+  it('reports a deletion turn unrecorded once its baseline blob is gone', async () => {
+    const service = createService();
+    setFile('/ws/d.txt', 'gone\n');
+
+    startTurn(1);
+    await fireEdit(service, '/ws/d.txt', 1);
+    files.delete('/ws/d.txt');
+    endTurn(1);
+    await service.settled();
+
+    expect(await service.changes(1)).toEqual([
+      { path: 'd.txt', status: 'deleted', additions: 0, deletions: 1 },
+    ]);
+    expect(await service.turnRecorded(1)).toBe(true);
+
+    const keyed = Object.values(
+      service.history().checkpoints.find((c) => c.turnId === 1 && c.phase !== 'end')!.entries,
+    ).find((entry) => entry.key !== null);
+    await blobs.delete(scopeCtx.scope(), keyed!.key!);
+    expect(await service.turnRecorded(1)).toBe(false);
+  });
+
   it('keeps a shared baseline blob alive until its last window reference leaves', async () => {
     const service = createService();
     setFile('/ws/s.txt', 'base\n');
@@ -522,19 +506,12 @@ describe('AgentFileHistoryService', () => {
 });
 
 describe('file history through real scripted turns', () => {
-  beforeEach(() => {
-    process.env[FILE_HISTORY_FLAG_ENV] = '1';
-  });
-
-  afterEach(() => {
-    delete process.env[FILE_HISTORY_FLAG_ENV];
-  });
-
   it('checkpoints edits across turns and serves exact per-turn changes', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'file-history-e2e-'));
+    const home = await mkdtemp(join(tmpdir(), 'file-history-home-'));
     const file = join(dir, 'notes.txt');
     await writeFile(file, 'alpha\nbeta\n');
-    const ctx = createTestAgent();
+    const ctx = createTestAgent(homeDirServices(home));
     try {
       await ctx.rpc.setPermission({ mode: 'yolo' });
 
@@ -582,9 +559,14 @@ describe('file history through real scripted turns', () => {
         { path: file, status: 'modified', additions: 1, deletions: 1 },
       ]);
       expect(await service.changes(1)).toEqual([]);
+
+      expect(await service.turnRecorded(0)).toBe(true);
+      expect(await service.turnRecorded(1)).toBe(false);
+      expect(await service.turnRecorded(99)).toBe(false);
     } finally {
       await ctx.dispose();
       await rm(dir, { recursive: true, force: true });
+      await rm(home, { recursive: true, force: true });
     }
   });
 

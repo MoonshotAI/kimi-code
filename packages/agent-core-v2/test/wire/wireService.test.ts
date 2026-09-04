@@ -69,7 +69,7 @@ async function collect(journal: AsyncIterable<WireRecord>): Promise<WireRecord[]
 function wireOverLog(
   stubLog: IAppendLogStore,
   key: string,
-  dependencies: { blob?: IAgentBlobService; telemetry?: ITelemetryService } = {},
+  dependencies: { blob?: IAgentBlobService; storage?: IFileSystemStorageService; telemetry?: ITelemetryService } = {},
 ): IWireService {
   const stubIx = disposables.add(new TestInstantiationService());
   return registerTestAgentWire(stubIx, testWireScope(SCOPE, key), { log: stubLog, ...dependencies });
@@ -933,5 +933,71 @@ describe('WireService flush', () => {
     await flushPromise;
     expect(flushed).toBe(true);
     expect(records).toEqual([{ type: 'wire.test.gated', time: 1 }]);
+  });
+});
+
+describe('WireService journal location', () => {
+  it('counts every line written to the journal, including the metadata envelope', async () => {
+    await wire.seal();
+    wire.appendRecord({ type: 'wire.test.one', time: 1 });
+    wire.appendRecord({ type: 'wire.test.two', time: 2 });
+    await wire.flush();
+
+    expect(wire.lineCount()).toBe(3);
+  });
+
+  it('counts dehydrated appends once they land', async () => {
+    await wire.seal();
+    wire.appendRecord({ type: 'wire.test.gated', time: 1 }, async (record) => record);
+    await wire.flush();
+
+    expect(wire.lineCount()).toBe(2);
+  });
+
+  it('recounts the journal lines when a fresh service reads it back', async () => {
+    await wire.seal();
+    wire.appendRecord({ type: 'wire.test.one', time: 1 });
+    wire.appendRecord({ type: 'wire.test.two', time: 2 });
+    await wire.flush();
+
+    const reopened = wireOverLog(log, KEY);
+    expect(reopened.lineCount()).toBe(0);
+    await collect(reopened.readJournal());
+
+    expect(reopened.lineCount()).toBe(3);
+    reopened.appendRecord({ type: 'wire.test.three', time: 3 });
+    await reopened.flush();
+    expect(reopened.lineCount()).toBe(4);
+  });
+
+  it('reports no journal path when the storage has no on-disk location', () => {
+    expect(wire.journalPath()).toBeUndefined();
+  });
+
+  it('tracks the latest context.clear line across appends and reads', async () => {
+    await wire.seal();
+    wire.appendRecord({ type: 'wire.test.one', time: 1 });
+    expect(wire.lastContextClearLine()).toBeUndefined();
+    wire.appendRecord({ type: 'context.clear', time: 2 });
+    wire.appendRecord({ type: 'wire.test.two', time: 3 });
+    await wire.flush();
+
+    expect(wire.lastContextClearLine()).toBe(3);
+
+    const reopened = wireOverLog(log, KEY);
+    expect(reopened.lastContextClearLine()).toBeUndefined();
+    await collect(reopened.readJournal());
+    expect(reopened.lastContextClearLine()).toBe(3);
+  });
+
+  it('reports the on-disk journal path resolved by the storage layer', () => {
+    const locatedStorage: IFileSystemStorageService = Object.assign(Object.create(storage), {
+      pathFor: (scope: string, key: string) => `/home/user/.kimi-code/${scope}/${key}`,
+    }) as IFileSystemStorageService;
+    const located = wireOverLog(log, 'located', { storage: locatedStorage });
+
+    expect(located.journalPath()).toBe(
+      `/home/user/.kimi-code/${testWireScope(SCOPE, 'located')}/${AGENT_WIRE_RECORD_KEY}`,
+    );
   });
 });

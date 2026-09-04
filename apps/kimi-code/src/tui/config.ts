@@ -56,6 +56,7 @@ export const TuiConfigFileSchema = z.object({
   render_latex: z.boolean().optional(),
   disable_paste_burst: z.boolean().optional(),
   cache_expiry_hint: z.boolean().optional(),
+  disable_feedback_survey: z.boolean().optional(),
   editor: z
     .object({
       command: z.string().optional(),
@@ -84,6 +85,7 @@ export const TuiConfigSchema = z.object({
   /** Present in every normalized config; optional only so hand-built test
    * fixtures from before this field existed still typecheck. */
   cacheExpiryHint: z.boolean().optional(),
+  disableFeedbackSurvey: z.boolean().optional(),
   editorCommand: z.string().nullable(),
   notifications: NotificationsConfigSchema,
   upgrade: UpgradePreferencesSchema,
@@ -111,6 +113,7 @@ export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({
   renderLatex: true,
   disablePasteBurst: false,
   cacheExpiryHint: true,
+  disableFeedbackSurvey: false,
   editorCommand: null,
   notifications: DEFAULT_NOTIFICATIONS_CONFIG,
   upgrade: DEFAULT_UPGRADE_PREFERENCES,
@@ -198,6 +201,8 @@ export function normalizeTuiConfig(
     renderLatex: config.render_latex ?? DEFAULT_TUI_CONFIG.renderLatex,
     disablePasteBurst: config.disable_paste_burst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
     cacheExpiryHint: config.cache_expiry_hint ?? DEFAULT_TUI_CONFIG.cacheExpiryHint,
+    disableFeedbackSurvey:
+      config.disable_feedback_survey ?? DEFAULT_TUI_CONFIG.disableFeedbackSurvey,
     editorCommand: command === undefined || command.length === 0 ? null : command,
     notifications: {
       enabled: config.notifications?.enabled ?? DEFAULT_NOTIFICATIONS_CONFIG.enabled,
@@ -248,6 +253,7 @@ theme = "${escapeTomlBasicString(config.theme)}" # "auto" | "dark" | "light" | c
 render_latex = ${String(config.renderLatex !== false)} # false keeps LaTeX math in assistant messages as raw source
 disable_paste_burst = ${String(config.disablePasteBurst)} # true disables non-bracketed paste-burst fallback
 cache_expiry_hint = ${String(config.cacheExpiryHint !== false)} # false disables the "cache expired" dialog on resume / idle submit
+disable_feedback_survey = ${String(config.disableFeedbackSurvey === true)} # true hides the occasional session rating prompt
 
 [editor]
 command = "${escapeTomlBasicString(config.editorCommand ?? '')}" # Empty uses $VISUAL / $EDITOR

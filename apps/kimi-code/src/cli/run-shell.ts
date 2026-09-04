@@ -140,6 +140,7 @@ export async function runShell(
     migrationPlan,
     migrateOnly: runOptions.migrateOnly,
     engineV2,
+    telemetryDisabled: config.telemetry === false,
   });
 
   initializeCliTelemetry({
