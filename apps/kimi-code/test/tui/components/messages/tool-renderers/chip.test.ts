@@ -391,3 +391,15 @@ describe('Grep chip with a zero-valued context flag', () => {
     ).toBe('3 matches across 2 files');
   });
 });
+
+describe('Grep chip when -C overrides -A/-B', () => {
+  it('follows the effective flag, since a defined -C makes the backend drop -A and -B', () => {
+    expect(
+      chipFor(
+        'Grep',
+        { pattern: 'foo', output_mode: 'content', '-n': false, '-C': 0, '-A': 2 },
+        result('src/a.ts:foo\nsrc/a.ts:foo again\nsrc/b.ts:foo'),
+      ),
+    ).toBe('3 matches across 2 files');
+  });
+});

@@ -131,11 +131,14 @@ export function parseGrepOutput(toolCall: ToolCallBlockData, output: string): Gr
   // (`-A`/`-B`/`-C`) look exactly the same — the backend separates fields
   // with ':' unconditionally — so an exact match count is unknowable then.
   const numbered = toolCall.args['-n'] !== false;
-  // The schema allows zero, which asks for no context rows at all.
-  const hasContext = ['-A', '-B', '-C'].some((flag) => {
+  // The schema allows zero, which asks for no context rows at all, and a
+  // defined `-C` makes the backend drop `-A`/`-B` entirely.
+  const positive = (flag: string): boolean => {
     const value = toolCall.args[flag];
     return typeof value === 'number' && value > 0;
-  });
+  };
+  const hasContext =
+    typeof toolCall.args['-C'] === 'number' ? positive('-C') : positive('-A') || positive('-B');
   const countable = numbered || !hasContext;
   const entries: GrepEntry[] = [];
   const paths = new Set<string>();

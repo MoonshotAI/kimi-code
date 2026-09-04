@@ -155,7 +155,12 @@ import {
   type TUIStartupOptions,
   type TUIStartupState,
 } from './types';
-import { hasDispose, hasHiddenContent, isExpandable } from './utils/component-capabilities';
+import {
+  hasDispose,
+  hasHiddenContent,
+  isExpandable,
+  isExpandedComponent,
+} from './utils/component-capabilities';
 import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
 import { pickForegroundTasks } from './utils/foreground-task';
@@ -3477,9 +3482,19 @@ export class KimiTUI {
    */
   private toolOutputExpandHint(): 'expand' | 'collapse' | null {
     const children = this.state.transcriptContainer.children;
+    if (this.state.toolOutputExpanded) {
+      // Toggling off collapses every expanded card, including one that slid
+      // out of the expansion window since it was expanded, so any expanded
+      // card with hidden content keeps the collapse hint on.
+      for (let i = children.length - 1; i >= 0; i--) {
+        const child = children[i];
+        if (isExpandedComponent(child) && hasHiddenContent(child)) return 'collapse';
+      }
+      return null;
+    }
     const cutoff = this.expandCutoff(children);
     for (let i = children.length - 1; i >= cutoff; i--) {
-      if (hasHiddenContent(children[i])) return this.state.toolOutputExpanded ? 'collapse' : 'expand';
+      if (hasHiddenContent(children[i])) return 'expand';
     }
     return null;
   }

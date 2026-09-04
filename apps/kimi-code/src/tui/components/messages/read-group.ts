@@ -71,6 +71,10 @@ export class ReadGroupComponent extends Container {
     return this.entries.length > 0;
   }
 
+  isExpanded(): boolean {
+    return this.expanded;
+  }
+
   /**
    * Borrows a standalone `ToolCallComponent` into the group as a hidden state
    * container. Snapshot changes trigger throttled refreshes. Re-attaching the

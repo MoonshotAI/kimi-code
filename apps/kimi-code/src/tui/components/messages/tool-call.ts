@@ -799,6 +799,11 @@ export class ToolCallComponent extends Container {
     return this.hiddenContent || this.truncatedAtLastRender;
   }
 
+  /** Whether the global ctrl+o toggle currently has this card expanded. */
+  isExpanded(): boolean {
+    return this.expanded;
+  }
+
   private computeHiddenContent(): boolean {
     const { name, args } = this.toolCall;
     // A solo Agent card with subagent state never renders its result body and

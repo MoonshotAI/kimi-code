@@ -81,6 +81,10 @@ export class ShellRunComponent extends Container {
    * (or a capped buffer) behind it, or a finished preview cut to its row cap.
    * Drives the footer's ctrl+o hint.
    */
+  isExpanded(): boolean {
+    return this.expanded;
+  }
+
   hasHiddenContent(): boolean {
     if (this.disposed || this.backgrounded) return false;
     if (this.running) return this.runningHidesRows;
