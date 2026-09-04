@@ -1545,7 +1545,7 @@ describe('FullCompaction', () => {
         {
           "role": "user",
           "text": "<system-reminder>
-      Context compaction is complete — resume from the latest user message; if a turn was in flight when compaction began, finish that turn first.
+      Context compaction is complete — continue the work for the latest user message from where it stopped.
       </system-reminder>",
         },
       ]
@@ -1775,14 +1775,14 @@ describe('FullCompaction', () => {
         messages:
           user: text "old user one\\n\\nold user two\\n\\nrecent user three\\n\\nAnswer after compacting"
           user: text "The conversation so far has been compacted to free up context. What follows is your own working summary of this task — use it to continue your train of thought rather than starting over. Treat it as notes, not proof: where it says a step was done, tests passed, or a fix worked, verify that yourself before relying on it. Any user messages earlier in this context are preserved verbatim from the compacted conversation; where a system-reminder note among them marks an omitted middle section, the user messages it replaced are covered by this summary. Respond to the latest genuine user message — earlier requests recorded in the summary were already addressed.\\nAuto compacted summary."
-          user: text "<system-reminder>\\nContext compaction is complete — resume from the latest user message; if a turn was in flight when compaction began, finish that turn first.\\n</system-reminder>"
+          user: text "<system-reminder>\\nContext compaction is complete — continue the work for the latest user message from where it stopped.\\n</system-reminder>"
     `);
     expect(records).toContainEqual({
       event: 'compaction_finished',
       properties: expect.objectContaining({
         source: 'auto',
         tokens_before: 6_169,
-        tokens_after: 6_199,
+        tokens_after: 6_190,
         compacted_count: 7,
         retry_count: 0,
       }),
@@ -2390,7 +2390,7 @@ describe('FullCompaction', () => {
           "user: The conversation so far has been compacted to free up context. What follows is your own working summary of this task — use it to continue your train of thought rather than starting over. Treat it as notes, not proof: where it says a step was done, tests passed, or a fix worked, verify that yourself before relying on it. Any user messages earlier in this context are preserved verbatim from the compacted conversation; where a system-reminder note among them marks an omitted middle section, the user messages it replaced are covered by this summary. Respond to the latest genuine user message — earlier requests recorded in the summary were already addressed.
       Overflow compacted summary.",
           "user: <system-reminder>
-      Context compaction is complete — resume from the latest user message; if a turn was in flight when compaction began, finish that turn first.
+      Context compaction is complete — continue the work for the latest user message from where it stopped.
       </system-reminder>",
         ],
       ]
@@ -3258,7 +3258,7 @@ describe('FullCompaction', () => {
           "user: The conversation so far has been compacted to free up context. What follows is your own working summary of this task — use it to continue your train of thought rather than starting over. Treat it as notes, not proof: where it says a step was done, tests passed, or a fix worked, verify that yourself before relying on it. Any user messages earlier in this context are preserved verbatim from the compacted conversation; where a system-reminder note among them marks an omitted middle section, the user messages it replaced are covered by this summary. Respond to the latest genuine user message — earlier requests recorded in the summary were already addressed.
       Placeholder compacted summary.",
           "user: <system-reminder>
-      Context compaction is complete — resume from the latest user message; if a turn was in flight when compaction began, finish that turn first.
+      Context compaction is complete — continue the work for the latest user message from where it stopped.
       </system-reminder>",
         ],
       ]

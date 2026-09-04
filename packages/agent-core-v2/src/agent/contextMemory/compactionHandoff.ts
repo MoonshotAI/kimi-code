@@ -163,7 +163,7 @@ export function createCompactionContinuationMessage(): ContextMessage {
 
 export function buildCompactionContinuationText(): string {
   return wrapSystemReminder(
-    'Context compaction is complete — resume from the latest user message; if a turn was in flight when compaction began, finish that turn first.',
+    'Context compaction is complete — continue the work for the latest user message from where it stopped.',
   );
 }
 
