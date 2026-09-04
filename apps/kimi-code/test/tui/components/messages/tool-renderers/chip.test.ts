@@ -379,3 +379,15 @@ describe('Grep chip on paginated numbered content with context rows', () => {
     ).toBe('1 match in 1 file');
   });
 });
+
+describe('Grep chip with a zero-valued context flag', () => {
+  it('keeps the exact match count, since -C 0 asks for no context rows', () => {
+    expect(
+      chipFor(
+        'Grep',
+        { pattern: 'foo', output_mode: 'content', '-n': false, '-C': 0 },
+        result('src/a.ts:foo\nsrc/a.ts:foo again\nsrc/b.ts:foo'),
+      ),
+    ).toBe('3 matches across 2 files');
+  });
+});

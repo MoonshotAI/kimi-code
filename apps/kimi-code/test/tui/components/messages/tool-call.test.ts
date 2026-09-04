@@ -2506,3 +2506,25 @@ describe('ToolCallComponent hasHiddenContent for goal cards', () => {
     update.dispose();
   });
 });
+
+describe('ToolCallComponent hasHiddenContent at the Edit preview cap', () => {
+  function editCard(lineCount: number): ToolCallComponent {
+    const oldStr = Array.from({ length: lineCount }, (_, i) => `old ${String(i + 1)}`).join('\n');
+    const newStr = Array.from({ length: lineCount }, (_, i) => `new ${String(i + 1)}`).join('\n');
+    return new ToolCallComponent(
+      { id: 'call_edit', name: 'Edit', args: { path: 'a.ts', old_string: oldStr, new_string: newStr } },
+      { tool_call_id: 'call_edit', output: 'Edited a.ts', is_error: false },
+    );
+  }
+
+  it('is false when the body fills the cap exactly, since the header row is not capped', () => {
+    // 5 replaced lines render as 5 deletions plus 5 additions: 10 body rows.
+    const exact = editCard(5);
+    expect(exact.hasHiddenContent()).toBe(false);
+    exact.dispose();
+    // 6 replaced lines are 12 body rows: the capped preview cuts two of them.
+    const over = editCard(6);
+    expect(over.hasHiddenContent()).toBe(true);
+    over.dispose();
+  });
+});

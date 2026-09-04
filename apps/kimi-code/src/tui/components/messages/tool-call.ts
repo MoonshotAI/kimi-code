@@ -873,14 +873,17 @@ export class ToolCallComponent extends Container {
         const oldStr = str(args['old_string']);
         const newStr = str(args['new_string']);
         if (oldStr.length === 0 && newStr.length === 0) return false;
-        // Mirror buildCallPreview exactly: context rows and inter-hunk
-        // separators also consume the preview cap, so counting only
-        // added/removed rows undercounts changes in distant hunks.
+        // Mirror buildCallPreview exactly by rendering both ways: the cap
+        // applies to body rows at cluster boundaries under a header row, so
+        // the capped render differs from the full one only when it cut rows
+        // (its trailer then replaces them).
         const filePath = str(args['file_path'] ?? args['path']);
-        return (
-          renderDiffLinesClustered(oldStr, newStr, filePath, { contextLines: 3 }).length >
-          COMMAND_PREVIEW_LINES
-        );
+        const full = renderDiffLinesClustered(oldStr, newStr, filePath, { contextLines: 3 });
+        const capped = renderDiffLinesClustered(oldStr, newStr, filePath, {
+          contextLines: 3,
+          maxLines: COMMAND_PREVIEW_LINES,
+        });
+        return capped.length !== full.length || capped.at(-1) !== full.at(-1);
       }
       case 'Write':
         return computeWriteStats(args).lines > COMMAND_PREVIEW_LINES;
