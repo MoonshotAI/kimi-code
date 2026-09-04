@@ -173,7 +173,7 @@ export function acpMcpServersToConfigRecord(
   servers: readonly McpServer[] | undefined,
 ): Record<string, McpServerConfig> | undefined {
   if (servers === undefined || servers.length === 0) return undefined;
-  const out: Record<string, McpServerConfig> = {};
+  const out: Record<string, McpServerConfig> = Object.create(null);
   for (const server of servers) {
     if (!('type' in server)) {
       out[server.name] = {

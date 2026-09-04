@@ -42,6 +42,28 @@ describe('acpMcpServersToConfigRecord', () => {
     });
   });
 
+  it('preserves stdio server names that match object prototype properties', () => {
+    const servers: McpServer[] = [
+      {
+        name: '__proto__',
+        command: '/usr/local/bin/mcp-proto',
+        args: [],
+        env: [],
+      },
+    ];
+
+    const converted = acpMcpServersToConfigRecord(servers);
+    expect(converted).toBeDefined();
+    expect(Object.keys(converted ?? {})).toEqual(['__proto__']);
+    expect(converted?.['__proto__']).toEqual({
+      transport: 'stdio',
+      command: '/usr/local/bin/mcp-proto',
+      args: [],
+      env: undefined,
+      runtime_id: 'local',
+    });
+  });
+
   it('maps http and sse servers with header pairs as a record', () => {
     const servers: McpServer[] = [
       {
