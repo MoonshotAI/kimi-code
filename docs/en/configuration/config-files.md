@@ -442,6 +442,17 @@ Like the `tools` / `disallowedTools` fields of an agent file, this section shape
 
 `max_edge_px` can be overridden by the `KIMI_IMAGE_MAX_EDGE_PX` environment variable and `read_byte_budget` by `KIMI_IMAGE_READ_BYTE_BUDGET`; both take higher priority than `config.toml`.
 
+## `database`
+
+`database` controls the embedded storage engines behind session indexing and global search. Both keys default to `true` and act as kill switches that fall back to the legacy behavior when set to `false`.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `base` | `boolean` | `true` | Use the minidb-backed read model for session indexing; `false` falls back to reading session metadata directly |
+| `search` | `boolean` | `true` | Run the global search index in a dedicated worker thread; `false` runs it in the server process |
+
+`base` can be overridden by the `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` environment variable and `search` by `KIMI_CODE_SEARCH_WORKER`; both take higher priority than `config.toml`.
+
 <!--
 ## `experimental`
 

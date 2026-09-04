@@ -19,7 +19,6 @@ import {
   filterForwardRequestHeaders,
   formatRemoteControlOutput,
   formatRemoteControlStatus,
-  isRemoteControlEnabled,
   parseRawHttpRequest,
   resolveRemoteControlRelayOrigin,
   rewriteRemoteControlResponse,
@@ -42,21 +41,6 @@ const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
   vi.unstubAllEnvs();
   while (cleanups.length > 0) await cleanups.pop()!();
-});
-
-describe('Remote Control experimental flag', () => {
-  it('is off unless the per-feature env or the master switch is truthy', () => {
-    expect(isRemoteControlEnabled({})).toBe(false);
-    expect(isRemoteControlEnabled({ KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL: '0' })).toBe(false);
-    expect(isRemoteControlEnabled({ KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL: '1' })).toBe(true);
-    expect(isRemoteControlEnabled({ KIMI_CODE_EXPERIMENTAL_FLAG: 'true' })).toBe(true);
-    expect(
-      isRemoteControlEnabled({
-        KIMI_CODE_EXPERIMENTAL_FLAG: '0',
-        KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL: 'yes',
-      }),
-    ).toBe(true);
-  });
 });
 
 describe('Remote Control URLs', () => {

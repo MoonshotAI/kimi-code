@@ -120,7 +120,7 @@ function applyEnvBindings(
   }
 }
 
-function applySectionEnv(
+export function applySectionEnv(
   base: unknown,
   env: AnyEnvBindings,
   getEnv: GetEnv,
