@@ -126,6 +126,14 @@ Agent 思考或调用工具时，输入框仍然可用，支持以下额外操�
 - **`Esc` / `Ctrl-C`**：中断当前轮次
 - **`Ctrl-O`**：全局切换工具输出和压缩摘要的折叠状态
 
+VS Code 1.97 及更高版本可以在集成终端的标签页中显示 Kimi Code CLI 的工作状态指示器。请在 [`terminal.integrated.tabs.title` 或 `terminal.integrated.tabs.description`](https://code.visualstudio.com/docs/terminal/appearance#_tab-text) 中包含 `${progress}`，例如：
+
+```json
+{
+  "terminal.integrated.tabs.title": "${process}${separator}${progress}"
+}
+```
+
 ## 外部编辑器
 
 按 `Ctrl-G` 把当前输入内容发给外部编辑器，保存后回填到输入框，不保存则保持原样。适合需要输入大段文本或带格式内容的场景。

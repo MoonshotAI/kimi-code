@@ -123,7 +123,9 @@ export function supportsTerminalProgress(env: NodeJS.ProcessEnv = process.env): 
   if ((env['WT_SESSION'] ?? '').length > 0) return true;
   if (env['ConEmuANSI'] === 'ON') return true;
   const termProgram = env['TERM_PROGRAM'] ?? '';
-  if (termProgram === 'ghostty' || termProgram === 'WezTerm') return true;
+  if (termProgram === 'ghostty' || termProgram === 'WezTerm' || termProgram === 'vscode') {
+    return true;
+  }
   const term = env['TERM'] ?? '';
   if (term === 'xterm-ghostty') return true;
   return false;
