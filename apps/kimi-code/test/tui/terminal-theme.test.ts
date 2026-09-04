@@ -15,6 +15,7 @@ import {
   handleTerminalThemeInput,
   installTerminalThemeTracking,
 } from "#/tui/utils/terminal-theme";
+import { parseColorFgBg } from "#/tui/theme/detect";
 
 type InputListener = Parameters<TUIState["ui"]["addInputListener"]>[0];
 const DARK_OSC11_REPORT = "\u001B]11;rgb:2828/2c2c/3434\u0007";
@@ -171,5 +172,13 @@ describe('ColorPalette warning token', () => {
   it('resolves the correct palette by theme name', () => {
     expect(getBuiltInPalette('dark')).toBe(darkColors);
     expect(getBuiltInPalette('light')).toBe(lightColors);
+  });
+});
+
+describe("parseColorFgBg", () => {
+  it("rejects malformed background color indexes", () => {
+    expect(parseColorFgBg("0;9")).toBe("light");
+    expect(parseColorFgBg("0;9abc")).toBeNull();
+    expect(parseColorFgBg("0;1.5")).toBeNull();
   });
 });
