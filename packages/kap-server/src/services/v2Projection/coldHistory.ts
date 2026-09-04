@@ -1,5 +1,6 @@
 import type {
   ServerMessage,
+  SkillActivation,
   StepUsage,
   TaskMessage,
   TaskNotificationPayload,
@@ -10,6 +11,7 @@ import type {
 import {
   normalizeTodoToolCall,
   textFromContent,
+  toSkillActivations,
   toStepUsage,
   toTaskKind,
   toTurnOrigin,
@@ -141,6 +143,7 @@ interface UserAcc {
   steeredAt?: string;
   origin?: UserMessageOrigin;
   notification?: TaskNotificationPayload;
+  skillActivations?: SkillActivation[];
   sortTime?: number;
 }
 
@@ -186,7 +189,13 @@ function asText(value: unknown): string | undefined {
 }
 
 function isDisplayableTurnOrigin(origin: TurnOrigin): boolean {
-  return origin.kind === 'user' || origin.kind === 'cron' || origin.kind === 'side' || origin.kind === 'task';
+  return (
+    origin.kind === 'user' ||
+    origin.kind === 'cron' ||
+    origin.kind === 'side' ||
+    origin.kind === 'task' ||
+    origin.kind === 'skill'
+  );
 }
 
 function parseNotificationXmlText(text: string): TaskNotificationPayload | undefined {
@@ -306,6 +315,7 @@ export function buildColdHistory(
             acceptedTime: time,
             origin: toUserOrigin(originValue),
             notification,
+            skillActivations: toSkillActivations(originValue),
           });
         }
         break;
@@ -642,6 +652,7 @@ export function buildColdHistory(
       steered_at: user.steeredAt,
       origin: user.origin,
       notification: user.notification,
+      skill_activations: user.skillActivations,
     } as ServerMessage;
   };
 

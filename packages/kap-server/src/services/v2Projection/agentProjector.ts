@@ -7,6 +7,7 @@ import type {
   QuestionRequest,
   QuestionResponsePayload,
   ServerMessage,
+  SkillActivation,
   StepMessage,
   StepRetry,
   StepUsage,
@@ -145,6 +146,7 @@ interface PromptAcc {
   attachmentIds?: string[];
   steeredAt?: string;
   notification?: TaskNotificationPayload;
+  skillActivations?: SkillActivation[];
 }
 
 interface StepAcc {
@@ -250,6 +252,8 @@ export function toTurnOrigin(origin: unknown): TurnOrigin {
     }
     case 'task':
       return { kind: 'task', task_id: (o as { taskId?: string }).taskId ?? '' };
+    case 'skill_activation':
+      return { kind: 'skill', skill_name: (o as { skillName?: string }).skillName };
     case 'hook_result':
       return { kind: 'hook', name: (o as { event?: string }).event };
     case 'compaction_summary':
@@ -270,10 +274,28 @@ export function toTurnOrigin(origin: unknown): TurnOrigin {
 }
 
 export function toUserOrigin(origin: unknown): UserMessageOrigin | undefined {
-  const o = origin as { kind?: string; jobId?: string; cron?: string; taskId?: string } | undefined;
+  const o = origin as
+    | { kind?: string; jobId?: string; cron?: string; taskId?: string; skillName?: string; skillArgs?: string; trigger?: string }
+    | undefined;
   if (o?.kind === 'cron_job') return { kind: 'cron', cron_id: o.jobId ?? '', schedule: o.cron ?? '' };
   if (o?.kind === 'task') return { kind: 'task', task_id: o.taskId ?? '' };
+  if (o?.kind === 'skill_activation') {
+    return { kind: 'skill', skill_name: o.skillName ?? '', args: o.skillArgs, trigger: o.trigger };
+  }
   return undefined;
+}
+
+export function toSkillActivations(origin: unknown): SkillActivation[] | undefined {
+  const list = (origin as { skillActivations?: unknown } | undefined)?.skillActivations;
+  if (!Array.isArray(list) || list.length === 0) return undefined;
+  const out: SkillActivation[] = [];
+  for (const item of list) {
+    const name = (item as { skillName?: unknown } | undefined)?.skillName;
+    if (typeof name !== 'string' || name.length === 0) continue;
+    const args = (item as { skillArgs?: unknown } | undefined)?.skillArgs;
+    out.push({ skill_name: name, skill_args: typeof args === 'string' ? args : undefined });
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 export function toStepUsage(usage: unknown): StepUsage | undefined {
@@ -334,6 +356,7 @@ export class AgentV2Projector {
     switch (event.type) {
       case 'prompt.submitted': this.onPromptSubmitted(event, out); break;
       case 'prompt.steered': this.onPromptSteered(event, out); break;
+      case 'turn.steer': this.onTurnSteer(event, out); break;
       case 'prompt.started': this.onPromptStarted(event, out); break;
       case 'prompt.completed': this.onPromptCompleted(event, out); break;
       case 'prompt.aborted': this.onPromptAborted(event, out); break;
@@ -493,6 +516,7 @@ export class AgentV2Projector {
       emitted: true,
       origin,
       attachmentIds: event.attachmentIds as string[] | undefined,
+      skillActivations: toSkillActivations(event.origin),
     };
     this.prompts.set(promptId, acc);
     out.push(this.userMessage(acc, event.time));
@@ -630,6 +654,52 @@ export class AgentV2Projector {
       turn.promptIds.push(promptId);
       out.push(this.userMessage(acc, event.time));
     }
+  }
+
+  private onTurnSteer(event: ProjectionEvent, out: ServerMessage[]): void {
+    const origin = toUserOrigin(event.origin);
+    if (origin?.kind !== 'skill') return;
+    const text = textFromContent(event.input);
+    const steeredAt = iso(event.time);
+    const activationId = (event.origin as { activationId?: string } | undefined)?.activationId;
+    const turn = this.latestTurn();
+    if (turn && turn.state === 'running') {
+      const seq = turn.userSeq++;
+      const acc: PromptAcc = {
+        promptId: `skill_${activationId ?? `${turn.turnId}.${seq}`}`,
+        messageId: `${turn.turnId}.u${seq}`,
+        turnId: turn.turnId,
+        text,
+        createdAt: steeredAt,
+        status: 'running',
+        queued: false,
+        steerHeld: false,
+        emitted: true,
+        origin,
+        steeredAt,
+      };
+      this.prompts.set(acc.promptId, acc);
+      out.push(this.userMessage(acc, event.time));
+      return;
+    }
+    const engineTurnId = this.maxTurnId + 1;
+    const turnId = this.protocolTurnId(engineTurnId);
+    const seq = this.nextUserSeq(engineTurnId);
+    const acc: PromptAcc = {
+      promptId: `skill_${activationId ?? turnId}`,
+      messageId: `${turnId}.u${seq}`,
+      turnId,
+      text,
+      createdAt: steeredAt,
+      status: 'running',
+      queued: false,
+      steerHeld: false,
+      emitted: true,
+      origin,
+      steeredAt,
+    };
+    this.prompts.set(acc.promptId, acc);
+    out.push(this.userMessage(acc, event.time));
   }
 
   private onPromptStarted(event: ProjectionEvent, out: ServerMessage[]): void {
@@ -1065,13 +1135,52 @@ export class AgentV2Projector {
   }
 
   private onSkillActivated(event: ProjectionEvent, out: ServerMessage[]): void {
-    out.push({
-      type: 'system',
-      ...this.base(event),
-      system_id: this.nextSystemId(),
-      subtype: 'skill',
-      payload: { skill_name: event.skillName as string | undefined },
+    if (event.trigger === 'user-slash') return;
+    const origin = toUserOrigin({
+      kind: 'skill_activation',
+      skillName: event.skillName,
+      skillArgs: event.skillArgs,
+      trigger: event.trigger,
     });
+    const name = (event.skillName as string) ?? '';
+    const args = (event.skillArgs as string | undefined) ?? '';
+    const text = args.length > 0 ? `${name} ${args}` : name;
+    const turn = this.latestTurn();
+    if (turn && turn.state === 'running') {
+      const seq = turn.userSeq++;
+      const acc: PromptAcc = {
+        promptId: `skill_${(event.activationId as string) ?? seq}`,
+        messageId: `${turn.turnId}.u${seq}`,
+        turnId: turn.turnId,
+        text,
+        createdAt: iso(event.time),
+        status: 'completed',
+        queued: false,
+        steerHeld: false,
+        emitted: true,
+        origin,
+      };
+      this.prompts.set(acc.promptId, acc);
+      out.push(this.userMessage(acc, event.time));
+      return;
+    }
+    const engineTurnId = this.maxTurnId + 1;
+    const turnId = this.protocolTurnId(engineTurnId);
+    const seq = this.nextUserSeq(engineTurnId);
+    const acc: PromptAcc = {
+      promptId: `skill_${(event.activationId as string) ?? seq}`,
+      messageId: `${turnId}.u${seq}`,
+      turnId,
+      text,
+      createdAt: iso(event.time),
+      status: 'completed',
+      queued: false,
+      steerHeld: false,
+      emitted: true,
+      origin,
+    };
+    this.prompts.set(acc.promptId, acc);
+    out.push(this.userMessage(acc, event.time));
   }
 
   private onPluginCommandActivated(event: ProjectionEvent, out: ServerMessage[]): void {
@@ -1252,6 +1361,7 @@ export class AgentV2Projector {
       origin: acc.origin,
       attachment_ids: acc.attachmentIds,
       notification: acc.notification,
+      skill_activations: acc.skillActivations,
     };
   }
 

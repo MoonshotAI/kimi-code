@@ -5,6 +5,12 @@ export const userMessageOriginSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('cron'), cron_id: z.string(), schedule: z.string() }),
   z.object({ kind: z.literal('channel'), channel_id: z.string() }),
   z.object({ kind: z.literal('task'), task_id: z.string() }),
+  z.object({
+    kind: z.literal('skill'),
+    skill_name: z.string(),
+    args: z.string().optional(),
+    trigger: z.string().optional(),
+  }),
 ]);
 export type UserMessageOrigin = z.infer<typeof userMessageOriginSchema>;
 

@@ -5,6 +5,7 @@ export const turnOriginSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('user') }),
   z.object({ kind: z.literal('cron'), cron_id: z.string(), schedule: z.string().optional() }),
   z.object({ kind: z.literal('task'), task_id: z.string() }),
+  z.object({ kind: z.literal('skill'), skill_name: z.string().optional() }),
   z.object({ kind: z.literal('hook'), name: z.string().optional() }),
   z.object({ kind: z.literal('compaction') }),
   z.object({ kind: z.literal('side') }),
