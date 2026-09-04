@@ -509,6 +509,15 @@ describe('AgentLifecycleService', () => {
     expect(svc.handleOf('main')).toBeUndefined();
   });
 
+  it('remove flushes the agent wire journal before disposal', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+    const dispatcher = svc.handleOf('main')!.accessor.get(IEventDispatcher);
+    const flush = vi.spyOn(dispatcher, 'flush');
+    await svc.remove(svc.get('main')!);
+    expect(flush).toHaveBeenCalled();
+  });
+
   it('remove keeps the lifecycle context active through async scope teardown', async () => {
     const svc = ix.get(IAgentLifecycleService);
     const bus = ix.get(ISessionEventBus);

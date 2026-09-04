@@ -4,6 +4,7 @@ import { IInstantiationService } from '#/_base/di/instantiation';
 import type { InstantiationService } from '#/_base/di/instantiationService';
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
+import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { Error2, ErrorCodes } from '#/errors';
 import { LifecycleScope } from '#/app/scopes';
 import {
@@ -373,6 +374,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       compaction.abortController.abort(reason);
     }
     await Promise.all([loop.settled(), compactionSettled, prompt.drain(reason)]);
+    await handle.accessor.get(IEventDispatcher).flush().catch(onUnexpectedError);
     managed.killSpace();
     await handle.dispose();
     if (this.roster.get(agent.agentId) === managed) this.roster.delete(agent.agentId);
