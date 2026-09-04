@@ -42,14 +42,54 @@ export interface WireRenderer<K extends RecordType> {
  *  over the full `RecordType` union, so TypeScript forces an entry per kind. */
 type RendererMap = { [K in RecordType]: WireRenderer<K> };
 
-/** Render the summary of a `context.apply_compaction` record across its v2
- *  payload variants: a plain string on current records, a ContextMessage on
- *  the legacy variant; fall back to `contextSummary` when neither holds. */
-function compactionSummaryText(r: AgentRecordOf<'context.apply_compaction'>): string {
-  const summary = r.summary;
-  if (typeof summary === 'string') return summary;
-  if (summary !== undefined) return firstText(summary.content);
-  return ('contextSummary' in r ? r.contextSummary : undefined) ?? '';
+interface CompactionSummaryView {
+  label: 'summary' | 'contextSummary';
+  text: string;
+  contextSummary?: string;
+  message?: UnknownObject;
+}
+
+/** Normalize all three `context.apply_compaction` summary variants without
+ *  trusting imported wire payloads. */
+function compactionSummaryView(
+  r: AgentRecordOf<'context.apply_compaction'>,
+): CompactionSummaryView {
+  const record = r as unknown as UnknownObject;
+  const summary = record.summary;
+  const contextSummary =
+    typeof record.contextSummary === 'string' ? record.contextSummary : undefined;
+  if (typeof summary === 'string') {
+    return {
+      label: 'summary',
+      text: summary,
+      contextSummary: contextSummary === summary ? undefined : contextSummary,
+    };
+  }
+  const message = asObject(summary);
+  const content = message?.content;
+  if (Array.isArray(content)) {
+    let text = '';
+    for (const part of content) {
+      const candidate = asObject(part);
+      if (candidate?.type === 'text' && typeof candidate.text === 'string') {
+        text += candidate.text;
+      }
+    }
+    return {
+      label: 'summary',
+      text,
+      contextSummary: contextSummary === text ? undefined : contextSummary,
+      message,
+    };
+  }
+  if (summary === undefined && contextSummary !== undefined) {
+    return { label: 'contextSummary', text: contextSummary };
+  }
+  return {
+    label: 'summary',
+    text: invalidValue(summary),
+    contextSummary,
+  };
 }
 
 type UnknownObject = Record<string, unknown>;
@@ -58,6 +98,25 @@ function asObject(value: unknown): UnknownObject | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as UnknownObject)
     : undefined;
+}
+
+function wireLineRange(value: unknown): { start: number; end: number } | undefined {
+  const range = asObject(value);
+  if (range === undefined) return undefined;
+  const { start, end } = range;
+  if (
+    typeof start !== 'number' ||
+    !Number.isFinite(start) ||
+    !Number.isInteger(start) ||
+    start < 0 ||
+    typeof end !== 'number' ||
+    !Number.isFinite(end) ||
+    !Number.isInteger(end) ||
+    end < 0
+  ) {
+    return undefined;
+  }
+  return { start, end };
 }
 
 function valuePreview(value: unknown): string {
@@ -131,6 +190,20 @@ function sizeValue(value: unknown): string {
 function timestampValue(value: unknown): string {
   if (typeof value !== 'number' || !Number.isFinite(value)) return invalidValue(value);
   return new Date(value).toLocaleString();
+}
+
+function optionalNumberValue(value: unknown, fallback: string): string {
+  return value === undefined ? fallback : numberValue(value);
+}
+
+function compactionCount(record: UnknownObject): { label: 'compactedCount' | 'count'; value: string } {
+  if (record.compactedCount !== undefined) {
+    return { label: 'compactedCount', value: numberValue(record.compactedCount) };
+  }
+  if (record.count !== undefined) {
+    return { label: 'count', value: numberValue(record.count) };
+  }
+  return { label: 'compactedCount', value: '(missing)' };
 }
 
 export const WIRE_RENDERERS: RendererMap = {
@@ -472,8 +545,10 @@ export const WIRE_RENDERERS: RendererMap = {
       // v2 payload variants: `summary` is a string on current records, a
       // ContextMessage on the legacy variant (which uses `count` instead of
       // `compactedCount`); `tokensBefore`/`tokensAfter` are optional.
-      const summaryText = compactionSummaryText(r);
-      const compactedCount = r.compactedCount ?? ('count' in r ? r.count : 0);
+      const record = r as unknown as UnknownObject;
+      const summary = compactionSummaryView(r);
+      const compactedCount = compactionCount(record);
+      const wireLines = wireLineRange(record.wireLines);
       return {
         main: (
           <span className="flex items-center gap-2 min-w-0">
@@ -481,77 +556,108 @@ export const WIRE_RENDERERS: RendererMap = {
               compacted
             </Pill>
             <Dim>
-              summary {summaryText.length}b · {r.tokensBefore ?? '?'}→{r.tokensAfter ?? '?'} tok ·{' '}
-              {compactedCount} msgs
+              {summary.label} {summary.text.length}b · {optionalNumberValue(record.tokensBefore, '?')}→
+              {optionalNumberValue(record.tokensAfter, '?')} tok ·{' '}
+              {compactedCount.value} msgs
             </Dim>
           </span>
         ),
         right:
-          r.wireLines === undefined ? undefined : (
+          wireLines === undefined ? undefined : (
             <Mono>
-              L{r.wireLines.start}–{r.wireLines.end}
+              L{wireLines.start}–{wireLines.end}
             </Mono>
           ),
       };
     },
     detail: (r) => {
-      const summaryText = compactionSummaryText(r);
-      const compactedCount = r.compactedCount ?? ('count' in r ? r.count : 0);
-      const contextSummary =
-        'contextSummary' in r && typeof r.contextSummary === 'string'
-          ? r.contextSummary
-          : undefined;
+      const record = r as unknown as UnknownObject;
+      const summary = compactionSummaryView(r);
+      const compactedCount = compactionCount(record);
+      const wireLines = wireLineRange(record.wireLines);
       return (
         <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
-          <FieldRow label="summary" wide>
-            <SizePreview label="summary" sizeBytes={summaryText.length} preview={summaryText}>
-              <pre className="whitespace-pre-wrap break-words text-fg-1">{summaryText}</pre>
+          <FieldRow label={summary.label} wide>
+            <SizePreview
+              label={summary.label}
+              sizeBytes={summary.text.length}
+              preview={summary.text}
+            >
+              <pre className="whitespace-pre-wrap break-words text-fg-1">{summary.text}</pre>
             </SizePreview>
           </FieldRow>
-          {contextSummary !== undefined && contextSummary !== summaryText ? (
+          {summary.message !== undefined ? (
+            <FieldRow label="summaryMessage" wide>
+              <JsonViewer value={summary.message} defaultOpenDepth={2} />
+            </FieldRow>
+          ) : null}
+          {summary.contextSummary !== undefined ? (
             <FieldRow label="contextSummary" wide>
               <SizePreview
                 label="contextSummary"
-                sizeBytes={contextSummary.length}
-                preview={contextSummary}
+                sizeBytes={summary.contextSummary.length}
+                preview={summary.contextSummary}
               >
-                <pre className="whitespace-pre-wrap break-words text-fg-1">{contextSummary}</pre>
+                <pre className="whitespace-pre-wrap break-words text-fg-1">
+                  {summary.contextSummary}
+                </pre>
               </SizePreview>
             </FieldRow>
           ) : null}
-          <FieldRow label="compactedCount">
-            <span className="text-[var(--color-sev-info)]">{compactedCount}</span>
+          <FieldRow label={compactedCount.label}>
+            <span className="text-[var(--color-sev-info)]">{compactedCount.value}</span>
           </FieldRow>
           <FieldRow label="tokensBefore">
-            <span className="text-[var(--color-sev-info)]">{r.tokensBefore ?? '(n/a)'}</span>
+            <span className="text-[var(--color-sev-info)]">
+              {optionalNumberValue(record.tokensBefore, '(n/a)')}
+            </span>
           </FieldRow>
           <FieldRow label="tokensAfter">
-            <span className="text-[var(--color-sev-info)]">{r.tokensAfter ?? '(n/a)'}</span>
+            <span className="text-[var(--color-sev-info)]">
+              {optionalNumberValue(record.tokensAfter, '(n/a)')}
+            </span>
           </FieldRow>
-          {r.summaryOutputTokens !== undefined ? (
+          {record.summaryOutputTokens !== undefined ? (
             <FieldRow label="summaryOutputTokens">
-              <span className="text-[var(--color-sev-info)]">{r.summaryOutputTokens}</span>
+              <span className="text-[var(--color-sev-info)]">
+                {numberValue(record.summaryOutputTokens)}
+              </span>
             </FieldRow>
           ) : null}
-          {r.keptUserMessageCount !== undefined ? (
+          {record.keptUserMessageCount !== undefined ? (
             <FieldRow label="keptUserMessages">
-              <span className="text-[var(--color-sev-info)]">{r.keptUserMessageCount}</span>
+              <span className="text-[var(--color-sev-info)]">
+                {numberValue(record.keptUserMessageCount)}
+              </span>
             </FieldRow>
           ) : null}
-          {r.keptHeadUserMessageCount !== undefined ? (
+          {record.keptHeadUserMessageCount !== undefined ? (
             <FieldRow label="keptHeadMessages">
-              <span className="text-[var(--color-sev-info)]">{r.keptHeadUserMessageCount}</span>
+              <span className="text-[var(--color-sev-info)]">
+                {numberValue(record.keptHeadUserMessageCount)}
+              </span>
             </FieldRow>
           ) : null}
-          {r.droppedCount !== undefined ? (
+          {record.droppedCount !== undefined ? (
             <FieldRow label="droppedCount">
-              <span className="text-[var(--color-sev-info)]">{r.droppedCount}</span>
+              <span className="text-[var(--color-sev-info)]">
+                {numberValue(record.droppedCount)}
+              </span>
             </FieldRow>
           ) : null}
-          {r.wireLines !== undefined ? (
+          {record.legacyTail !== undefined ? (
+            <FieldRow label="legacyTail">
+              <Mono>
+                {typeof record.legacyTail === 'boolean'
+                  ? String(record.legacyTail)
+                  : invalidValue(record.legacyTail)}
+              </Mono>
+            </FieldRow>
+          ) : null}
+          {wireLines !== undefined ? (
             <FieldRow label="wireLines">
               <Mono>
-                {r.wireLines.start}–{r.wireLines.end}
+                {wireLines.start}–{wireLines.end}
               </Mono>
             </FieldRow>
           ) : null}
