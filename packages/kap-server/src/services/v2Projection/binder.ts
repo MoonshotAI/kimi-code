@@ -16,6 +16,7 @@ import {
 
 import { serverMessageSchema, type ServerMessage } from '../../protocol/v2/messages/index';
 import type { ProjectionEvent } from './agentProjector';
+import { toWireInteractionRequest, toWireInteractionResponse } from './interactionWire';
 import { SessionV2Projector } from './sessionProjector';
 import type { ComposerTurnFact, SessionFactsPatch } from './sessionStateComposer';
 
@@ -209,7 +210,7 @@ export class SessionV2Binding {
         id: pending.id,
         kind: 'question',
         toolCallId: pending.toolCallId,
-        request: pending.request as never,
+        request: toWireInteractionRequest('question', pending.request) as never,
         time: this.clock(),
       });
       if (msgs.length > 0) this.agentFor(agentId).emit(msgs);
@@ -223,7 +224,7 @@ export class SessionV2Binding {
     const msgs = this.projector.agentFor(owner).applyInteractionResolved({
       id,
       state: dismissed ? 'dismissed' : 'answered',
-      response: response as never,
+      response: toWireInteractionResponse('question', response) as never,
       time: this.clock(),
     });
     if (msgs.length > 0) this.agentFor(owner).emit(msgs);

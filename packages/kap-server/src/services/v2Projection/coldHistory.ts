@@ -15,6 +15,7 @@ import {
   toUserOrigin,
   todoItemsFromInput,
 } from './agentProjector';
+import { toWireInteractionRequest, toWireInteractionResponse } from './interactionWire';
 
 export interface ColdWireRecord {
   type: string;
@@ -450,7 +451,8 @@ export function buildColdHistory(
         if (!id) break;
         const kind = record.kind === 'question' ? ('question' as const) : ('approval' as const);
         const toolCallId = asText(record.toolCallId);
-        const acc: InteractionAcc = { id, kind, toolCallId, request: record.request, requestTime: time };
+        const toolArgs = toolCallId !== undefined ? tools.get(toolCallId)?.acc.input : undefined;
+        const acc: InteractionAcc = { id, kind, toolCallId, request: toWireInteractionRequest(kind, record.request, toolArgs), requestTime: time };
         const toolStep = toolCallId !== undefined ? tools.get(toolCallId)?.step : undefined;
         const step = toolStep ?? latestStep;
         if (!step) break;
@@ -466,7 +468,7 @@ export function buildColdHistory(
         const id = asText(record.id);
         const acc = id ? interactions.get(id) : undefined;
         if (!acc) break;
-        acc.response = record.response;
+        acc.response = toWireInteractionResponse(acc.kind, record.response);
         acc.resolvedTime = time;
         break;
       }
