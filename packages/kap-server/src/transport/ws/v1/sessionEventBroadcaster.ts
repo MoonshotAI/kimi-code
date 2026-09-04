@@ -1,3 +1,4 @@
+import { rm } from 'node:fs/promises';
 import type {
   AgentActivityState,
   ApprovalResponse,
@@ -644,12 +645,23 @@ export class SessionEventBroadcaster {
     if (event.type === 'event.session.deleted') {
       const payload = sessionDeletedPayload(corePayload);
       if (payload === undefined) return;
-      void this.dispatchGlobal({
-        type: 'event.session.deleted',
-        workspace_id: payload.workspaceId,
-        agentId: 'main',
-        sessionId: payload.sessionId,
-      } as Event).catch((error: unknown) =>
+      void (async () => {
+        const pending = this.pendingStates.get(payload.sessionId);
+        if (pending !== undefined) await pending.catch(() => undefined);
+        const state = this.sessions.get(payload.sessionId);
+        if (state !== undefined) {
+          this.sessions.delete(payload.sessionId);
+          await disposeSessionState(state);
+        }
+        this.opts.transcriptService?.dropSession(payload.sessionId);
+        await rm(sessionJournalPath(this.opts.eventsDir, payload.sessionId), { force: true });
+        await this.dispatchGlobal({
+          type: 'event.session.deleted',
+          workspace_id: payload.workspaceId,
+          agentId: 'main',
+          sessionId: payload.sessionId,
+        } as Event);
+      })().catch((error: unknown) =>
         this.logDispatchError(GLOBAL_SESSION_ID, 'event.session.deleted', error),
       );
       return;

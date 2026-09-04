@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -1281,6 +1281,31 @@ describe('SessionEventBroadcaster', () => {
       },
     });
     expect(globalView.deliveries).toEqual(['immediate']);
+  });
+
+  it('purges cached state and the journal when a materialized session is deleted', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    const view = collectingTarget();
+    expect(await bc.subscribe('s1', view.target)).toBe(true);
+
+    main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    await bc.getCursor('s1');
+    await vi.waitFor(async () => {
+      await access(join(dir, 's1.jsonl'));
+    });
+
+    sessions.delete('s1');
+    eventBus.emit({
+      type: 'event.session.deleted',
+      payload: { sessionId: 's1', workspaceId: 'wd_1' },
+    });
+
+    await vi.waitFor(async () => {
+      await expect(access(join(dir, 's1.jsonl'))).rejects.toThrow();
+    });
+    expect(await bc.subscribe('s1', collectingTarget().target)).toBe(false);
   });
 
   it('fans out event.workspace.created/updated with the wire workspace shape', async () => {
