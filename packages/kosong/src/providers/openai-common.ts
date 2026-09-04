@@ -105,16 +105,29 @@ export function toolToOpenAI(tool: Tool): OpenAIToolParam {
 // `exceeded_current_quota_error`) live with their vendor and reach this
 // converter through the optional `convertErrorHook` instead.
 export function isOpenAIInsufficientQuotaCode(code: string | null | undefined): boolean {
-  return code === 'insufficient_quota';
+  return code !== null && code !== undefined && code.toLowerCase() === 'insufficient_quota';
+}
+
+const GENERIC_QUOTA_EXHAUSTED_MESSAGE_PATTERNS = [
+  /insufficient_quota/,
+  /insufficient balance/,
+  /check your account balance/,
+  /exceeded your current (?:token )?quota/,
+  /recharge your account|please recharge/,
+  /account (?:is )?in arrears/,
+  /arrearage/,
+] as const;
+
+export function isGenericQuotaExhaustedMessage(message: string): boolean {
+  const lower = message.toLowerCase();
+  return GENERIC_QUOTA_EXHAUSTED_MESSAGE_PATTERNS.some((p) => p.test(lower));
 }
 
 function isOpenAIInsufficientQuotaError(error: OpenAIAPIError): boolean {
   if (error.status !== 429) return false;
   if (typeof error.code === 'string' && isOpenAIInsufficientQuotaCode(error.code)) return true;
   if (typeof error.type === 'string' && isOpenAIInsufficientQuotaCode(error.type)) return true;
-  // Gateways sometimes flatten the JSON body into the message text; the
-  // literal code string is unambiguous there, unlike prose wordings.
-  return error.message.toLowerCase().includes('insufficient_quota');
+  return isGenericQuotaExhaustedMessage(error.message);
 }
 
 export function convertOpenAIError(
