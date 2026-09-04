@@ -346,13 +346,23 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           eventService: core.accessor.get(IEventService),
           sessionId: session_id,
         }, promptMetadataTextFromContentParts(parts));
-        const handle = await reservation.submit({
-          role: 'user',
-          content: parts,
-          toolCalls: [],
-          origin: { kind: 'user', attachments: promptAttachments },
-        });
+        const handle = await reservation.submit(
+          {
+            role: 'user',
+            content: parts,
+            toolCalls: [],
+            origin: { kind: 'user', attachments: promptAttachments },
+          },
+          req.body.steer === true ? { steer: true } : undefined,
+        );
         enqueued = true;
+        if (req.body.steer === true && handle.state === 'pending') {
+          try {
+            await resolved.prompt.steer([handle.id]);
+          } catch (error) {
+            if (!isError2(error) || error.code !== ErrorCodes.PROMPT_NOT_FOUND) throw error;
+          }
+        }
         const staging = preparedMedia;
         void Promise.race([handle.launched, handle.completion]).then(
           () => staging?.discard(),

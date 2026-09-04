@@ -29,6 +29,7 @@ export const promptSubmissionSchema = z.object({
   goal_objective: z.string().optional(),
   goal_control: z.enum(['pause', 'resume', 'cancel']).optional(),
   disabled_tools: z.array(z.string()).optional(),
+  steer: z.boolean().optional(),
   prompt_id: z.string().min(1).optional(),
   skills: z.array(promptSkillActivationSchema).min(1).optional(),
 });
