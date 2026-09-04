@@ -40,13 +40,14 @@ export function createProgram(
     .addOption(
       new Option(
         '-S, --session [id]',
-        'Resume a session. With ID: resume that session. Without ID: interactively pick.',
+        'Resume a session (alias: -r, --resume). With ID: resume that session. Without ID: interactively pick.',
       ).argParser((val: string | boolean) => (val === true ? '' : (val as string))),
     )
     .addOption(
-      new Option('-r, --resume [id]')
-        .hideHelp()
-        .argParser((val: string | boolean) => (val === true ? '' : (val as string))),
+      new Option(
+        '-r, --resume [id]',
+        'Alias for --session. Resume a session by ID, or interactively pick when omitted.',
+      ).argParser((val: string | boolean) => (val === true ? '' : (val as string))),
     )
     .option('-c, --continue', 'Continue the previous session for the working directory.', false)
     .addOption(new Option('-C').hideHelp().default(false))
@@ -81,7 +82,7 @@ export function createProgram(
     .addOption(
       new Option(
         '--agent <name>',
-        'Agent profile to start the new session with. Custom profiles are discovered from agent directories or loaded via --agent-file. Cannot be combined with --session/--continue.',
+        'Agent profile name for a new session (catalog / discovered profiles). Mutually exclusive with --agent-file. Cannot be combined with --session/--continue.',
       )
         .argParser((value: string, previous: string | undefined) => {
           if (previous !== undefined) {
@@ -94,7 +95,7 @@ export function createProgram(
     .addOption(
       new Option(
         '--agent-file <path>',
-        'Load an agent definition from a Markdown file and select it for the new session. Cannot be combined with --session/--continue.',
+        'Load one agent Markdown file for a new session (tools/disallowedTools in frontmatter restrict the tool set). Mutually exclusive with --agent. Cannot be combined with --session/--continue.',
       )
         .argParser((value: string, previous: string[] | undefined) => {
           if ((previous?.length ?? 0) > 0) {
