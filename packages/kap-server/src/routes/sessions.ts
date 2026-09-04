@@ -32,6 +32,7 @@ import {
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
+import { IGlobalSearchService } from '../search/searchService';
 import { ErrorCode } from '../protocol/error-codes';
 import { pageResponseSchema } from '../protocol/pagination';
 import { toProtocolMessage } from '../services/messages/messageProjection';
@@ -996,6 +997,7 @@ async function archiveSessionAction(ctx: SessionActionCtx): Promise<void> {
 async function deleteSessionAction(ctx: SessionActionCtx): Promise<void> {
   const { core, req, reply, id } = ctx;
   await core.accessor.get(ISessionManager).delete(id);
+  await core.accessor.get(IGlobalSearchService).deleteSession(id);
   requestLog(req)?.info({ session_id: id, action: 'delete' }, 'session action completed');
   reply.send(okEnvelope({ deleted: true }, req.id));
 }

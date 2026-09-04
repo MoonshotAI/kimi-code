@@ -67,7 +67,7 @@ export interface GlobalEventsWsHandlers {
   /** A session was permanently deleted (list-level signal). Same envelope
    *  shape as `event.session.archived`: the real session id rides in the
    *  payload. */
-  onSessionDeleted?: ((sessionId: string) => void) | undefined;
+  onSessionDeleted?: (sessionId: string) => void;
   /** A workspace was created / updated / deleted (list-level signal). */
   onWorkspaceChanged?: (() => void) | undefined;
   /** A DI unit of the engine's scope tree changed state (debug feed). */

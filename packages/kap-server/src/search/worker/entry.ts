@@ -94,6 +94,11 @@ async function dispatch(request: SearchWorkerCall): Promise<unknown> {
     }
     case 'status':
       return core.status();
+    case 'deleteSession':
+      await core.deleteSession(
+        (request.params as { sessionId: string }).sessionId,
+      );
+      return null;
     case 'close':
       return null;
   }

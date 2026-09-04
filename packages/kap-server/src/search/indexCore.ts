@@ -438,6 +438,14 @@ export class SearchIndexCore {
     return { ...outcome, lockToken: this.lockToken, lifecycle: this.lifecycleState() };
   }
 
+  async deleteSession(sessionId: string): Promise<void> {
+    if (this.disposed) return;
+    await this.ensureOpen();
+    const db = this.db;
+    if (!db || db.readOnly || this.disposed) return;
+    await this.deleteSessionDocs(db, sessionId);
+  }
+
   private async runSync(sessions: readonly SyncSessionInput[]): Promise<CoreSyncPassOutcome> {
     if (this.disposed) return { noop: true, sessions: 0, documents: 0 };
     this.syncReplaced = false;

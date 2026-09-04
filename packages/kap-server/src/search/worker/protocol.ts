@@ -23,6 +23,7 @@ export type SearchWorkerCall =
   | { readonly id: number; readonly v: number; readonly type: 'refresh' }
   | { readonly id: number; readonly v: number; readonly type: 'reindex' }
   | { readonly id: number; readonly v: number; readonly type: 'status' }
+  | { readonly id: number; readonly v: number; readonly type: 'deleteSession'; readonly params: { readonly sessionId: string } }
   | { readonly id: number; readonly v: number; readonly type: 'close' };
 
 export type SearchWorkerCallType = SearchWorkerCall['type'];
@@ -47,6 +48,7 @@ export interface SearchWorkerResultMap {
   readonly refresh: SearchWorkerOpenResult;
   readonly reindex: SearchWorkerOpenResult;
   readonly status: CoreStatus;
+  readonly deleteSession: null;
   readonly close: null;
 }
 
