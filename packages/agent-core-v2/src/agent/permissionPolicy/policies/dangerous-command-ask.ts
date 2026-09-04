@@ -119,6 +119,7 @@ export class DangerousCommandAskPermissionPolicyService implements PermissionPol
 
   evaluate(context: ResolvedToolExecutionHookContext): PermissionPolicyResult | undefined {
     if (!isDangerousCommandGuardEnabled(this.config)) return undefined;
+    if (this.modeService.mode === 'auto') return undefined;
     if (context.toolCall.name !== 'Bash') return undefined;
     const command = bashCommandText(context.args);
     const verdict =
@@ -128,18 +129,9 @@ export class DangerousCommandAskPermissionPolicyService implements PermissionPol
             this.bashParser.parse(source, PARSE_OPTIONS),
           );
     if (verdict === undefined) return undefined;
-    const auto = this.modeService.mode === 'auto';
     if (verdict.kind === 'dangerous') {
-      if (auto) {
-        return {
-          kind: 'deny',
-          reason: { dangerous_command: verdict.command },
-          message: `Bash command '${verdict.command}' is blocked in auto permission mode because it is considered dangerous. Ask the user to switch permission mode or run it themselves.`,
-        };
-      }
       return { kind: 'ask', reason: { dangerous_command: verdict.command } };
     }
-    if (auto) return undefined;
     return { kind: 'ask', reason: { unanalyzable_command: true } };
   }
 }

@@ -66,7 +66,7 @@ Approvals are not triggered for regular tool calls in Ask When Needed mode, nor 
 
 **Ask When Needed mode** (formerly YOLO), toggled with `/ask-when-needed`, auto-approves regular tool calls, making it suitable for batch tasks you know are safe. It still asks before sensitive actions — accessing sensitive files such as `.env` or SSH keys, running dangerous commands such as `shutdown` or `rm -rf`, or exiting Plan mode — and the agent can still ask you questions.
 
-**Never Ask mode** (formerly Auto), toggled with `/never-ask`, is the fully unattended mode: every tool approval is handled automatically, including sensitive files and plan exits, and the agent never asks you questions — it decides everything on its own. The only exception is the built-in dangerous-command guard: commands such as `shutdown`, `reboot`, or `rm -rf` are always blocked in Never Ask mode, and always require your confirmation in Always Ask and Ask When Needed mode.
+**Never Ask mode** (formerly Auto), toggled with `/never-ask`, is the fully unattended mode: every tool approval is handled automatically, including sensitive files and plan exits, and the agent never asks you questions — it decides everything on its own. The built-in dangerous-command guard asks for your confirmation before commands such as `shutdown`, `reboot`, or `rm -rf` in Always Ask and Ask When Needed mode; in Never Ask mode these commands run without interruption.
 
 
 ## Mode switching

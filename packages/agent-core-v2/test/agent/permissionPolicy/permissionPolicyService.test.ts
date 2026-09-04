@@ -236,19 +236,19 @@ describe('AgentPermissionPolicyService chain', () => {
   );
 
   it.each([
-    ['shutdown -h now', 'shutdown'],
-    ['reboot', 'reboot'],
-    ['rm -rf /tmp/build', 'rm -rf'],
-    ['dd if=/dev/zero of=/dev/sda bs=1M', 'dd'],
-  ] as const)('denies `%s` in auto mode', async (command, matched) => {
+    'shutdown -h now',
+    'reboot',
+    'rm -rf /tmp/build',
+    'dd if=/dev/zero of=/dev/sda bs=1M',
+  ])('approves `%s` in auto mode', async (command) => {
     mode = 'auto';
 
     await expect(evaluate({
       toolName: 'Bash',
       args: { command, timeout: 60 },
     })).resolves.toMatchObject({
-      policyName: 'dangerous-command-ask',
-      result: { kind: 'deny', reason: { dangerous_command: matched } },
+      policyName: 'auto-mode-approve',
+      result: { kind: 'approve' },
     });
   });
 
