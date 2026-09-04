@@ -136,3 +136,24 @@ describe('TruncatedHeaderLine', () => {
     expect(line.wasTruncated()).toBe(false);
   });
 });
+
+describe('graphemes that pack many code units into a cell', () => {
+  // A ZWJ family emoji: 2 cells, 11 UTF-16 code units.
+  const family = '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}';
+
+  it('never assumes a cut from code-unit length alone', () => {
+    const text = family.repeat(10);
+    expect(visibleWidth(text)).toBe(20);
+    const line = renderHeaderContent({ head: '', flex: { text, keep: 'head' }, tail: '' }, 20);
+    expect(line).toBe(text);
+    const tailKept = renderHeaderContent({ head: '', flex: { text, keep: 'tail' }, tail: '' }, 20);
+    expect(tailKept).toBe(text);
+  });
+
+  it('keeps whole emoji clusters at the tail when it does have to cut', () => {
+    const text = `${'x'.repeat(30)}${family.repeat(5)}`;
+    const line = renderHeaderContent({ head: '', flex: { text, keep: 'tail' }, tail: '' }, 9);
+    expect(line).toBe(`…${family.repeat(4)}`);
+    expect(visibleWidth(line)).toBe(9);
+  });
+});

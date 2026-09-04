@@ -2472,3 +2472,37 @@ describe('ToolCallComponent hasHiddenContent for a call truncated by max_tokens'
     component.dispose();
   });
 });
+
+describe('ToolCallComponent hasHiddenContent for goal cards', () => {
+  it('reports nothing to expand for a parsed goal snapshot or a bodiless goal update', () => {
+    // The tool wraps the snapshot in a `goal` envelope (null when there is no goal).
+    const snapshot = JSON.stringify(
+      {
+        goal: {
+        goalId: 'g1',
+        objective: 'Ship the feature',
+        status: 'active',
+        turnsUsed: 3,
+        tokensUsed: 100,
+        wallClockMs: 1000,
+        budget: { tokenBudget: null, turnBudget: null, wallClockBudgetMs: null },
+        },
+      },
+      null,
+      2,
+    );
+    const getGoal = new ToolCallComponent(
+      { id: 'call_get_goal', name: 'GetGoal', args: {} },
+      { tool_call_id: 'call_get_goal', output: snapshot, is_error: false },
+    );
+    expect(getGoal.hasHiddenContent()).toBe(false);
+    getGoal.dispose();
+
+    const update = new ToolCallComponent(
+      { id: 'call_update_goal', name: 'UpdateGoal', args: { status: 'paused' } },
+      { tool_call_id: 'call_update_goal', output: snapshot, is_error: false },
+    );
+    expect(update.hasHiddenContent()).toBe(false);
+    update.dispose();
+  });
+});

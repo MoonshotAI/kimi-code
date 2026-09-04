@@ -84,8 +84,14 @@ export class ShellRunComponent extends Container {
   hasHiddenContent(): boolean {
     if (this.disposed || this.backgrounded) return false;
     if (this.running) return this.runningHidesRows;
-    return this.children.some(
-      (child) => child instanceof TruncatedOutputComponent && child.wasTruncated(),
+    // More physical lines than the collapsed cap is hidden for certain, even
+    // for a card that finished while already expanded; a wrapped overflow
+    // shows up once a collapsed render has recorded it.
+    return (
+      this.finalOutput.split('\n').length > SHELL_OUTPUT_PREVIEW_LINES ||
+      this.children.some(
+        (child) => child instanceof TruncatedOutputComponent && child.wasTruncated(),
+      )
     );
   }
 

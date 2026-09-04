@@ -365,3 +365,17 @@ describe('Grep and Glob chips on an incomplete result set', () => {
     ).toBe('2+ files');
   });
 });
+
+describe('Grep chip on paginated numbered content with context rows', () => {
+  it('counts the page rows instead of the pagination total, which includes context rows', () => {
+    expect(
+      chipFor(
+        'Grep',
+        { pattern: 'foo', output_mode: 'content', '-C': 1, head_limit: 4 },
+        result(
+          'src/a.ts-1-import x\nsrc/a.ts:2:foo\nsrc/a.ts-3-export y\n--\nResults truncated to 4 lines (total: 12). Use offset=4 to see more.',
+        ),
+      ),
+    ).toBe('1 match in 1 file');
+  });
+});

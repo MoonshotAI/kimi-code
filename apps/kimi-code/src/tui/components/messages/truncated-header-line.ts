@@ -14,7 +14,11 @@
 import type { Component } from '@moonshot-ai/pi-tui';
 import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 
-import { TRUNCATION_ELLIPSIS } from '#/tui/constant/rendering';
+import {
+  ANSI_ESCAPE_PATTERN,
+  TAIL_WINDOW_UNITS_PER_CELL,
+  TRUNCATION_ELLIPSIS,
+} from '#/tui/constant/rendering';
 
 export interface HeaderFlex {
   /** Plain text; `style` is applied after the cut so the ellipsis is styled too. */
@@ -34,11 +38,6 @@ export type HeaderContent = string | HeaderSegments;
 // The middle is plain text and gets styled after the cut, so it is cut by
 // hand here: pi-tui's truncateToWidth wraps its ellipsis in a reset sequence,
 // which would break the caller's styling around it.
-
-// ANSI escape sequences (CSI, OSC) — tool output can carry them — are
-// zero-width atomic units: a cut must neither count their bytes toward the
-// budget nor split a sequence in half and leak a malformed one.
-const ANSI_ESCAPE_PATTERN = /\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))/g;
 
 interface TextUnit {
   readonly text: string;
@@ -85,10 +84,13 @@ function keepHead(text: string, width: number): string {
 /** Keep the end of `text` behind a leading ellipsis, within `width` cells. */
 function keepTail(text: string, width: number): string {
   const budget = width - visibleWidth(TRUNCATION_ELLIPSIS);
-  // One cell needs at most one code unit of payload; the window adds headroom
-  // only for zero-width escape sequences, so the segmented slice stays
-  // bounded by the terminal width instead of the whole argument.
-  const windowed = text.length > budget + 64 ? text.slice(-(budget + 64)) : text;
+  // The segmented slice stays bounded by the terminal width instead of the
+  // whole argument. ZWJ emoji and combining sequences pack many code units
+  // into one cell, so the window keeps TAIL_WINDOW_UNITS_PER_CELL per cell
+  // plus headroom for zero-width escape sequences; only sequences denser than
+  // that lose fitting clusters to the cut.
+  const window = budget * TAIL_WINDOW_UNITS_PER_CELL + 64;
+  const windowed = text.length > window ? text.slice(-window) : text;
   const units = [...textUnits(windowed)];
   // The window edge may have split a grapheme or an escape sequence; drop
   // whatever partial unit it left behind the leading ellipsis.
@@ -107,10 +109,18 @@ function keepTail(text: string, width: number): string {
   return truncated ? `${TRUNCATION_ELLIPSIS}${out}` : out;
 }
 
+/** Whether `text` fits `width` cells, measured lazily so a huge argument is never walked whole. */
+function fits(text: string, width: number): boolean {
+  let used = 0;
+  for (const unit of textUnits(text)) {
+    used += unit.width;
+    if (used > width) return false;
+  }
+  return true;
+}
+
 function fitFlex(flex: HeaderFlex, width: number): string {
-  // Two cells per code unit is the worst case (wide chars), so beyond twice
-  // the width a cut is certain and the whole string is never measured.
-  if (flex.text.length <= width * 2 && visibleWidth(flex.text) <= width) return flex.text;
+  if (fits(flex.text, width)) return flex.text;
   return flex.keep === 'tail' ? keepTail(flex.text, width) : keepHead(flex.text, width);
 }
 

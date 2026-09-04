@@ -36,7 +36,7 @@ import { PlanBoxComponent } from './plan-box';
 import { TruncatedHeaderLine, type HeaderContent } from './truncated-header-line';
 import { ShellExecutionComponent } from './shell-execution';
 import { countNonEmptyLines, pickChip } from './tool-renderers/chip';
-import { buildGoalToolHeader } from './tool-renderers/goal';
+import { buildGoalToolHeader, parseGoalToolOutput } from './tool-renderers/goal';
 import { computeWriteStats } from './tool-renderers/chip';
 import { nonEmptyLines, outcomeLine } from './tool-renderers/outcome';
 import { TruncatedOutputComponent } from './tool-renderers/truncated';
@@ -839,6 +839,16 @@ export class ToolCallComponent extends Container {
         return (
           args['background'] === true && nonEmptyLines(result.output).length > OUTCOME_MAX_LINES
         );
+      case 'CreateGoal':
+      case 'GetGoal':
+        // A parsed goal renders the same fixed snapshot in both states; only an
+        // unparsable result falls back to the line-count rule.
+        return (
+          parseGoalToolOutput(result.output) === undefined &&
+          nonEmptyLines(result.output).length > OUTCOME_MAX_LINES
+        );
+      case 'SetGoalBudget':
+      case 'UpdateGoal':
       case 'AgentSwarm':
       case 'TodoList':
       case 'EnterPlanMode':

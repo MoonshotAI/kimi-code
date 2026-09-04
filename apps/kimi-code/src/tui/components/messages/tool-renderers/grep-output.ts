@@ -159,7 +159,7 @@ export function parseGrepOutput(toolCall: ToolCallBlockData, output: string): Gr
   }
   // Without context flags every paginated row is a match, so the tool's
   // total is the exact match count; the files beyond the page stay unknown.
-  const paginatedTotal = countable ? PAGINATION_TOTAL.exec(output)?.[1] : undefined;
+  const paginatedTotal = hasContext ? undefined : PAGINATION_TOTAL.exec(output)?.[1];
   const matches = countable ? (paginatedTotal === undefined ? rows : Number(paginatedTotal)) : null;
   return {
     mode,

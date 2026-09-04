@@ -209,3 +209,20 @@ describe('ShellRunComponent hasHiddenContent', () => {
     expect(short.hasHiddenContent()).toBe(false);
   });
 });
+
+describe('ShellRunComponent hasHiddenContent when finished while expanded', () => {
+  let component: ShellRunComponent | undefined;
+
+  afterEach(() => {
+    component?.dispose();
+    component = undefined;
+  });
+
+  it('still reports the rows a collapse would hide, without a prior collapsed render', () => {
+    component = new ShellRunComponent(() => {});
+    component.setExpanded(true);
+    component.finish(Array.from({ length: 20 }, (_, i) => `row ${String(i + 1)}`).join('\n'), '', false);
+    component.render(100);
+    expect(component.hasHiddenContent()).toBe(true);
+  });
+});
