@@ -131,7 +131,8 @@ describe('chip registry', () => {
           ].join('\n'),
         ),
       ),
-    ).toBe('2 files');
+      // The timeout and cap notices mark the set incomplete: the count is a lower bound.
+    ).toBe('2+ files');
   });
 
   it('Glob chip shows file count', () => {
@@ -327,5 +328,40 @@ describe('Grep chip on paginated content results', () => {
         result(`src/a.ts:foo\nsrc/a.ts:bar\nsrc/b.ts:foo\n${notice}`),
       ),
     ).toBe('2 files');
+  });
+});
+
+describe('Grep and Glob chips on an incomplete result set', () => {
+  it('marks the counts as lower bounds when Grep timed out or hit its output cap', () => {
+    expect(
+      chipFor(
+        'Grep',
+        { pattern: 'foo' },
+        result(
+          'a.ts\nb.ts\nGrep timed out after 30s; partial results returned. Narrow the path, glob, or pattern and retry for complete results.',
+        ),
+      ),
+    ).toBe('2+ files');
+    expect(
+      chipFor(
+        'Grep',
+        { pattern: 'foo', output_mode: 'count_matches' },
+        result(
+          'Found 40 total occurrences across 12 files.\na.ts:30\nb.ts:10\n[Output truncated at 1048576 bytes of rg output — the result set is incomplete. Narrow the pattern, path, or glob filters and re-run to recover complete results.]',
+        ),
+      ),
+    ).toBe('40+ matches across 12+ files');
+  });
+
+  it('marks a capped Glob result the same way', () => {
+    expect(
+      chipFor(
+        'Glob',
+        { pattern: '**/*.ts' },
+        result(
+          '[Truncated at 1000 matches — use a more specific pattern]\nOnly the first 1000 matches are returned.\na.ts\nb.ts',
+        ),
+      ),
+    ).toBe('2+ files');
   });
 });

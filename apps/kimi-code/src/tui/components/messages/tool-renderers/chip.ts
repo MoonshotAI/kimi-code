@@ -28,8 +28,9 @@ export function countNonEmptyLines(text: string): number {
   return n;
 }
 
-function pluralize(n: number, singular: string, plural?: string): string {
-  return `${String(n)} ${n === 1 ? singular : (plural ?? `${singular}s`)}`;
+// `partial` marks a lower bound (`12+ files`) when the tool reported an incomplete result set.
+function pluralize(n: number, singular: string, plural?: string, partial = false): string {
+  return `${String(n)}${partial ? '+' : ''} ${n === 1 ? singular : (plural ?? `${singular}s`)}`;
 }
 
 function formatBytes(bytes: number): string {
@@ -110,20 +111,20 @@ const grepChip: ChipProvider = (toolCall, result) => {
   const stats = parseGrepOutput(toolCall, result.output);
   // A paginated count-mode page past the last row still carries the totals.
   if (stats.files === 0) return 'no matches';
-  if (stats.mode === 'files_with_matches') return pluralize(stats.files, 'file');
-  if (stats.matches === null) return pluralize(stats.files, 'file');
-  const matches = pluralize(stats.matches, 'match', 'matches');
+  if (stats.mode === 'files_with_matches') return pluralize(stats.files, 'file', undefined, stats.partial);
+  if (stats.matches === null) return pluralize(stats.files, 'file', undefined, stats.partial);
+  const matches = pluralize(stats.matches, 'match', 'matches', stats.partial);
   // A paginated content result only shows the files on its page.
   if (stats.filesPartial) return matches;
   return stats.files === 1
     ? `${matches} in 1 file`
-    : `${matches} across ${pluralize(stats.files, 'file')}`;
+    : `${matches} across ${pluralize(stats.files, 'file', undefined, stats.partial)}`;
 };
 
 const globChip: ChipProvider = (_toolCall, result) => {
-  const files = parseGlobOutput(result.output).length;
-  if (files === 0) return 'no files';
-  return pluralize(files, 'file');
+  const { entries, partial } = parseGlobOutput(result.output);
+  if (entries.length === 0) return 'no files';
+  return pluralize(entries.length, 'file', undefined, partial);
 };
 
 const fetchChip: ChipProvider = (_toolCall, result) =>

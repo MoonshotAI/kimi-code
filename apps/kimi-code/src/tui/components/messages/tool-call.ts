@@ -748,7 +748,8 @@ export class ToolCallComponent extends Container {
       this.truncatedAtLastRender = this.children.some(
         (child, index) =>
           (child instanceof TruncatedHeaderLine &&
-            (index !== 1 || this.toolCall.name === 'Bash') &&
+            (index !== 1 ||
+              (this.toolCall.name === 'Bash' && this.toolCall.truncated !== true)) &&
             child.wasTruncated()) ||
           ((child instanceof TruncatedOutputComponent || child instanceof ShellExecutionComponent) &&
             child.wasTruncated()),
@@ -804,6 +805,9 @@ export class ToolCallComponent extends Container {
     // its subagent block is a fixed-height window either way, so ctrl+o
     // changes nothing there.
     if (this.isSingleSubagentView()) return false;
+    // Arguments cut off by max_tokens: the card shows a fixed "call never
+    // executed" note in place of any preview, so there is nothing to expand.
+    if (this.toolCall.truncated === true && this.result === undefined) return false;
     if (this.callPreviewHidesContent()) return true;
     const { result } = this;
     if (result === undefined) return nonEmptyLines(this.liveOutput).length > 1;

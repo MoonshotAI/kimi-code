@@ -69,10 +69,22 @@ describe('renderHeaderContent', () => {
     expect(line).toBe('H ABCDE… T');
   });
 
-  it('falls back to cutting the whole row when even the fixed parts overflow', () => {
-    const line = strip(renderHeaderContent(segments('ls', 'head'), 12));
-    expect(visibleWidth(line)).toBeLessThanOrEqual(12);
-    expect(line.endsWith('…')).toBe(true);
+  it('drops the middle before the fixed parts when the row is too narrow for it', () => {
+    const content = { head: 'HEAD ', flex: { text: 'abcdef', keep: 'head' as const }, tail: ' T' };
+    // One spare cell: the middle collapses to an ellipsis between the fixed parts.
+    expect(renderHeaderContent(content, 8)).toBe('HEAD … T');
+    // No spare cell: the middle is dropped outright, both fixed parts stay.
+    expect(renderHeaderContent(content, 7)).toBe('HEAD  T');
+  });
+
+  it('cuts the head from its end so the tail survives when even the fixed parts overflow', () => {
+    const content = { head: 'HEAD ', flex: { text: 'abcdef', keep: 'head' as const }, tail: ' T' };
+    const line = strip(renderHeaderContent(content, 5));
+    expect(line).toBe('HE… T');
+    // Below two cells for the head there is nothing left to keep: cut from the end.
+    const tiny = strip(renderHeaderContent(content, 3));
+    expect(visibleWidth(tiny)).toBeLessThanOrEqual(3);
+    expect(tiny.endsWith('…')).toBe(true);
   });
 
   it('keeps ANSI escape sequences atomic and zero-width when cutting', () => {

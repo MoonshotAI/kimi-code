@@ -2454,3 +2454,21 @@ describe('ToolCallComponent hasHiddenContent with a capped call preview', () => 
     short.dispose();
   });
 });
+
+describe('ToolCallComponent hasHiddenContent for a call truncated by max_tokens', () => {
+  it('reports nothing to expand, since the card only shows the never-executed note', () => {
+    const component = new ToolCallComponent(
+      {
+        id: 'call_cut',
+        name: 'Bash',
+        args: { command: 'echo one\necho two\necho three' },
+        truncated: true,
+      },
+      undefined,
+    );
+    expect(component.hasHiddenContent()).toBe(false);
+    component.render(30);
+    expect(component.hasHiddenContent()).toBe(false);
+    component.dispose();
+  });
+});

@@ -38,6 +38,14 @@ export interface GrepStats {
   readonly files: number;
   /** True when a paginated content result only shows the files on its page, so `files` is a lower bound. */
   readonly filesPartial: boolean;
+  /** True when the tool reported an incomplete result set (timeout or output cap): every count is a lower bound. */
+  readonly partial: boolean;
+}
+
+export interface GlobStats {
+  readonly entries: readonly string[];
+  /** True when Glob timed out or hit its match cap: the count is a lower bound. */
+  readonly partial: boolean;
 }
 
 // Lines the tools add around the results: the empty-result sentence, the
@@ -52,6 +60,9 @@ const NOTICE =
 // the full line count — the file count in files mode.
 const COUNT_SUMMARY = /^Found (\d+) total (?:non-sensitive )?occurrences? across (\d+) files?\.$/m;
 const PAGINATION_TOTAL = /^Results truncated to \d+ lines \(total: (\d+)/m;
+// Notices that mark the result set itself as incomplete, as opposed to merely paginated.
+const INCOMPLETE =
+  /^(?:\[Output truncated at \d+ bytes|Grep timed out after |Glob timed out after |\[stdout truncated at |\[Truncated at \d+ matches|Only the first \d+ matches)/m;
 
 // `path:line:text`; context lines use `-` separators and are not matches.
 const CONTENT_MATCH = /^(.+?):(\d+):/;
@@ -74,12 +85,13 @@ export function grepMode(toolCall: ToolCallBlockData): GrepMode {
 export function parseGrepOutput(toolCall: ToolCallBlockData, output: string): GrepStats {
   const mode = grepMode(toolCall);
   const lines = resultLines(output);
+  const partial = INCOMPLETE.test(output);
 
   if (mode === 'files_with_matches') {
     const entries = lines.map((path) => ({ path, label: path }));
     const total = PAGINATION_TOTAL.exec(output)?.[1];
     const files = total === undefined ? entries.length : Number(total);
-    return { mode, entries, total: files, matches: files, files, filesPartial: false };
+    return { mode, entries, total: files, matches: files, files, filesPartial: false, partial };
   }
 
   if (mode === 'count_matches') {
@@ -100,9 +112,18 @@ export function parseGrepOutput(toolCall: ToolCallBlockData, output: string): Gr
         matches: Number(totalMatches),
         files: Number(totalFiles),
         filesPartial: false,
+        partial,
       };
     }
-    return { mode, entries, total: entries.length, matches, files: entries.length, filesPartial: false };
+    return {
+      mode,
+      entries,
+      total: entries.length,
+      matches,
+      files: entries.length,
+      filesPartial: false,
+      partial,
+    };
   }
 
   // Content mode: with line numbers (the default) only `path:line:` rows are
@@ -147,9 +168,10 @@ export function parseGrepOutput(toolCall: ToolCallBlockData, output: string): Gr
     matches,
     files: paths.size,
     filesPartial: paginatedTotal !== undefined,
+    partial,
   };
 }
 
-export function parseGlobOutput(output: string): string[] {
-  return resultLines(output);
+export function parseGlobOutput(output: string): GlobStats {
+  return { entries: resultLines(output), partial: INCOMPLETE.test(output) };
 }

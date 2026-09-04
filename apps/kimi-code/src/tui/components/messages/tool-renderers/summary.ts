@@ -77,7 +77,7 @@ const grepGlance: GlanceFn = (toolCall, result) => {
   return sampleList(labels, Math.max(labels.length, stats.total));
 };
 
-const globGlance: GlanceFn = (_toolCall, result) => sampleList(parseGlobOutput(result.output));
+const globGlance: GlanceFn = (_toolCall, result) => sampleList(parseGlobOutput(result.output).entries);
 
 // ── Exports ──────────────────────────────────────────────────────────
 

@@ -129,12 +129,30 @@ function layoutHeaderContent(
   const style = flex.style ?? ((text: string) => text);
   const available = safeWidth - visibleWidth(head) - visibleWidth(tail);
   // Below two cells there is no room for even an ellipsis plus one character
-  // of the middle: give up on the layout and cut the whole row from the end.
+  // of the middle: drop the middle and keep the fixed parts, cutting the head
+  // from its end when even those overflow, so the tail (the result chip)
+  // stays visible whenever it can fit at all.
   if (available < 2) {
-    const row = `${head}${style(flex.text)}${tail}`;
+    const headWidth = visibleWidth(head);
+    const tailWidth = visibleWidth(tail);
+    if (headWidth + tailWidth <= safeWidth) {
+      const marker =
+        flex.text.length > 0 && safeWidth - headWidth - tailWidth >= 1
+          ? style(TRUNCATION_ELLIPSIS)
+          : '';
+      return { line: `${head}${marker}${tail}`, truncated: flex.text.length > 0 };
+    }
+    if (safeWidth - tailWidth >= 2) {
+      // The head is already styled, so pi-tui's cutter (which resets styles
+      // around its ellipsis) is the right tool here.
+      return {
+        line: `${truncateToWidth(head, safeWidth - tailWidth, TRUNCATION_ELLIPSIS)}${tail}`,
+        truncated: true,
+      };
+    }
     return {
-      line: truncateToWidth(row, safeWidth, TRUNCATION_ELLIPSIS),
-      truncated: visibleWidth(row) > safeWidth,
+      line: truncateToWidth(`${head}${tail}`, safeWidth, TRUNCATION_ELLIPSIS),
+      truncated: true,
     };
   }
   const fitted = fitFlex(flex, available);
