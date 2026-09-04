@@ -147,4 +147,57 @@ describe('TodoListTool', () => {
     expect(clearExecution.description).toBe('Clearing todo list');
     expect(updateExecution.description).toBe('Updating todo list');
   });
+
+  it('defers query display until execution while writes expose defensive input displays', async () => {
+    const current: TodoItem[] = [{ title: 'existing', status: 'in_progress' }];
+    const { tool } = makeTool(current);
+    const next: TodoItem[] = [{ title: 'next', status: 'pending' }];
+
+    const readExecution = tool.resolveExecution({});
+    const updateExecution = tool.resolveExecution({ todos: next });
+    const clearExecution = tool.resolveExecution({ todos: [] });
+
+    if (
+      readExecution.isError === true ||
+      updateExecution.isError === true ||
+      clearExecution.isError === true
+    ) {
+      throw new TypeError('expected runnable executions');
+    }
+
+    expect(readExecution.display).toBeUndefined();
+    expect(updateExecution.display).toEqual({
+      kind: 'todo_list',
+      items: [{ title: 'next', status: 'pending' }],
+    });
+    expect(clearExecution.display).toEqual({ kind: 'todo_list', items: [] });
+
+    next[0] = { title: 'mutated next', status: 'done' };
+    expect(updateExecution.display).toEqual({
+      kind: 'todo_list',
+      items: [{ title: 'next', status: 'pending' }],
+    });
+
+    next[0] = { title: 'next', status: 'pending' };
+    await updateExecution.execute({
+      turnId: 1,
+      toolCallId: 'update',
+      signal,
+    });
+    const readResult = await readExecution.execute({
+      turnId: 1,
+      toolCallId: 'read',
+      signal,
+    });
+    expect(readResult.display).toEqual({
+      kind: 'todo_list',
+      items: [{ title: 'next', status: 'pending' }],
+    });
+
+    current[0] = { title: 'mutated current', status: 'done' };
+    expect(readResult.display).toEqual({
+      kind: 'todo_list',
+      items: [{ title: 'next', status: 'pending' }],
+    });
+  });
 });
