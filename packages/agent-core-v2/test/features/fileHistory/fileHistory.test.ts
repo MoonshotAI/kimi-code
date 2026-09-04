@@ -434,6 +434,28 @@ describe('AgentFileHistoryService', () => {
     expect(await service.turnRecorded(3)).toBe(false);
   });
 
+  it('reports a deletion turn unrecorded once its baseline blob is gone', async () => {
+    const service = createService();
+    setFile('/ws/d.txt', 'gone\n');
+
+    startTurn(1);
+    await fireEdit(service, '/ws/d.txt', 1);
+    files.delete('/ws/d.txt');
+    endTurn(1);
+    await service.settled();
+
+    expect(await service.changes(1)).toEqual([
+      { path: 'd.txt', status: 'deleted', additions: 0, deletions: 1 },
+    ]);
+    expect(await service.turnRecorded(1)).toBe(true);
+
+    const keyed = Object.values(
+      service.history().checkpoints.find((c) => c.turnId === 1 && c.phase !== 'end')!.entries,
+    ).find((entry) => entry.key !== null);
+    await blobs.delete(scopeCtx.scope(), keyed!.key!);
+    expect(await service.turnRecorded(1)).toBe(false);
+  });
+
   it('keeps a shared baseline blob alive until its last window reference leaves', async () => {
     const service = createService();
     setFile('/ws/s.txt', 'base\n');

@@ -119,10 +119,17 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
         index === state.checkpoints.length - 1 &&
         this.activeTurnId === turnId;
       if (end === undefined && !live) return false;
-      const entries = { ...state.checkpoints[index]!.entries, ...end?.entries };
-      const keyed = Object.values(entries).find((entry) => entry.key !== null);
-      if (keyed?.key === null || keyed?.key === undefined) return true;
-      return this.blobs.has(this.agentCtx.scope(), keyed.key);
+      const keys = new Set<string>();
+      for (const entry of [
+        ...Object.values(state.checkpoints[index]!.entries),
+        ...Object.values(end?.entries ?? {}),
+      ]) {
+        if (entry.key !== null) keys.add(entry.key);
+      }
+      for (const key of keys) {
+        if (!(await this.blobs.has(this.agentCtx.scope(), key))) return false;
+      }
+      return true;
     });
   }
 
