@@ -64,6 +64,10 @@ export interface GlobalEventsWsHandlers {
    *  carries the `__global__` watermark; the real session id rides in the
    *  payload. */
   onSessionArchived?: ((sessionId: string) => void) | undefined;
+  /** A session was permanently deleted (list-level signal). Same envelope
+   *  shape as `event.session.archived`: the real session id rides in the
+   *  payload. */
+  onSessionDeleted?: ((sessionId: string) => void) | undefined;
   /** A workspace was created / updated / deleted (list-level signal). */
   onWorkspaceChanged?: (() => void) | undefined;
   /** A DI unit of the engine's scope tree changed state (debug feed). */
@@ -192,6 +196,14 @@ export class GlobalEventsWs {
         const archivedId = payload?.sessionId;
         if (typeof archivedId === 'string' && archivedId !== '') {
           this.handlers.onSessionArchived?.(archivedId);
+        }
+        return;
+      }
+      case 'event.session.deleted': {
+        const payload = frame.payload as { sessionId?: unknown } | undefined;
+        const deletedId = payload?.sessionId;
+        if (typeof deletedId === 'string' && deletedId !== '') {
+          this.handlers.onSessionDeleted?.(deletedId);
         }
         return;
       }
