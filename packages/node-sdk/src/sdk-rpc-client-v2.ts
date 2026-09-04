@@ -55,9 +55,10 @@
  *   aggregate the base class builds, re-read from the profile / permission /
  *   swarm services plus the facade. `importContext` composes v1's exact
  *   message + rejections over v2 primitives (`src/v2/import-context.ts`) —
- *   the engine has no import capability of its own. `createSession`'s
- *   `model` / `thinking` / `permission` options are applied in this batch
- *   too (default-profile bind + permission mode).
+   *   the engine has no import capability of its own. `createSession`'s
+   *   `model` / `thinking` / `permission` / `agentProfile` / `agentFiles`
+   *   options are applied in this batch too (startup-profile or default-profile
+   *   bind + permission mode).
  * - `prompt` / `steer` / `runShellCommand` / `cancelShellCommand` → the
  *   `klient.session(id).agent(id)` facade; `activatePluginCommand` →
  *   `IAgentPluginCommandService` through the agent scope; `activateSkill` →
@@ -134,7 +135,7 @@
  *   `toolCall` keeps the base class's "not supported" answer, which the
  *   interaction bridge already relies on.
  */
-import { readdir } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import {
@@ -164,6 +165,8 @@ import {
   drainSessionIndexMirror,
   ensureKimiHome,
   ensureMainAgent,
+  parseAgentFileText,
+  resolveAgentPath,
   agentContextOf,
   IAgentActivityView,
   IAgentContextMemoryService,
@@ -1307,15 +1310,19 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * v1 semantics: register the workDir as a workspace and create the session
    * (the handler's `ISessionLifecycleService.create` does both; the klient facade
    * wrapper is bypassed because it takes neither an explicit session id nor
-   * caller metadata). The `model` / `thinking` / `permission` options are the
-   * main-agent configuration v1 applies eagerly at creation: supplying any of
-   * them materializes the main agent here (v2 otherwise keeps it lazy) and
-   * binds the default profile with the requested model/thinking. v1 never
-   * validates either at create time — an unknown alias is recorded verbatim
-   * and an unlisted effort normalizes to the model default — so the bind is
-   * deliberately NOT `strictThinking`, and the v2-only create-time rejections
-   * that still leak through (unknown alias → `config.invalid`, no configured
-   * default model → `model.not_configured`) are pinned in the parity tests.
+   * caller metadata). The `model` / `thinking` / `permission` / `agentProfile`
+   * options are the main-agent configuration v1 applies eagerly at creation:
+   * supplying any of them materializes the main agent here (v2 otherwise keeps
+   * it lazy). `agentProfile` is bound at create (the same `mainAgentBinding`
+   * print mode uses) so a custom agent's `tools` / `disallowedTools` apply in
+   * interactive sessions; otherwise the default profile is bound with the
+   * requested model/thinking. v1 never validates model/thinking at create time
+   * — an unknown alias is recorded verbatim and an unlisted effort normalizes
+   * to the model default — so the bind is deliberately NOT `strictThinking`,
+   * and the v2-only create-time rejections that still leak through (unknown
+   * alias → `config.invalid`, no configured default model →
+   * `model.not_configured`, unknown `agentProfile` → `profile.unknown`) are
+   * pinned in the tests.
    */
   override async createSession(input: CreateSessionOptions): Promise<SessionSummary> {
     // An explicit id takes the per-session queue so the check-then-create
@@ -1340,20 +1347,32 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         );
       }
     }
+    await this.seedExplicitAgentFiles(workDir, input.agentFiles);
+    const agentProfileName = await this.resolveStartupAgentProfile(input, workDir);
     const handle = await this.engineAccessor.get(ISessionManager).create({
       sessionId: input.id,
       workDir,
       additionalDirs: input.additionalDirs,
+      mainAgentBinding:
+        agentProfileName !== undefined
+          ? {
+              profile: agentProfileName,
+              model: input.model,
+              thinking: input.thinking,
+            }
+          : undefined,
     });
     // Wired before the optional main-agent materialization so a profile-bind
     // warning (oversized AGENTS.md) reaches the listeners like v1's create.
     this.wireSession(handle);
     if (
+      agentProfileName !== undefined ||
       input.model !== undefined ||
       input.thinking !== undefined ||
       input.permission !== undefined
     ) {
       const agent = await this.materializeMainAgent(handle, {
+        profile: agentProfileName,
         model: input.model,
         thinking: input.thinking,
       });
@@ -1663,17 +1682,72 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   // -----------------------------------------------------------------------
 
   /**
-   * The session's materialized main agent with v1's eager default binding
-   * applied: a freshly created agent whose profile is still unbound gets the
-   * default profile + configured default model (the same bind kap-server's
-   * prompt route performs on first use). A home with no configured model
-   * leaves the agent unbound instead of failing — v1's model-less session
-   * reads (`model: undefined`, `'off'` thinking, zero capabilities) map onto
-   * the unbound state exactly.
+   * The session's materialized main agent with v1's eager binding applied: a
+   * freshly created agent whose profile is still unbound gets the requested
+   * startup profile (or the default) plus the configured default model. An
+   * already-bound agent is left alone unless a startup profile was requested.
+   * A home with no configured model leaves the agent unbound instead of
+   * failing — v1's model-less session reads (`model: undefined`, `'off'`
+   * thinking, zero capabilities) map onto the unbound state exactly.
    */
+  private async resolveStartupAgentProfile(
+    input: CreateSessionOptions,
+    workDir: string,
+  ): Promise<string | undefined> {
+    if (input.agentProfile !== undefined) return input.agentProfile;
+    const agentFile = input.agentFiles?.[0];
+    if (agentFile === undefined) return undefined;
+    const agentFilePath = resolveAgentPath(
+      agentFile,
+      workDir,
+      this.engineAccessor.get(IBootstrapService).osHomeDir,
+    );
+    let text: string;
+    try {
+      text = await readFile(agentFilePath, 'utf8');
+    } catch (error) {
+      throw new KimiError(
+        ErrorCodes.AGENT_NOT_FOUND,
+        `Failed to read agent file "${agentFilePath}": ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+    try {
+      return parseAgentFileText({
+        path: agentFilePath,
+        source: 'explicit',
+        text,
+      }).name;
+    } catch (error) {
+      throw new KimiError(
+        ErrorCodes.AGENT_NOT_FOUND,
+        `Invalid agent file "${agentFilePath}": ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+  }
+
+  private async seedExplicitAgentFiles(
+    workDir: string,
+    agentFiles: readonly string[] | undefined,
+  ): Promise<void> {
+    const hostArgs = this.engineAccessor.get(IBootstrapService).args as {
+      agentFiles?: readonly string[];
+    };
+    const next =
+      agentFiles !== undefined && agentFiles.length > 0 ? [...agentFiles] : undefined;
+    if (next === undefined && hostArgs.agentFiles === undefined) return;
+    hostArgs.agentFiles = next;
+    const instance = await this.engineAccessor
+      .get(IWorkspaceInstanceManager)
+      .getOrCreate({ root: workDir });
+    await instance.program.ready;
+    await instance.program.explicitAgentProfiles.reload();
+  }
+
   private async materializeMainAgent(
     session: ISessionScopeHandle,
-    binding?: { readonly model?: string; readonly thinking?: string },
+    binding?: { readonly profile?: string; readonly model?: string; readonly thinking?: string },
   ): Promise<IAgentScopeHandle> {
     await this.modelReady;
     const context = await ensureMainAgent(session);
@@ -1682,16 +1756,16 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       throw new KimiError(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
     }
     const profile = agent.accessor.get(IAgentProfileService);
-    if (binding !== undefined || profile.data().profileName === undefined) {
+    if (binding?.profile !== undefined || profile.data().profileName === undefined) {
       try {
         await profile.bind({
-          profile: DEFAULT_AGENT_PROFILE_NAME,
+          profile: binding?.profile ?? DEFAULT_AGENT_PROFILE_NAME,
           model: binding?.model,
           thinking: binding?.thinking,
         });
       } catch (error) {
         if (
-          binding === undefined &&
+          binding?.profile === undefined &&
           error instanceof ProfileError &&
           error.code === ProfileErrors.codes.MODEL_NOT_CONFIGURED
         ) {

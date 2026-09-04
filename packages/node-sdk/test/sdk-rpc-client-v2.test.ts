@@ -36,11 +36,13 @@ import { foldAgentWireReplay } from '#/v2/resume-replay';
 import {
   drainQueryStoreDisposals,
   drainSessionIndexMirror,
+  ensureMainAgent,
   Error2,
   getLiveSessionById,
   HostProcessError,
   IAgentTodoService,
   IAgentLifecycleService,
+  IAgentProfileService,
   IAgentTowerService,
   IHostRequestHeaders,
   IMcpManagementService,
@@ -1548,7 +1550,135 @@ describe('removeProviderFromConfig', () => {
 
     expect(next.secondaryModel).toEqual({ defaultModel: 'a/m1' });
   });
+
+  it('binds --agent disallowedTools on interactive createSession (v2 TUI path)', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    await writeRestrictedAgentHome(homeDir);
+    const rpc = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      const summary = await rpc.createSession({
+        workDir,
+        model: 'kimi-test-model',
+        agentProfile: 'dev',
+      });
+      const data = await mainAgentProfileData(rpc, summary.id);
+      expect(data.profileName).toBe('dev');
+      expect(data.disallowedTools).toEqual(['Read', 'Write', 'Edit']);
+      expect(data.activeToolNames ?? []).not.toContain('Read');
+      expect(data.activeToolNames ?? []).not.toContain('Write');
+      expect(data.activeToolNames ?? []).not.toContain('Edit');
+    } finally {
+      await rpc.close();
+    }
+  });
+
+  it('binds an --agent-file profile that is not in user/project agent dirs', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    await writeRestrictedAgentHome(homeDir);
+    const agentFilePath = join(workDir, 'explicit-only.md');
+    await writeFile(
+      agentFilePath,
+      `---
+name: explicit-only
+description: Agent-file-only profile for interactive --agent-file bind.
+disallowedTools:
+  - Read
+  - Write
+  - Edit
+---
+
+You are an explicit agent-file-only profile.
+`,
+      'utf-8',
+    );
+    const rpc = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      const summary = await rpc.createSession({
+        workDir,
+        model: 'kimi-test-model',
+        agentFiles: [agentFilePath],
+      });
+      const data = await mainAgentProfileData(rpc, summary.id);
+      expect(data.profileName).toBe('explicit-only');
+      expect(data.disallowedTools).toEqual(['Read', 'Write', 'Edit']);
+    } finally {
+      await rpc.close();
+    }
+  });
+
+  it('rejects an unknown --agent profile at interactive session create', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    await writeRestrictedAgentHome(homeDir);
+    const rpc = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await expect(
+        rpc.createSession({
+          workDir,
+          model: 'kimi-test-model',
+          agentProfile: 'no-such-agent',
+        }),
+      ).rejects.toMatchObject({ code: 'profile.unknown' });
+      expect(await sessionDirExists(homeDir, 'ses_unused')).toBe(false);
+    } finally {
+      await rpc.close();
+    }
+  });
 });
+
+async function writeRestrictedAgentHome(homeDir: string): Promise<void> {
+  await writeFile(
+    join(homeDir, 'config.toml'),
+    `
+[providers.local]
+type = "kimi"
+base_url = "https://example.test/v1"
+api_key = "sk-test"
+
+[models."kimi-test-model"]
+provider = "local"
+model = "kimi-test-model"
+max_context_size = 1000
+
+default_model = "kimi-test-model"
+`,
+    'utf-8',
+  );
+  const agentDir = join(homeDir, 'agents');
+  await mkdir(agentDir, { recursive: true });
+  await writeFile(
+    join(agentDir, 'dev.md'),
+    `---
+name: dev
+description: Default agent with Read/Write/Edit disabled
+disallowedTools:
+  - Read
+  - Write
+  - Edit
+---
+
+\${base_prompt}
+`,
+    'utf-8',
+  );
+}
+
+async function mainAgentProfileData(rpc: SDKRpcClientV2, sessionId: string) {
+  const session = getLiveSessionById(rpc.engineAccessor, sessionId);
+  if (session === undefined) throw new Error(`live session "${sessionId}" not found`);
+  const context = await ensureMainAgent(session);
+  const agent = session.accessor.get(IAgentLifecycleService).handleOf(context.agentId);
+  if (agent === undefined) throw new Error('main agent was not found');
+  return agent.accessor.get(IAgentProfileService).data();
+}
 
 async function writeSkill(dir: string, name: string): Promise<void> {  await mkdir(dir, { recursive: true });
   await writeFile(
