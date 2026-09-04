@@ -184,7 +184,7 @@ function makeFakeHarness() {
           };
         }),
         drain: vi.fn(async () => {}),
-        list: vi.fn(() => ({ active: undefined, pending: [] })),
+        list: vi.fn(() => ({ launching: false, active: undefined, pending: [] })),
       },
     ],
     [IAgentTaskService, { list: vi.fn(() => []) }],
@@ -826,11 +826,11 @@ describe('runV2Print', () => {
     };
     loop.status.mockReturnValue({ state: 'running', pendingTurnIds: [] });
     loop.cancel.mockImplementation(() => {
-      order.push('cancel');
+      if (!order.includes('cancel')) order.push('cancel');
       return true;
     });
     loop.settled = vi.fn(async () => {
-      order.push('settled');
+      if (!order.includes('settled')) order.push('settled');
     });
     const dispatcher = agentServices.get(IEventDispatcher) as {
       flush: ReturnType<typeof vi.fn>;
@@ -839,9 +839,10 @@ describe('runV2Print', () => {
       order.push('flush');
     });
 
-    // A turn that is still in flight when the signal arrives; its prompt queue
-    // stays non-empty (the prompt-settle chain has not run) until released
-    // below.
+    // A turn that is still in flight when the signal arrives. The prompt
+    // queue reports the launch window first (the prompt left `pending` and is
+    // not yet `active`), then the running prompt, and only goes empty once
+    // released below.
     const promptService = agentServices.get(IAgentPromptService) as {
       enqueue: ReturnType<typeof vi.fn>;
       drain: ReturnType<typeof vi.fn>;
@@ -856,12 +857,16 @@ describe('runV2Print', () => {
         }),
       }),
     });
-    let promptsBusy = true;
-    promptService.list = vi.fn(() =>
-      promptsBusy
-        ? { active: { id: 'p1' }, pending: [] }
-        : { active: undefined, pending: [] },
-    );
+    let promptPhase: 'launching' | 'active' | 'empty' = 'launching';
+    promptService.list = vi.fn(() => {
+      if (promptPhase === 'launching') {
+        return { launching: true, active: undefined, pending: [] };
+      }
+      if (promptPhase === 'active') {
+        return { launching: false, active: { id: 'p1' }, pending: [] };
+      }
+      return { launching: false, active: undefined, pending: [] };
+    });
 
     const handlers = new Map<string, () => Promise<void>>();
     const fakeProcess = {
@@ -890,8 +895,8 @@ describe('runV2Print', () => {
     settleTurn({ type: 'cancelled', steps: 0, reason: new Error('aborted') });
     const sigintRun = onSigint();
     // Quiesce waits for the prompt queue to empty before the wire flush: the
-    // loops are already idle, but while the snapshot still reports an active
-    // prompt the flush must not happen.
+    // loops are already idle, but while the snapshot still reports the launch
+    // window or an active prompt the flush must not happen.
     for (let i = 0; i < 100 && !order.includes('settled'); i++) {
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
@@ -900,7 +905,10 @@ describe('runV2Print', () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(promptService.drain).toHaveBeenCalled();
     expect(order).toEqual(['cancel', 'settled']);
-    promptsBusy = false;
+    promptPhase = 'active';
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(order).toEqual(['cancel', 'settled']);
+    promptPhase = 'empty';
     await sigintRun;
 
     expect(order).toEqual(['cancel', 'settled', 'flush', 'exit:130']);

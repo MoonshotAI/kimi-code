@@ -938,7 +938,6 @@ async function quiesceSessionAgents(
       return [];
     }
   });
-  await Promise.allSettled(promptServices.map((service) => service.drain()));
   const loops = handles.flatMap((handle) => {
     try {
       return [handle.accessor.get(IAgentLoopService)];
@@ -948,20 +947,29 @@ async function quiesceSessionAgents(
       return [];
     }
   });
-  for (const loop of loops) {
-    for (const turnId of loop.status().pendingTurnIds) loop.cancel(turnId);
-    loop.cancel();
-  }
-  await Promise.allSettled(loops.map((loop) => loop.settled()));
-  // The loop reports idle (releaseActiveTurn) before the prompt-settle chain
-  // dispatches the final prompt.completed; settle() clears the active prompt
-  // and dispatches the record in one synchronous block, so an empty queue
-  // snapshot proves the record was already queued for the wire flush.
+  // Repeat until a full pass finds every queue empty: a prompt can surface
+  // after one pass already ran — from startNext's launch window (the prompt
+  // left `pending` and is not yet `active`, so drain could not see it) or
+  // from a cancelled turn's settle chain. The snapshot covers all three
+  // states; the loop reports idle (releaseActiveTurn) before the
+  // prompt-settle chain dispatches the final record, and settle() clears the
+  // active prompt and dispatches that record in one synchronous block, so an
+  // empty snapshot proves it was already queued for the wire flush.
   for (;;) {
+    await Promise.allSettled(promptServices.map((service) => service.drain()));
+    for (const loop of loops) {
+      for (const turnId of loop.status().pendingTurnIds) loop.cancel(turnId);
+      loop.cancel();
+    }
+    await Promise.allSettled(loops.map((loop) => loop.settled()));
     const busy = promptServices.some((service) => {
       try {
         const snapshot = service.list();
-        return snapshot.active !== undefined || snapshot.pending.length > 0;
+        return (
+          snapshot.launching ||
+          snapshot.active !== undefined ||
+          snapshot.pending.length > 0
+        );
       } catch {
         return false;
       }
