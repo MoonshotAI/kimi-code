@@ -149,8 +149,14 @@ function pairBlocks(
 
     const content = projectedContent(message, onAnomaly);
     if (message.toolCalls.length === 0 && !hasDeclaredTools(message)) {
-      if (content.length === 0) continue;
-      if (content.every(isVacuousContentPart)) {
+      const sendable = wireSendableContent(content);
+      if (sendable.length === 0) {
+        if (content.length > 0) {
+          onAnomaly?.({ kind: 'vacuous_message_dropped', role: message.role });
+        }
+        continue;
+      }
+      if (sendable.every(isVacuousContentPart)) {
         onAnomaly?.({ kind: 'vacuous_message_dropped', role: message.role });
         continue;
       }
@@ -404,6 +410,10 @@ function isInterruptedToolResult(message: Message | undefined): boolean {
 
 function isBlankText(part: ContentPart): boolean {
   return part.type === 'text' && part.text.trim().length === 0;
+}
+
+function wireSendableContent(content: readonly ContentPart[]): ContentPart[] {
+  return content.filter((part) => part.type !== 'think' || part.encrypted !== undefined);
 }
 
 function canMergeUserMessage(message: ContextMessage): boolean {
