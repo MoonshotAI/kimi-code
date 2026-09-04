@@ -646,15 +646,22 @@ export class SessionEventBroadcaster {
       const payload = sessionDeletedPayload(corePayload);
       if (payload === undefined) return;
       void (async () => {
-        const pending = this.pendingStates.get(payload.sessionId);
-        if (pending !== undefined) await pending.catch(() => undefined);
-        const state = this.sessions.get(payload.sessionId);
-        if (state !== undefined) {
-          this.sessions.delete(payload.sessionId);
-          await disposeSessionState(state);
+        try {
+          const pending = this.pendingStates.get(payload.sessionId);
+          if (pending !== undefined) await pending.catch(() => undefined);
+          const state = this.sessions.get(payload.sessionId);
+          if (state !== undefined) {
+            this.sessions.delete(payload.sessionId);
+            await disposeSessionState(state);
+          }
+          this.opts.transcriptService?.dropSession(payload.sessionId);
+          await rm(sessionJournalPath(this.opts.eventsDir, payload.sessionId), { force: true });
+        } catch (error: unknown) {
+          this.opts.logger?.warn(
+            { sessionId: payload.sessionId, err: String(error) },
+            'session deletion cleanup failed; dispatching event.session.deleted anyway',
+          );
         }
-        this.opts.transcriptService?.dropSession(payload.sessionId);
-        await rm(sessionJournalPath(this.opts.eventsDir, payload.sessionId), { force: true });
         await this.dispatchGlobal({
           type: 'event.session.deleted',
           workspace_id: payload.workspaceId,

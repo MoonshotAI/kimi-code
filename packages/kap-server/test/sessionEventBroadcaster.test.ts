@@ -1,4 +1,4 @@
-import { access, mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -1306,6 +1306,29 @@ describe('SessionEventBroadcaster', () => {
       await expect(access(join(dir, 's1.jsonl'))).rejects.toThrow();
     });
     expect(await bc.subscribe('s1', collectingTarget().target)).toBe(false);
+  });
+
+  it('still fans out event.session.deleted when the journal cleanup fails', async () => {
+    const globalView = collectingTarget();
+    bc.addGlobalTarget(globalView.target);
+    await mkdir(join(dir, 'cold-2.jsonl'));
+
+    eventBus.emit({
+      type: 'event.session.deleted',
+      payload: { sessionId: 'cold-2', workspaceId: 'wd_cold' },
+    });
+
+    await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+    expect(globalView.envelopes[0]).toMatchObject({
+      type: 'event.session.deleted',
+      session_id: '__global__',
+      payload: {
+        type: 'event.session.deleted',
+        agentId: 'main',
+        sessionId: 'cold-2',
+        workspace_id: 'wd_cold',
+      },
+    });
   });
 
   it('fans out event.workspace.created/updated with the wire workspace shape', async () => {
