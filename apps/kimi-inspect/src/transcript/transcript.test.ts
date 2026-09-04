@@ -1,117 +1,182 @@
 /**
- * Transcript glue-layer tests — the app's own REST/WS/store plumbing. The L2
- * reducer semantics themselves are covered by `@moonshot-ai/transcript`'s own
- * test suite and are intentionally not re-tested here.
+ * Message-protocol glue-layer tests — the app's own REST/WS/store/channel
+ * plumbing for the v3 protocol. The wire schemas themselves are covered by
+ * kap-server's contract tests and are intentionally not re-tested here.
  */
 
-import {
-  itemId,
-  type StepHeader,
-  type TranscriptOperation,
-  type TranscriptTurn,
-  type TurnHeader,
-  type TurnState,
-} from '@moonshot-ai/transcript';
+import type {
+  AssistantMessage,
+  HistoryMessage,
+  InteractionMessage,
+  ServerMessage,
+  StepMessage,
+  SystemMessage,
+  TaskMessage,
+  ToolCallMessage,
+  TurnMessage,
+  UserMessage,
+} from '@moonshot-ai/kap-server/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { WsLike } from '../channel/wsLike';
+import { fetchFullHistory, fetchHistoryPage } from './api';
+import { ChatChannel } from './channel';
+import { projectPlans } from './plan';
 import {
-  fetchTranscriptAttachment,
-  fetchTranscriptOps,
-  fetchTranscriptPage,
-  fetchTranscriptPlan,
-  transcriptAttachmentUrl,
-  type TranscriptPage,
-} from './api';
-import {
-  countTurns,
-  createCoalescedRunner,
+  ChatStore,
+  newestTerminalStepId,
   oldestTurnId,
   recoverLoadedWindow,
-  TranscriptChatStore,
+  type TimelineEntry,
 } from './store';
-import { TranscriptWs } from './ws';
+import { ChatWs } from './ws';
 
 // ---------------------------------------------------------------- fixtures
 
-function turnHeader(n: number, state: TurnState = 'completed'): TurnHeader {
-  return { kind: 'turn', turnId: `t${n}`, ordinal: n, state, origin: { kind: 'user' } };
+const T0 = Date.parse('2026-01-01T00:00:00.000Z');
+let tick = 0;
+
+function ts(offsetMs?: number): string {
+  tick += 1;
+  return new Date(T0 + tick * 1000 + (offsetMs ?? 0)).toISOString();
 }
 
-function turnItem(n: number): TranscriptTurn {
-  return { ...turnHeader(n), steps: [] };
+const base = { session_id: 's1', agent_id: 'main' } as const;
+
+function turnMsg(n: number, state: 'running' | 'completed' = 'completed', at?: string): TurnMessage {
+  return {
+    type: 'turn',
+    ...base,
+    timestamp: at ?? ts(),
+    turn_id: `t${n}`,
+    ordinal: n,
+    state,
+    origin: { kind: 'user' },
+  };
 }
 
-function stepHeader(stepId: string, ordinal: number): StepHeader {
-  return { kind: 'step', stepId, turnId: stepId.split('.')[0] ?? 't1', ordinal, state: 'running' };
-}
-
-describe('transcript attachments', () => {
-  it('maps each attachment locator to its transport route', () => {
-    expect(
-      transcriptAttachmentUrl('http://h:1', 's 1', { kind: 'file', fileId: 'f 1' }),
-    ).toBe('http://h:1/api/v1/files/f%201');
-    expect(
-      transcriptAttachmentUrl('http://h:1', 's 1', {
-        kind: 'session_media',
-        fileId: 'f 1',
-      }),
-    ).toBe('http://h:1/api/v1/sessions/s%201/media/f%201');
-    expect(
-      transcriptAttachmentUrl('http://h:1', 's1', {
-        kind: 'url',
-        url: 'https://example.com/a.png',
-      }),
-    ).toBe('https://example.com/a.png');
-  });
-
-  it('fetches stored attachment bytes with bearer auth', async () => {
-    const fetchImpl = vi.fn(async () => new Response('media-bytes', { status: 200 }));
-
-    const blob = await fetchTranscriptAttachment({
-      baseUrl: 'http://h:1',
-      token: 'tok',
-      sessionId: 's1',
-      source: { kind: 'session_media', fileId: 'f_1' },
-      fetchImpl: fetchImpl as typeof fetch,
-    });
-
-    expect(fetchImpl).toHaveBeenCalledWith(
-      'http://h:1/api/v1/sessions/s1/media/f_1',
-      { headers: { authorization: 'Bearer tok' } },
-    );
-    await expect(blob.text()).resolves.toBe('media-bytes');
-  });
-});
-
-const textFrameUpsert = (turnId: string, stepId: string, frameId: string, text: string) => ({
-  op: 'frame.upsert' as const,
-  turnId,
-  stepId,
-  frame: { kind: 'text' as const, frameId, role: 'assistant' as const, text },
-});
-
-const frameAppend = (
-  turnId: string,
+function stepMsg(
   stepId: string,
-  frameId: string,
-  offset: number,
-  text: string,
-) => ({
-  op: 'append' as const,
-  target: { type: 'frame' as const, turnId, stepId, frameId },
-  offset,
-  text,
-});
+  state: StepMessage['state'] = 'completed',
+  at?: string,
+): StepMessage {
+  const turnId = stepId.split('.')[0] ?? 't1';
+  const ordinal = Number(stepId.split('.')[1] ?? '1');
+  return {
+    type: 'step',
+    ...base,
+    timestamp: at ?? ts(),
+    step_id: stepId,
+    turn_id: turnId,
+    ordinal,
+    state,
+  };
+}
 
-const emptyPage = {
-  tasks: [],
-  interactions: [],
-  attachments: [],
-  todos: [],
-  meta: {},
-  pendingInteractions: [],
-} as const;
+function userMsg(stepId: string, text: string, at?: string): UserMessage {
+  const turnId = stepId.split('.')[0] ?? 't1';
+  return {
+    type: 'user',
+    ...base,
+    timestamp: at ?? ts(),
+    message_id: `${stepId}.u0`,
+    turn_id: turnId,
+    step_id: stepId,
+    text,
+    status: 'completed',
+    created_at: at ?? ts(),
+  };
+}
+
+function assistantMsg(
+  stepId: string,
+  text: string,
+  status: 'streaming' | 'completed' = 'completed',
+  at?: string,
+): AssistantMessage {
+  const turnId = stepId.split('.')[0] ?? 't1';
+  return {
+    type: 'assistant',
+    ...base,
+    timestamp: at ?? ts(),
+    message_id: `${stepId}.a0`,
+    turn_id: turnId,
+    step_id: stepId,
+    status,
+    text,
+  };
+}
+
+function toolCallMsg(
+  stepId: string,
+  id: string,
+  overrides: Partial<ToolCallMessage> = {},
+): ToolCallMessage {
+  const turnId = stepId.split('.')[0] ?? 't1';
+  return {
+    type: 'tool_call',
+    ...base,
+    timestamp: ts(),
+    tool_call_id: id,
+    turn_id: turnId,
+    step_id: stepId,
+    name: 'Bash',
+    state: 'running',
+    ...overrides,
+  };
+}
+
+function systemMsg(
+  subtype: SystemMessage['subtype'],
+  systemId: string,
+  payload?: unknown,
+): SystemMessage {
+  return {
+    type: 'system',
+    ...base,
+    timestamp: ts(),
+    system_id: systemId,
+    subtype,
+    payload,
+  } as SystemMessage;
+}
+
+function interactionMsg(id: string, toolCallId?: string): InteractionMessage {
+  return {
+    type: 'interaction',
+    ...base,
+    timestamp: ts(),
+    interaction_id: id,
+    kind: 'approval',
+    state: 'pending',
+    tool_call_id: toolCallId,
+  };
+}
+
+function taskMsg(id: string, state: TaskMessage['state'] = 'running'): TaskMessage {
+  return {
+    type: 'task',
+    ...base,
+    timestamp: ts(),
+    task_id: id,
+    kind: 'shell',
+    state,
+    detached: false,
+    output_tail: '',
+  };
+}
+
+function undoMsg(systemId: string, removedIds: readonly string[]): SystemMessage {
+  return systemMsg('undo', systemId, { removed_ids: [...removedIds] });
+}
+
+function entryKeys(entries: readonly TimelineEntry[]): string[] {
+  return entries.map((entry) => entry.key);
+}
+
+function makeStore(): ChatStore {
+  return new ChatStore({ notifyIntervalMs: 0 });
+}
 
 function okEnvelope(data: unknown) {
   return { code: 0, msg: 'success', data, request_id: 'r1' };
@@ -173,42 +238,52 @@ class FakeWs implements WsLike {
   sentFrames(): Record<string, unknown>[] {
     return this.sent.map((data) => JSON.parse(data) as Record<string, unknown>);
   }
+
+  hello(): void {
+    this.serverFrame({
+      type: 'hello',
+      protocol_version: '3',
+      server_id: 'srv',
+      capabilities: ['step_replay_v1'],
+    });
+  }
 }
 
-function makeWs(handlers: Partial<ConstructorParameters<typeof TranscriptWs>[0]['handlers']> = {}) {
+function makeWs(handlers: Partial<ConstructorParameters<typeof ChatWs>[0]['handlers']> = {}) {
   const seen = {
-    ops: [] as {
-      agentId: string;
-      ops: readonly TranscriptOperation[];
-      at?: string;
-      seq?: number;
-    }[],
-    resets: [] as { agentId: string; hasMoreOlder: boolean; at?: string; seq?: number }[],
-    resyncs: 0,
+    messages: [] as ServerMessage[],
+    acks: [] as { code: number; msg?: string }[],
+    protocolErrors: [] as { code: number; msg: string }[],
+    invalid: 0,
     reconnects: 0,
   };
-  const ws = new TranscriptWs({
+  const ws = new ChatWs({
     url: 'http://h:1',
     token: 'tok',
     sessionId: 's1',
-    agentId: 'main',
+    agentIds: ['main'],
     WebSocketImpl: FakeWs,
+    reconnectDelayMs: 1,
     handlers: {
-      onOps: (agentId, ops, meta) => {
-        seen.ops.push({ agentId, ops, at: meta?.at, seq: meta?.seq });
-        handlers.onOps?.(agentId, ops, meta);
+      onMessage: (message) => {
+        seen.messages.push(message);
+        handlers.onMessage?.(message);
       },
-      onReset: (agentId, _snapshot, hasMoreOlder, meta) => {
-        seen.resets.push({ agentId, hasMoreOlder, at: meta?.at, seq: meta?.seq });
-        handlers.onReset?.(agentId, _snapshot, hasMoreOlder, meta);
+      onAck: (code, msg) => {
+        seen.acks.push({ code, msg });
+        handlers.onAck?.(code, msg);
       },
-      onResyncRequired: () => {
-        seen.resyncs += 1;
-        handlers.onResyncRequired?.();
+      onProtocolError: (code, msg) => {
+        seen.protocolErrors.push({ code, msg });
+        handlers.onProtocolError?.(code, msg);
       },
-      onReconnected: () => {
+      onInvalidFrame: () => {
+        seen.invalid += 1;
+        handlers.onInvalidFrame?.(null);
+      },
+      onReconnectScheduled: () => {
         seen.reconnects += 1;
-        handlers.onReconnected?.();
+        handlers.onReconnectScheduled?.(0);
       },
     },
   });
@@ -217,416 +292,170 @@ function makeWs(handlers: Partial<ConstructorParameters<typeof TranscriptWs>[0][
 
 // ---------------------------------------------------------------- api
 
-describe('fetchTranscriptPage', () => {
+describe('fetchHistoryPage', () => {
   const pageData = {
-    agent_id: 'main',
-    items: [turnItem(1)],
-    has_more: true,
-    tasks: [
-      { taskId: 'bash-1', kind: 'shell', state: 'running', detached: false, outputTail: 'x' },
-    ],
-    interactions: [],
-    attachments: [],
-    todos: [],
-    meta: { activity: 'turn' },
-    agents: [],
-    pending_interactions: ['apr-1'],
-    seq: 42,
+    messages: [turnMsg(1)],
+    in_flight: { turn_id: 't1', step_id: 't1.2' },
   };
 
   it('requests the endpoint with cursor params and bearer auth, unwraps the envelope', async () => {
     const { calls, fetchImpl } = fakeFetch(okEnvelope(pageData));
-    const page = await fetchTranscriptPage({
+    const page = await fetchHistoryPage({
       baseUrl: 'http://h:1',
       token: 'tok',
       sessionId: 's 1',
       agentId: 'main',
       beforeTurn: 't5',
+      pageSize: 50,
       fetchImpl,
     });
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.url).toContain('/api/v1/sessions/s%201/transcript?');
+    expect(calls[0]!.url).toContain('/api/v1/sessions/s%201/history?');
     expect(calls[0]!.url).toContain('agent_id=main');
     expect(calls[0]!.url).toContain('before_turn=t5');
-    expect(calls[0]!.url).toContain('page_size=1');
+    expect(calls[0]!.url).toContain('page_size=50');
     expect(calls[0]!.init?.headers).toEqual({ authorization: 'Bearer tok' });
-    expect(page.hasMoreOlder).toBe(true);
-    expect(page.items.map((item) => itemId(item))).toEqual(['t1']);
-    expect(page.tasks.map((task) => task.taskId)).toEqual(['bash-1']);
-    expect(page.meta.activity).toBe('turn');
-    expect(page.pendingInteractions).toEqual(['apr-1']);
-    expect(page.seq).toBe(42);
+    expect(page.messages).toHaveLength(1);
+    expect(page.inFlight).toEqual({ turn_id: 't1', step_id: 't1.2' });
+  });
+
+  it('sends after_step and omits unset cursors', async () => {
+    const { calls, fetchImpl } = fakeFetch(okEnvelope({ messages: [] }));
+    await fetchHistoryPage({
+      baseUrl: 'http://h:1',
+      sessionId: 's1',
+      agentId: 'main',
+      afterStep: 't1.3',
+      fetchImpl,
+    });
+    expect(calls[0]!.url).toContain('after_step=t1.3');
+    expect(calls[0]!.url).not.toContain('before_turn');
+    expect(calls[0]!.init?.headers).toEqual({});
   });
 
   it('throws on a non-zero envelope code', async () => {
     const { fetchImpl } = fakeFetch({ code: 40401, msg: 'session not found', data: null });
     await expect(
-      fetchTranscriptPage({ baseUrl: 'http://h:1', sessionId: 's9', agentId: 'main', fetchImpl }),
+      fetchHistoryPage({ baseUrl: 'http://h:1', sessionId: 's9', agentId: 'main', fetchImpl }),
     ).rejects.toThrow('session not found');
   });
 
   it('throws when the payload fails schema validation', async () => {
-    const { fetchImpl } = fakeFetch(okEnvelope({ agent_id: 'main', items: 'nope' }));
+    const { fetchImpl } = fakeFetch(okEnvelope({ messages: 'nope' }));
     await expect(
-      fetchTranscriptPage({ baseUrl: 'http://h:1', sessionId: 's1', agentId: 'main', fetchImpl }),
+      fetchHistoryPage({ baseUrl: 'http://h:1', sessionId: 's1', agentId: 'main', fetchImpl }),
     ).rejects.toThrow('unexpected response shape');
   });
-});
 
-// ---------------------------------------------------------------- ops catch-up
-
-describe('fetchTranscriptOps', () => {
-  const catchupData = {
-    agent_id: 'main',
-    batches: [
-      { seq: 6, ops: [{ op: 'meta.merge', meta: { activity: 'turn' } }] },
-      { seq: 7, ops: [{ op: 'turn.upsert', turn: turnHeader(7, 'running') }] },
-    ],
-    latest_seq: 7,
-    complete: true,
-  };
-
-  it('requests the ops endpoint with since_seq and unwraps batches in order', async () => {
-    const { calls, fetchImpl } = fakeFetch(okEnvelope(catchupData));
-    const res = await fetchTranscriptOps({
-      baseUrl: 'http://h:1',
-      token: 'tok',
-      sessionId: 's1',
-      agentId: 'main',
-      sinceSeq: 5,
-      fetchImpl,
-    });
-    expect(calls[0]!.url).toContain('/api/v1/sessions/s1/transcript/ops?');
-    expect(calls[0]!.url).toContain('agent_id=main');
-    expect(calls[0]!.url).toContain('since_seq=5');
-    expect(res.complete).toBe(true);
-    expect(res.latestSeq).toBe(7);
-    expect(res.batches.map((batch) => batch.seq)).toEqual([6, 7]);
-  });
-
-  it('surfaces an incomplete catch-up (journal cannot cover)', async () => {
-    const { fetchImpl } = fakeFetch(
-      okEnvelope({ ...catchupData, batches: [], latest_seq: 500, complete: false }),
-    );
-    const res = await fetchTranscriptOps({
+  it('fetchFullHistory pages before_turn to the beginning and returns timeline order', async () => {
+    const pages: Record<string, unknown> = {
+      newest: okEnvelope({ messages: [turnMsg(3), stepMsg('t3.1')] }),
+      't3': okEnvelope({ messages: [turnMsg(1), turnMsg(2)] }),
+    };
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url);
+      calls.push(text);
+      const before = /before_turn=([^&]+)/.exec(text)?.[1];
+      const envelope = before === undefined ? pages['newest'] : (pages[before] ?? okEnvelope({ messages: [] }));
+      return { json: async () => envelope };
+    }) as unknown as typeof fetch;
+    const messages = await fetchFullHistory({
       baseUrl: 'http://h:1',
       sessionId: 's1',
       agentId: 'main',
-      sinceSeq: 5,
+      pageSize: 2,
       fetchImpl,
     });
-    expect(res.complete).toBe(false);
-    expect(res.batches).toEqual([]);
-  });
-
-  it('throws on a legacy server (envelope error) so callers fall back', async () => {
-    const { fetchImpl } = fakeFetch({ code: 40404, msg: 'unknown route', data: null });
-    await expect(
-      fetchTranscriptOps({
-        baseUrl: 'http://h:1',
-        sessionId: 's1',
-        agentId: 'main',
-        sinceSeq: 5,
-        fetchImpl,
-      }),
-    ).rejects.toThrow('unknown route');
-  });
-});
-
-// ------------------------------------------------------------------ plan lookup
-
-describe('fetchTranscriptPlan', () => {
-  const planEntry = {
-    tool_call_id: 'call_plan',
-    turn_id: 't3',
-    source: 'interaction',
-    plan: '# The Plan\n\nDo the thing.',
-    path: '/tmp/plans/foo.md',
-    options: [{ label: 'Approach A', description: 'fast' }],
-    review: { state: 'approved', selected_option: 'Approach A', feedback: 'looks good' },
-  };
-
-  it('requests the plan endpoint with agent_id/tool_call_id and maps the snake_case payload', async () => {
-    const { calls, fetchImpl } = fakeFetch(okEnvelope({ agent_id: 'main', plans: [planEntry] }));
-    const plans = await fetchTranscriptPlan({
-      baseUrl: 'http://h:1',
-      token: 'tok',
-      sessionId: 's 1',
-      agentId: 'main',
-      toolCallId: 'call_plan',
-      fetchImpl,
-    });
-    expect(calls).toHaveLength(1);
-    expect(calls[0]!.url).toContain('/api/v1/sessions/s%201/transcript/plan?');
-    expect(calls[0]!.url).toContain('agent_id=main');
-    expect(calls[0]!.url).toContain('tool_call_id=call_plan');
-    expect(calls[0]!.init?.headers).toEqual({ authorization: 'Bearer tok' });
-    expect(plans).toEqual([
-      {
-        toolCallId: 'call_plan',
-        turnId: 't3',
-        source: 'interaction',
-        plan: '# The Plan\n\nDo the thing.',
-        path: '/tmp/plans/foo.md',
-        options: [{ label: 'Approach A', description: 'fast' }],
-        review: { state: 'approved', selectedOption: 'Approach A', feedback: 'looks good' },
-      },
-    ]);
-  });
-
-  it('omits tool_call_id from the query when unset (lists every plan of the agent)', async () => {
-    const { calls, fetchImpl } = fakeFetch(
-      okEnvelope({
-        agent_id: 'main',
-        plans: [
-          { tool_call_id: 'call_draft', turn_id: 't1', source: 'display', plan: '# Draft' },
-          { tool_call_id: 'call_final', turn_id: 't2', source: 'output', plan: '# Final' },
-        ],
-      }),
-    );
-    const plans = await fetchTranscriptPlan({
-      baseUrl: 'http://h:1',
-      sessionId: 's1',
-      agentId: 'main',
-      fetchImpl,
-    });
-    expect(calls[0]!.url).not.toContain('tool_call_id');
-    expect(plans.map((p) => [p.toolCallId, p.plan])).toEqual([
-      ['call_draft', '# Draft'],
-      ['call_final', '# Final'],
-    ]);
-    expect(plans[0]!.review).toBeUndefined();
-    expect(plans[0]!.path).toBeUndefined();
-    expect(plans[0]!.options).toBeUndefined();
-  });
-
-  it('throws on a 40416 envelope (unknown tool call / not ExitPlanMode)', async () => {
-    const { fetchImpl } = fakeFetch({
-      code: 40416,
-      msg: 'no ExitPlanMode tool call found for tool_call_id: call_nope',
-      data: null,
-    });
-    await expect(
-      fetchTranscriptPlan({
-        baseUrl: 'http://h:1',
-        sessionId: 's1',
-        agentId: 'main',
-        toolCallId: 'call_nope',
-        fetchImpl,
-      }),
-    ).rejects.toThrow('40416');
-  });
-
-  it('throws when the payload fails schema validation', async () => {
-    const { fetchImpl } = fakeFetch(okEnvelope({ agent_id: 'main', plans: 'nope' }));
-    await expect(
-      fetchTranscriptPlan({
-        baseUrl: 'http://h:1',
-        sessionId: 's1',
-        agentId: 'main',
-        fetchImpl,
-      }),
-    ).rejects.toThrow('unexpected response shape');
+    expect(calls).toHaveLength(3);
+    expect(calls[1]).toContain('before_turn=t3');
+    expect(calls[2]).toContain('before_turn=t1');
+    expect(messages.map((m) => ('turn_id' in m ? m.turn_id : ''))).toEqual(['t1', 't2', 't3', 't3']);
   });
 });
 
 // ---------------------------------------------------------------- ws
 
-describe('TranscriptWs', () => {
-  it('connects with the bearer subprotocol and sends the grade spec via subscribe_v2', () => {
+describe('ChatWs', () => {
+  it('connects with the bearer subprotocol and subscribes after the server hello', () => {
     FakeWs.reset();
     makeWs();
     const sock = FakeWs.instances[0]!;
-    expect(sock.url).toBe('ws://h:1/api/v1/ws');
+    expect(sock.url).toBe('ws://h:1/api/v3/ws');
     expect(sock.protocols).toEqual(['kimi-code.bearer.tok']);
     sock.open();
-    expect(sock.sentFrames()[0]).toMatchObject({
-      type: 'client_hello',
-      payload: {
-        subscriptions: ['s1'],
-      },
-    });
-    expect(sock.sentFrames()[1]).toMatchObject({
-      type: 'subscribe_v2',
-      payload: {
-        session_id: 's1',
-        transcript: { main: 'block' },
-      },
+    expect(sock.sent).toHaveLength(0);
+    sock.hello();
+    expect(sock.sentFrames()[0]).toEqual({
+      type: 'subscribe',
+      id: 1,
+      session_id: 's1',
+      agent_ids: ['main'],
     });
   });
 
-  it('forwards transcript.ops and surfaces transcript.reset via onReset, both with envelope meta', () => {
+  it('fires onAck on the subscribe ack and forwards entity messages', () => {
     FakeWs.reset();
     const { seen } = makeWs();
     const sock = FakeWs.instances[0]!;
     sock.open();
+    sock.hello();
+    sock.serverFrame({ type: 'ack', id: 1, code: 0 });
+    expect(seen.acks).toEqual([{ code: 0 }]);
+    sock.serverFrame(turnMsg(1, 'running'));
     sock.serverFrame({
-      type: 'transcript.reset',
-      seq: 1,
-      volatile: true,
+      type: 'session.state',
       session_id: 's1',
-      timestamp: '2026-01-01T00:00:00Z',
-      payload: {
-        type: 'transcript.reset',
-        agent_id: 'main',
-        snapshot: { items: [], tasks: [], interactions: [], meta: {} },
-        has_more_older: true,
-        seq: 41,
-      },
+      timestamp: ts(),
+      busy: false,
+      main_turn_active: false,
+      activity: 'idle',
     });
-    expect(seen.ops).toHaveLength(0);
-    expect(seen.resets).toEqual([
-      { agentId: 'main', hasMoreOlder: true, at: '2026-01-01T00:00:00Z', seq: 41 },
-    ]);
-    sock.serverFrame({
-      type: 'transcript.ops',
-      seq: 1,
-      volatile: true,
-      session_id: 's1',
-      timestamp: '2026-01-01T00:00:01Z',
-      payload: {
-        type: 'transcript.ops',
-        agent_id: 'main',
-        ops: [{ op: 'meta.merge', meta: { activity: 'turn' } }],
-        seq: 42,
-      },
-    });
-    expect(seen.ops).toHaveLength(1);
-    expect(seen.ops[0]!.agentId).toBe('main');
-    expect(seen.ops[0]!.at).toBe('2026-01-01T00:00:01Z');
-    expect(seen.ops[0]!.seq).toBe(42);
-    expect(seen.ops[0]!.ops[0]).toMatchObject({ op: 'meta.merge' });
+    expect(seen.messages.map((m) => m.type)).toEqual(['turn', 'session.state']);
   });
 
-  it('sends a clean client_hello and carries grades/transcript_since on subscribe_v2', async () => {
+  it('surfaces protocol error frames and ignores acks for other ids', () => {
     FakeWs.reset();
-    let watermark: number | undefined;
-    new TranscriptWs({
-      url: 'http://h:1',
-      sessionId: 's1',
-      agentId: 'main',
-      WebSocketImpl: FakeWs,
-      getSince: () => watermark,
-      reconnectDelayMs: 1,
-      handlers: { onOps: () => {}, onResyncRequired: () => {}, onReconnected: () => {} },
-    });
+    const { seen } = makeWs();
     const sock = FakeWs.instances[0]!;
     sock.open();
-    expect(sock.sentFrames()[0]).toMatchObject({
-      type: 'client_hello',
-      payload: { client_id: 'kimi-inspect', subscriptions: ['s1'] },
-    });
-    expect(sock.sentFrames()[0]).not.toHaveProperty('payload.transcript');
-    expect(sock.sentFrames()[1]).toMatchObject({
-      type: 'subscribe_v2',
-      payload: { session_id: 's1', transcript: { main: 'block' } },
-    });
-    expect(
-      (sock.sentFrames()[1] as { payload: Record<string, unknown> }).payload['transcript_since'],
-    ).toBeUndefined();
-    watermark = 42;
-    sock.emit('close');
+    sock.hello();
+    sock.serverFrame({ type: 'ack', id: 99, code: 0 });
+    expect(seen.acks).toHaveLength(0);
+    sock.serverFrame({ type: 'error', code: 1008, msg: 'slow consumer' });
+    expect(seen.protocolErrors).toEqual([{ code: 1008, msg: 'slow consumer' }]);
+  });
+
+  it('ignores unknown future message types but reports malformed known ones', () => {
+    FakeWs.reset();
+    const { seen } = makeWs();
+    const sock = FakeWs.instances[0]!;
+    sock.open();
+    sock.hello();
+    sock.serverFrame({ type: 'turn.supercharged', whatever: true });
+    sock.serverFrame({ type: 'turn', turn_id: 42 });
+    expect(seen.messages).toHaveLength(0);
+    expect(seen.invalid).toBe(1);
+  });
+
+  it('re-subscribes after a drop and fires onAck per subscribe', async () => {
+    FakeWs.reset();
+    const { seen } = makeWs();
+    const first = FakeWs.instances[0]!;
+    first.open();
+    first.hello();
+    first.serverFrame({ type: 'ack', id: 1, code: 0 });
+    expect(seen.acks).toHaveLength(1);
+    first.emit('close');
     await vi.waitFor(() => {
       expect(FakeWs.instances.length).toBeGreaterThan(1);
     });
     const second = FakeWs.instances[1]!;
     second.open();
-    expect(second.sentFrames()[1]).toMatchObject({
-      type: 'subscribe_v2',
-      payload: { session_id: 's1', transcript_since: { main: 42 } },
-    });
-  });
-
-  it('still ignores transcript.reset when no onReset handler is set', () => {
-    FakeWs.reset();
-    const seen = { ops: 0 };
-    new TranscriptWs({
-      url: 'http://h:1',
-      sessionId: 's1',
-      agentId: 'main',
-      WebSocketImpl: FakeWs,
-      handlers: {
-        onOps: () => {
-          seen.ops += 1;
-        },
-        onResyncRequired: () => {},
-        onReconnected: () => {},
-      },
-    });
-    const sock = FakeWs.instances[0]!;
-    sock.open();
-    sock.serverFrame({
-      type: 'transcript.reset',
-      timestamp: '2026-01-01T00:00:00Z',
-      payload: {
-        type: 'transcript.reset',
-        agent_id: 'main',
-        snapshot: { items: [], tasks: [], interactions: [], meta: {} },
-        has_more_older: false,
-      },
-    });
-    expect(seen.ops).toBe(0);
-  });
-
-  it('answers ping with pong carrying the nonce', () => {
-    FakeWs.reset();
-    makeWs();
-    const sock = FakeWs.instances[0]!;
-    sock.open();
-    sock.serverFrame({ type: 'ping', timestamp: '2026-01-01T00:00:00Z', payload: { nonce: 'n1' } });
-    expect(sock.sentFrames().at(-1)).toEqual({ type: 'pong', payload: { nonce: 'n1' } });
-  });
-
-  it('surfaces resync_required for its session (and ignores other sessions)', () => {
-    FakeWs.reset();
-    const { seen } = makeWs();
-    const sock = FakeWs.instances[0]!;
-    sock.open();
-    sock.serverFrame({
-      type: 'resync_required',
-      timestamp: '2026-01-01T00:00:00Z',
-      payload: { session_id: 'other', reason: 'buffer_overflow', current_seq: 5 },
-    });
-    expect(seen.resyncs).toBe(0);
-    sock.serverFrame({
-      type: 'resync_required',
-      timestamp: '2026-01-01T00:00:00Z',
-      payload: { session_id: 's1', reason: 'buffer_overflow', current_seq: 5 },
-    });
-    expect(seen.resyncs).toBe(1);
-  });
-
-  it('re-subscribes after a drop and reports the reconnect only on the subscribe_v2 ack', () => {
-    vi.useFakeTimers();
-    try {
-      FakeWs.reset();
-      const { seen } = makeWs();
-      const first = FakeWs.instances[0]!;
-      first.open();
-      // Open alone does not reconcile: the server attaches the transcript
-      // stream only after processing subscribe_v2.
-      expect(seen.reconnects).toBe(0);
-      // Neither does the client_hello ack.
-      const helloId = (first.sentFrames()[0] as { id: string }).id;
-      first.serverFrame({ type: 'ack', id: helloId, code: 0, msg: 'success', payload: {} });
-      expect(seen.reconnects).toBe(0);
-      const subscribeV2Id = (first.sentFrames()[1] as { id: string }).id;
-      first.serverFrame({ type: 'ack', id: subscribeV2Id, code: 0, msg: 'success', payload: {} });
-      expect(seen.reconnects).toBe(1);
-      first.emit('close');
-      vi.advanceTimersByTime(600);
-      expect(FakeWs.instances).toHaveLength(2);
-      const second = FakeWs.instances[1]!;
-      second.open();
-      expect(second.sentFrames()[0]).toMatchObject({ type: 'client_hello' });
-      expect(second.sentFrames()[1]).toMatchObject({ type: 'subscribe_v2' });
-      expect(seen.reconnects).toBe(1);
-      const subscribeV2Id2 = (second.sentFrames()[1] as { id: string }).id;
-      second.serverFrame({ type: 'ack', id: subscribeV2Id2, code: 0, msg: 'success', payload: {} });
-      expect(seen.reconnects).toBe(2);
-    } finally {
-      vi.useRealTimers();
-    }
+    second.hello();
+    expect(second.sentFrames()[0]).toMatchObject({ type: 'subscribe', id: 2 });
+    second.serverFrame({ type: 'ack', id: 2, code: 0 });
+    expect(seen.acks).toHaveLength(2);
   });
 
   it('stays closed after close()', () => {
@@ -640,276 +469,439 @@ describe('TranscriptWs', () => {
 
 // ---------------------------------------------------------------- store
 
-describe('TranscriptChatStore', () => {
-  it('applyPage(replace) installs the newest slice wholesale (items + globals)', () => {
-    const store = new TranscriptChatStore();
-    store.applyOps([{ op: 'turn.upsert', turn: turnHeader(9, 'running') }]);
-    store.applyPage(
-      {
-        ...emptyPage,
-        items: [turnItem(1), turnItem(2)],
-        hasMoreOlder: true,
-        tasks: [
-          { taskId: 'bash-1', kind: 'shell', state: 'running', detached: false, outputTail: '' },
-        ],
-        meta: { activity: 'idle' },
-        pendingInteractions: ['apr-1'],
-      },
-      { replace: true },
-    );
+describe('ChatStore', () => {
+  it('upserts entities by (type, id) and replaces in place', () => {
+    const store = makeStore();
+    store.applyLive(turnMsg(1, 'running'));
+    store.applyLive(stepMsg('t1.1', 'running'));
+    store.applyLive(turnMsg(1, 'completed'));
     const state = store.getState();
-    expect(state.items.map((item) => itemId(item))).toEqual(['t1', 't2']);
-    expect(state.hasMoreOlder).toBe(true);
-    expect(state.tasks.get('bash-1')?.kind).toBe('shell');
-    expect(state.meta.activity).toBe('idle');
-    expect([...state.pendingInteractions]).toEqual(['apr-1']);
+    expect(entryKeys(state.entries)).toEqual(['turn:t1', 'step:t1.1']);
+    const turn = state.entries[0]!.message as TurnMessage;
+    expect(turn.state).toBe('completed');
   });
 
-  it('prepends older pages ahead of the window, dedupes, keeps live globals', () => {
-    const store = new TranscriptChatStore();
-    store.applyPage(
-      { ...emptyPage, items: [turnItem(3)], hasMoreOlder: true, meta: { activity: 'idle' } },
-      { replace: true },
-    );
-    store.applyPage({
-      ...emptyPage,
-      items: [turnItem(1), turnItem(2)],
-      hasMoreOlder: true,
-      meta: {},
-    });
-    expect(store.getState().items.map((item) => itemId(item))).toEqual(['t1', 't2', 't3']);
-    expect(store.getState().hasMoreOlder).toBe(true);
-    // Globals from the older page do not clobber the fresher live state.
-    expect(store.getState().meta.activity).toBe('idle');
-    store.applyPage({ ...emptyPage, items: [turnItem(2)], hasMoreOlder: false });
-    expect(store.getState().items.map((item) => itemId(item))).toEqual(['t1', 't2', 't3']);
-    expect(store.getState().hasMoreOlder).toBe(false);
+  it('skips an upsert whose timestamp is older than the held entity', () => {
+    const store = makeStore();
+    store.applyLive(assistantMsg('t1.1', 'hello world', 'streaming', '2026-01-01T00:00:10.000Z'));
+    store.applyLive(assistantMsg('t1.1', 'hel', 'streaming', '2026-01-01T00:00:05.000Z'));
+    const held = store.getState().entries[0]!.message as AssistantMessage;
+    expect(held.text).toBe('hello world');
   });
 
-  it('applies ops through the package reducer and notifies once per batch', () => {
-    const store = new TranscriptChatStore();
-    let notified = 0;
-    store.subscribe(() => {
-      notified += 1;
+  it('appends deltas to the held entity and drops orphan deltas', () => {
+    const store = makeStore();
+    store.applyLive({
+      type: 'assistant.delta',
+      ...base,
+      timestamp: ts(),
+      message_id: 't1.1.a0',
+      text: 'orphan',
     });
-    store.applyOps([
-      { op: 'turn.upsert', turn: turnHeader(1, 'running') },
-      { op: 'step.upsert', turnId: 't1', step: stepHeader('t1.1', 1) },
-      textFrameUpsert('t1', 't1.1', 't1.1.f1', ''),
-      frameAppend('t1', 't1.1', 't1.1.f1', 0, 'hel'),
-      frameAppend('t1', 't1.1', 't1.1.f1', 3, 'lo'),
+    expect(store.getState().entries).toHaveLength(0);
+    store.applyLive(assistantMsg('t1.1', '', 'streaming'));
+    store.applyLive({
+      type: 'assistant.delta',
+      ...base,
+      timestamp: ts(),
+      message_id: 't1.1.a0',
+      text: 'hel',
+    });
+    store.applyLive({
+      type: 'assistant.delta',
+      ...base,
+      timestamp: ts(),
+      message_id: 't1.1.a0',
+      text: 'lo',
+    });
+    const held = store.getState().entries[0]!.message as AssistantMessage;
+    expect(held.text).toBe('hello');
+  });
+
+  it('treats an entity arrival after deltas as the authoritative whole', () => {
+    const store = makeStore();
+    store.applyLive(assistantMsg('t1.1', '', 'streaming'));
+    store.applyLive({
+      type: 'assistant.delta',
+      ...base,
+      timestamp: ts(),
+      message_id: 't1.1.a0',
+      text: 'partial',
+    });
+    store.applyLive(assistantMsg('t1.1', 'partial but authoritative', 'completed'));
+    const held = store.getState().entries[0]!.message as AssistantMessage;
+    expect(held.text).toBe('partial but authoritative');
+    expect(held.status).toBe('completed');
+  });
+
+  it('appends tool_call deltas to input_text and patches tool.progress', () => {
+    const store = makeStore();
+    store.applyLive(toolCallMsg('t1.1', 'call_1', { input_text: '' }));
+    store.applyLive({
+      type: 'tool_call.delta',
+      ...base,
+      timestamp: ts(),
+      tool_call_id: 'call_1',
+      input_text: '{"command"',
+    });
+    store.applyLive({
+      type: 'tool_call.delta',
+      ...base,
+      timestamp: ts(),
+      tool_call_id: 'call_1',
+      input_text: ':"ls"}',
+    });
+    store.applyLive({
+      type: 'tool.progress',
+      ...base,
+      timestamp: ts(),
+      tool_call_id: 'call_1',
+      progress: { kind: 'stdout', text: 'file.txt' },
+    });
+    const held = store.getState().entries[0]!.message as ToolCallMessage;
+    expect(held.input_text).toBe('{"command":"ls"}');
+    expect(held.progress).toEqual({ kind: 'stdout', text: 'file.txt' });
+  });
+
+  it('truncates the removed turn subtree on system(undo) and keeps the marker', () => {
+    const store = makeStore();
+    store.applyLive(turnMsg(1));
+    store.applyLive(stepMsg('t1.1'));
+    store.applyLive(assistantMsg('t1.1', 'first'));
+    store.applyLive(turnMsg(2));
+    store.applyLive(stepMsg('t2.1'));
+    store.applyLive(toolCallMsg('t2.1', 'call_1'));
+    store.applyLive(undoMsg('sys-undo-1', ['t2']));
+    const state = store.getState();
+    expect(entryKeys(state.entries)).toEqual([
+      'turn:t1',
+      'step:t1.1',
+      'assistant:t1.1.a0',
+      'system:sys-undo-1',
     ]);
-    expect(notified).toBe(1);
-    const turn = store.getState().items[0];
-    expect(turn?.kind).toBe('turn');
-    if (turn?.kind === 'turn') {
-      expect(turn.steps[0]?.frames[0]).toMatchObject({ kind: 'text', text: 'hello' });
-    }
   });
 
-  it('absorbs duplicate ops without notifying', () => {
-    const store = new TranscriptChatStore();
-    store.applyOps([{ op: 'turn.upsert', turn: turnHeader(1, 'running') }]);
-    let notified = 0;
-    store.subscribe(() => {
-      notified += 1;
+  it('cascades undo to interactions anchored at removed tool calls', () => {
+    const store = makeStore();
+    store.applyLive(turnMsg(1));
+    store.applyLive(toolCallMsg('t1.1', 'call_1'));
+    store.applyLive(interactionMsg('ix-1', 'call_1'));
+    store.applyLive(interactionMsg('ix-2', 'call_other'));
+    store.applyLive(undoMsg('sys-undo-1', ['t1']));
+    expect([...store.getState().interactions.keys()]).toEqual(['ix-2']);
+  });
+
+  it('empties the timeline on system(clear)', () => {
+    const store = makeStore();
+    store.applyLive(turnMsg(1));
+    store.applyLive(stepMsg('t1.1'));
+    store.applyLive(assistantMsg('t1.1', 'gone'));
+    store.applyLive(systemMsg('clear', 'sys-clear-1', { removed_ids: ['t1', 't1.1', 't1.1.a0'] }));
+    expect(entryKeys(store.getState().entries)).toEqual(['system:sys-clear-1']);
+  });
+
+  it('upserts state entities into their own maps and ignores global messages', () => {
+    const store = makeStore();
+    store.applyLive(interactionMsg('ix-1', 'call_1'));
+    store.applyLive(taskMsg('task-1'));
+    store.applyLive({
+      type: 'todo',
+      ...base,
+      timestamp: ts(),
+      todo_id: 'todo',
+      items: [{ title: 'x', status: 'pending' }],
     });
-    store.applyOps([{ op: 'turn.upsert', turn: turnHeader(1, 'running') }]);
-    expect(notified).toBe(0);
+    store.applyLive({
+      type: 'session.state',
+      session_id: 's1',
+      timestamp: ts(),
+      busy: true,
+      main_turn_active: true,
+      activity: 'turn',
+    });
+    store.applyLive({
+      type: 'workspace',
+      timestamp: ts(),
+      subtype: 'updated',
+      workspace: {
+        id: 'wd_test_0123456789ab',
+        root: '/tmp',
+        name: 'tmp',
+        created_at: ts(),
+        last_opened_at: ts(),
+        session_count: 1,
+      },
+    });
+    const state = store.getState();
+    expect(state.interactions.get('ix-1')?.state).toBe('pending');
+    expect(state.tasks.get('task-1')?.kind).toBe('shell');
+    expect(state.todos.get('todo')?.items).toHaveLength(1);
+    expect(state.sessionState?.busy).toBe(true);
+    expect(state.entries).toHaveLength(0);
   });
 
-  it('buffered ops converge when flushed onto freshly fetched pages', () => {
-    const store = new TranscriptChatStore();
-    // Simulate: REST page lands AFTER the live ops were produced (buffered).
-    const buffered: TranscriptOperation[] = [
-      { op: 'turn.upsert', turn: turnHeader(1, 'running') },
-      { op: 'step.upsert', turnId: 't1', step: stepHeader('t1.1', 1) },
-      textFrameUpsert('t1', 't1.1', 't1.1.f1', ''),
-      frameAppend('t1', 't1.1', 't1.1.f1', 0, 'hello'),
-    ];
-    // The REST snapshot already includes part of the stream ('hel').
-    const pageTurn: TranscriptTurn = {
-      ...turnHeader(1, 'running'),
-      steps: [
-        {
-          kind: 'step',
-          stepId: 't1.1',
-          turnId: 't1',
-          ordinal: 1,
-          state: 'running',
-          frames: [{ kind: 'text', frameId: 't1.1.f1', role: 'assistant', text: 'hel' }],
-        },
-      ],
-    };
-    store.applyPage({ ...emptyPage, items: [pageTurn], hasMoreOlder: false }, { replace: true });
-    store.applyOps(buffered);
-    const turn = store.getState().items[0];
-    if (turn?.kind !== 'turn') throw new Error('expected turn');
-    expect(turn.steps[0]?.frames[0]).toMatchObject({ kind: 'text', text: 'hello' });
+  it('replace installs the page as the window and keeps entries newer than the page', () => {
+    const store = makeStore();
+    store.applyLive(turnMsg(9, 'running', '2026-01-01T00:00:09.000Z'));
+    store.applyLive(turnMsg(1, 'completed', '2026-01-01T00:00:01.000Z'));
+    store.applyHistoryPage(
+      [turnMsg(1, 'completed', '2026-01-01T00:00:01.500Z'), stepMsg('t1.1', 'completed', '2026-01-01T00:00:02.000Z')],
+      'replace',
+    );
+    expect(entryKeys(store.getState().entries)).toEqual(['turn:t1', 'step:t1.1', 'turn:t9']);
   });
 
-  it('surfaces append placement gaps through onGap', () => {
-    const store = new TranscriptChatStore();
-    let gaps = 0;
-    store.onGap = () => {
-      gaps += 1;
-    };
-    store.applyOps([frameAppend('t1', 't1.1', 't1.1.f1', 0, 'x')]);
-    expect(gaps).toBe(1);
+  it('prepend inserts older pages ahead of the window and dedupes by key', () => {
+    const store = makeStore();
+    store.applyHistoryPage([turnMsg(3)], 'replace');
+    store.applyHistoryPage([turnMsg(1), turnMsg(2), turnMsg(3)], 'prepend');
+    expect(entryKeys(store.getState().entries)).toEqual(['turn:t1', 'turn:t2', 'turn:t3']);
+  });
+
+  it('tail upserts the catch-up slice in page order', () => {
+    const store = makeStore();
+    store.applyHistoryPage([turnMsg(1), stepMsg('t1.1')], 'replace');
+    store.applyHistoryPage(
+      [assistantMsg('t1.1', 'tail'), turnMsg(2), stepMsg('t2.1', 'running')],
+      'tail',
+    );
+    expect(entryKeys(store.getState().entries)).toEqual([
+      'turn:t1',
+      'step:t1.1',
+      'assistant:t1.1.a0',
+      'turn:t2',
+      'step:t2.1',
+    ]);
+  });
+
+  it('applies a system(undo) inside a history page like a live one', () => {
+    const store = makeStore();
+    store.applyLive(turnMsg(1));
+    store.applyLive(turnMsg(2));
+    store.applyHistoryPage([undoMsg('sys-undo-1', ['t2'])], 'tail');
+    expect(entryKeys(store.getState().entries)).toEqual(['turn:t1', 'system:sys-undo-1']);
   });
 });
 
+// ---------------------------------------------------------------- helpers
+
 describe('recoverLoadedWindow', () => {
-  const range = (from: number, to: number): TranscriptTurn[] =>
-    Array.from({ length: to - from + 1 }, (_, i) => turnItem(from + i));
-  const pageOf = (items: TranscriptTurn[], hasMoreOlder: boolean): TranscriptPage => ({
-    ...emptyPage,
-    items,
-    hasMoreOlder,
-  });
+  const pageOf = (items: HistoryMessage[], hasMore: boolean): HistoryMessage[] => items;
 
   it('pages backwards until the previous oldest turn is re-covered', async () => {
-    const store = new TranscriptChatStore();
-    // The refresh landed the newest page (t36..t65) while the previously
-    // loaded window reached t1 — a count-based stop would drop t1..t5.
-    store.applyPage(pageOf(range(36, 65), true), { replace: true });
-
+    const store = makeStore();
+    store.applyHistoryPage([turnMsg(4), turnMsg(5), turnMsg(6)], 'replace');
+    store.setHasMoreOlder(true);
     const fetched: string[] = [];
     await recoverLoadedWindow(
       store,
-      't1',
+      't2',
       async (beforeTurn) => {
         fetched.push(beforeTurn);
-        return beforeTurn === 't36' ? pageOf(range(6, 35), true) : pageOf(range(1, 5), false);
+        store.setHasMoreOlder(beforeTurn !== 't2');
+        return beforeTurn === 't4' ? [turnMsg(2), turnMsg(3)] : [];
       },
       () => false,
     );
-
-    expect(fetched).toEqual(['t36', 't6']);
-    expect(countTurns(store.getState().items)).toBe(65);
-    expect(oldestTurnId(store.getState().items)).toBe('t1');
-  });
-
-  it('stops immediately when the window is already covered', async () => {
-    const store = new TranscriptChatStore();
-    store.applyPage(pageOf(range(1, 30), true), { replace: true });
-    let calls = 0;
-    await recoverLoadedWindow(
-      store,
-      't1',
-      async () => {
-        calls += 1;
-        return pageOf([], false);
-      },
-      () => false,
-    );
-    expect(calls).toBe(0);
+    expect(fetched).toEqual(['t4']);
+    expect(oldestTurnId(store.getState().entries)).toBe('t2');
+    expect(newestTerminalStepId(store.getState().entries)).toBeUndefined();
   });
 
   it('stops when there is no older history left, even if the anchor is gone', async () => {
-    const store = new TranscriptChatStore();
-    store.applyPage(pageOf(range(10, 20), true), { replace: true });
+    const store = makeStore();
+    store.applyHistoryPage([turnMsg(5)], 'replace');
+    store.setHasMoreOlder(true);
     const fetched: string[] = [];
     await recoverLoadedWindow(
       store,
       't1',
       async (beforeTurn) => {
         fetched.push(beforeTurn);
+        store.setHasMoreOlder(false);
         return pageOf([], false);
       },
       () => false,
     );
-    // The anchor no longer exists server-side: one no-progress probe, then stop.
-    expect(fetched).toEqual(['t10']);
-    expect(countTurns(store.getState().items)).toBe(11);
-  });
-
-  it('reports each applied page through onPageApplied', async () => {
-    const store = new TranscriptChatStore();
-    store.applyPage(pageOf(range(36, 65), true), { replace: true });
-    const applied: TranscriptPage[] = [];
-    await recoverLoadedWindow(
-      store,
-      't1',
-      async (beforeTurn) =>
-        beforeTurn === 't36' ? pageOf(range(6, 35), true) : pageOf(range(1, 5), false),
-      () => false,
-      (page) => {
-        applied.push(page);
-      },
-    );
-    expect(applied.map((page) => page.items.map((item) => itemId(item)))).toEqual([
-      range(6, 35).map((turn) => turn.turnId),
-      range(1, 5).map((turn) => turn.turnId),
-    ]);
+    expect(fetched).toEqual(['t5']);
   });
 });
 
-describe('createCoalescedRunner', () => {
-  const deferred = (): { promise: Promise<void>; resolve: () => void } => {
-    let resolve!: () => void;
-    const promise = new Promise<void>((r) => {
-      resolve = r;
-    });
-    return { promise, resolve };
-  };
+describe('ChatChannel', () => {
+  function scriptedFetch(script: { noCursor: unknown[]; afterStep?: Record<string, readonly unknown[]> }) {
+    const calls: string[] = [];
+    let noCursorIndex = 0;
+    const fetchImpl = (async (url: string | URL) => {
+      const text = String(url);
+      calls.push(text);
+      const after = /after_step=([^&]+)/.exec(text)?.[1];
+      let envelope: unknown;
+      if (after !== undefined) {
+        envelope = okEnvelope({ messages: [...(script.afterStep?.[after] ?? [])] });
+      } else {
+        envelope = script.noCursor[Math.min(noCursorIndex, script.noCursor.length - 1)];
+        noCursorIndex += 1;
+      }
+      return { json: async () => envelope };
+    }) as unknown as typeof fetch;
+    return { calls, fetchImpl };
+  }
 
-  it('runs once per trigger when idle', async () => {
-    let runs = 0;
-    const kick = createCoalescedRunner(async () => {
-      runs += 1;
+  function makeChannel(fetchImpl: typeof fetch): { channel: ChatChannel; sock: FakeWs } {
+    FakeWs.reset();
+    const channel = new ChatChannel({
+      baseUrl: 'http://h:1',
+      token: 'tok',
+      sessionId: 's1',
+      agentId: 'main',
+      pageSize: 50,
+      WebSocketImpl: FakeWs,
+      fetchImpl,
+      notifyIntervalMs: 0,
     });
-    kick();
-    await Promise.resolve();
-    kick();
-    await Promise.resolve();
-    expect(runs).toBe(2);
+    return { channel, sock: FakeWs.instances[0]! };
+  }
+
+  it('serializes the initial refresh with the ack catch-up behind one queue', async () => {
+    const newest = okEnvelope({ messages: [turnMsg(1), stepMsg('t1.1')] });
+    const { calls, fetchImpl } = scriptedFetch({ noCursor: [newest] });
+    let releaseFirst: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let first = true;
+    const gatedFetch = (async (url: string | URL, init?: RequestInit) => {
+      if (first) {
+        first = false;
+        await gate;
+      }
+      return fetchImpl(url, init);
+    }) as unknown as typeof fetch;
+    const { channel, sock } = makeChannel(gatedFetch);
+    channel.start();
+    sock.open();
+    sock.hello();
+    sock.serverFrame({ type: 'ack', id: 1, code: 0 });
+    releaseFirst();
+    await vi.waitFor(() => {
+      expect(calls).toHaveLength(3);
+    });
+    const restEntries = channel.trail.getEntries().filter((e) => e.kind === 'rest');
+    expect(restEntries.filter((e) => e.mode === 'replace')).toHaveLength(1);
+    expect(channel.trail.getEntries().some((e) => e.kind === 'event' && e.event === 'catchup-refresh')).toBe(false);
+    expect(calls.filter((url) => !url.includes('after_step='))).toHaveLength(2);
+    expect(calls[1]).toContain('after_step=t1.1');
+    expect(newestTerminalStepId(channel.store.getState().entries)).toBe('t1.1');
+    channel.close();
   });
 
-  it('coalesces triggers during a run into exactly one follow-up', async () => {
-    let runs = 0;
-    const gates: Array<() => void> = [];
-    const kick = createCoalescedRunner(async () => {
-      runs += 1;
-      const gate = deferred();
-      gates.push(gate.resolve);
-      await gate.promise;
-    });
-    kick();
-    kick();
-    kick();
-    expect(runs).toBe(1);
-    gates[0]?.();
+  it('probes the newest page for the anchor step or turn before falling back to a refresh', async () => {
+    const first = okEnvelope({ messages: [turnMsg(1), stepMsg('t1.1')] });
+    const probeWithTurn = okEnvelope({ messages: [systemMsg('notice', 'sys_n1'), turnMsg(1)] });
+    const alive = scriptedFetch({ noCursor: [first, probeWithTurn] });
+    const aliveChannel = makeChannel(alive.fetchImpl);
+    aliveChannel.channel.start();
+    aliveChannel.sock.open();
+    aliveChannel.sock.hello();
+    aliveChannel.sock.serverFrame({ type: 'ack', id: 1, code: 0 });
     await vi.waitFor(() => {
-      expect(runs).toBe(2);
+      expect(aliveChannel.channel.store.getState().entries.length).toBeGreaterThan(0);
     });
-    gates[1]?.();
     await vi.waitFor(() => {
-      expect(gates.length).toBe(2);
+      expect(alive.calls).toHaveLength(3);
     });
-    // No third run: the two mid-run triggers were coalesced into one.
+    expect(
+      aliveChannel.channel.trail.getEntries().some((e) => e.kind === 'event' && e.event === 'catchup-refresh'),
+    ).toBe(false);
+    expect(aliveChannel.channel.trail.getEntries().filter((e) => e.kind === 'rest' && e.mode === 'replace')).toHaveLength(1);
+    aliveChannel.channel.close();
+
+    const movedOn = okEnvelope({ messages: [turnMsg(2), stepMsg('t2.1')] });
+    const gone = scriptedFetch({ noCursor: [first, movedOn] });
+    const goneChannel = makeChannel(gone.fetchImpl);
+    goneChannel.channel.start();
+    goneChannel.sock.open();
+    goneChannel.sock.hello();
+    goneChannel.sock.serverFrame({ type: 'ack', id: 1, code: 0 });
+    await vi.waitFor(() => {
+      expect(
+        goneChannel.channel.trail.getEntries().some((e) => e.kind === 'event' && e.event === 'catchup-refresh'),
+      ).toBe(true);
+    });
+    await vi.waitFor(() => {
+      expect(newestTerminalStepId(goneChannel.channel.store.getState().entries)).toBe('t2.1');
+    });
+    goneChannel.channel.close();
+  });
+});
+
+// ---------------------------------------------------------------- plan
+
+describe('projectPlans', () => {
+  const planCall = (id: string, overrides: Partial<ToolCallMessage> = {}): ToolCallMessage =>
+    toolCallMsg('t1.1', id, { name: 'ExitPlanMode', state: 'done', ...overrides });
+
+  it('derives plan content and review from the linked approval interaction', () => {
+    const messages: HistoryMessage[] = [
+      turnMsg(1),
+      planCall('call_plan', { approval_id: 'ix-1' }),
+      {
+        type: 'interaction',
+        ...base,
+        timestamp: ts(),
+        interaction_id: 'ix-1',
+        kind: 'approval',
+        state: 'approved',
+        tool_call_id: 'call_plan',
+        request: {
+          tool_name: 'ExitPlanMode',
+          action: 'review',
+          tool_input_display: {
+            kind: 'plan_review',
+            plan: '# The Plan\n\nDo the thing.',
+            path: '/tmp/plans/foo.md',
+            options: [{ label: 'Approach A', description: 'fast' }],
+          },
+        },
+        response: { decision: 'approved', selected_label: 'Approach A', feedback: 'looks good' },
+      },
+    ];
+    const plans = projectPlans(messages);
+    expect(plans).toEqual([
+      {
+        toolCallId: 'call_plan',
+        turnId: 't1',
+        source: 'interaction',
+        plan: '# The Plan\n\nDo the thing.',
+        path: '/tmp/plans/foo.md',
+        options: [{ label: 'Approach A', description: 'fast' }],
+        review: { state: 'approved', selectedOption: 'Approach A', feedback: 'looks good' },
+      },
+    ]);
   });
 
-  it('queues again when a trigger lands during the follow-up run', async () => {
-    let runs = 0;
-    const gates: Array<() => void> = [];
-    const kick = createCoalescedRunner(async () => {
-      runs += 1;
-      const gate = deferred();
-      gates.push(gate.resolve);
-      await gate.promise;
-    });
-    kick();
-    kick();
-    gates[0]?.();
-    await vi.waitFor(() => {
-      expect(runs).toBe(2);
-    });
-    kick();
-    gates[1]?.();
-    await vi.waitFor(() => {
-      expect(runs).toBe(3);
-    });
-    gates[2]?.();
+  it('falls back to the tool call display, then to the output body', () => {
+    const fromDisplay = projectPlans([
+      planCall('call_display', {
+        display: { kind: 'plan_review', plan: '# Draft', path: '/tmp/draft.md' },
+      }),
+    ]);
+    expect(fromDisplay[0]).toMatchObject({ source: 'display', plan: '# Draft', path: '/tmp/draft.md' });
+    const fromOutput = projectPlans([
+      planCall('call_output', {
+        output: 'Plan saved to: /tmp/out.md\n## Approved Plan:\n# Final',
+      }),
+    ]);
+    expect(fromOutput[0]).toMatchObject({ source: 'output', plan: '# Final', path: '/tmp/out.md' });
+  });
+
+  it('filters by tool_call_id and ignores non-ExitPlanMode calls', () => {
+    const messages: HistoryMessage[] = [
+      planCall('call_a', { display: { kind: 'plan_review', plan: '# A' } }),
+      toolCallMsg('t1.1', 'call_bash', { name: 'Bash', state: 'done' }),
+      planCall('call_b', { display: { kind: 'plan_review', plan: '# B' } }),
+    ];
+    expect(projectPlans(messages, 'call_b').map((p) => p.toolCallId)).toEqual(['call_b']);
+    expect(projectPlans(messages).map((p) => p.toolCallId)).toEqual(['call_a', 'call_b']);
   });
 });
