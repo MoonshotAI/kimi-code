@@ -14,6 +14,13 @@ export const STATUS_LINE_COMMAND_TIMEOUT_MS = 300;
 export const STATUS_LINE_RERUN_INTERVAL_MS = 1_000;
 export const STATUS_LINE_MAX_CAPTURE_BYTES = 65_536;
 
+export interface StatusLineUsageRow {
+  readonly label: string;
+  readonly used: number;
+  readonly limit: number;
+  readonly resetHint?: string;
+}
+
 export interface StatusLinePayload {
   model: string;
   cwd: string;
@@ -25,6 +32,11 @@ export interface StatusLinePayload {
   maxContextTokens: number;
   sessionId: string;
   version: string;
+  managedUsage?: {
+    summary: StatusLineUsageRow | null;
+    limits: readonly StatusLineUsageRow[];
+    fetchedAt: number;
+  } | null;
 }
 
 export function runStatusLineCommand(
