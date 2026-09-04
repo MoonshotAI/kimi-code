@@ -2619,6 +2619,39 @@ describe('v2Projection × 实例对拍', () => {
     ]);
   });
 
+  it('steer race：提交即收官，按新 turn 单实体补 emit', () => {
+    const S = Date.parse('2026-09-03T19:10:00.000Z');
+    const actual = runScript('s_race', [
+      { event: { type: 'prompt.submitted', promptId: 'p_01', status: 'running', content: [{ type: 'text', text: '主任务' }], createdAt: '2026-09-03T19:10:00.000Z', time: S } },
+      { event: { type: 'turn.started', turnId: 0, promptId: 'p_01', origin: { kind: 'user' }, time: S + 10 } },
+      { event: { type: 'turn.step.started', turnId: 0, step: 1, time: S + 20 } },
+      { event: { type: 'prompt.submitted', promptId: 'p_02', status: 'queued', steer: true, content: [{ type: 'text', text: '插一句' }], createdAt: '2026-09-03T19:10:01.000Z', time: S + 1000 } },
+      { event: { type: 'turn.step.completed', turnId: 0, step: 1, time: S + 2000 } },
+      { event: { type: 'turn.ended', turnId: 0, reason: 'completed', durationMs: 2000, time: S + 2010 } },
+      { event: { type: 'prompt.completed', promptId: 'p_01', finishedAt: '2026-09-03T19:10:02.010Z', time: S + 2010 } },
+      { event: { type: 'turn.started', turnId: 1, promptId: 'p_02', origin: { kind: 'user' }, time: S + 2020 } },
+      { event: { type: 'prompt.started', promptId: 'p_02', time: S + 2021 } },
+      { event: { type: 'turn.step.started', turnId: 1, step: 1, time: S + 2022 } },
+      { event: { type: 'turn.step.completed', turnId: 1, step: 1, time: S + 3000 } },
+      { event: { type: 'turn.ended', turnId: 1, reason: 'completed', durationMs: 1000, time: S + 3010 } },
+      { event: { type: 'prompt.completed', promptId: 'p_02', finishedAt: '2026-09-03T19:10:03.010Z', time: S + 3010 } },
+    ]);
+    for (const msg of actual) parseServerMessage(msg);
+    const steerFrames = actual.filter(
+      (m) => m.type === 'user' && (m as { text?: string }).text === '插一句',
+    ) as { message_id: string; status: string }[];
+    expect(steerFrames.length).toBeGreaterThan(0);
+    for (const frame of steerFrames) expect(frame.message_id).toBe('t2.u0');
+    expect(steerFrames[steerFrames.length - 1]?.status).toBe('completed');
+    const firstSteerIdx = actual.indexOf(steerFrames[0] as (typeof actual)[number]);
+    const turnT2Idx = actual.findIndex((m) => m.type === 'turn' && (m as { turn_id?: string }).turn_id === 't2');
+    expect(firstSteerIdx).toBeGreaterThan(turnT2Idx);
+    const t1Users = actual.filter(
+      (m) => m.type === 'user' && (m as { message_id?: string }).message_id?.startsWith('t1.'),
+    ) as { text?: string }[];
+    for (const frame of t1Users) expect(frame.text).not.toBe('插一句');
+  });
+
   it('subagent 四场景', () => {
     const B = Date.parse('2026-09-03T17:30:00.000Z');
     const spawnArgs = { description: '审查 LoginView 的白屏修复', agent_type: 'reviewer' };

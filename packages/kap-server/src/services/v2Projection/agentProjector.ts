@@ -587,6 +587,7 @@ export class AgentV2Projector {
     const acc = this.prompts.get(event.promptId as string);
     if (!acc || acc.status === 'completed') return;
     acc.status = 'completed';
+    if (!acc.emitted) this.assignHeld(acc, this.maxTurnId + 1);
     out.push(this.userMessage(acc, event.time, (event.finishedAt as string) ?? iso(event.time)));
   }
 
@@ -597,6 +598,7 @@ export class AgentV2Projector {
     if (qi >= 0) this.queue.splice(qi, 1);
     if (acc.status !== 'completed') {
       acc.status = 'completed';
+      if (!acc.emitted) this.assignHeld(acc, this.maxTurnId + 1);
       out.push(this.userMessage(acc, event.time, (event.abortedAt as string) ?? iso(event.time)));
     }
     out.push({
@@ -606,6 +608,14 @@ export class AgentV2Projector {
       subtype: 'interruption',
       payload: { reason: 'aborted', turn_id: acc.turnId },
     });
+  }
+
+  private assignHeld(acc: PromptAcc, engineTurnId: number): void {
+    const turnId = this.protocolTurnId(engineTurnId);
+    const seq = this.nextUserSeq(engineTurnId);
+    acc.messageId = `${turnId}.u${seq}`;
+    acc.turnId = turnId;
+    acc.emitted = true;
   }
 
   private onTurnStarted(event: ProjectionEvent, out: ServerMessage[]): void {
@@ -629,14 +639,20 @@ export class AgentV2Projector {
     }
     turn.userSeq = maxSeq;
     const promptId = event.promptId as string | undefined;
+    let heldAcc: PromptAcc | undefined;
     if (promptId) {
       const acc = this.prompts.get(promptId);
+      if (acc && !acc.emitted) {
+        this.assignHeld(acc, engineTurnId);
+        heldAcc = acc;
+      }
       turn.userMessageId = acc?.messageId ?? promptId;
       turn.promptIds.push(promptId);
       turn.attachmentIds = acc?.attachmentIds;
     }
     this.turns.set(engineTurnId, turn);
     out.push(this.turnMessage(turn, event.time));
+    if (heldAcc) out.push(this.userMessage(heldAcc, event.time));
   }
 
   private onTurnEnded(event: ProjectionEvent, out: ServerMessage[]): void {
@@ -762,6 +778,7 @@ export class AgentV2Projector {
     const step = this.currentStep;
     if (!step) return;
     let acc = kind === 'assistant' ? this.openAssistant : this.openThinking;
+    if (!acc && delta.length === 0) return;
     if (!acc || acc.stepKey !== step.stepId) {
       this.closeOpenTexts(event.time, out);
       const seq = kind === 'assistant' ? step.textSeq.a++ : step.textSeq.h++;
@@ -1025,8 +1042,13 @@ export class AgentV2Projector {
     });
   }
 
+  private lastGoalStatus?: string;
+
   private onGoalUpdated(event: ProjectionEvent, out: ServerMessage[]): void {
     const snapshot = event.snapshot as { status?: string; objective?: string } | null | undefined;
+    const status = snapshot?.status;
+    if (status === this.lastGoalStatus) return;
+    this.lastGoalStatus = status;
     if (!snapshot) return;
     out.push({
       type: 'system',

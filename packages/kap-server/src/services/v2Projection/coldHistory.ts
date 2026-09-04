@@ -105,7 +105,7 @@ interface InteractionAcc {
 }
 
 interface SystemAcc {
-  subtype: 'interruption' | 'undo';
+  subtype: 'interruption' | 'undo' | 'goal';
   payload: Record<string, unknown>;
   time?: number;
   recordIndex: number;
@@ -381,6 +381,7 @@ export function buildColdHistory(
           const kind = partType === 'think' ? 'thinking' : partType === 'text' ? 'assistant' : undefined;
           if (!kind) break;
           const text = kind === 'thinking' ? asText(part?.['think']) ?? '' : asText(part?.['text']) ?? '';
+          if (text.length === 0) break;
           if (!step.openText || step.openText.kind !== kind) {
             sealOpenText(step);
             const seq = kind === 'assistant' ? step.textSeq.a++ : step.textSeq.h++;
@@ -507,6 +508,19 @@ export function buildColdHistory(
         });
         break;
       }
+      case 'goal.create': {
+        looseSystems.push({
+          subtype: 'goal',
+          payload: { status: 'active', objective: asText(record['objective']) },
+          time,
+          recordIndex,
+        });
+        break;
+      }
+      case 'goal.update':
+      case 'goal.clear': {
+        break;
+      }
       case 'context.apply_compaction': {
         floorIndex = recordIndex;
         floorTime = time;
@@ -544,7 +558,7 @@ export function buildColdHistory(
     }
   }
 
-  const keptTurns = turns.filter((turn) => turn.lastRecordIndex > floorIndex);
+  const keptTurns = query.beforeTurn !== undefined ? turns : turns.filter((turn) => turn.lastRecordIndex > floorIndex);
 
   interface FlatUnit {
     pos: number;
@@ -775,7 +789,7 @@ export function buildColdHistory(
 
   for (const task of tasks.values()) {
     const lastTime = task.terminatedTime ?? task.lastTime ?? task.startedTime;
-    if (lastTime !== undefined && floorTime !== undefined && lastTime <= floorTime) continue;
+    if (query.beforeTurn === undefined && lastTime !== undefined && floorTime !== undefined && lastTime <= floorTime) continue;
     const startedInfo = task.startedInfo;
     const terminatedInfo = task.terminatedInfo;
     units.push({

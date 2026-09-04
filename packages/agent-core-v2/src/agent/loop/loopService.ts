@@ -932,6 +932,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     response: AgentLLMRequestFinish,
   ): void {
     for (const part of response.message.content) {
+      if (part.type === 'think' && part.think === '' && (part as { encrypted?: string }).encrypted === undefined) continue;
       this.context.appendLoopEvent({
         type: 'content.part',
         uuid: randomUUID(),
@@ -950,6 +951,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     streamParts: StreamPartCollector,
   ): void {
     for (const part of streamParts.drainInterruptedContent()) {
+      if (part.type === 'think' && part.think === '' && (part as { encrypted?: string }).encrypted === undefined) continue;
       this.context.appendLoopEvent({
         type: 'content.part',
         uuid: randomUUID(),
@@ -1144,13 +1146,19 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
               new AssistantDelta({ agentId: this.scopeContext.agentId, turnId, delta: part.text }),
             );
             return;
-          case 'think':
+          case 'think': {
+            const hasPayload =
+              part.think !== '' || (part as { encrypted?: string }).encrypted !== undefined;
+            if (!hasPayload) return;
             onResponseEvent();
             accumulate(part);
-            void this.dispatcher.dispatch(
-              new ThinkingDelta({ agentId: this.scopeContext.agentId, turnId, delta: part.think }),
-            );
+            if (part.think !== '') {
+              void this.dispatcher.dispatch(
+                new ThinkingDelta({ agentId: this.scopeContext.agentId, turnId, delta: part.think }),
+              );
+            }
             return;
+          }
           case 'image_url':
           case 'audio_url':
           case 'video_url':
