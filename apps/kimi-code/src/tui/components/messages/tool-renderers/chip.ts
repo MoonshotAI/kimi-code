@@ -87,6 +87,13 @@ const writeChip: ChipProvider = (toolCall) => formatWriteChip(computeWriteStats(
 const readChip: ChipProvider = (_toolCall, result) =>
   pluralize(countNonEmptyLines(result.output), 'line');
 
+// The collapsed Bash card shows only the command and the last output line,
+// so the line count is what tells the user there is more behind ctrl+o.
+const bashChip: ChipProvider = (_toolCall, result) => {
+  const lines = countNonEmptyLines(result.output);
+  return lines === 0 ? '' : pluralize(lines, 'line');
+};
+
 const grepChip: ChipProvider = (_toolCall, result) => {
   const matches = countNonEmptyLines(result.output);
   if (matches === 0) return 'no matches';
@@ -116,6 +123,7 @@ const goalStatusOutputChip: ChipProvider = (_toolCall, result) =>
   result.is_error ? '' : goalStatusChip(result.output);
 
 const REGISTRY: Record<string, ChipProvider> = {
+  Bash: bashChip,
   Edit: editChip,
   Write: writeChip,
   Read: readChip,

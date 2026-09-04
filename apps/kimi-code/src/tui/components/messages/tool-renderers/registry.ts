@@ -3,8 +3,8 @@
  *
  * Each tool name maps to a `ResultRenderer` that turns the tool's
  * `ToolResultBlockData` into renderable Components. Tools without an
- * explicit entry fall through to `renderTruncated` (the original
- * 3-line + ctrl+o behavior).
+ * explicit entry fall through to `renderTruncated` (header plus the first
+ * output line when collapsed, full output on ctrl+o, errors always previewed).
  *
  * Keep this dispatch flat — tool names live next to the renderer they
  * choose, so adding a new tool means appending one case.

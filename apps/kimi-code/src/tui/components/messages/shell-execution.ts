@@ -6,6 +6,7 @@ import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 
 import type { ResultRenderer } from './tool-renderers/types';
 import { PREVIEW_LINES } from './tool-renderers/types';
+import { lastNonEmptyLine, outcomeLine } from './tool-renderers/outcome';
 import { TruncatedOutputComponent } from './tool-renderers/truncated';
 
 export interface ShellExecutionOptions {
@@ -85,13 +86,22 @@ export const shellExecutionResultRenderer: ResultRenderer = (
   _toolCall: ToolCallBlockData,
   result: ToolResultBlockData,
   ctx,
-): Component[] => [
+): Component[] => {
+  // Collapsed: the command's last output line is the card's outcome row
+  // (most commands conclude on their last line); the rest waits for ctrl+o.
+  // A failing command keeps its multi-line preview so the error is visible.
+  if (!ctx.expanded && result.is_error !== true) {
+    const last = lastNonEmptyLine(result.output);
+    return last === undefined ? [] : [outcomeLine(last)];
+  }
   // Result only. The command preview is owned by ToolCallComponent's
   // buildCallPreview across the whole lifecycle (streaming, running, and
   // done); rendering it here too would duplicate the command once the result
   // lands.
-  new ShellExecutionComponent({
-    result,
-    expanded: ctx.expanded,
-  }),
-];
+  return [
+    new ShellExecutionComponent({
+      result,
+      expanded: ctx.expanded,
+    }),
+  ];
+};

@@ -2,9 +2,9 @@
  * Summary-style renderers — produce optional inline-glance content for
  * tools whose raw output is high-volume but low-information (Grep,
  * Glob). The numeric summary (line counts, exit codes, sizes) lives in
- * the header chip (see chip.ts), so most tools intentionally render an
- * empty body and only expose details when the global expand toggle is
- * on.
+ * the header chip (see chip.ts), so every tool here renders the glance
+ * line as the collapsed card's outcome row; the raw output only appears
+ * when the global expand toggle is on.
  *
  * Errors always fall through to the truncated renderer so the user
  * sees the actual error message, not a synthetic summary.
@@ -14,6 +14,7 @@ import type { Component } from '@moonshot-ai/pi-tui';
 import { Text } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 
+import { outcomeLine } from './outcome';
 import { renderTruncated } from './truncated';
 import type { ResultRenderer } from './types';
 
@@ -29,10 +30,12 @@ function withGlance(glance: GlanceFn | null): ResultRenderer {
     if (result.is_error) return renderTruncated(toolCall, result, ctx);
 
     const out: Component[] = [];
+    // The glance is the collapsed card's outcome row (one width-truncated
+    // line); the raw output only follows once expanded.
     if (glance !== null) {
       const line = glance(toolCall, result);
       if (line.length > 0) {
-        out.push(new Text(`  ${chalk.dim(line)}`, 0, 0));
+        out.push(ctx.expanded ? new Text(`  ${chalk.dim(line)}`, 0, 0) : outcomeLine(line));
       }
     }
     if (ctx.expanded && result.output.length > 0) {

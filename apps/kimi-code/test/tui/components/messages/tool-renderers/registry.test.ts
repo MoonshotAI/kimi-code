@@ -58,21 +58,44 @@ function goalOutput(overrides: Record<string, unknown> = {}): string {
 }
 
 describe('tool-result registry', () => {
-  it('falls back to truncated renderer for unknown tools', () => {
+  it('falls back to truncated renderer for unknown tools: header-only collapsed, full when expanded', () => {
     const renderer = pickResultRenderer('SomethingUnknown');
-    const out = strip(joinRender(renderer(call('SomethingUnknown'), result('a\nb\nc\nd\ne'), ctx)));
+    const collapsed = strip(
+      joinRender(renderer(call('SomethingUnknown'), result('\na\nb\nc\nd\ne'), ctx)),
+    );
+    expect(collapsed).toBe('  a');
+
+    const expanded = strip(
+      joinRender(renderer(call('SomethingUnknown'), result('a\nb\nc\nd\ne'), expandedCtx)),
+    );
+    expect(expanded).toContain('a');
+    expect(expanded).toContain('e');
+    expect(expanded).not.toContain('ctrl+o to expand');
+  });
+
+  it('keeps a failing unknown tool\'s output previewed while collapsed', () => {
+    const renderer = pickResultRenderer('SomethingUnknown');
+    const out = strip(
+      joinRender(
+        renderer(call('SomethingUnknown'), result('a\nb\nc\nd\ne', true), ctx),
+      ),
+    );
     expect(out).toContain('a');
-    expect(out).toContain('b');
     expect(out).toContain('c');
     expect(out).not.toContain('\nd');
     expect(out).toContain('… (2 more lines, ctrl+o to expand)');
   });
 
-  it('uses truncated renderer for Bash to preserve raw output UX', () => {
+  it('uses the shell renderer for Bash: last line collapsed, raw output expanded', () => {
     const renderer = pickResultRenderer('Bash');
-    const out = strip(joinRender(renderer(call('Bash'), result('one\ntwo\nthree\nfour'), ctx)));
+    expect(strip(joinRender(renderer(call('Bash'), result('one\ntwo\nthree\nfour'), ctx)))).toBe(
+      '  four',
+    );
+    const out = strip(
+      joinRender(renderer(call('Bash'), result('one\ntwo\nthree\nfour'), expandedCtx)),
+    );
     expect(out).toContain('one');
-    expect(out).toContain('… (1 more lines, ctrl+o to expand)');
+    expect(out).toContain('four');
   });
 
   it('Read renders no body when collapsed (header chip carries the count)', () => {
@@ -92,7 +115,7 @@ describe('tool-result registry', () => {
     expect(out).toContain('bar');
   });
 
-  it('Grep glance lists path samples below the chip', () => {
+  it('Grep renders its glance as the outcome row when collapsed', () => {
     const renderer = pickResultRenderer('Grep');
     const out = strip(
       joinRender(
@@ -103,11 +126,22 @@ describe('tool-result registry', () => {
         ),
       ),
     );
-    expect(out).toContain('src/a.ts');
-    expect(out).toContain('src/b.ts');
-    expect(out).toContain('src/c.ts');
-    expect(out).toContain('+2 more');
-    expect(out).not.toContain('src/d.ts');
+    expect(out).toBe('  src/a.ts, src/b.ts, src/c.ts, +2 more');
+  });
+
+  it('Grep glance lists path samples above the raw output when expanded', () => {
+    const renderer = pickResultRenderer('Grep');
+    const out = strip(
+      joinRender(
+        renderer(
+          call('Grep', { pattern: 'foo' }),
+          result('src/a.ts\nsrc/b.ts\nsrc/c.ts\nsrc/d.ts\nsrc/e.ts'),
+          expandedCtx,
+        ),
+      ),
+    );
+    expect(out).toContain('src/a.ts, src/b.ts, src/c.ts, +2 more');
+    expect(out).toContain('src/d.ts');
   });
 
   it('Grep glance strips trailing :line:text in content mode', () => {
@@ -117,12 +151,11 @@ describe('tool-result registry', () => {
         renderer(
           call('Grep', { pattern: 'foo' }),
           result('src/a.ts:42:    foo()\nsrc/b.ts:7:foo'),
-          ctx,
+          expandedCtx,
         ),
       ),
     );
-    expect(out).toContain('src/a.ts:42');
-    expect(out).not.toContain('foo()');
+    expect(out).toContain('src/a.ts:42, src/b.ts:7');
   });
 
   it('Grep with empty result renders nothing in collapsed state', () => {
@@ -131,11 +164,22 @@ describe('tool-result registry', () => {
     expect(out.trim()).toBe('');
   });
 
-  it('Glob glance lists path samples', () => {
+  it('Glob glance lists path samples when expanded', () => {
     const renderer = pickResultRenderer('Glob');
+    expect(
+      strip(
+        joinRender(
+          renderer(call('Glob', { pattern: '**/*.ts' }), result('a.ts\nb.ts\nc.ts\nd.ts'), ctx),
+        ),
+      ),
+    ).toBe('  a.ts, b.ts, c.ts, +1 more');
     const out = strip(
       joinRender(
-        renderer(call('Glob', { pattern: '**/*.ts' }), result('a.ts\nb.ts\nc.ts\nd.ts'), ctx),
+        renderer(
+          call('Glob', { pattern: '**/*.ts' }),
+          result('a.ts\nb.ts\nc.ts\nd.ts'),
+          expandedCtx,
+        ),
       ),
     );
     expect(out).toContain('a.ts');
@@ -242,10 +286,12 @@ describe('tool-result registry', () => {
     expect(isGenericToolResult('Edit')).toBe(false);
   });
 
-  it('truncates unknown tool output by wrapped visual lines, not raw newlines', () => {
+  it('truncates a failing unknown tool\'s output by wrapped visual lines, not raw newlines', () => {
     const renderer = pickResultRenderer('SomethingUnknown');
     const longLine = 'x'.repeat(500);
-    const out = strip(joinRender(renderer(call('SomethingUnknown'), result(longLine), ctx), 20));
+    const out = strip(
+      joinRender(renderer(call('SomethingUnknown'), result(longLine, true), ctx), 20),
+    );
     expect(out).toContain('x');
     expect(out).not.toContain(longLine);
     expect(out).toContain('… (');

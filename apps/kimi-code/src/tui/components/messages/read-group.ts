@@ -4,7 +4,8 @@
  * It follows the same structure as `AgentGroupComponent`, with a smaller
  * surface:
  * - one summary header and a tree body listing each file path and status;
- * - permanently grouped, while the body remains visible;
+ * - permanently grouped; the body is shown only while expanded (ctrl+o),
+ *   the collapsed group is the header line alone;
  * - 200ms throttling, matching AgentGroup;
  * - state stays in each `ToolCallComponent`; the group only reads snapshots.
  *
@@ -27,6 +28,7 @@ import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 
 import type { ToolCallComponent, ToolCallReadSnapshot } from './tool-call';
+import { TruncatedHeaderLine } from './truncated-header-line';
 
 const THROTTLE_MS = 200;
 
@@ -37,16 +39,17 @@ interface ReadEntry {
 
 export class ReadGroupComponent extends Container {
   private readonly entries: ReadEntry[] = [];
-  private readonly headerText: Text;
+  private readonly headerText: TruncatedHeaderLine;
   private readonly bodyContainer: Container;
   private throttleTimer: ReturnType<typeof setTimeout> | null = null;
   private lastFlushPhases = new Map<string, ToolCallReadSnapshot['phase']>();
   private _invalidating = false;
+  private expanded = false;
 
   constructor(private readonly ui: TUI | undefined) {
     super();
     this.addChild(new Spacer(1));
-    this.headerText = new Text('', 0, 0);
+    this.headerText = new TruncatedHeaderLine('');
     this.addChild(this.headerText);
     this.bodyContainer = new Container();
     this.addChild(this.bodyContainer);
@@ -54,6 +57,13 @@ export class ReadGroupComponent extends Container {
 
   size(): number {
     return this.entries.length;
+  }
+
+  /** Global ctrl+o toggle: the per-file body is only rendered while expanded. */
+  setExpanded(expanded: boolean): void {
+    if (this.expanded === expanded) return;
+    this.expanded = expanded;
+    this.flushRender();
   }
 
   /**
@@ -112,13 +122,15 @@ export class ReadGroupComponent extends Container {
     this.headerText.setText(this.buildHeader(snapshots.length, pending, failed, totalLines));
 
     this.bodyContainer.clear();
-    const visibleSnapshots = snapshots.filter(
-      (snap) => snap.filePath !== undefined && snap.filePath.length > 0,
-    );
-    visibleSnapshots.forEach((snap, idx) => {
-      const isLast = idx === visibleSnapshots.length - 1;
-      this.bodyContainer.addChild(new Text(this.buildBodyLine(snap, isLast), 0, 0));
-    });
+    if (this.expanded) {
+      const visibleSnapshots = snapshots.filter(
+        (snap) => snap.filePath !== undefined && snap.filePath.length > 0,
+      );
+      visibleSnapshots.forEach((snap, idx) => {
+        const isLast = idx === visibleSnapshots.length - 1;
+        this.bodyContainer.addChild(new Text(this.buildBodyLine(snap, isLast), 0, 0));
+      });
+    }
 
     this.lastFlushPhases.clear();
     this.entries.forEach((entry, i) => {

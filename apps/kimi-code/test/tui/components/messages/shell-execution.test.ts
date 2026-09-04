@@ -112,7 +112,7 @@ describe('ShellExecutionComponent', () => {
   describe('shellExecutionResultRenderer', () => {
     const longCmd = `echo ${'a'.repeat(200)}\necho done`;
 
-    it('renders only the result and leaves the command to the call preview', () => {
+    it('renders only the last output line as the outcome row while collapsed', () => {
       const components = shellExecutionResultRenderer(
         {
           id: 'call_1',
@@ -121,8 +121,36 @@ describe('ShellExecutionComponent', () => {
         },
         {
           tool_call_id: 'call_1',
-          output: 'ok',
+          output: 'first\nsecond\n\nTests 12 passed\n\n',
           is_error: false,
+        },
+        { expanded: false },
+      );
+
+      const rendered = components.flatMap((c) => c.render(100)).map(strip);
+      expect(rendered).toEqual(['  Tests 12 passed']);
+    });
+
+    it('renders no outcome row for a successful result without output', () => {
+      const components = shellExecutionResultRenderer(
+        { id: 'call_1', name: 'Bash', args: { command: 'true' } },
+        { tool_call_id: 'call_1', output: '\n  \n', is_error: false },
+        { expanded: false },
+      );
+      expect(components).toEqual([]);
+    });
+
+    it('keeps a failing result previewed while collapsed and leaves the command to the call preview', () => {
+      const components = shellExecutionResultRenderer(
+        {
+          id: 'call_1',
+          name: 'Bash',
+          args: { command: longCmd },
+        },
+        {
+          tool_call_id: 'call_1',
+          output: 'boom',
+          is_error: true,
         },
         { expanded: false },
       );
@@ -135,7 +163,7 @@ describe('ShellExecutionComponent', () => {
       // renderer — rendering it here too would duplicate it once the result
       // lands.
       expect(rendered).not.toContain('$ echo');
-      expect(rendered).toContain('ok');
+      expect(rendered).toContain('boom');
     });
 
     it('still renders only the result when expanded', () => {

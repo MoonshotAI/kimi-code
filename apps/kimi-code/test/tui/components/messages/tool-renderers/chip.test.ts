@@ -26,7 +26,7 @@ function chipFor(name: string, args: Record<string, unknown>, out: ToolResultBlo
 
 describe('chip registry', () => {
   it('Bash has no chip (exit code is not surfaced)', () => {
-    expect(pickChip('Bash')).toBeUndefined();
+    expect(pickChip('AskUserQuestion')).toBeUndefined();
   });
 
   it('Edit chip shows +N -M from args diff', () => {
@@ -140,5 +140,15 @@ describe('computeEditStats', () => {
     const stats = computeEditStats({ old_string: '', new_string: 'x\ny\nz' });
     expect(stats.added).toBe(3);
     expect(stats.removed).toBe(0);
+  });
+});
+
+describe('Bash chip', () => {
+  it('counts the non-empty output lines and stays silent for no output', () => {
+    const chip = pickChip('Bash')!;
+    const call = { id: 'tc', name: 'Bash', args: { command: 'ls' } };
+    expect(chip(call, { tool_call_id: 'tc', output: 'a\n\nb\nc\n', is_error: false })).toBe('3 lines');
+    expect(chip(call, { tool_call_id: 'tc', output: 'only', is_error: false })).toBe('1 line');
+    expect(chip(call, { tool_call_id: 'tc', output: '', is_error: false })).toBe('');
   });
 });

@@ -157,19 +157,43 @@ describe('ToolCallComponent', () => {
       },
     );
 
-    const collapsed = strip(component.render(100).join('\n'));
-    expect(collapsed).toContain('line1');
-    expect(collapsed).toContain('line2');
-    expect(collapsed).toContain('line3');
-    expect(collapsed).not.toContain('line4');
-    expect(collapsed).toContain('… (2 more lines, ctrl+o to expand)');
+    // Collapsed: the header (command + line-count chip) plus one outcome row
+    // holding the last output line; the rest waits for ctrl+o.
+    const collapsedLines = component.render(100).map(strip).filter((line) => line.trim().length > 0);
+    expect(collapsedLines).toHaveLength(2);
+    expect(collapsedLines[0]).toContain('Ran a command');
+    expect(collapsedLines[0]).toContain('$ printf output');
+    expect(collapsedLines[0]).toContain('· 5 lines');
+    expect(collapsedLines[1]).toBe('  line5');
 
     component.setExpanded(true);
 
     const expanded = strip(component.render(100).join('\n'));
+    expect(expanded).toContain('line1');
     expect(expanded).toContain('line4');
     expect(expanded).toContain('line5');
     expect(expanded).not.toContain('ctrl+o to expand');
+  });
+
+  it('keeps a failing command\'s output visible while collapsed', () => {
+    const component = new ToolCallComponent(
+      {
+        id: 'call_shell_err',
+        name: 'Bash',
+        args: { command: 'false' },
+      },
+      {
+        tool_call_id: 'call_shell_err',
+        output: ['err1', 'err2', 'err3', 'err4', 'err5'].join('\n'),
+        is_error: true,
+      },
+    );
+
+    const collapsed = strip(component.render(100).join('\n'));
+    expect(collapsed).toContain('err1');
+    expect(collapsed).toContain('err3');
+    expect(collapsed).not.toContain('err4');
+    expect(collapsed).toContain('… (2 more lines, ctrl+o to expand)');
   });
 
   it('renders live Bash output while the command is running', () => {
@@ -185,10 +209,18 @@ describe('ToolCallComponent', () => {
     component.appendLiveOutput('line1\n');
     component.appendLiveOutput('line2\n');
 
-    const out = strip(component.render(100).join('\n'));
-    expect(out).toContain('Running a command');
-    expect(out).toContain('line1');
-    expect(out).toContain('line2');
+    // Collapsed: the header plus the newest live line as the outcome row, so
+    // progress stays visible; the whole live tail waits for ctrl+o.
+    const rows = component.render(100).map(strip).filter((line) => line.trim().length > 0);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toContain('Running a command');
+    expect(rows[0]).toContain('$ printf output');
+    expect(rows[1]).toBe('  line2');
+
+    component.setExpanded(true);
+    const expanded = strip(component.render(100).join('\n'));
+    expect(expanded).toContain('line1');
+    expect(expanded).toContain('line2');
   });
 
   it('clears live Bash output when the final result arrives', () => {
@@ -207,6 +239,7 @@ describe('ToolCallComponent', () => {
       output: 'final-only\n',
       is_error: false,
     });
+    component.setExpanded(true);
 
     const out = strip(component.render(100).join('\n'));
     expect(out).toContain('Ran a command');
@@ -219,17 +252,17 @@ describe('ToolCallComponent', () => {
       '\n',
     );
 
-    it('shows the truncated command while running and reveals the rest when expanded', () => {
+    it('keeps a running multi-line command to its first line until expanded', () => {
       const component = new ToolCallComponent(
         { id: 'call_bash_running', name: 'Bash', args: { command: longCommand } },
         undefined,
       );
 
-      const collapsed = strip(component.render(100).join('\n'));
-      expect(collapsed).toContain('Running a command');
-      expect(collapsed).toContain('echo step1');
-      expect(collapsed).toContain('echo step10');
-      expect(collapsed).not.toContain('echo step11');
+      const collapsed = component.render(100).map(strip).filter((line) => line.trim().length > 0);
+      expect(collapsed).toHaveLength(1);
+      expect(collapsed[0]).toContain('Running a command');
+      expect(collapsed[0]).toContain('$ echo step1…');
+      expect(collapsed[0]).not.toContain('echo step2');
 
       component.setExpanded(true);
 
@@ -238,48 +271,121 @@ describe('ToolCallComponent', () => {
       expect(expanded).toContain('echo step15');
     });
 
-    it('keeps the command preview after the result lands to avoid a height collapse', () => {
+    it('settles on header plus outcome row after the result lands and shows everything once expanded', () => {
       const component = new ToolCallComponent(
         { id: 'call_bash_done', name: 'Bash', args: { command: longCommand } },
         undefined,
       );
 
-      // Sanity: while running, the in-flight preview shows the command.
-      expect(strip(component.render(100).join('\n'))).toContain('$ echo step1');
-
       component.setResult({ tool_call_id: 'call_bash_done', output: 'done', is_error: false });
 
-      // Collapsed result view still shows the command preview (capped at
-      // COMMAND_PREVIEW_LINES) so a multi-line command with short output does
-      // not collapse the card. The command is owned by buildCallPreview, so it
-      // must appear exactly once — the result renderer no longer renders it.
-      const out = strip(component.render(100).join('\n'));
-      expect(out).toContain('Ran a command');
-      expect(out).toContain('$ echo step1');
-      expect(out).toContain('echo step10');
-      expect(out).not.toContain('echo step11');
-      expect(out).toContain('done');
-      expect(out.split('$ echo step1').length - 1).toBe(1);
+      const collapsed = component.render(100).map(strip).filter((line) => line.trim().length > 0);
+      expect(collapsed).toHaveLength(2);
+      expect(collapsed[0]).toContain('Ran a command');
+      expect(collapsed[0]).toContain('$ echo step1…');
+      expect(collapsed[0]).toContain('· 1 line');
+      expect(collapsed[1]).toBe('  done');
 
       component.setExpanded(true);
+      // The command is owned by buildCallPreview, so it appears exactly once —
+      // the result renderer renders the output only.
       const expanded = strip(component.render(100).join('\n'));
       expect(expanded).toContain('echo step11');
       expect(expanded).toContain('echo step15');
+      expect(expanded).toContain('done');
+      // Header keeps the truncated first line (`$ echo step1…`); the full
+      // command body must appear exactly once below it.
+      expect(expanded.match(/\$ echo step1(?!…)/g)).toHaveLength(1);
     });
 
-    it('keeps the command preview when the command produces no output', () => {
+    it('carries the command in the header when the command produces no output', () => {
       const component = new ToolCallComponent(
         { id: 'call_bash_empty', name: 'Bash', args: { command: 'mkdir -p a/b/c\necho done' } },
         { tool_call_id: 'call_bash_empty', output: '', is_error: false },
       );
 
-      // buildContent early-returns on empty output, but the command preview
-      // (owned by buildCallPreview) must still render so the card does not
-      // collapse to just the header.
-      const out = strip(component.render(100).join('\n'));
-      expect(out).toContain('Ran a command');
-      expect(out).toContain('$ mkdir -p a/b/c');
-      expect(out).toContain('echo done');
+      const collapsed = component.render(100).map(strip).filter((line) => line.trim().length > 0);
+      expect(collapsed).toHaveLength(1);
+      expect(collapsed[0]).toContain('Ran a command');
+      expect(collapsed[0]).toContain('$ mkdir -p a/b/c…');
+
+      component.setExpanded(true);
+      const expanded = strip(component.render(100).join('\n'));
+      expect(expanded).toContain('echo done');
+    });
+  });
+
+  describe('collapsed header width', () => {
+    it('truncates a long Bash header to the terminal width instead of wrapping', () => {
+      const command = `pnpm exec vitest run ${'test/very/long/path/'.repeat(6)}spec.test.ts --reporter=verbose`;
+      const component = new ToolCallComponent(
+        { id: 'call_bash_narrow', name: 'Bash', args: { command } },
+        { tool_call_id: 'call_bash_narrow', output: 'ok', is_error: false },
+      );
+      for (const width of [40, 60, 80]) {
+        const rows = component.render(width).map(strip).filter((line) => line.trim().length > 0);
+        // Header plus the outcome row holding the command's output ("ok").
+        expect(rows).toHaveLength(2);
+        expect(visibleWidth(rows[0]!)).toBeLessThanOrEqual(width);
+        expect(rows[0]).toContain('Ran a command');
+        expect(rows[0]).toContain('…');
+      }
+    });
+
+    it('hands back the same header array while the header is unchanged', () => {
+      const component = new ToolCallComponent(
+        { id: 'call_bash_cached', name: 'Bash', args: { command: 'ls' } },
+        undefined,
+      );
+      // children[0] is the leading spacer; the header line follows it. The
+      // card and the gutter reuse a child's output by array identity, so an
+      // unchanged header must return the very same array across frames.
+      const header = component.children[1]!;
+      const first = header.render(100);
+      expect(header.render(100)).toBe(first);
+      expect(header.render(80)).not.toBe(first);
+
+      component.setResult({ tool_call_id: 'call_bash_cached', output: 'ok', is_error: false });
+      const finished = header.render(100);
+      expect(finished).not.toBe(first);
+      expect(strip(finished[0]!)).toContain('Ran a command');
+      expect(header.render(100)).toBe(finished);
+    });
+
+    it('lets a long Bash command fill a wide terminal and keeps the chip', () => {
+      const command =
+        'git log --oneline -5 origin/main -- apps/kimi-code/test/tui/kimi-tui-message-flow.test.ts';
+      const component = new ToolCallComponent(
+        { id: 'call_bash_wide', name: 'Bash', args: { command } },
+        { tool_call_id: 'call_bash_wide', output: 'ok', is_error: false },
+      );
+      // The command is the flexible middle segment: on a wide terminal it is
+      // shown in full, on a narrow one it is cut with an ellipsis before the chip.
+      const wide = component.render(160).map(strip).filter((line) => line.trim().length > 0);
+      expect(wide).toHaveLength(2);
+      expect(wide[0]).toContain(`$ ${command}`);
+      expect(wide[0]).not.toContain('…');
+
+      const narrow = component.render(70).map(strip).filter((line) => line.trim().length > 0);
+      expect(narrow).toHaveLength(2);
+      expect(visibleWidth(narrow[0]!)).toBeLessThanOrEqual(70);
+      // The command is cut to the remaining width; the line-count chip survives.
+      expect(narrow[0]).toMatch(/\$ git log .*… · 1 line$/);
+    });
+
+    it('keeps the file name of a long Read path on a narrow terminal', () => {
+      const path =
+        '/Users/someone/.kimi-code/sessions/session_5b2c/agents/main/tasks/bash-4g77gs5f/output.log';
+      const component = new ToolCallComponent(
+        { id: 'call_read_narrow', name: 'Read', args: { path } },
+        { tool_call_id: 'call_read_narrow', output: '1\ta\n2\tb', is_error: false },
+      );
+      const rows = component.render(60).map(strip).filter((line) => line.trim().length > 0);
+      expect(rows).toHaveLength(1);
+      expect(visibleWidth(rows[0]!)).toBeLessThanOrEqual(60);
+      expect(rows[0]).toContain('(…');
+      expect(rows[0]).toContain('/output.log)');
+      expect(rows[0]).toContain('2 lines');
     });
   });
 
@@ -419,6 +525,9 @@ describe('ToolCallComponent', () => {
       },
     );
 
+    // Successful output only renders once expanded; the point here is that a
+    // reminder tag mid-body must not suppress the whole output.
+    component.setExpanded(true);
     const out = strip(component.render(100).join('\n'));
     expect(out).toContain('first line');
   });
@@ -730,10 +839,16 @@ describe('ToolCallComponent', () => {
       },
     );
 
-    const out = strip(component.render(100).join('\n'));
-    expect(out).toContain('Started background question');
-    expect(out).toContain('question-aaaaaaaa');
-    expect(out).not.toContain('Collected your answers');
+    const collapsed = strip(component.render(100).join('\n'));
+    expect(collapsed).toContain('Started background question');
+    // The outcome row carries the result's first line: the task id.
+    expect(collapsed).toContain('task_id: question-aaaaaaaa');
+    expect(collapsed).not.toContain('description: Which database?');
+    expect(collapsed).not.toContain('Collected your answers');
+
+    component.setExpanded(true);
+    const expanded = strip(component.render(100).join('\n'));
+    expect(expanded).toContain('question-aaaaaaaa');
   });
 
   it('renders GetGoal as a goal check without raw JSON', () => {
