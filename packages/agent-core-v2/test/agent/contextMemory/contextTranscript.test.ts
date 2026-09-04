@@ -60,7 +60,7 @@ function compaction(
     compactedCount,
     tokensBefore: 1000,
     tokensAfter: 100,
-    ...(keptUserMessageCount === undefined ? {} : { keptUserMessageCount }),
+    ...(keptUserMessageCount === undefined ? {} : { keptUserMessageCount, hasContinuation: true }),
     ...(keptHeadUserMessageCount === undefined ? {} : { keptHeadUserMessageCount }),
   };
 }

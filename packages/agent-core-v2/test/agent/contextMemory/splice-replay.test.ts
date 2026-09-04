@@ -365,6 +365,7 @@ describe('AgentContextMemoryService (wire-backed)', () => {
         tokensBefore: 100,
         tokensAfter: 20,
         keptUserMessageCount: 2,
+        hasContinuation: true,
       },
     ];
 
@@ -415,12 +416,7 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     );
 
     const model = replay.agentState.get(contextMemoryKey);
-    expect(model.map(textOf)).toEqual([
-      'old user',
-      'recent user',
-      'OLD SUMMARY',
-      buildCompactionContinuationText(),
-    ]);
+    expect(model.map(textOf)).toEqual(['old user', 'recent user', 'OLD SUMMARY']);
     expect(model[2]).toMatchObject({
       role: 'user',
       origin: { kind: 'compaction_summary' },
