@@ -189,6 +189,39 @@ function asText(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
+interface SwarmResultRow {
+  agentId?: string;
+  item?: string;
+  outcome?: string;
+  body: string;
+}
+
+/** 解析 AgentSwarm 工具结果 XML（writer：agentSwarmTool.ts renderSwarmResults）的成员行。 */
+function parseSwarmResultRows(xml: string): SwarmResultRow[] {
+  const rows: SwarmResultRow[] = [];
+  const re = /<subagent\b([^>]*)>([\s\S]*?)<\/subagent>/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(xml)) !== null) {
+    rows.push({
+      agentId: xmlAttr(match[1] ?? '', 'agent_id'),
+      item: xmlAttr(match[1] ?? '', 'item'),
+      outcome: xmlAttr(match[1] ?? '', 'outcome'),
+      body: match[2] ?? '',
+    });
+  }
+  return rows;
+}
+
+function xmlAttr(attrs: string, name: string): string | undefined {
+  const value = new RegExp(`${name}="([^"]*)"`).exec(attrs)?.[1];
+  return value
+    ?.replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
 function isDisplayableTurnOrigin(origin: TurnOrigin): boolean {
   return (
     origin.kind === 'user' ||
@@ -876,37 +909,127 @@ export function buildColdHistory(
   }
 
   for (const task of tasks.values()) {
-    const lastTime = task.terminatedTime ?? task.lastTime ?? task.startedTime;
-    if (query.beforeTurn === undefined && lastTime !== undefined && floorTime !== undefined && lastTime <= floorTime) continue;
     const startedInfo = task.startedInfo;
     const terminatedInfo = task.terminatedInfo;
-    units.push({
-      pos: lastTime ?? 0,
-      seq: unitSeq++,
-      items: [
-        {
-          type: 'task',
-          session_id: sessionId,
-          agent_id: agentId,
-          timestamp: iso(lastTime),
-          task_id: task.taskId,
-          kind: toTaskKind(asText(terminatedInfo?.['kind']) ?? asText(startedInfo?.['kind'])),
-          state: (asText(terminatedInfo?.['status']) ?? 'running') as TaskMessage['state'],
-          detached: startedInfo?.['detached'] === true || terminatedInfo?.['detached'] === true,
-          description: asText(terminatedInfo?.['description']) ?? asText(startedInfo?.['description']),
-          output_tail: task.outputTail ?? asText(terminatedInfo?.['outputTail']) ?? '',
-          started_at: asText(startedInfo?.['startedAt']) ?? iso(task.startedTime),
-          ended_at: terminatedInfo !== undefined ? asText(terminatedInfo['endedAt']) ?? iso(task.terminatedTime) : undefined,
-          result_summary: asText(terminatedInfo?.['resultSummary']),
-          error: asText(terminatedInfo?.['error']),
-          state_reason: asText(terminatedInfo?.['stopReason']),
-          usage: toStepUsage(terminatedInfo?.['usage']),
-          model: asText(startedInfo?.['model']),
-          thinking_effort: asText(startedInfo?.['thinkingEffort']),
-          child_agent_id: asText(terminatedInfo?.['childAgentId']) ?? asText(startedInfo?.['childAgentId']),
-        } as ServerMessage,
-      ],
-      stepGroups: [],
+    const taskKind = toTaskKind(asText(terminatedInfo?.['kind']) ?? asText(startedInfo?.['kind']));
+    const detached = startedInfo?.['detached'] === true || terminatedInfo?.['detached'] === true;
+    // 前台 subagent 不发 task 实体（由下方 agent 实体承载）；detached 的保留后台句柄
+    if (taskKind !== 'subagent' || detached) {
+      const lastTime = task.terminatedTime ?? task.lastTime ?? task.startedTime;
+      if (query.beforeTurn === undefined && lastTime !== undefined && floorTime !== undefined && lastTime <= floorTime) continue;
+      units.push({
+        pos: lastTime ?? 0,
+        seq: unitSeq++,
+        items: [
+          {
+            type: 'task',
+            session_id: sessionId,
+            agent_id: agentId,
+            timestamp: iso(lastTime),
+            task_id: task.taskId,
+            kind: taskKind,
+            state: (asText(terminatedInfo?.['status']) ?? 'running') as TaskMessage['state'],
+            detached,
+            description: asText(terminatedInfo?.['description']) ?? asText(startedInfo?.['description']),
+            output_tail: task.outputTail ?? asText(terminatedInfo?.['outputTail']) ?? '',
+            started_at: asText(startedInfo?.['startedAt']) ?? iso(task.startedTime),
+            ended_at: terminatedInfo !== undefined ? asText(terminatedInfo['endedAt']) ?? iso(task.terminatedTime) : undefined,
+            result_summary: asText(terminatedInfo?.['resultSummary']),
+            error: asText(terminatedInfo?.['error']),
+            state_reason: asText(terminatedInfo?.['stopReason']),
+            usage: toStepUsage(terminatedInfo?.['usage']),
+            model: asText(startedInfo?.['model']),
+            thinking_effort: asText(startedInfo?.['thinkingEffort']),
+            child_agent_id:
+              asText(terminatedInfo?.['agentId']) ??
+              asText(startedInfo?.['agentId']) ??
+              asText(terminatedInfo?.['childAgentId']) ??
+              asText(startedInfo?.['childAgentId']),
+          } as ServerMessage,
+        ],
+        stepGroups: [],
+      });
+    }
+    // 已注册的 subagent task（单 Agent 工具 / detached）终态 → agent 实体
+    if (asText(startedInfo?.['kind']) === 'agent' && terminatedInfo !== undefined) {
+      const subagentId = asText(startedInfo['agentId']) ?? asText(terminatedInfo['agentId']);
+      if (subagentId !== undefined) {
+        const status = asText(terminatedInfo['status']);
+        const lastTime = task.terminatedTime ?? task.lastTime ?? task.startedTime;
+        units.push({
+          pos: lastTime ?? 0,
+          seq: unitSeq++,
+          items: [
+            {
+              type: 'agent',
+              session_id: sessionId,
+              agent_id: agentId,
+              timestamp: iso(lastTime),
+              subagent_id: subagentId,
+              parent_tool_call_id: asText(startedInfo['parentToolCallId']) ?? asText(terminatedInfo['parentToolCallId']),
+              subagent_type: asText(startedInfo['subagentType']) ?? 'subagent',
+              description: asText(startedInfo['description']) ?? asText(terminatedInfo['description']),
+              model: asText(startedInfo['model']),
+              thinking_effort: asText(startedInfo['thinkingEffort']),
+              detached,
+              state: status === 'completed' ? 'completed' : status === 'failed' ? 'failed' : 'cancelled',
+              task_id: task.taskId,
+              result_summary: asText(terminatedInfo['resultSummary']),
+              usage: toStepUsage(terminatedInfo['usage']),
+              error: asText(terminatedInfo['error']),
+              started_at: asText(startedInfo['startedAt']) ?? iso(task.startedTime),
+              ended_at: asText(terminatedInfo['endedAt']) ?? iso(task.terminatedTime),
+            } as ServerMessage,
+          ],
+          stepGroups: [],
+        });
+      }
+    }
+  }
+
+  // AgentSwarm 工具结果 XML → 每成员 agent 实体（终态；非终态由直播恢复载荷覆盖）
+  for (const { acc } of tools.values()) {
+    if (acc.name !== 'AgentSwarm' || acc.isError === true) continue;
+    const xml =
+      asText(acc.output) ??
+      (Array.isArray(acc.output)
+        ? acc.output.filter((line): line is string => typeof line === 'string').join('\n')
+        : undefined);
+    if (xml === undefined || !xml.includes('<agent_swarm_result>')) continue;
+    const input = asRecord(acc.input);
+    const profile = asText(input?.['subagent_type']) ?? 'subagent';
+    const swarmDescription = asText(input?.['description']);
+    const rows = parseSwarmResultRows(xml);
+    rows.forEach((row, index) => {
+      const swarmIndex = index + 1;
+      units.push({
+        pos: acc.resultTime ?? acc.callTime ?? 0,
+        seq: unitSeq++,
+        items: [
+          {
+            type: 'agent',
+            session_id: sessionId,
+            agent_id: agentId,
+            timestamp: iso(acc.resultTime ?? acc.callTime),
+            subagent_id: row.agentId ?? `${acc.toolCallId}:${swarmIndex}`,
+            parent_tool_call_id: acc.toolCallId,
+            subagent_type: profile,
+            description:
+              swarmDescription !== undefined
+                ? `${swarmDescription} #${swarmIndex} (${profile})`
+                : (row.item ?? profile),
+            model: asText(input?.['model']),
+            swarm_index: swarmIndex,
+            detached: false,
+            state: row.outcome === 'completed' ? 'completed' : row.outcome === 'failed' ? 'failed' : 'cancelled',
+            result_summary: row.outcome === 'completed' ? row.body : undefined,
+            error: row.outcome === 'completed' ? undefined : row.body,
+            started_at: iso(acc.callTime),
+            ended_at: iso(acc.resultTime),
+          } as ServerMessage,
+        ],
+        stepGroups: [],
+      });
     });
   }
 

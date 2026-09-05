@@ -5,6 +5,7 @@ export function entityId(msg: ServerMessage): string {
     message_id?: string;
     tool_call_id?: string;
     interaction_id?: string;
+    subagent_id?: string;
     task_id?: string;
     todo_id?: string;
     system_id?: string;
@@ -15,6 +16,7 @@ export function entityId(msg: ServerMessage): string {
     m.message_id ??
     m.tool_call_id ??
     m.interaction_id ??
+    m.subagent_id ??
     m.task_id ??
     m.todo_id ??
     m.system_id ??

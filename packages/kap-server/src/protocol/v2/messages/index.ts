@@ -12,6 +12,7 @@ import {
 } from './delta';
 import { toolCallMessageSchema } from './tool-call';
 import { interactionMessageSchema } from './interaction';
+import { agentMessageSchema } from './agent';
 import { taskMessageSchema } from './task';
 import { todoMessageSchema } from './todo';
 import { systemMessageSchema } from './system';
@@ -34,6 +35,7 @@ export * from './assistant';
 export * from './delta';
 export * from './tool-call';
 export * from './interaction';
+export * from './agent';
 export * from './task';
 export * from './todo';
 export * from './system';
@@ -56,6 +58,7 @@ export const serverMessageSchema = z.discriminatedUnion('type', [
   toolProgressMessageSchema,
   systemMessageSchema,
   interactionMessageSchema,
+  agentMessageSchema,
   taskMessageSchema,
   todoMessageSchema,
   sessionStateMessageSchema,

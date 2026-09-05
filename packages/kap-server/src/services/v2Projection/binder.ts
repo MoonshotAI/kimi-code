@@ -7,6 +7,7 @@ import {
   IAgentInteractionService,
   IAgentLifecycleService,
   IAgentPermissionModeService,
+  IAgentSwarmService,
   IEventBus,
   ISessionActivityView,
   getLiveSessionById,
@@ -32,6 +33,7 @@ export interface V2AgentSource {
     subscribe(handler: (event: V2BusEvent) => void): V2Disposable;
   };
   permissionMode?(): 'manual' | 'yolo' | 'auto' | undefined;
+  swarmMode?(): boolean | undefined;
 }
 
 export interface V2PendingInteraction {
@@ -118,6 +120,12 @@ function factsPatchForEvent(event: V2BusEvent): SessionFactsPatch | undefined {
       const mode = event.mode as 'manual' | 'yolo' | 'auto' | undefined;
       return mode === undefined ? undefined : { permission: mode };
     }
+    case 'swarm_mode.enter': {
+      const trigger = event.trigger as string | undefined;
+      return { modes: trigger === undefined ? { swarm: {} } : { swarm: { trigger } } };
+    }
+    case 'swarm_mode.exit':
+      return { modes: {} };
     default:
       return undefined;
   }
@@ -185,6 +193,9 @@ export class SessionV2Binding {
   private watchAgent(agent: V2AgentSource): void {
     const permission = agent.permissionMode?.();
     if (permission !== undefined) this.projector.composer.apply({ permission });
+    if (agent.agentId === 'main' && agent.swarmMode?.() === true) {
+      this.projector.composer.apply({ modes: { swarm: {} } });
+    }
     this.disposables.push(agent.bus.subscribe((event) => this.onAgentEvent(agent.agentId, event)));
   }
 
@@ -314,6 +325,7 @@ export function liveSessionSourceFor(core: Scope, sessionId: string): V2SessionS
         },
       },
       permissionMode: () => handle?.accessor.get(IAgentPermissionModeService)?.mode,
+      swarmMode: () => handle?.accessor.get(IAgentSwarmService)?.isActive,
     };
   };
   const interactions: V2InteractionSource = {

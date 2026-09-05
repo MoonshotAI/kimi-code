@@ -1,4 +1,6 @@
 import type {
+  AgentMessage,
+  AgentState,
   ApprovalRequest,
   ApprovalResponsePayload,
   AssistantDeltaMessage,
@@ -110,6 +112,12 @@ export interface ProjectionEvent {
   raw?: unknown;
   input?: unknown;
   trigger?: unknown;
+  subagentId?: unknown;
+  subagentName?: unknown;
+  parentToolCallId?: unknown;
+  swarmIndex?: unknown;
+  runInBackground?: unknown;
+  description?: unknown;
   [key: string]: unknown;
 }
 
@@ -210,6 +218,25 @@ interface TaskAcc {
   message: TaskMessage;
 }
 
+interface AgentAcc {
+  subagentId: string;
+  parentToolCallId?: string;
+  subagentType: string;
+  description?: string;
+  model?: string;
+  thinkingEffort?: string;
+  swarmIndex?: number;
+  detached: boolean;
+  state: AgentState;
+  taskId?: string;
+  suspendedReason?: string;
+  resultSummary?: string;
+  usage?: StepUsage;
+  error?: string;
+  startedAt?: string;
+  endedAt?: string;
+}
+
 interface TaskInfoPayload {
   taskId?: unknown;
   kind?: unknown;
@@ -226,6 +253,7 @@ interface TaskInfoPayload {
   usage?: unknown;
   outputTail?: unknown;
   childAgentId?: unknown;
+  agentId?: unknown;
 }
 
 interface InteractionAcc {
@@ -345,6 +373,7 @@ export class AgentV2Projector {
   private openThinking?: TextAcc;
   private readonly tools = new Map<string, ToolAcc>();
   private readonly tasks = new Map<string, TaskAcc>();
+  private readonly agents = new Map<string, AgentAcc>();
   private readonly interactions = new Map<string, InteractionAcc>();
   private todoId?: string;
   private todoSeq = 0;
@@ -385,6 +414,10 @@ export class AgentV2Projector {
       case 'task.started': this.onTaskStarted(event, out); break;
       case 'task.terminated': this.onTaskTerminated(event, out); break;
       case 'task.notified': this.onTaskNotified(event, out); break;
+      case 'subagent.spawned': this.onSubagentSpawned(event, out); break;
+      case 'subagent.started': this.onSubagentStarted(event, out); break;
+      case 'subagent.suspended': this.onSubagentSuspended(event, out); break;
+      case 'subagent.failed': this.onSubagentFailed(event, out); break;
       case 'tools.update_store': this.onToolsUpdateStore(event, out); break;
       case 'permission.approval.requested': this.onApprovalRequested(event, out); break;
       case 'permission.approval.resolved': this.onApprovalResolved(event, out); break;
@@ -470,6 +503,11 @@ export class AgentV2Projector {
     }
     for (const task of this.tasks.values()) {
       if (task.message.state === 'running') out.push({ ...task.message, timestamp: iso(now()) });
+    }
+    for (const acc of this.agents.values()) {
+      if (acc.state === 'queued' || acc.state === 'running' || acc.state === 'suspended') {
+        out.push(this.agentMessage(acc, now()));
+      }
     }
     if (this.todoId !== undefined && this.lastTodoItems !== undefined) {
       out.push(this.todoMessage(this.todoId, this.lastTodoItems, now(), this.todoUpdatedAt));
@@ -859,6 +897,16 @@ export class AgentV2Projector {
       if (acc && acc.status !== 'completed') {
         acc.status = 'completed';
         out.push(this.userMessage(acc, event.time, iso((event.endedAt as number | undefined) ?? event.time)));
+      }
+    }
+    // turn 收官时仍非终态的前台 subagent（abort 不发送终态事件）按 v1 语义结算为 cancelled；
+    // detached（后台/tower）生命周期不随 turn，跳过
+    for (const acc of this.agents.values()) {
+      if (acc.detached) continue;
+      if (acc.state === 'queued' || acc.state === 'running' || acc.state === 'suspended') {
+        acc.state = 'cancelled';
+        acc.endedAt = iso((event.endedAt as number | undefined) ?? event.time);
+        out.push(this.agentMessage(acc, event.time));
       }
     }
   }
@@ -1255,21 +1303,83 @@ export class AgentV2Projector {
     });
   }
 
-  private onSubagentCompleted(event: ProjectionEvent, out: ServerMessage[]): void {
-    const step = this.currentStep;
-    if (!step) return;
-    this.closeOpenTexts(event.time, out);
-    const seq = step.textSeq.a++;
-    const acc: TextAcc = {
-      kind: 'assistant',
-      messageId: `${step.stepId}.a${seq}`,
-      stepKey: step.stepId,
-      turnId: step.turnId,
-      stepId: step.stepId,
-      text: (event.resultSummary as string) ?? '',
-      announced: true,
+  private onSubagentSpawned(event: ProjectionEvent, out: ServerMessage[]): void {
+    const subagentId = event.subagentId as string;
+    const acc: AgentAcc = {
+      subagentId,
+      parentToolCallId: (event.parentToolCallId as string | undefined) || undefined,
+      subagentType: (event.subagentName as string | undefined) ?? 'subagent',
+      description: event.description as string | undefined,
+      model: event.model as string | undefined,
+      thinkingEffort: event.thinkingEffort as string | undefined,
+      swarmIndex: event.swarmIndex as number | undefined,
+      detached: event.runInBackground === true,
+      state: 'queued',
+      taskId: event.taskId as string | undefined,
+      startedAt: iso(event.time),
     };
-    out.push(this.textMessage(acc, 'completed', event.time));
+    this.agents.set(subagentId, acc);
+    out.push(this.agentMessage(acc, event.time));
+  }
+
+  private onSubagentStarted(event: ProjectionEvent, out: ServerMessage[]): void {
+    const acc = this.agents.get(event.subagentId as string);
+    if (!acc) return;
+    acc.state = 'running';
+    acc.suspendedReason = undefined;
+    out.push(this.agentMessage(acc, event.time));
+  }
+
+  private onSubagentSuspended(event: ProjectionEvent, out: ServerMessage[]): void {
+    const acc = this.agents.get(event.subagentId as string);
+    if (!acc) return;
+    acc.state = 'suspended';
+    acc.suspendedReason = event.reason as string | undefined;
+    out.push(this.agentMessage(acc, event.time));
+  }
+
+  private onSubagentCompleted(event: ProjectionEvent, out: ServerMessage[]): void {
+    const acc = this.agents.get(event.subagentId as string);
+    if (!acc) return;
+    acc.state = 'completed';
+    acc.resultSummary = event.resultSummary as string | undefined;
+    acc.usage = toStepUsage(event.usage);
+    acc.endedAt = iso(event.time);
+    out.push(this.agentMessage(acc, event.time));
+  }
+
+  private onSubagentFailed(event: ProjectionEvent, out: ServerMessage[]): void {
+    const acc = this.agents.get(event.subagentId as string);
+    if (!acc) return;
+    acc.state = 'failed';
+    acc.error = event.error as string | undefined;
+    acc.endedAt = iso(event.time);
+    out.push(this.agentMessage(acc, event.time));
+  }
+
+  private agentMessage(acc: AgentAcc, time: number | undefined): AgentMessage {
+    return {
+      type: 'agent',
+      session_id: this.sessionId,
+      agent_id: this.agentId,
+      timestamp: iso(time),
+      subagent_id: acc.subagentId,
+      parent_tool_call_id: acc.parentToolCallId,
+      subagent_type: acc.subagentType,
+      description: acc.description,
+      model: acc.model,
+      thinking_effort: acc.thinkingEffort,
+      swarm_index: acc.swarmIndex,
+      detached: acc.detached,
+      state: acc.state,
+      task_id: acc.taskId,
+      suspended_reason: acc.suspendedReason,
+      result_summary: acc.resultSummary,
+      usage: acc.usage,
+      error: acc.error,
+      started_at: acc.startedAt,
+      ended_at: acc.endedAt,
+    };
   }
 
   private onShellOutput(event: ProjectionEvent, out: ServerMessage[]): void {
@@ -1322,12 +1432,15 @@ export class AgentV2Projector {
   private onTaskStarted(event: ProjectionEvent, out: ServerMessage[]): void {
     const info = event.info as TaskInfoPayload | undefined;
     if (!info) return;
+    const kind = toTaskKind(info.kind as string | undefined);
+    // 前台 subagent 不再发 task 实体（由 agent 实体承载）；detached 的保留后台句柄
+    if (kind === 'subagent' && info.detached !== true) return;
     const taskId = info.taskId as string;
     const msg: TaskMessage = {
       type: 'task',
       ...this.base(event),
       task_id: taskId,
-      kind: toTaskKind(info.kind as string | undefined),
+      kind,
       state: (info.status as TaskMessage['state']) ?? 'running',
       detached: info.detached === true,
       description: info.description as string | undefined,
@@ -1335,7 +1448,7 @@ export class AgentV2Projector {
       started_at: (info.startedAt as string) ?? iso(event.time),
       model: info.model as string | undefined,
       thinking_effort: info.thinkingEffort as string | undefined,
-      child_agent_id: info.childAgentId as string | undefined,
+      child_agent_id: (info.agentId as string | undefined) ?? (info.childAgentId as string | undefined),
     };
     this.tasks.set(taskId, { taskId, message: msg });
     out.push(msg);
@@ -1344,13 +1457,15 @@ export class AgentV2Projector {
   private onTaskTerminated(event: ProjectionEvent, out: ServerMessage[]): void {
     const info = event.info as TaskInfoPayload | undefined;
     if (!info) return;
+    const kind = toTaskKind(info.kind as string | undefined);
+    if (kind === 'subagent' && info.detached !== true && !this.tasks.has(info.taskId as string)) return;
     const taskId = info.taskId as string;
     const prev = this.tasks.get(taskId)?.message;
     const msg: TaskMessage = {
       type: 'task',
       ...this.base(event),
       task_id: taskId,
-      kind: toTaskKind(info.kind as string | undefined),
+      kind,
       state: (info.status as TaskMessage['state']) ?? 'completed',
       detached: prev?.detached ?? info.detached === true,
       description: (info.description as string | undefined) ?? prev?.description,
@@ -1363,7 +1478,10 @@ export class AgentV2Projector {
       usage: toStepUsage(info.usage),
       model: prev?.model,
       thinking_effort: prev?.thinking_effort,
-      child_agent_id: (info.childAgentId as string | undefined) ?? prev?.child_agent_id,
+      child_agent_id:
+        (info.agentId as string | undefined) ??
+        (info.childAgentId as string | undefined) ??
+        prev?.child_agent_id,
     };
     this.tasks.set(taskId, { taskId, message: msg });
     out.push(msg);
