@@ -176,6 +176,77 @@ describe('DefaultCompactionStrategy', () => {
     expect(strategy.shouldCompact(28_000)).toBe(true);
     expect(strategy.shouldBlock(28_000)).toBe(true);
   });
+
+  it('describes a trigger budget that agrees with shouldCompact at the ratio threshold', () => {
+    const strategy = testCompactionStrategy(1_000_000);
+
+    const budget = strategy.budget();
+
+    expect(budget).toEqual({
+      maxSize: 1_000_000,
+      triggerRatio: 0.85,
+      reservedContextSize: 0,
+      triggerTokens: 850_000,
+    });
+    expect(strategy.shouldCompact(budget.triggerTokens)).toBe(true);
+    expect(strategy.shouldCompact(budget.triggerTokens - 1)).toBe(false);
+  });
+
+  it('lets the reserved context lower the trigger budget', () => {
+    const strategy = new DefaultCompactionStrategy(() => 128_000, {
+      triggerRatio: 0.85,
+      blockRatio: 0.85,
+      reservedContextSize: 50_000,
+      maxCompactionPerTurn: 3,
+      maxOverflowCompactionAttempts: 3,
+      maxRecentMessages: 3,
+      maxRecentUserMessages: Infinity,
+      maxRecentSizeRatio: 0.2,
+      minOverflowReductionRatio: 0.05,
+    });
+
+    const budget = strategy.budget();
+
+    expect(budget.triggerTokens).toBe(78_000);
+    expect(strategy.shouldCompact(78_000)).toBe(true);
+    expect(strategy.shouldCompact(77_999)).toBe(false);
+  });
+
+  it('rounds a fractional ratio threshold up so the budget never fires early', () => {
+    const strategy = new DefaultCompactionStrategy(() => 100_001, {
+      triggerRatio: 0.85,
+      blockRatio: 0.85,
+      reservedContextSize: 0,
+      maxCompactionPerTurn: 3,
+      maxOverflowCompactionAttempts: 3,
+      maxRecentMessages: 3,
+      maxRecentUserMessages: Infinity,
+      maxRecentSizeRatio: 0.2,
+      minOverflowReductionRatio: 0.05,
+    });
+
+    const budget = strategy.budget();
+
+    expect(budget.triggerTokens).toBe(85_001);
+    expect(strategy.shouldCompact(85_001)).toBe(true);
+    expect(strategy.shouldCompact(85_000)).toBe(false);
+  });
+
+  it('ignores a reserve that is not smaller than the window in the trigger budget', () => {
+    const strategy = new DefaultCompactionStrategy(() => 32_000, {
+      triggerRatio: 0.85,
+      blockRatio: 0.85,
+      reservedContextSize: 50_000,
+      maxCompactionPerTurn: 3,
+      maxOverflowCompactionAttempts: 3,
+      maxRecentMessages: 3,
+      maxRecentUserMessages: Infinity,
+      maxRecentSizeRatio: 0.2,
+      minOverflowReductionRatio: 0.05,
+    });
+
+    expect(strategy.budget().triggerTokens).toBe(27_200);
+  });
 });
 
 function testCompactionStrategy(maxSize: number = 1_000): DefaultCompactionStrategy {

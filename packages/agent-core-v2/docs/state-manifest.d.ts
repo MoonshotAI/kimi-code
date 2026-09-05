@@ -66,6 +66,7 @@
 //     fullCompaction.consecutiveOverflowCompactions   src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.lastCompactedTokenCount          src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.observedMaxContextTokensByModel  src/agent/fullCompaction/fullCompactionService.ts
+//     fullCompaction.wireRanges                       src/agent/fullCompaction/compactionOps.ts
 //     interruptionReminder                            src/agent/interruptionReminder/interruptionReminderOps.ts
 //     llm.requestTrace                                src/agent/llmRequester/llmRequestOps.ts
 //     llmRequester.emittedThinkingEffortWarnings      src/agent/llmRequester/llmRequesterService.ts
@@ -101,7 +102,6 @@
 //     runtime.binding                                 src/agent/runtimeBinding/runtimeBindingService.ts
 //     runtimeBinding                                  src/agent/runtimeBinding/runtimeBindingOps.ts
 //     shellCommand.tasks                              src/agent/shellCommand/shellCommandService.ts
-//     staleGuard                                      src/features/staleGuard/staleGuardOps.ts
 //     stepRetry.failedAttempts                        src/agent/stepRetry/stepRetryService.ts
 //     stepRetry.lastFailedDriverId                    src/agent/stepRetry/stepRetryService.ts
 //     swarm                                           src/features/swarm/swarmOps.ts
@@ -1177,6 +1177,11 @@ export interface AgentStateSnapshot {
   'fullCompaction': /* CompactionState — packages/agent-core-v2/src/agent/fullCompaction/compactionOps.ts */ {
     readonly phase: /* CompactionPhase — packages/agent-core-v2/src/agent/fullCompaction/compactionOps.ts */ 'completed' | 'cancelled' | 'running' | 'idle';
   };
+  // replayable · durable — folds: ContextApplyCompaction, ContextClear
+  'fullCompaction.wireRanges': readonly /* WireLineRange — packages/agent-core-v2/src/wire/record.ts */ {
+    readonly start: number;
+    readonly end: number;
+  }[];
   // src/agent/fullCompaction/fullCompactionService.ts
   'fullCompaction.activeTurnId': number | undefined;
   'fullCompaction.compactionCountInTurn': number;
@@ -1519,9 +1524,6 @@ export interface AgentStateSnapshot {
     readonly id?: string;
     readonly revisionCount?: Readonly<Record<string, number>>;
   };
-  // src/features/staleGuard/staleGuardOps.ts
-  // replayable · durable — folds: StaleGuardRecorded, StaleGuardCleared
-  'staleGuard': /* StaleGuardModelState — packages/agent-core-v2/src/features/staleGuard/staleGuardOps.ts */ Map<string, number>;
   // src/features/swarm/swarmOps.ts
   // replayable · durable — folds: SwarmModeEnter, SwarmModeExit
   'swarm': 'task' | 'tool' | 'manual' | null;

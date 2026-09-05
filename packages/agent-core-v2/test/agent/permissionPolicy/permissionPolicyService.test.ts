@@ -236,19 +236,19 @@ describe('AgentPermissionPolicyService chain', () => {
   );
 
   it.each([
-    ['shutdown -h now', 'shutdown'],
-    ['reboot', 'reboot'],
-    ['rm -rf /tmp/build', 'rm -rf'],
-    ['dd if=/dev/zero of=/dev/sda bs=1M', 'dd'],
-  ] as const)('denies `%s` in auto mode', async (command, matched) => {
+    'shutdown -h now',
+    'reboot',
+    'rm -rf /tmp/build',
+    'dd if=/dev/zero of=/dev/sda bs=1M',
+  ])('approves `%s` in auto mode', async (command) => {
     mode = 'auto';
 
     await expect(evaluate({
       toolName: 'Bash',
       args: { command, timeout: 60 },
     })).resolves.toMatchObject({
-      policyName: 'dangerous-command-ask',
-      result: { kind: 'deny', reason: { dangerous_command: matched } },
+      policyName: 'auto-mode-approve',
+      result: { kind: 'approve' },
     });
   });
 
@@ -357,8 +357,20 @@ describe('AgentPermissionPolicyService chain', () => {
     },
   );
 
+  it('approves a heredoc command containing a single quote in yolo mode', async () => {
+    mode = 'yolo';
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'gh --body "$(cat <<\'EOF\'\nit\'s\nEOF\n)"', timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'yolo-mode-approve',
+      result: { kind: 'approve' },
+    });
+  });
+
   it.each(['$CMD --force', 'bash -c "echo $HOME"', 'env $FLAGS'])(
-    'denies unanalyzable command `%s` in auto mode',
+    'approves unanalyzable command `%s` in auto mode',
     async (command) => {
       mode = 'auto';
 
@@ -366,8 +378,8 @@ describe('AgentPermissionPolicyService chain', () => {
         toolName: 'Bash',
         args: { command, timeout: 60 },
       })).resolves.toMatchObject({
-        policyName: 'dangerous-command-ask',
-        result: { kind: 'deny', reason: { unanalyzable_command: true } },
+        policyName: 'auto-mode-approve',
+        result: { kind: 'approve' },
       });
     },
   );

@@ -78,9 +78,11 @@ auto_install = false
 
     await handleReloadCommand(host);
 
-    expect(session.reloadSession).toHaveBeenCalledWith({
+    expect(host.harness.reloadSession).toHaveBeenCalledWith({
+      id: session.id,
       forcePluginSessionStartReminder: true,
     });
+    expect(session.reloadSession).not.toHaveBeenCalled();
     expect(host.reloadCurrentSessionView).toHaveBeenCalledWith(
       session,
       'Session reloaded.',
@@ -205,6 +207,7 @@ function makeHost({
     state,
     session,
     harness: {
+      reloadSession: vi.fn(async () => session),
       getConfig: vi.fn(async () => ({
         models: {
           fresh: { provider: 'test', model: 'fresh-model', maxContextSize: 1000 },
@@ -227,6 +230,7 @@ function makeHost({
     showStatus: vi.fn(),
   } as unknown as SlashCommandHost & {
     readonly harness: {
+      readonly reloadSession: ReturnType<typeof vi.fn>;
       readonly getConfig: ReturnType<typeof vi.fn>;
       readonly getExperimentalFeatures: ReturnType<typeof vi.fn>;
     };

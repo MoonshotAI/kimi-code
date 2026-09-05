@@ -194,8 +194,8 @@ describe('built-in slash command registry', () => {
         'undo',
         'usage',
         'version',
-        'ask-when-needed',
-        'never-ask',
+        'yolo',
+        'auto',
       ]),
     );
   });

@@ -15,7 +15,6 @@ import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IEventBus } from '#/app/event/eventBus';
-import { IFlagService } from '#/app/flag/flag';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -40,7 +39,6 @@ import {
   fileHistoryKey,
 } from './fileHistoryOps';
 import { touchFileHistorySession } from './fileHistoryRetention';
-import { FILE_HISTORY_FLAG_ID } from './flag';
 
 export const FILE_HISTORY_MAX_FILE_BYTES = 4 * 1024 * 1024;
 export { FILE_HISTORY_BLOB_PREFIX } from './fileHistory';
@@ -58,7 +56,6 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IEventBus eventBus: IEventBus,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-    @IFlagService private readonly flags: IFlagService,
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @IBlobStore private readonly blobs: IBlobStore,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
@@ -89,15 +86,10 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
       eventBus.subscribe(TurnEnded, (event) => {
         if (event.agentId !== this.agentCtx.agentId) return;
         if (this.activeTurnId === event.turnId) this.activeTurnId = undefined;
-        if (!this.enabled()) return;
         void this.enqueue(() => this.endCheckpoint(event.turnId));
       }),
     );
     this.effect(() => () => this.queue, 'fileHistory:drain');
-  }
-
-  enabled(): boolean {
-    return this.flags.enabled(FILE_HISTORY_FLAG_ID);
   }
 
   history(): FileHistoryState {
@@ -109,12 +101,10 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
   }
 
   changes(turnId: number): Promise<FileHistoryChange[]> {
-    if (!this.enabled()) return Promise.resolve([]);
     return this.enqueueValue(() => this.readChanges(turnId));
   }
 
   turnRecorded(turnId: number): Promise<boolean> {
-    if (!this.enabled()) return Promise.resolve(false);
     return this.enqueueValue(async () => {
       const state = this.history();
       const index = state.checkpoints.findIndex(
@@ -129,10 +119,17 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
         index === state.checkpoints.length - 1 &&
         this.activeTurnId === turnId;
       if (end === undefined && !live) return false;
-      const entries = { ...state.checkpoints[index]!.entries, ...end?.entries };
-      const keyed = Object.values(entries).find((entry) => entry.key !== null);
-      if (keyed?.key === null || keyed?.key === undefined) return true;
-      return this.blobs.has(this.agentCtx.scope(), keyed.key);
+      const keys = new Set<string>();
+      for (const entry of [
+        ...Object.values(state.checkpoints[index]!.entries),
+        ...Object.values(end?.entries ?? {}),
+      ]) {
+        if (entry.key !== null) keys.add(entry.key);
+      }
+      for (const key of keys) {
+        if (!(await this.blobs.has(this.agentCtx.scope(), key))) return false;
+      }
+      return true;
     });
   }
 
@@ -219,7 +216,6 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     path: string,
     phase: FileHistoryCheckpointPhase = 'start',
   ): Promise<FileHistoryContent | undefined> {
-    if (!this.enabled()) return Promise.resolve(undefined);
     return this.enqueueValue(() => this.readContentAt(turnId, path, phase));
   }
 
@@ -255,14 +251,12 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
   }
 
   private onWillExecuteTool(event: WillExecuteToolEvent): void {
-    if (!this.enabled()) return;
     const path = editTargetPath(event.execution.display);
     if (path === undefined) return;
     event.waitUntil(this.enqueue(() => this.capture(path, event.turnId)));
   }
 
   private onSubagentWillExecuteTool(event: WillExecuteToolEvent): void {
-    if (!this.enabled()) return;
     const path = editTargetPath(event.execution.display);
     if (path === undefined) return;
     const main = this.agentLifecycle.handleOf(MAIN_AGENT_ID);
@@ -272,7 +266,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
 
   captureForActiveTurn(path: string): Promise<void> {
     const turnId = this.activeTurnId;
-    if (!this.enabled() || turnId === undefined) return Promise.resolve();
+    if (turnId === undefined) return Promise.resolve();
     return this.enqueue(() => this.capture(path, turnId));
   }
 

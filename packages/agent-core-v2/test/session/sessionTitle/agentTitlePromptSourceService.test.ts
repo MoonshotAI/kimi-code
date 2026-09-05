@@ -41,7 +41,7 @@ describe('AgentTitlePromptSource', () => {
 
   beforeEach(() => {
     liveMessages = [];
-    queue = { active: undefined, pending: [] };
+    queue = { active: undefined, pending: [], launching: false };
     disposables = new DisposableStore();
     ix = createServices(disposables, {
       additionalServices: (reg) => {
@@ -60,6 +60,7 @@ describe('AgentTitlePromptSource', () => {
     liveMessages = [userMessage('one', '第一条')];
     queue = {
       active: undefined,
+      launching: false,
       pending: [
         {
           id: 'two',
@@ -122,6 +123,7 @@ describe('AgentTitlePromptSource', () => {
   it('counts a queued prompt already appended to the context only once', async () => {
     liveMessages = [userMessage('one', '同一条')];
     queue = {
+      launching: false,
       active: {
         id: 'one',
         userMessageId: 'one',
@@ -171,6 +173,7 @@ describe('AgentTitlePromptSource', () => {
       userMessage('two', '进行中的问题'),
     ];
     queue = {
+      launching: false,
       active: {
         id: 'two',
         userMessageId: 'two',

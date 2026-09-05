@@ -83,8 +83,6 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'task.started',
   'task.terminated',
   'task.waitDelivered',
-  'staleGuard.recorded',
-  'staleGuard.cleared',
   'interaction.request',
   'interaction.resolved',
   'plan.revision',
@@ -275,6 +273,7 @@ describe('conversation-time checkpoint registration', () => {
   const CHECKPOINT_EXEMPT_STATES: ReadonlySet<string> = new Set([
     'goalForkNotice',
     'turn',
+    'fullCompaction.wireRanges',
   ]);
   const CONTEXT_OWNER_STATE = 'contextMemory';
   const CONTEXT_EVENTS: readonly Event2Class[] = [

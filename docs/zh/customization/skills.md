@@ -1,8 +1,8 @@
 # Agent Skills
 
-Agent Skills 是 Kimi Code CLI 扩展模型能力的轻量机制。一个 Skill 就是一份带 YAML frontmatter 的 Markdown 文档，描述某项专业知识或工作流程——例如项目的代码风格规范、PR review 流程、提交消息格式。
+Agent Skills 是 Kimi Code CLI 扩展模型能力的轻量机制。一个 Skill 就是一份带 YAML frontmatter 的 Markdown 文档，描述某项专业知识或工作流程：项目的代码风格规范、PR review 流程、提交消息格式。
 
-相比每次把同样的指引粘到提示词里，Skill 的优势在于：内容沉淀在文件里、可以跨项目和团队复用、可以通过斜杠命令一键加载，也可以让模型在需要时自动调用。
+与每次把同样的指引粘到提示词里相比，Skill 把内容沉淀在文件里，可以跨项目和团队复用，既可以通过斜杠命令一键加载，也可以让模型在需要时自动调用。
 
 ## 创建 Skill
 
@@ -39,12 +39,12 @@ arguments:
 
 | 字段 | 说明 |
 | --- | --- |
-| `name` | Skill 名称。目录型 `SKILL.md` 中为必填；扁平 `.md` 文件省略时使用文件名。名称大小写不敏感 |
-| `description` | 一行总结，模型用它来判断何时使用这个 Skill。目录型 `SKILL.md` 中为必填；扁平 `.md` 文件省略时回退到正文第一行非空内容（截至 240 字符） |
-| `type` | Skill 类型：`prompt`（默认）、`inline`（与 `prompt` 语义相同）、`flow`（只支持手动调用，不支持模型自动调用）。其他值会被跳过 |
-| `whenToUse` | 触发场景描述。也接受 `when-to-use`、`when_to_use` 写法 |
-| `disableModelInvocation` | 设为 `true` 时禁止模型自动调用此 Skill。也接受 `disable-model-invocation`、`disable_model_invocation` 写法 |
-| `arguments` | 命名参数列表，可写成字符串数组或空白分隔的字符串（如 `arguments: target mode`）。声明后，正文可用 `$<name>` 读取参数 |
+| `name` | Skill 名称，大小写不敏感。目录型 `SKILL.md` 必填，扁平 `.md` 省略时取文件名 |
+| `description` | 一行总结，模型用它判断何时使用。目录型必填，扁平 `.md` 省略时取正文第一行非空内容（截至 240 字符） |
+| `type` | 类型：`prompt`（默认）、`inline`（同 `prompt`）、`flow`（仅手动调用）。其他值被跳过 |
+| `whenToUse` | 触发场景描述，也接受 `when-to-use`、`when_to_use` 写法 |
+| `disableModelInvocation` | 设为 true 禁止模型自动调用，也接受 `disable-model-invocation`、`disable_model_invocation` 写法 |
+| `arguments` | 命名参数列表，字符串数组或空白分隔字符串（如 `arguments: target mode`）。声明后正文可用 `$<name>` 读取 |
 
 ::: warning 注意
 目录型 `SKILL.md` 中 `name` 和 `description` **必须**显式填写，省略任意一项均会导致解析失败。
@@ -59,17 +59,17 @@ arguments:
 - `$<name>`：`arguments` 中声明的命名参数
 - `${KIMI_SKILL_DIR}`：当前 Skill 文件所在目录
 
-位置参数支持单双引号包裹，如 `/skill:commit "fix login" patch` 中 `$0` 展开为 `fix login`。若正文不含任何参数占位符，调用时附带的文本会以 `\n\nARGUMENTS: <文本>` 的形式追加到正文末尾。
+位置参数支持单双引号包裹：在 `/skill:commit "fix login" patch` 中，`$0` 展开为 `fix login`。若正文不含任何参数占位符，调用时附带的文本会以 `\n\nARGUMENTS: <文本>` 的形式追加到正文末尾。
 
 ## Skill 存放位置
 
-Kimi Code CLI 按作用域分四档扫描，越具体的作用域优先级越高：**Project > User > Extra > Built-in**
+Kimi Code CLI 按作用域分四档扫描，越具体的作用域优先级越高：**Project > User > Extra > Built-in**。
 
 **用户级**（对所有项目生效）：
 - `$KIMI_CODE_HOME/skills/`（默认：`~/.kimi-code/skills/`）
 - `~/.agents/skills/`
 
-Kimi 专属用户级 Skill 目录会随 `KIMI_CODE_HOME` 移动，因此隔离数据根时也会隔离 Kimi 专属 Skills。通用 `~/.agents/skills/` 目录仍放在真实 OS home 下，以便跨工具共享。
+Kimi 专属用户级 Skill 目录会随 `KIMI_CODE_HOME` 移动，隔离数据根时也会隔离 Kimi 专属 Skills。通用 `~/.agents/skills/` 目录仍放在真实 OS home 下，以便跨工具共享。
 
 **项目级**（项目根 = 工作目录向上最近的含 `.git` 的目录）：
 - `.kimi-code/skills/`
@@ -81,7 +81,7 @@ Kimi 专属用户级 Skill 目录会随 `KIMI_CODE_HOME` 移动，因此隔离�
 extra_skill_dirs = ["~/team-skills", ".agents/team-skills"]
 ```
 
-**内置 Skills** 随 CLI 一起分发，优先级最低。它们为常见任务提供开箱即用的工作流，例如配置 MCP server、定制 TUI 主题和编辑配置文件。完整列表详见[内置 Skill 命令](../reference/slash-commands.md#内置-skill-命令)。其中介绍 Kimi Code 自身的部分可以通过顶层 [`builtin_product_skills`](../configuration/config-files.md#顶层字段) 字段关闭。
+**内置 Skills** 随 CLI 一起分发，优先级最低，为常见任务提供开箱即用的工作流，例如配置 MCP server、定制 TUI 主题和编辑配置文件。完整列表详见[内置 Skill 命令](../reference/slash-commands.md#内置-skill-命令)。其中介绍 Kimi Code 自身的部分可以通过顶层 [`builtin_product_skills`](../configuration/config-files.md#顶层字段) 字段关闭。
 
 ## 调用 Skill
 
@@ -92,7 +92,7 @@ extra_skill_dirs = ["~/team-skills", ".agents/team-skills"]
 /skill:git-commits 修复登录接口的并发问题
 ```
 
-模型也可以根据 `description` 和 `whenToUse` 自动调用 Skill（除非 `disableModelInvocation` 设为 `true` 或 `type` 为 `flow`）。Skill 调用时最多允许嵌套 3 层，超过后会被终止。
+模型也可以根据 `description` 和 `whenToUse` 自动调用 Skill。`disableModelInvocation` 设为 true 或 `type` 设为 flow 时不自动调用。Skill 调用最多允许嵌套 3 层，超过后会被终止。
 
 ## 完整示例
 
@@ -122,7 +122,7 @@ arguments:
    - 值得肯定的地方
 ```
 
-保存为 `$KIMI_CODE_HOME/skills/review-pr/SKILL.md`（未设置 `KIMI_CODE_HOME` 时为 `~/.kimi-code/skills/review-pr/SKILL.md`），检查清单放在同目录的 `references/checklist.md`，重开会话后即可通过 `/skill:review-pr #1234` 调用，其中 `#1234` 会展开到 `$pr_ref`。
+将文件保存为 `$KIMI_CODE_HOME/skills/review-pr/SKILL.md`，未设置 `KIMI_CODE_HOME` 时为 `~/.kimi-code/skills/review-pr/SKILL.md`。检查清单放在同目录的 `references/checklist.md`。重开会话后即可调用，例如 `/skill:review-pr #1234`，其中的参数会展开到 `$pr_ref`。
 
 ## 下一步
 

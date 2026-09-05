@@ -388,7 +388,7 @@ export class AgentPromptService implements IAgentPromptService {
   }
 
   list(): PromptQueueSnapshot {
-    return { active: this.active === undefined ? undefined : snapshot(this.active), pending: this.pending.map(snapshot) };
+    return { active: this.active === undefined ? undefined : snapshot(this.active), pending: this.pending.map(snapshot), launching: this.launching };
   }
 
   async steer(promptIds: readonly string[]): Promise<readonly PromptHandle[]> {
