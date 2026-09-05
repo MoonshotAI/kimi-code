@@ -70,6 +70,8 @@ import type {
   SessionSummaryPage,
   SkillSummary,
   PluginCommandDef,
+  SuggestFilesInput,
+  SuggestFilesResult,
   Unsubscribe,
   UploadFileOptions,
   WorkspaceTrustInfo,
@@ -854,6 +856,17 @@ export abstract class SDKRpcClientBase {
    */
   async listPluginCommandsGlobal(): Promise<readonly PluginCommandDef[]> {
     return [];
+  }
+
+  /**
+   * Workspace-root file suggestions, no session required. The v1 engine has
+   * no equivalent capability, so the base reports `undefined`; the v2 client
+   * overrides with the workspace handler's fs service.
+   */
+  async suggestFiles(workDir: string, input: SuggestFilesInput): Promise<SuggestFilesResult | undefined> {
+    void workDir;
+    void input;
+    return undefined;
   }
 
   async listBackgroundTasks(

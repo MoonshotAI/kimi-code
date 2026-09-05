@@ -42,6 +42,8 @@ import type {
   SessionSummary,
   SessionSummaryPage,
   SkillSummary,
+  SuggestFilesInput,
+  SuggestFilesResult,
   TelemetryClient,
   TelemetryContextPatch,
   TelemetryProperties,
@@ -335,6 +337,15 @@ export class KimiHarness {
   /** Skills visible to a new session in `workDir`, without creating that session. */
   async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {
     return this.rpc.listWorkspaceSkills(workDir);
+  }
+
+  /**
+   * File suggestions for @ mention-style completion under `workDir`, no
+   * session required. `undefined` on the v1 engine, which has no equivalent
+   * capability; callers fall back to their own file search there.
+   */
+  async suggestFiles(workDir: string, input: SuggestFilesInput): Promise<SuggestFilesResult | undefined> {
+    return this.rpc.suggestFiles(workDir, input);
   }
 
   /**

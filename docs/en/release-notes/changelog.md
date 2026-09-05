@@ -6,6 +6,30 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.40.0 (2026-09-02)
+
+### Features
+
+- web: Add a Plugins panel to Settings for browsing the plugin marketplace and installing, enabling, disabling, and removing plugins.
+- web: Support activating multiple skills from a single message.
+- Add the `kimi session list` command to list sessions from the command line.
+- Tower mode (experimental, `KIMI_CODE_EXPERIMENTAL_TOWER=1`): the agent no longer enters tower mode on its own — turn it on with `/tower on` or `/tower <base-branch>`.
+- The subagent model setting (`[secondary_model]`) graduates from experimental to stable.
+- Block dangerous shell commands such as shutdown, reboot, or rm -rf in Auto mode, and always ask before running them in Manual and YOLO modes; disable the guard with `[permission] dangerous_command_guard = false` or `KIMI_CODE_DANGEROUS_COMMAND_GUARD=false`.
+
+### Polish
+
+- Preserve comments, key order, and formatting in config.toml when configuration values are updated.
+- Remove the workspace restriction on the Bash tool's cwd parameter.
+- Default the workspace trust prompt selection to "Trust this folder" instead of "Don't trust".
+- The `kimi acp` subcommand no longer honors `KIMI_CODE_LEGACY_FLAG`; it always runs on the default agent engine.
+- web: Add a code wrap toggle to the diff panel and streamline its header.
+
+### Bug Fixes
+
+- Honor explicit `[experimental]` config entries over the `KIMI_CODE_EXPERIMENTAL_FLAG` master switch, so a flag set to `false` in config.toml stays off; per-feature `KIMI_CODE_EXPERIMENTAL_<NAME>` variables still override both.
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
 ## 0.39.1 (2026-08-28)
 
 ### Bug Fixes

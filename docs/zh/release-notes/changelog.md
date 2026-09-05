@@ -6,6 +6,30 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 0.40.0（2026-09-02）
+
+### 新功能
+
+- Web 版设置新增「插件」面板：可浏览插件市场并安装、启停、移除插件。
+- 支持在一条消息中同时激活多个技能。
+- 新增 `kimi session list` 命令，可在命令行直接列出会话。
+- Tower 模式（实验性）行为调整：agent 不再自行进入，需用 `/tower on` 或 `/tower <base-branch>` 显式开启。
+- 子代理设置（`[secondary_model]`）功能由实验性转为正式。
+- 新增危险命令护栏：Auto 模式直接拦截 shutdown、reboot、rm -rf 等危险命令，Manual 与 YOLO 模式执行前必定询问；可用 `[permission] dangerous_command_guard = false` 或 `KIMI_CODE_DANGEROUS_COMMAND_GUARD=false` 关闭。
+
+### 优化
+
+- 更新配置时完整保留 config.toml 的注释、键顺序与格式。
+- Bash 工具的 cwd 参数不再限制在工作区内。
+- 工作区信任弹窗默认选中「Trust this folder」。
+- `kimi acp` 子命令不再识别 `KIMI_CODE_LEGACY_FLAG`，始终运行在默认 agent 引擎。
+- Web 版 Diff 面板新增代码折行开关，并精简了面板头部。
+
+### 修复
+
+- 修复实验开关优先级：config.toml 中显式设为 `false` 的 `[experimental]` 条目现在稳定优先于 `KIMI_CODE_EXPERIMENTAL_FLAG` 总开关（单项 `KIMI_CODE_EXPERIMENTAL_<NAME>` 变量仍覆盖两者）。
+- 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
 ## 0.39.1（2026-08-28）
 
 ### 修复
