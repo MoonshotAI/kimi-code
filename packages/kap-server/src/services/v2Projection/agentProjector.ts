@@ -100,6 +100,15 @@ export interface ProjectionEvent {
   skillName?: unknown;
   commandName?: unknown;
   swarmMode?: unknown;
+  title?: unknown;
+  body?: unknown;
+  severity?: unknown;
+  notificationType?: unknown;
+  sourceKind?: unknown;
+  sourceId?: unknown;
+  sourceAgentId?: unknown;
+  raw?: unknown;
+  input?: unknown;
   [key: string]: unknown;
 }
 
