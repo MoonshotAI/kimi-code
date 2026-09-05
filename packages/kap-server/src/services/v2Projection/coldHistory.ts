@@ -196,7 +196,6 @@ interface SwarmResultRow {
   body: string;
 }
 
-/** 解析 AgentSwarm 工具结果 XML（writer：agentSwarmTool.ts renderSwarmResults）的成员行。 */
 function parseSwarmResultRows(xml: string): SwarmResultRow[] {
   const rows: SwarmResultRow[] = [];
   const re = /<subagent\b([^>]*)>([\s\S]*?)<\/subagent>/g;
@@ -913,7 +912,6 @@ export function buildColdHistory(
     const terminatedInfo = task.terminatedInfo;
     const taskKind = toTaskKind(asText(terminatedInfo?.['kind']) ?? asText(startedInfo?.['kind']));
     const detached = startedInfo?.['detached'] === true || terminatedInfo?.['detached'] === true;
-    // 前台 subagent 不发 task 实体（由下方 agent 实体承载）；detached 的保留后台句柄
     if (taskKind !== 'subagent' || detached) {
       const lastTime = task.terminatedTime ?? task.lastTime ?? task.startedTime;
       if (query.beforeTurn === undefined && lastTime !== undefined && floorTime !== undefined && lastTime <= floorTime) continue;
@@ -950,8 +948,7 @@ export function buildColdHistory(
         stepGroups: [],
       });
     }
-    // 已注册的 subagent task（单 Agent 工具 / detached）终态 → agent 实体
-    if (asText(startedInfo?.['kind']) === 'agent' && terminatedInfo !== undefined) {
+    if (startedInfo !== undefined && asText(startedInfo['kind']) === 'agent' && terminatedInfo !== undefined) {
       const subagentId = asText(startedInfo['agentId']) ?? asText(terminatedInfo['agentId']);
       if (subagentId !== undefined) {
         const status = asText(terminatedInfo['status']);
@@ -987,7 +984,6 @@ export function buildColdHistory(
     }
   }
 
-  // AgentSwarm 工具结果 XML → 每成员 agent 实体（终态；非终态由直播恢复载荷覆盖）
   for (const { acc } of tools.values()) {
     if (acc.name !== 'AgentSwarm' || acc.isError === true) continue;
     const xml =

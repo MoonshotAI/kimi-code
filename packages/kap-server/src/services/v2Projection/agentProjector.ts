@@ -112,6 +112,7 @@ export interface ProjectionEvent {
   raw?: unknown;
   input?: unknown;
   trigger?: unknown;
+  error?: unknown;
   subagentId?: unknown;
   subagentName?: unknown;
   parentToolCallId?: unknown;
@@ -899,8 +900,6 @@ export class AgentV2Projector {
         out.push(this.userMessage(acc, event.time, iso((event.endedAt as number | undefined) ?? event.time)));
       }
     }
-    // turn 收官时仍非终态的前台 subagent（abort 不发送终态事件）按 v1 语义结算为 cancelled；
-    // detached（后台/tower）生命周期不随 turn，跳过
     for (const acc of this.agents.values()) {
       if (acc.detached) continue;
       if (acc.state === 'queued' || acc.state === 'running' || acc.state === 'suspended') {
@@ -1433,7 +1432,6 @@ export class AgentV2Projector {
     const info = event.info as TaskInfoPayload | undefined;
     if (!info) return;
     const kind = toTaskKind(info.kind as string | undefined);
-    // 前台 subagent 不再发 task 实体（由 agent 实体承载）；detached 的保留后台句柄
     if (kind === 'subagent' && info.detached !== true) return;
     const taskId = info.taskId as string;
     const msg: TaskMessage = {
