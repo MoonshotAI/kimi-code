@@ -47,6 +47,35 @@ describe('groupTurns', () => {
     expect(turns[1]!.turnId).toBeUndefined();
     expect(turns[1]!.entries).toHaveLength(1);
   });
+
+  it('splits a `!` shell stretch into one turn per command', () => {
+    const echo = () => makeEntry(undefined, 'user');
+    const out = () => makeEntry(undefined, 'status');
+    const turns = groupTurns([echo(), out(), echo(), out(), echo(), out()]);
+    expect(turns).toHaveLength(3);
+    for (const turn of turns) {
+      expect(turn.turnId).toBeUndefined();
+      expect(turn.entries.map((e) => e.kind)).toEqual(['user', 'status']);
+    }
+  });
+
+  it('still attaches a real prompt to the following defined turn', () => {
+    const prompt = makeEntry(undefined, 'user');
+    const turns = groupTurns([prompt, tool('7'), msg('7')]);
+    expect(turns).toHaveLength(1);
+    expect(turns[0]!.turnId).toBe('7');
+    expect(turns[0]!.entries[0]).toBe(prompt);
+  });
+
+  it('flushes a buffered `!` run when the next prompt arrives', () => {
+    const echo = makeEntry(undefined, 'user');
+    const out = makeEntry(undefined, 'status');
+    const prompt = makeEntry(undefined, 'user');
+    const turns = groupTurns([echo, out, prompt, msg('3')]);
+    expect(turns.map((t) => t.turnId)).toEqual([undefined, '3']);
+    expect(turns[0]!.entries).toEqual([echo, out]);
+    expect(turns[1]!.entries).toEqual([prompt, turns[1]!.entries[1]!]);
+  });
 });
 
 describe('turnsToTrim', () => {
@@ -76,6 +105,22 @@ describe('turnsToTrim', () => {
     const turns = groupTurns(entries); // 1 turn
     const removed = turnsToTrim(turns, 2, 0);
     expect(removed.size).toBe(0);
+  });
+
+  it('trims old `!` command turns in a shell-heavy session', () => {
+    const entries: TranscriptEntry[] = [];
+    for (let i = 0; i < 10; i++) {
+      entries.push(makeEntry(undefined, 'user'), makeEntry(undefined, 'status'));
+    }
+    const turns = groupTurns(entries); // 10 small turns, one per command
+    expect(turns).toHaveLength(10);
+    const removed = turnsToTrim(turns, 3, 0);
+    // 10 > 3, oldest 7 commands trimmed; the newest 3 stay.
+    expect(removed.size).toBe(14);
+    expect(removed.has(entries[0]!)).toBe(true);
+    expect(removed.has(entries[13]!)).toBe(true);
+    expect(removed.has(entries[14]!)).toBe(false);
+    expect(removed.has(entries[19]!)).toBe(false);
   });
 });
 

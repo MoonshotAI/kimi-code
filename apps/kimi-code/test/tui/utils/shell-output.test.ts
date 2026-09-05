@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatBashOutputForDisplay, sanitizeShellOutput } from '#/tui/utils/shell-output';
+import { capStoredShellOutput, formatBashOutputForDisplay, sanitizeShellOutput } from '#/tui/utils/shell-output';
 
 const ESC = '\u001B';
 const BEL = '\u0007';
@@ -104,5 +104,32 @@ describe('formatBashOutputForDisplay', () => {
     expect(() =>
       formatBashOutputForDisplay(undefined as unknown as string, null as unknown as string),
     ).not.toThrow();
+  });
+});
+
+describe('capStoredShellOutput', () => {
+  it('keeps short output untouched', () => {
+    expect(capStoredShellOutput('hello\nworld')).toBe('hello\nworld');
+  });
+
+  it('keeps exactly maxChars untouched', () => {
+    const exact = 'x'.repeat(100);
+    expect(capStoredShellOutput(exact, 100)).toBe(exact);
+  });
+
+  it('keeps the tail and reports the dropped count', () => {
+    const long = `${'a'.repeat(80)}${'b'.repeat(80)}`;
+    const capped = capStoredShellOutput(long, 80);
+    expect(capped).toMatch(/^… \(80 earlier chars truncated\)\n/);
+    expect(capped.endsWith('b'.repeat(80))).toBe(true);
+  });
+
+  it('never starts the tail on a lone low surrogate', () => {
+    // 100 BMP chars, an astral char (surrogate pair), then 100 more; a 101-char
+    // cut lands on the low half of the pair, which must be dropped with it.
+    const text = `${'x'.repeat(100)}${'\u{1F600}'}${'y'.repeat(100)}`;
+    const capped = capStoredShellOutput(text, 101);
+    expect(capped).toMatch(/^… \(102 earlier chars truncated\)\n/);
+    expect(capped.split('\n')[1]).toBe('y'.repeat(100));
   });
 });
