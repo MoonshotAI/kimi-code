@@ -6,6 +6,7 @@ export * from './base';
 export * from './capability';
 export * from './config';
 export * from './config-warning';
+export * from './entity-id';
 export * from './error';
 export * from './hello';
 export * from './history';

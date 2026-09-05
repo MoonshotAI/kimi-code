@@ -346,6 +346,155 @@ describe('AgentMessageProjector', () => {
     expect(missedUser.origin).not.toHaveProperty('cron_id');
   });
 
+  it('projects task notifications as user messages on the idle, busy and turn-less paths', () => {
+    const projector = makeProjector();
+    const sink: ServerMessage[] = [];
+    feed(
+      projector,
+      ev({
+        type: 'turn.started',
+        turnId: 1,
+        origin: { kind: 'task', taskId: 'task-1', status: 'completed', notificationId: 'task:task-1:completed' },
+      }),
+      sink,
+    );
+    feed(
+      projector,
+      ev({
+        type: 'task.notified',
+        notificationType: 'task.completed',
+        title: 'Task completed',
+        body: 'build finished',
+        severity: 'info',
+        sourceKind: 'background_task',
+        sourceId: 'task-1',
+      }),
+      sink,
+    );
+    const turn = ofType(sink, 'turn').at(-1)!;
+    expect(turn).toMatchObject({
+      origin: { kind: 'task', task_id: 'task-1' },
+      user_message_id: 't1.u0',
+    });
+    const opening = ofType(sink, 'user')[0]!;
+    expect(opening).toMatchObject({
+      message_id: 't1.u0',
+      turn_id: 't1',
+      text: 'Task completed\nbuild finished',
+      status: 'running',
+      origin: { kind: 'task', task_id: 'task-1' },
+      notification: {
+        title: 'Task completed',
+        body: 'build finished',
+        severity: 'info',
+        type: 'task.completed',
+        source_kind: 'background_task',
+        source_id: 'task-1',
+      },
+    });
+    feed(projector, ev({ type: 'turn.step.started', turnId: 1, step: 1 }), sink);
+    feed(projector, ev({ type: 'turn.step.completed', turnId: 1, step: 1 }), sink);
+    feed(
+      projector,
+      ev({
+        type: 'task.notified',
+        notificationType: 'task.failed',
+        title: 'Task failed',
+        body: 'tests broke',
+        severity: 'warning',
+        sourceKind: 'background_task',
+        sourceId: 'task-2',
+      }),
+      sink,
+    );
+    feed(projector, ev({ type: 'turn.step.started', turnId: 1, step: 2 }), sink);
+    const injected = ofType(sink, 'user').find((u) => u.message_id === 't1.2.u1')!;
+    expect(injected).toMatchObject({
+      turn_id: 't1',
+      step_id: 't1.2',
+      text: 'Task failed\ntests broke',
+      status: 'running',
+      origin: { kind: 'task', task_id: 'task-2' },
+    });
+    expect(typeof injected.steered_at).toBe('string');
+    feed(projector, ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }), sink);
+    expect(ofType(sink, 'user').filter((u) => u.status === 'completed')).toHaveLength(2);
+
+    const turnless = makeProjector();
+    const phantom = feedAll(turnless, [
+      ev({
+        type: 'task.notified',
+        notificationType: 'task.completed',
+        title: 'Restored',
+        body: 'from previous session',
+        severity: 'info',
+        sourceKind: 'background_task',
+        sourceId: 'task-9',
+      }),
+    ]);
+    expect(ofType(phantom, 'user')[0]).toMatchObject({
+      message_id: 't0.u1',
+      turn_id: 't0',
+      status: 'completed',
+      origin: { kind: 'task', task_id: 'task-9' },
+    });
+  });
+
+  it('tags user-slash skill prompts and steers with the skill user origin', () => {
+    const projector = makeProjector();
+    const sink: ServerMessage[] = [];
+    feed(
+      projector,
+      ev({
+        type: 'turn.started',
+        turnId: 1,
+        origin: {
+          kind: 'skill_activation',
+          skillName: 'review',
+          skillArgs: 'src/',
+          trigger: 'user-slash',
+          activationId: 'a1',
+        },
+        prompt: 'review the code',
+      }),
+      sink,
+    );
+    expect(ofType(sink, 'turn')[0]!.origin).toEqual({ kind: 'user' });
+    const user = ofType(sink, 'user')[0]!;
+    expect(user).toMatchObject({
+      message_id: 't1.u0',
+      origin: { kind: 'skill', skill_name: 'review', args: 'src/', trigger: 'user-slash' },
+      skill_activations: [{ skill_name: 'review', skill_args: 'src/' }],
+    });
+    feed(projector, ev({ type: 'turn.step.started', turnId: 1, step: 1 }), sink);
+    feed(
+      projector,
+      ev({
+        type: 'turn.steer',
+        turnId: 1,
+        input: [{ type: 'text', text: 'skill body' }],
+        origin: { kind: 'skill_activation', skillName: 'deploy', trigger: 'user-slash', activationId: 'a2' },
+      }),
+      sink,
+    );
+    const steered = ofType(sink, 'user').at(-1)!;
+    expect(steered).toMatchObject({
+      message_id: 't1.1.u1',
+      origin: { kind: 'skill', skill_name: 'deploy', trigger: 'user-slash' },
+    });
+    feed(
+      projector,
+      ev({
+        type: 'turn.steer',
+        turnId: 1,
+        input: [{ type: 'text', text: 'model triggered' }],
+        origin: { kind: 'skill_activation', skillName: 'internal', trigger: 'model-tool', activationId: 'a3' },
+      }),
+      sink,
+    );
+    expect(ofType(sink, 'user')).toHaveLength(2);
+  });
+
   it('covers the three subagent wait modes around the parent tool call', () => {
     const projector = makeProjector();
     const sink: ServerMessage[] = [];

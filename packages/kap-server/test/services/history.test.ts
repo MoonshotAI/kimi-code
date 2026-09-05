@@ -324,6 +324,126 @@ describe('foldWireHistory steer', () => {
   });
 });
 
+describe('foldWireHistory task notifications', () => {
+  const xmlFor = (taskId: string, status: string, title: string, severity: string, body: string): string =>
+    `<notification id="task:${taskId}:${status}" category="task" type="task.${status}" source_kind="background_task" source_id="${taskId}">\nTitle: ${title}\nSeverity: ${severity}\n${body}</notification>`;
+
+  const notificationMessage = (taskId: string, status: string, xml: string): Record<string, unknown> => ({
+    message: {
+      role: 'user',
+      content: [{ type: 'text', text: xml }],
+      toolCalls: [],
+      origin: { kind: 'task', taskId, status, notificationId: `task:${taskId}:${status}` },
+    },
+  });
+
+  it('rebuilds notification user messages from idle turns, busy appends and turn-less restores', () => {
+    const xml1 = xmlFor('task-1', 'completed', 'Task completed', 'info', 'build finished');
+    const xml2 = xmlFor('task-2', 'failed', 'Task failed', 'warning', 'tests broke');
+    const xml3 = xmlFor('task-9', 'completed', 'Restored', 'info', 'from previous session');
+    const messages = fold([
+      rec('turn.prompt', {
+        input: [{ type: 'text', text: xml1 }],
+        origin: { kind: 'task', taskId: 'task-1', status: 'completed', notificationId: 'task:task-1:completed' },
+      }),
+      rec('context.append_message', notificationMessage('task-1', 'completed', xml1), T0 + 1),
+      loopEvent({ type: 'step.begin', uuid: 'u1', turnId: '0', step: 1 }, T0 + 2),
+      loopEvent({ type: 'step.end', uuid: 'u1' }, T0 + 3),
+      rec('turn.ended', { turnId: 0, reason: 'completed' }, T0 + 4),
+      rec('turn.prompt', { input: [{ type: 'text', text: 'next' }], origin: { kind: 'user' } }, T0 + 5),
+      loopEvent({ type: 'step.begin', uuid: 'v1', turnId: '1', step: 1 }, T0 + 6),
+      loopEvent({ type: 'step.end', uuid: 'v1' }, T0 + 7),
+      rec('context.append_message', notificationMessage('task-2', 'failed', xml2), T0 + 8),
+      loopEvent({ type: 'step.begin', uuid: 'v2', turnId: '1', step: 2 }, T0 + 9),
+      rec('turn.ended', { turnId: 1, reason: 'completed' }, T0 + 10),
+      rec('context.append_message', notificationMessage('task-9', 'completed', xml3), T0 + 11),
+    ]);
+    const turn0 = ofType(messages, 'turn')[0]!;
+    expect(turn0).toMatchObject({
+      origin: { kind: 'task', task_id: 'task-1' },
+      user_message_id: 't0.u0',
+    });
+    const opening = ofType(messages, 'user').find((u) => u.message_id === 't0.u0')!;
+    expect(opening).toMatchObject({
+      turn_id: 't0',
+      text: 'Task completed\nbuild finished',
+      status: 'completed',
+      origin: { kind: 'task', task_id: 'task-1' },
+      notification: {
+        title: 'Task completed',
+        body: 'build finished',
+        severity: 'info',
+        type: 'task.completed',
+        source_kind: 'background_task',
+        source_id: 'task-1',
+        raw: xml1,
+      },
+    });
+    expect(ofType(messages, 'user').filter((u) => u.text === 'Task completed\nbuild finished')).toHaveLength(1);
+    const injected = ofType(messages, 'user').find((u) => u.message_id === 't1.2.u1')!;
+    expect(injected).toMatchObject({
+      turn_id: 't1',
+      step_id: 't1.2',
+      text: 'Task failed\ntests broke',
+      status: 'completed',
+      origin: { kind: 'task', task_id: 'task-2' },
+      notification: { title: 'Task failed', type: 'task.failed', source_id: 'task-2' },
+    });
+    expect(injected.steered_at).toBe(iso(T0 + 8));
+    const phantom = ofType(messages, 'user').find((u) => u.message_id === 't2.u1')!;
+    expect(phantom).toMatchObject({
+      turn_id: 't2',
+      text: 'Restored\nfrom previous session',
+      status: 'completed',
+      origin: { kind: 'task', task_id: 'task-9' },
+      notification: { title: 'Restored', source_id: 'task-9' },
+    });
+  });
+
+  it('tags user-slash skill prompts and steers with the skill user origin', () => {
+    const messages = fold([
+      rec('turn.prompt', {
+        input: [{ type: 'text', text: 'review the code' }],
+        origin: {
+          kind: 'skill_activation',
+          skillName: 'review',
+          skillArgs: 'src/',
+          trigger: 'user-slash',
+          activationId: 'a1',
+        },
+      }),
+      rec(
+        'turn.steer',
+        {
+          input: [{ type: 'text', text: 'skill body' }],
+          origin: { kind: 'skill_activation', skillName: 'deploy', trigger: 'user-slash', activationId: 'a2' },
+        },
+        T0 + 1,
+      ),
+      rec(
+        'turn.steer',
+        {
+          input: [{ type: 'text', text: 'model triggered' }],
+          origin: { kind: 'skill_activation', skillName: 'internal', trigger: 'model-tool', activationId: 'a3' },
+        },
+        T0 + 2,
+      ),
+      loopEvent({ type: 'step.begin', uuid: 'u1', turnId: '0', step: 1 }, T0 + 3),
+    ]);
+    const users = ofType(messages, 'user');
+    expect(users).toHaveLength(2);
+    expect(users[0]).toMatchObject({
+      message_id: 't0.u0',
+      origin: { kind: 'skill', skill_name: 'review', args: 'src/', trigger: 'user-slash' },
+      skill_activations: [{ skill_name: 'review', skill_args: 'src/' }],
+    });
+    expect(users[1]).toMatchObject({
+      message_id: 't0.1.u1',
+      origin: { kind: 'skill', skill_name: 'deploy', trigger: 'user-slash' },
+    });
+  });
+});
+
 describe('foldWireHistory undo and clear', () => {
   function anchorTurn(ordinal: number, promptId: string, time: number): ContextRecord[] {
     return [
@@ -800,34 +920,29 @@ describe('paginateHistory', () => {
     });
 
   it('returns the newest page by default and pages older with before_turn', () => {
-    expect(ids(paginateHistory(base, {}))).toHaveLength(8);
-    expect(ids(paginateHistory(base, { page_size: 3 }))).toEqual(['t1.u0', 't1.1', 't1.1.a1']);
-    expect(ids(paginateHistory(base, { before_turn: 't1' }))).toEqual([
-      't0',
-      't0.u0',
-      't0.1',
-      't0.1.a1',
-    ]);
-    expect(ids(paginateHistory(base, { before_turn: 't1', page_size: 2 }))).toEqual([
-      't0.1',
-      't0.1.a1',
-    ]);
-    expect(paginateHistory(base, { before_turn: 't99' })).toEqual([]);
+    expect(ids(paginateHistory(base, {}).messages)).toHaveLength(8);
+    expect(paginateHistory(base, {}).hasMore).toBe(false);
+    const newest = paginateHistory(base, { page_size: 3 });
+    expect(ids(newest.messages)).toEqual(['t1.u0', 't1.1', 't1.1.a1']);
+    expect(newest.hasMore).toBe(true);
+    const older = paginateHistory(base, { before_turn: 't1' });
+    expect(ids(older.messages)).toEqual(['t0', 't0.u0', 't0.1', 't0.1.a1']);
+    expect(older.hasMore).toBe(false);
+    const olderCapped = paginateHistory(base, { before_turn: 't1', page_size: 2 });
+    expect(ids(olderCapped.messages)).toEqual(['t0.1', 't0.1.a1']);
+    expect(olderCapped.hasMore).toBe(true);
+    expect(paginateHistory(base, { before_turn: 't99' })).toEqual({ messages: [], hasMore: false });
   });
 
   it('catches up newer messages with after_step', () => {
-    expect(ids(paginateHistory(base, { after_step: 't0.1' }))).toEqual([
-      't1',
-      't1.u0',
-      't1.1',
-      't1.1.a1',
-    ]);
-    expect(ids(paginateHistory(base, { after_step: 't0.1', page_size: 2 }))).toEqual([
-      't1',
-      't1.u0',
-    ]);
-    expect(paginateHistory(base, { after_step: 't0.9' })).toEqual([]);
-    expect(paginateHistory(base, { after_step: 't1.1' })).toEqual([]);
+    const tail = paginateHistory(base, { after_step: 't0.1' });
+    expect(ids(tail.messages)).toEqual(['t1', 't1.u0', 't1.1', 't1.1.a1']);
+    expect(tail.hasMore).toBe(false);
+    const tailCapped = paginateHistory(base, { after_step: 't0.1', page_size: 2 });
+    expect(ids(tailCapped.messages)).toEqual(['t1', 't1.u0']);
+    expect(tailCapped.hasMore).toBe(true);
+    expect(paginateHistory(base, { after_step: 't0.9' })).toEqual({ messages: [], hasMore: false });
+    expect(paginateHistory(base, { after_step: 't1.1' })).toEqual({ messages: [], hasMore: false });
   });
 });
 
@@ -938,6 +1053,17 @@ describe('live and cold rebuild id consistency', () => {
       }),
     );
     feed(ev({ type: 'turn.step.completed', turnId: 0, step: 2 }));
+    feed(
+      ev({
+        type: 'task.notified',
+        notificationType: 'task.completed',
+        title: 'Task completed',
+        body: 'build finished',
+        severity: 'info',
+        sourceKind: 'background_task',
+        sourceId: 'task-7',
+      }),
+    );
     feed(ev({ type: 'turn.ended', turnId: 0, reason: 'completed', durationMs: 1500 }));
     feed(ev({ type: 'turn.started', turnId: 1, promptId: 'p2', origin: { kind: 'user' }, prompt: 'second' }));
     feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
@@ -989,6 +1115,19 @@ describe('live and cold rebuild id consistency', () => {
       rec('interaction.resolved', { id: 'apr-1', response: { decision: 'approved' } }),
       rec('goal.create', { objective: 'ship' }),
       loopEvent({ type: 'step.end', uuid: 'u2' }),
+      rec('context.append_message', {
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: '<notification id="task:task-7:completed" category="task" type="task.completed" source_kind="background_task" source_id="task-7">\nTitle: Task completed\nSeverity: info\nbuild finished</notification>',
+            },
+          ],
+          toolCalls: [],
+          origin: { kind: 'task', taskId: 'task-7', status: 'completed', notificationId: 'task:task-7:completed' },
+        },
+      }),
       rec('turn.ended', { turnId: 0, reason: 'completed', durationMs: 1500 }),
       rec('turn.prompt', {
         input: [{ type: 'text', text: 'second' }],

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  ContractViolation,
   ackMessageSchema,
   assistantDeltaMessageSchema,
   assistantMessageSchema,
@@ -8,12 +9,15 @@ import {
   clientMessageSchema,
   configMessageSchema,
   configWarningMessageSchema,
+  entityId,
+  entityKey,
   errorMessageSchema,
   helloMessageSchema,
   historyQuerySchema,
   historyResponseSchema,
   interactionMessageSchema,
   modelCatalogMessageSchema,
+  parseServerMessage,
   pluginMessageSchema,
   serverMessageSchema,
   sessionMessageSchema,
@@ -32,6 +36,11 @@ import {
   unsubscribeMessageSchema,
   userMessageSchema,
   workspaceMessageSchema,
+  type CapabilityChangedMessage,
+  type ConfigWarningMessage,
+  type DeltaMessage,
+  type ModelCatalogChangedMessage,
+  type PluginChangedMessage,
 } from '../src/protocol/messages';
 
 const TS = '2026-09-04T08:00:00.000Z';
@@ -480,10 +489,12 @@ describe('historyResponseSchema', () => {
   it('accepts a timeline entity page with in_flight marker', () => {
     const page = {
       messages: [turn, step, user, assistant, thinking, toolCall, systemUndo, interactionApproval, task, todo],
+      has_more: false,
       in_flight: { turn_id: 't2', step_id: 't2.0' },
     };
     expect(historyResponseSchema.safeParse(page).success).toBe(true);
-    expect(historyResponseSchema.safeParse({ messages: [] }).success).toBe(true);
+    expect(historyResponseSchema.safeParse({ messages: [], has_more: true }).success).toBe(true);
+    expect(historyResponseSchema.safeParse({ messages: [] }).success).toBe(false);
   });
 
   it('rejects volatile and non-persisted entities in history', () => {
@@ -512,5 +523,55 @@ describe('timestamp contract', () => {
     if (parsed.success) {
       expect(parsed.data.timestamp).toBe(TS);
     }
+  });
+});
+
+describe('parseServerMessage + entityKey', () => {
+  it('parses valid messages, throws detailed violations and derives replace-by-id keys', () => {
+    expect(parseServerMessage(turn)).toMatchObject({ type: 'turn', turn_id: 't1' });
+    expect(() => parseServerMessage({ type: 'turn' })).toThrow(ContractViolation);
+    try {
+      parseServerMessage({ type: 'turn' });
+      expect.unreachable();
+    } catch (error) {
+      const violation = error as ContractViolation;
+      expect(violation.issues.length).toBeGreaterThan(0);
+      expect(violation.raw).toEqual({ type: 'turn' });
+      expect(violation.message).toContain('contract violation');
+    }
+    expect(entityId(assistant as never)).toBe('t1.0.a0');
+    expect(entityId(toolCall as never)).toBe('tc1');
+    expect(entityId(interactionApproval as never)).toBe('tc1');
+    expect(entityId(interactionQuestion as never)).toBe('ia2');
+    expect(entityId(task as never)).toBe('task1');
+    expect(entityId(todo as never)).toBe('todo1');
+    expect(entityId(systemUndo as never)).toBe('sys1');
+    expect(entityId(step as never)).toBe('t1.0');
+    expect(entityId(turn as never)).toBe('t1');
+    expect(entityKey(turn as never)).toBe('agent_1:turn:t1');
+    expect(entityKey(sessionState as never)).toBe(':session.state:');
+    expect(entityKey(config as never)).toBe(':config:');
+  });
+
+  it('exposes the delta union and client-facing type aliases', () => {
+    const deltas: DeltaMessage[] = [assistantDelta, thinkingDelta, toolCallDelta, toolProgress].map(
+      (m) => parseServerMessage(m) as DeltaMessage,
+    );
+    expect(deltas.map((m) => m.type)).toEqual([
+      'assistant.delta',
+      'thinking.delta',
+      'tool_call.delta',
+      'tool.progress',
+    ]);
+    const warning: ConfigWarningMessage = configWarningMessageSchema.parse(configWarning);
+    const catalog: ModelCatalogChangedMessage = modelCatalogMessageSchema.parse(modelCatalog);
+    const plug: PluginChangedMessage = pluginMessageSchema.parse(plugin);
+    const cap: CapabilityChangedMessage = capabilityMessageSchema.parse(capability);
+    expect([warning.type, catalog.type, plug.type, cap.type]).toEqual([
+      'config.warning',
+      'model_catalog',
+      'plugin',
+      'capability',
+    ]);
   });
 });

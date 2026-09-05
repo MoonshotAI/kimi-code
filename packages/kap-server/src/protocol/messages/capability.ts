@@ -9,3 +9,5 @@ export const capabilityMessageSchema = z.object({
 });
 
 export type CapabilityChanged = z.infer<typeof capabilityMessageSchema>;
+
+export type CapabilityChangedMessage = CapabilityChanged;

@@ -295,6 +295,7 @@ function makeWs(handlers: Partial<ConstructorParameters<typeof ChatWs>[0]['handl
 describe('fetchHistoryPage', () => {
   const pageData = {
     messages: [turnMsg(1)],
+    has_more: false,
     in_flight: { turn_id: 't1', step_id: 't1.2' },
   };
 
@@ -320,7 +321,7 @@ describe('fetchHistoryPage', () => {
   });
 
   it('sends after_step and omits unset cursors', async () => {
-    const { calls, fetchImpl } = fakeFetch(okEnvelope({ messages: [] }));
+    const { calls, fetchImpl } = fakeFetch(okEnvelope({ messages: [], has_more: false }));
     await fetchHistoryPage({
       baseUrl: 'http://h:1',
       sessionId: 's1',
@@ -349,15 +350,15 @@ describe('fetchHistoryPage', () => {
 
   it('fetchFullHistory pages before_turn to the beginning and returns timeline order', async () => {
     const pages: Record<string, unknown> = {
-      newest: okEnvelope({ messages: [turnMsg(3), stepMsg('t3.1')] }),
-      't3': okEnvelope({ messages: [turnMsg(1), turnMsg(2)] }),
+      newest: okEnvelope({ messages: [turnMsg(3), stepMsg('t3.1')], has_more: true }),
+      't3': okEnvelope({ messages: [turnMsg(1), turnMsg(2)], has_more: false }),
     };
     const calls: string[] = [];
     const fetchImpl = (async (url: string | URL) => {
       const text = String(url);
       calls.push(text);
       const before = /before_turn=([^&]+)/.exec(text)?.[1];
-      const envelope = before === undefined ? pages['newest'] : (pages[before] ?? okEnvelope({ messages: [] }));
+      const envelope = before === undefined ? pages['newest'] : (pages[before] ?? okEnvelope({ messages: [], has_more: false }));
       return { json: async () => envelope };
     }) as unknown as typeof fetch;
     const messages = await fetchFullHistory({
@@ -737,7 +738,7 @@ describe('ChatChannel', () => {
       const after = /after_step=([^&]+)/.exec(text)?.[1];
       let envelope: unknown;
       if (after !== undefined) {
-        envelope = okEnvelope({ messages: [...(script.afterStep?.[after] ?? [])] });
+        envelope = okEnvelope({ messages: [...(script.afterStep?.[after] ?? [])], has_more: false });
       } else {
         envelope = script.noCursor[Math.min(noCursorIndex, script.noCursor.length - 1)];
         noCursorIndex += 1;
@@ -763,7 +764,7 @@ describe('ChatChannel', () => {
   }
 
   it('serializes the initial refresh with the ack catch-up behind one queue', async () => {
-    const newest = okEnvelope({ messages: [turnMsg(1), stepMsg('t1.1')] });
+    const newest = okEnvelope({ messages: [turnMsg(1), stepMsg('t1.1')], has_more: false });
     const { calls, fetchImpl } = scriptedFetch({ noCursor: [newest] });
     let releaseFirst: () => void = () => {};
     const gate = new Promise<void>((resolve) => {
@@ -796,8 +797,8 @@ describe('ChatChannel', () => {
   });
 
   it('probes the newest page for the anchor step or turn before falling back to a refresh', async () => {
-    const first = okEnvelope({ messages: [turnMsg(1), stepMsg('t1.1')] });
-    const probeWithTurn = okEnvelope({ messages: [systemMsg('notice', 'sys_n1'), turnMsg(1)] });
+    const first = okEnvelope({ messages: [turnMsg(1), stepMsg('t1.1')], has_more: false });
+    const probeWithTurn = okEnvelope({ messages: [systemMsg('notice', 'sys_n1'), turnMsg(1)], has_more: false });
     const alive = scriptedFetch({ noCursor: [first, probeWithTurn] });
     const aliveChannel = makeChannel(alive.fetchImpl);
     aliveChannel.channel.start();
@@ -816,7 +817,7 @@ describe('ChatChannel', () => {
     expect(aliveChannel.channel.trail.getEntries().filter((e) => e.kind === 'rest' && e.mode === 'replace')).toHaveLength(1);
     aliveChannel.channel.close();
 
-    const movedOn = okEnvelope({ messages: [turnMsg(2), stepMsg('t2.1')] });
+    const movedOn = okEnvelope({ messages: [turnMsg(2), stepMsg('t2.1')], has_more: false });
     const gone = scriptedFetch({ noCursor: [first, movedOn] });
     const goneChannel = makeChannel(gone.fetchImpl);
     goneChannel.channel.start();
