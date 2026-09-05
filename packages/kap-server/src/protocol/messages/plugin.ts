@@ -8,3 +8,5 @@ export const pluginMessageSchema = z.object({
 });
 
 export type PluginChanged = z.infer<typeof pluginMessageSchema>;
+
+export type PluginChangedMessage = PluginChanged;

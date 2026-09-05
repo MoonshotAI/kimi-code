@@ -9,3 +9,5 @@ export const configWarningMessageSchema = z.object({
 });
 
 export type ConfigWarning = z.infer<typeof configWarningMessageSchema>;
+
+export type ConfigWarningMessage = ConfigWarning;

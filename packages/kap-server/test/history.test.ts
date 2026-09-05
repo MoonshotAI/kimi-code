@@ -27,6 +27,7 @@ interface Envelope<T> {
 
 interface HistoryWire {
   messages: Record<string, unknown>[];
+  has_more: boolean;
   in_flight?: { turn_id: string; step_id: string };
 }
 
@@ -256,6 +257,7 @@ describe('server /api/v1/sessions/{sid}/history', () => {
     const all = await getJson<HistoryWire>(`/api/v1/sessions/${id}/history`);
     expect(all.body.code).toBe(0);
     expect(all.body.data.in_flight).toBeUndefined();
+    expect(all.body.data.has_more).toBe(false);
     const ids = all.body.data.messages.map(entityId);
     expect(ids).toEqual([
       't0',
@@ -287,6 +289,7 @@ describe('server /api/v1/sessions/{sid}/history', () => {
 
     const page = await getJson<HistoryWire>(`/api/v1/sessions/${id}/history?page_size=3`);
     expect(page.body.data.messages.map(entityId)).toEqual(['t1.u0', 't1.1', 't1.1.a1']);
+    expect(page.body.data.has_more).toBe(true);
 
     const older = await getJson<HistoryWire>(`/api/v1/sessions/${id}/history?before_turn=t1`);
     expect(older.body.data.messages.map(entityId)).toEqual([
@@ -297,12 +300,15 @@ describe('server /api/v1/sessions/{sid}/history', () => {
       'call_1',
       'task-2',
     ]);
+    expect(older.body.data.has_more).toBe(false);
 
     const newer = await getJson<HistoryWire>(`/api/v1/sessions/${id}/history?after_step=t0.1`);
     expect(newer.body.data.messages.map(entityId)).toEqual(['task-2', 't1', 't1.u0', 't1.1', 't1.1.a1']);
+    expect(newer.body.data.has_more).toBe(false);
 
     const missing = await getJson<HistoryWire>(`/api/v1/sessions/${id}/history?before_turn=t99`);
     expect(missing.body.data.messages).toEqual([]);
+    expect(missing.body.data.has_more).toBe(false);
   });
 
   it('reads a subagent timeline with agent_id and classifies its turn origin from the main wire', async () => {

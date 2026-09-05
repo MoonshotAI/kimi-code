@@ -44,6 +44,7 @@ export type HistoryInFlight = z.infer<typeof historyInFlightSchema>;
 
 export const historyResponseSchema = z.object({
   messages: z.array(historyMessageSchema),
+  has_more: z.boolean(),
   in_flight: historyInFlightSchema.optional(),
 });
 
