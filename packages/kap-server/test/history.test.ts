@@ -287,8 +287,8 @@ describe('server /api/v1/sessions/{sid}/history', () => {
     const task = all.body.data.messages.find((m) => m['type'] === 'task')!;
     expect(task).toMatchObject({ type: 'task', kind: 'subagent', child_agent_id: 'sub-1' });
 
-    const page = await getJson<HistoryWire>(`/api/v1/sessions/${id}/history?page_size=3`);
-    expect(page.body.data.messages.map(entityId)).toEqual(['t1.u0', 't1.1', 't1.1.a1']);
+    const page = await getJson<HistoryWire>(`/api/v1/sessions/${id}/history?page_size=1`);
+    expect(page.body.data.messages.map(entityId)).toEqual(['t1', 't1.u0', 't1.1', 't1.1.a1']);
     expect(page.body.data.has_more).toBe(true);
 
     const older = await getJson<HistoryWire>(`/api/v1/sessions/${id}/history?before_turn=t1`);
