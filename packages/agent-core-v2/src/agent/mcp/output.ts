@@ -1,4 +1,4 @@
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 

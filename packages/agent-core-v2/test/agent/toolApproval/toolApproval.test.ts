@@ -26,7 +26,7 @@ import { EventBusService } from '#/app/event/eventBusService';
 import type { Event2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { OrderedHookSlot } from '#/hooks';
-import type { ToolCall } from '#/kosong/contract/message';
+import type { ToolCall } from '#human/llm/message';
 import {
   ISessionApprovalService,
   type ApprovalRequest,

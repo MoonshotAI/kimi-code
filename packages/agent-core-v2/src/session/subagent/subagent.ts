@@ -1,6 +1,6 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
-import type { TokenUsage } from '#/kosong/contract/usage';
+import type { TokenUsage } from '#human/llm/usage';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type { Turn } from '#/agent/loop/loop';
 import type { Hooks } from '#/hooks';

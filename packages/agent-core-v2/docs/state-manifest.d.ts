@@ -1044,30 +1044,30 @@ export interface AgentStateSnapshot {
   'agentsMdReminder.seeded': boolean;
   // src/agent/contextMemory/contextOps.ts
   // replayable · durable · undoable — folds: ContextAppendMessage, ContextAppendLoopEvent, ContextClear, ContextApplyCompaction
-  'contextMemory': (/* ContextMessage — packages/agent-core-v2/src/agent/contextMemory/types.ts */ /* Message — packages/agent-core-v2/src/kosong/contract/message.ts */ {
-    readonly role: /* Role — packages/agent-core-v2/src/kosong/contract/message.ts */ 'user' | 'assistant' | 'system' | 'tool';
+  'contextMemory': (/* ContextMessage — packages/agent-core-v2/src/agent/contextMemory/types.ts */ /* Message — packages/agent-core-v2/src/llm-adapter/contract/message.ts */ {
+    readonly role: /* Role — packages/agent-core-v2/src/human/llm/message.ts */ 'user' | 'assistant' | 'system' | 'tool';
     readonly name?: string;
-    readonly content: (/* ContentPart — packages/agent-core-v2/src/kosong/contract/message.ts */ /* TextPart — packages/agent-core-v2/src/kosong/contract/message.ts */ {
+    readonly content: (/* ContentPart — packages/agent-core-v2/src/human/llm/message.ts */ /* TextPart — packages/agent-core-v2/src/human/llm/message.ts */ {
       type: 'text';
       text: string;
-    } | /* ThinkPart — packages/agent-core-v2/src/kosong/contract/message.ts */ {
+    } | /* ThinkPart — packages/agent-core-v2/src/human/llm/message.ts */ {
       type: 'think';
       think: string;
       encrypted?: string;
-    } | /* ImageURLPart — packages/agent-core-v2/src/kosong/contract/message.ts */ {
+    } | /* ImageURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
       type: 'image_url';
       imageUrl: {
         url: string;
         id?: string;
         name?: string;
       };
-    } | /* AudioURLPart — packages/agent-core-v2/src/kosong/contract/message.ts */ {
+    } | /* AudioURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
       type: 'audio_url';
       audioUrl: {
         url: string;
         id?: string;
       };
-    } | /* VideoURLPart — packages/agent-core-v2/src/kosong/contract/message.ts */ {
+    } | /* VideoURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
       type: 'video_url';
       videoUrl: {
         url: string;
@@ -1075,7 +1075,7 @@ export interface AgentStateSnapshot {
         name?: string;
       };
     })[];
-    readonly toolCalls: /* ToolCall — packages/agent-core-v2/src/kosong/contract/message.ts */ {
+    readonly toolCalls: /* ToolCall — packages/agent-core-v2/src/human/llm/message.ts */ {
       type: 'function';
       id: string;
       name: string;
@@ -1085,7 +1085,7 @@ export interface AgentStateSnapshot {
     }[];
     readonly toolCallId?: string;
     readonly partial?: boolean;
-    readonly tools?: readonly /* Tool — packages/agent-core-v2/src/kosong/contract/tool.ts */ {
+    readonly tools?: readonly /* ToolDescription — packages/agent-core-v2/src/human/llm/message.ts */ {
       name: string;
       description: string;
       parameters: Record<string, unknown>;
@@ -1208,7 +1208,7 @@ export interface AgentStateSnapshot {
   'llmRequester.turnConfigs': Map<number, /* TurnRequestConfig — packages/agent-core-v2/src/agent/llmRequester/llmRequesterService.ts */ {
     readonly resolved: /* ProfileModelContext — packages/agent-core-v2/src/agent/profile/profile.ts */ {
       readonly modelAlias: string;
-      readonly modelCapabilities: /* ModelCapability — packages/agent-core-v2/src/kosong/contract/capability.ts */ {
+      readonly modelCapabilities: /* ModelCapability — packages/agent-core-v2/src/llm-adapter/contract/capability.ts */ {
         readonly image_in: boolean;
         readonly video_in: boolean;
         readonly audio_in: boolean;
@@ -1220,13 +1220,13 @@ export interface AgentStateSnapshot {
       };
       readonly maxOutputSize: number | undefined;
       readonly alwaysThinking: boolean | undefined;
-      readonly thinkingLevel: /* ThinkingEffort — packages/agent-core-v2/src/kosong/contract/provider.ts */ 'off' | 'on' | (string & {});
+      readonly thinkingLevel: /* ThinkingEffort — packages/agent-core-v2/src/human/llm/thinking.ts */ 'off' | 'on' | (string & {});
       readonly reservedContextSize: number | undefined;
       readonly compactionTriggerRatio: number | undefined;
     };
-    readonly params: /* ModelRequestParams — packages/agent-core-v2/src/kosong/model/modelRequester.ts */ {
+    readonly params: /* ModelRequestParams — packages/agent-core-v2/src/llm-adapter/model/model-requester.ts */ {
       readonly cacheKey?: string;
-      readonly sampling?: /* SamplingOptions — packages/agent-core-v2/src/kosong/contract/provider.ts */ {
+      readonly sampling?: /* SamplingOptions — packages/agent-core-v2/src/llm-adapter/model/model-requester.ts */ {
         readonly temperature?: number;
         readonly topP?: number;
       };
@@ -1264,27 +1264,27 @@ export interface AgentStateSnapshot {
   'mcp.discoveryWritesReady': boolean;
   'mcp.mcpToolsByServer': Map<string, string[]>;
   // src/agent/media/mediaResolverService.ts
-  'media.resolved': Map<string, /* ContentPart — packages/agent-core-v2/src/kosong/contract/message.ts */ /* TextPart — packages/agent-core-v2/src/kosong/contract/message.ts */ {
+  'media.resolved': Map<string, /* ContentPart — packages/agent-core-v2/src/human/llm/message.ts */ /* TextPart — packages/agent-core-v2/src/human/llm/message.ts */ {
     type: 'text';
     text: string;
-  } | /* ThinkPart — packages/agent-core-v2/src/kosong/contract/message.ts */ {
+  } | /* ThinkPart — packages/agent-core-v2/src/human/llm/message.ts */ {
     type: 'think';
     think: string;
     encrypted?: string;
-  } | /* ImageURLPart — packages/agent-core-v2/src/kosong/contract/message.ts */ {
+  } | /* ImageURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
     type: 'image_url';
     imageUrl: {
       url: string;
       id?: string;
       name?: string;
     };
-  } | /* AudioURLPart — packages/agent-core-v2/src/kosong/contract/message.ts */ {
+  } | /* AudioURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
     type: 'audio_url';
     audioUrl: {
       url: string;
       id?: string;
     };
-  } | /* VideoURLPart — packages/agent-core-v2/src/kosong/contract/message.ts */ {
+  } | /* VideoURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
     type: 'video_url';
     videoUrl: {
       url: string;

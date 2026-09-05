@@ -1,18 +1,20 @@
-import { emptyUsage } from '#/kosong/contract/usage';
+import { emptyUsage } from '#human/llm/usage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { ModelRecord } from '#/kosong/model/model';
+import type { ModelRecord } from '#/llm-adapter/model/model';
 import {
   configServices,
   createTestAgent,
   InMemoryWireRecordPersistence,
   llmGenerateServices,
   modelProviderOptionServices,
+  requesterFromGenerateFn,
   telemetryServices,
   wireRecordPersistenceServices,
+  type LegacyGenerateFn,
   type TestAgentContext,
 } from '../../harness';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
@@ -22,8 +24,10 @@ type TestProtocolModelConfig = NonNullable<TestKimiConfig['models']>[string] &
   Pick<ModelRecord, 'protocol'>;
 type GenerateFn = Parameters<typeof llmGenerateServices>[0];
 
-function defaultGenerate(): ReturnType<GenerateFn> {
-  throw new Error('generate should not be called');
+function defaultGenerate(): GenerateFn {
+  return {
+    generate: () => Promise.reject(new Error('generate should not be called')),
+  };
 }
 
 describe('ConfigState model capabilities', () => {
@@ -38,11 +42,13 @@ describe('ConfigState model capabilities', () => {
     kimiConfig = {
       providers: {},
     };
-    generate = defaultGenerate;
+    generate = defaultGenerate();
     records = [];
     ctx = createTestAgent(
       configServices(() => kimiConfig),
-      llmGenerateServices((...args) => generate(...args)),
+      llmGenerateServices({
+        generate: (config, content, control) => generate.generate(config, content, control),
+      }),
       telemetryServices(recordingTelemetry(records)),
     );
     profile = ctx.get(IAgentProfileService);
@@ -228,7 +234,9 @@ describe('ConfigState model capabilities', () => {
     const resumed = createTestAgent(
       { autoConfigure: false },
       configServices(() => kimiConfig),
-      llmGenerateServices((...args) => generate(...args)),
+      llmGenerateServices({
+        generate: (config, content, control) => generate.generate(config, content, control),
+      }),
       telemetryServices(recordingTelemetry(resumedRecords)),
       wireRecordPersistenceServices(
         new InMemoryWireRecordPersistence([
@@ -296,7 +304,7 @@ describe('ConfigState model capabilities', () => {
         },
       },
     };
-    generate = async (_provider, _systemPrompt, _tools, _history, _callbacks, options) => {
+    generate = requesterFromGenerateFn(async (_provider, _systemPrompt, _tools, _history, _callbacks, options) => {
       requestMaxTokens = options?.maxCompletionTokens;
       return {
         id: 'response-1',
@@ -305,7 +313,7 @@ describe('ConfigState model capabilities', () => {
         finishReason: 'completed',
         rawFinishReason: 'stop',
       };
-    };
+    });
 
     profile.update({
       modelAlias: 'deepseek/deepseek-v4-flash',
@@ -419,7 +427,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
     capturedThinking = undefined;
     ctx = createTestAgent(
       configServices(() => kimiConfig),
-      llmGenerateServices(async (_provider, _systemPrompt, _tools, _history, _callbacks, options) => {
+      llmGenerateServices(requesterFromGenerateFn(async (_provider, _systemPrompt, _tools, _history, _callbacks, options) => {
         capturedThinking = options?.thinking;
         return {
           id: 'response-1',
@@ -428,7 +436,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
           finishReason: 'completed',
           rawFinishReason: 'stop',
         };
-      }),
+      })),
     );
     profile = ctx.get(IAgentProfileService);
     requester = ctx.get(IAgentLLMRequesterService);
@@ -555,7 +563,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   let requester: IAgentLLMRequesterService;
   let kimiConfig: TestKimiConfig;
   let capturedProvider: unknown;
-  let capturedOptions: Parameters<GenerateFn>[5];
+  let capturedOptions: Parameters<LegacyGenerateFn>[5];
 
   beforeEach(() => {
     kimiConfig = {
@@ -593,7 +601,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   function createAgentWithEnv(): void {
     ctx = createTestAgent(
       configServices(() => kimiConfig),
-      llmGenerateServices(async (provider, _systemPrompt, _tools, _history, _callbacks, options) => {
+      llmGenerateServices(requesterFromGenerateFn(async (provider, _systemPrompt, _tools, _history, _callbacks, options) => {
         capturedProvider = provider;
         capturedOptions = options;
         return {
@@ -603,7 +611,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
           finishReason: 'completed',
           rawFinishReason: 'stop',
         };
-      }),
+      })),
     );
     profile = ctx.get(IAgentProfileService);
     requester = ctx.get(IAgentLLMRequesterService);

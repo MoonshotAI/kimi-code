@@ -1,4 +1,5 @@
-import type { Message, ToolCall } from '#/kosong/contract/message';
+import type { Message } from '#/llm-adapter/contract/message';
+import type { ToolCall } from '#human/llm/message';
 
 export class ToolCallIdNormalizer {
   private readonly seen = new Set<string>();

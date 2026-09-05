@@ -1,7 +1,7 @@
-import { VideoUploadUnsupportedError } from '#/kosong/contract/errors';
-import type { VideoURLPart } from '#/kosong/contract/message';
-import type { Protocol } from '#/kosong/protocol/protocol';
-import { ProtocolErrors } from '#/kosong/protocol/errors';
+import { VideoUploadUnsupportedError } from '#/llm-adapter/contract/errors';
+import type { VideoURLPart } from '#human/llm/message';
+import type { Protocol } from '#/llm-adapter/protocol/protocol';
+import { ProtocolErrors } from '#/llm-adapter/protocol/errors';
 
 export function isVideoUploadAuthError(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;

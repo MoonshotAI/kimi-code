@@ -9,7 +9,8 @@ import {
   type UsageModelState,
   type UsageRecordScope,
 } from '#/agent/usage/usageOps';
-import { addUsage, type TokenUsage } from '#/kosong/contract/usage';
+import { addUsage } from '#/llm-adapter/contract/usage';
+import type { TokenUsage } from '#human/llm/usage';
 import { AgentModel, defineAgentModel, type AgentModelContext } from '#/state/agentModel';
 
 export interface UsageRecordInput {

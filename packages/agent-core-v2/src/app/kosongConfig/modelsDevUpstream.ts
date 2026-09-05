@@ -1,7 +1,7 @@
 import { CoreErrors } from '#/_base/errors/codes';
 import { BugIndicatingError, Error2 } from '#/_base/errors/errors';
-import type { ModelCapability } from '#/kosong/contract/capability';
-import type { ModelRecord } from '#/kosong/model/model';
+import type { ModelCapability } from '#/llm-adapter/contract/capability';
+import type { ModelRecord } from '#/llm-adapter/model/model';
 
 import { BUILT_IN_MODELS_DEV_JSON } from './builtInModelsDev';
 import { ModelsDevImportErrors } from './errors';

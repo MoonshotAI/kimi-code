@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Message, ToolCall } from '#/kosong/contract/message';
+import type { Message } from '#/llm-adapter/contract/message';
+import type { ToolCall } from '#human/llm/message';
 
 import { ToolCallIdNormalizer } from '#/agent/llmRequester/toolCallIdNormalizer';
 

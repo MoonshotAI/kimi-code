@@ -7,9 +7,9 @@ import type {
   ToolDidExecuteContext,
   WillExecuteToolEvent,
 } from '#/agent/toolExecutor/toolHooks';
-import type { ToolCall } from '#/kosong/contract/message';
+import type { ToolCall } from '#human/llm/message';
 import type { OrderedHookSlot } from '#/hooks';
-import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
+import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { ToolSource } from '#/tool/toolContract';
 
 export interface ToolCallStartedPayload {

@@ -1,4 +1,4 @@
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 import type { PromptFileAttachment } from '#/agent/contextMemory/types';
 
 export interface SkillActivationInput {

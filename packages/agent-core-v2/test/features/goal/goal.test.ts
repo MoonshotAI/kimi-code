@@ -40,26 +40,27 @@ import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/tool
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import type { WireRecord } from '#/wire/record';
 import { IEventBus } from '#/app/event/eventBus';
-import { APIConnectionError, APIStatusError } from '#/kosong/contract/errors';
-import type { ToolCall } from '#/kosong/contract/message';
-import type { TokenUsage } from '#/kosong/contract/usage';
+import { APIConnectionError, APIStatusError } from '#/llm-adapter/contract/errors';
+import type { ToolCall } from '#human/llm/message';
+import type { TokenUsage } from '#human/llm/usage';
 import { ErrorCodes, Error2, errorInfo, toKimiErrorPayload } from '#/errors';
 import type { ExecutableTool, RunnableToolExecution } from '#/tool/toolContract';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import {
   InMemoryWireRecordPersistence,
-  appService,
   agentService,
+  appService,
   createTestAgent as createHarnessTestAgent,
   execEnvServices,
   permissionModeServices,
+  requesterFromGenerateFn,
   sessionService,
   telemetryServices,
-  wireRecordPersistenceServices,
   type TestAgentContext,
   type TestAgentOptions,
   type TestAgentServiceOverride,
+  wireRecordPersistenceServices,
 } from '../../harness';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubFlag } from '../../app/flag/stubs';
@@ -159,29 +160,22 @@ function waitForAbort(signal: AbortSignal): Promise<never> {
 }
 
 function blockingGenerate(): {
-  readonly generate: NonNullable<TestAgentOptions['generate']>;
+  readonly requester: NonNullable<TestAgentOptions['generate']>;
   readonly started: Promise<void>;
   readonly signal: () => AbortSignal;
 } {
   const started = deferred();
   let activeSignal: AbortSignal | undefined;
-  const generate: NonNullable<TestAgentOptions['generate']> = async (
-    _chat,
-    _systemPrompt,
-    _tools,
-    _history,
-    _callbacks,
-    options,
-  ) => {
-    const signal = options?.signal;
-    if (signal === undefined) throw new Error('Expected an LLM abort signal');
-    options?.onRequestStart?.();
-    activeSignal = signal;
-    started.resolve();
-    return waitForAbort(signal);
+  const requester: NonNullable<TestAgentOptions['generate']> = {
+    generate: (_config, _content, control) => {
+      control.onEvent?.({ type: 'llm.sent' });
+      activeSignal = control.signal;
+      started.resolve();
+      return waitForAbort(control.signal);
+    },
   };
   return {
-    generate,
+    requester,
     started: started.promise,
     signal: () => {
       if (activeSignal === undefined) throw new Error('LLM request has not started');
@@ -1844,9 +1838,9 @@ describe('goal pause classification on provider errors', () => {
   }
 
   it('pauses the goal on provider rate limits', async () => {
-    const goal = await goalAfterFailedTurn(async () => {
+    const goal = await goalAfterFailedTurn(requesterFromGenerateFn(async () => {
       throw new APIStatusError(429, 'Rate limited', 'req-429');
-    });
+    }));
 
     expect(goal).toMatchObject({
       status: 'paused',
@@ -1855,9 +1849,9 @@ describe('goal pause classification on provider errors', () => {
   });
 
   it('pauses the goal on provider connection errors', async () => {
-    const goal = await goalAfterFailedTurn(async () => {
+    const goal = await goalAfterFailedTurn(requesterFromGenerateFn(async () => {
       throw new APIConnectionError('socket hang up');
-    });
+    }));
 
     expect(goal).toMatchObject({
       status: 'paused',
@@ -1866,9 +1860,9 @@ describe('goal pause classification on provider errors', () => {
   });
 
   it('pauses the goal on provider authentication errors', async () => {
-    const goal = await goalAfterFailedTurn(async () => {
+    const goal = await goalAfterFailedTurn(requesterFromGenerateFn(async () => {
       throw new APIStatusError(401, 'Unauthorized', 'req-401');
-    });
+    }));
 
     expect(goal).toMatchObject({
       status: 'paused',
@@ -1877,9 +1871,9 @@ describe('goal pause classification on provider errors', () => {
   });
 
   it('pauses the goal on model configuration errors', async () => {
-    const goal = await goalAfterFailedTurn(async () => {
+    const goal = await goalAfterFailedTurn(requesterFromGenerateFn(async () => {
       throw new Error2(ErrorCodes.MODEL_NOT_CONFIGURED, 'Model not set');
-    });
+    }));
 
     expect(goal).toMatchObject({
       status: 'paused',
@@ -1888,7 +1882,7 @@ describe('goal pause classification on provider errors', () => {
   });
 
   it('pauses the goal on provider safety policy blocks', async () => {
-    const goal = await goalAfterFailedTurn(async () => ({
+    const goal = await goalAfterFailedTurn(requesterFromGenerateFn(async () => ({
       id: 'mock-filtered',
       message: {
         role: 'assistant',
@@ -1898,7 +1892,7 @@ describe('goal pause classification on provider errors', () => {
       usage: { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 },
       finishReason: 'filtered',
       rawFinishReason: 'content_filter',
-    }));
+    })));
 
     expect(goal).toMatchObject({
       status: 'paused',
@@ -1912,7 +1906,7 @@ describe('AgentGoalService hard wall-clock deadline', () => {
     const clock = new ManualGoalDeadlineScheduler();
     const llm = blockingGenerate();
     const ctx = createTestAgent(appService(IGoalDeadlineScheduler, clock), {
-      generate: llm.generate,
+      generate: llm.requester,
     });
     try {
       ctx.configure();
@@ -2007,7 +2001,7 @@ describe('AgentGoalService hard wall-clock deadline', () => {
     const clock = new ManualGoalDeadlineScheduler();
     const llm = blockingGenerate();
     const ctx = createTestAgent(appService(IGoalDeadlineScheduler, clock), {
-      generate: llm.generate,
+      generate: llm.requester,
     });
     try {
       ctx.configure();

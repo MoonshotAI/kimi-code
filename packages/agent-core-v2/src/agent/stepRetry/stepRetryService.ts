@@ -12,7 +12,7 @@ import {
   retryErrorFields,
   sleepForRetry,
 } from '#/_base/utils/retry';
-import { isRetryableGenerateError } from '#/kosong/contract/errors';
+import { isRetryableGenerateError } from '#/llm-adapter/contract/errors';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
 import { AgentEvent2, registerEvent2Class } from '#/app/event/event2';

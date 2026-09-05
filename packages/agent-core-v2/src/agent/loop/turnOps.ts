@@ -11,7 +11,7 @@ import {
 import { isUndoAnchorOrigin } from '#/agent/contextMemory/conversationTime';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { AgentEvent2, type SerializedEvent2 } from '#/app/event/event2';
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 import { defineState } from '#/state/state';
 
 import type { TurnInterruptReason } from './turnEvents';

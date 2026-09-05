@@ -17,5 +17,6 @@
     "vite",
     "vite.config.ts",
     "../../packages/agent-core-v2/src"
-  ]
+  ],
+  "exclude": ["../../packages/agent-core-v2/src/human"]
 }

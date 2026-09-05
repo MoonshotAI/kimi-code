@@ -13,7 +13,7 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
-import { type ThinkingConfig } from '#/kosong/model/thinking';
+import { type ThinkingConfig } from '#/llm-adapter/model/thinking';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { TomlAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';

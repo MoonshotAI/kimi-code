@@ -19,7 +19,6 @@
  */
 
 import {
-  type FinishReason,
   IProtocolAdapterRegistry,
   type IProtocolAdapterRegistry as IProtocolAdapterRegistryType,
   type Message,
@@ -29,6 +28,7 @@ import {
   type TokenUsage,
   type Tool,
 } from '@moonshot-ai/agent-core-v2';
+import type { FinishReason } from '@moonshot-ai/agent-core-v2/human/llm/finish-reason';
 
 interface ScriptedResponse {
   readonly parts: readonly StreamedMessagePart[];

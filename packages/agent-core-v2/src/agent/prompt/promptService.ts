@@ -20,7 +20,7 @@ import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IFileService } from '#/app/file/fileService';
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 import { IEventService } from '#/app/event/event';
 import { AgentEvent2 } from '#/app/event/event2';
 import { ErrorCodes, Error2, isError2 } from '#/errors';

@@ -19,5 +19,5 @@
     "../kosong/src/**/*.ts",
     "../oauth/src/**/*.ts"
   ],
-  "exclude": ["dist", ".tmp-api-extractor", "examples", "test", "../*/dist", "../*/test"]
+  "exclude": ["dist", ".tmp-api-extractor", "examples", "test", "../*/dist", "../*/test", "../agent-core-v2/src/human/test"]
 }

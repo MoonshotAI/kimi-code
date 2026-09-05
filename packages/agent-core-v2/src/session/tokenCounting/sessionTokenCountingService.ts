@@ -13,15 +13,15 @@ import type {
   TokenCountingRequest,
   TokenCountingStrategy,
 } from '#/agent/tokenCounting/tokenCounting';
-import type { Message } from '#/kosong/contract/message';
-import type { Tool } from '#/kosong/contract/tool';
+import type { Message } from '#/llm-adapter/contract/message';
+import type { ToolDescription as Tool } from '#human/llm/message';
 import {
   estimateTokens,
   estimateTokensForMessage,
   estimateTokensForMessages,
   estimateTokensForTools,
-} from '#/kosong/contract/tokens';
-import type { TokenUsage } from '#/kosong/contract/usage';
+} from '#/llm-adapter/contract/tokens';
+import type { TokenUsage } from '#human/llm/usage';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
 import {

@@ -19,7 +19,7 @@ import type { InstalledFile } from '#/app/plugin/store';
 import type { PluginMutationSummary, ReloadSummary } from '#/app/plugin/types';
 import { LifecycleScope } from '#/app/scopes';
 import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
-import { IProviderService, type ProviderConfig } from '#/kosong/provider/provider';
+import { IProviderService, type ProviderConfig } from '#/llm-adapter/provider/provider';
 
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubProviderService } from '../provider/stubs';

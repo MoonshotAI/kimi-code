@@ -4,9 +4,9 @@ import { z } from 'zod';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { parseDaemonFileUrl } from '#/agent/media/mediaRef';
 import { AgentEvent2, registerEvent2Class } from '#/app/event/event2';
-import type { FinishReason } from '#/kosong/contract/provider';
-import type { ContentPart, TextPart } from '#/kosong/contract/message';
-import type { TokenUsage } from '#/kosong/contract/usage';
+import type { FinishReason } from '#human/llm/finish-reason';
+import type { ContentPart, TextPart } from '#human/llm/message';
+import type { TokenUsage } from '#human/llm/usage';
 
 export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'blocked';
 
