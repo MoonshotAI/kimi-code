@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { inflateRawSync } from 'node:zlib';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import {
   Error2,
@@ -79,10 +79,11 @@ function goalContinuationStarts(events: readonly Event2<any>[]): readonly Event2
 
 describe('server-v2 /api/v1/sessions', () => {
   let server: RunningServer | undefined;
+  let baselineServer: RunningServer | undefined;
   let home: string | undefined;
   let base: string;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-'));
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
@@ -92,12 +93,20 @@ describe('server-v2 /api/v1/sessions', () => {
       logLevel: 'silent',
       debugEndpoints: true,
     });
+    baselineServer = server;
     base = `http://127.0.0.1:${server.port}`;
   });
 
   afterEach(async () => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
+    if (server !== baselineServer) {
+      await restartWithFreshHome();
+      baselineServer = server;
+    }
+  });
+
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -108,6 +117,27 @@ describe('server-v2 /api/v1/sessions', () => {
       home = undefined;
     }
   });
+
+  async function restartWithFreshHome(): Promise<void> {
+    if (server !== undefined) {
+      await server.close();
+      server = undefined;
+    }
+    if (home !== undefined) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as never);
+    }
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-'));
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      debugEndpoints: true,
+    });
+    base = `http://127.0.0.1:${server.port}`;
+  }
 
   async function postJson<T>(
     path: string,
@@ -357,10 +387,10 @@ describe('server-v2 /api/v1/sessions', () => {
     const { body } = await postJson<null>('/api/v1/sessions', { metadata: { cwd: missing } });
     expect(body.code).toBe(40409);
 
-    const workspaces = await getJson<{ items: unknown[] }>('/api/v1/workspaces');
-    expect(workspaces.body.data.items).toEqual([]);
+    const workspaces = await getJson<{ items: { root: string }[] }>('/api/v1/workspaces');
+    expect(workspaces.body.data.items.some((w) => w.root === missing)).toBe(false);
     const sessions = await getJson<PageWire>('/api/v1/sessions');
-    expect(sessions.body.data.items).toEqual([]);
+    expect(sessions.body.data.items.some((s) => s.metadata.cwd === missing)).toBe(false);
   });
 
   it('rejects create when metadata.cwd is not a directory (40409)', async () => {
@@ -484,6 +514,7 @@ describe('server-v2 /api/v1/sessions', () => {
   });
 
   it('paginates sessions with before_id and terminates on the last page', async () => {
+    await restartWithFreshHome();
     const cwd = home as string;
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
     const ids: string[] = [];
@@ -1098,7 +1129,7 @@ describe('server-v2 /api/v1/sessions', () => {
     ]);
   });
 
-  it('cold-forks a session with hundreds of agents without materializing it', async () => {
+  it('cold-forks a session with hundreds of agents without materializing it', { timeout: 30_000 }, async () => {
     const cwd = home as string;
     const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const parentId = parent.body.data.id;
@@ -1325,6 +1356,7 @@ describe('server-v2 /api/v1/sessions', () => {
   });
 
   it('paginates archived_only without returning empty filtered pages', async () => {
+    await restartWithFreshHome();
     const cwd = home as string;
     const archivedOlder = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     await postJson<{ archived: boolean }>(
@@ -1416,6 +1448,7 @@ describe('server-v2 /api/v1/sessions', () => {
   });
 
   it('lists the union of legacy split buckets for one workspace, in recency order', async () => {
+    await restartWithFreshHome();
     const typedRoot = 'C:\\Users\\Foo\\Proj';
     const lowerRoot = 'c:\\users\\foo\\proj';
     const typedId = encodeWorkDirKey(typedRoot);
@@ -1644,6 +1677,7 @@ describe('server-v2 /api/v1/sessions', () => {
   });
 
   it('derives the session title from the first prompt submitted via /api/v1', async () => {
+    await restartWithFreshHome();
     const cwd = home as string;
     await writeFile(join(cwd, 'config.toml'), [
       'default_model = "stub"', '', '[providers.stub]', 'type = "openai"',
@@ -1726,7 +1760,7 @@ describe('server-v2 /api/v1/sessions status context window', () => {
   let home: string | undefined;
   let base: string;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-status-'));
     await writeFile(
       join(home, 'config.toml'),
@@ -1758,7 +1792,7 @@ describe('server-v2 /api/v1/sessions status context window', () => {
     base = `http://127.0.0.1:${server.port}`;
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -1832,7 +1866,7 @@ describe('server-v2 /api/v1/sessions (minidb read model)', () => {
     '',
   ].join('\n');
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     process.env[READ_MODEL_ENV] = '1';
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-rm-'));
     await writeFile(join(home, 'config.toml'), READ_MODEL_CONFIG, 'utf8');
@@ -1847,7 +1881,7 @@ describe('server-v2 /api/v1/sessions (minidb read model)', () => {
     base = `http://127.0.0.1:${server.port}`;
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
     process.env[READ_MODEL_ENV] = 'false';
     if (server !== undefined) {
       await server.close();

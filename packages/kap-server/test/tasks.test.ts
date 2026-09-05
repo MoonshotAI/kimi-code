@@ -9,7 +9,7 @@ import {
   IModelCatalog,
   type AgentTask,
 } from '@moonshot-ai/agent-core-v2';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -50,7 +50,7 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
   let home: string | undefined;
   let base: string;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-tasks-'));
     const modelCatalog: IModelCatalog = {
       _serviceBrand: undefined,
@@ -87,7 +87,7 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     base = `http://127.0.0.1:${server.port}`;
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;

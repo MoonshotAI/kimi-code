@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 
@@ -43,7 +43,7 @@ describe('server-v2 /api/v1/workspaces', () => {
   let home: string | undefined;
   let base: string;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-'));
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
@@ -55,7 +55,7 @@ describe('server-v2 /api/v1/workspaces', () => {
     base = `http://127.0.0.1:${server.port}`;
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -245,11 +245,13 @@ describe('server-v2 /api/v1/workspaces', () => {
     await seedBucket(typedId, 's-typed', {});
     await seedBucket(lowerId, 's-lower', { archived: true, updatedAt: 2 });
 
-    const { body } = await getJson<ListWire>('/api/v1/workspaces');
-    expect(body.code).toBe(0);
-    expect(body.data.items).toHaveLength(1);
-    expect([typedId, lowerId]).toContain(body.data.items[0]?.id);
-    expect(body.data.items[0]?.session_count).toBe(2);
+    await vi.waitFor(async () => {
+      const { body } = await getJson<ListWire>('/api/v1/workspaces');
+      expect(body.code).toBe(0);
+      const unions = body.data.items.filter((w) => [typedId, lowerId].includes(w.id));
+      expect(unions).toHaveLength(1);
+      expect(unions[0]?.session_count).toBe(2);
+    });
   });
 
   it('adds an additional directory and persists it by default', async () => {
@@ -274,7 +276,7 @@ describe('server-v2 /api/v1/workspaces', () => {
   });
 
   it('adds a relative directory without persisting when persist is false', async () => {
-    const root = home as string;
+    const root = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-rel-'));
     const extra = join(root, 'extra-rel');
     await mkdir(extra);
     const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
@@ -288,6 +290,7 @@ describe('server-v2 /api/v1/workspaces', () => {
     expect(body.data.persisted).toBe(false);
     expect(body.data.additional_dirs).toContain(extra);
     await expect(readFile(body.data.config_path, 'utf8')).rejects.toThrow();
+    await rm(root, { recursive: true, force: true });
   });
 
   it('returns 40410 when adding a directory to an unknown workspace', async () => {
