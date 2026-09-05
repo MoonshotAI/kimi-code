@@ -862,6 +862,41 @@ describe('quota-exhausted classification through the real composition (behavior 
 });
 
 describe('reasoning dialect (behavior probes)', () => {
+  it('detects but does not emit an empty streaming reasoning field', async () => {
+    const provider = new OpenAILegacyChatProvider({
+      model: 'gpt-4.1',
+      apiKey: 'sk-probe',
+    });
+
+    const captured: Array<Record<string, unknown>> = [];
+    const client = sdkClient(provider) as { chat: { completions: { create: unknown } } };
+    client.chat.completions.create = vi.fn().mockImplementation((params: unknown) => {
+      captured.push(params as Record<string, unknown>);
+      async function* chunks(): AsyncIterable<unknown> {
+        yield {
+          id: 'chatcmpl-probe',
+          choices: [{ index: 0, delta: { reasoning_content: '' } }],
+        };
+        yield {
+          id: 'chatcmpl-probe',
+          choices: [{ index: 0, delta: { content: 'ok' }, finish_reason: 'stop' }],
+        };
+      }
+      return {
+        withResponse: () =>
+          Promise.resolve({ data: chunks(), response: { headers: new Headers() } }),
+      };
+    });
+
+    const parts: unknown[] = [];
+    for await (const part of await provider.generate('', [], PROBE_HISTORY)) parts.push(part);
+    expect(parts).toEqual([{ type: 'text', text: 'ok' }]);
+
+    await drain(await provider.generate('', [], THINK_HISTORY));
+    const messages = captured[1]?.['messages'] as Array<Record<string, unknown>>;
+    expect(messages[0]).toMatchObject({ reasoning_content: 'earlier reasoning' });
+  });
+
   it('yields think parts from the `reasoning` wire field', async () => {
     const provider = registry.createChatProvider({
       protocol: 'openai',

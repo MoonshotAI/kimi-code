@@ -415,7 +415,7 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
     if (!message) return;
 
     const reasoning = reasoningKeyDialect.observe(message);
-    if (reasoning !== undefined) {
+    if (reasoning) {
       yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
     }
 
@@ -464,7 +464,7 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
         const delta = choice.delta;
 
         const reasoning = reasoningKeyDialect.observe(delta);
-        if (reasoning !== undefined) {
+        if (reasoning) {
           yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
         }
 
