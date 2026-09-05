@@ -24,6 +24,15 @@ continue:
   above all the actual ask. If several requests are in play, say which one governs
   the next move, and re-quote any still-relevant earlier request that may have
   scrolled out of the kept messages.
+- The fate of every earlier request still visible in your kept messages: old
+  user prompts survive compaction verbatim, but with none of your answers
+  attached, so a long-finished request reads exactly like a pending one. Go
+  through them and mark each plainly — done (and where its output landed),
+  abandoned, superseded by a newer request, or still open. This applies doubly
+  to kept messages that carry their own instructions, such as a skill
+  activation or slash command: record whether you already carried that
+  instruction out. Never leave a completed request unmarked — the next turn
+  re-executes anything that looks unanswered.
 - The instructions and constraints currently in force (user preferences,
   project rules, environment and tooling limits) — condensed to what still
   matters, keeping decisions you have already settled (what you chose and why)
