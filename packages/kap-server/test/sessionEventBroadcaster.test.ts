@@ -5,8 +5,12 @@ import { join } from 'node:path';
 import type {
   AgentActivityState,
   AgentContext,
+  Interaction,
+  InteractionKind,
+  InteractionPendingChangedEvent,
+  InteractionRequest,
+  InteractionResolution,
   IScopeHandle,
-  ISessionStateService,
   Scope,
   SessionActivityCause,
   SessionActivityChangedEvent,
@@ -14,6 +18,7 @@ import type {
 } from '@moonshot-ai/agent-core-v2';
 import {
   IAgentActivityView,
+  IAgentInteractionService,
   LifecycleScope,
   IAgentLifecycleService,
   IAgentProfileService,
@@ -23,7 +28,6 @@ import {
   IModelCatalog,
   IModelService,
   ISessionActivityView,
-  ISessionInteractionService,
   ISessionMetadata,
   ISessionLifecycleService,
   ISessionManager,
@@ -33,13 +37,13 @@ import {
   IWorkspaceSessions,
   MAIN_AGENT_ID,
   makeAgentScopeContext,
-  SessionInteractionService,
-  StateRegistry,
 } from '@moonshot-ai/agent-core-v2';
+import { Emitter } from '@moonshot-ai/agent-core-v2/_base/event';
 import { TurnStarted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { AgentEvent } from '../src/transport/ws/v1/events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { sessionEventMessageSchema } from '../src/protocol/ws-control';
 import {
   type BroadcastDelivery,
   type BroadcastTarget,
@@ -47,10 +51,6 @@ import {
 } from '../src/transport/ws/v1/sessionEventBroadcaster';
 import type { EventEnvelope } from '../src/transport/ws/v1/sessionEventJournal';
 import { TranscriptService } from '../src/services/transcript/transcriptService';
-
-class TestSessionStateService extends StateRegistry implements ISessionStateService {
-  declare readonly _serviceBrand: undefined;
-}
 
 type FakeBusEvent = { type: string };
 
@@ -126,14 +126,135 @@ class FakeAgentHandle {
   dispose(): void {}
 }
 
+class FakeInteractionKernel {
+  private readonly pending = new Map<string, Interaction>();
+  private readonly changeEmitter = new Emitter<InteractionPendingChangedEvent>();
+  private readonly resolveEmitter = new Emitter<InteractionResolution>();
+  readonly onDidChangePending = this.changeEmitter.event;
+  readonly onDidResolve = this.resolveEmitter.event;
+
+  request<TPayload, TResponse>(req: InteractionRequest<TPayload>): Promise<TResponse> {
+    return new Promise<TResponse>((resolve) => {
+      this.park(req, (response) => resolve(response as TResponse));
+    });
+  }
+
+  enqueue<TPayload>(req: InteractionRequest<TPayload>): Interaction {
+    return this.park(req, () => {});
+  }
+
+  respond(id: string, response: unknown): boolean {
+    if (!this.pending.delete(id)) return false;
+    this.changeEmitter.fire({ pending: [...this.pending.keys()] });
+    this.resolveEmitter.fire({ id, response });
+    return true;
+  }
+
+  listPending(kind?: InteractionKind): readonly Interaction[] {
+    const all = [...this.pending.values()];
+    return kind === undefined ? all : all.filter((i) => i.kind === kind);
+  }
+
+  isRecentlyResolved(): boolean {
+    return false;
+  }
+
+  cancelPendingForTurn(_turnId: number): void {}
+
+  private park<TPayload>(
+    req: InteractionRequest<TPayload>,
+    resolve: (response: unknown) => void,
+  ): Interaction {
+    void resolve;
+    const interaction: Interaction = {
+      id: req.id ?? `interaction-${this.pending.size}`,
+      kind: req.kind,
+      payload: req.payload,
+      origin: req.origin ?? {},
+      createdAt: Date.now(),
+    };
+    this.pending.set(interaction.id, interaction);
+    this.changeEmitter.fire({ pending: [...this.pending.keys()] });
+    return interaction;
+  }
+}
+
+class FakeInteractionHub {
+  private readonly changeEmitter = new Emitter<InteractionPendingChangedEvent>();
+  private readonly resolveEmitter = new Emitter<InteractionResolution>();
+  readonly onDidChangePending = this.changeEmitter.event;
+  readonly onDidResolve = this.resolveEmitter.event;
+  private readonly watched = new Set<FakeInteractionKernel>();
+
+  constructor(
+    private readonly kernelFor: (agentId: string) => FakeInteractionKernel,
+    private readonly allKernels: () => Iterable<FakeInteractionKernel>,
+  ) {}
+
+  watch(kernel: FakeInteractionKernel): void {
+    if (this.watched.has(kernel)) return;
+    this.watched.add(kernel);
+    kernel.onDidChangePending((e: InteractionPendingChangedEvent) => this.changeEmitter.fire(e));
+    kernel.onDidResolve((e: InteractionResolution) => this.resolveEmitter.fire(e));
+  }
+
+  request<TPayload, TResponse>(req: InteractionRequest<TPayload>): Promise<TResponse> {
+    return this.kernelFor(req.origin?.agentId ?? 'main').request(req);
+  }
+
+  enqueue<TPayload>(req: InteractionRequest<TPayload>): Interaction {
+    return this.kernelFor(req.origin?.agentId ?? 'main').enqueue(req);
+  }
+
+  respond(id: string, response: unknown): boolean {
+    for (const kernel of this.allKernels()) {
+      if (kernel.respond(id, response)) return true;
+    }
+    return false;
+  }
+
+  listPending(kind?: InteractionKind): readonly Interaction[] {
+    return [...this.allKernels()].flatMap((kernel) => kernel.listPending(kind));
+  }
+
+  isRecentlyResolved(): boolean {
+    return false;
+  }
+
+  cancelPendingForTurn(turnId: number): void {
+    for (const kernel of this.allKernels()) kernel.cancelPendingForTurn(turnId);
+  }
+}
+
 class FakeLifecycle {
   readonly handles: FakeAgentHandle[] = [];
-  readonly interactions = new SessionInteractionService(new TestSessionStateService());
+  private readonly kernels = new Map<string, FakeInteractionKernel>();
+  readonly interactions: FakeInteractionHub;
+  readonly workView: FakeSessionActivityView;
+
+  constructor() {
+    this.interactions = new FakeInteractionHub(
+      (agentId) => this.kernelFor(agentId),
+      () => this.kernels.values(),
+    );
+    this.workView = new FakeSessionActivityView(this);
+  }
+
+  kernelFor(agentId: string): FakeInteractionKernel {
+    let kernel = this.kernels.get(agentId);
+    if (kernel === undefined) {
+      kernel = new FakeInteractionKernel();
+      this.kernels.set(agentId, kernel);
+      this.interactions.watch(kernel);
+    }
+    return kernel;
+  }
+
   private readonly turnCounters = new Map<string, { dispose(): void }>();
   private createHandlers: Array<(context: AgentContext) => void> = [];
   private disposeHandlers: Array<(context: AgentContext) => void> = [];
-  list(): readonly FakeAgentHandle[] {
-    return this.handles;
+  list(): readonly AgentContext[] {
+    return this.handles.map((handle) => handle.context);
   }
   get(context: AgentContext): FakeAgentHandle | undefined {
     return this.handles.find((h) => h.id === context.agentId);
@@ -141,14 +262,14 @@ class FakeLifecycle {
   getHandle(id: string): FakeAgentHandle | undefined {
     return this.handles.find((h) => h.id === id);
   }
-  findAgentHandle(agentId: string): FakeAgentHandle | undefined {
+  handleOf(agentId: string): FakeAgentHandle | undefined {
     return this.handles.find((h) => h.id === agentId);
   }
   onDidCreate(h: (context: AgentContext) => void) {
     this.createHandlers.push(h);
     return { dispose: () => {} };
   }
-  onDidDispose(h: (context: AgentContext) => void) {
+  onDidClose(h: (context: AgentContext) => void) {
     this.disposeHandlers.push(h);
     return { dispose: () => {} };
   }
@@ -157,6 +278,7 @@ class FakeLifecycle {
     handle.set(IAgentActivityView, {
       state: () => ({ lifecycle: 'ready', background: [] }),
     });
+    handle.set(IAgentInteractionService, this.kernelFor(id));
     const onTurnStarted = handle.bus.subscribe('turn.started', (e) => {
       handle.bus.emit(
         agentEvent('agent.activity.updated', {
@@ -203,7 +325,6 @@ class FakeLifecycle {
       for (const cb of this.disposeHandlers) cb(removed.context);
     }
   }
-  readonly workView = new FakeSessionActivityView(this);
 }
 
 class FakeSessionActivityView {
@@ -213,7 +334,7 @@ class FakeSessionActivityView {
     { turnActive: boolean; background: number; lastTurnReason?: 'completed' | 'cancelled' | 'failed' }
   >();
   private readonly busSubscriptions = new Map<string, { dispose(): void }>();
-  private readonly interactions: SessionInteractionService;
+  private readonly interactions: FakeInteractionHub;
   private current: SessionActivityState;
 
   constructor(lifecycle: FakeLifecycle) {
@@ -224,7 +345,7 @@ class FakeSessionActivityView {
       if (handle !== undefined) this.attach(handle as unknown as FakeAgentHandle);
       this.recompute('agent_lifecycle');
     });
-    lifecycle.onDidDispose((context) => {
+    lifecycle.onDidClose((context) => {
       const agentId = context.agentId;
       this.busSubscriptions.get(agentId)?.dispose();
       this.busSubscriptions.delete(agentId);
@@ -344,7 +465,6 @@ function makeCore(
     const sessionAccessor = {
       get: (t: unknown) => {
         if (t === IAgentLifecycleService) return lifecycle;
-        if (t === ISessionInteractionService) return lifecycle.interactions;
         if (t === ISessionActivityView) return lifecycle.workView;
         if (t === ISessionMetadata) return { read: async () => ({ agents: metaAgents }) };
         return undefined;
@@ -842,7 +962,7 @@ describe('SessionEventBroadcaster', () => {
     );
   });
 
-  it.each(['prompt.steered', 'prompt.queued'])(
+  it.each(['prompt.steered', 'prompt.queued', 'prompt.submitted'])(
     'projects %s content without leaking daemon refs (live + tail replay)',
     async (type) => {
       const lc = new FakeLifecycle();
@@ -854,7 +974,9 @@ describe('SessionEventBroadcaster', () => {
       const ids =
         type === 'prompt.steered'
           ? { activePromptId: 'p1', promptIds: ['p2'], steeredAt: '2026-01-01T00:00:02.000Z' }
-          : { promptId: 'p2', queueLength: 1 };
+          : type === 'prompt.submitted'
+            ? { promptId: 'p2', userMessageId: 'p2', status: 'queued', createdAt: '2026-01-01T00:00:01.000Z' }
+            : { promptId: 'p2', queueLength: 1 };
       main.bus.emit(
         agentEvent(type, {
           ...ids,
@@ -1424,6 +1546,170 @@ describe('SessionEventBroadcaster', () => {
       expect(globalView.envelopes[0]).toMatchObject({
         type: 'event.config.warning',
         payload: { warnings },
+      });
+    });
+
+    it('delivers event.config.changed to a global-only target that never subscribed', async () => {
+      const globalView = collectingTarget();
+      bc.addGlobalTarget(globalView.target);
+
+      const config = { default_model: 'k2', providers: {} };
+      eventBus.emit({
+        type: 'event.config.changed',
+        payload: { changedFields: ['defaultModel'], config },
+      });
+
+      await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+      expect(globalView.envelopes[0]).toMatchObject({
+        type: 'event.config.changed',
+        session_id: '__global__',
+        payload: { changedFields: ['defaultModel'], config },
+      });
+      expect(globalView.deliveries).toEqual(['immediate']);
+    });
+
+    it('preserves unlisted config domains through event validation', async () => {
+      const globalView = collectingTarget();
+      bc.addGlobalTarget(globalView.target);
+
+      const config = { default_model: 'k2', providers: {}, mcp: { servers: { fs: { command: 'npx' } } } };
+      eventBus.emit({
+        type: 'event.config.changed',
+        payload: { changedFields: ['mcp'], config },
+      });
+
+      await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+      expect(globalView.envelopes[0]).toMatchObject({
+        type: 'event.config.changed',
+        session_id: '__global__',
+        payload: { changedFields: ['mcp'], config },
+      });
+    });
+
+    it('drops malformed event.config.changed payloads', async () => {
+      const globalView = collectingTarget();
+      bc.addGlobalTarget(globalView.target);
+
+      eventBus.emit({ type: 'event.config.changed', payload: null });
+      eventBus.emit({ type: 'event.config.changed', payload: { changedFields: 'defaultModel' } });
+      eventBus.emit({
+        type: 'event.config.changed',
+        payload: { changedFields: ['defaultModel', 7], config: {} },
+      });
+      eventBus.emit({
+        type: 'event.config.changed',
+        payload: { changedFields: ['defaultModel'], config: null },
+      });
+      eventBus.emit({
+        type: 'event.config.changed',
+        payload: { changedFields: ['defaultModel'], config: [] },
+      });
+      eventBus.emit({
+        type: 'event.config.changed',
+        payload: { changedFields: [''], config: {} },
+      });
+
+      eventBus.emit({
+        type: 'event.config.changed',
+        payload: { changedFields: ['models'], config: { models: {} } },
+      });
+
+      await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+      expect(globalView.envelopes[0]).toMatchObject({
+        type: 'event.config.changed',
+        payload: { changedFields: ['models'], config: { models: {} } },
+      });
+    });
+
+    it('delivers event.model_catalog.changed to a global-only target that never subscribed', async () => {
+      const globalView = collectingTarget();
+      bc.addGlobalTarget(globalView.target);
+
+      const changed = [
+        { provider_id: 'managed:kimi-code', provider_name: 'Kimi Code', added: 2, removed: 1 },
+      ];
+      const failed = [{ provider: 'managed:kimi-code', reason: 'network disabled' }];
+      eventBus.emit({
+        type: 'event.model_catalog.changed',
+        payload: { changed, unchanged: ['openai-main'], failed },
+      });
+
+      await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+      expect(globalView.envelopes[0]).toMatchObject({
+        type: 'event.model_catalog.changed',
+        session_id: '__global__',
+        payload: { changed, unchanged: ['openai-main'], failed },
+      });
+      expect(globalView.deliveries).toEqual(['immediate']);
+    });
+
+    it('drops malformed event.model_catalog.changed payloads', async () => {
+      const globalView = collectingTarget();
+      bc.addGlobalTarget(globalView.target);
+
+      eventBus.emit({ type: 'event.model_catalog.changed', payload: null });
+      eventBus.emit({ type: 'event.model_catalog.changed', payload: { changed: [] } });
+      eventBus.emit({
+        type: 'event.model_catalog.changed',
+        payload: {
+          changed: [{ provider_id: 'p', provider_name: 'P', added: '1', removed: 0 }],
+          unchanged: [],
+          failed: [],
+        },
+      });
+      eventBus.emit({
+        type: 'event.model_catalog.changed',
+        payload: {
+          changed: [{ provider_id: 'p', provider_name: 'P', added: -1, removed: 0 }],
+          unchanged: [],
+          failed: [],
+        },
+      });
+      eventBus.emit({
+        type: 'event.model_catalog.changed',
+        payload: {
+          changed: [{ provider_id: 'p', provider_name: 'P', added: 0.5, removed: 0 }],
+          unchanged: [],
+          failed: [],
+        },
+      });
+      eventBus.emit({
+        type: 'event.model_catalog.changed',
+        payload: {
+          changed: [{ provider_id: '', provider_name: 'P', added: 1, removed: 0 }],
+          unchanged: [],
+          failed: [],
+        },
+      });
+      eventBus.emit({
+        type: 'event.model_catalog.changed',
+        payload: { changed: [], unchanged: ['ok', 7], failed: [] },
+      });
+      eventBus.emit({
+        type: 'event.model_catalog.changed',
+        payload: { changed: [], unchanged: ['ok', ''], failed: [] },
+      });
+      eventBus.emit({
+        type: 'event.model_catalog.changed',
+        payload: { changed: [], unchanged: [], failed: [{ provider: 'p' }] },
+      });
+      eventBus.emit({
+        type: 'event.model_catalog.changed',
+        payload: { changed: [], unchanged: [], failed: [{ provider: 'p', reason: '' }] },
+      });
+
+      const changed = [
+        { provider_id: 'managed:kimi-code', provider_name: 'Kimi Code', added: 1, removed: 0 },
+      ];
+      eventBus.emit({
+        type: 'event.model_catalog.changed',
+        payload: { changed, unchanged: [], failed: [] },
+      });
+
+      await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+      expect(globalView.envelopes[0]).toMatchObject({
+        type: 'event.model_catalog.changed',
+        payload: { changed, unchanged: [], failed: [] },
       });
     });
   });
@@ -2096,7 +2382,7 @@ describe('SessionEventBroadcaster', () => {
           expect(ops.volatile).toBe(true);
         }
         expect(batches.map((ops) => (ops.payload as OpsPayload).ops.map((o) => o.op))).toEqual([
-          ['turn.upsert'],
+          ['turn.upsert', 'meta.merge'],
           ['meta.merge'],
         ]);
       }
@@ -2743,5 +3029,94 @@ describe('SessionEventBroadcaster', () => {
 
       expect(transcriptEnvelopes(view.envelopes)).toHaveLength(0);
     });
+  });
+});
+
+describe('sessionEventMessageSchema', () => {
+  const timestamp = '2026-08-27T00:00:00.000Z';
+
+  function envelope(payload: Record<string, unknown>): Record<string, unknown> {
+    return {
+      type: payload['type'],
+      seq: 3,
+      session_id: '__global__',
+      timestamp,
+      payload: { agentId: 'main', sessionId: '__global__', ...payload },
+    };
+  }
+
+  it('accepts config changed, config warning, and model catalog changed envelopes', () => {
+    expect(
+      sessionEventMessageSchema.safeParse(
+        envelope({
+          type: 'event.config.changed',
+          changedFields: ['defaultModel'],
+          config: { default_model: 'k2', providers: {} },
+        }),
+      ).success,
+    ).toBe(true);
+
+    expect(
+      sessionEventMessageSchema.safeParse(
+        envelope({
+          type: 'event.config.warning',
+          warnings: [{ domain: 'loopControl', message: 'deprecated key' }, { message: 'other' }],
+        }),
+      ).success,
+    ).toBe(true);
+
+    expect(
+      sessionEventMessageSchema.safeParse(
+        envelope({
+          type: 'event.model_catalog.changed',
+          changed: [
+            { provider_id: 'managed:kimi-code', provider_name: 'Kimi Code', added: 2, removed: 1 },
+          ],
+          unchanged: ['openai-main'],
+          failed: [{ provider: 'managed:kimi-code', reason: 'network disabled' }],
+        }),
+      ).success,
+    ).toBe(true);
+  });
+
+  it('rejects malformed config and model catalog event envelopes', () => {
+    expect(
+      sessionEventMessageSchema.safeParse(
+        envelope({ type: 'event.config.changed', changedFields: 'defaultModel', config: {} }),
+      ).success,
+    ).toBe(false);
+
+    expect(
+      sessionEventMessageSchema.safeParse(
+        envelope({ type: 'event.config.changed', changedFields: [], config: [] }),
+      ).success,
+    ).toBe(false);
+
+    expect(
+      sessionEventMessageSchema.safeParse(
+        envelope({ type: 'event.config.warning', warnings: [{ domain: 'loopControl' }] }),
+      ).success,
+    ).toBe(false);
+
+    expect(
+      sessionEventMessageSchema.safeParse(
+        envelope({
+          type: 'event.model_catalog.changed',
+          changed: [],
+          failed: [],
+        }),
+      ).success,
+    ).toBe(false);
+
+    expect(
+      sessionEventMessageSchema.safeParse(
+        envelope({
+          type: 'event.model_catalog.changed',
+          changed: [],
+          unchanged: [],
+          failed: [{ provider: 'managed:kimi-code', reason: 42 }],
+        }),
+      ).success,
+    ).toBe(false);
   });
 });

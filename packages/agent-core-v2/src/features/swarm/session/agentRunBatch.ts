@@ -32,6 +32,7 @@ export type AgentRunAttemptHandle = {
   readonly completion: Promise<{
     readonly result: string;
     readonly usage?: TokenUsage;
+    readonly stopReason?: string;
   }>;
 };
 
@@ -311,6 +312,7 @@ export class AgentRunBatch<T> {
         status: 'completed',
         result: completion.result,
         usage: completion.usage,
+        stopReason: completion.stopReason,
       };
     } catch (error) {
       if (isProviderRateLimitError(error)) {

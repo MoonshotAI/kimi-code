@@ -1,29 +1,52 @@
 import { describe, expect, it } from 'vitest';
 
 import type {
+  HostProcessOptions,
   IHostEnvironment,
+  IHostProcess,
+  IHostProcessService,
   Runtime,
   RuntimeProviderHost,
 } from '@moonshot-ai/agent-core-v2';
 
-import type { IAcpConnection } from '../src/acp-fs/acpConnection';
+import type { IAcpConnection, IAcpTerminalHandle } from '../src/acp-fs/acpConnection';
 import { AcpHostFileSystem } from '../src/acp-fs/acpFsService';
 import { AcpRuntimeProviderFactory } from '../src/acp-terminal/acpTerminalRunner';
 
-function makeConnection(): IAcpConnection {
+function makeConnection(
+  options: { terminalEnabled?: boolean; createTerminal?: () => IAcpTerminalHandle } = {},
+): IAcpConnection {
   return {
     _serviceBrand: undefined,
     bound: true,
     fsReadTextFile: true,
     fsWriteTextFile: true,
-    terminalEnabled: true,
+    terminalEnabled: options.terminalEnabled ?? true,
     bind: () => {},
-    get: () => ({}) as never,
+    get: () => ({ createTerminal: async () => options.createTerminal?.() }) as never,
     bindFsCapabilities: () => {},
     bindTerminalCapability: () => {},
     notifyTerminalCreated: () => {},
     onTerminalCreated: () => () => {},
   };
+}
+
+interface LocalSpawnCall {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly options: HostProcessOptions | undefined;
+}
+
+function makeLocalProcessService(): { local: IHostProcessService; calls: LocalSpawnCall[] } {
+  const calls: LocalSpawnCall[] = [];
+  const local: IHostProcessService = {
+    _serviceBrand: undefined,
+    spawn: async (command, args = [], options) => {
+      calls.push({ command, args, options });
+      return {} as IHostProcess;
+    },
+  };
+  return { local, calls };
 }
 
 function makeEnvironment(overrides: Partial<IHostEnvironment> = {}): IHostEnvironment {
@@ -41,7 +64,10 @@ function makeEnvironment(overrides: Partial<IHostEnvironment> = {}): IHostEnviro
   } as IHostEnvironment;
 }
 
-async function bindRuntime(environment: IHostEnvironment): Promise<Runtime> {
+async function bindRuntime(
+  environment: IHostEnvironment,
+  options: { connection?: IAcpConnection; local?: IHostProcessService } = {},
+): Promise<Runtime> {
   const runtimes: Runtime[] = [];
   const host = {
     registerRuntime: (runtime: Runtime) => {
@@ -49,7 +75,11 @@ async function bindRuntime(environment: IHostEnvironment): Promise<Runtime> {
       return { remove: async () => {} };
     },
   } as unknown as RuntimeProviderHost;
-  const factory = new AcpRuntimeProviderFactory(makeConnection(), environment);
+  const factory = new AcpRuntimeProviderFactory(
+    options.connection ?? makeConnection(),
+    environment,
+    options.local ?? makeLocalProcessService().local,
+  );
   await factory.attach({ id: 'w1' } as never, host);
   factory.bindSession('w1', 's1', '/repo');
   const runtime = runtimes[0];
@@ -96,5 +126,71 @@ describe('AcpSessionRuntime', () => {
     expect(runtime.path.isAbsolute('C:\\repo')).toBe(true);
     expect(runtime.path.isAbsolute('repo')).toBe(false);
     expect(runtime.path.resolve('C:\\repo', 'src')).toBe('C:\\repo\\src');
+  });
+});
+
+describe('AcpProcessService local fallback', () => {
+  const bashEnv = { NO_COLOR: '1', TERM: 'dumb' };
+
+  function makeTerminalHandle(): IAcpTerminalHandle {
+    return {
+      id: 'term-1',
+      currentOutput: async () => ({ output: '', truncated: false }),
+      waitForExit: async () => ({ exitCode: 0 }),
+      kill: async () => ({}),
+      release: async () => ({}),
+    };
+  }
+
+  it('runs Bash-shaped spawns in the client terminal when the capability is advertised', async () => {
+    let created = 0;
+    const connection = makeConnection({
+      terminalEnabled: true,
+      createTerminal: () => {
+        created += 1;
+        return makeTerminalHandle();
+      },
+    });
+    const { local, calls } = makeLocalProcessService();
+    const runtime = await bindRuntime(makeEnvironment(), { connection, local });
+
+    await runtime.process!.spawn('/bin/bash', ['-c', 'echo hi'], { env: { ...bashEnv } });
+
+    expect(created).toBe(1);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('falls back to local execution for Bash-shaped spawns without the terminal capability', async () => {
+    const connection = makeConnection({ terminalEnabled: false });
+    const { local, calls } = makeLocalProcessService();
+    const runtime = await bindRuntime(makeEnvironment(), { connection, local });
+
+    await runtime.process!.spawn('/bin/bash', ['-c', 'echo hi'], { env: { ...bashEnv } });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      command: '/bin/bash',
+      args: ['-c', 'echo hi'],
+      options: { env: bashEnv, cwd: '/repo' },
+    });
+  });
+
+  it('falls back to local execution for non-Bash spawns even with the terminal capability', async () => {
+    let created = 0;
+    const connection = makeConnection({
+      terminalEnabled: true,
+      createTerminal: () => {
+        created += 1;
+        return makeTerminalHandle();
+      },
+    });
+    const { local, calls } = makeLocalProcessService();
+    const runtime = await bindRuntime(makeEnvironment(), { connection, local });
+
+    await runtime.process!.spawn('rg', ['--files', '--hidden']);
+
+    expect(created).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ command: 'rg', args: ['--files', '--hidden'], options: { cwd: '/repo' } });
   });
 });

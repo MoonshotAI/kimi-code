@@ -195,8 +195,18 @@ export async function mcpResultToExecutableOutput(
   // payload are stripped so server data cannot fake an early end of the
   // block. Protocol-reserved _meta keys are dropped first: those carry
   // host/protocol plumbing, not model-facing data.
+  //
+  // content and structuredContent are alternatives — never both forwarded.
+  // content wins whenever it carries anything usable (a media block or
+  // non-whitespace text): there is no reliable signal that the structured
+  // payload is richer than what the server already rendered into content,
+  // so the only case structuredContent fills in is an empty content array.
+  // _meta has no such overlap and always passes through.
+  const hasUsableContent = converted.some((part) =>
+    part.type === 'text' ? part.text.trim().length > 0 : true,
+  );
   const structuredExtras: Record<string, unknown> = {};
-  if (result.structuredContent !== undefined) {
+  if (result.structuredContent !== undefined && !hasUsableContent) {
     structuredExtras['structuredContent'] = result.structuredContent;
   }
   if (result._meta !== undefined) {
@@ -208,12 +218,12 @@ export async function mcpResultToExecutableOutput(
   if (Object.keys(structuredExtras).length > 0) {
     try {
       const serialized = JSON.stringify(structuredExtras).replaceAll(
-        '</mcp-structured-result>',
+        '</mcp-result-extras>',
         '',
       );
       wrapped.push({
         type: 'text',
-        text: `\n<mcp-structured-result>\n${serialized}\n</mcp-structured-result>`,
+        text: `\n<mcp-result-extras>\n${serialized}\n</mcp-result-extras>`,
       });
     } catch {
       // Non-serialisable payloads are dropped rather than failing the call.

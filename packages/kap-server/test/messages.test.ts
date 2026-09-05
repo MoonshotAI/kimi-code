@@ -11,7 +11,7 @@ import {
   type ContextMessage,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -47,7 +47,7 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
   let base: string;
   let seeds: ScopeSeed | undefined;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-messages-'));
     const modelCatalog: IModelCatalog = {
       _serviceBrand: undefined,
@@ -89,7 +89,7 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
     base = `http://127.0.0.1:${server.port}`;
   }
 
-  afterEach(async () => {
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -124,9 +124,10 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
   ): Promise<void> {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
-    let agent = session.accessor.get(IAgentLifecycleService).findAgentHandle('main');
+    let agent = session.accessor.get(IAgentLifecycleService).handleOf('main');
     if (agent === undefined) {
-      agent = await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+      await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+      agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
     }
     if (messages.length > 0) {
       agent.accessor.get(IAgentContextMemoryService).append(...messages);
@@ -287,7 +288,8 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
     const id = await createSession();
     const session = getLiveSessionById(server!.core.accessor, id);
     if (session === undefined) throw new Error(`session ${id} not found`);
-    const agent = await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+    await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
     const ctx = agent.accessor.get(IAgentContextMemoryService);
     ctx.append(
       { role: 'user', content: [{ type: 'text', text: 'm0' }], toolCalls: [] },

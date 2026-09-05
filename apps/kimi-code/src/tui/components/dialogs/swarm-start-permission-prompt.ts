@@ -13,27 +13,27 @@ export interface SwarmStartPermissionPromptOptions {
 const OPTIONS: readonly StartPermissionOption<SwarmStartPermissionChoice>[] = [
   {
     value: 'auto',
-    label: 'Switch to Auto and start',
+    label: 'Switch to Never Ask and start',
     description:
       'Best for swarm tasks. Tools are approved automatically, and questions are skipped.',
   },
   {
     value: 'yolo',
-    label: 'Switch to YOLO and start',
+    label: 'Switch to Ask When Needed and start',
     description:
       'Tools and plan changes are approved automatically. Kimi Code may still ask you questions.',
   },
   {
     value: 'manual',
-    label: 'Start in Manual',
+    label: 'Start in Always Ask',
     description:
       'Keep approvals on. Kimi Code may stop and wait for you during the swarm task.',
   },
 ];
 
 const NOTICE_LINES = [
-  'Manual mode asks you before Kimi Code runs commands, edits files, or takes other risky actions.',
-  'Manual mode can block swarm work while agents are running.',
+  'Always Ask mode asks you before Kimi Code runs commands, edits files, or takes other risky actions.',
+  'Always Ask mode can block swarm work while agents are running.',
   'You can go back without losing your command.',
 ] as const;
 

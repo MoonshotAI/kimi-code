@@ -56,6 +56,7 @@ export class KimiRuntime {
   private readonly log: KimiRuntimeOptions["log"];
   private readonly sessions = new Map<string, SessionRuntime>();
   private readonly sessionByView = new Map<string, string>();
+  private readonly viewChains = new Map<string, Promise<void>>();
   private closed = false;
 
   constructor(options: KimiRuntimeOptions) {
@@ -86,6 +87,10 @@ export class KimiRuntime {
   }
 
   async openSession(options: OpenSessionOptions): Promise<SessionRuntime> {
+    return this.serializeView(options.webviewId, () => this.openSessionInner(options));
+  }
+
+  private async openSessionInner(options: OpenSessionOptions): Promise<SessionRuntime> {
     this.ensureOpen();
     const current = this.getSessionForView(options.webviewId);
     const requestedId = options.sessionId ?? current?.id;
@@ -104,7 +109,7 @@ export class KimiRuntime {
     if (runtime !== undefined) {
       assertSessionWorkDir(runtime.session, options.workDir);
       await applySessionSettings(runtime.session, options, runtime.legacyApprovalFlags);
-      await this.detachView(options.webviewId);
+      await this.detachViewInner(options.webviewId);
     } else {
       const defaultApproval: LegacyApprovalFlags = { yolo: options.yoloMode, afk: false };
       const session =
@@ -127,7 +132,7 @@ export class KimiRuntime {
           await session.updateMetadata(legacyApprovalMetadata(approval));
         }
         await applySessionSettings(session, options, approval);
-        await this.detachView(options.webviewId);
+        await this.detachViewInner(options.webviewId);
         runtime = this.wrapSession(session, approval);
       } catch (error) {
         await session.close().catch((closeError: unknown) => {
@@ -148,13 +153,23 @@ export class KimiRuntime {
     session: Session,
     defaultYoloMode = false,
   ): Promise<SessionRuntime> {
+    return this.serializeView(webviewId, () =>
+      this.attachResumedSessionInner(webviewId, session, defaultYoloMode),
+    );
+  }
+
+  private async attachResumedSessionInner(
+    webviewId: string,
+    session: Session,
+    defaultYoloMode: boolean,
+  ): Promise<SessionRuntime> {
     const existing = this.sessions.get(session.id);
     if (existing !== undefined && this.sessionByView.get(webviewId) === session.id) {
       existing.subscribe(webviewId);
       await existing.announceStatus(webviewId);
       return existing;
     }
-    await this.detachView(webviewId);
+    await this.detachViewInner(webviewId);
     let runtime = existing ?? this.sessions.get(session.id);
     if (runtime === undefined) {
       try {
@@ -185,6 +200,10 @@ export class KimiRuntime {
   }
 
   async detachView(webviewId: string): Promise<void> {
+    return this.serializeView(webviewId, () => this.detachViewInner(webviewId));
+  }
+
+  private async detachViewInner(webviewId: string): Promise<void> {
     const id = this.sessionByView.get(webviewId);
     if (id === undefined) return;
     this.sessionByView.delete(webviewId);
@@ -195,6 +214,23 @@ export class KimiRuntime {
       this.sessions.delete(id);
       await runtime.close();
     }
+  }
+
+  // A view attaches to at most one session, so opens/detaches for one view
+  // must never overlap: concurrent callers that both miss `this.sessions`
+  // would wrap the same SDK session twice and double every streamed event.
+  private serializeView<T>(webviewId: string, work: () => Promise<T>): Promise<T> {
+    const prev = this.viewChains.get(webviewId) ?? Promise.resolve();
+    const run = prev.then(work, work);
+    const next = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.viewChains.set(webviewId, next);
+    void next.finally(() => {
+      if (this.viewChains.get(webviewId) === next) this.viewChains.delete(webviewId);
+    });
+    return run;
   }
 
   async closeSession(id: string): Promise<void> {

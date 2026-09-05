@@ -6,10 +6,11 @@ import type { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfi
 import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { IConfigService } from '#/app/config/config';
 import type { IGitService } from '#/app/git/git';
-import type { IMcpOAuthStore } from '#/app/mcpConfig/oauthStore';
+import type { McpOAuthService } from '#/mcpCore/oauth/service';
+import type { IMcpConfigStore } from '#/app/mcpConfig/configStore';
 import type { IPluginService } from '#/app/plugin/plugin';
 import type { ISessionManager } from '#/app/sessionManager/sessionManager';
-import type { IBuiltinSkillSource } from '#/app/skillCatalog/builtinSkillSource';
+import type { IBuiltinSkillSource } from '#/features/skill/catalog/builtinSkillSource';
 import type { IAppStateService } from '#/app/state/appState';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -24,7 +25,7 @@ import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentPro
 import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
 import type { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
-import type { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
+import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
 
 export interface ProgramSessionControllerInput {
   readonly context: IWorkspaceContext;
@@ -48,7 +49,8 @@ export interface ProgramDependencies {
   readonly git: LiveRef<IGitService>;
   readonly identity: IAgentIdentity;
   readonly log: ILogService;
-  readonly oauthStore: IMcpOAuthStore;
+  readonly oauth: McpOAuthService;
+  readonly configStore: IMcpConfigStore;
   readonly plugins: IPluginService;
   readonly sessionManager: LiveRef<ISessionManager>;
   readonly agentProfiles: IAgentProfileRegistry;

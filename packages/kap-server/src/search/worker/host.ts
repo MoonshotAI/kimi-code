@@ -35,11 +35,6 @@ export type SearchWorkerErrorCode =
   | 'backoff'
   | 'disposed';
 
-/**
- * Recognizable worker-availability failure. The service maps it to a
- * building/degraded response (searches) or the degraded state (background
- * ops) — it is never swallowed silently.
- */
 export class SearchWorkerError extends Error {
   constructor(
     readonly code: SearchWorkerErrorCode,
@@ -51,20 +46,13 @@ export class SearchWorkerError extends Error {
 }
 
 export interface SearchWorkerHostOptions {
-  /** Absolute path of the search-index database directory. */
   readonly dir: string;
   readonly log: SearchCoreLog;
-  /** Ready-handshake budget (ms). Default 15_000. */
   readonly readyTimeoutMs?: number;
-  /** Grace period for the drain-on-close before terminate() (ms). Default 30_000. */
   readonly closeTimeoutMs?: number;
-  /** Watchdog budget per query/lifecycle request (ms). Default 60_000. */
   readonly requestTimeoutMs?: number;
-  /** Watchdog budget per sync/reindex request (ms). Default 30 min. */
   readonly syncTimeoutMs?: number;
-  /** Worker heap cap, mirroring the text-build worker. Default 1024. */
   readonly maxOldSpaceMb?: number;
-  /** Test hook: worker factory override. */
   readonly workerFactory?: (entry: { url: URL; data: SearchWorkerData; execArgv: string[] }) => Worker;
 }
 
@@ -92,12 +80,10 @@ const ORPHAN_LOCK_GRACE_MS = 250;
 
 const liveLockTokens = new Set<string>();
 
-/** Register a held search-index lock token (inline backend's core). */
 export function noteLiveLockToken(token: string): void {
   liveLockTokens.add(token);
 }
 
-/** Drop a previously registered token (inline backend close/dispose). */
 export function dropLiveLockToken(token: string | undefined): void {
   if (token !== undefined) liveLockTokens.delete(token);
 }
@@ -108,7 +94,6 @@ export class SearchWorkerHost {
   private reapPromise: Promise<void> | null = null;
   private readonly requests = new Map<number, PendingRequest>();
   private nextId = 1;
-  /** Token of the db.lock line the current/last worker published. */
   private lockToken: string | undefined;
   private failures = 0;
   private nextRetryAfter = 0;
@@ -117,12 +102,6 @@ export class SearchWorkerHost {
   private exiting = false;
   private exitResolve: (() => void) | null = null;
   private orphanCheckScheduled = false;
-  /**
-   * The worker-side core's lifecycle as of the last RPC response that carried
-   * it (every response shape does: status/open/refresh/reindex directly,
-   * search via its index view). Feeds `lifecycleSnapshot` — the local,
-   * round-trip-free answer for the service's status surface.
-   */
   private lastCoreLifecycle: CoreLifecycleReport | null = null;
 
   constructor(private readonly options: SearchWorkerHostOptions) {}
@@ -135,18 +114,10 @@ export class SearchWorkerHost {
     return this.options.dir;
   }
 
-  /** Test/diagnostic: the lock token the current/last worker reported. */
   get reportedLockToken(): string | undefined {
     return this.lockToken;
   }
 
-  /**
-   * The aggregate search lifecycle from the host's LOCAL knowledge (stage 5):
-   * never spawns the worker, never waits on an RPC — the states a wedged or
-   * not-yet-running worker cannot answer for itself are exactly the ones this
-   * must report (stopped/opening/degraded-backoff/closing). A live worker's
-   * state comes from the cached last response (`lastCoreLifecycle`).
-   */
   lifecycleSnapshot(): CoreLifecycleReport {
     if (this.exiting) {
       return this.worker !== null || this.spawnPromise !== null
@@ -194,7 +165,6 @@ export class SearchWorkerHost {
     return this.call('status');
   }
 
-  /** Test hook: hard-kill the worker (crash/restart semantics). */
   async killWorkerForTest(): Promise<void> {
     const worker = this.worker;
     if (worker === null) return;
@@ -246,11 +216,6 @@ export class SearchWorkerHost {
     });
   }
 
-  /**
-   * Watchdog: a request outlived its budget — the worker is presumed wedged.
-   * Reject the requester and take the crash path (terminate → reject the
-   * remaining in-flight requests → reap → backed-off restart).
-   */
   private onRequestTimeout(id: number): void {
     const pending = this.requests.get(id);
     if (pending === undefined) return;
@@ -277,13 +242,6 @@ export class SearchWorkerHost {
     pending.resolve(result);
   }
 
-  /**
-   * Track the worker-published db.lock token and the read-only role from any
-   * response carrying them; a read-only answer triggers the orphan-lock
-   * detector (see recoverOrphanedLock). Also refreshes the cached core
-   * lifecycle (`lastCoreLifecycle`) — every response shape carries it:
-   * status/open/refresh/reindex directly, search via its index view.
-   */
   private noteResult(result: unknown): void {
     if (result === null || typeof result !== 'object') return;
     const direct = (result as { lockToken?: unknown }).lockToken;
@@ -492,7 +450,6 @@ export class SearchWorkerHost {
     });
   }
 
-  /** Record a spawn/handshake failure and arm the restart backoff. */
   private noteFailure(message: string): void {
     this.failures += 1;
     const backoff = Math.min(BACKOFF_BASE_MS * 2 ** (this.failures - 1), BACKOFF_CAP_MS);
@@ -500,12 +457,6 @@ export class SearchWorkerHost {
     this.lastFailure = message;
   }
 
-  /**
-   * Remove the search-index db.lock ONLY when it still carries the dead
-   * worker's own token. A lock line written by anyone else (a live worker of
-   * another service instance in this process, another process entirely) is
-   * never touched.
-   */
   private async reapLockFile(token: string | undefined): Promise<void> {
     if (token === undefined) return;
     const lockPath = join(this.dir, 'db.lock');
@@ -571,13 +522,6 @@ export class SearchWorkerHost {
     });
   }
 
-  /**
-   * Synchronously stop accepting new work (the service's dispose() calls
-   * this before any awaiting): every later RPC fails fast with 'disposed',
-   * and the worker's core is told NOW (control message) so an in-flight
-   * sync abandons its remaining work at the next checkpoint instead of
-   * wedging the dispose behind a running pass.
-   */
   beginClose(): void {
     this.exiting = true;
     try {
@@ -586,11 +530,6 @@ export class SearchWorkerHost {
     }
   }
 
-  /**
-   * A read-only answer while the lock could be an orphaned same-pid line
-   * (left by a dead worker whose token event never landed) schedules a
-   * re-check after a grace window — see recoverOrphanedLock.
-   */
   private scheduleOrphanCheck(): void {
     if (this.orphanCheckScheduled || this.exiting) return;
     this.orphanCheckScheduled = true;
@@ -601,15 +540,6 @@ export class SearchWorkerHost {
     timer.unref?.();
   }
 
-  /**
-   * Safety net behind the `lockToken` event: this instance is being served
-   * read-only while the lock line carries THIS process's pid. The line is
-   * legitimate only when its token belongs to a live worker of this process
-   * (`liveLockTokens`); anything else is an orphan left by a dead worker
-   * (its token event was lost with it) — reap it and restart the worker so
-   * the next request reopens as the writer instead of silently serving a
-   * frozen read-only view until process exit.
-   */
   private async recoverOrphanedLock(): Promise<void> {
     if (this.exiting || this.worker === null) return;
     const lockPath = join(this.dir, 'db.lock');

@@ -61,6 +61,7 @@ export const ErrorCode = {
   CAPABILITY_UNSUPPORTED: 40925,
   RUNTIME_UNAVAILABLE: 40926,
   PROMPT_ID_CONFLICT: 40927,
+  MCP_OAUTH_FAILED: 40929,
 
   APPROVAL_EXPIRED: 41001,
   QUESTION_EXPIRED: 41002,
@@ -82,17 +83,5 @@ export const ErrorCode = {
   TOOL_NOT_AVAILABLE: 60002,
 
 } as const;
-
-/**
- * Reserved (intentionally unallocated; do NOT reuse for new variants):
- *   - 40101 auth.invalid_token        (daemon's own token; future)
- *   - 40102 auth.missing_token        (daemon's own token; future)
- *   - 40103 auth.forbidden_origin     (daemon's own token; future)
- *   - 42901 rate.limited
- *   - 50002 protocol.version_mismatch
- *
- * (`ErrorCodeReason` 不随本表迁移：server 侧没有消费方；数字码到字符串
- * reason 的映射仍由 protocol 包为 v1 链路和 server-e2e 持有。)
- */
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

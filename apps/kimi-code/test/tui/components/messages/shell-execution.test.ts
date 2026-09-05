@@ -35,7 +35,7 @@ describe('ShellExecutionComponent', () => {
     expect(collapsedOutput).toContain('line1');
     expect(collapsedOutput).toContain('line3');
     expect(collapsedOutput).not.toContain('line4');
-    expect(collapsedOutput).toContain('... (2 more lines, ctrl+o to expand)');
+    expect(collapsedOutput).toContain('… (2 more lines, ctrl+o to expand)');
 
     const expanded = new ShellExecutionComponent({
       result: {
@@ -76,7 +76,7 @@ describe('ShellExecutionComponent', () => {
 
     const output = component.render(100).map(strip).join('\n');
     expect(output).toContain('hello');
-    expect(output).not.toContain('... (2 more lines');
+    expect(output).not.toContain('… (2 more lines');
   });
 
   it('preserves internal empty lines while trimming only trailing ones', () => {
@@ -91,7 +91,7 @@ describe('ShellExecutionComponent', () => {
     const output = component.render(100).map(strip).join('\n');
     expect(output).toContain('a');
     expect(output).toContain('b');
-    expect(output).not.toContain('... (2 more lines');
+    expect(output).not.toContain('… (2 more lines');
   });
 
   it('truncates long single-line output by wrapped visual lines', () => {
@@ -106,7 +106,7 @@ describe('ShellExecutionComponent', () => {
     const out = strip(component.render(20).join('\n'));
     expect(out).toContain('x');
     expect(out).not.toContain('x'.repeat(500));
-    expect(out).toContain('... (');
+    expect(out).toContain('… (');
   });
 
   describe('shellExecutionResultRenderer', () => {

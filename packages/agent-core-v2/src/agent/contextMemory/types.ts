@@ -4,9 +4,17 @@ import type { AgentTaskStatus } from '#/agent/task/task';
 
 export type SkillSource = 'project' | 'user' | 'extra' | 'builtin';
 
+export interface PromptFileAttachment {
+  readonly name: string;
+  readonly mediaType: string;
+  readonly size: number;
+  readonly path: string;
+}
+
 export interface UserPromptOrigin {
   readonly kind: 'user';
   readonly skillActivations?: readonly BundledSkillActivation[];
+  readonly attachments?: readonly PromptFileAttachment[];
 }
 
 export const USER_PROMPT_ORIGIN: UserPromptOrigin = { kind: 'user' };
@@ -29,6 +37,7 @@ export interface SkillActivationOrigin {
   readonly skillType?: string | undefined;
   readonly skillPath?: string | undefined;
   readonly skillSource?: SkillSource | undefined;
+  readonly attachments?: readonly PromptFileAttachment[];
 }
 
 export interface PluginCommandOrigin {

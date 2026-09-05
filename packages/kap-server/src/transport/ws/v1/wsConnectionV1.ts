@@ -57,25 +57,14 @@ export interface WsConnectionV1Options {
   readonly broadcaster: SessionEventBroadcaster;
   readonly fsWatchBridge?: FsWatchBridge;
   readonly connectionRegistry: IConnectionRegistry;
-  /**
-   * Present-only credential check for the post-connect `client_hello`
-   * handshake. The WebSocket upgrade handler (`start.ts`) is the real auth
-   * gate; this is defense-in-depth so a presented handshake token must still
-   * be valid. A missing token is accepted (the production web client sends
-   * the bearer at the upgrade and no token in `client_hello`).
-   */
   readonly validateCredential?: CredentialValidator;
   readonly remoteAddress: string | null;
   readonly userAgent: string | null;
   readonly logger?: JournalLogger;
   readonly maxBufferSize?: number;
-  /** Delay before buffered subscription events are flushed. */
   readonly flushIntervalMs?: number;
-  /** Flush subscription events once this many frames are queued. */
   readonly maxBatchSize?: number;
-  /** `socket.bufferedAmount` above which flushing is deferred (backpressure). */
   readonly highWaterMarkBytes?: number;
-  /** Heartbeat ping cadence; advertised as `heartbeat_ms` in `server_hello`. */
   readonly heartbeatIntervalMs?: number;
 }
 
@@ -98,26 +87,15 @@ export class WsConnectionV1 implements BroadcastTarget {
 
   private closed = false;
   private gotClientHello = false;
-  /** Per-session subscription state: legacy agent allowlist + opt-in transcript grades. */
   readonly subscriptions = new Map<string, SessionSubscription>();
-  /**
-   * Serializes control-frame handling in receive order. Frames arrive
-   * back-to-back (e.g. `client_hello` immediately followed by
-   * `subscribe_v2`), and a later handler reads subscription state the
-   * earlier one stores — without the queue, two async attaches could
-   * interleave and the stale one would overwrite the fresher state.
-   */
   private controlQueue: Promise<void> = Promise.resolve();
 
-  /** Outbound frames awaiting the next flush. */
   private outbound: unknown[] = [];
   private flushTimer?: ReturnType<typeof setTimeout>;
   private backpressureRetryTimer?: ReturnType<typeof setTimeout>;
-  /** Epoch ms when the current backpressure deferral started; caps the wait. */
   private backpressureSince?: number;
 
   private heartbeatTimer?: ReturnType<typeof setInterval>;
-  /** Epoch ms of the most recent inbound frame — any frame proves the peer is alive. */
   private lastInboundAt = Date.now();
 
   constructor(opts: WsConnectionV1Options) {
@@ -165,7 +143,6 @@ export class WsConnectionV1 implements BroadcastTarget {
     return Array.from(this.subscriptions.keys()).sort();
   }
 
-  /** BroadcastTarget — buffer subscription traffic; public traffic is a FIFO barrier. */
   send(envelope: EventEnvelope, delivery: BroadcastDelivery = 'subscription'): void {
     if (delivery === 'immediate') this.sendImmediateFrame(envelope);
     else this.sendSubscribedFrame(envelope);
@@ -216,11 +193,6 @@ export class WsConnectionV1 implements BroadcastTarget {
     });
   }
 
-  /**
-   * Heartbeat tick: reap first, ping second. A peer silent for two full cycles
-   * (no pong, no control traffic at all) is half-open — close it rather than
-   * ping a dead pipe. The close also fires the client's reconnect path.
-   */
   private onHeartbeat(): void {
     if (Date.now() - this.lastInboundAt >= this.heartbeatIntervalMs * HEARTBEAT_MISS_LIMIT) {
       this.close(1001, 'heartbeat timeout');
@@ -296,14 +268,6 @@ export class WsConnectionV1 implements BroadcastTarget {
     );
   }
 
-  /**
-   * `subscribe_v2` — the ONLY transcript subscription channel: attach or
-   * update this connection's per-agent transcript grades for ONE session.
-   * Carries no durable cursor (transcript frames are volatile), so the
-   * baseline/catch-up decision lives entirely in the broadcaster's
-   * `subscribeTranscript` (`transcript_since` journal replay vs reset). A
-   * legacy agent allowlist already held for the session is preserved.
-   */
   private async onSubscribeV2(frame: InboundFrame): Promise<void> {
     const parsed = transcriptSubscribeV2PayloadSchema.safeParse(frame.payload ?? {});
     if (!parsed.success) {
@@ -336,14 +300,6 @@ export class WsConnectionV1 implements BroadcastTarget {
     );
   }
 
-  /**
-   * `unsubscribe_v2` — the agent-grained counterpart of `subscribe_v2`:
-   * detach the listed agents' transcript streams (`agent_ids` absent = the
-   * whole session's stream) while leaving the legacy event subscription and
-   * its agent allowlist untouched. Idempotent and never activates a session;
-   * a detached agent's legacy `session_event`s resume in full as the
-   * suppression lifts with its grade.
-   */
   private async onUnsubscribeV2(frame: InboundFrame): Promise<void> {
     const parsed = unsubscribeV2PayloadSchema.safeParse(frame.payload ?? {});
     if (!parsed.success) {
@@ -422,16 +378,6 @@ export class WsConnectionV1 implements BroadcastTarget {
     );
   }
 
-  /**
-   * Shared attach path behind `client_hello` (legacy inline subscriptions)
-   * and `subscribe`. Subscribes the connection via the broadcaster, then
-   * either replays durable events since the client's cursor (with the
-   * transcript baseline deferred until after the replay — its seq must
-   * follow the replayed backlog, never precede it) or reports the server's
-   * current cursor. Unknown sessions land in `collectors.notFound` when the
-   * caller is `subscribe`, otherwise in `resyncRequired` (the hello ack has
-   * no `not_found` field).
-   */
   private async attachSession(
     sid: string,
     cursor: SessionCursor | undefined,
@@ -504,7 +450,6 @@ export class WsConnectionV1 implements BroadcastTarget {
     return true;
   }
 
-  /** Queue an event delivered through `subscribe` / `subscribe_v2`. */
   private sendSubscribedFrame(msg: unknown): void {
     if (this.closed) return;
     this.outbound.push(msg);
@@ -515,10 +460,6 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.scheduleFlush();
   }
 
-  /**
-   * Public/control frames do not start a timer. They join the FIFO and flush it
-   * immediately, so no later frame can overtake earlier subscription traffic.
-   */
   private sendImmediateFrame(msg: unknown): void {
     if (this.closed) return;
     this.outbound.push(msg);
@@ -534,13 +475,6 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.flushTimer.unref?.();
   }
 
-  /**
-   * Drain the outbound buffer: coalesce adjacent compatible volatile deltas,
-   * then write the surviving frames to the socket. When the peer is not
-   * draining (`bufferedAmount` above the high-water mark) and `force` is not
-   * set, defer and keep accumulating — later deltas merge into the queued
-   * ones, so the frame count does not grow while we wait.
-   */
   private flush(force = false): void {
     if (this.flushTimer !== undefined) {
       clearTimeout(this.flushTimer);
@@ -656,22 +590,6 @@ function isCoalescableDelta(frame: unknown): frame is CoalescableDelta {
   return typeof (payload as Record<string, unknown>)['delta'] === 'string';
 }
 
-/**
- * Merge adjacent compatible volatile text deltas into a single envelope.
- *
- * Two adjacent frames merge when both are `volatile` `assistant.delta` /
- * `thinking.delta` of the same type, addressed to the same session, agent,
- * and turn. The merged frame keeps the first frame's `seq` / `offset` /
- * `timestamp` and concatenates `payload.delta` in order — the client's
- * offset-based alignment against the in-flight snapshot stays correct
- * (the broadcaster's per-session dispatch queue guarantees consecutive deltas
- * for a turn carry consecutive offsets).
- *
- * Durable events, control frames, and non-text deltas are never merged, and
- * merging never crosses a non-mergeable frame, so overall ordering is
- * preserved. The input frames are not mutated; merged results are fresh
- * objects. Exported for unit testing.
- */
 export function coalesceFrames(frames: readonly unknown[]): unknown[] {
   const out: unknown[] = [];
   for (const frame of frames) {

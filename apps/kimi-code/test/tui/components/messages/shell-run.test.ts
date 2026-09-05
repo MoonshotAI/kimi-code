@@ -90,7 +90,7 @@ describe('ShellRunComponent finished collapse', () => {
     const c = create();
     c.finish(rows(30), '', false);
     const rendered = stripTheme(c.render(80).join('\n'));
-    expect(rendered).toContain('... (20 more lines, ctrl+o to expand)');
+    expect(rendered).toContain('… (20 more lines, ctrl+o to expand)');
     expect(rendered).toContain('row-01');
     expect(rendered).toContain('row-10');
     expect(rendered).not.toContain('row-11');
@@ -116,7 +116,7 @@ describe('ShellRunComponent finished collapse', () => {
 
     c.setExpanded(false);
     const collapsed = stripTheme(c.render(80).join('\n'));
-    expect(collapsed).toContain('... (20 more lines, ctrl+o to expand)');
+    expect(collapsed).toContain('… (20 more lines, ctrl+o to expand)');
     expect(collapsed).not.toContain('row-11');
   });
 
@@ -153,7 +153,7 @@ describe('ShellRunComponent finished collapse', () => {
     c.append('x'.repeat(300 * 1024));
     c.setExpanded(true);
     const rendered = stripTheme(c.render(80).join('\n'));
-    expect(rendered).toContain('... (output truncated)');
+    expect(rendered).toContain('… (output truncated)');
   });
 
   it('keeps the backgrounded view when toggled', () => {
@@ -168,7 +168,7 @@ describe('ShellRunComponent finished collapse', () => {
     const c = create();
     c.finish(rows(30), 'boom', true);
     const collapsed = stripTheme(c.render(80).join('\n'));
-    expect(collapsed).toContain('... (21 more lines, ctrl+o to expand)');
+    expect(collapsed).toContain('… (21 more lines, ctrl+o to expand)');
 
     c.setExpanded(true);
     const expanded = stripTheme(c.render(80).join('\n'));

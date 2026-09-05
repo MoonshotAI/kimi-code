@@ -32,6 +32,7 @@ import {
   writeExportZip,
 } from './zip';
 import { openZipSource, type ZipSource } from './file-source';
+import { FILE_HISTORY_BLOB_PREFIX } from '#/features/fileHistory/fileHistoryService';
 
 const SESSION_LOG_REL = 'logs/kimi-code.log';
 const GLOBAL_LOG_REL = 'logs/global/kimi-code.log';
@@ -129,8 +130,10 @@ export class SessionExportService implements ISessionExportService {
     );
     const agents = handle.accessor.get(IAgentLifecycleService);
     for (const agent of agents.list()) {
+      const agentHandle = agents.handleOf(agent.agentId);
+      if (agentHandle === undefined) continue;
       await this.warnIfFails('export agent wire flush failed', () =>
-        agent.accessor.get(IWireService).flush(),
+        agentHandle.accessor.get(IWireService).flush(),
       );
     }
 
@@ -201,7 +204,8 @@ export async function exportSessionDirectory(input: {
     const sessionScan = await scanSessionWire(sessionDir, input.signal);
     const stableSessionLog = sessionLogSource;
     const selectedSessionFiles: SessionZipEntry[] = sessionFiles.filter(
-      (file) => file !== sessionLogPath,
+      (file) =>
+        file !== sessionLogPath && !file.split(/[\\/]/).includes(FILE_HISTORY_BLOB_PREFIX),
     );
     if (stableSessionLog !== undefined) {
       selectedSessionFiles.push({ path: sessionLogPath, source: stableSessionLog });

@@ -18,7 +18,6 @@ const TELEMETRY_DISABLE_ENV_VALUES = new Set(['1', 'true', 't', 'yes', 'y']);
 const TELEMETRY_SHUTDOWN_TIMEOUT_MS = 3_000;
 
 export interface ServerTelemetry {
-  /** Present only when telemetry is enabled by both config and environment. */
   readonly appender?: CloudAppender;
   readonly registration?: IDisposable;
 }

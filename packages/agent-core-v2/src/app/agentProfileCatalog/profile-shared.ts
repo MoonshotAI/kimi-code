@@ -107,7 +107,7 @@ const WINDOWS_NOTES =
 export const DEFAULT_PRODUCT_NAME = 'Kimi Code CLI';
 
 export const DEFAULT_REPLY_STYLE_GUIDE =
-  "Your text replies render as Markdown in the user's terminal. Use light Markdown that reads well there: short paragraphs, `-` bullets for lists, backticks for code, commands, paths, and identifiers, and fenced blocks for multi-line code. Keep structure shallow — avoid deep nesting, large tables, and heavy headings in ordinary replies. Do not use emoji unless the user does first or asks for it. Default to prose; reach for a list only when the content is genuinely a set of items or steps. When you point to a specific code location, cite it as `path/to/file.ts:42` — a precise, consistent reference the user can navigate to.";
+  "Your text replies render as Markdown in the user's terminal. Keep structure light and shallow — deep nesting, large tables, and heavy headings read poorly there. Cite code locations as `path/to/file.ts:42` so the user can navigate to them. Do not use emoji unless the user does first or asks for it.";
 
 const ADDITIONAL_DIRS_SECTION_PROSE =
   'The following directories have been added to the workspace. You can read, write, search, and glob files in these directories as part of your workspace scope.';
@@ -138,7 +138,6 @@ export function systemPromptVars(
     os: context.osKind ?? '',
     windows_notes: context.osKind === 'Windows' ? `\n\n${WINDOWS_NOTES}\n\n` : '',
     shell: shellName.length > 0 ? `${shellName} (\`${shellPath}\`)` : '',
-    now: context.now ?? new Date().toISOString(),
     cwd: context.cwd ?? '',
     cwd_listing: context.cwdListing ?? '',
     agents_md: context.agentsMd ?? '',
@@ -171,10 +170,7 @@ export function renderPromptTemplateResult(
   }
   return {
     text: renderPrompt(template, vars),
-    environment: mergeEnvironmentDisclosure(
-      environmentForTemplate(template, context),
-      baseResult?.environment,
-    ),
+    environment: mergeEnvironmentDisclosure(environmentForTemplate(context), baseResult?.environment),
   };
 }
 
@@ -188,28 +184,12 @@ export function renderSystemPromptResult(
       ...systemPromptVars(context, options),
       role_additional: roleAdditional,
     }),
-    environment: environmentForTemplate(SYSTEM_PROMPT_TEMPLATE, context),
+    environment: environmentForTemplate(context),
   };
 }
 
-function environmentForTemplate(
-  template: string,
-  context: AgentProfileContext,
-): EnvironmentDisclosureSnapshot {
-  const usesNow = template.includes('${now}');
-  const timeZone = context.timeZone ?? localTimeZone();
-  return {
-    cwd: context.cwd ?? '',
-    date: usesNow
-      ? {
-          disclosed: true,
-          value: {
-            localDate: localDateKey(context.now, timeZone),
-            timeZone,
-          },
-        }
-      : { disclosed: false },
-  };
+function environmentForTemplate(context: AgentProfileContext): EnvironmentDisclosureSnapshot {
+  return { cwd: context.cwd ?? '' };
 }
 
 function mergeEnvironmentDisclosure(
@@ -217,26 +197,5 @@ function mergeEnvironmentDisclosure(
   base: EnvironmentDisclosureSnapshot | undefined,
 ): EnvironmentDisclosureSnapshot {
   if (base === undefined) return direct;
-  return {
-    cwd: direct.cwd || base.cwd,
-    date: direct.date.disclosed ? direct.date : base.date,
-  };
-}
-
-function localDateKey(now: string | undefined, timeZone: string): string {
-  const date = now === undefined ? new Date() : new Date(now);
-  if (Number.isNaN(date.getTime())) return localDateKey(undefined, timeZone);
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(date);
-  const part = (type: Intl.DateTimeFormatPartTypes): string =>
-    parts.find((candidate) => candidate.type === type)?.value ?? '';
-  return `${part('year')}-${part('month')}-${part('day')}`;
-}
-
-function localTimeZone(): string {
-  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  return { cwd: direct.cwd || base.cwd };
 }

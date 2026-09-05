@@ -270,6 +270,46 @@ export function expandedModelAppliers(
   return expanded;
 }
 
+export function expandedRuntimeFolds(
+  owner: string,
+  undoable: boolean,
+  folds: ReadonlyMap<Event2Class<any, any>, StateFold<any, any>>,
+): ReadonlyMap<Event2Class<any, any>, StateFold<any, any>> {
+  if (!undoable) return folds;
+  if (undoableProtocol === undefined) {
+    throw new BugIndicatingError(
+      `Agent runtime '${owner}' is undoable but no undoable protocol is registered ` +
+        '(the contextMemory domain registers it at import time)',
+    );
+  }
+  const protocol = undoableProtocol;
+  if (folds.has(protocol.events.undo)) {
+    throw new BugIndicatingError(
+      `Undoable agent runtime '${owner}' must not fold the undo event itself`,
+    );
+  }
+  const expanded = new Map(folds);
+  const domainAppend = expanded.get(protocol.events.appendMessage);
+  expanded.set(protocol.events.appendMessage, (state, event, ctx) => {
+    if (protocol.isUndoAnchor(event.message)) {
+      ctx.checkpoint();
+      return;
+    }
+    return domainAppend?.(state, event, ctx);
+  });
+  for (const cls of [protocol.events.applyCompaction, protocol.events.clear]) {
+    const domain = expanded.get(cls);
+    expanded.set(cls, (state, event, ctx) => {
+      ctx.clearCheckpoints();
+      return domain?.(state, event, ctx);
+    });
+  }
+  expanded.set(protocol.events.undo, (_state, event, ctx) => {
+    if (protocol.isValidUndoCount(event.count)) ctx.undoToCheckpoint(event.count);
+  });
+  return expanded;
+}
+
 export type DeepReadonly<T> = T extends (...args: infer A) => infer R
   ? (...args: A) => R
   : T extends ReadonlyMap<infer K, infer V>

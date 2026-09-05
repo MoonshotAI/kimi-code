@@ -3,7 +3,6 @@ import net from 'node:net';
 export type BindClass = 'loopback' | 'lan' | 'public';
 
 export interface ClassifyOptions {
-  /** Override classification of wildcard binds (`0.0.0.0` / `::` / empty). */
   readonly bindClass?: 'lan' | 'public';
 }
 
@@ -46,13 +45,6 @@ function isLinkLocalV6(host: string): boolean {
   return first >= 0xfe80 && first <= 0xfebf;
 }
 
-/**
- * Classify a bind host by the network exposure it implies.
- *
- * See the module header for the tier definitions. A non-IP hostname that is
- * not `localhost` is treated conservatively as `public` — a DNS name could
- * resolve to a public address.
- */
 export function classify(host: string, opts?: ClassifyOptions): BindClass {
   if (host === '' || host === '0.0.0.0' || host === '::') {
     return opts?.bindClass ?? 'public';

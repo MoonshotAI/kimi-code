@@ -3,7 +3,7 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { GOAL_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '#/agent/tools/mainAgentOnly';
 import { type ToolExecution } from '#/tool/toolContract';
 
-import { IAgentGoalService } from '#/features/goal/goal';
+import { IAgentGoalService } from '#/features/goal/goalService';
 import { goalResultForModel } from '#/features/goal/tools/serialize';
 
 import DESCRIPTION from './get-goal.md?raw';
@@ -33,3 +33,4 @@ export class GetGoalTool implements IGetGoalTool {
     };
   }
 }
+

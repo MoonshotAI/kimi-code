@@ -5,16 +5,28 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import { canonicalTelemetryArgs } from '#/_base/utils/canonical-args';
-import type { ToolCallDedupDetectedEvent, ToolCallRepeatEvent } from '#/app/telemetry/events';
+import type {
+  ToolCallDedupDetectedEvent,
+  ToolCallRepeatEvent,
+  ToolCallRepeatHandoffEvent,
+  ToolCallTurnRepeatEvent,
+} from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { HandoffStepRequest } from '#/agent/loop/handoffStep';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { wrapSystemReminder } from '#/agent/systemReminder/systemReminder';
+import { IEventBus } from '#/app/event/eventBus';
+import { TurnEnded } from '#/agent/loop/turnOps';
+import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { IAgentToolExecutorService, type ToolCallDupType } from '#/agent/toolExecutor/toolExecutor';
 import type { ContentPart } from '#/kosong/contract/message';
-import { IAgentToolDedupeService, type ToolDedupeResult } from './toolDedupe';
+import {
+  IAgentToolDedupeService,
+  REPEAT_BREAKER_STOP_REASON,
+  type ToolDedupeResult,
+} from './toolDedupe';
 
 const REMINDER_TEXT_1 =
   '\n\n' +
@@ -50,6 +62,21 @@ const REPEAT_REMINDER_2_START = 5;
 const REPEAT_REMINDER_3_START = 8;
 const REPEAT_FORCE_STOP_STREAK = 12;
 
+const HANDOFF_VETO_TEXT =
+  'This turn was ended by the repeat breaker after the same tool call was issued ' +
+  `${String(REPEAT_FORCE_STOP_STREAK)} times in a row. This step accepts a text response only, ` +
+  'so the tool call was not executed. Reply in text: the current blocker, what you tried, ' +
+  'and what you need next.';
+
+const HANDOFF_VETO_RESULT: ToolDedupeResult = {
+  output: HANDOFF_VETO_TEXT,
+  isError: true,
+  stopTurn: true,
+  stopTurnReason: REPEAT_BREAKER_STOP_REASON,
+};
+
+type HandoffPhase = 'idle' | 'pending' | 'active' | 'done';
+
 interface Deferred<T> {
   readonly promise: Promise<T>;
   resolve(value: T): void;
@@ -71,8 +98,17 @@ function argsHash(args: unknown): string {
   return createHash('sha256').update(canonicalTelemetryArgs(args)).digest('hex').slice(0, 8);
 }
 
+function callSignature(key: string): string {
+  return createHash('sha256').update(key).digest('hex');
+}
+
 interface CheckedToolCall {
   readonly syntheticResult: ToolDedupeResult | null;
+}
+
+interface TurnCallRecord {
+  count: number;
+  lastStep: number;
 }
 
 function appendReminder(result: ToolDedupeResult, reminderText: string): ToolDedupeResult {
@@ -90,14 +126,18 @@ function appendReminder(result: ToolDedupeResult, reminderText: string): ToolDed
     }
     newOutput = arr;
   }
+  const spill =
+    result.spill !== undefined
+      ? { ...result.spill, suffix: (result.spill.suffix ?? '') + reminderText }
+      : undefined;
   return result.isError === true
-    ? { ...result, output: newOutput, isError: true }
-    : { ...result, output: newOutput };
+    ? { ...result, output: newOutput, isError: true, spill }
+    : { ...result, output: newOutput, spill };
 }
 
 function forceStopResult(result: ToolDedupeResult, reminderText: string): ToolDedupeResult {
   const withReminder = appendReminder(result, reminderText);
-  return { ...withReminder, stopTurn: true };
+  return { ...withReminder, stopTurn: true, stopTurnReason: REPEAT_BREAKER_STOP_REASON };
 }
 
 const DEDUPE_PLACEHOLDER_RESULT: ToolDedupeResult = { output: '' };
@@ -128,16 +168,31 @@ export const toolDedupeActiveTurnIdKey = defineState<number | undefined>(
   () => undefined as number | undefined,
 );
 export const toolDedupeActiveStepKey = defineState<number>('toolDedupe.activeStep', () => 0);
+export const toolDedupeTurnCallRecordsKey = defineState<Map<string, TurnCallRecord>>(
+  'toolDedupe.turnCallRecords',
+  () => new Map(),
+);
+export const toolDedupeTurnRepeatCountKey = defineState<number>(
+  'toolDedupe.turnRepeatCount',
+  () => 0,
+);
+export const toolDedupeHandoffPhaseKey = defineState<HandoffPhase>(
+  'toolDedupe.handoffPhase',
+  () => 'idle' as HandoffPhase,
+);
 
 export class AgentToolDedupeService extends Service implements IAgentToolDedupeService {
   declare readonly _serviceBrand: undefined;
   private readonly stepDeferreds = new Map<string, Deferred<ToolDedupeResult>>();
+  private readonly handoffVetoedCallIds = new Set<string>();
+  private forceStoppedInStep = false;
 
   constructor(
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IAgentLoopService loop: IAgentLoopService,
+    @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
     @IAgentStateService private readonly states: IAgentStateService,
+    @IEventBus eventBus: IEventBus,
   ) {
     super();
     this.states.contributeState(toolDedupeStepCallsKey);
@@ -148,15 +203,25 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
     this.states.contributeState(toolDedupeConsecutiveCountKey);
     this.states.contributeState(toolDedupeActiveTurnIdKey);
     this.states.contributeState(toolDedupeActiveStepKey);
+    this.states.contributeState(toolDedupeTurnCallRecordsKey);
+    this.states.contributeState(toolDedupeTurnRepeatCountKey);
+    this.states.contributeState(toolDedupeHandoffPhaseKey);
+    this._register(eventBus.subscribe(TurnEnded, () => this.clearTurnRecords()));
     loop.hooks.onWillBeginStep.register('toolDedupe', async (ctx, next) => {
       this.beginStep(ctx.turnId, ctx.step);
       await next();
     });
-    loop.hooks.onDidFinishStep.register('toolDedupe', async (_ctx, next) => {
+    loop.hooks.onDidFinishStep.register('toolDedupe', async (ctx, next) => {
       this.endStep();
+      this.settleHandoff(ctx.turnId);
       await next();
     });
     toolExecutor.onBeforeExecuteTool((event) => {
+      if (this.handoffPhase === 'active') {
+        this.handoffVetoedCallIds.add(event.toolCall.id);
+        event.veto(HANDOFF_VETO_RESULT);
+        return;
+      }
       const checked = this.checkToolCall(
         event.toolCall.id,
         event.toolCall.name,
@@ -168,6 +233,13 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
       }
     });
     toolExecutor.hooks.onDidExecuteTool.register('toolDedupe', async (ctx, next) => {
+      if (this.handoffPhase === 'active') {
+        this.handoffVetoedCallIds.add(ctx.toolCall.id);
+        ctx.result = HANDOFF_VETO_RESULT;
+        ctx.stopTurn = true;
+        await next();
+        return;
+      }
       this.registerSkipped(
         ctx.toolCall.id,
         ctx.toolCall.name,
@@ -241,15 +313,44 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
     this.states.set(toolDedupeActiveStepKey, value);
   }
 
+  private get turnCallRecords(): Map<string, TurnCallRecord> {
+    return this.states.get(toolDedupeTurnCallRecordsKey);
+  }
+
+  private get turnRepeatCount(): number {
+    return this.states.get(toolDedupeTurnRepeatCountKey);
+  }
+
+  private set turnRepeatCount(value: number) {
+    this.states.set(toolDedupeTurnRepeatCountKey, value);
+  }
+
+  private get handoffPhase(): HandoffPhase {
+    return this.states.get(toolDedupeHandoffPhaseKey);
+  }
+
+  private set handoffPhase(value: HandoffPhase) {
+    this.states.set(toolDedupeHandoffPhaseKey, value);
+  }
+
+  private clearTurnRecords(): void {
+    this.turnCallRecords.clear();
+    this.turnRepeatCount = 0;
+  }
+
   private beginStep(turnId?: number, step?: number): void {
     if (turnId !== undefined && turnId !== this.activeTurnId) {
       this.activeTurnId = turnId;
       this.consecutiveKey = null;
       this.consecutiveCount = 0;
+      this.handoffPhase = 'idle';
+      this.clearTurnRecords();
     }
     if (step !== undefined) {
       this.activeStep = step;
     }
+    this.forceStoppedInStep = false;
+    this.handoffVetoedCallIds.clear();
 
     for (const deferred of this.stepDeferreds.values()) {
       deferred.resolve({
@@ -275,6 +376,61 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
     }
   }
 
+  private settleHandoff(turnId: number): void {
+    const phase = this.handoffPhase;
+    if (phase === 'active') {
+      this.handoffPhase = 'done';
+      const properties: ToolCallRepeatHandoffEvent = {
+        turn_id: turnId,
+        outcome: this.handoffVetoedCallIds.size > 0 ? 'vetoed' : 'text',
+      };
+      this.telemetry.track2('tool_call_repeat_handoff', properties);
+      return;
+    }
+    if (phase !== 'idle' || !this.forceStoppedInStep) return;
+    this.handoffPhase = 'pending';
+    this.loop.enqueue(
+      new HandoffStepRequest({
+        onMaterialize: () => {
+          this.handoffPhase = 'active';
+        },
+        onAbort: () => {
+          this.handoffPhase = 'done';
+        },
+      }),
+    );
+  }
+
+  private recordTurnRepeat(
+    toolCallId: string,
+    toolName: string,
+    args: unknown,
+    key: string,
+    trace: LLMRequestTrace | undefined,
+  ): void {
+    const signature = callSignature(key);
+    const record = this.turnCallRecords.get(signature);
+    if (record === undefined) {
+      this.turnCallRecords.set(signature, { count: 0, lastStep: this.activeStep });
+      return;
+    }
+    if (record.lastStep === this.activeStep) return;
+
+    record.count += 1;
+    record.lastStep = this.activeStep;
+    this.turnRepeatCount += 1;
+    const properties: ToolCallTurnRepeatEvent = {
+      turn_id: this.activeTurnId,
+      step_no: this.activeStep,
+      tool_call_id: toolCallId,
+      tool_name: toolName,
+      turn_repeat_count: this.turnRepeatCount,
+      args_hash: argsHash(args),
+      trace_id: trace?.traceId,
+    };
+    this.telemetry.track2('tool_call_turn_repeat', properties);
+  }
+
   private checkToolCall(
     toolCallId: string,
     toolName: string,
@@ -292,6 +448,7 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
       this.recordDupType(toolCallId, toolName, args, 'same_step', trace);
       return { syntheticResult: DEDUPE_PLACEHOLDER_RESULT };
     }
+    this.recordTurnRepeat(toolCallId, toolName, args, key, trace);
     this.stepDeferreds.set(key, makeDeferred<ToolDedupeResult>());
     this.originalCallIndex.set(toolCallId, index);
     if (this.consecutiveKey === key && this.consecutiveCount > 0) {
@@ -375,6 +532,7 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
     if (streak >= REPEAT_FORCE_STOP_STREAK) {
       finalResult = forceStopResult(result, REMINDER_TEXT_3);
       action = 'stop';
+      this.forceStoppedInStep = true;
     } else if (streak >= REPEAT_REMINDER_3_START) {
       finalResult = appendReminder(result, REMINDER_TEXT_3);
       action = 'r3';
@@ -410,6 +568,8 @@ export const __testing = {
   REPEAT_REMINDER_2_START,
   REPEAT_REMINDER_3_START,
   REPEAT_FORCE_STOP_STREAK,
+  REPEAT_BREAKER_STOP_REASON,
+  HANDOFF_VETO_TEXT,
 };
 
 registerScopedService(

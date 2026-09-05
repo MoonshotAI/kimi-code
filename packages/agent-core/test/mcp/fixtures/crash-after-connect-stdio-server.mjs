@@ -14,7 +14,11 @@ const stderrBanner = process.env['KIMI_TEST_MCP_STDERR'];
 
 function exitWithBanner() {
   if (stderrBanner !== undefined) {
-    process.stderr.write(`${stderrBanner}\n`);
+    // `process.stderr` is a pipe here, so writes are asynchronous; exiting
+    // from the write callback guarantees the banner is flushed to the pipe
+    // before the process dies instead of being truncated by `process.exit`.
+    process.stderr.write(`${stderrBanner}\n`, () => process.exit(exitCode));
+    return;
   }
   process.exit(exitCode);
 }

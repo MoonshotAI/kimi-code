@@ -1,7 +1,7 @@
 /**
  * Agent engine routing gates for the CLI surfaces.
  *
- * `kimi -p`, the interactive TUI, and `kimi doctor` use the native
+ * `kimi -p` and the interactive TUI use the native
  * agent-core-v2 path by default. A truthy `KIMI_CODE_LEGACY_FLAG` selects the
  * legacy agent-core-backed path instead. `KIMI_CODE_EXPERIMENTAL_FLAG` remains
  * the master switch for experimental features within either engine; it does

@@ -17,7 +17,7 @@ const TIMER_INTERVAL_MS = 1000;
 const MAX_COMBINED_CHARS = 256 * 1024;
 const KEEP_COMBINED_CHARS = 64 * 1024;
 
-const TRUNCATED_RUNNING_NOTICE = '... (output truncated)';
+const TRUNCATED_RUNNING_NOTICE = '… (output truncated)';
 
 /**
  * Live view for a user-initiated `!` shell command. Two phases:

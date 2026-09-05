@@ -26,13 +26,6 @@ import { Feature } from '#/features/feature';
 import { IFeatureAssemblyService } from '#/features/featureAssembly';
 import { FeatureAssemblyService } from '#/features/featureAssemblyService';
 import {
-  AgentEffectContribution,
-  defineAgentEffect,
-  SessionEffectContribution,
-  type AgentEffectDefinition,
-  type SessionEffectDefinition,
-} from '#/state/agentEffect';
-import {
   AgentModel,
   AgentModelContribution,
   defineAgentModel,
@@ -160,8 +153,7 @@ describe('Feature — built-in capability assembly (src/features)', () => {
     host.dispose();
   });
 
-  it('registers model and effect definitions without materializing them', async () => {
-    let creates = 0;
+  it('registers model definitions and retracts them on unload', async () => {
     const sessionModel: SessionModelDefinition<number> = {
       id: 'test-feature.session-model',
       state: { initial: () => 0, schema: z.custom<number>() },
@@ -174,20 +166,6 @@ describe('Feature — built-in capability assembly (src/features)', () => {
       state: { initial: () => 0, schema: z.custom<number>() },
       events: [],
     });
-    const sessionEffect: SessionEffectDefinition = {
-      id: 'test-feature.session-effect',
-      create: () => {
-        creates += 1;
-        return { dispose: () => {} };
-      },
-    };
-    const agentEffect: AgentEffectDefinition<any, any> = defineAgentEffect({
-      id: 'test-feature.agent-effect',
-      create: () => {
-        creates += 1;
-        return { dispose: () => {} };
-      },
-    });
     class DomainFeature extends Feature {
       static override readonly name = 'domain-definitions';
 
@@ -195,8 +173,6 @@ describe('Feature — built-in capability assembly (src/features)', () => {
         super();
         this.contributeSessionModel(sessionModel);
         this.contributeAgentModel(agentModel);
-        this.contributeSessionEffect(sessionEffect);
-        this.contributeAgentEffect(agentEffect);
       }
     }
     class ReplacementFeature extends Feature {
@@ -214,16 +190,11 @@ describe('Feature — built-in capability assembly (src/features)', () => {
     const views = [
       collectionViewOf(host.app, SessionModelContribution),
       collectionViewOf(host.app, AgentModelContribution),
-      collectionViewOf(host.app, SessionEffectContribution),
-      collectionViewOf(host.app, AgentEffectContribution),
     ];
     expect(views.map((view) => view.items)).toEqual([
       [sessionModel],
       [agentModel],
-      [sessionEffect],
-      [agentEffect],
     ]);
-    expect(creates).toBe(0);
     expect(() => manager.provideUnit(ReplacementFeature)).toThrow(
       "Agent model 'test-feature.agent-model' already has an active provider",
     );
@@ -232,7 +203,6 @@ describe('Feature — built-in capability assembly (src/features)', () => {
     await host.app.instantiation.cascade.whenIdle();
     expect(views.every((view) => view.items.length === 0)).toBe(true);
     expect(() => manager.provideUnit(ReplacementFeature)).not.toThrow();
-    expect(creates).toBe(0);
     host.dispose();
   });
 

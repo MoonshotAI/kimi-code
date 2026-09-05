@@ -35,15 +35,21 @@
  * with a misleading "kimi now launches the new CLI" notice in front of
  * a "permission denied" notice. Uses `fs.lstat` (not `fs.access`) to
  * detect dangling symlinks at the target so we don't clobber them.
+ *
+ * Every helper accepts an optional trailing `platform` argument
+ * (`'posix' | 'win32'`, defaulting to the real `process.platform`) so
+ * Windows forms (PATHEXT expansion, extension-preserving rename
+ * targets, system-dir heuristics) can be exercised in tests on any
+ * host OS.
  */
 
 import { constants as fsConstants, promises as fs } from 'node:fs';
-import { delimiter, dirname, extname, join, sep } from 'node:path';
+
+import { executableCandidates, pathFlavor } from './platform.mjs';
 
 const LEGACY_BIN = 'kimi';
 const LEGACY_RENAME = 'kimi-legacy';
 const PYTHON_MARKER = 'kimi_cli';
-const IS_WINDOWS = process.platform === 'win32';
 
 // Read window for the marker sniff.
 //   POSIX: setuptools entry-point scripts are a few hundred bytes —
@@ -57,7 +63,8 @@ const IS_WINDOWS = process.platform === 'win32';
 const SHIM_SNIFF_BYTES_POSIX = 4096;
 const SHIM_SNIFF_BYTES_WINDOWS_MAX = 256 * 1024;
 
-function pathEntries(pathString) {
+function pathEntries(pathString, platform) {
+  const { delimiter } = pathFlavor(platform);
   if (!pathString) return [];
   const seen = new Set();
   const out = [];
@@ -69,41 +76,27 @@ function pathEntries(pathString) {
   return out;
 }
 
-/**
- * Expand `kimi` into the set of filenames that resolve as executables
- * on this platform. POSIX → just `['kimi']`. Windows → adds every
- * `PATHEXT` extension (so we find `kimi.exe`, `kimi.cmd`, etc).
- */
-function executableCandidates(basename) {
-  if (!IS_WINDOWS) return [basename];
-  const pathext = (process.env['PATHEXT'] ?? '.EXE;.CMD;.BAT;.COM')
-    .toLowerCase()
-    .split(';')
-    .map((e) => e.trim())
-    .filter(Boolean);
-  return [basename, ...pathext.map((ext) => basename + ext)];
-}
-
-async function isExecutableFile(filePath) {
+async function isExecutableFile(filePath, platform) {
   try {
     const info = await fs.stat(filePath);
     if (!info.isFile()) return false;
     // Windows: stat().mode doesn't reflect ACLs in any useful way.
     // Callers already restrict to PATHEXT candidates, so existence
     // suffices.
-    if (IS_WINDOWS) return true;
+    if (platform === 'win32') return true;
     return (info.mode & 0o111) !== 0;
   } catch {
     return false;
   }
 }
 
-async function readShimHead(filePath) {
+async function readShimHead(filePath, platform) {
   let handle;
   try {
     handle = await fs.open(filePath, 'r');
     const stat = await handle.stat();
-    const limit = IS_WINDOWS ? SHIM_SNIFF_BYTES_WINDOWS_MAX : SHIM_SNIFF_BYTES_POSIX;
+    const limit =
+      platform === 'win32' ? SHIM_SNIFF_BYTES_WINDOWS_MAX : SHIM_SNIFF_BYTES_POSIX;
     const target = Math.min(stat.size, limit);
     const buffer = Buffer.alloc(target);
     const { bytesRead } = await handle.read(buffer, 0, target, 0);
@@ -130,17 +123,18 @@ async function readShimHead(filePath) {
  * value: `{ shimPath, realPath }`. The empty array means
  * "fresh-install / no-op".
  */
-export async function detectLegacyShims(ownRoot, pathString) {
+export async function detectLegacyShims(ownRoot, pathString, platform = process.platform) {
+  const { sep, join } = pathFlavor(platform);
   const ownRootPrefix = ownRoot ? ownRoot + sep : null;
-  const candidates = executableCandidates(LEGACY_BIN);
+  const candidates = executableCandidates(LEGACY_BIN, platform);
   const results = [];
   const seenShims = new Set();
 
-  for (const dir of pathEntries(pathString)) {
+  for (const dir of pathEntries(pathString, platform)) {
     for (const name of candidates) {
       const shimPath = join(dir, name);
       if (seenShims.has(shimPath)) continue;
-      if (!(await isExecutableFile(shimPath))) continue;
+      if (!(await isExecutableFile(shimPath, platform))) continue;
 
       let realPath;
       try {
@@ -161,7 +155,7 @@ export async function detectLegacyShims(ownRoot, pathString) {
         continue;
       }
 
-      const head = await readShimHead(realPath);
+      const head = await readShimHead(realPath, platform);
       if (!head || !head.includes(PYTHON_MARKER)) continue;
 
       seenShims.add(shimPath);
@@ -181,14 +175,14 @@ export async function detectLegacyShims(ownRoot, pathString) {
  * drop the duplicate `kimi`) or a user-managed file we must not
  * clobber.
  */
-export async function isLegacyShim(p) {
+export async function isLegacyShim(p, platform = process.platform) {
   let real;
   try {
     real = await fs.realpath(p);
   } catch {
     return false;
   }
-  const head = await readShimHead(real);
+  const head = await readShimHead(real, platform);
   return Boolean(head && head.includes(PYTHON_MARKER));
 }
 
@@ -211,8 +205,9 @@ async function pathExists(p) {
  * rather than an extension-less `kimi-legacy` that `kimi.exe -- legacy`
  * shells won't run.
  */
-function renameTargetFor(shimPath) {
-  const ext = extname(shimPath);  // "" on POSIX, ".exe" on Windows
+export function renameTargetFor(shimPath, platform = process.platform) {
+  const { dirname, extname, join } = pathFlavor(platform);
+  const ext = extname(shimPath); // "" on POSIX, ".exe" on Windows
   return join(dirname(shimPath), LEGACY_RENAME + ext);
 }
 
@@ -233,8 +228,9 @@ function renameTargetFor(shimPath) {
  * uses this to switch from a bare "rename it manually" message to a
  * sudo-aware / admin-aware explanation.
  */
-async function isSystemOwnedDir(shimPath) {
-  if (IS_WINDOWS) {
+export async function isSystemOwnedDir(shimPath, platform = process.platform) {
+  const { dirname } = pathFlavor(platform);
+  if (platform === 'win32') {
     const dir = dirname(shimPath).toLowerCase();
     const systemRoots = [
       'c:\\program files',
@@ -292,8 +288,9 @@ async function canWriteDir(dir) {
  *                        `isSystemPath` so the renderer can suggest
  *                        sudo (POSIX) or admin PowerShell (Windows).
  */
-export async function classifyShim(shimPath) {
-  const target = renameTargetFor(shimPath);
+export async function classifyShim(shimPath, platform = process.platform) {
+  const { dirname } = pathFlavor(platform);
+  const target = renameTargetFor(shimPath, platform);
   const dir = dirname(shimPath);
 
   if (!(await canWriteDir(dir))) {
@@ -301,12 +298,12 @@ export async function classifyShim(shimPath) {
       kind: 'blocked',
       shimPath,
       target,
-      isSystemPath: await isSystemOwnedDir(shimPath),
+      isSystemPath: await isSystemOwnedDir(shimPath, platform),
     };
   }
 
   if (await pathExists(target)) {
-    if (await isLegacyShim(target)) {
+    if (await isLegacyShim(target, platform)) {
       return { kind: 'consolidate', shimPath, target };
     }
     return { kind: 'delete-only', shimPath, target };

@@ -13,10 +13,10 @@ export interface FsSuggestResult {
   readonly truncated: boolean;
 }
 
-export interface FetchWorkspaceFsSuggestOptions {
+export interface FetchFsSuggestOptions {
   readonly baseUrl: string;
   readonly token?: string;
-  readonly workspace: string;
+  readonly roots: readonly string[];
   readonly query: string;
   readonly limit?: number;
   readonly followGitignore?: boolean;
@@ -52,35 +52,27 @@ function parseItem(value: unknown): FsSuggestItem | undefined {
   };
 }
 
-export async function fetchWorkspaceFsSuggest(
-  opts: FetchWorkspaceFsSuggestOptions,
+async function postSuggest(
+  body: Record<string, unknown>,
+  opts: { baseUrl: string; token?: string; fetchImpl?: typeof fetch },
 ): Promise<FsSuggestResult> {
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (opts.token !== undefined && opts.token !== '') {
     headers['authorization'] = `Bearer ${opts.token}`;
   }
   const doFetch = opts.fetchImpl ?? fetch;
-  const res = await doFetch(`${opts.baseUrl.replace(/\/$/, '')}/api/v1/workspace/fs:suggest`, {
+  const res = await doFetch(`${opts.baseUrl.replace(/\/$/, '')}/api/v1/fs:suggest`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({
-      workspace: opts.workspace,
-      query: opts.query,
-      limit: opts.limit,
-      follow_gitignore: opts.followGitignore,
-      show_hidden: opts.showHidden,
-      include_globs: opts.includeGlobs,
-      exclude_globs: opts.excludeGlobs,
-      runtime_id: opts.runtimeId,
-    }),
+    body: JSON.stringify(body),
   });
   const envelope = (await res.json()) as { code: number; msg: string; data: unknown };
   if (envelope.code !== 0) {
-    throw new Error(`workspace fs:suggest failed (${envelope.code}): ${envelope.msg}`);
+    throw new Error(`fs:suggest failed (${envelope.code}): ${envelope.msg}`);
   }
   const data = envelope.data as Record<string, unknown> | null;
   if (data === null || typeof data !== 'object' || !Array.isArray(data['items'])) {
-    throw new Error('workspace fs:suggest: unexpected response shape');
+    throw new Error('fs:suggest: unexpected response shape');
   }
   return {
     items: (data['items'] as unknown[])
@@ -88,4 +80,17 @@ export async function fetchWorkspaceFsSuggest(
       .filter((item): item is FsSuggestItem => item !== undefined),
     truncated: data['truncated'] === true,
   };
+}
+
+export async function fetchFsSuggest(opts: FetchFsSuggestOptions): Promise<FsSuggestResult> {
+  return postSuggest({
+    roots: [...opts.roots],
+    query: opts.query,
+    limit: opts.limit,
+    follow_gitignore: opts.followGitignore,
+    show_hidden: opts.showHidden,
+    include_globs: opts.includeGlobs,
+    exclude_globs: opts.excludeGlobs,
+    runtime_id: opts.runtimeId,
+  }, opts);
 }

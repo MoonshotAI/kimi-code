@@ -4,17 +4,21 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { TestInstantiationService } from '#/_base/di/test';
 import { resetUnexpectedErrorHandler, setUnexpectedErrorHandler } from '#/_base/errors/unexpectedError';
+import { ILogService } from '#/_base/log/log';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
+import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import type { ContentPart } from '#/kosong/contract/message';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService, StorageError, StorageErrors } from '#/persistence/interface/storage';
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
+import { wireJournalBackupKey } from '#/wire/repair';
+import { WireError, WireErrors } from '#/wire/errors';
 import { IWireService } from '#/wire/wire';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
-import { recordingWireLog, registerTestAgentWire, testWireScope } from './stubs';
+import { recordingWireLog, registerTestAgentWire, testWireScope, noopLogger } from './stubs';
 
 const SCOPE = 'wire';
 const KEY = 'journal-test';
@@ -23,14 +27,21 @@ let disposables: DisposableStore;
 let ix: TestInstantiationService;
 let wire: IWireService;
 let log: IAppendLogStore;
+let storage: InMemoryStorageService;
 
 beforeEach(() => {
   disposables = new DisposableStore();
   ix = disposables.add(new TestInstantiationService());
-  ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+  storage = new InMemoryStorageService();
+  ix.stub(IFileSystemStorageService, storage);
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   log = ix.get(IAppendLogStore);
-  wire = registerTestAgentWire(ix, testWireScope(SCOPE, KEY), { log });
+  wire = registerTestAgentWire(ix, testWireScope(SCOPE, KEY), {
+    log,
+    storage,
+    logger: noopLogger,
+    telemetry: noopTelemetryService,
+  });
 });
 
 afterEach(() => disposables.dispose());
@@ -58,7 +69,7 @@ async function collect(journal: AsyncIterable<WireRecord>): Promise<WireRecord[]
 function wireOverLog(
   stubLog: IAppendLogStore,
   key: string,
-  dependencies: { blob?: IAgentBlobService } = {},
+  dependencies: { blob?: IAgentBlobService; storage?: IFileSystemStorageService; telemetry?: ITelemetryService } = {},
 ): IWireService {
   const stubIx = disposables.add(new TestInstantiationService());
   return registerTestAgentWire(stubIx, testWireScope(SCOPE, key), { log: stubLog, ...dependencies });
@@ -219,6 +230,104 @@ describe('WireService appendRecord', () => {
 });
 
 describe('WireService readJournal', () => {
+  it('normalizes legacy plan revision paths and rewrites them as keys', async () => {
+    const telemetryRecords: { event: string; properties: unknown }[] = [];
+    const telemetry = {
+      ...noopTelemetryService,
+      track2: (event: string, properties: unknown) => telemetryRecords.push({ event, properties }),
+    } as unknown as ITelemetryService;
+    const seeded: WireRecord[] = [
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'wire.test.before', value: 1, time: 2 },
+      {
+        type: 'plan.revision',
+        id: 'plan-1',
+        version: 1,
+        path: 'sessions/source/session-1/agents/test-agent/plan/plan-1/v1.md',
+        sha256: 'sha',
+        bytes: 3,
+        time: 2,
+      },
+      { type: 'wire.test.after', value: 2, time: 3 },
+    ];
+    const stubLog = recordingWireLog(seeded);
+    const stub = wireOverLog(stubLog, 'legacy-plan', { telemetry });
+
+    expect(await collect(stub.readJournal())).toEqual([
+      seeded[0],
+      { type: 'wire.test.before', value: 1, time: 2 },
+      {
+        type: 'plan.revision',
+        id: 'plan-1',
+        version: 1,
+        key: 'plan/plan-1/v1.md',
+        sha256: 'sha',
+        bytes: 3,
+        time: 2,
+      },
+      { type: 'wire.test.after', value: 2, time: 3 },
+    ]);
+    expect(telemetryRecords).toEqual([
+      {
+        event: 'wire_plan_revision_migrated',
+        properties: {
+          record_type: 'plan.revision',
+          legacy_field: 'path',
+          migration_outcome: 'migrated',
+        },
+      },
+    ]);
+    expect(await readRecords(stubLog, SCOPE, 'legacy-plan')).toEqual([
+      seeded[0],
+      { type: 'wire.test.before', value: 1, time: 2 },
+      {
+        type: 'plan.revision',
+        id: 'plan-1',
+        version: 1,
+        key: 'plan/plan-1/v1.md',
+        sha256: 'sha',
+        bytes: 3,
+        time: 2,
+      },
+      { type: 'wire.test.after', value: 2, time: 3 },
+    ]);
+  });
+
+  it('skips unsafe legacy plan revision paths and reports the migration outcome', async () => {
+    const telemetryRecords: { event: string; properties: unknown }[] = [];
+    const telemetry = {
+      ...noopTelemetryService,
+      track2: (event: string, properties: unknown) => telemetryRecords.push({ event, properties }),
+    } as unknown as ITelemetryService;
+    const stub = wireOverLog(
+      recordingWireLog([
+        { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+        {
+          type: 'plan.revision',
+          id: 'plan-1',
+          version: 1,
+          path: 'sessions/source/session-1/agents/other-agent/plan/plan-1/v1.md',
+          sha256: 'sha',
+          bytes: 3,
+        },
+      ]),
+      'unsafe-legacy-plan',
+      { telemetry },
+    );
+
+    expect(await collect(stub.readJournal())).toEqual([
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+    ]);
+    expect(telemetryRecords).toContainEqual({
+      event: 'wire_plan_revision_migrated',
+      properties: {
+        record_type: 'plan.revision',
+        legacy_field: 'path',
+        migration_outcome: 'skipped',
+      },
+    });
+  });
+
   it('bootstraps the metadata envelope onto an empty journal', async () => {
     expect(await collect(wire.readJournal())).toEqual([]);
 
@@ -319,6 +428,38 @@ describe('WireService readJournal', () => {
     expect(rewrites).toBe(0);
   });
 
+  it('leaves legacy plan revision paths untouched in a newer-version journal', async () => {
+    const telemetryRecords: { event: string; properties: unknown }[] = [];
+    const telemetry = {
+      ...noopTelemetryService,
+      track2: (event: string, properties: unknown) => telemetryRecords.push({ event, properties }),
+    } as unknown as ITelemetryService;
+    const seeded: WireRecord[] = [
+      { type: 'metadata', protocol_version: '9.9', created_at: 1 },
+      {
+        type: 'plan.revision',
+        id: 'plan-1',
+        version: 1,
+        path: 'sessions/source/session-1/agents/test-agent/plan/plan-1/v1.md',
+        sha256: 'sha',
+        bytes: 3,
+        time: 2,
+      },
+    ];
+    let rewrites = 0;
+    const counting = recordingWireLog(seeded);
+    const rewrite = counting.rewrite.bind(counting);
+    counting.rewrite = async (scope, key, next) => {
+      rewrites += 1;
+      return rewrite(scope, key, next);
+    };
+    const stub = wireOverLog(counting, 'newer-legacy-plan', { telemetry });
+
+    expect(await collect(stub.readJournal())).toEqual(seeded);
+    expect(rewrites).toBe(0);
+    expect(telemetryRecords).toEqual([]);
+  });
+
   it('rejects a malformed metadata envelope as corrupted storage', async () => {
     const stub = wireOverLog(
       recordingWireLog([{ type: 'metadata' }]),
@@ -376,6 +517,395 @@ describe('WireService readJournal', () => {
   });
 });
 
+describe('WireService corruption repair', () => {
+  const enc = new TextEncoder();
+  const dec = new TextDecoder();
+  const BACKUP_KEY = wireJournalBackupKey(AGENT_WIRE_RECORD_KEY);
+
+  interface RepairCapture {
+    readonly warnings: Array<{ message: string; payload?: unknown }>;
+    readonly events: Array<{ name: string; payload: unknown }>;
+  }
+
+  function wireWithCapture(key: string, capture: RepairCapture): IWireService {
+    const logger: ILogService = {
+      _serviceBrand: undefined,
+      level: 'off',
+      error: () => {},
+      warn: (message, payload) => capture.warnings.push({ message, payload }),
+      info: () => {},
+      debug: () => {},
+      child: () => logger,
+      setLevel: () => {},
+      flush: async () => {},
+    };
+    const telemetry: ITelemetryService = {
+      ...noopTelemetryService,
+      track2: ((name: string, payload: unknown) => {
+        capture.events.push({ name, payload });
+      }) as ITelemetryService['track2'],
+    };
+    const localIx = disposables.add(new TestInstantiationService());
+    return registerTestAgentWire(localIx, testWireScope(SCOPE, key), {
+      log,
+      storage,
+      logger,
+      telemetry,
+    });
+  }
+
+  async function rawBytes(key = AGENT_WIRE_RECORD_KEY): Promise<string | undefined> {
+    const bytes = await storage.read(testWireScope(SCOPE, KEY), key);
+    return bytes === undefined ? undefined : dec.decode(bytes);
+  }
+
+  async function seedCorrupt(raw: string): Promise<void> {
+    await storage.write(testWireScope(SCOPE, KEY), AGENT_WIRE_RECORD_KEY, enc.encode(raw));
+  }
+
+  function currentMetadata(createdAt = 1): string {
+    return JSON.stringify({
+      type: 'metadata',
+      protocol_version: WIRE_PROTOCOL_VERSION,
+      created_at: createdAt,
+    });
+  }
+
+  it('heals a torn final line, keeps the valid prefix, and backs up the original bytes', async () => {
+    const valid = `${currentMetadata()}\n${JSON.stringify({ type: 'wire.test.ok', time: 3 })}\n`;
+    const torn = `${JSON.stringify({ type: 'wire.test.torn', time: 4 }).slice(0, 12)}`;
+    await seedCorrupt(valid + torn);
+
+    const yielded = await collect(wire.readJournal());
+
+    expect(yielded).toEqual([
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'wire.test.ok', time: 3 },
+    ]);
+    expect(await rawBytes()).toBe(valid);
+    expect(await rawBytes(BACKUP_KEY)).toBe(valid + torn);
+    expect(await collect(wire.readJournal())).toEqual(yielded);
+  });
+
+  it('truncates at a corrupted middle line, dropping later valid lines', async () => {
+    const prefix = `${currentMetadata()}\n${JSON.stringify({ type: 'wire.test.a', time: 1 })}\n`;
+    const raw = `${prefix}GARBAGE\n${JSON.stringify({ type: 'wire.test.b', time: 2 })}\n`;
+    await seedCorrupt(raw);
+
+    const yielded = await collect(wire.readJournal());
+
+    expect(yielded).toEqual([
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'wire.test.a', time: 1 },
+    ]);
+    expect(await rawBytes()).toBe(prefix);
+    expect(await rawBytes(BACKUP_KEY)).toBe(raw);
+  });
+
+  it('does not surface AppendLogCorruptedError from the restore read path', async () => {
+    await seedCorrupt(`${currentMetadata()}\nGARBAGE\n`);
+
+    await expect(collect(wire.readJournal())).resolves.toEqual([
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+    ]);
+  });
+
+  it('keeps the first backup when the journal corrupts again after a repair', async () => {
+    const first = `${currentMetadata()}\nGARBAGE-1\n`;
+    await seedCorrupt(first);
+    await collect(wire.readJournal());
+    const second = `${currentMetadata()}\nGARBAGE-2\n`;
+    await seedCorrupt(second);
+
+    await collect(wire.readJournal());
+
+    expect(await rawBytes(BACKUP_KEY)).toBe(first);
+  });
+
+  it('repairs through the migration rewrite path when corruption meets an old version', async () => {
+    const legacy = `${JSON.stringify({ type: 'metadata', protocol_version: '1.4', created_at: 1 })}\n`;
+    const raw = `${legacy}${JSON.stringify({ type: 'wire.test.legacy', time: 9 })}\nGARBAGE\n`;
+    await seedCorrupt(raw);
+
+    const yielded = await collect(wire.readJournal());
+
+    expect(yielded).toEqual([
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'wire.test.legacy', time: 9 },
+    ]);
+    expect(await rawBytes()).toBe(
+      `${currentMetadata()}\n${JSON.stringify({ type: 'wire.test.legacy', time: 9 })}\n`,
+    );
+    expect(await rawBytes(BACKUP_KEY)).toBe(raw);
+  });
+
+  it('repairs a corrupted journal that also carries a migratable legacy plan revision', async () => {
+    const legacyPlan = JSON.stringify({
+      type: 'plan.revision',
+      id: 'plan-1',
+      version: 1,
+      path: 'sessions/source/session-1/agents/test-agent/plan/plan-1/v1.md',
+      sha256: 'sha',
+      bytes: 3,
+      time: 2,
+    });
+    const raw = `${currentMetadata()}\n${legacyPlan}\nGARBAGE\n${JSON.stringify({ type: 'wire.test.dropped', time: 3 })}\n`;
+    await seedCorrupt(raw);
+
+    const yielded = await collect(wire.readJournal());
+
+    expect(yielded).toEqual([
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      {
+        type: 'plan.revision',
+        id: 'plan-1',
+        version: 1,
+        sha256: 'sha',
+        bytes: 3,
+        time: 2,
+        key: 'plan/plan-1/v1.md',
+      },
+    ]);
+    expect(await rawBytes()).toBe(
+      `${currentMetadata()}\n${JSON.stringify({
+        type: 'plan.revision',
+        id: 'plan-1',
+        version: 1,
+        sha256: 'sha',
+        bytes: 3,
+        time: 2,
+        key: 'plan/plan-1/v1.md',
+      })}\n`,
+    );
+    expect(await rawBytes(BACKUP_KEY)).toBe(raw);
+  });
+
+  it('reports a corrupted middle line through a warn log and the wire_repair event', async () => {
+    const capture: RepairCapture = { warnings: [], events: [] };
+    const svc = wireWithCapture(KEY, capture);
+    const prefix = `${currentMetadata()}\n${JSON.stringify({ type: 'wire.test.a', time: 1 })}\n`;
+    const raw = `${prefix}GARBAGE\n${JSON.stringify({ type: 'wire.test.b', time: 2 })}\n`;
+    await seedCorrupt(raw);
+
+    await collect(svc.readJournal());
+
+    expect(capture.warnings).toHaveLength(1);
+    expect(capture.warnings[0]!.message).toBe(
+      'corrupted wire journal truncated to its valid prefix',
+    );
+    expect(capture.warnings[0]!.payload).toMatchObject({
+      lineNumber: 3,
+      reason: 'corrupted',
+      outcome: 'repaired',
+      droppedCount: 2,
+      backupCreated: true,
+    });
+    expect(capture.events).toEqual([
+      {
+        name: 'wire_repair',
+        payload: {
+          kind: 'corrupted',
+          outcome: 'repaired',
+          dropped_count: 2,
+          backup_created: true,
+        },
+      },
+    ]);
+  });
+
+  it('reports a torn tail as truncation through the wire_repair event', async () => {
+    const capture: RepairCapture = { warnings: [], events: [] };
+    const svc = wireWithCapture(KEY, capture);
+    const raw = `${currentMetadata()}\n${JSON.stringify({ type: 'wire.test.a' }).slice(0, 10)}`;
+    await seedCorrupt(raw);
+
+    await collect(svc.readJournal());
+
+    expect(capture.events).toEqual([
+      {
+        name: 'wire_repair',
+        payload: {
+          kind: 'truncated',
+          outcome: 'repaired',
+          dropped_count: 1,
+          backup_created: true,
+        },
+      },
+    ]);
+  });
+
+  it('keeps restoring from the valid prefix when the on-disk repair itself fails', async () => {
+    const capture: RepairCapture = { warnings: [], events: [] };
+    const svc = wireWithCapture(KEY, capture);
+    const prefix = `${currentMetadata()}\n`;
+    const raw = `${prefix}GARBAGE\n`;
+    await seedCorrupt(raw);
+    const originalWrite = storage.write.bind(storage);
+    storage.write = async (scope, key, data, options) => {
+      if (key === AGENT_WIRE_RECORD_KEY) throw new Error('disk full');
+      return originalWrite(scope, key, data, options);
+    };
+
+    const yielded = await collect(svc.readJournal());
+
+    expect(yielded).toEqual([
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+    ]);
+    expect(capture.events).toEqual([
+      {
+        name: 'wire_repair',
+        payload: {
+          kind: 'corrupted',
+          outcome: 'failed',
+          dropped_count: 1,
+          backup_created: true,
+        },
+      },
+    ]);
+  });
+
+  it('retries a failed repair before the next append and heals the journal first', async () => {
+    const capture: RepairCapture = { warnings: [], events: [] };
+    const svc = wireWithCapture(KEY, capture);
+    const prefix = `${currentMetadata()}\n`;
+    const raw = `${prefix}GARBAGE\n`;
+    await seedCorrupt(raw);
+    const originalWrite = storage.write.bind(storage);
+    storage.write = async (scope, key, data, options) => {
+      if (key === AGENT_WIRE_RECORD_KEY) throw new Error('disk full');
+      return originalWrite(scope, key, data, options);
+    };
+    await collect(svc.readJournal());
+    storage.write = originalWrite;
+
+    svc.appendRecord({ type: 'wire.test.new', time: 7 });
+    await svc.flush();
+
+    expect(await rawBytes()).toBe(`${prefix}${JSON.stringify({ type: 'wire.test.new', time: 7 })}\n`);
+    expect(await rawBytes(BACKUP_KEY)).toBe(raw);
+    expect(await collect(svc.readJournal())).toEqual([
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'wire.test.new', time: 7 },
+    ]);
+    expect(capture.events).toEqual([
+      {
+        name: 'wire_repair',
+        payload: {
+          kind: 'corrupted',
+          outcome: 'failed',
+          dropped_count: 1,
+          backup_created: true,
+        },
+      },
+      {
+        name: 'wire_repair',
+        payload: {
+          kind: 'corrupted',
+          outcome: 'repaired',
+          dropped_count: 1,
+          backup_created: false,
+        },
+      },
+    ]);
+  });
+
+  it('refuses to append behind the corrupted tail while a failed repair keeps failing', async () => {
+    const capture: RepairCapture = { warnings: [], events: [] };
+    const svc = wireWithCapture(KEY, capture);
+    const prefix = `${currentMetadata()}\n`;
+    const raw = `${prefix}GARBAGE\n`;
+    await seedCorrupt(raw);
+    const originalWrite = storage.write.bind(storage);
+    storage.write = async (scope, key, data, options) => {
+      if (key === AGENT_WIRE_RECORD_KEY) throw new Error('disk full');
+      return originalWrite(scope, key, data, options);
+    };
+    await collect(svc.readJournal());
+
+    const unexpected: unknown[] = [];
+    setUnexpectedErrorHandler((error) => unexpected.push(error));
+    try {
+      svc.appendRecord({ type: 'wire.test.doomed', time: 8 });
+      await expect(svc.flush()).rejects.toThrow('Wire journal repair did not complete');
+
+      expect(await rawBytes()).toBe(raw);
+      expect(unexpected).toHaveLength(1);
+      expect(unexpected[0]).toBeInstanceOf(WireError);
+      expect((unexpected[0] as WireError).code).toBe(WireErrors.codes.RECORDS_WRITE_FAILED);
+      expect(capture.events).toEqual([
+        {
+          name: 'wire_repair',
+          payload: {
+            kind: 'corrupted',
+            outcome: 'failed',
+            dropped_count: 1,
+            backup_created: true,
+          },
+        },
+        {
+          name: 'wire_repair',
+          payload: {
+            kind: 'corrupted',
+            outcome: 'failed',
+            dropped_count: 1,
+            backup_created: false,
+          },
+        },
+      ]);
+    } finally {
+      resetUnexpectedErrorHandler();
+    }
+  });
+
+  it('surfaces the discarded record to flush callers when the repair never reaches the rewrite', async () => {
+    const capture: RepairCapture = { warnings: [], events: [] };
+    const svc = wireWithCapture(KEY, capture);
+    const prefix = `${currentMetadata()}\n`;
+    const raw = `${prefix}GARBAGE\n`;
+    await seedCorrupt(raw);
+    const originalWrite = storage.write.bind(storage);
+    storage.write = async (scope, key, data, options) => {
+      if (key === BACKUP_KEY) throw new Error('disk full');
+      return originalWrite(scope, key, data, options);
+    };
+    await collect(svc.readJournal());
+
+    const unexpected: unknown[] = [];
+    setUnexpectedErrorHandler((error) => unexpected.push(error));
+    try {
+      svc.appendRecord({ type: 'wire.test.doomed', time: 9 });
+      await expect(svc.flush()).rejects.toThrow('Wire journal repair did not complete');
+
+      expect(await rawBytes()).toBe(raw);
+      expect(unexpected).toHaveLength(1);
+      expect(unexpected[0]).toBeInstanceOf(WireError);
+      expect((unexpected[0] as WireError).code).toBe(WireErrors.codes.RECORDS_WRITE_FAILED);
+      expect(capture.events).toEqual([
+        {
+          name: 'wire_repair',
+          payload: {
+            kind: 'corrupted',
+            outcome: 'failed',
+            dropped_count: 1,
+            backup_created: false,
+          },
+        },
+        {
+          name: 'wire_repair',
+          payload: {
+            kind: 'corrupted',
+            outcome: 'failed',
+            dropped_count: 1,
+            backup_created: false,
+          },
+        },
+      ]);
+    } finally {
+      resetUnexpectedErrorHandler();
+    }
+  });
+});
+
 describe('WireService flush', () => {
   it('drains the dehydrate queue before resolving', async () => {
     const records: WireRecord[] = [];
@@ -403,5 +933,71 @@ describe('WireService flush', () => {
     await flushPromise;
     expect(flushed).toBe(true);
     expect(records).toEqual([{ type: 'wire.test.gated', time: 1 }]);
+  });
+});
+
+describe('WireService journal location', () => {
+  it('counts every line written to the journal, including the metadata envelope', async () => {
+    await wire.seal();
+    wire.appendRecord({ type: 'wire.test.one', time: 1 });
+    wire.appendRecord({ type: 'wire.test.two', time: 2 });
+    await wire.flush();
+
+    expect(wire.lineCount()).toBe(3);
+  });
+
+  it('counts dehydrated appends once they land', async () => {
+    await wire.seal();
+    wire.appendRecord({ type: 'wire.test.gated', time: 1 }, async (record) => record);
+    await wire.flush();
+
+    expect(wire.lineCount()).toBe(2);
+  });
+
+  it('recounts the journal lines when a fresh service reads it back', async () => {
+    await wire.seal();
+    wire.appendRecord({ type: 'wire.test.one', time: 1 });
+    wire.appendRecord({ type: 'wire.test.two', time: 2 });
+    await wire.flush();
+
+    const reopened = wireOverLog(log, KEY);
+    expect(reopened.lineCount()).toBe(0);
+    await collect(reopened.readJournal());
+
+    expect(reopened.lineCount()).toBe(3);
+    reopened.appendRecord({ type: 'wire.test.three', time: 3 });
+    await reopened.flush();
+    expect(reopened.lineCount()).toBe(4);
+  });
+
+  it('reports no journal path when the storage has no on-disk location', () => {
+    expect(wire.journalPath()).toBeUndefined();
+  });
+
+  it('tracks the latest context.clear line across appends and reads', async () => {
+    await wire.seal();
+    wire.appendRecord({ type: 'wire.test.one', time: 1 });
+    expect(wire.lastContextClearLine()).toBeUndefined();
+    wire.appendRecord({ type: 'context.clear', time: 2 });
+    wire.appendRecord({ type: 'wire.test.two', time: 3 });
+    await wire.flush();
+
+    expect(wire.lastContextClearLine()).toBe(3);
+
+    const reopened = wireOverLog(log, KEY);
+    expect(reopened.lastContextClearLine()).toBeUndefined();
+    await collect(reopened.readJournal());
+    expect(reopened.lastContextClearLine()).toBe(3);
+  });
+
+  it('reports the on-disk journal path resolved by the storage layer', () => {
+    const locatedStorage: IFileSystemStorageService = Object.assign(Object.create(storage), {
+      pathFor: (scope: string, key: string) => `/home/user/.kimi-code/${scope}/${key}`,
+    }) as IFileSystemStorageService;
+    const located = wireOverLog(log, 'located', { storage: locatedStorage });
+
+    expect(located.journalPath()).toBe(
+      `/home/user/.kimi-code/${testWireScope(SCOPE, 'located')}/${AGENT_WIRE_RECORD_KEY}`,
+    );
   });
 });

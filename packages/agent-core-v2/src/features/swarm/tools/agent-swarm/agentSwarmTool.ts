@@ -12,6 +12,7 @@ import { ISessionSwarmService, type SessionSwarmTask } from '#/features/swarm/se
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
+import { resolveSwarmTimeoutMs } from '#/features/swarm/configSection';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import {
   FORK_EXPERIMENTAL_UNAVAILABLE,
@@ -23,7 +24,6 @@ import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
 import {
   buildSubagentModelDescriptions,
   exposesSubagentModelChoice,
-  resolveSubagentTimeoutMs,
   stripSubagentForkParameter,
   stripSubagentModelParameter,
 } from '#/session/subagent/configSection';
@@ -65,6 +65,7 @@ interface SwarmRunResult {
   readonly status: 'completed' | 'failed' | 'aborted';
   readonly state?: 'started' | 'not_started';
   readonly result?: string;
+  readonly stopReason?: string;
   readonly error?: string;
 }
 
@@ -172,7 +173,7 @@ export class AgentSwarmTool implements IAgentSwarmTool {
       });
     }
     const profileName = plan?.profileName ?? DEFAULT_SUBAGENT_TYPE;
-    const timeoutMs = resolveSubagentTimeoutMs(this.config);
+    const timeoutMs = resolveSwarmTimeoutMs(this.config);
     const specs = await createAgentSwarmSpecs(args, (agentId) =>
       this.swarmService.getSwarmItem({ callerAgentId: this.callerAgentId, agentId }),
     );
@@ -301,7 +302,7 @@ function renderSwarmResults(results: readonly SwarmRunResult[]): string {
   const failed = results.filter((result) => result.status === 'failed').length;
   const aborted = results.filter((result) => result.status === 'aborted').length;
   const shouldRenderResumeHint =
-    results.some((result) => result.status !== 'completed') &&
+    results.some((result) => result.status !== 'completed' || result.stopReason !== undefined) &&
     results.some((result) => result.agentId !== undefined);
   const lines = [
     '<agent_swarm_result>',
@@ -319,9 +320,11 @@ function renderSwarmResults(results: readonly SwarmRunResult[]): string {
     const mode = result.spec.kind === 'resume' ? ' mode="resume"' : '';
     const item = result.spec.item === undefined ? '' : ` item="${escapeXmlAttribute(result.spec.item)}"`;
     const state = result.state === undefined ? '' : ` state="${result.state}"`;
+    const stopReason =
+      result.stopReason === undefined ? '' : ` stop_reason="${escapeXmlAttribute(result.stopReason)}"`;
     const body = result.status === 'completed' ? (result.result ?? '') : (result.error ?? 'unknown error');
     lines.push(
-      `<subagent${mode}${agentId}${item}${state} outcome="${result.status}">${body}</subagent>`,
+      `<subagent${mode}${agentId}${item}${state} outcome="${result.status}"${stopReason}>${body}</subagent>`,
     );
   }
 

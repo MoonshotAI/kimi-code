@@ -1,4 +1,5 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { Event } from '#/_base/event';
 
 import type { Workspace } from './workspace';
 
@@ -22,6 +23,8 @@ export interface WorkspaceCatalog {
 
 export interface IWorkspacePersistence {
   readonly _serviceBrand: undefined;
+
+  readonly onDidChange: Event<void>;
 
   load(): Promise<WorkspaceCatalog | undefined>;
   save(catalog: WorkspaceCatalog): Promise<void>;

@@ -1,5 +1,17 @@
 # @moonshot-ai/agent-core-v2
 
+## 0.4.3
+
+### Patch Changes
+
+- [#3341](https://github.com/MoonshotAI/kimi-code/pull/3341) [`9fa1e77`](https://github.com/MoonshotAI/kimi-code/commit/9fa1e77df5794cebaa3eb09d01bbe174d55e5a28) Thanks [@7Sageer](https://github.com/7Sageer)! - Remove the `${now}` variable from the system prompt template variable table.
+
+## 0.4.2
+
+### Patch Changes
+
+- [#3289](https://github.com/MoonshotAI/kimi-code/pull/3289) [`f143130`](https://github.com/MoonshotAI/kimi-code/commit/f143130c072e9dba8d60ef40c49d4305b93ab2fe) Thanks [@liruifengv](https://github.com/liruifengv)! - Carry the orchestrator's prompt on subagent turns: `isDisplayablePromptOrigin` now accepts `system_trigger/subagent`, so live `turn.started` events include the prompt, and cold rebuild folds the opening input (text and attachments) into turns opened by subagent run messages. Other system triggers (goal_continuation, stop_hook, loadable-tools) remain promptless.
+
 ## 0.4.1
 
 ### Patch Changes

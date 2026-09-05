@@ -13,7 +13,7 @@ import {
   userCancellationReason,
 } from '#/_base/utils/abort';
 import { setClampedTimeout } from '#/_base/utils/timer';
-import { escapeXml, escapeXmlAttr } from '#/_base/utils/xml-escape';
+import { escapeXml, escapeXmlAttr, escapeXmlTags } from '#/_base/utils/xml-escape';
 import { IEventBus } from '#/app/event/eventBus';
 import { Error2, ErrorCodes } from '#/errors';
 import { z } from 'zod';
@@ -25,7 +25,7 @@ import '#/agent/contextMemory/conversationTime';
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ContextMessage, TaskOrigin } from '#/agent/contextMemory/types';
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { MessageStepRequest } from '#/agent/loop/stepRequest';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -163,7 +163,9 @@ const SIGTERM_GRACE_MS = 5_000;
 const TASK_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
 const SESSION_CLOSED_REASON = 'Session closed';
 const NOTIFICATION_FALLBACK_PREVIEW_BYTES = 3_000;
+const QUESTION_ANSWER_INLINE_BYTES = 16_000;
 const ACTIVE_BACKGROUND_TASK_INJECTION_VARIANT = 'background_task_status';
+const TASK_RESUME_TERMINATION_VARIANT = 'task_resume_termination';
 const ACTIVE_BACKGROUND_TASK_GUIDANCE = [
   'The conversation was compacted, so the earlier messages that started these background tasks are gone — but the tasks are still running from before.',
   'Do not start duplicates. Use TaskList to list them, TaskOutput for a non-blocking status/output snapshot, and TaskStop to cancel one — completion arrives via automatic notification.',
@@ -238,7 +240,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @ITaskService private readonly taskService: ITaskService,
     @IEventBus private readonly eventBus: IEventBus,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-    @IAgentContextInjectorService injector: IAgentContextInjectorService,
+    @IAgentReminderService private readonly reminder: IAgentReminderService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentConversationUndoParticipantRegistry
     undoParticipants: IAgentConversationUndoParticipantRegistry,
@@ -291,7 +293,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       }),
     );
     this._register(
-      injector.register(ACTIVE_BACKGROUND_TASK_INJECTION_VARIANT, () =>
+      this.reminder.register(ACTIVE_BACKGROUND_TASK_INJECTION_VARIANT, () =>
         this.activeBackgroundTaskReminder(),
       ),
     );
@@ -557,6 +559,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     for (const info of lostTasks) {
       this.recordTaskTerminated(info);
     }
+    this.appendPreviousSessionTasksReminder();
     await this.restoreAgentTaskNotifications();
     return lostTasks;
   }
@@ -797,10 +800,17 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   async stopAllOnExit(reason: string): Promise<readonly AgentTaskInfo[]> {
     if (this.keepAliveOnExit()) return [];
     const active = this.list(true);
-    await Promise.all(
+    await Promise.allSettled(
       active
         .filter((task) => task.detached === true)
-        .map((task) => this.suppressTerminalNotification(task.taskId)),
+        .map((task) =>
+          this.suppressTerminalNotification(task.taskId).catch((error: unknown) => {
+            this.log.error('terminal notification suppression failed', {
+              taskId: task.taskId,
+              error,
+            });
+          }),
+        ),
     );
     return this.stopAll(reason);
   }
@@ -1133,8 +1143,97 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   private async restoreAgentTaskNotificationsNow(): Promise<void> {
     for (const info of this.list(false)) {
       if (!isAgentTaskTerminal(info.status)) continue;
+      if (info.status === 'lost') continue;
       await this.restoreAgentTaskNotification(info);
     }
+  }
+
+  private appendPreviousSessionTasksReminder(): void {
+    const tasks: AgentTaskInfo[] = [];
+    for (const info of this.ghosts.values()) {
+      if (info.resumeReminded === true) continue;
+      if (!isPreviousSessionTermination(info)) continue;
+      if (
+        this.hasPreviousSessionReminder(info.taskId) ||
+        (info.status === 'lost' && this.hasDeliveredTaskOrigin(info))
+      ) {
+        this.persistPreviousSessionReminderMarker(info);
+        continue;
+      }
+      tasks.push(info);
+    }
+    if (tasks.length === 0) return;
+    const lines = tasks.map((info) => previousSessionTaskLine(info));
+    this.reminder.notify(
+      [
+        'The user exited the application after your last turn, so your background tasks from the previous session lost contact:',
+        ...lines,
+        "Don't assume any of them completed; check current state (they may still be running), then re-run or resume only what you still need.",
+      ].join('\n'),
+      { variant: TASK_RESUME_TERMINATION_VARIANT },
+    );
+    for (const info of tasks) {
+      this.firePreviousSessionLostTaskNotificationHook(info);
+      this.persistPreviousSessionReminderMarker(info);
+    }
+  }
+
+  private hasPreviousSessionReminder(taskId: string): boolean {
+    const taskLinePrefix = `- ${taskId} "`;
+    return this.context.get().some((message) => {
+      if (
+        message.origin?.kind !== 'injection' ||
+        message.origin.variant !== TASK_RESUME_TERMINATION_VARIANT
+      ) {
+        return false;
+      }
+      return message.content.some(
+        (part) =>
+          part.type === 'text' &&
+          part.text.split('\n').some((line) => line.startsWith(taskLinePrefix)),
+      );
+    });
+  }
+
+  private hasDeliveredTaskOrigin(info: AgentTaskInfo): boolean {
+    const origin: TaskNotificationOrigin = {
+      taskId: info.taskId,
+      status: info.status,
+      notificationId: taskNotificationId(info.taskId, info.status),
+    };
+    const key = notificationKey(origin);
+    return (
+      this.states.get(taskNotificationDeliveryKey).includes(key) ||
+      this.deliveredNotificationKeys.has(key) ||
+      this.hasDeliveredNotification(key)
+    );
+  }
+
+  private persistPreviousSessionReminderMarker(info: AgentTaskInfo): void {
+    const marked: AgentTaskInfo = { ...info, resumeReminded: true };
+    this.ghosts.set(info.taskId, marked);
+    void this.persistence.writeTask(marked).catch((error: unknown) => {
+      this.log.error('previous-session task reminder marker write failed', {
+        taskId: info.taskId,
+        error,
+      });
+    });
+  }
+
+  private firePreviousSessionLostTaskNotificationHook(info: AgentTaskInfo): void {
+    if (info.status !== 'lost') return;
+    if (info.detached === false) return;
+    if (info.terminalNotificationSuppressed === true) return;
+    const origin: TaskNotificationOrigin = {
+      taskId: info.taskId,
+      status: info.status,
+      notificationId: taskNotificationId(info.taskId, info.status),
+    };
+    const key = notificationKey(origin);
+    if (this.scheduledNotificationKeys.has(key)) return;
+    if (this.deliveredNotificationKeys.has(key)) return;
+    if (this.hasDeliveredNotification(key)) return;
+    this.fireNotificationHook(buildAgentTaskNotification(info));
   }
 
   private async restoreAgentTaskNotification(info: AgentTaskInfo): Promise<void> {
@@ -1169,10 +1268,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     try {
       let output = emptyOutputSnapshot();
       try {
-        output = await this.getOutputSnapshot(info.taskId, 0);
-        if (!output.fullOutputAvailable) {
-          output = await this.getOutputSnapshot(info.taskId, NOTIFICATION_FALLBACK_PREVIEW_BYTES);
-        }
+        output = await this.notificationOutputSnapshot(info);
       } catch (error) {
         this.log.error('task notification output read failed; delivering without output', {
           taskId: info.taskId,
@@ -1184,18 +1280,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       if (this.deliveredNotificationKeys.has(key)) return undefined;
       if (this.hasDeliveredNotification(key)) return undefined;
       this.scheduledNotificationKeys.add(key);
-      const notification: AgentTaskNotification = {
-        id: origin.notificationId,
-        category: 'task',
-        type: `task.${info.status}`,
-        source_kind: 'background_task',
-        source_id: info.taskId,
-        agent_id: info.kind === 'agent' ? info.agentId : undefined,
-        title: `Background ${info.kind} ${info.status}`,
-        severity: info.status === 'completed' ? 'info' : 'warning',
-        body: buildAgentTaskNotificationBody(info),
-        children: agentTaskNotificationChildren(output),
-      };
+      const notification = buildAgentTaskNotification(info, output);
       const content = [
         {
           type: 'text',
@@ -1206,6 +1291,15 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     } finally {
       this.buildingNotificationKeys.delete(key);
     }
+  }
+
+  private async notificationOutputSnapshot(info: AgentTaskInfo): Promise<AgentTaskOutputSnapshot> {
+    if (info.kind === 'question') {
+      return this.getOutputSnapshot(info.taskId, QUESTION_ANSWER_INLINE_BYTES);
+    }
+    const persisted = await this.getOutputSnapshot(info.taskId, 0);
+    if (persisted.fullOutputAvailable) return persisted;
+    return this.getOutputSnapshot(info.taskId, NOTIFICATION_FALLBACK_PREVIEW_BYTES);
   }
 
   private fireNotificationHook(notification: AgentTaskNotification): void {
@@ -1306,13 +1400,62 @@ function emptyOutputSnapshot(): AgentTaskOutputSnapshot {
 }
 
 function agentTaskNotificationChildren(
-  output: AgentTaskOutputSnapshot,
+  info: AgentTaskInfo,
+  output: AgentTaskOutputSnapshot | undefined,
 ): readonly string[] | undefined {
+  if (output === undefined) return undefined;
+  if (inlinesQuestionAnswer(info, output)) {
+    return output.preview.length === 0 ? undefined : [renderAnswerBlock(output.preview)];
+  }
   if (output.fullOutputAvailable && output.outputPath !== undefined) {
     return [renderOutputFileBlock(output.outputPath, output.outputSizeBytes)];
   }
   if (output.preview.length === 0) return undefined;
   return [renderOutputPreviewBlock(output)];
+}
+
+function inlinesQuestionAnswer(info: AgentTaskInfo, output: AgentTaskOutputSnapshot): boolean {
+  return info.kind === 'question' && !output.truncated;
+}
+
+function renderAnswerBlock(answer: string): string {
+  return ['<answer>', escapeXmlTags(answer), '</answer>'].join('\n');
+}
+
+function questionNotificationText(
+  info: AgentTaskInfo,
+  output: AgentTaskOutputSnapshot | undefined,
+): { readonly title: string; readonly body: string } | undefined {
+  if (info.status !== 'completed' || output === undefined || !inlinesQuestionAnswer(info, output)) {
+    return undefined;
+  }
+  const outcome = questionOutcome(output.preview);
+  if (outcome === 'answered') {
+    return {
+      title: 'Background question answered',
+      body: `The user answered "${info.description}".`,
+    };
+  }
+  if (outcome === 'dismissed') {
+    return {
+      title: 'Background question dismissed',
+      body: `The user dismissed "${info.description}" without answering.`,
+    };
+  }
+  return undefined;
+}
+
+function questionOutcome(output: string): 'answered' | 'dismissed' | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return undefined;
+  const answers = (parsed as { readonly answers?: unknown }).answers;
+  if (typeof answers !== 'object' || answers === null || Array.isArray(answers)) return undefined;
+  return Object.keys(answers).length > 0 ? 'answered' : 'dismissed';
 }
 
 function renderOutputFileBlock(outputPath: string, outputSizeBytes: number): string {
@@ -1419,6 +1562,25 @@ function buildAgentTaskNotificationBody(info: AgentTaskInfo): string {
   return `${baseLine}${recovery}`;
 }
 
+function buildAgentTaskNotification(
+  info: AgentTaskInfo,
+  output?: AgentTaskOutputSnapshot,
+): AgentTaskNotification {
+  const question = questionNotificationText(info, output);
+  return {
+    id: taskNotificationId(info.taskId, info.status),
+    category: 'task',
+    type: `task.${info.status}`,
+    source_kind: 'background_task',
+    source_id: info.taskId,
+    agent_id: info.kind === 'agent' ? info.agentId : undefined,
+    title: question?.title ?? `Background ${info.kind} ${info.status}`,
+    severity: info.status === 'completed' ? 'info' : 'warning',
+    body: question?.body ?? buildAgentTaskNotificationBody(info),
+    children: agentTaskNotificationChildren(info, output),
+  };
+}
+
 function generateTaskId(kind: string): string {
   const bytes = randomBytes(8);
   let suffix = '';
@@ -1448,6 +1610,22 @@ function createForegroundRelease(): ForegroundRelease {
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function previousSessionTaskLine(info: AgentTaskInfo): string {
+  if (info.kind === 'agent' && info.agentId !== undefined) {
+    return `- ${info.taskId} "${info.description}" (subagent) — resume it with Agent(resume="${info.agentId}", prompt="Pick up where you left off; redo the last tool call if its result was never observed.") to continue from its prior context.`;
+  }
+  return `- ${info.taskId} "${info.description}" (${info.kind === 'process' ? 'bash' : info.kind})`;
+}
+
+function isPreviousSessionTermination(info: AgentTaskInfo): boolean {
+  if (info.status === 'lost') return true;
+  return (
+    info.status === 'killed' &&
+    info.terminalNotificationSuppressed === true &&
+    info.stopReason === SESSION_CLOSED_REASON
+  );
 }
 
 registerScopedService(

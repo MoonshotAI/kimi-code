@@ -32,20 +32,11 @@ export interface RouteHost {
 }
 
 export interface ServiceDispatcherRouteOptions {
-  /** Per-call deadline in ms. Default 30s. */
   readonly callTimeoutMs?: number;
-  /** Channel name → identifier resolution. Default: the full scoped DI registry. */
   readonly lookup?: ChannelLookup;
-  /** Descriptor source for `GET {basePath}/channels`. Default: every scoped Service. */
   readonly describe?: () => readonly ChannelDescriptor[];
 }
 
-/**
- * Mount the reflection dispatcher under `basePath` (e.g. `/debug` inside the
- * prefixed `/api/v1` plugin): the three scope routes plus
- * `GET {basePath}/channels` for introspection. `channels` is a single segment,
- * so it cannot collide with `:service/:method`.
- */
 export function registerServiceDispatcherRoutes(
   app: RouteHost,
   core: Scope,

@@ -15,7 +15,7 @@ import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { ISessionInteractionService } from '#/session/interaction/interaction';
+import { IAgentInteractionService } from '#/features/interaction/interactionService';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
@@ -65,14 +65,11 @@ function createProfileStub(activeToolNames?: readonly string[]): IAgentProfileSe
   } as unknown as IAgentProfileService & ProfileStub;
 }
 
-function createInteractionStub(): ISessionInteractionService {
+function createInteractionStub(): IAgentInteractionService {
   return {
-    _serviceBrand: undefined,
     request: () => Promise.reject(new Error('not exercised')),
-    respond: () => undefined,
-    onDidResolve: () => ({ dispose: () => undefined }),
-    onDidChangePending: () => ({ dispose: () => undefined }),
-  } as unknown as ISessionInteractionService;
+    respond: () => false,
+  } as unknown as IAgentInteractionService;
 }
 
 let disposables: DisposableStore;
@@ -93,7 +90,7 @@ beforeEach(() => {
   ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
   profile = createProfileStub();
   ix.stub(IAgentProfileService, profile);
-  ix.stub(ISessionInteractionService, createInteractionStub());
+  
   ix.set(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));
   log = ix.get(IAppendLogStore);
   registerTestAgentWire(ix, testWireScope(SCOPE, KEY), { log });
@@ -192,7 +189,7 @@ describe('AgentUserToolService (wire-backed)', () => {
     ixChild.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     const childProfile = createProfileStub();
     ixChild.stub(IAgentProfileService, childProfile);
-    ixChild.stub(ISessionInteractionService, createInteractionStub());
+    ixChild.stub(IAgentInteractionService, createInteractionStub());
     ixChild.set(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));
 
     registerTestAgentWire(ixChild, testWireScope(SCOPE, 'user-tool-child'), {
@@ -237,7 +234,7 @@ describe('AgentUserToolService (wire-backed)', () => {
     ixChild.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     const childProfile = createProfileStub([]);
     ixChild.stub(IAgentProfileService, childProfile);
-    ixChild.stub(ISessionInteractionService, createInteractionStub());
+    ixChild.stub(IAgentInteractionService, createInteractionStub());
     ixChild.set(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));
     registerTestAgentWire(ixChild, testWireScope(SCOPE, 'inactive-user-tool-child'), {
       log: ixChild.get(IAppendLogStore),
@@ -265,19 +262,17 @@ describe('AgentUserToolService (wire-backed)', () => {
     const responses: { id: string; response: unknown }[] = [];
     let settle: ((result: unknown) => void) | undefined;
     const interactionStub = {
-      _serviceBrand: undefined,
-      request: (req: { id?: string; kind: string; payload: unknown }) => {
+      request: ((req: { id?: string; kind: string; payload: unknown }) => {
         parked.push({ id: req.id, kind: req.kind, payload: req.payload });
-        return new Promise((resolve) => {
+        return new Promise<unknown>((resolve) => {
           settle = resolve;
         });
-      },
+      }) as IAgentInteractionService['request'],
       respond: (id: string, response: unknown) => {
         responses.push({ id, response });
+        return true;
       },
-      onDidResolve: () => ({ dispose: () => undefined }),
-      onDidChangePending: () => ({ dispose: () => undefined }),
-    } as unknown as ISessionInteractionService;
+    } as unknown as IAgentInteractionService;
 
     const ixExec = disposables.add(new TestInstantiationService());
     ixExec.stub(IFileSystemStorageService, new InMemoryStorageService());
@@ -285,7 +280,7 @@ describe('AgentUserToolService (wire-backed)', () => {
     ixExec.set(IAgentStateService, new AgentStateService());
     ixExec.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     ixExec.stub(IAgentProfileService, createProfileStub());
-    ixExec.stub(ISessionInteractionService, interactionStub);
+    ixExec.stub(IAgentInteractionService, interactionStub);
     ixExec.set(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));
     registerTestAgentWire(ixExec, testWireScope(SCOPE, 'user-tool-exec'), {
       log: ixExec.get(IAppendLogStore),
@@ -359,7 +354,7 @@ describe('AgentUserToolService (wire-backed)', () => {
     ix2.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     const profile2 = createProfileStub();
     ix2.stub(IAgentProfileService, profile2);
-    ix2.stub(ISessionInteractionService, createInteractionStub());
+    ix2.stub(IAgentInteractionService, createInteractionStub());
     ix2.set(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));
 
     registerTestAgentWire(ix2, testWireScope(SCOPE, 'user-tool-replay'), {

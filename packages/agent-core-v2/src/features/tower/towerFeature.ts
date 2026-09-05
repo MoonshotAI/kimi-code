@@ -82,13 +82,6 @@ export class TowerFeature extends Feature {
 const assembledFlagServices = new WeakSet<IFlagService>();
 let assembledOverrideForTests: boolean | undefined;
 
-/**
- * Whether the App scope owning `flags` ran its tower feature assembly with
- * the flag on. A live `/experiments` flip does not re-assemble features, so
- * until a restart the tower tools/profile do not exist and the mode
- * machinery must stay inert. Keyed per App scope (via its flag service) so
- * coexisting Apps in one process do not leak assembly state into each other.
- */
 export function isTowerFeatureAssembled(flags: IFlagService): boolean {
   return assembledOverrideForTests ?? assembledFlagServices.has(flags);
 }

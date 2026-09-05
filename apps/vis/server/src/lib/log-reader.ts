@@ -30,10 +30,11 @@ export interface LogReadResult {
  * Discover a base log file plus its rotated siblings (`<base>`, `<base>.1`,
  * `<base>.2`, …) in chronological order, oldest first.
  *
- * agent-core rotates by renaming the active file to `.1` and bumping older
- * archives to higher numbers (`sinks.ts` rotate()), so the un-suffixed file is
- * newest and `.N` is oldest. A bundle whose active log has already rotated
- * away may contain only `<base>.1`, etc. — which the Logs tab must still find.
+ * The engine rotates by renaming the active file to `.1` and bumping older
+ * archives to higher numbers (`_base/log/fileLog.ts` rotate()), so the
+ * un-suffixed file is newest and `.N` is oldest. A bundle whose active log
+ * has already rotated away may contain only `<base>.1`, etc. — which the
+ * Logs tab must still find.
  */
 export async function discoverLogFiles(baseLogPath: string): Promise<string[]> {
   const dir = dirname(baseLogPath);

@@ -19,6 +19,7 @@ import { modelDisplayName, segmentsFor } from '../components/dialogs/model-selec
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
 import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
+import { SurveyPreferenceSelectorComponent } from '../components/dialogs/survey-preference-selector';
 import { ThemeSelectorComponent } from '../components/dialogs/theme-selector';
 import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-preference-selector';
 import { DEFAULT_TUI_CONFIG, saveTuiConfig, type TuiConfig } from '../config';
@@ -26,6 +27,7 @@ import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
+import { PERMISSION_MODE_DESCRIPTIONS, PERMISSION_MODE_DISPLAY_NAMES } from '../utils/permission-mode';
 import { thinkingEffortToConfig } from '../utils/thinking-config';
 import { showUsage } from './info';
 import { setExperimentalFeatures } from './experimental-flags';
@@ -59,6 +61,8 @@ export function currentTuiConfig(host: Pick<SlashCommandHost, 'state'>): TuiConf
     disablePasteBurst: host.state.appState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
     renderLatex: host.state.appState.renderLatex ?? DEFAULT_TUI_CONFIG.renderLatex ?? true,
     cacheExpiryHint: host.state.appState.cacheExpiryHint ?? DEFAULT_TUI_CONFIG.cacheExpiryHint,
+    disableFeedbackSurvey:
+      host.state.appState.disableFeedbackSurvey ?? DEFAULT_TUI_CONFIG.disableFeedbackSurvey,
     notifications: host.state.appState.notifications,
     upgrade: host.state.appState.upgrade,
     statusLine: host.state.appState.statusLine ?? DEFAULT_TUI_CONFIG.statusLine,
@@ -122,98 +126,6 @@ async function applyPlanMode(host: SlashCommandHost, session: Session, enabled: 
   } catch (error) {
     const msg = formatErrorMessage(error);
     host.showError(`Failed to set plan mode: ${msg}`);
-  }
-}
-
-export async function handleYoloCommand(host: SlashCommandHost, args: string): Promise<void> {
-  const session = host.session;
-  if (session === undefined && !host.engineV2) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
-    return;
-  }
-  // v2 session-less: the chosen mode is recorded in appState and passed to the
-  // lazy-created session; apply the runtime permission only when one exists.
-
-  const subcmd = args.trim().toLowerCase();
-  const currentMode = host.state.appState.permissionMode;
-
-  if (subcmd === 'on') {
-    if (currentMode === 'yolo') {
-      host.showNotice('YOLO mode is already on');
-      return;
-    }
-    await session?.setPermission('yolo');
-    host.setAppState({ permissionMode: 'yolo' });
-    host.showNotice('YOLO mode: ON', 'Tool actions auto-approved; the agent may still ask you questions.');
-    return;
-  }
-
-  if (subcmd === 'off') {
-    if (currentMode !== 'yolo') {
-      host.showNotice('YOLO mode is already off');
-      return;
-    }
-    await session?.setPermission('manual');
-    host.setAppState({ permissionMode: 'manual' });
-    host.showNotice('YOLO mode: OFF');
-    return;
-  }
-
-  // toggle
-  if (currentMode === 'yolo') {
-    await session?.setPermission('manual');
-    host.setAppState({ permissionMode: 'manual' });
-    host.showNotice('YOLO mode: OFF');
-  } else {
-    await session?.setPermission('yolo');
-    host.setAppState({ permissionMode: 'yolo' });
-    host.showNotice('YOLO mode: ON', 'Tool actions auto-approved; the agent may still ask you questions.');
-  }
-}
-
-export async function handleAutoCommand(host: SlashCommandHost, args: string): Promise<void> {
-  const session = host.session;
-  if (session === undefined && !host.engineV2) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
-    return;
-  }
-  // v2 session-less: the chosen mode is recorded in appState and passed to the
-  // lazy-created session; apply the runtime permission only when one exists.
-
-  const subcmd = args.trim().toLowerCase();
-  const currentMode = host.state.appState.permissionMode;
-
-  if (subcmd === 'on') {
-    if (currentMode === 'auto') {
-      host.showNotice('Auto mode is already on');
-      return;
-    }
-    await session?.setPermission('auto');
-    host.setAppState({ permissionMode: 'auto' });
-    host.showNotice('Auto mode: ON', 'All actions auto-approved; the agent will not ask you questions.');
-    return;
-  }
-
-  if (subcmd === 'off') {
-    if (currentMode !== 'auto') {
-      host.showNotice('Auto mode is already off');
-      return;
-    }
-    await session?.setPermission('manual');
-    host.setAppState({ permissionMode: 'manual' });
-    host.showNotice('Auto mode: OFF');
-    return;
-  }
-
-  // toggle
-  if (currentMode === 'auto') {
-    await session?.setPermission('manual');
-    host.setAppState({ permissionMode: 'manual' });
-    host.showNotice('Auto mode: OFF');
-  } else {
-    await session?.setPermission('auto');
-    host.setAppState({ permissionMode: 'auto' });
-    host.showNotice('Auto mode: ON', 'All actions auto-approved; the agent will not ask you questions.');
   }
 }
 
@@ -597,7 +509,7 @@ async function persistModelSelection(
   const model = host.state.appState.availableModels[alias];
   const full = thinkingEffortToConfig(
     effort,
-    model === undefined ? undefined : effectiveModelForHost(host, model).supportEfforts,
+    model === undefined ? undefined : effectiveModelForHost(host, model),
   );
   // Re-confirming the effort shown when the picker opened is not an explicit
   // choice — persist the model but leave the stored effort preference alone.
@@ -734,10 +646,11 @@ async function applyThemeChoice(host: SlashCommandHost, theme: ThemeName): Promi
   host.showStatus(`Theme set to "${theme}"${detail}.`);
 }
 
-export function showPermissionPicker(host: SlashCommandHost): void {
+export function showPermissionPicker(host: SlashCommandHost, initialMode?: PermissionMode): void {
   host.mountEditorReplacement(
     new PermissionSelectorComponent({
       currentValue: host.state.appState.permissionMode,
+      initialValue: initialMode,
       onSelect: (value) => {
         host.restoreEditor();
         void applyPermissionChoice(host, value);
@@ -799,9 +712,9 @@ export async function applyExperimentalFeatureChanges(
     host.refreshSlashCommandAutocomplete();
     host.restoreEditor();
     if (host.session !== undefined) {
-      await host.session.reloadSession();
+      const reloadedSession = await host.harness.reloadSession({ id: host.session.id });
       await host.reloadCurrentSessionView(
-        host.session,
+        reloadedSession,
         'Experimental features updated. Session reloaded.',
       );
     } else {
@@ -813,7 +726,14 @@ export async function applyExperimentalFeatureChanges(
       // them; only the mode machinery (enter/injection/guards) reacts live.
       host.showNotice('Tower mode takes effect after restarting Kimi Code.');
     }
-    host.track('experimental_features_apply', { changed: changes.length });
+    host.track('experimental_features_apply', {
+      changed: changes.length,
+      flags: features
+        .filter((feature) => feature.enabled)
+        .map((feature) => feature.id)
+        .toSorted()
+        .join(','),
+    });
   } catch (error) {
     host.showError(`Failed to update experimental features: ${formatErrorMessage(error)}`);
   }
@@ -878,7 +798,7 @@ export async function applyUpdatePreferenceChoice(
 
 async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMode): Promise<void> {
   if (mode === host.state.appState.permissionMode) {
-    host.showStatus(`Permission mode unchanged: ${mode}.`);
+    host.showStatus(`Permission mode unchanged: ${PERMISSION_MODE_DISPLAY_NAMES[mode]}.`);
     return;
   }
 
@@ -898,7 +818,65 @@ async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMod
   }
 
   host.setAppState({ permissionMode: mode });
-  host.showNotice(`Permission mode: ${mode}`);
+  host.showNotice(`Permission mode: ${PERMISSION_MODE_DISPLAY_NAMES[mode]}`);
+  if (mode !== 'manual') {
+    host.showStatus(PERMISSION_MODE_DESCRIPTIONS[mode], 'warning');
+  }
+}
+
+export function showSurveyPreferencePicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new SurveyPreferenceSelectorComponent({
+      currentValue: host.state.appState.disableFeedbackSurvey !== true,
+      onSelect: (value) => {
+        host.restoreEditor();
+        void applySurveyPreferenceChoice(host, value);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+type SurveyPreferenceHost = {
+  readonly state: {
+    readonly appState: Pick<
+      SlashCommandHost['state']['appState'],
+      'theme' | 'editorCommand' | 'notifications' | 'upgrade' | 'disableFeedbackSurvey'
+    >;
+  };
+  setAppState(
+    patch: Pick<SlashCommandHost['state']['appState'], 'disableFeedbackSurvey'>,
+  ): void;
+  showStatus(msg: string, color?: string): void;
+};
+
+export async function applySurveyPreferenceChoice(
+  host: SurveyPreferenceHost,
+  enabled: boolean,
+): Promise<void> {
+  const disableFeedbackSurvey = !enabled;
+  if (disableFeedbackSurvey === (host.state.appState.disableFeedbackSurvey === true)) {
+    host.showStatus(`Feedback survey already ${enabled ? 'enabled' : 'disabled'}.`);
+    return;
+  }
+
+  try {
+    await saveTuiConfig({
+      ...currentTuiConfig(host as unknown as SlashCommandHost),
+      disableFeedbackSurvey,
+    });
+  } catch (error) {
+    host.showStatus(
+      `Failed to save session rating setting: ${formatErrorMessage(error)}`,
+      'error',
+    );
+    return;
+  }
+
+  host.setAppState({ disableFeedbackSurvey });
+  host.showStatus(`Feedback survey ${enabled ? 'enabled' : 'disabled'}.`);
 }
 
 export function showSettingsSelector(host: SlashCommandHost): void {
@@ -921,6 +899,7 @@ function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelectio
     case 'permission': showPermissionPicker(host); return;
     case 'theme': showThemePicker(host); return;
     case 'editor': showEditorPicker(host); return;
+    case 'survey': showSurveyPreferencePicker(host); return;
     case 'experiments': void showExperimentsPanel(host); return;
     case 'upgrade': showUpdatePreferencePicker(host); return;
     case 'usage': void showUsage(host); return;

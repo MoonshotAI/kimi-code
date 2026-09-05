@@ -10,7 +10,7 @@ import type { Agent, AgentOptions } from '../../src/agent';
 import { AGENT_WIRE_PROTOCOL_VERSION } from '../../src/agent/records';
 import type { KimiConfig } from '../../src/config';
 import { ErrorCodes, KimiError } from '../../src/errors';
-import { FlagResolver } from '../../src/flags';
+import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
 import { SessionAgentProfileCatalog, type ResolvedAgentProfile } from '../../src/profile';
 import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
@@ -1153,13 +1153,18 @@ describe('SessionSubagentHost', () => {
       text: 'Resumed the subagent from its earlier context and carried the task through to completion, then reported a full and detailed technical summary so the parent agent can continue without repeating prior work.',
     });
 
-    const session = fakeSession(parent.agent, child.agent, {
-      'agent-0': {
-        homedir: '/tmp/kimi-session/agents/agent-0',
-        type: 'sub',
-        parentAgentId: 'main',
+    const session = fakeSession(
+      parent.agent,
+      child.agent,
+      {
+        'agent-0': {
+          homedir: '/tmp/kimi-session/agents/agent-0',
+          type: 'sub',
+          parentAgentId: 'main',
+        },
       },
-    });
+      { experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'secondary-model': false }) },
+    );
     const host = new SessionSubagentHost(session, 'main');
 
     const handle = await host.resume('agent-0', {
@@ -1180,6 +1185,8 @@ describe('SessionSubagentHost', () => {
   describe('secondary model binding', () => {
     const secondaryFlags = () =>
       new FlagResolver({ KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL: '1' });
+    const disabledSecondaryFlags = () =>
+      new FlagResolver({}, FLAG_DEFINITIONS, { 'secondary-model': false });
     const LONG_SUMMARY =
       'Completed the delegated task end to end and reported a technically complete summary so the parent agent can continue without repeating prior work. ' +
       'The report covers the investigation, the changes made, and the verification results in enough detail for the caller to act on directly.';
@@ -1278,6 +1285,15 @@ describe('SessionSubagentHost', () => {
 
     it('inherits the parent model when the experiment is off', async () => {
       const { parent, child } = await spawnChild({
+        experimentalFlags: disabledSecondaryFlags(),
+        config: { providers: {}, secondaryModel: { model: 'cheap-model' } },
+      });
+      expect(child.agent.config.modelAlias).toBe(parent.agent.config.modelAlias);
+    });
+
+    it('keeps the secondary model opt-in by default', async () => {
+      const { parent, child } = await spawnChild({
+        experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS),
         config: { providers: {}, secondaryModel: { model: 'cheap-model' } },
       });
       expect(child.agent.config.modelAlias).toBe(parent.agent.config.modelAlias);

@@ -24,7 +24,10 @@ describe('setModeAndBroadcast', () => {
     await ctx.rpc.setPermission({ mode: 'auto' });
 
     expect(ctx.get(IAgentPermissionModeService).mode).toBe('auto');
-    expect(records).toContainEqual({ event: 'afk_toggle', properties: { agent_id: 'main', enabled: true } });
+    expect(records).toContainEqual({
+      event: 'afk_toggle',
+      properties: { agent_id: 'main', enabled: true, mode: 'agent', model: 'mock-model', protocol: 'openai', provider_type: 'kimi' },
+    });
   });
 
   it('tracks the yolo toggle on enter and exit', async () => {
@@ -35,7 +38,13 @@ describe('setModeAndBroadcast', () => {
     await ctx.rpc.setPermission({ mode: 'manual' });
 
     expect(ctx.get(IAgentPermissionModeService).mode).toBe('manual');
-    expect(records).toContainEqual({ event: 'yolo_toggle', properties: { agent_id: 'main', enabled: true } });
-    expect(records).toContainEqual({ event: 'yolo_toggle', properties: { agent_id: 'main', enabled: false } });
+    expect(records).toContainEqual({
+      event: 'yolo_toggle',
+      properties: { agent_id: 'main', enabled: true, mode: 'agent', model: 'mock-model', protocol: 'openai', provider_type: 'kimi' },
+    });
+    expect(records).toContainEqual({
+      event: 'yolo_toggle',
+      properties: { agent_id: 'main', enabled: false, mode: 'agent', model: 'mock-model', protocol: 'openai', provider_type: 'kimi' },
+    });
   });
 });

@@ -116,6 +116,11 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     signal: AbortSignal | undefined,
   ): Promise<ContentPart> {
     if (!requester.model.capabilities.image_in) {
+      this.telemetry.track2('media_resolve_fallback', {
+        kind: 'image',
+        reason: 'unsupported',
+        model: requester.model.name,
+      });
       return degradedImage(await this.displayPath(ref));
     }
     const cacheKey = `image\0${ref.fileId}`;
@@ -128,6 +133,11 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       source = await this.readMedia(ref, signal);
     } catch {
       signal?.throwIfAborted();
+      this.telemetry.track2('media_resolve_fallback', {
+        kind: 'image',
+        reason: 'read_failed',
+        model: requester.model.name,
+      });
       return degradedImage(path);
     }
 
@@ -136,8 +146,14 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       source.bytes.subarray(0, MEDIA_SNIFF_BYTES),
       'media',
     );
-    if (fileType.kind !== 'image') return degradedImage(path);
-    if (!isModelAcceptedImageMime(fileType.mimeType)) return degradedImage(path);
+    if (fileType.kind !== 'image' || !isModelAcceptedImageMime(fileType.mimeType)) {
+      this.telemetry.track2('media_resolve_fallback', {
+        kind: 'image',
+        reason: 'invalid',
+        model: requester.model.name,
+      });
+      return degradedImage(path);
+    }
 
     const part: ContentPart = {
       type: 'image_url',
@@ -250,6 +266,11 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     } catch (error) {
       if (signal?.aborted) throw error;
       if (isVideoUploadAuthError(error)) throw error;
+      this.telemetry.track2('media_resolve_fallback', {
+        kind: 'video',
+        reason: 'upload_failed',
+        model: model.name,
+      });
       if (isVideoUploadUnsupportedError(error)) {
         return {
           part: inlineSupported ? inlineVideoPart(bytes, mimeType) : videoTag(tagPath),

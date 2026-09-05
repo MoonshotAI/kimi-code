@@ -35,12 +35,16 @@ export async function runCommand(
     else signal.addEventListener('abort', onAbort, { once: true });
   }
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    readStream(proc.stdout),
-    readStream(proc.stderr),
-    proc.wait().catch(() => -1),
-  ]);
-  return { exitCode, stdout, stderr };
+  try {
+    const [stdout, stderr, exitCode] = await Promise.all([
+      readStream(proc.stdout),
+      readStream(proc.stderr),
+      proc.wait().catch(() => -1),
+    ]);
+    return { exitCode, stdout, stderr };
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+  }
 }
 
 export function readStream(stream: Readable): Promise<string> {

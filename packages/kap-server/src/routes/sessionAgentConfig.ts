@@ -8,6 +8,7 @@ import {
   IAgentSwarmService,
   IAgentTowerService,
   resumeSessionById,
+  towerEnterFailureMessage,
   type PermissionMode,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
@@ -56,11 +57,11 @@ export async function applySessionAgentConfig(
   if (agentConfig.tower_mode !== undefined) {
     const tower = agent.accessor.get(IAgentTowerService);
     if (agentConfig.tower_mode) {
-      await tower.enter();
-      if (!tower.isActive) {
+      const result = await tower.enter(agentConfig.tower_base);
+      if (!result.entered) {
         throw new Error2(
           ErrorCodes.SESSION_TOWER_MODE_INVALID,
-          'tower mode could not be enabled — the tower feature is unavailable in this process, or another live session owns the workspace tower',
+          towerEnterFailureMessage(result),
         );
       }
     } else {
@@ -68,7 +69,9 @@ export async function applySessionAgentConfig(
     }
   }
   if (agentConfig.goal_objective !== undefined) {
-    await agent.accessor.get(IAgentGoalService).createGoal({ objective: agentConfig.goal_objective });
+    await agent.accessor
+      .get(IAgentGoalService)
+      .createGoal({ objective: agentConfig.goal_objective });
   }
   if (agentConfig.goal_control !== undefined) {
     const goal = agent.accessor.get(IAgentGoalService);

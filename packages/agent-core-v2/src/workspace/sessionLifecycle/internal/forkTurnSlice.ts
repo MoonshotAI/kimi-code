@@ -1,4 +1,5 @@
 import { Error2, ErrorCodes } from '#/errors';
+import { FILE_HISTORY_RECORD_PREFIX } from '#/features/fileHistory/fileHistoryOps';
 import type { ContentPart } from '#/kosong/contract/message';
 import {
   promptMetadataTextFromContentParts,
@@ -45,7 +46,9 @@ export function sliceMainRecordsAtTurn(
   const retained = records
     .slice(0, end)
     .filter(
-      (record, index) => !isUserVisibleTurnInputRecord(record) || retainedTurnInputs.has(index),
+      (record, index) =>
+        !record.type.startsWith(FILE_HISTORY_RECORD_PREFIX) &&
+        (!isUserVisibleTurnInputRecord(record) || retainedTurnInputs.has(index)),
     );
   const cutoffTimes = retained
     .map(recordTime)

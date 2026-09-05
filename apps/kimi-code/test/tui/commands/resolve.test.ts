@@ -64,6 +64,13 @@ describe('resolveSlashCommandInput', () => {
     });
   });
 
+  it('gates /remote-control behind the remote-control experimental flag', () => {
+    expect(resolve('/rc')).toEqual({ kind: 'message', input: '/rc' });
+    setExperimentalFeatures([{ id: 'remote-control', enabled: true }]);
+    expect(resolve('/rc')).toMatchObject({ kind: 'builtin', name: 'remote-control' });
+    expect(resolve('/remote-control')).toMatchObject({ kind: 'builtin', name: 'remote-control' });
+  });
+
   it('blocks idle-only built-ins while streaming', () => {
     expect(resolve('/new', { isStreaming: true })).toEqual({
       kind: 'blocked',

@@ -6,7 +6,7 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { GOAL_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '#/agent/tools/mainAgentOnly';
 import { type ToolExecution } from '#/tool/toolContract';
 
-import { IAgentGoalService } from '#/features/goal/goal';
+import { IAgentGoalService } from '#/features/goal/goalService';
 import { goalForModel } from '#/features/goal/tools/serialize';
 
 import DESCRIPTION from './create-goal.md?raw';
@@ -24,8 +24,8 @@ export class CreateGoalTool implements ICreateGoalTool {
 
   constructor(
     @IAgentGoalService private readonly goal: IAgentGoalService,
-    @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
   ) {}
 
   resolveExecution(args: CreateGoalToolInput): ToolExecution {
@@ -68,3 +68,4 @@ export class CreateGoalTool implements ICreateGoalTool {
     };
   }
 }
+

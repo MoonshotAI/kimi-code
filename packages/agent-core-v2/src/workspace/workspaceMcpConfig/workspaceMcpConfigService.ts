@@ -1,24 +1,25 @@
-import { Disposable } from '#/_base/di/lifecycle';
-import { Emitter } from '#/_base/event';
-import { ILogService } from '#/_base/log/log';
-import { TimeoutTimer } from '#/_base/utils/timer';
-import { subtreeWatchFilter } from '#/_base/utils/paths';
 import { dirname } from 'pathe';
 
-import type { McpServerConfig } from '#/mcpCore/config-schema';
-import { MCP_SECTION, type McpSection } from '#/app/mcpConfig/configSection';
+import { Disposable } from '#/_base/di/lifecycle';
+import { AsyncEmitter } from '#/_base/event';
+import { ILogService } from '#/_base/log/log';
+import { subtreeWatchFilter } from '#/_base/utils/paths';
+import { TimeoutTimer } from '#/_base/utils/timer';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
+import { loadMcpServers, resolveMcpJsonPaths } from '#/app/mcpConfig/configLoader';
+import { MCP_SECTION, type McpSection } from '#/app/mcpConfig/configSection';
+import { IMcpConfigStore } from '#/app/mcpConfig/configStore';
 import { IPluginService } from '#/app/plugin/plugin';
+import type { McpServerConfig } from '#/mcpCore/config-schema';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 
-import { loadMcpServers, resolveMcpJsonPaths } from './internal/config-loader';
 import {
   IWorkspaceMcpConfigService,
-  type McpServersChange,
+  type McpServersChangeEvent,
   type McpTunables,
 } from './workspaceMcpConfig';
 
@@ -33,7 +34,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
   private pluginServers = new Map<string, McpServerConfig>();
   private current: Readonly<Record<string, McpServerConfig>> = {};
   private readonly watchDebounce = this._register(new TimeoutTimer());
-  private readonly changeEmitter = this._register(new Emitter<McpServersChange>());
+  private readonly changeEmitter = this._register(new AsyncEmitter<McpServersChangeEvent>());
   readonly onDidChange = this.changeEmitter.event;
 
   constructor(
@@ -45,16 +46,19 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     @IHostFsWatchService private readonly fsWatch: IHostFsWatchService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IWorkspaceTrust private readonly trust: IWorkspaceTrust,
+    @IMcpConfigStore mcpConfigStore: IMcpConfigStore,
   ) {
     super();
     this.ready = this.initialize().catch((error: unknown) => {
       this.log.error('mcp config initial load failed', { error });
     });
     this._register(
-      this.plugins.onDidReload(() => {
-        void this.reloadPluginServers().catch((error) => {
-          this.log.warn(`mcp plugin reload failed: ${String(error)}`);
-        });
+      this.plugins.onDidReload((event) => {
+        event.waitUntil(
+          this.reloadPluginServers().catch((error) => {
+            this.log.warn(`mcp plugin reload failed: ${String(error)}`);
+          }),
+        );
       }),
     );
     this._register(
@@ -62,6 +66,15 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
         void this.reloadFileServers().catch((error) => {
           this.log.warn(`mcp trust reload failed: ${String(error)}`);
         });
+      }),
+    );
+    this._register(
+      mcpConfigStore.onDidWrite((event) => {
+        event.waitUntil(
+          this.reloadFileServers().catch((error) => {
+            this.log.warn(`mcp config reload after management write failed: ${String(error)}`);
+          }),
+        );
       }),
     );
     void this.watchConfigFiles();
@@ -155,7 +168,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
         includeProject: this.trust.isTrusted(),
       });
       this.fileServers = new Map(Object.entries(fresh));
-      this.publishIfChanged();
+      await this.publishIfChanged();
     });
   }
 
@@ -164,13 +177,13 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     await this.mutate(async () => {
       const fresh = await this.plugins.enabledMcpServers();
       this.pluginServers = new Map(Object.entries(fresh));
-      this.publishIfChanged();
+      await this.publishIfChanged();
     });
   }
 
-  private publishIfChanged(): void {
+  private async publishIfChanged(): Promise<void> {
     const next = this.merged();
-    const upsert: Record<string, McpServerConfig> = {};
+    const upsert: Record<string, McpServerConfig> = Object.create(null);
     const remove: string[] = [];
     for (const [name, config] of Object.entries(next)) {
       const previous = this.current[name];
@@ -183,9 +196,11 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     }
     this.current = next;
     if (Object.keys(upsert).length === 0 && remove.length === 0) return;
-    this.changeEmitter.fire({ upsert, remove });
+    await this.changeEmitter.fireAsync({ upsert, remove }, NO_ABORT);
   }
 }
+
+const NO_ABORT = new AbortController().signal;
 
 function fingerprintConfig(config: McpServerConfig): string {
   return JSON.stringify(sortKeysDeep(config));
@@ -202,4 +217,3 @@ function sortKeysDeep(value: unknown): unknown {
   }
   return value;
 }
-

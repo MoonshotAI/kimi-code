@@ -22,6 +22,7 @@ export interface IWorkspaceInstanceManager {
   getOrCreate(ref: WorkspaceInstanceRef): Promise<WorkspaceInstance>;
   get(workspaceId: string): WorkspaceInstance | undefined;
   findByRoot(root: string): WorkspaceInstance | undefined;
+  findContaining(cwd: string): WorkspaceInstance | undefined;
   list(): readonly WorkspaceInstance[];
   snapshot(): WorkspaceInstancesSnapshot;
   close(workspaceId: string): Promise<void>;

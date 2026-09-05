@@ -30,11 +30,6 @@ import {
   THINKING_SECTION,
 } from './configSection';
 import {
-  SECONDARY_MODEL_SECTION,
-  cascadeSubagentModelPool,
-  type SecondaryModelConfig,
-} from '#/session/subagent/configSection';
-import {
   IProviderDiscoveryService,
   ModelCatalogChanged,
   type RefreshProviderModelsOptions,
@@ -164,9 +159,15 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
     const defaultModel = this.config.inspect<string>(DEFAULT_MODEL_SECTION).userValue;
     const thinking =
       this.config.inspect<ManagedKimiConfigShape['thinking']>(THINKING_SECTION).userValue;
+    const visibleModels = withoutKeys(models, exclusion.models);
+    const excludedDefaultModel = exclusion.defaultModel;
+    const excludedDefaultRecord =
+      excludedDefaultModel !== undefined ? models[excludedDefaultModel] : undefined;
     return {
       providers: withoutKeys(providers, exclusion.providers) as ManagedKimiConfigShape['providers'],
-      models: withoutKeys(models, exclusion.models) as ManagedKimiConfigShape['models'],
+      models: (excludedDefaultModel !== undefined && excludedDefaultRecord !== undefined
+        ? { ...visibleModels, [excludedDefaultModel]: excludedDefaultRecord }
+        : visibleModels) as ManagedKimiConfigShape['models'],
       defaultModel,
       thinking: thinking === undefined ? undefined : { ...thinking },
     };
@@ -218,16 +219,6 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
     }
     if ('thinking' in patch) {
       sections[THINKING_SECTION] = restoreDefault ? exclusion.thinking : patch.thinking;
-    }
-    const nextModels = sections[MODELS_SECTION] as Record<string, ModelRecord> | undefined;
-    if (nextModels !== undefined) {
-      const cascadedPool = cascadeSubagentModelPool(
-        this.config.inspect<SecondaryModelConfig>(SECONDARY_MODEL_SECTION).userValue,
-        nextModels,
-      );
-      if (cascadedPool !== undefined) {
-        sections[SECONDARY_MODEL_SECTION] = cascadedPool ?? undefined;
-      }
     }
     await this.config.replaceSections(sections);
     return {

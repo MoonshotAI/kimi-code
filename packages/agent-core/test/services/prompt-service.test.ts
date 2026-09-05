@@ -282,9 +282,8 @@ function makeBus(): {
 function makeAuth(opts: { ensureReadyError?: Error } = {}): IAuthSummaryService {
   return {
     get: vi.fn().mockResolvedValue({
-      ready: true,
+      models_ready: true,
       providers_count: 1,
-      default_model: 'kimi-k2',
       managed_provider: null,
     }),
     ensureReady: vi.fn().mockImplementation(async () => {

@@ -77,12 +77,6 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-/**
- * `search_worker` — run the global search index in a dedicated worker
- * thread (default ON). Disable via `KIMI_CODE_EXPERIMENTAL_SEARCH_WORKER=false`
- * or the `[experimental]` config section to fall back to the in-process
- * (inline) host. Read once at service construction.
- */
 export const SEARCH_WORKER_FLAG_ID = 'search_worker';
 
 registerFlagDefinition({
@@ -106,55 +100,24 @@ export async function drainGlobalSearchDisposals(): Promise<void> {
 export interface IGlobalSearchService {
   readonly _serviceBrand: undefined;
   search(query: GlobalSearchQuery): Promise<GlobalSearchPage>;
-  /** Full rebuild: wipe the index and rescan every wire file. */
   reindex(): Promise<{ sessions: number; documents: number }>;
-  /**
-   * Diagnostic status (the `/api/v1/debug` surface reflects it). Never
-   * throws: a backend that cannot answer (failed open, worker down) reports
-   * a degraded lifecycle instead of rejecting. `lifecycle` is the aggregate
-   * state machine (stage 5): stopped → opening → ready → building/degraded →
-   * closing. NOTE the historical contract: the call may kick/await the
-   * backend's open and read-only refresh — use `lifecycleReport()` for a
-   * non-intrusive local read.
-   */
   status(): Promise<{
     sessions: number;
     documents: number;
     lastIndexedAt: number | null;
-    /** Identity of the published base; bumps invalidate v2 page tokens. */
     generation: number;
-    /** Last background refresh/sync/reindex failure, if serving stale. */
     degraded?: string;
     lifecycle: CoreLifecycleReport;
   }>;
-  /**
-   * Synchronous local lifecycle report (stage 5): never kicks an open, never
-   * spawns the worker, never awaits. Answers the transitional states
-   * (stopped/opening/degraded-backoff/closing) that status() would block on.
-   */
   lifecycleReport(): CoreLifecycleReport;
-  /**
-   * Wire the live-transcript source for the in-memory search route. Called
-   * once from the composition root (start.ts) after `TranscriptService` is
-   * constructed; until then every search takes the index route.
-   */
   setLiveTranscriptSource(source: LiveTranscriptSource): void;
 }
 
 export const IGlobalSearchService = createDecorator<IGlobalSearchService>('globalSearch');
 
-/**
- * Live-transcript access behind the in-memory (live) search route.
- * Implemented by `TranscriptService` (`src/services/transcript/`); declared
- * here with only the three methods the route needs, so the search module
- * does not import the transcript service's dependency stack.
- */
 export interface LiveTranscriptSource {
-  /** Transcript store of a session live in this process; undefined when not in memory. */
   forSessionLive(sessionId: string): TranscriptStore | undefined;
-  /** Resolves when the session's initial history backfill has landed. */
   whenReady(sessionId: string): Promise<void>;
-  /** Replay one agent's persisted history into the live store (idempotent per agent). */
   ensureAgentHistory(sessionId: string, agentId: string): Promise<void>;
 }
 
@@ -191,20 +154,8 @@ function normalizeQuery(input: GlobalSearchQuery, maxQueryTerms: number): Normal
   };
 }
 
-/** The service's view of an execution host for the search-index core. */
 export interface SearchBackend {
-  /**
-   * Synchronously stop accepting new background work (called from the
-   * service's synchronous dispose() before any awaiting): in-flight passes
-   * skip their remaining writes at the next gate check.
-   */
   beginClose(): void;
-  /**
-   * Local, round-trip-free aggregate lifecycle (stage 5): the states a wedged
-   * or not-yet-started backend must be able to report without being asked
-   * (stopped/opening/degraded/closing). The full status() round trip refines
-   * the up states (ready/building) with exact stats.
-   */
   lifecycleSnapshot(): CoreLifecycleReport;
   ensureOpen(): Promise<unknown>;
   search(params: CoreSearchParams): Promise<CoreSearchResult>;
@@ -215,7 +166,6 @@ export interface SearchBackend {
   dispose(): Promise<void>;
 }
 
-/** Rollback host: the search-index core running on the main thread. */
 export class InlineSearchBackend implements SearchBackend {
   readonly core: SearchIndexCore;
 
@@ -268,25 +218,18 @@ export class InlineSearchBackend implements SearchBackend {
 export class GlobalSearchService implements IGlobalSearchService {
   declare readonly _serviceBrand: undefined;
 
-  /** Minimum interval between search-triggered sync passes (test knob). */
   syncDebounceMs = 2_000;
 
-  /** Literal-mode candidate cap (test knob, see LITERAL_CANDIDATE_CAP). */
   literalCandidateCap = LITERAL_CANDIDATE_CAP;
 
-  /** Terms-mode candidate cap (test knob, see MAX_TEXT_HITS). */
   maxTextHits = MAX_TEXT_HITS;
 
-  /** Postings-visit budget per query (test knob, see MAX_POSTINGS_VISITS). */
   postingsVisitBudget = MAX_POSTINGS_VISITS;
 
-  /** Match/confirm wall-clock budget per query (test knob). */
   queryDeadlineMs = QUERY_DEADLINE_MS;
 
-  /** Literal-confirmation text-volume budget per query (test knob). */
   queryTextBudgetChars = QUERY_TEXT_BUDGET_CHARS;
 
-  /** Max distinct query terms in terms mode (test knob). */
   maxQueryTerms = MAX_QUERY_TERMS;
 
   private readonly backend: SearchBackend;
@@ -295,17 +238,11 @@ export class GlobalSearchService implements IGlobalSearchService {
   private lastSyncStartedAt = 0;
   private summaries = new Map<string, SessionSummary>();
   private disposed = false;
-  /** Set while `reindex()` swaps the db — syncs started meanwhile are no-ops. */
   private reindexing = false;
-  /** Live-transcript source for the in-memory route; null until start.ts wires it. */
   private liveSource: LiveTranscriptSource | null = null;
-  /** One queued follow-up pass behind the in-flight one (backpressure). */
   private syncQueued = false;
-  /** Trailing-pass timer behind the debounce window. */
   private syncTimer: ReturnType<typeof setTimeout> | null = null;
-  /** Last background sync/reindex/worker failure — surfaced as degraded. */
   private lastRefreshError: { at: number; message: string } | null = null;
-  /** Set when dispose()'s async drain finished — lifecycle 'stopped'. */
   private drainSettled = false;
 
   constructor(
@@ -397,7 +334,6 @@ export class GlobalSearchService implements IGlobalSearchService {
     );
   }
 
-  /** Single-flight: concurrent callers share the in-flight sync. */
   private ensureSyncStarted(): Promise<void> {
     if (this.syncPromise === null) {
       const p = this.runSync().finally(() => {
@@ -433,17 +369,6 @@ export class GlobalSearchService implements IGlobalSearchService {
     return out;
   }
 
-  /**
-   * Drive a read-only refresh of the backend (single-flight facade).
-   * Production note: request-path searches no longer call this — the core
-   * kicks read-only refreshes internally and reports freshness via
-   * `CoreIndexView.freshnessStale`. The facade remains as the deterministic
-   * refresh drive for tests (`refreshNow`) and its promise feeds the
-   * read-only-side `stale` bit while an explicit refresh is in flight. The
-   * core records refresh failures itself (surfaced as `degraded`); only
-   * worker-availability failures land in the rejection branch here — a
-   * failed refresh must never fail the search that kicked it.
-   */
   private refreshReadonly(): Promise<void> {
     if (this.refreshPromise === null) {
       this.refreshPromise = this.backend.refresh().then(
@@ -462,13 +387,6 @@ export class GlobalSearchService implements IGlobalSearchService {
     return this.refreshPromise;
   }
 
-  /**
-   * Route: a container-scoped query on a session that is live in this process
-   * scans the in-memory transcript store instead of the index, in both terms
-   * and literal mode. Anything else takes the index route. The live route
-   * never falls back on error — the store being in hand means the session is
-   * alive, so a scan failure is a real error, not a degradation signal.
-   */
   async search(input: GlobalSearchQuery): Promise<GlobalSearchPage> {
     const q = normalizeQuery(input, this.maxQueryTerms);
     const sessionId = q.container?.sessionId;
@@ -531,17 +449,6 @@ export class GlobalSearchService implements IGlobalSearchService {
     };
   }
 
-  /**
-   * Flatten the live transcript store into the same document shape the index
-   * route searches (`MessageDoc` / `TitleDoc`), each with a stable synthetic
-   * key for keyset pagination:
-   *   - one user doc per non-empty `turn.prompt` (turn ordinal + turn time);
-   *   - one assistant doc per assistant-role text frame (turn ordinal +
-   *     stepId); thinking / tool / notice frames are skipped;
-   *   - one title doc from the session-index summary, same as the sync path.
-   * Text is trimmed and empty results skipped, mirroring the index side's
-   * `wireExtract` (which trims both user and assistant text).
-   */
   private async collectLiveDocs(
     sessionId: string,
     store: TranscriptStore,
@@ -725,12 +632,6 @@ export class GlobalSearchService implements IGlobalSearchService {
     };
   }
 
-  /**
-   * Merge the backend's index view with the coordinator's writer-side state:
-   * a page is stale when the backend knows its view is behind (read-only
-   * freshness) OR a sync pass is in flight/queued/pending behind the
-   * debounce window.
-   */
   private composeIndexState(view: CoreIndexView): GlobalSearchIndexState {
     const coordinatorStale = view.readOnly
       ? this.refreshPromise !== null
@@ -747,14 +648,6 @@ export class GlobalSearchService implements IGlobalSearchService {
     };
   }
 
-  /**
-   * The page served while the index base is unavailable: the first full sync
-   * has not finished yet (no db yet), a deferred open-time base build is
-   * still running / finally failed on the served handle, or the search
-   * worker is down. Same "never wait" rule as every other request path —
-   * the background coordinator/build catches up and a later search serves
-   * real hits.
-   */
   private buildingPage(view: CoreIndexView | null): GlobalSearchPage {
     const indexed = view?.indexedSessions ?? 0;
     const readOnly = view?.readOnly === true;
@@ -825,15 +718,6 @@ export class GlobalSearchService implements IGlobalSearchService {
     }
   }
 
-  /**
-   * Synchronous LOCAL lifecycle report (stage 5): never kicks an open, never
-   * spawns the worker, never awaits — the view that still answers DURING a
-   * minutes-long first open (or while the worker backs off), where status()
-   * would block. The up states (ready/building) come from the backend's
-   * cached last response and may lag one RPC; status() is the exact,
-   * round-trip variant. Reflected on the `/api/v1/debug` surface like every
-   * Service method.
-   */
   lifecycleReport(): CoreLifecycleReport {
     if (this.disposed) return { state: this.drainSettled ? 'stopped' : 'closing' };
     return this.backend.lifecycleSnapshot();

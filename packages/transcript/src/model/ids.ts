@@ -23,7 +23,6 @@ export function frameId(step: StepId, ordinal: number): FrameId {
   return `${step}.f${ordinal}`;
 }
 
-/** Compare turn ids by their embedded ordinal (`t2` < `t10`). */
 export function compareTurnIds(a: TurnId, b: TurnId): number {
   return turnOrdinal(a) - turnOrdinal(b);
 }

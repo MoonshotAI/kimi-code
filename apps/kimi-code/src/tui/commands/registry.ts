@@ -148,14 +148,14 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'yolo',
     aliases: ['yes'],
-    description: 'Toggle YOLO mode: auto-approve tool actions, but the agent may still ask questions.',
+    description: 'Ask When Needed mode: routine edits and commands run automatically; risky actions, questions, and plans still ask.',
     priority: 101,
     availability: 'always',
   },
   {
     name: 'auto',
     aliases: [],
-    description: 'Toggle Auto mode: fully autonomous, agent decides everything without asking.',
+    description: 'Never Ask mode: never interrupts you; everything runs and is decided automatically.',
     priority: 99,
     availability: 'always',
   },
@@ -192,19 +192,14 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'tower',
     aliases: [],
-    description: 'Report tower status, toggle tower mode, or set the tower objective',
+    description: 'Report tower status, toggle tower mode, or turn it on with a base branch',
     priority: 100,
-    argumentHint: '[status|teardown|on|off] | <objective>',
+    argumentHint: '[status|teardown|on|off] | <base-branch>',
     completeArgs: towerArgumentCompletions,
-    availability: (args) => {
-      const sub = args.trim().toLowerCase();
-      // Objective args enable the mode and queue the prompt: they must wait
-      // for idle so the running turn is not hijacked mid-flight. Pure reads
-      // (status/teardown) and deliberate toggles stay always-available.
-      return sub === '' || sub === 'on' || sub === 'off' || sub === 'status' || sub === 'teardown'
-        ? 'always'
-        : 'idle-only';
-    },
+    // Every form stays available while busy: base selections apply to the next
+    // TowerInit of the running coordinator turn, so /tower commands never wait
+    // for the previous one to finish.
+    availability: 'always',
     experimentalFlag: 'tower',
     requiresEngineV2: true,
   },
@@ -435,6 +430,14 @@ export const BUILTIN_SLASH_COMMANDS = [
     description: 'Open the current session in the Web UI by starting a new server',
     priority: 40,
     availability: 'always',
+  },
+  {
+    name: 'remote-control',
+    aliases: ['rc'],
+    description: 'Open the current session through Kimi Remote Control (experimental)',
+    priority: 40,
+    availability: 'always',
+    experimentalFlag: 'remote-control',
   },
   {
     name: 'exit',

@@ -5,33 +5,45 @@
  */
 
 import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
-import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
 import { ISessionQuestionService } from '@moonshot-ai/agent-core-v2/session/question/question';
 import { useState } from 'react';
 
 import { useConnection } from '../connection';
-import { ActionButton, Badge, ErrorLine, JsonView, relTime } from '../ui';
+import { ActionButton, Badge, ErrorLine, JsonView } from '../ui';
 
 interface PendingInteraction {
   readonly id: string;
-  /** Known kinds: 'approval' | 'question' | 'user_tool'; other kinds may appear. */
+  /** Known kinds: 'approval' | 'question'. */
   readonly kind: string;
   readonly payload: Record<string, unknown>;
-  readonly createdAt: number;
 }
 
 export function InteractionsCard({ sessionId }: { sessionId: string }) {
   const { klient } = useConnection();
   const [pending, setPending] = useState<readonly PendingInteraction[]>([]);
   const [error, setError] = useState<unknown>(null);
-  const interaction = klient.session(sessionId).service(ISessionInteractionService);
   const approval = klient.session(sessionId).service(ISessionApprovalService);
   const question = klient.session(sessionId).service(ISessionQuestionService);
 
   const reload = async () => {
     try {
       setError(null);
-      setPending((await interaction.listPending()) as readonly PendingInteraction[]);
+      const [approvals, questions] = await Promise.all([
+        approval.listPending() as Promise<readonly { id: string }[]>,
+        question.listPending() as Promise<readonly { id: string }[]>,
+      ]);
+      setPending([
+        ...approvals.map((p) => ({
+          id: p.id,
+          kind: 'approval',
+          payload: p as unknown as Record<string, unknown>,
+        })),
+        ...questions.map((p) => ({
+          id: p.id,
+          kind: 'question',
+          payload: p as unknown as Record<string, unknown>,
+        })),
+      ]);
     } catch (error) {
       setError(error);
     }
@@ -89,7 +101,6 @@ export function InteractionsCard({ sessionId }: { sessionId: string }) {
               <div className="mb-1 flex items-center gap-2">
                 <Badge tone="amber">{item.kind}</Badge>
                 <span className="font-mono text-[10px] text-neutral-500">{item.id}</span>
-                <span className="text-[10px] text-neutral-600">{relTime(item.createdAt)}</span>
               </div>
               {item.kind === 'approval' ? (
                 <>

@@ -67,6 +67,7 @@ export const ErrorCodes = {
   MCP_SERVER_DISABLED: 'mcp.server_disabled',
   MCP_STARTUP_FAILED: 'mcp.startup_failed',
   MCP_TOOL_NAME_COLLISION: 'mcp.tool_name_collision',
+  MCP_OAUTH_FAILED: 'mcp.oauth_failed',
 
   PLUGIN_NOT_FOUND: 'plugin.not_found',
   PLUGIN_LOAD_FAILED: 'plugin.load_failed',
@@ -403,6 +404,12 @@ export const KIMI_ERROR_INFO = {
     public: true,
     action: 'Rename one of the colliding MCP tools or servers so their qualified names are unique.',
   },
+  'mcp.oauth_failed': {
+    title: 'MCP OAuth authorization failed',
+    retryable: true,
+    public: true,
+    action: 'Begin the authorization flow again; inspect the error details if it keeps failing.',
+  },
 
   'plugin.not_found': {
     title: 'Plugin not found',
@@ -456,3 +463,12 @@ export const KIMI_ERROR_INFO = {
     action: 'Inspect logs or report the issue with diagnostics.',
   },
 } as const satisfies Record<KimiErrorCode, KimiErrorInfo>;
+
+/**
+ * Runtime membership check against the registry. Errors arriving from another
+ * process or engine generation may carry codes this build does not declare;
+ * branch on this before indexing `KIMI_ERROR_INFO` with an untrusted code.
+ */
+export function isKimiErrorCode(code: unknown): code is KimiErrorCode {
+  return typeof code === 'string' && Object.hasOwn(KIMI_ERROR_INFO, code);
+}

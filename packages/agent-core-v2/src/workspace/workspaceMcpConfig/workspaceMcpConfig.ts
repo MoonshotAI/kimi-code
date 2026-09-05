@@ -1,12 +1,13 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import type { Event } from '#/_base/event';
-
+import type { Event, IWaitUntil } from '#/_base/event';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 
 export interface McpServersChange {
   readonly upsert: Readonly<Record<string, McpServerConfig>>;
   readonly remove: readonly string[];
 }
+
+export type McpServersChangeEvent = McpServersChange & IWaitUntil;
 
 export interface McpTunables {
   readonly startupTimeoutMs?: number;
@@ -22,7 +23,7 @@ export interface IWorkspaceMcpConfigService {
 
   tunables(): McpTunables;
 
-  readonly onDidChange: Event<McpServersChange>;
+  readonly onDidChange: Event<McpServersChangeEvent>;
 }
 
 export const IWorkspaceMcpConfigService: ServiceIdentifier<IWorkspaceMcpConfigService> =

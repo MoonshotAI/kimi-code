@@ -64,6 +64,7 @@ export const KIMI_CODE_UPDATE_REEXEC_ENV = 'KIMI_CODE_UPDATE_REEXEC';
 export const KIMI_CODE_INPUT_HISTORY_DIR_NAME = 'user-history';
 export const KIMI_CODE_BANNER_DIR_NAME = 'banner';
 export const KIMI_CODE_BANNER_STATE_FILE_NAME = 'state.json';
+export const KIMI_CODE_SURVEY_STATE_FILE_NAME = 'feedback-survey-state.json';
 
 // Managed Kimi auth provider key shared with OAuth/SDK config.
 export const DEFAULT_OAUTH_PROVIDER_NAME = 'managed:kimi-code';
@@ -118,6 +119,11 @@ export { KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV } from '@moonshot-ai/agent-core-v2
 export function kimiCodePluginMarketplaceUrl(): string {
   return `${kimiCodeCdnBase()}/plugins/marketplace.json`;
 }
+// Bound on each background "latest release" lookup when the TUI fills in
+// marketplace versions. Without it a stalled connection to github.com hangs
+// the version phase for undici's default header timeout (300s).
+export const MARKETPLACE_VERSION_LOOKUP_TIMEOUT_MS = 5000;
+export const INTERACTIVE_UPDATE_CHECK_TIMEOUT_MS = 10_000;
 // Official plugins whose usage bills against the user's plan quota. Installing
 // one of these shows a quota note after the install result.
 export const QUOTA_CONSUMING_PLUGIN_IDS: readonly string[] = ['kimi-datasource'];

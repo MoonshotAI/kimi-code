@@ -364,7 +364,7 @@ describe('task notification → main agent (real Agent instance)', () => {
       }
     });
 
-    it('RESUME: terminal bg tasks discovered on reconcile are SILENTLY injected (no auto-turn)', async () => {
+    it('RESUME: previous-session lost tasks surface as one unified reminder (no auto-turn)', async () => {
 
       const launchSpy = vi.spyOn(loop as unknown as { startTurn: () => unknown }, 'startTurn');
 
@@ -375,8 +375,10 @@ describe('task notification → main agent (real Agent instance)', () => {
 
       await vi.waitFor(() => {
         const flatContext = JSON.stringify(ctx.contextData());
-        expect(flatContext).toContain('bash-prev0000');
+        expect(flatContext).toContain('task_resume_termination');
+        expect(flatContext).toContain('<system-reminder>');
         expect(flatContext).toContain('agent-prev0000');
+        expect(flatContext).toContain('bash-prev0000');
       });
 
       expect(launchSpy).not.toHaveBeenCalled();
@@ -387,7 +389,7 @@ describe('task notification → main agent (real Agent instance)', () => {
       expect(flatContext).toContain('<output-file');
       expect(flatContext).not.toContain('previous bash output');
       expect(flatContext).toMatch(/task\.completed/);
-      expect(flatContext).toMatch(/task\.lost/);
+      expect(flatContext).not.toMatch(/task\.lost/);
     });
   });
 });

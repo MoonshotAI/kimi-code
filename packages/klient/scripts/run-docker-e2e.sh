@@ -51,7 +51,6 @@ workspace_node_modules=(
   "apps_vis_server:/workspace/kimi-code/apps/vis/server/node_modules"
   "apps_vis_web:/workspace/kimi-code/apps/vis/web/node_modules"
   "docs:/workspace/kimi-code/docs/node_modules"
-  "pkg_acp-adapter:/workspace/kimi-code/packages/acp-adapter/node_modules"
   "pkg_agent-core:/workspace/kimi-code/packages/agent-core/node_modules"
   "pkg_kap-server:/workspace/kimi-code/packages/kap-server/node_modules"
   "pkg_server-e2e:/workspace/kimi-code/packages/klient/node_modules"

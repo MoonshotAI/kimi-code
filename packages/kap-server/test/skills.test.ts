@@ -10,7 +10,7 @@ import {
   activateSkillResultSchema,
   listSkillsResponseSchema,
 } from '../src/protocol/rest-skill';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -37,13 +37,13 @@ describe('server-v2 /api/v1 skills', () => {
   let home: string | undefined;
   let base: string;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-skills-'));
     server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
     base = `http://127.0.0.1:${server.port}`;
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -85,7 +85,7 @@ describe('server-v2 /api/v1 skills', () => {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
     const agents = session.accessor.get(IAgentLifecycleService);
-    if (agents.findAgentHandle('main') === undefined) await agents.create({ agentId: 'main' });
+    if (agents.handleOf('main') === undefined) await agents.create({ agentId: 'main' });
   }
 
   async function registerWorkspace(root: string): Promise<string> {
@@ -301,6 +301,81 @@ describe('server-v2 /api/v1 skills', () => {
       expect(body.code).toBe(40407);
     });
 
+    it('activates a skill with a server-local file attachment by path', async () => {
+      const id = await createSession();
+      await createMainAgent(id);
+      const noteBytes = Buffer.from('path attachment note');
+      const sourcePath = join(home as string, 'note.txt');
+      await writeFile(sourcePath, noteBytes);
+
+      const { body } = await postJson<{ activated: boolean; skill_name: string }>(
+        `/api/v1/sessions/${id}/skills/update-config:activate`,
+        { attachments: [{ type: 'file', path: sourcePath }] },
+      );
+      expect(body.code).toBe(0);
+      expect(body.data).toEqual({ activated: true, skill_name: 'update-config' });
+
+      const messages = await getJson<{
+        items: Array<{ role: string; content: Array<{ type: string; text?: string }> }>;
+      }>(`/api/v1/sessions/${id}/messages`);
+      const userMsg = messages.body.data.items.find(
+        (m) =>
+          m.role === 'user' &&
+          m.content.some((part) => part.text?.includes('User activated the skill')),
+      );
+      expect(userMsg).toBeDefined();
+      const notice = userMsg!.content[1];
+      expect(notice).toEqual({
+        type: 'text',
+        text: `Attached file "note.txt" (application/octet-stream, ${noteBytes.length} bytes): ${sourcePath} — open it with the Read tool`,
+      });
+
+      const transcript = await getJson<{
+        items: Array<{ kind: string; attachmentIds?: string[] }>;
+        attachments: Array<{
+          attachmentId: string;
+          mediaType: string;
+          name?: string;
+          size?: number;
+          source?: unknown;
+        }>;
+      }>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+      const transcriptAttachments = transcript.body.data.attachments;
+      expect(transcriptAttachments).toHaveLength(1);
+      expect(transcriptAttachments[0]).toMatchObject({
+        mediaType: 'application/octet-stream',
+        name: 'note.txt',
+        size: noteBytes.length,
+      });
+      expect(transcriptAttachments[0]).not.toHaveProperty('source');
+      const turn = transcript.body.data.items.find((item) => item.kind === 'turn');
+      expect(turn?.attachmentIds).toEqual([transcriptAttachments[0]!.attachmentId]);
+    });
+
+    it('rejects a relative attachment path on skill activation (40001)', async () => {
+      const id = await createSession();
+      await createMainAgent(id);
+
+      const { body } = await postJson<null>(
+        `/api/v1/sessions/${id}/skills/update-config:activate`,
+        { attachments: [{ type: 'file', path: 'relative/note.txt' }] },
+      );
+      expect(body.code).toBe(40001);
+    });
+
+    it('rejects a sensitive attachment path on skill activation (40001)', async () => {
+      const id = await createSession();
+      await createMainAgent(id);
+      const secretPath = join(home as string, '.env');
+      await writeFile(secretPath, 'TOKEN=secret');
+
+      const { body } = await postJson<null>(
+        `/api/v1/sessions/${id}/skills/update-config:activate`,
+        { attachments: [{ type: 'file', path: secretPath }] },
+      );
+      expect(body.code).toBe(40001);
+    });
+
     it('rejects an unknown skill with attachments before materializing them (40415)', async () => {
       const id = await createSession();
       await createMainAgent(id);
@@ -327,7 +402,7 @@ describe('server-v2 /api/v1 skills', () => {
       expect(body.code).toBe(40415);
 
       const sessionTree = await readdir(join(home as string, 'sessions'), { recursive: true });
-      expect(sessionTree.filter((entry) => entry.includes('attachments'))).toEqual([]);
+      expect(sessionTree.filter((entry) => entry.includes(id) && entry.includes('attachments'))).toEqual([]);
     });
   });
 

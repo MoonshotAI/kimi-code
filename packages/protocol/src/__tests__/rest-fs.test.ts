@@ -19,6 +19,7 @@ import {
   fsStatManyRequestSchema,
   fsStatManyResponseSchema,
   fsStatRequestSchema,
+  fsRootSuggestRequestSchema,
   fsSuggestRequestSchema,
   fsSuggestResponseSchema,
 } from '../rest/fs';
@@ -318,6 +319,51 @@ describe('fsSuggestRequestSchema', () => {
       exclude_globs: ['**/node_modules/**'],
     };
     expect(fsSuggestRequestSchema.parse(body)).toEqual(body);
+  });
+});
+
+describe('fsRootSuggestRequestSchema', () => {
+  it('applies suggest defaults on a roots-only body', () => {
+    const parsed = fsRootSuggestRequestSchema.parse({ roots: ['/repo'], query: 'Button' });
+    expect(parsed).toEqual({
+      roots: ['/repo'],
+      query: 'Button',
+      limit: 50,
+      follow_gitignore: true,
+      show_hidden: false,
+    });
+  });
+
+  it('accepts multiple roots and runtime_id', () => {
+    const body = {
+      roots: ['/repo', '/extra'],
+      query: 'apps/de',
+      runtime_id: 'local',
+    };
+    expect(fsRootSuggestRequestSchema.parse(body)).toEqual({
+      ...body,
+      limit: 50,
+      follow_gitignore: true,
+      show_hidden: false,
+    });
+  });
+
+  it('rejects missing or empty roots', () => {
+    expect(fsRootSuggestRequestSchema.safeParse({ query: 'a' }).success).toBe(false);
+    expect(fsRootSuggestRequestSchema.safeParse({ roots: [], query: 'a' }).success).toBe(false);
+    expect(fsRootSuggestRequestSchema.safeParse({ roots: [''], query: 'a' }).success).toBe(false);
+  });
+
+  it('rejects more than 32 roots', () => {
+    const roots = Array.from({ length: 33 }, (_, i) => `/root-${i}`);
+    expect(fsRootSuggestRequestSchema.safeParse({ roots, query: 'a' }).success).toBe(false);
+    expect(
+      fsRootSuggestRequestSchema.safeParse({ roots: roots.slice(0, 32), query: 'a' }).success,
+    ).toBe(true);
+  });
+
+  it('rejects a missing query', () => {
+    expect(fsRootSuggestRequestSchema.safeParse({ roots: ['/repo'] }).success).toBe(false);
   });
 });
 

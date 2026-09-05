@@ -73,7 +73,7 @@ describe('SessionSubagentModelsValidationService', () => {
     expect(resolve()).toBeUndefined();
   });
 
-  it('is a no-op for a broken pool while the secondary-model experiment is off', () => {
+  it('skips a broken pool when secondary-model is disabled', () => {
     setup({ [SECONDARY_MODEL_SECTION]: { defaultModel: 'provider/typo' } }, false);
     expect(resolve()).toBeUndefined();
   });

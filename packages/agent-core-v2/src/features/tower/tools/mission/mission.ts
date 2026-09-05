@@ -7,9 +7,11 @@ export const TowerMissionToolInputSchema = z
   .object({
     id: z.string().describe('Mission id (e.g. "M1")'),
     status: z
-      .enum(['planned', 'active', 'completed', 'blocked', 'paused', 'merged'])
+      .enum(['planned', 'active', 'completed', 'blocked', 'paused', 'merged', 'abandoned'])
       .optional()
-      .describe('New lifecycle status'),
+      .describe(
+        'New lifecycle status. "abandoned" is tower-only: it gives the mission up without merging — releasing its scope, satisfying its dependents, and excluding its branch from conflict checks.',
+      ),
     note: z.string().optional().describe('Append a decision-log note'),
     blocker: z.string().optional().describe('Report a blocker (also sets status to blocked)'),
     clear_blockers: z.boolean().optional().describe('Clear all recorded blockers'),

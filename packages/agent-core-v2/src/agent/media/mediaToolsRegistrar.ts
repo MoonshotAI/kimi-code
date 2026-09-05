@@ -10,7 +10,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { type ModelRequester } from '#/kosong/model/modelRequester';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';

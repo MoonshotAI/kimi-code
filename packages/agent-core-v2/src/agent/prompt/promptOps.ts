@@ -7,16 +7,19 @@ import { defineState } from '#/state/state';
 const promptAcceptedSchema = z.object({
   agentId: z.string(),
   promptId: z.string().min(1),
+  content: z.unknown().optional(),
 });
 
 export class PromptAccepted extends AgentEvent2<z.infer<typeof promptAcceptedSchema>> {
   static override readonly type = 'prompt.accepted';
   static override readonly durable = true;
+  static override readonly observable = true;
   static override readonly schema = promptAcceptedSchema;
 }
 export interface PromptAccepted {
   readonly agentId: string;
   readonly promptId: string;
+  readonly content?: unknown;
 }
 
 export const promptAdmissionKey = defineState('promptAdmission', (): Map<string, true> => new Map())

@@ -176,7 +176,14 @@ export function acpMcpServersToConfigRecord(
   const out: Record<string, McpServerConfig> = {};
   for (const server of servers) {
     if (!('type' in server)) {
-      throw new Error(`ACP stdio MCP server ${server.name} does not declare a runtime identity`);
+      out[server.name] = {
+        transport: 'stdio',
+        command: server.command,
+        args: server.args,
+        env: namedPairsToRecord(server.env),
+        runtime_id: 'local',
+      };
+      continue;
     }
     if (server.type === 'http' || server.type === 'sse') {
       out[server.name] = {

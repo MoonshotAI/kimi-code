@@ -3,7 +3,7 @@ import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import { Error2, ErrorCodes, toErrorMessage } from '#/errors';
 import { isAbortError } from '#/_base/utils/abort';
 
-import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult } from '#/tool/toolContract';
+import type { ExecutableTool, ExecutableToolContext } from '#/tool/toolContract';
 import { mcpResultToExecutableOutput } from '#/agent/mcp/output';
 import type { MCPClient, MCPToolResult } from '#/mcpCore/types';
 import {
@@ -49,12 +49,10 @@ export function createMcpTool(
         } catch (error) {
           result = await retryAfterReconnect(error, client, args, context, options, callTool);
         }
-        return normalizeMcpToolResult(
-          await mcpResultToExecutableOutput(result, qualifiedName, {
-            originalsDir: options.originalsDir,
-            telemetry: options.telemetry,
-          }),
-        );
+        return mcpResultToExecutableOutput(result, qualifiedName, {
+          originalsDir: options.originalsDir,
+          telemetry: options.telemetry,
+        });
       },
     }),
   };
@@ -112,20 +110,4 @@ async function retryAfterReconnect(
     throw failure;
   }
   return callTool(freshClient, args, context.signal);
-}
-
-function normalizeMcpToolResult(result: {
-  readonly output: ExecutableToolResult['output'];
-  readonly isError: boolean;
-  readonly note?: string;
-  readonly truncated?: true;
-}): ExecutableToolResult {
-  if (result.isError) {
-    return result.truncated === true
-      ? { output: result.output, isError: true, note: result.note, truncated: true }
-      : { output: result.output, isError: true, note: result.note };
-  }
-  return result.truncated === true
-    ? { output: result.output, note: result.note, truncated: true }
-    : { output: result.output, note: result.note };
 }

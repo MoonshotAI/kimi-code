@@ -17,6 +17,7 @@ import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { IConfigService } from '#/app/config/config';
 import {
+  APIContextOverflowError,
   APIRequestTooLargeError,
   APIStatusError,
   classifyApiError,
@@ -43,7 +44,10 @@ import { completionBudgetParams, resolveCompletionBudget } from '#/kosong/model/
 import { resolveThinkingKeep, type ThinkingConfig } from '#/kosong/model/thinking';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import type { Protocol } from '#/kosong/protocol/protocol';
-import type { ApiErrorEvent } from '#/app/telemetry/events';
+import type {
+  ApiErrorEvent,
+  LlmRequestProjectionFallbackEvent,
+} from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -72,8 +76,15 @@ import {
   type LlmRequestToolSchema,
 } from './llmRequestOps';
 import { isAbortError } from '#/_base/utils/abort';
+import { parseBooleanEnv } from '#/_base/utils/env';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
-import { retryErrorFields } from '#/_base/utils/retry';
+import {
+  readRetryAfterMs,
+  retryBackoffDelay,
+  retryErrorFields,
+  sleepForRetry,
+} from '#/_base/utils/retry';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 
 const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
   type: 'object',
@@ -81,6 +92,8 @@ const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
 };
 
 const noopOnPart: AgentLLMRequestPartHandler = () => {};
+
+export const KIMI_CODE_INFINITE_RETRY_ENV = 'KIMI_CODE_INFINITE_RETRY';
 
 interface ResolvedLLMRequest {
   readonly requester: ModelRequester;
@@ -157,6 +170,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
   ) {
     this.states.contributeState(llmRequestTraceKey);
     this.states.contributeState(llmRequesterLastConfigLogSignatureKey);
@@ -224,19 +238,23 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
   ): Promise<AgentLLMRequestFinish> {
     signal?.throwIfAborted();
     const startedAt = Date.now();
-    trace.set(undefined);
+    const setTrace = (traceId: string | undefined): void => {
+      trace.set(traceId);
+      if (overrides.source?.type === 'turn') {
+        this.telemetry.setContext({ trace_id: traceId });
+      }
+    };
+    setTrace(undefined);
     try {
       return await this.runRequest(
         this.resolveRequest(overrides),
         onPart,
         signal,
-        (traceId) => {
-          trace.set(traceId);
-        },
+        setTrace,
       );
     } catch (error) {
       this.logRequestFailure(error, overrides, signal);
-      trace.set(this.trackApiError(error, startedAt, signal, overrides.source, trace.traceId));
+      setTrace(this.trackApiError(error, startedAt, signal, overrides.source, trace.traceId));
       throw error;
     }
   }
@@ -434,6 +452,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       };
     };
 
+    let infiniteRetryAttempt = 0;
     for (;;) {
       try {
         return await run(policy);
@@ -445,10 +464,37 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           signal,
           captureMediaStripPolicy,
         );
-        if (nextPolicy === undefined) throw error;
-        policy = nextPolicy;
+        if (nextPolicy !== undefined) {
+          policy = nextPolicy;
+          continue;
+        }
+        const raw = unwrapErrorCause(error);
+        if (
+          !this.infiniteRetryEnabled ||
+          isAbortError(error) ||
+          signal?.aborted === true ||
+          raw instanceof APIContextOverflowError
+        ) {
+          throw error;
+        }
+        infiniteRetryAttempt += 1;
+        const delayMs =
+          readRetryAfterMs(raw) ??
+          retryBackoffDelay(infiniteRetryAttempt - 1);
+        this.log.warn('llm request failed; retrying indefinitely (KIMI_CODE_INFINITE_RETRY)', {
+          model: request.model.name,
+          ...request.logFields,
+          attempt: infiniteRetryAttempt,
+          delayMs,
+          ...retryErrorFields(error),
+        });
+        await sleepForRetry(delayMs, signal);
       }
     }
+  }
+
+  private get infiniteRetryEnabled(): boolean {
+    return parseBooleanEnv(this.bootstrap.getEnv(KIMI_CODE_INFINITE_RETRY_ENV)) === true;
   }
 
   private nextProjectionPolicyForError(
@@ -461,6 +507,8 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     if (signal?.aborted === true) return undefined;
     const raw = unwrapErrorCause(error);
     const media = policy?.media;
+    let projection: LlmRequestProjectionFallbackEvent['projection'];
+    let nextPolicy: ProjectionPolicy;
     if (
       raw instanceof APIRequestTooLargeError &&
       (media === undefined || media === 'degraded')
@@ -472,18 +520,20 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           ...request.logFields,
         });
         this.markRecoveryTurn(this.mediaDegradedTurns, request.source);
-        return { ...policy, media: 'degraded' };
+        projection = 'media-degraded';
+        nextPolicy = { ...policy, media: 'degraded' };
+      } else {
+        this.log.warn(
+          'provider rejected degraded-media request as too large; resending with rejected media stripped',
+          {
+            model: request.model.name,
+            ...request.logFields,
+          },
+        );
+        projection = 'media-stripped';
+        nextPolicy = { ...policy, media: captureMediaStripPolicy() };
       }
-      this.log.warn(
-        'provider rejected degraded-media request as too large; resending with rejected media stripped',
-        {
-          model: request.model.name,
-          ...request.logFields,
-        },
-      );
-      return { ...policy, media: captureMediaStripPolicy() };
-    }
-    if (typeof media !== 'object' && isImageFormatError(raw)) {
+    } else if (typeof media !== 'object' && isImageFormatError(raw)) {
       signal?.throwIfAborted();
       this.log.warn(
         'provider rejected an image in the request; resending with rejected media stripped',
@@ -492,17 +542,27 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           ...request.logFields,
         },
       );
-      return { ...policy, media: captureMediaStripPolicy() };
-    }
-    if (policy?.structure === undefined && isRecoverableRequestStructureError(raw)) {
+      projection = 'media-stripped';
+      nextPolicy = { ...policy, media: captureMediaStripPolicy() };
+    } else if (policy?.structure === undefined && isRecoverableRequestStructureError(raw)) {
       signal?.throwIfAborted();
       this.log.warn('provider rejected request structure; resending with strict projection', {
         model: request.model.name,
         ...request.logFields,
       });
-      return { ...policy, structure: 'strict' };
+      projection = 'strict';
+      nextPolicy = { ...policy, structure: 'strict' };
+    } else {
+      return undefined;
     }
-    return undefined;
+    const properties: LlmRequestProjectionFallbackEvent = {
+      projection,
+      error_type: classifyApiError(raw).kind,
+      model: request.model.id,
+      turn_id: request.source?.turnId,
+    };
+    this.telemetry.track2('llm_request_projection_fallback', properties);
+    return nextPolicy;
   }
 
   private normalizeStreamPart(

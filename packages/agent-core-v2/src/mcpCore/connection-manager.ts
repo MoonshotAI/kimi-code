@@ -37,12 +37,6 @@ interface InternalEntry {
 
 export type McpStatusListener = (entry: McpServerEntry) => void;
 
-/**
- * The consumer surface of a connection manager. `McpConnectionManager`
- * implements it directly; the session domain's `MergedMcpConnectionView`
- * implements it over a workspace manager plus a session overlay, so session
- * and agent consumers never care which manager owns a server.
- */
 export interface McpConnectionView {
   readonly oauthService: McpOAuthService | undefined;
   list(): readonly McpServerEntry[];
@@ -295,6 +289,12 @@ export class McpConnectionManager implements McpConnectionView {
     });
     this.inFlightReconnects.set(name, work);
     return work;
+  }
+
+  async reconnectAfterCurrent(name: string): Promise<void> {
+    const existing = this.inFlightReconnects.get(name);
+    if (existing !== undefined) await existing.catch(() => undefined);
+    await this.reconnectAndJoin(name);
   }
 
   async shutdown(): Promise<void> {
@@ -561,7 +561,7 @@ function stderrTail(client: RuntimeMcpClient | undefined): string | undefined {
   return snapshot.trimEnd();
 }
 
-function mcpServerConfigsEqual(a: McpServerConfig, b: McpServerConfig): boolean {
+export function mcpServerConfigsEqual(a: McpServerConfig, b: McpServerConfig): boolean {
   return stableConfigJson(a) === stableConfigJson(b);
 }
 

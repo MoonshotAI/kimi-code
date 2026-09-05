@@ -52,12 +52,12 @@ interface FakeWatch {
   readonly disposedCount: () => number;
 }
 
-function fakeHostFsWatch(): FakeWatch {
+function fakeHostFsWatch(handleReady: Promise<void> = Promise.resolve()): FakeWatch {
   const watchCalls: string[] = [];
   let listener: ((e: HostFsChange) => void) | undefined;
   let disposedCount = 0;
   const handle: IHostFsWatchHandle = {
-    ready: Promise.resolve(),
+    ready: handleReady,
     onDidChange: (l) => {
       listener = l;
       return { dispose: () => (listener = undefined) };
@@ -100,8 +100,8 @@ interface Harness {
   readonly watch: FakeWatch;
 }
 
-function makeWorkspace(gitignore?: string): Harness {
-  const watch = fakeHostFsWatch();
+function makeWorkspace(gitignore?: string, handleReady?: Promise<void>): Harness {
+  const watch = fakeHostFsWatch(handleReady);
   const disposables = new DisposableStore();
   const services = createServices(disposables, {
     additionalServices: (registry) => {
@@ -140,6 +140,24 @@ describe('WorkspaceFsWatchService', () => {
     sub.setWatchedPaths(['src']);
     expect(watch.watchCalls).toEqual([WORK_DIR]);
     expect(sub.watchedPaths).toEqual(['src']);
+  });
+
+  it('gates subscription readiness on the backing watcher readiness', async () => {
+    let resolveReady: (() => void) | undefined;
+    const { svc } = makeWorkspace(undefined, new Promise<void>((r) => (resolveReady = r)));
+    const sub = svc.subscribe();
+    await expect(sub.ready).resolves.toBeUndefined();
+
+    sub.setWatchedPaths(['src']);
+    let settled = false;
+    void sub.ready.then(() => (settled = true));
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    resolveReady?.();
+    await expect(sub.ready).resolves.toBeUndefined();
+    await Promise.resolve();
+    expect(settled).toBe(true);
   });
 
   it('drops events outside the subscribed subtree', () => {

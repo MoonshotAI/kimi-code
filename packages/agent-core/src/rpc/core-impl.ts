@@ -855,24 +855,23 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   ): Promise<readonly GlobalMcpServerAuthStatus[]> {
     await this.awaitMcpRegistryReady();
     const entries = await this.mcpRegistry.list({ cwd: input?.cwd });
-    const verify = input?.verify === true;
     return Promise.all(
       entries.map(async (entry) => ({
         name: entry.name,
-        authStatus: await this.mcpServerAuthState(entry, input?.cwd, verify),
+        authStatus: await this.mcpServerAuthState(entry, input?.cwd, input?.verify),
       })),
     );
   }
 
   async addGlobalMcpServer(
-    { server }: PutGlobalMcpServerPayload,
+    { server, cwd }: PutGlobalMcpServerPayload,
   ): Promise<readonly McpManagedServerInfo[]> {
     await this.awaitMcpRegistryReady();
     // Normalize once: the store trims names, so the read-only guard, the
     // persisted key, and live-session reconciliation must all agree (a padded
     // name would otherwise persist trimmed but reconcile the raw name).
     const name = normalizeServerName(server.name);
-    const existing = await this.mcpRegistry.get(name).catch(() => undefined);
+    const existing = await this.mcpRegistry.get(name, { cwd }).catch(() => undefined);
     if (existing !== undefined && !(existing.source === 'global' && existing.mutable)) {
       // A same-named plugin / project-layer entry already exists; writing a
       // user-level shadow would silently change precedence, so reject. A
@@ -882,15 +881,15 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     }
     await this.globalMcpConfig.add({ ...server, name });
     await this.reconcileMcpServerInSessions([name], 'global-add');
-    return this.listGlobalMcpServers({});
+    return this.listGlobalMcpServers({ cwd });
   }
 
   async updateGlobalMcpServer(
-    { server }: PutGlobalMcpServerPayload,
+    { server, cwd }: PutGlobalMcpServerPayload,
   ): Promise<readonly McpManagedServerInfo[]> {
     await this.awaitMcpRegistryReady();
     const name = normalizeServerName(server.name);
-    const existing = await this.mcpRegistry.get(name).catch(() => undefined);
+    const existing = await this.mcpRegistry.get(name, { cwd }).catch(() => undefined);
     if (existing === undefined) {
       // Preserve the store's not-found error (and its config validation).
       await this.globalMcpConfig.update({ ...server, name });
@@ -899,19 +898,19 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       await this.globalMcpConfig.update({ ...server, name });
       await this.reconcileMcpServerInSessions([name], 'global-update');
     }
-    return this.listGlobalMcpServers({});
+    return this.listGlobalMcpServers({ cwd });
   }
 
   async removeGlobalMcpServer(
-    { name }: GlobalMcpServerNamePayload,
+    { name, cwd }: GlobalMcpServerNamePayload,
   ): Promise<readonly McpManagedServerInfo[]> {
     await this.awaitMcpRegistryReady();
     const normalized = normalizeServerName(name);
-    const existing = await this.mcpRegistry.get(normalized).catch(() => undefined);
+    const existing = await this.mcpRegistry.get(normalized, { cwd }).catch(() => undefined);
     if (existing !== undefined) this.throwReadOnlyMcpServer(existing);
     await this.globalMcpConfig.remove(normalized);
     await this.reconcileMcpServerInSessions([normalized], 'global-remove');
-    return this.listGlobalMcpServers({});
+    return this.listGlobalMcpServers({ cwd });
   }
 
   private throwReadOnlyMcpServer(entry: McpRegistryEntry): void {
@@ -1016,15 +1015,16 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 
   async beginGlobalMcpServerAuth(
-    { name }: GlobalMcpServerNamePayload,
+    { name, cwd }: GlobalMcpServerNamePayload,
   ): Promise<BeginGlobalMcpServerAuthResult> {
-    return this.beginAppMcpServerAuth(await this.resolveLegacyNamedAppMcpServer(name));
+    return this.beginAppMcpServerAuth(await this.resolveLegacyNamedAppMcpServer(name, cwd));
   }
 
   async beginMcpServerAuth({
     locator,
+    cwd,
   }: McpServerLocatorPayload): Promise<BeginGlobalMcpServerAuthResult> {
-    return this.beginAppMcpServerAuth(await this.resolveAppMcpServer(locator));
+    return this.beginAppMcpServerAuth(await this.resolveAppMcpServer(locator, cwd));
   }
 
   private async beginAppMcpServerAuth(
@@ -1086,14 +1086,14 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     await active.flow.cancel();
   }
 
-  async resetGlobalMcpServerAuth({ name }: GlobalMcpServerNamePayload): Promise<void> {
+  async resetGlobalMcpServerAuth({ name, cwd }: GlobalMcpServerNamePayload): Promise<void> {
     // The legacy name-based surface resolves through the registry too, so a
     // plugin runtime name works here as well.
-    await this.appMcpServerDescriptorReset(await this.resolveLegacyNamedAppMcpServer(name));
+    await this.appMcpServerDescriptorReset(await this.resolveLegacyNamedAppMcpServer(name, cwd));
   }
 
-  async resetMcpServerAuth({ locator }: McpServerLocatorPayload): Promise<void> {
-    await this.appMcpServerDescriptorReset(await this.resolveAppMcpServer(locator));
+  async resetMcpServerAuth({ locator, cwd }: McpServerLocatorPayload): Promise<void> {
+    await this.appMcpServerDescriptorReset(await this.resolveAppMcpServer(locator, cwd));
   }
 
   private async appMcpServerDescriptorReset(
@@ -1107,17 +1107,20 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   async inspectAppMcpServers({
     targets,
+    cwd,
   }: InspectAppMcpServersPayload): Promise<readonly AppMcpServerInspection[]> {
-    const catalog = await this.appMcpServerDescriptors();
+    const catalog = await this.appMcpServerDescriptors(cwd);
     const descriptors = selectAppMcpServerDescriptors(catalog, targets);
     const inspections = await this.inspectAppMcpServerDescriptors(descriptors, catalog);
     return inspections.map(sanitizeAppMcpServerInspection);
   }
 
   /** The registry catalog in the locator-addressed shape, with full configs. */
-  private async appMcpServerDescriptors(): Promise<readonly AppMcpServerRuntimeDescriptor[]> {
+  private async appMcpServerDescriptors(
+    cwd?: string,
+  ): Promise<readonly AppMcpServerRuntimeDescriptor[]> {
     await this.awaitMcpRegistryReady();
-    return (await this.mcpRegistry.list()).map((entry) => this.appMcpServerDescriptor(entry));
+    return (await this.mcpRegistry.list({ cwd })).map((entry) => this.appMcpServerDescriptor(entry));
   }
 
   private appMcpServerDescriptor(entry: McpRegistryEntry): AppMcpServerRuntimeDescriptor {
@@ -1142,8 +1145,9 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   private async resolveAppMcpServer(
     locator: McpServerLocator,
+    cwd?: string,
   ): Promise<AppMcpServerRuntimeDescriptor> {
-    const catalog = await this.appMcpServerDescriptors();
+    const catalog = await this.appMcpServerDescriptors(cwd);
     const server = selectAppMcpServerDescriptors(catalog, [locator])[0]!;
     this.requireUnambiguousRuntimeName(catalog, server);
     return server;
@@ -1157,11 +1161,12 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
    */
   private async resolveLegacyNamedAppMcpServer(
     name: string,
+    cwd?: string,
   ): Promise<AppMcpServerRuntimeDescriptor> {
     await this.awaitMcpRegistryReady();
     // get() first, preserving its not-found error for unknown names.
-    await this.mcpRegistry.get(name);
-    const catalog = await this.appMcpServerDescriptors();
+    await this.mcpRegistry.get(name, { cwd });
+    const catalog = await this.appMcpServerDescriptors(cwd);
     const matches = catalog.filter((candidate) => candidate.runtimeName === name);
     // The sole enabled owner wins over disabled shadows (matching the runtime
     // and the connection-test path); ambiguity is then judged among the
@@ -1357,7 +1362,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   private async mcpServerAuthState(
     entry: McpRegistryEntry,
     cwd: string | undefined,
-    verify: boolean,
+    verify: boolean | undefined,
   ): Promise<GlobalMcpServerAuthState> {
     const server = entry.config;
     // A disabled server never participates in OAuth; keep the historical
@@ -1389,11 +1394,12 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
         return offline();
       });
 
-    if (verify) {
+    if (verify === true) {
       // Online verification: a real connection probe settles states the
       // offline view cannot distinguish (revoked grant, dead refresh token).
       return probe();
     }
+    if (verify === false) return offline();
     if (tokens.hasTokens) return offline();
     if (server.auth === 'oauth') return 'oauth-required';
     // Unpinned auth with no stored grant: probe once to detect whether the

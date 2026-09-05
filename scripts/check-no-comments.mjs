@@ -6,110 +6,6 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 const PACKAGES = ['packages/agent-core-v2', 'packages/kap-server', 'packages/transcript'];
 const DIRS = ['src', 'test', 'scripts'];
 
-const MEMBER_KINDS = new Set([
-  ts.SyntaxKind.PropertySignature,
-  ts.SyntaxKind.MethodSignature,
-  ts.SyntaxKind.PropertyDeclaration,
-  ts.SyntaxKind.MethodDeclaration,
-  ts.SyntaxKind.GetAccessor,
-  ts.SyntaxKind.SetAccessor,
-  ts.SyntaxKind.Constructor,
-  ts.SyntaxKind.EnumMember,
-  ts.SyntaxKind.CallSignature,
-  ts.SyntaxKind.ConstructSignature,
-  ts.SyntaxKind.IndexSignature,
-]);
-
-const DECL_KINDS = new Set([
-  ts.SyntaxKind.InterfaceDeclaration,
-  ts.SyntaxKind.ClassDeclaration,
-  ts.SyntaxKind.TypeAliasDeclaration,
-  ts.SyntaxKind.EnumDeclaration,
-  ts.SyntaxKind.FunctionDeclaration,
-  ts.SyntaxKind.VariableStatement,
-  ts.SyntaxKind.ModuleDeclaration,
-]);
-
-function hasExportModifier(node) {
-  return (
-    ts.canHaveModifiers(node) &&
-    (ts.getModifiers(node) ?? []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
-  );
-}
-
-function isFunctionWithBody(node) {
-  return (ts.isFunctionLike(node) || ts.isArrowFunction(node)) && node.body !== undefined;
-}
-
-function collectBinding(name, out) {
-  if (ts.isIdentifier(name)) out.add(name.text);
-  else if (ts.isObjectBindingPattern(name) || ts.isArrayBindingPattern(name)) {
-    for (const el of name.elements) if (ts.isBindingElement(el)) collectBinding(el.name, out);
-  }
-}
-
-function declaredNames(node, out) {
-  if (ts.isVariableStatement(node)) {
-    for (const d of node.declarationList.declarations) collectBinding(d.name, out);
-  } else if (
-    (ts.isFunctionDeclaration(node) ||
-      ts.isClassDeclaration(node) ||
-      ts.isInterfaceDeclaration(node) ||
-      ts.isTypeAliasDeclaration(node) ||
-      ts.isEnumDeclaration(node) ||
-      ts.isModuleDeclaration(node)) &&
-    node.name
-  ) {
-    out.add(node.name.text);
-  }
-}
-
-function computeKeptJSDocStarts(sf) {
-  const exportedNames = new Set();
-  for (const stmt of sf.statements) {
-    if (ts.isExportDeclaration(stmt) && stmt.exportClause && ts.isNamedExports(stmt.exportClause)) {
-      for (const el of stmt.exportClause.elements) {
-        exportedNames.add((el.propertyName ?? el.name).text);
-      }
-    }
-    if (ts.isExportAssignment(stmt) && ts.isIdentifier(stmt.expression)) {
-      exportedNames.add(stmt.expression.text);
-    }
-  }
-
-  const kept = new Set();
-
-  function visit(node, ctx) {
-    const exported = hasExportModifier(node);
-    let effectivelyExported = exported;
-    if (!effectivelyExported && node.parent && ts.isSourceFile(node.parent)) {
-      const names = new Set();
-      declaredNames(node, names);
-      for (const n of names) {
-        if (exportedNames.has(n)) {
-          effectivelyExported = true;
-          break;
-        }
-      }
-    }
-
-    if (effectivelyExported || (ctx && (MEMBER_KINDS.has(node.kind) || DECL_KINDS.has(node.kind)))) {
-      const docs = node.jsDoc;
-      if (Array.isArray(docs)) for (const d of docs) kept.add(d.getStart(sf));
-    }
-
-    let childCtx;
-    if (isFunctionWithBody(node)) childCtx = false;
-    else if (effectivelyExported) childCtx = true;
-    else childCtx = ctx;
-
-    node.forEachChild((c) => visit(c, childCtx));
-  }
-
-  visit(sf, false);
-  return kept;
-}
-
 function collectLeaves(node, leaves, jsdocNodes) {
   if (ts.isJSDoc(node)) {
     jsdocNodes.push(node);
@@ -152,7 +48,6 @@ function extractGapComments(gap, offset, out) {
 function checkFile(file) {
   const text = fs.readFileSync(file, 'utf8');
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
-  const keptStarts = computeKeptJSDocStarts(sf);
 
   const leaves = [];
   const jsdocNodes = [];
@@ -161,6 +56,10 @@ function checkFile(file) {
 
   const comments = [];
   let cursor = 0;
+  if (text.startsWith('#!')) {
+    const nl = text.indexOf('\n');
+    cursor = nl === -1 ? text.length : nl + 1;
+  }
   for (const leaf of leaves) {
     const s = leaf.getStart(sf);
     if (s > cursor) extractGapComments(text.slice(cursor, s), cursor, comments);
@@ -177,14 +76,13 @@ function checkFile(file) {
     const key = `${c.pos}:${c.end}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    if (c.jsdoc && keptStarts.has(c.pos)) continue;
     const line = text.slice(0, c.pos).split('\n').length;
     const snippet = text.slice(c.pos, Math.min(c.end, c.pos + 60)).replace(/\s+/g, ' ');
     if (/(?:oxlint|eslint)-disable/.test(snippet)) continue;
     const isDirective = /@ts-(expect-error|ignore|nocheck)|prettier-ignore|istanbul|c8 ignore/.test(
       snippet,
     );
-    violations.push({ line, snippet, isDirective });
+    violations.push({ line, snippet, isDirective, jsdoc: c.jsdoc });
   }
   return violations;
 }
@@ -201,7 +99,7 @@ for (const pkg of PACKAGES) {
         const p = path.join(d, e.name);
         if (e.isDirectory()) {
           if (e.name !== 'node_modules') stack.push(p);
-        } else if (/\.(ts|tsx|mts)$/.test(e.name)) {
+        } else if (/\.(ts|tsx|mts|mjs)$/.test(e.name)) {
           files.push(p);
         }
       }
@@ -217,8 +115,8 @@ for (const f of files) {
     const rel = path.relative(ROOT, f);
     if (v.isDirective) {
       console.error(`${rel}:${v.line}: tooling directives are not allowed — fix the underlying lint/type problem instead: ${v.snippet}`);
-    } else if (v.snippet.startsWith('/**')) {
-      console.error(`${rel}:${v.line}: JSDoc is only allowed on exported symbols: ${v.snippet}`);
+    } else if (v.jsdoc) {
+      console.error(`${rel}:${v.line}: JSDoc is not allowed in this package: ${v.snippet}`);
     } else {
       console.error(`${rel}:${v.line}: comments are not allowed in this package: ${v.snippet}`);
     }

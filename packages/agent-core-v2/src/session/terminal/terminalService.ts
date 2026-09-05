@@ -79,7 +79,7 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
       ['terminal'],
     );
     const view = new RuntimeWorkspaceView(lease.runtime, this.workspace);
-    const cwd = input.cwd === undefined ? view.workDir : view.resolve(input.cwd);
+    const cwd = input.cwd === undefined ? view.workDir : view.assertAllowed(view.resolve(input.cwd));
     const shell = input.shell ?? lease.runtime.environment.shellPath;
     let process: TerminalProcess;
     try {

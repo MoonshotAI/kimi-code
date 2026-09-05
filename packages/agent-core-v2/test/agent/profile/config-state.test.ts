@@ -3,13 +3,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ModelRecord } from '#/kosong/model/model';
 import {
   configServices,
   createTestAgent,
+  InMemoryWireRecordPersistence,
   llmGenerateServices,
   modelProviderOptionServices,
   telemetryServices,
+  wireRecordPersistenceServices,
   type TestAgentContext,
 } from '../../harness';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
@@ -156,8 +159,94 @@ describe('ConfigState model capabilities', () => {
 
     expect(records).toContainEqual({
       event: 'thinking_toggle',
-      properties: { agent_id: 'main', enabled: true, effort: 'low', from: 'off' },
+      properties: {
+        agent_id: 'main',
+        enabled: true,
+        effort: 'low',
+        from: 'off',
+        mode: 'agent',
+        model: 'kimi-code/kimi-for-coding',
+        protocol: 'openai',
+        provider_type: 'kimi',
+      },
     });
+  });
+
+  it('writes the bound model into the ambient telemetry context', () => {
+    kimiConfig = {
+      providers: {
+        kimi: {
+          type: 'kimi',
+          apiKey: 'test-key',
+          baseUrl: 'https://api.example.test/v1',
+        },
+      },
+      models: {
+        'kimi-code/kimi-for-coding': {
+          provider: 'kimi',
+          model: 'kimi-for-coding',
+          maxContextSize: 1_000_000,
+        },
+      },
+    };
+
+    profile.update({ modelAlias: 'kimi-code/kimi-for-coding' });
+
+    expect(ctx.get(ITelemetryService).getContext()).toMatchObject({
+      model: 'kimi-code/kimi-for-coding',
+      provider_type: 'kimi',
+      protocol: 'openai',
+    });
+  });
+
+  it('keeps the alias as ambient model when the bound model does not resolve', () => {
+    profile.update({ modelAlias: 'ghost/model' });
+
+    expect(ctx.get(ITelemetryService).getContext()).toMatchObject({
+      model: 'ghost/model',
+    });
+  });
+
+  it('restores the ambient model after a cold resume', async () => {
+    kimiConfig = {
+      providers: {
+        kimi: {
+          type: 'kimi',
+          apiKey: 'test-key',
+          baseUrl: 'https://api.example.test/v1',
+        },
+      },
+      models: {
+        'kimi-code/kimi-for-coding': {
+          provider: 'kimi',
+          model: 'kimi-for-coding',
+          maxContextSize: 1_000_000,
+        },
+      },
+    };
+    const resumedRecords: TelemetryRecord[] = [];
+    const resumed = createTestAgent(
+      { autoConfigure: false },
+      configServices(() => kimiConfig),
+      llmGenerateServices((...args) => generate(...args)),
+      telemetryServices(recordingTelemetry(resumedRecords)),
+      wireRecordPersistenceServices(
+        new InMemoryWireRecordPersistence([
+          { type: 'config.update', agentId: 'main', modelAlias: 'kimi-code/kimi-for-coding' },
+        ]),
+      ),
+    );
+    try {
+      await resumed.restorePersisted();
+
+      expect(resumed.get(ITelemetryService).getContext()).toMatchObject({
+        model: 'kimi-code/kimi-for-coding',
+        provider_type: 'kimi',
+        protocol: 'openai',
+      });
+    } finally {
+      await resumed.dispose();
+    }
   });
 
   it('does not infer Kimi capabilities from the provider catalogue', () => {

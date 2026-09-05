@@ -50,7 +50,7 @@ export function StreamingConfirmDialog({
             disabled={confirmDisabled}
             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
           >
-            {confirmLoading ? `${confirmLabel}...` : confirmLabel}
+            {confirmLoading ? `${confirmLabel}…` : confirmLabel}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

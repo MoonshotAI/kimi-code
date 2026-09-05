@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-/** GitHub provenance for github-sourced plugins (domain PluginGithubMetadata). */
 export const pluginGithubMetadataSchema = z.object({
   owner: z.string(),
   repo: z.string(),

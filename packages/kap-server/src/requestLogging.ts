@@ -1,12 +1,5 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 
-/**
- * Pull the envelope `code` out of a serialized JSON response body.
- *
- * Returns `undefined` for non-string payloads (buffers, streams) and for bodies
- * that are not envelopes (e.g. `/openapi.json`, static assets) — those simply
- * log without a `code` field.
- */
 export function extractEnvelopeCode(payload: unknown): number | undefined {
   if (typeof payload !== 'string') {
     return undefined;
@@ -19,13 +12,6 @@ export function extractEnvelopeCode(payload: unknown): number | undefined {
   return Number.isSafeInteger(code) ? code : undefined;
 }
 
-/**
- * Register the `onSend` + `onResponse` hooks that emit the access log line.
- *
- * The `onResponse` line mirrors Fastify's default shape (reqId via the child
- * logger, `req`, `responseTime`, `msg: 'request completed'`) but swaps
- * `res.statusCode` for the envelope `code`.
- */
 export function registerRequestLogging(app: FastifyInstance): void {
   const codes = new WeakMap<FastifyReply, number>();
 

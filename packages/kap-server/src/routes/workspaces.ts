@@ -1,4 +1,5 @@
 import {
+  IBootstrapService,
   IHostFileSystem,
   IWorkspaceInstanceManager,
   IWorkspaceService,
@@ -7,7 +8,7 @@ import {
   type Scope,
   type Workspace,
 } from '@moonshot-ai/agent-core-v2';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, join, normalize, resolve } from 'node:path';
 
 import { z } from 'zod';
 
@@ -16,6 +17,8 @@ import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import {
+  addDirRequestSchema,
+  addDirResponseSchema,
   createWorkspaceRequestSchema,
   createWorkspaceResponseSchema,
   deleteWorkspaceResponseSchema,
@@ -269,6 +272,84 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
     untrustRoute.options,
     untrustRoute.handler as Parameters<WorkspaceRouteHost['post']>[2],
   );
+
+  const addDirRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/workspaces/{workspace_id}/add-dir',
+      params: workspaceIdParamSchema,
+      body: addDirRequestSchema,
+      success: { data: addDirResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.FS_PATH_NOT_FOUND]: {},
+        [ErrorCode.WORKSPACE_NOT_FOUND]: {},
+      },
+      description: 'Add an additional directory to the workspace',
+      tags: ['workspaces'],
+    },
+    async (req, reply) => {
+      const { workspace_id } = req.params;
+      const ws = await core.accessor.get(IWorkspaceService).get(workspace_id);
+      if (ws === undefined) {
+        reply.send(
+          errEnvelope(ErrorCode.WORKSPACE_NOT_FOUND, `workspace ${workspace_id} does not exist`, req.id),
+        );
+        return;
+      }
+      const resolved = resolveAdditionalDirPath(core, ws.root, req.body.path);
+      const hostFs = core.accessor.get(IHostFileSystem);
+      try {
+        const stat = await hostFs.stat(resolved);
+        if (!stat.isDirectory) {
+          reply.send(
+            errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, `path ${req.body.path} is not a directory`, req.id),
+          );
+          return;
+        }
+      } catch {
+        reply.send(
+          errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, `path ${req.body.path} does not exist`, req.id),
+        );
+        return;
+      }
+      const workspace = await core
+        .accessor.get(IWorkspaceInstanceManager)
+        .getOrCreate({ workspaceId: workspace_id, root: ws.root });
+      const result = await workspace.program.dirs.addDir({
+        path: req.body.path,
+        persist: req.body.persist,
+      });
+      reply.send(
+        okEnvelope(
+          {
+            project_root: result.projectRoot,
+            config_path: result.configPath,
+            additional_dirs: [...result.additionalDirs],
+            persisted: result.persisted,
+          },
+          req.id,
+        ),
+      );
+    },
+  );
+  app.post(
+    addDirRoute.path,
+    addDirRoute.options,
+    addDirRoute.handler as Parameters<WorkspaceRouteHost['post']>[2],
+  );
+}
+
+function resolveAdditionalDirPath(core: Scope, root: string, input: string): string {
+  const trimmed = input.trim();
+  const osHomeDir = core.accessor.get(IBootstrapService).osHomeDir;
+  const expanded =
+    trimmed === '~'
+      ? osHomeDir
+      : trimmed.startsWith('~/')
+        ? join(osHomeDir, trimmed.slice(2))
+        : trimmed;
+  return isAbsolute(expanded) ? normalize(expanded) : resolve(root, expanded);
 }
 
 type TrustReply = { send(payload: unknown): unknown };

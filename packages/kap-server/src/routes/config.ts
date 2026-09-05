@@ -1,9 +1,4 @@
-import {
-  ConfigChanged,
-  IConfigService,
-  IEventService,
-  type Scope,
-} from '@moonshot-ai/agent-core-v2';
+import { IConfigService, type Scope } from '@moonshot-ai/agent-core-v2';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
@@ -76,9 +71,6 @@ export function registerConfigRoutes(app: ConfigRouteHost, core: Scope): void {
         }
         const response = toConfigResponse(config.getAll());
         const changedFields = Object.keys(req.body as Record<string, unknown>);
-        core.accessor.get(IEventService).publish(
-          new ConfigChanged({ payload: { changedFields, config: response } }),
-        );
         requestLog(req)?.info({ changedFields }, 'config updated');
         reply.send(okEnvelope(response, req.id));
       } catch (error) {
@@ -91,10 +83,17 @@ export function registerConfigRoutes(app: ConfigRouteHost, core: Scope): void {
   app.post(setRoute.path, setRoute.options, setRoute.handler as Parameters<ConfigRouteHost['post']>[2]);
 }
 
-function toConfigResponse(resolved: Record<string, unknown>): ConfigResponse {
+export function toConfigResponse(resolved: Record<string, unknown>): ConfigResponse {
   const wire: Record<string, unknown> = {};
   for (const [domain, value] of Object.entries(resolved)) {
-    wire[camelToSnake(domain)] = domain === 'providers' ? toProviderResponses(value) : value;
+    wire[camelToSnake(domain)] =
+      domain === 'providers'
+        ? toProviderResponses(value)
+        : domain === 'models'
+          ? toModelResponses(value)
+          : domain === 'services'
+            ? toServiceResponses(value)
+            : value;
   }
   const defaultPermissionMode = resolved['defaultPermissionMode'];
   if (typeof defaultPermissionMode === 'string') {
@@ -133,6 +132,51 @@ function hasProviderCredential(provider: ProviderLike): boolean {
   if (nonEmpty(provider.apiKey) !== undefined) return true;
   if (provider.oauth !== undefined) return true;
   return false;
+}
+
+interface ModelLike {
+  readonly apiKey?: unknown;
+  readonly oauth?: unknown;
+}
+
+function toModelResponses(value: unknown): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  if (!isPlainObject(value)) return result;
+  for (const [id, raw] of Object.entries(value)) {
+    if (!isPlainObject(raw)) {
+      result[id] = raw;
+      continue;
+    }
+    const { apiKey: _apiKey, oauth: _oauth, ...rest } = raw as ModelLike & Record<string, unknown>;
+    result[id] = { ...rest, has_api_key: hasModelCredential(raw as ModelLike) };
+  }
+  return result;
+}
+
+function hasModelCredential(model: ModelLike): boolean {
+  if (nonEmpty(model.apiKey) !== undefined) return true;
+  if (model.oauth !== undefined) return true;
+  return false;
+}
+
+function toServiceResponses(value: unknown): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  if (!isPlainObject(value)) return result;
+  for (const [id, raw] of Object.entries(value)) {
+    if (!isPlainObject(raw)) {
+      result[id] = raw;
+      continue;
+    }
+    const { apiKey: _apiKey, oauth: _oauth, customHeaders, ...rest } = raw as ModelLike & {
+      customHeaders?: unknown;
+    } & Record<string, unknown>;
+    result[id] = {
+      ...rest,
+      has_api_key: hasModelCredential(raw as ModelLike),
+      custom_header_keys: isPlainObject(customHeaders) ? Object.keys(customHeaders) : undefined,
+    };
+  }
+  return result;
 }
 
 function nonEmpty(value: unknown): string | undefined {

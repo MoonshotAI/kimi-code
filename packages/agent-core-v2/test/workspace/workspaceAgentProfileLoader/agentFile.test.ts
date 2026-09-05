@@ -183,10 +183,7 @@ describe('agentProfileFromFile', () => {
   };
   const basePrompt = (): SystemPromptRenderResult => ({
     text: 'BASE_PROMPT',
-    environment: {
-      cwd: '',
-      date: { disclosed: false },
-    },
+    environment: { cwd: '' },
   });
 
   it('returns a plain body verbatim and injects no unreferenced context', () => {
@@ -249,25 +246,13 @@ describe('agentProfileFromFile', () => {
       { ...base, prompt: 'extra instructions\n\n${base_prompt}' },
       (): SystemPromptRenderResult => ({
         text: 'BASE_PROMPT',
-        environment: {
-          cwd: '/work',
-          date: {
-            disclosed: true,
-            value: { localDate: '2026-07-29', timeZone: 'Asia/Shanghai' },
-          },
-        },
+        environment: { cwd: '/work' },
       }),
     );
 
     const rendered = profile.renderSystemPrompt({ cwd: '/work' });
     expect(rendered.text).toBe('extra instructions\n\nBASE_PROMPT');
-    expect(rendered.environment).toEqual({
-      cwd: '/work',
-      date: {
-        disclosed: true,
-        value: { localDate: '2026-07-29', timeZone: 'Asia/Shanghai' },
-      },
-    });
+    expect(rendered.environment).toEqual({ cwd: '/work' });
   });
 
   it('places plugin instructions where ${plugin_sections} is referenced', () => {

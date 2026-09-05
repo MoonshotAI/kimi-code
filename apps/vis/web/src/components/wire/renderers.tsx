@@ -1,7 +1,7 @@
 // The single wire-renderer registry. Co-locates tone + label + headline +
 // detail for every record kind. Because `WIRE_RENDERERS` is typed as a mapped
 // type over the FULL `RecordType` union, TypeScript REQUIRES an entry for each
-// kind: adding a kind upstream in agent-core fails
+// kind: adding a kind upstream in agent-core-v2 fails
 // `pnpm --filter @moonshot-ai/vis-web typecheck` here until a renderer is
 // added. This is the anti-rot guarantee that keeps vis from silently falling
 // behind the wire protocol.
@@ -42,6 +42,170 @@ export interface WireRenderer<K extends RecordType> {
  *  over the full `RecordType` union, so TypeScript forces an entry per kind. */
 type RendererMap = { [K in RecordType]: WireRenderer<K> };
 
+interface CompactionSummaryView {
+  label: 'summary' | 'contextSummary';
+  text: string;
+  contextSummary?: string;
+  message?: UnknownObject;
+}
+
+/** Normalize all three `context.apply_compaction` summary variants without
+ *  trusting imported wire payloads. */
+function compactionSummaryView(
+  r: AgentRecordOf<'context.apply_compaction'>,
+): CompactionSummaryView {
+  const record = r as unknown as UnknownObject;
+  const summary = record.summary;
+  const contextSummary =
+    typeof record.contextSummary === 'string' ? record.contextSummary : undefined;
+  if (typeof summary === 'string') {
+    return {
+      label: 'summary',
+      text: summary,
+      contextSummary: contextSummary === summary ? undefined : contextSummary,
+    };
+  }
+  const message = asObject(summary);
+  const content = message?.content;
+  if (Array.isArray(content)) {
+    let text = '';
+    for (const part of content) {
+      const candidate = asObject(part);
+      if (candidate?.type === 'text' && typeof candidate.text === 'string') {
+        text += candidate.text;
+      }
+    }
+    return {
+      label: 'summary',
+      text,
+      contextSummary: contextSummary === text ? undefined : contextSummary,
+      message,
+    };
+  }
+  if (summary === undefined && contextSummary !== undefined) {
+    return { label: 'contextSummary', text: contextSummary };
+  }
+  return {
+    label: 'summary',
+    text: invalidValue(summary),
+    contextSummary,
+  };
+}
+
+type UnknownObject = Record<string, unknown>;
+
+function asObject(value: unknown): UnknownObject | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as UnknownObject)
+    : undefined;
+}
+
+function wireLineRange(value: unknown): { start: number; end: number } | undefined {
+  const range = asObject(value);
+  if (range === undefined) return undefined;
+  const { start, end } = range;
+  if (
+    typeof start !== 'number' ||
+    !Number.isFinite(start) ||
+    !Number.isInteger(start) ||
+    start < 0 ||
+    typeof end !== 'number' ||
+    !Number.isFinite(end) ||
+    !Number.isInteger(end) ||
+    end < 0
+  ) {
+    return undefined;
+  }
+  return { start, end };
+}
+
+function valuePreview(value: unknown): string {
+  if (value === null) return 'null';
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    typeof value === 'bigint'
+  ) {
+    return String(value);
+  }
+  if (value === undefined) return 'undefined';
+  try {
+    const serialized = JSON.stringify(value);
+    return serialized === undefined ? `[${typeof value}]` : truncate(serialized, 80);
+  } catch {
+    return '[unserializable]';
+  }
+}
+
+function invalidValue(value: unknown): string {
+  return value === undefined ? '(missing)' : `(invalid: ${valuePreview(value)})`;
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === 'string' ? value : invalidValue(value);
+}
+
+function numberValue(value: unknown): string {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? String(value)
+    : invalidValue(value);
+}
+
+function checkpointPhase(value: unknown): { label: string; tone: PillTone } {
+  if (value === undefined || value === 'start') return { label: 'start', tone: 'lifecycle' };
+  if (value === 'end') return { label: 'end', tone: 'success' };
+  return { label: invalidValue(value), tone: 'warning' };
+}
+
+function trackedStatus(value: unknown): { label: string; tone: PillTone } {
+  const entry = asObject(value);
+  if (entry === undefined) return { label: 'entry unavailable', tone: 'warning' };
+  if (entry.oversize === true) return { label: 'oversize', tone: 'warning' };
+  if (entry.oversize !== undefined && typeof entry.oversize !== 'boolean') {
+    return { label: 'invalid entry', tone: 'warning' };
+  }
+  if (entry.key === null) return { label: 'new', tone: 'info' };
+  if (typeof entry.key !== 'string') return { label: 'invalid entry', tone: 'warning' };
+  if (typeof entry.version !== 'number' || !Number.isFinite(entry.version)) {
+    return { label: 'invalid version', tone: 'warning' };
+  }
+  return { label: `v${entry.version}`, tone: 'tools' };
+}
+
+function snapshotKey(entry: UnknownObject | undefined): { label: string; dim: boolean } {
+  if (entry === undefined) return { label: '(entry unavailable)', dim: true };
+  if (entry.oversize === true) return { label: '(not captured: oversized)', dim: true };
+  if (entry.key === null) return { label: '(file did not exist)', dim: true };
+  if (typeof entry.key === 'string') return { label: entry.key, dim: false };
+  return { label: invalidValue(entry.key), dim: true };
+}
+
+function sizeValue(value: unknown): string {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? `${value}b`
+    : invalidValue(value);
+}
+
+function timestampValue(value: unknown): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return invalidValue(value);
+  return new Date(value).toLocaleString();
+}
+
+function optionalNumberValue(value: unknown, fallback: string): string {
+  return value === undefined ? fallback : numberValue(value);
+}
+
+function compactionCount(record: UnknownObject): { label: 'compactedCount' | 'count'; value: string } {
+  if (record.compactedCount !== undefined) {
+    return { label: 'compactedCount', value: numberValue(record.compactedCount) };
+  }
+  if (record.count !== undefined) {
+    return { label: 'count', value: numberValue(record.count) };
+  }
+  return { label: 'compactedCount', value: '(missing)' };
+}
+
 export const WIRE_RENDERERS: RendererMap = {
   metadata: {
     tone: 'meta',
@@ -57,6 +221,126 @@ export const WIRE_RENDERERS: RendererMap = {
     }),
   },
 
+  'file_history.checkpoint': {
+    tone: 'lifecycle',
+    label: 'files·checkpoint',
+    headline: (r) => {
+      const record = r as unknown as UnknownObject;
+      const phase = checkpointPhase(record.phase);
+      const entries = asObject(record.entries);
+      const count = entries === undefined ? undefined : Object.keys(entries).length;
+      return {
+        main: (
+          <span className="flex items-center gap-2 min-w-0">
+            <Mono>turn {numberValue(record.turnId)}</Mono>
+            <Dim>
+              {count === undefined
+                ? 'entries unavailable'
+                : `${count} file${count === 1 ? '' : 's'}`}
+            </Dim>
+          </span>
+        ),
+        right: (
+          <Pill tone={phase.tone} variant="outline">
+            {phase.label}
+          </Pill>
+        ),
+      };
+    },
+    detail: (r) => {
+      const record = r as unknown as UnknownObject;
+      const phase = checkpointPhase(record.phase);
+      return (
+        <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
+          <FieldRow label="turnId">
+            <span className="text-[var(--color-sev-info)]">{numberValue(record.turnId)}</span>
+          </FieldRow>
+          <FieldRow label="phase">
+            <Mono>{phase.label}</Mono>
+          </FieldRow>
+          <FieldRow label="entries" wide>
+            <JsonViewer value={record.entries} defaultOpenDepth={2} />
+          </FieldRow>
+        </div>
+      );
+    },
+  },
+
+  'file_history.tracked': {
+    tone: 'tools',
+    label: 'file·tracked',
+    headline: (r) => {
+      const record = r as unknown as UnknownObject;
+      const status = trackedStatus(record.entry);
+      return {
+        main: (
+          <span className="flex items-center gap-2 min-w-0">
+            <Mono>turn {numberValue(record.turnId)}</Mono>
+            <Dim className="truncate">{stringValue(record.path)}</Dim>
+          </span>
+        ),
+        right: (
+          <Pill tone={status.tone} variant="outline">
+            {status.label}
+          </Pill>
+        ),
+      };
+    },
+    detail: (r) => {
+      const record = r as unknown as UnknownObject;
+      const entry = asObject(record.entry);
+      const key = snapshotKey(entry);
+      const malformedOversize =
+        entry !== undefined &&
+        entry.oversize !== undefined &&
+        typeof entry.oversize !== 'boolean';
+      return (
+        <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
+          <FieldRow label="turnId">
+            <span className="text-[var(--color-sev-info)]">{numberValue(record.turnId)}</span>
+          </FieldRow>
+          <FieldRow label="path" wide>
+            <Mono className="break-all">{stringValue(record.path)}</Mono>
+          </FieldRow>
+          <FieldRow label="version">
+            <span className="text-[var(--color-sev-info)]">
+              {entry === undefined ? '(entry unavailable)' : numberValue(entry.version)}
+            </span>
+          </FieldRow>
+          <FieldRow label="snapshotKey" wide>
+            {key.dim ? <Dim>{key.label}</Dim> : <Mono>{key.label}</Mono>}
+          </FieldRow>
+          {entry !== undefined && entry.contentHash !== undefined ? (
+            <FieldRow label="contentHash" wide>
+              <Mono className="break-all">{stringValue(entry.contentHash)}</Mono>
+            </FieldRow>
+          ) : null}
+          {entry !== undefined && entry.size !== undefined ? (
+            <FieldRow label="size">
+              <span className="text-[var(--color-sev-info)]">{sizeValue(entry.size)}</span>
+            </FieldRow>
+          ) : null}
+          {entry !== undefined && entry.mtimeMs !== undefined ? (
+            <FieldRow label="mtime">
+              <Mono>{timestampValue(entry.mtimeMs)}</Mono>
+            </FieldRow>
+          ) : null}
+          {entry?.oversize === true ? (
+            <FieldRow label="oversize">
+              <Pill tone="warning" variant="outline">
+                true
+              </Pill>
+            </FieldRow>
+          ) : malformedOversize ? (
+            <FieldRow label="oversize">
+              <Dim>{invalidValue(entry.oversize)}</Dim>
+            </FieldRow>
+          ) : null}
+        </div>
+      );
+    },
+  },
+
   forked: {
     tone: 'lifecycle',
     label: 'fork',
@@ -67,11 +351,13 @@ export const WIRE_RENDERERS: RendererMap = {
     tone: 'config',
     label: 'config',
     headline: (r) => {
+      const cwd = r.environmentDisclosure?.cwd;
+      const effort = r.thinkingEffort ?? r.thinkingLevel;
       const parts: string[] = [];
       if (r.profileName !== undefined) parts.push(`profile=${r.profileName}`);
       if (r.modelAlias !== undefined) parts.push(`model=${r.modelAlias}`);
-      if (r.cwd !== undefined) parts.push(`cwd=${r.cwd}`);
-      if (r.thinkingEffort !== undefined) parts.push(`thinking=${r.thinkingEffort}`);
+      if (cwd !== undefined) parts.push(`cwd=${cwd}`);
+      if (effort !== undefined) parts.push(`thinking=${effort}`);
       if (r.systemPrompt !== undefined) parts.push(`system(${r.systemPrompt.length}b)`);
       return {
         main: (
@@ -255,37 +541,129 @@ export const WIRE_RENDERERS: RendererMap = {
   'context.apply_compaction': {
     tone: 'compaction',
     label: 'compacted',
-    headline: (r) => ({
-      main: (
-        <span className="flex items-center gap-2 min-w-0">
-          <Pill tone="compaction" variant="soft">
-            compacted
-          </Pill>
-          <Dim>
-            summary {r.summary.length}b · {r.tokensBefore}→{r.tokensAfter} tok · {r.compactedCount}{' '}
-            msgs
-          </Dim>
-        </span>
-      ),
-    }),
-    detail: (r) => (
-      <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
-        <FieldRow label="summary" wide>
-          <SizePreview label="summary" sizeBytes={r.summary.length} preview={r.summary}>
-            <pre className="whitespace-pre-wrap break-words text-fg-1">{r.summary}</pre>
-          </SizePreview>
-        </FieldRow>
-        <FieldRow label="compactedCount">
-          <span className="text-[var(--color-sev-info)]">{r.compactedCount}</span>
-        </FieldRow>
-        <FieldRow label="tokensBefore">
-          <span className="text-[var(--color-sev-info)]">{r.tokensBefore}</span>
-        </FieldRow>
-        <FieldRow label="tokensAfter">
-          <span className="text-[var(--color-sev-info)]">{r.tokensAfter}</span>
-        </FieldRow>
-      </div>
-    ),
+    headline: (r) => {
+      // v2 payload variants: `summary` is a string on current records, a
+      // ContextMessage on the legacy variant (which uses `count` instead of
+      // `compactedCount`); `tokensBefore`/`tokensAfter` are optional.
+      const record = r as unknown as UnknownObject;
+      const summary = compactionSummaryView(r);
+      const compactedCount = compactionCount(record);
+      const wireLines = wireLineRange(record.wireLines);
+      return {
+        main: (
+          <span className="flex items-center gap-2 min-w-0">
+            <Pill tone="compaction" variant="soft">
+              compacted
+            </Pill>
+            <Dim>
+              {summary.label} {summary.text.length}b · {optionalNumberValue(record.tokensBefore, '?')}→
+              {optionalNumberValue(record.tokensAfter, '?')} tok ·{' '}
+              {compactedCount.value} msgs
+            </Dim>
+          </span>
+        ),
+        right:
+          wireLines === undefined ? undefined : (
+            <Mono>
+              L{wireLines.start}–{wireLines.end}
+            </Mono>
+          ),
+      };
+    },
+    detail: (r) => {
+      const record = r as unknown as UnknownObject;
+      const summary = compactionSummaryView(r);
+      const compactedCount = compactionCount(record);
+      const wireLines = wireLineRange(record.wireLines);
+      return (
+        <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
+          <FieldRow label={summary.label} wide>
+            <SizePreview
+              label={summary.label}
+              sizeBytes={summary.text.length}
+              preview={summary.text}
+            >
+              <pre className="whitespace-pre-wrap break-words text-fg-1">{summary.text}</pre>
+            </SizePreview>
+          </FieldRow>
+          {summary.message !== undefined ? (
+            <FieldRow label="summaryMessage" wide>
+              <JsonViewer value={summary.message} defaultOpenDepth={2} />
+            </FieldRow>
+          ) : null}
+          {summary.contextSummary !== undefined ? (
+            <FieldRow label="contextSummary" wide>
+              <SizePreview
+                label="contextSummary"
+                sizeBytes={summary.contextSummary.length}
+                preview={summary.contextSummary}
+              >
+                <pre className="whitespace-pre-wrap break-words text-fg-1">
+                  {summary.contextSummary}
+                </pre>
+              </SizePreview>
+            </FieldRow>
+          ) : null}
+          <FieldRow label={compactedCount.label}>
+            <span className="text-[var(--color-sev-info)]">{compactedCount.value}</span>
+          </FieldRow>
+          <FieldRow label="tokensBefore">
+            <span className="text-[var(--color-sev-info)]">
+              {optionalNumberValue(record.tokensBefore, '(n/a)')}
+            </span>
+          </FieldRow>
+          <FieldRow label="tokensAfter">
+            <span className="text-[var(--color-sev-info)]">
+              {optionalNumberValue(record.tokensAfter, '(n/a)')}
+            </span>
+          </FieldRow>
+          {record.summaryOutputTokens !== undefined ? (
+            <FieldRow label="summaryOutputTokens">
+              <span className="text-[var(--color-sev-info)]">
+                {numberValue(record.summaryOutputTokens)}
+              </span>
+            </FieldRow>
+          ) : null}
+          {record.keptUserMessageCount !== undefined ? (
+            <FieldRow label="keptUserMessages">
+              <span className="text-[var(--color-sev-info)]">
+                {numberValue(record.keptUserMessageCount)}
+              </span>
+            </FieldRow>
+          ) : null}
+          {record.keptHeadUserMessageCount !== undefined ? (
+            <FieldRow label="keptHeadMessages">
+              <span className="text-[var(--color-sev-info)]">
+                {numberValue(record.keptHeadUserMessageCount)}
+              </span>
+            </FieldRow>
+          ) : null}
+          {record.droppedCount !== undefined ? (
+            <FieldRow label="droppedCount">
+              <span className="text-[var(--color-sev-info)]">
+                {numberValue(record.droppedCount)}
+              </span>
+            </FieldRow>
+          ) : null}
+          {record.legacyTail !== undefined ? (
+            <FieldRow label="legacyTail">
+              <Mono>
+                {typeof record.legacyTail === 'boolean'
+                  ? String(record.legacyTail)
+                  : invalidValue(record.legacyTail)}
+              </Mono>
+            </FieldRow>
+          ) : null}
+          {wireLines !== undefined ? (
+            <FieldRow label="wireLines">
+              <Mono>
+                {wireLines.start}–{wireLines.end}
+              </Mono>
+            </FieldRow>
+          ) : null}
+        </div>
+      );
+    },
   },
 
   'context.undo': {
@@ -642,7 +1020,7 @@ export const WIRE_RENDERERS: RendererMap = {
     headline: () => ({ main: <Dim>goal cleared</Dim> }),
   },
 
-  // Observability records — the request trace (see agent-core records/types.ts).
+  // Observability records — the request trace (see the v2 wire manifest).
 
   'llm.tools_snapshot': {
     tone: 'tools',
@@ -787,6 +1165,278 @@ export const WIRE_RENDERERS: RendererMap = {
           <Mono>#{r.hash.slice(0, 8)}</Mono>
         ),
     }),
+  },
+
+  'turn.ended': {
+    tone: 'turn',
+    label: 'turn✓',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>turn {r.turnId}</Mono>
+          <Pill
+            tone={r.reason === 'completed' ? 'success' : r.reason === 'failed' ? 'error' : 'warning'}
+            variant="soft"
+          >
+            {r.reason}
+          </Pill>
+          {r.durationMs !== undefined ? <Dim>{r.durationMs}ms</Dim> : null}
+          {r.stopReason !== undefined ? (
+            <span className="truncate text-fg-3" title={r.stopReason}>
+              {truncate(r.stopReason, 80)}
+            </span>
+          ) : null}
+        </span>
+      ),
+    }),
+  },
+
+  'turn.step.interrupted': {
+    tone: 'warning',
+    label: 'step×',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>
+            turn {r.turnId} · step {r.step}
+          </Mono>
+          <Dim className="truncate">{r.reason}</Dim>
+        </span>
+      ),
+    }),
+  },
+
+  'turn.step.retrying': {
+    tone: 'warning',
+    label: 'retry↻',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>
+            turn {r.turnId} · step {r.step}
+          </Mono>
+          <Pill tone="warning" variant="soft">
+            attempt {r.nextAttempt}/{r.maxAttempts}
+          </Pill>
+          <Dim className="truncate">
+            {r.errorName}: {truncate(r.errorMessage, 60)}
+          </Dim>
+        </span>
+      ),
+    }),
+  },
+
+  'prompt.accepted': {
+    tone: 'turn',
+    label: 'prompt+',
+    headline: (r) => ({ main: <Mono>{r.promptId}</Mono> }),
+  },
+
+  'prompt.aborted': {
+    tone: 'warning',
+    label: 'prompt×',
+    headline: (r) => ({ main: <Mono>{r.promptId}</Mono> }),
+  },
+
+  'prompt.completed': {
+    tone: 'turn',
+    label: 'prompt✓',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2">
+          <Mono>{r.promptId}</Mono>
+          <Pill tone={r.reason === 'completed' ? 'success' : 'warning'} variant="soft">
+            {r.reason}
+          </Pill>
+        </span>
+      ),
+    }),
+  },
+
+  'prompt.steered': {
+    tone: 'turn',
+    label: 'steer→',
+    headline: (r) => ({
+      main: <span className="truncate text-fg-1">→ {truncate(firstText(r.content), 80)}</span>,
+    }),
+  },
+
+  'interaction.request': {
+    tone: 'approval',
+    label: 'ask→',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2">
+          <Pill tone="approval" variant="soft">
+            {r.kind}
+          </Pill>
+          <Mono>{r.id}</Mono>
+        </span>
+      ),
+    }),
+  },
+
+  'interaction.resolved': {
+    tone: 'approval',
+    label: 'ask✓',
+    headline: (r) => ({ main: <Mono>{r.id}</Mono> }),
+  },
+
+  'task.started': {
+    tone: 'subagent',
+    label: 'task↻',
+    headline: (r) => ({ main: <Mono>{r.info.taskId}</Mono> }),
+  },
+
+  'task.terminated': {
+    tone: 'subagent',
+    label: 'task✓',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2">
+          <Mono>{r.info.taskId}</Mono>
+          <Dim>{r.info.status}</Dim>
+        </span>
+      ),
+    }),
+  },
+
+  'task.waitDelivered': {
+    tone: 'subagent',
+    label: 'task⇢',
+    headline: (r) => ({
+      main: (
+        <Dim>
+          wait delivered · {r.keys.length} task{r.keys.length === 1 ? '' : 's'}
+        </Dim>
+      ),
+    }),
+  },
+
+  'token_counting.measured': {
+    tone: 'meta',
+    label: 'tokens',
+    headline: (r) => ({ main: <Dim>context {r.tokens} tok (measured)</Dim> }),
+  },
+
+  'token_counting.truncated': {
+    tone: 'meta',
+    label: 'tokens',
+    headline: (r) => ({ main: <Dim>context {r.tokens} tok (truncated @ {r.length})</Dim> }),
+  },
+
+  'token_counting.rebased': {
+    tone: 'meta',
+    label: 'tokens',
+    headline: (r) => ({
+      main: (
+        <Dim>
+          context {r.tokens} tok (rebased{r.measured ? ', measured' : ''})
+        </Dim>
+      ),
+    }),
+  },
+
+  'token_counting.turn_recorded': {
+    tone: 'meta',
+    label: 'tokens',
+    headline: (r) => ({ main: <Dim>context {r.tokens} tok (turn {r.turnId})</Dim> }),
+  },
+
+  'cron.add': {
+    tone: 'lifecycle',
+    label: 'cron+',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>{r.task.cron}</Mono>
+          <Dim className="truncate">{truncate(r.task.prompt, 60)}</Dim>
+        </span>
+      ),
+    }),
+  },
+
+  'cron.delete': {
+    tone: 'warning',
+    label: 'cron−',
+    headline: (r) => ({
+      main: (
+        <Dim>
+          {r.ids.length} task{r.ids.length === 1 ? '' : 's'} deleted
+        </Dim>
+      ),
+    }),
+  },
+
+  'cron.cursor': {
+    tone: 'lifecycle',
+    label: 'cron·fired',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>{r.id}</Mono>
+          <Dim>fired {new Date(r.lastFiredAt).toLocaleString()}</Dim>
+        </span>
+      ),
+    }),
+  },
+
+  'plan.revision': {
+    tone: 'lifecycle',
+    label: 'plan·rev',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>
+            plan {r.id} · v{r.version}
+          </Mono>
+          <Dim>{r.bytes}b</Dim>
+        </span>
+      ),
+    }),
+  },
+
+  'plugin.session_start': {
+    tone: 'meta',
+    label: 'plugin',
+    headline: (r) => ({
+      main: (
+        <Dim className="truncate">
+          session start{r.content !== null ? `: ${truncate(r.content, 60)}` : ''}
+        </Dim>
+      ),
+    }),
+  },
+
+  'runtime.set_binding': {
+    tone: 'meta',
+    label: 'runtime',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>{r.runtimeId}</Mono>
+          <Dim className="truncate">workspace {r.workspaceId}</Dim>
+        </span>
+      ),
+    }),
+  },
+
+  'staleGuard.recorded': {
+    tone: 'meta',
+    label: 'stale',
+    headline: (r) => ({ main: <Dim className="truncate">{r.path}</Dim> }),
+  },
+
+  'staleGuard.cleared': {
+    tone: 'meta',
+    label: 'stale✓',
+    headline: () => ({ main: <Dim>stale guard cleared</Dim> }),
+  },
+
+  'interruptionReminder.recorded': {
+    tone: 'meta',
+    label: 'interrupted',
+    headline: (r) => ({ main: <Dim>interruption reminder · turn {r.turnId}</Dim> }),
   },
 };
 

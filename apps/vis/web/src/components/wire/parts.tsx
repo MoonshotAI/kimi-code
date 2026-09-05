@@ -242,6 +242,9 @@ export function LoopEventDetail({ event }: { event: LoopRecordedEvent }) {
           parsed = event.args;
         }
       }
+      // v2 no longer persists `description` / `display` on `tool.call`;
+      // read them tolerantly so v1 wires still render both.
+      const legacy = event as { description?: string; display?: unknown };
       return (
         <div className="space-y-2">
           <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
@@ -257,10 +260,10 @@ export function LoopEventDetail({ event }: { event: LoopRecordedEvent }) {
             <FieldRow label="turnId">
               <Mono>{event.turnId}</Mono>
             </FieldRow>
-            {event.description ? (
+            {legacy.description ? (
               <FieldRow label="description" wide>
                 <pre className="whitespace-pre-wrap break-words text-fg-1">
-                  {event.description}
+                  {legacy.description}
                 </pre>
               </FieldRow>
             ) : null}
@@ -269,10 +272,10 @@ export function LoopEventDetail({ event }: { event: LoopRecordedEvent }) {
             <div className="mb-1 text-fg-2">args</div>
             <JsonViewer value={parsed} defaultOpenDepth={2} />
           </div>
-          {event.display ? (
+          {legacy.display ? (
             <div>
               <div className="mb-1 text-fg-2">display</div>
-              <JsonViewer value={event.display} defaultOpenDepth={1} />
+              <JsonViewer value={legacy.display} defaultOpenDepth={1} />
             </div>
           ) : null}
         </div>
@@ -281,6 +284,8 @@ export function LoopEventDetail({ event }: { event: LoopRecordedEvent }) {
     case 'tool.result': {
       const isError = event.result.isError === true;
       const output = event.result.output;
+      // v1 persisted `truncated` / `message`; v2 persists `note` instead.
+      const result = event.result as { truncated?: boolean; message?: string; note?: string };
       return (
         <div className="space-y-2">
           <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
@@ -299,18 +304,23 @@ export function LoopEventDetail({ event }: { event: LoopRecordedEvent }) {
                 {String(isError)}
               </span>
             </FieldRow>
-            {event.result.truncated === true ? (
+            {result.truncated === true ? (
               <FieldRow label="truncated">
                 <span className="text-[var(--color-sev-warning)]">
                   true · output was paged or dropped before the model saw it
                 </span>
               </FieldRow>
             ) : null}
-            {event.result.message !== undefined ? (
+            {result.message !== undefined ? (
               <FieldRow label="message" wide>
                 <pre className="whitespace-pre-wrap break-words text-fg-1">
-                  {event.result.message}
+                  {result.message}
                 </pre>
+              </FieldRow>
+            ) : null}
+            {result.note !== undefined ? (
+              <FieldRow label="note" wide>
+                <pre className="whitespace-pre-wrap break-words text-fg-1">{result.note}</pre>
               </FieldRow>
             ) : null}
           </div>

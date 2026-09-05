@@ -14,7 +14,6 @@ import {
 let dir: string;
 
 beforeEach(async () => {
-  vi.stubEnv('KIMI_CODE_LEGACY_FLAG', '');
   dir = join(tmpdir(), `kimi-doctor-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   await mkdir(dir, { recursive: true });
 });
@@ -103,25 +102,56 @@ describe('kimi doctor', () => {
     expect(out).toContain('built-in defaults will apply');
   });
 
-  it('uses the legacy validator when legacy wins over the experimental flag', async () => {
+  it('keeps v2 validation when the legacy flag is set', async () => {
     const configPath = join(dir, 'config.toml');
-    const text = '[providers.kimi]\ntype = "kimi"\n';
-    await writeFile(configPath, text, 'utf-8');
-    vi.stubEnv('KIMI_CODE_LEGACY_FLAG', '1');
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '1');
-    const validateConfigToml = vi.fn(async () => undefined);
-    const { deps } = makeDeps();
+    await writeFile(
+      configPath,
+      `
+default_model = "kimi"
 
-    const code = await handleDoctor(
-      {
-        ...deps,
-        configRpc: { validateConfigToml } as unknown as NonNullable<DoctorDeps['configRpc']>,
-      },
-      { target: 'config' },
+[providers.kimi]
+type = "kimi"
+base_url = "https://api.example.com/v1"
+api_key = "YOUR_API_KEY"
+
+[models.kimi]
+provider = "kimi"
+model = "kimi"
+protocol = "openai"
+max_context_size = 262144
+`,
+      'utf-8',
     );
+    vi.stubEnv('KIMI_CODE_LEGACY_FLAG', '1');
+    const { deps, stdout, stderr } = makeDeps();
+
+    const code = await handleDoctor(deps, { target: 'config' });
 
     expect(code).toBe(0);
-    expect(validateConfigToml).toHaveBeenCalledWith({ text, filePath: configPath });
+    expect(stderr.join('')).toBe('');
+    expect(stdout.join('')).toContain(`OK config.toml  ${configPath}`);
+  });
+
+  it('reports schema-invalid sections with the v2 engine when the legacy flag is set', async () => {
+    await writeFile(
+      join(dir, 'config.toml'),
+      `
+[models.kimi]
+provider = "kimi"
+model = "kimi"
+max_context_size = "large"
+`,
+      'utf-8',
+    );
+    vi.stubEnv('KIMI_CODE_LEGACY_FLAG', '1');
+    const { deps, stderr } = makeDeps();
+
+    const code = await handleDoctor(deps, { target: 'config' });
+
+    expect(code).toBe(1);
+    const err = stderr.join('');
+    expect(err).toContain('Validation issues:');
+    expect(err).toContain('models.kimi.max_context_size:');
   });
 
   it('checks only config.toml when the config target is selected', async () => {

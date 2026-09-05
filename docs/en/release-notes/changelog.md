@@ -6,6 +6,98 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.41.0 (2026-09-04)
+
+### Features
+
+- web: Add tower multi-agent collaboration mode (experimental), enabled via the `/tower` command or the composer plus menu; `/tower` supports specifying a base branch (e.g. `/tower add-new-feature`).
+- web: Add selection annotation — select text in messages, file previews, the diff and per-turn changes panels, or the terminal to add a comment or quote it into the chat.
+- CLI: Add a session rating prompt that invites you to rate the session at appropriate times above the input box.
+
+### Polish
+
+- Auto permission mode no longer blocks dangerous commands and commands that cannot be statically analyzed.
+- Remind the model of its context budget before automatic compaction, and after compaction point it at the session's event log for exact details.
+- web: Rename the three permission modes to Always Ask / Ask When Needed / Never Ask and update their descriptions; switching to Ask When Needed or Never Ask permission mode now warns that files may be modified or deleted directly in that mode.
+- web: Esc no longer closes the right detail panel.
+- web: Restyle Bash commands in the right-side panel in terminal style.
+- Deliver background question answers to the agent directly instead of via a saved output file.
+- Subagent final messages under 200 characters are no longer bounced back for expansion.
+
+### Bug Fixes
+
+- Fix print mode (`kimi -p`) losing session records when the run exits on an error or a termination signal.
+- Fix print mode (`kimi -p`) ignoring the `KIMI_DISABLE_TELEMETRY` environment variable.
+- Tower mode (experimental): fix tower mode never starting when enabled through `[experimental] tower = true` in config.toml instead of the environment variable, and make `/tower` work in directories that are not git repositories; enablement errors now name the actual blocker.
+- Fix background questions being cancelled as soon as the agent finishes its turn.
+- Fix resuming a subagent by its agent id after the session is reopened in a new process; the resumed subagent follows the current permission mode and is matched by its own profile in permission rules.
+- web: Fix per-turn file change previews showing added/removed lines that never existed and inaccurate line counts when the same file is edited multiple times in one turn; change cards now show only exact line statistics.
+- web: Fix the default thinking effort in settings not being settable to the highest level (Max).
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
+## 0.40.1 (2026-09-02)
+
+### Bug Fixes
+
+- Fix the condition for showing the kimi-cli migration prompt.
+
+## 0.40.0 (2026-09-02)
+
+### Features
+
+- web: Add a Plugins panel to Settings for browsing the plugin marketplace and installing, enabling, disabling, and removing plugins.
+- web: Support activating multiple skills from a single message.
+- Add the `kimi session list` command to list sessions from the command line.
+- Tower mode (experimental, `KIMI_CODE_EXPERIMENTAL_TOWER=1`): the agent no longer enters tower mode on its own — turn it on with `/tower on` or `/tower <base-branch>`.
+- The subagent model setting (`[secondary_model]`) graduates from experimental to stable.
+- Block dangerous shell commands such as shutdown, reboot, or rm -rf in Auto mode, and always ask before running them in Manual and YOLO modes; disable the guard with `[permission] dangerous_command_guard = false` or `KIMI_CODE_DANGEROUS_COMMAND_GUARD=false`.
+
+### Polish
+
+- Preserve comments, key order, and formatting in config.toml when configuration values are updated.
+- Remove the workspace restriction on the Bash tool's cwd parameter.
+- Default the workspace trust prompt selection to "Trust this folder" instead of "Don't trust".
+- The `kimi acp` subcommand no longer honors `KIMI_CODE_LEGACY_FLAG`; it always runs on the default agent engine.
+- web: Add a code wrap toggle to the diff panel and streamline its header.
+
+### Bug Fixes
+
+- Honor explicit `[experimental]` config entries over the `KIMI_CODE_EXPERIMENTAL_FLAG` master switch, so a flag set to `false` in config.toml stays off; per-feature `KIMI_CODE_EXPERIMENTAL_<NAME>` variables still override both.
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
+## 0.39.1 (2026-08-28)
+
+### Bug Fixes
+
+- web: Fix switching the permission mode in one session changing it for every session; the permission mode is now scoped per session.
+- web: Fix signed-in users without a usable model being wrongly asked to sign in (and getting stuck there on web); the send gate now offers picking or configuring a model instead.
+- web: Fix the first IME (or keyboard) character being silently swallowed after clicking the composer placeholder.
+- web: Fix attachments in a newly created session still showing as uploading after the upload has finished.
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
+## 0.39.0 (2026-08-27)
+
+### Features
+
+- Add Remote Control as an experimental feature for accessing a local web session remotely. Enable it with `KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL=1`, then run `kimi rc`, `kimi web --remote-control`, or `/remote-control` to start it.
+- Add experimental tower mode for multi-agent orchestration; set `KIMI_CODE_EXPERIMENTAL_TOWER=1`, then run `/tower on` and `/tower <objective>` to start.
+- Add an optional `fork` parameter to subagent and swarm tools that starts the subagent with a snapshot of the calling agent's conversation history; set `KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK=1` or `subagent_fork = true` under `[experimental]` in config.toml to enable it.
+- web: Allow moving a running foreground Bash command or subagent to the background via the "Move to background" button on the running card.
+- web: Add a flat/by-workspace tab to the mobile session list.
+- Add the Tencent CloudBase plugin to the curated marketplace.
+- Add a dedicated `[swarm] timeout_ms` config option (or the `KIMI_CODE_SWARM_TIMEOUT_MS` env var) for AgentSwarm subagent timeouts, which no longer follow `[subagent] timeout_ms`.
+
+### Polish
+
+- web: Revamp the right sidebar as a multi-tab panel.
+- web: Improve composer interaction, including the presentation of file, folder, and media attachments.
+- web: Improve mobile UI styling.
+
+### Bug Fixes
+
+- Fix file tools and shell working directories failing to resolve Git Bash paths such as /c/Users or /tmp on Windows.
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
 ## 0.38.0 (2026-08-20)
 
 ### Features

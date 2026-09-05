@@ -15,8 +15,7 @@ it('creates an independent agent with a scoped experimental flag resolver', () =
     experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS),
   });
 
-  // No experimental flags are currently registered, so the scoped resolver
-  // reports none enabled.
+  // Legacy agent-core keeps the secondary-model experiment disabled by default.
   expect(ctx.agent.experimentalFlags.enabledIds()).toEqual([]);
 });
 

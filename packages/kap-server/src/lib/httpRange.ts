@@ -7,11 +7,6 @@ export function pickHeader(
   return Array.isArray(v) ? (v[0] as string | undefined) : (v as string);
 }
 
-/**
- * Parse a single-range `bytes=` header against a known size. Returns null for
- * absent, malformed, multi-range, or unsatisfiable specs (callers then serve
- * the full body with 200).
- */
 export function parseRangeHeader(
   raw: string | undefined,
   size: number,

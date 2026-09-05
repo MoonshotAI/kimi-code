@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { fetchWorkspaceFsSuggest } from './api';
+import { fetchFsSuggest } from './api';
 
 function okEnvelope(data: unknown) {
   return { code: 0, msg: 'success', data, request_id: 'r1' };
@@ -30,89 +30,71 @@ const resultData = {
   truncated: true,
 };
 
-describe('fetchWorkspaceFsSuggest', () => {
-  it('posts the workspace suggestion request and maps items', async () => {
+describe('fetchFsSuggest', () => {
+  it('posts the roots suggestion request and maps items', async () => {
     const { calls, fetchImpl } = fakeFetch(okEnvelope(resultData));
-    const result = await fetchWorkspaceFsSuggest({
+    const result = await fetchFsSuggest({
       baseUrl: 'http://h:1/',
       token: 'tok',
-      workspace: 'ws-1',
+      roots: ['/repo', '/extra'],
       query: 'apps/de',
       limit: 20,
-      followGitignore: true,
-      showHidden: false,
+      followGitignore: false,
+      showHidden: true,
       includeGlobs: ['**/*.ts'],
       excludeGlobs: ['dist/**'],
       runtimeId: 'local',
       fetchImpl,
     });
 
-    expect(calls[0]!.url).toBe('http://h:1/api/v1/workspace/fs:suggest');
+    expect(calls[0]!.url).toBe('http://h:1/api/v1/fs:suggest');
     expect(calls[0]!.init?.method).toBe('POST');
     expect(calls[0]!.init?.headers).toEqual({
       'content-type': 'application/json',
       authorization: 'Bearer tok',
     });
     expect(JSON.parse(calls[0]!.init?.body as string)).toEqual({
-      workspace: 'ws-1',
+      roots: ['/repo', '/extra'],
       query: 'apps/de',
       limit: 20,
-      follow_gitignore: true,
-      show_hidden: false,
+      follow_gitignore: false,
+      show_hidden: true,
       include_globs: ['**/*.ts'],
       exclude_globs: ['dist/**'],
       runtime_id: 'local',
     });
-    expect(result.items).toEqual([
-      {
-        path: 'apps/desktop',
-        name: 'desktop',
-        kind: 'directory',
-        score: 0.9,
-        matchPositions: [5, 6],
-      },
-      {
-        path: 'README.md',
-        name: 'README.md',
-        kind: 'file',
-        score: 0.8,
-        matchPositions: [0, 1],
-      },
-    ]);
+    expect(result.items).toHaveLength(2);
+    expect(result.items[0]).toEqual({
+      path: 'apps/desktop',
+      name: 'desktop',
+      kind: 'directory',
+      score: 0.9,
+      matchPositions: [5, 6],
+    });
     expect(result.truncated).toBe(true);
   });
 
   it('omits optional fields and authorization when not configured', async () => {
     const { calls, fetchImpl } = fakeFetch(okEnvelope({ items: [], truncated: false }));
-    await fetchWorkspaceFsSuggest({
-      baseUrl: 'http://h:1',
-      workspace: '/tmp/workspace',
-      query: '',
-      fetchImpl,
-    });
+    await fetchFsSuggest({ baseUrl: 'http://h:1', roots: ['/repo'], query: '', fetchImpl });
     expect(calls[0]!.init?.headers).toEqual({ 'content-type': 'application/json' });
     expect(JSON.parse(calls[0]!.init?.body as string)).toEqual({
-      workspace: '/tmp/workspace',
+      roots: ['/repo'],
       query: '',
     });
   });
 
   it('throws on a non-zero envelope code', async () => {
-    const { fetchImpl } = fakeFetch({ code: 40410, msg: 'workspace missing', data: null });
+    const { fetchImpl } = fakeFetch({ code: 40409, msg: 'root missing', data: null });
     await expect(
-      fetchWorkspaceFsSuggest({
-        baseUrl: 'http://h:1',
-        workspace: 'missing',
-        query: 'x',
-        fetchImpl,
-      }),
-    ).rejects.toThrow(/40410/);
+      fetchFsSuggest({ baseUrl: 'http://h:1', roots: ['/missing'], query: 'x', fetchImpl }),
+    ).rejects.toThrow(/40409/);
   });
 
   it('throws on a malformed payload', async () => {
     const { fetchImpl } = fakeFetch(okEnvelope({ truncated: false }));
     await expect(
-      fetchWorkspaceFsSuggest({ baseUrl: 'http://h:1', workspace: 'ws', query: 'x', fetchImpl }),
+      fetchFsSuggest({ baseUrl: 'http://h:1', roots: ['/repo'], query: 'x', fetchImpl }),
     ).rejects.toThrow(/unexpected response shape/);
   });
 });

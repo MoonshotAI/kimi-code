@@ -17,6 +17,7 @@ import {
   type SubagentHandle,
 } from '#/agent/tools/agent/subagent-task';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
+import { QuestionBackgroundTask } from '#/agent/tools/ask-user-question/question-background-task';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IEventBus } from '#/app/event/eventBus';
 import type { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
@@ -322,7 +323,15 @@ describe('AgentTaskService — event emission', () => {
     );
     expect(records).toContainEqual({
       event: 'background_task_created',
-      properties: { agent_id: 'main', task_id: taskId, kind: 'bash' },
+      properties: {
+        agent_id: 'main',
+        task_id: taskId,
+        kind: 'bash',
+        mode: 'agent',
+        model: 'mock-model',
+        protocol: 'openai',
+        provider_type: 'kimi',
+      },
     });
   });
 
@@ -344,7 +353,15 @@ describe('AgentTaskService — event emission', () => {
     );
     expect(records).toContainEqual({
       event: 'background_task_created',
-      properties: { agent_id: 'main', task_id: taskId, kind: 'agent' },
+      properties: {
+        agent_id: 'main',
+        task_id: taskId,
+        kind: 'agent',
+        mode: 'agent',
+        model: 'mock-model',
+        protocol: 'openai',
+        provider_type: 'kimi',
+      },
     });
   });
 
@@ -485,6 +502,135 @@ describe('AgentTaskService — notification delivery', () => {
     expect(text).toContain('agent task completed.');
     expect(text).toContain('<output-file');
     expect(text).not.toContain('final subagent summary');
+  });
+
+  it('inlines the answer in completed question task notifications', async () => {
+    const { agent, ctx, manager } = createAgentTaskService();
+    ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
+    const turnEnd = ctx.untilTurnEnd();
+    const answer = JSON.stringify({ answers: { 'Which database?': 'Postgres' } });
+    const taskId = manager.registerTask(
+      new QuestionBackgroundTask(
+        async () => ({ isError: false, output: answer }),
+        'Which database?',
+        { questionCount: 1, toolCallId: 'call_q' },
+      ),
+      { detached: true },
+    );
+
+    await manager.wait(taskId);
+
+    await vi.waitFor(() => {
+      expect(notifiedCount(ctx)).toBe(1);
+    });
+    await turnEnd;
+
+    const message = notificationMessageFor(agent, taskId);
+    expect(message.origin).toEqual({
+      kind: 'task',
+      taskId,
+      status: 'completed',
+      notificationId: `task:${taskId}:completed`,
+    });
+    const text = message.content[0]!.text;
+    expect(text).toContain('Title: Background question answered');
+    expect(text).toContain('The user answered "Which database?".');
+    expect(text).toContain(`<answer>\n${answer}\n</answer>`);
+    expect(text).not.toContain('<output-file');
+    expect(text).not.toContain('<output-preview');
+  });
+
+  it('reports a dismissed question task without an output file', async () => {
+    const { agent, ctx, manager } = createAgentTaskService();
+    ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
+    const turnEnd = ctx.untilTurnEnd();
+    const dismissed = JSON.stringify({
+      answers: {},
+      note: 'User dismissed the question without answering.',
+    });
+    const taskId = manager.registerTask(
+      new QuestionBackgroundTask(
+        async () => ({ isError: false, output: dismissed }),
+        'Which database?',
+        { questionCount: 1, toolCallId: 'call_q' },
+      ),
+      { detached: true },
+    );
+
+    await manager.wait(taskId);
+
+    await vi.waitFor(() => {
+      expect(notifiedCount(ctx)).toBe(1);
+    });
+    await turnEnd;
+
+    const text = notificationMessageFor(agent, taskId).content[0]!.text;
+    expect(text).toContain('Title: Background question dismissed');
+    expect(text).toContain('The user dismissed "Which database?" without answering.');
+    expect(text).toContain(`<answer>\n${dismissed}\n</answer>`);
+    expect(text).not.toContain('<output-file');
+  });
+
+  it('keeps the generic wording for question output that is not an answer payload', async () => {
+    const { agent, ctx, manager } = createAgentTaskService();
+    ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
+    const turnEnd = ctx.untilTurnEnd();
+    const taskId = manager.registerTask(
+      new QuestionBackgroundTask(
+        async () => ({ isError: false, output: 'not an answer payload' }),
+        'Which database?',
+        { questionCount: 1, toolCallId: 'call_q' },
+      ),
+      { detached: true },
+    );
+
+    await manager.wait(taskId);
+
+    await vi.waitFor(() => {
+      expect(notifiedCount(ctx)).toBe(1);
+    });
+    await turnEnd;
+
+    const text = notificationMessageFor(agent, taskId).content[0]!.text;
+    expect(text).toContain('Title: Background question completed');
+    expect(text).toContain('Which database? completed.');
+    expect(text).not.toContain('dismissed');
+    expect(text).toContain('<answer>\nnot an answer payload\n</answer>');
+    expect(text).not.toContain('<output-file');
+  });
+
+  it('reports a failed question task with its reason and no answer block', async () => {
+    const { agent, ctx, manager } = createAgentTaskService();
+    ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
+    const turnEnd = ctx.untilTurnEnd();
+    const taskId = manager.registerTask(
+      new QuestionBackgroundTask(
+        async () => ({
+          isError: true,
+          output: 'The connected client does not support interactive questions.',
+        }),
+        'Which database?',
+        { questionCount: 1, toolCallId: 'call_q' },
+      ),
+      { detached: true },
+    );
+
+    await manager.wait(taskId);
+
+    await vi.waitFor(() => {
+      expect(notifiedCount(ctx)).toBe(1);
+    });
+    await turnEnd;
+
+    const message = notificationMessageFor(agent, taskId);
+    expect(message.origin).toMatchObject({ kind: 'task', taskId, status: 'failed' });
+    const text = message.content[0]!.text;
+    expect(text).toContain('Title: Background question failed');
+    expect(text).toContain(
+      'Which database? failed. Reason: The connected client does not support interactive questions.',
+    );
+    expect(text).not.toContain('<answer>');
+    expect(text).not.toContain('dismissed');
   });
 
   it('enqueues completed process task notifications into the turn flow', async () => {
@@ -830,6 +976,7 @@ describe('AgentTaskService — notification delivery', () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-lost-'));
     let fixture: TaskServiceFixture | undefined;
     try {
+      const fireAndForgetTrigger = vi.fn<FireAndForgetTrigger>(async () => []);
       const persistence = createAgentTaskPersistence(sessionDir);
       await persistence.writeTask(
         persistedAgent({
@@ -839,7 +986,10 @@ describe('AgentTaskService — notification delivery', () => {
           status: 'running',
         }),
       );
-      fixture = createAgentTaskService({ sessionDir });
+      fixture = createAgentTaskService({
+        sessionDir,
+        hooks: { fireAndForgetTrigger },
+      });
       const { agent, manager } = fixture;
 
       await manager.loadFromDisk();
@@ -850,15 +1000,146 @@ describe('AgentTaskService — notification delivery', () => {
         expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
       });
       const message = firstAppendedContextMessage(agent);
-      expect(message.origin).toEqual({
-        kind: 'task',
-        taskId: 'agent-run00000',
-        status: 'lost',
-        notificationId: 'task:agent-run00000:lost',
+      expect(message.origin).toMatchObject({
+        kind: 'injection',
+        variant: 'task_resume_termination',
       });
-      expect(message.content[0]!.text).toContain(
-        'Background agent lost',
+      expect(message.content[0]!.text).toContain('<system-reminder>');
+      expect(message.content[0]!.text).toContain('agent-run00000');
+      await vi.waitFor(() => {
+        expect(fireAndForgetTrigger).toHaveBeenCalledTimes(1);
+      });
+      expect(fireAndForgetTrigger).toHaveBeenCalledWith('Notification', expect.objectContaining({
+        matcherValue: 'task.lost',
+        inputData: expect.objectContaining({
+          sink: 'context',
+          notificationType: 'task.lost',
+          title: 'Background agent lost',
+          body: expect.stringContaining('interrupted task lost.'),
+          severity: 'warning',
+          sourceKind: 'background_task',
+          sourceId: 'agent-run00000',
+        }),
+      }));
+    } finally {
+      await cleanupSessionDir(sessionDir, fixture);
+    }
+  });
+
+  it('does not repeat a restored lost-task reminder when its marker is missing', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-reminded-'));
+    let fixture: TaskServiceFixture | undefined;
+    try {
+      const persistence = createAgentTaskPersistence(sessionDir);
+      await persistence.writeTask(
+        persistedAgent({
+          taskId: 'agent-hist0000',
+          description: 'interrupted task',
+          status: 'lost',
+        }),
       );
+      fixture = createAgentTaskService({ sessionDir });
+      const { agent, ctx, manager } = fixture;
+      ctx.appendSystemReminder(
+        '- agent-hist0000 "interrupted task" (subagent)',
+        { kind: 'injection', variant: 'task_resume_termination' },
+      );
+
+      await manager.loadFromDisk();
+      await manager.reconcile();
+
+      expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
+      await vi.waitFor(async () => {
+        await expect(persistence.readTask('agent-hist0000')).resolves.toMatchObject({
+          resumeReminded: true,
+        });
+      });
+    } finally {
+      await cleanupSessionDir(sessionDir, fixture);
+    }
+  });
+
+  it('does not replace a delivered legacy lost-task notification with a reminder', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-delivered-'));
+    let fixture: TaskServiceFixture | undefined;
+    try {
+      const persistence = createAgentTaskPersistence(sessionDir);
+      await persistence.writeTask(
+        persistedAgent({
+          taskId: 'agent-old00000',
+          description: 'interrupted task',
+          status: 'lost',
+        }),
+      );
+      fixture = createAgentTaskService({ sessionDir });
+      const { agent, ctx, manager } = fixture;
+      ctx.get(IAgentContextMemoryService).append({
+        role: 'user',
+        content: [{ type: 'text', text: '<notification>interrupted task lost.</notification>' }],
+        toolCalls: [],
+        origin: {
+          kind: 'task',
+          taskId: 'agent-old00000',
+          status: 'lost',
+          notificationId: 'task:agent-old00000:lost',
+        },
+      });
+
+      await manager.loadFromDisk();
+      await manager.reconcile();
+
+      expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
+      expect(
+        ctx.contextData().history.filter(
+          (message) =>
+            message.origin?.kind === 'injection' &&
+            message.origin.variant === 'task_resume_termination',
+        ),
+      ).toEqual([]);
+      await vi.waitFor(async () => {
+        await expect(persistence.readTask('agent-old00000')).resolves.toMatchObject({
+          resumeReminded: true,
+        });
+      });
+    } finally {
+      await cleanupSessionDir(sessionDir, fixture);
+    }
+  });
+
+  it('does not block restore when persisting a reminder marker fails', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-marker-'));
+    let fixture: TaskServiceFixture | undefined;
+    try {
+      const persistence = createAgentTaskPersistence(sessionDir);
+      await persistence.writeTask(
+        persistedAgent({
+          taskId: 'agent-mark0000',
+          description: 'interrupted task',
+          status: 'lost',
+        }),
+      );
+      fixture = createAgentTaskService({ sessionDir });
+      const { agent, manager } = fixture;
+      await manager.loadFromDisk();
+      const internalPersistence = (
+        manager as unknown as {
+          readonly persistence: Pick<ReturnType<typeof createAgentTaskPersistence>, 'writeTask'>;
+        }
+      ).persistence;
+      vi.spyOn(internalPersistence, 'writeTask').mockRejectedValueOnce(
+        new Error('marker write failed'),
+      );
+
+      await expect(manager.reconcile()).resolves.toEqual([]);
+
+      expect(manager.getTask('agent-mark0000')).toMatchObject({
+        status: 'lost',
+        resumeReminded: true,
+      });
+      expect(firstAppendedContextMessage(agent).origin).toMatchObject({
+        kind: 'injection',
+        variant: 'task_resume_termination',
+      });
     } finally {
       await cleanupSessionDir(sessionDir, fixture);
     }

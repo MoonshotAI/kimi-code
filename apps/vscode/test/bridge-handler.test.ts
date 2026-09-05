@@ -4,7 +4,7 @@
  * Wiring: the real BridgeHandler and handlers; VS Code and the public Node SDK harness boundary are replaced.
  * Run: pnpm --filter kimi-code exec vitest run --config vitest.config.ts test/bridge-handler.test.ts
  */
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -293,6 +293,36 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
     });
   });
 
+  it("resolves the fallback-profile default effort with the provider type", async () => {
+    // claude-latest declares efforts but no default; the Anthropic fallback
+    // profile only matches when the provider type joins the resolution.
+    host.harness.getConfig.mockResolvedValueOnce({
+      defaultModel: "custom/claude",
+      providers: {
+        custom: { type: "anthropic", apiKey: "test-key" },
+      },
+      models: {
+        "custom/claude": {
+          provider: "custom",
+          model: "claude-latest",
+          supportEfforts: ["low", "medium", "high", "xhigh", "max"],
+        },
+      },
+    });
+
+    const result = await bridge.handle({ id: "rpc-models", method: Methods.GetModels }, "view-1");
+
+    expect(result).toMatchObject({
+      result: {
+        models: [{
+          id: "custom/claude",
+          support_efforts: ["low", "medium", "high", "xhigh", "max"],
+          default_effort: "high",
+        }],
+      },
+    });
+  });
+
   it("does not expose the session storage path when listing sessions", async () => {
     host.harness.listSessions.mockResolvedValueOnce([
       {
@@ -471,6 +501,41 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
   });
 });
 
+describe("Registered working directories", () => {
+  it("lists the workspace root when there is no session history", async () => {
+    host.harness.listSessions.mockResolvedValueOnce([] as never);
+
+    const result = await bridge.handle({ id: "rpc-1", method: Methods.GetRegisteredWorkDirs }, "view-1");
+
+    expect(result).toEqual({ id: "rpc-1", result: [root] });
+  });
+
+  it("keeps the selected working directory visible without session history", async () => {
+    const sub = join(root, "packages", "demo");
+    await mkdir(sub, { recursive: true });
+    host.harness.listSessions.mockResolvedValue([] as never);
+
+    await bridge.handle({ id: "rpc-1", method: Methods.SetWorkDir, params: { workDir: sub } }, "view-1");
+    const result = await bridge.handle({ id: "rpc-2", method: Methods.GetRegisteredWorkDirs }, "view-1");
+
+    expect(result).toEqual({ id: "rpc-2", result: [root, sub].toSorted() });
+  });
+
+  it("merges session-history directories and hides directories outside the workspace", async () => {
+    const inside = join(root, "nested");
+    host.harness.listSessions.mockResolvedValueOnce([
+      { id: "s-1", workDir: inside },
+      { id: "s-2", workDir: "/private/outside" },
+      { id: "s-3", workDir: root },
+    ] as never);
+
+    const result = await bridge.handle({ id: "rpc-1", method: Methods.GetRegisteredWorkDirs }, "view-1");
+
+    expect(result).toEqual({ id: "rpc-1", result: [inside, root].toSorted() });
+    expect(JSON.stringify(result)).not.toContain("/private/outside");
+  });
+});
+
 describe("Webview config saves (thinking effort persistence parity with the TUI)", () => {
   const effortModel = {
     provider: "managed:kimi-code",
@@ -502,7 +567,7 @@ describe("Webview config saves (thinking effort persistence parity with the TUI)
     });
   });
 
-  it("keeps the model's top declared tier session-only", async () => {
+  it("keeps a pick above the model's delivered default session-only", async () => {
     mockConfig();
 
     await bridge.handle(
@@ -512,6 +577,42 @@ describe("Webview config saves (thinking effort persistence parity with the TUI)
 
     expect(host.harness.setConfig).toHaveBeenCalledWith({
       defaultModel: "kimi/reasoning",
+      thinking: { enabled: true },
+    });
+  });
+
+  it("persists the top tier when the model's delivered default is the top tier", async () => {
+    host.harness.getConfig.mockResolvedValue({
+      defaultModel: "kimi/reasoning",
+      models: { "kimi/reasoning": { ...effortModel, defaultEffort: "max" } },
+    } as never);
+
+    await bridge.handle(
+      { id: "rpc-1", method: Methods.SaveConfig, params: { model: "kimi/reasoning", thinking: true, effort: "max" } },
+      "view-1",
+    );
+
+    expect(host.harness.setConfig).toHaveBeenCalledWith({
+      defaultModel: "kimi/reasoning",
+      thinking: { enabled: true, effort: "max" },
+    });
+  });
+
+  it("keeps an xhigh pick session-only when the default comes from the Anthropic profile inference", async () => {
+    // claude-opus-4-7 declares no efforts; the profile inference supplies
+    // [low, medium, high, xhigh, max] and resolves the default to "high".
+    host.harness.getConfig.mockResolvedValue({
+      defaultModel: "custom/claude",
+      models: { "custom/claude": { provider: "custom", model: "claude-opus-4-7" } },
+    } as never);
+
+    await bridge.handle(
+      { id: "rpc-1", method: Methods.SaveConfig, params: { model: "custom/claude", thinking: true, effort: "xhigh" } },
+      "view-1",
+    );
+
+    expect(host.harness.setConfig).toHaveBeenCalledWith({
+      defaultModel: "custom/claude",
       thinking: { enabled: true },
     });
   });

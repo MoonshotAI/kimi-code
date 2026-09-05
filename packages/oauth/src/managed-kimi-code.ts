@@ -13,10 +13,12 @@ export const KIMI_CODE_PROVIDER_NAME = 'managed:kimi-code';
 export const KIMI_CODE_OAUTH_KEY = 'oauth/kimi-code';
 const KIMI_CODE_SCOPED_OAUTH_KEY_PREFIX = 'oauth/kimi-code-env-';
 
-export type ManagedKimiCodeProtocol = 'kimi' | 'anthropic';
+export type ManagedKimiCodeProtocol = 'kimi' | 'anthropic' | 'openai_responses';
 
 export function parseModelProtocol(value: unknown): ManagedKimiCodeProtocol | undefined {
-  return value === 'anthropic' ? 'anthropic' : undefined;
+  if (value === 'anthropic') return 'anthropic';
+  if (value === 'response') return 'openai_responses';
+  return undefined;
 }
 
 /**

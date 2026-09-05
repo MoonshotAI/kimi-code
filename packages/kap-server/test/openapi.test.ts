@@ -1,39 +1,11 @@
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
 
-import { afterEach, describe, expect, it } from 'vitest';
-
-import { type RunningServer, startServer } from '../src/start';
-import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
-import { authHeaders } from './helpers/auth';
+import { sharedAuthHeaders, sharedServer } from './helpers/sharedServer';
 
 describe('server-v2 OpenAPI', () => {
-  let server: RunningServer | undefined;
-  let home: string | undefined;
-
-  afterEach(async () => {
-    if (server !== undefined) {
-      await server.close();
-      server = undefined;
-    }
-    if (home !== undefined) {
-      await rm(home, { recursive: true, force: true });
-      home = undefined;
-    }
-  });
-
   async function fetchOpenApi(): Promise<Record<string, unknown>> {
-    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-openapi-'));
-    server = await startServer({
-      hostIdentity: TEST_HOST_IDENTITY,
-      host: '127.0.0.1',
-      port: 0,
-      homeDir: home,
-      logLevel: 'silent',
-    });
-    const res = await fetch(`http://127.0.0.1:${server.port}/openapi.json`, {
-      headers: authHeaders(server),
+    const res = await fetch(`${sharedServer().base}/openapi.json`, {
+      headers: sharedAuthHeaders(),
     } as never);
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toContain('application/json');
@@ -115,6 +87,25 @@ describe('server-v2 OpenAPI', () => {
     const json = asRecord(content['application/json']);
     const schema = asRecord(json['schema']);
     expect(Array.isArray(schema['oneOf'])).toBe(true);
+  });
+
+  it('documents MCP OAuth failures for auth completion', async () => {
+    const doc = await fetchOpenApi();
+    const authCompleteOp = operation(doc, '/api/v2/mcp/auth:complete', 'post');
+    const responses = asRecord(authCompleteOp['responses']);
+    const response = asRecord(responses['200']);
+    const content = asRecord(response['content']);
+    const schema = asRecord(asRecord(content['application/json'])['schema']);
+    const variants = schema['oneOf'];
+
+    expect(Array.isArray(variants)).toBe(true);
+    expect(
+      (variants as unknown[]).some((variant) => {
+        const properties = asRecord(asRecord(variant)['properties']);
+        const values = asRecord(properties['code'])['enum'];
+        return Array.isArray(values) && values.includes(40929);
+      }),
+    ).toBe(true);
   });
 });
 

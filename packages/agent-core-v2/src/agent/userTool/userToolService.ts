@@ -12,8 +12,8 @@ import type {
   ExecutableToolResult,
 } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { ISessionInteractionService } from '#/session/interaction/interaction';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IAgentInteractionService } from '#/features/interaction/interactionService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
@@ -40,7 +40,7 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
-    @ISessionInteractionService private readonly interaction: ISessionInteractionService,
+    @IAgentInteractionService private readonly interaction: IAgentInteractionService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentStateService private readonly agentState: IAgentStateService,
   ) {

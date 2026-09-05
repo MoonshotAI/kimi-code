@@ -230,4 +230,32 @@ describe('fetchLatestFromCdn', () => {
       vi.useRealTimers();
     }
   });
+
+  it('honors a custom request timeout instead of the background budget', async () => {
+    vi.useFakeTimers();
+    try {
+      const f = vi.fn(async (_input: string | URL, init?: RequestInit) => {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new Error('aborted'));
+          }, { once: true });
+        });
+      }) as unknown as typeof fetch;
+
+      const result = fetchLatestFromCdn(f, 10_000);
+      let rejected = false;
+      void result.catch(() => {
+        rejected = true;
+      });
+      const expectation = expect(result).rejects.toThrow(/aborted/);
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(rejected).toBe(false);
+      await vi.advanceTimersByTimeAsync(14_000);
+
+      await expectation;
+      expect(rejected).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

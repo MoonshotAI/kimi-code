@@ -2,15 +2,10 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 
-import {
-  createKimiConfigRpc,
-  type KimiConfigRpc,
-  type KimiConfigValidationIssue,
-} from '@moonshot-ai/kimi-code-sdk';
+import { resolveConfigPath, type KimiConfigValidationIssue } from '@moonshot-ai/kimi-code-sdk';
 import type { Command } from 'commander';
 import { z } from 'zod';
 
-import { isKimiV2Enabled } from '#/cli/experimental-v2';
 import { getTuiConfigPath, parseTuiConfig } from '#/tui/config';
 
 interface WritableLike {
@@ -26,7 +21,6 @@ export interface DoctorDeps {
   readonly stdout: WritableLike;
   readonly stderr: WritableLike;
   readonly exit: (code: number) => never;
-  readonly configRpc?: KimiConfigRpc;
   readonly fileExists?: (path: string) => boolean;
   readonly readTextFile?: (path: string) => Promise<string>;
   readonly validateConfigToml?: (text: string, path: string) => MaybePromise<string | void>;
@@ -115,15 +109,9 @@ async function runDoctorCommand(
 }
 
 function resolveDeps(deps: Partial<DoctorDeps> | DoctorDeps | undefined): ResolvedDoctorDeps {
-  let configRpc = deps?.configRpc;
-  const getConfigRpc = (): KimiConfigRpc => {
-    configRpc ??= createKimiConfigRpc();
-    return configRpc;
-  };
-
   return {
     cwd: deps?.cwd ?? (() => process.cwd()),
-    defaultConfigPath: deps?.defaultConfigPath ?? (() => getConfigRpc().resolveConfigPath()),
+    defaultConfigPath: deps?.defaultConfigPath ?? (() => resolveConfigPath({})),
     defaultTuiConfigPath: deps?.defaultTuiConfigPath ?? getTuiConfigPath,
     stdout: deps?.stdout ?? process.stdout,
     stderr: deps?.stderr ?? process.stderr,
@@ -133,15 +121,8 @@ function resolveDeps(deps: Partial<DoctorDeps> | DoctorDeps | undefined): Resolv
     validateConfigToml:
       deps?.validateConfigToml ??
       (async (text, filePath) => {
-        if (isKimiV2Enabled()) {
-          // Default v2 route (same engine gate as `kimi -p`): validate with
-          // the agent-core-v2 section registry instead of the legacy schema.
-          // Loaded lazily so the v2 module graph stays off the legacy path.
-          const { validateConfigTomlV2 } = await import('../v2/validate-config');
-          return validateConfigTomlV2(text, filePath);
-        }
-        await getConfigRpc().validateConfigToml({ text, filePath });
-        return undefined;
+        const { validateConfigTomlV2 } = await import('../v2/validate-config');
+        return validateConfigTomlV2(text, filePath);
       }),
   };
 }

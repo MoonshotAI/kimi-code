@@ -8,19 +8,10 @@ export interface TextClassification {
 export const FS_BINARY_NONPRINTABLE_FRACTION = 0.3;
 
 export interface TextEncodingDetection {
-  /**
-   * Detected encoding. `'utf-8'` when no signal points elsewhere (also the
-   * placeholder when `seemsBinary` is true).
-   */
   readonly encoding: UtfTextEncoding;
-  /**
-   * True when zero bytes appear but fit neither UTF-16 pattern — the sample
-   * should be treated as binary, not text.
-   */
   readonly seemsBinary: boolean;
 }
 
-/** Number of leading bytes inspected for the zero-byte heuristic. */
 export const ENCODING_DETECTION_SAMPLE_BYTES = 512;
 
 const MIN_ZERO_BYTES_FOR_UTF16 = 2;
@@ -112,24 +103,11 @@ export function classifyTextSample(sample: Uint8Array): TextClassification {
   return { isBinary: false, encoding: 'utf-8' };
 }
 
-/**
- * Detect the encoding of a text file from its leading bytes.
- *
- * Known limitation inherited from the reference implementation: a BOM-less
- * UTF-16 file whose content carries no zero bytes at all (e.g. purely CJK
- * text) is reported as `'utf-8'`; strict UTF-8 decoding of it will then fail
- * or produce garbage. Notepad and most editors write a BOM, so this is rare
- * in practice.
- */
 export function detectTextEncoding(sample: Uint8Array): TextEncodingDetection {
   const classification = classifyTextSample(sample);
   return { encoding: classification.encoding, seemsBinary: classification.isBinary };
 }
 
-/**
- * Decode bytes in a detected UTF encoding to a JS string. Malformed
- * sequences are replaced (non-fatal) and a leading BOM is stripped.
- */
 export function decodeUtfText(bytes: Uint8Array, encoding: UtfTextEncoding): string {
   return new TextDecoder(encoding, { fatal: false }).decode(bytes);
 }

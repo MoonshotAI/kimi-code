@@ -12,7 +12,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DeviceCodeTimeoutError, OAuthUnauthorizedError } from '../src/errors';
+import { DeviceCodeTimeoutError, OAuthAccessDeniedError, OAuthUnauthorizedError } from '../src/errors';
 import type { DevicePollResult } from '../src/oauth';
 import { OAuthManager } from '../src/oauth-manager';
 import { FileTokenStorage } from '../src/storage';
@@ -691,6 +691,7 @@ describe('OAuthManager.login', () => {
       pollDeviceImpl: pollImpl,
       sleep: async () => {},
     });
+    await expect(mgr.login()).rejects.toBeInstanceOf(OAuthAccessDeniedError);
     await expect(mgr.login()).rejects.toThrow(/denied|reject/i);
   });
 

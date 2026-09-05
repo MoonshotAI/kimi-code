@@ -9,30 +9,15 @@ import type { Scope, ScopedEntry, ServiceIdentifier } from '@moonshot-ai/agent-c
 
 export interface ChannelMethodDescriptor {
   readonly name: string;
-  /** `method` is a callable; `property` is a getter readable with no args. */
   readonly kind: 'method' | 'property';
-  /** Declared parameter count (`Function.length`) — a UI hint, not a schema. */
   readonly arity: number;
-  /**
-   * Declared parameter list as written in source (e.g. `title`,
-   * `{ workspaceId, limit }`), parsed from `Function#toString`. Names only —
-   * types are erased at runtime. Empty for getters and zero-arg methods.
-   * Relies on running from source; a minified bundle would degrade the names.
-   */
   readonly params: string;
 }
 
 export interface ChannelDescriptor {
-  /** Decorator id / wire channel name, e.g. `sessionMetadata`. */
   readonly name: string;
-  /**
-   * Registration scope — the minimal scope at which the channel resolves.
-   * Derived from the scoped DI registry.
-   */
   readonly scope: 'app' | 'session' | 'agent';
-  /** Domain tag recorded at `registerScopedService`. */
   readonly domain: string;
-  /** Public prototype members, sorted — events are instance properties and never appear. */
   readonly methods: readonly ChannelMethodDescriptor[];
 }
 
@@ -62,7 +47,6 @@ function scopedServiceNameIndex(): Map<string, ServiceIdentifier<unknown>> {
   return serviceNameIndex;
 }
 
-/** Resolve a wire name to its `ServiceIdentifier` anywhere in the DI registry. */
 export function resolveAnyScopedServiceId(
   core: Scope,
   name: string,
@@ -119,11 +103,6 @@ function describeMethods(
   return [...methods.values()].toSorted((a, b) => a.name.localeCompare(b.name));
 }
 
-/**
- * Describe EVERY registered scoped Service — served by
- * `GET /api/v1/debug/channels` so dev tooling (kimi-inspect) can load the
- * full protocol surface 1:1.
- */
 export function describeAllChannels(): readonly ChannelDescriptor[] {
   const byName = new Map<string, ScopedEntry>();
   for (const scope of [LifecycleScope.App, LifecycleScope.Session, LifecycleScope.Agent]) {

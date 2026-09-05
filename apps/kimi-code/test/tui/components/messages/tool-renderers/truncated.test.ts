@@ -20,7 +20,7 @@ describe('TruncatedOutputComponent', () => {
     const lines = strip(component.render(80).join('\n')).split('\n');
     expect(lines[0]?.startsWith('      a')).toBe(true);
     expect(lines[1]?.startsWith('      b')).toBe(true);
-    expect(lines[2]).toBe('      ... (3 more lines, ctrl+o to expand)');
+    expect(lines[2]).toBe('      … (3 more lines, ctrl+o to expand)');
   });
 
   it('defaults to a two-space indent for both content and hint', () => {
@@ -32,7 +32,7 @@ describe('TruncatedOutputComponent', () => {
 
     const lines = strip(component.render(80).join('\n')).split('\n');
     expect(lines[0]?.startsWith('  x')).toBe(true);
-    expect(lines[1]).toBe('  ... (2 more lines, ctrl+o to expand)');
+    expect(lines[1]).toBe('  … (2 more lines, ctrl+o to expand)');
   });
 
   it('omits the ctrl+o promise when expandHint is false', () => {
@@ -45,7 +45,7 @@ describe('TruncatedOutputComponent', () => {
     });
 
     const lines = strip(component.render(80).join('\n')).split('\n');
-    expect(lines[2]).toBe('    ... (2 more lines)');
+    expect(lines[2]).toBe('    … (2 more lines)');
   });
 
   it('renders all lines without a hint when expanded', () => {

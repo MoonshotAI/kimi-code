@@ -82,10 +82,6 @@ export { SECONDARY_DERIVED_MODEL_ALIAS } from '@moonshot-ai/agent-core';
 // caller's own model, so hosts must not offer a user alias named `primary`
 // as the subagent default model.
 export { PRIMARY_SUBAGENT_MODEL_CHOICE } from '@moonshot-ai/agent-core-v2/session/subagent/configSection';
-// Pool cascade for writes that rebuild the `[models]` table: hosts staging a
-// provider overwrite (remove-then-re-add) use it to restore the still-valid
-// pool entries against the final alias set.
-export { cascadeSubagentModelPool } from '@moonshot-ai/agent-core-v2/session/subagent/configSection';
 
 // Process-wide HTTP proxy bootstrap — installed once at CLI startup so all
 // outbound fetch honors HTTP_PROXY / HTTPS_PROXY / NO_PROXY.

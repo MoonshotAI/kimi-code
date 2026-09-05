@@ -4,11 +4,7 @@ import type { Session } from '@moonshot-ai/kimi-code-sdk';
 
 import { handleTowerCommand } from '#/tui/commands/index';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
-import {
-  LLM_NOT_SET_MESSAGE,
-  TOWER_STATUS_PROMPT,
-  TOWER_TEARDOWN_PROMPT,
-} from '#/tui/constant/kimi-tui';
+import { TOWER_STATUS_PROMPT, TOWER_TEARDOWN_PROMPT } from '#/tui/constant/kimi-tui';
 
 function makeHost(
   overrides: {
@@ -87,7 +83,7 @@ describe('handleTowerCommand', () => {
 
     await handleTowerCommand(host, 'on');
 
-    expect(session.setTowerMode).toHaveBeenCalledWith(true);
+    expect(session.setTowerMode).toHaveBeenCalledWith(true, undefined);
     expect(host.setAppState).toHaveBeenCalledWith({ towerMode: true });
     expect(host.showNotice).toHaveBeenCalledWith('Tower mode: ON');
     expect(host.showError).not.toHaveBeenCalled();
@@ -99,7 +95,7 @@ describe('handleTowerCommand', () => {
 
     await handleTowerCommand(host, 'off');
 
-    expect(session.setTowerMode).toHaveBeenCalledWith(false);
+    expect(session.setTowerMode).toHaveBeenCalledWith(false, undefined);
     expect(host.setAppState).toHaveBeenCalledWith({ towerMode: false });
     expect(host.showNotice).toHaveBeenCalledWith('Tower mode: OFF');
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
@@ -110,7 +106,7 @@ describe('handleTowerCommand', () => {
 
     await handleTowerCommand(host, 'on');
 
-    expect(session.setTowerMode).toHaveBeenCalledWith(true);
+    expect(session.setTowerMode).toHaveBeenCalledWith(true, undefined);
     expect(host.showStatus).toHaveBeenCalledWith('Tower mode is already on.');
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
@@ -120,47 +116,50 @@ describe('handleTowerCommand', () => {
 
     await handleTowerCommand(host, 'off');
 
-    expect(session.setTowerMode).toHaveBeenCalledWith(false);
+    expect(session.setTowerMode).toHaveBeenCalledWith(false, undefined);
     expect(host.showStatus).toHaveBeenCalledWith('Tower mode is already off.');
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
-  it('enables tower mode and sends the objective as a normal prompt', async () => {
+  it('turns tower mode on with a base branch', async () => {
     const { host, session } = makeHost({ towerMode: false });
 
-    await handleTowerCommand(host, 'Ship feature X');
+    await handleTowerCommand(host, 'develop');
 
-    expect(session.setTowerMode).toHaveBeenCalledWith(true);
+    expect(session.setTowerMode).toHaveBeenCalledWith(true, 'develop');
     expect(host.setAppState).toHaveBeenCalledWith({ towerMode: true });
-    expect(host.showNotice).toHaveBeenCalledWith('Tower mode: ON');
-    expect(host.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
-  });
-
-  it('refuses the objective without touching the mode when no model is configured', async () => {
-    const { host, session } = makeHost({ towerMode: false, model: '' });
-
-    await handleTowerCommand(host, 'Ship feature X');
-
-    expect(host.showError).toHaveBeenCalledWith(LLM_NOT_SET_MESSAGE);
-    expect(session.setTowerMode).not.toHaveBeenCalled();
+    expect(host.showNotice).toHaveBeenCalledWith('Tower mode: ON (base: develop)');
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
-  it('re-asserts tower mode idempotently for the objective when already on, without a notice', async () => {
+  it('updates the base when tower mode is already on', async () => {
     const { host, session } = makeHost({ towerMode: true });
 
-    await handleTowerCommand(host, 'Ship feature X');
+    await handleTowerCommand(host, 'develop');
 
-    expect(session.setTowerMode).toHaveBeenCalledWith(true);
-    expect(host.showNotice).not.toHaveBeenCalled();
-    expect(host.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
+    expect(session.setTowerMode).toHaveBeenCalledWith(true, 'develop');
+    expect(host.showNotice).toHaveBeenCalledWith('Tower base: develop');
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
-  it('does not send the objective when enabling tower mode fails', async () => {
+  it('does not show the base notice when enabling with a base fails', async () => {
+    const { host, session } = makeHost({ towerMode: false });
+    session.setTowerMode.mockRejectedValueOnce(new Error('not a local branch'));
+
+    await handleTowerCommand(host, 'develop');
+
+    expect(host.showError).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to enable tower mode'),
+    );
+    expect(host.showNotice).not.toHaveBeenCalled();
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+  });
+
+  it('reports a failure when enabling tower mode fails', async () => {
     const { host, session } = makeHost({ towerMode: false });
     session.setTowerMode.mockRejectedValueOnce(new Error('denied'));
 
-    await handleTowerCommand(host, 'Ship feature X');
+    await handleTowerCommand(host, 'on');
 
     expect(host.showError).toHaveBeenCalledWith(
       expect.stringContaining('Failed to enable tower mode'),
@@ -180,10 +179,10 @@ describe('handleTowerCommand', () => {
     expect(host.setAppState).not.toHaveBeenCalledWith({ towerMode: false });
   });
 
-  it('does not show ON or send the objective when the engine refuses entry', async () => {
+  it('does not show ON when the engine refuses entry', async () => {
     const { host } = makeHost({ towerMode: false, refuseTowerEntry: true });
 
-    await handleTowerCommand(host, 'Ship feature X');
+    await handleTowerCommand(host, 'on');
 
     expect(host.showError).toHaveBeenCalledWith(expect.stringContaining('could not be enabled'));
     expect(host.setAppState).toHaveBeenCalledWith({ towerMode: false });
@@ -208,7 +207,7 @@ describe('handleTowerCommand', () => {
     await handleTowerCommand(host, 'on');
 
     expect(host.ensureSession).toHaveBeenCalled();
-    expect(session.setTowerMode).toHaveBeenCalledWith(true);
+    expect(session.setTowerMode).toHaveBeenCalledWith(true, undefined);
     expect(host.showNotice).toHaveBeenCalledWith('Tower mode: ON');
     expect(host.showError).not.toHaveBeenCalled();
   });

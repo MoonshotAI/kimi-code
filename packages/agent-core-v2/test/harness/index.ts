@@ -8,7 +8,6 @@ export {
   createTestAgent,
   appService,
   appServices,
-  cronServices,
   execEnvServices,
   externalHookServices,
   homeDirServices,

@@ -21,6 +21,24 @@ export interface OAuthTokenTransactionOptions<T extends object> {
   readonly remove: () => Promise<void>;
   readonly parse: (value: unknown) => T | undefined;
   readonly adopt?: (tokens: T | undefined) => void;
+  /**
+   * Strips caller-local fields before a remembered effect is compared with an
+   * incoming SDK save, so a durable-only stamp (e.g. `obtained_at`) does not
+   * defeat effect coalescing. The remembered effect keeps its original tokens.
+   */
+  readonly normalize?: (tokens: T) => T;
+  /**
+   * Runs inside the exclusive lock right after a durable write or remove
+   * commits, so side effects (sidecar files, notifications) serialize with the
+   * token write instead of racing a concurrent clear.
+   */
+  readonly afterCommit?: (tokens: T | undefined) => Promise<void>;
+  /**
+   * Receives the in-flight promise of every token-grant request and of every
+   * exclusive save/invalidate commit, so callers can await transport-driven
+   * grants and their trailing durable commits during shutdown.
+   */
+  readonly track?: (operation: Promise<unknown>) => void;
 }
 
 /**
@@ -45,25 +63,43 @@ export class OAuthTokenTransaction<T extends object> {
       ) {
         return fetchFn(input, init);
       }
-      return transactionLock.runExclusive(this.options.key, () =>
+      const request = transactionLock.runExclusive(this.options.key, () =>
         this.runTokenRequest(fetchFn, input, init, params, grantType),
       );
+      // Track past the response headers until the body has fully arrived: the
+      // SDK's trailing parse + saveTokens continuation can only run after it
+      // reads the body, so a shutdown drain that outlives this promise also
+      // covers the durable commit (which is itself tracked from save()).
+      const operation = request.then((response) =>
+        response.clone().arrayBuffer().catch(() => undefined),
+      );
+      this.options.track?.(operation);
+      return request;
     }) as typeof fetch;
   }
 
-  async save(tokens: T): Promise<void> {
-    await transactionLock.runExclusive(this.options.key, async () => {
-      if (this.consumeSave(tokens)) {
-        this.adopt(await this.options.read());
+  async save(tokens: T): Promise<T | undefined> {
+    let persisted: T | undefined;
+    const operation = transactionLock.runExclusive(this.options.key, async () => {
+      const pending = this.consumeSave(tokens);
+      if (pending !== undefined) {
+        persisted = await this.options.read();
+        this.adopt(persisted);
+        if (persisted !== undefined) await this.options.afterCommit?.(persisted);
         return;
       }
       await this.options.write(tokens);
       this.adopt(tokens);
+      persisted = tokens;
+      await this.options.afterCommit?.(tokens);
     });
+    this.options.track?.(operation);
+    await operation;
+    return persisted;
   }
 
   async invalidateFromSdk(scope: 'tokens' | 'all'): Promise<boolean> {
-    return transactionLock.runExclusive(this.options.key, async () => {
+    const operation = transactionLock.runExclusive(this.options.key, async () => {
       const effect = this.takeInvalidate(scope);
       if (effect === undefined) return false;
       const current = await this.options.read();
@@ -82,14 +118,18 @@ export class OAuthTokenTransaction<T extends object> {
       }
       await this.options.remove();
       this.adopt(undefined);
+      await this.options.afterCommit?.(undefined);
       return true;
     });
+    this.options.track?.(operation);
+    return operation;
   }
 
   async clear(): Promise<void> {
     await transactionLock.runExclusive(this.options.key, async () => {
       await this.options.remove();
       this.adopt(undefined);
+      await this.options.afterCommit?.(undefined);
     });
   }
 
@@ -187,13 +227,18 @@ export class OAuthTokenTransaction<T extends object> {
     this.effects.push(effect);
   }
 
-  private consumeSave(tokens: T): boolean {
+  private consumeSave(tokens: T): T | undefined {
+    const normalize = this.options.normalize ?? ((value: T) => value);
+    const normalized = normalize(tokens);
     const index = this.effects.findIndex(
-      (effect) => effect.kind === 'save' && isDeepStrictEqual(effect.tokens, tokens),
+      (effect) =>
+        effect.kind === 'save' &&
+        (isDeepStrictEqual(normalize(effect.tokens), normalized) ||
+          sameRefreshSave(normalize(effect.tokens), normalized)),
     );
-    if (index === -1) return false;
-    this.effects.splice(index, 1);
-    return true;
+    if (index === -1) return undefined;
+    const effect = this.effects.splice(index, 1)[0] as Extract<Effect<T>, { kind: 'save' }>;
+    return effect.tokens;
   }
 
   private takeInvalidate(scope: 'tokens' | 'all'): Extract<Effect<T>, { kind: 'invalidate' }> | undefined {
@@ -207,6 +252,20 @@ export class OAuthTokenTransaction<T extends object> {
     if (index === -1) return undefined;
     return this.effects.splice(index, 1)[0] as Extract<Effect<T>, { kind: 'invalidate' }>;
   }
+}
+
+function sameRefreshSave<T extends object>(expected: T, actual: T): boolean {
+  const expectedRecord = expected as Record<string, unknown>;
+  const actualRecord = actual as Record<string, unknown>;
+  if (
+    refreshToken(expected) === undefined ||
+    ('refresh_token' in actualRecord && actualRecord['refresh_token'] !== undefined)
+  ) {
+    return false;
+  }
+  const { refresh_token: _expectedRefreshToken, ...expectedWithoutRefresh } = expectedRecord;
+  const { refresh_token: _actualRefreshToken, ...actualWithoutRefresh } = actualRecord;
+  return isDeepStrictEqual(expectedWithoutRefresh, actualWithoutRefresh);
 }
 
 function refreshToken(tokens: object | undefined): string | undefined {

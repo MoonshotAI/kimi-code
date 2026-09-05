@@ -4,11 +4,12 @@ import { join } from 'node:path';
 
 import {
   ISessionQuestionService,
+  ensureMainAgent,
   getLiveSessionById,
   type QuestionRequest,
   type QuestionResult,
 } from '@moonshot-ai/agent-core-v2';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -68,7 +69,7 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
   let home: string | undefined;
   let base: string;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-questions-'));
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
@@ -80,7 +81,7 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
     base = `http://127.0.0.1:${server.port}`;
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -119,6 +120,9 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
       metadata: { cwd: home as string },
     });
     expect(body.code).toBe(0);
+    const handle = getLiveSessionById(server!.core.accessor, body.data.id);
+    expect(handle).toBeDefined();
+    await ensureMainAgent(handle!);
     return body.data.id;
   }
 

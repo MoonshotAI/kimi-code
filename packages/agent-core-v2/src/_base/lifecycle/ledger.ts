@@ -65,6 +65,11 @@ export class Ledger {
     return this._push({ label, kind: 'disposer', active: true, run: disposer });
   }
 
+  registerFinalizer(disposer: Disposer, label: string = 'finalizer'): LedgerEntry {
+    this._assertActive('registerFinalizer');
+    return this._push({ label, kind: 'disposer', active: true, run: disposer }, true);
+  }
+
   effect(body: EffectBody, label: string = 'effect'): LedgerEntry {
     this._assertActive('effect');
     const out = body();
@@ -151,11 +156,15 @@ export class Ledger {
     return infos;
   }
 
-  private _push(record: EntryRecord): LedgerEntry {
+  private _push(record: EntryRecord, front = false): LedgerEntry {
     if (Ledger.captureStacks) {
       record.stack = new Error('Ledger registration').stack;
     }
-    this._records.push(record);
+    if (front) {
+      this._records.unshift(record);
+    } else {
+      this._records.push(record);
+    }
     return {
       label: record.label,
       get disposed() {

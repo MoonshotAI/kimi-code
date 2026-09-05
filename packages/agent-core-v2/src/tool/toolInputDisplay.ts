@@ -1,8 +1,3 @@
-/**
- * `ToolInputDisplay` — structured UI hint describing a tool call's input, so
- * approval panels and tool renderers can present it without re-deriving it
- * from raw arguments.
- */
 export type ToolInputDisplay =
   | {
       kind: 'command';

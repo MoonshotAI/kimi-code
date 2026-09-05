@@ -22,15 +22,14 @@
     }
   },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch --import ../../../build/register-raw-text-loader.mjs src/index.ts",
     "build": "tsdown",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
-    "@moonshot-ai/agent-core": "workspace:^",
-    "@moonshot-ai/kosong": "workspace:^",
+    "@moonshot-ai/agent-core-v2": "workspace:^",
     "hono": "^4.7.7",
     "yauzl": "^3.3.0"
   },

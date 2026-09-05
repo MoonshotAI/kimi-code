@@ -11,10 +11,12 @@ import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IRestGateway } from '#/app/gateway/gateway';
 import { RestGateway } from '#/app/gateway/gatewayService';
+import { stubAgentContext } from '../../agent/agentContext/stubs';
 import { ILogService } from '#/_base/log/log';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
+import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { createHooks } from '#/hooks';
 import { stubLog } from '../../_base/log/stubs';
@@ -57,7 +59,7 @@ describe('RestGateway', () => {
       submit: () => Promise.resolve(undefined),
       submitSteer: () => Promise.resolve(undefined),
       steer: () => Promise.resolve([]),
-      list: () => ({ active: undefined, pending: [] }),
+      list: () => ({ active: undefined, pending: [], launching: false }),
       abort: () => true,
       drain: () => Promise.resolve(),
       inject: () => Promise.resolve(undefined),
@@ -75,18 +77,21 @@ describe('RestGateway', () => {
       ]),
       dispose: () => {},
     };
+    const agentContext = stubAgentContext('main', 1);
     const agents: IAgentLifecycleService = {
       _serviceBrand: undefined,
       onDidCreate: () => ({ dispose: () => {} }),
       onDidCreateScope: () => ({ dispose: () => {} }),
-      onDidDispose: () => ({ dispose: () => {} }),
-      create: () => Promise.resolve(agentHandle),
-      fork: () => Promise.resolve(agentHandle),
-      get: (context: AgentContext) => (context.agentId === 'main' ? agentHandle : undefined),
-      findAgentHandle: (agentId: string) => (agentId === 'main' ? agentHandle : undefined),
-      list: () => [agentHandle],
+      onWillClose: () => ({ dispose: () => {} }),
+      onDidClose: () => ({ dispose: () => {} }),
+      create: () => Promise.resolve(agentContext),
+      fork: () => Promise.resolve(agentContext),
+      get: (agentId: string) => (agentId === 'main' ? agentContext : undefined),
+      list: () => [agentContext],
       remove: () => Promise.resolve(),
       broadcastPermissionMode: () => {},
+      handleOf: (agentId: string) => (agentId === 'main' ? agentHandle : undefined),
+      adopt: () => agentContext,
     };
     const sessionHandle: ISessionScopeHandle = {
       id: 's1',
@@ -95,6 +100,12 @@ describe('RestGateway', () => {
       dispose: () => {},
     };
 
+    const sessionMeta: SessionMeta = {
+      id: 's1',
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+    };
     const sessionLifecycle: ISessionLifecycleService = {
       _serviceBrand: undefined,
       onWillCreateSession: () => ({ dispose: () => {} }),
@@ -111,8 +122,8 @@ describe('RestGateway', () => {
       archive: () => Promise.resolve(),
       restore: () => Promise.resolve(sessionHandle),
       delete: () => Promise.resolve(),
-      fork: () => Promise.resolve(sessionHandle),
-      createChild: () => Promise.resolve(sessionHandle),
+      fork: () => Promise.resolve(sessionMeta),
+      createChild: () => Promise.resolve(sessionMeta),
     };
     const handlerHandle = {
       id: 'wd_stub',
@@ -130,7 +141,7 @@ describe('RestGateway', () => {
       archive: () => Promise.resolve(),
       restore: () => Promise.resolve(sessionHandle),
       delete: () => Promise.resolve(),
-      fork: () => Promise.resolve(sessionHandle),
+      fork: () => Promise.resolve(sessionMeta),
     });
     ix.stub(ILogService, stubLog());
     ix.set(IRestGateway, new SyncDescriptor(RestGateway));

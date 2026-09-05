@@ -4,7 +4,8 @@
  * Published alongside the release and consumed by the install scripts; the
  * staged updater reuses the same file so checksums and file names have a
  * single source of truth. Entries point at the bare platform binary
- * (`kimi-code-<target>[.exe]`), not an archive.
+ * (`kimi-code-<target>[.exe]`), not an archive; an entry may additionally
+ * carry `compressed`, pointing at the zstd-compressed variant of that binary.
  */
 
 import { valid } from 'semver';
@@ -17,6 +18,12 @@ const MANIFEST_FETCH_TIMEOUT_MS = 10_000;
 const PlatformEntrySchema = z.object({
   filename: z.string().min(1),
   checksum: z.string().regex(/^[a-f0-9]{64}$/, { error: 'invalid sha256' }),
+  compressed: z
+    .object({
+      filename: z.string().min(1),
+      checksum: z.string().regex(/^[a-f0-9]{64}$/, { error: 'invalid sha256' }),
+    })
+    .optional(),
 });
 
 /**

@@ -6,17 +6,7 @@ export type ActionSuffixParse<TAction extends string> =
 export interface ParseActionSuffixOptions<TAction extends string> {
   readonly tail: string;
   readonly allowedActions: readonly TAction[];
-  /**
-   * When set, a bare `<id>` (no action suffix) is accepted and reported as
-   * `{kind:'bare'}`. When `undefined`, bare ids are rejected with
-   * `unsupported action: <tail>` — appropriate for resources where every
-   * REST action is an explicit `:verb` (e.g. `/sessions/{sid}/prompts/`).
-   */
   readonly defaultAction?: TAction;
-  /**
-   * Resource label used in the error message for empty-id failures, e.g.
-   * `'question'` → `"invalid question_id in path"`. Defaults to `'resource'`.
-   */
   readonly resourceLabel?: string;
 }
 

@@ -15,6 +15,10 @@ export interface IAgentToolResultTruncationService {
   truncateForModel<T extends ExecutableToolResult>(
     input: ToolResultTruncationInput<T>,
   ): Promise<T>;
+
+  isSpillFilePath(path: string): boolean;
+
+  isWireJournalPath(path: string): boolean;
 }
 
 export const IAgentToolResultTruncationService: ServiceIdentifier<

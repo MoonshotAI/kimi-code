@@ -59,6 +59,24 @@ describe('fetchNativeReleaseManifest', () => {
     expect(manifest.version).toBe(VERSION);
   });
 
+  it('parses a platform entry carrying a compressed artifact pointer', async () => {
+    const body = JSON.stringify({
+      version: VERSION,
+      platforms: {
+        'linux-x64': {
+          filename: 'kimi-code-linux-x64',
+          checksum: 'a'.repeat(64),
+          compressed: { filename: 'kimi-code-linux-x64.zst', checksum: 'b'.repeat(64) },
+        },
+      },
+    });
+    const manifest = await fetchNativeReleaseManifest(VERSION, mockFetch({ ok: true, status: 200, body }));
+    expect(manifest.platforms['linux-x64']?.compressed).toEqual({
+      filename: 'kimi-code-linux-x64.zst',
+      checksum: 'b'.repeat(64),
+    });
+  });
+
   it('rejects a non-semver version argument before hitting the network', async () => {
     const f = mockFetch({ ok: true, status: 200, body: MANIFEST_BODY });
     await expect(fetchNativeReleaseManifest('nope', f)).rejects.toThrow(/invalid semver/);

@@ -17,7 +17,6 @@
  */
 
 import { IAgentActivityView } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
-import { IAgentGoalService } from '@moonshot-ai/agent-core-v2/features/goal/goal';
 import { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
 import { IAgentPermissionModeService } from '@moonshot-ai/agent-core-v2/agent/permissionMode/permissionMode';
 import { IAgentPermissionRulesService } from '@moonshot-ai/agent-core-v2/agent/permissionRules/permissionRules';
@@ -31,7 +30,6 @@ import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
 import { IProviderService } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
 import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
-import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
 import { ISessionQuestionService } from '@moonshot-ai/agent-core-v2/session/question/question';
 import { ISessionInitService } from '@moonshot-ai/agent-core-v2/features/sessionInit/sessionInit';
 import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
@@ -125,12 +123,6 @@ export const SESSION_PANELS: readonly ServicePanelDef[] = [
     fetch: (svc) => call(svc, 'listPending'),
   },
   {
-    id: String(ISessionInteractionService),
-    label: 'SessionInteractionService',
-    scope: 'session',
-    fetch: (svc) => call(svc, 'listPending'),
-  },
-  {
     id: String(ISessionWorkspaceContext),
     label: 'SessionWorkspaceContext',
     scope: 'session',
@@ -166,7 +158,6 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
     }),
     actions: [
       { label: 'Set model', input: 'Model id', run: (svc, model) => call(svc, 'setModel', model) },
-      { label: 'Refresh system prompt', run: (svc) => call(svc, 'refreshSystemPrompt') },
     ],
   },
   {
@@ -194,17 +185,6 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
       { label: 'enter', run: (svc) => call(svc, 'enter') },
       { label: 'cancel', run: (svc) => call(svc, 'cancel') },
       { label: 'clear', run: (svc) => call(svc, 'clear') },
-    ],
-  },
-  {
-    id: String(IAgentGoalService),
-    label: 'AgentGoalService',
-    scope: 'agent',
-    fetch: (svc) => call(svc, 'getGoal'),
-    actions: [
-      { label: 'pause', run: (svc) => call(svc, 'pauseGoal', {}) },
-      { label: 'resume', run: (svc) => call(svc, 'resumeGoal', {}) },
-      { label: 'cancel', danger: true, run: (svc) => call(svc, 'cancelGoal', {}) },
     ],
   },
   {

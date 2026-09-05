@@ -15,7 +15,7 @@ import type {
 import type {
   Interaction,
   InteractionKind,
-} from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
+} from '@moonshot-ai/agent-core-v2/features/interaction/interaction';
 import type {
   QuestionRequest,
   QuestionResult,
@@ -25,7 +25,7 @@ import type {
   SessionMeta,
   SessionMetaPatch,
 } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
-import type { SkillSummary } from '@moonshot-ai/agent-core-v2/app/skillCatalog/types';
+import type { SkillSummary } from '@moonshot-ai/agent-core-v2/features/skill/catalog/types';
 
 import type { ScopeRef } from '../channel.js';
 import type { McpServerConfig } from '../../contract/mcp.js';
@@ -33,7 +33,7 @@ import type { ScopedCaller } from './global.js';
 
 export type { ScopedCaller } from './global.js';
 
-/** What `sessionLifecycleService.create/fork/createChild` leaves on the wire. */
+/** What `sessionLifecycleService.create` and `sessionManager.restore` leave on the wire. */
 interface HandleWire {
   readonly id: string;
 }
@@ -125,10 +125,9 @@ export function createSessionFacade(call: ScopedCaller, sessionId: string): Sess
     method: 'fork' | 'createChild',
     input: { title?: string; metadata?: Record<string, unknown> } = {},
   ): Promise<SessionMeta> => {
-    const handle = (await call({}, 'sessionManager', method, [
+    return call({}, 'sessionManager', method, [
       { sourceSessionId: sessionId, title: input.title, metadata: input.metadata },
-    ])) as HandleWire;
-    return call({ sessionId: handle.id }, 'sessionMetadata', 'read', []) as Promise<SessionMeta>;
+    ]) as Promise<SessionMeta>;
   };
 
   return {

@@ -479,6 +479,7 @@ describe('ModelCatalogService', () => {
             oauth: { storage: 'file', key: 'oauth/kimi-code' },
           },
         },
+        defaultModel: 'kimi-code/kimi-for-coding',
         models: {
           'kimi-code/kimi-for-coding': {
             provider: KIMI_CODE_PROVIDER_NAME,

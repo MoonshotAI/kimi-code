@@ -17,17 +17,17 @@ import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { ContextUndone } from '#/agent/undo/undoService';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IEventBus } from '#/app/event/eventBus';
-import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { ErrorCodes } from '#/errors';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
-import { ToolsUpdateStore } from '#/session/todo/todoOps';
-import { TodoAgentModelDefinition } from '#/session/todo/todoAgentModel';
+import { ToolsUpdateStore } from '#/features/todo/todoOps';
+import { IAgentTodoService } from '#/features/todo/todoService';
 import { type ReplayableStateKey } from '#/state/state';
 import { IWireService } from '#/wire/wire';
 
 import { createTestAgent, execEnvServices, telemetryServices, type TestAgentContext } from '../../harness';
 import { createFakeHostFs } from '../../tools/fixtures/fake-exec';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 
 describe('AgentConversationUndoService', () => {
   let ctx: TestAgentContext;
@@ -239,6 +239,7 @@ describe('AgentConversationUndoService', () => {
   it('restores todos to their pre-turn value', async () => {
     setup();
     const undo = ctx.get(IAgentConversationUndoService);
+    expect(ctx.get(IAgentTodoService).get()).toEqual([]);
     ctx.appendTurnExchange('u1', 'a1');
     await ctx.dispatcher.dispatch(
       new ToolsUpdateStore({ agentId: 'main', key: 'todo', value: [{ title: 'kept', status: 'pending' }] }),
@@ -250,7 +251,7 @@ describe('AgentConversationUndoService', () => {
 
     await undo.undo(1);
 
-    expect(ctx.readModel(TodoAgentModelDefinition, (model) => model.items())).toEqual([{ title: 'kept', status: 'pending' }]);
+    expect(ctx.get(IAgentTodoService).get()).toEqual([{ title: 'kept', status: 'pending' }]);
   });
 
   it('restores plan mode and its telemetry mirror to their pre-turn value', async () => {
@@ -268,7 +269,7 @@ describe('AgentConversationUndoService', () => {
       await undo.undo(1);
 
       expect(ctx.agentState.get(planKey).active).toBe(false);
-      expect(ctx.get(IAgentTelemetryContextService).get().mode).toBe('agent');
+      expect(ctx.get(ITelemetryService).getContext().mode).toBe('agent');
       expect(restoredModes).toEqual([false]);
     } finally {
       subscription.dispose();
@@ -285,6 +286,93 @@ describe('AgentConversationUndoService', () => {
     await undo.undo(1);
 
     expect(ctx.agentState.get(turnKey).nextTurnId).toBe(2);
+  });
+
+  it('reports the earliest removed turn id when a trailing non-anchor turn follows the anchor', async () => {
+    setup();
+    const undo = ctx.get(IAgentConversationUndoService);
+    const loop = ctx.get(IAgentLoopService);
+
+    ctx.mockNextResponse({ type: 'text', text: 'a1' });
+    const userTurn = (
+      await loop.enqueue(
+        new MessageStepRequest(
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'u1' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+          { admission: 'newTurn' },
+        ),
+      ).assigned
+    ).turn;
+    await expect(userTurn.result).resolves.toMatchObject({ type: 'completed' });
+
+    ctx.mockNextResponse({ type: 'text', text: 'cron done' });
+    const cronTurn = (
+      await loop.enqueue(
+        new MessageStepRequest(
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'cron work' }],
+            toolCalls: [],
+            origin: {
+              kind: 'cron_job',
+              jobId: 'j1',
+              cron: '0 9 * * *',
+              recurring: true,
+              coalescedCount: 0,
+              stale: false,
+            },
+          },
+          { admission: 'newTurn' },
+        ),
+      ).assigned
+    ).turn;
+    await expect(cronTurn.result).resolves.toMatchObject({ type: 'completed' });
+
+    let fromTurnId: number | undefined;
+    const subscription = ctx.get(IEventBus).subscribe(ContextUndone, (event) => {
+      fromTurnId = event.fromTurnId;
+    });
+    try {
+      await undo.undo(1);
+      expect(fromTurnId).toBe(userTurn.id);
+      expect(ctx.agentState.get(turnKey).anchorTurnIds).toEqual([]);
+      expect(ctx.context.get()).toHaveLength(0);
+    } finally {
+      subscription.dispose();
+    }
+  });
+
+  it('omits the removed turn id when context anchors were not opened by engine turns', async () => {
+    setup();
+    const undo = ctx.get(IAgentConversationUndoService);
+    ctx.get(IAgentContextMemoryService).append(
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'u1' }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'a1' }],
+        toolCalls: [],
+      },
+    );
+
+    let fromTurnId: number | undefined = Number.NaN;
+    const subscription = ctx.get(IEventBus).subscribe(ContextUndone, (event) => {
+      fromTurnId = event.fromTurnId;
+    });
+    try {
+      await undo.undo(1);
+      expect(fromTurnId).toBeUndefined();
+    } finally {
+      subscription.dispose();
+    }
   });
 
   it('flushes state reconciliation before publishing undo', async () => {
@@ -416,7 +504,14 @@ describe('AgentConversationUndoService', () => {
 
     expect(records).toContainEqual({
       event: 'conversation_undo',
-      properties: { agent_id: 'main', count: 1 },
+      properties: {
+        agent_id: 'main',
+        count: 1,
+        mode: 'agent',
+        model: 'mock-model',
+        protocol: 'openai',
+        provider_type: 'kimi',
+      },
     });
     expect(ctx.context.get().map((m) => m.role)).toEqual(['user', 'assistant']);
   });
@@ -441,6 +536,7 @@ describe('AgentConversationUndoService', () => {
     ctx.appendTurnExchange('u2', 'a2');
     const list = vi.spyOn(ctx.get(IAgentPromptService), 'list').mockReturnValue({
       active: undefined,
+      launching: false,
       pending: [
         {
           id: 'queued',
@@ -484,7 +580,14 @@ describe('AgentConversationUndoService', () => {
       expect(undone).toEqual([1]);
       expect(records).toContainEqual({
         event: 'conversation_undo',
-        properties: { agent_id: 'main', count: 1 },
+        properties: {
+          agent_id: 'main',
+          count: 1,
+          mode: 'agent',
+          model: 'mock-model',
+          protocol: 'openai',
+          provider_type: 'kimi',
+        },
       });
     } finally {
       subscription.dispose();

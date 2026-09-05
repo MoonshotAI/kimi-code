@@ -17,7 +17,7 @@ import { dirname } from 'node:path';
 
 import lockfile from 'proper-lockfile';
 
-import { DeviceCodeTimeoutError, OAuthError, OAuthUnauthorizedError } from './errors';
+import { DeviceCodeTimeoutError, OAuthAccessDeniedError, OAuthError, OAuthUnauthorizedError } from './errors';
 import { pollDeviceToken, refreshAccessToken, requestDeviceAuthorization } from './oauth';
 import type { DevicePollResult, RefreshOptions } from './oauth';
 import type { TokenStorage } from './storage';
@@ -430,7 +430,7 @@ export class OAuthManager {
           return result.token;
         }
         if (result.kind === 'denied') {
-          throw new OAuthError(
+          throw new OAuthAccessDeniedError(
             `Authorization denied${result.description ? `: ${result.description}` : ''}`,
           );
         }

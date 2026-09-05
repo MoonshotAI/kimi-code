@@ -1,3 +1,7 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+import { stringify as stringifyToml } from 'smol-toml';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type CollectionToken, type CollectionView } from '#/_base/di/collection';
@@ -30,6 +34,7 @@ import {
   _clearFeatureRecipesForTests,
   registerFeature,
 } from '#/features/featureRegistry';
+import { TOWER_FLAG_ENV } from '#/features/tower/flag';
 import { TOWER_FLAG_ID } from '#/features/tower/tower';
 import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
 import {
@@ -131,7 +136,90 @@ describe('TowerFeature — experimental flag gating', () => {
   });
 });
 
-describe('tower flag — hard-disabled (no declaration registered)', () => {
+describe('TowerFeature — config-sourced flag assembly', () => {
+  let disposables: DisposableStore;
+  let homeDir: string;
+
+  beforeEach(() => {
+    disposables = new DisposableStore();
+    homeDir = `/tmp/kimi-code-tower-assembly-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    _clearScopedRegistryForTests();
+    _clearFeatureRecipesForTests();
+    registerScopedService(
+      LifecycleScope.App,
+      IFeatureManager,
+      FeatureManagerService,
+      ScopeActivation.OnScopeCreated,
+      'feature',
+    );
+    registerScopedService(
+      LifecycleScope.App,
+      IFeatureAssemblyService,
+      FeatureAssemblyService,
+      ScopeActivation.OnScopeCreated,
+      'features',
+    );
+    registerFeature(TowerFeature);
+  });
+  afterEach(() => disposables.dispose());
+
+  async function makeRealFlags(preseed?: Record<string, unknown>) {
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(IBootstrapService, stubBootstrap(homeDir));
+    ix.stub(ILogService, stubLog());
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    ix.set(IFlagRegistry, new SyncDescriptor(FlagRegistryService));
+    ix.set(IFlagService, new SyncDescriptor(FlagService));
+    if (preseed !== undefined) {
+      mkdirSync(homeDir, { recursive: true });
+      writeFileSync(join(homeDir, 'config.toml'), `${stringifyToml(preseed)}\n`);
+      await ix.get(IAtomicTomlDocumentStore).set('', 'config.toml', preseed);
+    }
+    return { config: ix.get(IConfigService), flags: ix.get(IFlagService) };
+  }
+
+  it('assembles a config-sourced flag at startup', async () => {
+    const { flags } = await makeRealFlags({ experimental: { [TOWER_FLAG_ID]: true } });
+    const host = createScopedTestHost([[IFlagService, flags]]);
+
+    expect(isTowerFeatureAssembled(flags)).toBe(true);
+    expect(flags.explain(TOWER_FLAG_ID)).toMatchObject({ enabled: true, source: 'config' });
+    const manager = host.app.accessor.get(IFeatureManager);
+    expect(
+      manager
+        .contributedServices()
+        .filter(
+          (entry) => entry.scope === LifecycleScope.App && entry.id === ITowerRateLimitService,
+        ),
+    ).toHaveLength(1);
+    const agent = host.child(LifecycleScope.Agent, 'agent-1');
+    expect(collectionViewOf(agent, AgentToolContribution).items).toHaveLength(11);
+    host.dispose();
+  });
+
+  it('does not assemble on a config flip after startup — a restart is required', async () => {
+    const { config, flags } = await makeRealFlags();
+    const host = createScopedTestHost([[IFlagService, flags]]);
+    const manager = host.app.accessor.get(IFeatureManager);
+    expect(manager.units().map((unit) => unit.name)).toEqual(['tower']);
+    expect(isTowerFeatureAssembled(flags)).toBe(false);
+
+    await config.set(EXPERIMENTAL_SECTION, { [TOWER_FLAG_ID]: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(flags.enabled(TOWER_FLAG_ID)).toBe(true);
+    expect(isTowerFeatureAssembled(flags)).toBe(false);
+    expect(manager.contributedServices()).toHaveLength(0);
+    const agent = host.child(LifecycleScope.Agent, 'agent-1');
+    expect(collectionViewOf(agent, AgentToolContribution).items).toHaveLength(0);
+    host.dispose();
+  });
+});
+
+describe('tower flag — resolution', () => {
   let disposables: DisposableStore;
   let homeDir: string;
 
@@ -154,19 +242,62 @@ describe('tower flag — hard-disabled (no declaration registered)', () => {
     return { config: ix.get(IConfigService), flags: ix.get(IFlagService) };
   }
 
-  it('cannot be enabled by the dedicated or master env while no tower flag is registered', () => {
-    const { flags } = makeFlags({
-      KIMI_CODE_EXPERIMENTAL_TOWER: 'true',
-      [MASTER_ENV]: 'true',
+  it('is registered and disabled by default', () => {
+    const { flags } = makeFlags();
+    expect(flags.explain(TOWER_FLAG_ID)).toMatchObject({
+      id: TOWER_FLAG_ID,
+      env: TOWER_FLAG_ENV,
+      defaultEnabled: false,
+      enabled: false,
+      source: 'default',
     });
-    expect(flags.explain(TOWER_FLAG_ID)).toBeUndefined();
-    expect(flags.enabled(TOWER_FLAG_ID)).toBe(false);
   });
 
-  it('cannot be enabled through the [experimental] config section', async () => {
-    const { config, flags } = makeFlags();
-    await config.set(EXPERIMENTAL_SECTION, { [TOWER_FLAG_ID]: true });
-    expect(flags.explain(TOWER_FLAG_ID)).toBeUndefined();
-    expect(flags.enabled(TOWER_FLAG_ID)).toBe(false);
+  it('is enabled by the dedicated env', () => {
+    const { flags } = makeFlags({ [TOWER_FLAG_ENV]: '1' });
+    expect(flags.explain(TOWER_FLAG_ID)).toMatchObject({
+      enabled: true,
+      source: 'env',
+    });
+  });
+
+  it('uses config unless the dedicated env overrides it', async () => {
+    const configured = makeFlags();
+    await configured.config.set(EXPERIMENTAL_SECTION, { [TOWER_FLAG_ID]: true });
+    expect(configured.flags.explain(TOWER_FLAG_ID)).toMatchObject({
+      enabled: true,
+      source: 'config',
+      configValue: true,
+    });
+
+    const overridden = makeFlags({ [TOWER_FLAG_ENV]: 'false' });
+    await overridden.config.set(EXPERIMENTAL_SECTION, { [TOWER_FLAG_ID]: true });
+    expect(overridden.flags.explain(TOWER_FLAG_ID)).toMatchObject({
+      enabled: false,
+      source: 'env',
+      configValue: true,
+    });
+  });
+
+  it('lets the master env turn the flag on only when env and config are unset', async () => {
+    const masterOnly = makeFlags({ [MASTER_ENV]: 'true' });
+    expect(masterOnly.flags.explain(TOWER_FLAG_ID)).toMatchObject({
+      enabled: true,
+      source: 'master-env',
+    });
+
+    const configured = makeFlags({ [MASTER_ENV]: 'true' });
+    await configured.config.set(EXPERIMENTAL_SECTION, { [TOWER_FLAG_ID]: false });
+    expect(configured.flags.explain(TOWER_FLAG_ID)).toMatchObject({
+      enabled: false,
+      source: 'config',
+      configValue: false,
+    });
+
+    const overridden = makeFlags({ [TOWER_FLAG_ENV]: 'false', [MASTER_ENV]: 'true' });
+    expect(overridden.flags.explain(TOWER_FLAG_ID)).toMatchObject({
+      enabled: false,
+      source: 'env',
+    });
   });
 });

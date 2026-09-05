@@ -9,6 +9,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { pluginManifestSchema } from '../src/contract/global/plugins.js';
+import { mcpServerAuthFlowHandleSchema } from '../src/contract/global/mcpManagement.js';
 import { createSessionOptionsSchema } from '../src/contract/session/lifecycle.js';
 import { promptPayloadSchema } from '../src/contract/agent/schemas.js';
 
@@ -64,6 +65,17 @@ describe('MCP timeout contract validation', () => {
       },
     });
     expect(parsed.success).toBe(false);
+  });
+
+  it('completeAuth timeoutMs accepts the setTimeout maximum and rejects above it', () => {
+    expect(
+      mcpServerAuthFlowHandleSchema.safeParse({ flowId: 'flow-1', timeoutMs: 2_147_483_647 })
+        .success,
+    ).toBe(true);
+    expect(
+      mcpServerAuthFlowHandleSchema.safeParse({ flowId: 'flow-1', timeoutMs: 2_147_483_648 })
+        .success,
+    ).toBe(false);
   });
 });
 

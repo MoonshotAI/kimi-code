@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { migrateConfigStep } from '../../src/steps/config.js';
@@ -57,14 +57,41 @@ describe('migrateConfigStep', () => {
     expect(r.wroteSiblingDueToConflict).toBe(false);
     const cfg = await readFile(join(tgt, 'config.toml'), 'utf-8');
     expect(cfg).toContain('merge_all_available_skills = true');
-    expect(cfg).not.toContain('"vllm"'); // dropped provider
-    expect(cfg).not.toContain('"internal-vibe"'); // dropped model
+    expect(cfg).toContain('"vllm"');
+    expect(cfg).toContain('"internal-vibe"');
+    expect(cfg).toContain('default_model = "internal-vibe"');
+    expect(cfg).not.toContain('openai_legacy');
     expect(cfg).not.toContain('theme'); // moved to tui
     const tui = await readFile(join(tgt, 'tui.toml'), 'utf-8');
     expect(tui).toContain('theme = "dark"');
     expect(tui).toContain('command = "code --wait"');
-    expect(r.droppedProviders).toContain('vllm');
-    expect(r.droppedModels).toContain('internal-vibe');
+    expect(r.droppedProviders).not.toContain('vllm');
+    expect(r.droppedModels).not.toContain('internal-vibe');
+  });
+
+  it('maps legacy provider types onto kimi-code types', async () => {
+    await writeFile(
+      join(src, 'config.toml'),
+      `[providers.vllm]\ntype = "openai_legacy"\nbase_url = "https://internal.example.com/v1"\napi_key = "EMPTY"\n\n[providers.g]\ntype = "gemini"\nbase_url = "https://g.example.com"\n\n[providers.g2]\ntype = "google_genai"\nbase_url = "https://g2.example.com"\n`,
+    );
+    const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
+    expect(r.droppedProviders).toEqual([]);
+    const cfg = await readFile(join(tgt, 'config.toml'), 'utf-8');
+    expect(cfg).toContain('type = "openai"');
+    expect(cfg.match(/type = "google-genai"/g)).toHaveLength(2);
+  });
+
+  it('moves a provider-level reasoning_key onto bound models', async () => {
+    await writeFile(
+      join(src, 'config.toml'),
+      `[providers.vllm]\ntype = "openai_legacy"\nbase_url = "https://internal.example.com/v1"\napi_key = "EMPTY"\nreasoning_key = "reasoning"\n\n[models.m1]\nprovider = "vllm"\nmodel = "m1"\nmax_context_size = 131072\n\n[models.m2]\nprovider = "vllm"\nmodel = "m2"\nmax_context_size = 131072\nreasoning_key = "custom"\n`,
+    );
+    const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
+    expect(r.droppedProviders).toEqual([]);
+    const cfg = await readFile(join(tgt, 'config.toml'), 'utf-8');
+    expect(cfg).toMatch(/\[models\.m1\][\s\S]*?reasoning_key = "reasoning"/);
+    expect(cfg).toMatch(/\[models\.m2\][\s\S]*?reasoning_key = "custom"/);
+    expect(cfg).not.toMatch(/\[providers\.vllm\][^[]*reasoning_key/);
   });
 
   it('additively merges into a user-modified target config', async () => {
@@ -77,7 +104,8 @@ describe('migrateConfigStep', () => {
     expect(r.configConflicts).toContain('merge_all_available_skills');
     const cfg = await readFile(join(tgt, 'config.toml'), 'utf-8');
     expect(cfg).toContain('merge_all_available_skills = false'); // target value kept
-    expect(cfg).toContain('telemetry = true'); // additively brought over
+    expect(cfg).not.toContain('telemetry'); // v2 has no telemetry section — dropped
+    expect(r.droppedKeys).toContain('telemetry');
     expect(cfg).toContain('kimi-code/kimi-for-coding'); // migrated model added
   });
 
@@ -151,12 +179,44 @@ base_url = "https://target.example/v1"
     await writeFile(join(src, 'config.toml'), 'this is = = not valid toml [[[');
     const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
     expect(r.migrated).toBe(false);
+    expect(r.sourceUnreadable).toBe(true);
   });
 
-  it('drops a kept-provider model missing required schema fields', async () => {
-    // `bad-model` references the kept `managed:kimi-code` provider but omits
-    // `max_context_size`, which kimi-code's ModelAliasSchema requires. Written
-    // verbatim it would make getConfig() reject the whole config post-migration.
+  it('falls back to config.json when config.toml is absent', async () => {
+    await writeFile(
+      join(src, 'config.json'),
+      JSON.stringify({
+        merge_all_available_skills: true,
+        providers: { vllm: { type: 'openai_legacy', base_url: 'https://internal.example.com/v1', api_key: 'EMPTY' } },
+      }),
+    );
+    const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
+    expect(r.migrated).toBe(true);
+    expect(r.sourceUnreadable).toBe(false);
+    const cfg = await readFile(join(tgt, 'config.toml'), 'utf-8');
+    expect(cfg).toContain('merge_all_available_skills = true');
+    expect(cfg).toContain('type = "openai"');
+  });
+
+  it('prefers config.toml over config.json when both exist', async () => {
+    await writeFile(join(src, 'config.toml'), 'merge_all_available_skills = false\n');
+    await writeFile(join(src, 'config.json'), '{"merge_all_available_skills": true}');
+    const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
+    expect(r.migrated).toBe(true);
+    const cfg = await readFile(join(tgt, 'config.toml'), 'utf-8');
+    expect(cfg).toContain('merge_all_available_skills = false');
+  });
+
+  it('reports sourceUnreadable for an unparseable config.json', async () => {
+    await writeFile(join(src, 'config.json'), '{"broken": ');
+    const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
+    expect(r.migrated).toBe(false);
+    expect(r.sourceUnreadable).toBe(true);
+  });
+
+  it('keeps a model missing optional schema fields under the v2 model schema', async () => {
+    // v2's ModelRecordSchema treats `max_context_size` as optional, so a model
+    // that v1's ModelAliasSchema rejected now validates and migrates.
     const cfg = `[providers."managed:kimi-code"]
 type = "kimi"
 base_url = "https://api.kimi.com/coding/v1"
@@ -174,11 +234,11 @@ model = "kimi-for-coding"
     await writeFile(join(tgt, 'config.toml'), DEFAULT_CONFIG_FILE_TEXT);
     const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
     expect(r.migrated).toBe(true);
-    expect(r.droppedModels).toContain('bad-model');
+    expect(r.droppedModels).not.toContain('bad-model');
     expect(r.droppedModels).not.toContain('good-model');
     const written = await readFile(join(tgt, 'config.toml'), 'utf-8');
     expect(written).toContain('good-model');
-    expect(written).not.toContain('bad-model');
+    expect(written).toContain('bad-model');
   });
 
   it('does not write an empty hooks array', async () => {
@@ -465,7 +525,7 @@ base_url = "https://target.example/v1"
     expect(cfg).not.toContain('micro_compaction');
     expect(cfg).not.toContain('unknown_flag');
     expect(cfg).toContain('[loop_control]');
-    expect(cfg).toContain('max_retries_per_step = 2');
+    expect(cfg).not.toContain('max_retries_per_step');
     expect(cfg).toContain('reserved_context_size = 60000');
     expect(cfg).not.toContain('max_steps_per_turn');
     expect(cfg).not.toContain('max_steps_per_run');
@@ -491,5 +551,47 @@ base_url = "https://target.example/v1"
     const written = await readFile(join(tgt, 'config.toml'), 'utf-8');
     expect(written).toContain('default_permission_mode = "yolo"');
     expect(written).not.toContain('yolo = true');
+  });
+});
+
+describe('migrateConfigStep device_id', () => {
+  it('copies the legacy device_id when the target has none', async () => {
+    await writeFile(join(src, 'config.toml'), OLD_CONFIG_TOML);
+    await writeFile(join(src, 'device_id'), 'abc123deviceid\n');
+    const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
+    expect(r.deviceIdCopied).toBe(true);
+    expect(await readFile(join(tgt, 'device_id'), 'utf-8')).toBe('abc123deviceid\n');
+  });
+
+  it('keeps the target device_id when one already exists', async () => {
+    await writeFile(join(src, 'config.toml'), OLD_CONFIG_TOML);
+    await writeFile(join(src, 'device_id'), 'legacy-id\n');
+    await writeFile(join(tgt, 'device_id'), 'current-id\n');
+    const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
+    expect(r.deviceIdCopied).toBe(false);
+    expect(await readFile(join(tgt, 'device_id'), 'utf-8')).toBe('current-id\n');
+  });
+
+  it('reports not-copied when the source has no device_id', async () => {
+    await writeFile(join(src, 'config.toml'), OLD_CONFIG_TOML);
+    const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
+    expect(r.deviceIdCopied).toBe(false);
+  });
+});
+
+describe('migrateConfigStep read-failure classification', () => {
+  it('reports sourceUnreadable (not "missing") when config.toml exists but cannot be read', async () => {
+    // A directory named config.toml makes readFile fail with EISDIR — not
+    // ENOENT — and must surface as an incomplete run instead of a silent skip.
+    await mkdir(join(src, 'config.toml'), { recursive: true });
+    const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
+    expect(r.migrated).toBe(false);
+    expect(r.sourceUnreadable).toBe(true);
+  });
+
+  it('reports sourceUnreadable when config.toml is unreadable and no config.json exists', async () => {
+    await mkdir(join(src, 'config.toml'), { recursive: true });
+    const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
+    expect(r.sourceUnreadable).toBe(true);
   });
 });

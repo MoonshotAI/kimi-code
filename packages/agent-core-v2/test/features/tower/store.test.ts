@@ -90,10 +90,50 @@ async function cleanReview(reviewer: string, target: string): Promise<void> {
   });
 }
 
+describe('init in a non-git directory', () => {
+  it('bootstraps an empty directory with git init and an empty initial commit', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'tower-store-nogit-empty-'));
+    try {
+      const result = await new TowerStore(dir).init('session-a');
+      const branch = await git(dir, 'symbolic-ref', '--short', 'HEAD');
+      expect(result).toMatchObject({ base: branch, created: true, checkout: branch });
+      expect(await git(dir, 'rev-list', '--count', 'HEAD')).toBe('1');
+      expect(await git(dir, 'log', '-1', '--format=%s')).toBe('tower: init');
+      expect(await git(dir, 'status', '--porcelain')).toBe('');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('snapshots the existing files of a non-empty directory onto the requested base', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'tower-store-nogit-dirty-'));
+    try {
+      await mkdir(join(dir, 'src'), { recursive: true });
+      await writeFile(join(dir, 'src', 'app.ts'), 'export {}\n');
+      await writeFile(join(dir, 'README.md'), '# scratch\n');
+      const result = await new TowerStore(dir).init('session-a', 'tower-base');
+      expect(result).toMatchObject({ base: 'tower-base', created: true, checkout: 'tower-base' });
+      expect(await git(dir, 'log', '-1', '--format=%s')).toBe(
+        'tower: snapshot of uncommitted base checkout changes (base tower-base)',
+      );
+      expect(await git(dir, 'ls-files')).toContain('src/app.ts');
+      expect(await git(dir, 'status', '--porcelain')).toBe('');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('init', () => {
   it('creates the directory skeleton, state.json, and the git exclude entry', async () => {
     const result = await store.init();
-    expect(result).toEqual({ base: 'main', created: true, retiredAgents: [] });
+    expect(result).toEqual({
+      base: 'main',
+      created: true,
+      retiredAgents: [],
+      checkout: 'main',
+      openMissions: [],
+    });
 
     for (const sub of ['inbox', 'findings', 'reviews', 'missions', 'log']) {
       expect((await stat(join(repo, '.tower/comms', sub))).isDirectory()).toBe(true);
@@ -119,7 +159,13 @@ describe('init', () => {
     await store.plan([{ title: 'kept mission', scope: ['src/kept/**'] }]);
 
     const second = await store.init();
-    expect(second).toEqual({ base: 'main', created: false, retiredAgents: [] });
+    expect(second).toEqual({
+      base: 'main',
+      created: false,
+      retiredAgents: [],
+      checkout: 'main',
+      openMissions: ['M1'],
+    });
     const state = await store.load();
     expect(state.missions).toHaveLength(1);
   });
@@ -130,7 +176,13 @@ describe('init', () => {
 
     const second = await store.init('session-a');
 
-    expect(second).toEqual({ base: 'main', created: false, retiredAgents: [] });
+    expect(second).toEqual({
+      base: 'main',
+      created: false,
+      retiredAgents: [],
+      checkout: 'main',
+      openMissions: [],
+    });
     const state = await store.load();
     expect(state.roster.agents.map((agent) => agent.name)).toEqual(['agent-build']);
   });
@@ -147,6 +199,8 @@ describe('init', () => {
       base: 'main',
       created: false,
       retiredAgents: ['agent-build', 'reviewer-a'],
+      checkout: 'main',
+      openMissions: ['M1'],
     });
     const state = await store.load();
     expect(state.sessionId).toBe('session-b');
@@ -154,6 +208,217 @@ describe('init', () => {
     expect(state.missions).toHaveLength(1);
     const log = await store.recentLog(5);
     expect(log.some((line) => line.includes(' adopt ') && line.includes('session=session-b') && line.includes('previous=session-a') && line.includes('retired=agent-build,reviewer-a'))).toBe(true);
+  });
+
+  it('records an explicit local base branch instead of the checked-out one', async () => {
+    await git(repo, 'branch', 'develop');
+
+    const result = await store.init(undefined, 'develop');
+
+    expect(result).toEqual({
+      base: 'develop',
+      created: true,
+      retiredAgents: [],
+      checkout: 'main',
+      openMissions: [],
+    });
+    const state = await store.load();
+    expect(state.base).toBe('develop');
+  });
+
+  it('rejects a base that is not a local branch and stays uninitialized', async () => {
+    await expect(store.init(undefined, 'origin/main')).rejects.toThrow(
+      /base branch "origin\/main" does not exist as a local branch/,
+    );
+    await expect(store.init(undefined, 'no-such-branch')).rejects.toThrow(
+      /base branch "no-such-branch" does not exist as a local branch/,
+    );
+
+    expect(await store.isInitialized()).toBe(false);
+  });
+
+  it('allows a detached HEAD when the base is given explicitly', async () => {
+    await git(repo, 'checkout', '--detach', 'HEAD');
+
+    const result = await store.init(undefined, 'main');
+
+    expect(result).toEqual({
+      base: 'main',
+      created: true,
+      retiredAgents: [],
+      checkout: 'HEAD',
+      openMissions: [],
+    });
+  });
+
+  it('refuses a detached HEAD without an explicit base', async () => {
+    await git(repo, 'checkout', '--detach', 'HEAD');
+
+    await expect(store.init()).rejects.toThrow(/detached HEAD/);
+    expect(await store.isInitialized()).toBe(false);
+  });
+
+  it('ignores a conflicting base on re-init and keeps the recorded one', async () => {
+    await git(repo, 'branch', 'develop');
+    await store.init();
+
+    const second = await store.init(undefined, 'develop');
+
+    expect(second).toEqual({
+      base: 'main',
+      created: false,
+      retiredAgents: [],
+      checkout: 'main',
+      ignoredBase: 'develop',
+      openMissions: [],
+    });
+    const state = await store.load();
+    expect(state.base).toBe('main');
+  });
+});
+
+describe('release', () => {
+  it('clears the recorded owner and logs the release when the session matches', async () => {
+    await store.init('session-a');
+
+    await store.release('session-a');
+
+    const state = await store.load();
+    expect(state.sessionId).toBeUndefined();
+    const log = await store.recentLog(5);
+    expect(log.some((line) => line.includes(' release ') && line.includes('session=session-a'))).toBe(true);
+  });
+
+  it('keeps the recorded owner for a different session and logs nothing', async () => {
+    await store.init('session-a');
+
+    await store.release('session-b');
+
+    const state = await store.load();
+    expect(state.sessionId).toBe('session-a');
+    const log = await store.recentLog(5);
+    expect(log.some((line) => line.includes(' release '))).toBe(false);
+  });
+
+  it('is a no-op while the workspace is not initialized', async () => {
+    await store.release('session-a');
+
+    expect(await store.isInitialized()).toBe(false);
+  });
+
+  it('is idempotent once ownership is already released', async () => {
+    await store.init('session-a');
+    await store.release('session-a');
+
+    await store.release('session-a');
+
+    expect((await store.load()).sessionId).toBeUndefined();
+    const log = await store.recentLog(10);
+    expect(log.filter((line) => line.includes(' release '))).toHaveLength(1);
+  });
+
+  it('lets another session adopt the workspace after the owner released it', async () => {
+    await store.init('session-a');
+    await store.release('session-a');
+
+    const result = await store.init('session-b');
+
+    expect(result.created).toBe(false);
+    expect(result.retiredAgents).toEqual([]);
+    expect((await store.load()).sessionId).toBe('session-b');
+  });
+});
+
+describe('markAgentDied', () => {
+  it('marks the roster entry and appends an activity log line', async () => {
+    await store.init('session-a');
+    const missions = await store.plan([{ title: 'engine', scope: ['src/engine/**'] }]);
+    const mission = missions[0]!;
+    await store.registerAgent(
+      rosterEntry({ name: 'w1', kind: 'worker', agentId: 'agent-w1', missionId: mission.id }),
+    );
+
+    const entry = await store.markAgentDied('agent-w1', 'failed', 'provider blew up\nstack line');
+
+    expect(entry?.diedAt).toBeDefined();
+    expect(entry?.deathStatus).toBe('failed');
+    expect(entry?.deathReason).toBe('provider blew up\nstack line');
+    const state = await store.load();
+    expect(state.roster.agents[0]?.diedAt).toBe(entry?.diedAt);
+    const log = await readFile(join(repo, '.tower/comms/log/activity.log'), 'utf8');
+    const diedLine = log.split('\n').find((line) => line.includes(' died '));
+    expect(diedLine).toBeDefined();
+    expect(diedLine).toContain('name=w1');
+    expect(diedLine).toContain('agent=agent-w1');
+    expect(diedLine).toContain('status=failed');
+    expect(diedLine).toContain('reason=provider blew up stack line');
+    expect(diedLine).toContain(`mission=${mission.id}`);
+    expect(diedLine).toContain('ref=');
+    expect(diedLine).toContain(mission.id);
+  });
+
+  it('is a no-op for unknown or already-dead agents', async () => {
+    await store.init('session-a');
+    await store.registerAgent(rosterEntry({ name: 'w1', kind: 'worker', agentId: 'agent-w1' }));
+
+    expect(await store.markAgentDied('agent-ghost', 'failed')).toBeUndefined();
+
+    const first = await store.markAgentDied('agent-w1', 'failed', 'first');
+    const second = await store.markAgentDied('agent-w1', 'timed_out', 'second');
+    expect(second?.diedAt).toBe(first?.diedAt);
+    expect(second?.deathStatus).toBe('failed');
+    expect(second?.deathReason).toBe('first');
+  });
+
+  it('clearAgentDied removes the death mark and logs the revival', async () => {
+    await store.init('session-a');
+    await store.registerAgent(rosterEntry({ name: 'w1', kind: 'worker', agentId: 'agent-w1' }));
+    await store.markAgentDied('agent-w1', 'failed', 'boom');
+
+    expect(await store.clearAgentDied('agent-w1')).toBe(true);
+    expect(await store.clearAgentDied('agent-w1')).toBe(false);
+    expect(await store.clearAgentDied('agent-ghost')).toBe(false);
+
+    const state = await store.load();
+    expect(state.roster.agents[0]?.diedAt).toBeUndefined();
+    expect(state.roster.agents[0]?.deathStatus).toBeUndefined();
+    expect(state.roster.agents[0]?.deathReason).toBeUndefined();
+    const log = await readFile(join(repo, '.tower/comms/log/activity.log'), 'utf8');
+    const revivedLine = log.split('\n').find((line) => line.includes(' revived '));
+    expect(revivedLine).toBeDefined();
+    expect(revivedLine).toContain('name=w1');
+    expect(revivedLine).toContain('agent=agent-w1');
+  });
+});
+
+describe('rebase', () => {
+  it('switches the recorded base and logs it when no missions are open', async () => {
+    await git(repo, 'branch', 'develop');
+    await store.init('session-a', 'main');
+
+    await store.rebase('develop');
+
+    expect((await store.load()).base).toBe('develop');
+    const log = await readFile(join(repo, '.tower/comms/log/activity.log'), 'utf8');
+    expect(log).toContain('rebase');
+    expect(log).toContain('from=main');
+    expect(log).toContain('to=develop');
+  });
+
+  it('refuses while missions are open and keeps the recorded base', async () => {
+    await git(repo, 'branch', 'develop');
+    await store.init('session-a', 'main');
+    await store.plan([{ title: 'engine', scope: ['src/engine/**'] }]);
+
+    await expect(store.rebase('develop')).rejects.toThrow('cannot rebase');
+    expect((await store.load()).base).toBe('main');
+  });
+
+  it('rejects a base that is not a local branch', async () => {
+    await store.init('session-a', 'main');
+
+    await expect(store.rebase('develop')).rejects.toThrow('does not exist as a local branch');
+    expect((await store.load()).base).toBe('main');
   });
 });
 
@@ -618,6 +883,253 @@ describe('merge gate', () => {
     await store.merge(build.branch);
     expect((await store.load()).missions.find((m) => m.id === build.id)?.status).toBe('merged');
   });
+
+  it('treats an abandoned dependency as satisfied', async () => {
+    const [, followUp] = await store.plan([
+      { title: 'base work', scope: ['src/a/**'] },
+      { title: 'follow up', scope: ['src/b/**'], deps: ['M1'] },
+    ]);
+    const state = await store.load();
+    await store.addWorktree(followUp!.worktree, followUp!.branch, state.base);
+    await commitFile(worktreeOf(followUp!), 'src/b/b.ts', 'b\n', 'work on M2');
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: followUp!.branch }),
+    );
+
+    await expect(store.merge(followUp!.branch)).rejects.toThrow(/dependencies not merged yet/);
+
+    await store.updateMission('tower', 'M1', { status: 'abandoned' });
+    await cleanReview('rev', followUp!.branch);
+    await store.merge(followUp!.branch);
+    expect((await store.load()).missions.find((m) => m.id === 'M2')?.status).toBe('merged');
+  });
+
+  it('excludes abandoned branches from the post-merge conflict report', async () => {
+    const [first, second] = await store.plan([
+      { title: 'first', scope: ['src/a/**'] },
+      { title: 'second', scope: ['src/b/**'] },
+    ]);
+    const state = await store.load();
+    await store.addWorktree(first!.worktree, first!.branch, state.base);
+    await store.addWorktree(second!.worktree, second!.branch, state.base);
+    await commitFile(worktreeOf(first!), 'src/a/shared.ts', 'from first\n', 'first');
+    await commitFile(worktreeOf(second!), 'src/a/shared.ts', 'from second\n', 'second strays');
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: first!.branch }),
+    );
+    await cleanReview('rev', first!.branch);
+
+    const before = await store.merge(first!.branch);
+    expect(before.conflictsWith.map((c) => c.branch)).toContain(second!.branch);
+
+    await store.updateMission('tower', 'M2', { status: 'abandoned' });
+    const [third] = await store.plan([{ title: 'third', scope: ['src/a/**'] }]);
+    await store.addWorktree(third!.worktree, third!.branch, state.base);
+    await commitFile(worktreeOf(third!), 'src/a/shared.ts', 'from third\n', 'third');
+    await store.registerAgent(
+      rosterEntry({ name: 'rev3', kind: 'reviewer', reviewTarget: third!.branch }),
+    );
+    await cleanReview('rev3', third!.branch);
+
+    const after = await store.merge(third!.branch);
+    expect(after.conflictsWith.map((c) => c.branch)).not.toContain(second!.branch);
+  });
+});
+
+describe('dirty base checkout', () => {
+  beforeEach(async () => {
+    await store.init();
+  });
+
+  it('snapshots uncommitted base changes as the mission branch base without touching the checkout', async () => {
+    await writeFile(join(repo, 'README.md'), '# fixture\nwip edit\n');
+    await writeFile(join(repo, 'staged.ts'), 'export const staged = 1;\n');
+    await git(repo, 'add', 'staged.ts');
+    await writeFile(join(repo, 'untracked.ts'), 'export const untracked = 1;\n');
+    const statusBefore = await git(repo, 'status', '--porcelain');
+    const baseTip = await git(repo, 'rev-parse', 'main');
+
+    const [mission] = await store.plan([{ title: 'wip consumer', scope: ['src/**'] }]);
+    const state = await store.load();
+    const added = await store.addWorktree(mission!.worktree, mission!.branch, state.base);
+
+    expect(added.spawnBase).toBeDefined();
+    const wt = worktreeOf(mission!);
+    expect(await readFile(join(wt, 'README.md'), 'utf8')).toBe('# fixture\nwip edit\n');
+    expect(await readFile(join(wt, 'staged.ts'), 'utf8')).toBe('export const staged = 1;\n');
+    expect(await readFile(join(wt, 'untracked.ts'), 'utf8')).toBe('export const untracked = 1;\n');
+    expect(await git(wt, 'status', '--porcelain')).toBe('');
+
+    expect(await git(repo, 'rev-parse', `${added.spawnBase}^`)).toBe(baseTip);
+    expect(await git(repo, 'rev-parse', mission!.branch)).toBe(added.spawnBase);
+
+    expect(await git(repo, 'status', '--porcelain')).toBe(statusBefore);
+    expect(await git(repo, 'rev-parse', 'main')).toBe(baseTip);
+    expect((await store.load()).missions[0]?.spawnBase).toBeUndefined();
+
+    const log = (await store.recentLog(3)).join('\n');
+    expect(log).toContain('worktree.add');
+    expect(log).toContain(`spawn_base=${added.spawnBase}`);
+  });
+
+  it('excludes .tower/ protocol files and gitignored paths from the snapshot', async () => {
+    await commitFile(repo, '.gitignore', 'ignored/\n', 'ignore rules');
+    await mkdir(join(repo, 'ignored'), { recursive: true });
+    await writeFile(join(repo, 'ignored/blob.txt'), 'ignored\n');
+    await writeFile(join(repo, 'wip.ts'), 'wip\n');
+
+    const [mission] = await store.plan([{ title: 'wip consumer', scope: ['src/**'] }]);
+    const state = await store.load();
+    const added = await store.addWorktree(mission!.worktree, mission!.branch, state.base);
+
+    expect(added.spawnBase).toBeDefined();
+    const snapshotFiles = (await git(repo, 'diff', '--name-only', `${added.spawnBase}^`, added.spawnBase!)).split('\n');
+    expect(snapshotFiles).toEqual(['wip.ts']);
+    await expect(stat(join(worktreeOf(mission!), '.tower'))).rejects.toThrow();
+    await expect(stat(join(worktreeOf(mission!), 'ignored'))).rejects.toThrow();
+  });
+
+  it('snapshots base WIP when the tower root is a repository subdirectory', async () => {
+    const sub = join(repo, 'sub');
+    await mkdir(sub, { recursive: true });
+    const subStore = new TowerStore(sub);
+    await subStore.init();
+    await writeFile(join(sub, 'wip.ts'), 'export const wip = 1;\n');
+
+    const [mission] = await subStore.plan([{ title: 'wip consumer', scope: ['src/**'] }]);
+    const state = await subStore.load();
+    const added = await subStore.addWorktree(mission!.worktree, mission!.branch, state.base);
+
+    expect(added.spawnBase).toBeDefined();
+    const snapshotFiles = (
+      await git(repo, 'diff', '--name-only', `${added.spawnBase}^`, added.spawnBase!)
+    ).split('\n');
+    expect(snapshotFiles).toEqual(['sub/wip.ts']);
+    const wt = join(sub, '.tower/worktrees', mission!.worktree);
+    expect(await readFile(join(wt, 'sub/wip.ts'), 'utf8')).toBe('export const wip = 1;\n');
+  });
+
+  it('refuses to create a worktree while the base checkout has unmerged paths', async () => {
+    await git(repo, 'checkout', '-b', 'side');
+    await commitFile(repo, 'conflict.txt', 'side\n', 'side change');
+    await git(repo, 'checkout', 'main');
+    await commitFile(repo, 'conflict.txt', 'main\n', 'main change');
+    await expect(git(repo, 'merge', 'side')).rejects.toThrow();
+
+    const [mission] = await store.plan([{ title: 'wip consumer', scope: ['src/**'] }]);
+    const state = await store.load();
+    await expect(
+      store.addWorktree(mission!.worktree, mission!.branch, state.base),
+    ).rejects.toThrow(/unmerged paths/);
+
+    await git(repo, 'merge', '--abort');
+  });
+
+  it('refuses to snapshot WIP from a checkout that is not the recorded base', async () => {
+    await git(repo, 'checkout', '-b', 'side');
+    await commitFile(repo, 'README.md', '# side\n', 'side version');
+    await writeFile(join(repo, 'README.md'), '# side wip\n');
+
+    const [mission] = await store.plan([{ title: 'wip consumer', scope: ['src/**'] }]);
+    const state = await store.load();
+    await expect(
+      store.addWorktree(mission!.worktree, mission!.branch, state.base),
+    ).rejects.toThrow(/on "side" with uncommitted changes, not the recorded base "main"/);
+    await expect(stat(join(repo, '.tower/worktrees', mission!.worktree))).rejects.toThrow();
+    await expect(git(repo, 'rev-parse', '--verify', mission!.branch)).rejects.toThrow();
+  });
+
+  it('refuses to snapshot WIP from a detached HEAD checkout', async () => {
+    await writeFile(join(repo, 'wip.ts'), 'export const wip = 1;\n');
+    await git(repo, 'checkout', '--detach', 'HEAD');
+
+    const [mission] = await store.plan([{ title: 'wip consumer', scope: ['src/**'] }]);
+    const state = await store.load();
+    await expect(
+      store.addWorktree(mission!.worktree, mission!.branch, state.base),
+    ).rejects.toThrow(/detached HEAD state with uncommitted changes/);
+  });
+
+  it('the merge gate ignores snapshotted base WIP and blocks only while the checkout still holds it', async () => {
+    await writeFile(join(repo, 'wip.ts'), 'export const wip = 1;\n');
+    const [mission] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    const state = await store.load();
+    const added = await store.addWorktree(mission!.worktree, mission!.branch, state.base);
+    expect(added.spawnBase).toBeDefined();
+    await store.updateMission('tower', mission!.id, { spawnBase: added.spawnBase });
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: mission!.branch }),
+    );
+    await commitFile(worktreeOf(mission!), 'src/x/x.ts', 'export const x = 1;\n', 'work on M1');
+    await cleanReview('rev', mission!.branch);
+
+    await expect(store.merge(mission!.branch)).rejects.toThrow(
+      /uncommitted changes in file\(s\) this merge would overwrite: wip\.ts/,
+    );
+    const log = (await store.recentLog(3)).join('\n');
+    expect(log).toContain('merge.blocked');
+    expect(log).toContain('reason=base-dirty');
+    expect((await store.load()).missions[0]?.status).not.toBe('merged');
+
+    await git(repo, 'add', 'wip.ts');
+    await git(repo, 'commit', '-m', 'commit my wip');
+
+    const { mergeCommit } = await store.merge(mission!.branch);
+    expect(mergeCommit).toBe(await git(repo, 'rev-parse', 'HEAD'));
+    expect((await store.load()).missions[0]?.status).toBe('merged');
+    expect(await readFile(join(repo, 'wip.ts'), 'utf8')).toBe('export const wip = 1;\n');
+    expect(await readFile(join(repo, 'src/x/x.ts'), 'utf8')).toBe('export const x = 1;\n');
+  });
+
+  it('falls back to the base branch for the scope diff after a rebase drops the snapshot', async () => {
+    await writeFile(join(repo, 'wip.ts'), 'export const wip = 1;\n');
+    const [mission] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    const state = await store.load();
+    const added = await store.addWorktree(mission!.worktree, mission!.branch, state.base);
+    expect(added.spawnBase).toBeDefined();
+    await store.updateMission('tower', mission!.id, { spawnBase: added.spawnBase });
+    const wt = worktreeOf(mission!);
+    await commitFile(wt, 'src/x/x.ts', 'export const x = 1;\n', 'work on M1');
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: mission!.branch }),
+    );
+
+    await git(repo, 'add', 'wip.ts');
+    await git(repo, 'commit', '-m', 'commit my wip');
+    await commitFile(repo, 'src/other/base.ts', 'export const other = 1;\n', 'later base work');
+
+    await git(wt, 'rebase', state.base);
+    await expect(
+      git(repo, 'merge-base', '--is-ancestor', added.spawnBase!, mission!.branch),
+    ).rejects.toThrow();
+
+    await cleanReview('rev', mission!.branch);
+    const { mergeCommit } = await store.merge(mission!.branch);
+    expect(mergeCommit).toBe(await git(repo, 'rev-parse', 'HEAD'));
+    expect((await store.load()).missions[0]?.status).toBe('merged');
+    expect(await readFile(join(repo, 'src/x/x.ts'), 'utf8')).toBe('export const x = 1;\n');
+    expect(await readFile(join(repo, 'src/other/base.ts'), 'utf8')).toBe(
+      'export const other = 1;\n',
+    );
+  });
+
+  it('merges when checkout dirt does not intersect the files the merge touches', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/x.ts',
+      content: 'x\n',
+    });
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: mission.branch }),
+    );
+    await cleanReview('rev', mission.branch);
+    await writeFile(join(repo, 'scratch.txt'), 'unrelated wip\n');
+
+    const { mergeCommit } = await store.merge(mission.branch);
+    expect(mergeCommit).toBe(await git(repo, 'rev-parse', 'HEAD'));
+    expect((await store.load()).missions[0]?.status).toBe('merged');
+  });
 });
 
 describe('updateMission', () => {
@@ -693,6 +1205,43 @@ describe('updateMission', () => {
     expect(file).toContain('| feat/alpha | wt-1 | 🟡 | src/alpha/** | w1 |');
     const index = await readFile(join(repo, '.tower/comms/MISSIONS.md'), 'utf8');
     expect(index).toContain('| M1 | alpha | feat/alpha | wt-1 | 🟡 | w1 |');
+  });
+
+  it('lets only the tower abandon a mission, and logs it', async () => {
+    await expect(store.updateMission('w1', 'M1', { status: 'abandoned' })).rejects.toThrow(
+      /cannot abandon/,
+    );
+    expect((await store.load()).missions[0]?.status).toBe('planned');
+
+    const abandoned = await store.updateMission('tower', 'M1', { status: 'abandoned' });
+    expect(abandoned.status).toBe('abandoned');
+    const index = await readFile(join(repo, '.tower/comms/MISSIONS.md'), 'utf8');
+    expect(index).toContain('🚫');
+    const log = (await store.recentLog(5)).join('\n');
+    expect(log).toContain('mission.update');
+    expect(log).toContain('status=abandoned');
+  });
+
+  it('frees an abandoned mission\'s scope for new plans', async () => {
+    await expect(store.plan([{ title: 'gamma', scope: ['src/alpha/**'] }])).rejects.toThrow(
+      /scopes overlap/,
+    );
+
+    await store.updateMission('tower', 'M1', { status: 'abandoned' });
+
+    const [gamma] = await store.plan([{ title: 'gamma', scope: ['src/alpha/**'] }]);
+    expect(gamma!.id).toBe('M3');
+  });
+
+  it('frees an abandoned mission\'s scope for scope patches', async () => {
+    await expect(
+      store.updateMission('tower', 'M2', { scope: ['src/alpha/**'] }),
+    ).rejects.toThrow(/scopes overlap/);
+
+    await store.updateMission('tower', 'M1', { status: 'abandoned' });
+
+    const patched = await store.updateMission('tower', 'M2', { scope: ['src/alpha/**'] });
+    expect(patched.scope).toEqual(['src/alpha/**']);
   });
 });
 

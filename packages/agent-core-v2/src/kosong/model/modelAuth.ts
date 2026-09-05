@@ -1,6 +1,7 @@
 import { Error2 } from '#/_base/errors/errors';
 import { CONFIG_INVALID_ERROR_CODE } from '#/kosong/contract/errors';
-import type { ResolutionTrace } from '#/kosong/contract/inspection';
+import type { InspectionSource, ResolutionTrace } from '#/kosong/contract/inspection';
+import { ProtocolSchema, type Protocol } from '#/kosong/protocol/protocol';
 
 import {
   BUDGET_THINKING_EFFORTS,
@@ -8,7 +9,7 @@ import {
   matchUnknownClaudeProfile,
 } from '../provider/bases/anthropic/anthropic-profile';
 import type { ProviderConfig } from '../provider/provider';
-import { explainProviderEndpoint } from '../provider/providerDefinition';
+import { explainProviderEndpoint, getProviderDefinition } from '../provider/providerDefinition';
 
 import type { ModelRecord } from './model';
 import type { ResolvedModelAuthMaterial } from './model.types';
@@ -134,6 +135,137 @@ export function deriveProviderId(baseUrl: string): string {
   } catch {
     return baseUrl;
   }
+}
+
+export function providerNameFromFlatModel(model: ModelRecord): string | undefined {
+  const baseUrl = nonEmpty(model.baseUrl);
+  return baseUrl === undefined ? undefined : deriveProviderId(baseUrl);
+}
+
+export interface ModelProtocolResolution {
+  readonly protocol: Protocol;
+  readonly source: InspectionSource;
+}
+
+export function resolveModelProtocol(
+  model: ModelRecord,
+  provider: ProviderConfig | undefined,
+): ModelProtocolResolution | undefined {
+  if (model.protocol !== undefined) {
+    return { protocol: model.protocol, source: { kind: 'config', detail: 'model.protocol' } };
+  }
+  const providerType = provider?.type;
+  if (providerType !== undefined) {
+    const asProtocol = ProtocolSchema.safeParse(providerType);
+    if (asProtocol.success) {
+      return {
+        protocol: asProtocol.data,
+        source: {
+          kind: 'config',
+          detail: `provider type '${providerType}' is itself a wire protocol`,
+        },
+      };
+    }
+    const definition = getProviderDefinition(providerType);
+    if (definition !== undefined) {
+      return {
+        protocol: definition.baseProtocol,
+        source: { kind: 'builtin', detail: `vendor '${providerType}' declared baseProtocol` },
+      };
+    }
+  }
+  return undefined;
+}
+
+export interface EndpointBaseUrlResolution {
+  readonly baseUrl: string | undefined;
+  readonly source?: InspectionSource;
+}
+
+export function resolveEndpointBaseUrl(
+  model: ModelRecord,
+  provider: ProviderConfig,
+  providerId: string,
+): EndpointBaseUrlResolution {
+  const fromModel = nonEmpty(model.baseUrl);
+  if (fromModel !== undefined) {
+    return { baseUrl: fromModel, source: { kind: 'config', detail: 'model.baseUrl' } };
+  }
+  const fromProvider = nonEmpty(provider.baseUrl);
+  if (fromProvider !== undefined) {
+    return {
+      baseUrl: fromProvider,
+      source: { kind: 'config', detail: `provider '${providerId}' baseUrl` },
+    };
+  }
+  const endpointType = provider.type ?? model.protocol;
+  const endpoint =
+    endpointType === undefined ? {} : explainProviderEndpoint(endpointType, provider.env ?? {});
+  const baseUrl = nonEmpty(endpoint.baseUrl);
+  if (endpoint.baseUrlEnvName !== undefined) {
+    return {
+      baseUrl,
+      source: {
+        kind: 'env',
+        detail: `${endpoint.baseUrlEnvName} (provider '${providerId}' env bag)`,
+      },
+    };
+  }
+  if (endpoint.baseUrlIsDefault === true) {
+    return {
+      baseUrl,
+      source: { kind: 'builtin', detail: `provider definition '${endpointType}' defaultBaseUrl` },
+    };
+  }
+  return { baseUrl };
+}
+
+export type ModelReadyFailureReason =
+  | 'no-default'
+  | 'dangling-alias'
+  | 'provider-missing'
+  | 'unresolvable';
+
+export type ModelReadyResolution =
+  | { readonly resolved: true }
+  | { readonly resolved: false; readonly reason: ModelReadyFailureReason };
+
+export function resolveModelForReady(
+  modelId: string | undefined,
+  models: Readonly<Record<string, ModelRecord>>,
+  providers: Readonly<Record<string, ProviderConfig>>,
+  defaultProvider?: string,
+): ModelReadyResolution {
+  if (modelId === undefined || modelId.trim().length === 0) {
+    return { resolved: false, reason: 'no-default' };
+  }
+  const configured = models[modelId];
+  if (configured === undefined) {
+    return { resolved: false, reason: 'dangling-alias' };
+  }
+  const model = effectiveModelConfig(configured);
+  const fallbackProvider =
+    defaultProvider === undefined || defaultProvider.trim().length === 0 ? undefined : defaultProvider;
+  const providerId = model.providerId ?? model.provider ?? fallbackProvider;
+  const provider = providerId === undefined ? undefined : providers[providerId];
+  if (providerId !== undefined && provider === undefined) {
+    return { resolved: false, reason: 'provider-missing' };
+  }
+  const providerName = providerId ?? providerNameFromFlatModel(model);
+  if (providerName === undefined) {
+    return { resolved: false, reason: 'unresolvable' };
+  }
+  if (nonEmpty(model.name ?? model.model) === undefined) {
+    return { resolved: false, reason: 'unresolvable' };
+  }
+  const maxContextSize = model.maxContextSize;
+  if (maxContextSize === undefined || maxContextSize <= 0) {
+    return { resolved: false, reason: 'unresolvable' };
+  }
+  if (resolveModelProtocol(model, provider) === undefined) {
+    return { resolved: false, reason: 'unresolvable' };
+  }
+  return { resolved: true };
 }
 
 export function nonEmpty(value: string | undefined): string | undefined {

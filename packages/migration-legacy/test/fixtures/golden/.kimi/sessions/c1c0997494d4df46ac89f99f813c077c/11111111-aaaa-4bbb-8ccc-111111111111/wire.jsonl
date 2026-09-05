@@ -1,0 +1,2 @@
+{"type": "metadata", "protocol_version": "1.10"}
+{"timestamp": 1735689600.0, "message": {"type": "ToolResult", "payload": {"tool_call_id": "call-1", "return_value": {"is_error": false, "output": "total 0", "message": "", "display": [{"type": "shell", "command": "ls -la", "language": "bash"}]}}}}

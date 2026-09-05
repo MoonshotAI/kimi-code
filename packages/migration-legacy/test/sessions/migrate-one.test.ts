@@ -20,8 +20,7 @@ afterEach(async () => {
 describe('migrateOneSession (tiny-hello-world fixture)', () => {
   it('produces a valid v1.0 session dir', async () => {
     const result = await migrateOneSession({
-      sourceSessionDir: join(FIXTURES, 'tiny-hello-world'),
-      oldSessionUuid: 'tiny-uuid',
+      source: { uuid: 'tiny-uuid', sessionDir: join(FIXTURES, 'tiny-hello-world'), contextPath: join(join(FIXTURES, 'tiny-hello-world'), 'context.jsonl') },
       workdirPath: '/Users/me/proj',
       targetHome,
     });
@@ -29,23 +28,31 @@ describe('migrateOneSession (tiny-hello-world fixture)', () => {
     const targetDir = (result as Extract<MigrateOneResult, { outcome: 'migrated' }>).targetDir;
     const state = JSON.parse(await readFile(join(targetDir, 'state.json'), 'utf-8'));
     expect(state.title).toBe('hi');
+    expect(state.lastTurnReason).toBe('completed');
     const wire = await readFile(join(targetDir, 'agents', 'main', 'wire.jsonl'), 'utf-8');
     const lines = wire.split('\n').filter((l) => l.length > 0);
     expect(lines[0]).toContain('"protocol_version":"1.0"');
-    // 2 messages (user + assistant); markers dropped
-    expect(lines).toHaveLength(3);
+    const records = lines.map((l) => JSON.parse(l) as { type: string });
+    // metadata + turn.prompt + 2 messages + turn.ended + token_counting.measured
+    // (the fixture carries a `_usage` row with token_count 9133)
+    expect(records.map((r) => r.type)).toEqual([
+      'metadata',
+      'turn.prompt',
+      'context.append_message',
+      'context.append_message',
+      'turn.ended',
+      'token_counting.measured',
+    ]);
   });
 
   it('reports already-migrated on an idempotent re-run', async () => {
     await migrateOneSession({
-      sourceSessionDir: join(FIXTURES, 'tiny-hello-world'),
-      oldSessionUuid: 'tiny-uuid',
+      source: { uuid: 'tiny-uuid', sessionDir: join(FIXTURES, 'tiny-hello-world'), contextPath: join(join(FIXTURES, 'tiny-hello-world'), 'context.jsonl') },
       workdirPath: '/Users/me/proj',
       targetHome,
     });
     const second = await migrateOneSession({
-      sourceSessionDir: join(FIXTURES, 'tiny-hello-world'),
-      oldSessionUuid: 'tiny-uuid',
+      source: { uuid: 'tiny-uuid', sessionDir: join(FIXTURES, 'tiny-hello-world'), contextPath: join(join(FIXTURES, 'tiny-hello-world'), 'context.jsonl') },
       workdirPath: '/Users/me/proj',
       targetHome,
     });
@@ -56,8 +63,7 @@ describe('migrateOneSession (tiny-hello-world fixture)', () => {
 
   it('reports conflict when an unrelated kimi-code session occupies the dir', async () => {
     const first = await migrateOneSession({
-      sourceSessionDir: join(FIXTURES, 'tiny-hello-world'),
-      oldSessionUuid: 'tiny-uuid',
+      source: { uuid: 'tiny-uuid', sessionDir: join(FIXTURES, 'tiny-hello-world'), contextPath: join(join(FIXTURES, 'tiny-hello-world'), 'context.jsonl') },
       workdirPath: '/Users/me/proj',
       targetHome,
     });
@@ -66,8 +72,7 @@ describe('migrateOneSession (tiny-hello-world fixture)', () => {
     // Overwrite state.json with a non-migrated (real) kimi-code session.
     await writeFile(join(targetDir, 'state.json'), JSON.stringify({ title: 'real' }), 'utf-8');
     const second = await migrateOneSession({
-      sourceSessionDir: join(FIXTURES, 'tiny-hello-world'),
-      oldSessionUuid: 'tiny-uuid',
+      source: { uuid: 'tiny-uuid', sessionDir: join(FIXTURES, 'tiny-hello-world'), contextPath: join(join(FIXTURES, 'tiny-hello-world'), 'context.jsonl') },
       workdirPath: '/Users/me/proj',
       targetHome,
     });
@@ -90,8 +95,7 @@ describe('migrateOneSession (tiny-hello-world fixture)', () => {
     await writeFile(join(targetDir, 'agents', 'main', 'wire.jsonl'), '{"type":"metadata"}\n');
 
     const result = await migrateOneSession({
-      sourceSessionDir: join(FIXTURES, 'tiny-hello-world'),
-      oldSessionUuid: 'tiny-uuid',
+      source: { uuid: 'tiny-uuid', sessionDir: join(FIXTURES, 'tiny-hello-world'), contextPath: join(join(FIXTURES, 'tiny-hello-world'), 'context.jsonl') },
       workdirPath,
       targetHome,
     });
@@ -116,8 +120,7 @@ describe('migrateOneSession (tiny-hello-world fixture)', () => {
     await writeFile(join(targetDir, 'state.json'), '{ "createdAt": "broke');
 
     const result = await migrateOneSession({
-      sourceSessionDir: join(FIXTURES, 'tiny-hello-world'),
-      oldSessionUuid: 'tiny-uuid',
+      source: { uuid: 'tiny-uuid', sessionDir: join(FIXTURES, 'tiny-hello-world'), contextPath: join(join(FIXTURES, 'tiny-hello-world'), 'context.jsonl') },
       workdirPath,
       targetHome,
     });
@@ -132,8 +135,7 @@ describe('migrateOneSession (tiny-hello-world fixture)', () => {
     // migrated artifacts must carry the original timestamp — not write-time.
     const expectedMs = Math.floor(1772616338.93 * 1000);
     const result = await migrateOneSession({
-      sourceSessionDir: join(FIXTURES, 'tiny-hello-world'),
-      oldSessionUuid: 'tiny-uuid',
+      source: { uuid: 'tiny-uuid', sessionDir: join(FIXTURES, 'tiny-hello-world'), contextPath: join(join(FIXTURES, 'tiny-hello-world'), 'context.jsonl') },
       workdirPath: '/Users/me/proj',
       targetHome,
     });
@@ -169,8 +171,7 @@ describe('migrateOneSession (tiny-hello-world fixture)', () => {
     await utimes(join(srcDir, 'wire.jsonl'), wireTime, wireTime);
 
     const result = await migrateOneSession({
-      sourceSessionDir: srcDir,
-      oldSessionUuid: 'no-wiremtime-uuid',
+      source: { uuid: 'no-wiremtime-uuid', sessionDir: srcDir, contextPath: join(srcDir, 'context.jsonl') },
       workdirPath: '/Users/me/proj',
       targetHome,
     });
@@ -194,8 +195,7 @@ describe('migrateOneSession (tiny-hello-world fixture)', () => {
     await writeFile(join(srcDir, 'state.json'), '{}', 'utf-8');
 
     const result = await migrateOneSession({
-      sourceSessionDir: srcDir,
-      oldSessionUuid: 'empty-context-uuid',
+      source: { uuid: 'empty-context-uuid', sessionDir: srcDir, contextPath: join(srcDir, 'context.jsonl') },
       workdirPath: '/Users/me/proj',
       targetHome,
     });
@@ -212,8 +212,7 @@ describe('migrateOneSession (tiny-hello-world fixture)', () => {
     await writeFile(join(srcDir, 'state.json'), '{}', 'utf-8');
 
     const result = await migrateOneSession({
-      sourceSessionDir: srcDir,
-      oldSessionUuid: 'corrupt-context-uuid',
+      source: { uuid: 'corrupt-context-uuid', sessionDir: srcDir, contextPath: join(srcDir, 'context.jsonl') },
       workdirPath: '/Users/me/proj',
       targetHome,
     });
@@ -222,4 +221,301 @@ describe('migrateOneSession (tiny-hello-world fixture)', () => {
       expect(result.reason).toMatch(/corrupt|parseable/i);
     }
   });
+
+  it('migrates a historical flat context file with no session dir', async () => {
+    const flatFile = join(targetHome, 'flat-uuid.jsonl');
+    await writeFile(
+      flatFile,
+      '{"role":"user","content":"hello from the flat era"}\n',
+      'utf-8',
+    );
+
+    const result = await migrateOneSession({
+      source: { uuid: 'flat-uuid', flatContextFile: flatFile, contextPath: flatFile },
+      workdirPath: '/Users/me/proj',
+      targetHome,
+    });
+    expect(result.outcome).toBe('migrated');
+    const targetDir = (result as Extract<MigrateOneResult, { outcome: 'migrated' }>).targetDir;
+    const wire = await readFile(join(targetDir, 'agents', 'main', 'wire.jsonl'), 'utf-8');
+    expect(wire).toContain('hello from the flat era');
+    const state = JSON.parse(await readFile(join(targetDir, 'state.json'), 'utf-8')) as {
+      title: string;
+    };
+    expect(state.title).toBe('hello from the flat era');
+  });
+
+  it('migrates a title-only session: empty wire, title preserved', async () => {
+    const srcDir = join(targetHome, 'src-title-only');
+    await mkdir(srcDir, { recursive: true });
+    await writeFile(join(srcDir, 'context.jsonl'), '', 'utf-8');
+    await writeFile(
+      join(srcDir, 'state.json'),
+      JSON.stringify({ custom_title: 'My named session' }),
+      'utf-8',
+    );
+
+    const result = await migrateOneSession({
+      source: { uuid: 'title-only-uuid', sessionDir: srcDir, contextPath: join(srcDir, 'context.jsonl') },
+      workdirPath: '/Users/me/proj',
+      targetHome,
+    });
+    expect(result.outcome).toBe('migrated');
+    const targetDir = (result as Extract<MigrateOneResult, { outcome: 'migrated' }>).targetDir;
+    const wire = await readFile(join(targetDir, 'agents', 'main', 'wire.jsonl'), 'utf-8');
+    expect(wire).not.toContain('append_message');
+    const state = JSON.parse(await readFile(join(targetDir, 'state.json'), 'utf-8')) as {
+      title: string;
+      isCustomTitle: boolean;
+    };
+    expect(state.title).toBe('My named session');
+    expect(state.isCustomTitle).toBe(true);
+  });
+
+  it('merges legacy metadata.json into the migrated state (state fields win)', async () => {
+    const srcDir = join(targetHome, 'src-metadata-merge');
+    await mkdir(srcDir, { recursive: true });
+    await writeFile(
+      join(srcDir, 'context.jsonl'),
+      '{"role":"user","content":"hi"}\n',
+      'utf-8',
+    );
+    await writeFile(
+      join(srcDir, 'state.json'),
+      JSON.stringify({ archived: false, archived_at: null, custom_title: 'State Title' }),
+      'utf-8',
+    );
+    await writeFile(
+      join(srcDir, 'metadata.json'),
+      JSON.stringify({
+        session_id: 'metadata-merge-uuid',
+        title: 'Legacy Title',
+        archived: true,
+        archived_at: 9999,
+        auto_archive_exempt: true,
+      }),
+      'utf-8',
+    );
+
+    const result = await migrateOneSession({
+      source: { uuid: 'metadata-merge-uuid', sessionDir: srcDir, contextPath: join(srcDir, 'context.jsonl') },
+      workdirPath: '/Users/me/proj',
+      targetHome,
+    });
+    expect(result.outcome).toBe('migrated');
+    const targetDir = (result as Extract<MigrateOneResult, { outcome: 'migrated' }>).targetDir;
+    const state = JSON.parse(await readFile(join(targetDir, 'state.json'), 'utf-8')) as {
+      title: string;
+      archived: boolean;
+      archivedAt?: number;
+      custom: { auto_archive_exempt: boolean };
+    };
+    expect(state.title).toBe('State Title');
+    expect(state.archived).toBe(true);
+    expect(state.archivedAt).toBe(9999000);
+    expect(state.custom.auto_archive_exempt).toBe(true);
+  });
+});
+
+describe('migrateOneSession with a pre-existing old-format import', () => {
+  it('leaves an old message-only import untouched as already-migrated', async () => {
+    const workdirPath = '/Users/me/proj';
+    const targetDir = join(
+      targetSessionsDir(targetHome),
+      computeWorkdirBucket(workdirPath),
+      'ses_old-import-uuid',
+    );
+    await mkdir(join(targetDir, 'agents', 'main'), { recursive: true });
+    const wireLines = [
+      '{"type":"metadata","protocol_version":"1.0","created_at":1700000000000}',
+      '{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"old question"}],"toolCalls":[]}}',
+    ];
+    await writeFile(join(targetDir, 'agents', 'main', 'wire.jsonl'), wireLines.join('\n') + '\n');
+    await writeFile(
+      join(targetDir, 'state.json'),
+      JSON.stringify({
+        id: 'ses_old-import-uuid',
+        title: 'old import',
+        custom: { imported_from_kimi_cli: true, kimi_cli_session_id: 'old-import-uuid' },
+      }),
+    );
+
+    const result = await migrateOneSession({
+      source: { uuid: 'old-import-uuid', sessionDir: join(FIXTURES, 'tiny-hello-world'), contextPath: join(FIXTURES, 'tiny-hello-world', 'context.jsonl') },
+      workdirPath,
+      targetHome,
+    });
+    expect(result.outcome).toBe('already-migrated');
+
+    const wire = await readFile(join(targetDir, 'agents', 'main', 'wire.jsonl'), 'utf-8');
+    expect(wire).toBe(wireLines.join('\n') + '\n');
+  });
+});
+
+describe('migrateOneSession todo list migration', () => {
+  it('writes the legacy todos as a tools.update_store record in a fresh migration', async () => {
+    const srcDir = join(targetHome, 'src-fresh-todos');
+    await mkdir(srcDir, { recursive: true });
+    await writeFile(
+      join(srcDir, 'context.jsonl'),
+      '{"role":"user","content":"hi"}\n{"role":"assistant","content":[{"type":"text","text":"Hello"}]}\n',
+    );
+    await writeFile(
+      join(srcDir, 'state.json'),
+      JSON.stringify({
+        todos: [
+          { title: '创建 f1.txt', status: 'done' },
+          { title: '创建 f2.txt', status: 'pending' },
+        ],
+      }),
+    );
+
+    const result = await migrateOneSession({
+      source: { uuid: 'fresh-todos-uuid', sessionDir: srcDir, contextPath: join(srcDir, 'context.jsonl') },
+      workdirPath: '/Users/me/proj',
+      targetHome,
+    });
+    expect(result.outcome).toBe('migrated');
+    const targetDir = (result as Extract<MigrateOneResult, { outcome: 'migrated' }>).targetDir;
+    const lines = (await readFile(join(targetDir, 'agents', 'main', 'wire.jsonl'), 'utf-8'))
+      .split('\n')
+      .filter((l) => l.length > 0);
+    const last = JSON.parse(lines.at(-1)!);
+    expect(last).toMatchObject({
+      type: 'tools.update_store',
+      agentId: 'main',
+      key: 'todo',
+      value: [
+        { title: '创建 f1.txt', status: 'done' },
+        { title: '创建 f2.txt', status: 'pending' },
+      ],
+    });
+    const state = JSON.parse(await readFile(join(targetDir, 'state.json'), 'utf-8'));
+    expect(state.custom.imported_from_kimi_cli).toBe(true);
+  });
+});
+
+describe('migrateOneSession subagent migration', () => {
+  const workdirPath = '/Users/me/proj';
+
+  async function seedSourceWithSubagent(): Promise<string> {
+    const srcDir = join(targetHome, 'src-with-subagent');
+    await mkdir(join(srcDir, 'subagents', 'sub1'), { recursive: true });
+    await writeFile(
+      join(srcDir, 'context.jsonl'),
+      [
+        '{"role":"user","content":"run a subagent"}',
+        '{"role":"assistant","content":[],"tool_calls":[{"type":"function","id":"tool_X","function":{"name":"Agent","arguments":"{\\"description\\":\\"calc\\"}"}}]}',
+        '{"role":"tool","tool_call_id":"tool_X","content":"56088"}',
+      ].join('\n') + '\n',
+    );
+    await writeFile(join(srcDir, 'state.json'), '{}');
+    await writeFile(
+      join(srcDir, 'wire.jsonl'),
+      [
+        '{"type":"metadata","protocol_version":"1.10"}',
+        '{"timestamp":1,"message":{"type":"SubagentEvent","payload":{"parent_tool_call_id":"tool_X","agent_id":"sub1","subagent_type":"coder","event":{"type":"TurnBegin","payload":{"user_input":"计算 123 乘以 456"}}}}}',
+      ].join('\n') + '\n',
+    );
+    await writeFile(
+      join(srcDir, 'subagents', 'sub1', 'meta.json'),
+      JSON.stringify({
+        agent_id: 'sub1',
+        subagent_type: 'coder',
+        status: 'idle',
+        description: 'Calculate 123*456',
+        created_at: 1700000000.0,
+        updated_at: 1700000007.0,
+        launch_spec: { effective_model: 'k2' },
+      }),
+    );
+    await writeFile(
+      join(srcDir, 'subagents', 'sub1', 'context.jsonl'),
+      [
+        '{"role":"user","content":"计算 123 乘以 456"}',
+        '{"role":"assistant","content":[{"type":"text","text":"56088"}]}',
+      ].join('\n') + '\n',
+    );
+    await writeFile(
+      join(srcDir, 'subagents', 'sub1', 'state.json'),
+      JSON.stringify({ todos: [{ title: 'calc', status: 'done' }] }),
+    );
+    return srcDir;
+  }
+
+  it('migrates subagent wire, task records and roster registration linked to the main history', async () => {
+    const srcDir = await seedSourceWithSubagent();
+    const result = await migrateOneSession({
+      source: { uuid: 'sub-session-uuid', sessionDir: srcDir, contextPath: join(srcDir, 'context.jsonl') },
+      workdirPath,
+      targetHome,
+    });
+    expect(result.outcome).toBe('migrated');
+    const targetDir = (result as Extract<MigrateOneResult, { outcome: 'migrated' }>).targetDir;
+
+    const subWire = (await readFile(join(targetDir, 'agents', 'sub1', 'wire.jsonl'), 'utf-8'))
+      .split('\n')
+      .filter((l) => l.length > 0)
+      .map((l) => JSON.parse(l) as { type: string });
+    expect(subWire.map((r) => r.type)).toEqual([
+      'metadata',
+      'turn.prompt',
+      'context.append_message',
+      'context.append_message',
+      'turn.ended',
+      'tools.update_store',
+    ]);
+    expect(subWire[1]).toMatchObject({ agentId: 'sub1', origin: { kind: 'user' } });
+    expect(subWire[5]).toMatchObject({ agentId: 'sub1', key: 'todo', value: [{ title: 'calc', status: 'done' }] });
+
+    const mainWire = (await readFile(join(targetDir, 'agents', 'main', 'wire.jsonl'), 'utf-8'))
+      .split('\n')
+      .filter((l) => l.length > 0)
+      .map((l) => JSON.parse(l) as { type: string });
+    expect(mainWire.map((r) => r.type)).toEqual([
+      'metadata',
+      'turn.prompt',
+      'context.append_message',
+      'task.started',
+      'context.append_message',
+      'context.append_message',
+      'task.terminated',
+      'turn.ended',
+    ]);
+    expect(mainWire[3]).toMatchObject({
+      agentId: 'main',
+      info: {
+        kind: 'agent',
+        taskId: 'sub1',
+        agentId: 'sub1',
+        subagentType: 'coder',
+        parentToolCallId: 'tool_X',
+        description: 'Calculate 123*456',
+        status: 'running',
+        startedAt: 1700000000000,
+        endedAt: null,
+        model: 'k2',
+      },
+    });
+    expect(mainWire[6]).toMatchObject({
+      agentId: 'main',
+      info: { taskId: 'sub1', status: 'completed', endedAt: 1700000007000 },
+    });
+
+    const state = JSON.parse(await readFile(join(targetDir, 'state.json'), 'utf-8'));
+    expect(state.agents.sub1).toMatchObject({
+      type: 'sub',
+      parentAgentId: 'main',
+      labels: { parentAgentId: 'main' },
+    });
+    expect(state.agents.sub1.homedir).toBe(join(targetDir, 'agents', 'sub1'));
+
+    const second = await migrateOneSession({
+      source: { uuid: 'sub-session-uuid', sessionDir: srcDir, contextPath: join(srcDir, 'context.jsonl') },
+      workdirPath,
+      targetHome,
+    });
+    expect(second.outcome).toBe('already-migrated');
+  });
+
 });

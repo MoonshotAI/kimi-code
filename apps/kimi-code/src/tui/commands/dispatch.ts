@@ -28,7 +28,6 @@ import { handleLoginCommand, handleLogoutCommand } from './auth';
 import { handleBtwCommand } from './btw';
 import { handleCopyCommand } from './copy';
 import {
-  handleAutoCommand,
   handleCompactCommand,
   handleEditorCommand,
   handleEffortCommand,
@@ -36,7 +35,6 @@ import {
   handlePlanCommand,
   handleSecondaryModelCommand,
   handleThemeCommand,
-  handleYoloCommand,
   showExperimentsPanel,
   showModelPicker,
   showPermissionPicker,
@@ -71,7 +69,7 @@ import {
 import { handleSwarmCommand } from './swarm';
 import { handleTowerCommand } from './tower';
 import { handleUndoCommand } from './undo';
-import { handleWebCommand } from './web';
+import { handleRemoteControlCommand, handleWebCommand } from './web';
 
 // ---------------------------------------------------------------------------
 // Re-exports — keep existing consumers working
@@ -82,7 +80,6 @@ export { handleBtwCommand } from './btw';
 export { handleCopyCommand } from './copy';
 export { handleAddDirCommand } from './add-dir';
 export {
-  handleAutoCommand,
   handleCompactCommand,
   handleEditorCommand,
   handleEffortCommand,
@@ -90,7 +87,6 @@ export {
   handlePlanCommand,
   handleSecondaryModelCommand,
   handleThemeCommand,
-  handleYoloCommand,
   showModelPicker,
   showExperimentsPanel,
   showPermissionPicker,
@@ -110,7 +106,7 @@ export {
   handleTitleCommand,
 } from './session';
 export { handleUndoCommand } from './undo';
-export { handleWebCommand } from './web';
+export { handleRemoteControlCommand, handleWebCommand } from './web';
 
 // ---------------------------------------------------------------------------
 // Host interface
@@ -566,10 +562,10 @@ async function handleBuiltInSlashCommand(
       await handleTitleCommand(host, args);
       return;
     case 'yolo':
-      await handleYoloCommand(host, args);
+      showPermissionPicker(host, 'yolo');
       return;
     case 'auto':
-      await handleAutoCommand(host, args);
+      showPermissionPicker(host, 'auto');
       return;
     case 'plan':
       await handlePlanCommand(host, args);
@@ -612,6 +608,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'web':
       await handleWebCommand(host);
+      return;
+    case 'remote-control':
+      await handleRemoteControlCommand(host);
       return;
     default:
       host.showError(`Unknown slash command: /${String(name)}`);

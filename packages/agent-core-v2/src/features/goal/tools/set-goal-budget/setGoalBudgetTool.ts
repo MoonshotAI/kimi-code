@@ -3,7 +3,7 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { GOAL_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '#/agent/tools/mainAgentOnly';
 import { type ToolExecution } from '#/tool/toolContract';
 
-import { IAgentGoalService } from '#/features/goal/goal';
+import { IAgentGoalService } from '#/features/goal/goalService';
 import type { GoalBudgetLimits, GoalSnapshot } from '#/features/goal/types';
 
 import DESCRIPTION from './set-goal-budget.md?raw';
@@ -90,6 +90,7 @@ export class SetGoalBudgetTool implements ISetGoalBudgetTool {
     );
   }
 }
+
 
 function normalizeBudgetInput(input: SetGoalBudgetToolInput): SetGoalBudgetToolInput {
   switch (input.unit) {

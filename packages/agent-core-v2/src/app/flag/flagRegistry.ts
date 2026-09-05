@@ -1,6 +1,8 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 
+import type { IFlagService } from './flag';
+
 export type FlagSurface = 'core' | 'tui' | 'both';
 
 export type FlagId = string;
@@ -12,6 +14,7 @@ export interface FlagDefinitionInput {
   readonly env: string;
   readonly default: boolean;
   readonly surface: FlagSurface;
+  readonly isExposed?: (flags: IFlagService) => boolean;
 }
 
 const contributedFlags: FlagDefinitionInput[] = [];

@@ -10,7 +10,7 @@ import { z } from 'zod';
 import type {
   Interaction,
   InteractionResolution,
-} from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
+} from '@moonshot-ai/agent-core-v2/features/interaction/interaction';
 import type { SessionMetadataChangedEvent } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 
 import type { EventRegistration } from '../types.js';

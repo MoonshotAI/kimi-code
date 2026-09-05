@@ -1,53 +1,16 @@
-/**
- * End-to-end check that a migrated session is actually visible to — and
- * resumable by — real kimi-core. The migrator writes session buckets named by
- * `computeWorkdirBucket`; kimi-core's session picker (`SessionStore.list`)
- * locates sessions purely by `readdir(encodeWorkDirKey(workDir))`. If the two
- * bucket algorithms diverge (see review item C1), migrated sessions become
- * silently invisible — this test fails fast in that case.
- *
- * The resume test additionally drives a real `Session.resume()`: it reads the
- * migrated `state.json`, instantiates the `main` agent from
- * `agents.main.homedir`, and replays that agent's `wire.jsonl`. If
- * `agents.main.homedir` does not point at `<sessionDir>/agents/main` (where the
- * migrator writes the translated history), the resumed agent's context is
- * empty and the migrated history is lost.
- *
- * agent-core API used:
- *   - `SessionStore` (constructor: `new SessionStore(homeDir)`)
- *   - `SessionStore.list({ workDir })`
- *   - `encodeWorkDirKey` / `normalizeWorkDir`
- *     all from `@moonshot-ai/agent-core/session/store`.
- *   - `Session` (constructor + `resume()` + `getReadyAgent()`), from
- *     `@moonshot-ai/agent-core`; `localKaos` from `@moonshot-ai/kaos`. After
- *     `resume()`, `session.getReadyAgent('main').context.messages` exposes the
- *     replayed message history.
- */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import {
-  SessionStore,
-  encodeWorkDirKey,
-  normalizeWorkDir,
-} from '@moonshot-ai/agent-core/session/store/index';
-import { Session, type SDKSessionRPC } from '@moonshot-ai/agent-core';
-import { LocalKaos } from '@moonshot-ai/kaos';
+import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
+import { reduceContextTranscript } from '@moonshot-ai/agent-core-v2';
+import { groupMessagesIntoSnapshot } from '@moonshot-ai/transcript';
 
 import { migrateOneSession, type MigrateOneResult } from '../src/sessions/migrate-one.js';
 import { computeWorkdirBucket } from '../src/sessions/workdir-bucket.js';
-
-function createSessionRpc(): SDKSessionRPC {
-  return {
-    emitEvent: vi.fn(async () => {}),
-    requestApproval: vi.fn(async () => ({ decision: 'cancelled' })),
-    requestQuestion: vi.fn(async () => null),
-    toolCall: vi.fn(async () => ({ output: 'unused', isError: true })),
-  } as unknown as SDKSessionRPC;
-}
+import { listSessionsV2, readSessionSummaryV2 } from './v2-session-scan.js';
 
 const FIXTURES = fileURLToPath(new URL('./fixtures', import.meta.url));
 const WORK_DIR = '/Users/example/proj';
@@ -60,47 +23,42 @@ afterEach(async () => {
   await rm(targetHome, { recursive: true, force: true });
 });
 
-describe('migrated session loads in real kimi-core', () => {
-  it('computeWorkdirBucket matches kimi-core encodeWorkDirKey', () => {
-    expect(computeWorkdirBucket(WORK_DIR)).toBe(
-      encodeWorkDirKey(normalizeWorkDir(WORK_DIR)),
-    );
+async function migrateFixture(
+  uuid: string,
+  fixture: string,
+): Promise<Extract<MigrateOneResult, { outcome: 'migrated' }>> {
+  const result = await migrateOneSession({
+    source: {
+      uuid,
+      sessionDir: join(FIXTURES, fixture),
+      contextPath: join(join(FIXTURES, fixture), 'context.jsonl'),
+    },
+    workdirPath: WORK_DIR,
+    targetHome,
+  });
+  expect(result.outcome).toBe('migrated');
+  return result as Extract<MigrateOneResult, { outcome: 'migrated' }>;
+}
+
+describe('migrated session is discoverable by agent-core-v2', () => {
+  it('computeWorkdirBucket matches v2 encodeWorkDirKey', () => {
+    expect(computeWorkdirBucket(WORK_DIR)).toBe(encodeWorkDirKey(WORK_DIR));
   });
 
-  it('SessionStore.list() finds a migrated session under the same workDir', async () => {
-    const result = await migrateOneSession({
-      sourceSessionDir: join(FIXTURES, 'with-tool-calls'),
-      oldSessionUuid: 'integ-uuid',
-      workdirPath: WORK_DIR,
-      targetHome,
-    });
-    expect(result.outcome).toBe('migrated');
+  it('v2 authoritative scan finds a migrated session under the same workDir', async () => {
+    await migrateFixture('integ-uuid', 'with-tool-calls');
 
-    // `SessionStore(homeDir)` resolves sessions under `homeDir/sessions`,
-    // which is exactly where the migrator wrote.
-    const store = new SessionStore(targetHome);
-    const sessions = await store.list({ workDir: WORK_DIR });
-
-    // This exercises kimi-core's bucket lookup end-to-end: list() does
-    // `readdir(encodeWorkDirKey(workDir))` and never consults the index.
-    expect(sessions.map((s) => s.id)).toContain('ses_integ-uuid');
-
+    const sessions = await listSessionsV2(targetHome);
     const migrated = sessions.find((s) => s.id === 'ses_integ-uuid');
-    expect(migrated?.metadata?.['imported_from_kimi_cli']).toBe(true);
+    expect(migrated).toBeDefined();
+    expect(migrated?.custom?.['imported_from_kimi_cli']).toBe(true);
+    expect(migrated?.cwd).toBe(WORK_DIR);
   });
 
-  it('migrated wire history is non-empty and resumable', async () => {
-    const result = await migrateOneSession({
-      sourceSessionDir: join(FIXTURES, 'tiny-hello-world'),
-      oldSessionUuid: 'tiny-resume',
-      workdirPath: WORK_DIR,
-      targetHome,
-    });
-    expect(result.outcome).toBe('migrated');
-    const targetDir = (result as Extract<MigrateOneResult, { outcome: 'migrated' }>)
-      .targetDir;
+  it('migrated wire history is non-empty', async () => {
+    const result = await migrateFixture('tiny-resume', 'tiny-hello-world');
 
-    const wire = await readFile(join(targetDir, 'agents', 'main', 'wire.jsonl'), 'utf-8');
+    const wire = await readFile(join(result.targetDir, 'agents', 'main', 'wire.jsonl'), 'utf-8');
     const events = wire
       .split('\n')
       .filter((l) => l.length > 0)
@@ -109,93 +67,85 @@ describe('migrated session loads in real kimi-core', () => {
     expect(events.filter((e) => e.type === 'context.append_message').length).toBeGreaterThan(0);
   });
 
-  it('real kimi-core Session.resume() loads the migrated message history', async () => {
-    const result = await migrateOneSession({
-      sourceSessionDir: join(FIXTURES, 'tiny-hello-world'),
-      oldSessionUuid: 'tiny-resume',
-      workdirPath: WORK_DIR,
-      targetHome,
-    });
-    expect(result.outcome).toBe('migrated');
-    const targetDir = (result as Extract<MigrateOneResult, { outcome: 'migrated' }>)
-      .targetDir;
+  it('v2 summary exposes the migrated title, metadata and message history', async () => {
+    const result = await migrateFixture('tiny-resume', 'tiny-hello-world');
 
-    // Drive a real kimi-core resume: `Session.resume()` reads `state.json`
-    // from `homedir`, then instantiates the `main` agent from
-    // `agents.main.homedir` and replays *that directory's* `wire.jsonl`.
-    // If `agents.main.homedir` were the project workdir (the bug), the agent
-    // would replay an absent file and the history would be empty.
-    const session = new Session({
-      kaos: (await LocalKaos.create()).withCwd(WORK_DIR),
-      id: 'ses_tiny-resume',
-      homedir: targetDir,
-      rpc: createSessionRpc(),
-      initializeMainAgent: false,
-    });
-    try {
-      await session.resume();
-      const mainAgent = session.getReadyAgent('main');
-      expect(mainAgent).toBeDefined();
+    const summary = await readSessionSummaryV2(targetHome, 'ses_tiny-resume');
+    expect(summary).toBeDefined();
+    expect(summary?.title).toBe('hi');
+    expect(summary?.cwd).toBe(WORK_DIR);
+    expect(summary?.archived).toBe(false);
+    expect(summary?.createdAt).toBeGreaterThan(0);
 
-      // The migrated wire carries no `config.update` bootstrap events, so a
-      // naive replay leaves the agent with an empty system prompt and no
-      // tools. `Session.resume()` re-applies the default profile when it
-      // detects this — assert it took effect so the resumed session is usable.
-      expect((mainAgent?.config.systemPrompt ?? '').length).toBeGreaterThan(0);
-
-      const messages = mainAgent?.context.messages ?? [];
-      // The fixture has a user + assistant message — both must be replayed.
-      expect(messages.length).toBeGreaterThan(0);
-      const transcript = messages
-        .flatMap((m) => m.content)
-        .map((part) => (part.type === 'text' ? part.text : ''))
-        .join('\n');
-      expect(transcript).toContain('hi');
-      expect(transcript).toContain('Hello! How can I help?');
-    } finally {
-      await session.close();
-    }
+    const wire = await readFile(join(result.targetDir, 'agents', 'main', 'wire.jsonl'), 'utf-8');
+    expect(wire).toContain('hi');
+    expect(wire).toContain('Hello! How can I help?');
   });
 
-  it('real Session.resume() preserves a legacy todo display', async () => {
-    const result = await migrateOneSession({
-      sourceSessionDir: join(FIXTURES, 'large-100msgs'),
-      oldSessionUuid: 'todo-display',
-      workdirPath: WORK_DIR,
-      targetHome,
-    });
-    expect(result.outcome).toBe('migrated');
-    const targetDir = (result as Extract<MigrateOneResult, { outcome: 'migrated' }>)
-      .targetDir;
+  it('v2 scan lists a title-only migrated session with its custom title', async () => {
+    await migrateFixture('title-only-resume', 'title-only');
 
-    const session = new Session({
-      kaos: (await LocalKaos.create()).withCwd(WORK_DIR),
-      id: 'ses_todo-display',
-      homedir: targetDir,
-      rpc: createSessionRpc(),
-      initializeMainAgent: false,
-    });
-    try {
-      await session.resume();
-      const assistant = session
-        .getReadyAgent('main')
-        ?.context.history.find((message) =>
-          message.toolCalls.some(
-            (call) => call.id === 'tool_y3SXWWQIUysddnYoklaWhUeE',
-          ),
-        );
+    const summary = await readSessionSummaryV2(targetHome, 'ses_title-only-resume');
+    expect(summary).toBeDefined();
+    expect(summary?.title).toBe('My named session');
+  });
 
-      expect(
-        assistant?.toolCallDisplays?.['tool_y3SXWWQIUysddnYoklaWhUeE'],
-      ).toEqual({
-        kind: 'todo_list',
-        items: expect.arrayContaining([
-          { title: '准备测试环境（创建隔离 work-dir）', status: 'in_progress' },
-          { title: '汇报结论', status: 'pending' },
-        ]),
+  it('migrated wire preserves a legacy todo display', async () => {
+    const result = await migrateFixture('todo-display', 'large-100msgs');
+
+    const wire = await readFile(join(result.targetDir, 'agents', 'main', 'wire.jsonl'), 'utf-8');
+    expect(wire).toContain('tool_y3SXWWQIUysddnYoklaWhUeE');
+    expect(wire).toContain('todo_list');
+    expect(wire).toContain('准备测试环境（创建隔离 work-dir）');
+    expect(wire).toContain('汇报结论');
+  });
+
+  it('turn structure survives a v2 context-transcript round trip and aligns with transcript grouping', async () => {
+    const result = await migrateFixture('turn-structure', 'with-tool-calls');
+
+    const wire = await readFile(join(result.targetDir, 'agents', 'main', 'wire.jsonl'), 'utf-8');
+    const records = wire
+      .split('\n')
+      .filter((l) => l.length > 0)
+      .map((l) => JSON.parse(l) as { type: string; [key: string]: unknown });
+
+    // Content round trip: the v2 context transcript sees exactly the imported
+    // messages — the synthesized turn records must not alter, duplicate, or
+    // drop any message. (`toolCallDisplays` is UI-only enrichment the context
+    // transcript deliberately does not carry, so strip it from both sides.)
+    const transcript = reduceContextTranscript(records);
+    const imported = records
+      .filter((r) => r.type === 'context.append_message')
+      .map((r) => r['message']);
+    const stripDisplays = (
+      messages: readonly unknown[],
+    ): unknown[] =>
+      messages.map((m) => {
+        const { toolCallDisplays: _dropped, ...rest } = m as Record<string, unknown>;
+        return rest;
       });
-    } finally {
-      await session.close();
-    }
+    expect(stripDisplays([...transcript.entries])).toEqual(stripDisplays(imported));
+
+    // The invariant that keeps a live turn from hijacking an imported one:
+    // every turn.prompt advances the restored turn clock by one, so the number
+    // of synthesized turn.prompt records must equal the number of turns the
+    // transcript grouping derives from the same messages. The first live turn
+    // after resume then gets an id past every imported turn.
+    const promptCount = records.filter((r) => r.type === 'turn.prompt').length;
+    const groupedTurns = groupMessagesIntoSnapshot([...transcript.entries]).items.filter(
+      (item) => item.kind === 'turn',
+    ).length;
+    expect(promptCount).toBe(groupedTurns);
+    expect(promptCount).toBeGreaterThan(0);
+
+    const endedTurnIds = records
+      .filter((r) => r.type === 'turn.ended')
+      .map((r) => r['turnId'])
+      .filter((id): id is number => typeof id === 'number');
+    // Turns without assistant content (e.g. an unanswered user message) get no
+    // turn.ended; the rest carry sequential ids within the imported range.
+    expect(endedTurnIds).toEqual([...endedTurnIds].sort((a, b) => a - b));
+    expect(new Set(endedTurnIds).size).toBe(endedTurnIds.length);
+    expect(Math.max(...endedTurnIds)).toBeLessThan(promptCount);
   });
 });

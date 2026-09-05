@@ -1,6 +1,7 @@
 import { type FlagDefinitionInput, registerFlagDefinition } from '#/app/flag/flagRegistry';
 
 import { TOWER_FLAG_ID } from './tower';
+import { isTowerFeatureAssembled } from './towerFeature';
 
 export const TOWER_FLAG_ENV = 'KIMI_CODE_EXPERIMENTAL_TOWER';
 
@@ -12,6 +13,7 @@ export const towerFlag: FlagDefinitionInput = {
   env: TOWER_FLAG_ENV,
   default: false,
   surface: 'both',
+  isExposed: (flags) => isTowerFeatureAssembled(flags),
 };
 
 registerFlagDefinition(towerFlag);

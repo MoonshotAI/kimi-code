@@ -7,28 +7,16 @@ import { errEnvelope } from '../envelope';
 const HOST_ERROR_CODE = 40301;
 
 export interface HostCheckOptions {
-  /** The host the server bound to; always allowed (port stripped both sides). */
   readonly boundHost?: string;
-  /** Extra allowed hosts / domain-suffix patterns (from `KIMI_CODE_ALLOWED_HOSTS`). */
   readonly extra?: readonly string[];
-  /** Disable the check entirely (`KIMI_CODE_DISABLE_HOST_CHECK=1`; test-only). */
   readonly disable?: boolean;
 }
 
-/** Returned by {@link createHostCheck}: the Fastify hook plus the raw predicate. */
 export interface HostCheck {
-  /** Fastify `onRequest` hook that 403s on a disallowed `Host`. */
   readonly onRequest: (req: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply | void>;
-  /** Reusable predicate (also used by the WS upgrade path in M4.3). */
   readonly isAllowed: (host: string | undefined) => boolean;
 }
 
-/**
- * Parse `KIMI_CODE_ALLOWED_HOSTS` into an `extra` allowlist.
- *
- * Comma-separated, trimmed, empties dropped. A leading `.` is preserved so the
- * caller can express domain-suffix wildcards (`.example.com`).
- */
 export function parseAllowedHosts(env: NodeJS.ProcessEnv = process.env): string[] {
   const raw = env['KIMI_CODE_ALLOWED_HOSTS'];
   if (raw === undefined) {
@@ -40,21 +28,10 @@ export function parseAllowedHosts(env: NodeJS.ProcessEnv = process.env): string[
     .filter((entry) => entry.length > 0);
 }
 
-/** True when `KIMI_CODE_DISABLE_HOST_CHECK=1` (test/controlled env only). */
 export function isHostCheckDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env['KIMI_CODE_DISABLE_HOST_CHECK'] === '1';
 }
 
-/**
- * Strip a trailing `:port` from a `Host` value and lowercase it.
- *
- * Handles:
- *   - bracketed IPv6 with a port: `[::1]:80` → `[::1]`;
- *   - host/IPv4 with a port: `localhost:80` → `localhost`, `1.2.3.4:5678` → `1.2.3.4`;
- *   - bare values (no port): returned lowercased as-is;
- *   - bare IPv6 without brackets (multiple colons, e.g. `::1`): returned
- *     lowercased as-is — there is no unambiguous port to strip.
- */
 export function stripPort(host: string): string {
   if (host.startsWith('[')) {
     const end = host.indexOf(']');
@@ -81,12 +58,6 @@ export function formatHostErrorMessage(host: string | undefined): string {
   return `Invalid Host header: ${hostLabel}; allow this host with KIMI_CODE_ALLOWED_HOSTS=${hostArg} or 'kimi web --allowed-host ${hostArg}'.`;
 }
 
-/**
- * Decide whether a `Host` value is allowed under the given options.
- *
- * Missing/empty `Host` is rejected (HTTP/1.1 requires it). The check is a no-op
- * when `opts.disable` is set.
- */
 export function isAllowedHost(host: string | undefined, opts: HostCheckOptions): boolean {
   if (opts.disable === true) {
     return true;
@@ -123,12 +94,6 @@ export function isAllowedHost(host: string | undefined, opts: HostCheckOptions):
   return false;
 }
 
-/**
- * Build the Fastify `onRequest` hook and the reusable `isAllowed` predicate.
- *
- * Returning the `reply` from the hook short-circuits Fastify on 403 so the
- * route handler never runs.
- */
 export function createHostCheck(opts: HostCheckOptions): HostCheck {
   const isAllowed = (host: string | undefined): boolean => isAllowedHost(host, opts);
   const onRequest = async (

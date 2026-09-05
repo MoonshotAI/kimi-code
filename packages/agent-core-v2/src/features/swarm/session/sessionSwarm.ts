@@ -42,6 +42,7 @@ export interface SessionSwarmRunResult<T = unknown> {
   readonly state?: 'started' | 'not_started';
   readonly result?: string;
   readonly usage?: TokenUsage;
+  readonly stopReason?: string;
   readonly error?: string;
 }
 

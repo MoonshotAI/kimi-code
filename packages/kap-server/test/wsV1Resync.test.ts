@@ -8,7 +8,7 @@ import {
   IAgentLifecycleService,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -105,14 +105,14 @@ describe('server-v2 /api/v1/ws resync', () => {
   let base: string;
   let wsUrl: string;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-wsv1-test-'));
     server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
     base = `http://127.0.0.1:${server.port}`;
     wsUrl = `ws://127.0.0.1:${server.port}/api/v1/ws`;
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -138,7 +138,7 @@ describe('server-v2 /api/v1/ws resync', () => {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     expect(session).toBeDefined();
     const agents = session!.accessor.get(IAgentLifecycleService);
-    if (agents.findAgentHandle('main') === undefined) {
+    if (agents.handleOf('main') === undefined) {
       await agents.create({ agentId: 'main' });
     }
   }
@@ -151,7 +151,7 @@ describe('server-v2 /api/v1/ws resync', () => {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     expect(session).toBeDefined();
     const agents = session!.accessor.get(IAgentLifecycleService);
-    const main = agents.findAgentHandle('main');
+    const main = agents.handleOf('main');
     expect(main).toBeDefined();
     main!.accessor.get(IEventBus).publish(event);
   }
@@ -251,7 +251,8 @@ describe('server-v2 /api/v1/ws resync', () => {
     const session = getLiveSessionById(server!.core.accessor, sid);
     expect(session).toBeDefined();
     const agents = session!.accessor.get(IAgentLifecycleService);
-    const sub = await agents.create({ agentId: 'agent-0' });
+    await agents.create({ agentId: 'agent-0' });
+    const sub = agents.handleOf('agent-0')!;
 
     const c = await openConn(wsUrl, server!.authTokenService.getToken());
     await c.next((f) => f.type === 'server_hello');
@@ -266,7 +267,7 @@ describe('server-v2 /api/v1/ws resync', () => {
     });
     await c.next((f) => f.type === 'ack' && f.id === 'h1');
 
-    agents.findAgentHandle('main')!
+    agents.handleOf('main')!
       .accessor.get(IEventBus)
       .publish({ type: 'turn.ended', turnId: 1 } as unknown as Event2<any>);
     sub.accessor

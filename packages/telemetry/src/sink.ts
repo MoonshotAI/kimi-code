@@ -55,6 +55,10 @@ export class EventSink {
     }
   }
 
+  setModel(model: string): void {
+    setPrimitive(this.context, 'model', model);
+  }
+
   startPeriodicFlush(): void {
     if (this.flushTimer !== null) return;
     this.flushTimer = setInterval(() => {

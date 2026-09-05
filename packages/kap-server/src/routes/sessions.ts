@@ -4,6 +4,7 @@ import {
   IAgentProfileService,
   IAgentConversationUndoService,
   IAgentFullCompactionService,
+  IAgentLifecycleService,
   IAgentLoopService,
   IAuthSummaryService,
   ISessionActivityView,
@@ -26,6 +27,7 @@ import {
   Error2,
   type ContextMessage,
   type IAgentScopeHandle,
+  type ISessionScopeHandle,
   type Scope,
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
@@ -62,7 +64,8 @@ import { z } from 'zod';
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
-import { ensureMainAgent } from '../transport/mainAgent';
+import { readLegacyStatus } from '../services/legacyStatus/legacyStatus';
+import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, dispatchAction } from './action-dispatch';
 import { applySessionAgentConfig } from './sessionAgentConfig';
 import { updateSessionProfile } from './sessionProfile';
@@ -163,7 +166,15 @@ const sessionActionRequestSchema = z.preprocess(
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
-export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void {
+export interface SessionsRoutesDeps {
+  readonly sessionEventCursor: (sessionId: string) => Promise<{ seq: number; epoch: string }>;
+}
+
+export function registerSessionsRoutes(
+  app: SessionRouteHost,
+  core: Scope,
+  deps: SessionsRoutesDeps,
+): void {
   const createRoute = defineRoute(
     {
       method: 'POST',
@@ -400,6 +411,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
     },
     async (req, reply) => {
       const { session_id } = req.params;
+      const cursor = await deps.sessionEventCursor(session_id);
       const summary = await core.accessor.get(ISessionIndex).get(session_id);
       if (summary === undefined) {
         reply.send(
@@ -420,7 +432,10 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         return;
       }
       reply.send(
-        okEnvelope(toWireSession(summary, cwd, resolveSessionFacts(core, session_id)), req.id),
+        okEnvelope(
+          toWireSession(summary, cwd, resolveSessionFacts(core, session_id), cursor.seq),
+          req.id,
+        ),
       );
     },
   );
@@ -708,16 +723,14 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         if (childHandler === undefined) {
           throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${session_id} does not exist`);
         }
-        const handle = await core.accessor.get(ISessionManager).createChild({
+        const meta = await core.accessor.get(ISessionManager).createChild({
           sourceSessionId: session_id,
           title: req.body.title,
           metadata: req.body.metadata,
         });
-        const meta = await handle.accessor.get(ISessionMetadata).read();
-        const ctx = handle.accessor.get(ISessionContext);
         const session = toWireSession(
-          { ...meta, workspaceId: ctx.workspaceId },
-          ctx.cwd,
+          { ...meta, workspaceId: childHandler.workspaceId },
+          meta.cwd ?? '',
           resolveSessionFacts(core, meta.id),
         );
         core.accessor.get(IEventService).publish(
@@ -872,16 +885,14 @@ async function forkSessionAction(
   if (forkHandler === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
   }
-  const handle = await core.accessor.get(ISessionManager).fork({
+  const meta = await core.accessor.get(ISessionManager).fork({
     sourceSessionId: id,
     title: body.title,
     metadata: body.metadata,
   });
-  const meta = await handle.accessor.get(ISessionMetadata).read();
-  const sessionCtx = handle.accessor.get(ISessionContext);
   const session = toWireSession(
-    { ...meta, workspaceId: sessionCtx.workspaceId },
-    sessionCtx.cwd,
+    { ...meta, workspaceId: forkHandler.workspaceId },
+    meta.cwd ?? '',
     resolveSessionFacts(core, meta.id),
   );
   core.accessor
@@ -944,7 +955,9 @@ async function btwSessionAction(ctx: SessionActionCtx): Promise<void> {
   if (session === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
   }
-  await core.accessor.get(IAuthSummaryService).ensureReady();
+  const agent = await ensureMainAgent(session);
+  const sessionModel = agent.accessor.get(IAgentProfileService).getModel();
+  await core.accessor.get(IAuthSummaryService).ensureReady(sessionModel || undefined);
   const agentId = await session.accessor.get(ISessionBtwService).start();
   reply.send(okEnvelope({ agent_id: agentId }, req.id));
 }
@@ -994,6 +1007,7 @@ export function toWireSession(
   fields: SessionWireFields,
   cwd: string,
   facts: SessionFacts,
+  lastSeq?: number,
 ): Session {
   return {
     id: fields.id,
@@ -1011,32 +1025,23 @@ export function toWireSession(
     archived: fields.archived,
     last_prompt: fields.lastPrompt,
     metadata: buildWireMetadata(fields.custom, cwd),
-    agent_config: { model: '' },
+    agent_config: { model: facts.model ?? '' },
     usage: emptySessionUsage(),
     permission_rules: [],
     message_count: 0,
-    last_seq: 0,
+    last_seq: lastSeq ?? 0,
   };
 }
 
-/** Live activity and interaction facts projected onto the wire `Session`. */
 export interface SessionFacts {
   readonly busy: boolean;
   readonly mainTurnActive: boolean;
   readonly pendingInteraction: SessionPendingInteraction;
   readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
-  /** False when no live handle exists (cold session); live warm sessions
-   *  always report their own outcome, never the persisted fallback. */
   readonly live?: boolean;
+  readonly model?: string;
 }
 
-/**
- * Resolve a session's live wire facts from the core `ISessionActivityView`
- * aggregate (`busy` = any agent with an active turn or background task; the
- * reason is the main agent's latest turn outcome, `blocked` folds into
- * `failed`). A cold session (no live handle) is not busy and carries no
- * outcome.
- */
 export function resolveSessionFacts(core: Scope, sessionId: string): SessionFacts {
   const handle = getLiveSessionById(core.accessor, sessionId);
   if (handle === undefined) {
@@ -1047,7 +1052,17 @@ export function resolveSessionFacts(core: Scope, sessionId: string): SessionFact
       live: false,
     };
   }
-  return { ...handle.accessor.get(ISessionActivityView).state(), live: true };
+  return {
+    ...handle.accessor.get(ISessionActivityView).state(),
+    live: true,
+    model: readLiveSessionModel(handle),
+  };
+}
+
+function readLiveSessionModel(session: ISessionScopeHandle): string | undefined {
+  const main = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
+  if (main === undefined) return undefined;
+  return readLegacyStatus(main)?.model;
 }
 
 async function resolveMainAgent(core: Scope, sessionId: string): Promise<IAgentScopeHandle> {

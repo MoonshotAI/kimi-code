@@ -24,14 +24,19 @@ import { MASTER_ENV } from '#/app/flag/flagService';
 import { estimateTokensForMessages } from '#/kosong/contract/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import type { TestAgentContext, TestAgentOptions, TestAgentServiceOverride } from '../../harness';
-import { agentService, appServices, createCommandRunner, execEnvServices, hostEnvironmentServices, sessionServices, testAgent } from '../../harness';
+import { agentService, appService, appServices, createCommandRunner, execEnvServices, hostEnvironmentServices, sessionServices, testAgent as createTestAgent } from '../../harness';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
+import { renderCompactionInstruction } from '#/agent/fullCompaction/compactionInstruction';
+import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
 import {
   IAgentFullCompactionService,
   IModelOAuthTokens,
   IAgentProfileService,
+  ITelemetryService,
   IAgentToolRegistryService,
-  ISessionTodoService,
   DYNAMIC_TOOL_SCHEMA_VARIANT,
   normalizeAgentProfile,
   type ExecutableTool,
@@ -39,11 +44,19 @@ import {
   type ToolExecution,
 } from '#/index';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentGoalService } from '#/features/goal/goal';
-import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
+import { IWireService } from '#/wire/wire';
+import { IAgentTodoService } from '#/features/todo/todoService';
+import { IAgentGoalService } from '#/features/goal/goalService';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 
 type GenerateFn = NonNullable<TestAgentOptions['generate']>;
+
+function testAgent(
+  ...inputs: readonly (TestAgentServiceOverride | TestAgentOptions)[]
+): TestAgentContext {
+  const context = createTestAgent(...inputs);
+  return context;
+}
 
 const CATALOGUED_PROVIDER = {
   type: 'kimi',
@@ -69,7 +82,7 @@ const SNAPSHOT_VISIBLE_TOOLS = [
   'ExitPlanMode',
 ] as const;
 const LARGE_MCP_TOOL = 'mcp__srv__large';
-const EXACT_COMPACTION_REFRESH_PROFILE: ResolvedAgentProfile = normalizeAgentProfile({
+const EXACT_COMPACTION_PROFILE: ResolvedAgentProfile = normalizeAgentProfile({
   name: 'exact-compaction-refresh',
   systemPrompt: (context) =>
     [
@@ -296,7 +309,7 @@ describe('FullCompaction', () => {
         compacted_count: 6,
         retry_count: 0,
         thinking_effort: 'off',
-        input_tokens: 1181,
+        input_tokens: 1247,
         output_tokens: 8,
         input_cache_read: 0,
         input_cache_creation: 0,
@@ -343,7 +356,7 @@ describe('FullCompaction', () => {
     hook.dispose();
   });
 
-  it('refreshes the active profile system prompt after compaction without resetting active tools', async () => {
+  it('keeps the active profile system prompt frozen after compaction without resetting active tools', async () => {
     const homeDir = mkdtempSync(join(tmpdir(), 'kimi-compact-refresh-home-'));
     const workDir = mkdtempSync(join(tmpdir(), 'kimi-compact-refresh-work-'));
     try {
@@ -355,14 +368,12 @@ describe('FullCompaction', () => {
       );
       ctx.configureRuntimeModel(CATALOGUED_PROVIDER, CATALOGUED_MODEL_CAPABILITIES);
       const profile = ctx.get(IAgentProfileService);
-      await profile.applyProfile(EXACT_COMPACTION_REFRESH_PROFILE);
+      await profile.applyProfile(EXACT_COMPACTION_PROFILE);
       profile.update({ activeToolNames: ['Read'] });
 
-      expect(profile.data().systemPrompt).toBe(
-        exactCompactionRefreshPrompt(workDir, 'old project instructions'),
-      );
+      const before = profile.data().systemPrompt;
+      expect(before).toBe(exactCompactionPrompt(workDir, 'old project instructions'));
 
-      const refreshSpy = vi.spyOn(profile, 'refreshSystemPrompt');
       writeFileSync(join(workDir, 'AGENTS.md'), 'new project instructions', 'utf-8');
       ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
       ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
@@ -372,10 +383,7 @@ describe('FullCompaction', () => {
       await ctx.rpc.beginCompaction({});
       await completed;
 
-      expect(refreshSpy).toHaveBeenCalledTimes(1);
-      expect(profile.data().systemPrompt).toBe(
-        exactCompactionRefreshPrompt(workDir, 'new project instructions'),
-      );
+      expect(profile.data().systemPrompt).toBe(before);
       expect(profile.getActiveToolNames()).toEqual(['Read']);
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
@@ -655,11 +663,64 @@ describe('FullCompaction', () => {
       event: 'compaction_finished',
       properties: expect.objectContaining({
         source: 'manual',
-        tokens_before: 17_840,
+        tokens_before: 17_950,
         retry_count: 1,
         trace_id: 'trace-compact-1',
       }),
     });
+    await ctx.expectResumeMatches();
+  });
+
+  it('retries any compaction request error indefinitely when KIMI_CODE_INFINITE_RETRY is set', async () => {
+    vi.stubEnv('KIMI_CODE_INFINITE_RETRY', '1');
+    let attempts = 0;
+    const generate: GenerateFn = async () => {
+      attempts += 1;
+      if (attempts === 1) throw new APIStatusError(400, 'endpoint broken', null, 1);
+      if (attempts === 2) throw new APIStatusError(404, 'model not found', null, 1);
+      return textResult('Recovered compacted summary.');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const compacted = ctx.once('full_compaction.complete');
+    const completed = ctx.once('compaction.completed');
+
+    await ctx.rpc.beginCompaction({});
+    await compacted;
+    await completed;
+
+    expect(attempts).toBe(3);
+    await ctx.expectResumeMatches();
+  });
+
+  it('lets context overflow reach compaction shrink instead of retrying when KIMI_CODE_INFINITE_RETRY is set', async () => {
+    vi.stubEnv('KIMI_CODE_INFINITE_RETRY', '1');
+    let attempts = 0;
+    const generate: GenerateFn = async () => {
+      attempts += 1;
+      if (attempts === 1) throw new APIContextOverflowError(400, 'context length exceeded');
+      return textResult('Recovered compacted summary.');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const compacted = ctx.once('full_compaction.complete');
+    const completed = ctx.once('compaction.completed');
+
+    await ctx.rpc.beginCompaction({});
+    await compacted;
+    await completed;
+
+    expect(attempts).toBe(2);
     await ctx.expectResumeMatches();
   });
 
@@ -951,6 +1012,35 @@ describe('FullCompaction', () => {
     ]);
   });
 
+  it('fails the compaction instead of compacting an empty history when overflow shrink drops everything', async () => {
+    let calls = 0;
+    const generate: GenerateFn = async () => {
+      calls += 1;
+      if (calls === 1) {
+        throw new APIContextOverflowError(400, 'Context length exceeded', 'req-shrink-empty');
+      }
+      return textResult('Groundless summary.');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'small user one', 'small assistant one', 20);
+    ctx.context.append({
+      role: 'user',
+      content: [{ type: 'text', text: 'X'.repeat(400_000) }],
+      toolCalls: [],
+    });
+    const failed = ctx.once('error');
+
+    await ctx.rpc.beginCompaction({});
+    await failed;
+
+    expect(calls).toBe(1);
+    expect(ctx.context.get()).toHaveLength(3);
+  });
+
   it('waits before retrying compaction generation after a retryable failure', async () => {
     vi.useFakeTimers();
     const firstAttemptFailed = deferred<void>();
@@ -1026,6 +1116,10 @@ describe('FullCompaction', () => {
         agent_id: 'main',
         from: 'compacting',
         trace_id: 'trace-compact-retry',
+        mode: 'agent',
+        model: 'kimi-code',
+        protocol: 'openai',
+        provider_type: 'kimi',
       },
     });
     vi.useRealTimers();
@@ -1069,7 +1163,7 @@ describe('FullCompaction', () => {
       properties: expect.objectContaining({
         agent_id: 'main',
         source: 'manual',
-        tokens_before: 17_840,
+        tokens_before: 17_950,
         duration_ms: expect.any(Number),
         round: 1,
         retry_count: 0,
@@ -1129,7 +1223,7 @@ describe('FullCompaction', () => {
     });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
-    ctx.get(IAgentTelemetryContextService).set({ trace_id: 'trace-turn-1' });
+    ctx.get(ITelemetryService).setContext({ trace_id: 'trace-turn-1' });
     const failed = ctx.once('error');
 
     await ctx.rpc.beginCompaction({});
@@ -1144,7 +1238,7 @@ describe('FullCompaction', () => {
         trace_id: 'trace-mid-stream',
       }),
     });
-    expect(ctx.get(IAgentTelemetryContextService).get().trace_id).toBe('trace-turn-1');
+    expect(ctx.get(ITelemetryService).getContext().trace_id).toBe('trace-turn-1');
     await ctx.expectResumeMatches();
   });
 
@@ -1294,7 +1388,7 @@ describe('FullCompaction', () => {
       event: 'compaction_failed',
       properties: expect.objectContaining({
         source: 'manual',
-        tokens_before: 17_840,
+        tokens_before: 17_950,
         duration_ms: expect.any(Number),
         retry_count: 4,
         error_type: 'APIConnectionError',
@@ -2932,17 +3026,12 @@ describe('FullCompaction', () => {
       { title: 'Fix the auth bug', status: 'in_progress' },
       { title: 'Add tests', status: 'pending' },
     ] as const;
-    const ctx = testAgent(
-      sessionServices((reg) => {
-        reg.definePartialInstance(ISessionTodoService, {
-          getTodos: async () => todos,
-        });
-      }),
-    );
+    const ctx = testAgent();
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
+    await ctx.get(IAgentTodoService).replace(todos);
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
 
@@ -2982,6 +3071,269 @@ describe('FullCompaction', () => {
   });
 });
 
+describe('FullCompaction context recovery pointer', () => {
+  const JOURNAL_HOME = '/home/user/.kimi-code';
+
+  interface ApplyCompactionArgs {
+    readonly summary?: string;
+    readonly contextSummary?: string;
+    readonly wireLines?: { readonly start: number; readonly end: number };
+  }
+
+  function locatedStorage(base: string): IFileSystemStorageService {
+    const memory = new InMemoryStorageService();
+    return new Proxy(memory, {
+      get(target, property, receiver) {
+        if (property === 'pathFor') {
+          return (scope: string, key: string) => `${base}/${scope}/${key}`;
+        }
+        const value = Reflect.get(target, property, receiver) as unknown;
+        return typeof value === 'function'
+          ? (value as (...args: unknown[]) => unknown).bind(target)
+          : value;
+      },
+    }) as unknown as IFileSystemStorageService;
+  }
+
+  function recoveryAgent(
+    ...inputs: readonly (TestAgentServiceOverride | TestAgentOptions)[]
+  ): TestAgentContext {
+    const ctx = testAgent(...inputs);
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+      tools: SNAPSHOT_VISIBLE_TOOLS,
+    });
+    return ctx;
+  }
+
+  async function compactOnce(ctx: TestAgentContext, summary: string): Promise<void> {
+    const completed = ctx.once('compaction.completed');
+    ctx.mockNextResponse({ type: 'text', text: summary });
+    await ctx.rpc.beginCompaction({});
+    await completed;
+  }
+
+  function noteText(ctx: TestAgentContext): string {
+    const part = ctx.context.get().at(-1)?.content[0];
+    return part?.type === 'text' ? part.text : '';
+  }
+
+  function applyCompactionRecords(ctx: TestAgentContext): ApplyCompactionArgs[] {
+    return ctx.newEvents().flatMap((event) => {
+      if (event === null || typeof event !== 'object') return [];
+      const candidate = event as { type?: unknown; event?: unknown; args?: unknown };
+      if (candidate.type !== '[wire]' || candidate.event !== 'context.apply_compaction') return [];
+      return [candidate.args as ApplyCompactionArgs];
+    });
+  }
+
+  function reminderMessage(variant: string, text: string): ContextMessage {
+    return {
+      role: 'user',
+      content: [{ type: 'text', text: `<system-reminder>${text}</system-reminder>` }],
+      toolCalls: [],
+      origin: { kind: 'injection', variant },
+    };
+  }
+
+  it('appends the journal location and window line ranges to the model-facing note', async () => {
+    const ctx = recoveryAgent(appService(IFileSystemStorageService, locatedStorage(JOURNAL_HOME)));
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 40);
+
+    await compactOnce(ctx, 'Compacted summary.');
+
+    const [record] = applyCompactionRecords(ctx);
+    expect(record?.wireLines).toEqual({ start: 1, end: expect.any(Number) });
+    const end = record!.wireLines!.end;
+    expect(end).toBeGreaterThan(1);
+    const note = noteText(ctx);
+    expect(note).toContain('Compacted summary.');
+    expect(note).toContain('## Context Recovery');
+    expect(note).toContain(`${JOURNAL_HOME}/`);
+    expect(note).toContain('/wire.jsonl');
+    expect(note).toContain(`window 1: lines 1–${String(end)}   ← the conversation this note summarizes`);
+    expect(note).toContain(`window 2 (the one you are in now) starts at line ${String(end + 1)}`);
+    expect(note).toContain('context.append_loop_event');
+    expect(record?.summary).not.toContain('Context Recovery');
+    expect(record?.contextSummary).toContain('Context Recovery');
+    await ctx.expectResumeMatches();
+  });
+
+  it('lists every earlier window after repeated compactions', async () => {
+    const ctx = recoveryAgent(appService(IFileSystemStorageService, locatedStorage(JOURNAL_HOME)));
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    await compactOnce(ctx, 'First summary.');
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 40);
+    await compactOnce(ctx, 'Second summary.');
+
+    const [first, second] = applyCompactionRecords(ctx);
+    const firstLines = first!.wireLines!;
+    const secondLines = second!.wireLines!;
+    expect(secondLines.start).toBe(firstLines.end + 1);
+    expect(secondLines.end).toBeGreaterThan(secondLines.start);
+    const note = noteText(ctx);
+    expect(note).toContain(`window 1: lines 1–${String(firstLines.end)}\n`);
+    expect(note).not.toContain(`window 1: lines 1–${String(firstLines.end)}   ←`);
+    expect(note).toContain(
+      `window 2: lines ${String(secondLines.start)}–${String(secondLines.end)}   ← the conversation this note summarizes`,
+    );
+    expect(note).toContain(`window 3 (the one you are in now) starts at line ${String(secondLines.end + 1)}`);
+    await ctx.expectResumeMatches();
+  });
+
+  it('records window line ranges but omits the pointer when the journal has no on-disk path', async () => {
+    const ctx = recoveryAgent();
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 40);
+
+    await compactOnce(ctx, 'Compacted summary.');
+
+    const [record] = applyCompactionRecords(ctx);
+    expect(record?.wireLines).toEqual({ start: 1, end: expect.any(Number) });
+    expect(noteText(ctx)).not.toContain('Context Recovery');
+    expect(record?.contextSummary).not.toContain('Context Recovery');
+  });
+
+  it('starts the window after the latest context.clear record', async () => {
+    const ctx = recoveryAgent(appService(IFileSystemStorageService, locatedStorage(JOURNAL_HOME)));
+    ctx.appendExchange(1, 'discarded user one', 'discarded assistant one', 20);
+    ctx.context.clear();
+    ctx.appendExchange(2, 'post-clear user two', 'post-clear assistant two', 40);
+
+    await compactOnce(ctx, 'Post-clear summary.');
+
+    const wire = ctx.get(IWireService);
+    await wire.flush();
+    let line = 0;
+    let clearLine = 0;
+    for await (const record of wire.readJournal()) {
+      line += 1;
+      if (record.type === 'context.clear') clearLine = line;
+    }
+    expect(clearLine).toBeGreaterThan(1);
+    const [record] = applyCompactionRecords(ctx);
+    expect(record?.wireLines?.start).toBe(clearLine + 1);
+    expect(record!.wireLines!.end).toBeGreaterThan(clearLine);
+    const note = noteText(ctx);
+    expect(note).toContain(`window 1: lines ${String(clearLine + 1)}–`);
+    expect(note).not.toContain('window 1: lines 1–');
+  });
+
+  it('counts the appended recovery footer into the compacted token floor', async () => {
+    const withFooter = recoveryAgent(
+      appService(IFileSystemStorageService, locatedStorage(JOURNAL_HOME)),
+    );
+    const bare = recoveryAgent();
+    for (const ctx of [withFooter, bare]) {
+      ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+      ctx.appendExchange(2, 'recent user two', 'recent assistant two', 40);
+      await compactOnce(ctx, 'Compacted summary.');
+    }
+
+    const [footerRecord] = applyCompactionRecords(withFooter);
+    const contextSummary = footerRecord!.contextSummary!;
+    const footer = contextSummary.slice(contextSummary.indexOf('## Context Recovery'));
+    expect(footer.length).toBeGreaterThan(0);
+    const withFooterTokens = withFooter.tokenCounting.get().size;
+    const bareTokens = bare.tokenCounting.get().size;
+    expect(withFooterTokens - bareTokens).toBe(
+      withFooter.get(ISessionTokenCountingService).estimateText(footer),
+    );
+  });
+
+  it('keeps context budget reminders out of the summarizer request', async () => {
+    const ctx = recoveryAgent();
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.context.append(
+      reminderMessage('context_budget', 'BUDGET-REMINDER-TEXT'),
+      reminderMessage('compaction_ahead', 'AHEAD-REMINDER-TEXT'),
+    );
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 40);
+
+    await compactOnce(ctx, 'Compacted summary.');
+
+    const request = JSON.stringify(ctx.lastLlmInput().input.history);
+    expect(request).toContain('old user one');
+    expect(request).toContain('recent assistant two');
+    expect(request).not.toContain('BUDGET-REMINDER-TEXT');
+    expect(request).not.toContain('AHEAD-REMINDER-TEXT');
+  });
+
+  it('reports what the agent did after the compaction-ahead reminder', async () => {
+    const records: TelemetryRecord[] = [];
+    const ctx = recoveryAgent({ telemetry: recordingTelemetry(records) });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.context.append(
+      reminderMessage('compaction_ahead', 'AHEAD-REMINDER-TEXT'),
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'persisting state' }],
+        toolCalls: [
+          { type: 'function', id: 'call_write', name: 'Write', arguments: '{}' },
+          { type: 'function', id: 'call_bash', name: 'Bash', arguments: '{}' },
+        ],
+      },
+      { role: 'tool', content: [{ type: 'text', text: 'ok' }], toolCalls: [], toolCallId: 'call_write' },
+      { role: 'tool', content: [{ type: 'text', text: 'ok' }], toolCalls: [], toolCallId: 'call_bash' },
+    );
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 40);
+
+    await compactOnce(ctx, 'Compacted summary.');
+
+    expect(records).toContainEqual({
+      event: 'compaction_finished',
+      properties: expect.objectContaining({
+        ahead_reminder_delivered: true,
+        ahead_steps_count: 2,
+        ahead_write_calls_count: 1,
+        ahead_bash_calls_count: 1,
+        ahead_todo_calls_count: 0,
+      }),
+    });
+  });
+
+  it('reports that no compaction-ahead reminder was delivered when none was', async () => {
+    const records: TelemetryRecord[] = [];
+    const ctx = recoveryAgent({ telemetry: recordingTelemetry(records) });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 40);
+
+    await compactOnce(ctx, 'Compacted summary.');
+
+    const finished = records.find((record) => record.event === 'compaction_finished');
+    expect(finished?.properties).toMatchObject({ ahead_reminder_delivered: false });
+    expect(finished?.properties).not.toHaveProperty('ahead_steps_count');
+  });
+
+  it('exposes the live compaction budget from the numbers that drive auto compaction', () => {
+    const ctx = recoveryAgent();
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 1_000);
+
+    const budget = ctx.get(IAgentFullCompactionService).budget();
+
+    expect(budget).toEqual({
+      used: ctx.get(ISessionTokenCountingService).get(ctx.agentContext).size,
+      maxSize: 256_000,
+      triggerRatio: 0.85,
+      reservedContextSize: 50_000,
+      triggerTokens: 206_000,
+    });
+    expect(budget.used).toBeGreaterThan(0);
+  });
+
+  it('tells the summarizer a recovery pointer follows the note', () => {
+    const withPointer = renderCompactionInstruction({});
+    const withCustom = renderCompactionInstruction({ customInstruction: ' keep the API facts ' });
+
+    expect(withPointer).toContain('a recovery pointer is appended below your note automatically');
+    expect(withPointer).toContain('format for the final answer.\n\nThis conversation');
+    expect(withPointer).not.toContain('${');
+    expect(withCustom).toContain('Optional user instruction:\nkeep the API facts');
+  });
+});
+
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
@@ -3011,7 +3363,7 @@ function countEvents(events: ReturnType<TestAgentContext['newEvents']>, type: st
   }).length;
 }
 
-function exactCompactionRefreshPrompt(workDir: string, agentsMd: string): string {
+function exactCompactionPrompt(workDir: string, agentsMd: string): string {
   return [
     `cwd:${workDir}`,
     'os:Linux',
@@ -3342,6 +3694,7 @@ describe('goal reminder re-injection after full compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
+    await ctx.restorePersisted();
     await ctx.get(IAgentGoalService).createGoal({ objective: GOAL_OBJECTIVE });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 100);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 950_000);
@@ -3363,6 +3716,7 @@ describe('goal reminder re-injection after full compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
+    await ctx.restorePersisted();
     await ctx.get(IAgentGoalService).createGoal({ objective: GOAL_OBJECTIVE });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
@@ -3417,6 +3771,7 @@ describe('goal reminder re-injection after full compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
+    await ctx.restorePersisted();
     await ctx.get(IAgentGoalService).createGoal({ objective: GOAL_OBJECTIVE });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);

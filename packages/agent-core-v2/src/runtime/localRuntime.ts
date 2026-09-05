@@ -8,7 +8,7 @@ import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 import { IHostTerminalService } from '#/os/interface/terminal';
 
-import type { Runtime, RuntimePath, RuntimeStatus } from './runtime';
+import type { Runtime, RuntimeCapability, RuntimePath, RuntimeStatus } from './runtime';
 import type { RuntimeProviderAttachment, RuntimeProviderContext, RuntimeProviderFactory } from './runtimeProvider';
 import type { RuntimeProviderHost } from './runtimeUnitHost';
 
@@ -16,7 +16,7 @@ let nextGeneration = 1;
 
 export class LocalRuntime implements Runtime {
   readonly identity;
-  readonly capabilities = new Set(['fs', 'process', 'watch', 'terminal'] as const);
+  readonly capabilities: ReadonlySet<RuntimeCapability>;
   readonly environment;
   readonly path: RuntimePath;
   readonly workspace: Runtime['workspace'];
@@ -31,12 +31,18 @@ export class LocalRuntime implements Runtime {
   constructor(
     workspaceId: string,
     environment: IHostEnvironment,
-    fs: IHostFileSystem,
-    process: IHostProcessService,
-    watch: IHostFsWatchService,
-    terminal: IHostTerminalService,
+    fs: IHostFileSystem | undefined,
+    process: IHostProcessService | undefined,
+    watch: IHostFsWatchService | undefined,
+    terminal: IHostTerminalService | undefined,
   ) {
     this.identity = { workspaceId, runtimeId: 'local', generation: `local-${nextGeneration++}` };
+    const capabilities = new Set<RuntimeCapability>();
+    if (fs !== undefined) capabilities.add('fs');
+    if (process !== undefined) capabilities.add('process');
+    if (watch !== undefined) capabilities.add('watch');
+    if (terminal !== undefined) capabilities.add('terminal');
+    this.capabilities = capabilities;
     this.environment = {
       osKind: environment.osKind,
       osArch: environment.osArch,

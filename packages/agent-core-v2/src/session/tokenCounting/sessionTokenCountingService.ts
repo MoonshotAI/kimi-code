@@ -1,7 +1,6 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { agentSpaceOf } from '#/agent/agentContext/agentSpace';
-import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IConfigService } from '#/app/config/config';
 import { ISessionEventBus } from '#/app/event/eventBus';
@@ -37,14 +36,14 @@ export class SessionTokenCountingService extends Disposable implements ISessionT
   constructor(
     @IConfigService private readonly config: IConfigService,
     @ISessionEventBus eventBus: ISessionEventBus,
-    @IAgentLifecycleService lifecycle: IAgentLifecycleService,
+    @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
   ) {
     super();
     this._register(
       eventBus.subscribe(TurnEnded, (event) => {
-        const handle = lifecycle.findAgentHandle(event.agentId);
-        if (handle === undefined) return;
-        void agentSpaceOf(agentContextOf(handle)).use(
+        const agent = agentLifecycle.get(event.agentId);
+        if (agent === undefined) return;
+        void agentSpaceOf(agent).use(
           TokenCountingAgentModelDefinition,
           (model) => model.recordTurn(event.turnId, this.strategy),
         );

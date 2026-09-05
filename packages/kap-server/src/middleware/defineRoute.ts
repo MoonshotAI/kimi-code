@@ -86,40 +86,18 @@ export interface DefineRouteOptions<
   TQuery extends z.ZodTypeAny | undefined,
   TSuccessData extends z.ZodTypeAny | undefined,
 > {
-  /** HTTP method (used by the consumer for registration bookkeeping). */
   method: string;
-  /** Route path with OpenAPI `{param}` syntax. */
   path: string;
-  /** Request-body Zod schema. */
   body?: TBody;
-  /** Route-params Zod schema. */
   params?: TParams;
-  /** Query-string Zod schema. */
   querystring?: TQuery;
-  /** Success payload schema (wrapped in envelope code:0 automatically). */
   success?: { data: TSuccessData };
-  /**
-   * Error variants for the 200-response oneOf.
-   * Key = business error code.
-   * `dataSchema` defaults to `z.null()`; override for idempotent-conflict
-   * shapes such as `{code:40903, data:{aborted:false}}`.
-   * `detailsSchema` describes the structured error context when present.
-   */
   errors?: Record<number, { dataSchema?: z.ZodTypeAny; detailsSchema?: z.ZodTypeAny }>;
-  /**
-   * Raw response schemas that are NOT envelope-wrapped.
-   * Useful for binary-stream endpoints (e.g. file download).
-   */
   rawResponse?: Record<number, Record<string, unknown>>;
-  /** Swagger description. */
   description?: string;
-  /** Swagger summary. */
   summary?: string;
-  /** Swagger tags. */
   tags?: string[];
-  /** Swagger operationId. */
   operationId?: string;
-  /** Swagger consumes. */
   consumes?: string[];
 }
 
@@ -129,7 +107,6 @@ export interface RouteDefinition<
   TQuery extends z.ZodTypeAny | undefined,
 > {
   method: string;
-  /** Fastify-style path (`:param`). */
   path: string;
   options: {
     preHandler: unknown[];
@@ -146,17 +123,6 @@ export interface RouteDefinition<
   ) => Promise<void> | void;
 }
 
-/**
- * Declare a route from a single Zod-based definition.
- *
- * Returns a `RouteDefinition` carrying:
- *   - `path`      – converted to Fastify `:param` syntax
- *   - `options`   – `preHandler` (runtime validation) + `schema` (Swagger)
- *   - `handler`   – typed request / reply callback
- *
- * The caller is responsible for registering the definition on the correct
- * app verb, e.g. `app.post(route.path, route.options, route.handler)`.
- */
 export function defineRoute<
   TBody extends z.ZodTypeAny | undefined,
   TParams extends z.ZodTypeAny | undefined,

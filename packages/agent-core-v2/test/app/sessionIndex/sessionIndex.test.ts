@@ -16,12 +16,17 @@ import { ILogService } from '#/_base/log/log';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
+import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import {
   ISessionIndex,
   ISessionIndexMirror,
   type SessionSummary,
 } from '#/app/sessionIndex/sessionIndex';
-import { recencyColumn, sessionCollection } from '#/app/sessionIndex/sessionIndexModel';
+import {
+  SESSION_INDEX_MANIFEST,
+  recencyColumn,
+  sessionCollection,
+} from '#/app/sessionIndex/sessionIndexModel';
 import { FileSessionIndex } from '#/app/sessionIndex/sessionIndexService';
 import {
   drainSessionIndexMirror,
@@ -90,6 +95,7 @@ describe('FileSessionIndex (legacy)', () => {
       stubPair(IQueryStore, stubQueryStore()),
       stubPair(ISessionIndexMirror, stubSessionIndexMirror()),
       stubPair(IFlagService, stubFlag(false)),
+      stubPair(ITelemetryService, noopTelemetryService),
       stubPair(ILogService, stubLog()),
     ]);
     disposeHost = () => {
@@ -351,6 +357,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IFlagService, stubFlag(true)),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -741,6 +748,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IFlagService, stubFlag(true)),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -813,6 +821,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IFlagService, stubFlag(true)),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -869,6 +878,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IFlagService, stubFlag(true)),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -957,6 +967,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IFlagService, stubFlag(true)),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -1016,6 +1027,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IFlagService, stubFlag(true)),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -1074,6 +1086,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IFlagService, stubFlag(true)),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -1149,6 +1162,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IFlagService, stubFlag(true)),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -1216,6 +1230,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IFlagService, stubFlag(true)),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -1261,6 +1276,8 @@ describe('FileSessionIndex (read model)', () => {
     const first = build();
     await first.prepare();
     expect(first.status()).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+    const published = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
+    expect(published).toMatchObject({ seq: 1, sourceMaxMtimeMs: expect.any(Number) });
     disposeHost?.();
     disposeHost = undefined;
     await drainSessionIndexMirror();
@@ -1281,6 +1298,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IFlagService, stubFlag(true)),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -1295,6 +1313,74 @@ describe('FileSessionIndex (read model)', () => {
     const warm = await second.listRecent({ workspaceIds: [workspaceId] });
     expect(warm.items.map((s) => s.id)).toEqual(['a', 'b', 'c']);
     expect(docs.gets).toBe(0);
+  });
+
+  it('re-projects on the next startup when the session directories changed externally', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
+    await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
+
+    const first = build();
+    await first.prepare();
+    expect(first.status()).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+    disposeHost?.();
+    disposeHost = undefined;
+    await drainSessionIndexMirror();
+    await drainQueryStoreDisposals();
+
+    await seedSession('c', { title: 'c', createdAt: 3, updatedAt: 4 });
+    const future = new Date(Date.now() + 60_000);
+    await fsp.utimes(
+      join(sessionsDir, workspaceId, 'c', 'session-meta', 'state.json'),
+      future,
+      future,
+    );
+
+    const second = build();
+    const status = await second.prepare();
+    expect(status).toEqual({ state: 'ready', generation: 2, degradedCount: 0 });
+    const page = await second.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items.map((s) => s.id)).toEqual(['c', 'b', 'a']);
+  });
+
+  it('treats a published checkpoint without sourceMaxMtimeMs as stale and re-projects', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
+
+    const first = build();
+    await first.prepare();
+    await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, { seq: 1 });
+    disposeHost?.();
+    disposeHost = undefined;
+    await drainSessionIndexMirror();
+    await drainQueryStoreDisposals();
+
+    const second = build();
+    const status = await second.prepare();
+    expect(status).toEqual({ state: 'ready', generation: 2, degradedCount: 0 });
+    const page = await second.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items.map((s) => s.id)).toEqual(['a']);
+  });
+
+  it('reconciliation refreshes the published source max mtime', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
+
+    const store = build();
+    await store.prepare();
+    const published = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
+    expect(published).toMatchObject({ seq: 1, sourceMaxMtimeMs: expect.any(Number) });
+
+    await seedSession('a', { title: 'a2', createdAt: 1, updatedAt: 5 });
+    const future = new Date((published?.sourceMaxMtimeMs ?? 0) + 60_000);
+    await fsp.utimes(
+      join(sessionsDir, workspaceId, 'a', 'session-meta', 'state.json'),
+      future,
+      future,
+    );
+
+    await store.reconcileNow();
+    const refreshed = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
+    expect(refreshed?.seq).toBe(1);
+    expect(refreshed?.sourceMaxMtimeMs).toBeGreaterThan(published?.sourceMaxMtimeMs ?? 0);
+    expect((await store.get('a'))?.title).toBe('a2');
   });
 
   it('the resume-startup sequence pays one scan: point lookup, projection, then warm lists', async () => {
@@ -1317,6 +1403,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IFlagService, stubFlag(true)),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();

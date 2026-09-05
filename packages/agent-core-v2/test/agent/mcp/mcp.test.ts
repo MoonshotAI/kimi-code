@@ -45,10 +45,6 @@ import {
 
 import { discoverTools, executeTool, fakeMcpClient } from '../../mcpCore/stubs';
 
-const MCP_OUTPUT_TRUNCATED_TEXT =
-  '\n\n[Output truncated: exceeded 100000 character limit. ' +
-  'Use pagination or more specific queries to get remaining content.]';
-
 interface ResolvedServer {
   readonly client: MCPClient;
   readonly tools: readonly KosongTool[];
@@ -1018,7 +1014,7 @@ describe('AgentMcpService', () => {
     expect(reconnects).toBe(0);
   });
 
-  it('truncates oversized MCP text output through the wrapped tool path', async () => {
+  it('passes oversized MCP text through for the pipeline to shape', async () => {
     const manager = new FakeMcpManager();
     const client: MCPClient = {
       async listTools() {
@@ -1051,7 +1047,7 @@ describe('AgentMcpService', () => {
     });
 
     expect(result.isError).toBeUndefined();
-    expect(result.output).toBe('x'.repeat(100_000) + MCP_OUTPUT_TRUNCATED_TEXT);
+    expect(result.output).toBe('x'.repeat(100_001));
   });
 
   it('wraps MCP image output in mcp_tool_result companions through the wrapped tool path', async () => {

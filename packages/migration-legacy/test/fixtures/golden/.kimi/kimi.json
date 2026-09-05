@@ -1,0 +1,14 @@
+{
+  "work_dirs": [
+    {
+      "path": "/work/golden-proj",
+      "kaos": "local",
+      "last_session_id": "11111111-aaaa-4bbb-8ccc-111111111111"
+    },
+    {
+      "path": "/remote/golden-proj",
+      "kaos": "ssh",
+      "last_session_id": null
+    }
+  ]
+}

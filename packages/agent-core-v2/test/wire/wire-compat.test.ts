@@ -17,14 +17,13 @@ import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageSe
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { defineState } from '#/state/state';
-import { TodoAgentModelDefinition } from '#/session/todo/todoAgentModel';
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
 import {
+  attachTodoService,
   registerTestAgentWire,
   registerTestEventDispatcher,
   restoreTestEventDispatcher,
@@ -86,10 +85,12 @@ function makeContainer(storage: IFileSystemStorageService, logKey: string) {
   const log = ix.get(IAppendLogStore);
   registerTestAgentWire(ix, testWireScope(SCOPE, logKey), { log });
   const dispatcher = registerTestEventDispatcher(ix);
+  const todo = attachTodoService(ix);
+  store.add({ dispose: () => { todo.dispose(); } });
   const agentState = ix.get(IAgentStateService);
   agentState.contributeState(compatCounterKey);
   agentState.contributeState(compatTagsKey);
-  return { ix, dispatcher, agentState, log };
+  return { ix, dispatcher, agentState, todo, log };
 }
 
 function makeReader(storage: IFileSystemStorageService): IAppendLogStore {
@@ -192,11 +193,9 @@ describe('wire.jsonl round-trip', () => {
     await legacy.dispatcher.restore();
 
     expect(legacy.agentState.get(compatCounterKey)).toEqual({ value: 7 });
-    expect(
-      legacy.ix
-        .get(IAgentScopeContext)
-        .agentContext.space.use(TodoAgentModelDefinition, (model) => model.items()),
-    ).toEqual([{ title: 'legacy todo', status: 'pending' }]);
+    expect(legacy.todo.get()).toEqual([
+      { title: 'legacy todo', status: 'pending' },
+    ]);
 
     expect(await collect(makeReader(storage), 'legacy')).toEqual([
       { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },

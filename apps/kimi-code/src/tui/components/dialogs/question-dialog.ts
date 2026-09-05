@@ -469,7 +469,7 @@ export class QuestionDialogComponent extends Container implements Focusable {
         appendWrapped(lines, '   ', '   ', bodyLine, renderWidth, dim);
       }
       if (bodyLines.length > visibleBodyLines.length) {
-        lines.push(dim(`   ... ${String(bodyLines.length - visibleBodyLines.length)} more lines`));
+        lines.push(dim(`   … ${String(bodyLines.length - visibleBodyLines.length)} more lines`));
       }
     }
 

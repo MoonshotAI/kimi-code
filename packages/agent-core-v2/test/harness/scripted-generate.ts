@@ -17,6 +17,7 @@ interface ScriptedResponse {
   readonly finishReason?: FinishReason | null | undefined;
   readonly rawFinishReason?: string | null | undefined;
   readonly traceId?: string | null | undefined;
+  readonly error?: Error | undefined;
 }
 
 export function createScriptedGenerate() {
@@ -33,12 +34,14 @@ export function createScriptedGenerate() {
     readonly finishReason?: FinishReason | null | undefined;
     readonly rawFinishReason?: string | null | undefined;
     readonly traceId?: string | null | undefined;
+    readonly error?: Error | undefined;
   }) {
     responses.push({
       parts: structuredClone(input.parts ?? []),
       ...(input.finishReason !== undefined ? { finishReason: input.finishReason } : {}),
       ...(input.rawFinishReason !== undefined ? { rawFinishReason: input.rawFinishReason } : {}),
       ...(input.traceId !== undefined ? { traceId: input.traceId } : {}),
+      ...(input.error !== undefined ? { error: input.error } : {}),
     });
   }
 
@@ -74,6 +77,9 @@ export function createScriptedGenerate() {
     for (const part of response.parts) {
       await callbacks?.onMessagePart?.(structuredClone(part));
       options?.signal?.throwIfAborted();
+    }
+    if (response.error !== undefined) {
+      throw response.error;
     }
     options?.onStreamEnd?.();
 

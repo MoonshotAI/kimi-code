@@ -37,7 +37,6 @@ export class AuthSummaryService
     const config = await this._readConfig();
     const providers = config.providers ?? {};
     const providers_count = Object.keys(providers).length;
-    const default_model = nonEmpty(config.defaultModel);
 
     let managed_provider: AuthSummary['managed_provider'] = null;
     if (providers[MANAGED_PROVIDER_NAME] !== undefined) {
@@ -48,12 +47,11 @@ export class AuthSummaryService
       };
     }
 
-    const ready =
-      providers_count >= 1 &&
-      default_model !== null &&
-      (managed_provider === null || managed_provider.status !== 'revoked');
-
-    return { ready, providers_count, default_model, managed_provider };
+    return {
+      models_ready: resolvesReadyModel(config),
+      providers_count,
+      managed_provider,
+    };
   }
 
   async ensureReady(modelOverride?: string): Promise<void> {
@@ -116,7 +114,7 @@ export class AuthSummaryService
     // future RW endpoints land on disk via `writeConfigFile`, but
     // KimiCore's `this.config` only refreshes when something explicitly
     // asks for `reload`. Without this flag, `GET /v1/auth` would stay
-    // `ready:false` for the entire daemon lifetime after first login.
+    // `models_ready:false` for the entire daemon lifetime after first login.
     return this.core.rpc.getKimiConfig({ reload: true });
   }
 
@@ -137,6 +135,19 @@ function nonEmpty(value: string | undefined): string | null {
   if (value === undefined) return null;
   const trimmed = value.trim();
   return trimmed.length === 0 ? null : trimmed;
+}
+
+// Mirrors the resolution segment of `ensureReady` below (alias → provider
+// lookup, no credential probe) so the read probe and the write gate agree on
+// what "a usable model" means.
+function resolvesReadyModel(config: KimiConfig): boolean {
+  const modelId = config.defaultModel;
+  if (modelId === undefined || modelId === '') return false;
+  const alias = config.models?.[modelId];
+  if (alias === undefined) return false;
+  const providerName = alias.provider ?? config.defaultProvider;
+  if (providerName === undefined || providerName === '') return false;
+  return (config.providers ?? {})[providerName] !== undefined;
 }
 
 // Self-register under the global singleton registry. All ctor deps are

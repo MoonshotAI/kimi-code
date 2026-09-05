@@ -36,7 +36,11 @@ describe('detectPendingMigration', () => {
 
   it('returns null when source has nothing worth migrating', async () => {
     // empty source dir, no config/mcp/credentials/sessions
-    const plan = await detectPendingMigration({ sourceHome: src, targetHome: tgt });
+    const plan = await detectPendingMigration({
+      sourceHome: src,
+      targetHome: tgt,
+      plansSourceHome: tgt,
+    });
     expect(plan).toBeNull();
   });
 
@@ -57,7 +61,11 @@ describe('detectPendingMigration', () => {
       }),
       'utf-8',
     );
-    const plan = await detectPendingMigration({ sourceHome: src, targetHome: tgt });
+    const plan = await detectPendingMigration({
+      sourceHome: src,
+      targetHome: tgt,
+      plansSourceHome: tgt,
+    });
     expect(plan).toBeNull();
   });
 
@@ -96,5 +104,39 @@ describe('detectPendingMigration', () => {
     );
     const plan = await detectPendingMigration({ sourceHome: src, targetHome: tgt });
     expect(plan).toBeNull();
+  });
+
+  it('returns a MigrationPlan when source has only skills', async () => {
+    await mkdir(join(src, 'skills', 'mine'), { recursive: true });
+    await writeFile(join(src, 'skills', 'mine', 'SKILL.md'), '# skill', 'utf-8');
+    const plan = await detectPendingMigration({ sourceHome: src, targetHome: tgt });
+    expect(plan).not.toBeNull();
+    expect(plan?.hasSkills).toBe(true);
+  });
+
+  it('returns a MigrationPlan when source has only session scan failures', async () => {
+    const bucket = join(src, 'sessions', '11111111111111111111111111111111');
+    await mkdir(join(bucket, 'legacy-session'), { recursive: true });
+    const plan = await detectPendingMigration({ sourceHome: src, targetHome: tgt });
+    expect(plan).not.toBeNull();
+    expect(plan?.sessionScanFailures?.length).toBeGreaterThan(0);
+  });
+
+  it('detects skills from skillsSourceHome when it differs from the source home', async () => {
+    const skillsHome = await mkdtemp(join(tmpdir(), 'detect-pending-skills-'));
+    try {
+      await mkdir(join(skillsHome, 'skills', 'mine'), { recursive: true });
+      await writeFile(join(skillsHome, 'skills', 'mine', 'SKILL.md'), '# skill', 'utf-8');
+      const plan = await detectPendingMigration({
+        sourceHome: src,
+        skillsSourceHome: skillsHome,
+        targetHome: tgt,
+      });
+      expect(plan).not.toBeNull();
+      expect(plan?.hasSkills).toBe(true);
+      expect(plan?.skillsSourceHome).toBe(skillsHome);
+    } finally {
+      await rm(skillsHome, { recursive: true, force: true });
+    }
   });
 });

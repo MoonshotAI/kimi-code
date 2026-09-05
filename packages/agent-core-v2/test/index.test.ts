@@ -28,13 +28,13 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { TokenCountingMeasured } from '#/agent/tokenCounting/tokenCountingOps';
-import { ToolsUpdateStore } from '#/session/todo/todoOps';
-import { TodoAgentModelDefinition } from '#/session/todo/todoAgentModel';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { TurnStepInterrupted } from '#/agent/loop/turnEvents';
+import { TurnStepRetrying } from '#/agent/stepRetry/stepRetryService';
+import { ToolsUpdateStore } from '#/features/todo/todoOps';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { Event2Class } from '#/app/event/event2';
 import { AGENT_WIRE_RECORD_KEY } from '#/wire/record';
-import { registerTestAgentWire, registerTestEventDispatcher, restoreTestEventDispatcher } from './wire/stubs';
+import { attachTodoService, registerTestAgentWire, registerTestEventDispatcher, restoreTestEventDispatcher } from './wire/stubs';
 import { BUILTIN_REPLAYABLE_STATE_KEYS } from './state/builtinReplayableKeys';
 
 const V1_RECORD_TYPES: ReadonlySet<string> = new Set([
@@ -83,16 +83,19 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'task.started',
   'task.terminated',
   'task.waitDelivered',
-  'staleGuard.recorded',
-  'staleGuard.cleared',
   'interaction.request',
   'interaction.resolved',
   'plan.revision',
+  'file_history.tracked',
+  'file_history.checkpoint',
   'interruptionReminder.recorded',
   'plugin.session_start',
   'runtime.set_binding',
   'turn.ended',
   'prompt.accepted',
+  'prompt.aborted',
+  'prompt.completed',
+  'prompt.steered',
   'token_counting.measured',
   'token_counting.truncated',
   'token_counting.rebased',
@@ -100,6 +103,8 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'cron.delete',
   'cron.cursor',
   'token_counting.turn_recorded',
+  'turn.step.retrying',
+  'turn.step.interrupted',
 ]);
 
 describe('v1 wire vocabulary', () => {
@@ -164,6 +169,81 @@ describe('v1 wire vocabulary', () => {
     ]);
   });
 
+  it('persists step retrying and interrupted records with full payloads and replays them safely', async () => {
+    await dispatcher.restore();
+    await dispatcher.dispatch(
+      new TurnStepRetrying({
+        agentId: 'test-agent',
+        turnId: 1,
+        step: 2,
+        failedAttempt: 1,
+        nextAttempt: 2,
+        maxAttempts: 10,
+        delayMs: 500,
+        errorName: 'APIStatusError',
+        errorMessage: 'Overloaded',
+        statusCode: 429,
+      }),
+    );
+    await dispatcher.dispatch(
+      new TurnStepInterrupted({
+        agentId: 'test-agent',
+        turnId: 1,
+        step: 2,
+        reason: 'error',
+        message: 'boom',
+      }),
+    );
+    const records = await readRecords();
+    expect(records).toEqual([
+      {
+        type: 'metadata',
+        protocol_version: WIRE_PROTOCOL_VERSION,
+        created_at: expect.any(Number),
+      },
+      {
+        type: 'turn.step.retrying',
+        agentId: 'test-agent',
+        turnId: 1,
+        step: 2,
+        failedAttempt: 1,
+        nextAttempt: 2,
+        maxAttempts: 10,
+        delayMs: 500,
+        errorName: 'APIStatusError',
+        errorMessage: 'Overloaded',
+        statusCode: 429,
+        time: expect.any(Number),
+      },
+      {
+        type: 'turn.step.interrupted',
+        agentId: 'test-agent',
+        turnId: 1,
+        step: 2,
+        reason: 'error',
+        message: 'boom',
+        time: expect.any(Number),
+      },
+    ]);
+
+    const store = new DisposableStore();
+    disposables.add(store);
+    const ix2 = store.add(new TestInstantiationService());
+    ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    const log2 = ix2.get(IAppendLogStore);
+    registerTestAgentWire(ix2, SCOPE, { log: log2 });
+    const fresh = registerTestEventDispatcher(ix2);
+
+    await restoreTestEventDispatcher(fresh, log2, SCOPE, records);
+
+    const replayed: WireRecord[] = [];
+    for await (const record of log2.read<WireRecord>(SCOPE, AGENT_WIRE_RECORD_KEY)) {
+      replayed.push(record);
+    }
+    expect(replayed).toEqual(records);
+  });
+
   it('round-trips the todo list through the persisted tools.update_store record', async () => {
     await dispatcher.dispatch(
       new ToolsUpdateStore({ agentId: 'test-agent', key: 'todo', value: [{ title: 'restore me', status: 'in_progress' }] }),
@@ -178,11 +258,12 @@ describe('v1 wire vocabulary', () => {
     const log2 = ix2.get(IAppendLogStore);
     registerTestAgentWire(ix2, SCOPE, { log: log2 });
     const fresh = registerTestEventDispatcher(ix2);
+    const todo = attachTodoService(ix2);
+    store.add({ dispose: () => { todo.dispose(); } });
 
     await restoreTestEventDispatcher(fresh, log2, SCOPE, records);
 
-    const freshAgent = ix2.get(IAgentScopeContext).agentContext;
-    expect(freshAgent.space.use(TodoAgentModelDefinition, (model) => model.items())).toEqual([
+    expect(todo.get()).toEqual([
       { title: 'restore me', status: 'in_progress' },
     ]);
   });
@@ -191,6 +272,8 @@ describe('v1 wire vocabulary', () => {
 describe('conversation-time checkpoint registration', () => {
   const CHECKPOINT_EXEMPT_STATES: ReadonlySet<string> = new Set([
     'goalForkNotice',
+    'turn',
+    'fullCompaction.wireRanges',
   ]);
   const CONTEXT_OWNER_STATE = 'contextMemory';
   const CONTEXT_EVENTS: readonly Event2Class[] = [

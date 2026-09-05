@@ -1,7 +1,6 @@
 import type { Session } from '@moonshot-ai/kimi-code-sdk';
 
 import {
-  LLM_NOT_SET_MESSAGE,
   NO_ACTIVE_SESSION_MESSAGE,
   TOWER_STATUS_PROMPT,
   TOWER_TEARDOWN_PROMPT,
@@ -30,29 +29,22 @@ export async function handleTowerCommand(host: SlashCommandHost, args: string): 
     return;
   }
 
-  await startTowerObjective(host, input);
+  await startTowerWithBase(host, input);
 }
 
-async function startTowerObjective(host: SlashCommandHost, objective: string): Promise<void> {
+async function startTowerWithBase(host: SlashCommandHost, base: string): Promise<void> {
+  // `/tower <base>` is manual activation too: it turns tower mode on and pins
+  // the branch missions merge back into (the engine validates that it is a
+  // local branch). Only the agent can never enter the mode by itself.
   const wasActive = host.state.appState.towerMode;
-  // Validate prompt prerequisites before mutating the mode — otherwise a
-  // rejected objective (no model configured) would leave tower on with the
-  // next ordinary prompt unexpectedly running under the tower injection.
-  if (host.state.appState.model.trim().length === 0) {
-    host.showError(LLM_NOT_SET_MESSAGE);
-    return;
-  }
-  // The engine's enter is idempotent, so never let the cached state skip the
-  // mutation: it may be stale (mode changed elsewhere or an unlanded event).
-  if (!(await setTowerMode(host, true))) return;
-  if (!wasActive) host.showNotice('Tower mode: ON');
-  host.sendNormalUserInput(objective);
+  if (!(await setTowerMode(host, true, base))) return;
+  host.showNotice(wasActive ? `Tower base: ${base}` : `Tower mode: ON (base: ${base})`);
 }
 
 async function applyTowerMode(host: SlashCommandHost, enabled: boolean): Promise<void> {
   const wasActive = host.state.appState.towerMode;
-  // Like startTowerObjective: the setter is idempotent engine-side, so always
-  // reassert — a stale cache must not leave the authoritative mode unchanged.
+  // The setter is idempotent engine-side, so always reassert — a stale cache
+  // must not leave the authoritative mode unchanged.
   if (!(await setTowerMode(host, enabled))) return;
   if (wasActive === enabled) {
     host.showStatus(`Tower mode is already ${enabled ? 'on' : 'off'}.`);
@@ -61,15 +53,18 @@ async function applyTowerMode(host: SlashCommandHost, enabled: boolean): Promise
   host.showNotice(enabled ? 'Tower mode: ON' : 'Tower mode: OFF');
 }
 
-async function setTowerMode(host: SlashCommandHost, enabled: boolean): Promise<boolean> {
+async function setTowerMode(
+  host: SlashCommandHost,
+  enabled: boolean,
+  base?: string,
+): Promise<boolean> {
   const session = await requireSessionEnsured(host);
   if (session === undefined) return false;
   try {
-    await session.setTowerMode(enabled);
+    await session.setTowerMode(enabled, base);
     // The engine may silently refuse entry (flag off, feature not assembled
     // until a restart, another session owning the workspace tower) — confirm
-    // the mode actually took before reporting success or letting an objective
-    // ride on it.
+    // the mode actually took before reporting success.
     const status = await session.getStatus();
     const effective = status.towerMode ?? false;
     if (effective !== enabled) {

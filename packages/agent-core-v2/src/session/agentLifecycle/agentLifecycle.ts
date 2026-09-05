@@ -35,17 +35,21 @@ export interface IAgentLifecycleService {
 
   readonly onDidCreate: Event<AgentContext>;
   readonly onDidCreateScope: Event<AgentScopeCreatedEvent>;
-  readonly onDidDispose: Event<AgentContext>;
+  readonly onWillClose: Event<AgentContext>;
+  readonly onDidClose: Event<AgentContext>;
 
-  create(opts?: CreateAgentOptions): Promise<IAgentScopeHandle>;
+  create(opts?: CreateAgentOptions): Promise<AgentContext>;
 
-  fork(source: AgentContext, opts?: ForkAgentOptions): Promise<IAgentScopeHandle>;
+  fork(source: AgentContext, opts?: ForkAgentOptions): Promise<AgentContext>;
 
-  get(context: AgentContext): IAgentScopeHandle | undefined;
-  findAgentHandle(agentId: string): IAgentScopeHandle | undefined;
-  list(filter?: AgentListFilter): readonly IAgentScopeHandle[];
+  get(agentId: string): AgentContext | undefined;
+  list(filter?: AgentListFilter): readonly AgentContext[];
   broadcastPermissionMode(mode: PermissionMode): void;
-  remove(context: AgentContext): Promise<void>;
+  remove(agent: AgentContext): Promise<void>;
+
+  handleOf(agentId: string): IAgentScopeHandle | undefined;
+
+  adopt(handle: IAgentScopeHandle): AgentContext;
 }
 
 export const IAgentLifecycleService: ServiceIdentifier<IAgentLifecycleService> =

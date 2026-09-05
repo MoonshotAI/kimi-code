@@ -152,7 +152,8 @@ vi.mock('../../src/tui/theme/detect', () => ({
   detectTerminalTheme: mocks.detectTerminalTheme,
 }));
 
-vi.mock('../../src/migration/index', () => ({
+vi.mock('../../src/migration/index', async (importOriginal) => ({
+  ...(await importOriginal()),
   detectPendingMigration: mocks.detectPendingMigration,
 }));
 
@@ -359,6 +360,7 @@ describe('runShell', () => {
       },
       version: '1.2.3-test',
       workDir: process.cwd(),
+      telemetryDisabled: false,
     });
     expect(mocks.tuiStart).toHaveBeenCalledOnce();
     expect(mocks.withTelemetryContext).toHaveBeenCalledWith({ sessionId: 'ses-startup' });
@@ -419,6 +421,20 @@ describe('runShell', () => {
 
     const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
     expect(startupInput).toMatchObject({ agentProfile: 'reviewer' });
+  });
+
+  it('forwards the telemetry opt-out from config to the TUI startup input', async () => {
+    stubTuiStartup();
+    mocks.harnessGetConfig.mockResolvedValue({
+      providers: {},
+      defaultModel: 'k2',
+      telemetry: false,
+    });
+
+    await runShell(minimalCliOptions, '1.2.3-test');
+
+    const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
+    expect(startupInput).toMatchObject({ telemetryDisabled: true });
   });
 
   it('forwards skillsDirs from CLI options to the harness', async () => {
@@ -980,5 +996,20 @@ describe('runShell', () => {
       ),
     ).rejects.toThrow('Invalid configuration');
     expect(mocks.tuiStart).not.toHaveBeenCalled();
+  });
+
+  it('refuses migration when KIMI_SHARE_DIR resolves to the Kimi Code home', async () => {
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      await withEnv({ KIMI_SHARE_DIR: '/tmp/kimi-code-test-home' }, async () => {
+        await runShell(minimalCliOptions, '1.2.3-test', { migrateOnly: true });
+      });
+      expect(mocks.detectPendingMigration).not.toHaveBeenCalled();
+      expect(mocks.harnessClose).toHaveBeenCalledOnce();
+      expect(mocks.tuiStart).not.toHaveBeenCalled();
+      expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('KIMI_SHARE_DIR'));
+    } finally {
+      stderrSpy.mockRestore();
+    }
   });
 });

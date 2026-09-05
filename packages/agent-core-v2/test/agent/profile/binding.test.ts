@@ -4,7 +4,7 @@ import { join, normalize } from 'pathe';
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { Event } from '#/_base/event';
+import { Emitter, Event } from '#/_base/event';
 import { InstantiationService } from '#/_base/di/instantiationService';
 import { ServiceCollection } from '#/_base/di/serviceCollection';
 import { ConfigTarget, IConfigService } from '#/app/config/config';
@@ -17,7 +17,7 @@ import { BuiltinAgentProfileLoaderService } from '#/app/agentProfileCatalog/buil
 import { registerAgentProfile } from '#/app/agentProfileCatalog/contribution';
 import type { ToolCall } from '#/kosong/contract/message';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
-import { IHostClock } from '#/os/interface/hostClock';
+import type { HostFsChange } from '#/os/interface/hostFsWatch';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -25,7 +25,9 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
 import { IAtomicDocumentStore, type IAtomicDocumentStore as AtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
+import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { IWireService } from '#/wire/wire';
@@ -139,21 +141,14 @@ describe('AgentProfileService.bind', () => {
     expect(svc.isRunnable()).toBe(true);
   });
 
-  it('keeps the rendered prompt and disclosure free of clock-dependent content', async () => {
-    const hostClock: IHostClock = {
-      _serviceBrand: undefined,
-      now: () => new Date('2026-07-29T04:00:00.000Z'),
-      timeZone: () => 'Asia/Shanghai',
-    };
-    ctx = createTestAgent(appService(IHostClock, hostClock), hostEnvironmentServices(homeDir));
+  it('binds an environment disclosure snapshot with only the session cwd', async () => {
+    ctx = createTestAgent(hostEnvironmentServices(homeDir));
     const svc = ctx.get(IAgentProfileService);
 
     await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
 
     expect(svc.getSystemPrompt()).not.toContain('2026-07-29');
-    expect(svc.data().environmentDisclosure).toMatchObject({
-      date: { disclosed: false },
-    });
+    expect(svc.data().environmentDisclosure).toEqual({ cwd: ctx.get(ISessionContext).cwd });
   });
 
   it('persists the complete binding in one journal record', async () => {
@@ -248,21 +243,59 @@ describe('AgentProfileService.bind', () => {
     );
   });
 
-  it('refreshes the system prompt from the session cwd after a default bind', async () => {
+  it('keeps the system prompt frozen after a default bind when AGENTS.md changes', async () => {
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-bind-work-'));
     try {
       await writeFile(join(workDir, 'AGENTS.md'), 'v1 instructions', 'utf-8');
       ctx = createTestAgent(hostEnvironmentServices(homeDir), { cwd: workDir });
       const svc = ctx.get(IAgentProfileService);
       await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+      const bound = svc.getSystemPrompt();
+      expect(bound).toContain('v1 instructions');
 
       await writeFile(join(workDir, 'AGENTS.md'), 'v2 instructions', 'utf-8');
-      await svc.refreshSystemPrompt();
 
-      expect(svc.getSystemPrompt()).toContain('v2 instructions');
+      expect(svc.getSystemPrompt()).toBe(bound);
     } finally {
       await rm(workDir, { recursive: true, force: true });
     }
+  });
+
+  it('freezes the system prompt when the session instructions change', async () => {
+    const persistence = new InMemoryWireRecordPersistence();
+    const emitter = new Emitter<readonly HostFsChange[]>();
+    let agentsMd = 'v1 instructions';
+    ctx = createTestAgent(
+      { persistence },
+      hostEnvironmentServices(homeDir),
+      sessionService(ISessionInstructionsProvider, {
+        _serviceBrand: undefined,
+        ready: Promise.resolve(),
+        get agentsMd() {
+          return agentsMd;
+        },
+        agentsMdWarning: undefined,
+        agentsMdPaths: [],
+        onDidChange: emitter.event,
+      } satisfies ISessionInstructionsProvider),
+    );
+    const svc = ctx.get(IAgentProfileService);
+    await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+    const before = svc.getSystemPrompt();
+    expect(before).toContain('v1 instructions');
+    await ctx.get(IWireService).flush();
+    const configUpdates = () =>
+      persistence.records.filter(
+        (record) => record.type === 'config.update' && 'systemPrompt' in record,
+      );
+    const configUpdateCount = configUpdates().length;
+
+    agentsMd = 'v2 instructions';
+    emitter.fire([{ path: '/repo/AGENTS.md', action: 'modified', kind: 'file' }]);
+    await ctx.get(IWireService).flush();
+
+    expect(svc.getSystemPrompt()).toBe(before);
+    expect(configUpdates()).toHaveLength(configUpdateCount);
   });
 
   it('setModel applies the default profile when none is bound yet', async () => {
@@ -708,7 +741,7 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
     expect(toolPolicy.isToolActive('Bash')).toBe(false);
   });
 
-  it('removes the skill listing when the session disables Skill', async () => {
+  it('keeps the skill listing frozen when the session disables Skill', async () => {
     const skillMarker = 'session-policy-skill-marker';
     ctx = createTestAgent(
       hostEnvironmentServices(homeDir),
@@ -724,12 +757,13 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
     );
     const { profile, toolPolicy } = profileServices(ctx);
     await profile.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
-    expect(profile.getSystemPrompt()).toContain(skillMarker);
+    const before = profile.getSystemPrompt();
+    expect(before).toContain(skillMarker);
 
     await toolPolicy.setSessionDisabledTools(['Skill']);
 
     expect(toolPolicy.isToolActive('Skill')).toBe(false);
-    expect(profile.getSystemPrompt()).not.toContain(skillMarker);
+    expect(profile.getSystemPrompt()).toBe(before);
   });
 
   it('omits the skill listing when global tools disable Skill', async () => {
@@ -754,7 +788,7 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
     expect(profile.getSystemPrompt()).not.toContain(skillMarker);
   });
 
-  it('refreshes the skill listing when global tool policy changes at runtime', async () => {
+  it('keeps the skill listing frozen when global tool policy changes at runtime', async () => {
     const skillMarker = 'live-global-policy-skill-marker';
     ctx = createTestAgent(
       hostEnvironmentServices(homeDir),
@@ -770,14 +804,15 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
     );
     const { profile, toolPolicy } = profileServices(ctx);
     await profile.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
-    expect(profile.getSystemPrompt()).toContain(skillMarker);
+    const before = profile.getSystemPrompt();
+    expect(before).toContain(skillMarker);
 
     await ctx
       .get(IConfigService)
       .replace(TOOLS_SECTION, { disabled: ['Skill'] }, ConfigTarget.Memory);
 
     expect(toolPolicy.isToolActive('Skill')).toBe(false);
-    await vi.waitFor(() => expect(profile.getSystemPrompt()).not.toContain(skillMarker));
+    expect(profile.getSystemPrompt()).toBe(before);
   });
 });
 

@@ -32,16 +32,10 @@ export class AgentTranscript {
 
   constructor(readonly agentId: AgentId) {}
 
-  /** Full load == applying a reset: there is no second seeding path. */
   receive(ops: readonly TranscriptOperation[]): AppliedOps {
     return this.apply(ops);
   }
 
-  /**
-   * The single convergence path. Returns the accepted ops plus a gap signal
-   * when an `append` could not land (the caller's policy decides to ignore or
-   * re-snapshot). Emits exactly one `onChange` batch when anything changed.
-   */
   apply(ops: readonly TranscriptOperation[]): AppliedOps {
     const accepted: TranscriptOperation[] = [];
     let gap: AppliedOps['gap'];
@@ -132,7 +126,6 @@ export class AgentTranscript {
     return this.#state.hasMoreOlder;
   }
 
-  /** Materialize current state (optionally windowed to the newest turns). */
   snapshot(window?: { tailTurns: number }): AgentTranscriptSnapshot {
     let items = this.#state.items;
     let hasMoreOlder = this.#state.hasMoreOlder;

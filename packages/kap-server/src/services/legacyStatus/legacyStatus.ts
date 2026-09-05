@@ -11,11 +11,6 @@ import {
 import type { AgentActivityState } from '@moonshot-ai/agent-core-v2';
 import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 
-/**
- * The v1 `phase` field of the combined `agent.status.updated` payload — a
- * v1-only concept with no producer on the v2 side (v2's native status events
- * never carry it), so it is defined here at the v1 edge that projects it.
- */
 export type AgentPhase =
   | { readonly kind: 'idle' }
   | {
@@ -82,12 +77,10 @@ export type AgentPhase =
 export interface LegacyStatusSnapshot {
   readonly usage?: UsageStatus;
   readonly contextTokens: number;
-  /** Omitted when the context limit is unknown — 0 is never pushed (0 is the engine's "unknown" marker, not a real limit). */
   readonly maxContextTokens?: number;
   readonly model: string;
 }
 
-/** Read the current combined status when the handle exposes a complete agent. */
 export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot | undefined {
   const profile = agent.accessor.get(IAgentProfileService) as
     | IAgentProfileService
@@ -133,19 +126,6 @@ function defaultModelContextTokens(agent: IAgentScopeHandle): number | undefined
   }
 }
 
-/**
- * Map the native v2 `AgentActivityState` to the legacy v1 `AgentPhase`
- * (`agent.status.updated` payload). Pure function — kept at the kap-server
- * edge so the core engine stays free of v1 wire-compatibility concerns.
- *
- * Returns `undefined` for `disposing` / `disposed`, which have no v1
- * concept (emitting `idle` would mislead the UI).
- *
- * Three deliberate v1 divergences from the naive mapping (see status-refactor
- * plan 04 §3): a parallel approval resolve keeps `awaiting_approval` while any
- * approval is still pending (no premature `running`); `interrupted` carries the
- * `endingReason`; `disposing`/`disposed` emit nothing.
- */
 export function toLegacyPhase(state: AgentActivityState): AgentPhase | undefined {
   const { lifecycle, turn, lastTurn } = state;
 

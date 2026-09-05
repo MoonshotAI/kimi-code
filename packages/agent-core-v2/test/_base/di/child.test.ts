@@ -214,6 +214,64 @@ describe('InstantiationService.createChild', () => {
     expect(events).toEqual(['disposed']);
   });
 
+  it('repeated disposeAsync returns the in-flight teardown promise', async () => {
+    const events: string[] = [];
+    let releaseGate!: () => void;
+    const ix = new InstantiationService(new ServiceCollection());
+    ix.anchorKernelEntry(() => {
+      events.push('finalizer');
+    }, 'finalizer');
+    ix.anchorKernelEntry(() => {
+      events.push('gate-entered');
+      return new Promise<void>((resolve) => {
+        releaseGate = resolve;
+      });
+    }, 'gate');
+
+    const first = ix.disposeAsync();
+    const second = ix.disposeAsync();
+    let secondSettled = false;
+    void second.then(() => {
+      secondSettled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(events).toEqual(['gate-entered']);
+    expect(secondSettled).toBe(false);
+    releaseGate();
+    await Promise.all([first, second]);
+    expect(events).toEqual(['gate-entered', 'finalizer']);
+  });
+
+  it('disposeAsync awaits asynchronous child container teardown', async () => {
+    const events: string[] = [];
+    let releaseChildGate!: () => void;
+    const parent = new InstantiationService(new ServiceCollection());
+    const child = parent.createChild(new ServiceCollection()) as InstantiationService;
+    child.anchorKernelEntry(() => {
+      events.push('child-finalizer');
+    }, 'child-finalizer');
+    child.anchorKernelEntry(() => {
+      events.push('child-gate-entered');
+      return new Promise<void>((resolve) => {
+        releaseChildGate = resolve;
+      });
+    }, 'child-gate');
+    parent.anchorKernelEntry(() => {
+      events.push('parent-finalizer');
+    }, 'parent-finalizer');
+
+    let settled = false;
+    const disposal = parent.disposeAsync().then(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(events).toEqual(['child-gate-entered', 'parent-finalizer']);
+    expect(settled).toBe(false);
+    releaseChildGate();
+    await disposal;
+    expect(events).toEqual(['child-gate-entered', 'parent-finalizer', 'child-finalizer']);
+  });
+
   it('parent dispose propagates to children', () => {
     const events: string[] = [];
     interface IParentSvc {

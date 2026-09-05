@@ -109,6 +109,40 @@ describe('WorkspaceInstructionsService', () => {
     expect(provider.agentsMdWarning).toBeUndefined();
   });
 
+  it('does not fire onDidChange for the initial load', async () => {
+    await writeFile(join(workDir, 'AGENTS.md'), 'project instructions', 'utf8');
+
+    let fired = 0;
+    const { service } = createService();
+    service.onDidChange(() => {
+      fired += 1;
+    });
+    await service.ready;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+
+    expect(fired).toBe(0);
+    expect(service.snapshot.agentsMd).toContain('project instructions');
+  });
+
+  it('fires onDidChange with the changed file paths when a watched file changes', async () => {
+    const file = join(workDir, 'AGENTS.md');
+    await writeFile(file, 'old instructions', 'utf8');
+    const { service } = createService();
+    await service.ready;
+
+    const changed = new Promise<readonly HostFsChange[]>((resolvePromise) => {
+      const d = service.onDidChange((changes) => {
+        d.dispose();
+        resolvePromise(changes);
+      });
+    });
+    await writeFile(file, 'new instructions', 'utf8');
+    fireWatch(file);
+    const changes = await changed;
+
+    expect(changes).toEqual([{ path: file, action: 'modified', kind: 'file' }]);
+  });
+
   it('refreshes the snapshot and fires onDidChange when a watched file changes', async () => {
     const file = join(workDir, 'AGENTS.md');
     await writeFile(file, 'old instructions', 'utf8');

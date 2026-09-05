@@ -162,7 +162,7 @@ describe('ToolCallComponent', () => {
     expect(collapsed).toContain('line2');
     expect(collapsed).toContain('line3');
     expect(collapsed).not.toContain('line4');
-    expect(collapsed).toContain('... (2 more lines, ctrl+o to expand)');
+    expect(collapsed).toContain('… (2 more lines, ctrl+o to expand)');
 
     component.setExpanded(true);
 

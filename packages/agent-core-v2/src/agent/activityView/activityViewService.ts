@@ -34,6 +34,7 @@ import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import type { TurnEndReason } from '#/agent/loop/turnEvents';
 import { IEventDispatcher } from '#/state/eventDispatcher';
+import { ContextUndone } from '#/agent/undo/undoService';
 
 import type {
   ActivityLastTurnState,
@@ -139,6 +140,9 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
     );
     this._register(
       this.eventBus.subscribe(TurnEnded, (e) => this.onTurnEnded(e.turnId, e.reason)),
+    );
+    this._register(
+      this.eventBus.subscribe(ContextUndone, (e) => this.onContextUndone(e.fromTurnId)),
     );
     this._register(
       this.eventBus.subscribe(PermissionApprovalRequested, (e) =>
@@ -293,6 +297,14 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
     }
     this.lastTurn = { turnId, reason, durationMs: Date.now() - this.turn.since, at: Date.now() };
     this.turn = undefined;
+    this.publish();
+  }
+
+  private onContextUndone(fromTurnId: number | undefined): void {
+    const last = this.lastTurn;
+    if (last === undefined) return;
+    if (fromTurnId !== undefined && last.turnId < fromTurnId) return;
+    this.lastTurn = undefined;
     this.publish();
   }
 

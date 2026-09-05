@@ -5,7 +5,7 @@
 // needs but the raw record list does not surface:
 //   - per-turn / per-step / per-tool wall-clock duration (from record `time`)
 //   - per-turn token cost (sum of step usages) and cache-hit rate
-//   - context-window fill over time (mirrors agent-core's snapshot formula)
+//   - context-window fill over time (mirrors the engine's snapshot formula)
 //   - tool-result truncation / size / error flags
 //   - tool usage stats (count, error rate, latency)
 //   - idle gaps (large wall-clock gaps between records → waiting)
@@ -50,7 +50,7 @@ export interface StepNode {
   finishReason?: string;
   isError?: boolean;
   usage?: TokenUsage;
-  /** Context-window fill after this step (the agent-core snapshot formula). */
+  /** Context-window fill after this step (the engine's snapshot formula). */
   contextTokens?: number;
   llmFirstTokenLatencyMs?: number;
   llmStreamDurationMs?: number;
@@ -75,10 +75,15 @@ export interface TurnNode {
   steps: StepNode[];
   startTime?: number;
   endTime?: number;
-  /** endTime − startTime over the turn's steps (active execution time). */
+  /** Engine-reported duration, or endTime − startTime for legacy wires. */
   durationMs?: number;
   /** promptTime − previous turn's endTime (time the agent sat idle/waiting). */
   waitBeforeMs?: number;
+  /** Durable turn identity, available once `turn.ended` is recorded. */
+  turnId?: number;
+  endLineNo?: number;
+  outcome?: 'completed' | 'cancelled' | 'failed' | 'blocked';
+  stopReason?: string;
   /** Sum of this turn's step usages — total tokens processed (billing cost). */
   tokens: TokenUsage;
   toolCallCount: number;
@@ -180,7 +185,7 @@ function usageTotal(u: TokenUsage): number {
   return u.inputOther + u.output + u.inputCacheRead + u.inputCacheCreation;
 }
 
-/** Context-window fill after a step, mirroring agent-core ContextMemory. */
+/** Context-window fill after a step, mirroring the engine's token counting. */
 function contextFill(u: TokenUsage): number {
   return u.inputCacheRead + u.inputCacheCreation + u.inputOther + u.output;
 }
@@ -200,7 +205,8 @@ function outputSize(output: unknown): number {
   if (Array.isArray(output)) {
     let n = 0;
     for (const part of output) {
-      const text = (part as { text?: string })?.text;
+      const candidate = part as { text?: string; think?: string } | undefined;
+      const text = candidate?.text ?? candidate?.think;
       n += typeof text === 'string' ? text.length : JSON.stringify(part ?? null).length;
     }
     return n;
@@ -220,6 +226,12 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
   const configChanges: ConfigChange[] = [];
 
   let current: TurnNode | null = null;
+  let pendingSteer: {
+    lineNo: number;
+    time: number | undefined;
+    text: string;
+    originKind: string | undefined;
+  } | null = null;
   let contextTokens = 0;
   let peakContext = 0;
   let firstTime: number | undefined;
@@ -261,7 +273,12 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
           gapMs: t - prevTime,
           // A gap straddling a turn boundary is "waiting for the user"; a gap
           // inside a turn is the agent/tool being slow.
-          kind: rec.type === 'turn.prompt' || rec.type === 'turn.steer' ? 'between_turns' : 'in_turn',
+          kind:
+            rec.type === 'turn.prompt' ||
+            (rec.type === 'turn.steer' &&
+              (current === null || current.outcome !== undefined))
+              ? 'between_turns'
+              : 'in_turn',
         });
       }
       prevTime = t;
@@ -270,13 +287,41 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
 
     switch (rec.type) {
       case 'turn.prompt':
+        pendingSteer = null;
         current = startTurn('prompt', entry.lineNo, t, firstText(rec.input), rec.origin?.kind);
         break;
       case 'turn.steer':
-        current = startTurn('steer', entry.lineNo, t, firstText(rec.input), rec.origin?.kind);
+        if (current === null || current.outcome !== undefined) {
+          pendingSteer = null;
+          current = startTurn('steer', entry.lineNo, t, firstText(rec.input), rec.origin?.kind);
+        } else {
+          pendingSteer = {
+            lineNo: entry.lineNo,
+            time: t,
+            text: firstText(rec.input),
+            originKind: rec.origin?.kind,
+          };
+        }
         break;
       case 'turn.cancel':
-        if (current) current.cancelled = true;
+        if (
+          current !== null &&
+          rec.target !== 'queued' &&
+          (rec.turnId === undefined || current.turnId === undefined || current.turnId === rec.turnId)
+        ) {
+          current.cancelled = true;
+        }
+        break;
+      case 'turn.ended':
+        if (current !== null) {
+          current.turnId = rec.turnId;
+          current.endLineNo = entry.lineNo;
+          current.outcome = rec.reason;
+          current.stopReason = rec.stopReason;
+          current.cancelled ||= rec.reason === 'cancelled';
+          if (t !== undefined) current.endTime = t;
+          if (rec.durationMs !== undefined) current.durationMs = rec.durationMs;
+        }
         break;
 
       case 'context.update_token_count':
@@ -290,42 +335,107 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
         });
         if (contextTokens > peakContext) peakContext = contextTokens;
         break;
+      case 'token_counting.measured':
+      case 'token_counting.truncated':
+      case 'token_counting.rebased':
+      case 'token_counting.turn_recorded':
+        // v2's replacement for `context.update_token_count`: the record's
+        // `tokens` is the agent's current context-window fill.
+        contextTokens = rec.tokens;
+        contextSeries.push({
+          lineNo: entry.lineNo,
+          time: t,
+          turnIndex: current?.index ?? -1,
+          step: -1,
+          contextTokens,
+        });
+        if (contextTokens > peakContext) peakContext = contextTokens;
+        break;
       case 'context.clear':
         contextTokens = 0;
         break;
       case 'context.apply_compaction':
-        contextTokens = rec.tokensAfter;
-        contextSeries.push({ lineNo: entry.lineNo, time: t, turnIndex: current?.index ?? -1, step: -1, contextTokens });
-        if (contextTokens > peakContext) peakContext = contextTokens;
+        // `tokensAfter` is optional in the v2 payload (absent on legacy
+        // variants) — keep the prior count then.
+        if (rec.tokensAfter !== undefined) {
+          contextTokens = rec.tokensAfter;
+          contextSeries.push({ lineNo: entry.lineNo, time: t, turnIndex: current?.index ?? -1, step: -1, contextTokens });
+          if (contextTokens > peakContext) peakContext = contextTokens;
+        }
         break;
 
       case 'config.update': {
+        const cwd = rec.environmentDisclosure?.cwd;
+        const effort = rec.thinkingEffort ?? rec.thinkingLevel;
         const changed: { field: string; value: string }[] = [];
         if (rec.profileName !== undefined) changed.push({ field: 'profile', value: rec.profileName });
         if (rec.modelAlias !== undefined) changed.push({ field: 'model', value: rec.modelAlias });
-        if (rec.thinkingEffort !== undefined) changed.push({ field: 'thinking', value: rec.thinkingEffort });
-        if (rec.cwd !== undefined) changed.push({ field: 'cwd', value: rec.cwd });
+        if (effort !== undefined) changed.push({ field: 'thinking', value: effort });
+        if (cwd !== undefined) changed.push({ field: 'cwd', value: cwd });
         if (rec.systemPrompt !== undefined) changed.push({ field: 'systemPrompt', value: `${rec.systemPrompt.length} chars` });
         if (changed.length > 0) configChanges.push({ lineNo: entry.lineNo, time: t, changed });
+        break;
+      }
+
+      case 'profile.bind': {
+        // v2 writes most initial config state on `profile.bind` rather than
+        // `config.update`.
+        const changed: { field: string; value: string }[] = [];
+        if (rec.profileName !== undefined) changed.push({ field: 'profile', value: rec.profileName });
+        if (rec.modelAlias !== undefined) changed.push({ field: 'model', value: rec.modelAlias });
+        changed.push({ field: 'thinking', value: rec.thinkingEffort });
+        if (rec.environmentDisclosure !== undefined) changed.push({ field: 'cwd', value: rec.environmentDisclosure.cwd });
+        changed.push({ field: 'systemPrompt', value: `${rec.systemPrompt.length} chars` });
+        configChanges.push({ lineNo: entry.lineNo, time: t, changed });
         break;
       }
 
       case 'context.append_loop_event': {
         const ev = rec.event;
         if (ev.type === 'step.begin') {
-          current ??= startTurn('prompt', entry.lineNo, t, '(no prompt record)', undefined);
+          const parsedTurnId =
+            ev.turnId === undefined ? undefined : Number.parseInt(ev.turnId, 10);
+          const validTurnId =
+            parsedTurnId !== undefined && Number.isInteger(parsedTurnId)
+              ? parsedTurnId
+              : undefined;
+          let turn: TurnNode | null = current;
+          if (
+            turn === null ||
+            turn.outcome !== undefined ||
+            (validTurnId !== undefined &&
+              turn.turnId !== undefined &&
+              turn.turnId !== validTurnId)
+          ) {
+            turn = pendingSteer === null
+              ? startTurn('prompt', entry.lineNo, t, '(no prompt record)', undefined)
+              : startTurn(
+                  'steer',
+                  pendingSteer.lineNo,
+                  pendingSteer.time,
+                  pendingSteer.text,
+                  pendingSteer.originKind,
+                );
+          }
+          pendingSteer = null;
+          current = turn;
+          if (validTurnId !== undefined) {
+            turn.turnId ??= validTurnId;
+          }
           const step: StepNode = {
             uuid: ev.uuid,
-            step: ev.step,
-            turnId: ev.turnId,
+            // `step` / `turnId` are optional on v2 loop events; fall back so
+            // the timeline stays numeric for old and new wires alike.
+            step: ev.step ?? -1,
+            turnId: ev.turnId ?? '',
             beginLineNo: entry.lineNo,
             beginTime: t,
             content: { textChars: 0, thinkChars: 0 },
             toolCalls: [],
           };
           stepByUuid.set(ev.uuid, step);
-          current.steps.push(step);
-          current.startTime ??= t;
+          turn.steps.push(step);
+          turn.startTime ??= t;
         } else if (ev.type === 'step.end') {
           const step = stepByUuid.get(ev.uuid);
           if (step) {
@@ -339,17 +449,14 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
             step.llmServerDecodeMs = ev.llmServerDecodeMs;
             step.llmClientConsumeMs = ev.llmClientConsumeMs;
             if (step.beginTime !== undefined && t !== undefined) step.durationMs = t - step.beginTime;
-            // Steps don't carry a generic 'error' finish reason (errors are
-            // thrown, not recorded). 'filtered' means the provider blocked the
-            // response — the closest persisted step-level failure signal.
-            step.isError = ev.finishReason === 'filtered';
+            step.isError = ev.finishReason === 'filtered' || ev.finishReason === 'error';
             if ('usage' in ev && ev.usage !== undefined) {
               step.usage = ev.usage;
               if (current) addUsage(current.tokens, ev.usage);
               addUsage(cache, ev.usage);
               // A zero-usage step.end (e.g. a content-filtered response) must
-              // not reset the context-window fill to 0 — agent-core's
-              // ContextMemory keeps the prior snapshot in that case. Carry the
+              // not reset the context-window fill to 0 — the engine's
+              // token counting keeps the prior snapshot in that case. Carry the
               // running value so the chart shows no false drop.
               const fill = contextFill(ev.usage);
               if (fill > 0) {
@@ -361,7 +468,7 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
                 lineNo: entry.lineNo,
                 time: t,
                 turnIndex: current?.index ?? -1,
-                step: ev.step,
+                step: ev.step ?? -1,
                 contextTokens,
               });
             }
@@ -372,7 +479,8 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
             callLineNo: entry.lineNo,
             toolCallId: ev.toolCallId,
             name: ev.name,
-            description: ev.description,
+            // v2 no longer persists `description`; v1 wires still carry it.
+            description: (ev as { description?: string }).description,
             callTime: t,
           };
           toolByCallId.set(ev.toolCallId, node);
@@ -381,16 +489,20 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
           if (current) current.toolCallCount += 1;
         } else if (ev.type === 'content.part') {
           const step = stepByUuid.get(ev.stepUuid);
-          const part = ev.part as { type?: string; text?: string } | undefined;
+          const part = ev.part as { type?: string; text?: string; think?: string } | undefined;
           if (step && part) {
-            const chars = typeof part.text === 'string' ? part.text.length : 0;
-            if (part.type === 'think') step.content.thinkChars += chars;
-            else step.content.textChars += chars;
+            if (part.type === 'think') {
+              step.content.thinkChars += typeof part.think === 'string' ? part.think.length : 0;
+            } else {
+              step.content.textChars += typeof part.text === 'string' ? part.text.length : 0;
+            }
           }
         } else if (ev.type === 'tool.result') {
           const node = toolByCallId.get(ev.toolCallId);
           const isError = ev.result.isError === true;
-          const truncated = ev.result.truncated === true;
+          // v1 persisted `truncated` / `message`; v2 persists `note` instead.
+          const result = ev.result as { truncated?: boolean; message?: string; note?: string };
+          const truncated = result.truncated === true;
           const bytes = outputSize(ev.result.output);
           if (node) {
             node.resultLineNo = entry.lineNo;
@@ -398,7 +510,7 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
             node.isError = isError;
             node.truncated = truncated;
             node.outputBytes = bytes;
-            node.resultMessage = ev.result.message;
+            node.resultMessage = result.message ?? result.note;
             if (node.callTime !== undefined && t !== undefined) node.durationMs = t - node.callTime;
             if (isError && current) current.toolErrorCount += 1;
             recordToolStat(toolStatMap, node);
@@ -466,7 +578,11 @@ function summarize(
   let totalTokens = 0;
   let activeMs = 0;
   for (const turn of turns) {
-    if (turn.startTime !== undefined && turn.endTime !== undefined) {
+    if (
+      turn.durationMs === undefined &&
+      turn.startTime !== undefined &&
+      turn.endTime !== undefined
+    ) {
       turn.durationMs = turn.endTime - turn.startTime;
     }
     stepCount += turn.steps.length;

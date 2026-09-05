@@ -20,7 +20,7 @@ describe('CompactionComponent', () => {
       const lines = component.render(120).map(strip);
       const text = lines.join('\n');
 
-      expect(text).toContain('Compacting context...');
+      expect(text).toContain('Compacting context…');
       expect(text).toContain('  keep the recent files only');
     } finally {
       component.dispose();
@@ -34,7 +34,7 @@ describe('CompactionComponent', () => {
       const lines = component.render(120).map(strip);
       const text = lines.join('\n');
 
-      expect(text).toContain('Compacting context... · Tip: ctrl+s: steer mid-turn');
+      expect(text).toContain('Compacting context… · Tip: ctrl+s: steer mid-turn');
     } finally {
       component.dispose();
     }
@@ -65,7 +65,7 @@ describe('CompactionComponent', () => {
       const text = lines.join('\n');
 
       expect(text).toContain('Compaction cancelled');
-      expect(text).not.toContain('Compacting context...');
+      expect(text).not.toContain('Compacting context…');
     } finally {
       component.dispose();
     }
@@ -157,7 +157,7 @@ describe('CompactionComponent', () => {
 
     try {
       const headerOf = (): string => {
-        const line = component.render(120).find((l) => strip(l).includes('Compacting context...'));
+        const line = component.render(120).find((l) => strip(l).includes('Compacting context…'));
         if (line === undefined) throw new Error('header line not found');
         return line;
       };

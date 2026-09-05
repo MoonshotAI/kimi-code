@@ -9,7 +9,7 @@ export const secondaryModelFlag: FlagDefinitionInput = {
   description:
     'Let newly spawned subagents use a separately configured secondary model by default, with an explicit primary-model override for quality-sensitive tasks.',
   env: SECONDARY_MODEL_FLAG_ENV,
-  default: false,
+  default: true,
   surface: 'core',
 };
 
