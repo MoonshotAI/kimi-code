@@ -665,6 +665,18 @@ describe('CustomEditor shortcut telemetry hooks', () => {
 
     expect(onToggleTodoExpand).toHaveBeenCalledOnce();
   });
+
+  it('invokes onCycleNotifyPage on Ctrl+N and leaves the text alone when consumed', () => {
+    const editor = makeEditor();
+    const onCycleNotifyPage = vi.fn().mockReturnValue(true);
+    editor.onCycleNotifyPage = onCycleNotifyPage;
+    editor.setText('draft');
+
+    editor.handleInput('\u000e');
+
+    expect(onCycleNotifyPage).toHaveBeenCalledOnce();
+    expect(editor.getText()).toBe('draft');
+  });
 });
 
 describe('CustomEditor bash mode border label', () => {

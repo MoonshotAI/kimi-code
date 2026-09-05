@@ -5,7 +5,7 @@
 
 import { isAbsolute, relative, sep } from 'node:path';
 
-import { Container, Spacer, Text, truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
+import { Container, Markdown, Spacer, Text, truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 import type { Component, TUI } from '@moonshot-ai/pi-tui';
 import { highlightLines, langFromPath } from '#/tui/components/media/code-highlight';
 import { renderDiffLinesClustered } from '#/tui/components/media/diff-preview';
@@ -27,6 +27,7 @@ import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 import type { TokenUsage } from '@moonshot-ai/kimi-code-sdk';
 import { appendStreamingArgsPreview } from '#/tui/utils/event-payload';
+import { createMarkdownOptions } from '#/tui/utils/markdown-options';
 import { decodeMcpToolName } from '#/tui/utils/mcp-tool-name';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 import { formatTokenCount } from '#/utils/usage/usage-format';
@@ -299,7 +300,7 @@ function unescapeJsonString(s: string): string {
  * real newline we can highlight. Returns `undefined` if the field hasn't
  * started streaming yet.
  */
-function extractPartialStringField(text: string, key: string): string | undefined {
+export function extractPartialStringField(text: string, key: string): string | undefined {
   const opener = new RegExp(`"${key}"\\s*:\\s*"`);
   const match = opener.exec(text);
   if (match === null) return undefined;
@@ -465,6 +466,7 @@ export function extractKeyArgumentDetail(
     // Prefer the short `description` so the header preview never spills a
     // multi-line `prompt` into the TUI chrome.
     Agent: ['description', 'prompt'],
+    NotifyUser: ['message'],
   };
 
   // Glob: concatenate multiple args into a single summary so the header
@@ -1685,6 +1687,31 @@ export class ToolCallComponent extends Container {
       return `${bullet}${currentTheme.boldFg(tone, label)}`;
     }
 
+    if (toolCall.name === 'NotifyUser') {
+      // The update itself lives in the panel above the input box; the card
+      // is the durable trace in the transcript, so the header carries the
+      // first line and ctrl+o shows the whole message.
+      if (isTruncated) {
+        // max_tokens cut the arguments short: the call never ran and the
+        // panel entry was dropped, so the card must not read as in flight.
+        return `${bullet}${currentTheme.boldFg('error', 'Update cut off')}${currentTheme.dim(' (arguments truncated by max_tokens)')}`;
+      }
+      const label = isFinished
+        ? isError
+          ? 'Could not send you an update'
+          : 'Sent you an update'
+        : 'Sending you an update';
+      const tone = isError ? 'error' : 'primary';
+      const preview = extractKeyArgumentDetail(toolCall.name, toolCall.args, this.workspaceDir);
+      const head = `${bullet}${currentTheme.boldFg(tone, label)}`;
+      if (preview === null) return head;
+      return {
+        head: `${head}${currentTheme.dim(' (')}`,
+        flex: { text: preview.text, style: dimHeaderStyle, keep: 'head' },
+        tail: currentTheme.dim(')'),
+      };
+    }
+
     if (toolCall.name === 'Bash') {
       // The collapsed card is this header plus its outcome rows, so the header
       // carries the command's first line; the full command and its output only
@@ -2209,6 +2236,17 @@ export class ToolCallComponent extends Container {
       );
       return;
     }
+    if (name === 'NotifyUser') {
+      // Collapsed: header only (the panel shows the live text). Expanded:
+      // the full message as Markdown, indented under the header.
+      if (!this.expanded) return;
+      const message = str(this.toolCall.args['message']).trim();
+      if (message.length === 0) return;
+      this.addChild(
+        new Markdown(message, 2, 0, this.markdownTheme, undefined, createMarkdownOptions()),
+      );
+      return;
+    }
     if (this.result === undefined && this.toolCall.streamingArguments !== undefined) {
       this.buildStreamingPreview(this.toolCall.streamingArguments);
       return;
@@ -2443,6 +2481,12 @@ export class ToolCallComponent extends Container {
     }
 
     if (this.toolCall.name === 'EnterPlanMode' && !result.is_error) {
+      return;
+    }
+
+    // NotifyUser: the message is the call's argument (rendered by
+    // buildCallPreview when expanded); the acknowledgement output is noise.
+    if (this.toolCall.name === 'NotifyUser' && !result.is_error) {
       return;
     }
 

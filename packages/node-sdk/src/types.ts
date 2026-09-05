@@ -1,3 +1,4 @@
+import type { HostUiCapability } from '@moonshot-ai/agent-core-v2';
 import type {
   ExportSessionManifest,
   ResumeSessionResult,
@@ -85,6 +86,9 @@ export type {
 } from '@moonshot-ai/agent-core';
 
 export type { KimiHostIdentity, OAuthRefreshOutcome };
+// Host UI capabilities are an agent-core-v2 seam (`BootstrapInput.args.uiCapabilities`);
+// hosts name them through `KimiHarnessOptions.uiCapabilities`, so the type is public here.
+export type { HostUiCapability };
 export type { TelemetryClient, TelemetryContextPatch, TelemetryProperties };
 export type { ContentPart, Role, ThinkingEffort, ToolCall } from '@moonshot-ai/kosong';
 // Contributed commands are an agent-core-v2 seam; the type is re-exported
@@ -169,6 +173,14 @@ export interface KimiHarnessOptions {
   readonly autoLoadConfig?: boolean | undefined;
   readonly uiMode?: string;
   readonly skillDirs?: readonly string[];
+  /**
+   * UI surfaces this host can render, declared once per process and passed
+   * into the engine through `BootstrapInput.args.uiCapabilities`. Engine
+   * features gate on them at tool-table build time; nothing is persisted, so
+   * a session opened later by a host without the capability simply does not
+   * offer the dependent tool.
+   */
+  readonly uiCapabilities?: readonly HostUiCapability[];
   readonly telemetry?: TelemetryClient | undefined;
   readonly onOAuthRefresh?: ((outcome: OAuthRefreshOutcome) => void) | undefined;
   readonly sessionStartedProperties?: TelemetryProperties;

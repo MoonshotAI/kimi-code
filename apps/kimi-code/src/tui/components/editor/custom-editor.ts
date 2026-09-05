@@ -135,6 +135,8 @@ export class CustomEditor extends Editor {
   public onCtrlB?: () => boolean;
   /** Return `true` to consume Ctrl+T (the todo list had overflow to toggle); return `false`/`undefined` to fall through to the editor default. */
   public onToggleTodoExpand?: () => boolean;
+  /** Return `true` to consume Ctrl+N (the update panel had another page); return `false`/`undefined` to fall through to the editor default. */
+  public onCycleNotifyPage?: () => boolean;
   public onUndo?: () => void;
   public onTextPaste?: () => void;
   /**
@@ -481,6 +483,12 @@ export class CustomEditor extends Editor {
       // Only consume the key when the todo list actually has overflow to
       // expand/collapse; otherwise fall through to the editor default.
       if (this.onToggleTodoExpand?.() === true) return;
+    }
+
+    if (matchesKey(normalized, Key.ctrl('n'))) {
+      // Only consume the key when the update panel has another page to show;
+      // otherwise fall through to the editor default.
+      if (this.onCycleNotifyPage?.() === true) return;
     }
 
     if (matchesKey(normalized, 'shift+tab')) {

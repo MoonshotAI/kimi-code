@@ -24,6 +24,7 @@ import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAge
 import { ErrorCodes, Error2 } from "#/errors";
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IFlagService } from '#/app/flag/flag';
 import { IConfigService } from '#/app/config/config';
 import type { LoopControl } from '#/agent/loop/configSection';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
@@ -63,6 +64,9 @@ import { IAgentProfileService, ProfileError, ProfileErrors } from './profile';
 import { TOOLS_SECTION, type ToolsConfig } from '#/agent/toolPolicy/configSection';
 import { isToolActiveComposed, findInactiveToolPatterns, literalToolNames, type InactiveToolPattern } from '#/agent/toolPolicy/evaluate';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { notifyUserAvailable } from '#/features/notify/notifyUserAvailability';
+import { NOTIFY_USER_TOOL_NAME } from '#/features/notify/tools/notify-user/notify-user';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { getAgentToolContributions } from '#/agent/toolRegistry/toolContribution';
 import {
   profileActiveToolsKey,
@@ -149,6 +153,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @IFlagService private readonly flags: IFlagService,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
@@ -837,6 +842,10 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       skillActive: this.isToolActiveForProfile(profile, 'Skill'),
       productName: (await this.identity.resolved()).displayName,
       replyStyleGuide: this.bootstrap.args.replyStyleGuide,
+      notifyUserActive:
+        notifyUserAvailable(this.flags, this.bootstrap) &&
+        this.scopeContext.agentId === MAIN_AGENT_ID &&
+        this.isToolActiveForProfile(profile, NOTIFY_USER_TOOL_NAME),
     };
   }
 

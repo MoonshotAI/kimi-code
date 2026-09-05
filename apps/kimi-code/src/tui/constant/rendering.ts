@@ -22,6 +22,8 @@ export const RESULT_PREVIEW_LINES = 3;
 export const SHELL_OUTPUT_PREVIEW_LINES = 10;
 export const THINKING_PREVIEW_LINES = 2;
 export const COMMAND_PREVIEW_LINES = 10;
+// Body rows the mid-turn update panel (NotifyUser) shows per page.
+export const NOTIFY_PANEL_MAX_BODY_LINES = 8;
 
 // The ellipsis marking a single-row line (card header, outcome row) that was
 // cut to the terminal width or that stands in for hidden output lines.

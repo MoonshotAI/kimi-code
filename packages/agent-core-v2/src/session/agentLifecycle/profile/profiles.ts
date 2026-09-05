@@ -30,6 +30,7 @@ const AGENT_TOOLS = [
   'AgentSwarm',
   'FetchURL',
   'AskUserQuestion',
+  'NotifyUser',
   'EnterPlanMode',
   'ExitPlanMode',
   'CreateGoal',

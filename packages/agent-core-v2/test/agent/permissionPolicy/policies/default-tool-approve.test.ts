@@ -46,6 +46,7 @@ describe('DefaultToolApprovePermissionPolicyService', () => {
     ['ReadMediaFile', { path: '/workspace/image.png' }],
     ['SetTodoList', { items: [] }],
     ['TodoList', {}],
+    ['NotifyUser', { message: 'Reading the parser first.' }],
     ['TaskList', {}],
     ['TaskOutput', { task_id: 'task_1' }],
     ['CronList', {}],
