@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { Emitter } from '#/_base/event';
+import type { Event2 } from '#/app/event/event2';
 import { AgentRuntimeService, snapshotAgentRuntimeBinding } from '#/agent/runtimeBinding/agentRuntime';
+import { RuntimeSetBinding, runtimeBindingKey } from '#/agent/runtimeBinding/runtimeBindingOps';
 import { AgentRuntimeBindingService, agentRuntimeBindingKey } from '#/agent/runtimeBinding/runtimeBindingService';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
@@ -53,10 +55,25 @@ function setup() {
     sessionScope: 'sessions/session',
     cwd: '/workspace',
   });
+  let restoreHook: ((context: undefined, next: () => Promise<void>) => Promise<void>) | undefined;
+  const dispatched: Event2[] = [];
   const dispatcher = {
     _serviceBrand: undefined,
-    dispatch: () => Promise.resolve(),
-    hooks: { onDidRestore: { register: () => ({ dispose: () => {} }) } },
+    dispatch: (event: Event2) => {
+      dispatched.push(event);
+      return Promise.resolve();
+    },
+    hooks: {
+      onDidRestore: {
+        register: (
+          _id: string,
+          hook: (context: undefined, next: () => Promise<void>) => Promise<void>,
+        ) => {
+          restoreHook = hook;
+          return { dispose: () => {} };
+        },
+      },
+    },
   } as unknown as IEventDispatcher;
   const binding = new AgentRuntimeBindingService(
     {
@@ -77,6 +94,11 @@ function setup() {
     onDidChange: workspaceChanges.event,
     get: () => ({ runtimes: registry }),
   } as unknown as IWorkspaceInstanceManager;
+  const restore = async (replayed: RuntimeBinding): Promise<void> => {
+    state.set(runtimeBindingKey, replayed);
+    if (restoreHook === undefined) throw new Error('restore hook was not registered');
+    await restoreHook(undefined, async () => {});
+  };
   return {
     registry,
     resolver,
@@ -85,6 +107,8 @@ function setup() {
     local,
     remote,
     localRegistration,
+    dispatched,
+    restore,
     workspaceChanges,
     agentRuntime: new AgentRuntimeService(binding, resolver, workspaces),
   };
@@ -229,5 +253,75 @@ describe('AgentRuntimeBindingService', () => {
     expect(agentRuntime.isAvailable(['process'])).toBe(true);
     local.setStatus('ready');
     expect(changes).toHaveLength(1);
+  });
+
+  it('heals a stale restored binding through acquire and persists the fallback', async () => {
+    const { binding, dispatched, restore, agentRuntime } = setup();
+    await restore({ workspaceId: 'workspace', runtimeId: 'acp:session_gone' });
+
+    const firstLease = agentRuntime.acquire();
+    expect(firstLease.runtime.identity.runtimeId).toBe('local');
+    expect(binding.current).toEqual({ workspaceId: 'workspace', runtimeId: 'local' });
+    const secondLease = agentRuntime.acquire();
+    expect(secondLease.runtime.identity.runtimeId).toBe('local');
+    expect(dispatched).toEqual([
+      expect.objectContaining({
+        type: RuntimeSetBinding.type,
+        workspaceId: 'workspace',
+        runtimeId: 'local',
+      }),
+    ]);
+    firstLease.dispose();
+    secondLease.dispose();
+  });
+
+  it('heals a stale restored binding through inspect', async () => {
+    const { binding, dispatched, restore, agentRuntime } = setup();
+    await restore({ workspaceId: 'workspace', runtimeId: 'acp:session_gone' });
+
+    expect(agentRuntime.inspect().identity.runtimeId).toBe('local');
+    expect(binding.current).toEqual({ workspaceId: 'workspace', runtimeId: 'local' });
+    expect(dispatched).toEqual([
+      expect.objectContaining({ type: RuntimeSetBinding.type, runtimeId: 'local' }),
+    ]);
+  });
+
+  it('heals a stale restored binding through availability and persists the fallback', async () => {
+    const { binding, dispatched, restore, agentRuntime } = setup();
+    await restore({ workspaceId: 'workspace', runtimeId: 'acp:session_gone' });
+
+    expect(agentRuntime.isAvailable(['fs'])).toBe(true);
+    expect(binding.current).toEqual({ workspaceId: 'workspace', runtimeId: 'local' });
+    expect(dispatched).toEqual([
+      expect.objectContaining({ type: RuntimeSetBinding.type, runtimeId: 'local' }),
+    ]);
+    const lease = agentRuntime.acquire();
+    expect(lease.runtime.identity.runtimeId).toBe('local');
+    lease.dispose();
+  });
+
+  it('preserves the stale binding and original error when the local fallback is missing', async () => {
+    const { binding, localRegistration, restore, agentRuntime } = setup();
+    const stale = { workspaceId: 'workspace', runtimeId: 'acp:session_gone' };
+    await localRegistration.remove();
+    await restore(stale);
+
+    let thrown: unknown;
+    try {
+      agentRuntime.acquire();
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toEqual(
+      expect.objectContaining<Partial<RuntimeError>>({
+        code: 'runtime.not_found',
+        message: 'runtime acp:session_gone does not exist in workspace workspace',
+        cause: expect.objectContaining<Partial<RuntimeError>>({
+          code: 'runtime.not_found',
+          message: 'runtime local does not exist in workspace workspace',
+        }),
+      }),
+    );
+    expect(binding.current).toEqual(stale);
   });
 });
