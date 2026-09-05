@@ -33,7 +33,18 @@ import { isRecord } from './utils';
  */
 export interface RefreshProviderHost {
   getConfig(): Promise<ManagedKimiConfigShape>;
+  /**
+   * Remove the provider entry and every alias it owns
+   * (`record.provider === providerId`) from the persisted config. The host may
+   * defer the deletion to the following `setConfig` write so the pair lands as
+   * one atomic update.
+   */
   removeProvider(providerId: string): Promise<ManagedKimiConfigShape>;
+  /**
+   * Persist a sparse patch: only the provider/model entries carried here are
+   * written (entry-level replace); every other key on disk is left untouched,
+   * so a concurrent writer's changes survive the refresh.
+   */
   setConfig(patch: ManagedKimiConfigShape): Promise<ManagedKimiConfigShape>;
   resolveOAuthToken(providerName: string, oauthRef?: ManagedKimiOAuthRef): Promise<string>;
   /**
@@ -205,6 +216,19 @@ function computeChanges(oldIds: Set<string>, newIds: Set<string>): { added: numb
     if (!newIds.has(id)) removed++;
   }
   return { added, removed };
+}
+
+function pickDefined<T>(
+  record: Readonly<Record<string, T>> | undefined,
+  keys: Iterable<string>,
+): Record<string, T> {
+  const out: Record<string, T> = {};
+  if (record === undefined) return out;
+  for (const key of keys) {
+    const value = record[key];
+    if (value !== undefined) out[key] = value;
+  }
+  return out;
 }
 
 interface ProviderModelSnapshot {
@@ -379,7 +403,10 @@ function pickDefaultModel(
  *  3. Custom registries (models.dev-style, keyed by `provider.source`).
  *
  * Each branch diffs old vs new and only writes when something actually changed
- * (`removeProvider` then `setConfig`). Failures are collected per-provider and
+ * (`removeProvider` then `setConfig`). Writes are scoped to the refreshed
+ * providers: `setConfig` receives only their entries, so keys belonging to
+ * other providers or written concurrently by another process survive.
+ * Failures are collected per-provider and
  * never abort the whole refresh. Pass `providerId` to scope the refresh to a
  * single provider; pass `scope: 'oauth'` to refresh only the managed provider.
  */
@@ -449,8 +476,8 @@ export async function refreshProviderModels(
           );
           await host.removeProvider(KIMI_CODE_PROVIDER_NAME);
           config = await host.setConfig({
-            providers: next.providers,
-            models: next.models,
+            providers: pickDefined(next.providers, [KIMI_CODE_PROVIDER_NAME]),
+            models: pickDefined(next.models, providerAliasKeys(next, KIMI_CODE_PROVIDER_NAME)),
             defaultModel: next.defaultModel,
             thinking: next.thinking,
           });
@@ -529,8 +556,8 @@ export async function refreshProviderModels(
         );
         await host.removeProvider(providerId);
         config = await host.setConfig({
-          providers: next.providers,
-          models: next.models,
+          providers: pickDefined(next.providers, [providerId]),
+          models: pickDefined(next.models, providerAliasKeys(next, providerId)),
           defaultModel: next.defaultModel,
           thinking: next.thinking,
         });
@@ -603,8 +630,8 @@ export async function refreshProviderModels(
         );
         await host.removeProvider(providerId);
         config = await host.setConfig({
-          providers: next.providers,
-          models: next.models,
+          providers: pickDefined(next.providers, [providerId]),
+          models: pickDefined(next.models, providerAliasKeys(next, providerId)),
           defaultModel: next.defaultModel,
           thinking: next.thinking,
           // The v1 `removeProvider` RPC clears `defaultProvider` when it points
@@ -682,6 +709,7 @@ export async function refreshProviderModels(
         readonly removed: number;
       }> = [];
       const providersToRemoveBeforeSet = new Set<string>();
+      const batchProviderIds = new Set<string>();
       let hasUnreportedConfigChange = false;
       const remoteEntries = Object.values(entries);
       const remoteEntriesByProviderId = new Map(
@@ -713,6 +741,7 @@ export async function refreshProviderModels(
         const existed = config.providers[providerId] !== undefined;
         applyCustomRegistryProvider(next, entry, source);
         const refreshedAliasKeys = providerRefreshAliasKeys(config, next, providerId, `${providerId}/`);
+        batchProviderIds.add(providerId);
         if (existed) {
           restoreProviderAliases(next, preserveUserProviderAliases(config, providerId, refreshedAliasKeys));
         }
@@ -749,9 +778,13 @@ export async function refreshProviderModels(
         for (const providerId of providersToRemoveBeforeSet) {
           await host.removeProvider(providerId);
         }
+        const batchAliasKeys = new Set<string>();
+        for (const providerId of batchProviderIds) {
+          for (const key of providerAliasKeys(next, providerId)) batchAliasKeys.add(key);
+        }
         config = await host.setConfig({
-          providers: next.providers,
-          models: next.models,
+          providers: pickDefined(next.providers, batchProviderIds),
+          models: pickDefined(next.models, batchAliasKeys),
           defaultModel: next.defaultModel,
           thinking: next.thinking,
         });

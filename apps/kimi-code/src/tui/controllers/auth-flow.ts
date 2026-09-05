@@ -240,10 +240,11 @@ export class AuthFlowController {
    * `replaceSections`), the orchestrator's two-phase contract (removeProvider
    * then setConfig) is absorbed the same way the v2 engine's own refresh path
    * does it: the removal is staged in memory only, and the following
-   * setConfig persists the complete records in a single write — so a process
-   * exit mid-refresh can never leave config.toml in a "provider removed, not
-   * yet restored" state. The v1 harness keeps the legacy host (two
-   * whole-document writes, each atomic on its own).
+   * setConfig merges the sparse patch onto a fresh read and persists
+   * everything in a single write — so a process exit mid-refresh can never
+   * leave config.toml in a "provider removed, not yet restored" state, and
+   * concurrent writes from other processes survive. The v1 harness keeps the
+   * legacy host (two whole-document writes, each atomic on its own).
    */
   private buildRefreshHost(): RefreshProviderHost {
     const { host } = this;
@@ -262,6 +263,7 @@ export class AuthFlowController {
       };
     }
     let staged: KimiConfig | undefined;
+    const pendingRemovals = new Set<string>();
     const requireStaged = (): KimiConfig => {
       if (staged === undefined) {
         throw new Error('refresh host: getConfig must be called before writes');
@@ -274,17 +276,60 @@ export class AuthFlowController {
         return staged;
       },
       removeProvider: (id) => {
+        pendingRemovals.add(id);
         staged = removeProviderFromConfig(requireStaged(), id);
         return Promise.resolve(staged);
       },
       setConfig: async (patch) => {
-        // The orchestrator always passes complete records (built from a full
-        // clone), so the Partial-shaped patch is a full KimiConfig overlay.
-        staged = { ...requireStaged(), ...patch } as KimiConfig;
+        // The patch is sparse — only the refreshed providers' entries and
+        // their owned aliases — so merge it onto a fresh read for unrelated
+        // keys to survive, and fold the staged removals into the same write.
+        const fresh = await host.harness.getConfig({ reload: true });
+        const sections: Record<string, unknown> = {};
+        if (pendingRemovals.size > 0 || patch.providers !== undefined) {
+          const providers: Record<string, unknown> = { ...fresh.providers };
+          for (const id of pendingRemovals) delete providers[id];
+          if (patch.providers !== undefined) Object.assign(providers, patch.providers);
+          sections['providers'] = providers;
+        }
+        if (pendingRemovals.size > 0 || patch.models !== undefined) {
+          const models: Record<string, unknown> = { ...fresh.models };
+          for (const [key, record] of Object.entries(models)) {
+            const owner =
+              typeof record === 'object' && record !== null
+                ? (record as { provider?: string }).provider
+                : undefined;
+            if (owner !== undefined && pendingRemovals.has(owner)) delete models[key];
+          }
+          if (patch.models !== undefined) Object.assign(models, patch.models);
+          sections['models'] = models;
+        }
         // Object.entries keeps keys whose value is `undefined`, so a cleared
         // section (e.g. a dangling defaultModel) is expressed as a removal in
         // the atomic write; sections absent from the patch stay untouched.
-        await host.harness.replaceConfigSections(Object.fromEntries(Object.entries(patch)));
+        for (const [key, value] of Object.entries(patch)) {
+          if (key === 'providers' || key === 'models') continue;
+          sections[key] = value;
+        }
+        if (pendingRemovals.size > 0 && !('defaultModel' in patch)) {
+          const defaultModel = fresh.defaultModel;
+          const owner =
+            defaultModel === undefined
+              ? undefined
+              : (fresh.models?.[defaultModel] as { provider?: string } | undefined)?.provider;
+          if (owner !== undefined && pendingRemovals.has(owner)) {
+            sections['defaultModel'] = undefined;
+          }
+        }
+        if (pendingRemovals.size > 0 && !('defaultProvider' in patch)) {
+          const defaultProvider = fresh.defaultProvider;
+          if (defaultProvider !== undefined && pendingRemovals.has(defaultProvider)) {
+            sections['defaultProvider'] = undefined;
+          }
+        }
+        pendingRemovals.clear();
+        await host.harness.replaceConfigSections(sections);
+        staged = { ...fresh, ...sections } as KimiConfig;
         return staged;
       },
       resolveOAuthToken,
