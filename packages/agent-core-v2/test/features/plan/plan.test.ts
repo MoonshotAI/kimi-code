@@ -301,6 +301,7 @@ describe('Plan service', () => {
           key: revisionKey('rev-plan', 1),
           sha256: createHash('sha256').update(content, 'utf8').digest('hex'),
           bytes: Buffer.byteLength(content),
+          summary: 'Plan',
           time: expect.any(Number),
         },
       ]);

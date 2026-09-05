@@ -31,6 +31,8 @@ import {
   kimiRegionProfile,
   type KimiHostIdentity,
 } from '@moonshot-ai/kimi-code-oauth';
+import { ulid } from 'ulid';
+
 import { createAsyncApiDocument } from './protocol/asyncapi';
 import Fastify, { type FastifyInstance } from 'fastify';
 
@@ -42,6 +44,9 @@ import { resolveRequestId } from './request-id';
 import { registerApiV1Routes } from './routes/registerApiV1Routes';
 import { registerApiV2Routes } from './routes/registerApiV2Routes';
 import { registerWebAssetRoutes } from './routes/webAssets';
+import { resolveSessionFacts } from './routes/sessions';
+import { toWireWorkspace } from './routes/workspaces';
+import { MAIN_AGENT_ID } from './transport/mainAgent';
 import {
   createServerLogger,
   type ServerLogger,
@@ -61,6 +66,9 @@ import { SessionEventBroadcaster } from './transport/ws/v1/sessionEventBroadcast
 import type { ConfigWarningItem } from './transport/ws/v1/events';
 import { FsWatchBridge } from './transport/ws/v1/fsWatchBridge';
 import { registerWsV1, WS_PATH as WS_PATH_V1 } from './transport/ws/v1/registerWsV1';
+import { registerWsV2, WS_PATH_V2 } from './transport/ws/v2/registerWsV2';
+import { liveSessionSourceFor, SessionV2Binder } from './services/v2Projection/binder';
+import { GlobalV2Fanout } from './services/v2Projection/globalFanout';
 import { getServerVersion } from './version';
 import { classify } from './security/bindClassify';
 import {
@@ -417,6 +425,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
 
   await registerOpenApi();
 
+  const serverId = ulid();
+
   await registerApiV1Routes(app, core, {
     serverVersion,
     hostIdentity: opts.hostIdentity,
@@ -435,13 +445,14 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       (process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'] === undefined ||
         process.env['KIMI_CODE_PLUGIN_MARKETPLACE_FROM_DEV_SERVER'] === '1'),
     onShutdown: () => {
-      void close().catch((err: unknown) => logger.error({ err }, 'server close failed'));
+      void close().catch((error: unknown) => logger.error({ err: error }, 'server close failed'));
     },
     connectionRegistry,
     broadcaster,
     transcriptService,
     dangerousBypassAuth: opts.disableAuth === true,
     webTitle: opts.webTitle,
+    serverId,
   });
 
   await registerApiV2Routes(app, core);
@@ -454,6 +465,47 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     logger,
   });
 
+  const v2Binder = new SessionV2Binder();
+  const globalFanout = new GlobalV2Fanout(
+    { subscribe: (handler) => core.accessor.get(IEventService).subscribe(handler) },
+    {
+      sessionInfoFor: async (sessionId) => {
+        const summary = await core.accessor.get(ISessionIndex).get(sessionId);
+        if (summary === undefined) return undefined;
+        const facts = resolveSessionFacts(core, sessionId);
+        const binding = v2Binder.peek(sessionId);
+        return {
+          session_id: summary.id,
+          workspace_id: summary.workspaceId,
+          title: summary.title ?? '',
+          status: summary.archived ? 'archived' : 'active',
+          model: facts.model,
+          created_at: new Date(summary.createdAt).toISOString(),
+          updated_at: new Date(summary.updatedAt).toISOString(),
+          turn_count: binding?.projector.agentFor(MAIN_AGENT_ID).turnCount,
+        };
+      },
+      workspaceWireFor: async (workspace) => {
+        if (workspace === null || typeof workspace !== 'object') return undefined;
+        return (await toWireWorkspace(core, workspace as Parameters<typeof toWireWorkspace>[1])) as never;
+      },
+      ensureSessionBinding: (sessionId) => {
+        const source = liveSessionSourceFor(core, sessionId);
+        if (source !== undefined) v2Binder.attach(source);
+      },
+      logger: { warn: (meta, msg) => logger.warn(meta, msg) },
+    },
+  );
+
+  const wssV2 = registerWsV2({
+    binder: v2Binder,
+    registry: connectionRegistry,
+    serverId,
+    sessionSourceFor: (sessionId) => liveSessionSourceFor(core, sessionId),
+    globalFanout,
+    logger: { warn: (meta, msg) => logger.warn(meta, msg) },
+  });
+
   const handleUpgrade = async (
     req: IncomingMessage,
     socket: Duplex,
@@ -461,7 +513,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   ): Promise<void> => {
     const url = req.url ?? '';
     const isV1 = url === WS_PATH_V1 || url.startsWith(`${WS_PATH_V1}?`);
-    if (!isV1) {
+    const isV2 = url === WS_PATH_V2 || url.startsWith(`${WS_PATH_V2}?`);
+    if (!isV1 && !isV2) {
       socket.destroy();
       return;
     }
@@ -523,7 +576,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     }
 
     (socket as Socket).setNoDelay(true);
-    wssV1.handleUpgrade(req, socket, head, (ws) => wssV1.emit('connection', ws, req));
+    if (isV2) wssV2.handleUpgrade(req, socket, head, (ws) => wssV2.emit('connection', ws, req));
+    else wssV1.handleUpgrade(req, socket, head, (ws) => wssV1.emit('connection', ws, req));
   };
   app.server.on('upgrade', (req, socket, head) => {
     void handleUpgrade(req, socket, head).catch((error: unknown) =>
@@ -533,6 +587,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
 
   app.addHook('onClose', async () => {
     connectionRegistry.closeAll('server shutting down');
+    wssV2.close();
     wssV1.close();
     await broadcaster.close();
   });

@@ -16,6 +16,7 @@ const toolsUpdateStoreSchema = z.object({
 export class ToolsUpdateStore extends AgentEvent2<z.infer<typeof toolsUpdateStoreSchema>> {
   static override readonly type = 'tools.update_store';
   static override readonly durable = true;
+  static override readonly observable = true;
   static override readonly schema = toolsUpdateStoreSchema;
 }
 export interface ToolsUpdateStore {
