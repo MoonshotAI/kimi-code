@@ -13,6 +13,10 @@
       "types": "./src/contract.ts",
       "default": "./src/contract.ts"
     },
+    "./protocol": {
+      "types": "./src/protocol/messages/index.ts",
+      "default": "./src/protocol/messages/index.ts"
+    },
     "./search-worker-runtime": {
       "types": "./src/search/worker/runtime.ts",
       "default": "./src/search/worker/runtime.ts"

@@ -1,0 +1,168 @@
+import { join } from 'node:path';
+
+import {
+  getLiveSessionById,
+  IAgentLifecycleService,
+  ISessionIndex,
+  IWireService,
+  MAIN_AGENT_ID,
+  type Scope,
+} from '@moonshot-ai/agent-core-v2';
+
+import {
+  historyResponseSchema,
+  type HistoryMessage,
+  type HistoryResponse,
+} from '../../protocol/messages';
+import { readWireRecords, type ContextRecord } from '../projection/heal';
+import type { ProjectionService } from '../projection/projectionService';
+import { foldWireHistory } from './coldFold';
+
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 200;
+
+export class HistorySessionNotFoundError extends Error {
+  readonly sessionId: string;
+  constructor(sessionId: string) {
+    super(`session ${sessionId} does not exist`);
+    this.name = 'HistorySessionNotFoundError';
+    this.sessionId = sessionId;
+  }
+}
+
+export interface HistoryQueryOptions {
+  readonly before_turn?: string;
+  readonly after_step?: string;
+  readonly page_size?: number;
+  readonly agent_id?: string;
+}
+
+export interface HistoryServiceDeps {
+  readonly homeDir: string;
+  readonly core: Scope;
+  readonly projection: ProjectionService;
+}
+
+export async function readSessionHistory(
+  deps: HistoryServiceDeps,
+  sessionId: string,
+  query: HistoryQueryOptions,
+): Promise<HistoryResponse> {
+  const summary = await deps.core.accessor.get(ISessionIndex).get(sessionId);
+  if (summary === undefined) throw new HistorySessionNotFoundError(sessionId);
+  const agentId = query.agent_id ?? MAIN_AGENT_ID;
+  const live = getLiveSessionById(deps.core.accessor, sessionId) !== undefined;
+  if (live) await flushAgentWire(deps.core, sessionId, agentId);
+  const records = await readAgentWire(deps.homeDir, summary.workspaceId, sessionId, agentId);
+  let subagentTaskIds: ReadonlyMap<string, string> | undefined;
+  if (agentId !== MAIN_AGENT_ID) {
+    if (live) await flushAgentWire(deps.core, sessionId, MAIN_AGENT_ID);
+    const mainRecords = await readAgentWire(deps.homeDir, summary.workspaceId, sessionId, MAIN_AGENT_ID);
+    subagentTaskIds = scanSubagentTaskIds(mainRecords);
+  }
+  const all = foldWireHistory(records, {
+    sessionId,
+    agentId,
+    live,
+    fallbackTimestamp: new Date(summary.createdAt).toISOString(),
+    subagentTaskIds,
+    resolvePlanRevisionKey: (key) =>
+      join('sessions', summary.workspaceId, sessionId, 'agents', agentId, key),
+  });
+  const page = paginateHistory(all, query);
+  const inFlight = live ? deps.projection.inFlight(sessionId, agentId) : undefined;
+  const response: HistoryResponse = {
+    messages: page.messages,
+    has_more: page.hasMore,
+    in_flight: inFlight,
+  };
+  const parsed = historyResponseSchema.safeParse(response);
+  if (!parsed.success) {
+    throw new Error(
+      `history response failed schema validation: ${parsed.error.issues
+        .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+        .join('; ')}`,
+    );
+  }
+  return parsed.data;
+}
+
+export interface HistoryPage {
+  readonly messages: HistoryMessage[];
+  readonly hasMore: boolean;
+}
+
+export function paginateHistory(
+  messages: readonly HistoryMessage[],
+  query: HistoryQueryOptions,
+): HistoryPage {
+  const pageSize = Math.min(Math.max(query.page_size ?? DEFAULT_PAGE_SIZE, 1), MAX_PAGE_SIZE);
+  if (query.before_turn !== undefined) {
+    const cursorIndex = messages.findIndex(
+      (message) => message.type === 'turn' && message.turn_id === query.before_turn,
+    );
+    if (cursorIndex < 0) return { messages: [], hasMore: false };
+    const anchors = turnAnchorIndices(messages, cursorIndex);
+    const start = anchors.length > pageSize ? anchors[anchors.length - pageSize]! : 0;
+    return { messages: messages.slice(start, cursorIndex), hasMore: anchors.length > pageSize };
+  }
+  if (query.after_step !== undefined) {
+    let index = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i]!;
+      if ('step_id' in message && message.step_id === query.after_step) {
+        index = i;
+        break;
+      }
+    }
+    if (index < 0) return { messages: [], hasMore: false };
+    const end = Math.min(messages.length, index + 1 + pageSize);
+    return { messages: messages.slice(index + 1, end), hasMore: end < messages.length };
+  }
+  const anchors = turnAnchorIndices(messages, messages.length);
+  const start = anchors.length > pageSize ? anchors[anchors.length - pageSize]! : 0;
+  return { messages: messages.slice(start), hasMore: anchors.length > pageSize };
+}
+
+function turnAnchorIndices(messages: readonly HistoryMessage[], endExclusive: number): number[] {
+  const anchors: number[] = [];
+  for (let i = 0; i < endExclusive; i++) {
+    if (messages[i]!.type === 'turn') anchors.push(i);
+  }
+  return anchors;
+}
+
+function scanSubagentTaskIds(records: readonly ContextRecord[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const record of records) {
+    if (record.type !== 'task.started' && record.type !== 'task.terminated') continue;
+    const info = record['info'] as { kind?: unknown; agentId?: unknown; taskId?: unknown } | undefined;
+    if (info?.kind !== 'agent') continue;
+    if (typeof info.agentId !== 'string' || typeof info.taskId !== 'string') continue;
+    map.set(info.agentId, info.taskId);
+  }
+  return map;
+}
+
+async function flushAgentWire(core: Scope, sessionId: string, agentId: string): Promise<void> {
+  const session = getLiveSessionById(core.accessor, sessionId);
+  const handle = session?.accessor.get(IAgentLifecycleService).handleOf(agentId);
+  if (handle === undefined) return;
+  await handle.accessor.get(IWireService).flush();
+}
+
+async function readAgentWire(
+  homeDir: string,
+  workspaceId: string,
+  sessionId: string,
+  agentId: string,
+): Promise<ContextRecord[]> {
+  try {
+    return await readWireRecords(
+      join(homeDir, 'sessions', workspaceId, sessionId, 'agents', agentId, 'wire.jsonl'),
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+}

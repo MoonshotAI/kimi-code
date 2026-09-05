@@ -61,6 +61,7 @@ import { SessionEventBroadcaster } from './transport/ws/v1/sessionEventBroadcast
 import type { ConfigWarningItem } from './transport/ws/v1/events';
 import { FsWatchBridge } from './transport/ws/v1/fsWatchBridge';
 import { registerWsV1, WS_PATH as WS_PATH_V1 } from './transport/ws/v1/registerWsV1';
+import { registerWsV3, WS_PATH_V3 } from './transport/ws/v3/registerWsV3';
 import { getServerVersion } from './version';
 import { classify } from './security/bindClassify';
 import {
@@ -78,6 +79,7 @@ import {
   shutdownServerTelemetry,
 } from './services/telemetry';
 import { TranscriptService } from './services/transcript/transcriptService';
+import { ProjectionService } from './services/projection';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
 import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
 import { createAuthFailureLimiter } from './middleware/rateLimit';
@@ -339,6 +341,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     transcriptService,
   });
   const fsWatchBridge = new FsWatchBridge({ core, logger });
+  const projectionService = new ProjectionService({ homeDir, core, logger });
 
   const configService = core.accessor.get(IConfigService);
   const publishConfigWarnings = (diagnostics: readonly ConfigDiagnostic[]): void => {
@@ -440,6 +443,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     connectionRegistry,
     broadcaster,
     transcriptService,
+    homeDir,
+    projectionService,
     dangerousBypassAuth: opts.disableAuth === true,
     webTitle: opts.webTitle,
   });
@@ -454,6 +459,13 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     logger,
   });
 
+  const { wss: wssV3, hub: wsV3Hub } = registerWsV3(core, {
+    registry: connectionRegistry,
+    projection: projectionService,
+    serverId: registration.serverId,
+    logger,
+  });
+
   const handleUpgrade = async (
     req: IncomingMessage,
     socket: Duplex,
@@ -461,7 +473,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   ): Promise<void> => {
     const url = req.url ?? '';
     const isV1 = url === WS_PATH_V1 || url.startsWith(`${WS_PATH_V1}?`);
-    if (!isV1) {
+    const isV3 = url === WS_PATH_V3 || url.startsWith(`${WS_PATH_V3}?`);
+    if (!isV1 && !isV3) {
       socket.destroy();
       return;
     }
@@ -523,7 +536,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     }
 
     (socket as Socket).setNoDelay(true);
-    wssV1.handleUpgrade(req, socket, head, (ws) => wssV1.emit('connection', ws, req));
+    const wss = isV3 ? wssV3 : wssV1;
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   };
   app.server.on('upgrade', (req, socket, head) => {
     void handleUpgrade(req, socket, head).catch((error: unknown) =>
@@ -534,6 +548,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   app.addHook('onClose', async () => {
     connectionRegistry.closeAll('server shutting down');
     wssV1.close();
+    wssV3.close();
+    wsV3Hub.dispose();
     await broadcaster.close();
   });
 
