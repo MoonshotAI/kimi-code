@@ -142,4 +142,100 @@ describe('analyzeWire', () => {
     expect(a.summary.peakContextTokens).toBe(42);
     expect(a.contextSeries.map((point) => point.contextTokens)).toEqual([42]);
   });
+
+  it('keeps steering inside the active turn and folds the durable turn outcome', () => {
+    line = 0;
+    const a = analyzeWire([
+      e({ type: 'turn.prompt', input: [{ type: 'text', text: 'start' }], origin: { kind: 'user' } }, 1000),
+      loop({ type: 'step.begin', uuid: 's1', turnId: '7', step: 0 }, 1100),
+      loop({ type: 'content.part', stepUuid: 's1', part: { type: 'think', think: 'reasoning' } }, 1150),
+      e({ type: 'turn.steer', input: [{ type: 'text', text: 'one more thing' }], origin: { kind: 'user' } }, 1200),
+      loop({ type: 'step.end', uuid: 's1', turnId: '7', step: 0, finishReason: 'end_turn' }, 1400),
+      e({ type: 'turn.ended', agentId: 'main', turnId: 7, reason: 'completed', durationMs: 450, stopReason: 'repeat_breaker' }, 1500),
+      e({ type: 'token_counting.turn_recorded', agentId: 'main', turnId: 7, length: 2, tokens: 50 }, 1501),
+      e({ type: 'turn.prompt', input: [{ type: 'text', text: 'next' }], origin: { kind: 'user' } }, 3000),
+    ]);
+
+    expect(a.turns).toHaveLength(2);
+    expect(a.turns[0]).toMatchObject({
+      turnId: 7,
+      endTime: 1500,
+      durationMs: 450,
+      outcome: 'completed',
+      stopReason: 'repeat_breaker',
+    });
+    expect(a.turns[0]!.steps[0]!.content.thinkChars).toBe(9);
+    expect(a.turns[1]!.waitBeforeMs).toBe(1500);
+    expect(a.contextSeries.at(-1)?.turnIndex).toBe(0);
+    expect(a.summary.activeMs).toBe(450);
+  });
+
+  it('uses a steer as the trigger when the next step belongs to a new turn', () => {
+    line = 0;
+    const steerLine = 4;
+    const a = analyzeWire([
+      e({ type: 'turn.prompt', input: [{ type: 'text', text: 'start' }], origin: { kind: 'user' } }, 1000),
+      loop({ type: 'step.begin', uuid: 's1', turnId: '7', step: 0 }, 1100),
+      loop({ type: 'step.end', uuid: 's1', turnId: '7', step: 0, finishReason: 'end_turn', usage: { inputOther: 10, output: 2, inputCacheRead: 0, inputCacheCreation: 0 } }, 1200),
+      e({ type: 'turn.steer', input: [{ type: 'text', text: 'continue' }], origin: { kind: 'system_trigger' } }, 1300),
+      loop({ type: 'step.begin', uuid: 's2', turnId: '8', step: 0 }, 1400),
+      loop({ type: 'tool.call', uuid: 'tc2', turnId: '8', step: 0, stepUuid: 's2', toolCallId: 'c2', name: 'Read' }, 1450),
+      loop({ type: 'tool.result', parentUuid: 'tc2', toolCallId: 'c2', result: { output: 'done' } }, 1500),
+      loop({ type: 'step.end', uuid: 's2', turnId: '8', step: 0, finishReason: 'end_turn', usage: { inputOther: 20, output: 4, inputCacheRead: 5, inputCacheCreation: 1 } }, 1600),
+    ]);
+
+    expect(a.turns).toHaveLength(2);
+    expect(a.turns[0]).toMatchObject({
+      trigger: 'prompt',
+      turnId: 7,
+      steps: [{ uuid: 's1' }],
+      tokens: { inputOther: 10, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
+      toolCallCount: 0,
+    });
+    expect(a.turns[1]).toMatchObject({
+      trigger: 'steer',
+      promptLineNo: steerLine,
+      promptTime: 1300,
+      promptText: 'continue',
+      originKind: 'system_trigger',
+      turnId: 8,
+      steps: [{ uuid: 's2' }],
+      tokens: { inputOther: 20, output: 4, inputCacheRead: 5, inputCacheCreation: 1 },
+      toolCallCount: 1,
+    });
+  });
+
+  it('splits truncated wires when step turn ids advance without a prompt record', () => {
+    line = 0;
+    const a = analyzeWire([
+      e({ type: 'turn.prompt', input: [{ type: 'text', text: 'start' }], origin: { kind: 'user' } }, 1000),
+      loop({ type: 'step.begin', uuid: 's1', turnId: '7', step: 0 }, 1100),
+      loop({ type: 'step.end', uuid: 's1', turnId: '7', step: 0, finishReason: 'end_turn' }, 1200),
+      loop({ type: 'step.begin', uuid: 's2', turnId: '8', step: 0 }, 1300),
+      loop({ type: 'step.end', uuid: 's2', turnId: '8', step: 0, finishReason: 'end_turn' }, 1400),
+    ]);
+
+    expect(a.turns).toHaveLength(2);
+    expect(a.turns[0]).toMatchObject({ turnId: 7, steps: [{ uuid: 's1' }] });
+    expect(a.turns[1]).toMatchObject({
+      trigger: 'prompt',
+      promptLineNo: 4,
+      promptText: '(no prompt record)',
+      turnId: 8,
+      steps: [{ uuid: 's2' }],
+    });
+  });
+
+  it('marks persisted error step endings as errors', () => {
+    line = 0;
+    const analysis = analyzeWire([
+      e({ type: 'turn.prompt', input: [{ type: 'text', text: 'start' }], origin: { kind: 'user' } }, 1000),
+      loop({ type: 'step.begin', uuid: 's1', turnId: '3', step: 0 }, 1100),
+      loop({ type: 'step.end', uuid: 's1', turnId: '3', step: 0, finishReason: 'error' }, 1200),
+      e({ type: 'turn.ended', agentId: 'main', turnId: 3, reason: 'failed' }, 1250),
+    ]);
+
+    expect(analysis.turns[0]?.steps[0]?.isError).toBe(true);
+    expect(analysis.turns[0]?.outcome).toBe('failed');
+  });
 });

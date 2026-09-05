@@ -536,6 +536,7 @@ describe('AgentConversationUndoService', () => {
     ctx.appendTurnExchange('u2', 'a2');
     const list = vi.spyOn(ctx.get(IAgentPromptService), 'list').mockReturnValue({
       active: undefined,
+      launching: false,
       pending: [
         {
           id: 'queued',

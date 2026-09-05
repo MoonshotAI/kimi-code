@@ -40,7 +40,7 @@ import { extractBashTargetDirs } from './bashTargets';
 
 const AGENTS_MD_BASENAMES: ReadonlySet<string> = new Set<string>(AGENTS_MD_PLAIN_NAMES);
 
-const BASH_PARSE_OPTIONS = { timeoutMs: 20, maxNodes: 10_000 } as const;
+const BASH_PARSE_OPTIONS = { timeoutMs: 500, maxNodes: 10_000 } as const;
 
 const DISCOVERY_REMINDER_VARIANT = 'agents_md';
 

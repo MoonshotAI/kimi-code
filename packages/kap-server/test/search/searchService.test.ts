@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { appendFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { monitorEventLoopDelay, performance, type IntervalHistogram } from 'node:perf_hooks';
+import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
 import { Worker } from 'node:worker_threads';
 
 import type {
@@ -2276,7 +2276,12 @@ describe('search worker host (stage 4)', () => {
     expect(degraded.indexState.state).toBe('building');
     expect(degraded.indexState.degraded).toContain('worker');
 
-    await new Promise((resolve) => setTimeout(resolve, 700));
+    await vi.waitFor(
+      async () => {
+        expect((await hostOf(service).status()).readOnly).toBe(false);
+      },
+      { timeout: 10_000 },
+    );
     await settleSync(service);
     const page = await service.search({ query: '苹果' });
     expect(page.items.length).toBe(1);
@@ -2321,9 +2326,13 @@ describe('search worker host (stage 4)', () => {
     await opening;
     await waitForGone(lockPath());
 
-    await new Promise((resolve) => setTimeout(resolve, 700));
-    const reopened = await host.ensureOpen();
-    expect(reopened.readOnly).toBe(false);
+    await vi.waitFor(
+      async () => {
+        const reopened = await host.ensureOpen();
+        expect(reopened.readOnly).toBe(false);
+      },
+      { timeout: 10_000 },
+    );
   });
 
   it('recovers a read-only open caused by an orphaned same-pid lock', { timeout: 30_000 }, async () => {
@@ -2363,7 +2372,14 @@ describe('search worker host (stage 4)', () => {
 
     await host.ensureOpen();
     const sync = host.sync(inputs);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await vi.waitFor(
+      () => {
+        expect(
+          (host as unknown as { requests: Map<number, unknown> }).requests.size,
+        ).toBeGreaterThan(0);
+      },
+      { timeout: 10_000 },
+    );
     host.beginClose();
     const outcome = await sync;
     expect(outcome.noop).toBe(true);
@@ -2400,9 +2416,13 @@ describe('search worker host (stage 4)', () => {
     await expect(wedged).rejects.toThrow(/timed out/);
 
     gate = false;
-    await new Promise((resolve) => setTimeout(resolve, 700));
-    const status = await host.status();
-    expect(status.readOnly).toBe(false);
+    await vi.waitFor(
+      async () => {
+        const status = await host.status();
+        expect(status.readOnly).toBe(false);
+      },
+      { timeout: 10_000 },
+    );
   });
 
   it('rejects in-flight requests as disposed during a clean close', { timeout: 30_000 }, async () => {
@@ -2454,7 +2474,12 @@ describe('search worker host (stage 4)', () => {
     expect(page1.pageToken).toBeDefined();
 
     await hostOf(service).killWorkerForTest();
-    await new Promise((resolve) => setTimeout(resolve, 700));
+    await vi.waitFor(
+      async () => {
+        expect((await hostOf(service).status()).readOnly).toBe(false);
+      },
+      { timeout: 10_000 },
+    );
     await settleSync(service);
 
     await expect(
@@ -2876,7 +2901,12 @@ describe('search lifecycle diagnostics (stage 5)', () => {
     expect(down.state).toBe('degraded');
     expect(down.detail).toContain('worker');
 
-    await new Promise((resolve) => setTimeout(resolve, 700));
+    await vi.waitFor(
+      async () => {
+        expect((await hostOf(service).status()).readOnly).toBe(false);
+      },
+      { timeout: 10_000 },
+    );
     await settleSync(service);
     expect(service.lifecycleReport().state).toBe('ready');
     expect((await service.search({ query: '苹果' })).items.length).toBe(1);
@@ -2890,9 +2920,16 @@ describe('search lifecycle diagnostics (stage 5)', () => {
     expect(service.lifecycleReport().state).toBe('ready');
 
     await hostOf(service).killWorkerForTest();
-    await new Promise((resolve) => setTimeout(resolve, 700));
-
     const host = hostOf(service);
+    await vi.waitFor(
+      () => {
+        expect(
+          (host as unknown as { nextRetryAfter: number }).nextRetryAfter,
+        ).toBeLessThanOrEqual(Date.now());
+      },
+      { timeout: 10_000 },
+    );
+
     const respawn = syncNow(service);
     respawn.catch(() => {});
     await vi.waitFor(
@@ -2955,135 +2992,3 @@ describe('search lifecycle diagnostics (stage 5)', () => {
   });
 });
 
-describe('baseline: synthetic corpus', () => {
-  let home: string | undefined;
-  const services: GlobalSearchService[] = [];
-
-  beforeEach(async () => {
-    home = await mkdtemp(join(tmpdir(), 'kimi-kap-search-baseline-'));
-  });
-
-  afterEach(async () => {
-    for (const service of services.splice(0)) service.dispose();
-    await drainGlobalSearchDisposals();
-    if (home !== undefined) {
-      await rm(home, { recursive: true, force: true });
-      home = undefined;
-    }
-  });
-
-  const TOPICS = ['compaction', 'walrus', 'snapshot', 'recovery', '索引', '持久化'];
-
-  async function writeCorpus(from: number, to: number): Promise<SessionSummary[]> {
-    const summaries: SessionSummary[] = [];
-    for (let i = from; i < to; i++) {
-      const id = `s${i}`;
-      summaries.push(summary(id, `session ${i} 索引讨论`, T1 + i));
-      const lines: string[] = [];
-      for (let j = 0; j < 8; j++) {
-        lines.push(userLine(`session ${i} message ${j} about ${TOPICS[(i + j) % TOPICS.length]!}`, T1 + i * 100 + j));
-        lines.push(assistantLine(`reply ${j} covering ${TOPICS[(i + 2 * j) % TOPICS.length]!}`, T1 + i * 100 + j + 1));
-      }
-      await writeWire(home!, id, 'main', lines);
-    }
-    return summaries;
-  }
-
-  async function medianMs(fn: () => Promise<unknown>, runs = 5): Promise<number> {
-    const times: number[] = [];
-    for (let r = 0; r < runs; r++) {
-      const t0 = performance.now();
-      await fn();
-      times.push(performance.now() - t0);
-    }
-    times.sort((a, b) => a - b);
-    return times[(times.length / 2) | 0]!;
-  }
-
-  it('indexing and search latency scale within a linear budget from 100 to 400 sessions', async () => {
-    const all: SessionSummary[] = [];
-    const service = makeService(home!, staticIndex(all));
-    services.push(service);
-
-    all.push(...(await writeCorpus(0, 100)));
-    const t0 = performance.now();
-    await service.reindex();
-    const index100 = performance.now() - t0;
-    const terms100 = await medianMs(() => service.search({ query: 'compaction' }));
-    const literal100 = await medianMs(() => service.search({ query: 'message 3 about', mode: 'literal' }));
-
-    all.push(...(await writeCorpus(100, 400)));
-    const t1 = performance.now();
-    await service.reindex();
-    const index400 = performance.now() - t1;
-    const terms400 = await medianMs(() => service.search({ query: 'compaction' }));
-    const literal400 = await medianMs(() => service.search({ query: 'message 3 about', mode: 'literal' }));
-
-    const hits = await service.search({ query: 'compaction' });
-    expect(hits.items.length).toBeGreaterThan(0);
-    expect((await service.search({ query: 'message 3 about', mode: 'literal' })).items.length).toBeGreaterThan(0);
-
-    console.log(
-      `[baseline] searchService ${JSON.stringify({
-        sessions: [100, 400],
-        reindexMs: [index100, index400],
-        termsMedianMs: [terms100, terms400],
-        literalMedianMs: [literal100, literal400],
-      })}`,
-    );
-    expect(index400).toBeLessThan(index100 * 10 + 2000);
-    expect(terms400).toBeLessThan(terms100 * 10 + 100);
-    expect(literal400).toBeLessThan(literal100 * 10 + 100);
-  }, 120_000);
-
-  it('stage-4: deep keyset pages cost like the first page, with a bounded event-loop pause', async () => {
-    const all: SessionSummary[] = [];
-    const service = makeService(home!, staticIndex(all));
-    services.push(service);
-    all.push(...(await writeCorpus(0, 400)));
-    await service.reindex();
-
-    const eld: IntervalHistogram = monitorEventLoopDelay();
-    eld.enable();
-    try {
-      const tokens: (string | undefined)[] = [undefined];
-      let page = await service.search({ query: 'message', sort: 'time_desc', pageSize: 20 });
-      for (let p = 1; p < 10; p++) {
-        tokens.push(page.pageToken);
-        page = await service.search({
-          query: 'message',
-          sort: 'time_desc',
-          pageSize: 20,
-          pageToken: page.pageToken,
-        });
-      }
-      expect(page.items.length).toBe(20);
-
-      const page1Ms = await medianMs(() =>
-        service.search({ query: 'message', sort: 'time_desc', pageSize: 20 }),
-      );
-      const page10Ms = await medianMs(() =>
-        service.search({ query: 'message', sort: 'time_desc', pageSize: 20, pageToken: tokens[9] }),
-      );
-      const literalMs = await medianMs(() =>
-        service.search({ query: 'message 3 about', mode: 'literal' }),
-      );
-
-      const eldMaxMs = eld.max / 1e6;
-      const eldP99Ms = eld.percentile(99) / 1e6;
-      console.log(
-        `[baseline] stage4 ${JSON.stringify({
-          sessions: 400,
-          page1MedianMs: page1Ms,
-          page10MedianMs: page10Ms,
-          literalMedianMs: literalMs,
-          eventLoopDelayMs: { p99: eldP99Ms, max: eldMaxMs },
-        })}`,
-      );
-      expect(page10Ms).toBeLessThan(page1Ms * 5 + 50);
-      expect(eldMaxMs).toBeLessThan(500);
-    } finally {
-      eld.disable();
-    }
-  }, 120_000);
-});

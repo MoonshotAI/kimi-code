@@ -30,6 +30,9 @@ import type {
   CronCursorPayload,
   CronDeletePayload,
   CronTask,
+  ExportSessionManifest,
+  FileHistoryCheckpointed,
+  FileHistoryTracked,
   FullCompactionBegin,
   FullCompactionCancel,
   FullCompactionComplete,
@@ -84,10 +87,6 @@ import type { PermissionRecordApprovalResult } from '@moonshot-ai/agent-core-v2/
 import type { RuntimeSetBinding } from '@moonshot-ai/agent-core-v2/agent/runtimeBinding/runtimeBindingOps';
 import type { SwarmModeEnter, SwarmModeExit } from '@moonshot-ai/agent-core-v2/features/swarm/swarmOps';
 import type { TowerModeEnter, TowerModeExit } from '@moonshot-ai/agent-core-v2/features/tower/towerOps';
-import type {
-  StaleGuardCleared,
-  StaleGuardRecorded,
-} from '@moonshot-ai/agent-core-v2/features/staleGuard/staleGuardOps';
 import type { ToolsUpdateStore } from '@moonshot-ai/agent-core-v2/features/todo/todoOps';
 
 /** A wire record with v2's literal `type` discriminant restored. v2 declares
@@ -111,6 +110,22 @@ export interface ContextUpdateTokenCountRecord {
 export interface MicroCompactionApplyRecord {
   readonly type: 'micro_compaction.apply';
   readonly cutoff: number;
+  readonly time?: number;
+}
+
+/** v2-dropped durable record: removed with the staleGuard feature, but old
+ *  wires still contain it. */
+export interface StaleGuardRecordedRecord {
+  readonly type: 'staleGuard.recorded';
+  readonly path: string;
+  readonly mtimeMs: number;
+  readonly time?: number;
+}
+
+/** v2-dropped durable record: removed with the staleGuard feature, but old
+ *  wires still contain it. */
+export interface StaleGuardClearedRecord {
+  readonly type: 'staleGuard.cleared';
   readonly time?: number;
 }
 
@@ -143,6 +158,8 @@ export type AgentRecord =
   | WireRecordOf<'cron.add', CronAddPayload>
   | WireRecordOf<'cron.cursor', CronCursorPayload>
   | WireRecordOf<'cron.delete', CronDeletePayload>
+  | WireRecordOf<'file_history.checkpoint', FileHistoryCheckpointed>
+  | WireRecordOf<'file_history.tracked', FileHistoryTracked>
   | WireRecordOf<'forked', GoalForked>
   | WireRecordOf<'full_compaction.begin', FullCompactionBegin>
   | WireRecordOf<'full_compaction.cancel', FullCompactionCancel>
@@ -169,8 +186,6 @@ export type AgentRecord =
   | WireRecordOf<'prompt.completed', PromptCompleted>
   | WireRecordOf<'prompt.steered', PromptSteered>
   | WireRecordOf<'runtime.set_binding', RuntimeSetBinding>
-  | WireRecordOf<'staleGuard.cleared', StaleGuardCleared>
-  | WireRecordOf<'staleGuard.recorded', StaleGuardRecorded>
   | WireRecordOf<'swarm_mode.enter', SwarmModeEnter>
   | WireRecordOf<'swarm_mode.exit', SwarmModeExit>
   | WireRecordOf<'task.started', TaskStarted>
@@ -195,7 +210,9 @@ export type AgentRecord =
   | WireRecordOf<'turn.step.retrying', TurnStepRetrying>
   | WireRecordOf<'usage.record', UsageRecord>
   | ContextUpdateTokenCountRecord
-  | MicroCompactionApplyRecord;
+  | MicroCompactionApplyRecord
+  | StaleGuardRecordedRecord
+  | StaleGuardClearedRecord;
 
 /** Extract one record kind from the union. */
 export type AgentRecordOf<K extends AgentRecord['type']> = Extract<
@@ -205,26 +222,10 @@ export type AgentRecordOf<K extends AgentRecord['type']> = Extract<
 
 /**
  * `manifest.json` shape inside a `/export-debug-zip` bundle. Structural
- * mirror of the engine's `ExportSessionManifest`, which is not re-exported
- * from the package entry. All fields optional-tolerant because the manifest
- * comes from another machine / kimi-code version.
+ * current engine manifest with every field optional because the bundle may
+ * come from another machine or an older kimi-code version.
  */
-export interface ImportManifest {
-  sessionId?: string;
-  exportedAt?: string;
-  kimiCodeVersion?: string;
-  wireProtocolVersion?: string;
-  os?: string;
-  nodejsVersion?: string;
-  sessionFirstActivity?: string;
-  sessionLastActivity?: string;
-  title?: string;
-  workspaceDir?: string;
-  sessionLogPath?: string;
-  globalLogPath?: string;
-  installSource?: string;
-  shellEnv?: unknown;
-}
+export type ImportManifest = Partial<ExportSessionManifest>;
 
 /** vis-side bookkeeping for one imported bundle, written to
  *  `imported/<importId>/import-meta.json`. */
@@ -282,6 +283,7 @@ export interface AgentInfo {
   agentId: string;
   type: 'main' | 'sub' | 'independent';
   parentAgentId: string | null;
+  profileName: string | null;
   homedir: string;
   wireExists: boolean;
   wireRecordCount: number;

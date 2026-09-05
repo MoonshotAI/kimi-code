@@ -345,7 +345,7 @@ describe('AskUserQuestionTool', () => {
           },
         ],
       },
-      { signal, agentId: 'main' },
+      { signal, agentId: 'main', detached: false },
     );
     expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
       answered: 1,
@@ -381,7 +381,7 @@ describe('AskUserQuestionTool', () => {
           }),
         ],
       }),
-      { signal, agentId: 'main' },
+      { signal, agentId: 'main', detached: false },
     );
   });
 
@@ -549,9 +549,13 @@ describe('AskUserQuestionTool', () => {
       });
 
       expect(result.isError).toBe(false);
-      expect(result.output).toContain('task_id: q_test_task_id');
-      expect(result.output).toContain('automatic_notification: true');
-      expect(result.output).toContain('human_shell_hint: The pending question is also visible in the client UI.');
+      expect(result.output).toBe(
+        [
+          'task_id: q_test_task_id',
+          'status: running',
+          'next_step: Continue your work; the answer arrives automatically in a later message. Use TaskStop only to cancel the question.',
+        ].join('\n'),
+      );
       expect(registerTask).toHaveBeenCalledOnce();
       expect(registerTask.mock.calls[0]![1]).toMatchObject({ detached: true });
       expect(getTask).toHaveBeenCalledWith('q_test_task_id');
@@ -574,6 +578,54 @@ describe('AskUserQuestionTool', () => {
 
       expect(outputs).toEqual([JSON.stringify({ answers: { Postgres: true } })]);
       expect(settlements).toEqual([{ status: 'completed' }]);
+    });
+
+    it('detaches the background question from the asking turn', async () => {
+      const { tool, request, lastRegisteredTask } = makeTool();
+      await executeTool(tool, {
+        turnId: 4,
+        toolCallId: 'call_bg_detached',
+        args: { ...input(), background: true },
+        signal,
+      });
+
+      const { sink } = makeSink();
+      await lastRegisteredTask()!.start(sink);
+
+      expect(request).toHaveBeenCalledOnce();
+      expect(request.mock.calls[0]![0]).toMatchObject({ turnId: 4, toolCallId: 'call_bg_detached' });
+      expect(request.mock.calls[0]![1]).toMatchObject({ detached: true });
+
+      await executeTool(tool, { turnId: 4, toolCallId: 'call_fg', args: input(), signal });
+
+      expect(request).toHaveBeenCalledTimes(2);
+      expect(request.mock.calls[1]![1]).not.toMatchObject({ detached: true });
+    });
+
+    it('settles failed with the tool error when the question cannot be asked', async () => {
+      const { tool, lastRegisteredTask } = makeTool({
+        request: async () => {
+          throw new Error2(CoreErrors.codes.NOT_IMPLEMENTED, 'Client does not support questions');
+        },
+      });
+      await executeTool(tool, {
+        turnId: 0,
+        toolCallId: 'call_bg_unsupported',
+        args: { ...input(), background: true },
+        signal,
+      });
+
+      const { sink, outputs, settlements } = makeSink();
+      await lastRegisteredTask()!.start(sink);
+
+      expect(outputs).toEqual([]);
+      expect(settlements).toEqual([
+        {
+          status: 'failed',
+          stopReason:
+            'The connected client does not support interactive questions. Do NOT call this tool again. Ask the user directly in your text response instead.',
+        },
+      ]);
     });
 
     it('settles killed when the background task is aborted', async () => {

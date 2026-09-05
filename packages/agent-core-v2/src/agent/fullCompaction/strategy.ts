@@ -27,9 +27,17 @@ export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
   minOverflowReductionRatio: 0.05,
 };
 
+export interface CompactionTriggerBudget {
+  readonly maxSize: number;
+  readonly triggerRatio: number;
+  readonly reservedContextSize: number;
+  readonly triggerTokens: number;
+}
+
 export interface CompactionStrategy {
   shouldCompact(usedSize: number): boolean;
   shouldBlock(usedSize: number): boolean;
+  budget(): CompactionTriggerBudget;
   computeCompactCount(messages: readonly Message[], source: CompactionSource): number;
   reduceCompactOnOverflow(messages: readonly Message[]): number;
   readonly checkAfterStep: boolean;
@@ -49,6 +57,10 @@ export class RuntimeCompactionStrategy implements CompactionStrategy {
 
   shouldBlock(usedSize: number): boolean {
     return this.delegate().shouldBlock(usedSize);
+  }
+
+  budget(): CompactionTriggerBudget {
+    return this.delegate().budget();
   }
 
   computeCompactCount(messages: readonly Message[], source: CompactionSource): number {
@@ -127,6 +139,24 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
       usedSize >= this.maxSize * this.config.blockRatio ||
       this.shouldUseReservedContext(usedSize)
     );
+  }
+
+  budget(): CompactionTriggerBudget {
+    const maxSize = this.maxSize;
+    const reservedContextSize = this.config.reservedContextSize;
+    const reservedTrigger =
+      reservedContextSize > 0 && reservedContextSize < maxSize
+        ? maxSize - reservedContextSize
+        : Number.POSITIVE_INFINITY;
+    return {
+      maxSize,
+      triggerRatio: this.config.triggerRatio,
+      reservedContextSize,
+      triggerTokens:
+        maxSize <= 0
+          ? Number.POSITIVE_INFINITY
+          : Math.min(Math.ceil(maxSize * this.config.triggerRatio), reservedTrigger),
+    };
   }
 
   private shouldUseReservedContext(usedSize: number): boolean {

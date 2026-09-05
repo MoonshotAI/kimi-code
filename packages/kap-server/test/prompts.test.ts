@@ -14,6 +14,7 @@ import {
   IAgentStateService,
   IAgentToolPolicyService,
   IBootstrapService,
+  IConfigService,
   IFileService,
   ISessionContext,
   ISessionMetadata,
@@ -21,7 +22,7 @@ import {
   closeSessionById,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { projectPromptSnapshot, watchPromptSettlements } from '../src/routes/prompts';
@@ -193,14 +194,19 @@ describe('server-v2 /api/v1 prompts', () => {
   let home: string | undefined;
   let base: string;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-prompts-'));
     await writeConfigToml(home, PROMPT_TOML);
     server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
     base = `http://127.0.0.1:${server.port}`;
   });
 
-  afterEach(async () => {
+  beforeEach(async () => {
+    await writeConfigToml(home as string, PROMPT_TOML);
+    await (server as RunningServer).core.accessor.get(IConfigService).reload();
+  });
+
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -1537,39 +1543,44 @@ describe('server-v2 /api/v1 prompts', () => {
   });
 
   it('binds a discovered custom agent profile on the first prompt', async () => {
-    await mkdir(join(home as string, 'agents'), { recursive: true });
-    await writeFile(
-      join(home as string, 'agents', 'route-reviewer.md'),
-      [
-        '---',
-        'name: route-reviewer',
-        'description: reviewer defined by a user-level agent file',
-        '---',
-        '',
-        'You are a route-test reviewer.',
-        '',
-      ].join('\n'),
-      'utf-8',
-    );
-    const id = await createSession(home as string);
-    await createMainAgent(id);
+    const work = await mkdtemp(join(tmpdir(), 'kimi-server-v2-prompts-profile-'));
+    try {
+      await mkdir(join(home as string, 'agents'), { recursive: true });
+      await writeFile(
+        join(home as string, 'agents', 'route-reviewer.md'),
+        [
+          '---',
+          'name: route-reviewer',
+          'description: reviewer defined by a user-level agent file',
+          '---',
+          '',
+          'You are a route-test reviewer.',
+          '',
+        ].join('\n'),
+        'utf-8',
+      );
+      const id = await createSession(work);
+      await createMainAgent(id);
 
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
-      content: [{ type: 'text', text: 'hello' }],
-      profile: 'route-reviewer',
-    });
-    expect(submitted.body.code).toBe(0);
+      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'text', text: 'hello' }],
+        profile: 'route-reviewer',
+      });
+      expect(submitted.body.code).toBe(0);
 
-    const session = getLiveSessionById(server!.core.accessor, id);
-    if (session === undefined) throw new Error(`session ${id} not found`);
-    const main = session.accessor.get(IAgentLifecycleService).handleOf('main');
-    expect(main?.accessor.get(IAgentProfileService).data().profileName).toBe('route-reviewer');
+      const session = getLiveSessionById(server!.core.accessor, id);
+      if (session === undefined) throw new Error(`session ${id} not found`);
+      const main = session.accessor.get(IAgentLifecycleService).handleOf('main');
+      expect(main?.accessor.get(IAgentProfileService).data().profileName).toBe('route-reviewer');
 
-    const again = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
-      content: [{ type: 'text', text: 'again' }],
-      profile: 'route-reviewer',
-    });
-    expect(again.body.code).toBe(0);
+      const again = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'text', text: 'again' }],
+        profile: 'route-reviewer',
+      });
+      expect(again.body.code).toBe(0);
+    } finally {
+      await rm(work, { recursive: true, force: true });
+    }
   });
 
   it('rejects switching to a different profile once bound', async () => {

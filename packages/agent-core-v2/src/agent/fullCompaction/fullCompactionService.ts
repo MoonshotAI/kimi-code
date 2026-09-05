@@ -3,7 +3,6 @@ import { Service } from "#/_base/di/service";
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
-import { renderPrompt } from "#/_base/utils/render-prompt";
 import { estimateTokensForMessage } from "#/kosong/contract/tokens";
 import { buildCompactionSummaryText, isRealUserInput } from '#/agent/contextMemory/compactionHandoff';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
@@ -28,6 +27,13 @@ import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentTodoService } from '#/features/todo/todoService';
 import { renderTodoList } from '#/features/todo/todoItem';
 import {
+  isContextBudgetReminder,
+  summarizeCompactionAheadFollowUp,
+} from '#/features/contextBudget/contextBudgetReminder';
+import { onUnexpectedError } from '#/_base/errors/unexpectedError';
+import type { WireLineRange } from '#/wire/record';
+import { IWireService } from '#/wire/wire';
+import {
   APIContextOverflowError,
   APIEmptyResponseError,
   APIStatusError,
@@ -42,9 +48,11 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2, isCodedError, isError2, toKimiErrorPayload, unwrapErrorCause } from "#/errors";
 import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import compactionInstructionTemplate from './compaction-instruction.md?raw';
+import { renderCompactionInstruction } from './compactionInstruction';
+import { renderContextRecoveryPointer } from './contextRecovery';
 import {
   IAgentFullCompactionService,
+  type CompactionBudget,
   type FullCompactionInput,
   type FullCompactionTask,
 } from './fullCompaction';
@@ -57,6 +65,7 @@ import {
   CompactionCancelled,
   CompactionCompleted,
   fullCompactionKey,
+  fullCompactionWireRangesKey,
   FullCompactionBegin,
   FullCompactionCancel,
   FullCompactionComplete,
@@ -150,9 +159,11 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentLoopService private readonly loopService: IAgentLoopService,
     @IAgentStateService private readonly states: IAgentStateService,
+    @IWireService private readonly wire: IWireService,
   ) {
     super();
     this.states.contributeState(fullCompactionKey);
+    this.states.contributeState(fullCompactionWireRangesKey);
     this.states.contributeState(fullCompactionCompactionCountInTurnKey);
     this.states.contributeState(fullCompactionObservedMaxContextTokensByModelKey);
     this.states.contributeState(fullCompactionLastCompactedTokenCountKey);
@@ -235,6 +246,10 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
   get compacting(): FullCompactionTask | null {
     return this._compacting;
+  }
+
+  budget(): CompactionBudget {
+    return { used: this.tokenCountWithPending(), ...this.strategy.budget() };
   }
 
   cancel(): void {
@@ -633,15 +648,13 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
           : undefined;
       const compactionMaxOutputSize = resolvedModel.maxOutputSize ?? defaultCompactionCap;
 
-      const customInstruction = data.instruction?.trim() ?? '';
-      const instruction = renderPrompt(compactionInstructionTemplate, {
-        custom_instruction_block:
-          customInstruction.length > 0 ? `\nOptional user instruction:\n${customInstruction}\n` : '',
-      }).trimEnd();
+      const instruction = renderCompactionInstruction({ customInstruction: data.instruction });
 
       const delays = retryBackoffDelays(MAX_COMPACTION_RETRY_ATTEMPTS);
       let attempt: CompactionAttemptResult | undefined;
-      let historyForModel: readonly ContextMessage[] = stripDynamicToolContext(originalHistory);
+      let historyForModel: readonly ContextMessage[] = stripDynamicToolContext(originalHistory).filter(
+        (message) => !isContextBudgetReminder(message),
+      );
       let droppedCount = 0;
       let overflowShrinkCount = 0;
       let emptyOrTruncatedShrinkCount = 0;
@@ -688,6 +701,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
               overflowShrinkCount,
               (message) => this.tokenCounting.estimateMessage(message),
             );
+            if (historyForModel.length === 0) throw error;
             droppedCount += before - historyForModel.length;
             retryCount = 0;
             continue;
@@ -735,14 +749,23 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       }
 
       const summary = await this.postProcessSummary(attempt.summary);
+      const wireLines = await this.captureWireLines();
+      const recoveryFooter = this.renderRecoveryFooter(wireLines);
+      const summaryText = buildCompactionSummaryText(summary);
       const result = this.context.applyCompaction({
         summary,
-        contextSummary: buildCompactionSummaryText(summary),
+        contextSummary:
+          recoveryFooter === undefined ? summaryText : `${summaryText}\n\n${recoveryFooter}`,
         compactedCount: originalHistory.length,
         tokensBefore,
-        summaryOutputTokens: attempt.usage?.output,
+        summaryOutputTokens:
+          attempt.usage === null
+            ? undefined
+            : attempt.usage.output +
+              (recoveryFooter === undefined ? 0 : this.tokenCounting.estimateText(recoveryFooter)),
         requestOverheadTokens: this.requestTokens([]),
         droppedCount: droppedCount === 0 ? undefined : droppedCount,
+        wireLines,
       });
 
       const properties: CompactionFinishedEvent = {
@@ -758,6 +781,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         thinking_effort: thinkingEffort,
         trace_id: attempt.traceId,
         ...usageTelemetry(attempt.usage),
+        ...aheadReminderTelemetry(originalHistory),
       };
       this.telemetry.track2('compaction_finished', properties);
       return result;
@@ -794,9 +818,54 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     return `${summary.trim()}\n\n${renderTodoList(todos, '## TODO List')}`;
   }
 
+  private async captureWireLines(): Promise<WireLineRange | undefined> {
+    try {
+      await this.wire.flush();
+    } catch (error) {
+      onUnexpectedError(error);
+      return undefined;
+    }
+    const end = this.wire.lineCount();
+    const previous = this.states.get(fullCompactionWireRangesKey).at(-1);
+    const start = Math.max(previous?.end ?? 0, this.wire.lastContextClearLine() ?? 0) + 1;
+    if (end < start) return undefined;
+    return { start, end };
+  }
+
+  private renderRecoveryFooter(wireLines: WireLineRange | undefined): string | undefined {
+    if (wireLines === undefined) return undefined;
+    const journalPath = this.wire.journalPath();
+    if (journalPath === undefined) return undefined;
+    const windows = [...this.states.get(fullCompactionWireRangesKey), wireLines];
+    return renderContextRecoveryPointer({ journalPath, windows });
+  }
+
   private tokenCountWithPending(): number {
     return this.tokenCounting.get(agentContextOfScope(this.agent)).size;
   }
+}
+
+type CompactionAheadTelemetryProperties = Pick<
+  CompactionFinishedEvent,
+  | 'ahead_reminder_delivered'
+  | 'ahead_steps_count'
+  | 'ahead_write_calls_count'
+  | 'ahead_bash_calls_count'
+  | 'ahead_todo_calls_count'
+>;
+
+function aheadReminderTelemetry(
+  history: readonly ContextMessage[],
+): CompactionAheadTelemetryProperties {
+  const followUp = summarizeCompactionAheadFollowUp(history);
+  if (followUp === undefined) return { ahead_reminder_delivered: false };
+  return {
+    ahead_reminder_delivered: true,
+    ahead_steps_count: followUp.stepCount,
+    ahead_write_calls_count: followUp.writeCallCount,
+    ahead_bash_calls_count: followUp.bashCallCount,
+    ahead_todo_calls_count: followUp.todoCallCount,
+  };
 }
 
 function findAPIStatusError(error: unknown): APIStatusError | undefined {

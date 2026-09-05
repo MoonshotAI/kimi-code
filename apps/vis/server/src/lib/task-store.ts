@@ -2,8 +2,8 @@
 //
 // Read-only reader for background tasks, persisted by the engine under each
 // spawning agent's homedir at `<agentDir>/tasks/<taskId>.json`
-// (+ `tasks/<taskId>/output.log`) — NOT the session root. Callers pass the
-// agent homedir (`<session>/agents/<id>`).
+// (+ `tasks/<taskId>/output.log`). Main-agent reads may also receive the
+// legacy session root as a fallback.
 //
 // The visualizer never writes these files; it mirrors the engine's on-disk
 // layout (`packages/agent-core-v2/src/agent/task/persist.ts`) for reading only:
@@ -12,7 +12,7 @@
 //   - the same legacy snake_case → current camelCase normalization, so old
 //     sessions list identically to how the CLI would list them.
 
-import { open, readdir, readFile, stat } from 'node:fs/promises';
+import { open, readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type {
@@ -50,19 +50,44 @@ function taskOutputFile(agentDir: string, taskId: string): string {
  */
 export async function listBackgroundTasks(
   agentDir: string,
+  fallbackDir?: string,
 ): Promise<BackgroundTaskInfo[]> {
+  const primary = await listBackgroundTasksAt(agentDir);
+  const out = [...primary.tasks];
+  if (fallbackDir !== undefined) {
+    const fallback = await listBackgroundTasksAt(fallbackDir);
+    for (const task of fallback.tasks) {
+      if (!primary.reservedIds.has(task.keyId)) out.push(task);
+    }
+  }
+  // Newest first; tasks with no start time sort last.
+  out.sort((a, b) => (b.task.startedAt ?? 0) - (a.task.startedAt ?? 0));
+  return out.map((entry) => entry.task);
+}
+
+interface ListedTask {
+  keyId: string;
+  task: BackgroundTaskInfo;
+}
+
+async function listBackgroundTasksAt(
+  agentDir: string,
+): Promise<{ reservedIds: Set<string>; tasks: ListedTask[] }> {
   const dir = tasksDirOf(agentDir);
   let entries: import('node:fs').Dirent[];
   try {
     entries = await readdir(dir, { withFileTypes: true });
   } catch {
-    return [];
+    return { reservedIds: new Set(), tasks: [] };
   }
-  const out: BackgroundTaskInfo[] = [];
+  const reservedIds = new Set<string>();
+  const tasks: ListedTask[] = [];
   for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+    if (!entry.name.endsWith('.json')) continue;
     const id = entry.name.slice(0, -'.json'.length);
     if (!VALID_TASK_ID.test(id)) continue;
+    reservedIds.add(id);
+    if (!entry.isFile()) continue;
     let parsed: unknown;
     try {
       parsed = JSON.parse(await readFile(join(dir, entry.name), 'utf8'));
@@ -70,30 +95,42 @@ export async function listBackgroundTasks(
       continue;
     }
     if (!isReadablePersistedTask(parsed)) continue;
-    try {
-      out.push(normalizePersistedTask(parsed));
-    } catch {
-      // A record can pass the shape guard but still hold type-corrupt fields
-      // (e.g. a legacy `stop_reason` that is a number). Honour the
-      // silently-skips contract instead of failing the whole listing.
-      continue;
-    }
+    const task = normalizePersistedTask(parsed);
+    if (task === undefined || task.taskId !== id) continue;
+    tasks.push({ keyId: id, task });
   }
-  // Newest first; tasks with no start time sort last.
-  out.sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0));
-  return out;
+  return { reservedIds, tasks };
 }
 
-/** Byte size of a task's `output.log` (0 when absent or unreadable). */
+export interface TaskOutputMetadata {
+  exists: boolean;
+  size: number;
+}
+
+/** Presence and byte size of a task's `output.log`. */
+export async function taskOutputMetadata(
+  agentDir: string,
+  taskId: string,
+  fallbackDir?: string,
+): Promise<TaskOutputMetadata> {
+  const handle = await openTaskOutput(agentDir, taskId, fallbackDir);
+  if (handle === undefined) return { exists: false, size: 0 };
+  try {
+    return { exists: true, size: (await handle.stat()).size };
+  } catch {
+    return { exists: false, size: 0 };
+  } finally {
+    await handle.close();
+  }
+}
+
+/** Byte size of a task's `output.log` (0 when absent, empty, or unreadable). */
 export async function taskOutputSizeBytes(
   agentDir: string,
   taskId: string,
+  fallbackDir?: string,
 ): Promise<number> {
-  try {
-    return (await stat(taskOutputFile(agentDir, taskId))).size;
-  } catch {
-    return 0;
-  }
+  return (await taskOutputMetadata(agentDir, taskId, fallbackDir)).size;
 }
 
 export interface TaskOutputWindow {
@@ -123,13 +160,12 @@ export async function readTaskOutput(
   taskId: string,
   offset: number,
   maxBytes: number,
+  fallbackDir?: string,
 ): Promise<TaskOutputWindow> {
   const start = Math.max(0, Math.trunc(offset));
   const limit = Math.max(0, Math.trunc(maxBytes));
-  let handle;
-  try {
-    handle = await open(taskOutputFile(agentDir, taskId), 'r');
-  } catch {
+  const handle = await openTaskOutput(agentDir, taskId, fallbackDir);
+  if (handle === undefined) {
     return { offset: start, nextOffset: start, size: 0, content: '', eof: true };
   }
   try {
@@ -150,83 +186,180 @@ export async function readTaskOutput(
   }
 }
 
+async function openTaskOutput(
+  agentDir: string,
+  taskId: string,
+  fallbackDir?: string,
+): Promise<Awaited<ReturnType<typeof open>> | undefined> {
+  try {
+    return await open(taskOutputFile(agentDir, taskId), 'r');
+  } catch (error) {
+    if (!isMissingPath(error) || fallbackDir === undefined) return undefined;
+  }
+  try {
+    return await open(taskOutputFile(fallbackDir, taskId), 'r');
+  } catch {
+    return undefined;
+  }
+}
+
+function isMissingPath(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as NodeJS.ErrnoException).code === 'ENOENT'
+  );
+}
+
 // ── normalization (ported from agent-core-v2/agent/task/persist.ts) ────────
 
-type LegacyBackgroundTaskStatus =
-  | 'running'
-  | 'awaiting_approval'
-  | 'completed'
-  | 'failed'
-  | 'killed'
-  | 'lost';
+type ReadablePersistedTask = Record<string, unknown>;
 
-interface LegacyPersistedTask {
-  readonly task_id: string;
-  readonly command: string;
+interface CurrentTaskBase {
+  readonly taskId: string;
   readonly description: string;
-  readonly pid: number;
-  readonly started_at: number;
-  readonly ended_at: number | null;
-  readonly exit_code: number | null;
-  readonly status: LegacyBackgroundTaskStatus;
-  readonly timed_out?: boolean;
-  readonly stop_reason?: string;
-  readonly timeout_ms?: number;
-  readonly agent_id?: string;
-  readonly subagent_type?: string;
+  readonly status: BackgroundTaskStatus;
+  readonly detached: boolean;
+  readonly startedAt: number;
+  readonly endedAt: number | null;
+  readonly stopReason?: string;
+  readonly terminalNotificationSuppressed?: boolean;
+  readonly resumeReminded?: boolean;
+  readonly timeoutMs?: number;
 }
 
-type DiskPersistedTask = BackgroundTaskInfo | LegacyPersistedTask;
+const CURRENT_TASK_STATUSES: ReadonlySet<BackgroundTaskStatus> = new Set([
+  'running',
+  'completed',
+  'failed',
+  'timed_out',
+  'killed',
+  'lost',
+]);
 
-function normalizePersistedTask(task: DiskPersistedTask): BackgroundTaskInfo {
-  if (isLegacyPersistedTask(task)) return legacyPersistedTaskToInfo(task);
-  return { ...task, detached: task.detached ?? true };
+function normalizePersistedTask(task: ReadablePersistedTask): BackgroundTaskInfo | undefined {
+  const current = isLegacyPersistedTask(task) ? legacyPersistedTaskToCurrent(task) : task;
+  return decodeCurrentPersistedTask(current);
 }
 
-function legacyPersistedTaskToInfo(task: LegacyPersistedTask): BackgroundTaskInfo {
-  const status = legacyStatusToCurrent(task);
-  const base = {
+function decodeCurrentPersistedTask(task: ReadablePersistedTask): BackgroundTaskInfo | undefined {
+  const base = decodeCurrentTaskBase(task);
+  if (base === undefined) return undefined;
+
+  switch (task['kind']) {
+    case 'process':
+      if (
+        typeof task['command'] !== 'string' ||
+        !isFiniteNumber(task['pid']) ||
+        !isNullableFiniteNumber(task['exitCode'])
+      ) {
+        return undefined;
+      }
+      return {
+        ...base,
+        kind: 'process',
+        command: task['command'],
+        pid: task['pid'],
+        exitCode: task['exitCode'],
+        parentToolCallId: optionalString(task['parentToolCallId']),
+      };
+    case 'agent':
+      return {
+        ...base,
+        kind: 'agent',
+        agentId: optionalString(task['agentId']),
+        subagentType: optionalString(task['subagentType']),
+        parentToolCallId: optionalString(task['parentToolCallId']),
+        model: optionalString(task['model']),
+        thinkingEffort: optionalString(task['thinkingEffort']),
+        stopCode: optionalString(task['stopCode']),
+      };
+    case 'question':
+      if (!isFiniteNumber(task['questionCount'])) return undefined;
+      return {
+        ...base,
+        kind: 'question',
+        questionCount: task['questionCount'],
+        toolCallId: optionalString(task['toolCallId']),
+      };
+    default:
+      return undefined;
+  }
+}
+
+function decodeCurrentTaskBase(task: ReadablePersistedTask): CurrentTaskBase | undefined {
+  if (
+    typeof task['taskId'] !== 'string' ||
+    !VALID_TASK_ID.test(task['taskId']) ||
+    typeof task['description'] !== 'string' ||
+    !isCurrentTaskStatus(task['status']) ||
+    !isFiniteNumber(task['startedAt']) ||
+    !isNullableFiniteNumber(task['endedAt'])
+  ) {
+    return undefined;
+  }
+  return {
+    taskId: task['taskId'],
+    description: task['description'],
+    status: task['status'],
+    detached: optionalBoolean(task['detached']) ?? true,
+    startedAt: task['startedAt'],
+    endedAt: task['endedAt'],
+    stopReason: optionalString(task['stopReason']),
+    terminalNotificationSuppressed: optionalBoolean(task['terminalNotificationSuppressed']),
+    resumeReminded: optionalBoolean(task['resumeReminded']),
+    timeoutMs: optionalNumber(task['timeoutMs']),
+  };
+}
+
+function legacyPersistedTaskToCurrent(
+  task: ReadablePersistedTask & { readonly task_id: string },
+): ReadablePersistedTask {
+  const base: ReadablePersistedTask = {
     taskId: task.task_id,
-    description: task.description,
-    status,
+    description: task['description'],
+    status: legacyStatusToCurrent(task),
     detached: true,
-    startedAt: task.started_at,
-    endedAt: task.ended_at,
-    stopReason: optionalNonEmptyString(task.stop_reason),
-    timeoutMs: typeof task.timeout_ms === 'number' ? task.timeout_ms : undefined,
+    startedAt: task['started_at'],
+    endedAt: task['ended_at'],
+    stopReason: optionalNonEmptyString(task['stop_reason']),
+    timeoutMs: optionalNumber(task['timeout_ms']),
   };
   if (task.task_id.startsWith('agent-')) {
     return {
       ...base,
       kind: 'agent',
-      agentId: optionalNonEmptyString(task.agent_id),
-      subagentType: optionalNonEmptyString(task.subagent_type),
+      agentId: optionalNonEmptyString(task['agent_id']),
+      subagentType: optionalNonEmptyString(task['subagent_type']),
     };
   }
   return {
     ...base,
     kind: 'process',
-    command: task.command,
-    pid: task.pid,
-    exitCode: task.exit_code,
+    command: task['command'],
+    pid: task['pid'],
+    exitCode: task['exit_code'],
   };
 }
 
-function legacyStatusToCurrent(task: LegacyPersistedTask): BackgroundTaskStatus {
-  if (task.status === 'awaiting_approval') return 'running';
-  if (task.status === 'failed' && task.timed_out === true) return 'timed_out';
-  return task.status;
+function legacyStatusToCurrent(task: ReadablePersistedTask): unknown {
+  if (task['status'] === 'awaiting_approval') return 'running';
+  if (task['status'] === 'failed' && task['timed_out'] === true) return 'timed_out';
+  return task['status'];
 }
 
-function isReadablePersistedTask(obj: unknown): obj is DiskPersistedTask {
+function isReadablePersistedTask(obj: unknown): obj is ReadablePersistedTask {
   return (
     isRecord(obj) &&
     (typeof obj['taskId'] === 'string' || typeof obj['task_id'] === 'string')
   );
 }
 
-function isLegacyPersistedTask(task: DiskPersistedTask): task is LegacyPersistedTask {
-  return 'task_id' in task;
+function isLegacyPersistedTask(
+  task: ReadablePersistedTask,
+): task is ReadablePersistedTask & { readonly task_id: string } {
+  return typeof task['task_id'] === 'string';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -237,4 +370,31 @@ function optionalNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function optionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  return isFiniteNumber(value) ? value : undefined;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isNullableFiniteNumber(value: unknown): value is number | null {
+  return value === null || isFiniteNumber(value);
+}
+
+function isCurrentTaskStatus(value: unknown): value is BackgroundTaskStatus {
+  return (
+    typeof value === 'string' &&
+    CURRENT_TASK_STATUSES.has(value as BackgroundTaskStatus)
+  );
 }

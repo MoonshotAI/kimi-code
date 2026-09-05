@@ -9,6 +9,7 @@ export function stubToolResultTruncationService(): ToolResultTruncationServiceSt
     _serviceBrand: undefined,
     truncateForModel: async ({ result }) => result,
     isSpillFilePath: () => false,
+    isWireJournalPath: () => false,
   };
 }
 

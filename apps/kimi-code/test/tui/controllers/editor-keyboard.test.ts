@@ -15,6 +15,12 @@ interface Harness {
   readonly cancelCompaction: ReturnType<typeof vi.fn>;
   readonly btwCancelRunning: ReturnType<typeof vi.fn>;
   readonly btwCloseOrCancel: ReturnType<typeof vi.fn>;
+  readonly survey: {
+    readonly handlePreInput: ReturnType<typeof vi.fn<(data: string) => boolean>>;
+    readonly handleSubmit: ReturnType<typeof vi.fn<(text: string) => boolean>>;
+    readonly handleEditorChange: ReturnType<typeof vi.fn<(text: string) => void>>;
+    readonly closeSilently: ReturnType<typeof vi.fn<() => void>>;
+  };
 }
 
 function createHarness(options: { streamingPhase?: string; isCompacting?: boolean } = {}): Harness {
@@ -29,6 +35,12 @@ function createHarness(options: { streamingPhase?: string; isCompacting?: boolea
   const cancelCompaction = vi.fn(async () => {});
   const btwCancelRunning = vi.fn(() => false);
   const btwCloseOrCancel = vi.fn(() => false);
+  const survey = {
+    handlePreInput: vi.fn<(data: string) => boolean>(() => false),
+    handleSubmit: vi.fn<(text: string) => boolean>(() => false),
+    handleEditorChange: vi.fn<(text: string) => void>(() => {}),
+    closeSilently: vi.fn<() => void>(() => {}),
+  };
   const session = { cancel: vi.fn(async () => {}), cancelCompaction };
 
   const host = {
@@ -38,16 +50,23 @@ function createHarness(options: { streamingPhase?: string; isCompacting?: boolea
       appState: {
         streamingPhase: options.streamingPhase ?? 'idle',
         isCompacting: options.isCompacting ?? false,
+        editorCommand: null,
       },
       footer: { setTransientHint: vi.fn() },
       ui: { requestRender: vi.fn() },
     },
     session,
     btwPanelController: { cancelRunning: btwCancelRunning, closeOrCancel: btwCloseOrCancel },
+    surveyController: survey,
     openUndoSelector,
     cancelRunningShellCommand,
     updateEditorBorderHighlight: vi.fn(),
     updateGoalLengthWarning: vi.fn(),
+    handleUserInput: vi.fn(),
+    track: vi.fn(),
+    openExternalEditor: vi.fn(),
+    showError: vi.fn(),
+    stop: vi.fn(),
   } as unknown as EditorKeyboardHost;
 
   const controller = new EditorKeyboardController(
@@ -64,6 +83,7 @@ function createHarness(options: { streamingPhase?: string; isCompacting?: boolea
     cancelCompaction,
     btwCancelRunning,
     btwCloseOrCancel,
+    survey,
   };
 }
 
@@ -76,6 +96,12 @@ function pressEscape(editor: Harness['editor']): void {
 function pressCtrlC(editor: Harness['editor']): void {
   const handler = editor['onCtrlC'];
   if (handler === undefined) throw new Error('onCtrlC handler not installed');
+  (handler as () => void)();
+}
+
+function pressCtrlD(editor: Harness['editor']): void {
+  const handler = editor['onCtrlD'];
+  if (handler === undefined) throw new Error('onCtrlD handler not installed');
   (handler as () => void)();
 }
 
@@ -647,5 +673,90 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
     ]);
     expect(setText).not.toHaveBeenCalled();
     expect(host.state.queuedMessages).toEqual([]);
+  });
+});
+
+describe('EditorKeyboardController survey wiring', () => {
+  it('clears the pending undo-escape sequence only when the survey consumes Escape', () => {
+    const { editor, openUndoSelector, survey } = createHarness();
+    const onPreInput = editor['onPreInput'] as unknown as (data: string) => boolean;
+
+    pressEscape(editor);
+    survey.handlePreInput.mockReturnValueOnce(true);
+    onPreInput('\u001B');
+    pressEscape(editor);
+    expect(openUndoSelector).not.toHaveBeenCalled();
+
+    pressEscape(editor);
+    pressEscape(editor);
+    expect(openUndoSelector).toHaveBeenCalledOnce();
+  });
+
+  it('clears a pending exit when Escape arrives through the survey pre-input hook', () => {
+    const { host, editor } = createHarness();
+    const onPreInput = editor['onPreInput'] as unknown as (data: string) => boolean;
+
+    pressCtrlD(editor);
+    onPreInput('\u001B');
+    pressCtrlD(editor);
+
+    expect(host.stop).not.toHaveBeenCalled();
+  });
+
+  it('routes raw keys to the survey pre-input hook first', () => {
+    const { editor, survey } = createHarness();
+    const onPreInput = editor['onPreInput'] as unknown as (data: string) => boolean;
+
+    survey.handlePreInput.mockReturnValueOnce(true);
+    expect(onPreInput('\u001B[D')).toBe(true);
+    expect(survey.handlePreInput).toHaveBeenCalledWith('\u001B[D');
+
+    survey.handlePreInput.mockReturnValueOnce(false);
+    expect(onPreInput('x')).toBe(false);
+  });
+
+  it('forwards editor text changes to the survey', () => {
+    const { editor, survey } = createHarness();
+    const onChange = editor['onChange'] as unknown as (text: string) => void;
+
+    onChange('1');
+
+    expect(survey.handleEditorChange).toHaveBeenCalledWith('1');
+  });
+
+  it('lets the survey intercept a submit instead of sending it', () => {
+    const { host, editor, survey } = createHarness();
+    const onSubmit = editor['onSubmit'] as unknown as (text: string) => void;
+
+    survey.handleSubmit.mockReturnValueOnce(true);
+    onSubmit('1');
+
+    expect(survey.handleSubmit).toHaveBeenCalledWith('1');
+    expect(host.handleUserInput).not.toHaveBeenCalled();
+  });
+
+  it('sends the submit when the survey passes it through', () => {
+    const { host, editor, survey } = createHarness();
+    const onSubmit = editor['onSubmit'] as unknown as (text: string) => void;
+
+    survey.handleSubmit.mockReturnValueOnce(false);
+    onSubmit('hello');
+
+    expect(host.handleUserInput).toHaveBeenCalledWith('hello');
+  });
+
+  it('closes the survey silently when the external editor opens', () => {
+    vi.stubEnv('VISUAL', '');
+    vi.stubEnv('EDITOR', '');
+    try {
+      const { editor, survey } = createHarness();
+      const onOpenExternalEditor = editor['onOpenExternalEditor'] as unknown as () => void;
+
+      onOpenExternalEditor();
+
+      expect(survey.closeSilently).toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
