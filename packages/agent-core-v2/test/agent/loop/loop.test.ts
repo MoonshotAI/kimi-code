@@ -20,7 +20,7 @@ import {
   TurnStepStarted,
 } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
-import { RetryStepRequest } from '#/agent/prompt/promptStepRequests';
+import { RetryStepRequest, SteerStepRequest } from '#/agent/prompt/promptStepRequests';
 import type { ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IEventBus } from '#/app/event/eventBus';
@@ -35,6 +35,7 @@ import {
   type TestAgentOptions,
 } from '../../harness';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
+import { createReminderStub } from '../../features/reminder/stubs';
 
 type GenerateFn = NonNullable<TestAgentOptions['generate']>;
 
@@ -702,6 +703,130 @@ describe('Agent loop', () => {
       'turn.ended:2',
     ]);
     expect(ctx.llmCalls).toHaveLength(3);
+  });
+
+  it('transfers an unmaterialized non-turn-scoped request into the next turn on cancel', async () => {
+    let started!: () => void;
+    const stepEntered = new Promise<void>((resolve) => { started = resolve; });
+    let release!: () => void;
+    const canFinish = new Promise<void>((resolve) => { release = resolve; });
+    const hook = loop.hooks.onWillBeginStep.register('test-non-turn-scoped-transfer', async (_hookCtx, next) => {
+      started();
+      await canFinish;
+      await next();
+    });
+
+    const steerCalls: unknown[] = [];
+    const steer = new SteerStepRequest(
+      { role: 'user', content: [{ type: 'text', text: 'steered' }], toolCalls: [], origin: { kind: 'user' } },
+      [],
+      createReminderStub(),
+      (materialized) => { steerCalls.push(materialized); },
+      () => {},
+    );
+
+    ctx.mockNextResponse({ type: 'text', text: 'first answer' });
+    const first = (await loop.enqueue(nextTurnMessage('first')).assigned).turn;
+    await stepEntered;
+
+    const assignment = await loop.enqueue(steer).assigned;
+    expect(assignment.turn.id).toBe(first.id);
+
+    first.cancel(userCancellationReason());
+    release();
+    await expect(first.result).resolves.toMatchObject({ type: 'cancelled' });
+    hook.dispose();
+
+    expect(steer.state).toBe('pending');
+    expect(steerCalls).toHaveLength(0);
+    await expect(assignment.step.result).resolves.toMatchObject({ type: 'cancelled' });
+    expect(loop.hasPendingRequests()).toBe(true);
+
+    ctx.mockNextResponse({ type: 'text', text: 'second answer' });
+    const second = (await loop.enqueue(nextTurnMessage('second')).assigned).turn;
+    await expect(second.result).resolves.toMatchObject({ type: 'completed' });
+
+    expect(steerCalls).toHaveLength(1);
+    expect(steer.state).toBe('materialized');
+    const texts = llmUserTexts(ctx.llmCalls.at(-1)).join('\n');
+    expect(texts).toContain('second');
+    expect(texts).toContain('steered');
+    expect(texts.indexOf('steered')).toBeGreaterThan(texts.indexOf('second'));
+  });
+
+  it('still aborts turn-scoped queued requests when the turn is cancelled', async () => {
+    let started!: () => void;
+    const stepEntered = new Promise<void>((resolve) => { started = resolve; });
+    let release!: () => void;
+    const canFinish = new Promise<void>((resolve) => { release = resolve; });
+    const hook = loop.hooks.onWillBeginStep.register('test-turn-scoped-abort', async (_hookCtx, next) => {
+      started();
+      await canFinish;
+      await next();
+    });
+
+    const scoped = new MessageStepRequest(
+      { role: 'user', content: [{ type: 'text', text: 'scoped' }], toolCalls: [], origin: { kind: 'user' } },
+      { mergeable: true, admission: 'activeTurnOnly' },
+    );
+
+    ctx.mockNextResponse({ type: 'text', text: 'first answer' });
+    const first = (await loop.enqueue(nextTurnMessage('first')).assigned).turn;
+    await stepEntered;
+
+    const assignment = await loop.enqueue(scoped).assigned;
+    expect(assignment.turn.id).toBe(first.id);
+
+    first.cancel(userCancellationReason());
+    release();
+    await expect(first.result).resolves.toMatchObject({ type: 'cancelled' });
+    hook.dispose();
+
+    expect(scoped.state).toBe('aborted');
+    await expect(assignment.step.result).resolves.toMatchObject({ type: 'cancelled' });
+    expect(loop.hasPendingRequests()).toBe(false);
+  });
+
+  it('transfers an unmaterialized non-turn-scoped request when the turn fails', async () => {
+    let started!: () => void;
+    const stepEntered = new Promise<void>((resolve) => { started = resolve; });
+    let fail!: () => void;
+    const canFail = new Promise<void>((resolve) => { fail = resolve; });
+    const hook = loop.hooks.onWillBeginStep.register('test-non-turn-scoped-transfer-failure', async () => {
+      started();
+      await canFail;
+      throw new Error('before step failed');
+    });
+
+    const steerCalls: unknown[] = [];
+    const steer = new SteerStepRequest(
+      { role: 'user', content: [{ type: 'text', text: 'steered' }], toolCalls: [], origin: { kind: 'user' } },
+      [],
+      createReminderStub(),
+      (materialized) => { steerCalls.push(materialized); },
+      () => {},
+    );
+
+    const first = (await loop.enqueue(nextTurnMessage('first')).assigned).turn;
+    await stepEntered;
+
+    const assignment = await loop.enqueue(steer).assigned;
+    expect(assignment.turn.id).toBe(first.id);
+
+    fail();
+    await expect(first.result).resolves.toMatchObject({ type: 'failed' });
+    hook.dispose();
+
+    expect(steer.state).toBe('pending');
+    expect(steerCalls).toHaveLength(0);
+
+    ctx.mockNextResponse({ type: 'text', text: 'second answer' });
+    const second = (await loop.enqueue(nextTurnMessage('second')).assigned).turn;
+    await expect(second.result).resolves.toMatchObject({ type: 'completed' });
+
+    expect(steerCalls).toHaveLength(1);
+    expect(steer.state).toBe('materialized');
+    expect(llmUserTexts(ctx.llmCalls.at(-1)).join('\n')).toContain('steered');
   });
 
   it('refuses a quiescence lease while a turn is active without cancelling it', async () => {
@@ -1774,6 +1899,12 @@ function nextTurnMessage(text: string): MessageStepRequest {
     },
     { admission: 'newTurn' },
   );
+}
+
+function llmUserTexts(call: TestAgentContext['llmCalls'][number] | undefined): string[] {
+  return (call?.history ?? [])
+    .filter((message) => message.role === 'user')
+    .flatMap((message) => message.content.filter((part) => part.type === 'text').map((part) => part.text));
 }
 
 function createTimingRequester(): IAgentLLMRequesterService {

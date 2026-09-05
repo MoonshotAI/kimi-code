@@ -441,11 +441,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return step;
   }
 
-  private cancelStep(job: TurnJob, step: MutableStep, request: StepRequest, reason?: unknown): boolean {
+  private cancelStep(job: TurnJob, step: MutableStep, request: StepRequest, reason?: unknown, abortRequest = true): boolean {
     if (step.state === 'completed' || step.state === 'failed' || step.state === 'cancelled') return false;
     const cancellation = reason ?? userCancellationReason();
     step.state = 'cancelled';
-    request.abort();
+    if (abortRequest) request.abort();
     step.controller?.abort(cancellation);
     step.resultControl?.resolve({ type: 'cancelled', reason: cancellation });
     return true;
@@ -596,8 +596,21 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const job = this.activeTurnJob?.turn === turn ? this.activeTurnJob : undefined;
     if (job === undefined) return;
     const reason = result?.type === 'cancelled' ? result.reason : abortError('Turn ended');
+    const transferred = new Map<string, StepRequest>();
+    for (const request of job.queue.drain()) {
+      if (request.state === 'pending' && !request.turnScoped) {
+        this.standaloneStepQueue.enqueue(request, 'tail');
+        transferred.set(request.id, request);
+      }
+    }
     for (const step of job.steps.values()) {
-      if (step.state === 'queued' || step.state === 'running') step.cancel(reason);
+      if (step.state !== 'queued' && step.state !== 'running') continue;
+      const request = transferred.get(step.id);
+      if (request === undefined) {
+        step.cancel(reason);
+      } else {
+        this.cancelStep(job, step, request, reason, false);
+      }
     }
     this.activeTurnJob = undefined;
     this.maybeSettle();
