@@ -787,6 +787,13 @@ export class AgentV2Projector {
       turn.userMessageId = acc?.messageId ?? promptId;
       turn.promptIds.push(promptId);
       turn.attachmentIds = acc?.attachmentIds;
+      if (acc && acc.skillActivations === undefined) {
+        const skillActivations = toSkillActivations(event.origin);
+        if (skillActivations !== undefined) {
+          acc.skillActivations = skillActivations;
+          heldAcc = acc;
+        }
+      }
     }
     this.turns.set(engineTurnId, turn);
     if (maxSeq === 0 && heldAcc === undefined) {
