@@ -2716,8 +2716,16 @@ describe('v2Projection × 实例对拍', () => {
     const collectSteps = (at: number): ScriptStep[] => [
       {
         event: {
+          type: 'subagent.completed',
+          subagentId: 'review_01',
+          resultSummary: '审查通过：可选链修复正确，无回归风险。',
+          time: at - 10,
+        },
+      },
+      {
+        event: {
           type: 'task.terminated',
-          info: { taskId: 'task_01', kind: 'agent', status: 'completed', description: '审查 LoginView 的白屏修复', resultSummary: '审查通过，无回归风险' },
+          info: { taskId: 'task_01', kind: 'agent', status: 'completed', description: '审查 LoginView 的白屏修复', detached: true, agentId: 'review_01', resultSummary: '审查通过，无回归风险' },
           outputTail: '审查通过：可选链修复正确，无回归风险。',
           time: at,
         },
@@ -2773,6 +2781,27 @@ describe('v2Projection × 实例对拍', () => {
               args: spawnArgs,
               agentRefs: reviewRefs,
               time: B + 1500,
+            },
+          },
+          {
+            event: {
+              type: 'subagent.spawned',
+              subagentId: 'review_01',
+              subagentName: 'reviewer',
+              parentToolCallId: 'call_01',
+              description: '审查 LoginView 的白屏修复',
+              runInBackground: false,
+              taskId: 'task_01',
+              time: B + 1510,
+            },
+          },
+          { event: { type: 'subagent.started', subagentId: 'review_01', time: B + 1520 } },
+          {
+            event: {
+              type: 'subagent.completed',
+              subagentId: 'review_01',
+              resultSummary: '审查通过：可选链修复正确，无回归风险。',
+              time: B + 4000,
             },
           },
           {
@@ -2842,7 +2871,6 @@ describe('v2Projection × 实例对拍', () => {
               time: B + 1500,
             },
           },
-          { event: { type: 'tool.result', turnId: 0, toolCallId: 'call_01', output: { task_id: 'task_01' }, time: B + 1600 } },
           {
             event: {
               type: 'task.started',
@@ -2852,11 +2880,25 @@ describe('v2Projection × 实例对拍', () => {
                 status: 'running',
                 description: '审查 LoginView 的白屏修复',
                 detached: true,
-                childAgentId: 'review_01',
+                agentId: 'review_01',
               },
-              time: B + 1610,
+              time: B + 1560,
             },
           },
+          {
+            event: {
+              type: 'subagent.spawned',
+              subagentId: 'review_01',
+              subagentName: 'reviewer',
+              parentToolCallId: 'call_01',
+              description: '审查 LoginView 的白屏修复',
+              runInBackground: true,
+              taskId: 'task_01',
+              time: B + 1570,
+            },
+          },
+          { event: { type: 'subagent.started', subagentId: 'review_01', time: B + 1580 } },
+          { event: { type: 'tool.result', turnId: 0, toolCallId: 'call_01', output: { task_id: 'task_01' }, time: B + 1600 } },
           { event: { type: 'assistant.delta', turnId: 0, delta: '子代理在后台审查，完成后我汇总。', time: B + 2000 } },
           {
             event: {
@@ -2915,12 +2957,25 @@ describe('v2Projection × 实例对拍', () => {
                 status: 'running',
                 description: '审查 LoginView 的白屏修复',
                 detached: true,
-                childAgentId: 'review_01',
+                agentId: 'review_01',
                 outputTail: '…正在读 LoginView 的改动…',
               },
               time: B + 3500,
             },
           },
+          {
+            event: {
+              type: 'subagent.spawned',
+              subagentId: 'review_01',
+              subagentName: 'reviewer',
+              parentToolCallId: 'call_01',
+              description: '审查 LoginView 的白屏修复',
+              runInBackground: true,
+              taskId: 'task_01',
+              time: B + 3502,
+            },
+          },
+          { event: { type: 'subagent.started', subagentId: 'review_01', time: B + 3505 } },
           {
             event: {
               type: 'tool.result',
@@ -2967,6 +3022,20 @@ describe('v2Projection × 实例对拍', () => {
       {
         sectionLabel: '子代理通道（按需订阅）',
         steps: [
+          {
+            event: {
+              type: 'subagent.spawned',
+              agentId: 'review_01',
+              subagentId: 'review_01',
+              subagentName: 'reviewer',
+              parentToolCallId: 'call_01',
+              description: '审查 LoginView 的白屏修复',
+              runInBackground: true,
+              taskId: 'task_01',
+              time: B + 1570,
+            },
+          },
+          { event: { type: 'subagent.started', agentId: 'review_01', subagentId: 'review_01', time: B + 1580 } },
           { event: { type: 'turn.started', agentId: 'review_01', turnId: 0, origin: { kind: 'task', taskId: 'task_01' }, time: B + 1600 } },
           { event: { type: 'turn.step.started', agentId: 'review_01', turnId: 0, step: 1, time: B + 1620 } },
           { event: { type: 'thinking.delta', agentId: 'review_01', turnId: 0, delta: '先读 LoginView 的改动，', time: B + 2000 } },
@@ -3838,6 +3907,8 @@ describe('WS v2 传输层', () => {
     const { socket, frames } = scenario.connect();
     const drive = (event: FakeBusEvent) => buses.get('review_01')!.emit(event);
     socket.deliver(JSON.stringify({ type: 'subscribe', id: 2, session_id: 's_16', agent_id: 'review_01' }));
+    drive({ type: 'subagent.spawned', agentId: 'review_01', subagentId: 'review_01', subagentName: 'reviewer', parentToolCallId: 'call_01', description: '审查 LoginView 的白屏修复', runInBackground: true, taskId: 'task_01', time: B + 1570 });
+    drive({ type: 'subagent.started', agentId: 'review_01', subagentId: 'review_01', time: B + 1580 });
     drive({ type: 'turn.started', agentId: 'review_01', turnId: 0, origin: { kind: 'task', taskId: 'task_01' }, time: B + 1600 });
     drive({ type: 'turn.step.started', agentId: 'review_01', turnId: 0, step: 1, time: B + 1620 });
     drive({ type: 'thinking.delta', agentId: 'review_01', turnId: 0, delta: '先读 LoginView 的改动，', time: B + 2000 });

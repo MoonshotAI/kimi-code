@@ -1848,7 +1848,7 @@
             },
             {
               "note": "上下文将满，先压缩——时间线上留一条标记（创建即完整）",
-              "json": "{\n  \"type\": \"system\",\n  \"session_id\": \"s_12\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T16:30:00.100Z\",\n  \"payload\": {\n    \"before_tokens\": 241000,\n    \"after_tokens\": 62000,\n    \"summarized_through_turn\": \"t8\"\n  },\n  \"system_id\": \"m_01\",\n  \"subtype\": \"compaction\"\n}"
+              "json": "{\n  \"type\": \"system\",\n  \"session_id\": \"s_12\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T16:30:00.100Z\",\n  \"payload\": {\n    \"state\": \"completed\",\n    \"before_tokens\": 241000,\n    \"after_tokens\": 62000,\n    \"summarized_through_turn\": \"t8\",\n    \"summary\": \"前 8 轮讨论摘要\"\n  },\n  \"system_id\": \"m_01\",\n  \"subtype\": \"compaction\"\n}"
             },
             {
               "note": "压缩后的聚合快照：context_tokens 骤降",
@@ -1919,14 +1919,14 @@
               "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_12\",\n  \"timestamp\": \"2026-09-03T16:30:02.720Z\",\n  \"busy\": false,\n  \"main_turn_active\": false,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"idle\",\n  \"phase\": {\n    \"kind\": \"idle\"\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"total\": {\n      \"input_other\": 20600,\n      \"output\": 4460,\n      \"input_cache_read\": 129500,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 65200,\n  \"max_context_tokens\": 262144\n}"
             }
           ],
-          "tail": "<b>要点</b><br>· compaction 只留一条 <code>system(compaction)</code>：时间线上的「此处压缩过」标记，<code>payload</code> 带前后 token 数与压缩范围<br>· 压缩的是 **LLM 上下文**，不改写时间线：REST 历史仍返回全部内容；变化只体现在 <code>session.state.context_tokens</code> 骤降（241000 → 62000）"
+          "tail": "<b>要点</b><br>· compaction 只留一条 <code>system(compaction)</code>：时间线上的「此处压缩过」标记，<code>payload</code> 带 <code>state</code>、前后 token 数、压缩范围与 <code>summary</code><br>· 压缩的是 **LLM 上下文**，不改写时间线：REST 历史仍返回全部内容；变化只体现在 <code>session.state.context_tokens</code> 骤降（241000 → 62000）"
         },
         {
           "label": "REST 历史",
           "items": [
             {
               "note": "刷新页面，`GET /api/v1/sessions/s_12/history?page_size=50`——响应为最后一页（`has_more: true`，更早的 t1..t8 用 `before_turn=t9` 往前翻）；compaction 不删历史，system 与 t9 全部实体都在",
-              "json": "{\n  \"session_id\": \"s_12\",\n  \"items\": [\n    {\n      \"type\": \"system\",\n      \"session_id\": \"s_12\",\n      \"agent_id\": \"main\",\n      \"timestamp\": \"2026-09-03T16:30:00.100Z\",\n      \"payload\": {\n        \"before_tokens\": 241000,\n        \"after_tokens\": 62000,\n        \"summarized_through_turn\": \"t8\"\n      },\n      \"system_id\": \"m_01\",\n      \"subtype\": \"compaction\"\n    },\n    {\n      \"type\": \"turn\",\n      \"session_id\": \"s_12\",\n      \"agent_id\": \"main\",\n      \"timestamp\": \"2026-09-03T16:30:02.700Z\",\n      \"turn_id\": \"t9\",\n      \"ordinal\": 8,\n      \"state\": \"completed\",\n      \"origin\": {\n        \"kind\": \"user\"\n      },\n      \"started_at\": \"2026-09-03T16:30:00.012Z\",\n      \"ended_at\": \"2026-09-03T16:30:02.695Z\",\n      \"usage\": {\n        \"input_tokens\": 3100,\n        \"output_tokens\": 72\n      },\n      \"duration_ms\": 2683,\n      \"user_message_id\": \"t9.u0\"\n    },\n    {\n      \"type\": \"step\",\n      \"session_id\": \"s_12\",\n      \"agent_id\": \"main\",\n      \"timestamp\": \"2026-09-03T16:30:02.600Z\",\n      \"step_id\": \"t9.0\",\n      \"turn_id\": \"t9\",\n      \"ordinal\": 0,\n      \"state\": \"completed\",\n      \"started_at\": \"2026-09-03T16:30:00.118Z\",\n      \"ended_at\": \"2026-09-03T16:30:02.595Z\",\n      \"usage\": {\n        \"input_other\": 3100,\n        \"output\": 72,\n        \"input_cache_read\": 9600,\n        \"input_cache_creation\": 0\n      },\n      \"finish_reason\": \"end_turn\"\n    },\n    {\n      \"type\": \"user\",\n      \"session_id\": \"s_12\",\n      \"agent_id\": \"main\",\n      \"timestamp\": \"2026-09-03T16:30:00.010Z\",\n      \"message_id\": \"t9.u0\",\n      \"turn_id\": \"t9\",\n      \"text\": \"接着上面的讨论，把新页面的路由也加上\",\n      \"status\": \"completed\",\n      \"created_at\": \"2026-09-03T16:30:00.000Z\",\n      \"finished_at\": \"2026-09-03T16:30:02.695Z\"\n    },\n    {\n      \"type\": \"thinking\",\n      \"session_id\": \"s_12\",\n      \"agent_id\": \"main\",\n      \"timestamp\": \"2026-09-03T16:30:00.800Z\",\n      \"message_id\": \"t9.0.h0\",\n      \"turn_id\": \"t9\",\n      \"step_id\": \"t9.0\",\n      \"status\": \"completed\",\n      \"text\": \"路由集中在 router 配置文件，加一条即可。\"\n    },\n    {\n      \"type\": \"assistant\",\n      \"session_id\": \"s_12\",\n      \"agent_id\": \"main\",\n      \"timestamp\": \"2026-09-03T16:30:01.300Z\",\n      \"message_id\": \"t9.0.a0\",\n      \"turn_id\": \"t9\",\n      \"step_id\": \"t9.0\",\n      \"status\": \"completed\",\n      \"text\": \"我来加路由：\"\n    },\n    {\n      \"type\": \"tool_call\",\n      \"session_id\": \"s_12\",\n      \"agent_id\": \"main\",\n      \"timestamp\": \"2026-09-03T16:30:01.900Z\",\n      \"tool_call_id\": \"call_01\",\n      \"turn_id\": \"t9\",\n      \"step_id\": \"t9.0\",\n      \"name\": \"Edit\",\n      \"state\": \"done\",\n      \"input\": {\n        \"path\": \"apps/web/src/router.ts\",\n        \"old\": \"  { path: '/login', component: LoginView },\",\n        \"new\": \"  { path: '/login', component: LoginView },\\n  { path: '/new-page', component: NewPageView },\"\n      },\n      \"output\": {\n        \"applied\": true\n      }\n    },\n    {\n      \"type\": \"assistant\",\n      \"session_id\": \"s_12\",\n      \"agent_id\": \"main\",\n      \"timestamp\": \"2026-09-03T16:30:02.500Z\",\n      \"message_id\": \"t9.0.a1\",\n      \"turn_id\": \"t9\",\n      \"step_id\": \"t9.0\",\n      \"status\": \"completed\",\n      \"text\": \"加好了：`/new-page` 路由已注册到 `router.ts`。\"\n    }\n  ],\n  \"has_more\": true,\n  \"in_flight\": null\n}"
+              "json": "{\n  \"session_id\": \"s_12\",\n  \"items\": [\n    {\n      \"type\": \"system\",\n      \"session_id\": \"s_12\",\n      \"agent_id\": \"main\",\n      \"timestamp\": \"2026-09-03T16:30:00.100Z\",\n      \"payload\": {\n        \"state\": \"completed\",\n        \"before_tokens\": 241000,\n        \"after_tokens\": 62000,\n        \"summarized_through_turn\": \"t8\",\n        \"summary\": \"前 8 轮讨论摘要\"\n      },\n      \"system_id\": \"m_01\",\n      \"subtype\": \"compaction\"\n    },\n    {\n      \"type\": \"turn\",\n      \"session_id\": \"s_12\",\n      \"agent_id\": \"main\",\n      \"timestamp\": \"2026-09-03T16:30:02.700Z\",\n      \"turn_id\": \"t9\",\n      \"ordinal\": 8,\n      \"state\": \"completed\",\n      \"origin\": {\n        \"kind\": \"user\"\n      },\n      \"started_at\": \"2026-09-03T16:30:00.012Z\",\n      \"ended_at\": \"2026-09-03T16:30:02.695Z\",\n      \"usage\": {\n        \"input_tokens\": 3100,\n        \"output_tokens\": 72\n      },\n      \"duration_ms\": 2683,\n      \"user_message_id\": \"t9.u0\"\n    },\n    {\n      \"type\": \"step\",\n      \"session_id\": \"s_12\",\n      \"agent_id\": \"main\",\n      \"timestamp\": \"2026-09-03T16:30:02.600Z\",\n      \"step_id\": \"t9.0\",\n      \"turn_id\": \"t9\",\n      \"ordinal\": 0,\n      \"state\": \"completed\",\n      \"started_at\": \"2026-09-03T16:30:00.118Z\",\n      \"ended_at\": \"2026-09-03T16:30:02.595Z\",\n      \"usage\": {\n        \"input_other\": 3100,\n        \"output\": 72,\n        \"input_cache_read\": 9600,\n        \"input_cache_creation\": 0\n      },\n      \"finish_reason\": \"end_turn\"\n    },\n    {\n      \"type\": \"user\",\n      \"session_id\": \"s_12\",\n      \"agent_id\": \"main\",\n      \"timestamp\": \"2026-09-03T16:30:00.010Z\",\n      \"message_id\": \"t9.u0\",\n      \"turn_id\": \"t9\",\n      \"text\": \"接着上面的讨论，把新页面的路由也加上\",\n      \"status\": \"completed\",\n      \"created_at\": \"2026-09-03T16:30:00.000Z\",\n      \"finished_at\": \"2026-09-03T16:30:02.695Z\"\n    },\n    {\n      \"type\": \"thinking\",\n      \"session_id\": \"s_12\",\n      \"agent_id\": \"main\",\n      \"timestamp\": \"2026-09-03T16:30:00.800Z\",\n      \"message_id\": \"t9.0.h0\",\n      \"turn_id\": \"t9\",\n      \"step_id\": \"t9.0\",\n      \"status\": \"completed\",\n      \"text\": \"路由集中在 router 配置文件，加一条即可。\"\n    },\n    {\n      \"type\": \"assistant\",\n      \"session_id\": \"s_12\",\n      \"agent_id\": \"main\",\n      \"timestamp\": \"2026-09-03T16:30:01.300Z\",\n      \"message_id\": \"t9.0.a0\",\n      \"turn_id\": \"t9\",\n      \"step_id\": \"t9.0\",\n      \"status\": \"completed\",\n      \"text\": \"我来加路由：\"\n    },\n    {\n      \"type\": \"tool_call\",\n      \"session_id\": \"s_12\",\n      \"agent_id\": \"main\",\n      \"timestamp\": \"2026-09-03T16:30:01.900Z\",\n      \"tool_call_id\": \"call_01\",\n      \"turn_id\": \"t9\",\n      \"step_id\": \"t9.0\",\n      \"name\": \"Edit\",\n      \"state\": \"done\",\n      \"input\": {\n        \"path\": \"apps/web/src/router.ts\",\n        \"old\": \"  { path: '/login', component: LoginView },\",\n        \"new\": \"  { path: '/login', component: LoginView },\\n  { path: '/new-page', component: NewPageView },\"\n      },\n      \"output\": {\n        \"applied\": true\n      }\n    },\n    {\n      \"type\": \"assistant\",\n      \"session_id\": \"s_12\",\n      \"agent_id\": \"main\",\n      \"timestamp\": \"2026-09-03T16:30:02.500Z\",\n      \"message_id\": \"t9.0.a1\",\n      \"turn_id\": \"t9\",\n      \"step_id\": \"t9.0\",\n      \"status\": \"completed\",\n      \"text\": \"加好了：`/new-page` 路由已注册到 `router.ts`。\"\n    }\n  ],\n  \"has_more\": true,\n  \"in_flight\": null\n}"
             }
           ],
           "request": "GET /api/v1/sessions/s_12/history?page_size=50",
@@ -2168,7 +2168,19 @@
               "json": "{\n  \"type\": \"tool_call\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:01.500Z\",\n  \"tool_call_id\": \"call_01\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"name\": \"Agent\",\n  \"state\": \"running\",\n  \"input\": {\n    \"description\": \"审查 LoginView 的白屏修复\",\n    \"agent_type\": \"reviewer\"\n  },\n  \"agent_refs\": [\n    {\n      \"agent_id\": \"review_01\",\n      \"role\": \"child\"\n    }\n  ]\n}"
             },
             {
-              "note": "主通道上看不到子代理干活（细节走子通道，末节）；done 的 `output` 即结论",
+              "note": "子代理出生——`agent` 实体入时间线（`subagent_id` 为主键，创建即 queued）：主通道从此看得见它存在",
+              "json": "{\n  \"type\": \"agent\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:01.510Z\",\n  \"subagent_id\": \"review_01\",\n  \"parent_tool_call_id\": \"call_01\",\n  \"subagent_type\": \"reviewer\",\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"detached\": false,\n  \"state\": \"queued\",\n  \"task_id\": \"task_01\",\n  \"started_at\": \"2026-09-03T17:30:01.510Z\"\n}"
+            },
+            {
+              "note": "子代理开跑——同一实体原位更新（`state: running`）",
+              "json": "{\n  \"type\": \"agent\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:01.520Z\",\n  \"subagent_id\": \"review_01\",\n  \"parent_tool_call_id\": \"call_01\",\n  \"subagent_type\": \"reviewer\",\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"detached\": false,\n  \"state\": \"running\",\n  \"task_id\": \"task_01\",\n  \"started_at\": \"2026-09-03T17:30:01.510Z\"\n}"
+            },
+            {
+              "note": "子代理收官——`result_summary` 带结论（干活细节走子通道，末节）",
+              "json": "{\n  \"type\": \"agent\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.000Z\",\n  \"subagent_id\": \"review_01\",\n  \"parent_tool_call_id\": \"call_01\",\n  \"subagent_type\": \"reviewer\",\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"detached\": false,\n  \"state\": \"completed\",\n  \"task_id\": \"task_01\",\n  \"result_summary\": \"审查通过：可选链修复正确，无回归风险。\",\n  \"started_at\": \"2026-09-03T17:30:01.510Z\",\n  \"ended_at\": \"2026-09-03T17:30:04.000Z\"\n}"
+            },
+            {
+              "note": "tool_call 同步收官——done 的 `output.report` 与 `agent.result_summary` 同源",
               "json": "{\n  \"type\": \"tool_call\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.000Z\",\n  \"tool_call_id\": \"call_01\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"name\": \"Agent\",\n  \"state\": \"done\",\n  \"input\": {\n    \"description\": \"审查 LoginView 的白屏修复\",\n    \"agent_type\": \"reviewer\"\n  },\n  \"output\": {\n    \"report\": \"审查通过：可选链修复正确，无回归风险。\"\n  },\n  \"agent_refs\": [\n    {\n      \"agent_id\": \"review_01\",\n      \"role\": \"child\"\n    }\n  ]\n}"
             },
             {
@@ -2208,7 +2220,7 @@
               "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_16\",\n  \"timestamp\": \"2026-09-03T17:30:04.920Z\",\n  \"busy\": false,\n  \"main_turn_active\": false,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"idle\",\n  \"phase\": {\n    \"kind\": \"idle\"\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"total\": {\n      \"input_other\": 6000,\n      \"output\": 152,\n      \"input_cache_read\": 22800,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 6200,\n  \"max_context_tokens\": 262144\n}"
             }
           ],
-          "tail": "<b>要点</b><br>· 前台 = 普通 tool_call：主 step 阻塞在 running 的 tool_call 上，done 的 <code>output</code> 即子代理结论；无 <code>task</code> 实体<br>· 主通道上看不到子代理干活——只有 tool_call 的等待与收官；想看细节就订阅子通道（末节），前台模式同样能看"
+          "tail": "<b>要点</b><br>· 前台 = 普通 tool_call + <code>agent</code> 实体：主 step 阻塞在 running 的 tool_call 上，done 的 <code>output</code> 即子代理结论；生命周期走 <code>agent</code>（queued → running → completed），无 <code>task</code> 实体<br>· 主通道上看不到子代理干活——只有 <code>agent</code> 的状态迁移与 tool_call 的等待收官；想看细节就订阅子通道（末节），前台模式同样能看"
         },
         {
           "label": "B · 后台（主通道）",
@@ -2262,12 +2274,20 @@
               "json": "{\n  \"type\": \"tool_call\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:01.500Z\",\n  \"tool_call_id\": \"call_01\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"name\": \"Agent\",\n  \"state\": \"running\",\n  \"input\": {\n    \"description\": \"审查 LoginView 的白屏修复\",\n    \"agent_type\": \"reviewer\",\n    \"run_in_background\": true\n  },\n  \"agent_refs\": [\n    {\n      \"agent_id\": \"review_01\",\n      \"role\": \"child\"\n    }\n  ]\n}"
             },
             {
-              "note": "tool_call 立即收官（`task_id`）：跟踪职责移交 task",
-              "json": "{\n  \"type\": \"tool_call\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:01.600Z\",\n  \"tool_call_id\": \"call_01\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"name\": \"Agent\",\n  \"state\": \"done\",\n  \"input\": {\n    \"description\": \"审查 LoginView 的白屏修复\",\n    \"agent_type\": \"reviewer\",\n    \"run_in_background\": true\n  },\n  \"output\": {\n    \"task_id\": \"task_01\"\n  },\n  \"agent_refs\": [\n    {\n      \"agent_id\": \"review_01\",\n      \"role\": \"child\"\n    }\n  ]\n}"
+              "note": "`task` 先行注册（`kind: subagent`、`detached: true`）——后台句柄",
+              "json": "{\n  \"type\": \"task\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:01.560Z\",\n  \"task_id\": \"task_01\",\n  \"kind\": \"subagent\",\n  \"state\": \"running\",\n  \"detached\": true,\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"child_agent_id\": \"review_01\",\n  \"output_tail\": \"\",\n  \"started_at\": \"2026-09-03T17:30:01.560Z\"\n}"
             },
             {
-              "note": "`task` 出现并接管（`kind: subagent`、`detached: true`）",
-              "json": "{\n  \"type\": \"task\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:01.610Z\",\n  \"task_id\": \"task_01\",\n  \"kind\": \"subagent\",\n  \"state\": \"running\",\n  \"detached\": true,\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"child_agent_id\": \"review_01\",\n  \"output_tail\": \"\",\n  \"started_at\": \"2026-09-03T17:30:01.610Z\"\n}"
+              "note": "`agent` 实体入时间线（`detached: true`，`task_id` 与 task 互链）",
+              "json": "{\n  \"type\": \"agent\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:01.570Z\",\n  \"subagent_id\": \"review_01\",\n  \"parent_tool_call_id\": \"call_01\",\n  \"subagent_type\": \"reviewer\",\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"detached\": true,\n  \"state\": \"queued\",\n  \"task_id\": \"task_01\",\n  \"started_at\": \"2026-09-03T17:30:01.570Z\"\n}"
+            },
+            {
+              "note": "",
+              "json": "{\n  \"type\": \"agent\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:01.580Z\",\n  \"subagent_id\": \"review_01\",\n  \"parent_tool_call_id\": \"call_01\",\n  \"subagent_type\": \"reviewer\",\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"detached\": true,\n  \"state\": \"running\",\n  \"task_id\": \"task_01\",\n  \"started_at\": \"2026-09-03T17:30:01.570Z\"\n}"
+            },
+            {
+              "note": "tool_call 立即收官（`task_id`）：跟踪职责移交 task",
+              "json": "{\n  \"type\": \"tool_call\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:01.600Z\",\n  \"tool_call_id\": \"call_01\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"name\": \"Agent\",\n  \"state\": \"done\",\n  \"input\": {\n    \"description\": \"审查 LoginView 的白屏修复\",\n    \"agent_type\": \"reviewer\",\n    \"run_in_background\": true\n  },\n  \"output\": {\n    \"task_id\": \"task_01\"\n  },\n  \"agent_refs\": [\n    {\n      \"agent_id\": \"review_01\",\n      \"role\": \"child\"\n    }\n  ]\n}"
             },
             {
               "note": "主 agent 不受阻，直接继续",
@@ -2299,11 +2319,15 @@
             },
             {
               "note": "几分钟后台进度——`output_tail` 末尾窗口整体重发",
-              "json": "{\n  \"type\": \"task\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:03.500Z\",\n  \"task_id\": \"task_01\",\n  \"kind\": \"subagent\",\n  \"state\": \"running\",\n  \"detached\": true,\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"child_agent_id\": \"review_01\",\n  \"output_tail\": \"…正在读 LoginView 的改动…\",\n  \"started_at\": \"2026-09-03T17:30:01.610Z\"\n}"
+              "json": "{\n  \"type\": \"task\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:03.500Z\",\n  \"task_id\": \"task_01\",\n  \"kind\": \"subagent\",\n  \"state\": \"running\",\n  \"detached\": true,\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"child_agent_id\": \"review_01\",\n  \"output_tail\": \"…正在读 LoginView 的改动…\",\n  \"started_at\": \"2026-09-03T17:30:01.560Z\"\n}"
+            },
+            {
+              "note": "子代理收官——`agent` 到终态（`result_summary` 带结论）",
+              "json": "{\n  \"type\": \"agent\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.090Z\",\n  \"subagent_id\": \"review_01\",\n  \"parent_tool_call_id\": \"call_01\",\n  \"subagent_type\": \"reviewer\",\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"detached\": true,\n  \"state\": \"completed\",\n  \"task_id\": \"task_01\",\n  \"result_summary\": \"审查通过：可选链修复正确，无回归风险。\",\n  \"started_at\": \"2026-09-03T17:30:01.570Z\",\n  \"ended_at\": \"2026-09-03T17:30:04.090Z\"\n}"
             },
             {
               "note": "task 到终态（`result_summary` 带审查结论）",
-              "json": "{\n  \"type\": \"task\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.100Z\",\n  \"task_id\": \"task_01\",\n  \"kind\": \"subagent\",\n  \"state\": \"completed\",\n  \"detached\": true,\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"child_agent_id\": \"review_01\",\n  \"output_tail\": \"审查通过：可选链修复正确，无回归风险。\",\n  \"started_at\": \"2026-09-03T17:30:01.610Z\",\n  \"ended_at\": \"2026-09-03T17:30:04.100Z\",\n  \"result_summary\": \"审查通过，无回归风险\"\n}"
+              "json": "{\n  \"type\": \"task\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:04.100Z\",\n  \"task_id\": \"task_01\",\n  \"kind\": \"subagent\",\n  \"state\": \"completed\",\n  \"detached\": true,\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"child_agent_id\": \"review_01\",\n  \"output_tail\": \"审查通过：可选链修复正确，无回归风险。\",\n  \"started_at\": \"2026-09-03T17:30:01.560Z\",\n  \"ended_at\": \"2026-09-03T17:30:04.100Z\",\n  \"result_summary\": \"审查通过，无回归风险\"\n}"
             },
             {
               "note": "结果回收：`origin: task` 的新 turn（例 12 同款）",
@@ -2342,7 +2366,7 @@
               "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_16\",\n  \"timestamp\": \"2026-09-03T17:30:04.910Z\",\n  \"busy\": false,\n  \"main_turn_active\": false,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"idle\",\n  \"phase\": {\n    \"kind\": \"idle\"\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"total\": {\n      \"input_other\": 5400,\n      \"output\": 122,\n      \"input_cache_read\": 20400,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 4800,\n  \"max_context_tokens\": 262144\n}"
             }
           ],
-          "tail": "<b>要点</b><br>· 后台 = tool_call 立即 done（<code>task_id</code>）+ <code>task</code> 接管：主 agent 不受阻，t1 当场收官<br>· 结果回收两跳：<code>task completed</code>（<code>result_summary</code>）→ <code>origin: task</code> 新 turn 汇报——与例 12 后台命令完全同款",
+          "tail": "<b>要点</b><br>· 后台 = <code>task</code> 先行注册 + tool_call 立即 done（<code>task_id</code>）：主 agent 不受阻，t1 当场收官；<code>agent</code> 实体（<code>detached: true</code>）与 <code>task</code> 并存互链——前者承载生命周期，后者是后台句柄（<code>output_tail</code> 等）<br>· 结果回收三跳：<code>agent completed</code>（<code>result_summary</code>）→ <code>task completed</code> → <code>origin: task</code> 新 turn 汇报——与例 12 后台命令同款",
           "branch_from": ""
         },
         {
@@ -2397,8 +2421,16 @@
               "json": "{\n  \"type\": \"tool_call\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:01.500Z\",\n  \"tool_call_id\": \"call_01\",\n  \"turn_id\": \"t1\",\n  \"step_id\": \"t1.0\",\n  \"name\": \"Agent\",\n  \"state\": \"running\",\n  \"input\": {\n    \"description\": \"审查 LoginView 的白屏修复\",\n    \"agent_type\": \"reviewer\"\n  },\n  \"agent_refs\": [\n    {\n      \"agent_id\": \"review_01\",\n      \"role\": \"child\"\n    }\n  ]\n}"
             },
             {
-              "note": "用户在等待时点了「转后台」（REST `POST /sessions/s_16/tool_calls/call_01:detach`，不在 WS）。`task` 补发，`started_at` 沿用 tool_call 起点——任务时长连续",
+              "note": "用户在等待时点了「转后台」（REST `POST /sessions/s_16/tool_calls/call_01:detach`，不在 WS）。`task` 此刻补发（`detached: true`）——前台阶段本就没有 task 实体",
               "json": "{\n  \"type\": \"task\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:03.500Z\",\n  \"task_id\": \"task_01\",\n  \"kind\": \"subagent\",\n  \"state\": \"running\",\n  \"detached\": true,\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"child_agent_id\": \"review_01\",\n  \"output_tail\": \"…正在读 LoginView 的改动…\",\n  \"started_at\": \"2026-09-03T17:30:03.500Z\"\n}"
+            },
+            {
+              "note": "`agent` 实体同步出现（`detached: true`，`task_id` 与 task 互链）",
+              "json": "{\n  \"type\": \"agent\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:03.502Z\",\n  \"subagent_id\": \"review_01\",\n  \"parent_tool_call_id\": \"call_01\",\n  \"subagent_type\": \"reviewer\",\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"detached\": true,\n  \"state\": \"queued\",\n  \"task_id\": \"task_01\",\n  \"started_at\": \"2026-09-03T17:30:03.502Z\"\n}"
+            },
+            {
+              "note": "",
+              "json": "{\n  \"type\": \"agent\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:03.505Z\",\n  \"subagent_id\": \"review_01\",\n  \"parent_tool_call_id\": \"call_01\",\n  \"subagent_type\": \"reviewer\",\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"detached\": true,\n  \"state\": \"running\",\n  \"task_id\": \"task_01\",\n  \"started_at\": \"2026-09-03T17:30:03.502Z\"\n}"
             },
             {
               "note": "tool_call 以 `detached` 收官，主 step 解阻",
@@ -2435,6 +2467,10 @@
             {
               "note": "几分钟后台进度——`output_tail` 末尾窗口整体重发",
               "json": "{\n  \"type\": \"task\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:05.300Z\",\n  \"task_id\": \"task_01\",\n  \"kind\": \"subagent\",\n  \"state\": \"running\",\n  \"detached\": true,\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"child_agent_id\": \"review_01\",\n  \"output_tail\": \"…正在读 LoginView 的改动…\",\n  \"started_at\": \"2026-09-03T17:30:03.500Z\"\n}"
+            },
+            {
+              "note": "子代理收官——`agent` 到终态（`result_summary` 带结论）",
+              "json": "{\n  \"type\": \"agent\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"main\",\n  \"timestamp\": \"2026-09-03T17:30:05.890Z\",\n  \"subagent_id\": \"review_01\",\n  \"parent_tool_call_id\": \"call_01\",\n  \"subagent_type\": \"reviewer\",\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"detached\": true,\n  \"state\": \"completed\",\n  \"task_id\": \"task_01\",\n  \"result_summary\": \"审查通过：可选链修复正确，无回归风险。\",\n  \"started_at\": \"2026-09-03T17:30:03.502Z\",\n  \"ended_at\": \"2026-09-03T17:30:05.890Z\"\n}"
             },
             {
               "note": "task 到终态（`result_summary` 带审查结论）",
@@ -2477,7 +2513,7 @@
               "json": "{\n  \"type\": \"session.state\",\n  \"session_id\": \"s_16\",\n  \"timestamp\": \"2026-09-03T17:30:06.710Z\",\n  \"busy\": false,\n  \"main_turn_active\": false,\n  \"pending_interaction\": \"none\",\n  \"activity\": \"idle\",\n  \"phase\": {\n    \"kind\": \"idle\"\n  },\n  \"model\": \"kimi-k3-highspeed\",\n  \"permission\": \"manual\",\n  \"usage\": {\n    \"total\": {\n      \"input_other\": 5400,\n      \"output\": 122,\n      \"input_cache_read\": 20400,\n      \"input_cache_creation\": 0\n    }\n  },\n  \"context_tokens\": 4800,\n  \"max_context_tokens\": 262144\n}"
             }
           ],
-          "tail": "<b>要点</b><br>· 转后台是运行时转换：tool_call 以 <code>detached + task_id</code> 收官，<code>task</code> 补发且 <code>started_at</code> 沿用 tool_call 起点<br>· 触发者可以是用户手动（本例），也可以是系统超时阈值——与例 12 的 Bash 转后台同一机制",
+          "tail": "<b>要点</b><br>· 转后台是运行时转换：tool_call 以 <code>detached + task_id</code> 收官，<code>task</code> 与 <code>agent</code>（<code>detached: true</code>）此刻才出现——前台阶段主通道只有阻塞中的 tool_call<br>· 触发者可以是用户手动（本例），也可以是系统超时阈值——与例 12 的 Bash 转后台同一机制",
           "branch_from": ""
         },
         {
@@ -2492,7 +2528,15 @@
               "json": "{\n  \"type\": \"ack\",\n  \"id\": 2,\n  \"code\": 0\n}"
             },
             {
-              "note": "子代理的完整消息流从此下来——与主通道同型同规则（以 B 模式为例）",
+              "note": "子代理的完整消息流从此下来——与主通道同型同规则（以 B 模式为例）；先是 `agent` 实体（频道命名空间 = `agent_id`，实体主键 = `subagent_id`）",
+              "json": "{\n  \"type\": \"agent\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"review_01\",\n  \"timestamp\": \"2026-09-03T17:30:01.570Z\",\n  \"subagent_id\": \"review_01\",\n  \"parent_tool_call_id\": \"call_01\",\n  \"subagent_type\": \"reviewer\",\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"detached\": true,\n  \"state\": \"queued\",\n  \"task_id\": \"task_01\",\n  \"started_at\": \"2026-09-03T17:30:01.570Z\"\n}"
+            },
+            {
+              "note": "",
+              "json": "{\n  \"type\": \"agent\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"review_01\",\n  \"timestamp\": \"2026-09-03T17:30:01.580Z\",\n  \"subagent_id\": \"review_01\",\n  \"parent_tool_call_id\": \"call_01\",\n  \"subagent_type\": \"reviewer\",\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"detached\": true,\n  \"state\": \"running\",\n  \"task_id\": \"task_01\",\n  \"started_at\": \"2026-09-03T17:30:01.570Z\"\n}"
+            },
+            {
+              "note": "",
               "json": "{\n  \"type\": \"turn\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"review_01\",\n  \"timestamp\": \"2026-09-03T17:30:01.600Z\",\n  \"turn_id\": \"r1\",\n  \"ordinal\": 0,\n  \"state\": \"running\",\n  \"origin\": {\n    \"kind\": \"task\",\n    \"task_id\": \"task_01\"\n  },\n  \"started_at\": \"2026-09-03T17:30:01.600Z\"\n}"
             },
             {
@@ -2536,8 +2580,8 @@
               "json": "{\n  \"type\": \"tool_call\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"review_01\",\n  \"timestamp\": \"2026-09-03T17:30:03.800Z\",\n  \"tool_call_id\": \"call_02\",\n  \"turn_id\": \"r1\",\n  \"step_id\": \"r1.0\",\n  \"name\": \"Read\",\n  \"state\": \"done\",\n  \"input\": {\n    \"path\": \"apps/web/src/views/LoginView.vue\"\n  },\n  \"output\": {\n    \"content\": \"<template>…</template>\",\n    \"lines\": 214\n  }\n}"
             },
             {
-              "note": "审查结论（这条正文即主通道 `task.result_summary` / 前台 `output.report` 的来源）",
-              "json": "{\n  \"type\": \"assistant\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"review_01\",\n  \"timestamp\": \"2026-09-03T17:30:04.500Z\",\n  \"message_id\": \"r1.0.a1\",\n  \"turn_id\": \"r1\",\n  \"step_id\": \"r1.0\",\n  \"status\": \"completed\",\n  \"text\": \"审查通过：可选链修复正确，无回归风险。\"\n}"
+              "note": "审查结论经 `agent.result_summary` 回收——即主通道 `task.result_summary` / 前台 `output.report` 的来源（不再折叠成 assistant 正文）",
+              "json": "{\n  \"type\": \"agent\",\n  \"session_id\": \"s_16\",\n  \"agent_id\": \"review_01\",\n  \"timestamp\": \"2026-09-03T17:30:04.500Z\",\n  \"subagent_id\": \"review_01\",\n  \"parent_tool_call_id\": \"call_01\",\n  \"subagent_type\": \"reviewer\",\n  \"description\": \"审查 LoginView 的白屏修复\",\n  \"detached\": true,\n  \"state\": \"completed\",\n  \"task_id\": \"task_01\",\n  \"result_summary\": \"审查通过：可选链修复正确，无回归风险。\",\n  \"started_at\": \"2026-09-03T17:30:01.570Z\",\n  \"ended_at\": \"2026-09-03T17:30:04.500Z\"\n}"
             },
             {
               "note": "",
