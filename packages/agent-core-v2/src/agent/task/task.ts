@@ -64,6 +64,8 @@ export interface AgentTaskNotificationContext {
   readonly severity: 'info' | 'warning';
   readonly sourceKind: string;
   readonly sourceId: string;
+  readonly sourceAgentId?: string;
+  readonly raw?: string;
 }
 
 export interface AgentTaskWaitDelivery {

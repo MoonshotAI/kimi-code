@@ -503,6 +503,7 @@ interface PlanRevisionPayload {
   key: string;
   sha256: string;
   bytes: number;
+  summary?: string;
 }
 
 /**

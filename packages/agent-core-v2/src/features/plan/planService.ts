@@ -206,6 +206,11 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     const scope = this.agentCtx.scope();
     const key = `plan/${id}/v${version}.md`;
     await this.blobs.put(scope, key, bytes);
+    const heading = content
+      .split('\n')
+      .map((line) => line.trim())
+      .find((line) => line.startsWith('#'));
+    const summary = heading === undefined ? undefined : heading.replace(/^#+\s*/, '').trim() || undefined;
     await this.dispatcher.dispatch(
       new PlanRevision({
         agentId: this.agentCtx.agentId,
@@ -214,6 +219,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
         key,
         sha256: createHash('sha256').update(bytes).digest('hex'),
         bytes: bytes.byteLength,
+        summary,
       }),
     );
   }
