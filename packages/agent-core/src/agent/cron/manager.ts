@@ -172,7 +172,9 @@ export class CronManager {
     this.scheduler = createCronScheduler({
       clocks: this.clocks,
       source: () => this.store.list(),
-      isIdle: () => !agent.turn.hasActiveTurn,
+      isIdle: () =>
+        !agent.turn.hasActiveTurn &&
+        agent.goal.getGoal().goal?.status !== 'paused',
       isKilled: () => process.env['KIMI_DISABLE_CRON'] === '1',
       onFire: (task, ctx) => {
         this.handleFire(task, ctx);

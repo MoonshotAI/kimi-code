@@ -530,7 +530,13 @@ function runPromptTurn(
         if (settled || activeTurnId !== undefined) return;
         // A task whose expression has no future fire can never trigger a
         // turn; don't hold the run open for it.
-        if (tasks.some((task) => task.nextFireAt !== null)) {
+        // CronManager deliberately suppresses fires while a goal is paused.
+        // Treat those queued tasks as ineligible here too, otherwise the
+        // print-only keep-alive waits for an event the scheduler cannot emit.
+        if (
+          goal?.status !== 'paused' &&
+          tasks.some((task) => task.nextFireAt !== null)
+        ) {
           holdEventLoop();
           return;
         }
