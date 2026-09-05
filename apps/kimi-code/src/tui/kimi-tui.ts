@@ -3164,13 +3164,28 @@ export class KimiTUI {
       newChildren.push(children[i]!);
     }
 
-    for (const idx of toMergeIndices) {
-      const child = children[idx]!;
+    const mergedChildren = toMergeIndices.map((idx) => children[idx]!);
+    for (const child of mergedChildren) {
       if (hasDispose(child)) child.dispose();
     }
+    // The merged components are gone; their transcript entries have to go
+    // too, or the entry list keeps growing underneath the folded tree.
+    this.dropTranscriptEntriesOf(mergedChildren);
 
     children.splice(0, children.length, ...newChildren);
     return true;
+  }
+
+  private dropTranscriptEntriesOf(components: readonly Component[]): void {
+    const dropped = new Set<TranscriptEntry>();
+    for (const component of components) {
+      const entry = getTranscriptComponentEntry(component);
+      if (entry !== undefined) dropped.add(entry);
+    }
+    if (dropped.size === 0) return;
+    this.state.transcriptEntries = this.state.transcriptEntries.filter(
+      (entry) => !dropped.has(entry),
+    );
   }
 
   mergeAllTurnSteps(): void {
@@ -3249,6 +3264,7 @@ export class KimiTUI {
     for (const child of toDispose) {
       if (hasDispose(child)) child.dispose();
     }
+    this.dropTranscriptEntriesOf(toDispose);
     children.splice(0, children.length, ...newChildren);
   }
 
