@@ -857,7 +857,7 @@ describe('foldWireHistory todo restoration', () => {
 
 describe('paginateHistory', () => {
   const base: HistoryMessage[] = [];
-  for (let turn = 0; turn < 2; turn++) {
+  for (let turn = 0; turn < 3; turn++) {
     base.push(
       {
         type: 'turn',
@@ -920,29 +920,29 @@ describe('paginateHistory', () => {
     });
 
   it('returns the newest page by default and pages older with before_turn', () => {
-    expect(ids(paginateHistory(base, {}).messages)).toHaveLength(8);
+    expect(ids(paginateHistory(base, {}).messages)).toHaveLength(12);
     expect(paginateHistory(base, {}).hasMore).toBe(false);
-    const newest = paginateHistory(base, { page_size: 3 });
-    expect(ids(newest.messages)).toEqual(['t1.u0', 't1.1', 't1.1.a1']);
+    const newest = paginateHistory(base, { page_size: 2 });
+    expect(ids(newest.messages)).toEqual(['t1', 't1.u0', 't1.1', 't1.1.a1', 't2', 't2.u0', 't2.1', 't2.1.a1']);
     expect(newest.hasMore).toBe(true);
-    const older = paginateHistory(base, { before_turn: 't1' });
-    expect(ids(older.messages)).toEqual(['t0', 't0.u0', 't0.1', 't0.1.a1']);
+    const older = paginateHistory(base, { before_turn: 't2' });
+    expect(ids(older.messages)).toEqual(['t0', 't0.u0', 't0.1', 't0.1.a1', 't1', 't1.u0', 't1.1', 't1.1.a1']);
     expect(older.hasMore).toBe(false);
-    const olderCapped = paginateHistory(base, { before_turn: 't1', page_size: 2 });
-    expect(ids(olderCapped.messages)).toEqual(['t0.1', 't0.1.a1']);
+    const olderCapped = paginateHistory(base, { before_turn: 't2', page_size: 1 });
+    expect(ids(olderCapped.messages)).toEqual(['t1', 't1.u0', 't1.1', 't1.1.a1']);
     expect(olderCapped.hasMore).toBe(true);
     expect(paginateHistory(base, { before_turn: 't99' })).toEqual({ messages: [], hasMore: false });
   });
 
   it('catches up newer messages with after_step', () => {
-    const tail = paginateHistory(base, { after_step: 't0.1' });
-    expect(ids(tail.messages)).toEqual(['t1', 't1.u0', 't1.1', 't1.1.a1']);
+    const tail = paginateHistory(base, { after_step: 't1.1' });
+    expect(ids(tail.messages)).toEqual(['t2', 't2.u0', 't2.1', 't2.1.a1']);
     expect(tail.hasMore).toBe(false);
-    const tailCapped = paginateHistory(base, { after_step: 't0.1', page_size: 2 });
-    expect(ids(tailCapped.messages)).toEqual(['t1', 't1.u0']);
+    const tailCapped = paginateHistory(base, { after_step: 't1.1', page_size: 2 });
+    expect(ids(tailCapped.messages)).toEqual(['t2', 't2.u0']);
     expect(tailCapped.hasMore).toBe(true);
     expect(paginateHistory(base, { after_step: 't0.9' })).toEqual({ messages: [], hasMore: false });
-    expect(paginateHistory(base, { after_step: 't1.1' })).toEqual({ messages: [], hasMore: false });
+    expect(paginateHistory(base, { after_step: 't2.1' })).toEqual({ messages: [], hasMore: false });
   });
 });
 
