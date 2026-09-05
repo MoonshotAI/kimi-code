@@ -13,6 +13,7 @@ import {
   isRetryableGenerateError,
 } from '#/kosong/contract/errors';
 import type { Message } from '#/kosong/contract/message';
+import type { Tool } from '#/kosong/contract/tool';
 import type {
   ChatProvider,
   GenerateOptions,
@@ -566,6 +567,7 @@ async function captureOpenAIBody(
 async function captureAnthropicBody(
   provider: ChatProvider,
   options?: GenerateOptions,
+  tools: Tool[] = [],
   history: Message[] = PROBE_HISTORY,
 ): Promise<{
   readonly params: Record<string, unknown>;
@@ -590,7 +592,7 @@ async function captureAnthropicBody(
     });
   client.messages.create = create('standard');
   client.beta.messages.create = create('beta');
-  await drain(await provider.generate('', [], history, options));
+  await drain(await provider.generate('', tools, history, options));
   if (capturedParams === undefined || via === undefined) {
     throw new Error('expected messages.create to be called');
   }
@@ -727,7 +729,7 @@ describe('reasoning-only assistant history projection', () => {
       apiKey: 'sk-probe',
     });
 
-    const { params } = await captureAnthropicBody(provider, undefined, THINK_HISTORY);
+    const { params } = await captureAnthropicBody(provider, undefined, [], THINK_HISTORY);
     const messages = params['messages'] as Array<Record<string, unknown>>;
 
     expect(messages[0]).toEqual({
@@ -859,6 +861,114 @@ describe('quota-exhausted classification through the real composition (behavior 
     expect(caught).not.toBeInstanceOf(APIProviderQuotaExhaustedError);
     expect(isRetryableGenerateError(caught)).toBe(true);
   });
+});
+
+describe('Anthropic tool schema compatibility', () => {
+  it('omits tools with unsupported root combinators and keeps compatible tools', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'claude-opus-4-6',
+      apiKey: 'sk-probe',
+      stream: false,
+    });
+    const tools: Tool[] = [
+      {
+        name: 'one_of_tool',
+        description: 'Uses oneOf.',
+        parameters: { oneOf: [{ required: ['resource_id'] }] },
+      },
+      {
+        name: 'any_of_tool',
+        description: 'Uses anyOf.',
+        parameters: { anyOf: [{ required: ['resource_id'] }] },
+      },
+      {
+        name: 'all_of_tool',
+        description: 'Uses allOf.',
+        parameters: { allOf: [{ required: ['resource_id'] }] },
+      },
+      {
+        name: 'compatible_tool',
+        description: 'Uses a regular object schema.',
+        parameters: {
+          type: 'object',
+          properties: { resource_id: { type: 'string' } },
+        },
+      },
+    ];
+    const originalTools = structuredClone(tools);
+
+    const { params } = await captureAnthropicBody(provider, undefined, tools);
+    const wireTools = params['tools'] as Array<{ name: string }>;
+
+    expect(wireTools.map((tool) => tool.name)).toEqual(['compatible_tool']);
+    expect(tools).toEqual(originalTools);
+
+    const kimiProvider = registry.createChatProvider({
+      protocol: 'anthropic',
+      providerType: 'kimi',
+      modelName: 'kimi-for-coding',
+      apiKey: 'sk-probe',
+    });
+    const { params: kimiParams } = await captureAnthropicBody(
+      kimiProvider,
+      undefined,
+      tools,
+    );
+    const kimiTools = kimiParams['tools'] as Array<{ name: string }>;
+    expect(kimiTools.map((tool) => tool.name)).toEqual(tools.map((tool) => tool.name));
+  });
+
+  it('filters unsupported tools for registry-created plain anthropic providers', async () => {
+    const provider = registry.createChatProvider({
+      protocol: 'anthropic',
+      modelName: 'claude-opus-4-6',
+      apiKey: 'sk-probe',
+    });
+    const tools: Tool[] = [
+      {
+        name: 'incompatible_tool',
+        description: 'Uses oneOf.',
+        parameters: { oneOf: [{ required: ['resource_id'] }] },
+      },
+      {
+        name: 'compatible_tool',
+        description: 'Uses a regular object schema.',
+        parameters: { type: 'object' },
+      },
+    ];
+
+    const { params } = await captureAnthropicBody(provider, undefined, tools);
+    const wireTools = params['tools'] as Array<{ name: string }>;
+    expect(wireTools.map((tool) => tool.name)).toEqual(['compatible_tool']);
+  });
+
+  it.each(['https://api.anthropic.com', 'https://api.anthropic.com/'])(
+    'filters unsupported tools for explicit official endpoint %s',
+    async (baseUrl) => {
+      const provider = new AnthropicChatProvider({
+        model: 'claude-opus-4-6',
+        apiKey: 'sk-probe',
+        baseUrl,
+        stream: false,
+      });
+      const tools: Tool[] = [
+        {
+          name: 'incompatible_tool',
+          description: 'Uses oneOf.',
+          parameters: { oneOf: [{ required: ['resource_id'] }] },
+        },
+        {
+          name: 'compatible_tool',
+          description: 'Uses a regular object schema.',
+          parameters: { type: 'object' },
+        },
+      ];
+
+      const { params } = await captureAnthropicBody(provider, undefined, tools);
+      const wireTools = params['tools'] as Array<{ name: string }>;
+      expect(wireTools.map((tool) => tool.name)).toEqual(['compatible_tool']);
+    },
+  );
 });
 
 describe('reasoning dialect (behavior probes)', () => {
