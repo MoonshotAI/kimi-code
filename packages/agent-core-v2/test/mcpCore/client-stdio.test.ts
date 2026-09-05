@@ -373,27 +373,32 @@ describe('StdioMcpClient', () => {
 
 describe('mergeStdioEnv', () => {
   it('enables NODE_USE_ENV_PROXY for a proxy set only in the server config.env', () => {
-    const merged = mergeStdioEnv({ HTTP_PROXY: 'http://corp:3128' }, { PATH: '/usr/bin' });
+    const merged = mergeStdioEnv('uvx', { HTTP_PROXY: 'http://corp:3128' }, { PATH: '/usr/bin' });
     expect(merged['HTTP_PROXY']).toBe('http://corp:3128');
     expect(merged['NODE_USE_ENV_PROXY']).toBe('1');
-    expect(merged['NO_PROXY']).toBe('localhost,127.0.0.1,::1,[::1]');
+    expect(merged['NO_PROXY']).toBe('localhost,127.0.0.1,::1');
     expect(merged['PATH']).toBe('/usr/bin');
   });
 
   it('does not inject NODE_USE_ENV_PROXY when no proxy is configured', () => {
-    const merged = mergeStdioEnv(undefined, { PATH: '/usr/bin' });
+    const merged = mergeStdioEnv('uvx', undefined, { PATH: '/usr/bin' });
     expect(merged['NODE_USE_ENV_PROXY']).toBeUndefined();
     expect(merged['PATH']).toBe('/usr/bin');
   });
 
   it('lets config.env override the parent env', () => {
-    const merged = mergeStdioEnv({ FOO: 'override' }, { FOO: 'parent', PATH: '/x' });
+    const merged = mergeStdioEnv('uvx', { FOO: 'override' }, { FOO: 'parent', PATH: '/x' });
     expect(merged['FOO']).toBe('override');
+  });
+
+  it('keeps bracketed IPv6 loopback for Node launchers', () => {
+    const merged = mergeStdioEnv('npx.cmd', { HTTP_PROXY: 'http://corp:3128' }, {});
+    expect(merged['NO_PROXY']).toBe('localhost,127.0.0.1,::1,[::1]');
   });
 
   it('does not depend on a filesystem cwd fixture for env merging', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'kimi-mcp-env-'));
     await rm(dir, { recursive: true, force: true });
-    expect(mergeStdioEnv(undefined, { PATH: dir })['PATH']).toBe(dir);
+    expect(mergeStdioEnv('uvx', undefined, { PATH: dir })['PATH']).toBe(dir);
   });
 });

@@ -98,6 +98,30 @@ export function resolveNoProxy(env: Env): string {
   return hosts.join(',');
 }
 
+function resolveChildNoProxy(
+  env: Env,
+  includeBracketedIpv6Loopback: boolean,
+  preserveExplicitBracketedIpv6Loopback = false,
+): string {
+  const noProxy = resolveNoProxy(env);
+  if (
+    noProxy === '*' ||
+    includeBracketedIpv6Loopback ||
+    (preserveExplicitBracketedIpv6Loopback && hasExplicitBracketedIpv6Loopback(env))
+  ) {
+    return noProxy;
+  }
+  return noProxy
+    .split(',')
+    .filter((entry) => entry !== '[::1]')
+    .join(',');
+}
+
+function hasExplicitBracketedIpv6Loopback(env: Env): boolean {
+  const raw = firstNonBlank(env, ['no_proxy', 'NO_PROXY']);
+  return raw?.split(',').some((entry) => entry.trim() === '[::1]') === true;
+}
+
 export function makeNoProxyMatcher(noProxy: string): (host: string, port?: number | string) => boolean {
   const entries = noProxy
     .split(',')
@@ -225,9 +249,12 @@ export function installGlobalProxyDispatcher(
   return true;
 }
 
-export function proxyEnvForChild(env: Env): Record<string, string> {
+export function proxyEnvForChild(
+  env: Env,
+  includeBracketedIpv6Loopback = false,
+): Record<string, string> {
   if (!hasHttpProxy(env)) return {};
-  const noProxy = resolveNoProxy(env);
+  const noProxy = resolveChildNoProxy(env, includeBracketedIpv6Loopback);
   const result: Record<string, string> = {
     NODE_USE_ENV_PROXY: '1',
     NO_PROXY: noProxy,
@@ -248,12 +275,17 @@ export function proxyEnvForChild(env: Env): Record<string, string> {
 export function reconcileChildNoProxy(
   childEnv: Record<string, string>,
   configEnv?: Record<string, string>,
+  includeBracketedIpv6Loopback = false,
 ): void {
   const override = [configEnv?.['no_proxy'], configEnv?.['NO_PROXY']].find(
     (value) => (value?.trim() ?? '').length > 0,
   );
   if (override === undefined) return;
-  const noProxy = resolveNoProxy({ no_proxy: override, NO_PROXY: override });
+  const noProxy = resolveChildNoProxy(
+    { no_proxy: override, NO_PROXY: override },
+    includeBracketedIpv6Loopback,
+    true,
+  );
   childEnv['NO_PROXY'] = noProxy;
   childEnv['no_proxy'] = noProxy;
 }
