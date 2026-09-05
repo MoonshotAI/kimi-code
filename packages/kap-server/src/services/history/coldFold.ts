@@ -649,7 +649,10 @@ export function foldWireHistory(
           inputText: typeof e.args === 'string' ? e.args : undefined,
           output: existing?.output,
           error: existing?.error,
-          taskId: existing?.taskId ?? taskIdByToolCall(e.toolCallId),
+          taskId:
+            existing?.taskId ??
+            taskIdByToolCall(e.toolCallId) ??
+            (e.name === 'Agent' ? agentTaskIdOf(e.toolCallId) : undefined),
           approvalId: existing?.approvalId,
           todoId:
             existing?.todoId ??
@@ -661,6 +664,31 @@ export function foldWireHistory(
         };
         tools.set(e.toolCallId, tool);
         if (existing === undefined) order.push(`tool:${e.toolCallId}`);
+        if (e.name === 'Agent') {
+          const agentTaskId = agentTaskIdOf(e.toolCallId);
+          if (!tasks.has(agentTaskId)) {
+            const args = (input ?? {}) as Record<string, unknown>;
+            tasks.set(agentTaskId, {
+              taskId: agentTaskId,
+              kind: 'subagent',
+              state: 'running',
+              detached: args['run_in_background'] === true,
+              description: typeof args['description'] === 'string' ? args['description'] : undefined,
+              childAgentId: undefined,
+              outputTail: '',
+              startedAt: at(record),
+              endedAt: undefined,
+              resultSummary: undefined,
+              error: undefined,
+              stateReason: undefined,
+              usage: undefined,
+              model: typeof args['model'] === 'string' ? args['model'] : undefined,
+              thinkingEffort: typeof args['thinking'] === 'string' ? args['thinking'] : undefined,
+              at: at(record),
+            });
+            order.push(`task:${agentTaskId}`);
+          }
+        }
         return;
       }
       case 'tool.result': {
@@ -675,6 +703,26 @@ export function foldWireHistory(
         existing.output = e.result.output;
         existing.error = isError && typeof e.result.output === 'string' ? e.result.output : undefined;
         existing.at = at(record);
+        if (existing.name === 'Agent') {
+          const agentTask = tasks.get(agentTaskIdOf(e.toolCallId));
+          if (agentTask !== undefined) {
+            agentTask.state = isError ? 'failed' : 'completed';
+            agentTask.endedAt = at(record);
+            if (typeof e.result.output === 'string') {
+              const outputText = e.result.output;
+              const childAgentId = /^agent_id: (\S+)$/m.exec(outputText)?.[1];
+              if (childAgentId !== undefined) {
+                agentTask.childAgentId = childAgentId;
+                if (!existing.agentRefs.some((ref) => ref.agent_id === childAgentId)) {
+                  existing.agentRefs = [...existing.agentRefs, { agent_id: childAgentId, role: 'child' }];
+                }
+              }
+              const summary = /\[summary\]\n([\s\S]*?)(?:\n\nresume_hint:|$)/.exec(outputText)?.[1]?.trim();
+              if (summary !== undefined && summary.length > 0) agentTask.resultSummary = summary;
+              if (isError) agentTask.error = outputText;
+            }
+          }
+        }
         return;
       }
       default:
@@ -688,6 +736,8 @@ export function foldWireHistory(
     }
     return undefined;
   };
+
+  const agentTaskIdOf = (toolCallId: string): string => `agent_${toolCallId}`;
 
   const agentRefsOf = (toolCallId: string): { agent_id: string; role?: 'child' | 'member' }[] => {
     const refs: { agent_id: string; role?: 'child' | 'member' }[] = [];
