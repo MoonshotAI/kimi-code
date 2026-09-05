@@ -1,5 +1,37 @@
 import { eastAsianWidth } from "get-east-asian-width";
 
+// ---------------------------------------------------------------------------
+// East Asian Ambiguous width mode
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether East Asian Ambiguous characters (① ★ → α …) count as 1 or 2
+ * terminal cells. Terminals in CJK locales render them double-width; treating
+ * them as narrow misaligns every padded line that contains one (upstream
+ * kimi-code #3302). Default "narrow" matches upstream; the host sets "wide"
+ * from `ambiguous_width` in tui.toml (auto → CJK locale detection).
+ */
+export type AmbiguousWidthMode = "narrow" | "wide";
+
+let ambiguousWidthMode: AmbiguousWidthMode = "narrow";
+
+export function setAmbiguousWidthMode(mode: AmbiguousWidthMode): void {
+	if (mode === ambiguousWidthMode) return;
+	ambiguousWidthMode = mode;
+	// widthCache (below) is keyed by string only — a mode switch must not serve
+	// widths computed under the old mode.
+	widthCache.clear();
+}
+
+export function getAmbiguousWidthMode(): AmbiguousWidthMode {
+	return ambiguousWidthMode;
+}
+
+/** eastAsianWidth honoring the configured ambiguous-width mode. */
+function cellWidth(cp: number): number {
+	return eastAsianWidth(cp, { ambiguousAsWide: ambiguousWidthMode === "wide" });
+}
+
 // segmenters (shared instance)
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 const wordSegmenter = new Intl.Segmenter(undefined, { granularity: "word" });
@@ -205,7 +237,7 @@ function graphemeWidth(segment: string): number {
 		return 2;
 	}
 
-	let width = eastAsianWidth(cp);
+	let width = cellWidth(cp);
 
 	// Intl.Segmenter can group multiple terminal-spacing code points into one
 	// grapheme. Count trailing visible code points that terminals may allocate
@@ -223,7 +255,7 @@ function graphemeWidth(segment: string): number {
 			const c = char.codePointAt(0)!;
 			if (followsMark || (c >= 0xff00 && c <= 0xffef)) {
 				// halfwidth + fullwidth forms
-				width += eastAsianWidth(c);
+				width += cellWidth(c);
 			} else if (c === 0x0e33 || c === 0x0eb3) {
 				width += 1;
 			}

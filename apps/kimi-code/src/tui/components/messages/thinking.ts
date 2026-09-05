@@ -16,6 +16,7 @@ import {
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
+import { replaceCircledNumbers } from '#/tui/utils/text-sanitize';
 
 export type ThinkingRenderMode = 'live' | 'finalized';
 
@@ -68,7 +69,8 @@ export class ThinkingComponent implements Component {
   }
 
   private styled(text: string): string {
-    return currentTheme.italicFg('textDim', text);
+    // Display-layer only: circled digits overlap on CJK terminals (#3302).
+    return currentTheme.italicFg('textDim', replaceCircledNumbers(text));
   }
 
   finalize(): void {

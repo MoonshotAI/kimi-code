@@ -56,6 +56,9 @@ export const TuiConfigFileSchema = z.object({
   render_latex: z.boolean().optional(),
   disable_paste_burst: z.boolean().optional(),
   cache_expiry_hint: z.boolean().optional(),
+  /** East Asian Ambiguous chars (① ★ →) cell width: "narrow"=1, "wide"=2,
+   * "auto"=detect from locale (CJK locales default wide; upstream #3302). */
+  ambiguous_width: z.enum(['narrow', 'wide', 'auto']).optional(),
   editor: z
     .object({
       command: z.string().optional(),
@@ -84,6 +87,9 @@ export const TuiConfigSchema = z.object({
   /** Present in every normalized config; optional only so hand-built test
    * fixtures from before this field existed still typecheck. */
   cacheExpiryHint: z.boolean().optional(),
+  /** Resolved cell width for East Asian Ambiguous chars; "auto" defers to
+   * locale detection at application time. */
+  ambiguousWidth: z.enum(['narrow', 'wide', 'auto']).optional(),
   editorCommand: z.string().nullable(),
   notifications: NotificationsConfigSchema,
   upgrade: UpgradePreferencesSchema,
@@ -111,6 +117,7 @@ export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({
   renderLatex: true,
   disablePasteBurst: false,
   cacheExpiryHint: true,
+  ambiguousWidth: 'auto',
   editorCommand: null,
   notifications: DEFAULT_NOTIFICATIONS_CONFIG,
   upgrade: DEFAULT_UPGRADE_PREFERENCES,
@@ -198,6 +205,7 @@ export function normalizeTuiConfig(
     renderLatex: config.render_latex ?? DEFAULT_TUI_CONFIG.renderLatex,
     disablePasteBurst: config.disable_paste_burst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
     cacheExpiryHint: config.cache_expiry_hint ?? DEFAULT_TUI_CONFIG.cacheExpiryHint,
+    ambiguousWidth: config.ambiguous_width ?? DEFAULT_TUI_CONFIG.ambiguousWidth,
     editorCommand: command === undefined || command.length === 0 ? null : command,
     notifications: {
       enabled: config.notifications?.enabled ?? DEFAULT_NOTIFICATIONS_CONFIG.enabled,

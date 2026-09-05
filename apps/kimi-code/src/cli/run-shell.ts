@@ -26,6 +26,7 @@ import { CHROME_GUTTER } from '#/tui/constant/rendering';
 import { KimiTUI } from '#/tui/index';
 import { startupTrace } from '#/utils/startup-trace';
 import { currentTheme, getColorPalette } from '#/tui/theme';
+import { setAmbiguousWidthMode } from '@moonshot-ai/pi-tui';
 import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 import { restoreTerminalModes } from '#/utils/terminal-restore';
 import { resolveCommandPath } from '#/utils/process/resolve-command';
@@ -56,6 +57,18 @@ export async function runShell(
   // Initialise the global Theme singleton before pi-tui grabs stdin.
   const palette = await getColorPalette(tuiConfig.theme);
   currentTheme.setPalette(palette);
+
+  // East Asian Ambiguous width mode (upstream #3302): "wide"/"narrow" honor
+  // tui.toml verbatim; "auto" treats CJK locales as wide, matching what their
+  // terminals actually render.
+  const ambiguous = tuiConfig.ambiguousWidth ?? 'auto';
+  const ambiguousMode =
+    ambiguous === 'auto'
+      ? /^zh|ja|ko/i.test(Intl.DateTimeFormat().resolvedOptions().locale ?? '')
+        ? 'wide'
+        : 'narrow'
+      : ambiguous;
+  setAmbiguousWidthMode(ambiguousMode);
 
   const workDir = process.cwd();
   const telemetryBootstrap = createCliTelemetryBootstrap();

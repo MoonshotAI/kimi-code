@@ -12,6 +12,7 @@ import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 import { createMarkdownOptions } from '#/tui/utils/markdown-options';
+import { replaceCircledNumbers } from '#/tui/utils/text-sanitize';
 import { markOsc133Zone } from '#/tui/utils/osc133';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 
@@ -45,7 +46,8 @@ export class AssistantMessageComponent implements Component {
   }
 
   updateContent(text: string, opts?: AssistantMarkdownOptions): void {
-    const displayText = text.trim();
+    // Display-layer only: circled digits overlap on CJK terminals (#3302).
+    const displayText = replaceCircledNumbers(text.trim());
     const transient = opts?.transient === true;
 
     if (displayText === this.lastText && transient === this.lastTransient) return;
