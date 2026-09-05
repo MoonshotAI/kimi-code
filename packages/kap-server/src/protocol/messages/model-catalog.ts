@@ -8,3 +8,5 @@ export const modelCatalogMessageSchema = z.object({
 });
 
 export type CatalogChanged = z.infer<typeof modelCatalogMessageSchema>;
+
+export type ModelCatalogChangedMessage = CatalogChanged;

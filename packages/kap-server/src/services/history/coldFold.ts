@@ -12,14 +12,17 @@ import type {
   StepUsage,
   SystemMessage,
   TaskMessage,
+  TaskNotificationPayload,
   TurnOrigin,
   UserMessageOrigin,
 } from '../../protocol/messages';
 import {
   mapInteractionEndState,
+  notificationTextOf,
   parseToolArgs,
   promptTextOf,
   skillActivationsOf,
+  taskNotificationOriginOf,
   todoWriteItems,
   toTurnOrigin,
   userOriginOf,
@@ -125,6 +128,7 @@ interface UserDraft {
   finishedAt?: string;
   steeredAt?: string;
   origin?: UserMessageOrigin;
+  notification?: TaskNotificationPayload;
   attachmentIds?: string[];
   skillActivations?: { skill_name: string; skill_args?: string }[];
   at: string;
@@ -172,6 +176,7 @@ interface PendingSteer {
   readonly skillActivations: { skill_name: string; skill_args?: string }[] | undefined;
   readonly skipBlocks: number;
   readonly at: string;
+  readonly notification?: { readonly payload: TaskNotificationPayload; readonly text: string };
 }
 
 interface TurnScratch {
@@ -225,6 +230,7 @@ export function foldWireHistory(
   let currentTurn: number | undefined;
 
   let nextTurnId = 0;
+  let phantomUserSeq = 0;
   const cancelledTurnIds = new Set<number>();
   const hiddenTurnIds = new Set<number>();
   const turnPromptIds = new Map<number, string>();
@@ -356,11 +362,12 @@ export function foldWireHistory(
       messageId,
       turnId,
       stepId: step.stepId,
-      text: textsOut.join(''),
+      text: steer.notification?.text ?? textsOut.join(''),
       status: 'running',
       createdAt: steer.at,
       steeredAt: steer.at,
       origin: steer.origin,
+      notification: steer.notification?.payload,
       attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
       skillActivations: steer.skillActivations,
       at: steer.at,
@@ -441,6 +448,7 @@ export function foldWireHistory(
     skipCancelledTurnIds();
     const rawId = nextTurnId;
     nextTurnId += 1;
+    phantomUserSeq = 0;
     const origin = record['origin'];
     const promptId = record['promptId'];
     if (typeof promptId === 'string') {
@@ -464,12 +472,13 @@ export function foldWireHistory(
         ? Array.from({ length: attachments }, (_, i) => attachmentIdOf(turnId, i + 1))
         : undefined;
     const wantsUser = wantsUserMessage(origin, promptText);
+    const taskOrigin = taskNotificationOriginOf(origin);
     const draft: TurnDraft = {
       turnId,
       rawId,
       origin: toTurnOrigin(origin, options.agentId, subagentTaskIds),
       state: 'running',
-      userMessageId: wantsUser ? turnUserMessageIdOf(turnId) : undefined,
+      userMessageId: wantsUser || taskOrigin !== undefined ? turnUserMessageIdOf(turnId) : undefined,
       attachmentIds,
       startedAt: recordAt,
       at: recordAt,
@@ -484,14 +493,17 @@ export function foldWireHistory(
       openingInputKey: JSON.stringify(input),
       openingSteerDeduped: false,
     });
-    if (wantsUser && draft.userMessageId !== undefined) {
+    if (draft.userMessageId !== undefined) {
+      const notification =
+        taskOrigin === undefined ? undefined : parseNotificationXmlText(promptText ?? '');
       const user: UserDraft = {
         messageId: draft.userMessageId,
         turnId,
-        text: promptText ?? '',
+        text: notification === undefined ? (promptText ?? '') : notificationTextOf(notification),
         status: 'running',
         createdAt: recordAt,
-        origin: userOriginOf(origin),
+        origin: taskOrigin ?? userOriginOf(origin),
+        notification,
         attachmentIds,
         skillActivations: skillActivationsOf(origin),
         at: recordAt,
@@ -504,16 +516,17 @@ export function foldWireHistory(
 
   const onTurnSteer = (record: ContextRecord): void => {
     const origin = record['origin'] as
-      | { kind?: string; skillActivations?: readonly { skillName: string; skillArgs?: string }[] }
+      | { kind?: string; skillActivations?: readonly { skillName: string; skillArgs?: string }[]; trigger?: string }
       | undefined;
     const kind = origin?.kind;
     if (kind !== 'user' && kind !== 'skill_activation' && kind !== 'cron_job') return;
+    if (kind === 'skill_activation' && origin?.trigger !== 'user-slash') return;
     const rawId = currentTurn;
     if (rawId === undefined || hiddenTurnIds.has(rawId)) return;
     const input = Array.isArray(record['input']) ? (record['input'] as ContentPart[]) : [];
     const steer: PendingSteer = {
       input,
-      origin: kind === 'cron_job' ? userOriginOf(origin) : undefined,
+      origin: userOriginOf(origin),
       skillActivations: skillActivationsOf(origin),
       skipBlocks: kind === 'user' ? (origin?.skillActivations?.length ?? 0) : 0,
       at: at(record),
@@ -684,6 +697,68 @@ export function foldWireHistory(
     return refs;
   };
 
+  const onTaskNotificationAppend = (
+    message: { content?: ContentPart[] },
+    taskOrigin: Extract<UserMessageOrigin, { kind: 'task' }>,
+    record: ContextRecord,
+  ): void => {
+    const recordAt = at(record);
+    const input = Array.isArray(message.content) ? message.content : [];
+    const rawText = promptTextOf(input);
+    const notification = parseNotificationXmlText(rawText);
+    const rawId = currentTurn;
+    if (rawId !== undefined && !hiddenTurnIds.has(rawId)) {
+      const turnId = turnIdOf(rawId);
+      const turn = turns.get(turnId);
+      const entry = scratchByTurn.get(rawId);
+      if (
+        turn !== undefined &&
+        turn.origin.kind === 'task' &&
+        turn.origin.task_id === taskOrigin.task_id &&
+        entry?.currentStep === undefined
+      ) {
+        return;
+      }
+      if (turn !== undefined && turn.state === 'running') {
+        const steer: PendingSteer = {
+          input,
+          origin: taskOrigin,
+          skillActivations: undefined,
+          skipBlocks: 0,
+          at: recordAt,
+          notification:
+            notification === undefined
+              ? undefined
+              : { payload: notification, text: notificationTextOf(notification) },
+        };
+        const stepOrdinal = entry?.currentStep;
+        if (stepOrdinal !== undefined) {
+          const step = steps.get(stepIdOf(turnId, stepOrdinal));
+          if (step !== undefined && step.state === 'running') {
+            emitSteer(rawId, step, steer);
+            return;
+          }
+        }
+        scratch(rawId).pendingSteers.push(steer);
+        return;
+      }
+    }
+    phantomUserSeq += 1;
+    const turnId = turnIdOf(nextTurnId);
+    const draft: UserDraft = {
+      messageId: `${turnId}.u${phantomUserSeq}`,
+      turnId,
+      text: notification === undefined ? rawText : notificationTextOf(notification),
+      status: 'completed',
+      createdAt: recordAt,
+      origin: taskOrigin,
+      notification,
+      at: recordAt,
+    };
+    users.set(draft.messageId, draft);
+    order.push(`user:${draft.messageId}`);
+  };
+
   const onAppendMessage = (record: ContextRecord): void => {
     const message = record['message'] as
       | {
@@ -698,6 +773,11 @@ export function foldWireHistory(
       | undefined;
     if (message?.role === undefined) return;
     if (message.role === 'user') {
+      const taskOrigin = taskNotificationOriginOf(message.origin);
+      if (taskOrigin !== undefined) {
+        onTaskNotificationAppend(message, taskOrigin, record);
+        return;
+      }
       if (!isUndoAnchorOrigin(message.origin)) return;
       const messageId = typeof message.id === 'string' ? message.id : undefined;
       const matchingIndex =
@@ -1304,6 +1384,7 @@ export function foldWireHistory(
           finished_at: draft.finishedAt,
           steered_at: draft.steeredAt,
           origin: draft.origin,
+          notification: draft.notification,
         });
         break;
       }
@@ -1434,6 +1515,33 @@ function baseFields(
   timestamp: string,
 ): { session_id: string; agent_id: string; timestamp: string } {
   return { session_id: options.sessionId, agent_id: options.agentId, timestamp };
+}
+
+function parseNotificationXmlText(text: string): TaskNotificationPayload | undefined {
+  const match = text.match(/^<notification\s+([^>]*)>\n?/);
+  if (!match) return undefined;
+  const attrs = match[1]!;
+  const attr = (name: string): string | undefined =>
+    attrs.match(new RegExp(`${name}="([^"]*)"`))?.[1];
+  const rest = text.slice(match[0].length).replace(/\n?<\/notification>\s*$/, '');
+  let title = '';
+  let severity: string | undefined;
+  const bodyLines: string[] = [];
+  for (const line of rest.split('\n')) {
+    if (line.startsWith('Title: ')) title = line.slice('Title: '.length);
+    else if (line.startsWith('Severity: ')) severity = line.slice('Severity: '.length);
+    else bodyLines.push(line);
+  }
+  return {
+    title,
+    body: bodyLines.join('\n').replaceAll(/^\n+|\n+$/g, ''),
+    severity,
+    type: attr('type'),
+    source_kind: attr('source_kind'),
+    source_id: attr('source_id'),
+    agent_id: attr('agent_id'),
+    raw: text,
+  };
 }
 
 function bundledSkillCount(origin: unknown): number {

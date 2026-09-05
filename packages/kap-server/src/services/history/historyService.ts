@@ -69,10 +69,11 @@ export async function readSessionHistory(
     resolvePlanRevisionKey: (key) =>
       join('sessions', summary.workspaceId, sessionId, 'agents', agentId, key),
   });
-  const messages = paginateHistory(all, query);
+  const page = paginateHistory(all, query);
   const inFlight = live ? deps.projection.inFlight(sessionId, agentId) : undefined;
   const response: HistoryResponse = {
-    messages,
+    messages: page.messages,
+    has_more: page.hasMore,
     in_flight: inFlight,
   };
   const parsed = historyResponseSchema.safeParse(response);
@@ -86,17 +87,23 @@ export async function readSessionHistory(
   return parsed.data;
 }
 
+export interface HistoryPage {
+  readonly messages: HistoryMessage[];
+  readonly hasMore: boolean;
+}
+
 export function paginateHistory(
   messages: readonly HistoryMessage[],
   query: HistoryQueryOptions,
-): HistoryMessage[] {
+): HistoryPage {
   const pageSize = Math.min(Math.max(query.page_size ?? DEFAULT_PAGE_SIZE, 1), MAX_PAGE_SIZE);
   if (query.before_turn !== undefined) {
     const index = messages.findIndex(
       (message) => message.type === 'turn' && message.turn_id === query.before_turn,
     );
-    if (index < 0) return [];
-    return messages.slice(Math.max(0, index - pageSize), index);
+    if (index < 0) return { messages: [], hasMore: false };
+    const start = Math.max(0, index - pageSize);
+    return { messages: messages.slice(start, index), hasMore: start > 0 };
   }
   if (query.after_step !== undefined) {
     let index = -1;
@@ -107,10 +114,12 @@ export function paginateHistory(
         break;
       }
     }
-    if (index < 0) return [];
-    return messages.slice(index + 1, index + 1 + pageSize);
+    if (index < 0) return { messages: [], hasMore: false };
+    const end = Math.min(messages.length, index + 1 + pageSize);
+    return { messages: messages.slice(index + 1, end), hasMore: end < messages.length };
   }
-  return messages.slice(Math.max(0, messages.length - pageSize));
+  const start = Math.max(0, messages.length - pageSize);
+  return { messages: messages.slice(start), hasMore: start > 0 };
 }
 
 function scanSubagentTaskIds(records: readonly ContextRecord[]): Map<string, string> {

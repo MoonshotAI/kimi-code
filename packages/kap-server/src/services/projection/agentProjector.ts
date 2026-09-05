@@ -16,6 +16,7 @@ import type {
   StepUsage,
   SystemMessage,
   TaskMessage,
+  TaskNotificationPayload,
   ThinkingMessage,
   TodoMessage,
   ToolCallAgentRef,
@@ -161,6 +162,7 @@ interface UserRecord {
   finishedAt?: string;
   steeredAt?: string;
   origin?: UserMessageOrigin;
+  notification?: TaskNotificationPayload;
   attachmentIds?: string[];
   skillActivations?: { skill_name: string; skill_args?: string }[];
 }
@@ -181,6 +183,7 @@ interface PendingSteer {
   readonly skillActivations: { skill_name: string; skill_args?: string }[] | undefined;
   readonly skipBlocks: number;
   readonly at: string;
+  readonly notification?: { readonly payload: TaskNotificationPayload; readonly text: string };
 }
 
 export class AgentMessageProjector {
@@ -190,6 +193,7 @@ export class AgentMessageProjector {
   private openThinking: TextRecord | undefined;
   private userSeq = 0;
   private attachmentSeq = 0;
+  private phantomUserSeq = 0;
   private readonly turns = new Map<string, TurnRecord>();
   private readonly steps = new Map<string, StepRecord>();
   private readonly texts = new Map<string, TextRecord>();
@@ -339,11 +343,12 @@ export class AgentMessageProjector {
         ];
       case 'prompt.accepted':
       case 'cron.fired':
-      case 'task.notified':
       case 'permission.approval.requested':
       case 'permission.approval.resolved':
       case 'subagent.started':
         return [];
+      case 'task.notified':
+        return this.onTaskNotified(event);
       default: {
         const type = (event as { type: string }).type;
         if (PROJECTION_IGNORED_EVENT_TYPES.has(type)) return [];
@@ -652,6 +657,7 @@ export class AgentMessageProjector {
     }
     const turnId = turnIdOf(event.turnId);
     this.noteTurnId(event.turnId);
+    this.phantomUserSeq = 0;
     const origin = this.mapTurnOrigin(event.origin);
     const attachments = event.promptAttachments ?? [];
     const attachmentIds = attachments.map((_, index) => attachmentIdOf(turnId, index + 1));
@@ -1552,15 +1558,17 @@ export class AgentMessageProjector {
       skillActivations?: readonly { skillName: string; skillArgs?: string }[];
       jobId?: string;
       cron?: string;
+      trigger?: string;
     };
     const kind = origin.kind;
     if (kind !== 'user' && kind !== 'skill_activation' && kind !== 'cron_job') return [];
+    if (kind === 'skill_activation' && origin.trigger !== 'user-slash') return [];
     const ops = this.settlePendingClear();
     const turn = this.currentTurn;
     if (turn === undefined || turn.state !== 'running') return ops;
     const steer: PendingSteer = {
       input: event.input,
-      origin: kind === 'cron_job' ? cronUserOrigin(origin) : undefined,
+      origin: userOriginOf(event.origin),
       skillActivations: skillActivationsOf(event.origin),
       skipBlocks: kind === 'user' ? (origin.skillActivations?.length ?? 0) : 0,
       at: epochMsToIso(event.time),
@@ -1613,16 +1621,107 @@ export class AgentMessageProjector {
       messageId,
       turnId: step.turnId,
       stepId: step.stepId,
-      text: texts.join(''),
+      text: steer.notification?.text ?? texts.join(''),
       status: 'running',
       createdAt: steer.at,
       steeredAt: steer.at,
       origin: steer.origin,
+      notification: steer.notification?.payload,
       attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
       skillActivations: steer.skillActivations,
     };
     this.users.set(messageId, user);
     return this.userOp(user);
+  }
+
+  private onTaskNotified(event: {
+    time: number;
+    notificationType: string;
+    title: string;
+    body: string;
+    severity: string;
+    sourceKind: string;
+    sourceId: string;
+  }): ServerMessage[] {
+    const ops = this.settlePendingClear();
+    const origin = taskUserOriginOf(event.sourceId);
+    if (origin === undefined) return ops;
+    const notification: TaskNotificationPayload = {
+      title: event.title,
+      body: event.body,
+      severity: event.severity,
+      type: event.notificationType,
+      source_kind: event.sourceKind,
+      source_id: event.sourceId,
+    };
+    const text = notificationTextOf(notification);
+    const at = epochMsToIso(event.time);
+    const turn = this.currentTurn;
+    if (
+      turn !== undefined &&
+      turn.state === 'running' &&
+      turn.origin.kind === 'task' &&
+      turn.origin.task_id === origin.task_id
+    ) {
+      const messageId = turn.userMessageId ?? turnUserMessageIdOf(turn.turnId);
+      if (turn.userMessageId === undefined) {
+        turn.userMessageId = messageId;
+        ops.push(this.turnOp(turn));
+      }
+      const existing = this.users.get(messageId);
+      if (existing !== undefined) {
+        if (existing.notification === undefined) {
+          existing.text = text;
+          existing.origin = origin;
+          existing.notification = notification;
+          ops.push(this.userOp(existing));
+        }
+        return ops;
+      }
+      const user: UserRecord = {
+        messageId,
+        turnId: turn.turnId,
+        text,
+        status: 'running',
+        createdAt: at,
+        origin,
+        notification,
+      };
+      this.users.set(messageId, user);
+      ops.push(this.userOp(user));
+      return ops;
+    }
+    if (turn !== undefined && turn.state === 'running') {
+      const steer: PendingSteer = {
+        input: [],
+        origin,
+        skillActivations: undefined,
+        skipBlocks: 0,
+        at,
+        notification: { payload: notification, text },
+      };
+      const step = this.currentStep;
+      if (step !== undefined && step.state === 'running' && step.turnId === turn.turnId) {
+        ops.push(this.steerUserMessage(step, steer));
+        return ops;
+      }
+      this.pendingSteers.push(steer);
+      return ops;
+    }
+    this.phantomUserSeq += 1;
+    const turnId = turnIdOf(this.nextTurnIdHint);
+    const user: UserRecord = {
+      messageId: `${turnId}.u${this.phantomUserSeq}`,
+      turnId,
+      text,
+      status: 'completed',
+      createdAt: at,
+      origin,
+      notification,
+    };
+    this.users.set(user.messageId, user);
+    ops.push(this.userOp(user));
+    return ops;
   }
 
   private onContextSpliced(event: {
@@ -1902,6 +2001,7 @@ export class AgentMessageProjector {
       finished_at: user.finishedAt,
       steered_at: user.steeredAt,
       origin: user.origin,
+      notification: user.notification,
     };
   }
 
@@ -2145,10 +2245,41 @@ export function wantsUserMessage(origin: unknown, promptText: string | undefined
 }
 
 export function userOriginOf(origin: unknown): UserMessageOrigin | undefined {
-  const candidate = origin as { kind?: unknown; jobId?: unknown; cron?: unknown } | null | undefined;
+  const candidate = origin as
+    | { kind?: unknown; jobId?: unknown; cron?: unknown; skillName?: unknown; skillArgs?: unknown; trigger?: unknown }
+    | null
+    | undefined;
   if (candidate?.kind === 'cron_job') return cronUserOrigin(candidate);
   if (candidate?.kind === 'cron_missed') return { kind: 'cron' };
+  if (candidate?.kind === 'skill_activation' && typeof candidate.skillName === 'string') {
+    return {
+      kind: 'skill',
+      skill_name: candidate.skillName,
+      args: typeof candidate.skillArgs === 'string' ? candidate.skillArgs : undefined,
+      trigger: typeof candidate.trigger === 'string' ? candidate.trigger : undefined,
+    };
+  }
   return undefined;
+}
+
+export function taskUserOriginOf(taskId: unknown): Extract<UserMessageOrigin, { kind: 'task' }> | undefined {
+  if (typeof taskId !== 'string' || taskId.length === 0) return undefined;
+  return { kind: 'task', task_id: taskId };
+}
+
+export function taskNotificationOriginOf(
+  origin: unknown,
+): Extract<UserMessageOrigin, { kind: 'task' }> | undefined {
+  const candidate = origin as { kind?: unknown; taskId?: unknown } | null | undefined;
+  if (candidate?.kind !== 'task' && candidate?.kind !== 'background_task') return undefined;
+  return taskUserOriginOf(candidate.taskId);
+}
+
+export function notificationTextOf(notification: {
+  title: string;
+  body: string;
+}): string {
+  return `${notification.title}\n${notification.body}`.trim();
 }
 
 function cronUserOrigin(candidate: {

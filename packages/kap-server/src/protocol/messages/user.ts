@@ -10,6 +10,19 @@ export const skillActivationSchema = z.object({
 
 export type SkillActivation = z.infer<typeof skillActivationSchema>;
 
+export const taskNotificationPayloadSchema = z.object({
+  title: z.string(),
+  body: z.string(),
+  severity: z.string().optional(),
+  type: z.string().optional(),
+  source_kind: z.string().optional(),
+  source_id: z.string().optional(),
+  agent_id: z.string().optional(),
+  raw: z.string().optional(),
+});
+
+export type TaskNotificationPayload = z.infer<typeof taskNotificationPayloadSchema>;
+
 export const userMessageSchema = z.object({
   type: z.literal('user'),
   ...timelineMessageBase,
@@ -24,6 +37,7 @@ export const userMessageSchema = z.object({
   finished_at: isoDateTimeSchema.optional(),
   steered_at: isoDateTimeSchema.optional(),
   origin: userMessageOriginSchema.optional(),
+  notification: taskNotificationPayloadSchema.optional(),
 });
 
 export type UserMessage = z.infer<typeof userMessageSchema>;
