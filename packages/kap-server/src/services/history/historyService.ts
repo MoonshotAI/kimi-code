@@ -97,12 +97,17 @@ export function paginateHistory(
   query: HistoryQueryOptions,
 ): HistoryPage {
   const pageSize = Math.min(Math.max(query.page_size ?? DEFAULT_PAGE_SIZE, 1), MAX_PAGE_SIZE);
+  const turnBoundaryIndexes: number[] = [];
+  for (let i = 0; i < messages.length; i += 1) {
+    if (messages[i]!.type === 'turn') turnBoundaryIndexes.push(i);
+  }
   if (query.before_turn !== undefined) {
     const index = messages.findIndex(
       (message) => message.type === 'turn' && message.turn_id === query.before_turn,
     );
     if (index < 0) return { messages: [], hasMore: false };
-    const start = Math.max(0, index - pageSize);
+    const turnsBefore = turnBoundaryIndexes.filter((boundary) => boundary < index);
+    const start = turnsBefore.length > pageSize ? turnsBefore[turnsBefore.length - pageSize]! : 0;
     return { messages: messages.slice(start, index), hasMore: start > 0 };
   }
   if (query.after_step !== undefined) {
@@ -115,10 +120,16 @@ export function paginateHistory(
       }
     }
     if (index < 0) return { messages: [], hasMore: false };
-    const end = Math.min(messages.length, index + 1 + pageSize);
-    return { messages: messages.slice(index + 1, end), hasMore: end < messages.length };
+    return { messages: messages.slice(index + 1), hasMore: false };
   }
-  const start = Math.max(0, messages.length - pageSize);
+  if (turnBoundaryIndexes.length === 0) {
+    const start = Math.max(0, messages.length - pageSize);
+    return { messages: messages.slice(start), hasMore: start > 0 };
+  }
+  const start =
+    turnBoundaryIndexes.length > pageSize
+      ? turnBoundaryIndexes[turnBoundaryIndexes.length - pageSize]!
+      : 0;
   return { messages: messages.slice(start), hasMore: start > 0 };
 }
 
