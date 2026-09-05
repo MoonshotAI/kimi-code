@@ -18,8 +18,8 @@ import { readWireRecords, type ContextRecord } from '../projection/heal';
 import type { ProjectionService } from '../projection/projectionService';
 import { foldWireHistory } from './coldFold';
 
-const DEFAULT_PAGE_SIZE = 200;
-const MAX_PAGE_SIZE = 500;
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 200;
 
 export class HistorySessionNotFoundError extends Error {
   readonly sessionId: string;
@@ -98,12 +98,13 @@ export function paginateHistory(
 ): HistoryPage {
   const pageSize = Math.min(Math.max(query.page_size ?? DEFAULT_PAGE_SIZE, 1), MAX_PAGE_SIZE);
   if (query.before_turn !== undefined) {
-    const index = messages.findIndex(
+    const cursorIndex = messages.findIndex(
       (message) => message.type === 'turn' && message.turn_id === query.before_turn,
     );
-    if (index < 0) return { messages: [], hasMore: false };
-    const start = Math.max(0, index - pageSize);
-    return { messages: messages.slice(start, index), hasMore: start > 0 };
+    if (cursorIndex < 0) return { messages: [], hasMore: false };
+    const anchors = turnAnchorIndices(messages, cursorIndex);
+    const start = anchors.length > pageSize ? anchors[anchors.length - pageSize]! : 0;
+    return { messages: messages.slice(start, cursorIndex), hasMore: anchors.length > pageSize };
   }
   if (query.after_step !== undefined) {
     let index = -1;
@@ -118,8 +119,17 @@ export function paginateHistory(
     const end = Math.min(messages.length, index + 1 + pageSize);
     return { messages: messages.slice(index + 1, end), hasMore: end < messages.length };
   }
-  const start = Math.max(0, messages.length - pageSize);
-  return { messages: messages.slice(start), hasMore: start > 0 };
+  const anchors = turnAnchorIndices(messages, messages.length);
+  const start = anchors.length > pageSize ? anchors[anchors.length - pageSize]! : 0;
+  return { messages: messages.slice(start), hasMore: anchors.length > pageSize };
+}
+
+function turnAnchorIndices(messages: readonly HistoryMessage[], endExclusive: number): number[] {
+  const anchors: number[] = [];
+  for (let i = 0; i < endExclusive; i++) {
+    if (messages[i]!.type === 'turn') anchors.push(i);
+  }
+  return anchors;
 }
 
 function scanSubagentTaskIds(records: readonly ContextRecord[]): Map<string, string> {
