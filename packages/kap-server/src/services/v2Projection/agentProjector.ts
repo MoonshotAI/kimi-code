@@ -303,6 +303,7 @@ export function toTurnOrigin(origin: unknown): TurnOrigin {
     case 'system_trigger': {
       const name = (o as { name?: string }).name;
       if (name === 'goal_continuation') return { kind: 'goal' };
+      if (name === 'subagent') return { kind: 'user' };
       return { kind: 'other', name };
     }
     case 'side':
