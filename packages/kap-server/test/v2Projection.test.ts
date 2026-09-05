@@ -4038,16 +4038,14 @@ describe('WS v2 全消息面', () => {
     const systems = out as { type: string; subtype: string; system_id: string }[];
     expect(systems.map((msg) => [msg.type, msg.subtype])).toEqual([
       ['system', 'hook'],
-      ['system', 'skill'],
       ['system', 'notice'],
       ['system', 'clear'],
       ['system', 'swarm.enter'],
       ['system', 'swarm.exit'],
     ]);
-    expect(systems.map((msg) => msg.system_id)).toEqual(['m_01', 'm_02', 'm_03', 'm_04', 'm_05', 'm_06']);
+    expect(systems.map((msg) => msg.system_id)).toEqual(['m_01', 'm_02', 'm_03', 'm_04', 'm_05']);
     expect(out[0]).toMatchObject({ payload: { event: 'user_prompt_submit', content: '继续' } });
-    expect(out[1]).toMatchObject({ payload: { skill_name: 'review-pr' } });
-    expect(out[2]).toMatchObject({ payload: { message: 'compact' } });
+    expect(out[1]).toMatchObject({ payload: { message: 'compact' } });
   });
 });
 

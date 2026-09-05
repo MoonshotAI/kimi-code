@@ -791,7 +791,7 @@ export class AgentV2Projector {
     this.turns.set(engineTurnId, turn);
     if (maxSeq === 0 && heldAcc === undefined) {
       const userOrigin = toUserOrigin(event.origin);
-      if (userOrigin !== undefined) {
+      if (userOrigin?.kind === 'skill') {
         const seq = turn.userSeq++;
         const openingAcc: PromptAcc = {
           promptId: `turn_${turn.turnId}`,
