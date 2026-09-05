@@ -1,0 +1,1 @@
+../../../.specify/extensions/gym/.specify-dev/agent-commands/kimi/speckit-gym-init/SKILL.md

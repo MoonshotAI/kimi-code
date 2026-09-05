@@ -35,6 +35,7 @@ export interface Model {
   readonly aliases: readonly string[];
   readonly protocol: Protocol;
   readonly baseUrl?: string;
+  readonly proxyUrl?: string;
   readonly headers: Readonly<Record<string, string>>;
 
   readonly capabilities: ModelCapability;

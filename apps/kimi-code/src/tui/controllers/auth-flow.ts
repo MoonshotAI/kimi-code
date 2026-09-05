@@ -15,6 +15,8 @@ import type { SkillListSession } from '../commands';
 import { OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE } from '../constant/kimi-tui';
 import {
   refreshAllProviderModels,
+  refreshCatalogProviderModels,
+  type RefreshCatalogResult,
   type RefreshProviderHost,
   type RefreshProviderScope,
   type RefreshResult,
@@ -224,6 +226,19 @@ export class AuthFlowController {
 
   async refreshOAuthProviderModels(): Promise<RefreshResult> {
     return this.refreshProviderModelsWithScope('oauth');
+  }
+
+  /**
+   * On-demand catalog refresh for OpenAI-compatible providers (`/refresh-catalog`).
+   * Unlike the automatic refresh, this preserves curated `maxContextSize` values
+   * and enriches names/capabilities from models.dev.
+   */
+  async refreshCatalogModels(providerId?: string): Promise<RefreshCatalogResult> {
+    const result = await refreshCatalogProviderModels(this.buildRefreshHost(), { providerId });
+    if (result.changed.length > 0) {
+      await this.refreshAvailableModels();
+    }
+    return result;
   }
 
   private async refreshProviderModelsWithScope(scope: RefreshProviderScope): Promise<RefreshResult> {

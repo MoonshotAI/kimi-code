@@ -929,6 +929,8 @@ export interface CompactionStartedEvent {
   readonly type: 'compaction.started';
   readonly trigger: 'manual' | 'auto';
   readonly instruction?: string;
+  readonly model?: string;
+  readonly model_display?: string;
 }
 
 export interface CompactionBlockedEvent {
@@ -1893,6 +1895,8 @@ export const compactionStartedEventSchema = z.object({
   type: z.literal('compaction.started'),
   trigger: z.enum(['manual', 'auto']),
   instruction: z.string().optional(),
+  model: z.string().optional(),
+  model_display: z.string().optional(),
 }) satisfies z.ZodType<CompactionStartedEvent>;
 
 export const compactionBlockedEventSchema = z.object({

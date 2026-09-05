@@ -22,6 +22,8 @@ const fullCompactionBeginSchema = z.object({
   agentId: z.string(),
   instruction: z.string().optional(),
   source: z.custom<CompactionSource>(),
+  model: z.string().optional(),
+  modelDisplay: z.string().optional(),
 });
 
 export class FullCompactionBegin extends AgentEvent2<
@@ -65,6 +67,8 @@ export interface CompactionStartedPayload {
   readonly agentId: string;
   readonly trigger: CompactionSource;
   readonly instruction?: string;
+  readonly model?: string;
+  readonly model_display?: string;
 }
 
 export class CompactionStarted extends AgentEvent2<CompactionStartedPayload> {
@@ -116,6 +120,8 @@ export const fullCompactionKey = defineState(
         agentId: e.agentId,
         trigger: e.source,
         instruction: e.instruction,
+        model: e.model,
+        model_display: e.modelDisplay,
       }),
     );
   })

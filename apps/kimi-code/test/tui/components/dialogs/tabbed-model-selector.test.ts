@@ -170,3 +170,128 @@ describe('TabbedModelSelectorComponent', () => {
     expect(lines.findIndex((l) => l.includes('Kimi K2'))).toBeGreaterThan(stripIdx);
   });
 });
+
+describe('TabbedModelSelectorComponent favorites', () => {
+  const SHIFT_A = 'A';
+  const SHIFT_R = 'R';
+  const SHIFT_TAB = `${ESC}[Z`;
+
+  function makeFavorites(favoriteAliases?: readonly string[]) {
+    const onSelect = vi.fn();
+    const onToggleFavorite = vi.fn();
+    const component = new TabbedModelSelectorComponent({
+      models: {
+        k2: model('Kimi K2', 'managed:kimi-code'),
+        gpt: model('GPT-5', 'openai'),
+      },
+      currentValue: 'k2',
+      currentThinkingEffort: 'off',
+      ...(favoriteAliases !== undefined ? { favoriteAliases } : {}),
+      onToggleFavorite,
+      onSelect,
+      onCancel: vi.fn(),
+    });
+    component.focused = true;
+    return { component, onSelect, onToggleFavorite };
+  }
+
+  function activeList(lines: string[]): string[] {
+    // The model list starts after the tab strip + blank line.
+    const stripIdx = lines.findIndex((l) => l.includes('All') && l.includes('Favorites'));
+    return stripIdx === -1 ? lines : lines.slice(stripIdx + 2);
+  }
+
+  it('prepends a Favorites tab that lists only favorites in add-order', () => {
+    const { component } = makeFavorites(['gpt', 'k2']);
+    const out = strip(component.render(120).join('\n'));
+
+    expect(out.indexOf('Favorites')).toBeGreaterThanOrEqual(0);
+    expect(out.indexOf('Favorites')).toBeLessThan(out.indexOf('All'));
+    // gpt was favorited first, so it leads the Favorites list.
+    const list = activeList(out.split('\n'));
+    expect(list.findIndex((l) => l.includes('GPT-5'))).toBeLessThan(
+      list.findIndex((l) => l.includes('Kimi K2')),
+    );
+    expect(out).toContain('★');
+  });
+
+  it('opens on the Favorites tab when favorites exist', () => {
+    const { component } = makeFavorites(['k2']);
+    const out = strip(component.render(120).join('\n'));
+    const list = activeList(out.split('\n'));
+    // Favorites tab active: only k2 is listed.
+    expect(list.some((l) => l.includes('Kimi K2'))).toBe(true);
+    expect(list.some((l) => l.includes('GPT-5'))).toBe(false);
+  });
+
+  it('falls back to the All tab when favorites are enabled but empty; the empty tab shows the how-to hint', () => {
+    const { component } = makeFavorites([]);
+    const out = strip(component.render(120).join('\n'));
+
+    // Empty favorites: the picker opens on All with the full model list.
+    expect(out).toContain('Favorites');
+    expect(out).toContain('Kimi K2');
+    expect(out).toContain('GPT-5');
+    expect(out).not.toContain('No favorites yet');
+
+    // Shift+Tab back to Favorites (it sits before All): the empty-state
+    // hint replaces the list.
+    component.handleInput(SHIFT_TAB);
+    const favoritesOut = strip(component.render(120).join('\n'));
+    expect(favoritesOut).toContain('No favorites yet');
+    expect(favoritesOut).toContain('Shift+A');
+  });
+
+  it('keeps the current-model marker inside the Favorites tab', () => {
+    const { component } = makeFavorites(['k2', 'gpt']);
+    const out = strip(component.render(120).join('\n'));
+    const list = activeList(out.split('\n'));
+    expect(list.some((l) => l.includes('Kimi K2') && l.includes('← current'))).toBe(true);
+  });
+
+  it('Shift+A forwards the highlighted non-favorite and live-updates tabs via setFavoriteAliases', () => {
+    const { component, onToggleFavorite } = makeFavorites([]);
+    component.handleInput(SHIFT_A);
+    expect(onToggleFavorite).toHaveBeenCalledWith('k2');
+
+    // The host persists and refreshes: both become favorites and are listed.
+    component.setFavoriteAliases(['k2', 'gpt']);
+    const out = strip(component.render(120).join('\n'));
+    const list = activeList(out.split('\n'));
+    expect(list.some((l) => l.includes('GPT-5'))).toBe(true);
+    expect(list.some((l) => l.includes('Kimi K2'))).toBe(true);
+  });
+
+  it('Shift+R forwards the highlighted favorite and live-updates tabs via setFavoriteAliases', () => {
+    const { component, onToggleFavorite } = makeFavorites(['k2', 'gpt']);
+    // Opens on the Favorites tab with k2 highlighted.
+    component.handleInput(SHIFT_R);
+    expect(onToggleFavorite).toHaveBeenCalledWith('k2');
+  });
+
+  it('live-removes a unfavorited model from the Favorites tab', () => {
+    const { component } = makeFavorites(['k2', 'gpt']);
+    // Start on Favorites (both listed), then remove k2.
+    component.setFavoriteAliases(['gpt']);
+    const out = strip(component.render(120).join('\n'));
+    const list = activeList(out.split('\n'));
+    expect(list.some((l) => l.includes('GPT-5'))).toBe(true);
+    expect(list.some((l) => l.includes('Kimi K2'))).toBe(false);
+  });
+
+  it('omits favorites that are no longer in the catalog without dropping them from config', () => {
+    const { component } = makeFavorites(['ghost', 'k2']);
+    const out = strip(component.render(120).join('\n'));
+    const list = activeList(out.split('\n'));
+    expect(list.some((l) => l.includes('Kimi K2'))).toBe(true);
+    expect(list.some((l) => l.includes('ghost'))).toBe(false);
+  });
+
+  it('adds no Favorites tab when favoriteAliases is not provided (other pickers unchanged)', () => {
+    const { component } = makeFavorites();
+    const out = strip(component.render(120).join('\n'));
+    expect(out).not.toContain('Favorites');
+    expect(out).toContain('All');
+    expect(out).not.toContain('★');
+  });
+});

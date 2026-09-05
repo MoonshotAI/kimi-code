@@ -10,9 +10,10 @@ import {
 } from '@moonshot-ai/pi-tui';
 
 import { DEFAULT_OAUTH_PROVIDER_NAME, PRODUCT_NAME } from '#/constant/app';
-import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
+import { CURRENT_MARK, FAVORITE_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { SearchableList } from '#/tui/utils/searchable-list';
+import { printableChar } from '#/tui/utils/printable-key';
 
 import type { ChoiceOption } from './choice-picker';
 
@@ -83,9 +84,18 @@ export interface ModelSelectorOptions {
   /** Set to false to hide the Thinking footer and disable ←/→ effort
    * switching — for pickers whose selection carries no thinking level. */
   readonly thinkingControl?: boolean;
+  /** Aliases currently marked as favorites; those rows render ★ after the
+   * model name. Absent means favorites are not surfaced in this picker. */
+  readonly favoriteAliases?: ReadonlySet<string>;
+  /** When set, Shift+A adds the highlighted model to Favorites and Shift+R
+   * removes it ( forwarded to the host, which persists it and refreshes the UI). */
+  readonly onToggleFavorite?: (alias: string) => void;
+  /** Replaces the 'No matches' line when the list is empty (e.g. the
+   * Favorites tab's how-to hint). */
+  readonly emptyMessage?: string;
   readonly onSelect: (selection: ModelSelection) => void;
-  /** When provided, Alt+S invokes this instead of onSelect — used to apply the
-   * choice to the current session only, without persisting it as the default. */
+  /** When provided, Shift+S invokes this instead of onSelect — used to apply
+   * the choice to the current session only, without persisting it as default. */
   readonly onSessionOnlySelect?: (selection: ModelSelection) => void;
   readonly onCancel: () => void;
 }
@@ -222,6 +232,29 @@ export class ModelSelectorComponent extends Container implements Focusable {
       return;
     }
 
+    // Single-key favorites + session-only, intercepted before the search
+    // filter would swallow the character. Only the Shift variants (uppercase
+    // letters) are shortcuts, so lowercase letters still type-filter the list.
+    const ch = printableChar(data);
+    if ((ch === 'A' || ch === 'R') && this.opts.onToggleFavorite !== undefined) {
+      const selected = this.selectedChoice();
+      if (selected !== undefined) {
+        const isFavorite = this.opts.favoriteAliases?.has(selected.alias) ?? false;
+        // 'A' adds only when not already a favorite; 'R' removes only when it is.
+        if ((ch === 'A') !== isFavorite) this.opts.onToggleFavorite(selected.alias);
+      }
+      return;
+    }
+    if (ch === 'S' && this.opts.onSessionOnlySelect !== undefined) {
+      const selected = this.selectedChoice();
+      if (selected === undefined) return;
+      this.opts.onSessionOnlySelect({
+        alias: selected.alias,
+        thinking: commitEffort(selected, this.effectiveEffort(selected)),
+      });
+      return;
+    }
+
     // ↑/↓, PgUp/PgDn, and — when searchable — typing + Backspace.
     if (this.list.handleKey(data)) {
       return;
@@ -264,15 +297,6 @@ export class ModelSelectorComponent extends Container implements Focusable {
       });
       return;
     }
-
-    if (matchesKey(data, Key.alt('s')) && this.opts.onSessionOnlySelect !== undefined) {
-      const selected = this.selectedChoice();
-      if (selected === undefined) return;
-      this.opts.onSessionOnlySelect({
-        alias: selected.alias,
-        thinking: commitEffort(selected, this.effectiveEffort(selected)),
-      });
-    }
   }
 
   override render(width: number): string[] {
@@ -292,7 +316,8 @@ export class ModelSelectorComponent extends Container implements Focusable {
     hintParts.push('↑↓ navigate');
     if (searchable && view.query.length > 0) hintParts.push('Backspace clear');
     hintParts.push('Enter select');
-    if (this.opts.onSessionOnlySelect !== undefined) hintParts.push('Alt+S session-only');
+    if (this.opts.onToggleFavorite !== undefined) hintParts.push('Shift+A favorite · Shift+R unfavorite');
+    if (this.opts.onSessionOnlySelect !== undefined) hintParts.push('Shift+S session-only');
     hintParts.push('Esc cancel');
 
     const lines: string[] = [
@@ -312,15 +337,20 @@ export class ModelSelectorComponent extends Container implements Focusable {
     }
 
     if (view.items.length === 0) {
-      lines.push(currentTheme.fg('textMuted', '   No matches'));
+      lines.push(currentTheme.fg('textMuted', `   ${this.opts.emptyMessage ?? 'No matches'}`));
     } else {
       // Column width for model names so the provider column lines up. Capped so
       // the provider + "← current" marker still fit on normal terminal widths.
+      // The favorite ★ (plus one space) is counted into the column so starred
+      // rows do not push their provider out of alignment.
       const nameCap = Math.max(8, Math.floor(width * 0.5));
+      const favoriteAliases = this.opts.favoriteAliases;
+      const starWidth = (alias: string): number =>
+        favoriteAliases !== undefined && favoriteAliases.has(alias) ? 2 : 0;
       let nameWidth = 0;
       for (let i = view.page.start; i < view.page.end; i++) {
         const choice = view.items[i];
-        if (choice !== undefined) nameWidth = Math.max(nameWidth, visibleWidth(choice.name));
+        if (choice !== undefined) nameWidth = Math.max(nameWidth, visibleWidth(choice.name) + starWidth(choice.alias));
       }
       nameWidth = Math.min(nameWidth, nameCap);
 
@@ -329,11 +359,15 @@ export class ModelSelectorComponent extends Container implements Focusable {
         if (choice === undefined) continue;
         const isSelected = i === view.selectedIndex;
         const isCurrent = choice.alias === this.opts.currentValue;
+        const isFavorite = favoriteAliases !== undefined && favoriteAliases.has(choice.alias);
         const pointer = isSelected ? SELECT_POINTER : ' ';
-        const truncatedName = truncateToWidth(choice.name, nameWidth, '…');
-        const namePad = ' '.repeat(Math.max(0, nameWidth - visibleWidth(truncatedName)));
+        const truncatedName = truncateToWidth(choice.name, nameWidth - starWidth(choice.alias), '…');
+        const star = isFavorite ? ' ' + currentTheme.fg('warning', FAVORITE_MARK) : '';
+        const namePad = ' '.repeat(
+          Math.max(0, nameWidth - visibleWidth(truncatedName) - starWidth(choice.alias)),
+        );
         let line = currentTheme.fg(isSelected ? 'primary' : 'textDim', `  ${pointer} `);
-        line += (isSelected ? currentTheme.boldFg('primary', truncatedName) : currentTheme.fg('text', truncatedName)) + namePad;
+        line += (isSelected ? currentTheme.boldFg('primary', truncatedName) : currentTheme.fg('text', truncatedName)) + star + namePad;
         line += '  ' + currentTheme.fg('textMuted', choice.provider);
         if (isCurrent) {
           line += ' ' + currentTheme.fg('success', CURRENT_MARK);

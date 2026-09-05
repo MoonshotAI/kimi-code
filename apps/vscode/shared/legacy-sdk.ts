@@ -133,7 +133,7 @@ export type LegacyWireEvent =
   | { type: 'TurnEnd'; payload: Record<string, never> }
   | { type: 'StepBegin'; payload: { n: number } }
   | { type: 'StepInterrupted'; payload: Record<string, never> }
-  | { type: 'CompactionBegin'; payload: Record<string, never> }
+  | { type: 'CompactionBegin'; payload: { model?: string } }
   | { type: 'CompactionEnd'; payload: Record<string, never> }
   | { type: 'StatusUpdate'; payload: StatusUpdate }
   | { type: 'ContentPart'; payload: ContentPart }

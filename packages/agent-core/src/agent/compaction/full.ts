@@ -202,6 +202,8 @@ export class FullCompaction {
       type: 'compaction.started',
       trigger: data.source,
       instruction: data.instruction,
+      model: this.agent.config.modelAlias,
+      model_display: this.agent.config.modelAlias,
     });
     const abortController = new AbortController();
     this.compacting = {

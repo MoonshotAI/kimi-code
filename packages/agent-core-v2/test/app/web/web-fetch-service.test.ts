@@ -4,6 +4,7 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IOAuthService } from '#/app/auth/auth';
 import { SERVICES_SECTION, type ServicesConfig } from '#/app/auth/configSection';
+import { SUBSCRIPTION_SECTION } from '#/app/subscription/configSection';
 import {
   buildAgentIdentitySnapshot,
   IAgentIdentity,
@@ -33,6 +34,7 @@ describe('WebFetchService', () => {
   let ix: TestInstantiationService;
   let providers: Record<string, ProviderConfig>;
   let servicesConfig: ServicesConfig | undefined;
+  let subscriptionConfig: Record<string, boolean> | undefined;
   let identitySlug: string | undefined;
   let resolveTokenProvider: ReturnType<typeof vi.fn>;
 
@@ -40,6 +42,7 @@ describe('WebFetchService', () => {
     disposables = new DisposableStore();
     providers = {};
     servicesConfig = undefined;
+    subscriptionConfig = undefined;
     identitySlug = undefined;
     resolveTokenProvider = vi
       .fn()
@@ -64,8 +67,11 @@ describe('WebFetchService', () => {
           args: { requestHeaders: HOST_HEADERS },
         });
         reg.definePartialInstance(IConfigService, {
-          get: ((domain: string) =>
-            domain === SERVICES_SECTION ? servicesConfig : undefined) as IConfigService['get'],
+          get: ((domain: string) => {
+            if (domain === SERVICES_SECTION) return servicesConfig;
+            if (domain === SUBSCRIPTION_SECTION) return subscriptionConfig;
+            return undefined;
+          }) as IConfigService['get'],
         });
         reg.defineInstance(ITelemetryService, noopTelemetryService);
         reg.define(IWebFetchService, WebFetchService);
@@ -242,5 +248,34 @@ describe('WebFetchService', () => {
     servicesConfig = { moonshotFetch: { apiKey: 'fetch-key' } };
     expect(fetcher()).toBeInstanceOf(LocalFetchURLProvider);
     expect(resolveTokenProvider).not.toHaveBeenCalled();
+  });
+
+  it('skips the managed /fetch path and uses the local fetcher when fetch_url is disabled', () => {
+    providers = {
+      [OAUTH_PROVIDER]: {
+        type: 'kimi',
+        baseUrl: 'https://managed.example.com/v1',
+        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+      },
+    };
+    subscriptionConfig = { fetch_url: false };
+    expect(fetcher()).toBeInstanceOf(LocalFetchURLProvider);
+    expect(resolveTokenProvider).not.toHaveBeenCalled();
+  });
+
+  it('uses the managed /fetch path when fetch_url is enabled', () => {
+    providers = {
+      [OAUTH_PROVIDER]: {
+        type: 'kimi',
+        baseUrl: 'https://managed.example.com/v1',
+        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+      },
+    };
+    subscriptionConfig = { fetch_url: true };
+    expect(fetcher()).toBeInstanceOf(MoonshotFetchURLProvider);
+    expect(resolveTokenProvider).toHaveBeenCalledWith(OAUTH_PROVIDER, {
+      storage: 'file',
+      key: 'oauth/kimi-code',
+    });
   });
 });

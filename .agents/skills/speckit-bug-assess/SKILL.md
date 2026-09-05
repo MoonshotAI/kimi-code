@@ -1,0 +1,1 @@
+../../../.specify/extensions/bug/.specify-dev/agent-commands/zed/speckit-bug-assess/SKILL.md

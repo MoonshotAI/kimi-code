@@ -366,6 +366,19 @@ export interface SessionStatus {
   readonly planMode: boolean;
   readonly swarmMode?: boolean;
   readonly towerMode?: boolean;
+  /**
+   * Effective auto-compaction trigger ratio (session override when set,
+   * otherwise the global `[loop_control] compaction_trigger_ratio` config
+   * value, otherwise undefined — the engine default applies). Populated by
+   * the v2 engine only.
+   */
+  readonly compactionTriggerRatio?: number;
+  /** True when a session-scoped override (e.g. `/compact-threshold`) is active. */
+  readonly compactionTriggerRatioOverridden?: boolean;
+  /** Absolute compaction trigger in tokens (e.g. `/compact-threshold-k 120` → 120000). */
+  readonly compactionTokenBudget?: number;
+  /** True when a session-scoped token-budget override is active. */
+  readonly compactionTokenBudgetOverridden?: boolean;
   readonly contextTokens: number;
   readonly maxContextTokens: number;
   readonly contextUsage: number;

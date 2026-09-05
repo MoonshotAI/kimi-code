@@ -27,12 +27,14 @@ export interface ProtocolProviderOptions {
   readonly vertexai?: boolean;
   readonly project?: string;
   readonly location?: string;
+  readonly proxyUrl?: string;
 }
 
 export interface ProtocolAdapterConfig {
   readonly protocol: Protocol;
   readonly providerType?: string;
   readonly baseUrl?: string;
+  readonly proxyUrl?: string;
   readonly modelName: string;
   readonly apiKey?: string;
   readonly defaultHeaders?: Readonly<Record<string, string>>;

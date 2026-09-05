@@ -36,6 +36,7 @@ export class ModelRequesterImpl implements ModelRequester {
       protocol: model.protocol,
       providerType: model.providerType,
       baseUrl: model.baseUrl,
+      proxyUrl: model.proxyUrl,
       modelName: model.name,
       defaultHeaders: model.headers,
       providerOptions: model.providerOptions,

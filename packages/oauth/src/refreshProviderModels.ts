@@ -7,6 +7,7 @@ import {
 import {
   applyManagedApiKeyProviderModels,
   applyManagedKimiCodeConfig,
+  applyOpenAiCompatibleCatalog,
   fetchManagedKimiCodeModels,
   KIMI_CODE_PLATFORM_ID,
   KIMI_CODE_PROVIDER_NAME,
@@ -16,6 +17,7 @@ import {
   type ManagedKimiOAuthRef,
 } from './managed-kimi-code';
 import { isManagedKimiCodeBaseUrl } from './managed-usage';
+import { fetchOpenAIProviderModels } from './openai-compatible';
 import {
   applyOpenPlatformConfig,
   fetchOpenPlatformModels,
@@ -76,9 +78,29 @@ interface ProviderView {
   readonly type?: string;
   readonly baseUrl?: string;
   readonly apiKey?: string;
+  readonly apiKeys?: Record<string, { key: string; name: string }>;
+  readonly activeApiKeyId?: string;
   readonly oauth?: ManagedKimiOAuthRef;
   readonly source?: unknown;
   readonly env?: unknown;
+  /** When true, the OpenAI-compatible catalog refresh keeps only free models. */
+  readonly freeModelsOnly?: boolean;
+}
+
+function getActiveProviderApiKey(provider: ProviderView): string | undefined {
+  if (!provider) return undefined;
+  // 1. Named keys with active selection
+  if (provider.apiKeys && provider.activeApiKeyId) {
+    const active = provider.apiKeys[provider.activeApiKeyId];
+    if (active && typeof active.key === 'string' && active.key.length > 0) {
+      return active.key;
+    }
+  }
+  // 2. Legacy single key
+  if (typeof provider.apiKey === 'string' && provider.apiKey.length > 0) {
+    return provider.apiKey;
+  }
+  return undefined;
 }
 
 /**
@@ -87,9 +109,8 @@ interface ProviderView {
  * wins, with `env.KIMI_API_KEY` as the documented config-file fallback.
  */
 function resolveProviderApiKey(provider: ProviderView): string | undefined {
-  if (typeof provider.apiKey === 'string' && provider.apiKey.length > 0) {
-    return provider.apiKey;
-  }
+  const activeKey = getActiveProviderApiKey(provider);
+  if (activeKey !== undefined) return activeKey;
   if (isRecord(provider.env)) {
     const fromEnv = provider.env['KIMI_API_KEY'];
     if (typeof fromEnv === 'string' && fromEnv.length > 0) return fromEnv;
@@ -103,7 +124,10 @@ function readProvider(
 ): ProviderView | undefined {
   const provider = config.providers[providerId];
   if (provider === undefined) return undefined;
-  return provider as ProviderView;
+  const view = provider as ProviderView;
+  const rawFree = (provider as Record<string, unknown>)['free_models_only'];
+  const freeModelsOnly = typeof rawFree === 'boolean' ? rawFree : undefined;
+  return { ...view, freeModelsOnly };
 }
 
 function readModel(
@@ -377,6 +401,11 @@ function pickDefaultModel(
  *     aliases are merged; the provider record is user-owned and never
  *     rewritten.
  *  3. Custom registries (models.dev-style, keyed by `provider.source`).
+ *  3.5. OpenAI-compatible providers (`type: 'openai'` / `'openai_responses'`)
+ *     with a `baseUrl` and API key but no custom-registry `source`; refreshed
+ *     from the provider's own `{baseUrl}/models` endpoint. This is what brings
+ *     plain OpenAI-compatible gateways (e.g. opencode, kilo) into the refresh
+ *     loop instead of silently skipping them.
  *
  * Each branch diffs old vs new and only writes when something actually changed
  * (`removeProvider` then `setConfig`). Failures are collected per-provider and
@@ -772,6 +801,123 @@ export async function refreshProviderModels(
           reason: error instanceof Error ? error.message : String(error),
         });
       }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 3.5. OpenAI-compatible providers (type: 'openai' / 'openai_responses')
+  // ---------------------------------------------------------------------------
+  // Intentionally removed from the automatic startup refresh. OpenAI-compatible
+  // gateways (e.g. opencode, kilo, z.ai) expose an inconsistent `/models`
+  // schema — many omit context length or display names — so an unattended
+  // refresh would clobber curated `maxContextSize` values (e.g. a 1M window
+  // imported from models.dev). Use `/refresh-catalog` (refreshProviderCatalog)
+  // instead: it is on-demand, preserves context like OpenRouter, and enriches
+  // names/capabilities from the models.dev catalog.
+
+  return { changed, unchanged, failed };
+}
+
+export interface RefreshCatalogResult {
+  readonly changed: readonly ProviderChange[];
+  readonly unchanged: readonly string[];
+  readonly failed: ReadonlyArray<{ provider: string; reason: string }>;
+}
+
+/**
+ * On-demand catalog refresh for OpenAI-compatible providers (type 'openai' /
+ * 'openai_responses'), triggered by the `/refresh-catalog` slash command.
+ *
+ * Unlike the startup refresh, this path:
+ *  - fetches each provider's `{baseUrl}/models` endpoint and **preserves the
+ *    provider-reported context length** (OpenRouter-style) instead of
+ *    substituting a default, so a curated `maxContextSize` is never clobbered;
+ *  - **enriches** every model from the models.dev catalog — display name and
+ *    capabilities — so names render correctly; the provider's own display name
+ *    (when present) takes priority over the catalog;
+ *  - adds newly-discovered models and drops ones the endpoint no longer lists,
+ *    while keeping any hand-written alias extras.
+ *
+ * Pass `providerId` to scope the refresh to a single provider.
+ */
+export async function refreshProviderCatalog(
+  host: RefreshProviderHost,
+  options: { providerId?: string; userAgent?: string } = {},
+): Promise<RefreshCatalogResult> {
+  const changed: ProviderChange[] = [];
+  const unchanged: string[] = [];
+  const failed: Array<{ provider: string; reason: string }> = [];
+  const targetId = options.providerId;
+
+  let config = await host.getConfig();
+  const openAiCompatibleTypes = new Set(['openai', 'openai_responses']);
+
+  for (const providerId of Object.keys(config.providers)) {
+    if (providerId === KIMI_CODE_PROVIDER_NAME) continue;
+    if (isOpenPlatformId(providerId)) continue;
+    if (targetId !== undefined && targetId !== providerId) continue;
+    const provider = readProvider(config, providerId);
+    if (provider === undefined) continue;
+    if (!openAiCompatibleTypes.has(provider.type ?? '')) continue;
+    if (readCustomRegistrySource(provider) !== undefined) continue;
+    if (provider.baseUrl === undefined || provider.baseUrl.length === 0) continue;
+    const apiKey = resolveProviderApiKey(provider);
+    if (apiKey === undefined) continue;
+
+    try {
+      const models = await fetchOpenAIProviderModels(provider.baseUrl, apiKey, {
+        userAgent: options.userAgent ?? host.userAgent,
+      });
+      if (models.length === 0) continue;
+
+      // Per-provider opt-in: when `free_models_only` is set, keep only models
+      // whose id contains "free" (case-insensitive — matches `:free` on
+      // OpenRouter/kilo and `-free` on opencode). The filter runs before
+      // enrichment so dropped (paid) models are never looked up or written.
+      const filteredModels = provider.freeModelsOnly
+        ? models.filter((m) => m.id.toLowerCase().includes('free'))
+        : models;
+      if (filteredModels.length === 0) {
+        // No free models returned: nothing to add. Skip so an existing catalog
+        // is left untouched (toggle the flag off to restore paid models).
+        continue;
+      }
+
+      config = await rebaseSelectionAfterFetch(host, config);
+      const aliasPrefix = `${providerId}/`;
+      const next = structuredClone(config);
+      applyOpenAiCompatibleCatalog(next, providerId, filteredModels, aliasPrefix);
+      const refreshedAliasKeys = providerRefreshAliasKeys(config, next, providerId, aliasPrefix);
+      restoreProviderAliases(
+        next,
+        preserveUserProviderAliases(config, providerId, refreshedAliasKeys),
+      );
+      restoreDefaultSelection(next, config.defaultModel, config.thinking?.enabled);
+      clampDanglingDefault(next);
+      clearDefaultThinkingWhenDefaultRemoved(next, config.defaultModel);
+
+      if (providerModelsEqual(config, next, providerId, refreshedAliasKeys)) {
+        unchanged.push(providerId);
+      } else {
+        const { added, removed } = computeChanges(
+          collectModelIdsForAliases(config, refreshedAliasKeys),
+          collectModelIdsForAliases(next, refreshedAliasKeys),
+        );
+        await host.removeProvider(providerId);
+        config = await host.setConfig({
+          providers: next.providers,
+          models: next.models,
+          defaultModel: next.defaultModel,
+          thinking: next.thinking,
+          defaultProvider: next['defaultProvider'],
+        });
+        changed.push({ providerId, providerName: providerId, added, removed });
+      }
+    } catch (error) {
+      failed.push({
+        provider: providerId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 

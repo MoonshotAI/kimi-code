@@ -1,4 +1,6 @@
 import OpenAI from 'openai';
+import { ProxyAgent } from 'undici';
+import type { Dispatcher } from 'undici';
 
 import { Error2 } from '#/_base/errors/errors';
 import {
@@ -42,11 +44,6 @@ import {
   TOOL_RESULT_MEDIA_PROMPT,
   type ToolMessageConversion,
 } from './openai-common';
-import {
-  mergeRequestHeaders,
-  requireProviderApiKey,
-  resolveAuthBackedClient,
-} from '../request-auth';
 import { normalizeToolCallIdsForProvider, sanitizeOpenAIResponsesCallId } from '../tool-call-id';
 
 function normalizeResponsesFinishReason(
@@ -357,6 +354,7 @@ function formatResponsesFailedResponse(response: RawObject): string {
 export interface OpenAIResponsesOptions {
   apiKey?: string | undefined;
   baseUrl?: string | undefined;
+  proxyUrl?: string | undefined;
   model: string;
   maxOutputTokens?: number | undefined;
   offEffort?: string | undefined;
@@ -1017,6 +1015,7 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
   private readonly _stream: boolean;
   private readonly _apiKey: string | undefined;
   private readonly _baseUrl: string | undefined;
+  private readonly _proxyUrl: string | undefined;
   private readonly _defaultHeaders: Record<string, string> | undefined;
   private readonly _thinkingEffort: ThinkingEffort | undefined;
   private readonly _offEffort: string | undefined;
@@ -1027,10 +1026,13 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
   private readonly _clientFactory: ((auth: ProviderRequestAuth) => OpenAI) | undefined;
   private readonly _convertErrorHook: ((error: unknown) => ChatProviderError | undefined) | undefined;
 
+  private _proxyDispatcher: Dispatcher | undefined;
+
   constructor(options: OpenAIResponsesOptions) {
     const apiKey = options.apiKey ?? process.env['OPENAI_API_KEY'];
     this._apiKey = apiKey === undefined || apiKey.length === 0 ? undefined : apiKey;
     this._baseUrl = options.baseUrl ?? 'https://api.openai.com/v1';
+    this._proxyUrl = options.proxyUrl;
     this._defaultHeaders = options.defaultHeaders;
     this._model = options.model;
     this._stream = true;
@@ -1042,11 +1044,17 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
     this._clientFactory = options.clientFactory;
     this._convertErrorHook = options.convertError;
 
+    if (this._proxyUrl !== undefined && this._proxyUrl.length > 0) {
+      try {
+        this._proxyDispatcher = new ProxyAgent(this._proxyUrl);
+      } catch (err) {
+        console.error('[OpenAIResponsesChatProvider] Proxy agent error:', err);
+      }
+    }
+
     if (options.maxOutputTokens !== undefined) {
       this._generationKwargs.max_output_tokens = options.maxOutputTokens;
     }
-
-    this._client = this._apiKey === undefined ? undefined : this._buildClient(this._apiKey);
   }
 
   get modelName(): string {
@@ -1131,71 +1139,146 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
       }
     }
 
-    try {
-      const client = this._createClient(options?.auth);
-      const createParams: Record<string, unknown> = {
-        model: this._model,
-        input,
-        tools: tools.map((t) => convertTool(t)),
-        store: false,
-        stream: this._stream,
-        ...kwargs,
+    const createParams: Record<string, unknown> = {
+      model: this._model,
+      input,
+      tools: tools.map((t) => convertTool(t)),
+      store: false,
+      stream: this._stream,
+      ...kwargs,
+    };
+    if (systemPrompt) {
+      createParams['instructions'] = systemPrompt;
+    }
+    if (options?.responseFormat !== undefined) {
+      createParams['text'] = {
+        ...asRawObject(createParams['text']),
+        ...responseFormatToResponsesText(options.responseFormat),
       };
-      if (systemPrompt) {
-        createParams['instructions'] = systemPrompt;
-      }
-      if (options?.responseFormat !== undefined) {
-        createParams['text'] = {
-          ...asRawObject(createParams['text']),
-          ...responseFormatToResponsesText(options.responseFormat),
-        };
-      }
+    }
 
-      if (
-        !('responses' in client) ||
-        typeof (client as { responses?: { create?: unknown } }).responses?.create !== 'function'
-      ) {
-        throw new Error2(
-          ProtocolErrors.codes.PROVIDER_API_ERROR,
-          'OpenAI SDK version does not support Responses API. Upgrade to >=4.x with responses support.',
-        );
-      }
-
+    try {
       options?.onRequestSent?.();
-      const response = await (
-        client.responses as {
-          create(params: unknown, opts?: unknown): Promise<unknown>;
-        }
-      ).create(createParams, options?.signal ? { signal: options.signal } : undefined);
-      return new OpenAIResponsesStreamedMessage(response, this._stream, this._convertErrorHook);
+
+      const apiKey = this._apiKey ?? (options?.auth?.apiKey);
+      if (!apiKey) {
+        throw new Error('API key is required');
+      }
+
+      const response = await this._fetchWithProxy('/responses', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(createParams),
+        signal: options?.signal,
+      }, options?.auth);
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw convertOpenAIError({
+          status: response.status,
+          message: JSON.stringify(errorData),
+          headers: response.headers,
+        } as unknown, this._convertErrorHook);
+      }
+
+      if (this._stream) {
+        const streamIterable = this._parseSSEStream(response);
+        return new OpenAIResponsesStreamedMessage(streamIterable, this._stream, this._convertErrorHook);
+      } else {
+        const data = await response.json();
+        return new OpenAIResponsesStreamedMessage(data, this._stream, this._convertErrorHook);
+      }
     } catch (error: unknown) {
       throw convertOpenAIError(error, this._convertErrorHook);
     }
   }
 
-  private _createClient(auth: ProviderRequestAuth | undefined): OpenAI {
-    return resolveAuthBackedClient(
-      { cachedClient: this._client, clientFactory: this._clientFactory },
-      auth,
-      (a) =>
-        this._buildClient(requireProviderApiKey('OpenAIResponsesChatProvider', a, this._apiKey), a),
-    );
+  private async _fetchWithProxy(
+    path: string,
+    options: RequestInit,
+    auth?: ProviderRequestAuth
+  ): Promise<Response> {
+    const apiKey = auth?.apiKey ?? this._apiKey;
+    if (!apiKey) {
+      throw new Error('API key is required');
+    }
+
+    const headers = new Headers(options.headers);
+    headers.set('Authorization', `Bearer ${apiKey}`);
+    headers.set('Content-Type', 'application/json');
+
+    if (this._defaultHeaders) {
+      for (const [key, value] of Object.entries(this._defaultHeaders)) {
+        headers.set(key, value);
+      }
+      if (auth?.headers) {
+        for (const [key, value] of Object.entries(auth.headers)) {
+          headers.set(key, value);
+        }
+      }
+    }
+
+    return fetch(`${this._baseUrl}${path}`, {
+      ...options,
+      headers,
+      ...(this._proxyDispatcher !== undefined
+        ? { dispatcher: this._proxyDispatcher as never }
+        : {}),
+    } as RequestInit);
   }
 
-  private _buildClient(apiKey: string, auth?: ProviderRequestAuth): OpenAI {
-    const clientOpts: Record<string, unknown> = {
-      apiKey,
-      baseURL: this._baseUrl,
-      maxRetries: 0,
-    };
-    const defaultHeaders = mergeRequestHeaders(this._defaultHeaders, auth?.headers);
-    if (defaultHeaders !== undefined) {
-      clientOpts['defaultHeaders'] = defaultHeaders;
+  private async *_parseSSEStream(response: Response): AsyncGenerator<RawObject> {
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('Response body is null');
     }
-    if (this._httpClient !== undefined) {
-      clientOpts['httpClient'] = this._httpClient;
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('data: ')) {
+            const data = trimmed.slice(6);
+            if (data === '[DONE]') {
+              return;
+            }
+            try {
+              const chunk = JSON.parse(data) as RawObject;
+              yield chunk;
+            } catch (e) {
+              console.warn('[OpenAIResponsesChatProvider] Ignoring malformed SSE chunk:', data);
+            }
+          }
+        }
+      }
+
+      if (buffer.trim().startsWith('data: ')) {
+        const data = buffer.trim().slice(6);
+        if (data !== '[DONE]') {
+          try {
+            const chunk = JSON.parse(data) as RawObject;
+            yield chunk;
+          } catch (e) {
+            console.warn('[OpenAIResponsesChatProvider] Failed to parse final SSE chunk:', data);
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
     }
-    return new OpenAI(clientOpts as ConstructorParameters<typeof OpenAI>[0]);
   }
 }
 

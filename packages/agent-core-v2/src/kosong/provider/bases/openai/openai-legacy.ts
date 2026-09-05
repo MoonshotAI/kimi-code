@@ -1,3 +1,5 @@
+import { ProxyAgent } from 'undici';
+import type { Dispatcher } from 'undici';
 import OpenAI from 'openai';
 
 import { parseTraceId, type ChatProviderError } from '#/kosong/contract/errors';
@@ -92,6 +94,7 @@ export interface OpenAIChatCompletionsHooks {
 export interface OpenAILegacyOptions {
   apiKey?: string | undefined;
   baseUrl?: string | undefined;
+  proxyUrl?: string | undefined;
   model: string;
   stream?: boolean | undefined;
   maxTokens?: number | undefined;
@@ -491,6 +494,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
   private readonly _stream: boolean;
   private readonly _apiKey: string | undefined;
   private readonly _baseUrl: string | undefined;
+  private readonly _proxyUrl: string | undefined;
   private readonly _defaultHeaders: Record<string, string> | undefined;
   private readonly _reasoningKeyDialect: ReasoningKeyDialect;
   private readonly _offEffort: string | undefined;
@@ -502,6 +506,8 @@ export class OpenAILegacyChatProvider implements ChatProvider {
   private readonly _clientFactory: ((auth: ProviderRequestAuth) => OpenAI) | undefined;
   private readonly _hooks: OpenAIChatCompletionsHooks | undefined;
 
+  private _proxyDispatcher: Dispatcher | undefined;
+
   readonly uploadVideo?: (
     input: string | VideoUploadInput,
     options?: GenerateOptions,
@@ -511,6 +517,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     const apiKey = options.apiKey ?? process.env['OPENAI_API_KEY'];
     this._apiKey = apiKey === undefined || apiKey.length === 0 ? undefined : apiKey;
     this._baseUrl = options.baseUrl ?? 'https://api.openai.com/v1';
+    this._proxyUrl = options.proxyUrl;
     this._defaultHeaders = options.defaultHeaders;
     this._model = options.model;
     this._stream = options.stream ?? true;
@@ -530,6 +537,14 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     this._toolMessageConversion = options.toolMessageConversion ?? null;
     this._httpClient = options.httpClient;
     this._clientFactory = options.clientFactory;
+
+    if (this._proxyUrl !== undefined && this._proxyUrl.length > 0) {
+      try {
+        this._proxyDispatcher = new ProxyAgent(this._proxyUrl);
+      } catch (err) {
+        console.error('[OpenAILegacyChatProvider] Proxy agent error:', err);
+      }
+    }
 
     this._client = this._apiKey === undefined ? undefined : this._buildClient(this._apiKey);
 
@@ -620,24 +635,54 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     const finalParams = builtParams ?? createParams;
 
     try {
-      const client = this._createClient(options?.auth);
       options?.onRequestSent?.();
-      const { data, response } = await client.chat.completions
-        .create(
-          finalParams as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
-          options?.signal ? { signal: options.signal } : undefined,
-        )
-        .withResponse();
-      return new OpenAILegacyStreamedMessage(
-        data as unknown as
-          | OpenAI.Chat.ChatCompletion
-          | AsyncIterable<OpenAI.Chat.ChatCompletionChunk>,
-        this._stream,
-        this._reasoningKeyDialect,
-        parseTraceId(response.headers),
-        this._hooks?.extractUsage,
-        this._hooks?.convertError,
-      );
+      
+      const apiKey = this._apiKey ?? (options?.auth?.apiKey);
+      if (!apiKey) {
+        throw new Error('API key is required');
+      }
+
+      const response = await this._fetchWithProxy('/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(finalParams),
+        signal: options?.signal,
+      }, options?.auth);
+
+      const traceId = response.headers.get('x-request-id') ?? null;
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw convertOpenAIError({
+          status: response.status,
+          message: JSON.stringify(errorData),
+          headers: response.headers,
+        } as unknown, this._hooks?.convertError);
+      }
+
+      if (this._stream) {
+        const streamIterable = this._parseSSEStream(response);
+        return new OpenAILegacyStreamedMessage(
+          streamIterable,
+          this._stream,
+          this._reasoningKeyDialect,
+          traceId,
+          this._hooks?.extractUsage,
+          this._hooks?.convertError,
+        );
+      } else {
+        const data = await response.json();
+        return new OpenAILegacyStreamedMessage(
+          data as unknown as OpenAI.Chat.ChatCompletion,
+          this._stream,
+          this._reasoningKeyDialect,
+          traceId,
+          this._hooks?.extractUsage,
+          this._hooks?.convertError,
+        );
+      }
     } catch (error: unknown) {
       throw convertOpenAIError(error, this._hooks?.convertError);
     }
@@ -746,6 +791,92 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       clientOpts['httpClient'] = this._httpClient;
     }
     return new OpenAI(clientOpts as ConstructorParameters<typeof OpenAI>[0]);
+  }
+
+  private async _fetchWithProxy(
+    path: string,
+    options: RequestInit,
+    auth?: ProviderRequestAuth
+  ): Promise<Response> {
+    const apiKey = auth?.apiKey ?? this._apiKey;
+    if (!apiKey) {
+      throw new Error('API key is required');
+    }
+
+    const headers = new Headers(options.headers);
+    headers.set('Authorization', `Bearer ${apiKey}`);
+    headers.set('Content-Type', 'application/json');
+
+    if (this._defaultHeaders) {
+      for (const [key, value] of Object.entries(this._defaultHeaders)) {
+        headers.set(key, value);
+      }
+      if (auth?.headers) {
+        for (const [key, value] of Object.entries(auth.headers)) {
+          headers.set(key, value);
+        }
+      }
+    }
+
+    return fetch(`${this._baseUrl}${path}`, {
+      ...options,
+      headers,
+      ...(this._proxyDispatcher !== undefined
+        ? { dispatcher: this._proxyDispatcher as never }
+        : {}),
+    } as RequestInit);
+  }
+
+  private async *_parseSSEStream(response: Response): AsyncGenerator<OpenAI.Chat.ChatCompletionChunk> {
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('Response body is null');
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('data: ')) {
+            const data = trimmed.slice(6);
+            if (data === '[DONE]') {
+              return;
+            }
+            try {
+              const chunk = JSON.parse(data) as OpenAI.Chat.ChatCompletionChunk;
+              yield chunk;
+            } catch (e) {
+              console.warn('[OpenAILegacyChatProvider] Ignoring malformed SSE chunk:', data);
+            }
+          }
+        }
+      }
+
+      if (buffer.trim().startsWith('data: ')) {
+        const data = buffer.trim().slice(6);
+        if (data !== '[DONE]') {
+          try {
+            const chunk = JSON.parse(data) as OpenAI.Chat.ChatCompletionChunk;
+            yield chunk;
+          } catch (e) {
+            console.warn('[OpenAILegacyChatProvider] Failed to parse final SSE chunk:', data);
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
   }
 }
 

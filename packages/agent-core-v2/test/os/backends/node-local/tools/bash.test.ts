@@ -810,13 +810,18 @@ describe('BashTool', () => {
     }
   });
 
-  it('exposes a default timeout in the JSON Schema', () => {
+  it('describes the default timeout in the JSON Schema', () => {
     const { runner } = createTestRunner(processWithOutput());
     const tool = bashTool(runner);
-    const properties = (tool.parameters as { properties: Record<string, { default?: number }> })
+    const properties = (tool.parameters as { properties: Record<string, { default?: number; description?: string }> })
       .properties;
 
-    expect(properties['timeout']?.default).toBe(60);
+    // The schema intentionally omits a JSON-schema `default` so the tool can
+    // distinguish "model omitted `timeout`" (use configured background default)
+    // from "model passed an explicit value" (use that value). The default value
+    // is still surfaced via the human-readable description.
+    expect(properties['timeout']?.default).toBeUndefined();
+    expect(properties['timeout']?.description).toMatch(/Foreground default 60s/);
   });
 
   it('renders the available commands section and the background-task panel hint', () => {
@@ -1800,6 +1805,116 @@ describe('BashTool background mode', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('uses bashTaskTimeoutS as the background default timeout for an explicitly backgrounded command', async () => {
+    async function backgroundTimeoutMsFor(
+      configValues: Record<string, unknown>,
+    ): Promise<number | undefined> {
+      const { runner } = createTestRunner(processWithOutput());
+      const { service, tasks } = createFakeTaskService();
+      const tool = bashTool(
+        runner,
+        createTestEnv(),
+        createTestCtx(),
+        service,
+        stubToolPolicy(),
+        stubConfig(configValues),
+      );
+
+      const result = await executeTool(
+        tool,
+        context({ command: 'watch', run_in_background: true, description: 'watch files' }),
+      );
+      expect(result).toMatchObject({ isError: false });
+
+      const taskId = service.list(false)[0]!.taskId;
+      return tasks.get(taskId)?.options.timeoutMs;
+    }
+
+    await expect(backgroundTimeoutMsFor({})).resolves.toBe(600_000);
+    await expect(backgroundTimeoutMsFor({ task: { bashTaskTimeoutS: 45 } })).resolves.toBe(45_000);
+    await expect(backgroundTimeoutMsFor({ background: { bashTaskTimeoutS: 1800 } })).resolves.toBe(
+      1_800_000,
+    );
+    await expect(backgroundTimeoutMsFor({ task: { bashTaskTimeoutS: 0 } })).resolves.toBe(0);
+  });
+
+  describe('honors bashTaskTimeoutS through the schema parse (regression for bash-task-timeout-ignored)', () => {
+    async function backgroundOptionsFor(
+      configValues: Record<string, unknown>,
+      rawArgs: Record<string, unknown>,
+    ): Promise<{ timeoutMs?: number | undefined; detachTimeoutMs?: number | undefined }> {
+      const { runner } = createTestRunner(processWithOutput());
+      const { service, tasks } = createFakeTaskService();
+      const tool = bashTool(
+        runner,
+        createTestEnv(),
+        createTestCtx(),
+        service,
+        stubToolPolicy(),
+        stubConfig(configValues),
+      );
+
+      const args = BashInputSchema.parse(rawArgs);
+      const result = await executeTool(tool, context(args));
+      expect(result).toMatchObject({ isError: false });
+
+      const taskId = service.list(false)[0]!.taskId;
+      return tasks.get(taskId)?.options ?? {};
+    }
+
+    it('uses the configured bashTaskTimeoutS when the model omits timeout', async () => {
+      const options = await backgroundOptionsFor(
+        { task: { bashTaskTimeoutS: 1800 } },
+        { command: 'sleep 1', run_in_background: true, description: 'sleep' },
+      );
+      expect(options.timeoutMs).toBe(1_800_000);
+      expect(options.detachTimeoutMs).toBe(1_800_000);
+    });
+
+    it('honors the legacy [background] bash_task_timeout_s alias', async () => {
+      const options = await backgroundOptionsFor(
+        { background: { bashTaskTimeoutS: 1800 } },
+        { command: 'sleep 1', run_in_background: true, description: 'sleep' },
+      );
+      expect(options.timeoutMs).toBe(1_800_000);
+      expect(options.detachTimeoutMs).toBe(1_800_000);
+    });
+
+    it('keeps disable_timeout authoritative regardless of the configured default', async () => {
+      const options = await backgroundOptionsFor(
+        { task: { bashTaskTimeoutS: 1800 } },
+        {
+          command: 'sleep 1',
+          run_in_background: true,
+          description: 'sleep',
+          disable_timeout: true,
+        },
+      );
+      expect(options.timeoutMs).toBeUndefined();
+    });
+
+    it('still honors an explicit per-call timeout over the configured default', async () => {
+      const options = await backgroundOptionsFor(
+        { task: { bashTaskTimeoutS: 1800 } },
+        {
+          command: 'sleep 1',
+          run_in_background: true,
+          description: 'sleep',
+          timeout: 30,
+        },
+      );
+      expect(options.timeoutMs).toBe(30_000);
+    });
+
+    it('uses the unconfigured default (600s) when neither the model nor the config sets a timeout', async () => {
+      const options = await backgroundOptionsFor(
+        {},
+        { command: 'sleep 1', run_in_background: true, description: 'sleep' },
+      );
+      expect(options.timeoutMs).toBe(600_000);
+    });
   });
 
   it('does not timeout-stop a background task when disable_timeout is true', async () => {

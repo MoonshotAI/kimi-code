@@ -21,6 +21,7 @@ registerProtocolBase({
           (endpoint === undefined ? undefined : ''),
         baseUrl:
           config.baseUrl ?? firstProcessEnv(endpoint?.baseUrlEnv) ?? endpoint?.defaultBaseUrl,
+        proxyUrl: config.proxyUrl,
         defaultHeaders: traitDefaultHeaders(traits),
         maxOutputTokens: config.providerOptions?.defaultMaxTokens,
         offEffort: config.providerOptions?.offEffort,

@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0",
+  "extensions": {
+    "bug": {
+      "version": "1.0.0",
+      "source": "local",
+      "manifest_hash": "sha256:7d168a3b0d409129022c600624d798ec2be4a72528ca8b5ba6e753e62fe5897a",
+      "enabled": true,
+      "priority": 10,
+      "registered_commands": {
+        "kimi": [
+          "speckit.bug.assess",
+          "speckit.bug.issue",
+          "speckit.bug.fetch",
+          "speckit.bug.fix",
+          "speckit.bug.pr",
+          "speckit.bug.test"
+        ]
+      },
+      "registered_skills": [],
+      "installed_at": "2026-08-24T07:56:10.462630+00:00"
+    },
+    "gym": {
+      "version": "1.0.0",
+      "source": "local",
+      "manifest_hash": "sha256:9c7695f66a922af95138c7e404ee740f1c48a178a6077435c0bbb1c961b79f2f",
+      "enabled": true,
+      "priority": 10,
+      "registered_commands": {
+        "kimi": [
+          "speckit.gym.init",
+          "speckit.gym.run",
+          "speckit.gym.warmup",
+          "speckit.gym.gate",
+          "speckit.gym.drop"
+        ]
+      },
+      "registered_skills": [],
+      "installed_at": "2026-08-24T07:56:10.778834+00:00"
+    },
+    "git": {
+      "version": "1.0.0",
+      "source": "local",
+      "manifest_hash": "sha256:47ea781a2c984fb3fe4c2627aae17ac22db2d07f99ada3301cf2960afc4c3d4f",
+      "enabled": true,
+      "priority": 10,
+      "registered_commands": {
+        "kimi": [
+          "speckit.git.feature",
+          "speckit.git.validate",
+          "speckit.git.remote",
+          "speckit.git.initialize",
+          "speckit.git.commit"
+        ]
+      },
+      "registered_skills": [],
+      "installed_at": "2026-08-24T07:56:11.114171+00:00"
+    }
+  }
+}

@@ -1,0 +1,68 @@
+schema_version: "1.0"
+
+extension:
+  id: tdd
+  name: "TDD Extension"
+  version: "1.1.2"
+  description: "Drives spec-kit implementation with tests: a language-agnostic red-green-refactor loop with a per-feature test list, recorded red and green evidence, and mutation-checked test strength."
+  author: d0whc3r
+  repository: https://github.com/arrrrny/speckit-extensions
+  homepage: https://github.com/arrrrny/speckit-extensions
+  license: MIT
+
+requires:
+  # 0.8.1 is the first release that resolves the feature directory from
+  # SPECIFY_FEATURE_DIRECTORY or .specify/feature.json, and 0.11.9 the first that
+  # actually invokes a mandatory hook instead of only printing its directive. The
+  # commands and the before_implement hook below depend on both.
+  speckit_version: ">=0.11.9"
+
+provides:
+  commands:
+    - name: speckit.tdd.setup
+      file: commands/speckit.tdd.setup.md
+      description: "Detect the repository's test stack and write .specify/memory/tdd-profile.md with the exact verified commands the loop needs (single test, full suite, coverage, mutation), plus the TDD principle to add to the project constitution"
+    - name: speckit.tdd.plan
+      file: commands/speckit.tdd.plan.md
+      description: "Derive the feature's test list from spec.md and plan.md into specs/<feature>/tdd/test-list.md (outer acceptance behaviors, inner unit behaviors, each traced to an acceptance criterion) and make the test tasks in tasks.md mandatory and correctly ordered"
+    - name: speckit.tdd.run
+      file: commands/speckit.tdd.run.md
+      description: "Drive the red-green-refactor loop one behavior at a time from the test list: write one failing test, prove it fails for the right reason, make it pass with the smallest change, refactor while green, record the evidence in the feature's tdd/cycle-log.md, and tick the tasks.md tasks the completed behaviors cover"
+    - name: speckit.tdd.verify
+      file: commands/speckit.tdd.verify.md
+      description: "Audit the feature's TDD discipline and test strength from cold context: test-first evidence in git history, red-phase evidence, test-smell rubric, mutation testing on the changed files, and acceptance-criteria coverage, then write specs/<feature>/tdd/verification.md with a verdict and remediation tasks"
+
+hooks:
+  after_tasks:
+    command: speckit.tdd.plan
+    optional: true
+    prompt: "Derive the TDD test list and make the test tasks in tasks.md mandatory?"
+    description: "Generate specs/<feature>/tdd/test-list.md from spec.md and plan.md, then reorder tasks.md so every behavior has a failing test before its implementation"
+  # Not optional, on purpose. spec-kit only waits for a hook whose optional flag
+  # is false; an optional pre-hook prints its offer and /speckit.implement writes
+  # the whole feature in the same run, which is the exact failure this hook
+  # exists to prevent. Set enabled: false in .specify/extensions.yml to opt out.
+  before_implement:
+    command: speckit.tdd.run
+    optional: false
+    prompt: "Drive the behavioral tasks through the red-green-refactor loop first?"
+    description: "Run the loop over every behavior on the feature's tdd/test-list.md, one failing test at a time with the red recorded, ticking the tasks each behavior completes so /speckit.implement then covers only the work that is not a behavior change"
+  after_implement:
+    command: speckit.tdd.verify
+    optional: true
+    prompt: "Audit TDD discipline and test strength for this feature?"
+    description: "Write specs/<feature>/tdd/verification.md: test-first evidence, test-smell rubric, mutation results, and acceptance-criteria coverage"
+
+tags:
+  - acceptance-tests
+  - mutation-testing
+  - property-based-testing
+  - quality
+  - red-green-refactor
+  - spec-kit
+  - spec-kit-extension
+  - tdd
+  - test-driven-development
+  - test-first
+  - testing
+  - unit-tests

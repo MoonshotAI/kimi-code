@@ -23,15 +23,23 @@ const stringRecordSchema = z.record(z.string(), z.string());
 
 const modelSourceSchema = z.enum(['static', 'discover', 'oauth-catalog']);
 
+const providerApiKeySchema = z.object({
+  key: z.string(),
+  name: z.string(),
+});
+
 export const providerConfigSchema = z.object({
   modelSource: modelSourceSchema.optional(),
 
   baseUrl: z.string().optional(),
+  proxyUrl: z.string().optional(),
   customHeaders: stringRecordSchema.optional(),
   defaultModel: z.string().optional(),
 
   type: providerTypeSchema.optional(),
   apiKey: z.string().optional(),
+  apiKeys: z.record(z.string(), providerApiKeySchema).optional(),
+  activeApiKeyId: z.string().optional(),
   oauth: oAuthRefSchema.optional(),
   env: stringRecordSchema.optional(),
   source: z.record(z.string(), z.unknown()).optional(),

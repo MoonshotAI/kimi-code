@@ -295,6 +295,34 @@ Configuration errors fail loudly instead of falling back silently. Session creat
 - `force` is set without `default_model`, or combined with a `models` table.
 :::
 
+## `visual_model`
+
+The visual model is a companion model configuration for **vision-only work** — typically a vision-capable model you pin so image / screenshot / video inspection tasks can run even when your main coding model is text-only. Its consumer today is `ReadMediaFile`: when set, the media tool registers against the visual model's capabilities and requester when the caller's model cannot consume image or video input, so the LLM keeps the `ReadMediaFile` tool available for visual inspection instead of silently losing it. When unset, behavior is unchanged (the tool registers only when the caller's model is vision-capable, exactly as before).
+
+This is a default binding, not a forced one. With the experiment enabled, the visual-model resolver (`resolveVisualModel`) returns the configured recipe and the media-tools registrar consults it; future agent tools that perform visual inspection can advertise a `model` parameter (accepting the symbolic values `"visual"` / `"primary"`) the same way `Agent` / `AgentSwarm` advertise their secondary-model choice.
+
+This feature is experimental and disabled by default. Enable it with `KIMI_CODE_EXPERIMENTAL_VISUAL_MODEL=1`, or the master `KIMI_CODE_EXPERIMENTAL_FLAG=1`. It takes effect in every launch mode, including the interactive TUI.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `model` | `string` | — | The alias of a configured [`[models]`](#models) entry, e.g. `kimi-code/kimi-vision` (any provider, not limited to Kimi models). Should be a vision-capable entry (`image_in` and/or `video_in` listed in its `capabilities`) |
+| `default_effort` | `string` | — | Thinking effort applied when visual tasks bind to the visual model. Unset, the effort resolves naturally (global `[thinking]` config → the bound model's default effort) instead of inheriting the caller's effort. Follows the main model's thinking-effort semantics: models with strict effort validation (e.g. Kimi models) fall back to their default effort for unsupported values; other providers receive the value as-is |
+| Other fields | — | — | Accepts every field of [`[models."<alias>".overrides]`](#models) (`max_context_size`, `max_output_size`, `support_efforts`, …) as a model patch applied only to visual tasks |
+
+Every field besides `model` forms a patch: when at least one patch field is set, the runtime synthesizes a derived model entry in memory (a copy of the pointed entry with the patch merged into its overrides, patch winning conflicts) and visual tasks bind that derived entry; with no patch fields, visual tasks bind the pointed entry directly. The derived entry lives only in memory (never written back to `config.toml`) and is hidden from model-selection lists.
+
+```toml
+[visual_model]
+model = "kimi-code/kimi-vision"
+default_effort = "low"
+max_output_size = 8192
+```
+
+`model` / `default_effort` can be overridden by the `KIMI_VISUAL_MODEL` / `KIMI_VISUAL_EFFORT` environment variables, which take higher priority than `config.toml`.
+
+When the experiment is enabled, the configuration is validated as the session starts: an unresolvable `model` produces a startup warning. The check is advisory — a broken visual model still fails at use time, with the same source hint attached to the error.
+
+
 ## `thinking`
 
 `thinking` sets the global default behavior for Thinking mode.

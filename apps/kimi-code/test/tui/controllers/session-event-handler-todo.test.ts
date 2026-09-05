@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { SessionEventHandler } from '#/tui/controllers/session-event-handler';
 import type { ToolCallBlockData } from '#/tui/types';
 
-function makeHarness() {
+function makeHarness(initialTodos: readonly { title: string; status: string }[] = []) {
   const activeCalls = new Map<string, ToolCallBlockData>();
   const streamingUI = {
     setTurnId: vi.fn(),
@@ -26,6 +26,9 @@ function makeHarness() {
       appState: { availableModels: {}, workDir: '/tmp/work', stepRetry: null },
       ui: { requestRender: vi.fn() },
       transcriptContainer: { addChild: vi.fn() },
+      todoPanel: {
+        getTodos: vi.fn(() => initialTodos),
+      },
     },
     session: undefined,
     streamingUI,
@@ -38,7 +41,7 @@ function makeHarness() {
     showStatus: vi.fn(),
   };
   const handler = new SessionEventHandler(host as never);
-  return { handler, streamingUI };
+  return { handler, streamingUI, host };
 }
 
 function todoCallStarted(toolCallId: string, todos: unknown): Event {
@@ -65,6 +68,20 @@ function todoResult(toolCallId: string, isError = false): Event {
   } as unknown as Event;
 }
 
+function goalCompletionEvent(): Event {
+  return {
+    type: 'goal.updated',
+    sessionId: 's1',
+    agentId: 'main',
+    snapshot: { description: 'goal', status: 'complete' },
+    change: {
+      kind: 'completion',
+      status: 'complete',
+      stats: { turnsUsed: 1, tokensUsed: 10, wallClockMs: 100 },
+    },
+  } as unknown as Event;
+}
+
 describe('SessionEventHandler — todo panel feed', () => {
   it('feeds the panel from TodoList call args when the tool result arrives', () => {
     const { handler, streamingUI } = makeHarness();
@@ -84,5 +101,24 @@ describe('SessionEventHandler — todo panel feed', () => {
     handler.handleEvent(todoResult('tc-1', true), vi.fn());
 
     expect(streamingUI.setTodoList).not.toHaveBeenCalled();
+  });
+
+  it('clears the todo panel when a goal completion fires with items still showing', () => {
+    const { handler, streamingUI } = makeHarness([
+      { title: 'first', status: 'done' },
+      { title: 'last', status: 'in_progress' },
+    ]);
+
+    handler.handleEvent(goalCompletionEvent(), vi.fn());
+
+    expect(streamingUI.setTodoList).toHaveBeenCalledWith([]);
+  });
+
+  it('does not call setTodoList on goal completion when the panel is already empty', () => {
+    const { handler, streamingUI } = makeHarness();
+
+    handler.handleEvent(goalCompletionEvent(), vi.fn());
+
+    expect(streamingUI.setTodoList).not.toHaveBeenCalledWith([]);
   });
 });

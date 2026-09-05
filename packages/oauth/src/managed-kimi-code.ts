@@ -6,6 +6,8 @@ import { OAuthUnauthorizedError } from './errors';
 import { parseKimiCodeCustomHeaders } from './identity';
 import { DEFAULT_KIMI_CODE_BASE_URL, kimiCodeBaseUrl } from './managed-usage';
 import { MANAGED_KIMI_MODEL_FIELDS, mergeRefreshedModelAlias } from './model-alias-merge';
+import { lookupModelsDevModel } from './modelsDevCatalog';
+import { OPENAI_COMPATIBLE_DEFAULT_CONTEXT } from './openai-compatible';
 import { isRecord } from './utils';
 
 export const KIMI_CODE_PLATFORM_ID = 'kimi-code';
@@ -33,6 +35,14 @@ export type SupportsThinkingType = 'only' | 'no' | 'both';
 export interface ManagedKimiCodeModelInfo {
   readonly id: string;
   readonly contextLength: number;
+  /**
+   * The context window reported by the provider's `/models` endpoint, or
+   * `undefined` when the endpoint omitted it (in which case `contextLength`
+   * holds the conservative default). The catalog refresh uses this to decide
+   * whether to preserve a curated `maxContextSize` instead of clobbering it
+   * with the default.
+   */
+  readonly reportedContextLength?: number | undefined;
   readonly supportsReasoning: boolean;
   readonly supportsImageIn: boolean;
   readonly supportsVideoIn: boolean;
@@ -686,6 +696,78 @@ export function applyManagedApiKeyProviderModels(
       toManagedModelAlias(providerId, model),
       MANAGED_KIMI_MODEL_FIELDS,
     );
+  }
+
+  config.models = existingModels;
+}
+
+function resolveModelsDevDisplayName(
+  providerId: string,
+  modelId: string,
+  endpointName: string | undefined,
+): string | undefined {
+  const catalog = lookupModelsDevModel(providerId, modelId);
+  // The provider's own display name wins; fall back to the catalog name.
+  if (endpointName !== undefined && endpointName.length > 0) return endpointName;
+  if (catalog?.displayName !== undefined) return catalog.displayName;
+  return undefined;
+}
+
+/**
+ * Catalog refresh for OpenAI-compatible providers (`/refresh-catalog`). Mirrors
+ * `applyManagedApiKeyProviderModels`'s merge contract, but:
+ *  - the provider-reported `contextLength` is preserved as-is (never replaced by
+ *    the 256K default), so curated windows survive;
+ *  - each alias is enriched from the models.dev catalog (display name +
+ *    capabilities), with the provider's own name taking priority.
+ */
+export function applyOpenAiCompatibleCatalog(
+  config: ManagedKimiConfigShape,
+  providerId: string,
+  models: readonly ManagedKimiCodeModelInfo[],
+  aliasPrefix: string,
+): void {
+  const existingModels = config.models ?? {};
+  const upstreamKeys = new Set(models.map((m) => `${aliasPrefix}${m.id}`));
+  for (const [key, model] of Object.entries(existingModels)) {
+    if (isRecord(model) && model['provider'] === providerId && !upstreamKeys.has(key)) {
+      delete existingModels[key];
+    }
+  }
+  for (const model of models) {
+    const key = `${aliasPrefix}${model.id}`;
+    const existing = isRecord(existingModels[key]) ? existingModels[key] : {};
+    const existingMaxContextSize =
+      typeof existing['maxContextSize'] === 'number' ? existing['maxContextSize'] : undefined;
+    const catalog = lookupModelsDevModel(providerId, model.id);
+    // Resolution order for maxContextSize:
+    //  1. provider-reported `context_length` (kilo/OpenRouter style — most
+    //     authoritative for the current pricing tier);
+    //  2. the models.dev catalog's `limit.context` (covers providers whose
+    //     `/models` endpoint omits context length, e.g. opencode);
+    //  3. an existing curated `maxContextSize` (the user's manual override);
+    //  4. `OPENAI_COMPATIBLE_DEFAULT_CONTEXT` (256K — the safety net for a
+    //     brand-new alias with no other signal).
+    const maxContextSize =
+      model.reportedContextLength ??
+      catalog?.context ??
+      existingMaxContextSize ??
+      OPENAI_COMPATIBLE_DEFAULT_CONTEXT;
+    const remoteAlias: ManagedKimiModelAlias = {
+      provider: providerId,
+      model: model.id,
+      maxContextSize,
+      ...(model.displayName !== undefined ? { displayName: model.displayName } : {}),
+      ...(catalog?.capabilities !== undefined ? { capabilities: catalog.capabilities } : {}),
+    };
+    existingModels[key] = mergeRefreshedModelAlias(
+      existing,
+      remoteAlias,
+      MANAGED_KIMI_MODEL_FIELDS,
+    );
+    // Prefer the provider's own display name; otherwise use the catalog name.
+    const displayName = resolveModelsDevDisplayName(providerId, model.id, model.displayName);
+    if (displayName !== undefined) existingModels[key].displayName = displayName;
   }
 
   config.models = existingModels;

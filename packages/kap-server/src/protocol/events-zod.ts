@@ -939,6 +939,8 @@ export const compactionStartedEventSchema = z.object({
   agentId: z.string(),
   trigger: z.enum(['manual', 'auto']),
   instruction: z.string().optional(),
+  model: z.string().optional(),
+  model_display: z.string().optional(),
 }) satisfies z.ZodType<CompactionStartedPayload>;
 
 export const compactionBlockedEventSchema = z.object({

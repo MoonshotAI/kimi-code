@@ -85,6 +85,8 @@ import {
   sleepForRetry,
 } from '#/_base/utils/retry';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { substituteModelActiveKey } from '#/session/substitute/state';
+import { fallbackModelActiveKey } from '#/session/fallback/state';
 
 const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
   type: 'object',
@@ -642,7 +644,19 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
 
   private resolveRequest(overrides: AgentLLMRequestOverrides): ResolvedLLMRequest {
     const turnConfig = this.resolveTurnConfig(overrides.source);
-    const resolved = turnConfig?.resolved ?? this.profile.resolveModelContext();
+    const fallbackAlias = overrides.model === undefined ? this.activeFallbackAlias() : undefined;
+    const substituteAlias =
+      overrides.model === undefined && fallbackAlias === undefined
+        ? this.activeSubstituteAlias()
+        : undefined;
+    const resolved =
+      overrides.model !== undefined
+        ? this.profile.resolveModelContextFor(overrides.model)
+        : fallbackAlias !== undefined
+          ? this.profile.resolveModelContextFor(fallbackAlias)
+          : substituteAlias !== undefined
+            ? this.profile.resolveModelContextFor(substituteAlias)
+            : turnConfig?.resolved ?? this.profile.resolveModelContext();
     const baseParams = turnConfig?.params ?? this.profile.resolveRequestParams();
     const budgetParams = completionBudgetParams({
       budget: resolveCompletionBudget({
@@ -672,6 +686,41 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       source: overrides.source,
       logFields: logFieldsForSource(overrides.source),
     };
+  }
+
+  private activeSubstituteAlias(): string | undefined {
+    if (!this.states.has(substituteModelActiveKey)) return undefined;
+    const active = this.states.get(substituteModelActiveKey);
+    if (active === undefined) return undefined;
+    if (Date.now() >= active.until) {
+      this.states.set(substituteModelActiveKey, undefined);
+      void this.dispatcher.dispatch(
+        new WarningIssued({
+          agentId: this.scopeContext.agentId,
+          code: 'substitute-model',
+          message: `Substitute model cooldown ended, retrying primary model ${active.primaryAlias}`,
+        }),
+      );
+      return undefined;
+    }
+    try {
+      this.profile.resolveModelContextFor(active.alias);
+    } catch {
+      return undefined;
+    }
+    return active.alias;
+  }
+
+  private activeFallbackAlias(): string | undefined {
+    if (!this.states.has(fallbackModelActiveKey)) return undefined;
+    const active = this.states.get(fallbackModelActiveKey);
+    if (active === undefined) return undefined;
+    try {
+      this.profile.resolveModelContextFor(active.alias);
+    } catch {
+      return undefined;
+    }
+    return active.alias;
   }
 
   private resolveTurnConfig(source: AgentLLMRequestSource | undefined): TurnRequestConfig | undefined {

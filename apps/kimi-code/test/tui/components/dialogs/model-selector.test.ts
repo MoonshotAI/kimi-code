@@ -305,7 +305,7 @@ describe('ModelSelectorComponent', () => {
     }
   });
 
-  it('invokes onSessionOnlySelect on Alt+S with the effective thinking state', () => {
+  it('invokes onSessionOnlySelect on Shift+S with the effective thinking state', () => {
     const onSelect = vi.fn();
     const onSessionOnlySelect = vi.fn();
     const picker = new ModelSelectorComponent({
@@ -317,14 +317,14 @@ describe('ModelSelectorComponent', () => {
       onCancel: vi.fn(),
     });
 
-    // Toggle thinking Off, then Alt+S applies the choice to the session only.
+    // Toggle thinking Off, then Shift+S applies the choice to the session only.
     picker.handleInput(RIGHT);
-    picker.handleInput(`${ESC}s`);
+    picker.handleInput('S');
     expect(onSessionOnlySelect).toHaveBeenCalledWith({ alias: 'kimi', thinking: 'off' });
     expect(onSelect).not.toHaveBeenCalled();
   });
 
-  it('ignores Alt+S and hides its hint when onSessionOnlySelect is not provided', () => {
+  it('ignores Shift+S and hides its hint when onSessionOnlySelect is not provided', () => {
     const onSelect = vi.fn();
     const picker = new ModelSelectorComponent({
       models: { kimi: model('Kimi K2') },
@@ -334,12 +334,12 @@ describe('ModelSelectorComponent', () => {
       onCancel: vi.fn(),
     });
 
-    picker.handleInput(`${ESC}s`);
+    picker.handleInput('S');
     expect(onSelect).not.toHaveBeenCalled();
-    expect(text(picker)).not.toContain('Alt+S session-only');
+    expect(text(picker)).not.toContain('Shift+S session-only');
   });
 
-  it('shows the Alt+S session-only hint when onSessionOnlySelect is provided', () => {
+  it('shows the Shift+S session-only hint when onSessionOnlySelect is provided', () => {
     const picker = new ModelSelectorComponent({
       models: { kimi: model('Kimi K2') },
       currentValue: 'kimi',
@@ -348,7 +348,7 @@ describe('ModelSelectorComponent', () => {
       onSessionOnlySelect: vi.fn(),
       onCancel: vi.fn(),
     });
-    expect(text(picker)).toContain('Alt+S session-only');
+    expect(text(picker)).toContain('Shift+S session-only');
   });
 
   it('renders effort segments with the default effort highlighted', () => {
@@ -563,5 +563,123 @@ describe('ModelSelectorComponent overrides', () => {
     expect(out).toContain('Low');
     expect(out).toContain('High');
     expect(out).not.toContain('Max');
+  });
+});
+
+describe('ModelSelectorComponent favorites', () => {
+  const SHIFT_A = 'A';
+  const SHIFT_R = 'R';
+
+  function makeFavoritesPicker(overrides: {
+    favoriteAliases?: ReadonlySet<string>;
+    onToggleFavorite?: (alias: string) => void;
+    emptyMessage?: string;
+    models?: Record<string, ModelAlias>;
+  } = {}) {
+    return new ModelSelectorComponent({
+      models: overrides.models ?? {
+        kimi: model('Kimi K2'),
+        gpt: { ...model('GPT-5'), provider: 'openai' },
+      },
+      currentValue: 'kimi',
+      currentThinkingEffort: 'on',
+      favoriteAliases: overrides.favoriteAliases,
+      ...(overrides.onToggleFavorite !== undefined ? { onToggleFavorite: overrides.onToggleFavorite } : {}),
+      ...(overrides.emptyMessage !== undefined ? { emptyMessage: overrides.emptyMessage } : {}),
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+  }
+
+  it('renders ★ after the name for favorite models only, keeping providers aligned', () => {
+    const picker = makeFavoritesPicker({ favoriteAliases: new Set(['kimi']) });
+    const out = text(picker);
+
+    expect(out).toMatch(/Kimi K2 ★\s+Kimi Code/);
+    expect(out).toMatch(/GPT-5\s+openai/);
+    expect(out).not.toMatch(/GPT-5 ★/);
+  });
+
+  it('Shift+A adds the highlighted model to Favorites when it is not already a favorite', () => {
+    const onToggleFavorite = vi.fn();
+    const picker = makeFavoritesPicker({ onToggleFavorite });
+
+    picker.handleInput(SHIFT_A);
+
+    expect(onToggleFavorite).toHaveBeenCalledWith('kimi');
+  });
+
+  it('Shift+A is a no-op when the highlighted model is already a favorite', () => {
+    const onToggleFavorite = vi.fn();
+    const picker = makeFavoritesPicker({ favoriteAliases: new Set(['kimi']), onToggleFavorite });
+
+    picker.handleInput(SHIFT_A);
+
+    expect(onToggleFavorite).not.toHaveBeenCalled();
+  });
+
+  it('Shift+R removes the highlighted model from Favorites', () => {
+    const onToggleFavorite = vi.fn();
+    const picker = makeFavoritesPicker({ favoriteAliases: new Set(['kimi']), onToggleFavorite });
+
+    picker.handleInput(SHIFT_R);
+
+    expect(onToggleFavorite).toHaveBeenCalledWith('kimi');
+  });
+
+  it('Shift+R is a no-op when the highlighted model is not a favorite', () => {
+    const onToggleFavorite = vi.fn();
+    const picker = makeFavoritesPicker({ onToggleFavorite });
+
+    picker.handleInput(SHIFT_R);
+
+    expect(onToggleFavorite).not.toHaveBeenCalled();
+  });
+
+  it('mentions Shift+A favorite and Shift+R unfavorite in the hint line only when the toggle is available', () => {
+    const withToggle = makeFavoritesPicker({ onToggleFavorite: vi.fn() });
+    expect(text(withToggle)).toContain('Shift+A favorite · Shift+R unfavorite');
+
+    const withoutToggle = makeFavoritesPicker();
+    expect(text(withoutToggle)).not.toContain('Shift+A favorite');
+  });
+
+  it('shows the custom empty message instead of "No matches" when the list is empty', () => {
+    const picker = makeFavoritesPicker({
+      models: {},
+      emptyMessage: 'No favorites yet — press Shift+A',
+    });
+
+    const out = text(picker);
+    expect(out).toContain('No favorites yet — press Shift+A');
+    expect(out).not.toContain('No matches');
+  });
+
+  it('passes uppercase A/R through to search filtering when onToggleFavorite is not provided', () => {
+    const picker = new ModelSelectorComponent({
+      models: {
+        alpha: model('Alpha Model'),
+        arena: model('Arena Model'),
+        rocket: model('Rocket Model'),
+      },
+      currentValue: 'alpha',
+      currentThinkingEffort: 'on',
+      searchable: true,
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    picker.handleInput('A');
+    const outA = text(picker);
+    expect(outA).toContain('Alpha Model');
+    expect(outA).toContain('Arena Model');
+    expect(outA).not.toContain('Rocket Model');
+
+    picker.handleInput(ESC);
+    picker.handleInput('R');
+    const outR = text(picker);
+    expect(outR).toContain('Arena Model');
+    expect(outR).toContain('Rocket Model');
+    expect(outR).not.toContain('Alpha Model');
   });
 });

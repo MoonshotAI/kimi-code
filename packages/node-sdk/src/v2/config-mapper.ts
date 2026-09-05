@@ -39,12 +39,24 @@ const KIMI_CONFIG_DOMAINS = [
   'background',
   'subagent',
   'secondaryModel',
+  'substituteModel',
+  'visualModel',
+  'compactionModel',
+  'fallbackModel',
   'mcp',
   'image',
   'modelCatalog',
   'experimental',
   'telemetry',
 ] as const;
+
+/** Sections whose all-optional v2 schema materializes an empty `{}` default; see {@link resolvedConfigToKimiConfig}. */
+const EMPTY_DEFAULT_SECTIONS: ReadonlySet<string> = new Set([
+  'visualModel',
+  'substituteModel',
+  'compactionModel',
+  'fallbackModel',
+]);
 
 /**
  * Pick the v1-shaped fields out of the v2 engine's resolved config
@@ -57,9 +69,23 @@ export function resolvedConfigToKimiConfig(resolved: Record<string, unknown>): K
   const config: Record<string, unknown> = {};
   for (const domain of KIMI_CONFIG_DOMAINS) {
     const value = resolved[domain];
-    if (value !== undefined) {
-      config[domain] = value;
+    if (value === undefined) continue;
+    // The optional-field model-override sections materialize as `{}` section
+    // defaults on v2 even when unset, while v1 leaves them absent. Omit the
+    // empty form so both engines report an unset section identically; a
+    // configured section is a non-empty object and passes through, which is
+    // what the `/visual-model`, `/substitute-model`, and `/compaction-model`
+    // read-backs need.
+    if (
+      EMPTY_DEFAULT_SECTIONS.has(domain) &&
+      typeof value === 'object' &&
+      value !== null &&
+      !Array.isArray(value) &&
+      Object.keys(value).length === 0
+    ) {
+      continue;
     }
+    config[domain] = value;
   }
   return config as KimiConfig;
 }

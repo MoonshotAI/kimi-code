@@ -174,6 +174,8 @@ export * from '#/kosong/protocol/protocol';
 export * from '#/kosong/protocol/protocolBase';
 export * from '#/kosong/protocol/protocolTrait';
 import '#/app/kosongConfig/envOverlay';
+import '#/app/kosongConfig/visualModelOverlay';
+import '#/app/kosongConfig/compactionModelOverlay';
 export * from '#/kosong/model/completionBudget';
 export * from '#/kosong/model/hostRequestHeaders';
 export * from '#/kosong/model/model';
@@ -189,6 +191,34 @@ export {
   ModelCatalogConfigSchema,
   type ModelCatalogConfig,
 } from '#/app/kosongConfig/configSection';
+export type { SecondaryModelConfig, VisualModelConfig, CompactionModelConfig } from '#/app/kosongConfig/configSection';
+export {
+  SECONDARY_MODEL_SECTION,
+  SECONDARY_MODEL_ENV,
+  SECONDARY_MODEL_EFFORT_ENV,
+  SecondaryModelConfigSchema,
+  secondaryModelEnvBindings,
+  VISUAL_MODEL_SECTION,
+  VISUAL_MODEL_ENV,
+  VISUAL_MODEL_EFFORT_ENV,
+  VisualModelConfigSchema,
+  visualModelEnvBindings,
+  COMPACTION_MODEL_SECTION,
+  COMPACTION_MODEL_ENV,
+  COMPACTION_MODEL_EFFORT_ENV,
+  CompactionModelConfigSchema,
+  compactionModelEnvBindings,
+} from '#/app/kosongConfig/configSection';
+export {
+  VISUAL_DERIVED_MODEL_ID,
+  visualModelOverlay,
+  visualModelPatch,
+} from '#/app/kosongConfig/visualModelOverlay';
+export {
+  COMPACTION_DERIVED_MODEL_ID,
+  compactionModelOverlay,
+  compactionModelPatch,
+} from '#/app/kosongConfig/compactionModelOverlay';
 export * from '#/app/kosongConfig/kosongConfig';
 export * from '#/app/kosongConfig/kosongConfigService';
 export * from '#/kosong/model/modelOAuth';
@@ -473,6 +503,62 @@ export * from '#/agent/tools/agent/subagent-task';
 export { AGENT_RUN_PROMPT_ORIGIN } from '#/session/subagent/runAgentTurn';
 export * from '#/session/subagent/mirrorAgentRun';
 import '#/session/subagent/configSection';
+import '#/session/visual/flag';
+import '#/session/visual/configSection';
+import '#/session/compaction/flag';
+import '#/session/compaction/configSection';
+import '#/session/substitute/flag';
+import '#/session/substitute/configSection';
+import '#/session/substitute/state';
+import '#/session/updateAllSessionModels/flag';
+export {
+  VISUAL_MODEL_FLAG_ID,
+  VISUAL_MODEL_FLAG_ENV,
+  visualModelFlag,
+} from '#/session/visual/flag';
+export {
+  resolveVisualModel,
+  resolveVisualBinding,
+  visualDisplayModel,
+  buildVisualModelDescriptions,
+  stripVisualModelParameter,
+  wrapVisualModelError,
+  VISUAL_MODEL_CHOICE_SCHEMA,
+  type VisualModelChoice,
+} from '#/session/visual/configSection';
+export {
+  COMPACTION_MODEL_FLAG_ID,
+  COMPACTION_MODEL_FLAG_ENV,
+  compactionModelFlag,
+} from '#/session/compaction/flag';
+export {
+  resolveCompactionModel,
+  resolveCompactionSecondaryModel,
+  resolveCompactionBinding,
+  compactionModelBindingFor,
+} from '#/session/compaction/configSection';
+export {
+  SUBSTITUTE_MODEL_FLAG_ID,
+  SUBSTITUTE_MODEL_FLAG_ENV,
+  substituteModelFlag,
+} from '#/session/substitute/flag';
+export {
+  UPDATE_ALL_SESSION_MODELS_FLAG_ID,
+  UPDATE_ALL_SESSION_MODELS_FLAG_ENV,
+  updateAllSessionModelsFlag,
+} from '#/session/updateAllSessionModels/flag';
+export {
+  resolveSubstituteModel,
+  resolveSubstituteModelAlias,
+  resolveSubstituteCooldownMs,
+  SUBSTITUTE_MODEL_SECTION,
+  SUBSTITUTE_MODEL_ENV,
+  SUBSTITUTE_MODEL_COOLDOWN_ENV,
+  SubstituteModelConfigSchema,
+  substituteModelEnvBindings,
+  type SubstituteModelConfig,
+} from '#/session/substitute/configSection';
+export * from '#/session/substitute/state';
 export * from '#/agent/tools/agent/agent';
 import '#/agent/tools/agent/agentTool';
 export * from '#/app/sessionManager/sessionLookup';
@@ -565,6 +651,7 @@ export * from '#/app/auth/configSection';
 export * from '#/app/auth/webSearch/webSearch';
 export * from '#/app/auth/webSearch/webSearchService';
 export * from '#/app/auth/webSearch/providers/moonshot-web-search';
+export * from '#/app/subscription/configSection';
 export * from '#/app/authLegacy/authLegacy';
 export * from '#/app/authLegacy/authLegacyService';
 export * from '#/app/file/fileService';

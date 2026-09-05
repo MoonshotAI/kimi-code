@@ -87,6 +87,19 @@ export interface ApplyProfileOptions {
   readonly additionalDirs?: readonly string[];
 }
 
+export const COMPACTION_TRIGGER_RATIO_MIN = 0.05;
+
+export const COMPACTION_TRIGGER_RATIO_MAX = 0.99;
+
+export function compactionTriggerRatioError(
+  ratio: number,
+): string | undefined {
+  if (!Number.isFinite(ratio) || ratio < COMPACTION_TRIGGER_RATIO_MIN || ratio > COMPACTION_TRIGGER_RATIO_MAX) {
+    return `Invalid compaction trigger ratio "${String(ratio)}": must be between ${COMPACTION_TRIGGER_RATIO_MIN} and ${COMPACTION_TRIGGER_RATIO_MAX}.`;
+  }
+  return undefined;
+}
+
 export interface ProfileModelContext {
   readonly modelAlias: string;
   readonly modelCapabilities: ModelCapability;
@@ -95,11 +108,31 @@ export interface ProfileModelContext {
   readonly thinkingLevel: ThinkingEffort;
   readonly reservedContextSize: number | undefined;
   readonly compactionTriggerRatio: number | undefined;
+  readonly compactionTokenBudget: number | undefined;
 }
 
 export interface ProfileSetModelResult {
   readonly model: string;
   readonly providerName?: string | undefined;
+}
+
+export type SessionModelOverrideKind =
+  | 'visual'
+  | 'compaction'
+  | 'compactionSecondary'
+  | 'fallback'
+  | 'fallbackSecondary'
+  | 'substitute'
+  | 'secondary';
+
+export interface SessionModelOverrides {
+  readonly visual?: string;
+  readonly compaction?: string;
+  readonly compactionSecondary?: string;
+  readonly fallback?: string;
+  readonly fallbackSecondary?: string;
+  readonly substitute?: string;
+  readonly secondary?: string;
 }
 
 export interface BindAgentInput {
@@ -118,6 +151,15 @@ export interface IAgentProfileService {
   bind(input: BindAgentInput): Promise<void>;
   setModel(model: string): Promise<ProfileSetModelResult>;
   setThinking(level: string): void;
+  setCompactionTriggerRatio(ratio: number | undefined): void;
+  getCompactionTriggerRatioOverride(): number | undefined;
+  getEffectiveCompactionTriggerRatio(): number | undefined;
+  setCompactionTokenBudget(tokens: number | undefined): void;
+  getCompactionTokenBudgetOverride(): number | undefined;
+  getEffectiveCompactionTokenBudget(): number | undefined;
+  setSessionModelOverride(kind: SessionModelOverrideKind, alias: string | undefined): void;
+  getSessionModelOverride(kind: SessionModelOverrideKind): string | undefined;
+  getAllSessionModelOverrides(): SessionModelOverrides;
   republishStatus(): void;
   getModel(): string;
   useProfile(profile: ResolvedAgentProfile, context: SystemPromptContext): void;
@@ -126,6 +168,7 @@ export interface IAgentProfileService {
   data(): ProfileData;
   getEffectiveThinkingLevel(): ThinkingEffort;
   resolveModelContext(): ProfileModelContext;
+  resolveModelContextFor(modelAlias: string): ProfileModelContext;
   resolveRequestParams(): ModelRequestParams;
   getModelCapabilities(): ModelCapability;
   getMaxOutputSize(): number | undefined;

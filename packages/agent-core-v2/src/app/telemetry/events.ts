@@ -220,6 +220,8 @@ export interface CompactionFinishedEvent {
   ahead_write_calls_count?: number;
   ahead_bash_calls_count?: number;
   ahead_todo_calls_count?: number;
+  model?: string;
+  model_display?: string;
 }
 
 export interface ContextBudgetReminderEvent {
@@ -289,6 +291,16 @@ export interface ThinkingToggleEvent {
   from: string;
 }
 
+export interface CompactionThresholdOverrideEvent {
+  action: 'set' | 'clear';
+  ratio?: number;
+}
+
+export interface CompactionTokenBudgetOverrideEvent {
+  action: 'set' | 'clear';
+  tokens?: number;
+}
+
 export interface QuestionDismissedEvent {
   trace_id?: string;
 }
@@ -330,6 +342,15 @@ export interface GoalStatusChangedEvent extends GoalBudgetProperties {
   turns_used: number;
   tokens_used: number;
   wall_clock_ms: number;
+}
+
+export interface SubstituteModelActivatedEvent {
+  original_model: string;
+  substitute_model: string;
+}
+
+export interface SubstituteModelDeactivatedEvent {
+  original_model: string;
 }
 
 export interface ToolCallDedupDetectedEvent {
@@ -808,6 +829,8 @@ export const telemetryEventDefinitions = {
       ahead_write_calls_count: 'Write/Edit tool calls made after the compaction-ahead reminder',
       ahead_bash_calls_count: 'Bash tool calls made after the compaction-ahead reminder',
       ahead_todo_calls_count: 'Todo tool calls made after the compaction-ahead reminder',
+      model: 'Model alias that produced the compaction summary (dedicated compaction model when configured, otherwise the active conversation model)',
+      model_display: 'User-facing model alias for the compaction summary producer',
     },
   }),
   context_budget_reminder: defineAgentTelemetryEvent<ContextBudgetReminderEvent>({
@@ -904,6 +927,22 @@ export const telemetryEventDefinitions = {
       from: 'Previous thinking effort level',
     },
   }),
+  compaction_threshold_override: defineAgentTelemetryEvent<CompactionThresholdOverrideEvent>({
+    owner: 'kimi-code',
+    comment: 'The session-scoped auto-compaction trigger ratio override is set or cleared.',
+    properties: {
+      action: 'Whether the override was set or cleared',
+      ratio: 'The new trigger ratio; absent when clearing',
+    },
+  }),
+  compaction_token_budget_override: defineAgentTelemetryEvent<CompactionTokenBudgetOverrideEvent>({
+    owner: 'kimi-code',
+    comment: 'The session-scoped auto-compaction token-budget override is set or cleared.',
+    properties: {
+      action: 'Whether the override was set or cleared',
+      tokens: 'The new absolute token budget (raw tokens, not thousands); absent when clearing',
+    },
+  }),
   question_dismissed: defineAgentTelemetryEvent<QuestionDismissedEvent>({
     owner: 'kimi-code',
     comment: 'A user question prompt is dismissed.',
@@ -962,6 +1001,21 @@ export const telemetryEventDefinitions = {
       has_token_budget: 'Whether a token budget was set',
       has_turn_budget: 'Whether a turn budget was set',
       has_wall_clock_budget: 'Whether a wall-clock budget was set',
+    },
+  }),
+  substitute_model_activated: defineAgentTelemetryEvent<SubstituteModelActivatedEvent>({
+    owner: 'kimi-code',
+    comment: 'Substitute model activated after primary hit rate limit.',
+    properties: {
+      original_model: 'The primary model that was rate-limited',
+      substitute_model: 'The substitute model that was activated',
+    },
+  }),
+  substitute_model_deactivated: defineAgentTelemetryEvent<SubstituteModelDeactivatedEvent>({
+    owner: 'kimi-code',
+    comment: 'Substitute model deactivated, primary model recovered.',
+    properties: {
+      original_model: 'The primary model that was restored',
     },
   }),
   tool_call_dedup_detected: defineAgentTelemetryEvent<ToolCallDedupDetectedEvent>({

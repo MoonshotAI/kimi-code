@@ -136,6 +136,8 @@ export const compactionStartedEventSchema = z.object({
   time: z.number().optional(),
   trigger: z.enum(['manual', 'auto']),
   instruction: z.string().optional(),
+  model: z.string().optional(),
+  model_display: z.string().optional(),
 });
 
 export const compactionBlockedEventSchema = z.object({

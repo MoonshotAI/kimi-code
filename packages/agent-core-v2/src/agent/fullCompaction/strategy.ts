@@ -13,6 +13,7 @@ export interface CompactionConfig {
   maxRecentUserMessages: number;
   maxRecentSizeRatio: number;
   minOverflowReductionRatio: number;
+  tokenBudget?: number;
 }
 
 export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
@@ -109,6 +110,9 @@ export class RuntimeCompactionStrategy implements CompactionStrategy {
       blockRatio,
       reservedContextSize:
         model.reservedContextSize ?? DEFAULT_COMPACTION_CONFIG.reservedContextSize,
+      ...(model.compactionTokenBudget !== undefined
+        ? { tokenBudget: model.compactionTokenBudget }
+        : {}),
     };
   }
 }
@@ -127,6 +131,9 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
 
   shouldCompact(usedSize: number): boolean {
     if (this.maxSize <= 0) return false;
+    if (this.config.tokenBudget !== undefined) {
+      return usedSize >= this.config.tokenBudget;
+    }
     return (
       usedSize >= this.maxSize * this.config.triggerRatio ||
       this.shouldUseReservedContext(usedSize)

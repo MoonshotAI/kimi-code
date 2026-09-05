@@ -249,6 +249,41 @@ describe('DefaultCompactionStrategy', () => {
   });
 });
 
+describe('DefaultCompactionStrategy token-budget short-circuit', () => {
+  function strategyWithTokenBudget(maxSize: number, tokenBudget: number | undefined): DefaultCompactionStrategy {
+    return new DefaultCompactionStrategy(() => maxSize, {
+      triggerRatio: 0.5,
+      blockRatio: 0.5,
+      reservedContextSize: 0,
+      maxCompactionPerTurn: 3,
+      maxOverflowCompactionAttempts: 3,
+      maxRecentMessages: 3,
+      maxRecentUserMessages: Infinity,
+      maxRecentSizeRatio: 0.2,
+      minOverflowReductionRatio: 0.05,
+      tokenBudget,
+    });
+  }
+
+  it('triggers at the token budget on a 32k context model (absolute, not 16k)', () => {
+    const strategy = strategyWithTokenBudget(32_000, 120_000);
+    expect(strategy.shouldCompact(119_999)).toBe(false);
+    expect(strategy.shouldCompact(120_000)).toBe(true);
+  });
+
+  it('does not trigger below the token budget even on a 1M context model', () => {
+    const strategy = strategyWithTokenBudget(1_000_000, 120_000);
+    expect(strategy.shouldCompact(119_999)).toBe(false);
+    expect(strategy.shouldCompact(120_000)).toBe(true);
+  });
+
+  it('falls through to the ratio path when the token budget is undefined', () => {
+    const strategy = strategyWithTokenBudget(32_000, undefined);
+    expect(strategy.shouldCompact(16_000)).toBe(true);
+    expect(strategy.shouldCompact(15_999)).toBe(false);
+  });
+});
+
 function testCompactionStrategy(maxSize: number = 1_000): DefaultCompactionStrategy {
   return new DefaultCompactionStrategy(() => maxSize, {
     triggerRatio: 0.85,

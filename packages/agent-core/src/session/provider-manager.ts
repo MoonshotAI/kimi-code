@@ -307,11 +307,13 @@ function toKosongProviderConfig(
         // receive the unified `User-Agent` (no `X-Msh-*` device identity),
         // matching the other non-Kimi transports. Provider `customHeaders`
         // still win on conflict.
-        ...defaultHeadersField(
-          provider.type === 'kimi' && modelProtocol === 'anthropic'
-            ? { ...envCustomHeaders, ...kimiRequestHeaders, ...provider.customHeaders }
-            : { ...envCustomHeaders, ...kimiUserAgentHeader(kimiRequestHeaders), ...provider.customHeaders },
-        ),
+        ...defaultHeadersField({
+          ...(provider.type === 'kimi' && modelProtocol === 'anthropic'
+            ? { ...envCustomHeaders, ...kimiRequestHeaders }
+            : { ...envCustomHeaders, ...kimiUserAgentHeader(kimiRequestHeaders) }),
+          ...(promptCacheKey !== undefined ? { 'x-opencode-session': promptCacheKey } : {}),
+          ...provider.customHeaders,
+        }),
       };
     }
     case 'openai':
@@ -333,6 +335,7 @@ function toKosongProviderConfig(
         ...defaultHeadersField({
           ...envCustomHeaders,
           ...kimiUserAgentHeader(kimiRequestHeaders),
+          ...(promptCacheKey !== undefined ? { 'x-opencode-session': promptCacheKey } : {}),
           ...provider.customHeaders,
         }),
       };
@@ -346,6 +349,7 @@ function toKosongProviderConfig(
         ...defaultHeadersField({
           ...envCustomHeaders,
           ...kimiRequestHeaders,
+          ...(promptCacheKey !== undefined ? { 'x-opencode-session': promptCacheKey } : {}),
           ...provider.customHeaders,
         }),
       };
@@ -359,6 +363,7 @@ function toKosongProviderConfig(
         ...defaultHeadersField({
           ...envCustomHeaders,
           ...kimiUserAgentHeader(kimiRequestHeaders),
+          ...(promptCacheKey !== undefined ? { 'x-opencode-session': promptCacheKey } : {}),
           ...provider.customHeaders,
         }),
       };
@@ -376,6 +381,7 @@ function toKosongProviderConfig(
         ...defaultHeadersField({
           ...envCustomHeaders,
           ...kimiUserAgentHeader(kimiRequestHeaders),
+          ...(promptCacheKey !== undefined ? { 'x-opencode-session': promptCacheKey } : {}),
           ...provider.customHeaders,
         }),
       };
@@ -399,6 +405,7 @@ function toKosongProviderConfig(
         ...defaultHeadersField({
           ...envCustomHeaders,
           ...kimiUserAgentHeader(kimiRequestHeaders),
+          ...(promptCacheKey !== undefined ? { 'x-opencode-session': promptCacheKey } : {}),
           ...provider.customHeaders,
         }),
       };
@@ -436,20 +443,31 @@ function kimiUserAgentHeader(
   return userAgent === undefined ? {} : { 'User-Agent': userAgent };
 }
 
+function getActiveApiKey(provider: ProviderConfig): string | undefined {
+  // 1. Named keys with active selection
+  if (provider.apiKeys && provider.activeApiKeyId) {
+    const active = provider.apiKeys[provider.activeApiKeyId];
+    if (active) return active.key;
+  }
+  // 2. Legacy single key
+  return provider.apiKey;
+}
+
 function providerApiKey(provider: ProviderConfig): string | undefined {
+  const activeKey = getActiveApiKey(provider);
   switch (provider.type) {
     case 'anthropic':
-      return providerValue(provider.apiKey, provider.env, 'ANTHROPIC_API_KEY');
+      return providerValue(activeKey, provider.env, 'ANTHROPIC_API_KEY');
     case 'openai':
     case 'openai_responses':
-      return providerValue(provider.apiKey, provider.env, 'OPENAI_API_KEY');
+      return providerValue(activeKey, provider.env, 'OPENAI_API_KEY');
     case 'kimi':
-      return providerValue(provider.apiKey, provider.env, 'KIMI_API_KEY');
+      return providerValue(activeKey, provider.env, 'KIMI_API_KEY');
     case 'google-genai':
-      return providerValue(provider.apiKey, provider.env, 'GOOGLE_API_KEY');
+      return providerValue(activeKey, provider.env, 'GOOGLE_API_KEY');
     case 'vertexai':
       return (
-        nonEmptyString(provider.apiKey) ??
+        nonEmptyString(activeKey) ??
         envValue(provider.env, 'VERTEXAI_API_KEY') ??
         envValue(provider.env, 'GOOGLE_API_KEY')
       );

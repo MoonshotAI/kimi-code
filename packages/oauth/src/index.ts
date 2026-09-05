@@ -201,14 +201,22 @@ export type {
   KimiOAuthToolkitOptions,
 } from './toolkit';
 
-export { refreshProviderModels } from './refreshProviderModels';
+export { refreshProviderModels, refreshProviderCatalog } from './refreshProviderModels';
 export type {
   ProviderChange,
   RefreshProviderHost,
   RefreshProviderOptions,
   RefreshProviderScope,
   RefreshResult,
+  RefreshCatalogResult,
 } from './refreshProviderModels';
+export {
+  fetchOpenAIProviderModels,
+  OPENAI_COMPATIBLE_DEFAULT_CONTEXT,
+} from './openai-compatible';
+export type { FetchOpenAIProviderModelsOptions } from './openai-compatible';
+export { lookupModelsDevModel, refreshModelsDevCatalog } from './modelsDevCatalog';
+export type { ModelsDevModelInfo } from './modelsDevCatalog';
 
 export type { OAuthTokenTransactionOptions } from './oauth-token-transaction';
 export { OAuthTokenTransaction } from './oauth-token-transaction';

@@ -294,6 +294,34 @@ k3-max = "同一模型的 max Thinking 档位。适合最难的子任务。"
 - `force` 未搭配 `default_model`，或与 `models` 表同时使用。
 :::
 
+## `visual_model`
+
+视觉模型是为**视觉类任务**单独配置的伴生模型——通常是一个具备视觉能力的模型，用来在主编码模型是纯文本时仍然能执行图像 / 截图 / 视频检查。它目前的消费者是 `ReadMediaFile`：设置后，当调用方模型无法处理图像或视频输入时，媒体工具会按照视觉模型的能力和 requester 注册，LLM 因此仍然可以调用 `ReadMediaFile` 进行视觉检查，而不会因为主模型是纯文本就静默丢失该工具。未设置时行为不变（工具仅在调用方模型具备视觉能力时注册，与之前一致）。
+
+这是默认绑定而非强制。实验功能启用后，视觉模型解析器（`resolveVisualModel`）会返回已配置的 recipe，媒体工具注册器会读取它；后续执行视觉检查的 agent 工具可以像 `Agent` / `AgentSwarm` 暴露次主力模型选择那样，在描述里暴露 `model` 参数（仅接受 `"visual"` / `"primary"` 两个符号值）。
+
+该功能目前是实验功能，默认关闭。通过 `KIMI_CODE_EXPERIMENTAL_VISUAL_MODEL=1` 启用，或使用 master `KIMI_CODE_EXPERIMENTAL_FLAG=1`。它在包括交互式 TUI 在内的所有启动方式下生效。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `model` | `string` | — | [`[models]`](#models) 中已配置条目的别名，如 `kimi-code/kimi-vision`（不限 kimi 模型，可用任意供应商）。应选择具备视觉能力的条目（其 `capabilities` 列出 `image_in` 和/或 `video_in`） |
+| `default_effort` | `string` | — | 视觉任务绑定视觉模型时使用的 thinking effort。未设置时按"全局 `[thinking]` 配置 → 模型默认 effort"的链路解析，不再继承主 Agent 的 effort。与主模型的 thinking effort 语义一致：严格校验 effort 的模型（如 kimi 模型）在不支持该取值时回退到模型默认 effort，其他供应商的模型按原样发送给后端 |
+| 其他字段 | — | — | 接受 [`[models."<alias>".overrides]`](#models) 的全部字段（`max_context_size`、`max_output_size`、`support_efforts` 等），作为仅对视觉任务生效的模型补丁 |
+
+`model` 之外的字段构成补丁：存在补丁字段时，运行时会在内存中合成一个派生模型条目（被指向条目的拷贝，补丁并入其 overrides 且补丁优先），视觉任务实际绑定该派生条目；没有补丁字段时，视觉任务直接绑定 `model` 指向的条目。派生条目只存在于内存中（不写回 `config.toml`），也不会出现在模型选择列表里。
+
+```toml
+[visual_model]
+model = "kimi-code/kimi-vision"
+default_effort = "low"
+max_output_size = 8192
+```
+
+`model` / `default_effort` 可被环境变量 `KIMI_VISUAL_MODEL` / `KIMI_VISUAL_EFFORT` 覆盖，优先级均高于配置文件。
+
+实验功能启用后，会话启动时会校验该配置：`model` 无法解析时会在启动时显示警告。该检查仅为提示——配置有误的视觉模型仍会在使用时失败，错误中同样附带配置来源提示。
+
+
 ## `thinking`
 
 `thinking` 设置 Thinking 模式的全局默认行为。

@@ -58,8 +58,16 @@ import type {
   ProfileServiceOptions,
   ProfileSetModelResult,
   ProfileUpdateData,
+  SessionModelOverrideKind,
+  SessionModelOverrides,
 } from './profile';
-import { IAgentProfileService, ProfileError, ProfileErrors } from './profile';
+import {
+  COMPACTION_TRIGGER_RATIO_MAX,
+  COMPACTION_TRIGGER_RATIO_MIN,
+  IAgentProfileService,
+  ProfileError,
+  ProfileErrors,
+} from './profile';
 import { TOOLS_SECTION, type ToolsConfig } from '#/agent/toolPolicy/configSection';
 import { isToolActiveComposed, findInactiveToolPatterns, literalToolNames, type InactiveToolPattern } from '#/agent/toolPolicy/evaluate';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -136,6 +144,10 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   private activeProfile: ResolvedAgentProfile | undefined;
+
+  private compactionTriggerRatioOverride: number | undefined;
+  private compactionTokenBudgetOverride: number | undefined;
+  private sessionModelOverrides: SessionModelOverrides = {};
 
   private frozenSkillListing: string | undefined;
   private frozenPluginSections: string | undefined;
@@ -368,6 +380,80 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     }
   }
 
+  setCompactionTriggerRatio(ratio: number | undefined): void {
+    if (ratio === undefined) {
+      this.compactionTriggerRatioOverride = undefined;
+      this.telemetry.track2('compaction_threshold_override', { action: 'clear' });
+      return;
+    }
+    if (
+      !Number.isFinite(ratio) ||
+      ratio < COMPACTION_TRIGGER_RATIO_MIN ||
+      ratio > COMPACTION_TRIGGER_RATIO_MAX
+    ) {
+      throw new ProfileError(
+        ProfileErrors.codes.MODEL_CONFIG_INVALID,
+        `Invalid compaction trigger ratio "${String(ratio)}": must be between ${COMPACTION_TRIGGER_RATIO_MIN} and ${COMPACTION_TRIGGER_RATIO_MAX}.`,
+      );
+    }
+    this.compactionTriggerRatioOverride = ratio;
+    this.telemetry.track2('compaction_threshold_override', { ratio, action: 'set' });
+  }
+
+  getCompactionTriggerRatioOverride(): number | undefined {
+    return this.compactionTriggerRatioOverride;
+  }
+
+  getEffectiveCompactionTriggerRatio(): number | undefined {
+    const loopControl = this.config.get<LoopControl>('loopControl');
+    return this.compactionTriggerRatioOverride ?? loopControl?.compactionTriggerRatio;
+  }
+
+  setCompactionTokenBudget(tokens: number | undefined): void {
+    if (tokens === undefined) {
+      this.compactionTokenBudgetOverride = undefined;
+      this.telemetry.track2('compaction_token_budget_override', { action: 'clear' });
+      return;
+    }
+    if (!Number.isInteger(tokens) || tokens < 1) {
+      throw new ProfileError(
+        ProfileErrors.codes.MODEL_CONFIG_INVALID,
+        `Invalid compaction token budget "${String(tokens)}": must be a positive integer (in thousands).`,
+      );
+    }
+    this.compactionTokenBudgetOverride = tokens * 1_000;
+    this.telemetry.track2('compaction_token_budget_override', {
+      tokens: this.compactionTokenBudgetOverride,
+      action: 'set',
+    });
+  }
+
+  getCompactionTokenBudgetOverride(): number | undefined {
+    return this.compactionTokenBudgetOverride;
+  }
+
+  getEffectiveCompactionTokenBudget(): number | undefined {
+    const loopControl = this.config.get<LoopControl>('loopControl');
+    return this.compactionTokenBudgetOverride ?? (loopControl as { compactionTokenBudget?: number } | undefined)?.compactionTokenBudget;
+  }
+
+  setSessionModelOverride(kind: SessionModelOverrideKind, alias: string | undefined): void {
+    if (alias === undefined) {
+      const { [kind]: _removed, ...rest } = this.sessionModelOverrides;
+      this.sessionModelOverrides = rest;
+    } else {
+      this.sessionModelOverrides = { ...this.sessionModelOverrides, [kind]: alias };
+    }
+  }
+
+  getSessionModelOverride(kind: SessionModelOverrideKind): string | undefined {
+    return this.sessionModelOverrides[kind];
+  }
+
+  getAllSessionModelOverrides(): SessionModelOverrides {
+    return this.sessionModelOverrides;
+  }
+
   private assertThinkingEffortSupported(
     requested: string,
     model: Model | undefined,
@@ -453,7 +539,23 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       alwaysThinking: model.alwaysThinking || undefined,
       thinkingLevel: this.resolveThinkingState(model).effective,
       reservedContextSize: loopControl?.reservedContextSize,
+      compactionTriggerRatio: this.getEffectiveCompactionTriggerRatio(),
+      compactionTokenBudget: this.getEffectiveCompactionTokenBudget(),
+    };
+  }
+
+  resolveModelContextFor(modelAlias: string): ProfileModelContext {
+    const model = this.modelCatalog.get(modelAlias);
+    const loopControl = this.config.get<LoopControl>('loopControl');
+    return {
+      modelAlias,
+      modelCapabilities: model.capabilities,
+      maxOutputSize: model.maxOutputSize,
+      alwaysThinking: model.alwaysThinking || undefined,
+      thinkingLevel: this.resolveThinkingState(model).effective,
+      reservedContextSize: loopControl?.reservedContextSize,
       compactionTriggerRatio: loopControl?.compactionTriggerRatio,
+      compactionTokenBudget: this.getEffectiveCompactionTokenBudget(),
     };
   }
 

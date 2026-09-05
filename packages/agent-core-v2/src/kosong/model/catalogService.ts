@@ -350,6 +350,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       aliases: model.aliases ?? [],
       protocol,
       baseUrl: resolvedBaseUrl,
+      proxyUrl: providerConfig?.proxyUrl,
       headers: resolveOutboundHeaders(
         providerConfig?.type,
         providerConfig?.customHeaders,

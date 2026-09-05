@@ -193,7 +193,9 @@ export class BashTool implements IBashTool {
     const timeoutMs = startsInBackground
       ? args.disable_timeout
         ? undefined
-        : normalizeTimeoutMs(args.timeout, true)
+        : args.timeout !== undefined
+          ? normalizeTimeoutMs(args.timeout, true)
+          : this.detachTimeoutMs()
       : foregroundTimeoutMs;
 
     const builder = new ToolOutputAccumulator();

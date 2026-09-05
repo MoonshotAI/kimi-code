@@ -16,6 +16,7 @@ import { SERVICES_SECTION, type ServicesConfig } from '../configSection';
 import { MoonshotWebSearchProvider } from './providers/moonshot-web-search';
 import type { WebSearchProvider } from '#/agent/tools/web-search/web-search';
 import { IWebSearchProviderService } from './webSearch';
+import { isSubscriptionMethodEnabled } from '#/app/subscription/subscription';
 
 export class WebSearchProviderService implements IWebSearchProviderService {
   declare readonly _serviceBrand: undefined;
@@ -29,10 +30,12 @@ export class WebSearchProviderService implements IWebSearchProviderService {
   ) {}
 
   getWebSearchProvider(): WebSearchProvider | undefined {
+    if (!isSubscriptionMethodEnabled(this.config, 'web_search')) return undefined;
     return this.fromServicesConfig() ?? this.fromManagedOAuth();
   }
 
   hasWebSearchProvider(): boolean {
+    if (!isSubscriptionMethodEnabled(this.config, 'web_search')) return false;
     return this.configuredSearch() !== undefined || this.managedTokenProvider() !== undefined;
   }
 

@@ -1,0 +1,118 @@
+# GitHub Triage Extension Configuration
+# Deployed to .specify/extensions/gh-triage/gh-triage-config.yml on install.
+# Edit it to customize triage behavior. Local overrides go in
+# gh-triage-config.local.yml (gitignored, never committed).
+
+# Apply triage labels to GitHub issues automatically after classification.
+#   true  -> gh-triage labels each issue with its verdict label (and a severity
+#            label when one is detected) by default.
+#   false -> gh-triage only reports the labels it WOULD apply (dry-run style),
+#            leaving issues untouched.
+auto_label: true
+
+# Whether gh-triage may continue PAST assessment into fixing the bug.
+#   false -> gh-triage only FETCHES + ASSESSES bugs. It never edits source,
+#            never runs bug.fix, and never opens a PR. This is the safe default.
+#   true  -> after assessment, gh-triage may also run bug.fix / bug.pr to
+#            resolve the bug. Leave false unless you explicitly want gh-triage
+#            to implement fixes.
+auto_fix: false
+
+# Whether gh-triage may continue PAST assessment into implementing the chore.
+#   false -> gh-triage only FETCHES + ASSESSES chores. It never edits source,
+#            never runs chore.implement, and never opens a PR. This is the safe
+#            default.
+#   true  -> after assessment, gh-triage may also run chore.implement /
+#            chore.pr to carry the chore out. Leave false unless you explicitly
+#            want gh-triage to implement chores.
+auto_implement: false
+
+# Whether the `feature` command automatically runs speckit.specify after filing
+# the feature issue.
+#   false -> `feature` only creates the GitHub issue. You either run
+#            speckit.specify yourself later, or pass --specify to force it for a
+#            single run. This is the safe default.
+#   true  -> after creating the issue, `feature` automatically runs
+#            speckit.specify to turn the request into a spec under specs/.
+# The --specify flag on the command overrides this for a single run.
+auto_specify: false
+
+# Repository to triage, as owner/repo (e.g. github/spec-kit).
+# Empty -> inferred from the current git remote.origin.url (must point to
+# github.com). Override here to triage a different repo than the one checked out.
+repo: ""
+
+# Max open issues to triage per run (0 = all open issues).
+limit: 0
+
+# Label mapping read DIRECTLY from config. gh-triage uses these exact label
+# names when it labels issues after triage. Set a key to "" to disable that
+# label. Only labels that actually exist in the target repo are applied;
+# missing labels are skipped with a warning (they never break the run).
+labels:
+  bug: "bug"            # applied when an issue is classified as a bug
+  feature: "enhancement" # applied when an issue is classified as a feature
+  chore: "chore"        # applied when an issue is classified as a chore
+  # Applied to issues the classifier cannot confidently place as bug/feature.
+  # Set to a real repo label (e.g. "needs_triage") to enable; the triage never
+  # auto-flags an issue as "invalid" from a heuristic.
+  needs_triage: ""
+  # Kept for reference only; gh-triage does NOT auto-apply "invalid".
+  invalid: "invalid"
+
+# Severity -> label mapping (applied for bugs when a severity is detected).
+# Keys must be one of: critical, high, medium, low, unknown.
+severity_labels:
+  critical: "severity:critical"
+  high: "severity:high"
+  medium: "severity:medium"
+  low: "severity:low"
+  unknown: ""
+
+# Classification keyword hints against the issue title + body (case-insensitive).
+# Single-word keywords match a whole word OR a word starting with the keyword
+# (so "crash" also matches "crashes"/"crashing"), but never a longer word that
+# merely contains them ("bug" does NOT match "debug", "low" does NOT match
+# "workflow"). Multi-word keywords ("add support") match as an exact phrase.
+# Used only when an issue has no classification label of its own.
+bug_keywords:
+  - crash
+  - error
+  - exception
+  - traceback
+  - broken
+  - regression
+  - fails
+  - bug
+  - stack trace
+  - leak
+  - hang
+  - deadlock
+  - freeze
+  - corrupt
+  - panic
+feature_keywords:
+  - feature
+  - enhancement
+  - request
+  - proposal
+  - "add support"
+  - idea
+  - suggestion
+  - want
+chore_keywords:
+  - chore
+  - cleanup
+  - refactor
+  - maintenance
+  - "tech debt"
+  - "dependency bump"
+  - "bump"
+  - "migrate"
+  - migration
+  - "housekeeping"
+  - "branding"
+  - "asset swap"
+  - "rename"
+  - "update logos"
+  - "swap"

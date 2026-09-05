@@ -43,3 +43,10 @@ handover.md
 *-mockup.html
 *-demo.html
 *-demos.html
+
+# Local caches / generated / scratch (not committed)
+.memsearch/
+.zread/
+kimi-dev
+handoffs/
+specs/

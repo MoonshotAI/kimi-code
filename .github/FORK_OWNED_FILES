@@ -1,0 +1,61 @@
+# Fork-owned files that upstream will never accept.
+#
+# This list is the secondary guardrail behind the merge-conflict abort
+# in sync-upstream.yml: after a clean (non-conflicting) merge, the
+# workflow verifies that every file below still exists on master and
+# still contains its survival marker. If upstream silently dropped a
+# fork-owned file in a clean merge, the sync fails and a `sync`-labeled
+# issue is opened so a human can restore it.
+#
+# Each entry: <path>  ::  <survival-marker-string>
+#
+# When you add or change a fork-owned file:
+#   1. Add the file to this list with a marker that is unique to the
+#      fork's version (e.g. a slash command name, a config section
+#      name, or a literal string the fork writes that upstream does
+#      not). Verify the marker exists on master before committing.
+#   2. After an upstream sync, run the workflow (or re-trigger it via
+#      `workflow_dispatch`) to confirm all markers still resolve.
+#
+# Do not remove entries from this list unless the fork-owned feature
+# has been intentionally retired and the corresponding upstream merge
+# has removed the source code.
+
+# --- /fallback-model cascade (PR #42, spec 009) ---
+packages/agent-core/src/config/schema.ts                                :: fallbackModel
+apps/kimi-code/src/tui/commands/config.ts                               :: fallbackModel
+apps/kimi-code/test/tui/commands/fallback-model.test.ts                :: fallback-model
+
+# --- squeeze-model + secondary cascade (PR rename) ---
+apps/kimi-code/src/tui/commands/registry.ts                             :: squeeze-model-secondary
+apps/kimi-code/src/tui/commands/config.ts                               :: Squeeze model
+apps/kimi-code/test/tui/commands/squeeze-model.test.ts                 :: squeeze-model
+
+# --- /fork-session alias + /fork-and-switch (PR #38) ---
+apps/kimi-code/src/tui/commands/registry.ts                             :: fork-and-switch
+apps/kimi-code/test/tui/commands/registry.test.ts                       :: fork-session
+
+# --- model favorites (PR #5, spec 004) ---
+apps/kimi-code/test/tui/commands/model-favorites.test.ts                :: model-favorites
+
+# --- compaction-model display (compactionModel overlay) ---
+packages/agent-core-v2/src/app/kosongConfig/compactionModelOverlay.ts   :: compactionModel
+packages/agent-core-v2/src/agent/fullCompaction/fullCompactionService.ts :: compactionModel
+
+# --- substitute-model on rate limit ---
+packages/agent-core-v2/src/agent/llmRequester/llmRequesterService.ts    :: substituteModelActiveKey
+packages/agent-core-v2/src/session/substitute/flag.ts                   :: substitute
+
+# --- session-list command (PR #41 group) ---
+apps/kimi-code/src/cli/sub/session.ts                                   :: handleSessionList
+apps/kimi-code/test/cli/session.test.ts                                 :: handleSessionList
+
+# --- /fuck-permissions mode spec file (feature spec only — impl deferred) ---
+specs/830-fuck-permissions/spec.md                                      :: Fuck Permissions Mode
+
+# --- agent-core-v2 / kap-server / transcript no-comment rule (AGENTS.md) ---
+scripts/check-no-comments.mjs                                           :: check-no-comments
+
+# --- Fork-owned deps (root package.json has http-proxy-agent@^9 which
+#     upstream removed; this is what the pnpm-lockfile guard is for) ---
+package.json                                                            :: http-proxy-agent

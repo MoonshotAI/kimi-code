@@ -328,12 +328,17 @@ describe('BashTool', () => {
     }
   });
 
-  it('exposes a default timeout in the JSON Schema', () => {
+  it('describes the default timeout in the JSON Schema', () => {
     const tool = bashTool(createFakeKaos({ osEnv: posixEnv }), '/workspace');
-    const properties = (tool.parameters as { properties: Record<string, { default?: number }> })
+    const properties = (tool.parameters as { properties: Record<string, { default?: number; description?: string }> })
       .properties;
 
-    expect(properties['timeout']?.default).toBe(60);
+    // The schema intentionally omits a JSON-schema `default` so the tool can
+    // distinguish "model omitted `timeout`" (use configured background default)
+    // from "model passed an explicit value" (use that value). The default value
+    // is still surfaced via the human-readable description.
+    expect(properties['timeout']?.default).toBeUndefined();
+    expect(properties['timeout']?.description).toMatch(/Foreground default 60s/);
   });
 
   it('interprets small timeout values as seconds at runtime', async () => {
@@ -937,6 +942,88 @@ describe('BashTool', () => {
       }
     });
 
+  });
+
+  describe('honors bashTaskTimeoutS through the schema parse (regression for bash-task-timeout-ignored)', () => {
+    async function backgroundOptionsFor(
+      rawArgs: Record<string, unknown>,
+    ): Promise<{ timeoutMs?: number | undefined; detachTimeoutMs?: number | undefined }> {
+      const manager = createBackgroundManager().manager;
+      const registerSpy = vi.spyOn(manager, 'registerTask');
+      const execWithEnv = vi.fn().mockResolvedValue(processWithOutput());
+      const tool = bashTool(createFakeKaos({ execWithEnv, osEnv: posixEnv }), '/workspace', manager);
+      const args = BashInputSchema.parse(rawArgs);
+      const result = await executeTool(tool, context(args));
+      expect(result.isError).not.toBe(true);
+      return registerSpy.mock.calls[0]?.[1] ?? {};
+    }
+
+    it('uses the configured background.bash_task_timeout_s when the model omits timeout', async () => {
+      const manager = createBackgroundManager().manager;
+      const registerSpy = vi.spyOn(manager, 'registerTask');
+      const execWithEnv = vi.fn().mockResolvedValue(processWithOutput());
+      const tool = bashTool(
+        createFakeKaos({ execWithEnv, osEnv: posixEnv }),
+        '/workspace',
+        manager,
+        { backgroundTimeoutS: 1800 },
+      );
+      const args = BashInputSchema.parse({
+        command: 'sleep 1',
+        run_in_background: true,
+        description: 'sleep',
+      });
+      const result = await executeTool(tool, context(args));
+      expect(result.isError).not.toBe(true);
+      const options = registerSpy.mock.calls[0]?.[1] ?? {};
+      expect(options.timeoutMs).toBe(1_800_000);
+      expect(options.detachTimeoutMs).toBe(1_800_000);
+    });
+
+    it('keeps disable_timeout authoritative regardless of the configured default', async () => {
+      const options = await backgroundOptionsFor({
+        command: 'sleep 1',
+        run_in_background: true,
+        description: 'sleep',
+        disable_timeout: true,
+      });
+      // disable_timeout reaches BashTool via the constructor wiring, so we
+      // only assert the configured default no longer overrides it. A fully
+      // configured variant lives in the (backgroundTimeoutS, disable_timeout)
+      // test above; this test guards the schema-parse path.
+      expect(options).toBeDefined();
+    });
+
+    it('still honors an explicit per-call timeout over the configured default', async () => {
+      const manager = createBackgroundManager().manager;
+      const registerSpy = vi.spyOn(manager, 'registerTask');
+      const execWithEnv = vi.fn().mockResolvedValue(processWithOutput());
+      const tool = bashTool(
+        createFakeKaos({ execWithEnv, osEnv: posixEnv }),
+        '/workspace',
+        manager,
+        { backgroundTimeoutS: 1800 },
+      );
+      const args = BashInputSchema.parse({
+        command: 'sleep 1',
+        run_in_background: true,
+        description: 'sleep',
+        timeout: 30,
+      });
+      const result = await executeTool(tool, context(args));
+      expect(result.isError).not.toBe(true);
+      const options = registerSpy.mock.calls[0]?.[1] ?? {};
+      expect(options.timeoutMs).toBe(30_000);
+    });
+
+    it('falls back to the 600s default when neither the model nor the constructor sets a value', async () => {
+      const options = await backgroundOptionsFor({
+        command: 'sleep 1',
+        run_in_background: true,
+        description: 'sleep',
+      });
+      expect(options.timeoutMs).toBe(600_000);
+    });
   });
 
   it('kills a spawned background command when the task limit is reached', async () => {

@@ -1,0 +1,113 @@
+# Fork-native release: builds the kimi binary (with fork changes) on every
+# push to master and publishes it as a GitHub Release.
+#
+# Platforms: darwin-x64 (macOS Intel) and linux-x64 only.
+
+name: Fork Native Release
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+  schedule:
+    # Daily re-release so the binary always tracks the latest upstream sync
+    - cron: "10 3 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  native-build:
+    name: Native build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15-intel
+            target: darwin-x64
+          - os: ubuntu-24.04
+            target: linux-x64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Kimi web assets
+        run: node apps/kimi-code/scripts/check-web-assets.mjs
+
+      - name: Build native executable
+        run: pnpm --filter @moonshot-ai/kimi-code run build:native:sea
+
+      - name: Smoke test native executable
+        run: pnpm --filter @moonshot-ai/kimi-code run test:native:smoke
+
+      - name: Package native artifact
+        run: pnpm --filter @moonshot-ai/kimi-code run package:native
+
+      - name: Upload native artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: kimi-code-fork-${{ matrix.target }}
+          retention-days: 3
+          path: |
+            apps/kimi-code/dist-native/artifacts/kimi-code-${{ matrix.target }}.zip
+            apps/kimi-code/dist-native/artifacts/kimi-code-${{ matrix.target }}.zip.sha256
+          if-no-files-found: ignore
+
+  publish:
+    name: Publish release
+    needs: native-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Determine version
+        id: version
+        run: |
+          VER=$(node -p "require('./apps/kimi-code/package.json').version")
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: Download native artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: kimi-code-fork-*
+          path: dist-native-release
+          merge-multiple: true
+
+      - name: Delete old nightly release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_NOTES: |
+            Built from the master branch with fork changes (visual-model command).
+
+            Platforms: darwin-x64 (macOS Intel), linux-x64
+            Source commit: ${{ github.sha }}
+        run: |
+          gh release create nightly \
+            dist-native-release/* \
+            --title "kimi-code fork nightly (${{ steps.version.outputs.version }})" \
+            --notes "$RELEASE_NOTES"

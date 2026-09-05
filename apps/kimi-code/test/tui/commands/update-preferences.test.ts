@@ -46,6 +46,7 @@ describe('update preference commands', () => {
       renderLatex: true,
       cacheExpiryHint: true,
       disableFeedbackSurvey: false,
+      favoriteModels: [],
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: false },
       statusLine: { items: null, command: null },

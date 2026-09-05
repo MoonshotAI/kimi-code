@@ -9,6 +9,8 @@ import {
 import { ToolOutputAccumulator } from '#/tool/output-accumulator';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
+import { IConfigService } from '#/app/config/config';
+import { isSubscriptionMethodEnabled } from '#/app/subscription/subscription';
 
 import {
   IWebSearchTool,
@@ -25,6 +27,7 @@ export class WebSearchTool implements IWebSearchTool {
 
   constructor(
     @IWebSearchProviderService private readonly providerService: IWebSearchProviderService,
+    @IConfigService private readonly config: IConfigService,
   ) {}
 
   resolveExecution(args: WebSearchInput): ToolExecution {
@@ -43,6 +46,12 @@ export class WebSearchTool implements IWebSearchTool {
     args: WebSearchInput,
     { toolCallId, signal }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
+    if (!isSubscriptionMethodEnabled(this.config, 'web_search')) {
+      return {
+        isError: true,
+        output: 'Web search is disabled by configuration.',
+      };
+    }
     const provider = this.providerService.getWebSearchProvider();
     if (provider === undefined) {
       return {

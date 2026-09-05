@@ -20,6 +20,8 @@ import {
   type ToolCallResponse,
   type SwarmModeTrigger,
 } from '@moonshot-ai/agent-core';
+import type { SessionModelOverrideKind } from '@moonshot-ai/klient/core/facade/agent';
+import type { SessionModelOverrides } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import type { Kaos } from '@moonshot-ai/kaos';
 
 import type { ApprovalHandler, QuestionHandler } from '#/events';
@@ -126,6 +128,16 @@ export interface SetSessionThinkingRpcInput extends SessionIdRpcInput {
   readonly effort: string;
 }
 
+export interface SetSessionCompactionTriggerRatioRpcInput extends SessionIdRpcInput {
+  /** New session-scoped auto-compaction trigger ratio; `undefined` clears the override. */
+  readonly ratio?: number | undefined;
+}
+
+export interface SetSessionCompactionTokenBudgetRpcInput extends SessionIdRpcInput {
+  /** New session-scoped absolute compaction token budget (in thousands of tokens); `undefined` clears the override. */
+  readonly tokens?: number | undefined;
+}
+
 export interface SetSessionPermissionRpcInput extends SessionIdRpcInput {
   readonly mode: PermissionMode;
 }
@@ -165,6 +177,15 @@ export interface RunCommandRpcInput extends SessionIdRpcInput {
 
 export interface SwitchSessionRuntimeRpcInput extends SessionIdRpcInput {
   readonly runtimeId: string;
+}
+
+export interface SetSessionModelOverrideRpcInput extends SessionIdRpcInput {
+  readonly kind: SessionModelOverrideKind;
+  readonly alias: string | null;
+}
+
+export interface GetSessionModelOverrideRpcInput extends SessionIdRpcInput {
+  readonly kind: SessionModelOverrideKind;
 }
 
 export interface ReconnectMcpServerRpcInput extends SessionIdRpcInput {
@@ -646,6 +667,27 @@ export abstract class SDKRpcClientBase {
     });
   }
 
+  setSessionModelOverride(_input: SetSessionModelOverrideRpcInput): Promise<void> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'This SDK client does not support setting session model overrides.',
+    );
+  }
+
+  getSessionModelOverride(_input: GetSessionModelOverrideRpcInput): Promise<string | undefined> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'This SDK client does not support getting session model overrides.',
+    );
+  }
+
+  getAllSessionModelOverrides(_input: SessionIdRpcInput): Promise<SessionModelOverrides> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'This SDK client does not support getting session model overrides.',
+    );
+  }
+
   async setThinking(input: SetSessionThinkingRpcInput): Promise<void> {
     const rpc = await this.getRpc();
     return rpc.setThinking({
@@ -653,6 +695,30 @@ export abstract class SDKRpcClientBase {
       agentId: this.interactiveAgentId,
       effort: input.effort,
     });
+  }
+
+  /**
+   * Set (or clear, when `ratio` is undefined) a session-scoped override for
+   * the auto-compaction trigger ratio. Only the v2 client implements this
+   * (through the agent scope's `IAgentProfileService`); the v1 engine has no
+   * per-session compaction threshold and throws `not_implemented`.
+   */
+  setCompactionTriggerRatio(
+    _input: SetSessionCompactionTriggerRatioRpcInput,
+  ): Promise<void> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'This SDK client does not support setting the compaction trigger ratio.',
+    );
+  }
+
+  setCompactionTokenBudget(
+    _input: SetSessionCompactionTokenBudgetRpcInput,
+  ): Promise<void> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'This SDK client does not support setting the compaction token budget.',
+    );
   }
 
   async setPermission(input: SetSessionPermissionRpcInput): Promise<void> {

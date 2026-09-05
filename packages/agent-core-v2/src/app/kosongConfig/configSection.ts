@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   type ConfigStripEnv,
   envBindings,
+  stripEnvBoundFields,
 } from '#/app/config/config';
 import { registerConfigSection } from '#/app/config/configSectionContributions';
 import {
@@ -42,14 +43,18 @@ export const ProviderConfigSchema = z.object({
   modelSource: ModelSourceSchema.optional(),
 
   baseUrl: z.string().optional(),
+  proxyUrl: z.string().optional(),
   customHeaders: StringRecordSchema.optional(),
   defaultModel: z.string().optional(),
 
   type: ProviderTypeSchema.optional(),
   apiKey: z.string().optional(),
+  apiKeys: z.record(z.string(), z.object({ key: z.string(), name: z.string() })).optional(),
+  activeApiKeyId: z.string().optional(),
   oauth: OAuthRefSchema.optional(),
   env: StringRecordSchema.optional(),
   source: z.record(z.string(), z.unknown()).optional(),
+  free_models_only: z.boolean().optional(),
 });
 
 export const ProvidersSectionSchema = z.record(z.string(), ProviderConfigSchema);
@@ -283,6 +288,94 @@ export const stripThinkingEnv: ConfigStripEnv<ThinkingConfig> = (value) => {
 registerConfigSection(THINKING_SECTION, ThinkingConfigSchema, {
   env: thinkingEnvBindings,
   stripEnv: stripThinkingEnv,
+});
+
+export const SECONDARY_MODEL_SECTION = 'secondaryModel';
+
+export const SECONDARY_MODEL_ENV = 'KIMI_SECONDARY_MODEL';
+export const SECONDARY_MODEL_EFFORT_ENV = 'KIMI_SECONDARY_EFFORT';
+
+export const SecondaryModelConfigSchema = ModelOverrideSchema.extend({
+  model: z.string().min(1).optional(),
+});
+
+export type SecondaryModelConfig = z.infer<typeof SecondaryModelConfigSchema>;
+
+function parseNonEmptyEnv(raw: string): string | undefined {
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+export const secondaryModelEnvBindings = envBindings(SecondaryModelConfigSchema, {
+  model: { env: SECONDARY_MODEL_ENV, parse: parseNonEmptyEnv },
+  defaultEffort: { env: SECONDARY_MODEL_EFFORT_ENV, parse: parseNonEmptyEnv },
+});
+
+export const VISUAL_MODEL_SECTION = 'visualModel';
+
+export const VISUAL_MODEL_ENV = 'KIMI_VISUAL_MODEL';
+export const VISUAL_MODEL_EFFORT_ENV = 'KIMI_VISUAL_EFFORT';
+
+export const VisualModelConfigSchema = ModelOverrideSchema.extend({
+  model: z.string().min(1).optional(),
+  defaultModel: z.string().min(1).optional(),
+});
+
+export type VisualModelConfig = z.infer<typeof VisualModelConfigSchema>;
+
+export const visualModelEnvBindings = envBindings(VisualModelConfigSchema, {
+  model: { env: VISUAL_MODEL_ENV, parse: parseNonEmptyEnv },
+  defaultEffort: { env: VISUAL_MODEL_EFFORT_ENV, parse: parseNonEmptyEnv },
+});
+
+registerConfigSection(VISUAL_MODEL_SECTION, VisualModelConfigSchema, {
+  env: visualModelEnvBindings,
+  stripEnv: stripEnvBoundFields(visualModelEnvBindings),
+});
+
+export const COMPACTION_MODEL_SECTION = 'compactionModel';
+
+export const COMPACTION_MODEL_ENV = 'KIMI_COMPACTION_MODEL';
+export const COMPACTION_MODEL_EFFORT_ENV = 'KIMI_COMPACTION_EFFORT';
+
+export const CompactionModelConfigSchema = ModelOverrideSchema.extend({
+  model: z.string().min(1).optional(),
+  defaultModel: z.string().min(1).optional(),
+  secondaryModel: z.string().min(1).optional(),
+});
+
+export type CompactionModelConfig = z.infer<typeof CompactionModelConfigSchema>;
+
+export const compactionModelEnvBindings = envBindings(CompactionModelConfigSchema, {
+  model: { env: COMPACTION_MODEL_ENV, parse: parseNonEmptyEnv },
+  defaultEffort: { env: COMPACTION_MODEL_EFFORT_ENV, parse: parseNonEmptyEnv },
+});
+
+registerConfigSection(COMPACTION_MODEL_SECTION, CompactionModelConfigSchema, {
+  env: compactionModelEnvBindings,
+  stripEnv: stripEnvBoundFields(compactionModelEnvBindings),
+});
+
+export const FALLBACK_MODEL_SECTION = 'fallbackModel';
+
+export const FALLBACK_MODEL_ENV = 'KIMI_FALLBACK_MODEL';
+export const FALLBACK_SECONDARY_MODEL_ENV = 'KIMI_FALLBACK_SECONDARY_MODEL';
+
+export const FallbackModelConfigSchema = ModelOverrideSchema.extend({
+  model: z.string().min(1).optional(),
+  secondaryModel: z.string().min(1).optional(),
+});
+
+export type FallbackModelConfig = z.infer<typeof FallbackModelConfigSchema>;
+
+export const fallbackModelEnvBindings = envBindings(FallbackModelConfigSchema, {
+  model: { env: FALLBACK_MODEL_ENV, parse: parseNonEmptyEnv },
+  secondaryModel: { env: FALLBACK_SECONDARY_MODEL_ENV, parse: parseNonEmptyEnv },
+});
+
+registerConfigSection(FALLBACK_MODEL_SECTION, FallbackModelConfigSchema, {
+  env: fallbackModelEnvBindings,
+  stripEnv: stripEnvBoundFields(fallbackModelEnvBindings),
 });
 
 export const MODEL_CATALOG_SECTION = 'modelCatalog';

@@ -244,7 +244,9 @@ import {
   type ServicesAccessor,
   type SessionSummary as V2SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
+import type { SessionModelOverrides } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import type { AgentHandle, Klient } from '@moonshot-ai/klient';
+import type { SessionModelOverrideKind } from '@moonshot-ai/klient/core/facade/agent';
 import { createKlient } from '@moonshot-ai/klient/memory';
 import { assertKimiHostIdentity, createKimiDefaultHeaders } from '@moonshot-ai/kimi-code-oauth';
 
@@ -264,6 +266,10 @@ import {
   type SessionPromptWithSkillsRpcInput,
   type SetSessionModelRpcInput,
   type SetSessionModelRpcResult,
+  type SetSessionModelOverrideRpcInput,
+  type GetSessionModelOverrideRpcInput,
+  type SetSessionCompactionTriggerRatioRpcInput,
+  type SetSessionCompactionTokenBudgetRpcInput,
   type SetSessionPermissionRpcInput,
   type SetSessionPlanModeRpcInput,
   type SetSessionSwarmModeRpcInput,
@@ -1736,6 +1742,21 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return agent.setModel(input.model);
   }
 
+  override async setSessionModelOverride(input: SetSessionModelOverrideRpcInput): Promise<void> {
+    const agent = await this.agentFacade(input.sessionId);
+    agent.setSessionModelOverride(input.kind, input.alias);
+  }
+
+  override async getSessionModelOverride(input: GetSessionModelOverrideRpcInput): Promise<string | undefined> {
+    const agent = await this.agentFacade(input.sessionId);
+    return agent.getSessionModelOverride(input.kind);
+  }
+
+  override async getAllSessionModelOverrides(input: SessionIdRpcInput): Promise<SessionModelOverrides> {
+    const agent = await this.agentFacade(input.sessionId);
+    return agent.getAllSessionModelOverrides();
+  }
+
   /**
    * Through the agent scope (`IAgentProfileService.setThinking`) — no klient
    * facade exists. Same registry-driven strictness as v1's
@@ -1746,6 +1767,30 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async setThinking(input: SetSessionThinkingRpcInput): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
     agent.accessor.get(IAgentProfileService).setThinking(input.effort);
+  }
+
+  /**
+   * Through the agent scope (`IAgentProfileService.setCompactionTriggerRatio`),
+   * same shape as `setThinking`: no klient facade exists. The profile service
+   * validates the [0.25, 0.99] range and rejects with `model.config_invalid`.
+   */
+  override async setCompactionTriggerRatio(
+    input: SetSessionCompactionTriggerRatioRpcInput,
+  ): Promise<void> {
+    const agent = await this.agentScope(input.sessionId);
+    agent.accessor.get(IAgentProfileService).setCompactionTriggerRatio(input.ratio);
+  }
+
+  /**
+   * Through the agent scope (`IAgentProfileService.setCompactionTokenBudget`).
+   * The profile service validates the input (positive integer ≥ 1) and
+   * multiplies by 1 000 to convert "thousands of tokens" to raw tokens.
+   */
+  override async setCompactionTokenBudget(
+    input: SetSessionCompactionTokenBudgetRpcInput,
+  ): Promise<void> {
+    const agent = await this.agentScope(input.sessionId);
+    agent.accessor.get(IAgentProfileService).setCompactionTokenBudget(input.tokens);
   }
 
   override async setPermission(input: SetSessionPermissionRpcInput): Promise<void> {
@@ -1828,7 +1873,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       facade.getPlan(),
       facade.getUsage(),
     ]);
-    const profile = agent.accessor.get(IAgentProfileService).data();
+    const profileService = agent.accessor.get(IAgentProfileService);
+    const profile = profileService.data();
     const capability = profile.modelCapabilities;
     const maxContextTokens = capability.max_input_tokens ?? capability.max_context_tokens;
     const contextTokens = context.tokenCount;
@@ -1844,6 +1890,23 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       planMode: plan !== null,
       swarmMode: agent.accessor.get(IAgentSwarmService).isActive,
       towerMode: agent.accessor.get(IAgentTowerService).isActive,
+      // Effective auto-compaction trigger ratio (override ?? config). Both new
+      // fields are spread conditionally so a session with neither override nor
+      // config keeps the exact v1 status shape — strict-equality getStatus
+      // parity tests must not see extra keys. Reads through the model-less
+      // accessors so getStatus keeps working on model-less sessions.
+      ...(profileService.getEffectiveCompactionTriggerRatio() !== undefined
+        ? { compactionTriggerRatio: profileService.getEffectiveCompactionTriggerRatio() }
+        : {}),
+      ...(profileService.getCompactionTriggerRatioOverride() !== undefined
+        ? { compactionTriggerRatioOverridden: true }
+        : {}),
+      ...(profileService.getEffectiveCompactionTokenBudget() !== undefined
+        ? { compactionTokenBudget: profileService.getEffectiveCompactionTokenBudget() }
+        : {}),
+      ...(profileService.getCompactionTokenBudgetOverride() !== undefined
+        ? { compactionTokenBudgetOverridden: true }
+        : {}),
       contextTokens,
       maxContextTokens,
       contextUsage,

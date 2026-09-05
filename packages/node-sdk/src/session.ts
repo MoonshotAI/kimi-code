@@ -7,6 +7,8 @@ import {
 } from '@moonshot-ai/agent-core';
 
 import { type ApprovalHandler, type Event, type QuestionHandler } from '#/events';
+import type { SessionModelOverrides } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
+import type { SessionModelOverrideKind } from '@moonshot-ai/klient/core/facade/agent';
 import type { SDKRpcClientBase } from '#/rpc';
 import type {
   AddAdditionalDirOptions,
@@ -278,6 +280,44 @@ export class Session {
       ErrorCodes.SESSION_THINKING_EMPTY,
     );
     await this.rpc.setThinking({ sessionId: this.id, effort: normalized });
+  }
+
+  async setSessionModelOverride(kind: SessionModelOverrideKind, alias: string | null): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.setSessionModelOverride({ sessionId: this.id, kind, alias });
+  }
+
+  async getSessionModelOverride(kind: SessionModelOverrideKind): Promise<string | undefined> {
+    this.ensureOpen();
+    return this.rpc.getSessionModelOverride({ sessionId: this.id, kind });
+  }
+
+  async getAllSessionModelOverrides(): Promise<SessionModelOverrides> {
+    this.ensureOpen();
+    return this.rpc.getAllSessionModelOverrides({ sessionId: this.id });
+  }
+
+  /**
+   * Set a session-scoped override for the auto-compaction trigger ratio
+   * (context-utilization fraction at which auto-compaction triggers), or clear
+   * it by omitting `ratio`. The override takes precedence over the global
+   * `[loop_control] compaction_trigger_ratio` config value for the rest of the
+   * session and is never persisted. Only the v2 engine supports this.
+   */
+  async setCompactionTriggerRatio(ratio?: number): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.setCompactionTriggerRatio({ sessionId: this.id, ratio });
+  }
+
+  /**
+   * Set or clear the session-scoped compaction token budget (absolute cap in
+   * thousands of tokens). The override takes precedence over the ratio path
+   * for the rest of the session and is never persisted. Only the v2 engine
+   * supports this.
+   */
+  async setCompactionTokenBudget(tokens?: number): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.setCompactionTokenBudget({ sessionId: this.id, tokens });
   }
 
   async setPermission(mode: PermissionMode): Promise<void> {

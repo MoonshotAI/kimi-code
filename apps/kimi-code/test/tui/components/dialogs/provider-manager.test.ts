@@ -26,6 +26,10 @@ function makeComponent(overrides: Partial<ProviderManagerOptions> = {}): Provide
     providers: {} as Record<string, ProviderConfig>,
     onAdd: vi.fn(),
     onDeleteSource: vi.fn(),
+    onAddKey: vi.fn(),
+    onRemoveKey: vi.fn(),
+    onSetActiveKey: vi.fn(),
+    onSetProxyUrl: vi.fn(),
     onClose: vi.fn(),
     ...overrides,
   });

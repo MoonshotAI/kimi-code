@@ -8,15 +8,17 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (26 sections · 2 overlay(s))
+# Index (31 sections · 4 overlay(s))
 #   background               src/agent/task/configSection.ts
 #   builtinProductSkills     src/features/skill/catalog/configSection.ts
+#   compactionModel          src/app/kosongConfig/configSection.ts
 #   cron                     src/features/cron/configSection.ts
 #   defaultPermissionMode    src/agent/permissionMode/configSection.ts
 #   defaultPlanMode          src/features/plan/configSection.ts
 #   experimental             src/app/flag/flag.ts
 #   extraAgentDirs           src/workspace/workspaceAgentProfileLoader/configSection.ts
 #   extraSkillDirs           src/features/skill/catalog/configSection.ts
+#   fallbackModel            src/app/kosongConfig/configSection.ts
 #   hooks                    src/features/externalHooks/configSection.ts
 #   identity                 src/app/agentIdentity/configSection.ts
 #   image                    src/agent/media/configSection.ts
@@ -30,13 +32,18 @@
 #   secondaryModel           src/session/subagent/configSection.ts
 #   services                 src/app/auth/configSection.ts
 #   subagent                 src/session/subagent/configSection.ts
+#   subscription             src/app/subscription/configSection.ts
+#   substituteModel          src/session/substitute/configSection.ts
 #   swarm                    src/features/swarm/configSection.ts
 #   task                     src/agent/task/configSection.ts
 #   thinking                 src/app/kosongConfig/configSection.ts
 #   tokenCounting            src/agent/tokenCounting/configSection.ts
 #   tools                    src/agent/toolPolicy/configSection.ts
+#   visualModel              src/app/kosongConfig/configSection.ts
 #   (overlay) servicesCredentialEnvOverlay  src/app/auth/configSection.ts
+#   (overlay) compactionModelOverlay  src/app/kosongConfig/compactionModelOverlay.ts
 #   (overlay) kimiModelEnvOverlay  src/app/kosongConfig/envOverlay.ts
+#   (overlay) visualModelOverlay  src/app/kosongConfig/visualModelOverlay.ts
 
 # ##########################################################################
 # background
@@ -68,6 +75,31 @@
 # ##########################################################################
 
 builtin_product_skills = true
+
+# ##########################################################################
+# compactionModel (config.toml: compaction_model)
+#   owner: src/app/kosongConfig/configSection.ts
+#   scope: core
+#   hooks: stripEnv
+#   env:
+#     model <- KIMI_COMPACTION_MODEL (custom parse)
+#     default_effort <- KIMI_COMPACTION_EFFORT (custom parse)
+# ##########################################################################
+
+[compaction_model]
+# max_context_size: integer
+# max_input_size: integer
+# max_output_size: integer
+# capabilities: string[]
+# display_name: string
+# reasoning_key: string
+# adaptive_thinking: boolean
+# support_efforts: string[]
+# default_effort: string
+# off_effort: string
+# model: string
+# default_model: string
+# secondary_model: string
 
 # ##########################################################################
 # cron
@@ -135,6 +167,30 @@ extra_agent_dirs = []
 extra_skill_dirs = []
 
 # ##########################################################################
+# fallbackModel (config.toml: fallback_model)
+#   owner: src/app/kosongConfig/configSection.ts
+#   scope: core
+#   hooks: stripEnv
+#   env:
+#     model <- KIMI_FALLBACK_MODEL (custom parse)
+#     secondary_model <- KIMI_FALLBACK_SECONDARY_MODEL (custom parse)
+# ##########################################################################
+
+[fallback_model]
+# max_context_size: integer
+# max_input_size: integer
+# max_output_size: integer
+# capabilities: string[]
+# display_name: string
+# reasoning_key: string
+# adaptive_thinking: boolean
+# support_efforts: string[]
+# default_effort: string
+# off_effort: string
+# model: string
+# secondary_model: string
+
+# ##########################################################################
 # hooks
 #   owner: src/features/externalHooks/configSection.ts
 #   scope: core
@@ -195,6 +251,7 @@ extra_skill_dirs = []
 # max_ralph_iterations: integer
 # reserved_context_size: integer
 # compaction_trigger_ratio: number
+# compaction_token_budget: integer
 
 # ##########################################################################
 # mcp
@@ -308,16 +365,20 @@ merge_all_available_skills = true
 # [providers."<name>"]
   # model_source: "static" | "discover" | "oauth-catalog"
   # base_url: string
+  # proxy_url: string
   # custom_headers: record<string, string>
   # default_model: string
   # type: string
   # api_key: string
+  # api_keys: record<string, object>
+  # active_api_key_id: string
   # oauth: object
     # storage: "file" | "keyring"
     # key: string
     # oauth_host: string
   # env: record<string, string>
   # source: record<string, any>
+  # free_models_only: boolean
 
 # ##########################################################################
 # secondaryModel (config.toml: secondary_model)
@@ -384,6 +445,30 @@ merge_all_available_skills = true
 
 [subagent]
 timeout_ms = 7200000
+
+# ##########################################################################
+# subscription
+#   owner: src/app/subscription/configSection.ts
+#   scope: core
+#   hooks: custom fromToml · custom toToml
+# ##########################################################################
+
+[subscription]
+# <name>: boolean
+
+# ##########################################################################
+# substituteModel (config.toml: substitute_model)
+#   owner: src/session/substitute/configSection.ts
+#   scope: core
+#   hooks: stripEnv
+#   env:
+#     default_model <- KIMI_SUBSTITUTE_MODEL (custom parse)
+#     cooldown_ms <- KIMI_SUBSTITUTE_MODEL_COOLDOWN_MS (custom parse)
+# ##########################################################################
+
+[substitute_model]
+# default_model: string
+# cooldown_ms: integer
 
 # ##########################################################################
 # swarm
@@ -453,3 +538,27 @@ strategy = "measured+estimated"
 [tools]
 # enabled: string[]
 # disabled: string[]
+
+# ##########################################################################
+# visualModel (config.toml: visual_model)
+#   owner: src/app/kosongConfig/configSection.ts
+#   scope: core
+#   hooks: stripEnv
+#   env:
+#     model <- KIMI_VISUAL_MODEL (custom parse)
+#     default_effort <- KIMI_VISUAL_EFFORT (custom parse)
+# ##########################################################################
+
+[visual_model]
+# max_context_size: integer
+# max_input_size: integer
+# max_output_size: integer
+# capabilities: string[]
+# display_name: string
+# reasoning_key: string
+# adaptive_thinking: boolean
+# support_efforts: string[]
+# default_effort: string
+# off_effort: string
+# model: string
+# default_model: string

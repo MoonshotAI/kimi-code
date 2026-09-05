@@ -175,4 +175,29 @@ describe('CompactionComponent', () => {
       component.dispose();
     }
   });
+
+  it('renders the model name in the compacting label when supplied', () => {
+    const component = new CompactionComponent(undefined, undefined, undefined, 'kimi-k2');
+
+    try {
+      const text = component.render(120).map(strip).join('\n');
+
+      expect(text).toContain('Compacting context using kimi-k2…');
+    } finally {
+      component.dispose();
+    }
+  });
+
+  it('falls back to the generic label when no model is supplied', () => {
+    const component = new CompactionComponent(undefined, undefined, undefined, undefined);
+
+    try {
+      const text = component.render(120).map(strip).join('\n');
+
+      expect(text).toContain('Compacting context…');
+      expect(text).not.toContain('using ');
+    } finally {
+      component.dispose();
+    }
+  });
 });

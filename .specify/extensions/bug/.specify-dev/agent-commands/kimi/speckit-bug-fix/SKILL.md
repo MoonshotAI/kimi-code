@@ -1,0 +1,138 @@
+---
+name: speckit-bug-fix
+description: Apply the remediation from a bug assessment and record what was changed
+compatibility: Requires spec-kit project structure with .specify/ directory
+metadata:
+  author: github-spec-kit
+  source: bug:commands/speckit.bug.fix.md
+---
+
+# Fix Bug
+
+Apply the remediation that was proposed by `/skill:speckit-bug-assess` and record the changes in a fix report at `.specify/bugs/<slug>/fix.md`. This command is **only** valid after an assessment exists for the given slug. Pass `--branch` (or `--worktree`) to isolate the fix on its own git branch before editing, mirroring how `/skill:speckit-specify` isolates feature work.
+
+## User Input
+
+```text
+$ARGUMENTS
+```
+
+The user input should identify the bug to fix. Accept any of:
+
+- `slug=<bug-slug>` or `--slug <bug-slug>` or just a bare slug-like token.
+- A path that contains the slug (e.g. `.specify/bugs/login-timeout/`).
+- **Branch isolation** (optional): `branch` / `--branch` creates a fix branch (`<prefix>/<slug>`) first; `worktree` / `--worktree` creates a git worktree instead. See **Optional — isolate the fix on a branch** below.
+- **Nothing** — fall back to context (see below).
+
+## Slug Resolution
+
+Resolve `BUG_SLUG` in this order, stopping at the first match:
+
+1. **Explicit user input** — a slug passed in `$ARGUMENTS` (any of the forms above).
+2. **Conversation context** — if the current session has just run `/skill:speckit-bug-assess`, the slug it reported is the working slug. Reuse it without re-prompting. Confirm it by checking that `.specify/bugs/<slug>/assessment.md` exists; if it does not, fall through.
+3. **Single candidate on disk** — list `.specify/bugs/*/assessment.md`. If exactly one matching `assessment.md` is found, use the slug from its parent directory.
+4. **Disambiguate**:
+   - **Interactive mode**: ask the user which bug to fix and list the candidates.
+   - **Automated mode**: stop with an error listing the candidates. Do not guess.
+
+Once resolved, set `BUG_SLUG` and `BUG_DIR = .specify/bugs/<BUG_SLUG>`, and briefly state in your reply which resolution path was used (explicit / from context / single candidate / asked).
+
+## Prerequisites
+
+- `BUG_DIR/assessment.md` MUST exist. If it does not, stop and instruct the user to run `/skill:speckit-bug-assess` first.
+- If `BUG_DIR/fix.md` already exists, ask the user whether to overwrite it before continuing (interactive mode) or refuse (automated mode).
+- Read `BUG_DIR/assessment.md` in full. Treat its **Proposed Remediation**, **Files likely to change**, **Tests to add or update**, and **Risks & Considerations** sections as the contract for this command.
+
+## Execution
+
+1. **Confirm the plan**
+   - Restate, in 3–6 bullets, what you are about to change and where, based on the assessment.
+   - If the assessment's verdict is `invalid`, stop — there is nothing to fix. Tell the user and exit.
+   - If the verdict is `likely valid, needs reproduction` and there are unresolved `[NEEDS CLARIFICATION]` items, flag them and ask the user whether to proceed in interactive mode, or stop in automated mode.
+
+### Optional — isolate the fix on a branch
+
+By default the fix is applied to the current branch. To match how `/skill:speckit-specify` isolates feature work, you may ask `bug.fix` to create a dedicated branch (or git worktree) first:
+
+- Parse the user input for `branch` / `--branch` / `worktree` / `--worktree` (or `branch=true` / `worktree=true`). These are mutually exclusive; prefer `--branch` unless the user explicitly asks for a worktree.
+- **Before creating a branch or worktree**, check Git availability and working tree state:
+  - Run `git rev-parse --is-inside-work-tree 2>/dev/null` to confirm a repository. If Git is unavailable or the directory is not a Git repository, skip isolation with a warning and apply the fix on the current branch.
+  - Run `git status --porcelain` to check for uncommitted changes. If the working tree has uncommitted changes (modified, staged, or untracked files that would conflict), stop and get explicit user approval before proceeding. Explain that branch mode would apply the fix on top of uncommitted changes, and ask whether to stash/commit first, skip isolation, or abort.
+- Determine the branch name `<prefix>/<BUG_SLUG>`, where `<prefix>` comes from `.specify/extensions/bug/bug-config.yml` (`branch_prefix`, default `fix`). Example: `fix/login-timeout`. If a branch with that name already exists, stop and ask the user how to proceed (reuse it, choose another name, or skip isolation).
+- **Branch mode** (`--branch`): run `git checkout -b <prefix>/<BUG_SLUG>` from the current branch (now verified clean or approved by the user).
+- **Worktree mode** (`--worktree`): run `git worktree add ../<repo>-<BUG_SLUG> -b <prefix>/<BUG_SLUG>` so the fix lives in a separate working directory; then continue operations there.
+- State which mode was used in your reply; all subsequent edits happen on that branch/worktree.
+
+2. **Apply the remediation**
+   - Make the code changes described by the preferred remediation. Stay within the files listed by the assessment unless newly discovered evidence requires expanding scope (in which case, log the expansion explicitly in the report).
+   - Add or update the tests called out in the assessment so the bug cannot regress silently.
+   - Keep the change minimal — do not refactor unrelated code, do not introduce dependencies that the assessment did not call for.
+   - If you discover the assessment was wrong (the proposed fix does not work, the root cause is elsewhere), STOP modifying code, document the new finding in the fix report under **Deviations from Assessment**, and recommend re-running `/skill:speckit-bug-assess`.
+
+3. **Run local checks**
+   - If the project has obvious test commands (e.g., `pytest`, `npm test`, `cargo test`), run the tests that exercise the changed paths. Capture pass/fail and key output.
+   - Do not run destructive or network-dependent suites without the user's consent.
+
+4. **Write the fix report**
+
+   Write to `BUG_DIR/fix.md` using this structure:
+
+   ```markdown
+   # Bug Fix: <short title>
+
+   - **Slug**: <BUG_SLUG>
+   - **Fixed**: <ISO 8601 date>
+   - **Assessment**: ./assessment.md
+   - **Status**: applied | partial | not-applied
+   - **Branch**: <branch/worktree name, or "current branch" if isolation was not used>
+   - **Revision**: <commit SHA after applying the fix, or "uncommitted" if not yet committed>
+
+   ## Summary
+
+   <One or two sentences describing what was changed and why.>
+
+   ## Changes
+
+   | File | Change | Notes |
+   |------|--------|-------|
+   | `path/to/file.py` | <added / modified / removed> | <short note> |
+   | `path/to/test_file.py` | added test | <short note> |
+
+   ## Diff Highlights (optional)
+
+   <Short, illustrative snippets of the most important hunks — not a full diff dump.>
+
+   ## Tests Added or Updated
+
+   - `path/to/test_file.py::test_name` — <what it pins down>
+
+   ## Local Verification
+
+   - Commands run: `<command>` → <result, brief>
+   - Manual checks: <what was verified by hand, if anything>
+
+   ## Deviations from Assessment
+
+   <Empty if none. Otherwise, list any places where the actual fix departed from the proposed remediation and why.>
+
+   ## Follow-ups
+
+   - <suggested cleanup, monitoring, doc update, etc.>
+   ```
+
+   Record the branch name used for isolation (or "current branch" if none), and capture the current Git commit SHA with `git rev-parse HEAD` after the fix is applied (or "uncommitted" if the changes are not yet committed). These fields enable `speckit-bug-test` to validate the workspace state matches the fix.
+
+5. **Report back** with:
+   - The slug and `BUG_DIR/fix.md` path.
+   - The status (`applied`, `partial`, `not-applied`).
+   - Which branch/worktree the fix was applied to (or "current branch" if isolation was not used).
+   - The next suggested step(s), in order:
+     - `/skill:speckit-bug-pr slug=<BUG_SLUG>` (open a PR from the fix branch, linking the issue).
+     - Then: `/skill:speckit-bug-test slug=<BUG_SLUG>` (validate the fix).
+
+## Guardrails
+
+- Never modify files outside the project workspace.
+- Never edit `assessment.md` — it is the contract you are working against. Record disagreements in `fix.md` under **Deviations from Assessment**.
+- Never delete files unless the assessment explicitly required it.
+- Never overwrite an existing `fix.md` without confirmation.

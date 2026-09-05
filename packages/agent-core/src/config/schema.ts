@@ -24,10 +24,21 @@ export type OAuthRef = z.infer<typeof OAuthRefSchema>;
 
 const StringRecordSchema = z.record(z.string(), z.string());
 
+export const ProviderApiKeySchema = z.object({
+  key: z.string().min(1),
+  name: z.string().min(1),
+});
+
+export type ProviderApiKey = z.infer<typeof ProviderApiKeySchema>;
+
 export const ProviderConfigSchema = z.object({
   type: ProviderTypeSchema,
   apiKey: z.string().optional(),
+  apiKeys: z.record(z.string(), ProviderApiKeySchema).optional(),
+  activeApiKeyId: z.string().optional(),
   baseUrl: z.string().optional(),
+  proxyUrl: z.string().optional(),
+  free_models_only: z.boolean().optional(),
   defaultModel: z.string().optional(),
   oauth: OAuthRefSchema.optional(),
   env: StringRecordSchema.optional(),
@@ -114,6 +125,40 @@ export const SecondaryModelConfigSchema = ModelAliasOverrideSchema.extend({
 
 export type SecondaryModelConfig = z.infer<typeof SecondaryModelConfigSchema>;
 
+export const SubstituteModelConfigSchema = z.object({
+  defaultModel: z.string().min(1).optional(),
+  cooldownMs: z.number().int().min(0).optional(),
+});
+
+export type SubstituteModelConfig = z.infer<typeof SubstituteModelConfigSchema>;
+
+export const VisualModelConfigSchema = ModelAliasOverrideSchema.extend({
+  model: z.string().min(1).optional(),
+  defaultModel: z.string().min(1).optional(),
+});
+
+export type VisualModelConfig = z.infer<typeof VisualModelConfigSchema>;
+
+export const CompactionModelConfigSchema = ModelAliasOverrideSchema.extend({
+  model: z.string().min(1).optional(),
+  defaultModel: z.string().min(1).optional(),
+  // Second tier of the compaction cascade (`/squeeze-model-secondary`):
+  // tried when the primary squeeze model is unset or unavailable, before
+  // falling back to the current conversation model.
+  secondaryModel: z.string().min(1).optional(),
+});
+
+export type CompactionModelConfig = z.infer<typeof CompactionModelConfigSchema>;
+
+export const FallbackModelConfigSchema = ModelAliasOverrideSchema.extend({
+  model: z.string().min(1).optional(),
+  // Second tier of the fallback cascade (`/fallback-model-secondary`):
+  // tried when the first-tier fallback also exhausts its retry budget.
+  secondaryModel: z.string().min(1).optional(),
+});
+
+export type FallbackModelConfig = z.infer<typeof FallbackModelConfigSchema>;
+
 export const ThinkingConfigSchema = z.object({
   enabled: z.boolean().optional(),
   effort: z.string().optional(),
@@ -155,7 +200,7 @@ export const LoopControlSchema = z.object({
   maxRetriesPerStep: z.number().int().min(0).optional(),
   maxRalphIterations: z.number().int().min(-1).optional(),
   reservedContextSize: z.number().int().min(0).optional(),
-  compactionTriggerRatio: z.number().min(0.5).max(0.99).optional(),
+  compactionTriggerRatio: z.number().min(0.25).max(0.99).optional(),
 });
 
 export type LoopControl = z.infer<typeof LoopControlSchema>;
@@ -364,6 +409,10 @@ export const KimiConfigSchema = z.object({
   background: BackgroundConfigSchema.optional(),
   subagent: SubagentConfigSchema.optional(),
   secondaryModel: SecondaryModelConfigSchema.optional(),
+  substituteModel: SubstituteModelConfigSchema.optional(),
+  visualModel: VisualModelConfigSchema.optional(),
+  compactionModel: CompactionModelConfigSchema.optional(),
+  fallbackModel: FallbackModelConfigSchema.optional(),
   mcp: McpConfigSchema.optional(),
   image: ImageConfigSchema.optional(),
   modelCatalog: ModelCatalogConfigSchema.optional(),
@@ -382,6 +431,8 @@ const LoopControlPatchSchema = LoopControlSchema.partial();
 const BackgroundConfigPatchSchema = BackgroundConfigSchema.partial();
 const SubagentConfigPatchSchema = SubagentConfigSchema.partial();
 const SecondaryModelConfigPatchSchema = SecondaryModelConfigSchema.partial();
+const SubstituteModelConfigPatchSchema = SubstituteModelConfigSchema.partial();
+const FallbackModelConfigPatchSchema = FallbackModelConfigSchema.partial();
 const McpConfigPatchSchema = McpConfigSchema.partial();
 const ImageConfigPatchSchema = ImageConfigSchema.partial();
 const ModelCatalogConfigPatchSchema = ModelCatalogConfigSchema.partial();
@@ -413,6 +464,10 @@ export const KimiConfigPatchSchema = z
     background: BackgroundConfigPatchSchema.optional(),
     subagent: SubagentConfigPatchSchema.optional(),
     secondaryModel: SecondaryModelConfigPatchSchema.optional(),
+    substituteModel: SubstituteModelConfigPatchSchema.optional(),
+    visualModel: VisualModelConfigSchema.optional(),
+    compactionModel: CompactionModelConfigSchema.optional(),
+    fallbackModel: FallbackModelConfigPatchSchema.optional(),
     mcp: McpConfigPatchSchema.optional(),
     image: ImageConfigPatchSchema.optional(),
     modelCatalog: ModelCatalogConfigPatchSchema.optional(),
@@ -431,12 +486,35 @@ export function getDefaultConfig(): KimiConfig {
 
 export function validateConfig(config: unknown): KimiConfig {
   try {
-    return KimiConfigSchema.parse(config);
+    const parsed = KimiConfigSchema.parse(config);
+    return migrateLegacyApiKeys(parsed);
   } catch (error) {
     throw new KimiError(ErrorCodes.CONFIG_INVALID, `Invalid configuration: ${formatConfigValidationError(error)}`, {
       cause: error,
     });
   }
+}
+
+function migrateLegacyApiKeys(config: KimiConfig): KimiConfig {
+  const providers = { ...config.providers };
+  let changed = false;
+
+  for (const [providerId, provider] of Object.entries(providers)) {
+    // If provider has legacy apiKey but no apiKeys, migrate it
+    if (provider.apiKey && !provider.apiKeys) {
+      const keyId = 'default';
+      providers[providerId] = {
+        ...provider,
+        apiKeys: {
+          [keyId]: { key: provider.apiKey, name: 'Default' },
+        },
+        activeApiKeyId: keyId,
+      };
+      changed = true;
+    }
+  }
+
+  return changed ? { ...config, providers } : config;
 }
 
 export function formatConfigValidationError(error: unknown): string {

@@ -92,6 +92,7 @@ export interface ChatState {
   messages: ChatMessage[];
   isStreaming: boolean;
   isCompacting: boolean;
+  compactingModel?: string;
   handshakeReceived: boolean;
   draftMedia: DraftMediaItem[];
   lastStatus: StatusUpdate | null;
@@ -178,6 +179,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
   isStreaming: false,
   isCompacting: false,
+  compactingModel: undefined,
   handshakeReceived: false,
   draftMedia: [],
   lastStatus: null,
@@ -294,6 +296,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: [],
       isStreaming: false,
       isCompacting: false,
+      compactingModel: undefined,
       handshakeReceived: false,
       draftMedia: [],
       lastStatus: null,
@@ -326,6 +329,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         draft.isStreaming = false;
         draft.isCompacting = false;
+        draft.compactingModel = undefined;
         draft.pendingQuestion = null;
       }),
     );
@@ -348,6 +352,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: [],
       isStreaming: false,
       isCompacting: false,
+      compactingModel: undefined,
       handshakeReceived: false,
       draftMedia: [],
       lastStatus: null,

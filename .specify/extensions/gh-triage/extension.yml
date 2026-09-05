@@ -1,0 +1,64 @@
+schema_version: "1.0"
+
+extension:
+  id: gh-triage
+  name: "GitHub Issue Triage"
+  version: "1.1.0"
+  description: "Fetch open GitHub issues, classify each as bug, feature, or chore, then DELEGATE to the correct extension: bugs → bug.fetch (.specify/bugs/), chores → chore.fetch (.specify/chores/), features → speckit.specify (specs/). Never save bugs or chores as specs."
+  author: arrrrny
+  repository: https://github.com/arrrrny/speckit-extensions
+  license: MIT
+
+requires:
+  speckit_version: ">=0.9.0"
+  tools:
+    - name: gh
+      required: true
+    # scripts/bash/gh-triage.sh parses all GitHub JSON with jq — without it the
+    # triage engine cannot fetch, classify, or label.
+    - name: jq
+      required: true
+  commands:
+    # Bug workflow (must be installed via the `bug` extension). gh-triage loads
+    # issues with bug.fetch, triages them with bug.assess, and the required
+    # bug.fix / bug.pr / bug.issue / bug.test commands complete the loop.
+    - speckit.bug.fetch
+    - speckit.bug.assess
+    - speckit.bug.issue
+    - speckit.bug.fix
+    - speckit.bug.pr
+    - speckit.bug.test
+    # Chore workflow (must be installed via the `chore` extension). gh-triage
+    # loads issues with chore.fetch, scopes them with chore.assess, and the
+    # required chore.implement / chore.pr commands complete the loop.
+    - speckit.chore.fetch
+    - speckit.chore.assess
+    - speckit.chore.issue
+    - speckit.chore.implement
+    - speckit.chore.pr
+    # New features are turned into specs with the core specify command.
+    - speckit.specify
+
+provides:
+  commands:
+    - name: speckit.gh-triage.triage
+      file: commands/speckit.gh-triage.triage.md
+      description: "Fetch open GitHub issues, classify as bug/feature/chore, route to the right workflow, and label each issue (default on)"
+    - name: speckit.gh-triage.feature
+      file: commands/speckit.gh-triage.feature.md
+      description: "Create a GitHub issue for a new feature (labeled per config), and optionally auto-run speckit.specify to turn it into a spec"
+
+  config:
+    - name: "gh-triage-config.yml"
+      template: "config-template.yml"
+      description: "GitHub triage configuration (label mapping, classification keywords, auto-label toggle)"
+      required: false
+
+tags:
+  - "triage"
+  - "github"
+  - "workflow"
+  - "automation"
+  - "bug"
+  - "feature"
+  - "chore"
