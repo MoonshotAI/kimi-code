@@ -17,6 +17,23 @@ import {
 } from '../config';
 import { ErrorCodes, isKimiError, KimiError } from '../errors';
 
+/**
+ * Check whether `baseUrl` points to an official OpenAI API endpoint.
+ * `undefined` means the client defaults to OpenAI. Only official endpoints
+ * should receive the `prompt_cache_key` field, because strictly-validating
+ * OpenAI-compatible endpoints (NVIDIA, Azure Foundry, etc.) reject unknown
+ * parameters with HTTP 400.
+ */
+function isOfficialOpenAIBaseUrl(baseUrl: string | undefined): boolean {
+  if (baseUrl === undefined) return true;
+  try {
+    const hostname = new URL(baseUrl).hostname;
+    return hostname === 'api.openai.com' || hostname.endsWith('.api.openai.com');
+  } catch {
+    return false;
+  }
+}
+
 export interface BearerTokenProvider {
   getAccessToken(options?: { readonly force?: boolean }): Promise<string>;
 }
@@ -327,9 +344,16 @@ function toKosongProviderConfig(
         offEffort,
         // Session affinity: route every request of this session through the
         // same provider-side prompt cache (the OpenAI analog of Anthropic
-        // `metadata.user_id` above). Undefined values are stripped at
-        // generate time, matching the `kimi` branch below.
-        generationKwargs: { prompt_cache_key: promptCacheKey },
+        // `metadata.user_id` above). Only sent to official OpenAI API
+        // endpoints — strictly-validating OpenAI-compatible third-party
+        // endpoints (NVIDIA, Azure Foundry, etc.) reject unknown parameters.
+        generationKwargs:
+          promptCacheKey !== undefined &&
+          isOfficialOpenAIBaseUrl(
+            modelBaseUrl ?? providerValue(provider.baseUrl, provider.env, 'OPENAI_BASE_URL'),
+          )
+            ? { prompt_cache_key: promptCacheKey }
+            : undefined,
         ...defaultHeadersField({
           ...envCustomHeaders,
           ...kimiUserAgentHeader(kimiRequestHeaders),
@@ -342,7 +366,9 @@ function toKosongProviderConfig(
         model,
         baseUrl: modelBaseUrl ?? providerValue(provider.baseUrl, provider.env, 'KIMI_BASE_URL'),
         apiKey: providerApiKey(provider),
-        generationKwargs: { prompt_cache_key: promptCacheKey },
+        // Kimi's API accepts prompt_cache_key on any endpoint.
+        generationKwargs:
+          promptCacheKey !== undefined ? { prompt_cache_key: promptCacheKey } : undefined,
         ...defaultHeadersField({
           ...envCustomHeaders,
           ...kimiRequestHeaders,
@@ -372,7 +398,15 @@ function toKosongProviderConfig(
         offEffort,
         // Session affinity: same `prompt_cache_key` intent as the `openai`
         // branch; the Responses API accepts it as a top-level request field.
-        generationKwargs: { prompt_cache_key: promptCacheKey },
+        // Only sent to official OpenAI API endpoints — third-party endpoints
+        // reject unknown parameters.
+        generationKwargs:
+          promptCacheKey !== undefined &&
+          isOfficialOpenAIBaseUrl(
+            modelBaseUrl ?? providerValue(provider.baseUrl, provider.env, 'OPENAI_BASE_URL'),
+          )
+            ? { prompt_cache_key: promptCacheKey }
+            : undefined,
         ...defaultHeadersField({
           ...envCustomHeaders,
           ...kimiUserAgentHeader(kimiRequestHeaders),
