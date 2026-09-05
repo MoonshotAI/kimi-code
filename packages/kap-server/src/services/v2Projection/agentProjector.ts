@@ -24,6 +24,7 @@ import type {
   ToolProgressPayload,
   TurnMessage,
   TurnOrigin,
+  UserAttachment,
   UserMessage,
   UserMessageOrigin,
 } from '../../protocol/v2/messages/index';
@@ -119,6 +120,7 @@ export interface ProjectionEvent {
   swarmIndex?: unknown;
   runInBackground?: unknown;
   description?: unknown;
+  promptAttachments?: unknown;
   [key: string]: unknown;
 }
 
@@ -163,6 +165,7 @@ interface PromptAcc {
   emitted: boolean;
   origin?: UserMessageOrigin;
   attachmentIds?: string[];
+  attachmentRecords?: UserAttachment[];
   steeredAt?: string;
   notification?: TaskNotificationPayload;
   skillActivations?: SkillActivation[];
@@ -333,6 +336,28 @@ export function toSkillActivations(origin: unknown): SkillActivation[] | undefin
     if (typeof name !== 'string' || name.length === 0) continue;
     const args = (item as { skillArgs?: unknown } | undefined)?.skillArgs;
     out.push({ skill_name: name, skill_args: typeof args === 'string' ? args : undefined });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+export function toUserAttachments(input: unknown): UserAttachment[] | undefined {
+  if (!Array.isArray(input) || input.length === 0) return undefined;
+  const out: UserAttachment[] = [];
+  for (const item of input) {
+    const a = item as { kind?: unknown; fileId?: unknown; name?: unknown; mediaType?: unknown; size?: unknown };
+    if (a.kind === 'image' || a.kind === 'video') {
+      if (typeof a.fileId !== 'string' || a.fileId.length === 0) continue;
+      out.push({ kind: a.kind, file_id: a.fileId });
+      continue;
+    }
+    if (a.kind === 'file') {
+      out.push({
+        kind: 'file',
+        name: typeof a.name === 'string' ? a.name : undefined,
+        media_type: typeof a.mediaType === 'string' ? a.mediaType : undefined,
+        size: typeof a.size === 'number' ? a.size : undefined,
+      });
+    }
   }
   return out.length > 0 ? out : undefined;
 }
@@ -568,6 +593,7 @@ export class AgentV2Projector {
       emitted: true,
       origin,
       attachmentIds: event.attachmentIds as string[] | undefined,
+      attachmentRecords: toUserAttachments(event.promptAttachments),
       skillActivations: toSkillActivations(event.origin),
     };
     this.prompts.set(promptId, acc);
@@ -827,6 +853,11 @@ export class AgentV2Projector {
         this.assignHeld(acc, engineTurnId);
         heldAcc = acc;
       }
+      const records = toUserAttachments(event.promptAttachments);
+      if (acc && records !== undefined && acc.attachmentRecords === undefined) {
+        acc.attachmentRecords = records;
+        heldAcc = acc;
+      }
       turn.userMessageId = acc?.messageId ?? promptId;
       turn.promptIds.push(promptId);
       turn.attachmentIds = acc?.attachmentIds;
@@ -854,6 +885,7 @@ export class AgentV2Projector {
           steerHeld: false,
           emitted: true,
           origin: userOrigin,
+          attachmentRecords: toUserAttachments(event.promptAttachments),
           skillActivations: toSkillActivations(event.origin),
         };
         this.prompts.set(openingAcc.promptId, openingAcc);
@@ -1443,7 +1475,10 @@ export class AgentV2Projector {
       detached: info.detached === true,
       description: info.description as string | undefined,
       output_tail: (info.outputTail as string) ?? '',
-      started_at: (info.startedAt as string) ?? iso(event.time),
+      started_at:
+        typeof info.startedAt === 'string'
+          ? info.startedAt
+          : iso(typeof info.startedAt === 'number' ? info.startedAt : event.time),
       model: info.model as string | undefined,
       thinking_effort: info.thinkingEffort as string | undefined,
       child_agent_id: (info.agentId as string | undefined) ?? (info.childAgentId as string | undefined),
@@ -1504,6 +1539,7 @@ export class AgentV2Projector {
       steered_at: acc.steeredAt,
       origin: acc.origin,
       attachment_ids: acc.attachmentIds,
+      attachments: acc.attachmentRecords,
       notification: acc.notification,
       skill_activations: acc.skillActivations,
     };

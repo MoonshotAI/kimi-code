@@ -32,6 +32,15 @@ export const skillActivationSchema = z.object({
 });
 export type SkillActivation = z.infer<typeof skillActivationSchema>;
 
+export const userAttachmentSchema = z.object({
+  kind: z.enum(['image', 'video', 'file']),
+  file_id: z.string().optional(),
+  name: z.string().optional(),
+  media_type: z.string().optional(),
+  size: z.number().optional(),
+});
+export type UserAttachment = z.infer<typeof userAttachmentSchema>;
+
 export const userMessageSchema = z.object({
   type: z.literal('user'),
   ...timelineBaseFields,
@@ -40,6 +49,7 @@ export const userMessageSchema = z.object({
   step_id: z.string().optional(),
   text: z.string(),
   attachment_ids: z.array(z.string()).optional(),
+  attachments: z.array(userAttachmentSchema).optional(),
   skill_activations: z.array(skillActivationSchema).optional(),
   status: z.enum(['running', 'completed']),
   created_at: z.string(),

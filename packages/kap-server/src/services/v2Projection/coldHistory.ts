@@ -6,6 +6,7 @@ import type {
   TaskNotificationPayload,
   ToolCallAgentRef,
   TurnOrigin,
+  UserAttachment,
   UserMessageOrigin,
 } from '../../protocol/v2/messages/index';
 import {
@@ -144,6 +145,7 @@ interface UserAcc {
   steeredAt?: string;
   origin?: UserMessageOrigin;
   notification?: TaskNotificationPayload;
+  attachments?: UserAttachment[];
   skillActivations?: SkillActivation[];
   sortTime?: number;
 }
@@ -187,6 +189,29 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function asText(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
+}
+
+function attachmentsFromInput(input: unknown): UserAttachment[] | undefined {
+  const parts = Array.isArray(input) ? input : [];
+  const out: UserAttachment[] = [];
+  for (const part of parts) {
+    const p = part as { type?: unknown; fileId?: unknown; name?: unknown; mediaType?: unknown; size?: unknown };
+    if (p.type === 'image' || p.type === 'video') {
+      if (typeof p.fileId !== 'string' || p.fileId.length === 0) continue;
+      out.push({ kind: p.type, file_id: p.fileId });
+      continue;
+    }
+    if (p.type === 'file') {
+      out.push({
+        kind: 'file',
+        file_id: typeof p.fileId === 'string' ? p.fileId : undefined,
+        name: typeof p.name === 'string' ? p.name : undefined,
+        media_type: typeof p.mediaType === 'string' ? p.mediaType : undefined,
+        size: typeof p.size === 'number' ? p.size : undefined,
+      });
+    }
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 interface SwarmResultRow {
@@ -355,6 +380,7 @@ export function buildColdHistory(
             acceptedTime: time,
             origin: toUserOrigin(originValue),
             notification,
+            attachments: attachmentsFromInput(record.input),
             skillActivations: toSkillActivations(originValue),
           });
         }
@@ -375,6 +401,7 @@ export function buildColdHistory(
           steeredAt: iso(time),
           origin,
           notification,
+          attachments: attachmentsFromInput(record.input),
           sortTime: time,
         });
         turn.lastRecordIndex = recordIndex;
@@ -693,6 +720,7 @@ export function buildColdHistory(
       steered_at: user.steeredAt,
       origin: user.origin,
       notification: user.notification,
+      attachments: user.attachments,
       skill_activations: user.skillActivations,
     } as ServerMessage;
   };
