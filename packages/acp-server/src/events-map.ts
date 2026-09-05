@@ -93,6 +93,36 @@ export function isAuthError(error?: { readonly code: string }): boolean {
 }
 
 /**
+ * Error codes that indicate a model-side failure the client should see as a
+ * JSON-RPC `internal_error` rather than a silent `end_turn`. Drawn from
+ * `kosong/contract/errors.ts` (provider.status / context.overflow),
+ * `kosong/model/errors.ts` (provider.not_found) and
+ * `agent/loop/errors.ts` (loop.max_steps_exceeded). `provider.filtered` is
+ * deliberately omitted: content-filter failures keep the legacy refusal
+ * mapping in `turnEndReasonToStopReason` and surface as `refusal`, not an
+ * error.
+ */
+const PROVIDER_ERROR_CODES: ReadonlySet<string> = new Set([
+  'provider.api_error',
+  'provider.rate_limit',
+  'provider.connection_error',
+  'provider.overloaded',
+  'provider.not_found',
+  'context.overflow',
+  'loop.max_steps_exceeded',
+]);
+
+/**
+ * Whether the given error is a provider / context failure that should
+ * propagate as a JSON-RPC error instead of being swallowed into `end_turn`.
+ * Auth errors are deliberately excluded — those are handled by `isAuthError`
+ * and surface as `auth_required`.
+ */
+export function isProviderError(error?: { readonly code: string }): boolean {
+  return error !== undefined && PROVIDER_ERROR_CODES.has(error.code);
+}
+
+/**
  * Build the ACP `toolCallId` for a wire-level tool call.
  *
  * Composes `${turnId}:${toolCallId}` so multiple turns within a single

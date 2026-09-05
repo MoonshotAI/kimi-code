@@ -569,15 +569,55 @@ describe('mapPromptLaunchError', () => {
   });
 });
 
+  it('surfaces a provider-coded rejection as internalError with the engine text in data', () => {
+    const error = Object.assign(new Error('custom gateway returned 500'), {
+      code: 'provider.api_error',
+    });
+    const mapped = mapPromptLaunchError(error, 'sess-x');
+    expect(mapped.code).toBe(-32603);
+    // The wire message stays generic so providers cannot echo PII into every
+    // error toast; the engine's full text and the provider code ride on the
+    // JSON-RPC `data` payload for clients that want to log them.
+    expect(mapped.message).toBe('Internal error: model provider reported an error');
+    expect(JSON.stringify(mapped)).toContain('custom gateway returned 500');
+    expect(JSON.stringify(mapped)).toContain('provider.api_error');
+  });
+
+  it('surfaces a context.overflow rejection as internalError with its engine text in data', () => {
+    const error = Object.assign(new Error('context_length_exceeded'), {
+      code: 'context.overflow',
+    });
+    const mapped = mapPromptLaunchError(error, 'sess-x');
+    expect(mapped.code).toBe(-32603);
+    expect(mapped.message).toBe('Internal error: model provider reported an error');
+    expect(JSON.stringify(mapped)).toContain('context_length_exceeded');
+  });
+
+  it('routes a provider.filtered launch rejection to the fixed generic path', () => {
+    // `provider.filtered` is deliberately excluded from `PROVIDER_ERROR_CODES`
+    // — content-filter failures keep the legacy refusal mapping on the turn
+    // path and fall through to the fixed generic message at launch, where
+    // there is no turn yet to attach a refusal to.
+    const error = Object.assign(new Error('request was blocked by content safety'), {
+      code: 'provider.filtered',
+    });
+    const mapped = mapPromptLaunchError(error, 'sess-x');
+    expect(mapped.code).toBe(-32603);
+    expect(mapped.message).toBe('Internal error: session prompt failed');
+    expect(JSON.stringify(mapped)).not.toContain('request was blocked');
+  });
+
 describe('acp-server prompt error hygiene', () => {
   let homeDir: string | undefined;
   let client: TestClient | undefined;
 
+  let scripted: ScriptedProvider | undefined;
   afterEach(async () => {
     if (client !== undefined) {
       await client.close();
       client = undefined;
     }
+    scripted = undefined;
     if (homeDir !== undefined) {
       await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
       homeDir = undefined;
@@ -612,6 +652,45 @@ describe('acp-server prompt error hygiene', () => {
     expect(serialized).toContain('session prompt failed');
     expect(serialized).not.toContain('session not found');
     expect(serialized).not.toContain(created.sessionId);
+  }, 30_000);
+
+  it('a mid-turn provider.api_error fails the prompt with internalError; engine text rides in data', async () => {
+    // Real engine + ACP wire + scripted LLM that throws a coded provider
+    // error on the first `generate()` call. Before this change the prompt
+    // silently resolved with `end_turn`; now it must reject with a JSON-RPC
+    // `internalError` whose data payload carries the engine's failure text
+    // and the provider code, while the wire message stays generic so PII
+    // cannot leak through every error toast.
+    homeDir = await mkdtemp(join(tmpdir(), 'acp-provider-error-'));
+    await writeFakeModelConfig(homeDir);
+    scripted = createScriptedProvider();
+    client = await createTestClient({ homeDir, extraSeeds: [scripted.seed] });
+    const c = client;
+    await c.send('initialize', { protocolVersion: 1, clientCapabilities: {} });
+    scripted.mockNextProviderError('provider.api_error', 'custom gateway returned 500');
+
+    const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
+      sessionId: string;
+    };
+    await c.waitForSessionUpdate('available_commands_update', 10_000);
+
+    let captured: unknown;
+    try {
+      await c.send('session/prompt', {
+        sessionId: created.sessionId,
+        prompt: [{ type: 'text', text: 'run anything' }],
+      });
+    } catch (error) {
+      captured = error;
+    }
+    const serialized = JSON.stringify((captured as Error)?.message ?? String(captured));
+    expect(serialized).toContain('-32603');
+    // Wire message stays generic.
+    expect(serialized).toContain('Internal error: model provider reported an error');
+    // Engine text and provider code ride on the JSON-RPC `data` payload.
+    expect(serialized).toContain('custom gateway returned 500');
+    expect(serialized).toContain('provider.api_error');
+    expect(scripted?.callCount() ?? 0).toBe(1);
   }, 30_000);
 });
 
