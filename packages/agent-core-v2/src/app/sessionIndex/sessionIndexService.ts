@@ -297,7 +297,20 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
 
   async listRecent(query: SessionListQuery): Promise<Page<SessionSummary>> {
     return this.withReadModel(
-      (generation) => this.listRecentFromReadModel(generation, query),
+      async (generation) => {
+        const page = await this.listRecentFromReadModel(generation, query);
+        // A workspace-scoped read that returns nothing can still hide sessions
+        // that exist on disk but were not projected into the read model (e.g.
+        // legacy/v1-era sessions recorded with only `workDir`, or sessions in
+        // alias buckets). Coalesce onto the authoritative source so `/sessions`
+        // (working-directory scope) and `--continue` never hide them. Unscooped
+        // reads stay on the projected recency column.
+        if (page.items.length === 0 && query.workspaceIds !== undefined) {
+          const legacy = await this.listLegacy(query);
+          if (legacy.items.length > 0) return legacy;
+        }
+        return page;
+      },
       () => this.listLegacy(query),
     );
   }

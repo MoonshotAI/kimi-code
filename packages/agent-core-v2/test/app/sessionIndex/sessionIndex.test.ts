@@ -532,6 +532,22 @@ describe('FileSessionIndex (read model)', () => {
     expect(fileStorage.listCalls).toBe(0);
   });
 
+  it('coalesces a workspace-scoped miss onto the authoritative directory', async () => {
+    const store = build();
+    await store.prepare();
+    store.stopReconcileLoop();
+    // A legacy/v1-era session recorded with only `workDir` (no `cwd`) that
+    // exists on disk but was never projected into the read model.
+    await seedSession('legacy', { workDir: WORK_DIR, createdAt: 1, updatedAt: 2 });
+
+    // Read model answers empty for the workspace; the built-in fallback must
+    // surface the on-disk session so `/sessions` (cwd scope) and --continue
+    // do not hide it.
+    const page = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items.map((s) => s.id)).toEqual(['legacy']);
+    expect(page.items[0]).toMatchObject({ cwd: WORK_DIR });
+  });
+
   it('paginates exactly through same-millisecond ties', async () => {
     const specs: [string, number][] = [
       ['a', 100],
