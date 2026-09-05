@@ -387,7 +387,10 @@ export class AgentV2Projector {
       case 'tools.update_store': this.onToolsUpdateStore(event, out); break;
       case 'permission.approval.requested': this.onApprovalRequested(event, out); break;
       case 'permission.approval.resolved': this.onApprovalResolved(event, out); break;
+      case 'compaction.started': this.onCompactionStarted(event, out); break;
       case 'compaction.completed': this.onCompactionCompleted(event, out); break;
+      case 'compaction.cancelled': this.onCompactionSettled(event, out, 'cancelled'); break;
+      case 'compaction.blocked': this.onCompactionSettled(event, out, 'blocked'); break;
       case 'context.undone': this.onContextUndone(event, out); break;
       case 'context.clear': this.onContextClear(event, out); break;
       case 'hook.result': this.onHookResult(event, out); break;
@@ -1101,22 +1104,55 @@ export class AgentV2Projector {
     );
   }
 
+  private compactionSystemId?: string;
+  private compactionTrigger?: string;
+
+  private onCompactionStarted(event: ProjectionEvent, out: ServerMessage[]): void {
+    this.compactionSystemId ??= this.nextSystemId();
+    this.compactionTrigger = event.trigger as string | undefined;
+    out.push({
+      type: 'system',
+      ...this.base(event),
+      system_id: this.compactionSystemId,
+      subtype: 'compaction',
+      payload: { state: 'running', trigger: this.compactionTrigger },
+    });
+  }
+
+  private onCompactionSettled(event: ProjectionEvent, out: ServerMessage[], state: 'cancelled' | 'blocked'): void {
+    if (this.compactionSystemId === undefined) return;
+    out.push({
+      type: 'system',
+      ...this.base(event),
+      system_id: this.compactionSystemId,
+      subtype: 'compaction',
+      payload: { state },
+    });
+    this.compactionSystemId = undefined;
+    this.compactionTrigger = undefined;
+  }
+
   private onCompactionCompleted(event: ProjectionEvent, out: ServerMessage[]): void {
-    const result = event.result as { tokensBefore?: number; tokensAfter?: number } | undefined;
+    const result = event.result as { tokensBefore?: number; tokensAfter?: number; summary?: string } | undefined;
     if (!result) return;
     const turn = this.latestTurn();
     const through = turn && turn.engineTurnId > 0 ? this.protocolTurnId(turn.engineTurnId - 1) : undefined;
     out.push({
       type: 'system',
       ...this.base(event),
-      system_id: this.nextSystemId(),
+      system_id: (this.compactionSystemId ??= this.nextSystemId()),
       subtype: 'compaction',
       payload: {
+        state: 'completed',
         before_tokens: result.tokensBefore as number,
         after_tokens: result.tokensAfter as number,
         summarized_through_turn: through,
+        trigger: this.compactionTrigger,
+        summary: result.summary,
       },
     });
+    this.compactionSystemId = undefined;
+    this.compactionTrigger = undefined;
   }
 
   private onContextUndone(event: ProjectionEvent, out: ServerMessage[]): void {

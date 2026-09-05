@@ -14,9 +14,12 @@ export const compactionSystemMessageSchema = z.object({
   ...systemBase,
   subtype: z.literal('compaction'),
   payload: z.object({
-    before_tokens: z.number(),
-    after_tokens: z.number(),
+    before_tokens: z.number().optional(),
+    after_tokens: z.number().optional(),
     summarized_through_turn: z.string().optional(),
+    state: z.enum(['running', 'completed', 'cancelled', 'blocked']).optional(),
+    trigger: z.string().optional(),
+    summary: z.string().optional(),
   }),
 });
 

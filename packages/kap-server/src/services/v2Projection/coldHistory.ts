@@ -682,9 +682,11 @@ export function buildColdHistory(
           system_id: compactionSystemId ?? 'm_01',
           subtype: 'compaction',
           payload: {
+            state: 'completed',
             before_tokens: asTime(compactionRecord.tokensBefore) ?? 0,
             after_tokens: asTime(compactionRecord.tokensAfter) ?? 0,
             summarized_through_turn: through,
+            summary: asText(compactionRecord.summary),
           },
         } as ServerMessage,
       ],
