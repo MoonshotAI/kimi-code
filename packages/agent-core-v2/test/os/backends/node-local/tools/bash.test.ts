@@ -837,7 +837,7 @@ describe('BashTool', () => {
     expect(exec).toHaveBeenCalledTimes(1);
     const [command, args, execOptions] = exec.mock.calls[0]!;
     expect(command).toBe('/bin/bash');
-    expect(args).toEqual(['-c', "cd '/workspace' && printf ok"]);
+    expect(args).toEqual(['-c', "cd '/workspace' || exit 1\nprintf ok"]);
     expect(execOptions?.env).toMatchObject({
       NO_COLOR: '1',
       TERM: 'dumb',
@@ -856,7 +856,20 @@ describe('BashTool', () => {
     await executeTool(tool, context({ command: 'pwd', cwd: '/workspace/project', timeout: 60 }));
 
     expect(exec.mock.calls[0]?.[0]).toBe('/bin/bash');
-    expect(exec.mock.calls[0]?.[1]).toEqual(['-c', "cd '/workspace/project' && pwd"]);
+    expect(exec.mock.calls[0]?.[1]).toEqual(['-c', "cd '/workspace/project' || exit 1\npwd"]);
+  });
+
+  it('keeps cwd applied to commands containing a background operator', async () => {
+    const { runner, exec } = createTestRunner(processWithOutput({ stdout: '' }));
+    const tool = bashTool(runner);
+
+    await executeTool(tool, context({ command: 'sleep 1 & pwd', timeout: 60 }));
+
+    // `cd /d && sleep 1 & pwd` parses as `{ cd /d && sleep 1 } & pwd`, which
+    // leaves `pwd` running in the shell's original directory.
+    const shellCommand = exec.mock.calls[0]?.[1]?.[1] ?? '';
+    expect(shellCommand).toBe("cd '/workspace' || exit 1\nsleep 1 & pwd");
+    expect(shellCommand).not.toContain('&& sleep 1 & pwd');
   });
 
   it('accepts args.cwd outside the workspace roots', async () => {
@@ -879,7 +892,7 @@ describe('BashTool', () => {
     await executeTool(tool, context({ command: 'pwd', timeout: 60 }));
 
     expect(exec.mock.calls[0]?.[0]).toBe('/bin/bash');
-    expect(exec.mock.calls[0]?.[1]).toEqual(['-c', "cd '/var/app' && pwd"]);
+    expect(exec.mock.calls[0]?.[1]).toEqual(['-c', "cd '/var/app' || exit 1\npwd"]);
   });
 
   it('uses Git Bash semantics on Windows', async () => {
@@ -892,7 +905,7 @@ describe('BashTool', () => {
     expect(exec).toHaveBeenCalledTimes(1);
     const [command, args, execOptions] = exec.mock.calls[0]!;
     expect(command).toBe('C:\\Program Files\\Git\\bin\\bash.exe');
-    expect(args).toEqual(['-c', "cd '/c/Users/me/project' && echo ok 2>/dev/null"]);
+    expect(args).toEqual(['-c', "cd '/c/Users/me/project' || exit 1\necho ok 2>/dev/null"]);
     expect(execOptions?.env).toMatchObject({ SHELL: 'C:\\Program Files\\Git\\bin\\bash.exe' });
     expect(result).toMatchObject({
       output: 'ok\n',
@@ -1296,7 +1309,7 @@ describe('BashTool', () => {
     await executeTool(tool, context({ command: 'ls 2>nul', timeout: 60 }));
 
     const args = exec.mock.calls[0]?.[1] as readonly string[];
-    expect(args[1]).toBe("cd '/c/Users/me/project' && ls 2>/dev/null");
+    expect(args[1]).toBe("cd '/c/Users/me/project' || exit 1\nls 2>/dev/null");
   });
 
   it('passes nul-redirect through unchanged on Linux so the argv keeps the literal file target', async () => {
@@ -1306,7 +1319,7 @@ describe('BashTool', () => {
     await executeTool(tool, context({ command: 'ls 2>nul', timeout: 60 }));
 
     const args = exec.mock.calls[0]?.[1] as readonly string[];
-    expect(args[1]).toBe("cd '/workspace' && ls 2>nul");
+    expect(args[1]).toBe("cd '/workspace' || exit 1\nls 2>nul");
   });
 
   it('exposes a shell description that documents /bin/bash, TaskOutput/TaskStop, safety and efficiency sections, and background semantics', () => {
@@ -1728,7 +1741,7 @@ describe('BashTool background mode', () => {
     expect(exec).toHaveBeenCalledTimes(2);
     const [command, args, execOptions] = exec.mock.calls[0]!;
     expect(command).toBe('C:\\Program Files\\Git\\bin\\bash.exe');
-    expect(args).toEqual(['-c', "cd '/c/Users/me/project' && echo ok 2>/dev/null"]);
+    expect(args).toEqual(['-c', "cd '/c/Users/me/project' || exit 1\necho ok 2>/dev/null"]);
     expect(execOptions?.env).toMatchObject({ SHELL: 'C:\\Program Files\\Git\\bin\\bash.exe' });
     expect(secondProc.kill).toHaveBeenCalledWith('SIGTERM');
     expect(results).toContainEqual(expect.objectContaining({ isError: false }));
