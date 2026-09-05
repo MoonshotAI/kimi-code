@@ -669,6 +669,33 @@ describe('per-turn intent wire encoding (behavior probes)', () => {
     expect(body['prompt_cache_key']).toBe('session-probe');
   });
 
+  it('omits prompt_cache_key on OpenAI-compatible custom endpoints (chat completions + responses)', async () => {
+    const legacy = registry.createChatProvider({
+      protocol: 'openai',
+      modelName: 'gpt-4o',
+      apiKey: 'sk-probe',
+      baseUrl: 'https://openai-compatible.example.test/v1',
+    });
+    const legacyBody = await captureOpenAIBody(legacy, { cacheKey: 'session-probe' });
+    expect(legacyBody).not.toHaveProperty('prompt_cache_key');
+
+    const responses = new OpenAIResponsesChatProvider({
+      model: 'gpt-4.1',
+      apiKey: 'sk-probe',
+      baseUrl: 'https://openai-compatible.example.test/v1',
+    });
+    const responsesBody = await captureResponsesBody(responses, { cacheKey: 'session-probe' });
+    expect(responsesBody).not.toHaveProperty('prompt_cache_key');
+  });
+
+  it('keeps prompt_cache_key on the official OpenAI Responses endpoint', async () => {
+    const provider = new OpenAIResponsesChatProvider({ model: 'gpt-4.1', apiKey: 'sk-probe' });
+
+    const body = await captureResponsesBody(provider, { cacheKey: 'session-probe' });
+
+    expect(body['prompt_cache_key']).toBe('session-probe');
+  });
+
   it('encodes cacheKey on Anthropic as metadata.user_id', async () => {
     const provider = registry.createChatProvider({
       protocol: 'anthropic',

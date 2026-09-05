@@ -14,7 +14,9 @@ coverage/
 .claude
 .conductor
 .kimi-stash-dir
-plugins/cdn/
+plugins/*
+!plugins/official/
+!plugins/marketplace.json
 .worktrees/
 .kimi-code/local.toml
 .kimi-sandbox/
