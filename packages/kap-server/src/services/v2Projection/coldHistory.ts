@@ -46,6 +46,7 @@ export interface ColdWireRecord {
   fromTurnId?: unknown;
   tokensBefore?: unknown;
   tokensAfter?: unknown;
+  summary?: unknown;
   [key: string]: unknown;
 }
 

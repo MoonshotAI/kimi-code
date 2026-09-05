@@ -109,6 +109,7 @@ export interface ProjectionEvent {
   sourceAgentId?: unknown;
   raw?: unknown;
   input?: unknown;
+  trigger?: unknown;
   [key: string]: unknown;
 }
 
