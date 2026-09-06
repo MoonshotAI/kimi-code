@@ -14,17 +14,17 @@ import type {
   LlmRequester,
 } from '#human/llm/requester/requester';
 
-export type HumanRequesterGateDecision =
+export type MachineRequesterGateDecision =
   | { readonly type: 'proceed'; readonly signal?: AbortSignal; readonly step?: number }
   | { readonly type: 'fail' };
 
-export interface HumanRequesterOptions {
+export interface MachineRequesterOptions {
   readonly source?: () => AgentLLMRequestSource | undefined;
-  readonly gate?: (signal: AbortSignal) => Promise<HumanRequesterGateDecision>;
+  readonly gate?: (signal: AbortSignal) => Promise<MachineRequesterGateDecision>;
   readonly onTrace?: (trace: LLMRequestTrace) => void;
 }
 
-export interface HumanRequester {
+export interface MachineRequester {
   readonly requester: LlmRequester;
   lastFinish(): AgentLLMRequestFinish | undefined;
   lastError(): unknown;
@@ -46,10 +46,10 @@ function toRemoteErrorMessage(error: unknown, signal: AbortSignal): LlmRemoteErr
   return toLlmErrorMessage(raw);
 }
 
-export function createHumanRequester(
+export function createMachineRequester(
   service: IAgentLLMRequesterService,
-  options?: HumanRequesterOptions,
-): HumanRequester {
+  options?: MachineRequesterOptions,
+): MachineRequester {
   let lastFinish: AgentLLMRequestFinish | undefined;
   let lastError: unknown;
   const generate = async (

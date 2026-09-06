@@ -105,7 +105,7 @@ describe('check-import-boundaries', () => {
       at('agent', 'loop.ts'),
     );
     expect(violations).toHaveLength(1);
-    expect(violations[0]?.message).toMatch(/only llm-adapter and agent\/loop\/human may import the human implementation/);
+    expect(violations[0]?.message).toMatch(/only llm-adapter and agent\/loop\/machine may import the human implementation/);
   });
 
   it('allows a non-adapter v2 file importing human vocabulary', () => {
@@ -130,7 +130,7 @@ describe('check-import-boundaries', () => {
       at('agent', 'loop.ts'),
     );
     expect(violations).toHaveLength(1);
-    expect(violations[0]?.message).toMatch(/only llm-adapter and agent\/loop\/human may import the human implementation/);
+    expect(violations[0]?.message).toMatch(/only llm-adapter and agent\/loop\/machine may import the human implementation/);
   });
 
   it('allows arbitrary cross-domain imports outside kosong', () => {

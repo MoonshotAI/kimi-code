@@ -4,7 +4,7 @@ import type { HistoryMessage } from '#human/agent/turn';
 import type { UserMessage } from '#human/llm/message';
 import { emptyUsage } from '#human/llm/usage';
 
-export const EMPTY_HUMAN_PROMPT: UserMessage = { role: 'user', content: [] };
+export const EMPTY_MACHINE_PROMPT: UserMessage = { role: 'user', content: [] };
 
 export function historyEntryFromContext(message: ContextMessage): HistoryMessage {
   const converted = toLlmMessage(message);

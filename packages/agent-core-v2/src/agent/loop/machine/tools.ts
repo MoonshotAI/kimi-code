@@ -31,7 +31,7 @@ export interface ToolResultExtras {
   readonly isError?: boolean;
 }
 
-export interface CreateHumanToolsOptions {
+export interface CreateMachineToolsOptions {
   readonly toolExecutor: IAgentToolExecutorService;
   readonly toolInfos: readonly ToolInfo[];
   readonly turnId: () => number;
@@ -40,7 +40,7 @@ export interface CreateHumanToolsOptions {
   readonly onToolResult?: (toolCallId: string, result: AgentToolResult) => void;
 }
 
-export interface HumanTools {
+export interface MachineTools {
   readonly tools: ToolDefinition[];
   readonly extras: ReadonlyMap<string, ToolResultExtras>;
   beginBatch(): void;
@@ -60,7 +60,7 @@ function parseToolArgs(raw: string | null): unknown {
   }
 }
 
-export function createHumanTools(options: CreateHumanToolsOptions): HumanTools {
+export function createMachineTools(options: CreateMachineToolsOptions): MachineTools {
   const extras = new Map<string, ToolResultExtras>();
   const progressHandlers = new Map<string, ((update: ToolUpdate) => void) | undefined>();
   let batchChain: Promise<unknown> = Promise.resolve();

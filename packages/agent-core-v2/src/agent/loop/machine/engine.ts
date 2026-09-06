@@ -11,14 +11,14 @@ import type { StreamedMessagePart, UserMessage } from '#human/llm/message';
 import type { LlmModel } from '#human/llm/model';
 import { createLlmMachine } from '#human/llm/requester/machine';
 import type { LlmRecovery, LlmRecoveryRecord } from '#human/llm/requester/recovery';
-import type { ToolResult as HumanToolResult, ToolUpdate } from '#human/tool/executor';
+import type { ToolResult as MachineToolResult, ToolUpdate } from '#human/tool/executor';
 import type { TokenUsage } from '#human/llm/usage';
 import { createActor, type Subscription } from '#human/xstate2';
 
-import { createHumanRequester, type HumanRequesterGateDecision } from './requester';
-import { createHumanTools, type ToolResultExtras } from './tools';
+import { createMachineRequester, type MachineRequesterGateDecision } from './requester';
+import { createMachineTools, type ToolResultExtras } from './tools';
 
-export type HumanEngineDelta =
+export type MachineEngineDelta =
   | { readonly kind: 'assistant'; readonly delta: string }
   | { readonly kind: 'thinking'; readonly delta: string }
   | {
@@ -29,13 +29,13 @@ export type HumanEngineDelta =
       readonly started?: boolean;
     };
 
-export type HumanTurnOutcome = 'done' | 'failed' | 'aborted';
+export type MachineTurnOutcome = 'done' | 'failed' | 'aborted';
 
-export type HumanEngineEvent =
+export type MachineEngineEvent =
   | { readonly type: 'turnStarted'; readonly machineTurnId: number }
   | {
       readonly type: 'turnSettled';
-      readonly outcome: HumanTurnOutcome;
+      readonly outcome: MachineTurnOutcome;
       readonly error?: unknown;
       readonly produced: readonly HistoryMessage[];
     }
@@ -52,7 +52,7 @@ export type HumanEngineEvent =
       readonly traceId?: string;
     }
   | { readonly type: 'stepFailed'; readonly step: number; readonly error: LlmErrorMessage; readonly rawError?: unknown }
-  | { readonly type: 'delta'; readonly delta: HumanEngineDelta }
+  | { readonly type: 'delta'; readonly delta: MachineEngineDelta }
   | {
       readonly type: 'retrying';
       readonly step: number;
@@ -82,13 +82,13 @@ export type HumanEngineEvent =
     }
   | { readonly type: 'toolUpdate'; readonly toolCallId: string; readonly update: ToolUpdate }
   | { readonly type: 'toolAsync'; readonly toolCallId: string; readonly text: string }
-  | { readonly type: 'toolDone'; readonly toolCallId: string; readonly result: HumanToolResult }
+  | { readonly type: 'toolDone'; readonly toolCallId: string; readonly result: MachineToolResult }
   | { readonly type: 'toolFailed'; readonly toolCallId: string; readonly error: unknown }
   | { readonly type: 'toolAborted'; readonly toolCallId: string }
   | { readonly type: 'remindersConsumed'; readonly reminders: HistoryMessage[] }
   | { readonly type: 'aborting' };
 
-export interface CreateHumanEngineOptions {
+export interface CreateMachineEngineOptions {
   readonly model: LlmModel;
   readonly systemPrompt?: string;
   readonly llmRequester: IAgentLLMRequesterService;
@@ -100,13 +100,13 @@ export interface CreateHumanEngineOptions {
   readonly trace?: () => LLMRequestTrace | undefined;
   readonly source?: () => AgentLLMRequestSource | undefined;
   readonly toolTurnId?: () => number | undefined;
-  readonly gate?: (signal: AbortSignal) => Promise<HumanRequesterGateDecision>;
+  readonly gate?: (signal: AbortSignal) => Promise<MachineRequesterGateDecision>;
   readonly onTrace?: (trace: LLMRequestTrace) => void;
-  readonly onEvent?: (event: HumanEngineEvent) => void;
+  readonly onEvent?: (event: MachineEngineEvent) => void;
   readonly onToolResult?: (toolCallId: string, result: AgentToolResult) => void;
 }
 
-export interface HumanEngineSnapshot {
+export interface MachineEngineSnapshot {
   readonly running: boolean;
   readonly aborting: boolean;
   readonly waitingForBackground: boolean;
@@ -116,7 +116,7 @@ export interface HumanEngineSnapshot {
   readonly backgroundCount: number;
 }
 
-export interface HumanEngine {
+export interface MachineEngine {
   submit(input: { readonly id?: string; readonly message: UserMessage }): void;
   steer(id: string): void;
   notify(message: UserMessage): void;
@@ -124,7 +124,7 @@ export interface HumanEngine {
   abort(): void;
   resetHistory(history: readonly HistoryMessage[], turnId: number): void;
   stop(): void;
-  snapshot(): HumanEngineSnapshot;
+  snapshot(): MachineEngineSnapshot;
   lastFinish(): AgentLLMRequestFinish | undefined;
   readonly toolExtras: ReadonlyMap<string, ToolResultExtras>;
   handleToolProgress(toolCallId: string, update: AgentToolUpdate): void;
@@ -140,7 +140,7 @@ interface MachineSnapshotLike {
   };
 }
 
-function createDeltaSplitter(): (part: StreamedMessagePart) => HumanEngineDelta | undefined {
+function createDeltaSplitter(): (part: StreamedMessagePart) => MachineEngineDelta | undefined {
   const callsByIndex = new Map<number | string | undefined, { id: string; name: string }>();
   return (part) => {
     switch (part.type) {
@@ -177,20 +177,20 @@ function createDeltaSplitter(): (part: StreamedMessagePart) => HumanEngineDelta 
   };
 }
 
-export function createHumanEngine(options: CreateHumanEngineOptions): HumanEngine {
+export function createMachineEngine(options: CreateMachineEngineOptions): MachineEngine {
   let currentStep = 0;
   let split = createDeltaSplitter();
   let pendingFailure: { step: number; error: LlmErrorMessage } | undefined;
 
-  const publish = (event: HumanEngineEvent): void => {
+  const publish = (event: MachineEngineEvent): void => {
     options.onEvent?.(event);
   };
-  const requester = createHumanRequester(options.llmRequester, {
+  const requester = createMachineRequester(options.llmRequester, {
     source: options.source,
     gate: options.gate,
     onTrace: options.onTrace,
   });
-  const tools = createHumanTools({
+  const tools = createMachineTools({
     toolExecutor: options.toolExecutor,
     toolInfos: options.toolInfos,
     turnId: () => options.toolTurnId?.() ?? 0,

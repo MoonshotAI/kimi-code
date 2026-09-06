@@ -71,13 +71,13 @@ import {
 } from './turnEvents';
 import { TurnCancel, TurnEnded, turnKey, TurnPrompt } from './turnOps';
 import {
-  createHumanEngine,
-  EMPTY_HUMAN_PROMPT,
+  createMachineEngine,
+  EMPTY_MACHINE_PROMPT,
   historyFromContext,
-  type HumanEngine,
-  type HumanEngineEvent,
-  type HumanTurnOutcome,
-} from './human';
+  type MachineEngine,
+  type MachineEngineEvent,
+  type MachineTurnOutcome,
+} from './machine';
 
 export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error';
 
@@ -93,7 +93,7 @@ export const loopDisposingKey = defineState<boolean>('loop.disposing', () => fal
 
 const MAX_STEP_SIGNAL_LISTENERS = 64;
 
-const HUMAN_LOOP_MODEL = {
+const MACHINE_LOOP_MODEL = {
   provider: 'agent-loop',
   model: 'agent-loop',
   capability: UNKNOWN_CAPABILITY,
@@ -117,7 +117,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private readonly settleWaiters: Array<() => void> = [];
   private quiescenceDepth = 0;
   private activeRequestTrace: LLMRequestTrace | undefined;
-  private engine: HumanEngine | undefined;
+  private engine: MachineEngine | undefined;
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
@@ -161,10 +161,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.states.set(loopDisposingKey, value);
   }
 
-  private humanEngine(): HumanEngine {
+  private machineEngine(): MachineEngine {
     if (this.engine === undefined) {
-      this.engine = createHumanEngine({
-        model: HUMAN_LOOP_MODEL,
+      this.engine = createMachineEngine({
+        model: MACHINE_LOOP_MODEL,
         llmRequester: this.llmRequester,
         toolExecutor: this.toolExecutor,
         toolInfos: this.toolRegistry.list(),
@@ -183,8 +183,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         onTrace: (trace) => {
           this.activeRequestTrace = trace;
         },
-        onEvent: (event) => this.projectHumanEvent(event),
-        onToolResult: (toolCallId, result) => this.appendHumanToolResult(toolCallId, result),
+        onEvent: (event) => this.projectMachineEvent(event),
+        onToolResult: (toolCallId, result) => this.appendMachineToolResult(toolCallId, result),
       });
     }
     return this.engine;
@@ -226,8 +226,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       onConsume: prompt.onMaterialize,
       onDrop: undefined,
     });
-    this.humanEngine().submit({ id, message: humanUserMessage(message) });
-    this.humanEngine().steer(id);
+    this.machineEngine().submit({ id, message: machineUserMessage(message) });
+    this.machineEngine().steer(id);
     return active.turn;
   }
 
@@ -243,7 +243,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.nudges.push(nudge);
     if (this.quiescenceDepth === 0) {
       nudge.sentToMachine = true;
-      this.humanEngine().notify(humanUserMessage(note.message));
+      this.machineEngine().notify(machineUserMessage(note.message));
     }
     return {
       get dropped() {
@@ -291,9 +291,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (reservation.cancelled || reservation.launched) return;
     reservation.launched = true;
 
-    this.humanEngine().submit({
+    this.machineEngine().submit({
       id: reservation.promptId ?? `turn-${String(reservation.id)}`,
-      message: humanUserMessage(reservation.message),
+      message: machineUserMessage(reservation.message),
     });
   }
 
@@ -357,7 +357,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     for (const nudge of this.nudges.slice(this.nudgeCursor)) {
       if (!nudge.dropped && !nudge.sentToMachine) {
         nudge.sentToMachine = true;
-        this.humanEngine().notify(humanUserMessage(nudge.contextMessage));
+        this.machineEngine().notify(machineUserMessage(nudge.contextMessage));
       }
     }
     this.maybeSettle();
@@ -376,7 +376,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       }),
     );
     active.controller.abort(cancellation);
-    this.humanEngine().abort();
+    this.machineEngine().abort();
     return true;
   }
 
@@ -469,7 +469,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return true;
   }
 
-  private async gate(machineSignal: AbortSignal): Promise<HumanGateDecision> {
+  private async gate(machineSignal: AbortSignal): Promise<MachineGateDecision> {
 
 
     const active = this.active;
@@ -495,7 +495,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }
     turn.steps += 1;
     turn.gatedSteps = turn.steps;
-    const step: HumanStepState = {
+    const step: MachineStepState = {
       number: turn.steps,
       uuid: randomUUID(),
       signal: turn.controller.signal,
@@ -526,19 +526,19 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
     } catch (error) {
 
-      return this.failHumanGate(turn, step, error);
+      return this.failMachineGate(turn, step, error);
     }
     if (step.signal.aborted) {
-      return this.failHumanGate(turn, step, step.signal.reason ?? abortError('Step aborted'));
+      return this.failMachineGate(turn, step, step.signal.reason ?? abortError('Step aborted'));
     }
     return { type: 'proceed', signal: step.signal, step: step.number };
   }
 
-  private failHumanGate(
+  private failMachineGate(
     turn: ActiveTurn,
-    step: HumanStepState,
+    step: MachineStepState,
     error: unknown,
-  ): HumanGateDecision {
+  ): MachineGateDecision {
     if (turn.controller.signal.aborted || isAbortError(error) || step.signal.aborted) {
       turn.abortReason = turn.controller.signal.aborted ? turn.controller.signal.reason : error;
       return { type: 'fail' };
@@ -705,7 +705,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return { live, bypass };
   }
 
-  private projectHumanEvent(event: HumanEngineEvent): void {
+  private projectMachineEvent(event: MachineEngineEvent): void {
     switch (event.type) {
       case 'turnStarted': {
 
@@ -757,13 +757,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         const delta = event.delta;
         switch (delta.kind) {
           case 'assistant':
-            this.accumulateHumanPart(turn, { type: 'text', text: delta.delta });
+            this.accumulateMachinePart(turn, { type: 'text', text: delta.delta });
             void this.dispatcher.dispatch(
               new AssistantDelta({ agentId: this.scopeContext.agentId, turnId: turn.id, delta: delta.delta }),
             );
             return;
           case 'thinking':
-            this.accumulateHumanPart(turn, { type: 'think', think: delta.delta });
+            this.accumulateMachinePart(turn, { type: 'think', think: delta.delta });
             void this.dispatcher.dispatch(
               new ThinkingDelta({ agentId: this.scopeContext.agentId, turnId: turn.id, delta: delta.delta }),
             );
@@ -808,7 +808,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         const toolCalls = event.entry.message.toolCalls;
         if (toolCalls.length === 0) {
           const finishReason = step.providerFinishReason ?? 'completed';
-          this.endOrInterruptHumanStep(turn, step, finishReason === 'tool_calls' ? 'other' : finishReason);
+          this.endOrInterruptMachineStep(turn, step, finishReason === 'tool_calls' ? 'other' : finishReason);
         } else {
           step.pendingToolIds = new Set(toolCalls.map((call) => call.id));
         }
@@ -843,13 +843,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           turn.afterChain = turn.afterChain.then(async () => {
             await this.executeUnknownToolCall(turn, step, event.toolCallId);
             if (step.pendingToolIds.size === 0) {
-              this.endOrInterruptHumanStep(turn, step, step.toolStopTurn ? 'completed' : 'tool_calls');
+              this.endOrInterruptMachineStep(turn, step, step.toolStopTurn ? 'completed' : 'tool_calls');
             }
           });
           return;
         }
         if (step.pendingToolIds.size === 0) {
-          this.endOrInterruptHumanStep(turn, step, step.toolStopTurn ? 'completed' : 'tool_calls');
+          this.endOrInterruptMachineStep(turn, step, step.toolStopTurn ? 'completed' : 'tool_calls');
         }
         return;
       }
@@ -866,7 +866,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         });
         step.pendingToolIds.delete(event.toolCallId);
         if (step.pendingToolIds.size === 0) {
-          this.endOrInterruptHumanStep(turn, step, step.toolStopTurn ? 'completed' : 'tool_calls');
+          this.endOrInterruptMachineStep(turn, step, step.toolStopTurn ? 'completed' : 'tool_calls');
         }
         return;
       }
@@ -875,7 +875,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         const step = turn?.current;
         if (turn === undefined) return;
         if (step !== undefined) {
-          this.closeFailedHumanStep(turn, step, 'error');
+          this.closeFailedMachineStep(turn, step, 'error');
         }
         const fields =
           event.rawError !== undefined
@@ -907,7 +907,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         const turn = this.active;
         const step = turn?.current;
         if (turn === undefined || step === undefined) return;
-        this.closeFailedHumanStep(turn, step, step.signal.aborted ? 'interrupted' : 'error');
+        this.closeFailedMachineStep(turn, step, step.signal.aborted ? 'interrupted' : 'error');
         turn.failedStep ??= {
           number: step.number,
           uuid: step.uuid,
@@ -922,7 +922,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   private isCannedUnknownToolResult(
-    step: HumanStepState,
+    step: MachineStepState,
     toolCallId: string,
     result: { readonly content: readonly ContentPart[]; readonly isError?: boolean },
   ): boolean {
@@ -940,7 +940,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   private async executeUnknownToolCall(
     turn: ActiveTurn,
-    step: HumanStepState,
+    step: MachineStepState,
     toolCallId: string,
   ): Promise<void> {
     const call = step.entry?.message.toolCalls.find((entry) => entry.id === toolCallId);
@@ -969,19 +969,19 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       },
     })) {
       if (result.toolCallId === toolCallId) {
-        this.appendHumanToolResult(toolCallId, result.result);
+        this.appendMachineToolResult(toolCallId, result.result);
       }
     }
   }
 
-  private accumulateHumanPart(turn: ActiveTurn, part: ContentPart): void {
+  private accumulateMachinePart(turn: ActiveTurn, part: ContentPart): void {
     const last = turn.partials.at(-1);
     if (!turn.forceContentPartBoundary && last !== undefined && mergeInPlace(last, part)) return;
     turn.forceContentPartBoundary = false;
     turn.partials.push({ ...part });
   }
 
-  private appendHumanToolResult(
+  private appendMachineToolResult(
     toolCallId: string,
     result: {
       readonly output: string | ContentPart[];
@@ -1007,7 +1007,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }
   }
 
-  private drainHumanPartials(turn: ActiveTurn, step: HumanStepState): void {
+  private drainMachinePartials(turn: ActiveTurn, step: MachineStepState): void {
     for (const part of turn.partials.splice(0).filter((entry) => !isVacuousContentPart(entry))) {
       this.context.appendLoopEvent({
         type: 'content.part',
@@ -1020,12 +1020,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }
   }
 
-  private closeFailedHumanStep(
+  private closeFailedMachineStep(
     turn: ActiveTurn,
-    step: HumanStepState,
+    step: MachineStepState,
     finishReason: 'error' | 'interrupted',
   ): void {
-    if (!step.contentAppended) this.drainHumanPartials(turn, step);
+    if (!step.contentAppended) this.drainMachinePartials(turn, step);
     this.context.appendLoopEvent({
       type: 'step.end',
       uuid: step.uuid,
@@ -1035,9 +1035,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     });
   }
 
-  private endOrInterruptHumanStep(
+  private endOrInterruptMachineStep(
     turn: ActiveTurn,
-    step: HumanStepState,
+    step: MachineStepState,
     finishReason: FinishReason,
   ): void {
     if (turn.controller.signal.aborted) {
@@ -1051,24 +1051,24 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       turn.current = undefined;
       return;
     }
-    this.endHumanStep(turn, step, finishReason);
+    this.endMachineStep(turn, step, finishReason);
   }
 
-  private endHumanStep(turn: ActiveTurn, step: HumanStepState, finishReason: FinishReason): void {
+  private endMachineStep(turn: ActiveTurn, step: MachineStepState, finishReason: FinishReason): void {
     const normalized = normalizeFinishReason(finishReason);
     const usage = step.usage ?? emptyUsage();
     turn.lastStopReason = finishReason;
     turn.current = undefined;
     const firstStepOfTurn = step.number === 1;
     turn.afterChain = turn.afterChain.then(async () => {
-      this.finishHumanStepProjection(turn, step, normalized, usage);
-      await this.runHumanAfterStep(turn, step, firstStepOfTurn, usage, finishReason);
+      this.finishMachineStepProjection(turn, step, normalized, usage);
+      await this.runMachineAfterStep(turn, step, firstStepOfTurn, usage, finishReason);
     });
   }
 
-  private finishHumanStepProjection(
+  private finishMachineStepProjection(
     turn: ActiveTurn,
-    step: HumanStepState,
+    step: MachineStepState,
     normalized: string,
     usage: TokenUsage,
   ): void {
@@ -1109,9 +1109,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     );
   }
 
-  private async runHumanAfterStep(
+  private async runMachineAfterStep(
     turn: ActiveTurn,
-    step: HumanStepState,
+    step: MachineStepState,
     firstStepOfTurn: boolean,
     usage: TokenUsage,
     finishReason: FinishReason,
@@ -1142,7 +1142,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   private async evaluateSettle(
     turn: ActiveTurn,
-    outcome: { readonly outcome: HumanTurnOutcome; readonly error?: unknown },
+    outcome: { readonly outcome: MachineTurnOutcome; readonly error?: unknown },
   ): Promise<void> {
     if (this.active !== turn) return;
     if (turn.abortReason !== undefined || turn.controller.signal.aborted || outcome.outcome === 'aborted') {
@@ -1150,7 +1150,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         turn.abortReason ??
         (turn.controller.signal.aborted ? turn.controller.signal.reason : undefined) ??
         abortError('Turn aborted');
-      this.interruptHumanRunForCancel(turn, reason);
+      this.interruptMachineRunForCancel(turn, reason);
       await this.endTurn(turn, { type: 'cancelled', steps: turn.steps, reason });
       return;
     }
@@ -1170,18 +1170,18 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       return;
     }
     if (turn.failedStep !== undefined) {
-      await this.recoverOrFailHumanRun(turn);
+      await this.recoverOrFailMachineRun(turn);
       return;
     }
     if (turn.stopRequested) {
-      await this.endTurn(turn, this.humanCompletedResult(turn));
+      await this.endTurn(turn, this.machineCompletedResult(turn));
       return;
     }
     if (this.hasLiveNudge()) {
       return;
     }
     if (turn.toolStopRequested) {
-      await this.endTurn(turn, this.humanCompletedResult(turn));
+      await this.endTurn(turn, this.machineCompletedResult(turn));
       return;
     }
     if (outcome.outcome === 'failed') {
@@ -1190,14 +1190,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       await this.endTurn(turn, { type: 'failed', steps: turn.steps, error });
       return;
     }
-    await this.endTurn(turn, this.humanCompletedResult(turn));
+    await this.endTurn(turn, this.machineCompletedResult(turn));
   }
 
   private hasLiveNudge(): boolean {
     return this.nudges.slice(this.nudgeCursor).some((nudge) => !nudge.dropped);
   }
 
-  private async recoverOrFailHumanRun(turn: ActiveTurn): Promise<void> {
+  private async recoverOrFailMachineRun(turn: ActiveTurn): Promise<void> {
     const failure = turn.failedStep!;
     turn.failedStep = undefined;
     const context: LoopErrorContext = {
@@ -1217,15 +1217,15 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           turn.interruptStep = undefined;
           if (turn.retryRequested) {
             turn.retryRequested = false;
-            this.humanEngine().resetHistory(historyFromContext(this.context.get()), turn.id - 1);
-            this.humanEngine().notify(EMPTY_HUMAN_PROMPT);
+            this.machineEngine().resetHistory(historyFromContext(this.context.get()), turn.id - 1);
+            this.machineEngine().notify(EMPTY_MACHINE_PROMPT);
           }
           return;
         }
       } catch (handlerError) {
         if (isAbortError(handlerError) || turn.controller.signal.aborted) {
           const reason = turn.controller.signal.aborted ? turn.controller.signal.reason : handlerError;
-          this.interruptHumanRunForCancel(turn, reason);
+          this.interruptMachineRunForCancel(turn, reason);
           await this.endTurn(turn, { type: 'cancelled', steps: turn.steps, reason });
           return;
         }
@@ -1234,21 +1234,21 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         return;
       }
     }
-    this.failHumanStep(turn, failure.number, failure.error);
+    this.failMachineStep(turn, failure.number, failure.error);
     await this.endTurn(turn, { type: 'failed', steps: turn.steps, error: failure.error });
   }
 
-  private failHumanStep(turn: ActiveTurn, step: number | undefined, error: unknown): void {
+  private failMachineStep(turn: ActiveTurn, step: number | undefined, error: unknown): void {
     const reason: LoopInterruptReason = isMaxStepsExceededError(error) ? 'max_steps' : 'error';
     const interruptedError =
       isError2(error) && error.code === ErrorCodes.INTERNAL && error.cause !== undefined ? error.cause : error;
     this.emitStepInterrupted(turn.id, step, reason, toErrorMessage(interruptedError));
   }
 
-  private interruptHumanRunForCancel(turn: ActiveTurn, reason: unknown): void {
+  private interruptMachineRunForCancel(turn: ActiveTurn, reason: unknown): void {
     const current = turn.current;
     if (current !== undefined) {
-      if (!current.contentAppended) this.drainHumanPartials(turn, current);
+      if (!current.contentAppended) this.drainMachinePartials(turn, current);
       this.context.appendLoopEvent({
         type: 'step.end',
         uuid: current.uuid,
@@ -1269,7 +1269,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }
   }
 
-  private humanCompletedResult(turn: ActiveTurn): LoopRunResult {
+  private machineCompletedResult(turn: ActiveTurn): LoopRunResult {
     const truncated = turn.lastStopReason === 'truncated';
     return {
       type: 'completed',
@@ -1373,7 +1373,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 }
 
-type HumanGateDecision =
+type MachineGateDecision =
   | { readonly type: 'proceed'; readonly signal: AbortSignal; readonly step: number }
   | { readonly type: 'fail' };
 
@@ -1388,8 +1388,8 @@ function normalizePromptMessage(prompt: LoopPromptSubmit): ContextMessage {
   return prompt.message;
 }
 
-function humanUserMessage(message: ContextMessage | undefined): UserMessage {
-  if (message === undefined) return EMPTY_HUMAN_PROMPT;
+function machineUserMessage(message: ContextMessage | undefined): UserMessage {
+  if (message === undefined) return EMPTY_MACHINE_PROMPT;
   return { role: 'user', content: [...message.content] };
 }
 
@@ -1422,14 +1422,14 @@ interface Nudge {
   sentToMachine?: boolean;
 }
 
-type HumanStepEntry = Extract<HumanEngineEvent, { readonly type: 'stepCompleted' }>['entry'];
+type MachineStepEntry = Extract<MachineEngineEvent, { readonly type: 'stepCompleted' }>['entry'];
 
-interface HumanStepState {
+interface MachineStepState {
   readonly number: number;
   readonly uuid: string;
   readonly signal: AbortSignal;
   contentAppended: boolean;
-  entry: HumanStepEntry | undefined;
+  entry: MachineStepEntry | undefined;
   usage: TokenUsage | undefined;
   timing: ModelRequestTiming | undefined;
   providerFinishReason: FinishReason | undefined;
@@ -1440,7 +1440,7 @@ interface HumanStepState {
   toolStopTurn: boolean;
 }
 
-interface HumanFailedStep {
+interface MachineFailedStep {
   readonly number: number;
   readonly uuid: string;
   readonly error: unknown;
@@ -1455,9 +1455,9 @@ interface ActiveTurn {
   steps: number;
   gatedSteps: number;
   nudgeCursor: number;
-  current: HumanStepState | undefined;
+  current: MachineStepState | undefined;
   interruptStep: number | undefined;
-  failedStep: HumanFailedStep | undefined;
+  failedStep: MachineFailedStep | undefined;
   stopRequested: boolean;
   toolStopRequested: boolean;
   forcedStopReason: string | undefined;
