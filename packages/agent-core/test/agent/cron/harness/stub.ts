@@ -45,6 +45,8 @@ export interface AgentStubOptions {
   readonly steerReturns?: number | null;
   /** Optional homedir so CronManager persistence can derive its path. */
   readonly homedir?: string;
+  /** Current goal status exposed through `agent.goal.getGoal()`. */
+  readonly goalStatus?: 'active' | 'paused' | 'blocked';
 }
 
 export interface AgentStub {
@@ -53,6 +55,7 @@ export interface AgentStub {
   readonly telemetryCalls: TelemetryCall[];
   readonly eventCalls: EventCall[];
   setHasActiveTurn(v: boolean): void;
+  setGoalStatus(v: 'active' | 'paused' | 'blocked' | undefined): void;
 }
 
 export function createAgentStub(opts: AgentStubOptions = {}): AgentStub {
@@ -60,6 +63,7 @@ export function createAgentStub(opts: AgentStubOptions = {}): AgentStub {
   const telemetryCalls: TelemetryCall[] = [];
   const eventCalls: EventCall[] = [];
   let hasActiveTurn = opts.hasActiveTurn ?? false;
+  let goalStatus = opts.goalStatus;
   // `?? 42` would collapse explicit `null` (buffered) into 42, so probe
   // the property's presence instead of relying on nullish coalescing.
   const steerReturns: number | null =
@@ -79,9 +83,20 @@ export function createAgentStub(opts: AgentStubOptions = {}): AgentStub {
       telemetryCalls.push({ event, props });
     },
   };
+  const goal = {
+    getGoal: () => ({
+      goal:
+        goalStatus === undefined
+          ? null
+          : {
+              status: goalStatus,
+            },
+    }),
+  };
   const agent = {
     turn,
     telemetry,
+    goal,
     homedir: opts.homedir,
     emitEvent: (event: AgentEvent) => {
       eventCalls.push({ event });
@@ -94,6 +109,9 @@ export function createAgentStub(opts: AgentStubOptions = {}): AgentStub {
     eventCalls,
     setHasActiveTurn: (v: boolean) => {
       hasActiveTurn = v;
+    },
+    setGoalStatus: (v) => {
+      goalStatus = v;
     },
   };
 }
