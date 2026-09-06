@@ -1079,6 +1079,7 @@ export interface AgentStateSnapshot {
       name: string;
       arguments: string | null;
       extras?: Record<string, unknown>;
+      rawId?: string;
       _streamIndex?: string | number;
     }[];
     readonly toolCallId?: string;

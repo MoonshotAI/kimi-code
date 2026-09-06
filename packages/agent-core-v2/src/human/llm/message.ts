@@ -41,6 +41,7 @@ export interface ToolCall {
   name: string;
   arguments: string | null;
   extras?: Record<string, unknown>;
+  rawId?: string;
   _streamIndex?: number | string;
 }
 
@@ -210,6 +211,7 @@ export function createMessageAccumulator(): MessageAccumulator {
         name: pending.name,
         arguments: pending.arguments,
         extras: pending.extras,
+        rawId: pending.rawId,
       });
       if (pending._streamIndex !== undefined) {
         toolCallIndexMap.set(pending._streamIndex, ordinal);

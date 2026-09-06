@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Message } from '#/llm-adapter/contract/message';
-import type { ToolCall } from '#human/llm/message';
+import type { Message, ToolCall } from '#/llm/message';
 
-import { ToolCallIdNormalizer } from '#/agent/llmRequester/toolCallIdNormalizer';
+import { ToolCallIdNormalizer } from '#/llm/toolCallIdNormalizer';
 
 function call(id: string, streamIndex?: number): ToolCall {
   return { type: 'function', id, name: 'Bash', arguments: '{}', _streamIndex: streamIndex };
@@ -65,9 +64,12 @@ describe('ToolCallIdNormalizer', () => {
 
   it('claims tool result ids from history as well', () => {
     const normalizer = new ToolCallIdNormalizer();
-    normalizer.seedFrom([
-      { role: 'tool', content: [], toolCalls: [], toolCallId: 'Bash_1' },
-    ]);
+    const history: Message[] = [
+      { role: 'user', content: [] },
+      { role: 'system', content: [] },
+      { role: 'tool', content: [], toolCallId: 'Bash_1' },
+    ];
+    normalizer.seedFrom(history);
 
     expect(normalizer.beginResponse().remapStreamedId('Bash_1', 0)).toBe('Bash_1__2');
   });

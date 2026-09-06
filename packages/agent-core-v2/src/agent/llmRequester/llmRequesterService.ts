@@ -67,7 +67,7 @@ import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import {
   ToolCallIdNormalizer,
   type ToolCallIdResponseNormalizer,
-} from './toolCallIdNormalizer';
+} from '#human/llm/toolCallIdNormalizer';
 import {
   LlmRequest,
   llmRequestTraceKey,

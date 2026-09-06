@@ -3,7 +3,6 @@ import type {
   AgentLLMRequestSource,
   IAgentLLMRequesterService,
 } from '#/agent/llmRequester/llmRequester';
-import { ToolCallIdResponseNormalizer } from '#/agent/llmRequester/toolCallIdNormalizer';
 import { unwrapErrorCause } from '#/errors';
 import { llmMessageFromError } from '#/llm-adapter/contract/errors';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
@@ -81,17 +80,9 @@ export function createMachineRequester(
       baseSource?.type === 'turn' && decision.step !== undefined
         ? { ...baseSource, step: decision.step }
         : baseSource;
-    const toolCallIds = new ToolCallIdResponseNormalizer(new Set());
     const task = service.start(
       { source },
-      (part) => {
-        if (part.type !== 'function') {
-          control.onEvent?.({ type: 'llm.delta', part });
-          return;
-        }
-        const id = toolCallIds.remapStreamedId(part.id, part._streamIndex);
-        control.onEvent?.({ type: 'llm.delta', part: id === part.id ? part : { ...part, id } });
-      },
+      (part) => control.onEvent?.({ type: 'llm.delta', part }),
       signal,
     );
     options?.onTrace?.(task.trace);

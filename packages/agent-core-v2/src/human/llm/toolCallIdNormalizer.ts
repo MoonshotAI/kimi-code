@@ -1,15 +1,20 @@
-import type { Message } from '#/llm-adapter/contract/message';
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '#/llm/message';
+
+export interface ToolCallIdSeedMessage {
+  readonly role?: string;
+  readonly toolCalls?: readonly { readonly id: string }[];
+  readonly toolCallId?: string;
+}
 
 export class ToolCallIdNormalizer {
   private readonly seen = new Set<string>();
   private seeded = false;
 
-  seedFrom(messages: readonly Message[]): void {
+  seedFrom(messages: readonly ToolCallIdSeedMessage[]): void {
     if (this.seeded) return;
     this.seeded = true;
     for (const message of messages) {
-      for (const call of message.toolCalls) this.seen.add(call.id);
+      for (const call of message.toolCalls ?? []) this.seen.add(call.id);
       if (message.toolCallId !== undefined) this.seen.add(message.toolCallId);
     }
   }

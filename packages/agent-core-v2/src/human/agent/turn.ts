@@ -16,6 +16,7 @@ import {
 import type { LlmModel } from '#/llm/model';
 import type { createLlmMachine, LlmEvent } from '#/llm/requester/machine';
 import type { LlmRequestConfig } from '#/llm/requester/requester';
+import { ToolCallIdNormalizer } from '#/llm/toolCallIdNormalizer';
 import { emptyUsage, type TokenUsage } from '#/llm/usage';
 import type { ToolResult } from '#/tool/executor';
 import type { ToolOutput } from '#/tool/machine';
@@ -83,7 +84,8 @@ export function toInputMessages(history: readonly HistoryMessage[]): Message[] {
 }
 
 export interface HistoryAccumulator {
-  push(part: StreamedMessagePart): void;
+  push(part: StreamedMessagePart): StreamedMessagePart;
+  rollback(): void;
   pushUsage(usage: Partial<TokenUsage>): void;
   pushHeaders(headers: Record<string, string>): void;
   pushFinish(finish: FinishInfo): void;
@@ -91,14 +93,32 @@ export interface HistoryAccumulator {
   finish(meta?: AssistantMetaInput): AssistantEntry;
 }
 
-export function createHistoryAccumulator(meta?: AssistantMetaInput): HistoryAccumulator {
+export function createHistoryAccumulator(
+  meta?: AssistantMetaInput,
+  toolCallIds?: ToolCallIdNormalizer,
+): HistoryAccumulator {
   const inner = createMessageAccumulator();
+  const response = toolCallIds?.beginResponse();
   let usage: TokenUsage | undefined;
   let headers: Record<string, string> | undefined;
   let finish: FinishInfo | undefined;
   let messageId: string | undefined;
   return {
-    push: (part) => inner.push(part),
+    push: (part) => {
+      if (response !== undefined && part.type === 'function') {
+        const id = response.remapStreamedId(part.id, part._streamIndex);
+        if (id !== part.id) {
+          const remapped = { ...part, id, rawId: part.id };
+          inner.push(remapped);
+          return remapped;
+        }
+      }
+      inner.push(part);
+      return part;
+    },
+    rollback: () => {
+      response?.rollback();
+    },
     pushUsage: (value) => {
       usage = {
         inputOther: value.inputOther ?? usage?.inputOther ?? 0,
@@ -169,6 +189,7 @@ export interface TurnMachineContext {
   input: TurnInput;
   produced: HistoryMessage[];
   accumulator: HistoryAccumulator;
+  toolCallIds: ToolCallIdNormalizer;
   pendingToolCalls: ToolCall[];
   outcomes: Record<string, ToolOutput>;
   steps: number;
@@ -261,19 +282,25 @@ export function createTurnMachine(llmActor: ReturnType<typeof createLlmMachine>)
   }).createMachine({
     id: 'turn',
     initial: 'thinking',
-    context: ({ input }) => ({
-      input,
-      produced: [],
-      accumulator: createHistoryAccumulator(modelMeta(input.request.model)),
-      pendingToolCalls: [],
-      outcomes: {},
-      steps: 0,
-    }),
+    context: ({ input }) => {
+      const toolCallIds = new ToolCallIdNormalizer();
+      toolCallIds.seedFrom(toInputMessages(input.history));
+      return {
+        input,
+        produced: [],
+        accumulator: createHistoryAccumulator(modelMeta(input.request.model), toolCallIds),
+        toolCallIds,
+        pendingToolCalls: [],
+        outcomes: {},
+        steps: 0,
+      };
+    },
     states: {
       thinking: {
         entry: assign({
           steps: ({ context }) => context.steps + 1,
-          accumulator: ({ context }) => createHistoryAccumulator(modelMeta(context.input.request.model)),
+          accumulator: ({ context }) =>
+            createHistoryAccumulator(modelMeta(context.input.request.model), context.toolCallIds),
         }),
         invoke: {
           src: 'llmActor',
@@ -312,27 +339,33 @@ export function createTurnMachine(llmActor: ReturnType<typeof createLlmMachine>)
           },
           'llm.delta': {
             actions: [
-              'forwardToParent',
-              ({ context, event }) => {
-                context.accumulator.push(event.part);
+              ({ context, event, self }) => {
+                const part = context.accumulator.push(event.part);
+                self._parent?.send({ ...event, part });
               },
             ],
           },
           'llm.retrying': {
             actions: [
               'forwardToParent',
+              ({ context }) => {
+                context.accumulator.rollback();
+              },
               assign({
                 accumulator: ({ context }) =>
-                  createHistoryAccumulator(modelMeta(context.input.request.model)),
+                  createHistoryAccumulator(modelMeta(context.input.request.model), context.toolCallIds),
               }),
             ],
           },
           'llm.recovering': {
             actions: [
               'forwardToParent',
+              ({ context }) => {
+                context.accumulator.rollback();
+              },
               assign({
                 accumulator: ({ context }) =>
-                  createHistoryAccumulator(modelMeta(context.input.request.model)),
+                  createHistoryAccumulator(modelMeta(context.input.request.model), context.toolCallIds),
               }),
             ],
           },

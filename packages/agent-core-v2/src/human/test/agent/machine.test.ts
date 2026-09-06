@@ -100,8 +100,9 @@ function stubTools(
 async function runAgent(
   requester: LlmRequester,
   tools: readonly ToolDefinition[],
+  retry?: LlmRetryOptions,
 ): Promise<HistoryMessage[]> {
-  const actor = createActor(createTestAgentMachine(tools, requester), {
+  const actor = createActor(createTestAgentMachine(tools, requester, retry), {
     input: { request: { model } },
   });
   actor.start();
@@ -230,6 +231,101 @@ describe('agent machine tool failure', () => {
       'assistant:',
       'tool:slow',
       'tool:fast',
+      'assistant:done',
+    ]);
+
+    const dupRequester = createStubRequester([
+      createAssistantMessage([], [toolCall('call-1', 'slow_tool'), toolCall('call-1', 'fast_tool')]),
+      createAssistantMessage([], [toolCall('call-1', 'slow_tool')]),
+      createAssistantMessage([{ type: 'text', text: 'done' }]),
+    ]);
+    const dupStarted: string[] = [];
+    const dupResolvers = new Map<string, (result: ToolResult) => void>();
+    const dupTools = stubTools(({ toolCall: call }) => {
+      dupStarted.push(`${call.id}:${call.name}`);
+      return new Promise((resolve) => {
+        dupResolvers.set(call.id, resolve);
+      });
+    }, 'slow_tool', 'fast_tool');
+
+    const dupPromise = runAgent(dupRequester, dupTools);
+    await vi.waitFor(() => {
+      expect(dupStarted).toEqual(['call-1:slow_tool', 'call-1__2:fast_tool']);
+    });
+    dupResolvers.get('call-1__2')?.({ content: [{ type: 'text', text: 'fast' }] });
+    dupResolvers.get('call-1')?.({ content: [{ type: 'text', text: 'slow' }] });
+    await vi.waitFor(() => {
+      expect(dupStarted).toEqual(['call-1:slow_tool', 'call-1__2:fast_tool', 'call-1__3:slow_tool']);
+    });
+    dupResolvers.get('call-1__3')?.({ content: [{ type: 'text', text: 'slow again' }] });
+    const dupMessages = await dupPromise;
+
+    expect(rolesAndTexts(dupMessages)).toEqual([
+      'user:hi',
+      'assistant:',
+      'tool:slow',
+      'tool:fast',
+      'assistant:',
+      'tool:slow again',
+      'assistant:done',
+    ]);
+    expect(
+      dupMessages
+        .filter((entry) => entry.message.role === 'tool')
+        .map((entry) => entry.message.toolCallId),
+    ).toEqual(['call-1', 'call-1__2', 'call-1__3']);
+    expect(
+      dupMessages
+        .filter((entry) => entry.message.role === 'assistant' && entry.message.toolCalls.length > 0)
+        .map((entry) => entry.message.toolCalls.map((call) => `${call.id}:${call.rawId ?? ''}`)),
+    ).toEqual([
+      ['call-1:', 'call-1__2:call-1'],
+      ['call-1__3:call-1'],
+    ]);
+
+    let attempt = 0;
+    const rollbackRequester: LlmRequester = {
+      generate: (_config, _content, { onEvent }) => {
+        attempt += 1;
+        onEvent?.({ type: 'llm.sent' });
+        if (attempt === 1) {
+          onEvent?.({ type: 'llm.delta', part: toolCall('call-1', 'retry_tool') });
+          onEvent?.({
+            type: 'llm.failed.remote',
+            error: {
+              kind: 'status',
+              statusCode: 500,
+              message: 'server error',
+              requestId: null,
+              retryAfterMs: null,
+              headers: null,
+            },
+          });
+          return Promise.resolve();
+        }
+        if (attempt === 2) {
+          streamMessage(createAssistantMessage([], [toolCall('call-1', 'retry_tool')]), onEvent);
+        } else {
+          streamMessage(createAssistantMessage([{ type: 'text', text: 'done' }]), onEvent);
+        }
+        return Promise.resolve();
+      },
+    };
+    const rollbackStarted: string[] = [];
+    const rollbackTools = stubTools(({ toolCall: call }) => {
+      rollbackStarted.push(call.id);
+      return Promise.resolve({ content: [{ type: 'text', text: 'retried' }] });
+    }, 'retry_tool');
+
+    const rollbackMessages = await runAgent(rollbackRequester, rollbackTools, {
+      maxAttemptsPerStep: 3,
+    });
+
+    expect(rollbackStarted).toEqual(['call-1']);
+    expect(rolesAndTexts(rollbackMessages)).toEqual([
+      'user:hi',
+      'assistant:',
+      'tool:retried',
       'assistant:done',
     ]);
   });
