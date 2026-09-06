@@ -265,6 +265,7 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
     }),
     actor.on('llm.done', (event) => {
       pendingFailure = undefined;
+      tools.beginBatch(event.entry.message.toolCalls);
       const finish = requester.lastFinish();
       const meta = event.entry.meta;
       publish({

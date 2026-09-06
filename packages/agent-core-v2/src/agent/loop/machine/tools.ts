@@ -4,13 +4,14 @@ import type {
   ToolExecutionResult,
 } from '#/agent/toolExecutor/toolExecutor';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
+import { toErrorMessage } from '#/_base/errors/errorMessage';
 import type {
   ToolDelivery,
   ToolInfo,
   ToolResult as AgentToolResult,
   ToolUpdate as AgentToolUpdate,
 } from '#/tool/toolContract';
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart, ToolCall } from '#human/llm/message';
 import type { ToolExecuteInput, ToolResult, ToolUpdate } from '#human/tool/executor';
 import type { ToolDefinition } from '#human/tool/tool';
 
@@ -18,8 +19,6 @@ const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
   type: 'object',
   properties: {},
 };
-
-const SKIPPED_TOOL_OUTPUT = 'Tool skipped because a previous tool call stopped the turn.';
 
 export interface ToolResultExtras {
   readonly stopTurn?: boolean;
@@ -43,97 +42,155 @@ export interface CreateMachineToolsOptions {
 export interface MachineTools {
   readonly tools: ToolDefinition[];
   readonly extras: ReadonlyMap<string, ToolResultExtras>;
-  beginBatch(): void;
+  beginBatch(expectedCalls?: readonly ToolCall[]): void;
   handleProgress(toolCallId: string, update: AgentToolUpdate): void;
+}
+
+interface PendingEntry {
+  readonly input: ToolExecuteInput;
+  readonly resolve: (result: ToolResult) => void;
+  readonly removeAbortListener: () => void;
 }
 
 function toContentParts(output: string | ContentPart[]): ContentPart[] {
   return typeof output === 'string' ? [{ type: 'text', text: output }] : output;
 }
 
-function parseToolArgs(raw: string | null): unknown {
-  if (raw === null) return undefined;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return raw;
-  }
-}
-
 export function createMachineTools(options: CreateMachineToolsOptions): MachineTools {
   const extras = new Map<string, ToolResultExtras>();
   const progressHandlers = new Map<string, ((update: ToolUpdate) => void) | undefined>();
-  let batchChain: Promise<unknown> = Promise.resolve();
-  let batchStopped = false;
+  const knownNames = new Set(options.toolInfos.map((info) => info.name));
+  const pending = new Map<string, PendingEntry>();
+  let expectedIds: readonly string[] | undefined;
+  let batchInFlight = false;
 
-  const skippedResult = (input: ToolExecuteInput): ToolResult => {
-    options.onToolCall?.({
-      toolCallId: input.toolCall.id,
-      name: input.toolCall.name,
-      args: parseToolArgs(input.toolCall.arguments),
-    });
-    const result: AgentToolResult = { output: SKIPPED_TOOL_OUTPUT, isError: true };
-    options.onToolResult?.(input.toolCall.id, result);
-    extras.set(input.toolCall.id, { output: SKIPPED_TOOL_OUTPUT, isError: true });
-    return { content: [{ type: 'text', text: SKIPPED_TOOL_OUTPUT }], isError: true };
+  const settleEntry = (entry: PendingEntry, result: ToolResult): void => {
+    entry.removeAbortListener();
+    progressHandlers.delete(entry.input.toolCall.id);
+    entry.resolve(result);
   };
 
-  const executeOne = async (input: ToolExecuteInput): Promise<ToolResult> => {
-    if (batchStopped) return skippedResult(input);
-    progressHandlers.set(input.toolCall.id, input.onUpdate);
+  const settleAborted = (entry: PendingEntry): void => {
+    settleEntry(entry, {
+      content: [{ type: 'text', text: `Tool "${entry.input.toolCall.name}" aborted before execution.` }],
+      isError: true,
+    });
+  };
+
+  const runBatch = async (entries: readonly PendingEntry[]): Promise<void> => {
+    batchInFlight = true;
+    const inFlight = new Map<string, PendingEntry>();
+    for (const entry of entries) inFlight.set(entry.input.toolCall.id, entry);
+    const signal = AbortSignal.any(entries.map((entry) => entry.input.signal));
+    const calls = entries.map((entry) => entry.input.toolCall);
+    const settleRemaining = (error?: unknown): void => {
+      for (const entry of inFlight.values()) {
+        settleEntry(entry, {
+          content: [
+            {
+              type: 'text',
+              text:
+                error === undefined
+                  ? `Tool "${entry.input.toolCall.name}" produced no result.`
+                  : `Tool "${entry.input.toolCall.name}" failed: ${toErrorMessage(error)}`,
+            },
+          ],
+          isError: true,
+        });
+      }
+      inFlight.clear();
+    };
     try {
-      let matched: ToolExecutionResult | undefined;
-      for await (const result of options.toolExecutor.execute([input.toolCall], {
-        signal: input.signal,
+      const stream = options.toolExecutor.execute(calls, {
+        signal,
         turnId: options.turnId(),
         trace: options.trace?.(),
         onToolCall: options.onToolCall,
-      })) {
-        if (result.toolCallId === input.toolCall.id) {
-          matched = result;
-          options.onToolResult?.(input.toolCall.id, result.result);
+      });
+      for await (const result of stream) {
+        const entry = inFlight.get(result.toolCallId);
+        if (entry === undefined) continue;
+        inFlight.delete(result.toolCallId);
+        try {
+          applyResult(entry, result);
+        } catch (error) {
+          settleEntry(entry, {
+            content: [
+              {
+                type: 'text',
+                text: `Tool "${entry.input.toolCall.name}" failed: ${toErrorMessage(error)}`,
+              },
+            ],
+            isError: true,
+          });
         }
       }
-      if (matched === undefined) {
-        return {
-          content: [
-            { type: 'text', text: `Tool "${input.toolCall.name}" produced no result.` },
-          ],
-          isError: true,
-        };
-      }
-      const { result } = matched;
-      extras.set(input.toolCall.id, {
-        stopTurn: result.stopTurn,
-        stopTurnReason: result.stopTurnReason,
-        note: result.note,
-        delivery: result.delivery,
-        stopBatchAfterThis: result.stopBatchAfterThis,
-        output: result.output,
-        isError: result.isError,
-      });
-      if (
-        result.isError === true &&
-        (result.stopBatchAfterThis === true || result.stopTurn === true)
-      ) {
-        batchStopped = true;
-      }
-      return {
-        content: toContentParts(result.output),
-        isError: result.isError === true ? true : undefined,
-      };
+      settleRemaining();
+    } catch (error) {
+      settleRemaining(error);
     } finally {
-      progressHandlers.delete(input.toolCall.id);
+      batchInFlight = false;
     }
   };
 
+  const applyResult = (entry: PendingEntry, matched: ToolExecutionResult): void => {
+    const id = entry.input.toolCall.id;
+    const { result } = matched;
+    options.onToolResult?.(id, result);
+    extras.set(id, {
+      stopTurn: result.stopTurn,
+      stopTurnReason: result.stopTurnReason,
+      note: result.note,
+      delivery: result.delivery,
+      stopBatchAfterThis: result.stopBatchAfterThis,
+      output: result.output,
+      isError: result.isError,
+    });
+    settleEntry(entry, {
+      content: toContentParts(result.output),
+      isError: result.isError === true ? true : undefined,
+    });
+  };
+
+  const flushIfReady = (): void => {
+    if (expectedIds === undefined || batchInFlight) return;
+    if (!expectedIds.every((id) => pending.has(id))) return;
+    const entries: PendingEntry[] = [];
+    for (const id of expectedIds) {
+      const entry = pending.get(id)!;
+      pending.delete(id);
+      entries.push(entry);
+    }
+    if (entries.length === 0) return;
+    void runBatch(entries);
+  };
+
   const execute = (input: ToolExecuteInput): Promise<ToolResult> => {
-    const run = batchChain.then(() => executeOne(input));
-    batchChain = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
+    progressHandlers.set(input.toolCall.id, input.onUpdate);
+    if (expectedIds === undefined || batchInFlight) {
+      return new Promise<ToolResult>((resolve) => {
+        const entry: PendingEntry = { input, resolve, removeAbortListener: () => {} };
+        void runBatch([entry]);
+      });
+    }
+    return new Promise<ToolResult>((resolve) => {
+      const onAbort = (): void => {
+        if (!pending.delete(input.toolCall.id)) return;
+        const stale = [...pending.values()];
+        pending.clear();
+        settleAborted({ input, resolve, removeAbortListener: () => {} });
+        for (const entry of stale) settleAborted(entry);
+      };
+      input.signal.addEventListener('abort', onAbort, { once: true });
+      pending.set(input.toolCall.id, {
+        input,
+        resolve,
+        removeAbortListener: () => {
+          input.signal.removeEventListener('abort', onAbort);
+        },
+      });
+      flushIfReady();
+    });
   };
 
   return {
@@ -145,9 +202,16 @@ export function createMachineTools(options: CreateMachineToolsOptions): MachineT
       execute,
     })),
     extras,
-    beginBatch: () => {
-      batchStopped = false;
-      batchChain = Promise.resolve();
+    beginBatch: (expectedCalls) => {
+      if (expectedCalls === undefined) {
+        expectedIds = undefined;
+        const stale = [...pending.values()];
+        pending.clear();
+        for (const entry of stale) settleAborted(entry);
+        return;
+      }
+      expectedIds = expectedCalls.filter((call) => knownNames.has(call.name)).map((call) => call.id);
+      flushIfReady();
     },
     handleProgress: (toolCallId, update) => {
       const onUpdate = progressHandlers.get(toolCallId);
