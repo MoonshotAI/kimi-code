@@ -10,6 +10,7 @@ export const SRC_ROOT = join(PKG_ROOT, 'src');
 const TEST_ROOT = join(PKG_ROOT, 'test');
 const HUMAN_ROOT = join(SRC_ROOT, 'human');
 const ADAPTER_ROOT = join(SRC_ROOT, 'llm-adapter');
+const LOOP_HUMAN_ADAPTER_ROOT = join(SRC_ROOT, 'agent/loop/human');
 
 const V1_PACKAGE = '@moonshot-ai/agent-core';
 const SELF_PACKAGE_PREFIX = '@moonshot-ai/agent-core-v2/';
@@ -87,7 +88,7 @@ export function checkSource(source, absFile) {
   const violations = [];
   const inSrc = !relative(SRC_ROOT, absFile).startsWith('..');
   const inHuman = isInside(HUMAN_ROOT, absFile);
-  const inAdapter = isInside(ADAPTER_ROOT, absFile);
+  const inAdapter = isInside(ADAPTER_ROOT, absFile) || isInside(LOOP_HUMAN_ADAPTER_ROOT, absFile);
 
   let match;
   IMPORT_RE.lastIndex = 0;
@@ -144,7 +145,7 @@ export function checkSource(source, absFile) {
       violations.push({
         file: absFile,
         line,
-        message: `only llm-adapter may import the human implementation ('${specifier}') — v2 code outside llm-adapter is limited to the vocabulary modules (${[...HUMAN_VOCABULARY].join(', ')})`,
+        message: `only llm-adapter and agent/loop/human may import the human implementation ('${specifier}') — v2 code outside those adapter layers is limited to the vocabulary modules (${[...HUMAN_VOCABULARY].join(', ')})`,
       });
     }
   }

@@ -11,7 +11,6 @@ import type { ModelRequestTiming } from '#/llm-adapter/model/model-requester';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentGoalService } from '#/features/goal/goalService';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
-import { ContinuationStepRequest, MessageStepRequest } from '#/agent/loop/stepRequest';
 import {
   AssistantDelta,
   ThinkingDelta,
@@ -20,7 +19,6 @@ import {
   TurnStepStarted,
 } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
-import { RetryStepRequest } from '#/agent/prompt/promptStepRequests';
 import type { ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IEventBus } from '#/app/event/eventBus';
@@ -177,12 +175,11 @@ describe('Agent loop', () => {
       rawFinishReason: 'length',
     });
 
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
-    const turn = (loop as unknown as { activeTurnJob?: { turn: Turn } }).activeTurnJob?.turn;
+    const { turn } = submitTurn(loop, 'Hello');
     expect(turn).toBeDefined();
 
     await ctx.untilTurnEnd();
-    await expect(turn!.result).resolves.toEqual({
+    await expect(turn.result).resolves.toEqual({
       type: 'completed',
       steps: 1,
       truncated: true,
@@ -209,12 +206,11 @@ describe('Agent loop', () => {
       finishReason: 'tool_calls',
     });
 
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
-    const turn = (loop as unknown as { activeTurnJob?: { turn: Turn } }).activeTurnJob?.turn;
+    const { turn } = submitTurn(loop, 'Hello');
     expect(turn).toBeDefined();
 
     await ctx.untilTurnEnd();
-    await expect(turn!.result).resolves.toEqual({
+    await expect(turn.result).resolves.toEqual({
       type: 'completed',
       steps: 1,
       truncated: false,
@@ -244,10 +240,8 @@ describe('Agent loop', () => {
         });
         if (seenErrors.length === 1) {
           ctx.mockNextResponse({ type: 'text', text: 'Recovered.' });
-          if (hookCtx.failedDriver !== undefined) {
-            loop.enqueue(hookCtx.failedDriver, { at: 'head' });
-            return true;
-          }
+          hookCtx.retry();
+          return true;
         }
         return undefined;
       },
@@ -324,10 +318,10 @@ describe('Agent loop', () => {
       },
       handle: async () => undefined,
     });
-    const controller = new AbortController();
-    controller.abort(new Error('stop'));
+    const { turn } = submitTurn(loop, 'go');
+    turn.cancel(new Error('stop'));
 
-    const result = await loop.run({ turnId: 0, signal: controller.signal });
+    const result = await turn.result;
 
     expect(result.type).toBe('cancelled');
     expect(called).toBe(false);
@@ -343,8 +337,8 @@ describe('Agent loop', () => {
       },
     });
 
-    loop.enqueue(new ContinuationStepRequest());
-    const result = await loop.run({ turnId: 0 });
+    const { turn } = submitTurn(loop, 'go');
+    const result = await turn.result;
 
     expect(result.type).toBe('failed');
     if (result.type === 'failed') {
@@ -502,17 +496,14 @@ describe('Agent loop', () => {
     loop.hooks.onDidFinishStep.register('test-repeat-stop-continuation', async (hookCtx, next) => {
       if (continuations < 2) {
         continuations += 1;
-        loop.enqueue(
-          new MessageStepRequest(
-            {
-              role: 'user',
-              content: [{ type: 'text', text: `continue ${continuations}` }],
-              toolCalls: [],
-              origin: { kind: 'system_trigger', name: 'stop_hook' },
-            },
-            { kind: 'stop_hook', mergeable: true },
-          ),
-        );
+        loop.notify({
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: `continue ${continuations}` }],
+            toolCalls: [],
+            origin: { kind: 'system_trigger', name: 'stop_hook' },
+          },
+        });
         return;
       }
       await next();
@@ -593,8 +584,7 @@ describe('Agent loop', () => {
     ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, lookupCall);
     ctx.mockNextResponse({ type: 'text', text: 'This step should not run.' });
 
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Look up moon' }] });
-    const turn = (loop as unknown as { activeTurnJob?: { turn: Turn } }).activeTurnJob?.turn;
+    const { turn } = submitTurn(loop, 'Look up moon');
     await ctx.untilApproval(true);
     await ctx.untilTurnEnd();
 
@@ -610,7 +600,7 @@ describe('Agent loop', () => {
     profile.update({ activeToolNames: [] });
 
     loop.hooks.onDidFinishStep.register('test-continue-like-stop-hook', async (hookCtx, next) => {
-      loop.enqueue(new ContinuationStepRequest());
+      loop.notify();
       await next();
     });
     loop.hooks.onDidFinishStep.register('test-hard-stop', async (hookCtx, next) => {
@@ -621,8 +611,7 @@ describe('Agent loop', () => {
     ctx.mockNextResponse({ type: 'text', text: 'First answer.' });
     ctx.mockNextResponse({ type: 'text', text: 'This continuation should not run.' });
 
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello' }] });
-    const turn = (loop as unknown as { activeTurnJob?: { turn: Turn } }).activeTurnJob?.turn;
+    const { turn } = submitTurn(loop, 'hello');
     await ctx.untilTurnEnd();
 
     expect(ctx.llmCalls).toHaveLength(1);
@@ -655,8 +644,7 @@ describe('Agent loop', () => {
     ctx.mockNextResponse({ type: 'text', text: 'Stopping.' }, stopCall);
     ctx.mockNextResponse({ type: 'text', text: 'This step should not run.' });
 
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'stop' }] });
-    const turn = (loop as unknown as { activeTurnJob?: { turn: Turn } }).activeTurnJob?.turn;
+    const { turn } = submitTurn(loop, 'stop');
     await ctx.untilApproval(true);
     await ctx.untilTurnEnd();
 
@@ -686,9 +674,9 @@ describe('Agent loop', () => {
     ctx.mockNextResponse({ type: 'text', text: 'two' });
     ctx.mockNextResponse({ type: 'text', text: 'three' });
 
-    const first = (await loop.enqueue(nextTurnMessage('first')).assigned).turn;
-    const second = (await loop.enqueue(nextTurnMessage('second')).assigned).turn;
-    const third = (await loop.enqueue(nextTurnMessage('third')).assigned).turn;
+    const first = submitTurn(loop, 'first').turn;
+    const second = submitTurn(loop, 'second').turn;
+    const third = submitTurn(loop, 'third').turn;
 
     expect([first.state, second.state, third.state]).toEqual(['running', 'queued', 'queued']);
     await Promise.all([first.result, second.result, third.result]);
@@ -720,7 +708,7 @@ describe('Agent loop', () => {
       await next();
     });
 
-    const active = (await loop.enqueue(nextTurnMessage('active')).assigned).turn;
+    const active = submitTurn(loop, 'active').turn;
     await activeStarted;
 
     expect(loop.tryAcquireQuiescence()).toBeUndefined();
@@ -736,36 +724,37 @@ describe('Agent loop', () => {
     const lease = loop.tryAcquireQuiescence();
     expect(lease).toBeDefined();
     expect(loop.tryAcquireQuiescence()).toBeUndefined();
-    const held = loop.enqueue(nextTurnMessage('held'));
-    let assigned = false;
-    void held.assigned.then(() => {
-      assigned = true;
+    const held = submitTurn(loop, 'held').turn;
+    let started = false;
+    const subscription = ctx.get(IEventBus).subscribe(TurnStarted, () => {
+      started = true;
     });
 
     await Promise.resolve();
-    expect(assigned).toBe(false);
+    expect(started).toBe(false);
+    expect(held.state).toBe('queued');
     expect(loop.status()).toMatchObject({ state: 'idle', hasPendingRequests: true });
 
     ctx.mockNextResponse({ type: 'text', text: 'after undo' });
     lease?.dispose();
-    const resumed = (await held.assigned).turn;
-    await expect(resumed.result).resolves.toMatchObject({ type: 'completed' });
+    await expect(held.result).resolves.toMatchObject({ type: 'completed' });
+    subscription.dispose();
   });
 
   it('can abort an admission while quiescence holds it', async () => {
     const lease = loop.tryAcquireQuiescence();
     expect(lease).toBeDefined();
-    const held = loop.enqueue(nextTurnMessage('held'));
+    const held = submitTurn(loop, 'held').turn;
 
-    expect(held.abort()).toBe(true);
-    await expect(held.assigned).rejects.toBeDefined();
+    expect(held.cancel()).toBe(true);
+    await expect(held.result).resolves.toMatchObject({ type: 'cancelled', steps: 0 });
     expect(loop.hasPendingRequests()).toBe(false);
 
     lease?.dispose();
     expect(loop.status().state).toBe('idle');
   });
 
-  it('cancels a running step without cancelling its turn and continues the next step', async () => {
+  it('cancels an in-flight turn while its queued turn continues afterwards', async () => {
     let releaseRunning!: () => void;
     const running = new Promise<void>((resolve) => {
       releaseRunning = resolve;
@@ -774,8 +763,10 @@ describe('Agent loop', () => {
     const started = new Promise<void>((resolve) => {
       stepStarted = resolve;
     });
-    loop.hooks.onWillBeginStep.register('test-running-step-cancel', async (hookCtx, next) => {
-      if (hookCtx.step === 2) {
+    let armed = true;
+    loop.hooks.onWillBeginStep.register('test-turn-cancel-mid-step', async (hookCtx, next) => {
+      if (armed) {
+        armed = false;
         stepStarted();
         await Promise.race([
           running,
@@ -786,25 +777,22 @@ describe('Agent loop', () => {
       }
       await next();
     });
-    ctx.mockNextResponse({ type: 'text', text: 'initial' });
     ctx.mockNextResponse({ type: 'text', text: 'after cancellation' });
 
-    const turn = (await loop.enqueue(nextTurnMessage('start')).assigned).turn;
-    const cancelledStep = (await loop.enqueue(new ContinuationStepRequest()).assigned).step;
-    loop.enqueue(new ContinuationStepRequest());
+    const turn = submitTurn(loop, 'start').turn;
+    const queued = submitTurn(loop, 'next').turn;
     await started;
 
-    expect(cancelledStep.state).toBe('running');
-    expect(cancelledStep.cancel(new Error('skip this step'))).toBe(true);
-    await expect(cancelledStep.result).resolves.toMatchObject({ type: 'cancelled' });
-    await expect(turn.result).resolves.toMatchObject({ type: 'completed', steps: 3 });
+    expect(turn.cancel(new Error('skip this turn'))).toBe(true);
+    await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
     releaseRunning();
+    await expect(queued.result).resolves.toMatchObject({ type: 'completed', steps: 1 });
 
-    expect(turn.state).toBe('completed');
-    expect(ctx.llmCalls).toHaveLength(2);
+    expect(queued.state).toBe('completed');
+    expect(ctx.llmCalls).toHaveLength(1);
   });
 
-  it('disposes active and queued turns with all steps settled and never pumps again', async () => {
+  it('disposes active and queued turns with all turns settled and never pumps again', async () => {
     let stepStarted!: () => void;
     const started = new Promise<void>((resolve) => {
       stepStarted = resolve;
@@ -817,22 +805,20 @@ describe('Agent loop', () => {
       await next();
     });
 
-    const active = (await loop.enqueue(nextTurnMessage('active')).assigned).turn;
-    const activeQueuedStep = (await loop.enqueue(new ContinuationStepRequest()).assigned).step;
-    const queued = (await loop.enqueue(nextTurnMessage('queued')).assigned).turn;
-    const queuedExtraStep = (await loop.enqueue(nextTurnMessage('queued-extra')).assigned).step;
+    const active = submitTurn(loop, 'active').turn;
+    const queued = submitTurn(loop, 'queued').turn;
+    const queuedExtra = submitTurn(loop, 'queued-extra').turn;
     await started;
 
     (loop as IAgentLoopService & { dispose(): void }).dispose();
 
     await expect(active.result).resolves.toMatchObject({ type: 'cancelled' });
     await expect(queued.result).resolves.toMatchObject({ type: 'cancelled', steps: 0 });
-    await expect(activeQueuedStep.result).resolves.toMatchObject({ type: 'cancelled' });
-    await expect(queuedExtraStep.result).resolves.toMatchObject({ type: 'cancelled' });
+    await expect(queuedExtra.result).resolves.toMatchObject({ type: 'cancelled', steps: 0 });
     expect(active.state).toBe('cancelled');
     expect(queued.state).toBe('cancelled');
     expect(ctx.llmCalls).toHaveLength(0);
-    expect(() => loop.enqueue(nextTurnMessage('rejected'))).toThrow();
+    expect(() => submitTurn(loop, 'rejected')).toThrow();
   });
 
   it('cancels a queued turn without starting or materializing its initial request', async () => {
@@ -843,12 +829,11 @@ describe('Agent loop', () => {
     ctx.mockNextResponse({ type: 'text', text: 'one' });
     ctx.mockNextResponse({ type: 'text', text: 'three' });
 
-    const first = (await loop.enqueue(nextTurnMessage('first')).assigned).turn;
-    const cancelledReceipt = loop.enqueue(nextTurnMessage('cancelled'));
-    const cancelledTurn = (await cancelledReceipt.assigned).turn;
-    const third = (await loop.enqueue(nextTurnMessage('third')).assigned).turn;
+    const first = submitTurn(loop, 'first').turn;
+    const cancelledTurn = submitTurn(loop, 'cancelled').turn;
+    const third = submitTurn(loop, 'third').turn;
 
-    expect(cancelledReceipt.abort()).toBe(true);
+    expect(cancelledTurn.cancel()).toBe(true);
     await expect(cancelledTurn.result).resolves.toMatchObject({ type: 'cancelled', steps: 0 });
     await Promise.all([first.result, third.result]);
     subscription.dispose();
@@ -867,21 +852,16 @@ describe('Agent loop', () => {
     ctx.mockNextResponse({ type: 'text', text: 'continued' });
     ctx.mockNextResponse({ type: 'text', text: 'hi there' });
 
-    const system = (
-      await loop.enqueue(
-        new MessageStepRequest(
-          {
-            role: 'user',
-            content: [{ type: 'text', text: 'continue the goal' }],
-            toolCalls: [],
-            origin: { kind: 'system_trigger', name: 'goal_continuation' },
-          },
-          { admission: 'newTurn' },
-        ),
-      ).assigned
-    ).turn;
+    const system = loop.submit({
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'continue the goal' }],
+        toolCalls: [],
+        origin: { kind: 'system_trigger', name: 'goal_continuation' },
+      },
+    }).turn;
     await system.result;
-    const user = (await loop.enqueue(nextTurnMessage('hi')).assigned).turn;
+    const user = submitTurn(loop, 'hi').turn;
     await user.result;
     subscription.dispose();
 
@@ -895,19 +875,14 @@ describe('Agent loop', () => {
     });
     ctx.mockNextResponse({ type: 'text', text: 'scanned' });
 
-    const subagent = (
-      await loop.enqueue(
-        new MessageStepRequest(
-          {
-            role: 'user',
-            content: [{ type: 'text', text: 'scan the repo' }],
-            toolCalls: [],
-            origin: { kind: 'system_trigger', name: 'subagent' },
-          },
-          { admission: 'newTurn' },
-        ),
-      ).assigned
-    ).turn;
+    const subagent = loop.submit({
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'scan the repo' }],
+        toolCalls: [],
+        origin: { kind: 'system_trigger', name: 'subagent' },
+      },
+    }).turn;
     await subagent.result;
     subscription.dispose();
 
@@ -921,10 +896,7 @@ describe('Agent loop', () => {
     });
     ctx.mockNextResponse({ type: 'text', text: 'seen' });
 
-    const turn = (
-      await loop.enqueue(
-        new MessageStepRequest(
-          {
+    const turn = loop.submit({ message: {
             role: 'user',
             content: [
               { type: 'image_url', imageUrl: { url: 'kimi-file://file_1', id: 'file_1', name: 'photo.png' } },
@@ -937,11 +909,7 @@ describe('Agent loop', () => {
             ],
             toolCalls: [],
             origin: { kind: 'user' },
-          },
-          { admission: 'newTurn' },
-        ),
-      ).assigned
-    ).turn;
+          } }).turn;
     await turn.result;
     subscription.dispose();
 
@@ -961,10 +929,7 @@ describe('Agent loop', () => {
     });
     ctx.mockNextResponse({ type: 'text', text: 'seen' });
 
-    const turn = (
-      await loop.enqueue(
-        new MessageStepRequest(
-          {
+    const turn = loop.submit({ message: {
             role: 'user',
             content: [
               { type: 'image_url', imageUrl: { url: 'kimi-file://file_1', id: 'file_1' } },
@@ -982,11 +947,7 @@ describe('Agent loop', () => {
                 },
               ],
             },
-          },
-          { admission: 'newTurn' },
-        ),
-      ).assigned
-    ).turn;
+          } }).turn;
     await turn.result;
     subscription.dispose();
 
@@ -1011,10 +972,7 @@ describe('Agent loop', () => {
     });
     ctx.mockNextResponse({ type: 'text', text: 'seen' });
 
-    const turn = (
-      await loop.enqueue(
-        new MessageStepRequest(
-          {
+    const turn = loop.submit({ message: {
             role: 'user',
             content: [{ type: 'text', text: 'User activated the skill "check".' }],
             toolCalls: [],
@@ -1032,11 +990,7 @@ describe('Agent loop', () => {
                 },
               ],
             },
-          },
-          { admission: 'newTurn' },
-        ),
-      ).assigned
-    ).turn;
+          } }).turn;
     await turn.result;
     subscription.dispose();
 
@@ -1181,7 +1135,7 @@ describe('turn telemetry', () => {
       local.get(IAgentProfileService).update({ activeToolNames: [] });
       localLoop.hooks.onDidFinishStep.register('test-continue-after-first-step', async (hookCtx, next) => {
         if (hookCtx.step === 1) {
-          localLoop.enqueue(new ContinuationStepRequest());
+          localLoop.notify();
           return;
         }
         await next();
@@ -1268,7 +1222,7 @@ describe('turn telemetry', () => {
           await next();
         });
 
-        const turn = (await localLoop.enqueue(nextTurnMessage('hang')).assigned).turn;
+        const turn = submitTurn(localLoop, 'hang').turn;
         await started;
         localLoop.cancel(turn.id, makeReason());
         await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
@@ -1334,7 +1288,7 @@ describe('interruption reminder', () => {
   it('preserves the partial stream and appends one reminder at the cancellation event point', async () => {
     ctx.mockNextResponse({ type: 'text', text: 'partial answer' }, { type: 'text', text: ' more' });
     const subscription = cancelOnFirstDelta();
-    const turn = (await loop.enqueue(nextTurnMessage('Hello')).assigned).turn;
+    const turn = submitTurn(loop, 'Hello').turn;
     await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
     subscription.dispose();
 
@@ -1389,7 +1343,7 @@ describe('interruption reminder', () => {
       cancelled = true;
       results.push(loop.cancel(), loop.cancel());
     });
-    const turn = (await loop.enqueue(nextTurnMessage('Hello')).assigned).turn;
+    const turn = submitTurn(loop, 'Hello').turn;
     await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
     subscription.dispose();
     expect(results).toEqual([true, true]);
@@ -1409,7 +1363,7 @@ describe('interruption reminder', () => {
     const subscription = ctx.get(IEventBus).subscribe(AssistantDelta, () => {
       loop.cancel(undefined, new Error('stop'));
     });
-    const turn = (await loop.enqueue(nextTurnMessage('Hello')).assigned).turn;
+    const turn = submitTurn(loop, 'Hello').turn;
     await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
     subscription.dispose();
 
@@ -1434,7 +1388,7 @@ describe('interruption reminder', () => {
   it('does not stack a second reminder without an intervening message', async () => {
     ctx.mockNextResponse({ type: 'text', text: 'partial answer' });
     const subscription = cancelOnFirstDelta();
-    const turn = (await loop.enqueue(nextTurnMessage('Hello')).assigned).turn;
+    const turn = submitTurn(loop, 'Hello').turn;
     await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
     subscription.dispose();
     expect(interruptionReminders()).toHaveLength(1);
@@ -1472,8 +1426,8 @@ describe('interruption reminder', () => {
     });
     ctx.mockNextResponse({ type: 'text', text: 'unreached' });
 
-    const active = (await loop.enqueue(nextTurnMessage('active')).assigned).turn;
-    const queued = (await loop.enqueue(nextTurnMessage('queued')).assigned).turn;
+    const active = submitTurn(loop, 'active').turn;
+    const queued = submitTurn(loop, 'queued').turn;
     expect(loop.cancel(queued.id)).toBe(true);
     await expect(queued.result).resolves.toMatchObject({ type: 'cancelled', steps: 0 });
     await entered;
@@ -1540,7 +1494,7 @@ describe('interruption reminder', () => {
     const subscription = ctx.get(IEventBus).subscribe(ThinkingDelta, () => {
       loop.cancel();
     });
-    const turn = (await loop.enqueue(nextTurnMessage('Hello')).assigned).turn;
+    const turn = submitTurn(loop, 'Hello').turn;
     await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
     subscription.dispose();
 
@@ -1556,7 +1510,7 @@ describe('interruption reminder', () => {
   it('records no partial content when the stream only produced whitespace', async () => {
     ctx.mockNextResponse({ type: 'text', text: '  ' }, { type: 'text', text: 'answer' });
     const subscription = cancelOnFirstDelta();
-    const turn = (await loop.enqueue(nextTurnMessage('Hello')).assigned).turn;
+    const turn = submitTurn(loop, 'Hello').turn;
     await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
     subscription.dispose();
 
@@ -1571,7 +1525,7 @@ describe('interruption reminder', () => {
   it('does not stack a second reminder around a vacuous retry turn', async () => {
     ctx.mockNextResponse({ type: 'text', text: 'partial answer' });
     const first = cancelOnFirstDelta();
-    const firstTurn = (await loop.enqueue(nextTurnMessage('Hello')).assigned).turn;
+    const firstTurn = submitTurn(loop, 'Hello').turn;
     await expect(firstTurn.result).resolves.toMatchObject({ type: 'cancelled' });
     first.dispose();
     expect(interruptionReminders()).toHaveLength(1);
@@ -1580,7 +1534,9 @@ describe('interruption reminder', () => {
     const onStepStarted = ctx.get(IEventBus).subscribe(TurnStepStarted, () => {
       loop.cancel();
     });
-    const retryTurn = (await loop.enqueue(new RetryStepRequest()).assigned).turn;
+    const retryTurn = loop.submit({
+      message: { role: 'user', content: [], toolCalls: [], origin: { kind: 'retry' } },
+    }).turn;
     await expect(retryTurn.result).resolves.toMatchObject({ type: 'cancelled' });
     onStepStarted.dispose();
     expect(interruptionReminders()).toHaveLength(1);
@@ -1628,7 +1584,7 @@ describe('interruption reminder', () => {
         { type: 'text', text: 'still working' },
         { type: 'function', id: 'call-work-2', name: 'Work', arguments: '{}' },
       );
-      const turn = (await localLoop.enqueue(nextTurnMessage('do work')).assigned).turn;
+      const turn = submitTurn(localLoop, 'do work').turn;
       await slowToolStarted.promise;
       localLoop.cancel(turn.id);
       await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
@@ -1695,16 +1651,11 @@ describe('aborted step tool execution', () => {
       ctx.get(IEventBus).publish(new TurnStarted({ agentId: 'main', turnId: 1, origin: { kind: 'user' } }));
 
       const loopService = ctx.get(IAgentLoopService);
-      loopService.enqueue(new ContinuationStepRequest());
-      const controller = new AbortController();
-      const resultPromise = loopService.run({
-        turnId: 1,
-        signal: controller.signal,
-      });
+      const { turn } = submitTurn(loopService, 'work');
       await slowToolStarted.promise;
-      controller.abort(new Error('cancelled by test'));
+      turn.cancel(new Error('cancelled by test'));
 
-      await expect(resultPromise).resolves.toMatchObject({ type: 'cancelled', steps: 2 });
+      await expect(turn.result).resolves.toMatchObject({ type: 'cancelled', steps: 2 });
       expect(ctx.usage.status()).toMatchObject({
         total: {
           inputOther: 107,
@@ -1744,16 +1695,11 @@ describe('aborted step tool execution', () => {
     try {
       const slowToolStarted = registerAbortableWorkTool(ctx);
       const loopService = ctx.get(IAgentLoopService);
-      loopService.enqueue(new ContinuationStepRequest());
-      const controller = new AbortController();
-      const result = loopService.run({
-        turnId: 1,
-        signal: controller.signal,
-      });
+      const { turn } = submitTurn(loopService, 'work');
       await slowToolStarted.promise;
-      controller.abort(new Error('Tool execution timed out'));
+      turn.cancel(new Error('Tool execution timed out'));
 
-      await expect(result).resolves.toMatchObject({ type: 'cancelled', steps: 2 });
+      await expect(turn.result).resolves.toMatchObject({ type: 'cancelled', steps: 2 });
       expect(interrupted).toMatchObject({
         reason: 'aborted',
         message: 'Tool execution timed out',
@@ -1765,16 +1711,15 @@ describe('aborted step tool execution', () => {
   });
 });
 
-function nextTurnMessage(text: string): MessageStepRequest {
-  return new MessageStepRequest(
-    {
+function submitTurn(loop: IAgentLoopService, text: string): { readonly turn: Turn } {
+  return loop.submit({
+    message: {
       role: 'user',
       content: [{ type: 'text', text }],
       toolCalls: [],
       origin: { kind: 'user' },
     },
-    { admission: 'newTurn' },
-  );
+  });
 }
 
 function createTimingRequester(): IAgentLLMRequesterService {

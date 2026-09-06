@@ -22,11 +22,8 @@ import {
   createMaxStepsExceededError,
   IAgentLoopService,
   type AfterStepContext,
-  type EnqueueReceipt,
-  type Step,
   type Turn,
 } from '#/agent/loop/loop';
-import { MessageStepRequest } from '#/agent/loop/stepRequest';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
@@ -232,7 +229,7 @@ async function runGoalStep(loopService: StubLoop, turn: Turn): Promise<boolean> 
   };
   await loopService.hooks.onWillBeginStep.run(step);
   await loopService.hooks.onDidFinishStep.run(afterStep);
-  return loopService.queue.takeNextBatch() !== undefined;
+  return loopService.drainNextBatch({ append: () => {} }) !== undefined;
 }
 
 async function recordStepUsage(
@@ -879,17 +876,8 @@ describe('AgentGoalService core workflow hooks', () => {
     abortResult = true,
   ): Promise<ReturnType<typeof vi.fn<() => boolean>>> {
     const abort = vi.fn<() => boolean>(() => abortResult);
-    const turn: Turn = { ...makeTurn(41), result: new Promise<never>(() => {}) };
-    const step: Step = {
-      id: 'goal-continuation',
-      turnId: turn.id,
-      state: 'queued',
-      signal: turn.signal,
-      result: Promise.resolve({ type: 'completed' }),
-      cancel: () => true,
-    };
-    const receipt: EnqueueReceipt = { assigned: Promise.resolve({ turn, step }), abort };
-    vi.spyOn(loopService, 'enqueue').mockReturnValue(receipt);
+    const turn: Turn = { ...makeTurn(41), result: new Promise<never>(() => {}), cancel: () => abort() };
+    vi.spyOn(loopService, 'submit').mockReturnValue({ turn });
 
     await goals.createGoal({ objective: 'finish the task' });
     await goals.markBlocked({ reason: 'need credentials' });
@@ -1245,14 +1233,14 @@ describe('AgentGoalService core workflow hooks', () => {
   });
 
   it('does not launch a continuation when another loop request is pending', async () => {
-    loopService.enqueue(
-      new MessageStepRequest({
+    loopService.notify({
+      message: {
         role: 'user',
         content: [{ type: 'text', text: 'queued work' }],
         toolCalls: [],
         origin: USER_PROMPT_ORIGIN,
-      }),
-    );
+      },
+    });
     await goals.createGoal({ objective: 'finish the task' });
     await goals.markBlocked({ reason: 'need credentials' });
 
@@ -1297,13 +1285,13 @@ describe('AgentGoalService core workflow hooks', () => {
 
   it('starts a continuation after an opted paused resume waits for a cancelled turn', async () => {
     await startLiveContinuation();
-    const enqueue = vi.mocked(loopService.enqueue);
+    const submit = vi.mocked(loopService.submit);
 
     await goals.pauseGoal();
     const resumed = await goals.resumeGoal({ continueIfPaused: true });
     endTurn(eventBus, makeTurn(41), { reason: 'cancelled' });
 
-    await vi.waitFor(() => expect(enqueue).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(submit).toHaveBeenCalledTimes(2));
     expect(resumed.status).toBe('active');
     expect(goals.getGoal().goal?.status).toBe('active');
   });
@@ -1635,7 +1623,7 @@ describe('AgentGoalService core workflow hooks', () => {
 
   it('pauses the goal when the continuation launch fails', async () => {
     await goals.createGoal({ objective: 'finish the task' });
-    vi.spyOn(loopService, 'enqueue').mockImplementation(() => {
+    vi.spyOn(loopService, 'submit').mockImplementation(() => {
       throw new Error('wire dispatch exploded');
     });
     const updates: GoalUpdated[] = [];

@@ -8,10 +8,8 @@ import {
 import { emptyUsage } from '#human/llm/usage';
 import { IEventBus } from '#/app/event/eventBus';
 import { retryBackoffDelays } from '#/_base/utils/retry';
-import { IAgentLoopService } from '#/agent/loop/loop';
-import { ContinuationStepRequest } from '#/agent/loop/stepRequest';
-import { TurnStarted } from '#/agent/loop/turnEvents';
-import { TurnStepRetrying } from '#/agent/stepRetry/stepRetryService';
+import { IAgentLoopService, type Turn, type TurnResult } from '#/agent/loop/loop';
+import { TurnStepRetrying } from '#/agent/loop/turnEvents';
 
 import { createTestAgent, llmGenerateServices, requesterFromGenerateFn, type TestAgentContext } from '../../harness';
 
@@ -19,6 +17,7 @@ const realSetTimeout = globalThis.setTimeout;
 
 describe('stepRetry plugin', () => {
   let ctx: TestAgentContext;
+  let lastTurn: Turn | undefined;
 
   afterEach(async () => {
     vi.useRealTimers();
@@ -45,11 +44,21 @@ describe('stepRetry plugin', () => {
       .map((entry) => (entry.args as { event: Record<string, unknown> }).event);
   }
 
-  async function runTurn(turnId: number, signal?: AbortSignal) {
-    void ctx.dispatcher.dispatch(new TurnStarted({ agentId: 'main', turnId, origin: { kind: 'user' } }));
+  async function runTurn(_turnId: number, signal?: AbortSignal): Promise<TurnResult> {
     const loop = ctx.get(IAgentLoopService);
-    loop.enqueue(new ContinuationStepRequest());
-    const resultPromise = loop.run({ turnId, signal });
+    const { turn } = loop.submit({
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'go' }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    });
+    lastTurn = turn;
+    const resultPromise = turn.result as Promise<TurnResult>;
+    if (signal !== undefined) {
+      signal.addEventListener('abort', () => turn.cancel(signal.reason), { once: true });
+    }
     let settled = false;
     void resultPromise.then(
       () => {
@@ -97,7 +106,7 @@ describe('stepRetry plugin', () => {
     expect(rpcEvents('turn.step.retrying')).toEqual([
       expect.objectContaining({
         args: expect.objectContaining({
-          turnId: 1,
+          turnId: lastTurn?.id,
           step: 1,
           failedAttempt: 1,
           nextAttempt: 2,
@@ -112,12 +121,12 @@ describe('stepRetry plugin', () => {
       rpcEvents('turn.step.started').map((event) => (event.args as { step: number }).step),
     ).toEqual([1, 2]);
     expect(rpcEvents('turn.step.interrupted')).toEqual([]);
-    expect(ctx.contextData().history).toEqual([
+    expect(ctx.contextData().history).toContainEqual(
       expect.objectContaining({
         role: 'assistant',
         content: [{ type: 'text', text: 'recovered' }],
       }),
-    ]);
+    );
   });
 
   it('pairs every retried step.begin with a step.end in the wire', async () => {
@@ -193,10 +202,16 @@ describe('stepRetry plugin', () => {
       })),
     );
 
-    void ctx.dispatcher.dispatch(new TurnStarted({ agentId: 'main', turnId: 1, origin: { kind: 'user' } }));
     const loop = ctx.get(IAgentLoopService);
-    loop.enqueue(new ContinuationStepRequest());
-    const result = await loop.run({ turnId: 1 });
+    const { turn } = loop.submit({
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'go' }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    });
+    const result = await turn.result;
 
     expect(result.type).toBe('completed');
     expect(rpcEvents('turn.step.retrying')).toEqual([

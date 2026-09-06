@@ -11,6 +11,8 @@ import { SubagentTask } from '#/agent/tools/agent/subagent-task';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { TurnStarted } from '#/agent/loop/turnEvents';
+import { IEventBus } from '#/app/event/eventBus';
 import {
   taskServices,
   createTestAgent,
@@ -360,7 +362,10 @@ describe('task notification → main agent (real Agent instance)', () => {
 
     it('RESUME: previous-session lost tasks surface as one unified reminder (no auto-turn)', async () => {
 
-      const launchSpy = vi.spyOn(loop as unknown as { startTurn: () => unknown }, 'startTurn');
+      const launches: number[] = [];
+      const launchSubscription = ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
+        launches.push(event.turnId);
+      });
 
       await background.loadFromDisk();
       await background.reconcile();
@@ -375,9 +380,10 @@ describe('task notification → main agent (real Agent instance)', () => {
         expect(flatContext).toContain('bash-prev0000');
       });
 
-      expect(launchSpy).not.toHaveBeenCalled();
+      expect(launches).toEqual([]);
       expect(ctx.llmCalls.length).toBe(0);
       expect(loop.status().activeTurnId).toBeUndefined();
+      launchSubscription.dispose();
 
       const flatContext = JSON.stringify(ctx.contextData());
       expect(flatContext).toContain('<output-file');

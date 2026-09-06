@@ -83,7 +83,7 @@
 //   turn.prompt                        turn                                                  src/agent/loop/turnOps.ts
 //   turn.steer                         turn                                                  src/agent/loop/turnOps.ts
 //   turn.step.interrupted              (none)                                                src/agent/loop/turnEvents.ts
-//   turn.step.retrying                 (none)                                                src/agent/stepRetry/stepRetryService.ts
+//   turn.step.retrying                 (none)                                                src/agent/loop/turnEvents.ts
 //   usage.record                       (none)                                                src/agent/usage/usageOps.ts
 
 /**
@@ -862,7 +862,7 @@ interface TurnStepInterruptedPayload {
 
 /**
  * states: (none)
- * owner: src/agent/stepRetry/stepRetryService.ts
+ * owner: src/agent/loop/turnEvents.ts
  */
 interface TurnStepRetryingPayload {
   _name: 'turn.step.retrying';

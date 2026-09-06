@@ -74,7 +74,7 @@ import type {
 } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
 import type { TurnCancel, TurnEnded, TurnPrompt, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import type { TurnStepInterrupted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
-import type { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/agent/stepRetry/stepRetryService';
+import type { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { UsageRecord } from '@moonshot-ai/agent-core-v2/agent/usage/usageOps';
 import type {
   ConfigUpdate,
