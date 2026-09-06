@@ -48,6 +48,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
 
   private queue: Promise<void> = Promise.resolve();
   private activeTurnId: number | undefined;
+  private lastEndedTurnId: number | undefined;
   private orphanSweepDone = false;
 
   constructor(
@@ -86,6 +87,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
       eventBus.subscribe(TurnEnded, (event) => {
         if (event.agentId !== this.agentCtx.agentId) return;
         if (this.activeTurnId === event.turnId) this.activeTurnId = undefined;
+        this.lastEndedTurnId = event.turnId;
         void this.enqueue(() => this.endCheckpoint(event.turnId));
       }),
     );
@@ -265,7 +267,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
   }
 
   captureForActiveTurn(path: string): Promise<void> {
-    const turnId = this.activeTurnId;
+    const turnId = this.activeTurnId ?? this.lastEndedTurnId;
     if (turnId === undefined) return Promise.resolve();
     return this.enqueue(() => this.capture(path, turnId));
   }

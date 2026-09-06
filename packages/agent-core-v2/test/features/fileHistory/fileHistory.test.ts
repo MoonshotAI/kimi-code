@@ -19,6 +19,7 @@ import { IAgentFileHistoryService } from '#/features/fileHistory/fileHistory';
 import { AgentFileHistoryService, countLineDiff } from '#/features/fileHistory/fileHistoryService';
 import { displacedCheckpoints } from '#/features/fileHistory/fileHistoryOps';
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ToolCall } from '#human/llm/message';
 import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -110,7 +111,14 @@ describe('AgentFileHistoryService', () => {
     });
   }
 
-  function createService(agentId = 'main'): AgentFileHistoryService {
+  function createService(
+    agentId = 'main',
+    options?: {
+      executor?: IAgentToolExecutorService;
+      lifecycle?: IAgentLifecycleService;
+      state?: IAgentStateService;
+    },
+  ): AgentFileHistoryService {
     const ctx =
       agentId === scopeCtx.agentId
         ? scopeCtx
@@ -129,8 +137,8 @@ describe('AgentFileHistoryService', () => {
       return disposables.add(
         new AgentFileHistoryService(
         ctx,
-        ix.get(IAgentStateService),
-        executorEvents.executor,
+        options?.state ?? ix.get(IAgentStateService),
+        options?.executor ?? executorEvents.executor,
         eventBus,
         ix.get(IEventDispatcher),
         stubRuntime(),
@@ -153,7 +161,7 @@ describe('AgentFileHistoryService', () => {
             readdir: async () => [],
             remove: async () => {},
           } as unknown as IHostFileSystem,
-          { handleOf: () => undefined } as unknown as IAgentLifecycleService,
+          options?.lifecycle ?? ({ handleOf: () => undefined } as unknown as IAgentLifecycleService),
         ),
       );
     } finally {
@@ -367,6 +375,103 @@ describe('AgentFileHistoryService', () => {
     await service.settled();
 
     expect(service.history().checkpoints).toEqual([]);
+  });
+
+  it('keeps a captureForActiveTurn after the main turn has ended', async () => {
+    const service = createService();
+    setFile('/ws/late.txt', 'from-background-subagent\n');
+
+    startTurn(1);
+    endTurn(1);
+    await service.settled();
+    expect(service.history().checkpoints).toEqual([]);
+
+    await service.captureForActiveTurn('/ws/late.txt');
+    await service.settled();
+
+    const start = service.history().checkpoints.find((c) => c.turnId === 1);
+    expect(start?.entries['late.txt']?.version).toBe(1);
+    expect(await blobText(start!.entries['late.txt']!.key!)).toBe('from-background-subagent\n');
+  });
+
+  it('forwards a subagent edit onto the last ended main turn', async () => {
+    const main = createService();
+    const subEvents = stubToolExecutorEvents();
+    const subState = {
+      contributeState: () => {},
+      get: () => ({ checkpoints: [], tracked: [] }),
+      has: () => false,
+      replayableKeys: () => [],
+      onDidContributeReplayable: () => ({ dispose() {} }),
+      onDidWithdrawReplayable: () => ({ dispose() {} }),
+    } as unknown as IAgentStateService;
+    createService('agent-1', {
+      executor: subEvents.executor,
+      state: subState,
+      lifecycle: {
+        handleOf: (id: string) =>
+          id === 'main'
+            ? {
+                accessor: {
+                  get: (token: unknown) =>
+                    token === IAgentFileHistoryService ? main : undefined,
+                },
+              }
+            : undefined,
+      } as unknown as IAgentLifecycleService,
+    });
+    setFile('/ws/from-sub.txt', 'written-after-parent-ended\n');
+
+    startTurn(3);
+    endTurn(3);
+    await main.settled();
+
+    const toolCall: ToolCall = {
+      type: 'function',
+      id: 'call-sub-0',
+      name: 'Write',
+      arguments: null,
+    };
+    const execution: RunnableToolExecution = {
+      approvalRule: 'Write',
+      display: { kind: 'file_io', operation: 'write', path: '/ws/from-sub.txt' },
+      execute: async () => ({ output: '' }),
+    };
+    await subEvents.fireWillExecute(
+      { turnId: 0, toolCall, execution, args: {} },
+      new AbortController().signal,
+    );
+    await main.settled();
+
+    const start = main.history().checkpoints.find((c) => c.turnId === 3);
+    expect(start?.entries['from-sub.txt']?.version).toBe(1);
+    expect(await blobText(start!.entries['from-sub.txt']!.key!)).toBe(
+      'written-after-parent-ended\n',
+    );
+  });
+
+  it('pins a captureForActiveTurn to the main turn that is active when it arrives', async () => {
+    const service = createService();
+    setFile('/ws/spawned.txt', 'during-turn-1\n');
+    startTurn(1);
+    await service.captureForActiveTurn('/ws/spawned.txt');
+    endTurn(1);
+    await service.settled();
+
+    startTurn(2);
+    setFile('/ws/late.txt', 'during-turn-2\n');
+    await service.captureForActiveTurn('/ws/late.txt');
+    await service.settled();
+
+    expect(
+      service.history().checkpoints.find((c) => c.turnId === 1)?.entries['spawned.txt'],
+    ).toBeDefined();
+    expect(
+      service.history().checkpoints.find((c) => c.turnId === 2)?.entries['late.txt'],
+    ).toBeDefined();
+    expect(
+      service.history().checkpoints.find((c) => c.turnId === 1)?.entries['late.txt'],
+    ).toBeUndefined();
   });
 
   it('drops turns outside the retention window and re-baselines returning files', async () => {
