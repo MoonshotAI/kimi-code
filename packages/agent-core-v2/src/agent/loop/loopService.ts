@@ -951,7 +951,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           new TurnStepRetrying({
             agentId: this.scopeContext.agentId,
             turnId: turn.id,
-            step: event.step,
+            step: step?.number ?? turn.gatedSteps,
             stepId: step?.uuid,
             failedAttempt: event.failedAttempt,
             nextAttempt: event.nextAttempt,

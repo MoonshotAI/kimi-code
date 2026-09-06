@@ -8,6 +8,7 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 import { IAgentProfileService } from '#/index';
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import type { ModelRequestTiming } from '#/llm-adapter/model/model-requester';
+import { APIProviderRateLimitError } from '#/llm-adapter/contract/errors';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import { IAgentGoalService } from '#/features/goal/goalService';
@@ -568,6 +569,7 @@ describe('Agent loop', () => {
     });
 
     ctx.mockNextResponse({ type: 'text', text: 'First answer.' });
+    ctx.mockNextProviderResponse({ error: new APIProviderRateLimitError('slow down', null, 1) });
     ctx.mockNextResponse({ type: 'text', text: 'Second answer.' });
     ctx.mockNextResponse({ type: 'text', text: 'Third answer.' });
 
@@ -575,7 +577,15 @@ describe('Agent loop', () => {
     await ctx.untilTurnEnd();
 
     expect(continuations).toBe(2);
-    expect(ctx.llmCalls).toHaveLength(3);
+    expect(ctx.llmCalls).toHaveLength(4);
+    const startedSteps = ctx.allEvents
+      .filter((event) => event.type === '[rpc]' && event.event === 'turn.step.started')
+      .map((event) => (event.args as { step: number }).step);
+    expect(startedSteps).toEqual([1, 2, 3, 4]);
+    const retryingSteps = ctx.allEvents
+      .filter((event) => event.type === '[rpc]' && event.event === 'turn.step.retrying')
+      .map((event) => (event.args as { step: number }).step);
+    expect(retryingSteps).toEqual([2]);
     expect(ctx.contextData().history).toContainEqual(
       expect.objectContaining({
         role: 'user',
