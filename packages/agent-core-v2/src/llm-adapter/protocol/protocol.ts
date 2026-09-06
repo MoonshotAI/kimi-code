@@ -3,7 +3,6 @@ import { z } from 'zod';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 import type { ModelCapability } from '../contract/capability';
-import type { InspectionSource } from '../contract/inspection';
 import type { Model } from '../model/catalog';
 import type { ResolvedLlmModel } from '../model/model-requester-impl';
 
@@ -36,11 +35,6 @@ export interface ProtocolAdapterConfig {
   readonly providerOptions?: ProtocolProviderOptions;
 }
 
-export interface ExplainedCapability {
-  readonly capability: ModelCapability;
-  readonly source: InspectionSource;
-}
-
 export interface IProtocolAdapterRegistry {
   readonly _serviceBrand: undefined;
 
@@ -55,12 +49,6 @@ export interface IProtocolAdapterRegistry {
     modelName: string,
     providerType?: string,
   ): ModelCapability;
-
-  explainCapability(
-    protocol: Protocol,
-    modelName: string,
-    providerType?: string,
-  ): ExplainedCapability;
 
   resolve(model: Model): ResolvedLlmModel;
 }

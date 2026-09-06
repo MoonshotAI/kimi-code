@@ -179,7 +179,7 @@ export function createScriptedProvider(): ScriptedProvider {
   };
   // Identity/capability/model resolution delegates to the real registry (the
   // interface grew `resolveAdapterIdentity` / `resolveProviderBaseId` /
-  // `resolveCapability` / `explainCapability` / `resolve` — delegating keeps the
+  // `resolveCapability` / `resolve` — delegating keeps the
   // stub truthful and immune to further growth); only the requester is scripted.
   const real = new ProtocolAdapterRegistry();
   const registry: IProtocolAdapterRegistryType = {
@@ -188,7 +188,6 @@ export function createScriptedProvider(): ScriptedProvider {
     resolveAdapterIdentity: real.resolveAdapterIdentity.bind(real),
     resolveProviderBaseId: real.resolveProviderBaseId.bind(real),
     resolveCapability: real.resolveCapability.bind(real),
-    explainCapability: real.explainCapability.bind(real),
     resolve: (model: Model) => ({ ...real.resolve(model), requester }),
     // `createChatProvider` is called by `ModelImpl` (a package-internal method
     // not on the public interface); present at runtime, cast for the type gap.

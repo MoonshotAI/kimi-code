@@ -107,9 +107,6 @@ function createModelCatalogStub(models: Readonly<Record<string, Model>> = {}): I
     getRequester: () => {
       throw new Error('not exercised');
     },
-    inspect: () => {
-      throw new Error('not exercised');
-    },
     ping: () => {
       throw new Error('not exercised');
     },
