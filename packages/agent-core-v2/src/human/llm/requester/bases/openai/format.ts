@@ -304,7 +304,7 @@ export function createOpenAIFormat(): OpenAIProtocolFormat {
           }
         } else {
           const reasoning = extractReasoning(delta);
-          if (reasoning !== undefined) {
+          if (reasoning !== undefined && reasoning.value) {
             sink.onDelta({ type: 'think', think: reasoning.value });
           }
         }
