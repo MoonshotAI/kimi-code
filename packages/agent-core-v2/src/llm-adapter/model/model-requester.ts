@@ -2,9 +2,9 @@ import type { FinishReason } from '#human/llm/finish-reason';
 import type { VideoUploadInput } from '#human/llm/media/upload';
 import type { ResponseFormat } from '#human/llm/response-format';
 import type { ThinkingEffort } from '#human/llm/thinking';
+import type { TokenUsage } from '#human/llm/usage';
 
 import type { Message, StreamedMessagePart, Tool, VideoURLPart } from '../contract/message';
-import type { TokenUsage } from '../contract/usage';
 
 import type { Model } from './catalog';
 

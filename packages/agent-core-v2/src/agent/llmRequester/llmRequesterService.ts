@@ -28,8 +28,7 @@ import {
 import type { Message } from '#/llm-adapter/contract/message';
 import { type ThinkingEffort } from '#human/llm/thinking';
 import { isToolCall, type StreamedMessagePart, type ToolDescription as Tool } from '#human/llm/message';
-import { inputTotal } from '#/llm-adapter/contract/usage';
-import { emptyUsage, type TokenUsage } from '#human/llm/usage';
+import { emptyUsage, inputTotal, type TokenUsage } from '#human/llm/usage';
 import { ILogService, type LogContext } from '#/_base/log/log';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import {

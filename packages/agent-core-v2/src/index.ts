@@ -149,8 +149,7 @@ export {
   type VideoURLPart,
 } from '#human/llm/message';
 export type { ToolDescription as Tool } from '#human/llm/message';
-export { emptyUsage, type TokenUsage } from '#human/llm/usage';
-export { addUsage, grandTotal, inputTotal } from '#/llm-adapter/contract/usage';
+export { addUsage, emptyUsage, grandTotal, inputTotal, type TokenUsage } from '#human/llm/usage';
 export type { FinishReason } from '#human/llm/finish-reason';
 export type {
   JsonObjectResponseFormat,
@@ -202,7 +201,6 @@ import '#/llm-adapter/protocol/errors';
 export * from '#/llm-adapter/protocol/errors';
 export * from '#/llm-adapter/protocol/protocol';
 export * from '#/llm-adapter/protocol/protocol-base';
-export * from '#/llm-adapter/protocol/protocol-trait';
 import '#/app/kosongConfig/envOverlay';
 export * from '#/llm-adapter/model/completion-budget';
 export * from '#/llm-adapter/model/host-request-headers';

@@ -1,10 +1,25 @@
 import { Error2, type Error2Options } from '#/_base/errors/errors';
 import {
+  appendThinkingEffortConfigHint,
+  isAbortError,
+  isContextOverflowStatusError,
+  isImageFormatStatusError,
+  isProviderOverloadStatusError,
+  isRequestStructureStatusError,
+  isRequestTooLargeStatusError,
+  isToolExchangeAdjacencyStatusError,
   llmStatusErrorMessage,
+  sanitizeStatusErrorMessage,
   type LlmErrorMessage,
   type LlmRemoteErrorMessage,
 } from '#human/llm/errors';
 import type { FinishReason } from '#human/llm/finish-reason';
+
+export {
+  isAbortError,
+  parseRetryAfterMs,
+  sanitizeStatusErrorMessage,
+} from '#human/llm/errors';
 
 export const CONFIG_INVALID_ERROR_CODE = 'config.invalid';
 
@@ -24,13 +39,6 @@ export type ProviderErrorCode =
   | typeof PROVIDER_CONNECTION_ERROR_CODE
   | typeof PROVIDER_OVERLOADED_ERROR_CODE
   | typeof CONTEXT_OVERFLOW_ERROR_CODE;
-
-export function sanitizeStatusErrorMessage(message: string): string {
-  const titleMatch = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(message);
-  const extracted = titleMatch?.[1]?.trim();
-  const normalized = extracted !== undefined && extracted.length > 0 ? extracted : message;
-  return normalized.replaceAll('\r', '');
-}
 
 function codeForStatusError(statusCode: number): ProviderErrorCode {
   if (statusCode === 429) return PROVIDER_RATE_LIMIT_ERROR_CODE;
@@ -186,16 +194,6 @@ export function createAbortError(): DOMException {
   return new DOMException('The operation was aborted.', 'AbortError');
 }
 
-export function isAbortError(error: unknown): boolean {
-  if (error instanceof DOMException && error.name === 'AbortError') return true;
-  if (error instanceof Error && error.name === 'AbortError') return true;
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    (error as object).constructor?.name === 'APIUserAbortError'
-  );
-}
-
 export function throwIfAbortError(error: unknown): void {
   if (isAbortError(error)) {
     throw createAbortError();
@@ -207,27 +205,11 @@ const IMAGE_FORMAT_PROVIDER_MESSAGE_PATTERNS = [
   /invalid data url for image/,
 ] as const;
 
-const IMAGE_FORMAT_STATUS_MESSAGE_PATTERNS = [
-  /unsupported image (?:url|format|type)/,
-  /does not represent a valid image/,
-  /could not (?:process|decode) (?:the |input )?image/,
-  /unable to process (?:the |input )?image/,
-  /failed to decode (?:the )?image/,
-  /invalid image(?: data| type| format)?/,
-] as const;
-
-const MEDIA_TYPE_FIELD_PATTERN = /(?:media|mime)_?type/;
-
 export function isImageFormatError(error: unknown): boolean {
   if (error instanceof APIStatusError) {
     if (error instanceof APIContextOverflowError) return false;
     if (error instanceof APIRequestTooLargeError) return false;
-    if (error.statusCode !== 400) return false;
-    const lowerMessage = error.message.toLowerCase();
-    return (
-      IMAGE_FORMAT_STATUS_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage)) ||
-      (MEDIA_TYPE_FIELD_PATTERN.test(lowerMessage) && lowerMessage.includes('image'))
-    );
+    return isImageFormatStatusError(error.statusCode, error.message);
   }
   if (error instanceof ChatProviderError) {
     const lowerMessage = error.message.toLowerCase();
@@ -268,17 +250,6 @@ export function classifyBaseApiError(message: string): ChatProviderError {
   return new ChatProviderError(`Error: ${message}`);
 }
 
-const CONTEXT_OVERFLOW_MESSAGE_PATTERNS = [
-  /context[ _-]?length/,
-  /(?:context[ _-]?window.*exceed|exceed.*context[ _-]?window)/,
-  /maximum context/,
-  /exceed(?:ed|s|ing)?\s+(?:the\s+)?max(?:imum)?\s+tokens?/,
-  /(?:too many tokens.*(?:prompt|input|context)|(?:prompt|input|context).*too many tokens)/,
-  /prompt is too long.*maximum/,
-  /input token count.*exceeds?.*maximum number of tokens/,
-  /request.*exceed(?:ed|s|ing)?.*model token limit/,
-] as const;
-
 const PROVIDER_RATE_LIMIT_MESSAGE_PATTERNS = [
   /(?:apistatuserror.*429|429.*apistatuserror)/,
   /429.*too many requests/,
@@ -288,41 +259,6 @@ const PROVIDER_RATE_LIMIT_MESSAGE_PATTERNS = [
   /rate[ _-]?limit(?:ed)?/,
   /rate-limited/,
 ] as const;
-
-const PROVIDER_OVERLOAD_MESSAGE_PATTERNS = [/overload/] as const;
-
-const REQUEST_TOO_LARGE_MESSAGE_PATTERNS = [
-  /request exceeds the maximum size/,
-  /request entity too large/,
-  /request_too_large/,
-  /exceeds? the maximum allowed number of bytes/,
-  /payload too large/,
-  /content too large/,
-  /request (?:body )?too large/,
-] as const;
-
-const THINKING_EFFORT_CONFIG_DOCS_URL =
-  'https://moonshotai.github.io/kimi-code/en/configuration/config-files.html#thinking';
-
-const THINKING_EFFORT_STATUS_MESSAGE_PATTERNS = [
-  /reasoning[_ .-]?effort/,
-  /thinking[_ .-]?effort/,
-  /output_config[\s\S]*effort/,
-  /unsupported[\s\S]*effort/,
-  /invalid[\s\S]*effort/,
-] as const;
-
-function appendThinkingEffortConfigHint(statusCode: number, message: string): string {
-  if (statusCode !== 400 && statusCode !== 422) return message;
-  const lowerMessage = message.toLowerCase();
-  if (!THINKING_EFFORT_STATUS_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage))) {
-    return message;
-  }
-  if (message.includes(THINKING_EFFORT_CONFIG_DOCS_URL)) return message;
-  return `${message}
-
-The provider rejected the configured thinking effort. Non-Kimi providers receive effort strings without client-side mapping; choose an effort supported by the selected model. For Kimi models, check support_efforts and default_effort. See ${THINKING_EFFORT_CONFIG_DOCS_URL}`;
-}
 
 export function isContextOverflowErrorCode(code: string | null | undefined): boolean {
   return code === 'context_length_exceeded';
@@ -356,19 +292,6 @@ export function normalizeAPIStatusError(
   );
 }
 
-export function parseRetryAfterMs(headers: unknown): number | null {
-  const raw =
-    headers !== null &&
-    typeof headers === 'object' &&
-    typeof (headers as { get?: unknown }).get === 'function'
-      ? (headers as { get(name: string): string | null }).get('retry-after')
-      : null;
-  if (raw === null || raw === undefined) return null;
-  const seconds = Number.parseInt(raw, 10);
-  if (!Number.isFinite(seconds) || seconds < 0) return null;
-  return seconds * 1000;
-}
-
 export function parseTraceId(headers: unknown): string | null {
   const raw =
     headers !== null &&
@@ -388,61 +311,16 @@ export function traceIdFromHeadersRecord(headers: Record<string, string> | null)
   return null;
 }
 
-export function isContextOverflowStatusError(statusCode: number, message: string): boolean {
-  if (statusCode !== 400 && statusCode !== 413 && statusCode !== 422) return false;
-  const lowerMessage = message.toLowerCase();
-  return CONTEXT_OVERFLOW_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
-}
-
-export function isProviderOverloadStatusError(statusCode: number, message: string): boolean {
-  if (statusCode === 529) return true;
-  if (statusCode !== 500 && statusCode !== 503) return false;
-  const lowerMessage = message.toLowerCase();
-  return PROVIDER_OVERLOAD_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
-}
-
-export function isRequestTooLargeStatusError(statusCode: number, message: string): boolean {
-  if (statusCode !== 413) return false;
-  const lowerMessage = message.toLowerCase();
-  return REQUEST_TOO_LARGE_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
-}
-
-const TOOL_EXCHANGE_ADJACENCY_MESSAGE_PATTERNS = [
-  /tool_use[\s\S]*tool_result/,
-  /tool_result[\s\S]*tool_use/,
-  /unexpected\s+`?tool_result/,
-  /tool_call_id[\s\S]*not found/,
-  /role\s+['"`]?tool['"`]?\s+must be a response to a preceding message/,
-  /assistant message with\s+['"`]?tool_calls['"`]?\s+must be followed by tool messages/,
-  /tool_call_ids? did not have response messages/,
-  /insufficient tool messages following/,
-] as const;
-
 export function isToolExchangeAdjacencyError(error: unknown): boolean {
   if (!(error instanceof APIStatusError)) return false;
   if (error instanceof APIContextOverflowError) return false;
-  if (error.statusCode !== 400 && error.statusCode !== 422) return false;
-  const lowerMessage = error.message.toLowerCase();
-  return TOOL_EXCHANGE_ADJACENCY_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
+  return isToolExchangeAdjacencyStatusError(error.statusCode, error.message);
 }
 
-const STRUCTURAL_REQUEST_MESSAGE_PATTERNS = [
-  /text content blocks must be non-empty/,
-  /text content blocks must contain non-whitespace/,
-  /first message must use the .*user.* role/,
-  /roles must alternate/,
-  /multiple .*(?:user|assistant).* roles in a row/,
-  /tool_use[\s\S]*ids must be unique/,
-  /message at position \d+ with role ['"`]?[a-z]+['"`]? must not be empty/,
-] as const;
-
 export function isRecoverableRequestStructureError(error: unknown): boolean {
-  if (isToolExchangeAdjacencyError(error)) return true;
   if (!(error instanceof APIStatusError)) return false;
   if (error instanceof APIContextOverflowError) return false;
-  if (error.statusCode !== 400 && error.statusCode !== 422) return false;
-  const lowerMessage = error.message.toLowerCase();
-  return STRUCTURAL_REQUEST_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
+  return isRequestStructureStatusError(error.statusCode, error.message);
 }
 
 export function isProviderRateLimitError(error: unknown): boolean {

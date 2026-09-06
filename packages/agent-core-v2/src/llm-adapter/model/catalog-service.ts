@@ -12,7 +12,7 @@ import {
 
 import type { ModelCapability } from '../contract/capability';
 import { CONFIG_INVALID_ERROR_CODE } from '../contract/errors';
-import type { TokenUsage } from '../contract/usage';
+import type { TokenUsage } from '#human/llm/usage';
 import {
   IProtocolAdapterRegistry,
   type Protocol,

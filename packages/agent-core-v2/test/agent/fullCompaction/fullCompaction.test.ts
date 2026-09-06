@@ -13,7 +13,7 @@ import { type Message } from '#/llm-adapter/contract/message';
 import { type StreamedMessagePart, type ToolCall } from '#human/llm/message';
 import type { FinishReason } from '#human/llm/finish-reason';
 import { fromLlmMessage } from '#/llm-adapter/contract/message';
-import type { TokenUsage } from '#/llm-adapter/contract/usage';
+import type { TokenUsage } from '#human/llm/usage';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {

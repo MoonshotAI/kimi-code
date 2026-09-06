@@ -16,7 +16,7 @@ import type {
 import { fromLlmMessage, type Message, type Tool } from '#/llm-adapter/contract/message';
 import { isAbortError } from '#/llm-adapter/contract/errors';
 import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
-import type { TokenUsage } from '#/llm-adapter/contract/usage';
+import type { TokenUsage } from '#human/llm/usage';
 import type { SamplingOptions } from '#/llm-adapter/model/model-requester';
 import { translateProviderError } from '#/llm-adapter/protocol/errors';
 

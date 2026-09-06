@@ -3,7 +3,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { inputTotal } from '#/llm-adapter/contract/usage';
+import { inputTotal } from '#human/llm/usage';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 

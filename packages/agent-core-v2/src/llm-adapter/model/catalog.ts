@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 import type { ModelCapability } from '../contract/capability';
-import type { TokenUsage } from '../contract/usage';
+import type { TokenUsage } from '#human/llm/usage';
 import type { Protocol, ProtocolProviderOptions } from '../protocol/protocol';
 import type { ProviderConfig } from '../provider/provider';
 

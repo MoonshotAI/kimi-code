@@ -9,7 +9,7 @@ import {
   estimateTokensForTools,
   MEDIA_TOKEN_ESTIMATE,
 } from '#/llm-adapter/contract/tokens';
-import { addUsage, emptyUsage, grandTotal, inputTotal } from '#/llm-adapter/contract/usage';
+import { addUsage, emptyUsage, grandTotal, inputTotal } from '#human/llm/usage';
 
 describe('TokenUsage aggregation', () => {
   it('emptyUsage is all zeros', () => {

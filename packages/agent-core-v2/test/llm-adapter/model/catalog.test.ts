@@ -6,7 +6,7 @@ import { isError2 } from '#/_base/errors/errors';
 import { IConfigService } from '#/app/config/config';
 import { ConfigErrors } from '#/app/config/errors';
 import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
-import { emptyUsage } from '#/llm-adapter/contract/usage';
+import { emptyUsage } from '#human/llm/usage';
 import type { LlmRequester } from '#human/llm/requester/requester';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import '#/llm-adapter/protocol/protocolAdapterRegistry';

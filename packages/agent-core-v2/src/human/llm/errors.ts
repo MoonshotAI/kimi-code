@@ -186,7 +186,7 @@ const THINKING_EFFORT_STATUS_MESSAGE_PATTERNS = [
   /invalid[\s\S]*effort/,
 ] as const;
 
-function appendThinkingEffortConfigHint(statusCode: number, message: string): string {
+export function appendThinkingEffortConfigHint(statusCode: number, message: string): string {
   if (statusCode !== 400 && statusCode !== 422) return message;
   const lowerMessage = message.toLowerCase();
   if (!THINKING_EFFORT_STATUS_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage))) {

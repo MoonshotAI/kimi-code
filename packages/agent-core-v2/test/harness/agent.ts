@@ -110,7 +110,7 @@ import { type ModelCapability } from '#/llm-adapter/contract/capability';
 import { isToolCall, isToolCallPart, type ContentPart, type Message as KosongMessage, type StreamedMessagePart } from '#/llm-adapter/contract/message';
 import { type ThinkingEffort } from '#human/llm/thinking';
 import { type Tool as KosongTool } from '#/llm-adapter/contract/message';
-import { type TokenUsage } from '#/llm-adapter/contract/usage';
+import { type TokenUsage } from '#human/llm/usage';
 import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
 import { type AgentModelDefinition } from '#/state/agentModel';
 import { type AgentModelInstanceOf } from '#/agent/agentContext/agentSpace';

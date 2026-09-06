@@ -34,7 +34,7 @@ import {
   VideoUploadUnsupportedError,
 } from '../contract/errors';
 import { fromLlmAssistantMessage, toLlmMessage, type Tool } from '../contract/message';
-import { mergeUsagePatch } from '../contract/usage';
+import { mergeUsagePatch } from '#human/llm/usage';
 
 import type { Model, ProviderRequestAuth } from './catalog';
 import type {
