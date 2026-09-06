@@ -303,7 +303,9 @@ export function createOpenAIFormat(): OpenAIProtocolFormat {
           const inline = extractReasoning(delta, 'reasoning_content');
           if (inline !== undefined) {
             seenReasoningContent = true;
-            sink.onDelta({ type: 'think', think: inline.value });
+            if (inline.value) {
+              sink.onDelta({ type: 'think', think: inline.value });
+            }
           }
           for (const part of convertReasoningDetails(reasoningDetails, seenReasoningContent)) {
             sink.onDelta(part);
@@ -314,7 +316,9 @@ export function createOpenAIFormat(): OpenAIProtocolFormat {
             if (reasoning.key === 'reasoning_content') {
               seenReasoningContent = true;
             }
-            sink.onDelta({ type: 'think', think: reasoning.value });
+            if (reasoning.value) {
+              sink.onDelta({ type: 'think', think: reasoning.value });
+            }
           }
         }
         if (typeof delta.content === 'string' && delta.content.length > 0) {
