@@ -12,14 +12,14 @@ export type EditApplyResult =
   | { readonly ok: true; readonly rawContent: string; readonly count: number }
   | { readonly ok: false; readonly error: string };
 
-/** Multi-line empty replacements without an explicit opt-in are refused (see #2427). */
 const LARGE_DELETE_MIN_OLD_LINES = 3;
 
 export function countEditLines(text: string): number {
   if (text.length === 0) return 0;
   let lines = 1;
   for (let i = 0; i < text.length; i++) {
-    if (text.charCodeAt(i) === 10) lines++;
+    const char = text[i];
+    if (char === '\n' || (char === '\r' && text[i + 1] !== '\n')) lines++;
   }
   return lines;
 }
