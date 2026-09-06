@@ -11,7 +11,7 @@ import {
 } from '#/errors';
 import { extractText } from '#/message';
 import type { ContentPart, Message } from '#/message';
-import type { FinishReason } from '#/provider';
+import type { FinishReason, ThinkingEffort } from '#/provider';
 import type { Tool } from '#/tool';
 import type { TokenUsage } from '#/usage';
 import {
@@ -302,4 +302,24 @@ export function convertToolMessageContent(
   return message.content
     .map((p) => convertContentPart(p))
     .filter((p): p is OpenAIContentPart => p !== null);
+}
+
+/**
+ * Default `reasoning_effort` for a boolean Thinking On. Chat-completions and
+ * Responses APIs have no dedicated "on" token; catalog models with
+ * `support_efforts` are remapped to a concrete effort before they reach this
+ * helper. Custom OpenAI-compatible models with only `adaptive_thinking`
+ * still arrive as `'on'` and must send an explicit value, or endpoints that
+ * think only when the field is present stay silent.
+ */
+export const DEFAULT_ON_REASONING_EFFORT = 'medium';
+
+export function encodeOpenAIReasoningEffort(
+  effort: ThinkingEffort | undefined,
+  options?: { offEffort?: string; onEffort?: string },
+): string | undefined {
+  if (effort === undefined) return undefined;
+  if (effort === 'off') return options?.offEffort;
+  if (effort === 'on') return options?.onEffort ?? DEFAULT_ON_REASONING_EFFORT;
+  return effort;
 }

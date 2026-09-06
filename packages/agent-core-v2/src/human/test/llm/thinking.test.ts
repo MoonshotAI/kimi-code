@@ -221,7 +221,7 @@ describe('openai requester thinking', () => {
     expect(client.body()['reasoning_effort']).toBe('max');
   });
 
-  it('sends nothing for on without a trait', async () => {
+  it('sends reasoning_effort medium for on without a trait', async () => {
     const client = stubOpenAIClient(chatCompletionChunks());
     const requester = createOpenAIRequester(undefined, { clientFactory: client.clientFactory });
     await requester.generate(
@@ -229,8 +229,22 @@ describe('openai requester thinking', () => {
       { messages },
       { signal: new AbortController().signal },
     );
-    expect(client.body()['reasoning_effort']).toBeUndefined();
+    expect(client.body()['reasoning_effort']).toBe('medium');
     expect(client.body()['thinking']).toBeUndefined();
+  });
+
+  it('sends defaultEffort as reasoning_effort for on on a custom OpenAI-compatible model', async () => {
+    const client = stubOpenAIClient(chatCompletionChunks());
+    const requester = createOpenAIRequester(undefined, { clientFactory: client.clientFactory });
+    await requester.generate(
+      {
+        model: modelWith({ adaptiveThinking: true, defaultEffort: 'high' }),
+        thinking: { effort: 'on' },
+      },
+      { messages },
+      { signal: new AbortController().signal },
+    );
+    expect(client.body()['reasoning_effort']).toBe('high');
   });
 
   it('sends the configured offEffort when thinking is off', async () => {

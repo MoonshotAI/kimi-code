@@ -79,7 +79,7 @@ export function resolveThinkingEffort(
   const effort = options.effort;
   const meta = thinkingMetadataOf(model);
   if (effort === 'on') {
-    return { ok: true, encode: 'silent' };
+    return { ok: true, encode: 'effort', value: nonEmpty(meta?.defaultEffort) ?? 'medium' };
   }
   if (effort === 'off') {
     if (meta?.offEffort !== undefined) {
