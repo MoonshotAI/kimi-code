@@ -20,7 +20,7 @@ export interface ThinkPart {
 
 export interface ImageURLPart {
   type: 'image_url';
-  imageUrl: { url: string; id?: string };
+  imageUrl: { url: string; id?: string; name?: string };
 }
 
 export interface AudioURLPart {
@@ -30,7 +30,7 @@ export interface AudioURLPart {
 
 export interface VideoURLPart {
   type: 'video_url';
-  videoUrl: { url: string; id?: string };
+  videoUrl: { url: string; id?: string; name?: string };
 }
 
 export type ContentPart = TextPart | ThinkPart | ImageURLPart | AudioURLPart | VideoURLPart;
