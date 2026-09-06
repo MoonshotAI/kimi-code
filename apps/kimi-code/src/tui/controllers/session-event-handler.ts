@@ -554,8 +554,9 @@ export class SessionEventHandler {
     // moon spinner while no ThinkingComponent is ever created (it needs visible
     // text), leaving a blank, spinner-less gap until the first real text/tool
     // token arrives. Keep the moon up until actual thinking text shows up.
-    if (event.delta.trim().length === 0 && !streamingUI.hasThinkingDraft()) return;
-    streamingUI.appendThinkingDelta(event.delta);
+    const delta = typeof event.delta === 'string' ? event.delta : '';
+    if (delta.trim().length === 0 && !streamingUI.hasThinkingDraft()) return;
+    streamingUI.appendThinkingDelta(delta);
     this.host.patchLivePane({ mode: 'idle' });
     if (state.appState.streamingPhase !== 'thinking') {
       this.host.setAppState({ streamingPhase: 'thinking', streamingStartTime: Date.now() });
@@ -565,15 +566,19 @@ export class SessionEventHandler {
 
   private handleAssistantDelta(event: AssistantDeltaEvent): void {
     const { state, streamingUI } = this.host;
+    // A compatible relay may stream a text block whose `text` field is absent;
+    // the wire event then carries no `delta` at all. Coerce it to an empty
+    // string so a malformed record can never crash the renderer.
+    const delta = typeof event.delta === 'string' ? event.delta : '';
     if (streamingUI.hasThinkingDraft()) {
       streamingUI.flushThinkingToTranscript('idle');
     }
 
-    if (event.delta.trim().length > 0) {
+    if (delta.trim().length > 0) {
       this.currentTurnHasAssistantText = true;
       this.pendingModelBlockedFallback = undefined;
     }
-    streamingUI.appendAssistantDelta(event.delta);
+    streamingUI.appendAssistantDelta(delta);
 
     this.host.patchLivePane({
       mode: 'idle',

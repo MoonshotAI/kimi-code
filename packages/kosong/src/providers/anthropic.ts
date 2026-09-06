@@ -809,7 +809,7 @@ class AnthropicStreamedMessage implements StreamedMessage {
           // eslint-disable-next-line typescript-eslint/switch-exhaustiveness-check
           switch (block.type) {
             case 'text':
-              yield { type: 'text', text: block.text };
+              yield { type: 'text', text: block.text ?? '' };
               break;
             case 'thinking':
               yield { type: 'think', think: block.thinking ?? '' };
@@ -842,7 +842,7 @@ class AnthropicStreamedMessage implements StreamedMessage {
           // eslint-disable-next-line typescript-eslint/switch-exhaustiveness-check
           switch (delta.type) {
             case 'text_delta':
-              yield { type: 'text', text: delta.text };
+              yield { type: 'text', text: delta.text ?? '' };
               break;
             case 'thinking_delta':
               yield { type: 'think', think: delta.thinking ?? '' };
