@@ -130,6 +130,53 @@ describe('skill discovery', () => {
     expect(warnings.some((message) => message.includes('Ignoring flat skill'))).toBe(true);
   });
 
+  it('treats .md files inside a skill bundle dir as payload, not flat skills', async () => {
+    const { repoDir } = await makeWorkspace();
+    const bundleRoot = path.join(repoDir, 'plugin-skills', 'teach');
+    await writeSkill(bundleRoot, 'SKILL.md', [
+      '---',
+      'name: teach',
+      'description: Teaching skill',
+      '---',
+      '',
+      'Teach body.',
+    ]);
+    await writeSkill(bundleRoot, 'GLOSSARY-FORMAT.md', [
+      '---',
+      'name: GLOSSARY-FORMAT',
+      'description: Auxiliary reference doc',
+      '---',
+      '',
+      'Glossary format reference.',
+    ]);
+
+    const skills = await discoverSkills({
+      roots: [{ path: bundleRoot, source: 'extra', plugin: { id: 'mattpocock-skills' } }],
+    });
+
+    expect(skills.map((skill) => skill.name)).toEqual(['teach']);
+  });
+
+  it('still registers flat .md skills in collection dirs without a top-level SKILL.md', async () => {
+    const { repoDir } = await makeWorkspace();
+    const collectionRoot = path.join(repoDir, 'plugin-skills');
+    await writeSkill(collectionRoot, path.join('teach', 'SKILL.md'), [
+      '---',
+      'name: teach',
+      'description: Teaching skill',
+      '---',
+      '',
+      'Teach body.',
+    ]);
+    await writeSkill(collectionRoot, 'review.md', ['Flat review body.']);
+
+    const skills = await discoverSkills({
+      roots: [{ path: collectionRoot, source: 'extra', plugin: { id: 'mattpocock-skills' } }],
+    });
+
+    expect(skills.map((skill) => skill.name).toSorted()).toEqual(['review', 'teach']);
+  });
+
   it('keeps flow skills user-visible while excluding them from model invocation', async () => {
     const { repoDir } = await makeWorkspace();
     const projectRoot = path.join(repoDir, '.kimi-code', 'skills');
