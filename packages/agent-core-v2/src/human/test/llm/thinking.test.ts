@@ -453,5 +453,22 @@ describe('openai requester thinking', () => {
     await expect(
       collect(chatCompletionChunks([{ reasoning: '' }, { content: 'hi' }])),
     ).resolves.toContainEqual({ type: 'think', think: '' });
+    await expect(
+      collect(
+        chatCompletionChunks([
+          { reasoning: '', content: 'hel' },
+          { reasoning: '', content: 'lo' },
+        ]),
+      ),
+    ).resolves.toEqual([
+      { type: 'think', think: '' },
+      { type: 'text', text: 'hello' },
+    ]);
+    await expect(
+      collect(chatCompletionChunks([{ content: 'hi' }, { reasoning: '' }])),
+    ).resolves.toEqual([
+      { type: 'text', text: 'hi' },
+      { type: 'think', think: '' },
+    ]);
   });
 });

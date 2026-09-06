@@ -1051,6 +1051,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   private accumulateMachinePart(turn: ActiveTurn, part: ContentPart): void {
     const last = turn.partials.at(-1);
+    if (part.type === 'think' && last?.type === 'text' && isVacuousContentPart(part)) return;
     if (!turn.forceContentPartBoundary && last !== undefined && mergeInPlace(last, part)) return;
     turn.forceContentPartBoundary = false;
     turn.partials.push({ ...part });

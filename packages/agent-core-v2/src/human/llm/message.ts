@@ -197,27 +197,31 @@ export function createMessageAccumulator(): MessageAccumulator {
   const message: AssistantMessage = { role: 'assistant', content: [], toolCalls: [] };
   const toolCallIndexMap = new Map<number | string, number>();
   let pending: StreamedMessagePart | null = null;
+  let deferredThink: ThinkPart | null = null;
   const flush = () => {
-    if (pending === null) {
-      return;
-    }
-    if (isContentPart(pending)) {
-      message.content.push(pending);
-    } else if (isToolCall(pending)) {
-      const ordinal = message.toolCalls.length;
-      message.toolCalls.push({
-        type: 'function',
-        id: pending.id,
-        name: pending.name,
-        arguments: pending.arguments,
-        extras: pending.extras,
-        rawId: pending.rawId,
-      });
-      if (pending._streamIndex !== undefined) {
-        toolCallIndexMap.set(pending._streamIndex, ordinal);
+    if (pending !== null) {
+      if (isContentPart(pending)) {
+        message.content.push(pending);
+      } else if (isToolCall(pending)) {
+        const ordinal = message.toolCalls.length;
+        message.toolCalls.push({
+          type: 'function',
+          id: pending.id,
+          name: pending.name,
+          arguments: pending.arguments,
+          extras: pending.extras,
+          rawId: pending.rawId,
+        });
+        if (pending._streamIndex !== undefined) {
+          toolCallIndexMap.set(pending._streamIndex, ordinal);
+        }
       }
+      pending = null;
     }
-    pending = null;
+    if (deferredThink !== null) {
+      message.content.push(deferredThink);
+      deferredThink = null;
+    }
   };
   return {
     push(part: StreamedMessagePart) {
@@ -238,8 +242,15 @@ export function createMessageAccumulator(): MessageAccumulator {
           return;
         }
       }
+      if (part.type === 'text') {
+        deferredThink = null;
+      }
       if (pending === null) {
         pending = structuredClone(part);
+        return;
+      }
+      if (pending.type === 'text' && part.type === 'think' && isVacuousContentPart(part)) {
+        deferredThink = structuredClone(part);
         return;
       }
       if (!mergeInPlace(pending, part)) {
