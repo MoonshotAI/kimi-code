@@ -111,6 +111,7 @@ export interface MachineEngineSnapshot {
   readonly aborting: boolean;
   readonly waitingForBackground: boolean;
   readonly queueLength: number;
+  readonly queueIds: readonly (string | undefined)[];
   readonly notificationCount: number;
   readonly reminderCount: number;
   readonly backgroundCount: number;
@@ -133,7 +134,7 @@ export interface MachineEngine {
 interface MachineSnapshotLike {
   readonly value: unknown;
   readonly context: {
-    readonly queue: readonly unknown[];
+    readonly queue: readonly { readonly id?: string }[];
     readonly notifications: readonly unknown[];
     readonly reminders: readonly unknown[];
     readonly background: Record<string, unknown>;
@@ -373,6 +374,7 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
           typeof value === 'object' && value !== null && 'idle' in value &&
           (value as { idle?: unknown }).idle === 'waiting',
         queueLength: snapshot.context.queue.length,
+        queueIds: snapshot.context.queue.map((entry) => entry.id),
         notificationCount: snapshot.context.notifications.length,
         reminderCount: snapshot.context.reminders.length,
         backgroundCount: Object.keys(snapshot.context.background).length,

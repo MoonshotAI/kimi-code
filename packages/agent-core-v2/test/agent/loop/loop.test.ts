@@ -671,12 +671,14 @@ describe('Agent loop', () => {
       }
     });
     ctx.mockNextResponse({ type: 'text', text: 'one' });
+    ctx.mockNextResponse({ type: 'text', text: 'one-continued' });
     ctx.mockNextResponse({ type: 'text', text: 'two' });
     ctx.mockNextResponse({ type: 'text', text: 'three' });
 
     const first = submitTurn(loop, 'first').turn;
     const second = submitTurn(loop, 'second').turn;
     const third = submitTurn(loop, 'third').turn;
+    loop.notify();
 
     expect([first.state, second.state, third.state]).toEqual(['running', 'queued', 'queued']);
     await Promise.all([first.result, second.result, third.result]);
@@ -690,7 +692,7 @@ describe('Agent loop', () => {
       'turn.started:2',
       'turn.ended:2',
     ]);
-    expect(ctx.llmCalls).toHaveLength(3);
+    expect(ctx.llmCalls).toHaveLength(4);
   });
 
   it('refuses a quiescence lease while a turn is active without cancelling it', async () => {
@@ -745,12 +747,16 @@ describe('Agent loop', () => {
     const lease = loop.tryAcquireQuiescence();
     expect(lease).toBeDefined();
     const held = submitTurn(loop, 'held').turn;
+    const resumed = submitTurn(loop, 'resumed').turn;
 
     expect(held.cancel()).toBe(true);
     await expect(held.result).resolves.toMatchObject({ type: 'cancelled', steps: 0 });
-    expect(loop.hasPendingRequests()).toBe(false);
+    expect(loop.hasPendingRequests()).toBe(true);
 
+    ctx.mockNextResponse({ type: 'text', text: 'resumed answer' });
     lease?.dispose();
+    await expect(resumed.result).resolves.toMatchObject({ type: 'completed', steps: 1 });
+    expect(loop.hasPendingRequests()).toBe(false);
     expect(loop.status().state).toBe('idle');
   });
 

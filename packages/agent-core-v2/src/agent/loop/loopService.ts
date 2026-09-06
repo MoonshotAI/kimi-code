@@ -114,6 +114,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private active: ActiveTurn | undefined;
   private machineTurnUnbound = false;
   private machineTurnSuppressed = false;
+  private unboundDrained: TurnReservation | undefined;
+  private readonly pendingMachineQueueIds = new Set<string>();
   private readonly settleWaiters: Array<() => void> = [];
   private quiescenceDepth = 0;
   private activeRequestTrace: LLMRequestTrace | undefined;
@@ -197,6 +199,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     for (const reservation of this.reservations.splice(0)) {
       this.settleReservationCancelled(reservation, reason);
     }
+    this.pendingMachineQueueIds.clear();
     this.active?.turn.cancel(reason);
     this.engine?.stop();
     this.maybeSettle();
@@ -275,6 +278,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     };
     return {
       id,
+      machineQueueId: prompt.promptId ?? `turn-${String(id)}`,
       message,
       origin: message.origin ?? { kind: 'user' },
       promptId: prompt.promptId,
@@ -290,9 +294,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private launchReservation(reservation: TurnReservation): void {
     if (reservation.cancelled || reservation.launched) return;
     reservation.launched = true;
-
+    this.pendingMachineQueueIds.add(reservation.machineQueueId);
     this.machineEngine().submit({
-      id: reservation.promptId ?? `turn-${String(reservation.id)}`,
+      id: reservation.machineQueueId,
       message: machineUserMessage(reservation.message),
     });
   }
@@ -308,7 +312,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return {
       state: this.active === undefined ? 'idle' : 'running',
       activeTurnId: this.active?.id,
-      pendingTurnIds: this.reservations.map((reservation) => reservation.id),
+      pendingTurnIds: this.reservations
+        .filter((reservation) => !reservation.cancelled)
+        .map((reservation) => reservation.id),
       hasPendingRequests: this.hasPendingRequests(),
       activeTraceId: this.activeRequestTrace?.traceId,
     };
@@ -381,8 +387,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   private cancelQueuedTurn(turnId: number, cancellation: unknown): boolean {
-    const reservation = this.reservations.find((entry) => entry.id === turnId);
-    if (reservation === undefined || reservation.cancelled) return false;
+    const index = this.reservations.findIndex((entry) => entry.id === turnId);
+    if (index < 0) return false;
+    const reservation = this.reservations[index]!;
+    if (reservation.cancelled) return false;
     reservation.cancelled = true;
     void this.dispatcher.dispatch(
       new TurnCancel({
@@ -392,6 +400,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         reason: cancelReasonFor(cancellation),
       }),
     );
+    if (!reservation.launched) {
+      this.reservations.splice(index, 1);
+    }
     this.settleReservationCancelled(reservation, cancellation);
     return true;
   }
@@ -554,16 +565,18 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private bindMachineTurn(): boolean {
     this.machineTurnUnbound = false;
     if (this.active !== undefined) return true;
-    const reservation = this.reservations[0];
-    if (reservation !== undefined) {
-      this.reservations.shift();
-      if (reservation.cancelled) {
+    const drained = this.unboundDrained;
+    this.unboundDrained = undefined;
+    if (drained !== undefined) {
+      const index = this.reservations.indexOf(drained);
+      if (index >= 0) this.reservations.splice(index, 1);
+      if (drained.cancelled) {
         this.machineTurnSuppressed = true;
         return false;
       }
-      this.beginActiveTurn(reservation.turn, reservation.controller, reservation);
-      reservation.onMaterialize?.();
-      this.materializeMessage(reservation.message);
+      this.beginActiveTurn(drained.turn, drained.controller, drained);
+      drained.onMaterialize?.();
+      this.materializeMessage(drained.message);
       return true;
     }
     const seeded = this.nudges.slice(this.nudgeCursor).find(
@@ -590,6 +603,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const origin = message.origin ?? { kind: 'user' };
     this.beginActiveTurn(turn, controller, {
       id,
+      machineQueueId: `turn-${String(id)}`,
       message,
       origin,
       promptId: message.id,
@@ -705,10 +719,34 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return { live, bypass };
   }
 
+  private reconcileDrainedQueueEntry(): void {
+    const engine = this.engine;
+    if (engine === undefined) return;
+    const queueIds = engine.snapshot().queueIds;
+    const drainedIds: string[] = [];
+    for (const id of this.pendingMachineQueueIds) {
+      if (!queueIds.includes(id)) drainedIds.push(id);
+    }
+    for (const id of drainedIds) {
+      this.pendingMachineQueueIds.delete(id);
+      const reservation = this.reservations.find((entry) => entry.machineQueueId === id);
+      if (reservation === undefined) continue;
+      if (this.active === undefined) {
+        this.unboundDrained = reservation;
+      } else {
+        this.pendingMachineQueueIds.add(reservation.machineQueueId);
+        this.machineEngine().submit({
+          id: reservation.machineQueueId,
+          message: machineUserMessage(reservation.message),
+        });
+      }
+    }
+  }
+
   private projectMachineEvent(event: MachineEngineEvent): void {
     switch (event.type) {
       case 'turnStarted': {
-
+        this.reconcileDrainedQueueEntry();
         this.machineTurnUnbound = true;
         this.machineTurnSuppressed = false;
         return;
@@ -1399,6 +1437,7 @@ type MutableTurn = {
 
 interface TurnReservation {
   readonly id: number;
+  readonly machineQueueId: string;
   readonly message: ContextMessage;
   readonly origin: PromptOrigin;
   readonly promptId?: string;
