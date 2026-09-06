@@ -257,6 +257,10 @@ export class WireService extends Service implements IWireService {
     }
   }
 
+  async drainPersisted(): Promise<void> {
+    await this.persistQueue;
+  }
+
   async flush(): Promise<void> {
     await this.persistQueue;
     const persistError = this.persistError;
