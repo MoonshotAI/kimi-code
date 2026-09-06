@@ -85,6 +85,7 @@ export type MachineEngineEvent =
   | { readonly type: 'toolDone'; readonly toolCallId: string; readonly result: MachineToolResult }
   | { readonly type: 'toolFailed'; readonly toolCallId: string; readonly error: unknown }
   | { readonly type: 'toolAborted'; readonly toolCallId: string }
+  | { readonly type: 'toolBatchFailed'; readonly error: unknown }
   | { readonly type: 'remindersConsumed'; readonly reminders: HistoryMessage[] }
   | { readonly type: 'aborting' };
 
@@ -205,6 +206,9 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
       });
     },
     onToolResult: options.onToolResult,
+    onBatchError: (error) => {
+      publish({ type: 'toolBatchFailed', error });
+    },
   });
   const actor = createActor(
     createAgentMachine({

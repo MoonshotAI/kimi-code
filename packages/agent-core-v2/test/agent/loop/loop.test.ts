@@ -9,6 +9,7 @@ import { IAgentProfileService } from '#/index';
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import type { ModelRequestTiming } from '#/llm-adapter/model/model-requester';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import { IAgentGoalService } from '#/features/goal/goalService';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
 import {
@@ -21,6 +22,7 @@ import {
 import { TurnEnded } from '#/agent/loop/turnOps';
 import type { ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { userCancellationReason } from '#/_base/utils/abort';
@@ -228,6 +230,16 @@ describe('Agent loop', () => {
 
   it('lets a loop error handler recover a non-context loop error by retrying', async () => {
     profile.update({ activeToolNames: [] });
+    const workTool: ExecutableTool = {
+      name: 'Work',
+      description: 'Pretend to work.',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      resolveExecution: () => ({
+        approvalRule: 'Work',
+        execute: async () => ({ output: 'should never run' }),
+      }),
+    };
+    ctx.get(IAgentToolRegistryService).register(workTool);
     const seenErrors: Array<{ readonly step: number | undefined; readonly message: string }> = [];
 
     loop.registerLoopErrorHandler({
@@ -259,6 +271,52 @@ describe('Agent loop', () => {
         args: expect.objectContaining({ reason: 'completed' }),
       }),
     );
+
+    profile.update({ activeToolNames: ['Work'] });
+    const beforeExecuteError = new Error('beforeExecute blew up');
+    const subscription = ctx.get(IAgentToolExecutorService).onBeforeExecuteTool(() => {
+      throw beforeExecuteError;
+    });
+    ctx.mockNextResponse(
+      { type: 'text', text: 'working' },
+      { type: 'function', id: 'call-work-1', name: 'Work', arguments: '{}' },
+    );
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'use the tool' }] });
+    await ctx.untilTurnEnd();
+    subscription.dispose();
+
+    expect(seenErrors).toEqual([
+      { step: 1, message: 'Unexpected generate call #1' },
+      { step: 1, message: 'beforeExecute blew up' },
+    ]);
+    expect(ctx.allEvents).toContainEqual(
+      expect.objectContaining({
+        event: 'turn.ended',
+        args: expect.objectContaining({
+          reason: 'failed',
+          error: expect.objectContaining({ message: 'beforeExecute blew up' }),
+        }),
+      }),
+    );
+    expect(ctx.allEvents).toContainEqual(
+      expect.objectContaining({
+        type: '[wire]',
+        event: 'context.append_loop_event',
+        args: expect.objectContaining({
+          event: expect.objectContaining({ type: 'step.end', finishReason: 'error' }),
+        }),
+      }),
+    );
+    expect(
+      ctx.allEvents.filter(
+        (entry) =>
+          entry.type === '[wire]' &&
+          entry.event === 'context.append_loop_event' &&
+          (entry.args as { event?: { type?: string } }).event?.type === 'tool.result',
+      ),
+    ).toHaveLength(0);
+    expect(ctx.llmCalls).toHaveLength(2);
   });
 
   it('reports an untyped LLM error message without an internal-code prefix', async () => {
@@ -1579,8 +1637,9 @@ describe('interruption reminder', () => {
 
   it('does not duplicate recorded content when cancelled during tool execution', async () => {
     const local = createTestAgent(permissionModeServices('yolo'));
+    const releaseSlowTool = deferred();
     try {
-      const slowToolStarted = registerAbortableWorkTool(local);
+      const slowToolStarted = registerAbortableWorkTool(local, releaseSlowTool.promise);
       const localLoop = local.get(IAgentLoopService);
       local.mockNextResponse(
         { type: 'text', text: 'working' },
@@ -1593,10 +1652,33 @@ describe('interruption reminder', () => {
       const turn = submitTurn(localLoop, 'do work').turn;
       await slowToolStarted.promise;
       localLoop.cancel(turn.id);
+      localLoop.cancel(turn.id);
       await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
 
       expect(contentPartRecordsIn(local)).toBe(2);
       expect(remindersIn(local)).toHaveLength(1);
+
+      const loopEvents = local.allEvents
+        .filter((entry) => entry.type === '[wire]' && entry.event === 'context.append_loop_event')
+        .map((entry) => (entry.args as { event: LoopRecordedEvent }).event);
+      const toolCalls = loopEvents.filter((event) => event.type === 'tool.call');
+      const toolResults = loopEvents.filter((event) => event.type === 'tool.result');
+      for (const call of toolCalls) {
+        expect(
+          toolResults.some(
+            (result) => result.toolCallId === call.toolCallId && result.parentUuid === call.uuid,
+          ),
+        ).toBe(true);
+      }
+      expect(toolResults.filter((event) => event.toolCallId === 'call-work-2')).toEqual([
+        expect.objectContaining({
+          result: {
+            output:
+              'The user manually interrupted "Work" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user\'s next instruction.',
+            isError: true,
+          },
+        }),
+      ]);
 
       local.mockNextResponse({ type: 'text', text: 'follow-up answer' });
       await local.rpc.prompt({ input: [{ type: 'text', text: 'again' }] });
@@ -1613,6 +1695,7 @@ describe('interruption reminder', () => {
 
       await local.expectResumeMatches();
     } finally {
+      releaseSlowTool.resolve();
       await local.dispose();
     }
   });
@@ -1793,7 +1876,10 @@ function createAbortedStepGenerate(): GenerateFn {
   });
 }
 
-function registerAbortableWorkTool(ctx: TestAgentContext): ReturnType<typeof deferred> {
+function registerAbortableWorkTool(
+  ctx: TestAgentContext,
+  ignoreAbortGate?: Promise<void>,
+): ReturnType<typeof deferred> {
   const slowToolStarted = deferred();
   let executions = 0;
   const tool: ExecutableTool = {
@@ -1807,6 +1893,10 @@ function registerAbortableWorkTool(ctx: TestAgentContext): ReturnType<typeof def
         executions += 1;
         if (executions === 1) return { output: 'first step complete' };
         slowToolStarted.resolve();
+        if (ignoreAbortGate !== undefined) {
+          await ignoreAbortGate;
+          return { output: 'second step late result' };
+        }
         if (!signal.aborted) {
           await new Promise<void>((resolve) => {
             signal.addEventListener(

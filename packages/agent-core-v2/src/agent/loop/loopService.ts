@@ -14,6 +14,7 @@ import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { ModelRequestTiming } from '#/llm-adapter/model/model-requester';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { abortedToolOutput } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IConfigService } from '#/app/config/config';
 import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
@@ -37,6 +38,7 @@ import type {
 } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IEventDispatcher } from '#/state/eventDispatcher';
+import { IWireService } from '#/wire/wire';
 import { LOOP_CONTROL_SECTION, type LoopControl } from './configSection';
 import {
   createMaxStepsExceededError,
@@ -131,6 +133,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly states: IAgentStateService,
+    @IWireService private readonly wire: IWireService,
   ) {
     super();
     this.states.contributeState(turnKey);
@@ -372,7 +375,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private cancelActiveTurn(turnId: number | undefined, cancellation: unknown): boolean {
     const active = this.active;
     if (active === undefined || (turnId !== undefined && active.id !== turnId)) return false;
-    if (active.controller.signal.aborted) return true;
+    if (active.controller.signal.aborted) {
+      this.machineEngine().abort();
+      return true;
+    }
     void this.dispatcher.dispatch(
       new TurnCancel({
         agentId: this.scopeContext.agentId,
@@ -492,6 +498,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (turn === undefined) return { type: 'fail' };
     if (turn.controller.signal.aborted || machineSignal.aborted) return { type: 'fail' };
     if (turn.stopRequested) return { type: 'fail' };
+    if (turn.failedStep !== undefined) return { type: 'fail' };
     const consumed = this.mirrorConsumedNudges(turn);
     if (turn.toolStopRequested && consumed.live === 0) return { type: 'fail' };
     const maxSteps = this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn;
@@ -519,6 +526,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       messageId: undefined,
       pendingToolIds: new Set(),
       toolCallUuids: new Map(),
+      resolvedToolIds: new Set(),
       toolStopTurn: false,
     };
     turn.current = step;
@@ -880,7 +888,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         if (this.isCannedUnknownToolResult(step, event.toolCallId, event.result)) {
           turn.afterChain = turn.afterChain.then(async () => {
             await this.executeUnknownToolCall(turn, step, event.toolCallId);
-            if (step.pendingToolIds.size === 0) {
+            if (turn.current === step && step.pendingToolIds.size === 0) {
               this.endOrInterruptMachineStep(turn, step, step.toolStopTurn ? 'completed' : 'tool_calls');
             }
           });
@@ -902,10 +910,26 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           toolCallId: event.toolCallId,
           result: { output: message, isError: true },
         });
+        step.resolvedToolIds.add(event.toolCallId);
         step.pendingToolIds.delete(event.toolCallId);
         if (step.pendingToolIds.size === 0) {
           this.endOrInterruptMachineStep(turn, step, step.toolStopTurn ? 'completed' : 'tool_calls');
         }
+        return;
+      }
+      case 'toolBatchFailed': {
+        const turn = this.active;
+        const step = turn?.current;
+        if (turn === undefined || step === undefined) return;
+        if (step.signal.aborted) return;
+        this.closeFailedMachineStep(turn, step, 'error');
+        turn.failedStep ??= {
+          number: step.number,
+          uuid: step.uuid,
+          error: event.error,
+        };
+        turn.current = undefined;
+        this.machineEngine().abort();
         return;
       }
       case 'retrying': {
@@ -983,32 +1007,44 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   ): Promise<void> {
     const call = step.entry?.message.toolCalls.find((entry) => entry.id === toolCallId);
     if (call === undefined) return;
-    for await (const result of this.toolExecutor.execute([call], {
-      signal: turn.controller.signal,
-      turnId: turn.id,
-      trace: this.activeRequestTrace,
-      onToolCall: (payload) => {
-        const callUuid = randomUUID();
-        step.toolCallUuids.set(payload.toolCallId, callUuid);
-        const extras = step.entry?.message.toolCalls.find(
-          (entry) => entry.id === payload.toolCallId,
-        )?.extras;
-        this.context.appendLoopEvent({
-          type: 'tool.call',
-          uuid: callUuid,
-          turnId: String(turn.id),
-          step: step.number,
-          stepUuid: step.uuid,
-          toolCallId: payload.toolCallId,
-          name: payload.name,
-          args: payload.args,
-          extras,
-        });
-      },
-    })) {
-      if (result.toolCallId === toolCallId) {
-        this.appendMachineToolResult(toolCallId, result.result);
+    try {
+      for await (const result of this.toolExecutor.execute([call], {
+        signal: turn.controller.signal,
+        turnId: turn.id,
+        trace: this.activeRequestTrace,
+        onToolCall: (payload) => {
+          const callUuid = randomUUID();
+          step.toolCallUuids.set(payload.toolCallId, callUuid);
+          const extras = step.entry?.message.toolCalls.find(
+            (entry) => entry.id === payload.toolCallId,
+          )?.extras;
+          this.context.appendLoopEvent({
+            type: 'tool.call',
+            uuid: callUuid,
+            turnId: String(turn.id),
+            step: step.number,
+            stepUuid: step.uuid,
+            toolCallId: payload.toolCallId,
+            name: payload.name,
+            args: payload.args,
+            extras,
+          });
+        },
+      })) {
+        if (result.toolCallId === toolCallId) {
+          this.appendMachineToolResult(toolCallId, result.result);
+        }
       }
+    } catch (error) {
+      if (this.active !== turn || turn.current !== step || step.signal.aborted) return;
+      this.closeFailedMachineStep(turn, step, 'error');
+      turn.failedStep ??= {
+        number: step.number,
+        uuid: step.uuid,
+        error,
+      };
+      turn.current = undefined;
+      this.machineEngine().abort();
     }
   }
 
@@ -1038,6 +1074,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       toolCallId,
       result: { output: result.output, isError: result.isError, note: result.note },
     });
+    step.resolvedToolIds.add(toolCallId);
     if (result.stopTurn === true) {
       step.toolStopTurn = true;
       turn.toolStopRequested = true;
@@ -1183,6 +1220,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     outcome: { readonly outcome: MachineTurnOutcome; readonly error?: unknown },
   ): Promise<void> {
     if (this.active !== turn) return;
+    if (
+      turn.failedStep !== undefined &&
+      turn.abortReason === undefined &&
+      !turn.controller.signal.aborted
+    ) {
+      await this.recoverOrFailMachineRun(turn);
+      return;
+    }
     if (turn.abortReason !== undefined || turn.controller.signal.aborted || outcome.outcome === 'aborted') {
       const reason =
         turn.abortReason ??
@@ -1205,10 +1250,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }
     if (turn.maxStepsError !== undefined) {
       await this.endTurn(turn, { type: 'failed', steps: turn.steps, error: turn.maxStepsError });
-      return;
-    }
-    if (turn.failedStep !== undefined) {
-      await this.recoverOrFailMachineRun(turn);
       return;
     }
     if (turn.stopRequested) {
@@ -1283,9 +1324,25 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.emitStepInterrupted(turn.id, step, reason, toErrorMessage(interruptedError));
   }
 
+  private backfillAbortedToolResults(step: MachineStepState, reason: unknown): void {
+    for (const toolCallId of step.pendingToolIds) {
+      if (step.resolvedToolIds.has(toolCallId)) continue;
+      const name =
+        step.entry?.message.toolCalls.find((call) => call.id === toolCallId)?.name ?? toolCallId;
+      this.context.appendLoopEvent({
+        type: 'tool.result',
+        parentUuid: step.toolCallUuids.get(toolCallId) ?? randomUUID(),
+        toolCallId,
+        result: { output: abortedToolOutput(name, reason), isError: true },
+      });
+      step.resolvedToolIds.add(toolCallId);
+    }
+  }
+
   private interruptMachineRunForCancel(turn: ActiveTurn, reason: unknown): void {
     const current = turn.current;
     if (current !== undefined) {
+      this.backfillAbortedToolResults(current, reason);
       if (!current.contentAppended) this.drainMachinePartials(turn, current);
       this.context.appendLoopEvent({
         type: 'step.end',
@@ -1320,9 +1377,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private async endTurn(turn: ActiveTurn, result: TurnResult): Promise<void> {
     if (this.active !== turn) return;
     this.active = undefined;
-    await new Promise<void>((resolve) => {
-      setImmediate(resolve);
-    });
+    await this.wire.drainPersisted().catch(() => undefined);
     for (const nudge of this.nudges.slice(this.nudgeCursor)) {
       if (nudge.turnScoped && !nudge.dropped) {
         nudge.dropped = true;
@@ -1476,6 +1531,7 @@ interface MachineStepState {
   messageId: string | undefined;
   pendingToolIds: Set<string>;
   toolCallUuids: Map<string, string>;
+  resolvedToolIds: Set<string>;
   toolStopTurn: boolean;
 }
 

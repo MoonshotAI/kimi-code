@@ -37,6 +37,7 @@ export interface CreateMachineToolsOptions {
   readonly trace?: () => LLMRequestTrace | undefined;
   readonly onToolCall?: (payload: ToolCallStartedPayload) => void;
   readonly onToolResult?: (toolCallId: string, result: AgentToolResult) => void;
+  readonly onBatchError?: (error: unknown) => void;
 }
 
 export interface MachineTools {
@@ -127,7 +128,11 @@ export function createMachineTools(options: CreateMachineToolsOptions): MachineT
       }
       settleRemaining();
     } catch (error) {
-      settleRemaining(error);
+      try {
+        options.onBatchError?.(error);
+      } finally {
+        settleRemaining(error);
+      }
     } finally {
       batchInFlight = false;
     }
