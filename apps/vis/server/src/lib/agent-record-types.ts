@@ -30,6 +30,9 @@ import type {
   CronCursorPayload,
   CronDeletePayload,
   CronTask,
+  ExportSessionManifest,
+  FileHistoryCheckpointed,
+  FileHistoryTracked,
   FullCompactionBegin,
   FullCompactionCancel,
   FullCompactionComplete,
@@ -155,6 +158,8 @@ export type AgentRecord =
   | WireRecordOf<'cron.add', CronAddPayload>
   | WireRecordOf<'cron.cursor', CronCursorPayload>
   | WireRecordOf<'cron.delete', CronDeletePayload>
+  | WireRecordOf<'file_history.checkpoint', FileHistoryCheckpointed>
+  | WireRecordOf<'file_history.tracked', FileHistoryTracked>
   | WireRecordOf<'forked', GoalForked>
   | WireRecordOf<'full_compaction.begin', FullCompactionBegin>
   | WireRecordOf<'full_compaction.cancel', FullCompactionCancel>
@@ -217,26 +222,10 @@ export type AgentRecordOf<K extends AgentRecord['type']> = Extract<
 
 /**
  * `manifest.json` shape inside a `/export-debug-zip` bundle. Structural
- * mirror of the engine's `ExportSessionManifest`, which is not re-exported
- * from the package entry. All fields optional-tolerant because the manifest
- * comes from another machine / kimi-code version.
+ * current engine manifest with every field optional because the bundle may
+ * come from another machine or an older kimi-code version.
  */
-export interface ImportManifest {
-  sessionId?: string;
-  exportedAt?: string;
-  kimiCodeVersion?: string;
-  wireProtocolVersion?: string;
-  os?: string;
-  nodejsVersion?: string;
-  sessionFirstActivity?: string;
-  sessionLastActivity?: string;
-  title?: string;
-  workspaceDir?: string;
-  sessionLogPath?: string;
-  globalLogPath?: string;
-  installSource?: string;
-  shellEnv?: unknown;
-}
+export type ImportManifest = Partial<ExportSessionManifest>;
 
 /** vis-side bookkeeping for one imported bundle, written to
  *  `imported/<importId>/import-meta.json`. */
@@ -294,6 +283,7 @@ export interface AgentInfo {
   agentId: string;
   type: 'main' | 'sub' | 'independent';
   parentAgentId: string | null;
+  profileName: string | null;
   homedir: string;
   wireExists: boolean;
   wireRecordCount: number;
