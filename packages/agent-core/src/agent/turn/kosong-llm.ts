@@ -301,7 +301,19 @@ export function downgradeUnsupportedMedia(
   messages: readonly Message[],
   capability: ModelCapability | undefined,
 ): Message[] {
-  if (capability === undefined || isUnknownCapability(capability)) return [...messages];
+  // Leave history alone when the host omitted a matrix (undefined) or only
+  // knows the model is uncatalogued (UNKNOWN_CAPABILITY). UNKNOWN means "we
+  // do not know", not "text-only" — a multimodal custom model can still use
+  // that marker (SingleModelProvider default, KimiForCodingProvider).
+  //
+  // Explicit matrices still strip: ProviderManager merges declared
+  // capabilities with the catalog into a plain ModelCapability object, so a
+  // text-only custom model configured as capabilities = ["thinking",
+  // "tool_use"] gets image_in: false without the UNKNOWN marker and is
+  // protected against image_url 400s that brick later turns (#2669).
+  if (capability === undefined || isUnknownCapability(capability)) {
+    return [...messages];
+  }
   const dropImage = !capability.image_in;
   const dropVideo = !capability.video_in;
   const dropAudio = !capability.audio_in;
