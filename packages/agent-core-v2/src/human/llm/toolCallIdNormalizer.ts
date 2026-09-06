@@ -55,7 +55,7 @@ export class ToolCallIdResponseNormalizer {
         this.occurrencesByRawId.get(call.id)?.[occurrence] ?? this.claim(call.id, occurrence);
       if (assigned === call.id) return call;
       changed = true;
-      return { ...call, id: assigned };
+      return { ...call, id: assigned, rawId: call.rawId ?? call.id };
     });
     return changed ? result : toolCalls;
   }

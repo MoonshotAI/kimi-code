@@ -237,6 +237,7 @@ describe('agent machine tool failure', () => {
     const dupRequester = createStubRequester([
       createAssistantMessage([], [toolCall('call-1', 'slow_tool'), toolCall('call-1', 'fast_tool')]),
       createAssistantMessage([], [toolCall('call-1', 'slow_tool')]),
+      createAssistantMessage([], [{ ...toolCall('call-1', 'slow_tool'), rawId: 'call-original' }]),
       createAssistantMessage([{ type: 'text', text: 'done' }]),
     ]);
     const dupStarted: string[] = [];
@@ -258,6 +259,15 @@ describe('agent machine tool failure', () => {
       expect(dupStarted).toEqual(['call-1:slow_tool', 'call-1__2:fast_tool', 'call-1__3:slow_tool']);
     });
     dupResolvers.get('call-1__3')?.({ content: [{ type: 'text', text: 'slow again' }] });
+    await vi.waitFor(() => {
+      expect(dupStarted).toEqual([
+        'call-1:slow_tool',
+        'call-1__2:fast_tool',
+        'call-1__3:slow_tool',
+        'call-1__4:slow_tool',
+      ]);
+    });
+    dupResolvers.get('call-1__4')?.({ content: [{ type: 'text', text: 'slow once more' }] });
     const dupMessages = await dupPromise;
 
     expect(rolesAndTexts(dupMessages)).toEqual([
@@ -267,13 +277,15 @@ describe('agent machine tool failure', () => {
       'tool:fast',
       'assistant:',
       'tool:slow again',
+      'assistant:',
+      'tool:slow once more',
       'assistant:done',
     ]);
     expect(
       dupMessages
         .filter((entry) => entry.message.role === 'tool')
         .map((entry) => entry.message.toolCallId),
-    ).toEqual(['call-1', 'call-1__2', 'call-1__3']);
+    ).toEqual(['call-1', 'call-1__2', 'call-1__3', 'call-1__4']);
     expect(
       dupMessages
         .filter((entry) => entry.message.role === 'assistant' && entry.message.toolCalls.length > 0)
@@ -281,6 +293,7 @@ describe('agent machine tool failure', () => {
     ).toEqual([
       ['call-1:', 'call-1__2:call-1'],
       ['call-1__3:call-1'],
+      ['call-1__4:call-original'],
     ]);
 
     let attempt = 0;

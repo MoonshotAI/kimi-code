@@ -108,7 +108,7 @@ export function createHistoryAccumulator(
       if (response !== undefined && part.type === 'function') {
         const id = response.remapStreamedId(part.id, part._streamIndex);
         if (id !== part.id) {
-          const remapped = { ...part, id, rawId: part.id };
+          const remapped = { ...part, id, rawId: part.rawId ?? part.id };
           inner.push(remapped);
           return remapped;
         }
