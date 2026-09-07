@@ -428,13 +428,22 @@ function prepareMessageForProjection(
   if (next.content.length === 0) return null;
   // Every remaining part serializes to nothing on the wire — e.g. an
   // assistant step that recorded only an empty thinking part from a
-  // provider-filtered response. Sent as-is it becomes an assistant message
-  // with no content and no tool calls, which strict providers reject ("the
-  // message ... with role 'assistant' must not be empty") on every resend,
-  // permanently wedging the session. Drop the whole message here. A message
-  // that carries any real content keeps every part verbatim — including
-  // empty thinking blocks, which preserved-thinking providers require back.
-  if (next.content.every(isVacuousContentPart)) {
+  // provider-filtered response, or one cut off mid-thinking by the user
+  // (ESC) so it holds only unencrypted thinking. Sent as-is it becomes an
+  // assistant message with no content and no tool calls, which strict
+  // providers reject ("the message ... with role 'assistant' must not be
+  // empty") on every resend, permanently wedging the session. Drop the whole
+  // message here. A message that carries any real content keeps every part
+  // verbatim — including empty thinking blocks, which preserved-thinking
+  // providers require back.
+  const sendable = wireSendableContent(next.content);
+  if (sendable.length === 0) {
+    if (next.content.length > 0) {
+      onAnomaly?.({ kind: 'vacuous_message_dropped', role: next.role });
+    }
+    return null;
+  }
+  if (sendable.every(isVacuousContentPart)) {
     onAnomaly?.({ kind: 'vacuous_message_dropped', role: next.role });
     return null;
   }
@@ -452,6 +461,18 @@ function isVacuousContentPart(part: ContentPart): boolean {
   if (part.type === 'text') return part.text.trim().length === 0;
   if (part.type === 'think') return part.encrypted === undefined && part.think.trim().length === 0;
   return false;
+}
+
+/**
+ * The parts of a message that the provider wire can actually carry as
+ * message content. Unencrypted thinking blocks are excluded: every protocol
+ * base moves them out of `content` (OpenAI → `reasoning_content`, Anthropic →
+ * `thinking` blocks), so a message whose only parts are unencrypted thinking
+ * would reach the wire with neither content nor tool_calls. Signed thinking
+ * (`encrypted`) must survive — reasoning providers require it back verbatim.
+ */
+function wireSendableContent(content: readonly ContentPart[]): ContentPart[] {
+  return content.filter((part) => part.type !== 'think' || part.encrypted !== undefined);
 }
 
 function canMergeUserMessage(message: ContextMessage): boolean {

@@ -589,10 +589,29 @@ describe('project drops vacuous (thinking-only) messages', () => {
     expect(projected[1]?.content).toEqual([thinkPart(''), textPart('answer')]);
   });
 
-  it('keeps a message whose think block has real content', () => {
+  it('drops a message whose only sendable part is an unencrypted think block', () => {
     const projected = project([user('u1'), thinkingAssistant([thinkPart('real reasoning')])]);
-    expect(projected.map((m) => m.role)).toEqual(['user', 'assistant']);
-    expect(projected[1]?.content).toEqual([thinkPart('real reasoning')]);
+    expect(projected.map((m) => m.role)).toEqual(['user']);
+  });
+
+  it('drops a thinking-only assistant sealed after an interrupted step (ESC cancel)', () => {
+    // A step cancelled mid-stream (ESC) seals a partial assistant that holds
+    // only a thinking fragment; projecting it into the request would produce
+    // an assistant message with neither content nor tool_calls and trip the
+    // provider's "content or tool_calls must be set" validation on every
+    // resend, permanently wedging the session.
+    const anomalies: ProjectionAnomaly[] = [];
+    const projected = project(
+      [
+        user('u1'),
+        thinkingAssistant([thinkPart('partial reasoning before cancel')]),
+        notification('The previous turn was interrupted by the user before completion'),
+        user('continue'),
+      ],
+      { onAnomaly: (a) => anomalies.push(a) },
+    );
+    expect(projected.map((m) => m.role)).toEqual(['user', 'user', 'user']);
+    expect(anomalies).toEqual([{ kind: 'vacuous_message_dropped', role: 'assistant' }]);
   });
 
   it('keeps a signed think block even when its text is empty', () => {
