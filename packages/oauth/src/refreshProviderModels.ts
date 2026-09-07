@@ -29,7 +29,7 @@ import { isRecord } from './utils';
  * Host capabilities the refresh orchestrator needs. Intentionally typed against
  * {@link ManagedKimiConfigShape} (the oauth package's own minimal config shape)
  * rather than the SDK's full `KimiConfig`, so this module has no dependency on
- * `agent-core` / the SDK and can be reused by both the CLI and the daemon.
+ * the engine or the SDK and can be reused by both the CLI and the daemon.
  */
 export interface RefreshProviderHost {
   getConfig(): Promise<ManagedKimiConfigShape>;
@@ -82,8 +82,8 @@ interface ProviderView {
 }
 
 /**
- * Mirrors the runtime credential resolution for `type: 'kimi'` providers
- * (`providerApiKey` in agent-core's provider-manager): the inline `apiKey`
+ * Mirrors the runtime credential resolution for `type: 'kimi'` providers:
+ * the inline `apiKey`
  * wins, with `env.KIMI_API_KEY` as the documented config-file fallback.
  */
 function resolveProviderApiKey(provider: ProviderView): string | undefined {

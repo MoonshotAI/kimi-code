@@ -12,14 +12,14 @@ const providerClientShimPath = path.join(dtsRoot, 'provider-clients.d.ts');
 const tscBinPath = packageBinPath('typescript', 'bin/tsc');
 const apiExtractorBinPath = packageBinPath('@microsoft/api-extractor', 'bin/api-extractor');
 
-const packageDirs = new Set(['agent-core', 'agent-core-v2', 'kaos', 'klient', 'kosong', 'node-sdk', 'oauth']);
+const packageDirs = new Set(['agent-core-v2', 'kaos', 'klient', 'kosong', 'node-sdk', 'oauth', 'protocol']);
 const workspacePackages = new Map([
   ['@moonshot-ai/agent-core-v2', 'agent-core-v2'],
-  ['@moonshot-ai/agent-core', 'agent-core'],
   ['@moonshot-ai/kaos', 'kaos'],
   ['@moonshot-ai/kimi-code-oauth', 'oauth'],
   ['@moonshot-ai/klient', 'klient'],
   ['@moonshot-ai/kosong', 'kosong'],
+  ['@moonshot-ai/protocol', 'protocol'],
 ]);
 
 try {
@@ -107,7 +107,7 @@ async function rewriteWorkspaceSpecifiers() {
           `import { GoogleGenAI as GenAIClient } from '${providerClientSpecifier}';`,
         );
       const updated = providerClientText.replaceAll(
-        /(["'])(#\/[^"']+|@moonshot-ai\/(?:agent-core-v2|agent-core|kaos|kimi-code-oauth|klient|kosong)(?:\/[^"']+)?)\1/g,
+        /(["'])(#\/[^"']+|@moonshot-ai\/(?:agent-core-v2|kaos|kimi-code-oauth|klient|kosong|protocol)(?:\/[^"']+)?)\1/g,
         (_match, quote, specifier) => {
           const resolved = resolveSpecifier({
             currentFile: file,
@@ -157,7 +157,7 @@ function resolveSpecifier({ currentFile, emittedFiles, packageDir, specifier }) 
   if (specifier.startsWith('#/')) {
     return resolvePackageSubpath({
       emittedFiles,
-      packageDir,
+      srcRoot: srcRootForFile(currentFile, packageDir),
       subpath: specifier.slice(2),
       originalSpecifier: specifier,
     });
@@ -170,10 +170,17 @@ function resolveSpecifier({ currentFile, emittedFiles, packageDir, specifier }) 
 
   return resolvePackageSubpath({
     emittedFiles,
-    packageDir: workspacePackage.packageDir,
+    srcRoot: path.join(dtsRoot, workspacePackage.packageDir, 'src'),
     subpath: workspacePackage.subpath,
     originalSpecifier: specifier,
   });
+}
+
+function srcRootForFile(currentFile, packageDir) {
+  const srcRoot = path.join(dtsRoot, packageDir, 'src');
+  const humanRoot = path.join(srcRoot, 'human');
+  const rel = path.relative(humanRoot, currentFile);
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel) ? humanRoot : srcRoot;
 }
 
 function workspacePackageForSpecifier(specifier) {
@@ -191,8 +198,7 @@ function workspacePackageForSpecifier(specifier) {
   return undefined;
 }
 
-function resolvePackageSubpath({ emittedFiles, packageDir, subpath, originalSpecifier }) {
-  const srcRoot = path.join(dtsRoot, packageDir, 'src');
+function resolvePackageSubpath({ emittedFiles, srcRoot, subpath, originalSpecifier }) {
   const directFile = path.resolve(srcRoot, `${subpath}.d.ts`);
   if (emittedFiles.has(directFile) || existsSync(directFile)) {
     return directFile;

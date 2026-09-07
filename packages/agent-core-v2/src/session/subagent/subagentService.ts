@@ -23,7 +23,7 @@ import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { Runtime } from '#/runtime/runtime';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
-import { IModelCatalog, type Model } from '#/kosong/model/catalog';
+import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { ILogService } from '#/_base/log/log';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';

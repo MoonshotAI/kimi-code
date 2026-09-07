@@ -7,7 +7,7 @@ import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 
-import type { Tool as KosongTool } from '#/kosong/contract/tool';
+import type { ToolDescription as KosongTool } from '#human/llm/message';
 import type { McpOAuthStore } from '#/mcpCore/oauth/store';
 import type {
   McpOAuthScheduledTask,

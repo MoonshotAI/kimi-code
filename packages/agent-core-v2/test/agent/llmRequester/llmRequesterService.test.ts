@@ -35,23 +35,19 @@ import {
   APIProviderRateLimitError,
   APIRequestTooLargeError,
   APIStatusError,
-} from '#/kosong/contract/errors';
-import { emptyUsage, type TokenUsage } from '#/kosong/contract/usage';
-import {
-  isToolCall,
-  type Message,
-  type StreamedMessagePart,
-  type ToolCall,
-} from '#/kosong/contract/message';
-import type { ThinkingEffort } from '#/kosong/contract/provider';
-import type { ModelCapability } from '#/kosong/contract/capability';
-import { IModelCatalog, type Model } from '#/kosong/model/catalog';
-import { IModelService } from '#/kosong/model/model';
+} from '#/llm-adapter/contract/errors';
+import { emptyUsage, type TokenUsage } from '#human/llm/usage';
+import { type Message } from '#/llm-adapter/contract/message';
+import { isToolCall, type StreamedMessagePart, type ToolCall } from '#human/llm/message';
+import type { ThinkingEffort } from '#human/llm/thinking';
+import type { ModelCapability } from '#/llm-adapter/contract/capability';
+import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
+import { IModelService } from '#/llm-adapter/model/model';
 import {
   type ModelRequestEvent,
   type ModelRequestInput,
   type ModelRequester,
-} from '#/kosong/model/modelRequester';
+} from '#/llm-adapter/model/model-requester';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ILogService } from '#/_base/log/log';
 import { Error2, ErrorCodes } from '#/errors';
@@ -1056,8 +1052,11 @@ describe('AgentLLMRequesterService tool call id normalization', () => {
     });
 
     expect(first.message.toolCalls[0]!.id).toBe('Bash_0');
-    expect(second.message.toolCalls[0]!.id).toBe('Bash_0__2');
-    expect(parts.filter(isToolCall).map((p) => p.id)).toEqual(['Bash_0', 'Bash_0__2']);
+    expect(second.message.toolCalls[0]).toMatchObject({ id: 'Bash_0__2', rawId: 'Bash_0' });
+    expect(parts.filter(isToolCall).map((p) => [p.id, p.rawId])).toEqual([
+      ['Bash_0', undefined],
+      ['Bash_0__2', 'Bash_0'],
+    ]);
   });
 
   it('rewrites duplicates within a single response', async () => {
@@ -1068,7 +1067,10 @@ describe('AgentLLMRequesterService tool call id normalization', () => {
 
     const result = await service.request();
 
-    expect(result.message.toolCalls.map((c) => c.id)).toEqual(['Bash_0', 'Bash_0__2']);
+    expect(result.message.toolCalls.map((c) => [c.id, c.rawId])).toEqual([
+      ['Bash_0', undefined],
+      ['Bash_0__2', 'Bash_0'],
+    ]);
   });
 
   it('rolls claims back when the attempt fails mid-stream', async () => {

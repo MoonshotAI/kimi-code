@@ -2,7 +2,7 @@
  * `modelResolver` — the engine's `IModelCatalog`: materialized model lookup
  * plus the read-only catalog enumeration over configured providers and model
  * aliases, and the global default-model selection. Mirrors
- * `agent-core-v2/kosong/model/catalog.ts`; wire shapes mirror
+ * `agent-core-v2/llm-adapter/model/catalog.ts`; wire shapes mirror
  * `protocol/src/modelCatalog.ts` and `protocol/src/rest/modelCatalog.ts`
  * (snake_case fields).
  */

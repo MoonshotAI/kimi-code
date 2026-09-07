@@ -44,7 +44,6 @@ function makeHost(
     },
   };
   const host: CacheHintHost = {
-    engineV2: true,
     harness: { auth: { getCachedAccessToken: vi.fn(async () => 'tok') } } as never,
     session: (overrides.session ?? { id: 's1' }) as never,
     state: state as never,

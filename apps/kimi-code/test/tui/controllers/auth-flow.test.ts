@@ -7,7 +7,6 @@ import {
 
 function makeHost(
   options: {
-    engineV2?: boolean;
     withSession?: boolean;
     defaultModel?: string;
     boundModel?: string;
@@ -32,7 +31,6 @@ function makeHost(
   const host = {
     state: { appState },
     session,
-    engineV2: options.engineV2 === true,
     harness: {
       createSession: vi.fn(async () => ({ id: 'ses-new', summary: { title: null } })),
       getConfig: vi.fn(async () => ({
@@ -94,7 +92,7 @@ describe('activateModelAfterLogin', () => {
   });
 
   it('only patches app state and reports no engine switch on the session-less v2 path', async () => {
-    const { host, appState } = makeHost({ engineV2: true });
+    const { host, appState } = makeHost();
     const authFlow = new AuthFlowController(host);
 
     const engineTrackedSwitch = await authFlow.activateModelAfterLogin('k2', 'high');
@@ -103,22 +101,6 @@ describe('activateModelAfterLogin', () => {
     expect(host.harness.createSession).not.toHaveBeenCalled();
     expect(appState.model).toBe('k2');
     expect(appState).toMatchObject({ lazySessionThinking: 'high' });
-  });
-
-  it('creates the session on the session-less v1 path and still reports no engine switch', async () => {
-    const { host } = makeHost();
-    const authFlow = new AuthFlowController(host);
-
-    // The v1 creation binds the model without an engine model_switch event,
-    // so callers must treat this path as "no engine switch" even though
-    // host.session is defined afterwards.
-    const engineTrackedSwitch = await authFlow.activateModelAfterLogin('k2', 'high');
-
-    expect(engineTrackedSwitch).toBe(false);
-    expect(host.harness.createSession).toHaveBeenCalledWith(
-      expect.objectContaining({ model: 'k2', thinking: 'high' }),
-    );
-    expect(host.session).toMatchObject({ id: 'ses-new' });
   });
 });
 
@@ -138,7 +120,7 @@ describe('refreshConfigAfterLogin', () => {
     expect(reachedLive).toBe(true);
     expect(live.session!.setModel).toHaveBeenCalledWith('k2');
 
-    const lazy = makeHost({ engineV2: true, defaultModel: 'k2' });
+    const lazy = makeHost({ defaultModel: 'k2' });
     const reachedLazy = await new AuthFlowController(lazy.host).refreshConfigAfterLogin();
     expect(reachedLazy).toBe(false);
     expect(lazy.host.harness.createSession).not.toHaveBeenCalled();

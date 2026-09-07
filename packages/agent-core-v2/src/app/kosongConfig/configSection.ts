@@ -15,10 +15,10 @@ import {
   transformPlainObject,
 } from '#/app/config/toml';
 import { type AssertExact, type Equal } from '#/_base/utils/typeEquality';
-import type { ModelOverride, ModelRecord, ModelsSection } from '#/kosong/model/model';
-import type { ThinkingConfig } from '#/kosong/model/thinking';
-import type { OAuthRef, ProviderConfig, ProvidersSection } from '#/kosong/provider/provider';
-import { ProtocolSchema } from '#/kosong/protocol/protocol';
+import type { ModelOverride, ModelRecord, ModelsSection } from '#/llm-adapter/model/model';
+import type { ThinkingConfig } from '#/llm-adapter/model/thinking';
+import type { OAuthRef, ProviderConfig, ProvidersSection } from '#/llm-adapter/provider/provider';
+import { ProtocolSchema } from '#/llm-adapter/protocol/protocol';
 
 export const PROVIDERS_SECTION = 'providers';
 

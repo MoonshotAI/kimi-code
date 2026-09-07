@@ -510,6 +510,9 @@ export class SessionEventBroadcaster {
     if (this.closed) return;
     this.closed = true;
     this.coreEventSubscription.dispose();
+    await Promise.all(
+      [...this.pendingStates.values()].map((pending) => pending.catch(() => undefined)),
+    );
     for (const [sessionId, state] of this.sessions) {
       await disposeSessionState(state);
       this.opts.transcriptService?.dropSession(sessionId);
@@ -575,7 +578,8 @@ export class SessionEventBroadcaster {
     return state;
   }
 
-  private ensureGlobalState(): Promise<SessionState> {
+  private ensureGlobalState(): Promise<SessionState | undefined> {
+    if (this.closed) return Promise.resolve(undefined);
     const existing = this.sessions.get(GLOBAL_SESSION_ID);
     if (existing !== undefined) return Promise.resolve(existing);
     let pending = this.pendingStates.get(GLOBAL_SESSION_ID);
@@ -587,14 +591,18 @@ export class SessionEventBroadcaster {
       });
       this.pendingStates.set(GLOBAL_SESSION_ID, pending);
     }
-    return pending as Promise<SessionState>;
+    return pending;
   }
 
-  private async createGlobalState(): Promise<SessionState> {
+  private async createGlobalState(): Promise<SessionState | undefined> {
     const journal = await SessionEventJournal.open(
       sessionJournalPath(this.opts.eventsDir, GLOBAL_SESSION_ID),
       this.opts.logger,
     );
+    if (this.closed) {
+      await journal.close();
+      return undefined;
+    }
     const state: SessionState = {
       sessionId: GLOBAL_SESSION_ID,
       journal,
@@ -767,6 +775,7 @@ export class SessionEventBroadcaster {
 
   private async dispatchGlobal(event: Event): Promise<void> {
     const state = await this.ensureGlobalState();
+    if (state === undefined) return;
     state.queue = state.queue
       .then(() => this.dispatch(state, event, isVolatileEventType(event.type)))
       .catch((error: unknown) => this.logDispatchDropped(state.sessionId, event.type, error));

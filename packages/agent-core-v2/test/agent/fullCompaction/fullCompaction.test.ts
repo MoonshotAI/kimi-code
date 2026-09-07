@@ -2,16 +2,18 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
+import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
 import {
   APIConnectionError,
   APIContextOverflowError,
   APIRequestTooLargeError,
   APIStatusError,
-} from '#/kosong/contract/errors';
-import { type Message, type StreamedMessagePart, type ToolCall } from '#/kosong/contract/message';
-import { generate as runKosongGenerate } from '#/kosong/contract/generate';
-import type { ChatProvider, StreamedMessage } from '#/kosong/contract/provider';
+} from '#/llm-adapter/contract/errors';
+import { type Message } from '#/llm-adapter/contract/message';
+import { type StreamedMessagePart, type ToolCall } from '#human/llm/message';
+import type { FinishReason } from '#human/llm/finish-reason';
+import { fromLlmMessage } from '#/llm-adapter/contract/message';
+import type { TokenUsage } from '#human/llm/usage';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -21,10 +23,10 @@ import { COMPACTION_SUMMARY_PREFIX } from '#/agent/contextMemory/compactionHando
 import { makeHookRunner } from '../../features/externalHooks/runner-stub';
 import type { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
 import { MASTER_ENV } from '#/app/flag/flagService';
-import { estimateTokensForMessages } from '#/kosong/contract/tokens';
+import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import type { TestAgentContext, TestAgentOptions, TestAgentServiceOverride } from '../../harness';
-import { agentService, appService, appServices, createCommandRunner, execEnvServices, hostEnvironmentServices, sessionServices, testAgent as createTestAgent } from '../../harness';
+import { agentService, appService, appServices, createCommandRunner, execEnvServices, hostEnvironmentServices, requesterFromGenerateFn, sessionServices, testAgent as createTestAgent, type LegacyGenerateResult } from '../../harness';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
@@ -468,7 +470,7 @@ describe('FullCompaction', () => {
       tokenCalls.push(options?.force);
       return options?.force === true ? 'forced-refresh-token' : 'fresh-token';
     });
-    const generate: GenerateFn = async (
+    const generate: GenerateFn = requesterFromGenerateFn(async (
       _provider,
       _system,
       _tools,
@@ -481,7 +483,7 @@ describe('FullCompaction', () => {
         throw new APIStatusError(401, 'Unauthorized', 'req-compact-401');
       }
       return textResult('Recovered compacted summary.');
-    };
+    });
     const ctx = testAgent(oauthOptions.services, {
       initialConfig: oauthOptions.initialConfig,
       generate,
@@ -636,13 +638,13 @@ describe('FullCompaction', () => {
   it('reports compaction retry_count after a retryable generation failure recovers', async () => {
     const records: TelemetryRecord[] = [];
     let attempts = 0;
-    const generate: GenerateFn = async () => {
+    const generate: GenerateFn = requesterFromGenerateFn(async () => {
       attempts += 1;
       if (attempts === 1) {
         throw new APIConnectionError('socket hang up');
       }
       return textResult('Recovered compacted summary.', 'trace-compact-1');
-    };
+    });
     const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -673,12 +675,12 @@ describe('FullCompaction', () => {
   it('retries any compaction request error indefinitely when KIMI_CODE_INFINITE_RETRY is set', async () => {
     vi.stubEnv('KIMI_CODE_INFINITE_RETRY', '1');
     let attempts = 0;
-    const generate: GenerateFn = async () => {
+    const generate: GenerateFn = requesterFromGenerateFn(async () => {
       attempts += 1;
       if (attempts === 1) throw new APIStatusError(400, 'endpoint broken', null, 1);
       if (attempts === 2) throw new APIStatusError(404, 'model not found', null, 1);
       return textResult('Recovered compacted summary.');
-    };
+    });
     const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -700,11 +702,11 @@ describe('FullCompaction', () => {
   it('lets context overflow reach compaction shrink instead of retrying when KIMI_CODE_INFINITE_RETRY is set', async () => {
     vi.stubEnv('KIMI_CODE_INFINITE_RETRY', '1');
     let attempts = 0;
-    const generate: GenerateFn = async () => {
+    const generate: GenerateFn = requesterFromGenerateFn(async () => {
       attempts += 1;
       if (attempts === 1) throw new APIContextOverflowError(400, 'context length exceeded');
       return textResult('Recovered compacted summary.');
-    };
+    });
     const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -727,7 +729,7 @@ describe('FullCompaction', () => {
     let attempts = 0;
     let sawMedia = false;
     let sawStrippedResend = false;
-    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, history) => {
       attempts += 1;
       const hasMedia = history.some((message) =>
         message.content.some((part) => part.type === 'image_url' || part.type === 'video_url'),
@@ -738,7 +740,7 @@ describe('FullCompaction', () => {
       }
       sawStrippedResend = true;
       return textResult('Recovered compacted summary.');
-    };
+    });
     const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -764,7 +766,7 @@ describe('FullCompaction', () => {
     let attempts = 0;
     let sawFullMedia = false;
     let sawDegradedResend = false;
-    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, history) => {
       attempts += 1;
       const mediaCount = history.reduce(
         (count, message) =>
@@ -779,7 +781,7 @@ describe('FullCompaction', () => {
       }
       sawDegradedResend = true;
       return textResult('Recovered compacted summary.');
-    };
+    });
     const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -806,14 +808,14 @@ describe('FullCompaction', () => {
     vi.useFakeTimers();
     const firstEmptySummary = deferred<void>();
     let attempts = 0;
-    const generate: GenerateFn = async () => {
+    const generate: GenerateFn = requesterFromGenerateFn(async () => {
       attempts += 1;
       if (attempts <= 2) {
         if (attempts === 1) firstEmptySummary.resolve();
         return textResult(attempts === 1 ? '' : '   \n');
       }
       return textResult('Recovered compacted summary.');
-    };
+    });
     const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -897,7 +899,7 @@ describe('FullCompaction', () => {
     const firstAttemptFailed = deferred<void>();
     let attempts = 0;
     const inputs: string[][] = [];
-    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, history) => {
       attempts += 1;
       inputs.push(inputHistorySnapshot(history));
       if (attempts === 1) {
@@ -905,7 +907,7 @@ describe('FullCompaction', () => {
         throw new APIStatusError(413, 'Request Entity Too Large', 'req-compact-plain-413');
       }
       return textResult('Recovered compacted summary.');
-    };
+    });
     const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -1013,13 +1015,13 @@ describe('FullCompaction', () => {
 
   it('fails the compaction instead of compacting an empty history when overflow shrink drops everything', async () => {
     let calls = 0;
-    const generate: GenerateFn = async () => {
+    const generate: GenerateFn = requesterFromGenerateFn(async () => {
       calls += 1;
       if (calls === 1) {
         throw new APIContextOverflowError(400, 'Context length exceeded', 'req-shrink-empty');
       }
       return textResult('Groundless summary.');
-    };
+    });
     const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -1044,14 +1046,14 @@ describe('FullCompaction', () => {
     vi.useFakeTimers();
     const firstAttemptFailed = deferred<void>();
     let attempts = 0;
-    const generate: GenerateFn = async () => {
+    const generate: GenerateFn = requesterFromGenerateFn(async () => {
       attempts += 1;
       if (attempts === 1) {
         firstAttemptFailed.resolve();
         throw new APIConnectionError('socket hang up');
       }
       return textResult('Recovered compacted summary.');
-    };
+    });
     const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -1080,13 +1082,13 @@ describe('FullCompaction', () => {
     const records: TelemetryRecord[] = [];
     const firstAttemptFailed = deferred<void>();
     let attempts = 0;
-    const generate: GenerateFn = async () => {
+    const generate: GenerateFn = requesterFromGenerateFn(async () => {
       attempts += 1;
       if (attempts === 1) {
         firstAttemptFailed.resolve();
       }
       throw new APIStatusError(429, 'rate limited', null, null, 'trace-compact-retry');
-    };
+    });
     const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -1127,9 +1129,9 @@ describe('FullCompaction', () => {
 
   it('cancels the compaction lifecycle when manual compaction generation fails', async () => {
     const records: TelemetryRecord[] = [];
-    const generate: GenerateFn = async () => {
+    const generate: GenerateFn = requesterFromGenerateFn(async () => {
       throw new Error('compaction exploded');
-    };
+    });
     const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -1177,9 +1179,9 @@ describe('FullCompaction', () => {
 
   it('attaches the failed request trace id to compaction_failed', async () => {
     const records: TelemetryRecord[] = [];
-    const generate: GenerateFn = async () => {
+    const generate: GenerateFn = requesterFromGenerateFn(async () => {
       throw new APIStatusError(400, 'Bad request', null, null, 'trace-compact-fail');
-    };
+    });
     const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -1243,10 +1245,10 @@ describe('FullCompaction', () => {
 
   it('fails a blocked turn when auto compaction generation fails', async () => {
     let attempts = 0;
-    const generate: GenerateFn = async () => {
+    const generate: GenerateFn = requesterFromGenerateFn(async () => {
       attempts += 1;
       throw new APIStatusError(400, 'Bad request');
-    };
+    });
     const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -1290,11 +1292,11 @@ describe('FullCompaction', () => {
   it('aborts an in-flight compaction when the agent is disposed', async () => {
     const started = deferred<void>();
     let signal: AbortSignal | undefined;
-    const generate: GenerateFn = async (_chat, _systemPrompt, _tools, _history, _callbacks, options) => {
+    const generate: GenerateFn = requesterFromGenerateFn(async (_chat, _systemPrompt, _tools, _history, _callbacks, options) => {
       signal = options?.signal;
       started.resolve();
       return new Promise(() => {});
-    };
+    });
     const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -1315,7 +1317,7 @@ describe('FullCompaction', () => {
     vi.useFakeTimers();
     const firstAttemptFinished = deferred<void>();
     let attempts = 0;
-    const generate: GenerateFn = async () => {
+    const generate: GenerateFn = requesterFromGenerateFn(async () => {
       attempts += 1;
       if (attempts === 1) {
         firstAttemptFinished.resolve();
@@ -1325,7 +1327,7 @@ describe('FullCompaction', () => {
         finishReason: 'truncated',
         rawFinishReason: 'length',
       };
-    };
+    });
     const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -1361,13 +1363,13 @@ describe('FullCompaction', () => {
     const records: TelemetryRecord[] = [];
     const firstAttemptFailed = deferred<void>();
     let attempts = 0;
-    const generate: GenerateFn = async () => {
+    const generate: GenerateFn = requesterFromGenerateFn(async () => {
       attempts += 1;
       if (attempts === 1) {
         firstAttemptFailed.resolve();
       }
       throw new APIConnectionError('socket hang up');
-    };
+    });
     const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -1670,13 +1672,13 @@ describe('FullCompaction', () => {
 
   it('cancels when a droppable user-role tail is appended during the summary request', async () => {
     let ctx!: TestAgentContext;
-    const generate: GenerateFn = async () => {
+    const generate: GenerateFn = requesterFromGenerateFn(async () => {
       ctx.appendSystemReminder('RACE-NOTIFY-OUTPUT', {
         kind: 'injection',
         variant: 'race-notification',
       });
       return textResult('Stale compacted summary.');
-    };
+    });
     ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -1775,7 +1777,7 @@ describe('FullCompaction', () => {
     const records: TelemetryRecord[] = [];
     let ctx!: TestAgentContext;
     let llmCallCount = 0;
-    const generate: GenerateFn = async () => {
+    const generate: GenerateFn = requesterFromGenerateFn(async () => {
       llmCallCount += 1;
       if (llmCallCount === 1) return textResult('Turn response.');
       if (llmCallCount === 2) {
@@ -1784,7 +1786,7 @@ describe('FullCompaction', () => {
         return textResult('Background compacted summary.');
       }
       throw new Error(`Unexpected generate call ${String(llmCallCount)}`);
-    };
+    });
     ctx = testAgent({
       generate,
       telemetry: recordingTelemetry(records),
@@ -2218,7 +2220,7 @@ describe('FullCompaction', () => {
   it('compacts and retries when the provider reports context overflow', async () => {
     let callCount = 0;
     const inputs: string[][] = [];
-    const generate: GenerateFn = async (_provider, _system, _tools, history, callbacks) => {
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, history, callbacks) => {
       callCount += 1;
       inputs.push(inputHistorySnapshot(history));
       if (callCount === 1) {
@@ -2235,7 +2237,7 @@ describe('FullCompaction', () => {
         return textResult('Recovered after overflow compaction.');
       }
       throw new Error(`Unexpected generate call ${String(callCount)}`);
-    };
+    });
     const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -2299,7 +2301,7 @@ describe('FullCompaction', () => {
   it('recovers from compaction-request overflow under the measured token-counting strategy', async () => {
     let callCount = 0;
     const compactionInputLengths: number[] = [];
-    const generate: GenerateFn = async (_provider, _system, _tools, history, callbacks) => {
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, history, callbacks) => {
       callCount += 1;
       if (callCount === 1) {
         throw new APIContextOverflowError(400, 'Context length exceeded', 'req-measured-overflow');
@@ -2317,7 +2319,7 @@ describe('FullCompaction', () => {
         return textResult('Recovered under measured.');
       }
       throw new Error(`Unexpected generate call ${String(callCount)}`);
-    };
+    });
     const ctx = testAgent({
       generate,
       initialConfig: {
@@ -2359,7 +2361,7 @@ describe('FullCompaction', () => {
 
   it('remembers the observed provider context window after overflow', async () => {
     let callCount = 0;
-    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks) => {
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, _history, callbacks) => {
       callCount += 1;
       if (callCount === 1) {
         throw new APIContextOverflowError(400, 'Context length exceeded', 'req-observed-window');
@@ -2385,7 +2387,7 @@ describe('FullCompaction', () => {
         return textResult('Answered after observed-window precompaction.');
       }
       throw new Error(`Unexpected generate call ${String(callCount)}`);
-    };
+    });
     const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -2432,14 +2434,14 @@ describe('FullCompaction', () => {
 
   it('triggers preemptive compaction against the declared input cap, not the total window', async () => {
     let callCount = 0;
-    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks) => {
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, _history, callbacks) => {
       callCount += 1;
       if (callCount === 1) {
         return textResult('Preemptive summary under the input cap.');
       }
       await callbacks?.onMessagePart?.({ type: 'text', text: 'Answered after input-cap compaction.' });
       return textResult('Answered after input-cap compaction.');
-    };
+    });
     const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -2464,7 +2466,7 @@ describe('FullCompaction', () => {
 
   it('honors the observed provider window over a declared input cap', async () => {
     let callCount = 0;
-    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks) => {
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, _history, callbacks) => {
       callCount += 1;
       if (callCount === 1) {
         throw new APIContextOverflowError(400, 'Context length exceeded', 'req-observed-window');
@@ -2490,7 +2492,7 @@ describe('FullCompaction', () => {
         return textResult('Answered after observed-window precompaction.');
       }
       throw new Error(`Unexpected generate call ${String(callCount)}`);
-    };
+    });
     const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -2521,7 +2523,7 @@ describe('FullCompaction', () => {
 
   it('recovers from plain 413 when estimated request is over effective max', async () => {
     let callCount = 0;
-    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks) => {
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, _history, callbacks) => {
       callCount += 1;
       if (callCount === 1) {
         throw new APIStatusError(413, 'Request Entity Too Large', 'req-plain-413');
@@ -2534,7 +2536,7 @@ describe('FullCompaction', () => {
         text: 'Recovered after plain 413 compaction.',
       });
       return textResult('Recovered after plain 413 compaction.');
-    };
+    });
     const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -2576,9 +2578,9 @@ describe('FullCompaction', () => {
   });
 
   it('does not compact plain 413 when estimated request is small', async () => {
-    const generate: GenerateFn = async () => {
+    const generate: GenerateFn = requesterFromGenerateFn(async () => {
       throw new APIStatusError(413, 'Request Entity Too Large', 'req-small-413');
-    };
+    });
     const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -2605,7 +2607,7 @@ describe('FullCompaction', () => {
 
   it('does not reset the step budget after provider context overflow compaction', async () => {
     let callCount = 0;
-    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks) => {
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, _history, callbacks) => {
       callCount += 1;
       if (callCount === 1) {
         throw new APIContextOverflowError(400, 'Context length exceeded', 'req-budget-overflow');
@@ -2615,7 +2617,7 @@ describe('FullCompaction', () => {
       }
       await callbacks?.onMessagePart?.({ type: 'text', text: 'Should not run.' });
       return textResult('Should not run.');
-    };
+    });
     const ctx = testAgent({
       generate,
       initialConfig: {
@@ -2655,7 +2657,7 @@ describe('FullCompaction', () => {
     let callCount = 0;
     const records: TelemetryRecord[] = [];
     const thinkingEfforts: unknown[] = [];
-    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks, options) => {
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, _history, callbacks, options) => {
       callCount += 1;
       thinkingEfforts.push(options?.thinking?.effort);
       if (callCount === 1) {
@@ -2676,7 +2678,7 @@ describe('FullCompaction', () => {
         return textResult('Recovered after thinking compaction.');
       }
       throw new Error(`Unexpected generate call ${String(callCount)}`);
-    };
+    });
     const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -2705,7 +2707,7 @@ describe('FullCompaction', () => {
   it('compacts provider overflow when model context size is unknown', async () => {
     let callCount = 0;
     const compactionMaxCompletionTokens: unknown[] = [];
-    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks, options) => {
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, _history, callbacks, options) => {
       callCount += 1;
       if (callCount === 1) {
         throw new APIContextOverflowError(400, 'Context length exceeded', 'req-unknown-context');
@@ -2722,7 +2724,7 @@ describe('FullCompaction', () => {
         return textResult('Recovered with unknown context size.');
       }
       throw new Error(`Unexpected generate call ${String(callCount)}`);
-    };
+    });
     const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -2774,7 +2776,7 @@ describe('FullCompaction', () => {
     vi.stubEnv('KIMI_MODEL_MAX_COMPLETION_TOKENS', '8192');
     let callCount = 0;
     const compactionMaxCompletionTokens: unknown[] = [];
-    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks, options) => {
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, _history, callbacks, options) => {
       callCount += 1;
       if (callCount === 1) {
         throw new APIContextOverflowError(400, 'Context length exceeded', 'req-hard-cap');
@@ -2788,7 +2790,7 @@ describe('FullCompaction', () => {
         text: 'Recovered with hard cap.',
       });
       return textResult('Recovered with hard cap.');
-    };
+    });
     const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -2810,7 +2812,7 @@ describe('FullCompaction', () => {
       vi.stubEnv('KIMI_MODEL_MAX_COMPLETION_TOKENS', maxCompletionTokens);
       let callCount = 0;
       const compactionMaxCompletionTokens: unknown[] = [];
-      const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks, options) => {
+      const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, _history, callbacks, options) => {
         callCount += 1;
         if (callCount === 1) {
           throw new APIContextOverflowError(400, 'Context length exceeded', 'req-opt-out');
@@ -2824,7 +2826,7 @@ describe('FullCompaction', () => {
           text: 'Recovered with opt-out.',
         });
         return textResult('Recovered with opt-out.');
-      };
+      });
       const ctx = testAgent({ generate });
       ctx.configure({
         provider: CATALOGUED_PROVIDER,
@@ -2844,7 +2846,7 @@ describe('FullCompaction', () => {
   it('honors maxOutputSize from model config during compaction', async () => {
     let callCount = 0;
     const compactionMaxCompletionTokens: unknown[] = [];
-    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks, options) => {
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, _history, callbacks, options) => {
       callCount += 1;
       if (callCount === 1) {
         throw new APIContextOverflowError(400, 'Context length exceeded', 'req-max-output');
@@ -2858,7 +2860,7 @@ describe('FullCompaction', () => {
         text: 'Recovered with max output.',
       });
       return textResult('Recovered with max output.');
-    };
+    });
     const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -2883,7 +2885,7 @@ describe('FullCompaction', () => {
   it('uses default 128k hardCap when maxOutputSize is not configured', async () => {
     let callCount = 0;
     const compactionMaxCompletionTokens: unknown[] = [];
-    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks, options) => {
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, _history, callbacks, options) => {
       callCount += 1;
       if (callCount === 1) {
         throw new APIContextOverflowError(400, 'Context length exceeded', 'req-default-cap');
@@ -2897,7 +2899,7 @@ describe('FullCompaction', () => {
         text: 'Recovered with default cap.',
       });
       return textResult('Recovered with default cap.');
-    };
+    });
     const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -2916,7 +2918,7 @@ describe('FullCompaction', () => {
   it('ignores filtered assistant placeholders when checking the retained overflow suffix', async () => {
     let callCount = 0;
     const inputs: string[][] = [];
-    const generate: GenerateFn = async (_provider, _system, _tools, history, callbacks) => {
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, history, callbacks) => {
       callCount += 1;
       inputs.push(inputHistorySnapshot(history));
       if (callCount === 1) {
@@ -2937,7 +2939,7 @@ describe('FullCompaction', () => {
         return textResult('Recovered after ignoring the placeholder.');
       }
       throw new Error(`Unexpected generate call ${String(callCount)}`);
-    };
+    });
     const ctx = testAgent({
       generate,
     });
@@ -3325,7 +3327,7 @@ type MutableKimiConfig = {
   };
 };
 
-function textResult(text: string, traceId: string | null = null): Awaited<ReturnType<GenerateFn>> {
+function textResult(text: string, traceId: string | null = null): LegacyGenerateResult {
   return {
     id: 'mock-compaction-oauth-retry',
     message: {
@@ -3345,18 +3347,23 @@ function textResult(text: string, traceId: string | null = null): Awaited<Return
   };
 }
 
+interface ScriptedStream {
+  readonly id: string | null;
+  readonly usage: TokenUsage | null;
+  readonly finishReason: FinishReason | null;
+  readonly rawFinishReason: string | null;
+  readonly traceId: string | null;
+  [Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart>;
+}
+
 function mockStreamedMessage(
   parts: readonly StreamedMessagePart[],
   traceId: string | null = null,
-  opts?: { finishReason?: StreamedMessage['finishReason']; rawFinishReason?: string | null },
-): StreamedMessage {
+  opts?: { finishReason?: FinishReason | null; rawFinishReason?: string | null },
+): ScriptedStream {
   return {
-    get id(): string | null {
-      return 'mock-stream';
-    },
-    get usage() {
-      return null;
-    },
+    id: 'mock-stream',
+    usage: null,
     finishReason: opts?.finishReason ?? null,
     rawFinishReason: opts?.rawFinishReason ?? null,
     traceId,
@@ -3369,19 +3376,38 @@ function mockStreamedMessage(
 }
 
 function realKosongGenerate(
-  script: (attempt: number, history: readonly Message[]) => StreamedMessage,
+  script: (attempt: number, history: readonly Message[]) => ScriptedStream,
 ): GenerateFn {
   let attempt = 0;
-  return (chat, systemPrompt, tools, history, callbacks, options) => {
-    attempt += 1;
-    const currentAttempt = attempt;
-    const provider: ChatProvider = {
-      name: 'mock-think-only',
-      modelName: chat.modelName,
-      thinkingEffort: chat.thinkingEffort,
-      generate: () => Promise.resolve(script(currentAttempt, history)),
-    };
-    return runKosongGenerate(provider, systemPrompt, tools, history, callbacks, options);
+  return {
+    generate: async (config, content, control) => {
+      attempt += 1;
+      const streamed = script(attempt, content.messages.map(fromLlmMessage));
+      const emit = control.onEvent;
+      emit?.({ type: 'llm.sent' });
+      emit?.({
+        type: 'llm.headers',
+        headers: streamed.traceId === null ? {} : { 'x-trace-id': streamed.traceId },
+      });
+      for await (const part of streamed) {
+        emit?.({ type: 'llm.delta', part });
+        control.signal.throwIfAborted();
+      }
+      if (streamed.usage !== null) {
+        emit?.({ type: 'llm.usage', usage: streamed.usage });
+      }
+      emit?.({
+        type: 'llm.finish',
+        finish: {
+          finishReason: streamed.finishReason,
+          rawFinishReason: streamed.rawFinishReason,
+        },
+      });
+      if (streamed.id !== null) {
+        emit?.({ type: 'llm.message-id', messageId: streamed.id });
+      }
+      emit?.({ type: 'llm.done' });
+    },
   };
 }
 
@@ -3491,7 +3517,7 @@ describe('prompt deferral during full compaction', () => {
     const releaseCompaction = deferred<void>();
     let llmCallCount = 0;
     const llmInputs: string[][] = [];
-    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, history) => {
       llmCallCount += 1;
       llmInputs.push(history.map(messageText));
       if (llmCallCount === 1) {
@@ -3500,7 +3526,7 @@ describe('prompt deferral during full compaction', () => {
         return textResult('Compacted summary.');
       }
       return textResult('Deferred turn reply.');
-    };
+    });
     const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -3541,7 +3567,7 @@ describe('prompt deferral during full compaction', () => {
     const releaseCompaction = deferred<void>();
     let llmCallCount = 0;
     const llmInputs: string[][] = [];
-    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, history) => {
       llmCallCount += 1;
       llmInputs.push(history.map(messageText));
       if (llmCallCount === 1) {
@@ -3550,7 +3576,7 @@ describe('prompt deferral during full compaction', () => {
         throw new Error('compaction exploded');
       }
       return textResult('Recovered turn reply.');
-    };
+    });
     const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -3665,7 +3691,7 @@ describe('goal reminder re-injection after full compaction', () => {
     const releaseCompaction = deferred<void>();
     let llmCallCount = 0;
     const llmInputs: string[][] = [];
-    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, history) => {
       llmCallCount += 1;
       llmInputs.push(history.map(messageText));
       if (llmCallCount === 1) {
@@ -3675,7 +3701,7 @@ describe('goal reminder re-injection after full compaction', () => {
       }
       if (llmCallCount === 2) return textResult('Deferred turn reply.');
       throw new Error(`Unexpected generate call #${String(llmCallCount)}`);
-    };
+    });
     const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,

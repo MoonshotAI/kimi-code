@@ -9,6 +9,7 @@ export interface IWireService {
   appendRecord(record: WireRecord, dehydrate?: RecordDehydrator): void;
   readJournal(): AsyncIterable<WireRecord>;
   flush(): Promise<void>;
+  drainPersisted(): Promise<void>;
   lineCount(): number;
   lastContextClearLine(): number | undefined;
   journalPath(): string | undefined;

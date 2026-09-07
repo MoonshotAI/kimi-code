@@ -133,11 +133,20 @@ async function readManifest(dir: string): Promise<ImportManifest | null> {
   }
 }
 
-/** Declared string fields of {@link ImportManifest}. `shellEnv` is free-form. */
+/** Declared string fields of {@link ImportManifest}. */
 const MANIFEST_STRING_FIELDS = [
   'sessionId', 'exportedAt', 'kimiCodeVersion', 'wireProtocolVersion', 'os',
   'nodejsVersion', 'sessionFirstActivity', 'sessionLastActivity', 'title',
-  'workspaceDir', 'sessionLogPath', 'globalLogPath', 'installSource',
+  'workspaceDir', 'sessionLogPath', 'globalLogPath', 'desktopLogPath',
+  'webLogPath', 'desktopVersion', 'installSource',
+] as const;
+
+const SHELL_ENV_STRING_FIELDS = [
+  'term',
+  'termProgram',
+  'termProgramVersion',
+  'multiplexer',
+  'shell',
 ] as const;
 
 /**
@@ -153,7 +162,15 @@ function sanitizeManifest(raw: unknown): ImportManifest | null {
   for (const field of MANIFEST_STRING_FIELDS) {
     if (typeof o[field] === 'string') m[field] = o[field];
   }
-  if (o['shellEnv'] !== undefined) m['shellEnv'] = o['shellEnv'];
+  const shellEnv = o['shellEnv'];
+  if (typeof shellEnv === 'object' && shellEnv !== null && !Array.isArray(shellEnv)) {
+    const source = shellEnv as Record<string, unknown>;
+    const sanitized: Record<string, string> = {};
+    for (const field of SHELL_ENV_STRING_FIELDS) {
+      if (typeof source[field] === 'string') sanitized[field] = source[field];
+    }
+    m['shellEnv'] = sanitized;
+  }
   return m as ImportManifest;
 }
 

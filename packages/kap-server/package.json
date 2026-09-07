@@ -31,6 +31,7 @@
     "@moonshot-ai/agent-core-v2": "workspace:^",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
     "@moonshot-ai/minidb": "workspace:*",
+    "@moonshot-ai/remote-control": "workspace:^",
     "@moonshot-ai/transcript": "workspace:^",
     "bcryptjs": "^2.4.3",
     "fastify": "^5.1.0",

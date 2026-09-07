@@ -19,15 +19,15 @@
 
 import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
-import type { InspectionSource } from '@moonshot-ai/agent-core-v2/kosong/contract/inspection';
-import type { TokenUsage } from '@moonshot-ai/agent-core-v2/kosong/contract/usage';
+import type { TokenUsage } from '@moonshot-ai/agent-core-v2/human/llm/usage';
+import type { InspectionSource } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/inspection';
 import {
   IModelCatalog,
   type ModelCatalogItem,
   type ModelPingResult,
   type ProviderCatalogItem,
-} from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
-import { IModelService } from '@moonshot-ai/agent-core-v2/kosong/model/model';
+} from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
+import { IModelService } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 

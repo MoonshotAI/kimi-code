@@ -306,7 +306,7 @@ export async function setDefaultModel(
     effort,
     model === undefined ? undefined : effectiveModelForHost(host, model),
   );
-  if (host.session === undefined && host.engineV2) {
+  if (host.session === undefined) {
     // A first prompt may still be inside lazy creation: wait it out so the
     // pick lands on the new session instead of racing its assembly (same
     // coordination as the /model path).

@@ -17,7 +17,6 @@ function resolve(
     pluginCommandMap: new Map<string, string>(),
     isStreaming: false,
     isCompacting: false,
-    engineV2: true,
     ...overrides,
   });
 }
@@ -64,9 +63,7 @@ describe('resolveSlashCommandInput', () => {
     });
   });
 
-  it('gates /remote-control behind the remote-control experimental flag', () => {
-    expect(resolve('/rc')).toEqual({ kind: 'message', input: '/rc' });
-    setExperimentalFeatures([{ id: 'remote-control', enabled: true }]);
+  it('resolves /remote-control and /rc as built-ins', () => {
     expect(resolve('/rc')).toMatchObject({ kind: 'builtin', name: 'remote-control' });
     expect(resolve('/remote-control')).toMatchObject({ kind: 'builtin', name: 'remote-control' });
   });
@@ -277,15 +274,6 @@ describe('resolveSlashCommandInput', () => {
     expect(resolve('/tower Ship feature X')).toEqual({
       kind: 'message',
       input: '/tower Ship feature X',
-    });
-  });
-
-  it('does not resolve /tower as a builtin on the legacy engine', () => {
-    setExperimentalFeatures([{ id: 'tower', enabled: true }]);
-
-    expect(resolve('/tower on', { engineV2: false })).toEqual({
-      kind: 'message',
-      input: '/tower on',
     });
   });
 });

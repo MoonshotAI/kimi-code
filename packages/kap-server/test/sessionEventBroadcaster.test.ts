@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -1320,6 +1320,19 @@ describe('SessionEventBroadcaster', () => {
         root: '/repo/a',
       },
     });
+
+    const journalPath = join(dir, '__global__.jsonl');
+    await vi.waitFor(async () => {
+      expect(await readFile(journalPath, 'utf8').catch(() => '')).toContain('wd_a');
+    });
+    const before = await readFile(journalPath, 'utf8');
+    eventBus.emit({
+      type: 'event.workspace.deleted',
+      payload: { workspaceId: 'wd_b', root: '/repo/b' },
+    });
+    await bc.close();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(await readFile(journalPath, 'utf8')).toBe(before);
   });
 
   it('gates event.di.unit_changed to connections opted into the DI debug feed', async () => {
@@ -2320,6 +2333,14 @@ describe('SessionEventBroadcaster', () => {
           delta: (envelope.payload as { delta: string }).delta,
         })),
     ).toEqual([{ offset: 0, delta: 'abc' }]);
+
+    eventBus.emit({
+      type: 'event.workspace.deleted',
+      payload: { workspaceId: 'wd_late', root: '/repo/late' },
+    });
+    await bc.close();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(await readdir(dir)).not.toContain('__global__.jsonl');
   });
 
   describe('transcript streaming', () => {

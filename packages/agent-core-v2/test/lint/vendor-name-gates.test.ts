@@ -20,7 +20,8 @@ function walk(dir: string): string[] {
     const abs = join(dir, entry);
     const st = statSync(abs);
     if (st.isDirectory()) {
-      if (relative(SRC_ROOT, abs) === 'kosong') continue;
+      const rel = relative(SRC_ROOT, abs);
+      if (rel === 'kosong' || rel === 'human' || rel === 'llm-adapter') continue;
       out.push(...walk(abs));
     } else if (abs.endsWith('.ts')) {
       out.push(abs);

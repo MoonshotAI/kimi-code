@@ -42,7 +42,7 @@ function stubWireJournal(journal: WireRecord[]): IWireService {
     readJournal: async function* () {
       for (const record of journal) yield record;
     },
-    flush: async () => {},
+    flush: async () => {}, drainPersisted: async () => {},
     lineCount: () => journal.length,
     lastContextClearLine: () => undefined,
     journalPath: () => undefined,

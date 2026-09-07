@@ -21,11 +21,6 @@ import type { PluginReloadEvent } from '#/app/plugin/types';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import {
-  IHostFsWatchService,
-  type HostFsChange,
-  type IHostFsWatchHandle,
-} from '#/os/interface/hostFsWatch';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import {
   IWorkspaceMcpConfigService,
@@ -36,8 +31,22 @@ import {
   IWorkspaceTrust,
   type WorkspaceTrustChange,
 } from '#/workspace/workspaceTrust/workspaceTrust';
+import type { WatchChange } from '#human/utils/watch';
 
 import { stubLog } from '../../_base/log/stubs';
+
+const watchFires = new Map<string, Emitter<WatchChange>>();
+
+vi.mock('#human/utils/watch', () => ({
+  watch: (path: string) => {
+    let emitter = watchFires.get(path);
+    if (emitter === undefined) {
+      emitter = new Emitter<WatchChange>();
+      watchFires.set(path, emitter);
+    }
+    return { ready: Promise.resolve(), onDidChange: emitter.event, dispose: () => {} };
+  },
+}));
 
 function stdioConfig(command: string): McpServerConfig {
   return { transport: 'stdio', command, args: [] };
@@ -47,7 +56,6 @@ describe('WorkspaceMcpConfigService', () => {
   let cwd: string;
   let homeDir: string;
   let disposables: DisposableStore;
-  let watchFires: Map<string, Emitter<HostFsChange>>;
   let pluginServers: Record<string, McpServerConfig>;
   let pluginReloads: AsyncEmitter<PluginReloadEvent>;
   let storeWrites: AsyncEmitter<McpConfigWriteEvent>;
@@ -59,7 +67,7 @@ describe('WorkspaceMcpConfigService', () => {
     cwd = mkdtempSync(join(tmpdir(), 'kimi-workspace-mcp-config-cwd-'));
     homeDir = mkdtempSync(join(tmpdir(), 'kimi-workspace-mcp-config-home-'));
     disposables = new DisposableStore();
-    watchFires = new Map();
+    watchFires.clear();
     pluginServers = {};
     pluginReloads = disposables.add(new AsyncEmitter<PluginReloadEvent>());
     storeWrites = disposables.add(new AsyncEmitter<McpConfigWriteEvent>());
@@ -77,20 +85,6 @@ describe('WorkspaceMcpConfigService', () => {
     ]);
   });
 
-  function fsWatchStub(): IHostFsWatchService {
-    return {
-      _serviceBrand: undefined,
-      watch: (path: string): IHostFsWatchHandle => {
-        let emitter = watchFires.get(path);
-        if (emitter === undefined) {
-          emitter = new Emitter<HostFsChange>();
-          watchFires.set(path, emitter);
-        }
-        return { ready: Promise.resolve(), onDidChange: emitter.event, dispose: () => {} };
-      },
-    };
-  }
-
   function createService(mcpSection?: McpSection): IWorkspaceMcpConfigService {
     const ix = createServices(disposables, {
       strict: true,
@@ -107,7 +101,6 @@ describe('WorkspaceMcpConfigService', () => {
           get: <T = unknown>(domain: string): T =>
             (domain === MCP_SECTION ? mcpSection : undefined) as T,
         });
-        reg.defineInstance(IHostFsWatchService, fsWatchStub());
         reg.defineInstance(IHostFileSystem, new HostFileSystem());
         reg.definePartialInstance(IWorkspaceTrust, {
           ready: Promise.resolve(),

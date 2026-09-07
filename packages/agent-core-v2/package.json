@@ -27,7 +27,8 @@
   ],
   "type": "module",
   "imports": {
-    "#/*": "./src/*.ts"
+    "#/*": "./src/*.ts",
+    "#human/*": "./src/human/*.ts"
   },
   "exports": {
     ".": {
@@ -77,6 +78,7 @@
     "openai": "^6.34.0",
     "pathe": "^2.0.3",
     "picomatch": "^4.0.4",
+    "radashi": "^12.9.1",
     "retry": "0.13.1",
     "semver": "^7.7.4",
     "smol-toml": "^1.6.1",

@@ -1,8 +1,6 @@
 import { toDisposable } from '#/_base/di/lifecycle';
 import { Event } from '#/_base/event';
-import type { IAgentLoopService, LoopErrorHandler, LoopErrorHandlerRegistrationOptions, Step, Turn, TurnResult } from '#/agent/loop/loop';
-import type { StepRequest } from '#/agent/loop/stepRequest';
-import { StepRequestQueue, type StepRequestBatch } from '#/agent/loop/stepRequestQueue';
+import type { IAgentLoopService, LoopErrorHandler, LoopErrorHandlerRegistrationOptions, LoopNotify, LoopNotifyHandle, LoopPromptSubmit, Turn, TurnResult } from '#/agent/loop/loop';
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { BeforeToolExecuteEvent, ToolDidExecuteContext, WillExecuteToolEvent } from '#/agent/toolExecutor/toolHooks';
 import { OrderedHookSlot } from '#/hooks';
@@ -12,12 +10,12 @@ import type { IWireService } from '#/wire/wire';
 
 export interface StubLoopOptions { readonly hasActiveTurn?: boolean; readonly currentId?: string | number; readonly pendingTurnResult?: boolean; readonly manualTurnResult?: boolean }
 export type StubLoop = IAgentLoopService & {
-  readonly queue: StepRequestQueue;
   readonly launches: readonly number[];
   readonly cancels: readonly { readonly turnId?: number; readonly reason?: unknown }[];
+  readonly queue: { hasPendingRequests(): boolean };
   startTurn(): Turn;
   settleActive(result?: TurnResult): void;
-  drainNextBatch(context: { append(...messages: ContextMessage[]): void }): StepRequestBatch | undefined;
+  drainNextBatch(context: { append(...messages: ContextMessage[]): void }): { readonly driver: { readonly kind: string } } | undefined;
 };
 const turnControllers = new WeakMap<Turn, AbortController>();
 export function makeTurn(id: number): Turn {
@@ -26,10 +24,7 @@ export function makeTurn(id: number): Turn {
   turnControllers.set(turn, controller);
   return turn;
 }
-function makeStep(turn: Turn, request: StepRequest, queue: StepRequestQueue, at: 'head' | 'tail' = 'tail'): Step {
-  queue.enqueue(request, at);
-  return { id: request.id, turnId: turn.id, state: 'queued', signal: new AbortController().signal, result: Promise.resolve({ type: 'completed' }), cancel: () => request.abort() };
-}
+interface PendingEntry { readonly kind: string; readonly message?: ContextMessage; readonly onConsume?: () => void }
 function registry(): { handlers: LoopErrorHandler[]; register: IAgentLoopService['registerLoopErrorHandler'] } {
   const handlers: LoopErrorHandler[] = [];
   const remove = (id: string) => { const i = handlers.findIndex((h) => h.id === id); if (i >= 0) handlers.splice(i, 1); };
@@ -40,10 +35,10 @@ function registry(): { handlers: LoopErrorHandler[]; register: IAgentLoopService
   };
   return { handlers, register };
 }
-function materialize(request: StepRequest, context: { append(...messages: ContextMessage[]): void }): void { if (request.state !== 'pending') return; request.onWillMaterialize(); const messages = request.resolveContextMessages(); if (messages.length) context.append(...messages); request.markMaterialized(); }
 export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
   const hooks = createHooks(['onWillBeginStep', 'onDidFinishStep']) as IAgentLoopService['hooks'];
-  const queue = new StepRequestQueue(); const errorHandlers = registry(); const launches: number[] = []; const cancels: { turnId?: number; reason?: unknown }[] = [];
+  const errorHandlers = registry(); const launches: number[] = []; const cancels: { turnId?: number; reason?: unknown }[] = [];
+  const pending: PendingEntry[] = [];
   let active: Turn | undefined; let nextId = typeof options.currentId === 'number' ? options.currentId : 0;
   let releaseActiveResult: ((result: TurnResult) => void) | undefined;
   const startTurn = () => {
@@ -54,29 +49,56 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
     const configured = { ...turn, result };
     launches.push(configured.id); active = configured; return configured;
   };
+  const hasPending = () => pending.length > 0;
   const stub: StubLoop = {
-    _serviceBrand: undefined, hooks, queue, launches, cancels, startTurn,
+    _serviceBrand: undefined, hooks, launches, cancels, startTurn,
+    queue: { hasPendingRequests: hasPending },
     settleActive(result = { type: 'completed', steps: 0, truncated: false }) { releaseActiveResult?.(result); },
-    enqueue(request, enqueueOptions) {
-      let turn = active;
-      if (request.admission === 'newTurn' || (request.admission === 'activeOrNewTurn' && turn === undefined)) turn = startTurn();
-      if (request.admission === 'activeTurnOnly' && turn === undefined) throw new Error('active turn required');
-      if (turn === undefined) {
-        queue.enqueue(request, enqueueOptions?.at ?? 'tail');
-        const assigned = new Promise<never>(() => {}); void assigned.catch(() => undefined);
-        return { assigned, abort: () => request.abort() };
-      }
-      const step = makeStep(turn, request, queue, enqueueOptions?.at ?? 'tail');
-      return { assigned: Promise.resolve({ turn, step }), abort: (reason) => step.cancel(reason) };
+    submit(prompt: LoopPromptSubmit) {
+      const turn = startTurn();
+      pending.push({ kind: 'prompt', message: prompt.message, onConsume: prompt.onMaterialize });
+      return { turn };
     },
-    async run() { return { type: 'completed', steps: 0, truncated: false }; },
-    status() { return { state: active !== undefined ? 'running' : 'idle', activeTurnId: active?.id, pendingTurnIds: [], hasPendingRequests: queue.hasPendingRequests() }; },
+    steer(prompt: LoopPromptSubmit) {
+      if (active === undefined) return undefined;
+      pending.push({ kind: 'steer', message: prompt.message, onConsume: prompt.onMaterialize });
+      return active;
+    },
+    notify(note: LoopNotify = {}): LoopNotifyHandle {
+      const entry: PendingEntry = {
+        kind: note.bypassMaxSteps === true ? 'handoff' : note.message !== undefined ? 'message' : 'continuation',
+        message: note.message,
+        onConsume: note.onConsume,
+      };
+      pending.push(entry);
+      let dropped = false;
+      return {
+        get dropped() { return dropped; },
+        drop: () => {
+          if (dropped) return;
+          dropped = true;
+          const index = pending.indexOf(entry);
+          if (index >= 0) pending.splice(index, 1);
+          note.onDrop?.();
+        },
+      };
+    },
+    status() { return { state: active !== undefined ? 'running' : 'idle', activeTurnId: active?.id, pendingTurnIds: [], hasPendingRequests: hasPending() }; },
     cancel(turnId, reason) { cancels.push({ turnId, reason }); if (active === undefined || (turnId !== undefined && active.id !== turnId)) return false; active.cancel(reason); return true; },
     cancelFromUser(turnId) { stub.cancel(turnId); },
     tryAcquireQuiescence: () => toDisposable(() => {}),
-    hasPendingRequests: () => queue.hasPendingRequests(), registerLoopErrorHandler: errorHandlers.register,
+    hasPendingRequests: hasPending,
+    registerLoopErrorHandler: errorHandlers.register,
     settled: () => Promise.resolve(),
-    drainNextBatch(context) { const batch = queue.takeNextBatch(); if (!batch) return undefined; materialize(batch.driver, context); for (const r of batch.merged) materialize(r, context); return batch; },
+    drainNextBatch(context) {
+      const batch = pending.splice(0);
+      if (batch.length === 0) return undefined;
+      for (const entry of batch) {
+        entry.onConsume?.();
+        if (entry.message !== undefined && entry.message.content.length > 0) context.append(entry.message);
+      }
+      return { driver: { kind: batch[0]!.kind } };
+    },
   };
   return stub;
 }
@@ -91,5 +113,5 @@ export async function runWillBeginStepHooks(
     signal: new AbortController().signal,
   });
 }
-export function stubWire(): IWireService { return { _serviceBrand: undefined, seal: async () => {}, appendRecord: () => {}, readJournal: async function* () {}, flush: async () => {}, lineCount: () => 0, lastContextClearLine: () => undefined, journalPath: () => undefined }; }
+export function stubWire(): IWireService { return { _serviceBrand: undefined, seal: async () => {}, appendRecord: () => {}, readJournal: async function* () {}, flush: async () => {}, drainPersisted: async () => {}, lineCount: () => 0, lastContextClearLine: () => undefined, journalPath: () => undefined }; }
 export function stubToolExecutor(): IAgentToolExecutorService { return { _serviceBrand: undefined, execute: async function* () {}, onBeforeExecuteTool: Event.None as Event<BeforeToolExecuteEvent>, onWillExecuteTool: Event.None as Event<WillExecuteToolEvent>, hooks: { onDidExecuteTool: new OrderedHookSlot<ToolDidExecuteContext>() }, recordDupType: () => {}, registerToolCallGuard: () => ({ dispose() {} }), registerUnavailableToolDescriber: () => ({ dispose() {} }), registerMissingToolDescriber: () => ({ dispose() {} }) }; }

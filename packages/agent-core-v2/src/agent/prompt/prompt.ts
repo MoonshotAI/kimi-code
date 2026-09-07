@@ -2,7 +2,7 @@ import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { Turn, TurnResult } from '#/agent/loop/loop';
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 import type { Hooks } from '#/hooks';
 
 export interface PromptSubmitContext {
@@ -47,6 +47,7 @@ export interface PromptHandle extends PromptSnapshot {
 export interface PromptQueueSnapshot {
   readonly active: PromptSnapshot | undefined;
   readonly pending: readonly PromptSnapshot[];
+  readonly launching: boolean;
 }
 
 export interface PromptPayload {

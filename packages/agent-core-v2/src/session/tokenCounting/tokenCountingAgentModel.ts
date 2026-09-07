@@ -14,9 +14,9 @@ import {
   type TokenCountingState,
 } from '#/agent/tokenCounting/tokenCountingOps';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
-import type { Message } from '#/kosong/contract/message';
-import { estimateTokensForMessages } from '#/kosong/contract/tokens';
-import type { TokenUsage } from '#/kosong/contract/usage';
+import type { Message } from '#/llm-adapter/contract/message';
+import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
+import type { TokenUsage } from '#human/llm/usage';
 import { AgentModel, defineAgentModel, type AgentModelContext } from '#/state/agentModel';
 
 import type { TokenCountingRebaseInput } from './sessionTokenCounting';

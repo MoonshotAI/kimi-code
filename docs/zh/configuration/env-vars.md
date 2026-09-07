@@ -140,6 +140,10 @@ kimi
 | `KIMI_CODE_PASSWORD` | 为 `kimi web` 本地服务设置并列鉴权密码；绑到非本机地址时建议设置，见 [安全注意](../guides/web.md#安全注意) | 任意非空字符串；未设置时仅 token 有效 |
 | `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` | 会话关闭时是否保留后台任务，优先级高于 `config.toml`。默认会在退出时停止后台任务 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS` | 同时运行的后台任务数上限，优先级高于 `config.toml` 的 `[background] max_running_tasks`；不设置表示无上限 | 正整数；非法值被忽略 |
+| `KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S` | 后台 `Bash` 任务的默认超时（秒），也用于前台命令转入后台后的重新计时，优先级高于 `[task] bash_task_timeout_s`；`0` 表示无超时 | 非负整数；非法值被忽略 |
+| `KIMI_CODE_BACKGROUND_PRINT_BACKGROUND_MODE` | `kimi -p` 主轮次结束后仍有后台任务待处理时的行为，优先级高于 `[task] print_background_mode` | `exit`、`drain` 或 `steer`；非法值被忽略 |
+| `KIMI_CODE_BACKGROUND_PRINT_WAIT_CEILING_S` | print 模式 drain/steer 等待的时长上限（秒），优先级高于 `[task] print_wait_ceiling_s` | 正整数；非法值被忽略 |
+| `KIMI_CODE_BACKGROUND_PRINT_MAX_TURNS` | print 模式下由后台任务完成触发的新轮次上限，优先级高于 `[task] print_max_turns` | 正整数；非法值被忽略 |
 | `KIMI_IMAGE_MAX_EDGE_PX` | 图片压缩的最长边上限（像素），优先级高于 `config.toml` 的 `[image] max_edge_px`（默认 `2000`） | 正整数；非法值被忽略 |
 | `KIMI_IMAGE_READ_BYTE_BUDGET` | 模型自行读图的单图字节预算，优先级高于 `config.toml` 的 `[image] read_byte_budget`（默认 `262144`） | 正整数；非法值被忽略 |
 | `KIMI_CODE_PLUGIN_MARKETPLACE_URL` | 覆盖 `/plugins` 加载的 marketplace JSON；默认 `https://code.kimi.com/kimi-code/plugins/marketplace.json` | 也接受 `http://`、`file://` URL 和本地路径 |
@@ -152,6 +156,8 @@ kimi
 | `KIMI_CODE_TUI_FULL_SCREEN` | 启用实验性的 fullscreen 界面：可滚动 transcript、鼠标选择、可点击链接、Ctrl-Shift-F 搜索 | `1` 开启；其他值保持常规内联界面 |
 | `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL` | 启用实验性的 [subagent 模型池](./config-files.md#subagent-模型池)，所有启动方式生效 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK` | 在 `Agent`/`AgentSwarm` 上启用实验性 `fork` 参数：以调用方对话历史快照而非空上下文启动 subagent | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
+| `KIMI_CODE_SEARCH_WORKER` | 在独立 worker 线程中运行全局搜索索引，优先级高于 `[database] search`（默认 `true`） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
+| `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` | 会话索引使用基于 minidb 的读模型，优先级高于 `[database] base`（默认 `true`） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_MCP_STARTUP_TIMEOUT_MS` | MCP server 全局默认连接超时（毫秒）；优先级高于配置文件，低于 `mcp.json` 的 `startupTimeoutMs` | `1` 到 `2147483647` 的整数；非法值被忽略 |
 | `KIMI_MCP_TOOL_TIMEOUT_MS` | MCP server 全局默认单次工具调用超时（毫秒）；优先级高于配置文件，低于 `mcp.json` 的 `toolTimeoutMs` | `1` 到 `2147483647` 的整数；非法值被忽略 |
 | `KIMI_LOOP_MAX_STEPS_PER_TURN` | Agent 单轮最大步数，优先级高于 `config.toml` 的 `[loop_control] max_steps_per_turn`；`0` 表示无上限 | 非负整数；非法值被忽略 |
@@ -162,8 +168,7 @@ kimi
 | `KIMI_WEB_SEARCH_API_KEY` | 网页搜索（`WebSearch`）服务的 API 密钥；设置后同时替换配置中的 API 密钥和 OAuth 凭据 | 非空字符串；空白值被忽略 |
 | `KIMI_WEB_FETCH_BASE_URL` | 网页抓取（`FetchURL`）服务的 API URL，优先级高于配置文件；未指定端点时已登录用户走 Kimi OAuth 托管抓取，再回退本地直连；凭据不发往该端点 | 非空字符串；空白值被忽略 |
 | `KIMI_WEB_FETCH_API_KEY` | 网页抓取（`FetchURL`）服务的 API 密钥；设置后同时替换配置中的 API 密钥和 OAuth 凭据 | 非空字符串；空白值被忽略 |
-| `KIMI_CODE_EXPERIMENTAL_FLAG` | 在当前进程启用所有已注册的实验功能；不用于选择 Agent 引擎 | `1`、`true`、`yes`、`on` |
-| `KIMI_CODE_LEGACY_FLAG` | 让 `kimi` 系列命令使用旧版 `agent-core` 引擎（默认 `agent-core-v2`） | `1`、`true`、`yes`、`on` |
+| `KIMI_CODE_EXPERIMENTAL_FLAG` | 在当前进程启用所有已注册的实验功能 | `1`、`true`、`yes`、`on` |
 | `KIMI_SHELL_PATH` | Windows 上覆盖 Git Bash 路径（自动探测失败时使用） | 绝对路径 |
 | `KIMI_MODEL_MAX_COMPLETION_TOKENS` | 单步 LLM 请求的 `max_completion_tokens` 硬上限，仅对 `kimi` 供应商生效 | 正整数；`0` 或负数禁用 clamp |
 | `KIMI_MODEL_TEMPERATURE` | 每次请求的采样温度，仅对 `kimi` 供应商生效（全局生效，不依赖 `KIMI_MODEL_NAME`） | 数字，如 `0.3` |
@@ -173,7 +178,7 @@ kimi
 | `KIMI_CODE_NO_AUTO_UPDATE` | 完全禁用更新预检：不检查、不后台安装、不提示。同时兼容旧名 `KIMI_CLI_NO_AUTO_UPDATE` | 真值：`1`/`true`/`yes`/`on` |
 | `KIMI_DISABLE_CRON` | 禁用定时任务工具（`CronCreate` 拒绝新计划，已有任务不触发） | `1` 表示禁用 |
 
-`KIMI_CODE_INFINITE_RETRY`、`KIMI_CODE_IDENTITY_*` 和 `KIMI_CODE_BUILTIN_PRODUCT_SKILLS` 这几个变量由默认的 `agent-core-v2` 引擎读取。设置 `KIMI_CODE_LEGACY_FLAG=1` 后，旧版 `kimi` / `kimi -p` 路径会忽略它们。
+`KIMI_CODE_INFINITE_RETRY`、`KIMI_CODE_IDENTITY_*` 和 `KIMI_CODE_BUILTIN_PRODUCT_SKILLS` 这几个变量由 `agent-core-v2` 引擎读取。
 
 ## 诊断日志
 

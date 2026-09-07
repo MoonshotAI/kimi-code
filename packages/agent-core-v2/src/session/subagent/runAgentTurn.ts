@@ -1,4 +1,4 @@
-import { APIProviderRateLimitError, isProviderRateLimitError } from '#/kosong/contract/errors';
+import { APIProviderRateLimitError, isProviderRateLimitError } from '#/llm-adapter/contract/errors';
 
 import { linkAbortSignal, userCancellationReason } from '#/_base/utils/abort';
 import type { IAgentScopeHandle } from '#/_base/di/scope';

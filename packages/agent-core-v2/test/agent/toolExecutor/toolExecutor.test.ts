@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { ToolCall } from '#/kosong/contract/message';
+import type { ToolCall } from '#human/llm/message';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -38,7 +38,7 @@ import { makeAgentScopeContext, IAgentScopeContext } from '#/agent/scopeContext/
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IEventBus } from '#/app/event/eventBus';
-import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
+import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
