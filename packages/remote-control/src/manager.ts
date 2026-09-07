@@ -50,7 +50,7 @@ function createRemoteControlMachine(
         const handle = await startRemoteControl({
           homeDir: options.homeDir,
           localOrigin: options.localOrigin(),
-          localServerToken: options.localServerToken(),
+          localServerToken: options.localServerToken,
           clientVersion: options.clientVersion,
           relayOrigin: options.relayOrigin,
           stderr: options.stderr,

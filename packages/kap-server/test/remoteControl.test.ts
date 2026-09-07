@@ -14,6 +14,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 
 import { ErrorCode } from '../src/protocol/error-codes';
+import { writeServerToken } from '../src/services/auth/persistentToken';
 import { type RunningServer, startServer } from '../src/start';
 import { authedFetch } from './helpers/auth';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -114,7 +115,29 @@ describe('server-v2 /api/v1/remote-control', () => {
     const restarted = await postRemoteControl(true);
     expect(restarted.code).toBe(0);
     expect(restarted.data.state).toBe('on');
-    relay.managementSockets[relay.managementSockets.length - 1]!.send(
+
+    await writeServerToken(home as string, 'rotated-server-token');
+    const httpSocket = relay.httpSockets.at(-1)!;
+    const rotatedResponsePromise = nextJsonMessage(httpSocket);
+    httpSocket.send(
+      JSON.stringify({
+        request_id: 'request-rotated',
+        type: 'request',
+        is_last: true,
+        body_base64: Buffer.from(
+          'GET /api/v1/healthz HTTP/1.1\r\nHost: relay.test\r\n\r\n',
+        ).toString('base64'),
+      }),
+    );
+    const rotatedMessage = await rotatedResponsePromise;
+    const rotatedResponse = Buffer.from(
+      rotatedMessage['body_base64'] as string,
+      'base64',
+    ).toString();
+    expect(rotatedResponse).toContain('HTTP/1.1 200');
+    expect(rotatedResponse).toContain('"ok":true');
+
+    relay.managementSockets.at(-1)!.send(
       JSON.stringify({ type: 'disconnect', payload: { reason: 'user_requested' } }),
     );
     await waitFor(async () => {
@@ -156,10 +179,19 @@ function rawDataText(data: RawData): string {
   return Buffer.from(data as ArrayBuffer).toString('utf8');
 }
 
+function nextJsonMessage(socket: WebSocket): Promise<Record<string, unknown>> {
+  return new Promise((resolve) => {
+    socket.once('message', (data) => {
+      resolve(JSON.parse(rawDataText(data)) as Record<string, unknown>);
+    });
+  });
+}
+
 async function startRegisterAckRelay(): Promise<{
   port: number;
   registrations: unknown[];
   managementSockets: WebSocket[];
+  httpSockets: WebSocket[];
   close(): Promise<void>;
 }> {
   const managementServer = new WebSocketServer({ noServer: true });
@@ -167,6 +199,7 @@ async function startRegisterAckRelay(): Promise<{
   const relayServer = createServer();
   const registrations: unknown[] = [];
   const managementSockets: WebSocket[] = [];
+  const httpSockets: WebSocket[] = [];
   managementServer.on('connection', (ws) => {
     managementSockets.push(ws);
     ws.on('error', () => {});
@@ -179,6 +212,7 @@ async function startRegisterAckRelay(): Promise<{
     });
   });
   httpTunnelServer.on('connection', (ws) => {
+    httpSockets.push(ws);
     ws.on('error', () => {});
   });
   relayServer.on('upgrade', (request, socket, head) => {
@@ -198,6 +232,7 @@ async function startRegisterAckRelay(): Promise<{
     port,
     registrations,
     managementSockets,
+    httpSockets,
     close: () =>
       new Promise((resolve, reject) => {
         relayServer.close((error) => {
