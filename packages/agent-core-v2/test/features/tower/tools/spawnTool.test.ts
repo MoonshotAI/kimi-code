@@ -608,4 +608,71 @@ describe('TowerSpawnTool', () => {
     const mission = (await store.load()).missions.find((m) => m.id === 'M1');
     expect(mission?.spawnBase).toBeUndefined();
   });
+
+  it('briefs the worker with the mission context and the clarify-first discipline', async () => {
+    const [docs] = await store.plan([
+      {
+        title: 'Docs polish',
+        scope: ['docs/**'],
+        tasks: ['rewrite the intro'],
+        context: 'Keep the tone friendly. Do not document internals.',
+      },
+    ]);
+
+    const result = await execute({ name: 'agent-docs', kind: 'worker', mission_id: docs!.id });
+
+    expect(result.isError).toBeUndefined();
+    const prompt = (runAgent.mock.calls.at(-1)?.[1] as { prompt: string }).prompt;
+    expect(prompt).toContain("## Context — the user's own words, verbatim");
+    expect(prompt).toContain('Keep the tone friendly. Do not document internals.');
+    expect(prompt).toContain('Ambiguity is escalated, not guessed');
+    expect(prompt).toContain('subject="clarify-request"');
+  });
+
+  it('briefs the reviewer with the mission text and the worker self-report', async () => {
+    const [docs] = await store.plan([
+      {
+        title: 'Docs polish',
+        scope: ['docs/**'],
+        tasks: ['rewrite the intro'],
+        context: 'Keep the tone friendly. Do not document internals.',
+      },
+    ]);
+    const workerResult = await execute({ name: 'agent-docs', kind: 'worker', mission_id: docs!.id });
+    expect(workerResult.isError).toBeUndefined();
+    await store.send('agent-docs', {
+      to: 'tower',
+      subject: 'review-request',
+      body: 'Rewrote the intro; tone kept friendly, internals left out.',
+    });
+
+    const result = await execute({
+      name: 'reviewer-a',
+      kind: 'reviewer',
+      review_target: docs!.branch,
+    });
+
+    expect(result.isError).toBeUndefined();
+    const prompt = (runAgent.mock.calls.at(-1)?.[1] as { prompt: string }).prompt;
+    expect(prompt).toContain('# Mission under review');
+    expect(prompt).toContain('# Mission M2: Docs polish');
+    expect(prompt).toContain('- [ ] rewrite the intro');
+    expect(prompt).toContain('Keep the tone friendly. Do not document internals.');
+    expect(prompt).toContain("# The author's own account");
+    expect(prompt).toContain('Rewrote the intro; tone kept friendly, internals left out.');
+    expect(prompt).toContain('1. Intent');
+  });
+
+  it('falls back to the generic checklist when the review target owns no mission', async () => {
+    const result = await execute({
+      name: 'reviewer-a',
+      kind: 'reviewer',
+      review_target: 'feat/orphan-branch',
+    });
+
+    expect(result.isError).toBeUndefined();
+    const prompt = (runAgent.mock.calls.at(-1)?.[1] as { prompt: string }).prompt;
+    expect(prompt).not.toContain('# Mission under review');
+    expect(prompt).toContain('1. Security\n2. Data integrity');
+  });
 });
