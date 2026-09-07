@@ -99,6 +99,7 @@ export class WorkspaceSkillCatalogService extends Disposable implements IWorkspa
       get catalog() {
         return currentCatalog();
       },
+      reloadSources: (ids) => this.reloadSources(ids),
     };
   }
 

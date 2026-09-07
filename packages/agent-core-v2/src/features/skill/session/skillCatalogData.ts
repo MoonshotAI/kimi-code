@@ -10,6 +10,7 @@ export interface ISessionSkillCatalogData {
   readonly ready: Promise<void>;
   readonly catalog: SkillCatalog;
   readonly onDidChange: Event<string>;
+  reloadSources(ids: readonly string[]): Promise<void>;
 }
 
 export const ISessionSkillCatalogData: ServiceIdentifier<ISessionSkillCatalogData> =

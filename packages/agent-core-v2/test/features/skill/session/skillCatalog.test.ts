@@ -35,6 +35,7 @@ function dataSeed(initial: InMemorySkillCatalog): {
       get catalog() {
         return current;
       },
+      reloadSources: () => Promise.resolve(),
     },
     replace(next: InMemorySkillCatalog) {
       current = next;

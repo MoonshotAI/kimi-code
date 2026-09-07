@@ -15,6 +15,7 @@ import {
   ISessionIndex,
   ISessionMediaStore,
   ISessionSkillCatalog,
+  ISessionSkillCatalogData,
   ISkillDiscovery,
   ITelemetryService,
   IWorkspaceService,
@@ -25,7 +26,6 @@ import {
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
   SKILL_SOURCE_PRIORITY,
   configuredRoots,
-  programForSession,
   projectRoots,
   sessionMediaOriginalsDir,
   userRoots,
@@ -166,8 +166,8 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         reply.send(resolved.envelope);
         return;
       }
-      const program = await programForSession(core.accessor, session_id);
-      await program?.skills.reloadSources(SKILLS_RELOAD_SOURCES);
+      const data = resolved.handle.accessor.get(ISessionSkillCatalogData);
+      await data.reloadSources(SKILLS_RELOAD_SOURCES);
       const catalog = resolved.handle.accessor.get(ISessionSkillCatalog);
       await catalog.ready;
       const skills = catalog.catalog.listSkills().map(toProtocolSkill);

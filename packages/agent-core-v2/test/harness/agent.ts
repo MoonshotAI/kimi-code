@@ -1242,6 +1242,7 @@ export class AgentTestContext {
               ready: Promise.resolve(),
               catalog: new InMemorySkillCatalog(),
               onDidChange: Event.None as Event<string>,
+              reloadSources: () => Promise.resolve(),
             } satisfies ISessionSkillCatalogData);
             reg.defineInstance(ISessionAgentProfileCatalogSeed, {
               _serviceBrand: undefined,
