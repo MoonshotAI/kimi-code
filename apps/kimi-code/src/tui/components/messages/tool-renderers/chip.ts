@@ -13,10 +13,10 @@ import { OUTCOME_MAX_LINES } from '#/tui/constant/rendering';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 
 import { goalStatusChip } from './goal';
-import { parseGlobOutput, parseGrepOutput } from './grep-output';
+import { parseGlobOutput, parseGrepOutput, searchNoticeOnly } from './grep-output';
 import { readMediaChip } from './media';
 import { nonEmptyLines } from './outcome';
-import { strArg } from './types';
+import { strArg, stripSpillPointer } from './types';
 import { waitForChip } from './wait-for';
 
 export type ChipProvider = (toolCall: ToolCallBlockData, result: ToolResultBlockData) => string;
@@ -89,7 +89,7 @@ const editChip: ChipProvider = (toolCall) => {
 const writeChip: ChipProvider = (toolCall) => formatWriteChip(computeWriteStats(toolCall.args));
 
 const readChip: ChipProvider = (_toolCall, result) =>
-  pluralize(countNonEmptyLines(result.output), 'line');
+  pluralize(nonEmptyLines(result.output).length, 'line');
 
 // A collapsed Bash card shows its output whole when it fits the outcome
 // rows; once one line stands in for the rest, the chip counts the hidden
@@ -108,11 +108,13 @@ const bashChip: ChipProvider = (_toolCall, result) => {
 // with context flags mixes match and context rows, so only the file count
 // is exact there.
 const grepChip: ChipProvider = (toolCall, result) => {
+  // A notice-only result (cut short, or only filtered sensitive files) is not
+  // an empty search; the glance shows the notice and the chip stays out of
+  // its way. A paginated count-mode page past the last row still carries
+  // the totals, so the emptiness check reads the summary-backed file count.
+  if (searchNoticeOnly(toolCall, result.output)) return '';
   const stats = parseGrepOutput(toolCall, result.output);
-  // A paginated count-mode page past the last row still carries the totals.
-  // A search the tool cut short before any row is not an empty result; the
-  // glance shows the notice instead and the chip stays out of its way.
-  if (stats.files === 0) return stats.partial ? '' : 'no matches';
+  if (stats.files === 0) return 'no matches';
   if (stats.mode === 'files_with_matches') return pluralize(stats.files, 'file', undefined, stats.partial);
   if (stats.matches === null) return pluralize(stats.files, 'file', undefined, stats.partial);
   const matches = pluralize(stats.matches, 'match', 'matches', stats.partial);
@@ -123,14 +125,15 @@ const grepChip: ChipProvider = (toolCall, result) => {
     : `${matches} across ${pluralize(stats.files, 'file', undefined, stats.partial)}`;
 };
 
-const globChip: ChipProvider = (_toolCall, result) => {
+const globChip: ChipProvider = (toolCall, result) => {
+  if (searchNoticeOnly(toolCall, result.output)) return '';
   const { entries, partial } = parseGlobOutput(result.output);
-  if (entries.length === 0) return partial ? '' : 'no files';
+  if (entries.length === 0) return 'no files';
   return pluralize(entries.length, 'file', undefined, partial);
 };
 
 const fetchChip: ChipProvider = (_toolCall, result) =>
-  formatBytes(Buffer.byteLength(result.output, 'utf8'));
+  formatBytes(Buffer.byteLength(stripSpillPointer(result.output), 'utf8'));
 
 const webSearchChip: ChipProvider = (_toolCall, result) => {
   const lines = result.output.split('\n').filter((l) => l.trim().length > 0);

@@ -611,3 +611,19 @@ describe('a search the tool cut short before any row', () => {
     expect(out).toBe('  Glob timed out after 60s; partial results returned.');
   });
 });
+
+describe('a search whose only matches were filtered as sensitive', () => {
+  it('shows the notice rows instead of an exact-looking empty result', () => {
+    const renderer = pickResultRenderer('Grep');
+    const out = strip(
+      joinRender(
+        renderer(
+          call('Grep', { pattern: 'secret' }),
+          result('No non-sensitive matches found\nFiltered 2 sensitive file(s): .env, secrets.json'),
+          ctx,
+        ),
+      ),
+    );
+    expect(out).toBe('  No non-sensitive matches found\n  Filtered 2 sensitive file(s): .env, secrets.json');
+  });
+});

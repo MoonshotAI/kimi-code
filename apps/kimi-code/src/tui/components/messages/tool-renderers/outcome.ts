@@ -14,6 +14,7 @@ import { currentTheme } from '#/tui/theme';
 import { sanitizeShellOutput } from '#/tui/utils/shell-output';
 
 import { TruncatedHeaderLine } from '../truncated-header-line';
+import { stripSpillPointer } from './types';
 
 // One shared reference so the line's render cache survives rebuilds (segment
 // styles are compared by identity); the palette is read at call time.
@@ -23,10 +24,11 @@ const dimOutcomeStyle = (text: string): string => currentTheme.dim(text);
  * Output lines worth a row, with terminal control sequences removed: an
  * outcome row is a dim one-line digest, so a tool's own colours are noise
  * there, and a colour left open past the width cut would bleed into the
- * row's ellipsis and tail. Expanded bodies keep the raw output.
+ * row's ellipsis and tail. The per-line spill pointer is metadata, not
+ * output. Expanded bodies keep the raw output.
  */
 export function nonEmptyLines(text: string): string[] {
-  return sanitizeShellOutput(text)
+  return sanitizeShellOutput(stripSpillPointer(text))
     .split('\n')
     .filter((line) => line.trim().length > 0)
     .map((line) => line.trimEnd());

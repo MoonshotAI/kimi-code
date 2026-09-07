@@ -436,3 +436,26 @@ describe('Glob chip with unreadable directories', () => {
     ).toBe('2+ files');
   });
 });
+
+describe('chips and the per-line spill pointer', () => {
+  const pointer =
+    '[Per-line truncation occurred; the complete output was saved to a file.\noutput_path: /tmp/kimi/tool-output.txt\nnext_step: Use Read with output_path to page through the saved output, or Grep to search it.]';
+
+  it('leave the appended pointer out of line and file counts', () => {
+    const chip = pickChip('Bash')!;
+    const call = { id: 'tc', name: 'Bash', args: { command: 'cat x' } };
+    expect(chip(call, { tool_call_id: 'tc', output: `a\nb\nc\nd\n${pointer}`, is_error: false })).toBe('3 more lines');
+    expect(chipFor('Grep', { pattern: 'foo' }, result(`a.ts\nb.ts\n${pointer}`))).toBe('2 files');
+  });
+});
+
+describe('chips when every match was a filtered sensitive file', () => {
+  it('stay silent so the notice row explains the empty listing', () => {
+    expect(
+      chipFor('Grep', { pattern: 'secret' }, result('No non-sensitive matches found\nFiltered 2 sensitive file(s): .env, secrets.json')),
+    ).toBe('');
+    expect(
+      chipFor('Glob', { pattern: '**/.env*' }, result('No non-sensitive matches found (2 sensitive file(s) filtered).')),
+    ).toBe('');
+  });
+});

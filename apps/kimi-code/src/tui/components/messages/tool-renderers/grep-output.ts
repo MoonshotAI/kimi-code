@@ -7,7 +7,7 @@
 
 import type { ToolCallBlockData } from '#/tui/types';
 
-import { strArg } from './types';
+import { strArg, stripSpillPointer } from './types';
 
 export type GrepMode = 'files_with_matches' | 'content' | 'count_matches';
 
@@ -72,7 +72,7 @@ const DRIVE_PREFIX = /^[A-Za-z]:[\\/]/;
 
 function resultLines(output: string): string[] {
   if (output.length === 0) return [];
-  return output
+  return stripSpillPointer(output)
     .split('\n')
     .filter((line) => line.length > 0 && line !== '--' && !NOTICE.test(line));
 }
@@ -180,16 +180,20 @@ export function parseGlobOutput(output: string): GlobStats {
   return { entries: resultLines(output), partial: INCOMPLETE.test(output) };
 }
 
+// Every match was a file the tool excludes as sensitive: the search did find
+// something, and the notice says why nothing is listed.
+const SENSITIVE_ONLY = /^No non-sensitive matches found/m;
+
 /**
  * Whether a Grep or Glob result is only the tool's notice: the search was cut
- * short (timeout, output cap, unreadable directories) before any row. Such a
- * card shows the notice as a plain outcome row, the same way in both states.
+ * short (timeout, output cap, unreadable directories) before any row, or every
+ * match was a filtered sensitive file. Such a card shows the notice as a plain
+ * outcome row, the same way in both states, and carries no count.
  */
-export function searchCutShort(toolCall: ToolCallBlockData, output: string): boolean {
-  if (toolCall.name === 'Glob') {
-    const { entries, partial } = parseGlobOutput(output);
-    return partial && entries.length === 0;
-  }
-  const stats = parseGrepOutput(toolCall, output);
-  return stats.partial && stats.entries.length === 0;
+export function searchNoticeOnly(toolCall: ToolCallBlockData, output: string): boolean {
+  const noRows =
+    toolCall.name === 'Glob'
+      ? parseGlobOutput(output).entries.length === 0
+      : parseGrepOutput(toolCall, output).entries.length === 0;
+  return noRows && (INCOMPLETE.test(output) || SENSITIVE_ONLY.test(output));
 }

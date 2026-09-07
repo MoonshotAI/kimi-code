@@ -31,3 +31,17 @@ export function strArg(args: Record<string, unknown>, ...keys: string[]): string
   }
   return '';
 }
+
+const PER_LINE_SPILL_POINTER = '[Per-line truncation occurred;';
+
+/**
+ * Drop the pointer agent-core appends when an oversized result kept its
+ * shape but had long lines cut: three bracketed lines, `output_path` and
+ * `next_step` included, that are metadata rather than output. Counts and
+ * outcome rows read the output without it; the expanded body keeps it.
+ */
+export function stripSpillPointer(output: string): string {
+  if (output.startsWith(PER_LINE_SPILL_POINTER)) return '';
+  const at = output.indexOf(`\n${PER_LINE_SPILL_POINTER}`);
+  return at < 0 ? output : output.slice(0, at);
+}

@@ -2585,3 +2585,27 @@ describe('ToolCallComponent hasHiddenContent for WaitFor', () => {
     component.dispose();
   });
 });
+
+describe('ToolCallComponent hasHiddenContent while arguments stream', () => {
+  it('is false for Write and Edit, whose streaming previews ignore the toggle, and true for a Bash command', () => {
+    const content = Array.from({ length: 12 }, (_, i) => `line ${String(i + 1)}`).join('\\n');
+    const write = new ToolCallComponent(
+      {
+        id: 'call_w',
+        name: 'Write',
+        args: { path: 'a.txt', content: content.replaceAll('\\n', '\n') },
+        streamingArguments: `{"path":"a.txt","content":"${content}`,
+      },
+      undefined,
+    );
+    expect(write.hasHiddenContent()).toBe(false);
+    write.dispose();
+
+    const bash = new ToolCallComponent(
+      { id: 'call_b', name: 'Bash', args: {}, streamingArguments: '{"command":"pnpm te' },
+      undefined,
+    );
+    expect(bash.hasHiddenContent()).toBe(true);
+    bash.dispose();
+  });
+});

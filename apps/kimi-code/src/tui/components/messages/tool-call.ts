@@ -37,7 +37,7 @@ import { TruncatedHeaderLine, type HeaderContent } from './truncated-header-line
 import { ShellExecutionComponent } from './shell-execution';
 import { countNonEmptyLines, pickChip } from './tool-renderers/chip';
 import { buildGoalToolHeader, parseGoalToolOutput } from './tool-renderers/goal';
-import { searchCutShort } from './tool-renderers/grep-output';
+import { searchNoticeOnly } from './tool-renderers/grep-output';
 import { parseReadMediaOutput } from './tool-renderers/media';
 import { computeWriteStats } from './tool-renderers/chip';
 import { nonEmptyLines, outcomeLine } from './tool-renderers/outcome';
@@ -815,6 +815,14 @@ export class ToolCallComponent extends Container {
     // Arguments cut off by max_tokens: the card shows a fixed "call never
     // executed" note in place of any preview, so there is nothing to expand.
     if (this.toolCall.truncated === true && this.result === undefined) return false;
+    if (this.result === undefined && this.toolCall.streamingArguments !== undefined) {
+      // While the arguments stream, the Write tail and the Edit progress row
+      // ignore the toggle; only Bash reveals its partial command when expanded.
+      return (
+        name === 'Bash' &&
+        (extractPartialStringField(this.toolCall.streamingArguments, 'command') ?? '').length > 0
+      );
+    }
     if (this.callPreviewHidesContent()) return true;
     const { result } = this;
     if (result === undefined) return nonEmptyLines(this.liveOutput).length > 1;
@@ -831,10 +839,11 @@ export class ToolCallComponent extends Container {
         );
       case 'Grep':
       case 'Glob':
-        // A search cut short before any row shows only the tool's notice, the
-        // same way in both states; every other result hides its body.
+        // A notice-only search (cut short, or only filtered sensitive files)
+        // shows that notice the same way in both states; every other result
+        // hides its body.
         return (
-          !searchCutShort(this.toolCall, result.output) ||
+          !searchNoticeOnly(this.toolCall, result.output) ||
           nonEmptyLines(result.output).length > OUTCOME_MAX_LINES
         );
       case 'WaitFor':
