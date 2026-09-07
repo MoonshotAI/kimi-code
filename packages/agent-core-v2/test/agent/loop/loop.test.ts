@@ -1728,6 +1728,7 @@ describe('step timing split propagation', () => {
         llmServerFirstTokenMs: 70,
         llmServerDecodeMs: 150,
         llmClientConsumeMs: 50,
+        llmClientBlockedMs: 20,
       });
     } finally {
       await ctx.dispose();
@@ -1829,6 +1830,7 @@ function createTimingRequester(): IAgentLLMRequesterService {
     serverFirstTokenMs: 70,
     serverDecodeMs: 150,
     clientConsumeMs: 50,
+    clientBlockedMs: 20,
   };
 
   const requester: IAgentLLMRequesterService = {

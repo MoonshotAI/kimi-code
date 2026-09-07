@@ -637,6 +637,7 @@ describe('AgentTranscriptProjector', () => {
         llmServerFirstTokenMs: 110,
         llmServerDecodeMs: 800,
         llmClientConsumeMs: 100,
+        llmClientBlockedMs: 40,
       }),
     );
 
@@ -656,6 +657,7 @@ describe('AgentTranscriptProjector', () => {
       llmServerFirstTokenMs: 110,
       llmServerDecodeMs: 800,
       llmClientConsumeMs: 100,
+      llmClientBlockedMs: 40,
     });
 
     feed(ev({ type: 'turn.step.started', turnId: 1, step: 2 }));

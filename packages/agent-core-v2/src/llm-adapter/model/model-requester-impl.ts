@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as nodePath from 'node:path';
+import { performance, type EventLoopUtilization } from 'node:perf_hooks';
 
 import { AsyncEventQueue } from '#/_base/asyncEventQueue';
 import type { LlmErrorMessage } from '#human/llm/errors';
@@ -61,6 +62,7 @@ export interface ModelLlmGateway {
 interface StreamDecodeStats {
   readonly serverDecodeMs: number;
   readonly clientConsumeMs: number;
+  readonly clientBlockedMs?: number;
 }
 
 export class ModelRequesterImpl implements ModelRequester {
@@ -143,6 +145,8 @@ export class ModelRequesterImpl implements ModelRequester {
     let serverDecodeMs = 0;
     let clientConsumeMs = 0;
     let lastResumeAt = 0;
+    let decodeEluStart: EventLoopUtilization | undefined;
+    let decodeEluEnd: EventLoopUtilization | undefined;
 
     let accumulator = createMessageAccumulator();
     let usage: TokenUsage | undefined;
@@ -195,6 +199,7 @@ export class ModelRequesterImpl implements ModelRequester {
             const arrivedAt = Date.now();
             if (firstChunkAt === undefined) {
               firstChunkAt = arrivedAt;
+              decodeEluStart = performance.eventLoopUtilization();
             } else {
               serverDecodeMs += arrivedAt - lastResumeAt;
             }
@@ -225,6 +230,9 @@ export class ModelRequesterImpl implements ModelRequester {
             streamEndedAt = Date.now();
             if (firstChunkAt !== undefined) {
               serverDecodeMs += streamEndedAt - lastResumeAt;
+              if (decodeEluStart !== undefined) {
+                decodeEluEnd = performance.eventLoopUtilization(decodeEluStart);
+              }
             }
             return;
           }
@@ -248,15 +256,38 @@ export class ModelRequesterImpl implements ModelRequester {
       traceId: traceId ?? undefined,
     });
     if (firstChunkAt !== undefined) {
+      const elu =
+        decodeEluEnd ??
+        (decodeEluStart === undefined
+          ? undefined
+          : performance.eventLoopUtilization(decodeEluStart));
       queue.push({
         type: 'timing',
-        ...buildStreamTiming(requestStartedAt, requestSentAt, firstChunkAt, streamEndedAt, {
-          serverDecodeMs,
-          clientConsumeMs,
-        }),
+        ...buildStreamTiming(
+          requestStartedAt,
+          requestSentAt,
+          firstChunkAt,
+          streamEndedAt,
+          finalizeDecodeStats(elu, {
+            serverDecodeMs,
+            clientConsumeMs,
+          }),
+        ),
       });
     }
   }
+}
+
+function finalizeDecodeStats(
+  elu: EventLoopUtilization | undefined,
+  raw: StreamDecodeStats,
+): StreamDecodeStats {
+  if (elu === undefined) return raw;
+  return {
+    serverDecodeMs: raw.serverDecodeMs,
+    clientConsumeMs: raw.clientConsumeMs,
+    clientBlockedMs: Math.max(0, Math.round(elu.active) - raw.clientConsumeMs),
+  };
 }
 
 function applyAuth(model: LlmModel, auth: ProviderRequestAuth | undefined): LlmModel {
@@ -358,6 +389,9 @@ export function buildStreamTiming(
   if (decodeStats !== undefined) {
     timing.serverDecodeMs = Math.max(0, decodeStats.serverDecodeMs);
     timing.clientConsumeMs = Math.max(0, decodeStats.clientConsumeMs);
+    if (decodeStats.clientBlockedMs !== undefined) {
+      timing.clientBlockedMs = Math.max(0, decodeStats.clientBlockedMs);
+    }
   }
   return timing;
 }

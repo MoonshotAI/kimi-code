@@ -35,6 +35,7 @@ export interface StepTiming {
   readonly llmServerFirstTokenMs?: number;
   readonly llmServerDecodeMs?: number;
   readonly llmClientConsumeMs?: number;
+  readonly llmClientBlockedMs?: number;
 }
 
 export interface StepRetry {

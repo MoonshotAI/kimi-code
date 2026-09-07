@@ -417,6 +417,26 @@ describe('ModelRequesterImpl request execution', () => {
     expect(part).toEqual({ type: 'video_url', videoUrl: { url: 'https://cdn.example.test/v.mp4' } });
     expect(seen).toEqual(['sk-1']);
   });
+
+  it('reports the event-loop-busy overlap of the decode window as clientBlockedMs', async () => {
+    const requester = new FakeLlmRequester();
+    requester.handler = (_i, emit) => {
+      emit({ type: 'llm.sent' });
+      emit({ type: 'llm.delta', part: { type: 'text', text: 'a' } });
+      const spinUntil = Date.now() + 150;
+      while (Date.now() < spinUntil) {}
+      emit({ type: 'llm.delta', part: { type: 'text', text: 'b' } });
+      emit({ type: 'llm.finish', finish: { finishReason: 'completed', rawFinishReason: 'stop' } });
+      emit({ type: 'llm.done' });
+    };
+    const impl = new ModelRequesterImpl(modelWith(staticAuth()), gatewayReturning(requester));
+    const events = await collect(impl.request(INPUT));
+    const timing = events.find((event) => event.type === 'timing');
+    expect(timing).toBeDefined();
+    if (timing?.type !== 'timing') return;
+    expect(timing.serverDecodeMs).toBeGreaterThanOrEqual(140);
+    expect(timing.clientBlockedMs).toBeGreaterThanOrEqual(100);
+  });
 });
 
 describe('effectiveMaxCompletionTokens', () => {
@@ -454,6 +474,24 @@ describe('buildStreamTiming', () => {
       serverFirstTokenMs: 130,
       serverDecodeMs: 90,
       clientConsumeMs: 60,
+    });
+  });
+
+  it('adds the blocked share of the decode window when reported', () => {
+    expect(
+      buildStreamTiming(100, 120, 250, 400, {
+        serverDecodeMs: 10,
+        clientConsumeMs: 60,
+        clientBlockedMs: 80,
+      }),
+    ).toEqual({
+      firstTokenLatencyMs: 150,
+      streamDurationMs: 150,
+      requestBuildMs: 20,
+      serverFirstTokenMs: 130,
+      serverDecodeMs: 10,
+      clientConsumeMs: 60,
+      clientBlockedMs: 80,
     });
   });
 });
