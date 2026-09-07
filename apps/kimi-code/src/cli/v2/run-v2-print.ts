@@ -61,7 +61,10 @@ import {
   type PrintBackgroundMode,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import { loadMcpServers } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
+import {
+  loadMcpServersDetailed,
+  resolveMcpJsonPaths,
+} from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
 import {
   createKimiDefaultHeaders,
   createKimiDeviceId,
@@ -494,9 +497,9 @@ export interface TrustGatedMcpServer {
 
 /**
  * Project-level MCP servers the workspace-trust gate leaves out in this
- * folder: what the config loader sees with project files included vs skipped
- * (mirrors the SDK's `getWorkspaceTrustInfo`). Empty when the folder is
- * trusted or nothing project-level is declared.
+ * folder, identified by the origin of each entry in the final merged config
+ * (mirrors the SDK's `getWorkspaceTrustInfo`). Empty when the folder is trusted
+ * or nothing project-level is declared.
  */
 export async function listTrustGatedMcpServers(
   app: Scope,
@@ -508,12 +511,13 @@ export async function listTrustGatedMcpServers(
     .getOrCreate({ root: workDir });
   if (await workspace.program.trust.get()) return [];
   const fs = app.accessor.get(IHostFileSystem);
-  const [withProject, userOnly] = await Promise.all([
-    loadMcpServers({ fs, cwd: workDir, homeDir, includeProject: true }),
-    loadMcpServers({ fs, cwd: workDir, homeDir, includeProject: false }),
+  const [paths, loaded] = await Promise.all([
+    resolveMcpJsonPaths({ fs, cwd: workDir, homeDir }),
+    loadMcpServersDetailed({ fs, cwd: workDir, homeDir, includeProject: true }),
   ]);
-  return Object.entries(withProject)
-    .filter(([name]) => !(name in userOnly))
+  const projectPaths = new Set([paths.projectRoot, paths.project]);
+  return Object.entries(loaded.servers)
+    .filter(([name]) => projectPaths.has(loaded.origins[name] ?? ''))
     .map(([name, config]) => ({ name, target: describeMcpTarget(config) }))
     .toSorted((a, b) => a.name.localeCompare(b.name));
 }

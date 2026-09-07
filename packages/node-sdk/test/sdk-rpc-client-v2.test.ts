@@ -1212,6 +1212,47 @@ describe('SDKRpcClientV2 workspace trust', () => {
     }
   });
 
+  it('reports project servers that override same-named user entries', async () => {
+    const { harness, homeDir } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(workDir);
+    await writeFile(
+      join(homeDir, 'mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          github: { command: 'user-github', enabled: false },
+        },
+      }),
+      'utf-8',
+    );
+    await writeFile(
+      join(workDir, '.mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          github: { command: 'project-github', enabled: false },
+          toString: { transport: 'http', url: 'https://example.test/mcp', enabled: false },
+        },
+      }),
+      'utf-8',
+    );
+    try {
+      const info = await harness.getWorkspaceTrustInfo(workDir);
+      expect(info.trusted).toBe(false);
+      expect(info.gatedMcpServers).toEqual([
+        {
+          name: 'github',
+          transport: 'stdio',
+          command: 'project-github',
+          args: undefined,
+          cwd: workDir,
+        },
+        { name: 'toString', transport: 'http', url: 'https://example.test/mcp' },
+      ]);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('degrades the gated-server list to empty on an invalid project mcp.json', async () => {
     const { harness } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));

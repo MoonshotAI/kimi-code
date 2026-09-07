@@ -152,7 +152,11 @@ import {
 } from '@moonshot-ai/agent-core';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { McpConnectionManager } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
-import { loadMcpServers } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
+import {
+  loadMcpServers,
+  loadMcpServersDetailed,
+  resolveMcpJsonPaths,
+} from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
 import { fsSuggestRequestSchema } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
 import { IAppendLogStore } from '@moonshot-ai/agent-core-v2/persistence/interface/appendLogStore';
 import type { McpServerConfig as WorkspaceMcpServerConfig } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
@@ -695,8 +699,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * via {@link engineAccessor} — the same `handlerFor({ root })` path
    * `createSession` takes (materializing the workspace handler is a no-op
    * cost here: session creation does it anyway). The gated-server list is
-   * what the pure config loader sees with project files included vs skipped
-   * (the workspaceTrust gate inside the engine's `workspaceMcpConfig`),
+   * the final merged config entries whose origins are project files (the
+   * workspaceTrust gate inside the engine's `workspaceMcpConfig`),
    * computed best-effort: an unreadable/invalid project file degrades to an
    * empty list rather than failing the caller.
    */
@@ -708,12 +712,18 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     if (trusted) return { trusted: true, gatedMcpServers: [] };
     try {
       const fs = this.engineAccessor.get(IHostFileSystem);
-      const [withProject, userOnly] = await Promise.all([
-        loadMcpServers({ fs, cwd: workDir, homeDir: this.homeDir, includeProject: true }),
-        loadMcpServers({ fs, cwd: workDir, homeDir: this.homeDir, includeProject: false }),
+      const [paths, loaded] = await Promise.all([
+        resolveMcpJsonPaths({ fs, cwd: workDir, homeDir: this.homeDir }),
+        loadMcpServersDetailed({
+          fs,
+          cwd: workDir,
+          homeDir: this.homeDir,
+          includeProject: true,
+        }),
       ]);
-      const gatedMcpServers = Object.entries(withProject)
-        .filter(([name]) => !(name in userOnly))
+      const projectPaths = new Set([paths.projectRoot, paths.project]);
+      const gatedMcpServers = Object.entries(loaded.servers)
+        .filter(([name]) => projectPaths.has(loaded.origins[name] ?? ''))
         .map(([name, config]) => describeWorkspaceMcpServer(name, config))
         .toSorted((a, b) => a.name.localeCompare(b.name));
       return { trusted: false, gatedMcpServers };

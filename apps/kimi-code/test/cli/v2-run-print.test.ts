@@ -39,9 +39,15 @@ import { runV2Print } from '../../src/cli/v2/run-v2-print';
 const mocks = vi.hoisted(() => ({
   bootstrap: vi.fn(),
   ensureMainAgent: vi.fn(),
-  loadMcpServers: vi.fn(
-    async (_input: { includeProject?: boolean }): Promise<Record<string, unknown>> => ({}),
-  ),
+  loadMcpServersDetailed: vi.fn(async () => ({
+    servers: {},
+    origins: {},
+  })),
+  resolveMcpJsonPaths: vi.fn(async () => ({
+    user: '/tmp/kimi-code-test-home/mcp.json',
+    projectRoot: '/tmp/project/.mcp.json',
+    project: '/tmp/project/.kimi-code/mcp.json',
+  })),
   createKimiDefaultHeaders: vi.fn(() => ({})),
   resolveKimiHome: vi.fn((homeDir?: string) => homeDir ?? '/tmp/kimi-code-test-home'),
   createKimiDeviceId: vi.fn(() => 'device-1'),
@@ -62,7 +68,8 @@ vi.mock('@moonshot-ai/agent-core-v2', async (importOriginal) => {
 });
 
 vi.mock('@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader', () => ({
-  loadMcpServers: mocks.loadMcpServers,
+  loadMcpServersDetailed: mocks.loadMcpServersDetailed,
+  resolveMcpJsonPaths: mocks.resolveMcpJsonPaths,
 }));
 
 vi.mock('@moonshot-ai/kimi-code-oauth', async () => {
@@ -318,7 +325,10 @@ describe('runV2Print', () => {
     // flip the default telemetry-on path these tests exercise.
     vi.stubEnv('KIMI_DISABLE_TELEMETRY', '');
     // `vi.clearAllMocks` keeps implementations, so re-pin the default here.
-    mocks.loadMcpServers.mockImplementation(async () => ({}));
+    mocks.loadMcpServersDetailed.mockImplementation(async () => ({
+      servers: {},
+      origins: {},
+    }));
   });
 
   afterEach(() => {
@@ -850,14 +860,16 @@ describe('runV2Print', () => {
     const stderr = writer();
     const { app, trustState } = makeFakeHarness();
     trustState.trusted = false;
-    mocks.loadMcpServers.mockImplementation(async (input: { includeProject?: boolean }) =>
-      input.includeProject === false
-        ? {}
-        : {
-            fs: { transport: 'stdio', command: 'node', args: ['server.js'] },
-            api: { transport: 'http', url: 'https://example.com/mcp' },
-          },
-    );
+    mocks.loadMcpServersDetailed.mockResolvedValue({
+      servers: {
+        fs: { transport: 'stdio', command: 'node', args: ['server.js'] },
+        api: { transport: 'http', url: 'https://example.com/mcp' },
+      },
+      origins: {
+        fs: '/tmp/project/.mcp.json',
+        api: '/tmp/project/.kimi-code/mcp.json',
+      },
+    });
 
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
@@ -883,7 +895,7 @@ describe('runV2Print', () => {
 
     await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
 
-    expect(mocks.loadMcpServers).not.toHaveBeenCalled();
+    expect(mocks.loadMcpServersDetailed).not.toHaveBeenCalled();
     expect(stderr.text()).not.toContain('not trusted');
   });
 
@@ -898,8 +910,33 @@ describe('runV2Print', () => {
 
     await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
 
-    expect(mocks.loadMcpServers).toHaveBeenCalled();
+    expect(mocks.loadMcpServersDetailed).toHaveBeenCalled();
     expect(stderr.text()).not.toContain('not trusted');
+  });
+
+  it('warns for a project server that overrides a same-named user server', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, trustState } = makeFakeHarness();
+    trustState.trusted = false;
+    mocks.loadMcpServersDetailed.mockResolvedValue({
+      servers: {
+        github: { transport: 'stdio', command: './project-github' },
+        toString: { transport: 'http', url: 'https://example.com/mcp' },
+      },
+      origins: {
+        github: '/tmp/project/.mcp.json',
+        toString: '/tmp/project/.kimi-code/mcp.json',
+      },
+    });
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
+
+    expect(stderr.text()).toContain('github (stdio: ./project-github)');
+    expect(stderr.text()).toContain('toString (http: https://example.com/mcp)');
   });
 
   it('still runs when the trust-gated MCP probe fails', async () => {
