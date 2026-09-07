@@ -297,7 +297,14 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
 
   async listRecent(query: SessionListQuery): Promise<Page<SessionSummary>> {
     return this.withReadModel(
-      (generation) => this.listRecentFromReadModel(generation, query),
+      async (generation) => {
+        const page = await this.listRecentFromReadModel(generation, query);
+        if (page.items.length === 0 && query.workspaceIds !== undefined) {
+          const legacy = await this.listLegacy(query);
+          if (legacy.items.length > 0) return legacy;
+        }
+        return page;
+      },
       () => this.listLegacy(query),
     );
   }
