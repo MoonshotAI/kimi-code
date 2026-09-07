@@ -6,17 +6,20 @@ function isModelShaped(entry: Record<string, unknown>): boolean {
   return entry['model'] !== undefined || entry['name'] !== undefined;
 }
 
-function findNestedModelPath(
+function collectNestedModelPaths(
   entry: Record<string, unknown>,
   path: readonly string[],
-): readonly string[] | undefined {
+): (readonly string[])[] {
+  const found: (readonly string[])[] = [];
   for (const [key, value] of Object.entries(entry)) {
     if (!isPlainObject(value)) continue;
-    if (isModelShaped(value)) return [...path, key];
-    const nested = findNestedModelPath(value, [...path, key]);
-    if (nested !== undefined) return nested;
+    if (isModelShaped(value)) {
+      found.push([...path, key]);
+      continue;
+    }
+    found.push(...collectNestedModelPaths(value, [...path, key]));
   }
-  return undefined;
+  return found;
 }
 
 export function collectMalformedModelEntries(
@@ -27,8 +30,8 @@ export function collectMalformedModelEntries(
   if (!isPlainObject(rawSection)) return diagnostics;
   for (const [alias, entry] of Object.entries(rawSection)) {
     if (!isPlainObject(entry)) continue;
-    const nestedPath = findNestedModelPath(entry, []);
-    if (nestedPath !== undefined) {
+    const nestedPaths = collectNestedModelPaths(entry, []);
+    for (const nestedPath of nestedPaths) {
       const full = [alias, ...nestedPath].join('.');
       diagnostics.push({
         domain: 'models',
@@ -37,9 +40,8 @@ export function collectMalformedModelEntries(
           `[models] entry '${full}' is nested under '${alias}' and cannot be used as a model; ` +
           `if the alias contains dots, quote the table name (e.g. [models."${full}"]).`,
       });
-      continue;
     }
-    if (isModelShaped(entry)) continue;
+    if (nestedPaths.length > 0 || isModelShaped(entry)) continue;
     diagnostics.push({
       domain: 'models',
       severity: 'warning',

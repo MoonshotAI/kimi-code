@@ -1458,6 +1458,29 @@ describe('malformed model entries', () => {
     disposables.dispose();
   });
 
+  it('warns for every nested model path sharing a prefix', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.openai.gpt-4]\nmodel = "gpt-4"\n\n[models.openai.gpt-4o]\nmodel = "gpt-4o"\n',
+    );
+
+    expect(config.diagnostics()).toContainEqual({
+      domain: MODELS_SECTION,
+      severity: 'warning',
+      message:
+        "[models] entry 'openai.gpt-4' is nested under 'openai' and cannot be used as a model; " +
+        'if the alias contains dots, quote the table name (e.g. [models."openai.gpt-4"]).',
+    });
+    expect(config.diagnostics()).toContainEqual({
+      domain: MODELS_SECTION,
+      severity: 'warning',
+      message:
+        "[models] entry 'openai.gpt-4o' is nested under 'openai' and cannot be used as a model; " +
+        'if the alias contains dots, quote the table name (e.g. [models."openai.gpt-4o"]).',
+    });
+
+    disposables.dispose();
+  });
+
   it('does not warn when the model field is present', async () => {
     const { config, disposables } = await createConfig(
       '[models.good]\nmodel = "good-model"\nmax_context_size = 128000\n',
