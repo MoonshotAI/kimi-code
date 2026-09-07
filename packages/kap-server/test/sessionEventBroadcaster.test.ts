@@ -49,7 +49,7 @@ import {
   type BroadcastTarget,
   SessionEventBroadcaster,
 } from '../src/transport/ws/v1/sessionEventBroadcaster';
-import type { EventEnvelope } from '../src/transport/ws/v1/sessionEventJournal';
+import { SessionEventJournal, type EventEnvelope } from '../src/transport/ws/v1/sessionEventJournal';
 import { TranscriptService } from '../src/services/transcript/transcriptService';
 
 type FakeBusEvent = { type: string };
@@ -459,9 +459,12 @@ function makeCore(
   eventBus = new FakeEventBus(),
   metaAgents: Record<string, { type?: string; parentAgentId?: string }> = {},
 ): Scope {
+  const handles = new WeakMap<FakeLifecycle, IScopeHandle>();
   const sessionFor = (sid: string) => {
     const lifecycle = sessions.get(sid);
     if (lifecycle === undefined) return undefined;
+    const existing = handles.get(lifecycle);
+    if (existing !== undefined) return existing;
     const sessionAccessor = {
       get: (t: unknown) => {
         if (t === IAgentLifecycleService) return lifecycle;
@@ -470,7 +473,9 @@ function makeCore(
         return undefined;
       },
     };
-    return { id: sid, kind: LifecycleScope.Session, accessor: sessionAccessor, dispose: () => {} };
+    const handle = { id: sid, kind: LifecycleScope.Session, accessor: sessionAccessor, dispose: () => {} } as unknown as IScopeHandle;
+    handles.set(lifecycle, handle);
+    return handle;
   };
   const sessionLifecycle = {
     onDidCloseSession: () => ({ dispose: () => {} }),
@@ -552,6 +557,33 @@ describe('SessionEventBroadcaster', () => {
   afterEach(async () => {
     await bc.close();
     await rm(dir, { recursive: true, force: true });
+  });
+
+  it('does not install a pending state after its session disappears', async () => {
+    const lifecycle = new FakeLifecycle();
+    lifecycle.addAgent('main');
+    sessions.set('s1', lifecycle);
+    const journal = await SessionEventJournal.open(join(dir, 's1.jsonl'));
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const opening = vi.spyOn(SessionEventJournal, 'open').mockImplementation(async () => {
+      enter();
+      await gate;
+      return journal;
+    });
+    try {
+      const subscription = bc.subscribe('s1', collectingTarget().target);
+      await entered;
+      sessions.delete('s1');
+      release();
+      expect(await subscription).toBe(false);
+      expect(await bc.subscribe('s1', collectingTarget().target)).toBe(false);
+    } finally {
+      release();
+      opening.mockRestore();
+    }
   });
 
   it('preserves a real Event2 time in payload and derives the envelope timestamp from it', async () => {
@@ -1244,6 +1276,29 @@ describe('SessionEventBroadcaster', () => {
       session_id: '__global__',
       payload: {
         type: 'event.session.archived',
+        agentId: 'main',
+        sessionId: 'cold-1',
+        workspace_id: 'wd_cold',
+      },
+    });
+    expect(globalView.deliveries).toEqual(['immediate']);
+  });
+
+  it('fans out event.session.deleted to every connection, including for cold sessions', async () => {
+    const globalView = collectingTarget();
+    bc.addGlobalTarget(globalView.target);
+
+    eventBus.emit({
+      type: 'event.session.deleted',
+      payload: { sessionId: 'cold-1', workspaceId: 'wd_cold' },
+    });
+
+    await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+    expect(globalView.envelopes[0]).toMatchObject({
+      type: 'event.session.deleted',
+      session_id: '__global__',
+      payload: {
+        type: 'event.session.deleted',
         agentId: 'main',
         sessionId: 'cold-1',
         workspace_id: 'wd_cold',
