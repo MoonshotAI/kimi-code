@@ -368,7 +368,7 @@ export interface OpenAIResponsesOptions {
    * shared default (`medium`) is sent so boolean Thinking On is not a
    * silent no-op on OpenAI-compatible endpoints.
    */
-  onEffort?: string | undefined;
+  onEffort?: string;
   httpClient?: unknown;
   defaultHeaders?: Record<string, string>;
   toolMessageConversion?: ToolMessageConversion | undefined;
