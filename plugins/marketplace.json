@@ -7,7 +7,10 @@
       "displayName": "Kimi Datasource",
       "version": "3.4.0",
       "description": "Stocks and financials from Wind, S&P Capital IQ, SEC EDGAR, etc.; news from Caixin, Xinhua Finance; macro from World Bank, IMF, FRED, NBS; corporate, academic, legal data, and more",
-      "keywords": ["data", "mcp"],
+      "keywords": [
+        "data",
+        "mcp"
+      ],
       "source": "./official/kimi-datasource"
     },
     {
@@ -16,7 +19,11 @@
       "displayName": "Kimi WebBridge",
       "version": "1.11.3",
       "description": "Control your real browser from Kimi Code.",
-      "keywords": ["browser", "automation", "webbridge"],
+      "keywords": [
+        "browser",
+        "automation",
+        "webbridge"
+      ],
       "source": "./official/kimi-webbridge"
     },
     {
@@ -25,7 +32,13 @@
       "displayName": "Superpowers",
       "description": "Planning, TDD, debugging, and delivery workflows for coding agents.",
       "homepage": "https://github.com/obra/superpowers",
-      "keywords": ["skills", "planning", "tdd", "debugging", "code-review"],
+      "keywords": [
+        "skills",
+        "planning",
+        "tdd",
+        "debugging",
+        "code-review"
+      ],
       "source": "https://github.com/obra/superpowers"
     },
     {
@@ -34,7 +47,13 @@
       "displayName": "Vercel Plugin",
       "description": "Comprehensive Vercel ecosystem plugin — skills, agents, and conventions for the Vercel platform.",
       "homepage": "https://vercel.com/docs/agent-resources/vercel-plugin",
-      "keywords": ["vercel", "deployment", "nextjs", "skills", "agents"],
+      "keywords": [
+        "vercel",
+        "deployment",
+        "nextjs",
+        "skills",
+        "agents"
+      ],
       "source": "https://github.com/vercel/vercel-plugin"
     },
     {
@@ -43,7 +62,13 @@
       "displayName": "Modern Web Guidance",
       "description": "Modern web platform expertise, best practices, and browser compatibility data for coding agents, from the Google Chrome team.",
       "homepage": "https://github.com/GoogleChrome/modern-web-guidance",
-      "keywords": ["web", "css", "browser", "frontend", "skills"],
+      "keywords": [
+        "web",
+        "css",
+        "browser",
+        "frontend",
+        "skills"
+      ],
       "source": "https://github.com/GoogleChrome/modern-web-guidance"
     },
     {
@@ -53,8 +78,29 @@
       "version": "0.2.0",
       "description": "Build, deploy, and manage Tencent CloudBase apps — databases, cloud functions, storage, auth, and hosting, powered by cloudbase-mcp.",
       "homepage": "https://github.com/TencentCloudBase/CloudBase-AI-Toolkit",
-      "keywords": ["cloudbase", "tencent-cloud", "baas", "database", "cloud-function", "mcp"],
+      "keywords": [
+        "cloudbase",
+        "tencent-cloud",
+        "baas",
+        "database",
+        "cloud-function",
+        "mcp"
+      ],
       "source": "https://github.com/TencentCloudBase/CloudBase-AI-Toolkit/releases/latest/download/cloudbase-kimi.zip"
+    },
+    {
+      "id": "centricmem-skill",
+      "tier": "curated",
+      "displayName": "CentricMem",
+      "description": "Hosted librarian for agent memory: organise and retrieve Markdown cards via host MCP.",
+      "homepage": "https://centricmem.com",
+      "keywords": [
+        "memory",
+        "mcp",
+        "skills",
+        "librarian"
+      ],
+      "source": "https://github.com/zeyu-j/centricmem-skill"
     }
   ]
 }
