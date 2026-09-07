@@ -79,21 +79,30 @@ function hasSchemaSettingsChild(entry: Record<string, unknown>): boolean {
   );
 }
 
-function nestedModelDiagnostic(path: readonly string[]): ConfigDiagnostic {
+function nestedModelDiagnostic(
+  path: readonly string[],
+  collides: boolean,
+): ConfigDiagnostic {
   const full = path.join('.');
   return {
     domain: 'models',
     severity: 'warning',
     message:
       `[models] entry '${tomlBasicString(full)}' is nested under '${tomlBasicString(path[0]!)}' and cannot be used as a model; ` +
-      `if the alias contains dots, quote the table name (e.g. [models."${tomlBasicString(full)}"]).`,
+      (collides
+        ? `'${tomlBasicString(full)}' is already defined at the top level — remove or rename the nested entry.`
+        : `if the alias contains dots, quote the table name (e.g. [models."${tomlBasicString(full)}"]).`),
   };
 }
 
-function missingNameDiagnostic(path: readonly string[]): ConfigDiagnostic {
+function missingNameDiagnostic(
+  path: readonly string[],
+  collides: boolean,
+): ConfigDiagnostic {
   const full = path.join('.');
-  const remedy =
-    path.length === 1
+  const remedy = collides
+    ? `'${tomlBasicString(full)}' is already defined at the top level — remove or rename the nested entry.`
+    : path.length === 1
       ? `add a nonblank 'model' (or 'name') field to make it usable.`
       : `add a nonblank 'model' (or 'name') field, and quote the table name if the alias contains dots (e.g. [models."${tomlBasicString(full)}"]).`;
   return {
@@ -105,48 +114,54 @@ function missingNameDiagnostic(path: readonly string[]): ConfigDiagnostic {
   };
 }
 
+function hasOwnScalarField(entry: Record<string, unknown>): boolean {
+  return Object.values(entry).some((value) => !isPlainObject(value));
+}
+
 function walkModelEntry(
   path: readonly string[],
   entry: Record<string, unknown>,
   diagnostics: ConfigDiagnostic[],
+  topLevelAliases: ReadonlySet<string>,
 ): void {
   const usable = isModelShaped(entry);
   const before = diagnostics.length;
   for (const [key, value] of childTables(entry)) {
     const childPath = [...path, key];
+    const collides = topLevelAliases.has(childPath.join('.'));
     if (SCHEMA_CHILD_KEYS.has(key)) {
       if (isModelShaped(value)) {
-        diagnostics.push(nestedModelDiagnostic(childPath));
-        walkModelEntry(childPath, value, diagnostics);
+        diagnostics.push(nestedModelDiagnostic(childPath, collides));
+        walkModelEntry(childPath, value, diagnostics, topLevelAliases);
       } else if (hasModelNameKey(value)) {
-        diagnostics.push(missingNameDiagnostic(childPath));
-        walkModelEntry(childPath, value, diagnostics);
+        diagnostics.push(missingNameDiagnostic(childPath, collides));
+        walkModelEntry(childPath, value, diagnostics, topLevelAliases);
       } else if (subtreeHasModelName(value)) {
-        walkModelEntry(childPath, value, diagnostics);
+        walkModelEntry(childPath, value, diagnostics, topLevelAliases);
       }
       continue;
     }
     if (usable) {
       if (!subtreeHasModelName(value)) continue;
       if (isModelShaped(value)) {
-        diagnostics.push(nestedModelDiagnostic(childPath));
+        diagnostics.push(nestedModelDiagnostic(childPath, collides));
       } else if (hasModelNameKey(value)) {
-        diagnostics.push(missingNameDiagnostic(childPath));
+        diagnostics.push(missingNameDiagnostic(childPath, collides));
       }
-      walkModelEntry(childPath, value, diagnostics);
+      walkModelEntry(childPath, value, diagnostics, topLevelAliases);
       continue;
     }
     if (isModelShaped(value)) {
-      diagnostics.push(nestedModelDiagnostic(childPath));
+      diagnostics.push(nestedModelDiagnostic(childPath, collides));
     } else if (
       hasModelNameKey(value) ||
       hasModelRecordField(value) ||
       hasSchemaSettingsChild(value) ||
       childTables(value).length === 0
     ) {
-      diagnostics.push(missingNameDiagnostic(childPath));
+      diagnostics.push(missingNameDiagnostic(childPath, collides));
     }
-    walkModelEntry(childPath, value, diagnostics);
+    walkModelEntry(childPath, value, diagnostics, topLevelAliases);
   }
   if (
     path.length === 1 &&
@@ -154,9 +169,10 @@ function walkModelEntry(
     (hasModelNameKey(entry) ||
       hasModelRecordField(entry) ||
       hasSchemaSettingsChild(entry) ||
+      hasOwnScalarField(entry) ||
       diagnostics.length === before)
   ) {
-    diagnostics.push(missingNameDiagnostic(path));
+    diagnostics.push(missingNameDiagnostic(path, false));
   }
 }
 
@@ -166,9 +182,10 @@ export function collectMalformedModelEntries(
   const diagnostics: ConfigDiagnostic[] = [];
   const rawSection = rawSnake['models'];
   if (!isPlainObject(rawSection)) return diagnostics;
+  const topLevelAliases = new Set(Object.keys(rawSection));
   for (const [alias, entry] of Object.entries(rawSection)) {
     if (!isPlainObject(entry)) continue;
-    walkModelEntry([alias], entry, diagnostics);
+    walkModelEntry([alias], entry, diagnostics, topLevelAliases);
   }
   return diagnostics;
 }

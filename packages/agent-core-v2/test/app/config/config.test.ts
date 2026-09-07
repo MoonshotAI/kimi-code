@@ -1798,6 +1798,48 @@ describe('malformed model entries', () => {
     disposables.dispose();
   });
 
+  it('reports a malformed root with only passthrough fields alongside a nested model', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.foo]\nnote = "local"\n\n[models.foo.bar]\nmodel = "bar"\n',
+    );
+
+    expect(config.diagnostics()).toContainEqual({
+      domain: MODELS_SECTION,
+      severity: 'warning',
+      message:
+        "[models] entry 'foo' has no usable model name and cannot be used as a model; " +
+        "add a nonblank 'model' (or 'name') field to make it usable.",
+    });
+    expect(config.diagnostics()).toContainEqual({
+      domain: MODELS_SECTION,
+      severity: 'warning',
+      message:
+        "[models] entry 'foo.bar' is nested under 'foo' and cannot be used as a model; " +
+        'if the alias contains dots, quote the table name (e.g. [models."foo.bar"]).',
+    });
+    expect(config.diagnostics()).toHaveLength(2);
+
+    disposables.dispose();
+  });
+
+  it('recommends removing the nested entry when the flattened alias already exists', async () => {
+    const { config, disposables } = await createConfig(
+      '[models."foo.bar"]\nmodel = "good"\nmax_context_size = 128000\n\n[models.foo.bar]\nmodel = "nested"\n',
+    );
+
+    expect(config.diagnostics()).toEqual([
+      {
+        domain: MODELS_SECTION,
+        severity: 'warning',
+        message:
+          "[models] entry 'foo.bar' is nested under 'foo' and cannot be used as a model; " +
+          "'foo.bar' is already defined at the top level — remove or rename the nested entry.",
+      },
+    ]);
+
+    disposables.dispose();
+  });
+
   it('escapes every TOML control character in suggested keys', async () => {
     const { config, disposables } = await createConfig(
       '[models."foo.\\u001Bbar"]\nnote = "junk"\n',
