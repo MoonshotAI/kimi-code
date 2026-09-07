@@ -542,6 +542,7 @@ export class ConfigService extends Disposable implements IConfigService {
         error instanceof TomlError
           ? `Failed to parse ${this.bootstrap.configPath}: ${describeTomlSyntaxError(error)}`
           : describeUnknownError(error);
+      this.fileDiagnostics = [];
       this.pushDiagnostic({ severity: 'error', message });
       this.log.warn('config load failed', { error: describeUnknownError(error) });
       if (source !== 'load') {

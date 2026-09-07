@@ -1388,7 +1388,7 @@ describe('malformed model entries', () => {
     ix.set(IConfigService, new SyncDescriptor(ConfigService));
     const config = ix.get(IConfigService);
     await config.ready;
-    return { config, disposables };
+    return { config, disposables, storage };
   }
 
   it('warns with the full dotted path when an unquoted dotted table name nests the entry', async () => {
@@ -1836,6 +1836,24 @@ describe('malformed model entries', () => {
           "'foo.bar' is already defined at the top level — remove or rename the nested entry.",
       },
     ]);
+
+    disposables.dispose();
+  });
+
+  it('clears the warning when a reload finds an unparsable file', async () => {
+    const { config, disposables, storage } = await createConfig(
+      '[models.kimi-k2.7-code]\nprovider = "local"\nmodel = "kimi-k2.7-code"\nmax_context_size = 262144\n',
+    );
+
+    expect(config.diagnostics()).toHaveLength(1);
+
+    await storage.write('', 'config.toml', new TextEncoder().encode('not [valid'));
+    await config.reload();
+
+    expect(config.diagnostics().some((diagnostic) => diagnostic.domain === MODELS_SECTION)).toBe(
+      false,
+    );
+    expect(config.diagnostics().some((diagnostic) => diagnostic.severity === 'error')).toBe(true);
 
     disposables.dispose();
   });
