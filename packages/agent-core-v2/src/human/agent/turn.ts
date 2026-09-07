@@ -1,4 +1,4 @@
-import { assign, raise, sendTo, setup } from '#/xstate2';
+import { assign, raise, setup } from '#/xstate2';
 
 import { emptyResponseError } from '#/llm/empty-response';
 import type { LlmErrorMessage, LlmRemoteErrorMessage } from '#/llm/errors';
@@ -188,7 +188,7 @@ export type TurnEvent =
   | { type: 'turn.abort' };
 
 export type TurnLlmEvent =
-  | Exclude<LlmEvent, { type: 'llm.done' } | { type: 'llm.abort' }>
+  | Exclude<LlmEvent, { type: 'llm.done' }>
   | { type: 'llm.done'; entry: AssistantEntry };
 
 export type TurnSignal =
@@ -206,6 +206,7 @@ export interface TurnMachineContext {
   produced: HistoryMessage[];
   accumulator: HistoryAccumulator;
   toolCallIds: ToolCallIdNormalizer;
+  llmController: AbortController;
   pendingToolCalls: ToolCall[];
   outcomes: Record<string, ToolOutput>;
   steps: number;
@@ -341,6 +342,7 @@ function emptyErrorOf(context: TurnMachineContext): LlmErrorMessage<'empty_respo
 export interface CreateTurnMachineOptions {
   readonly recovery?: LlmRecovery;
   readonly retry?: LlmRetryOptions;
+  readonly abortGraceMs?: number;
 }
 
 export function createTurnMachine(
@@ -349,6 +351,7 @@ export function createTurnMachine(
 ) {
   const recovery = options?.recovery;
   const retry = options?.retry;
+  const abortGraceMs = options?.abortGraceMs ?? 2_500;
   return setup({
     types: {
       input: {} as TurnInput,
@@ -386,9 +389,13 @@ export function createTurnMachine(
               : [...context.produced, { message: salvaged, meta: partial.meta }],
         };
       }),
+      collectAborted: assign(({ context }) =>
+        collectToolOutcomes({ ...context, outcomes: abortOutcomes(context) }),
+      ),
     },
     delays: {
       retryDelay: ({ context }) => context.delayMs,
+      abortGrace: abortGraceMs,
     },
   }).createMachine({
     id: 'turn',
@@ -401,6 +408,7 @@ export function createTurnMachine(
         produced: [],
         accumulator: createHistoryAccumulator(modelMeta(input.request.model), toolCallIds),
         toolCallIds,
+        llmController: new AbortController(),
         pendingToolCalls: [],
         outcomes: {},
         steps: 1,
@@ -414,15 +422,15 @@ export function createTurnMachine(
         entry: assign({
           accumulator: ({ context }) =>
             createHistoryAccumulator(modelMeta(context.input.request.model), context.toolCallIds),
+          llmController: () => new AbortController(),
         }),
-        initial: 'streaming',
         invoke: {
-          id: 'llm',
           src: 'llmActor',
           input: ({ context }) => {
             const entries = [...context.input.history, ...context.produced];
             return {
               config: context.input.request,
+              signal: context.llmController.signal,
               content: {
                 messages: attemptMessages(context, recovery),
                 usedContextTokens: estimateUsedContextTokens(entries, {
@@ -499,165 +507,144 @@ export function createTurnMachine(
               },
             ],
           },
-        },
-        states: {
-          streaming: {
-            on: {
-              'llm.done': [
+          'llm.done': [
+            {
+              guard: ({ context }) =>
+                context.accumulator.finish().message.toolCalls.length > 0,
+              target: 'acting',
+              actions: [
                 {
-                  guard: ({ context }) =>
-                    context.accumulator.finish().message.toolCalls.length > 0,
-                  target: '#turn.acting',
-                  actions: [
-                    {
-                      type: 'sendToParent',
-                      params: ({ context }) => ({
-                        type: 'llm.done' as const,
-                        entry: context.accumulator.finish({ source: 'llm' }),
-                      }),
-                    },
-                    assign(({ context }) => {
-                      const entry = context.accumulator.finish({ source: 'llm' });
-                      return {
-                        produced: [...context.produced, entry],
-                        pendingToolCalls: [...entry.message.toolCalls],
-                      };
-                    }),
-                  ],
-                },
-                {
-                  guard: ({ context }) => emptyErrorOf(context) !== null,
-                  actions: [
-                    raise(({ context }) => ({
-                      type: 'llm.failed.remote' as const,
-                      error: emptyErrorOf(context) as LlmErrorMessage<'empty_response'>,
-                    })),
-                  ],
-                },
-                {
-                  target: '#turn.done',
-                  actions: [
-                    {
-                      type: 'sendToParent',
-                      params: ({ context }) => ({
-                        type: 'llm.done' as const,
-                        entry: context.accumulator.finish({ source: 'llm' }),
-                      }),
-                    },
-                    assign({
-                      produced: ({ context }) => [
-                        ...context.produced,
-                        context.accumulator.finish({ source: 'llm' }),
-                      ],
-                    }),
-                  ],
-                },
-              ],
-              'llm.failed.syntax': {
-                target: '#turn.failed',
-                actions: [
-                  'forwardToParent',
-                  assign({
-                    outcome: 'failed' as const,
-                    error: ({ event }) => event.error,
+                  type: 'sendToParent',
+                  params: ({ context }) => ({
+                    type: 'llm.done' as const,
+                    entry: context.accumulator.finish({ source: 'llm' }),
                   }),
-                ],
-              },
-              'llm.failed.remote': [
-                {
-                  guard: ({ context, event }) =>
-                    proposeRecovery(recovery, {
-                      error: event.error,
-                      messages: baseMessages(context),
-                      applied: context.appliedRecoveries,
-                    }) !== undefined,
-                  target: '#turn.thinking',
-                  reenter: true,
-                  actions: [
-                    ({ context }) => {
-                      context.accumulator.rollback();
-                    },
-                    assign(({ context, event }) => {
-                      const proposal = proposeRecovery(recovery, {
-                        error: event.error,
-                        messages: baseMessages(context),
-                        applied: context.appliedRecoveries,
-                      });
-                      if (proposal === undefined) return {};
-                      return {
-                        lastError: event.error,
-                        appliedRecoveries: [
-                          ...context.appliedRecoveries,
-                          { strategy: proposal.strategy, action: proposal.action },
-                        ],
-                        attempt: 1,
-                      };
-                    }),
-                    {
-                      type: 'sendToParent',
-                      params: ({ context, event }) =>
-                        llmRecoveringEvent(
-                          context.appliedRecoveries.at(-1) as LlmRecoveryRecord,
-                          event.error,
-                        ),
-                    },
-                  ],
                 },
+                assign(({ context }) => {
+                  const entry = context.accumulator.finish({ source: 'llm' });
+                  return {
+                    produced: [...context.produced, entry],
+                    pendingToolCalls: [...entry.message.toolCalls],
+                  };
+                }),
+              ],
+            },
+            {
+              guard: ({ context }) => emptyErrorOf(context) !== null,
+              actions: [
+                raise(({ context }) => ({
+                  type: 'llm.failed.remote' as const,
+                  error: emptyErrorOf(context) as LlmErrorMessage<'empty_response'>,
+                })),
+              ],
+            },
+            {
+              target: 'done',
+              actions: [
                 {
-                  guard: ({ context, event }) =>
-                    shouldRetry(retry, context.attempt, event.error),
-                  target: '#turn.retrying',
-                  actions: [
-                    ({ context }) => {
-                      context.accumulator.rollback();
-                    },
-                    assign({
-                      delayMs: ({ context, event }) =>
-                        readRetryAfterMs(event.error) ?? retryBackoffDelay(context.attempt - 1),
-                    }),
-                    {
-                      type: 'sendToParent',
-                      params: ({ context, event }) =>
-                        llmRetryingEvent(retry, context.attempt, context.delayMs, event.error),
-                    },
-                  ],
+                  type: 'sendToParent',
+                  params: ({ context }) => ({
+                    type: 'llm.done' as const,
+                    entry: context.accumulator.finish({ source: 'llm' }),
+                  }),
                 },
-                {
-                  target: '#turn.failed',
-                  actions: [
-                    'forwardToParent',
-                    assign({
-                      outcome: 'failed' as const,
-                      error: ({ event }) => event.error,
-                    }),
+                assign({
+                  produced: ({ context }) => [
+                    ...context.produced,
+                    context.accumulator.finish({ source: 'llm' }),
                   ],
+                }),
+              ],
+            },
+          ],
+          'llm.failed.syntax': {
+            target: 'failed',
+            actions: [
+              'forwardToParent',
+              assign({
+                outcome: 'failed' as const,
+                error: ({ event }) => event.error,
+              }),
+            ],
+          },
+          'llm.failed.remote': [
+            {
+              guard: ({ context, event }) =>
+                proposeRecovery(recovery, {
+                  error: event.error,
+                  messages: baseMessages(context),
+                  applied: context.appliedRecoveries,
+                }) !== undefined,
+              target: 'thinking',
+              reenter: true,
+              actions: [
+                ({ context }) => {
+                  context.accumulator.rollback();
+                },
+                assign(({ context, event }) => {
+                  const proposal = proposeRecovery(recovery, {
+                    error: event.error,
+                    messages: baseMessages(context),
+                    applied: context.appliedRecoveries,
+                  });
+                  if (proposal === undefined) return {};
+                  return {
+                    lastError: event.error,
+                    appliedRecoveries: [
+                      ...context.appliedRecoveries,
+                      { strategy: proposal.strategy, action: proposal.action },
+                    ],
+                    attempt: 1,
+                  };
+                }),
+                {
+                  type: 'sendToParent',
+                  params: ({ context, event }) =>
+                    llmRecoveringEvent(
+                      context.appliedRecoveries.at(-1) as LlmRecoveryRecord,
+                      event.error,
+                    ),
                 },
               ],
-              'turn.abort': {
-                target: 'aborting',
-                actions: sendTo('llm', { type: 'llm.abort' as const }),
-              },
             },
-          },
-          aborting: {
-            on: {
-              'llm.done': {
-                target: '#turn.aborted',
-                actions: 'salvageAborted',
-              },
-              'llm.failed.syntax': {
-                target: '#turn.aborted',
-                actions: 'salvageAborted',
-              },
-              'llm.failed.remote': {
-                target: '#turn.aborted',
-                actions: 'salvageAborted',
-              },
-              'turn.abort': {
-                target: '#turn.aborted',
-                actions: 'salvageAborted',
-              },
+            {
+              guard: ({ context, event }) =>
+                shouldRetry(retry, context.attempt, event.error),
+              target: 'retrying',
+              actions: [
+                ({ context }) => {
+                  context.accumulator.rollback();
+                },
+                assign({
+                  delayMs: ({ context, event }) =>
+                    readRetryAfterMs(event.error) ?? retryBackoffDelay(context.attempt - 1),
+                }),
+                {
+                  type: 'sendToParent',
+                  params: ({ context, event }) =>
+                    llmRetryingEvent(retry, context.attempt, context.delayMs, event.error),
+                },
+              ],
             },
+            {
+              target: 'failed',
+              actions: [
+                'forwardToParent',
+                assign({
+                  outcome: 'failed' as const,
+                  error: ({ event }) => event.error,
+                }),
+              ],
+            },
+          ],
+          'turn.abort': {
+            target: 'aborted',
+            actions: [
+              ({ context }) => {
+                context.llmController.abort();
+              },
+              'salvageAborted',
+            ],
           },
         },
       },
@@ -681,6 +668,7 @@ export function createTurnMachine(
             toolCalls: context.pendingToolCalls,
           }),
         },
+        initial: 'running',
         always: [
           {
             guard: ({ context }) =>
@@ -742,18 +730,30 @@ export function createTurnMachine(
               }),
             }),
           },
-          'turn.abort': [
-            {
-              guard: ({ context }) => context.outcome === 'aborted',
-              target: 'aborted',
-              actions: assign(({ context }) =>
-                collectToolOutcomes({ ...context, outcomes: abortOutcomes(context) }),
-              ),
+        },
+        states: {
+          running: {
+            on: {
+              'turn.abort': {
+                target: 'aborting',
+                actions: assign({ outcome: 'aborted' as const }),
+              },
             },
-            {
-              actions: assign({ outcome: 'aborted' as const }),
+          },
+          aborting: {
+            after: {
+              abortGrace: {
+                target: '#turn.aborted',
+                actions: 'collectAborted',
+              },
             },
-          ],
+            on: {
+              'turn.abort': {
+                target: '#turn.aborted',
+                actions: 'collectAborted',
+              },
+            },
+          },
         },
       },
       draining: {

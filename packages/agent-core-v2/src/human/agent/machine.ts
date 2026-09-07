@@ -61,6 +61,7 @@ export type AgentEmitted =
 
 interface ToolEntry {
   toolCall: ToolCall;
+  controller: AbortController;
   ref: ToolActorRef;
 }
 
@@ -251,11 +252,13 @@ export function createAgentMachine({
         const waitForTasks = createWaitForTasks(self);
         const turnTools = { ...context.turnTools };
         for (const toolCall of event.toolCalls) {
+          const controller = new AbortController();
           turnTools[toolCall.id] = {
             toolCall,
+            controller,
             ref: spawn('toolActor', {
               id: toolCall.id,
-              input: { toolCall, waitForTasks },
+              input: { toolCall, signal: controller.signal, waitForTasks },
             }),
           };
         }
@@ -268,6 +271,7 @@ export function createAgentMachine({
         for (const toolCall of event.toolCalls) {
           const entry = context.turnTools[toolCall.id];
           if (entry !== undefined) {
+            entry.controller.abort();
             enqueue.sendTo(entry.ref, { type: 'tool.abort' as const });
           }
         }
@@ -275,11 +279,13 @@ export function createAgentMachine({
       abortTurn: sendTo('turn', { type: 'turn.abort' as const }),
       abortTurnTools: enqueueActions(({ context, enqueue }) => {
         for (const entry of Object.values(context.turnTools)) {
+          entry.controller.abort();
           enqueue.sendTo(entry.ref, { type: 'tool.abort' as const });
         }
       }),
       stopTurnTools: enqueueActions(({ context, enqueue }) => {
-        for (const toolCallId of Object.keys(context.turnTools)) {
+        for (const [toolCallId, entry] of Object.entries(context.turnTools)) {
+          entry.controller.abort();
           enqueue.stopChild(toolCallId);
         }
       }),
