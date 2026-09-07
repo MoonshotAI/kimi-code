@@ -99,6 +99,7 @@ export interface RemoteControlHandle {
   readonly deviceId: string;
   readonly deviceName: string;
   readonly url: string;
+  readonly closed: Promise<void>;
   close(): Promise<void>;
 }
 
@@ -250,10 +251,13 @@ export async function startRemoteControl(
     await lock.release();
     throw error;
   }
+  const closed = client.closed;
+  void closed.then(() => lock.release());
   return {
     deviceId,
     deviceName,
     url,
+    closed,
     close: async () => {
       await client.close();
       await lock.release();
@@ -313,6 +317,10 @@ class RemoteControlClient {
     });
     this.runPromise = this.run();
     await initial;
+  }
+
+  get closed(): Promise<void> {
+    return this.runPromise ?? Promise.resolve();
   }
 
   async close(): Promise<void> {

@@ -11,7 +11,7 @@ import {
 } from '@moonshot-ai/kimi-code-oauth';
 import { remoteControlLockPath } from '@moonshot-ai/remote-control';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { WebSocketServer, type RawData } from 'ws';
+import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 
 import { ErrorCode } from '../src/protocol/error-codes';
 import { type RunningServer, startServer } from '../src/start';
@@ -83,7 +83,7 @@ describe('server-v2 /api/v1/remote-control', () => {
     return (await res.json()) as Envelope<RemoteControlStatusWire>;
   }
 
-  it('starts and stops the tunnel at runtime and stays idempotent', async () => {
+  it('starts and stops the tunnel at runtime, dedupes concurrent enables, and tracks relay-initiated shutdown', async () => {
     const relay = await startRegisterAckRelay();
     vi.stubEnv('KIMI_CODE_REMOTE_CONTROL_RELAY_URL', `http://127.0.0.1:${relay.port}`);
 
@@ -92,18 +92,14 @@ describe('server-v2 /api/v1/remote-control', () => {
     expect(initialBody.code).toBe(0);
     expect(initialBody.data.state).toBe('off');
 
-    const started = await postRemoteControl(true);
-    expect(started.code).toBe(0);
-    expect(started.data.state).toBe('on');
-    expect(started.data.enabled).toBe(true);
-    expect(started.data.url).toContain('/devices/');
-    expect(started.data.device_id).toBeTruthy();
-    expect(started.data.device_name).toBeTruthy();
-    expect(relay.registrations).toHaveLength(1);
-
-    const again = await postRemoteControl(true);
-    expect(again.code).toBe(0);
-    expect(again.data.state).toBe('on');
+    const [first, second] = await Promise.all([postRemoteControl(true), postRemoteControl(true)]);
+    expect(first.code).toBe(0);
+    expect(second.code).toBe(0);
+    expect(first.data.state).toBe('on');
+    expect(second.data.state).toBe('on');
+    expect(first.data.url).toContain('/devices/');
+    expect(first.data.device_id).toBeTruthy();
+    expect(first.data.device_name).toBeTruthy();
     expect(relay.registrations).toHaveLength(1);
 
     const res = await authedFetch(server as RunningServer, base, '/api/v1/remote-control');
@@ -115,6 +111,23 @@ describe('server-v2 /api/v1/remote-control', () => {
     expect(stopped.data.state).toBe('off');
     expect(stopped.data.enabled).toBe(false);
 
+    const restarted = await postRemoteControl(true);
+    expect(restarted.code).toBe(0);
+    expect(restarted.data.state).toBe('on');
+    relay.managementSockets[relay.managementSockets.length - 1]!.send(
+      JSON.stringify({ type: 'disconnect', payload: { reason: 'user_requested' } }),
+    );
+    await waitFor(async () => {
+      const after = await authedFetch(server as RunningServer, base, '/api/v1/remote-control');
+      const body = (await after.json()) as Envelope<RemoteControlStatusWire>;
+      return body.data.state === 'off';
+    });
+
+    const reenabled = await postRemoteControl(true);
+    expect(reenabled.code).toBe(0);
+    expect(reenabled.data.state).toBe('on');
+
+    await postRemoteControl(false);
     await relay.close();
   });
 
@@ -143,10 +156,19 @@ function rawDataText(data: RawData): string {
   return Buffer.from(data as ArrayBuffer).toString('utf8');
 }
 
-async function startRegisterAckRelay(): Promise<{ port: number; registrations: unknown[]; close(): Promise<void> }> {  const wss = new WebSocketServer({ noServer: true });
+async function startRegisterAckRelay(): Promise<{
+  port: number;
+  registrations: unknown[];
+  managementSockets: WebSocket[];
+  close(): Promise<void>;
+}> {
+  const managementServer = new WebSocketServer({ noServer: true });
+  const httpTunnelServer = new WebSocketServer({ noServer: true });
   const relayServer = createServer();
   const registrations: unknown[] = [];
-  wss.on('connection', (ws) => {
+  const managementSockets: WebSocket[] = [];
+  managementServer.on('connection', (ws) => {
+    managementSockets.push(ws);
     ws.on('error', () => {});
     ws.on('message', (data) => {
       const message = JSON.parse(rawDataText(data)) as { type?: string };
@@ -156,8 +178,13 @@ async function startRegisterAckRelay(): Promise<{ port: number; registrations: u
       }
     });
   });
+  httpTunnelServer.on('connection', (ws) => {
+    ws.on('error', () => {});
+  });
   relayServer.on('upgrade', (request, socket, head) => {
-    wss.handleUpgrade(request, socket, head, (ws) => wss.emit('connection', ws, request));
+    const pathname = new URL(request.url ?? '', 'http://relay.test').pathname;
+    const target = pathname.endsWith('/v1/remote/create') ? managementServer : httpTunnelServer;
+    target.handleUpgrade(request, socket, head, (ws) => target.emit('connection', ws, request));
   });
   const port = await new Promise<number>((resolve, reject) => {
     relayServer.once('error', reject);
@@ -170,6 +197,7 @@ async function startRegisterAckRelay(): Promise<{ port: number; registrations: u
   return {
     port,
     registrations,
+    managementSockets,
     close: () =>
       new Promise((resolve, reject) => {
         relayServer.close((error) => {
@@ -178,4 +206,12 @@ async function startRegisterAckRelay(): Promise<{ port: number; registrations: u
         });
       }),
   };
+}
+
+async function waitFor(predicate: () => Promise<boolean>, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!(await predicate())) {
+    if (Date.now() >= deadline) throw new Error('condition timed out');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
 }

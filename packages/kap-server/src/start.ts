@@ -81,11 +81,12 @@ import { TranscriptService } from './services/transcript/transcriptService';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
 import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
 import { createAuthFailureLimiter } from './middleware/rateLimit';
+import { createRemoteControlManager } from '@moonshot-ai/remote-control';
+
 import { createAuthTokenService, type IAuthTokenService } from './services/auth/authTokenService';
 import { createCredentialValidator } from './services/auth/credentials';
 import { resolvePasswordHash } from './services/auth/password';
 import { createTokenStore } from './services/auth/tokenStore';
-import { createRemoteControlService } from './services/remoteControl/remoteControlService';
 
 import { drainGlobalSearchDisposals, IGlobalSearchService } from './search/searchService';
 
@@ -192,12 +193,18 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const validateCredential = createCredentialValidator(authTokenService, opts.rpcToken);
   const logging = resolveLoggingConfig({ homeDir, env: process.env });
   let boundPort = port;
-  const remoteControlService = createRemoteControlService({
+  const localOriginHost = host.includes(':') ? `[${host}]` : host;
+  const remoteControlManager = createRemoteControlManager({
     homeDir,
-    localOrigin: () => `http://${host}:${boundPort}`,
+    localOrigin: () => `http://${localOriginHost}:${boundPort}`,
     localServerToken: () => authTokenService.getToken(),
     clientVersion: `kimi-code/${serverVersion}`,
-    logger,
+    stderr: {
+      write: (text) => {
+        logger.warn(String(text).trimEnd());
+        return true;
+      },
+    },
   });
   const { app: core } = bootstrap(
     {
@@ -298,7 +305,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
 
   const close = async (): Promise<void> => {
     configChangedPublisher.close();
-    await remoteControlService.close();
+    await remoteControlManager.close();
     await app.close();
     configWarningSubscription.dispose();
     pluginChangeSubscription.dispose();
@@ -443,7 +450,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       (process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'] === undefined ||
         process.env['KIMI_CODE_PLUGIN_MARKETPLACE_FROM_DEV_SERVER'] === '1'),
     remoteControl: {
-      service: remoteControlService,
+      service: remoteControlManager,
       staticEnableError:
         exposureClass !== 'loopback'
           ? 'Remote Control requires a loopback host.'

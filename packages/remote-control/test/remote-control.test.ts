@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage } from 'node:http';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -561,7 +561,7 @@ describe('Remote Control single-instance lock', () => {
     expect(lock.pid).toBe(process.pid);
   });
 
-  it('releases the lock on close so a new instance can start', async () => {
+  it('releases the lock on close and on relay-initiated shutdown', async () => {
     const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
     const relay = await startAuthRelay();
     const options = {
@@ -579,6 +579,12 @@ describe('Remote Control single-instance lock', () => {
     cleanups.push(async () => second?.close());
     second = await startRemoteControl(options);
     expect(second.url).toContain('/devices/');
+
+    relay.managementSockets[relay.managementSockets.length - 1]!.send(
+      JSON.stringify({ type: 'disconnect', payload: { reason: 'user_requested' } }),
+    );
+    await second.closed;
+    await waitFor(() => !existsSync(remoteControlLockPath(homeDir)));
   });
 
   it('does not remove a successor lock when closing', async () => {

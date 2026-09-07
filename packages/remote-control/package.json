@@ -40,6 +40,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@moonshot-ai/agent-core-v2": "workspace:^",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
     "ws": "^8.18.0"
   },

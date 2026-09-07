@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 export const remoteControlStatusSchema = z.object({
   enabled: z.boolean(),
-  state: z.enum(['off', 'starting', 'on']),
+  state: z.enum(['off', 'starting', 'on', 'stopping']),
   url: z.string().optional(),
   device_id: z.string().optional(),
   device_name: z.string().optional(),

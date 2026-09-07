@@ -1,3 +1,9 @@
+import {
+  RemoteControlAlreadyRunningError,
+  type RemoteControlManager,
+  type RemoteControlStatusInfo,
+} from '@moonshot-ai/remote-control';
+
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
@@ -7,11 +13,6 @@ import {
   setRemoteControlRequestSchema,
   type RemoteControlStatusResponse,
 } from '../protocol/rest-remote-control';
-import {
-  RemoteControlAlreadyRunningError,
-  type IRemoteControlService,
-  type RemoteControlStatusInfo,
-} from '../services/remoteControl/remoteControlService';
 
 interface RemoteControlRouteHost {
   get(
@@ -33,7 +34,7 @@ interface RemoteControlRouteHost {
 }
 
 export interface RemoteControlRouteOptions {
-  readonly service: IRemoteControlService;
+  readonly service: RemoteControlManager;
   readonly staticEnableError?: string;
 }
 
