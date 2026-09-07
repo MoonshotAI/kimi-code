@@ -92,7 +92,7 @@
       "id": "centricmem-skill",
       "tier": "curated",
       "displayName": "CentricMem",
-      "description": "Hosted librarian for agent memory: organise and retrieve Markdown cards via host MCP.",
+      "description": "Hosted librarian for agent memory. Organize and retrieve Markdown cards on the hosted MCP server.",
       "homepage": "https://centricmem.com",
       "keywords": [
         "memory",
