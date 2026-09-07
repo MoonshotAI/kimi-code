@@ -406,6 +406,44 @@ describe('server-v2 /api/v1 skills', () => {
     });
   });
 
+  describe('POST /api/v1/sessions/{sid}/skills:reload', () => {
+    it('returns 40401 for an unknown session', async () => {
+      const { body } = await postJson<null>('/api/v1/sessions/nope/skills:reload');
+      expect(body.code).toBe(40401);
+      expect(body.msg).toMatch(/does not exist/);
+    });
+
+    it('picks up a user skill created after the session started', async () => {
+      const id = await createSession();
+      const skillName = 'e2e-reload-skill';
+      const before = await getJson<{ skills: SkillWire[] }>(`/api/v1/sessions/${id}/skills`);
+      expect(before.body.code).toBe(0);
+      expect(before.body.data.skills.some((s) => s.name === skillName)).toBe(false);
+
+      const skillDir = join(home as string, 'skills', skillName);
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(
+        join(skillDir, 'SKILL.md'),
+        `---\nname: ${skillName}\ndescription: reload test skill\n---\n\nSay hello.\n`,
+      );
+      try {
+        const { body } = await postJson<{ skills: SkillWire[] }>(
+          `/api/v1/sessions/${id}/skills:reload`,
+        );
+        expect(body.code).toBe(0);
+        const skills = listSkillsResponseSchema.parse(body.data).skills;
+        const seeded = skills.find((s) => s.name === skillName);
+        expect(seeded).toBeDefined();
+        expect(seeded?.source).toBe('user');
+
+        const after = await getJson<{ skills: SkillWire[] }>(`/api/v1/sessions/${id}/skills`);
+        expect(after.body.data.skills.some((s) => s.name === skillName)).toBe(true);
+      } finally {
+        await rm(skillDir, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe('GET /api/v1/workspaces/{wid}/skills', () => {
     it('lists skills for a workspace without creating a session', async () => {
       const workspaceDir = await makeWorkspaceDir();

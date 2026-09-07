@@ -25,6 +25,7 @@ import {
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
   SKILL_SOURCE_PRIORITY,
   configuredRoots,
+  programForSession,
   projectRoots,
   sessionMediaOriginalsDir,
   userRoots,
@@ -84,6 +85,8 @@ const sessionIdParamSchema = z.object({
   session_id: z.string().min(1),
 });
 
+const SKILLS_RELOAD_SOURCES: readonly string[] = ['user', 'explicit', 'extra'];
+
 const skillTailParamsSchema = z.object({
   session_id: z.string().min(1),
   tail: z.string().min(1),
@@ -140,6 +143,41 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
     listSkillsRoute.path,
     listSkillsRoute.options,
     listSkillsRoute.handler as Parameters<SkillsRouteHost['get']>[2],
+  );
+
+  const reloadSkillsRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/sessions/{session_id}/skills::reload',
+      params: sessionIdParamSchema,
+      success: { data: listSkillsResponseSchema },
+      errors: {
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+      },
+      description:
+        'Reload the user-level skill sources (user / explicit / extra dirs) and return the refreshed skill list',
+      tags: ['skills'],
+      operationId: 'reloadSkills',
+    },
+    async (req, reply) => {
+      const { session_id } = req.params;
+      const resolved = await resolveActivatedSession(core, session_id, req.id);
+      if ('envelope' in resolved) {
+        reply.send(resolved.envelope);
+        return;
+      }
+      const program = await programForSession(core.accessor, session_id);
+      await program?.skills.reloadSources(SKILLS_RELOAD_SOURCES);
+      const catalog = resolved.handle.accessor.get(ISessionSkillCatalog);
+      await catalog.ready;
+      const skills = catalog.catalog.listSkills().map(toProtocolSkill);
+      reply.send(okEnvelope({ skills }, req.id));
+    },
+  );
+  app.post(
+    reloadSkillsRoute.path,
+    reloadSkillsRoute.options,
+    reloadSkillsRoute.handler as Parameters<SkillsRouteHost['post']>[2],
   );
 
   const listWorkspaceSkillsRoute = defineRoute(
