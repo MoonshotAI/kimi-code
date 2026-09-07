@@ -1,5 +1,4 @@
-import type { ContentPart } from '#/kosong/contract/message';
-import type { Tool as KosongTool } from '#/kosong/contract/tool';
+import type { ContentPart, ToolDescription as KosongTool } from '#human/llm/message';
 import { Jimp } from 'jimp';
 import { CallToolResultSchema, ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';

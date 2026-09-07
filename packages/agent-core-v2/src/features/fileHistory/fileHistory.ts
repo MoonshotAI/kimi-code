@@ -42,7 +42,6 @@ export interface FileHistoryContent {
 export interface IAgentFileHistoryService {
   readonly _serviceBrand: undefined;
 
-  enabled(): boolean;
   history(): FileHistoryState;
   settled(): Promise<void>;
   captureForActiveTurn(path: string): Promise<void>;

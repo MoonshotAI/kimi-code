@@ -15,21 +15,19 @@ import '#/app/kosongConfig/discoveryService';
 import { MODEL_CATALOG_SECTION } from '#/app/kosongConfig/configSection';
 import { IKosongConfigService } from '#/app/kosongConfig/kosongConfig';
 import '#/app/kosongConfig/kosongConfigService';
-import '#/kosong/model/errors';
+import '#/llm-adapter/model/errors';
 import {
   IModelService,
   type ModelRecord,
-} from '#/kosong/model/model';
-import '#/kosong/model/modelService';
+} from '#/llm-adapter/model/model';
+import '#/llm-adapter/model/model-service';
 import {
   IProviderService,
   type ProviderConfig,
-} from '#/kosong/provider/provider';
-import '#/kosong/provider/providerService';
-import '#/kosong/provider/providers/kimi/kimi.contrib';
-import '#/kosong/provider/providers/standard.contrib';
+} from '#/llm-adapter/provider/provider';
+import '#/llm-adapter/provider/provider-service';
 
-import { StubConfigService, stubOAuthService, stubTokenProvider } from '../../kosong/stubs';
+import { StubConfigService, stubOAuthService, stubTokenProvider } from '../../stubs';
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubAgentIdentity } from '../agentIdentity/stubs';
 

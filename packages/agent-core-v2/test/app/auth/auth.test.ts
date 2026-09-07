@@ -32,12 +32,11 @@ import type { Event2 } from '#/app/event/event2';
 import { ILogService } from '#/_base/log/log';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IModelService, type ModelRecord } from '#/kosong/model/model';
+import { IModelService, type ModelRecord } from '#/llm-adapter/model/model';
 import { MODELS_SECTION } from '#/app/kosongConfig/configSection';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IProviderService, type ProviderConfig, type ProvidersChangedEvent } from '#/kosong/provider/provider';
+import { IProviderService, type ProviderConfig, type ProvidersChangedEvent } from '#/llm-adapter/provider/provider';
 
-import '#/kosong/provider/providers/kimi/kimi.contrib';
 
 import { registerBootstrapServices } from '../bootstrap/stubs';
 import { registerTelemetryServices } from '../telemetry/stubs';

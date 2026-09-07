@@ -1,5 +1,5 @@
-import { estimateTokens, estimateTokensForMessage, estimateTokensForMessages } from '#/kosong/contract/tokens';
-import type { ContentPart } from '#/kosong/contract/message';
+import { estimateTokens, estimateTokensForMessage, estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
+import type { ContentPart } from '#human/llm/message';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import summaryPrefixTemplate from './compaction-summary-prefix.md?raw';
 import type { ContextMessage, PromptOrigin } from './types';

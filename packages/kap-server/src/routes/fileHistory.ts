@@ -60,7 +60,6 @@ export function registerFileHistoryRoutes(app: FileHistoryRouteHost, core: Scope
         okEnvelope(
           {
             changes: await history.changes(req.query.turn_id),
-            enabled: history.enabled(),
             recorded: await history.turnRecorded(req.query.turn_id),
           },
           req.id,

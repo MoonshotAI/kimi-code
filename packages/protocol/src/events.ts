@@ -433,7 +433,7 @@ export interface CompactionResult {
   /**
    * Oldest messages trimmed from the summarizer input when the compaction
    * request overflowed the model window; not covered by the produced summary.
-   * Mirrors agent-core's `CompactionResult.droppedCount`; optional for backward
+   * Mirrors agent-core-v2's `CompactionResult.droppedCount`; optional for backward
    * compatibility.
    */
   readonly droppedCount?: number;
@@ -759,6 +759,7 @@ export interface TurnStepCompletedEvent {
    */
   readonly llmServerDecodeMs?: number;
   readonly llmClientConsumeMs?: number;
+  readonly llmClientBlockedMs?: number;
   readonly providerFinishReason?: FinishReason;
   readonly rawFinishReason?: string;
 }
@@ -1747,6 +1748,7 @@ export const turnStepCompletedEventSchema = z.object({
   llmServerFirstTokenMs: z.number().optional(),
   llmServerDecodeMs: z.number().optional(),
   llmClientConsumeMs: z.number().optional(),
+  llmClientBlockedMs: z.number().optional(),
   providerFinishReason: finishReasonSchema.optional(),
   rawFinishReason: z.string().optional(),
 }) satisfies z.ZodType<TurnStepCompletedEvent>;

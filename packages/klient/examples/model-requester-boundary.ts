@@ -48,24 +48,26 @@ import type { AddressInfo } from 'node:net';
 import { bootstrap, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-core-v2';
 import { isError2 } from '@moonshot-ai/agent-core-v2/_base/errors/errors';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
-import { UNKNOWN_CAPABILITY } from '@moonshot-ai/agent-core-v2/kosong/contract/capability';
+import { UNKNOWN_CAPABILITY } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/capability';
 import {
   APIContextOverflowError,
   APIStatusError,
   ChatProviderError,
   isAbortError,
   isToolExchangeAdjacencyError,
-} from '@moonshot-ai/agent-core-v2/kosong/contract/errors';
-import type { ToolCall } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
-import type { Tool } from '@moonshot-ai/agent-core-v2/kosong/contract/tool';
-import type { AuthProvider, Model } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
-import { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
+} from '@moonshot-ai/agent-core-v2/llm-adapter/contract/errors';
+import type {
+  ToolCall,
+  ToolDescription as Tool,
+} from '@moonshot-ai/agent-core-v2/human/llm/message';
+import type { AuthProvider, Model } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
+import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import type {
   ModelRequestInput,
   ModelRequester,
-} from '@moonshot-ai/agent-core-v2/kosong/model/modelRequester';
-import { ModelRequesterImpl } from '@moonshot-ai/agent-core-v2/kosong/model/modelRequesterImpl';
-import { ProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/kosong/provider/protocolAdapterRegistry';
+} from '@moonshot-ai/agent-core-v2/llm-adapter/model/model-requester';
+import { ModelRequesterImpl } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model-requester-impl';
+import { ProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocolAdapterRegistry';
 
 function assert(cond: boolean, message: string): asserts cond {
   if (!cond) throw new Error(`assertion failed: ${message}`);

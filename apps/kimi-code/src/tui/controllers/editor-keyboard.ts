@@ -17,7 +17,6 @@ import {
   DOUBLE_ESC_WINDOW_MS,
   EXIT_CONFIRM_WINDOW_MS,
   LLM_NOT_SET_MESSAGE,
-  NO_ACTIVE_SESSION_MESSAGE,
 } from '../constant/kimi-tui';
 import { Key, matchesKey } from '@moonshot-ai/pi-tui';
 import { MEDIA_STAGING_TTL_SECONDS } from '../constant/media';
@@ -37,13 +36,6 @@ import type { SurveyController } from './survey-controller';
 export interface EditorKeyboardHost {
   state: TUIState;
   session: Session | undefined;
-  /**
-   * True when the TUI runs on the agent-core-v2 engine (startup-selected).
-   * Gates the paste-time upload to the daemon file store; the v1 engine has
-   * no file store, so images keep the submit-time inline base64 form and
-   * videos cannot be submitted at all.
-   */
-  readonly engineV2: boolean;
   cancelInFlight: (() => void) | undefined;
   /**
    * The host's harness (KimiTUI always has one). Its `imageLimits` drives
@@ -275,10 +267,6 @@ export class EditorKeyboardController {
         host.handlePlanToggle(next);
       };
       if (host.session === undefined) {
-        if (!host.engineV2) {
-          host.showError(NO_ACTIVE_SESSION_MESSAGE);
-          return;
-        }
         // v2 session-less: lazy-create the session, then toggle — the same
         // path /plan takes.
         void host.ensureSession().then((session) => {
@@ -341,7 +329,6 @@ export class EditorKeyboardController {
       const editorHasInlineSkills =
         !editorIsBash &&
         text.length > 0 &&
-        host.engineV2 &&
         extractInlineSkillActivations(text, host.skillCommandMap).length > 0;
 
       type SteerRun =
@@ -696,7 +683,6 @@ export class EditorKeyboardController {
     bytes: Uint8Array,
     mime: string,
   ): Promise<FileMeta | undefined> {
-    if (!this.host.engineV2) return undefined;
     const harness = this.host.harness;
     if (harness === undefined) return undefined;
     try {
@@ -721,7 +707,6 @@ export class EditorKeyboardController {
   private async uploadVideoToDaemonFileStore(
     media: ClipboardVideo,
   ): Promise<FileMeta | undefined> {
-    if (!this.host.engineV2) return undefined;
     const harness = this.host.harness;
     if (harness === undefined) return undefined;
     let bytes: Uint8Array;

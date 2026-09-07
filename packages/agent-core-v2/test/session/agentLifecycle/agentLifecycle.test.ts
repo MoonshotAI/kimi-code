@@ -33,9 +33,9 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { agentContextOf, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
-import { IModelCatalog } from '#/kosong/model/catalog';
-import type { ToolCall } from '#/kosong/contract/message';
-import { IProtocolAdapterRegistry } from '#/kosong/protocol/protocol';
+import { IModelCatalog } from '#/llm-adapter/model/catalog';
+import type { ToolCall } from '#human/llm/message';
+import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { IHostClock } from '#/os/interface/hostClock';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
@@ -282,7 +282,6 @@ describe('AgentLifecycleService', () => {
         [...atomicDocs.keys()]
           .filter((key) => key.startsWith(`${scope}/${prefix}`))
           .map((key) => key.slice(scope.length + 1)),
-      watch: () => Event.None as Event<void>,
       acquire: () => ({ dispose: () => {} }),
     };
     ix.stub(IAtomicDocumentStore, atomicDocsStore);
@@ -348,11 +347,13 @@ describe('AgentLifecycleService', () => {
       }),
       cancel: loopCancel,
       settled: loopSettled,
+      tryAcquireQuiescence: vi.fn(() => ({ dispose: vi.fn() })),
     } as unknown as IAgentLoopService);
     promptDrain = vi.fn<IAgentPromptService['drain']>(async () => {});
     ix.stub(IAgentPromptService, {
       _serviceBrand: undefined,
       drain: promptDrain,
+      list: () => ({ launching: false, active: undefined, pending: [] }),
     } as unknown as IAgentPromptService);
     ix.stub(ITelemetryService, {
       _serviceBrand: undefined,
@@ -507,6 +508,15 @@ describe('AgentLifecycleService', () => {
     await svc.remove(main);
     expect(svc.get('main')).toBeUndefined();
     expect(svc.handleOf('main')).toBeUndefined();
+  });
+
+  it('remove flushes the agent wire journal before disposal', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+    const dispatcher = svc.handleOf('main')!.accessor.get(IEventDispatcher);
+    const flush = vi.spyOn(dispatcher, 'flush');
+    await svc.remove(svc.get('main')!);
+    expect(flush).toHaveBeenCalled();
   });
 
   it('remove keeps the lifecycle context active through async scope teardown', async () => {

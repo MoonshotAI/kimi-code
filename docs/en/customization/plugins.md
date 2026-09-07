@@ -311,7 +311,7 @@ Each field (the inline `systemPrompt` and the `systemPromptPath` file) is limite
 
 ### Differences between the two engines
 
-System-prompt contributions take effect on both agent engines. The interactive TUI, `kimi -p`, and `kimi web` use the v2 engine by default; setting `KIMI_CODE_LEGACY_FLAG=1` routes the local CLI surfaces to the legacy engine.
+System-prompt contributions take effect on every Kimi Code surface: the interactive TUI, `kimi -p`, and `kimi web` all run on the v2 engine.
 
 <details>
 <summary>Instruction refresh behavior under the two engines</summary>

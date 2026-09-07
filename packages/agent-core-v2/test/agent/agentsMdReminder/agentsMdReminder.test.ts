@@ -10,7 +10,7 @@ import { Emitter } from '#/_base/event';
 import { IBashParserService } from '#/app/bashParser/bashParser';
 import { BashParserService } from '#/app/bashParser/bashParserService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { ToolCall } from '#/kosong/contract/message';
+import type { ToolCall } from '#human/llm/message';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
@@ -18,7 +18,7 @@ import type { RuntimeLease } from '#/runtime/runtime';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
-import type { HostFsChange } from '#/os/interface/hostFsWatch';
+import type { WatchChange } from '#human/utils/watch';
 import {
   ToolAccesses,
   type ToolAccesses as ToolAccessesType,
@@ -93,7 +93,7 @@ interface Harness {
   readonly context: StubContextMemory;
   readonly telemetryEvents: TelemetryRecord[];
   readonly reminders: CapturedReminder[];
-  readonly instructionsChange: Emitter<readonly HostFsChange[]>;
+  readonly instructionsChange: Emitter<readonly WatchChange[]>;
   step(): Promise<void>;
 }
 
@@ -114,7 +114,7 @@ function createHarness(
   const telemetryEvents: TelemetryRecord[] = [];
   const reminders: CapturedReminder[] = [];
   const events = stubToolExecutorEvents();
-  const instructionsChange = disposables.add(new Emitter<readonly HostFsChange[]>());
+  const instructionsChange = disposables.add(new Emitter<readonly WatchChange[]>());
   const loop = stubLoopWithHooks();
   const context = stubContextMemory();
   const reminderRuntime = createReminderHarness(loop, context);
@@ -202,7 +202,7 @@ function createHarness(
         acquire: (): RuntimeLease => ({
           runtime: {
             identity: { workspaceId: 'workspace-1', runtimeId: 'local', generation: 'test' },
-            capabilities: new Set(['fs', 'watch', 'process', 'terminal']),
+            capabilities: new Set(['fs', 'process', 'terminal']),
             environment: hostEnvironment,
             path: {
               separator: options.pathClass === 'win32' ? '\\' : '/',

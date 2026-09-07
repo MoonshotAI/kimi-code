@@ -72,26 +72,3 @@ export const fsGitStatusEntrySchema = z.object({
   rename_from: z.string().optional(),
 });
 export type FsGitStatusEntry = z.infer<typeof fsGitStatusEntrySchema>;
-
-export const fsChangeKindSchema = z.enum(['file', 'directory', 'symlink']);
-export type FsChangeKind = z.infer<typeof fsChangeKindSchema>;
-
-export const fsChangeActionSchema = z.enum(['created', 'modified', 'deleted']);
-export type FsChangeAction = z.infer<typeof fsChangeActionSchema>;
-
-export const fsChangeEntrySchema = z.object({
-  path: z.string(),
-  change: fsChangeActionSchema,
-  kind: fsChangeKindSchema,
-  size_delta: z.number().int().optional(),
-  etag: z.string().optional(),
-});
-export type FsChangeEntry = z.infer<typeof fsChangeEntrySchema>;
-
-export const fsChangeEventSchema = z.object({
-  changes: z.array(fsChangeEntrySchema),
-  coalesced_window_ms: z.number().int().positive(),
-  truncated: z.boolean().optional(),
-  count: z.number().int().nonnegative().optional(),
-});
-export type FsChangeEvent = z.infer<typeof fsChangeEventSchema>;

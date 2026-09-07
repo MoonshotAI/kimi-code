@@ -45,7 +45,6 @@ describe('runtime architecture boundaries', () => {
     expect(program).not.toContain('ServiceIdentifier');
     expect(program).not.toContain('IHostEnvironment');
     expect(program).not.toContain('IHostFileSystem');
-    expect(program).not.toContain('IHostFsWatchService');
     expect(program).not.toContain('IHostProcessService');
     expect(program).not.toContain('IHostTerminalService');
     expect(dependencies).not.toContain('IInstantiationService');
@@ -105,13 +104,5 @@ describe('runtime architecture boundaries', () => {
     expect(mcp).not.toMatch(/@IHost(?:FileSystem|FsWatchService|ProcessService|TerminalService)/);
     expect(externalFs).toContain('get(IRuntimeResolver).acquire(');
     expect(externalFs).not.toMatch(/\.get\(IHost(?:FileSystem|FsWatchService|ProcessService|TerminalService)\)/);
-  });
-
-  it('serves WS fs watch from the engine-owned workspace watch service', () => {
-    const externalWatch = kapSource('transport/ws/v1/fsWatchBridge.ts');
-    expect(externalWatch).toContain('get(IWorkspaceInstanceManager)');
-    expect(externalWatch).toContain('.program.watch');
-    expect(externalWatch).not.toMatch(/\.get\(IHost(?:FileSystem|FsWatchService|ProcessService|TerminalService)\)/);
-    expect(externalWatch).not.toContain('runtime.watch');
   });
 });

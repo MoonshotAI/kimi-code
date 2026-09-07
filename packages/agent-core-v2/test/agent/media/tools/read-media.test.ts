@@ -1,8 +1,8 @@
 import * as posixPath from 'node:path/posix';
 
-import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/kosong/contract/capability';
-import type { ContentPart } from '#/kosong/contract/message';
-import { VideoUploadUnsupportedError } from '#/kosong/contract/errors';
+import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/llm-adapter/contract/capability';
+import type { ContentPart } from '#human/llm/message';
+import { VideoUploadUnsupportedError } from '#/llm-adapter/contract/errors';
 import { Jimp } from 'jimp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -39,8 +39,8 @@ import {
 import { EventBusService } from '#/app/event/eventBusService';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import type { IAgentProfileService } from '#/agent/profile/profile';
-import type { IModelCatalog } from '#/kosong/model/catalog';
-import type { ModelRequester } from '#/kosong/model/modelRequester';
+import type { IModelCatalog } from '#/llm-adapter/model/catalog';
+import type { ModelRequester } from '#/llm-adapter/model/model-requester';
 import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { WorkspaceConfig } from '#/tool/path-access';
 import { sniffImageDimensions } from '#/agent/media/file-type';

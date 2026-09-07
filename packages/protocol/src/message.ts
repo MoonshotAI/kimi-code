@@ -53,6 +53,7 @@ export type ImageSource = z.infer<typeof imageSourceSchema>;
 export const imageContentSchema = z.object({
   type: z.literal('image'),
   source: imageSourceSchema,
+  name: z.string().min(1).optional(),
 });
 export type ImageContent = z.infer<typeof imageContentSchema>;
 
@@ -60,6 +61,7 @@ export type ImageContent = z.infer<typeof imageContentSchema>;
 export const videoContentSchema = z.object({
   type: z.literal('video'),
   source: imageSourceSchema,
+  name: z.string().min(1).optional(),
 });
 export type VideoContent = z.infer<typeof videoContentSchema>;
 

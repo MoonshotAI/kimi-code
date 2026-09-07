@@ -9,7 +9,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
 import type { SkillRoot } from '#/features/skill/catalog/types';
 import { BugIndicatingError, Error2, PluginErrors } from '#/errors';
-import { IProviderService } from '#/kosong/provider/provider';
+import { IProviderService } from '#/llm-adapter/provider/provider';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 
 import { PluginManager } from './manager';

@@ -2,7 +2,8 @@ import { ErrorCodes, Error2 } from '#/errors';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
-import type { ContentPart, Message } from '#/kosong/contract/message';
+import type { Message } from '#/llm-adapter/contract/message';
+import type { ContentPart } from '#human/llm/message';
 
 export type ProjectionAnomaly =
   | { readonly kind: 'tool_result_reordered'; readonly toolCallId: string }

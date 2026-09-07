@@ -15,7 +15,7 @@ import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IFlagService } from '#/app/flag/flag';
+import { IConfigService } from '#/app/config/config';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import {
   ISessionIndex,
@@ -33,6 +33,7 @@ import {
   SessionIndexMirror,
 } from '#/app/sessionIndex/sessionIndexMirrorService';
 import { drainQueryStoreDisposals, MiniDbQueryStore } from '#/persistence/backends/minidb/miniDbQueryStore';
+import { DATABASE_SECTION } from '#/persistence/configSection';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -48,7 +49,7 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
 import { stubSessionIndexMirror } from './stubs';
 import { stubBootstrap } from '../bootstrap/stubs';
-import { stubFlag } from '../flag/stubs';
+import { stubConfigService } from '../config/stubs';
 import { stubLog } from '../../_base/log/stubs';
 import { stubQueryStore } from '../../persistence/interface/stubs';
 
@@ -94,7 +95,7 @@ describe('FileSessionIndex (legacy)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(IQueryStore, stubQueryStore()),
       stubPair(ISessionIndexMirror, stubSessionIndexMirror()),
-      stubPair(IFlagService, stubFlag(false)),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: false } })),
       stubPair(ITelemetryService, noopTelemetryService),
       stubPair(ILogService, stubLog()),
     ]);
@@ -220,19 +221,6 @@ describe('FileSessionIndex (legacy)', () => {
     expect(await store.count({ workspaceIds: ['wd_unknown'] })).toBe(0);
   });
 
-  it('listRecent merges a workspace-id set into one recency-ordered page', async () => {
-    const otherId = encodeWorkDirKey('/home/user/other');
-    await seedSession('a1', { createdAt: 1, updatedAt: 1 });
-    await seedSession('a3', { createdAt: 3, updatedAt: 3 });
-    await seedSession('b2', { createdAt: 2, updatedAt: 2 }, otherId);
-    await seedSession('b4', { createdAt: 4, updatedAt: 4 }, otherId);
-
-    const store = build();
-    const page = await store.listRecent({ workspaceIds: [workspaceId, otherId] });
-    expect(page.items.map((s) => s.id)).toEqual(['b4', 'a3', 'b2', 'a1']);
-    expect(page.items[0]?.workspaceId).toBe(otherId);
-  });
-
   it('listRecent applies limit after the cross-bucket merge', async () => {
     const otherId = encodeWorkDirKey('/home/user/other');
     await seedSession('a1', { createdAt: 1, updatedAt: 1 });
@@ -356,7 +344,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
-      stubPair(IFlagService, stubFlag(true)),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
       stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
@@ -514,6 +502,22 @@ describe('FileSessionIndex (read model)', () => {
     expect(await store.get('active')).toMatchObject({ id: 'active', title: 'hello' });
     expect(await store.count({ workspaceIds: [workspaceId] })).toBe(1);
     expect(await store.count({ workspaceIds: [workspaceId], includeArchived: true })).toBe(2);
+  });
+
+  it('prepare skips stray files and state-less directories instead of failing the projection', async () => {
+    await seedSession('active', { title: 'hello', createdAt: 1, updatedAt: 2 });
+    await fsp.writeFile(join(sessionsDir, 'workspace.json'), '{}');
+    await fsp.writeFile(join(sessionsDir, workspaceId, 'workspace.json'), '{}');
+    await fsp.writeFile(join(sessionsDir, workspaceId, '.DS_Store'), 'junk');
+    await fsp.mkdir(join(sessionsDir, workspaceId, 'no-state'), { recursive: true });
+
+    const store = build();
+    const status = await store.prepare();
+    expect(status).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+
+    const page = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items.map((s) => s.id)).toEqual(['active']);
+    expect(await store.count({ workspaceIds: [workspaceId] })).toBe(1);
   });
 
   it('serves warm reads without touching the session directories', async () => {
@@ -747,7 +751,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
-      stubPair(IFlagService, stubFlag(true)),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
       stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
@@ -820,7 +824,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
-      stubPair(IFlagService, stubFlag(true)),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
       stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
@@ -877,7 +881,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
-      stubPair(IFlagService, stubFlag(true)),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
       stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
@@ -966,7 +970,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IAtomicDocumentStore, docs),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
-      stubPair(IFlagService, stubFlag(true)),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
       stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
@@ -1026,7 +1030,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
-      stubPair(IFlagService, stubFlag(true)),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
       stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
@@ -1085,7 +1089,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IAtomicDocumentStore, docs),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
-      stubPair(IFlagService, stubFlag(true)),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
       stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
@@ -1161,7 +1165,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IAtomicDocumentStore, docs),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
-      stubPair(IFlagService, stubFlag(true)),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
       stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
@@ -1229,7 +1233,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
-      stubPair(IFlagService, stubFlag(true)),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
       stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
@@ -1297,7 +1301,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IAtomicDocumentStore, docs),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
-      stubPair(IFlagService, stubFlag(true)),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
       stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
@@ -1402,7 +1406,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IAtomicDocumentStore, docs),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
-      stubPair(IFlagService, stubFlag(true)),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
       stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {

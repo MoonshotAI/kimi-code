@@ -21,10 +21,11 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { type GetResult, IFileService } from '#/app/file/fileService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { ModelCapability } from '#/kosong/contract/capability';
-import type { ContentPart, Message, VideoURLPart } from '#/kosong/contract/message';
-import type { ModelRequester } from '#/kosong/model/modelRequester';
-import type { Protocol } from '#/kosong/protocol/protocol';
+import type { ModelCapability } from '#/llm-adapter/contract/capability';
+import type { Message } from '#/llm-adapter/contract/message';
+import type { ContentPart, VideoURLPart } from '#human/llm/message';
+import type { ModelRequester } from '#/llm-adapter/model/model-requester';
+import type { Protocol } from '#/llm-adapter/protocol/protocol';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 
 import { registerStateServices } from '../../state/stubs';

@@ -6,7 +6,7 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { ErrorCodes, Error2, isError2 } from '#/errors';
-import { IModelCatalog, type Model } from '#/kosong/model/catalog';
+import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import {
   SECONDARY_MODEL_SECTION,
   SUBAGENT_SECTION,
@@ -15,7 +15,7 @@ import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import { ISessionSubagentModelsValidationService } from '#/session/subagent/subagentModelsValidation';
 import { SessionSubagentModelsValidationService } from '#/session/subagent/subagentModelsValidationService';
 
-import { StubConfigService } from '../../kosong/stubs';
+import { StubConfigService } from '../../stubs';
 import { stubFlag } from '../../app/flag/stubs';
 
 describe('SessionSubagentModelsValidationService', () => {

@@ -1,4 +1,6 @@
-import type { ContentPart, Message } from '#/kosong/contract/message';
+import type { Message } from '#/llm-adapter/contract/message';
+import type { ContentPart } from '#human/llm/message';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import type { AgentTaskStatus } from '#/agent/task/task';
 
@@ -122,6 +124,7 @@ export type ContextMessage = Message & {
   readonly providerMessageId?: string;
   readonly origin?: PromptOrigin | undefined;
   readonly isError?: boolean;
+  toolCallDisplays?: Record<string, ToolInputDisplay>;
   readonly note?: string;
 };
 

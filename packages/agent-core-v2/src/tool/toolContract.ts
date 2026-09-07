@@ -1,6 +1,5 @@
-import type { ContentPart, ToolCall } from '#/kosong/contract/message';
-import type { Tool } from '#/kosong/contract/tool';
-import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
+import type { ContentPart, ToolCall, ToolDescription as Tool } from '#human/llm/message';
+import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 
 export type ExecutableToolOutput = string | ContentPart[];

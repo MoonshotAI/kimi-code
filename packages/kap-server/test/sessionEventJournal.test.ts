@@ -53,6 +53,9 @@ describe('SessionEventJournal', () => {
     j1.append(j1.nextSeq(), envelope(2));
     await j1.close();
 
+    j1.append(j1.nextSeq(), envelope(3));
+    await j1.flush();
+
     const j2 = await SessionEventJournal.open(filePath);
     expect(j2.epoch).toBe(epoch);
     expect(j2.seq).toBe(2);

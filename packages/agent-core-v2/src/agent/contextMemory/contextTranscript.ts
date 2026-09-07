@@ -1,4 +1,4 @@
-import { type ContentPart, type ToolCall } from '#/kosong/contract/message';
+import { type ContentPart, type ToolCall } from '#human/llm/message';
 import type { WireRecord } from '#/wire/record';
 
 import {

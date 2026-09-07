@@ -16,7 +16,7 @@ import {
   isToolExchangeAdjacencyError,
   normalizeAPIStatusError,
   parseRetryAfterMs,
-} from '#/kosong/contract/errors';
+} from '#/llm-adapter/contract/errors';
 import { describe, expect, it } from 'vitest';
 
 describe('ChatProviderError', () => {

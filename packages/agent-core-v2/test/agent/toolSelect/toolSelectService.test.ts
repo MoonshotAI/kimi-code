@@ -6,8 +6,8 @@ import { OrderedHookSlot } from '#/hooks';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2, Event2Class } from '#/app/event/event2';
 import { IFlagService } from '#/app/flag/flag';
-import type { ModelCapability } from '#/kosong/contract/capability';
-import type { ToolCall } from '#/kosong/contract/message';
+import type { ModelCapability } from '#/llm-adapter/contract/capability';
+import type { ToolCall } from '#human/llm/message';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { UndoCut } from '#/agent/contextMemory/contextOps';
@@ -20,13 +20,11 @@ import {
   IAgentLoopService,
   type AfterStepContext,
   type BeforeStepContext,
-  type EnqueueReceipt,
-  type LoopRunResult,
-  type StepEnqueueOptions,
+  type LoopNotifyHandle,
+  type LoopPromptSubmit,
   type Turn,
 } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
-import type { StepRequest } from '#/agent/loop/stepRequest';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -211,11 +209,15 @@ class FakeLoopService implements IAgentLoopService {
 
   cancelFromUser(): void {}
 
-  enqueue(_request: StepRequest, _options?: StepEnqueueOptions): EnqueueReceipt {
+  submit(_prompt: LoopPromptSubmit): { readonly turn: Turn } {
     throw new Error('unused in this suite');
   }
 
-  async run(): Promise<LoopRunResult> {
+  steer(): undefined {
+    return undefined;
+  }
+
+  notify(): LoopNotifyHandle {
     throw new Error('unused in this suite');
   }
 

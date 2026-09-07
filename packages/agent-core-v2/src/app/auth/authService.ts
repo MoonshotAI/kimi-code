@@ -47,8 +47,8 @@ import {
   resolveModelForReady,
   providerNameFromFlatModel,
   type ModelReadyFailureReason,
-} from '#/kosong/model/modelAuth';
-import { IModelService, type ModelRecord } from '#/kosong/model/model';
+} from '#/llm-adapter/model/model-auth';
+import { IModelService, type ModelRecord } from '#/llm-adapter/model/model';
 import {
   DEFAULT_MODEL_SECTION,
   MODELS_SECTION,
@@ -61,8 +61,8 @@ import {
   type OAuthRef,
   type ProviderConfig,
   type ProvidersChangedEvent,
-} from '#/kosong/provider/provider';
-import { isOAuthCatalogVendor } from '#/kosong/provider/providerDefinition';
+} from '#/llm-adapter/provider/provider';
+import { isOAuthCatalogVendor } from '#/llm-adapter/provider/provider-definition';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 
 import {

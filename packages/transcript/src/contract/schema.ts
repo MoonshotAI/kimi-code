@@ -47,6 +47,7 @@ export const stepTimingSchema = z.object({
   llmServerFirstTokenMs: z.number().optional(),
   llmServerDecodeMs: z.number().optional(),
   llmClientConsumeMs: z.number().optional(),
+  llmClientBlockedMs: z.number().optional(),
 });
 
 export const stepRetrySchema = z.object({

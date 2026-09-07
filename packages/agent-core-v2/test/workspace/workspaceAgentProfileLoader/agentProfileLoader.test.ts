@@ -32,14 +32,8 @@ import { IConfigService } from '#/app/config/config';
 import { IPluginService } from '#/app/plugin/plugin';
 import { PluginAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoaderService';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
-import { HostFsWatchService } from '#/os/backends/node-local/hostFsWatchService';
 import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import {
-  IHostFsWatchService,
-  type HostFsChange,
-  type IHostFsWatchHandle,
-} from '#/os/interface/hostFsWatch';
 import { SessionAgentProfileCatalogService } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalogService';
 import type { ISessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
 import { ExplicitAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoaderService';
@@ -53,6 +47,23 @@ import { IExtraAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoade
 import { IExplicitAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoader';
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
+
+const watchMockState = vi.hoisted(() => ({ mode: 'inert' as 'inert' | 'real' }));
+
+vi.mock('#human/utils/watch', async (importOriginal) => {
+  const original = await importOriginal<typeof import('#human/utils/watch')>();
+  return {
+    ...original,
+    watch: (path: string, options?: Parameters<typeof original.watch>[1]) => {
+      if (watchMockState.mode === 'real') return original.watch(path, options);
+      return {
+        ready: Promise.resolve(),
+        onDidChange: () => ({ dispose: () => {} }),
+        dispose: () => {},
+      };
+    },
+  };
+});
 
 function configStub(): IConfigService & {
   setExtraAgentDirs(dirs: readonly string[]): void;
@@ -103,17 +114,6 @@ function workspaceContextStub(workDir: string): IWorkspaceContext {
     source: 'local',
     meta: { id: 'wd_test', root: workDir, name: 'test', createdAt: 0, lastOpenedAt: 0 },
     persistenceScope: 'sessions/wd_test',
-  };
-}
-
-function fsWatchStub(): IHostFsWatchService {
-  return {
-    _serviceBrand: undefined,
-    watch: (): IHostFsWatchHandle => ({
-      ready: Promise.resolve(),
-      onDidChange: Event.None as Event<HostFsChange>,
-      dispose: () => {},
-    }),
   };
 }
 
@@ -232,7 +232,6 @@ interface StackOptions {
   readonly pluginAgentRoots?: readonly PluginAgentRoot[];
   readonly pluginReloadEmitter?: Emitter<PluginReloadEvent>;
   readonly hostFs?: HostFileSystem;
-  readonly fsWatch?: IHostFsWatchService;
 }
 
 function makeStack(fixture: Fixture, opts?: StackOptions) {
@@ -253,7 +252,6 @@ function makeStack(fixture: Fixture, opts?: StackOptions) {
       [IConfigService, config],
       [IBootstrapService, bootstrap],
       [IHostFileSystem, hostFs],
-      [IHostFsWatchService, opts?.fsWatch ?? fsWatchStub()],
       [IWorkspaceContext, workspaceContext],
       [IPluginService, pluginStub(opts?.pluginAgentRoots ?? [], opts?.pluginReloadEmitter)],
       [IAgentProfileRegistry, new SyncDescriptor(AgentProfileRegistryService)],
@@ -326,6 +324,7 @@ async function withStack(
 
 describe('agent profile loaders + session catalog', () => {
   beforeEach(() => {
+    watchMockState.mode = 'inert';
     _clearAgentProfileContributionsForTests();
     const builtinDefault: AgentProfile = normalizeAgentProfile({
       name: DEFAULT_AGENT_PROFILE_NAME,
@@ -748,9 +747,10 @@ describe('agent profile loaders + session catalog', () => {
   });
 
   it('rescans the workspace source when a project agent file changes on disk', async () => {
+    watchMockState.mode = 'real';
     await withFixture(async (fixture) => {
       await mkdir(join(fixture.workDir, '.kimi-code', 'agents'), { recursive: true });
-      await withStack(fixture, { fsWatch: new HostFsWatchService() }, async (stack) => {
+      await withStack(fixture, undefined, async (stack) => {
         await stack.ready();
         expect(stack.catalog.get('watched-agent')).toBeUndefined();
 
