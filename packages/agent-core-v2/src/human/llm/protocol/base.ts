@@ -1,7 +1,9 @@
 import type { ModelCapability } from '#/llm/capability';
 import type { LlmRequester } from '#/llm/requester/requester';
 
-import type { ProtocolTrait } from './trait';
+import type { ProviderConnection } from './connection';
+import type { ProtocolDialect } from './dialect';
+import type { ModelPolicy } from './policy';
 
 export type ProtocolName =
   | 'openai'
@@ -11,7 +13,13 @@ export type ProtocolName =
   | 'google-genai'
   | 'google-vertex';
 
+export interface ProtocolWiring {
+  readonly connection?: ProviderConnection;
+  readonly dialect?: ProtocolDialect;
+  readonly policy?: ModelPolicy;
+}
+
 export interface ProtocolBase {
   capability?(modelName: string): ModelCapability | undefined;
-  createRequester(trait?: ProtocolTrait): LlmRequester;
+  createRequester(wiring?: ProtocolWiring): LlmRequester;
 }

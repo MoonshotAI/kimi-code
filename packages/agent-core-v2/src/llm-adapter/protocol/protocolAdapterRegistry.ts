@@ -5,8 +5,14 @@ import { UNKNOWN_CAPABILITY, toLlmCapability, type ModelCapability } from '../co
 import type { ModelThinkingMetadata } from '#human/llm/thinking';
 import type { ProviderMediaContribution } from '#human/llm/media/upload';
 import type { LlmModel } from '#human/llm/model';
-import type { ProtocolBase, ProtocolName } from '#human/llm/protocol/base';
-import type { ProtocolTrait } from '#human/llm/protocol/trait';
+import type { ProtocolBase, ProtocolName, ProtocolWiring } from '#human/llm/protocol/base';
+import type { ProtocolDialect } from '#human/llm/protocol/dialect';
+import {
+  anthropicConnection,
+  geminiConnection,
+  openAIConnection,
+  vertexConnection,
+} from '#human/llm/provider/providers/standard';
 import { anthropicBase, anthropicBetaBase } from '#human/llm/requester/bases/anthropic/requester';
 import {
   createGoogleGenAIBase,
@@ -15,17 +21,11 @@ import {
 import { openAIBase } from '#human/llm/requester/bases/openai/requester';
 import { openAIResponsesBase } from '#human/llm/requester/bases/openai-responses/requester';
 import { KimiFiles } from '#human/llm-kimi/files';
-import { KIMI_DEFAULT_BASE_URL } from '#human/llm-kimi/trait';
+import { KIMI_DEFAULT_BASE_URL } from '#human/llm-kimi/connection';
 
 import type { Model } from '../model/catalog';
 import type { ResolvedLlmModel } from '../model/model-requester-impl';
-import {
-  anthropicEndpointTrait,
-  geminiEndpointTrait,
-  getProviderDefinition,
-  openAIEndpointTrait,
-  vertexEndpointTrait,
-} from '../provider/provider-definition';
+import { getProviderDefinition } from '../provider/provider-definition';
 
 import { IProtocolAdapterRegistry, type ExplainedCapability, type Protocol } from './protocol';
 import { getProtocolBase, listProtocolBases, type ProtocolBaseId } from './protocol-base';
@@ -43,7 +43,7 @@ const kimiMedia: ProviderMediaContribution = {
 
 interface AdapterRoute {
   readonly base: ProtocolBase;
-  readonly trait?: ProtocolTrait;
+  readonly wiring: ProtocolWiring;
   readonly providerId: string;
   readonly media?: ProviderMediaContribution;
 }
@@ -53,50 +53,61 @@ function routeFor(model: Model): AdapterRoute {
     model.providerType === undefined
       ? undefined
       : getProviderDefinition(model.providerType, model.protocol);
-  const routeTrait = definition?.routeTrait;
   const routeMedia = definition?.modelSource === 'oauth-catalog' ? kimiMedia : undefined;
   switch (model.protocol) {
     case 'openai':
-      return routeTrait !== undefined
-        ? { base: openAIBase, trait: routeTrait, providerId: 'openai', media: routeMedia }
-        : {
-            base: openAIBase,
-            trait: openAITraitFor(model),
-            providerId: 'openai',
-          };
+      return {
+        base: openAIBase,
+        wiring: {
+          connection: definition?.connection ?? openAIConnection,
+          dialect: definition?.dialect ?? reasoningKeyDialectFor(model),
+          policy: definition?.policy,
+        },
+        providerId: 'openai',
+        media: routeMedia,
+      };
     case 'openai_responses':
-      return routeTrait !== undefined
-        ? { base: openAIResponsesBase, trait: routeTrait, providerId: 'openai-responses', media: routeMedia }
-        : {
-            base: openAIResponsesBase,
-            trait: openAITraitFor(model),
-            providerId: 'openai-responses',
-          };
+      return {
+        base: openAIResponsesBase,
+        wiring: {
+          connection: definition?.connection ?? openAIConnection,
+          dialect: definition?.dialect ?? reasoningKeyDialectFor(model),
+          policy: definition?.policy,
+        },
+        providerId: 'openai-responses',
+        media: routeMedia,
+      };
     case 'anthropic': {
       const base = model.providerOptions?.betaApi === true ? anthropicBetaBase : anthropicBase;
-      return routeTrait !== undefined
-        ? { base, trait: routeTrait, providerId: 'anthropic', media: routeMedia }
-        : { base, trait: anthropicEndpointTrait, providerId: 'anthropic' };
+      return {
+        base,
+        wiring: {
+          connection: definition?.connection ?? anthropicConnection,
+          dialect: definition?.dialect,
+          policy: definition?.policy,
+        },
+        providerId: 'anthropic',
+        media: routeMedia,
+      };
     }
     case 'google-genai':
       return model.providerOptions?.vertexai === true
         ? {
             base: vertexGenAIBase,
-            trait: vertexEndpointTrait,
+            wiring: { connection: vertexConnection },
             providerId: 'google_genai',
           }
         : {
             base: googleGenAIBase,
-            trait: geminiEndpointTrait,
+            wiring: { connection: geminiConnection },
             providerId: 'google_genai',
           };
   }
 }
 
-function openAITraitFor(model: Model): ProtocolTrait {
+function reasoningKeyDialectFor(model: Model): ProtocolDialect | undefined {
   const reasoningKey = model.providerOptions?.reasoningKey ?? model.reasoningKey;
-  if (reasoningKey === undefined) return openAIEndpointTrait;
-  return { ...openAIEndpointTrait, reasoningKey: () => reasoningKey };
+  return reasoningKey === undefined ? undefined : { reasoningKey: () => reasoningKey };
 }
 
 export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
@@ -110,12 +121,12 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
     const definition =
       providerType === undefined ? undefined : getProviderDefinition(providerType, protocol);
     const baseId: ProtocolBaseId = definition?.baseProtocol ?? protocol;
-    const traits = definition?.traits ?? [];
-    const context = {
-      config: { protocol, providerType, modelName: '' },
-      providerId: providerType,
+    return {
+      baseId,
+      connection: definition?.connection,
+      dialect: definition?.dialect,
+      policy: definition?.policy,
     };
-    return { baseId, traits: traits.map((trait) => ({ trait, context })) };
   }
 
   resolveProviderBaseId(protocol: Protocol, providerType?: string): ProtocolBaseId {
@@ -134,17 +145,10 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
     providerType?: string,
   ): ExplainedCapability {
     const identity = this.resolveAdapterIdentity(protocol, providerType);
-    let traitCapability: ModelCapability | undefined;
-    for (const { trait } of identity.traits) {
-      if (trait.capability === undefined) continue;
-      const capability = trait.capability(modelName);
-      if (capability !== undefined) {
-        traitCapability = toV2Capability(capability);
-      }
-    }
-    if (traitCapability !== undefined) {
+    const policyCapability = identity.policy?.capability?.(modelName);
+    if (policyCapability !== undefined) {
       return {
-        capability: traitCapability,
+        capability: toV2Capability(policyCapability),
         source: {
           kind: 'builtin',
           detail: `trait capability hook (provider '${providerType ?? 'unregistered'}')`,
@@ -167,7 +171,7 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
 
   resolve(model: Model): ResolvedLlmModel {
     const route = routeFor(model);
-    const requester = route.base.createRequester(route.trait);
+    const requester = route.base.createRequester(route.wiring);
     const llmModel: LlmModel & ModelThinkingMetadata = {
       provider: route.providerId,
       model: model.name,

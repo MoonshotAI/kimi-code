@@ -2,8 +2,9 @@ import { GoogleGenAI as GenAIClient, type GenerateContentParameters } from '@goo
 
 import type { LlmModel } from '#/llm/model';
 import { toLlmSyntaxErrorMessage } from '#/llm/syntax-errors';
-import type { ProtocolBase } from '#/llm/protocol/base';
-import { resolveModelConnection, type ProtocolTrait, type TraitContext } from '#/llm/protocol/trait';
+import type { ProtocolBase, ProtocolWiring } from '#/llm/protocol/base';
+import { resolveModelConnection } from '#/llm/protocol/connection';
+import type { ProtocolHookContext } from '#/llm/protocol/context';
 import {
   mergeRequestHeaders,
   type LlmClientContext,
@@ -61,8 +62,8 @@ async function abortPromise(signal: AbortSignal): Promise<never> {
 }
 
 interface GoogleGenAITransport {
-  readonly trait: ProtocolTrait | undefined;
-  readonly ctx: TraitContext;
+  readonly wiring: ProtocolWiring | undefined;
+  readonly ctx: ProtocolHookContext;
   readonly resolveClient: (request: LlmClientContext) => GenAIClient;
   readonly signal: AbortSignal;
   readonly onEvent?: (event: LlmRequestEvent) => void;
@@ -72,11 +73,11 @@ async function internalGenerate(
   request: GoogleGenAIRequestParams,
   transport: GoogleGenAITransport,
 ): Promise<void> {
-  const { trait, ctx, resolveClient, signal, onEvent } = transport;
+  const { wiring, ctx, resolveClient, signal, onEvent } = transport;
   const client = resolveClient({
     model: ctx.model,
     headers: mergeRequestHeaders(
-      mergeRequestHeaders(trait?.defaultHeaders?.(ctx), ctx.model.defaultHeaders),
+      mergeRequestHeaders(wiring?.connection?.defaultHeaders?.(ctx), ctx.model.defaultHeaders),
       request.headers,
     ),
   });
@@ -90,7 +91,7 @@ async function internalGenerate(
     models.generateContentStream(request.params),
     abortPromise(signal),
   ]);
-  const parse = googleGenAIFormat.createStreamParser({ trait, ctx });
+  const parse = googleGenAIFormat.createStreamParser({ dialect: wiring?.dialect, ctx });
   let messageId: string | undefined;
   for await (const chunk of stream) {
     if (signal.aborted) {
@@ -119,7 +120,7 @@ async function internalGenerate(
 }
 
 export function createGoogleGenAIRequester(
-  trait?: ProtocolTrait,
+  wiring?: ProtocolWiring,
   options?: GoogleGenAIBaseOptions,
 ): LlmRequester {
   const vertexai = options?.vertexai === true;
@@ -132,11 +133,11 @@ export function createGoogleGenAIRequester(
       content: LlmRequestContent,
       control: LlmRequestControl,
     ): Promise<void> {
-      const model = resolveModelConnection(config.model, trait);
+      const model = resolveModelConnection(config.model, wiring?.connection);
       const { systemPrompt, tools = [] } = config;
       const { messages } = content;
       const { signal, onEvent } = control;
-      const ctx: TraitContext = { model };
+      const ctx: ProtocolHookContext = { model };
       let request: GoogleGenAIRequestParams;
       try {
         request = googleGenAIFormat.formatRequest({
@@ -144,7 +145,8 @@ export function createGoogleGenAIRequester(
           messages,
           systemPrompt,
           tools,
-          trait,
+          dialect: wiring?.dialect,
+          policy: wiring?.policy,
           ctx,
           cacheKey: config.cacheKey,
           thinking: config.thinking,
@@ -159,11 +161,11 @@ export function createGoogleGenAIRequester(
         return;
       }
       try {
-        await internalGenerate(request, { trait, ctx, resolveClient, signal, onEvent });
+        await internalGenerate(request, { wiring, ctx, resolveClient, signal, onEvent });
       } catch (error) {
         onEvent?.({
           type: 'llm.failed.remote',
-          error: convertGoogleGenAIError(error, (e) => trait?.convertError?.(e, ctx)),
+          error: convertGoogleGenAIError(error, (e) => wiring?.connection?.convertError?.(e, ctx)),
         });
       }
     },
@@ -173,7 +175,7 @@ export function createGoogleGenAIRequester(
 export function createGoogleGenAIBase(options?: GoogleGenAIBaseOptions): ProtocolBase {
   return {
     capability: getGoogleGenAIModelCapability,
-    createRequester: (trait?: ProtocolTrait) => createGoogleGenAIRequester(trait, options),
+    createRequester: (wiring?: ProtocolWiring) => createGoogleGenAIRequester(wiring, options),
   };
 }
 

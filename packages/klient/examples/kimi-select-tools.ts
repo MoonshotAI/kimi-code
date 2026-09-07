@@ -11,9 +11,9 @@
  * the loaded schemas as a `role: 'system'` message whose `tools` field
  * carries full definitions, and the model then calls the loaded tool.
  *
- * The wire fact that makes this kimi-specific: only the kimi vendor trait
+ * The wire fact that makes this kimi-specific: only the kimi vendor dialect
  * serializes `message.tools` into the outbound request
- * (`kimiOpenAITrait.convertMessage`); every other base SKIPS
+ * (`kimiOpenAIDialect.convertMessage`); every other base SKIPS
  * tool-declaration-only messages entirely. So the whole mechanism can only
  * work on `(kimi, openai)` — this example proves that on a stub, then
  * behaviorally tests each real kimi model with a simulated "kimi computer

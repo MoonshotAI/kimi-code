@@ -25,7 +25,7 @@ const HUMAN_VOCABULARY = new Set([
   'llm/media/upload',
   'llm/requester/requester',
   'llm/toolCallIdNormalizer',
-  'llm-kimi/trait',
+  'llm-kimi/wiring',
   'utils/watch',
 ]);
 

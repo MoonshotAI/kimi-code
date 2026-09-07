@@ -1,5 +1,6 @@
 import { extractText, type ContentPart, type Message } from '#/llm/message';
-import type { ProtocolTrait, TraitContext } from '#/llm/protocol/trait';
+import type { ProtocolHookContext } from '#/llm/protocol/context';
+import type { ProtocolDialect } from '#/llm/protocol/dialect';
 
 import { TOOL_RESULT_MEDIA_PLACEHOLDER } from './patterns';
 
@@ -82,14 +83,14 @@ function convertToolMessageMediaText(message: Message): string {
 }
 
 export interface OpenAILowerContext {
-  readonly trait: ProtocolTrait | undefined;
-  readonly ctx: TraitContext;
+  readonly dialect: ProtocolDialect | undefined;
+  readonly ctx: ProtocolHookContext;
   readonly reasoningKey: string;
   readonly preserveThinking: boolean;
 }
 
 export function lowerMessage(message: Message, lower: OpenAILowerContext): OpenAIWireMessage[] {
-  const { trait, ctx, reasoningKey, preserveThinking } = lower;
+  const { dialect, ctx, reasoningKey, preserveThinking } = lower;
   let reasoningContent = '';
   let hasReasoningPart = false;
   const nonThinkParts: ContentPart[] = [];
@@ -102,7 +103,7 @@ export function lowerMessage(message: Message, lower: OpenAILowerContext): OpenA
     }
   }
   let content: string | OpenAIContentPart[] | undefined;
-  if (message.role === 'tool' && trait?.toolMessageConversion?.(ctx) !== 'keep_parts') {
+  if (message.role === 'tool' && dialect?.toolMessageConversion?.(ctx) !== 'keep_parts') {
     content = message.content.some((part) => part.type !== 'text' && part.type !== 'think')
       ? convertToolMessageMediaText(message)
       : extractText(message);
@@ -144,8 +145,8 @@ export function lowerMessage(message: Message, lower: OpenAILowerContext): OpenA
     (converted as Record<string, unknown>)[reasoningKey] = reasoningContent;
   }
   const hooked =
-    trait?.convertMessage === undefined
+    dialect?.convertMessage === undefined
       ? converted
-      : (trait.convertMessage(message, converted, ctx) as OpenAIWireMessage | null);
+      : (dialect.convertMessage(message, converted, ctx) as OpenAIWireMessage | null);
   return hooked === null ? [] : [hooked];
 }

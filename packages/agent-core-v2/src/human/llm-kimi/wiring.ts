@@ -1,19 +1,9 @@
-import type { ProtocolEndpoint, ProtocolTrait } from '#/llm/protocol/trait';
+import type { ProtocolDialect } from '#/llm/protocol/dialect';
+import type { ModelPolicy } from '#/llm/protocol/policy';
 import type { ContentPart, ToolDescription } from '#/llm/message';
 import { CONTEXT_MANAGEMENT_BETA } from '#/llm/requester/bases/anthropic/format';
 
-import { classifyKimiQuotaError } from './errors';
 import { normalizeKimiToolSchema } from './schema';
-
-export const KIMI_API_KEY_ENV = 'KIMI_API_KEY';
-export const KIMI_BASE_URL_ENV = 'KIMI_BASE_URL';
-export const KIMI_DEFAULT_BASE_URL = 'https://api.moonshot.ai/v1';
-
-const kimiEndpoint: ProtocolEndpoint = {
-  apiKeyEnv: KIMI_API_KEY_ENV,
-  baseUrlEnv: KIMI_BASE_URL_ENV,
-  defaultBaseUrl: KIMI_DEFAULT_BASE_URL,
-};
 
 export interface KimiThinkingConfig {
   type?: 'enabled' | 'disabled';
@@ -56,40 +46,10 @@ function convertKimiTool(tool: ToolDescription): Record<string, unknown> {
   };
 }
 
-export const kimiOpenAITrait: ProtocolTrait = {
-  strictThinkingValidation: true,
-
-  endpoint: () => kimiEndpoint,
-
-  convertError: (error) => classifyKimiQuotaError(error),
-
+export const kimiOpenAIDialect: ProtocolDialect = {
   toolMessageConversion: () => 'keep_parts',
 
   cacheKey: (key) => ({ prompt_cache_key: key }),
-
-  withThinking: (thinking) => {
-    const config: KimiThinkingConfig =
-      thinking.effort === 'off'
-        ? { type: 'disabled' }
-        : thinking.effort === 'on'
-          ? { type: 'enabled' }
-          : { type: 'enabled', effort: thinking.effort };
-    if (thinking.keep !== undefined) {
-      config.keep = thinking.keep;
-    }
-    return { extra_body: { thinking: config } };
-  },
-
-  preserveThinking: (thinking) => {
-    if (thinking.keep === 'all' && thinking.effort !== 'off') {
-      return true;
-    }
-    return undefined;
-  },
-
-  withMaxCompletionTokens: (maxCompletionTokens) => ({
-    max_completion_tokens: maxCompletionTokens,
-  }),
 
   buildParams: (params) => {
     const {
@@ -157,11 +117,35 @@ export const kimiOpenAITrait: ProtocolTrait = {
   },
 };
 
-export const kimiAnthropicTrait: ProtocolTrait = {
-  endpoint: () => kimiEndpoint,
+export const kimiOpenAIPolicy: ModelPolicy = {
+  strictThinkingValidation: true,
 
-  convertError: (error) => classifyKimiQuotaError(error),
+  withThinking: (thinking) => {
+    const config: KimiThinkingConfig =
+      thinking.effort === 'off'
+        ? { type: 'disabled' }
+        : thinking.effort === 'on'
+          ? { type: 'enabled' }
+          : { type: 'enabled', effort: thinking.effort };
+    if (thinking.keep !== undefined) {
+      config.keep = thinking.keep;
+    }
+    return { extra_body: { thinking: config } };
+  },
 
+  preserveThinking: (thinking) => {
+    if (thinking.keep === 'all' && thinking.effort !== 'off') {
+      return true;
+    }
+    return undefined;
+  },
+
+  withMaxCompletionTokens: (maxCompletionTokens) => ({
+    max_completion_tokens: maxCompletionTokens,
+  }),
+};
+
+export const kimiAnthropicPolicy: ModelPolicy = {
   withThinking: (thinking) => {
     if (thinking.effort === 'off') {
       return { thinking: { type: 'disabled' }, betaFeatures: [CONTEXT_MANAGEMENT_BETA] };
@@ -172,10 +156,4 @@ export const kimiAnthropicTrait: ProtocolTrait = {
       betaFeatures: [CONTEXT_MANAGEMENT_BETA],
     };
   },
-};
-
-export const kimiResponsesTrait: ProtocolTrait = {
-  endpoint: () => kimiEndpoint,
-
-  convertError: (error) => classifyKimiQuotaError(error),
 };

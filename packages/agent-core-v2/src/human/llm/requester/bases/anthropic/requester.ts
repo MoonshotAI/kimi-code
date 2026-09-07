@@ -3,8 +3,9 @@ import Anthropic from '@anthropic-ai/sdk';
 import { headersToRecord } from '#/llm/errors';
 import type { LlmModel } from '#/llm/model';
 import { toLlmSyntaxErrorMessage } from '#/llm/syntax-errors';
-import type { ProtocolBase } from '#/llm/protocol/base';
-import { resolveModelConnection, type ProtocolTrait, type TraitContext } from '#/llm/protocol/trait';
+import type { ProtocolBase, ProtocolWiring } from '#/llm/protocol/base';
+import { resolveModelConnection } from '#/llm/protocol/connection';
+import type { ProtocolHookContext } from '#/llm/protocol/context';
 import {
   mergeRequestHeaders,
   type LlmClientContext,
@@ -75,8 +76,8 @@ function createClient(model: LlmModel, headers: Record<string, string> | undefin
 }
 
 interface AnthropicTransport {
-  readonly trait: ProtocolTrait | undefined;
-  readonly ctx: TraitContext;
+  readonly wiring: ProtocolWiring | undefined;
+  readonly ctx: ProtocolHookContext;
   readonly format: ReturnType<typeof createAnthropicFormat>;
   readonly resolveClient: (request: LlmClientContext) => Anthropic;
   readonly signal: AbortSignal;
@@ -87,10 +88,10 @@ async function internalGenerate(
   request: AnthropicRequestParams,
   transport: AnthropicTransport,
 ): Promise<void> {
-  const { trait, ctx, format, resolveClient, signal, onEvent } = transport;
+  const { wiring, ctx, format, resolveClient, signal, onEvent } = transport;
   const client = resolveClient({
     model: ctx.model,
-    headers: mergeRequestHeaders(trait?.defaultHeaders?.(ctx), ctx.model.defaultHeaders),
+    headers: mergeRequestHeaders(wiring?.connection?.defaultHeaders?.(ctx), ctx.model.defaultHeaders),
   });
   onEvent?.({ type: 'llm.sent' });
   const betaHeaders =
@@ -102,7 +103,7 @@ async function internalGenerate(
     ? await client.beta.messages.create(request.params, requestOptions).withResponse()
     : await client.messages.create(request.params, requestOptions).withResponse();
   onEvent?.({ type: 'llm.headers', headers: headersToRecord(response.headers) ?? {} });
-  const parse = format.createStreamParser({ trait, ctx });
+  const parse = format.createStreamParser({ dialect: wiring?.dialect, ctx });
   let messageId: string | undefined;
   for await (const event of stream) {
     let failed = false;
@@ -128,7 +129,7 @@ async function internalGenerate(
 }
 
 export function createAnthropicRequester(
-  trait?: ProtocolTrait,
+  wiring?: ProtocolWiring,
   options?: AnthropicBaseOptions,
 ): LlmRequester {
   const format = createAnthropicFormat(options);
@@ -141,20 +142,21 @@ export function createAnthropicRequester(
       content: LlmRequestContent,
       control: LlmRequestControl,
     ): Promise<void> {
-      const model = resolveModelConnection(config.model, trait);
+      const model = resolveModelConnection(config.model, wiring?.connection);
       const { systemPrompt, tools = [] } = config;
       const { messages } = content;
       const { signal, onEvent } = control;
-      const ctx: TraitContext = { model };
+      const ctx: ProtocolHookContext = { model };
       let request: AnthropicRequestParams;
       try {
-        const policy = trait?.toolCallIdPolicy?.(ctx) ?? ANTHROPIC_TOOL_CALL_ID_POLICY;
+        const policy = wiring?.dialect?.toolCallIdPolicy?.(ctx) ?? ANTHROPIC_TOOL_CALL_ID_POLICY;
         request = format.formatRequest({
           model,
           messages: normalizeToolCallIdsForProvider(messages, policy),
           systemPrompt,
           tools,
-          trait,
+          dialect: wiring?.dialect,
+          policy: wiring?.policy,
           ctx,
           cacheKey: config.cacheKey,
           thinking: config.thinking,
@@ -169,11 +171,11 @@ export function createAnthropicRequester(
         return;
       }
       try {
-        await internalGenerate(request, { trait, ctx, format, resolveClient, signal, onEvent });
+        await internalGenerate(request, { wiring, ctx, format, resolveClient, signal, onEvent });
       } catch (error) {
         onEvent?.({
           type: 'llm.failed.remote',
-          error: convertAnthropicError(error, (e) => trait?.convertError?.(e, ctx)),
+          error: convertAnthropicError(error, (e) => wiring?.connection?.convertError?.(e, ctx)),
         });
       }
     },
@@ -183,7 +185,7 @@ export function createAnthropicRequester(
 export function createAnthropicBase(options?: AnthropicBaseOptions): ProtocolBase {
   return {
     capability: getAnthropicModelCapability,
-    createRequester: (trait?: ProtocolTrait) => createAnthropicRequester(trait, options),
+    createRequester: (wiring?: ProtocolWiring) => createAnthropicRequester(wiring, options),
   };
 }
 

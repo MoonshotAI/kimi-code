@@ -135,17 +135,12 @@ function createProtocolRegistryStub(): IProtocolAdapterRegistry {
     supportedProtocols: () => ['anthropic', 'openai', 'openai_responses', 'google-genai'],
     resolveAdapterIdentity: (protocol: Protocol, providerType?: string) => ({
       baseId: protocol,
-      traits:
+      policy:
         providerType === 'kimi' && protocol === 'openai'
-          ? [
-              {
-                trait: { withThinking: () => undefined, strictThinkingValidation: true },
-                context: {},
-              },
-            ]
+          ? { withThinking: () => undefined, strictThinkingValidation: true }
           : providerType === 'kimi' && protocol === 'anthropic'
-            ? [{ trait: { withThinking: () => undefined }, context: {} }]
-            : [],
+            ? { withThinking: () => undefined }
+            : undefined,
     }),
     resolveProviderBaseId: (protocol: Protocol) => protocol,
     resolveCapability: () => {

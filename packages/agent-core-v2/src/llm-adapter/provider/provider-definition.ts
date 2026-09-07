@@ -1,43 +1,34 @@
 import { BugIndicatingError } from '#/_base/errors/errors';
-import type { ProtocolEndpoint, ProtocolTrait } from '#human/llm/protocol/trait';
+import type { ProviderConnection } from '#human/llm/protocol/connection';
+import type { ProtocolDialect } from '#human/llm/protocol/dialect';
+import type { ModelPolicy } from '#human/llm/protocol/policy';
 import {
-  kimiAnthropicTrait,
-  kimiOpenAITrait,
-  kimiResponsesTrait,
-  KIMI_DEFAULT_BASE_URL,
-} from '#human/llm-kimi/trait';
+  anthropicConnection,
+  openAIConnection,
+} from '#human/llm/provider/providers/standard';
+import { kimiConnection } from '#human/llm-kimi/connection';
+import {
+  kimiAnthropicPolicy,
+  kimiOpenAIDialect,
+  kimiOpenAIPolicy,
+} from '#human/llm-kimi/wiring';
 
 import type { Protocol } from '../protocol/protocol';
 import type { ModelSource } from './provider';
 
-export const openAIEndpointTrait: ProtocolTrait = {
-  endpoint: () => ({ apiKeyEnv: 'OPENAI_API_KEY', baseUrlEnv: 'OPENAI_BASE_URL' }),
-};
-
-export const anthropicEndpointTrait: ProtocolTrait = {
-  endpoint: () => ({ apiKeyEnv: 'ANTHROPIC_API_KEY', baseUrlEnv: 'ANTHROPIC_BASE_URL' }),
-};
-
-export const geminiEndpointTrait: ProtocolTrait = {
-  endpoint: () => ({ apiKeyEnv: 'GOOGLE_API_KEY', baseUrlEnv: 'GOOGLE_GEMINI_BASE_URL' }),
-};
-
-export const vertexEndpointTrait: ProtocolTrait = {
-  endpoint: () => ({ apiKeyEnv: 'VERTEXAI_API_KEY', baseUrlEnv: 'GOOGLE_VERTEX_BASE_URL' }),
-};
-
-export const kimiEndpoint: ProtocolEndpoint = {
-  apiKeyEnv: 'KIMI_API_KEY',
-  baseUrlEnv: 'KIMI_BASE_URL',
-  defaultBaseUrl: KIMI_DEFAULT_BASE_URL,
+export const googleConnection: ProviderConnection = {
+  endpoint: () => ({
+    apiKeyEnv: ['VERTEXAI_API_KEY', 'GOOGLE_API_KEY'],
+    baseUrlEnv: ['GOOGLE_VERTEX_BASE_URL', 'GOOGLE_GEMINI_BASE_URL'],
+  }),
 };
 
 export interface ProviderDefinition {
   readonly id: string;
   readonly baseProtocol: Protocol;
-  readonly traits: readonly ProtocolTrait[];
-  readonly routeTrait?: ProtocolTrait;
-  readonly endpoint?: ProtocolEndpoint;
+  readonly connection?: ProviderConnection;
+  readonly dialect?: ProtocolDialect;
+  readonly policy?: ModelPolicy;
   readonly hostHeaders?: 'full' | 'user-agent';
   readonly modelSource?: ModelSource;
 }
@@ -107,11 +98,10 @@ export function explainProviderEndpoint(
 ): ExplainedProviderEndpoint {
   const definition = getProviderDefinition(providerType);
   if (definition === undefined) return {};
-  const endpoint =
-    normalizeEndpointDeclaration(definition.endpoint) ?? aggregateTraitEndpoints(definition);
+  const endpoint = definition.connection?.endpoint?.();
   if (endpoint === undefined) return {};
-  const apiKeyHit = firstEnvHit(endpoint.apiKeyEnv, env);
-  const baseUrlHit = firstEnvHit(endpoint.baseUrlEnv, env);
+  const apiKeyHit = firstEnvHit(envNames(endpoint.apiKeyEnv), env);
+  const baseUrlHit = firstEnvHit(envNames(endpoint.baseUrlEnv), env);
   return {
     ...(apiKeyHit !== undefined
       ? { apiKey: apiKeyHit.value, apiKeyEnvName: apiKeyHit.name }
@@ -135,40 +125,9 @@ export function resolveProviderEndpoint(
   };
 }
 
-interface AggregatedEndpointDeclaration {
-  readonly apiKeyEnv: readonly string[];
-  readonly baseUrlEnv: readonly string[];
-  readonly defaultBaseUrl?: string;
-}
-
-function normalizeEndpointDeclaration(
-  endpoint: ProtocolEndpoint | undefined,
-): AggregatedEndpointDeclaration | undefined {
-  if (endpoint === undefined) return undefined;
-  return {
-    apiKeyEnv: endpoint.apiKeyEnv === undefined ? [] : [endpoint.apiKeyEnv],
-    baseUrlEnv: endpoint.baseUrlEnv === undefined ? [] : [endpoint.baseUrlEnv],
-    defaultBaseUrl: endpoint.defaultBaseUrl,
-  };
-}
-
-function aggregateTraitEndpoints(
-  definition: ProviderDefinition,
-): AggregatedEndpointDeclaration | undefined {
-  const apiKeyEnv: string[] = [];
-  const baseUrlEnv: string[] = [];
-  let defaultBaseUrl: string | undefined;
-  let declared = false;
-  for (const trait of definition.traits) {
-    if (trait.endpoint === undefined) continue;
-    const endpoint = trait.endpoint();
-    if (endpoint === undefined) continue;
-    declared = true;
-    if (endpoint.apiKeyEnv !== undefined) apiKeyEnv.push(endpoint.apiKeyEnv);
-    if (endpoint.baseUrlEnv !== undefined) baseUrlEnv.push(endpoint.baseUrlEnv);
-    if (endpoint.defaultBaseUrl !== undefined) defaultBaseUrl = endpoint.defaultBaseUrl;
-  }
-  return declared ? { apiKeyEnv, baseUrlEnv, defaultBaseUrl } : undefined;
+function envNames(names: string | readonly string[] | undefined): readonly string[] {
+  if (names === undefined) return [];
+  return typeof names === 'string' ? [names] : names;
 }
 
 function firstEnvHit(
@@ -185,36 +144,33 @@ function firstEnvHit(
 registerProviderDefinition({
   id: 'anthropic',
   baseProtocol: 'anthropic',
-  traits: [],
-  endpoint: { apiKeyEnv: 'ANTHROPIC_API_KEY', baseUrlEnv: 'ANTHROPIC_BASE_URL' },
+  connection: anthropicConnection,
 });
 
 registerProviderDefinition({
   id: 'openai',
   baseProtocol: 'openai',
-  traits: [],
-  endpoint: { apiKeyEnv: 'OPENAI_API_KEY', baseUrlEnv: 'OPENAI_BASE_URL' },
+  connection: openAIConnection,
 });
 
 registerProviderDefinition({
   id: 'openai_responses',
   baseProtocol: 'openai_responses',
-  traits: [],
-  endpoint: { apiKeyEnv: 'OPENAI_API_KEY', baseUrlEnv: 'OPENAI_BASE_URL' },
+  connection: openAIConnection,
 });
 
 registerProviderDefinition({
   id: 'google-genai',
   baseProtocol: 'google-genai',
-  traits: [vertexEndpointTrait, geminiEndpointTrait],
+  connection: googleConnection,
 });
 
 registerProviderDefinition({
   id: 'kimi',
   baseProtocol: 'openai',
-  traits: [kimiOpenAITrait],
-  routeTrait: kimiOpenAITrait,
-  endpoint: kimiEndpoint,
+  connection: kimiConnection,
+  dialect: kimiOpenAIDialect,
+  policy: kimiOpenAIPolicy,
   hostHeaders: 'full',
   modelSource: 'oauth-catalog',
 });
@@ -222,9 +178,8 @@ registerProviderDefinition({
 registerProviderDefinition({
   id: 'kimi',
   baseProtocol: 'anthropic',
-  traits: [kimiAnthropicTrait],
-  routeTrait: kimiAnthropicTrait,
-  endpoint: kimiEndpoint,
+  connection: kimiConnection,
+  policy: kimiAnthropicPolicy,
   hostHeaders: 'full',
   modelSource: 'oauth-catalog',
 });
@@ -232,9 +187,7 @@ registerProviderDefinition({
 registerProviderDefinition({
   id: 'kimi',
   baseProtocol: 'openai_responses',
-  traits: [kimiResponsesTrait],
-  routeTrait: kimiResponsesTrait,
-  endpoint: kimiEndpoint,
+  connection: kimiConnection,
   hostHeaders: 'full',
   modelSource: 'oauth-catalog',
 });

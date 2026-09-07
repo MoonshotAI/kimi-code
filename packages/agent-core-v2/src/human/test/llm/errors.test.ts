@@ -10,7 +10,9 @@ import { UNKNOWN_CAPABILITY } from '#/llm/capability';
 import { createAssistantMessage, createUserMessage, type Message } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
 import { classifyKimiQuotaError } from '#/llm-kimi/errors';
-import { kimiOpenAITrait } from '#/llm-kimi/trait';
+import { kimiConnection } from '#/llm-kimi/connection';
+import { kimiOpenAIDialect, kimiOpenAIPolicy } from '#/llm-kimi/wiring';
+import type { ProtocolWiring } from '#/llm/protocol/base';
 import { createGoogleGenAIRequester } from '#/llm/requester/bases/google-genai/requester';
 import { convertOpenAIError } from '#/llm/requester/bases/openai/format';
 import { createOpenAIRequester } from '#/llm/requester/bases/openai/requester';
@@ -23,6 +25,12 @@ const model: LlmModel = {
   baseUrl: 'https://example.test/v1',
 };
 const messages: readonly Message[] = [createUserMessage('hi')];
+
+const kimiOpenAIWiring: ProtocolWiring = {
+  connection: kimiConnection,
+  dialect: kimiOpenAIDialect,
+  policy: kimiOpenAIPolicy,
+};
 
 describe('convertOpenAIError', () => {
   it('converts abort errors to abort kind', () => {
@@ -291,7 +299,7 @@ describe('requester error conversion', () => {
   });
 
   it('converts a kimi quota response to quota_exhausted', async () => {
-    const requester = createOpenAIRequester(kimiOpenAITrait, {
+    const requester = createOpenAIRequester(kimiOpenAIWiring, {
       clientFactory: failingOpenAIClient(
         new RawOpenAISDKAPIError(
           429,

@@ -1,6 +1,8 @@
 import type { LlmRemoteErrorMessage } from '#/llm/errors';
 import type { FinishInfo } from '#/llm/finish-reason';
-import type { ProtocolTrait, TraitContext } from '#/llm/protocol/trait';
+import type { ProtocolHookContext } from '#/llm/protocol/context';
+import type { ProtocolDialect } from '#/llm/protocol/dialect';
+import type { ModelPolicy } from '#/llm/protocol/policy';
 import type { Message, StreamedMessagePart, ToolDescription } from '#/llm/message';
 import type { LlmRequestConfig } from '#/llm/requester/requester';
 import type { TokenUsage } from '#/llm/usage';
@@ -9,8 +11,9 @@ export type FormatRequestInput = LlmRequestConfig & {
   readonly messages: readonly Message[];
   readonly tools: readonly ToolDescription[];
   readonly usedContextTokens?: number;
-  readonly trait: ProtocolTrait | undefined;
-  readonly ctx: TraitContext;
+  readonly dialect?: ProtocolDialect;
+  readonly policy?: ModelPolicy;
+  readonly ctx: ProtocolHookContext;
 };
 
 export interface FormatRequestOptions {
@@ -28,8 +31,8 @@ export interface StreamParseSink {
 export type StreamParser<TChunk = unknown> = (chunk: TChunk, sink: StreamParseSink) => void;
 
 export interface StreamParserOptions {
-  readonly trait?: ProtocolTrait;
-  readonly ctx: TraitContext;
+  readonly dialect?: ProtocolDialect;
+  readonly ctx: ProtocolHookContext;
 }
 
 export interface ProtocolFormat<

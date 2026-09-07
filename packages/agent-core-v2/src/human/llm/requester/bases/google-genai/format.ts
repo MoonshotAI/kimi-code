@@ -17,7 +17,7 @@ import type {
   ToolDescription,
 } from '#/llm/message';
 import type { ThinkingEffort } from '#/llm/thinking';
-import { applyThinking } from '#/llm/protocol/trait';
+import { applyThinking } from '#/llm/protocol/policy';
 import { mergeConsecutiveUsers } from '#/llm/protocol/patterns';
 import { applyPatterns } from '#/llm/protocol/rewrite';
 import type { TokenUsage } from '#/llm/usage';
@@ -182,7 +182,7 @@ function encodeThinking(model: string, effort: ThinkingEffort): Record<string, u
 
 function resolveRequestKwargs(input: FormatRequestInput): Record<string, unknown> {
   const {
-    trait,
+    policy,
     ctx,
     thinking,
     responseFormat,
@@ -193,7 +193,7 @@ function resolveRequestKwargs(input: FormatRequestInput): Record<string, unknown
   } = input;
   let kwargs: Record<string, unknown> = {};
   if (thinking !== undefined) {
-    kwargs = applyThinking(kwargs, thinking, trait, ctx, (t, c) => ({
+    kwargs = applyThinking(kwargs, thinking, policy, ctx, (t, c) => ({
       thinkingConfig: encodeThinking(c.model.model, t.effort),
     })).kwargs;
   }
@@ -207,7 +207,7 @@ function resolveRequestKwargs(input: FormatRequestInput): Record<string, unknown
       cap = Math.min(cap, maxContextTokens - usedContextTokens);
     }
     cap = Math.max(1, cap);
-    const hooked = trait?.withMaxCompletionTokens?.(cap, ctx);
+    const hooked = policy?.withMaxCompletionTokens?.(cap, ctx);
     if (hooked !== undefined) {
       kwargs = { ...kwargs, ...hooked };
     } else {
@@ -234,10 +234,10 @@ export interface GoogleGenAIRequestParams {
 
 export const googleGenAIFormat: ProtocolFormat<GoogleGenAIRequestParams> = {
   formatRequest(input) {
-    const { messages, systemPrompt, tools, trait, ctx } = input;
+    const { messages, systemPrompt, tools, dialect, ctx } = input;
     const kwargs = resolveRequestKwargs(input);
     const contents = messagesToGoogleGenAIContents(messages);
-    const finalContents = trait?.mergeHistory?.(contents, ctx) as GoogleContent[] | undefined;
+    const finalContents = dialect?.mergeHistory?.(contents, ctx) as GoogleContent[] | undefined;
     const params: Record<string, unknown> = {
       model: ctx.model.model,
       contents: finalContents ?? contents,
@@ -246,11 +246,11 @@ export const googleGenAIFormat: ProtocolFormat<GoogleGenAIRequestParams> = {
         tools:
           tools.length === 0
             ? undefined
-            : tools.map((tool) => trait?.convertTool?.(tool, ctx) ?? toolToGoogleGenAI(tool)),
+            : tools.map((tool) => dialect?.convertTool?.(tool, ctx) ?? toolToGoogleGenAI(tool)),
         ...kwargs,
       },
     };
-    const finalParams = trait?.buildParams?.(params, ctx) ?? params;
+    const finalParams = dialect?.buildParams?.(params, ctx) ?? params;
     return { params: finalParams as unknown as GenerateContentParameters };
   },
 

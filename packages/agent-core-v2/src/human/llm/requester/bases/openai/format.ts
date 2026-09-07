@@ -28,8 +28,8 @@ import {
   type ToolDescription,
 } from '#/llm/message';
 import { toolResultToPlainText } from '#/llm/protocol/patterns';
+import { applyThinking } from '#/llm/protocol/policy';
 import { applyPatterns } from '#/llm/protocol/rewrite';
-import { applyThinking } from '#/llm/protocol/trait';
 import type { ResponseFormat } from '#/llm/response-format';
 import { encodeReasoningEffortFallback } from '#/llm/thinking';
 import type { TokenUsage } from '#/llm/usage';
@@ -164,7 +164,8 @@ interface ResolvedRequestKwargs {
 function resolveRequestKwargs(input: FormatRequestInput): ResolvedRequestKwargs {
   const {
     messages,
-    trait,
+    dialect,
+    policy,
     ctx,
     cacheKey,
     thinking,
@@ -176,18 +177,18 @@ function resolveRequestKwargs(input: FormatRequestInput): ResolvedRequestKwargs 
   } = input;
   let kwargs: Record<string, unknown> = {};
   if (cacheKey !== undefined) {
-    kwargs = trait?.cacheKey?.(cacheKey, ctx) ?? { prompt_cache_key: cacheKey };
+    kwargs = dialect?.cacheKey?.(cacheKey, ctx) ?? { prompt_cache_key: cacheKey };
   }
   let preserveThinking = false;
   if (thinking !== undefined) {
-    const applied = applyThinking(kwargs, thinking, trait, ctx, (t) =>
-      encodeReasoningEffortFallback(t, ctx.model, trait?.strictThinkingValidation === true),
+    const applied = applyThinking(kwargs, thinking, policy, ctx, (t) =>
+      encodeReasoningEffortFallback(t, ctx.model, policy?.strictThinkingValidation === true),
     );
     kwargs = applied.kwargs;
     preserveThinking = applied.preserveThinking;
   }
   if (
-    trait?.withThinking === undefined &&
+    policy?.withThinking === undefined &&
     thinking?.effort !== 'off' &&
     kwargs['reasoning_effort'] === undefined &&
     messages.some((message) => message.content.some((part) => part.type === 'think'))
@@ -207,7 +208,7 @@ function resolveRequestKwargs(input: FormatRequestInput): ResolvedRequestKwargs 
       cap = Math.min(cap, maxContextTokens - usedContextTokens);
     }
     cap = Math.max(1, cap);
-    const hooked = trait?.withMaxCompletionTokens?.(cap, ctx);
+    const hooked = policy?.withMaxCompletionTokens?.(cap, ctx);
     if (hooked !== undefined) {
       kwargs = { ...kwargs, ...hooked };
     } else {
@@ -227,11 +228,11 @@ export interface OpenAIRequestParams {
 
 export const openAIFormat: ProtocolFormat<OpenAIRequestParams, RawResponse, RawChunk> = {
   formatRequest(input, options?: FormatRequestOptions) {
-    const { messages, systemPrompt, tools, trait, ctx } = input;
+    const { messages, systemPrompt, tools, dialect, ctx } = input;
     const reasoningKey = options?.reasoningKey ?? DEFAULT_REASONING_KEY;
     const { kwargs, preserveThinking } = resolveRequestKwargs(input);
 
-    const conversion = trait?.toolMessageConversion?.(ctx);
+    const conversion = dialect?.toolMessageConversion?.(ctx);
     const mediaPattern =
       conversion === 'extract_text'
         ? toolResultToPlainText
@@ -245,22 +246,22 @@ export const openAIFormat: ProtocolFormat<OpenAIRequestParams, RawResponse, RawC
       converted.push({ role: 'system', content: systemPrompt });
     }
     for (const message of normalized) {
-      converted.push(...lowerMessage(message, { trait, ctx, reasoningKey, preserveThinking }));
+      converted.push(...lowerMessage(message, { dialect, ctx, reasoningKey, preserveThinking }));
     }
     const finalMessages =
-      (trait?.mergeHistory?.(converted, ctx) as OpenAIWireMessage[] | undefined) ?? converted;
+      (dialect?.mergeHistory?.(converted, ctx) as OpenAIWireMessage[] | undefined) ?? converted;
     const createParams: Record<string, unknown> = {
       model: ctx.model.model,
       messages: finalMessages,
       tools:
         tools.length === 0
           ? undefined
-          : tools.map((tool) => trait?.convertTool?.(tool, ctx) ?? defaultConvertTool(tool)),
+          : tools.map((tool) => dialect?.convertTool?.(tool, ctx) ?? defaultConvertTool(tool)),
       stream: true,
       stream_options: { include_usage: true },
       ...kwargs,
     };
-    const finalParams = trait?.buildParams?.(createParams, ctx) ?? createParams;
+    const finalParams = dialect?.buildParams?.(createParams, ctx) ?? createParams;
     return { params: finalParams as unknown as OpenAI.Chat.ChatCompletionCreateParamsStreaming };
   },
 
@@ -334,8 +335,8 @@ export const openAIFormat: ProtocolFormat<OpenAIRequestParams, RawResponse, RawC
         sink.onMessageId?.(chunk.id);
       }
       const hooked =
-        options?.trait?.extractUsage !== undefined && options.ctx !== undefined
-          ? options.trait.extractUsage(chunk as Record<string, unknown>, options.ctx)
+        options?.dialect?.extractUsage !== undefined && options.ctx !== undefined
+          ? options.dialect.extractUsage(chunk as Record<string, unknown>, options.ctx)
           : undefined;
       const usage = parseRawUsage(
         (hooked !== undefined ? hooked : chunk.usage) as RawUsage | null | undefined,

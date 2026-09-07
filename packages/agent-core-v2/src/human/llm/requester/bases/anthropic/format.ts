@@ -19,7 +19,7 @@ import type { FormatRequestInput, ProtocolFormat } from '#/llm/protocol/format';
 import type { ResponseFormat } from '#/llm/response-format';
 import { SyntaxRequestFormatError } from '#/llm/syntax-errors';
 import type { ToolDescription } from '#/llm/message';
-import { applyThinking } from '#/llm/protocol/trait';
+import { applyThinking } from '#/llm/protocol/policy';
 import { mergeConsecutiveUsers } from '#/llm/protocol/patterns';
 import { applyPatterns } from '#/llm/protocol/rewrite';
 import type { TokenUsage } from '#/llm/usage';
@@ -195,7 +195,7 @@ function applyThinkingKeep(kwargs: Record<string, unknown>, keep: string): Recor
 
 function resolveRequestKwargs(input: FormatRequestInput): Record<string, unknown> {
   const {
-    trait,
+    policy,
     ctx,
     thinking,
     responseFormat,
@@ -206,7 +206,7 @@ function resolveRequestKwargs(input: FormatRequestInput): Record<string, unknown
   } = input;
   let kwargs: Record<string, unknown> = { betaFeatures: [INTERLEAVED_THINKING_BETA] };
   if (thinking !== undefined) {
-    kwargs = applyThinking(kwargs, thinking, trait, ctx, (t, c) =>
+    kwargs = applyThinking(kwargs, thinking, policy, ctx, (t, c) =>
       encodeThinking(t, c.model),
     ).kwargs;
   }
@@ -224,7 +224,7 @@ function resolveRequestKwargs(input: FormatRequestInput): Record<string, unknown
     }
     cap = Math.max(1, cap);
     cap = resolveDefaultMaxTokens(ctx.model.model, cap);
-    const hooked = trait?.withMaxCompletionTokens?.(cap, ctx);
+    const hooked = policy?.withMaxCompletionTokens?.(cap, ctx);
     if (hooked !== undefined) {
       kwargs = { ...kwargs, ...hooked };
     } else {
@@ -255,15 +255,15 @@ export function createAnthropicFormat(
   const betaApi = options?.betaApi === true;
   return {
     formatRequest(input) {
-      const { messages, systemPrompt, tools, trait, ctx, cacheKey, thinking } = input;
+      const { messages, systemPrompt, tools, dialect, ctx, cacheKey, thinking } = input;
       const kwargs = resolveRequestKwargs(input);
       const normalized = applyPatterns(messages, [
         stripUnsignedThinking({ preserve: shouldPreserveUnsignedThinking(ctx.model.model) }),
         audioToPlaceholder,
       ]);
-      const converted = normalized.flatMap((message) => lowerMessage(message, { trait, ctx }));
+      const converted = normalized.flatMap((message) => lowerMessage(message, { dialect, ctx }));
       const merged =
-        (trait?.mergeHistory?.(converted, ctx) as AnthropicWireMessage[] | undefined) ??
+        (dialect?.mergeHistory?.(converted, ctx) as AnthropicWireMessage[] | undefined) ??
         applyPatterns(converted, [
           mergeConsecutiveUsers({
             isUser: (param) => param.role === 'user',
@@ -276,7 +276,7 @@ export function createAnthropicFormat(
         ]);
       injectCacheControlOnLastBlock(merged);
       const formattedTools: Record<string, unknown>[] = tools.map(
-        (tool) => trait?.convertTool?.(tool, ctx) ?? defaultConvertTool(tool),
+        (tool) => dialect?.convertTool?.(tool, ctx) ?? defaultConvertTool(tool),
       );
       const lastTool = formattedTools.at(-1);
       if (lastTool !== undefined) {
@@ -298,7 +298,7 @@ export function createAnthropicFormat(
         betas: useBetaApi && betas.length > 0 ? betas : undefined,
         stream: true,
       };
-      const finalParams = trait?.buildParams?.(createParams, ctx) ?? createParams;
+      const finalParams = dialect?.buildParams?.(createParams, ctx) ?? createParams;
       return {
         params: finalParams as unknown as Anthropic.MessageCreateParamsStreaming,
         betas,

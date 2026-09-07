@@ -1,11 +1,13 @@
 import type { ProtocolBase } from '#human/llm/protocol/base';
-import type { ProtocolTrait } from '#human/llm/protocol/trait';
+import type { ProviderConnection } from '#human/llm/protocol/connection';
+import type { ProtocolDialect } from '#human/llm/protocol/dialect';
+import type { ModelPolicy } from '#human/llm/protocol/policy';
 import { anthropicBase } from '#human/llm/requester/bases/anthropic/requester';
 import { googleGenAIBase } from '#human/llm/requester/bases/google-genai/requester';
 import { openAIBase } from '#human/llm/requester/bases/openai/requester';
 import { openAIResponsesBase } from '#human/llm/requester/bases/openai-responses/requester';
 
-import type { Protocol, ProtocolAdapterConfig } from './protocol';
+import type { Protocol } from './protocol';
 
 export type ProtocolBaseId = Protocol;
 
@@ -14,19 +16,11 @@ export interface ProtocolBaseDefinition {
   readonly base: ProtocolBase;
 }
 
-export interface TraitContext {
-  readonly config: ProtocolAdapterConfig;
-  readonly providerId?: string;
-}
-
-export interface ResolvedTrait {
-  readonly trait: ProtocolTrait;
-  readonly context: TraitContext;
-}
-
 export interface ResolvedAdapterIdentity {
   readonly baseId: ProtocolBaseId;
-  readonly traits: readonly ResolvedTrait[];
+  readonly connection?: ProviderConnection;
+  readonly dialect?: ProtocolDialect;
+  readonly policy?: ModelPolicy;
 }
 
 const PROTOCOL_BASES: readonly ProtocolBaseDefinition[] = [

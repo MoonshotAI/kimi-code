@@ -8,7 +8,8 @@ import {
   type Message,
 } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
-import type { TraitContext } from '#/llm/protocol/trait';
+import type { ProtocolHookContext } from '#/llm/protocol/context';
+import type { ProtocolWiring } from '#/llm/protocol/base';
 import {
   defaultThinkingEffortForModel,
   modelSupportsThinking,
@@ -16,7 +17,8 @@ import {
   resolveThinkingKeep,
   type ModelThinkingMetadata,
 } from '#/llm/thinking';
-import { kimiOpenAITrait } from '#/llm-kimi/trait';
+import { kimiConnection } from '#/llm-kimi/connection';
+import { kimiOpenAIDialect, kimiOpenAIPolicy } from '#/llm-kimi/wiring';
 import { createOpenAIRequester } from '#/llm/requester/bases/openai/requester';
 import type { LlmClientContext, LlmRequestEvent } from '#/llm/requester/requester';
 
@@ -26,8 +28,14 @@ const model: LlmModel = {
   capability: UNKNOWN_CAPABILITY,
   baseUrl: 'https://example.test/v1',
 };
-const ctx: TraitContext = { model };
+const ctx: ProtocolHookContext = { model };
 const messages: readonly Message[] = [createUserMessage('hi')];
+
+const kimiOpenAIWiring: ProtocolWiring = {
+  connection: kimiConnection,
+  dialect: kimiOpenAIDialect,
+  policy: kimiOpenAIPolicy,
+};
 
 function modelWith(meta: ModelThinkingMetadata): LlmModel {
   return { ...model, ...meta };
@@ -95,16 +103,16 @@ function bodyMessages(body: Record<string, unknown>): Record<string, unknown>[] 
   return body['messages'] as Record<string, unknown>[];
 }
 
-describe('kimiOpenAITrait thinking', () => {
+describe('kimiOpenAIPolicy thinking', () => {
   it('encodes thinking configs and resolves thinking defaults and keep', () => {
-    expect(kimiOpenAITrait.strictThinkingValidation).toBe(true);
-    expect(kimiOpenAITrait.withThinking?.({ effort: 'off' }, ctx)).toEqual({
+    expect(kimiOpenAIPolicy.strictThinkingValidation).toBe(true);
+    expect(kimiOpenAIPolicy.withThinking?.({ effort: 'off' }, ctx)).toEqual({
       extra_body: { thinking: { type: 'disabled' } },
     });
-    expect(kimiOpenAITrait.withThinking?.({ effort: 'on' }, ctx)).toEqual({
+    expect(kimiOpenAIPolicy.withThinking?.({ effort: 'on' }, ctx)).toEqual({
       extra_body: { thinking: { type: 'enabled' } },
     });
-    expect(kimiOpenAITrait.withThinking?.({ effort: 'high', keep: 'all' }, ctx)).toEqual({
+    expect(kimiOpenAIPolicy.withThinking?.({ effort: 'high', keep: 'all' }, ctx)).toEqual({
       extra_body: { thinking: { type: 'enabled', effort: 'high', keep: 'all' } },
     });
 
@@ -162,17 +170,17 @@ describe('kimiOpenAITrait thinking', () => {
   });
 
   it('preserves thinking only when keep is all and thinking is not disabled', () => {
-    expect(kimiOpenAITrait.preserveThinking?.({ effort: 'on', keep: 'all' }, ctx)).toBe(true);
-    expect(kimiOpenAITrait.preserveThinking?.({ effort: 'off', keep: 'all' }, ctx)).toBeUndefined();
-    expect(kimiOpenAITrait.preserveThinking?.({ effort: 'on' }, ctx)).toBeUndefined();
-    expect(kimiOpenAITrait.preserveThinking?.({ effort: 'on', keep: '1' }, ctx)).toBeUndefined();
+    expect(kimiOpenAIPolicy.preserveThinking?.({ effort: 'on', keep: 'all' }, ctx)).toBe(true);
+    expect(kimiOpenAIPolicy.preserveThinking?.({ effort: 'off', keep: 'all' }, ctx)).toBeUndefined();
+    expect(kimiOpenAIPolicy.preserveThinking?.({ effort: 'on' }, ctx)).toBeUndefined();
+    expect(kimiOpenAIPolicy.preserveThinking?.({ effort: 'on', keep: '1' }, ctx)).toBeUndefined();
   });
 });
 
 describe('openai requester thinking', () => {
   it('sends kimi thinking params at the top level', async () => {
     const client = stubOpenAIClient(chatCompletionChunks());
-    const requester = createOpenAIRequester(kimiOpenAITrait, {
+    const requester = createOpenAIRequester(kimiOpenAIWiring, {
       clientFactory: client.clientFactory,
     });
     await requester.generate(
@@ -191,7 +199,7 @@ describe('openai requester thinking', () => {
 
   it('sends disabled thinking for off', async () => {
     const client = stubOpenAIClient(chatCompletionChunks());
-    const requester = createOpenAIRequester(kimiOpenAITrait, {
+    const requester = createOpenAIRequester(kimiOpenAIWiring, {
       clientFactory: client.clientFactory,
     });
     await requester.generate(
@@ -279,7 +287,7 @@ describe('openai requester thinking', () => {
   it('rejects an effort outside the supported list under strict validation', async () => {
     const client = stubOpenAIClient(chatCompletionChunks());
     const requester = createOpenAIRequester(
-      { strictThinkingValidation: true },
+      { policy: { strictThinkingValidation: true } },
       { clientFactory: client.clientFactory },
     );
     const events: LlmRequestEvent[] = [];
@@ -355,7 +363,7 @@ describe('openai requester thinking', () => {
 
   it('echoes an empty reasoning_content on think-less assistant messages only when keeping all', async () => {
     const preserving = stubOpenAIClient(chatCompletionChunks());
-    const preservingRequester = createOpenAIRequester(kimiOpenAITrait, {
+    const preservingRequester = createOpenAIRequester(kimiOpenAIWiring, {
       clientFactory: preserving.clientFactory,
     });
     await preservingRequester.generate(
@@ -366,7 +374,7 @@ describe('openai requester thinking', () => {
     expect(bodyMessages(preserving.body())[1]!['reasoning_content']).toBe('');
 
     const plain = stubOpenAIClient(chatCompletionChunks());
-    const plainRequester = createOpenAIRequester(kimiOpenAITrait, {
+    const plainRequester = createOpenAIRequester(kimiOpenAIWiring, {
       clientFactory: plain.clientFactory,
     });
     await plainRequester.generate(
@@ -380,7 +388,7 @@ describe('openai requester thinking', () => {
   it('selects the outbound reasoning key from the trait declaration or inbound detection', async () => {
     const declared = stubOpenAIClient(chatCompletionChunks());
     const declaredRequester = createOpenAIRequester(
-      { reasoningKey: () => 'reasoning' },
+      { dialect: { reasoningKey: () => 'reasoning' } },
       { clientFactory: declared.clientFactory },
     );
     await declaredRequester.generate(

@@ -5,7 +5,7 @@ import type { LlmRemoteErrorMessage } from '#/llm/errors';
 import { NO_FINISH, type FinishInfo } from '#/llm/finish-reason';
 import type { FormatRequestInput, ProtocolFormat, StreamParserOptions } from '#/llm/protocol/format';
 import type { StreamedMessagePart, ToolDescription } from '#/llm/message';
-import { applyThinking } from '#/llm/protocol/trait';
+import { applyThinking } from '#/llm/protocol/policy';
 import type { ResponseFormat } from '#/llm/response-format';
 import { encodeReasoningEffortFallback } from '#/llm/thinking';
 import type { TokenUsage } from '#/llm/usage';
@@ -353,7 +353,8 @@ function extractEventUsage(event: RawObject): RawObject | undefined {
 
 function resolveRequestKwargs(input: FormatRequestInput): Record<string, unknown> {
   const {
-    trait,
+    dialect,
+    policy,
     ctx,
     cacheKey,
     thinking,
@@ -365,11 +366,11 @@ function resolveRequestKwargs(input: FormatRequestInput): Record<string, unknown
   } = input;
   let kwargs: Record<string, unknown> = {};
   if (cacheKey !== undefined) {
-    kwargs = trait?.cacheKey?.(cacheKey, ctx) ?? { prompt_cache_key: cacheKey };
+    kwargs = dialect?.cacheKey?.(cacheKey, ctx) ?? { prompt_cache_key: cacheKey };
   }
   if (thinking !== undefined) {
-    kwargs = applyThinking(kwargs, thinking, trait, ctx, (t) =>
-      encodeReasoningEffortFallback(t, ctx.model, trait?.strictThinkingValidation === true),
+    kwargs = applyThinking(kwargs, thinking, policy, ctx, (t) =>
+      encodeReasoningEffortFallback(t, ctx.model, policy?.strictThinkingValidation === true),
     ).kwargs;
   }
   if (maxCompletionTokens !== undefined) {
@@ -382,7 +383,7 @@ function resolveRequestKwargs(input: FormatRequestInput): Record<string, unknown
       cap = Math.min(cap, maxContextTokens - usedContextTokens);
     }
     cap = Math.max(1, cap);
-    const hooked = trait?.withMaxCompletionTokens?.(cap, ctx);
+    const hooked = policy?.withMaxCompletionTokens?.(cap, ctx);
     if (hooked !== undefined) {
       kwargs = { ...kwargs, ...hooked };
     } else {
@@ -413,16 +414,16 @@ export interface OpenAIResponsesRequestParams {
 
 export const openAIResponsesFormat: ProtocolFormat<OpenAIResponsesRequestParams> = {
   formatRequest(input) {
-    const { messages, systemPrompt, tools, trait, ctx } = input;
+    const { messages, systemPrompt, tools, dialect, ctx } = input;
     const kwargs = resolveRequestKwargs(input);
     const inputItems = messages.flatMap((message) =>
       lowerMessage(message, {
         modelName: ctx.model.model,
-        extractText: trait?.toolMessageConversion?.(ctx) === 'extract_text',
+        extractText: dialect?.toolMessageConversion?.(ctx) === 'extract_text',
       }),
     );
     const finalInput =
-      (trait?.mergeHistory?.(inputItems, ctx) as ResponsesInputItem[] | undefined) ?? inputItems;
+      (dialect?.mergeHistory?.(inputItems, ctx) as ResponsesInputItem[] | undefined) ?? inputItems;
     const createParams: Record<string, unknown> = {
       model: ctx.model.model,
       instructions: systemPrompt ? systemPrompt : undefined,
@@ -430,12 +431,12 @@ export const openAIResponsesFormat: ProtocolFormat<OpenAIResponsesRequestParams>
       tools:
         tools.length === 0
           ? undefined
-          : tools.map((tool) => trait?.convertTool?.(tool, ctx) ?? defaultConvertTool(tool)),
+          : tools.map((tool) => dialect?.convertTool?.(tool, ctx) ?? defaultConvertTool(tool)),
       store: false,
       stream: true,
       ...kwargs,
     };
-    const finalParams = trait?.buildParams?.(createParams, ctx) ?? createParams;
+    const finalParams = dialect?.buildParams?.(createParams, ctx) ?? createParams;
     return { params: finalParams as unknown as OpenAI.Responses.ResponseCreateParamsStreaming };
   },
 
@@ -518,8 +519,8 @@ export const openAIResponsesFormat: ProtocolFormat<OpenAIResponsesRequestParams>
         return;
       }
       const hookedUsage =
-        options?.trait?.extractUsage !== undefined && options.ctx !== undefined
-          ? options.trait.extractUsage(event, options.ctx)
+        options?.dialect?.extractUsage !== undefined && options.ctx !== undefined
+          ? options.dialect.extractUsage(event, options.ctx)
           : undefined;
       const usage = parseResponsesUsage(
         hookedUsage !== undefined ? hookedUsage : extractEventUsage(event),

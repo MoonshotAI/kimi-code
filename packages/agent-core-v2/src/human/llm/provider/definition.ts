@@ -1,13 +1,17 @@
 import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/llm/capability';
 import type { ProviderMediaContribution } from '#/llm/media/upload';
 import type { LlmConnection, LlmModel } from '#/llm/model';
-import type { ProtocolBase, ProtocolName } from '#/llm/protocol/base';
-import type { ProtocolTrait } from '#/llm/protocol/trait';
+import type { ProtocolBase, ProtocolName, ProtocolWiring } from '#/llm/protocol/base';
+import type { ProviderConnection } from '#/llm/protocol/connection';
+import type { ProtocolDialect } from '#/llm/protocol/dialect';
+import type { ModelPolicy } from '#/llm/protocol/policy';
 import type { LlmRequester } from '#/llm/requester/requester';
 
 export interface ProviderProtocolDefinition {
   readonly base: ProtocolBase;
-  readonly trait?: ProtocolTrait;
+  readonly connection?: ProviderConnection;
+  readonly dialect?: ProtocolDialect;
+  readonly policy?: ModelPolicy;
 }
 
 export interface LlmModelSeed {
@@ -43,7 +47,9 @@ export interface Provider {
 interface ProviderProtocolEntry {
   readonly name: ProtocolName;
   readonly base: ProtocolBase;
-  readonly trait?: ProtocolTrait;
+  readonly connection?: ProviderConnection;
+  readonly dialect?: ProtocolDialect;
+  readonly policy?: ModelPolicy;
 }
 
 export function createProvider(definition: ProviderDefinition): Provider {
@@ -51,7 +57,13 @@ export function createProvider(definition: ProviderDefinition): Provider {
   for (const name of Object.keys(definition.protocols) as ProtocolName[]) {
     const protocol = definition.protocols[name];
     if (protocol !== undefined) {
-      entries.push({ name, base: protocol.base, trait: protocol.trait });
+      entries.push({
+        name,
+        base: protocol.base,
+        connection: protocol.connection,
+        dialect: protocol.dialect,
+        policy: protocol.policy,
+      });
     }
   }
   const defaultEntry = entries[0];
@@ -76,7 +88,7 @@ export function createProvider(definition: ProviderDefinition): Provider {
     entry: ProviderProtocolEntry,
     modelName: string,
   ): ModelCapability =>
-    entry.trait?.capability?.(modelName) ??
+    entry.policy?.capability?.(modelName) ??
     entry.base.capability?.(modelName) ??
     UNKNOWN_CAPABILITY;
 
@@ -93,7 +105,7 @@ export function createProvider(definition: ProviderDefinition): Provider {
         provider: definition.id,
         model: seed.model,
         capability:
-          defaultEntry.trait?.capability?.(seed.model) ??
+          defaultEntry.policy?.capability?.(seed.model) ??
           seed.capability ??
           defaultEntry.base.capability?.(seed.model) ??
           UNKNOWN_CAPABILITY,
@@ -115,7 +127,12 @@ export function createProvider(definition: ProviderDefinition): Provider {
     },
     createRequester: (protocol) => {
       const entry = protocolFor(protocol);
-      return entry.base.createRequester(entry.trait);
+      const wiring: ProtocolWiring = {
+        connection: entry.connection,
+        dialect: entry.dialect,
+        policy: entry.policy,
+      };
+      return entry.base.createRequester(wiring);
     },
   };
 }

@@ -3,8 +3,9 @@ import OpenAI from 'openai';
 import { headersToRecord } from '#/llm/errors';
 import type { LlmModel } from '#/llm/model';
 import { toLlmSyntaxErrorMessage } from '#/llm/syntax-errors';
-import type { ProtocolBase } from '#/llm/protocol/base';
-import { resolveModelConnection, type ProtocolTrait, type TraitContext } from '#/llm/protocol/trait';
+import type { ProtocolBase, ProtocolWiring } from '#/llm/protocol/base';
+import { resolveModelConnection } from '#/llm/protocol/connection';
+import type { ProtocolHookContext } from '#/llm/protocol/context';
 import {
   mergeRequestHeaders,
   type LlmClientContext,
@@ -40,8 +41,8 @@ function createClient(model: LlmModel, headers: Record<string, string> | undefin
 }
 
 interface OpenAIResponsesTransport {
-  readonly trait: ProtocolTrait | undefined;
-  readonly ctx: TraitContext;
+  readonly wiring: ProtocolWiring | undefined;
+  readonly ctx: ProtocolHookContext;
   readonly resolveClient: (request: LlmClientContext) => OpenAI;
   readonly signal: AbortSignal;
   readonly onEvent?: (event: LlmRequestEvent) => void;
@@ -51,11 +52,11 @@ async function internalGenerate(
   request: OpenAIResponsesRequestParams,
   transport: OpenAIResponsesTransport,
 ): Promise<void> {
-  const { trait, ctx, resolveClient, signal, onEvent } = transport;
+  const { wiring, ctx, resolveClient, signal, onEvent } = transport;
   const client = resolveClient({
     model: ctx.model,
     headers: mergeRequestHeaders(
-      mergeRequestHeaders(trait?.defaultHeaders?.(ctx), ctx.model.defaultHeaders),
+      mergeRequestHeaders(wiring?.connection?.defaultHeaders?.(ctx), ctx.model.defaultHeaders),
       request.headers,
     ),
   });
@@ -64,7 +65,7 @@ async function internalGenerate(
     .create(request.params, { signal })
     .withResponse();
   onEvent?.({ type: 'llm.headers', headers: headersToRecord(response.headers) ?? {} });
-  const parse = openAIResponsesFormat.createStreamParser({ trait, ctx });
+  const parse = openAIResponsesFormat.createStreamParser({ dialect: wiring?.dialect, ctx });
   let messageId: string | undefined;
   for await (const chunk of stream) {
     let failed = false;
@@ -90,7 +91,7 @@ async function internalGenerate(
 }
 
 export function createOpenAIResponsesRequester(
-  trait?: ProtocolTrait,
+  wiring?: ProtocolWiring,
   options?: LlmRequesterOptions<OpenAI>,
 ): LlmRequester {
   const resolveClient =
@@ -102,20 +103,21 @@ export function createOpenAIResponsesRequester(
       content: LlmRequestContent,
       control: LlmRequestControl,
     ): Promise<void> {
-      const model = resolveModelConnection(config.model, trait);
+      const model = resolveModelConnection(config.model, wiring?.connection);
       const { systemPrompt, tools = [] } = config;
       const { messages } = content;
       const { signal, onEvent } = control;
-      const ctx: TraitContext = { model };
+      const ctx: ProtocolHookContext = { model };
       let request: OpenAIResponsesRequestParams;
       try {
-        const policy = trait?.toolCallIdPolicy?.(ctx) ?? OPENAI_RESPONSES_TOOL_CALL_ID_POLICY;
+        const policy = wiring?.dialect?.toolCallIdPolicy?.(ctx) ?? OPENAI_RESPONSES_TOOL_CALL_ID_POLICY;
         request = openAIResponsesFormat.formatRequest({
           model,
           messages: normalizeToolCallIdsForProvider(messages, policy),
           systemPrompt,
           tools,
-          trait,
+          dialect: wiring?.dialect,
+          policy: wiring?.policy,
           ctx,
           cacheKey: config.cacheKey,
           thinking: config.thinking,
@@ -131,11 +133,11 @@ export function createOpenAIResponsesRequester(
         return;
       }
       try {
-        await internalGenerate(request, { trait, ctx, resolveClient, signal, onEvent });
+        await internalGenerate(request, { wiring, ctx, resolveClient, signal, onEvent });
       } catch (error) {
         onEvent?.({
           type: 'llm.failed.remote',
-          error: convertOpenAIError(error, (e) => trait?.convertError?.(e, ctx)),
+          error: convertOpenAIError(error, (e) => wiring?.connection?.convertError?.(e, ctx)),
         });
       }
     },

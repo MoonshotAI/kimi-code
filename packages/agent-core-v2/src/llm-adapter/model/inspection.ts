@@ -371,7 +371,7 @@ export function assembleModelInspection(args: {
                     baseProtocol: definition.baseProtocol,
                     modelSource: definition.modelSource,
                     hostHeaders: definition.hostHeaders,
-                    endpoint: definition.endpoint,
+                    endpoint: definition.connection?.endpoint?.(),
                   }),
             },
     },
