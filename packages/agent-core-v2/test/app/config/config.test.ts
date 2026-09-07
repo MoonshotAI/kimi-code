@@ -1452,7 +1452,7 @@ describe('malformed model entries', () => {
       severity: 'warning',
       message:
         "[models] entry 'junk' has no usable model name and cannot be used as a model; " +
-        'if the alias contains dots, quote the table name (e.g. [models."junk"]).',
+        "add a nonblank 'model' (or 'name') field to make it usable.",
     });
 
     disposables.dispose();
@@ -1468,7 +1468,7 @@ describe('malformed model entries', () => {
       severity: 'warning',
       message:
         "[models] entry 'foo.bar' has no usable model name and cannot be used as a model; " +
-        'if the alias contains dots, quote the table name (e.g. [models."foo.bar"]).',
+        "add a nonblank 'model' (or 'name') field, and quote the table name if the alias contains dots (e.g. [models.\"foo.bar\"]).",
     });
 
     disposables.dispose();
@@ -1484,7 +1484,7 @@ describe('malformed model entries', () => {
       severity: 'warning',
       message:
         "[models] entry 'blank' has no usable model name and cannot be used as a model; " +
-        'if the alias contains dots, quote the table name (e.g. [models."blank"]).',
+        "add a nonblank 'model' (or 'name') field to make it usable.",
     });
 
     disposables.dispose();
@@ -1500,7 +1500,7 @@ describe('malformed model entries', () => {
       severity: 'warning',
       message:
         "[models] entry 'shadowed' has no usable model name and cannot be used as a model; " +
-        'if the alias contains dots, quote the table name (e.g. [models."shadowed"]).',
+        "add a nonblank 'model' (or 'name') field to make it usable.",
     });
 
     disposables.dispose();
@@ -1516,7 +1516,7 @@ describe('malformed model entries', () => {
       severity: 'warning',
       message:
         "[models] entry 'foo' has no usable model name and cannot be used as a model; " +
-        'if the alias contains dots, quote the table name (e.g. [models."foo"]).',
+        "add a nonblank 'model' (or 'name') field to make it usable.",
     });
     expect(config.diagnostics()).toHaveLength(1);
 
@@ -1533,7 +1533,7 @@ describe('malformed model entries', () => {
       severity: 'warning',
       message:
         "[models] entry 'foo' has no usable model name and cannot be used as a model; " +
-        'if the alias contains dots, quote the table name (e.g. [models."foo"]).',
+        "add a nonblank 'model' (or 'name') field to make it usable.",
     });
     expect(config.diagnostics()).toHaveLength(1);
 
@@ -1557,7 +1557,7 @@ describe('malformed model entries', () => {
       severity: 'warning',
       message:
         "[models] entry 'openai.bad' has no usable model name and cannot be used as a model; " +
-        'if the alias contains dots, quote the table name (e.g. [models."openai.bad"]).',
+        "add a nonblank 'model' (or 'name') field, and quote the table name if the alias contains dots (e.g. [models.\"openai.bad\"]).",
     });
     expect(config.diagnostics()).toHaveLength(2);
 
@@ -1626,7 +1626,7 @@ describe('malformed model entries', () => {
       severity: 'warning',
       message:
         "[models] entry 'foo' has no usable model name and cannot be used as a model; " +
-        'if the alias contains dots, quote the table name (e.g. [models."foo"]).',
+        "add a nonblank 'model' (or 'name') field to make it usable.",
     });
     expect(config.diagnostics()).toContainEqual({
       domain: MODELS_SECTION,
@@ -1679,7 +1679,7 @@ describe('malformed model entries', () => {
         severity: 'warning',
         message:
           "[models] entry 'foo' has no usable model name and cannot be used as a model; " +
-          'if the alias contains dots, quote the table name (e.g. [models."foo"]).',
+          "add a nonblank 'model' (or 'name') field to make it usable.",
       },
     ]);
 
@@ -1696,7 +1696,7 @@ describe('malformed model entries', () => {
       severity: 'warning',
       message:
         "[models] entry 'foo' has no usable model name and cannot be used as a model; " +
-        'if the alias contains dots, quote the table name (e.g. [models."foo"]).',
+        "add a nonblank 'model' (or 'name') field to make it usable.",
     });
     expect(config.diagnostics()).toContainEqual({
       domain: MODELS_SECTION,
@@ -1720,8 +1720,8 @@ describe('malformed model entries', () => {
         domain: MODELS_SECTION,
         severity: 'warning',
         message:
-          '[models] entry \'foo.bar"baz\' has no usable model name and cannot be used as a model; ' +
-          'if the alias contains dots, quote the table name (e.g. [models."foo.bar\\"baz"]).',
+          '[models] entry \'foo.bar\\"baz\' has no usable model name and cannot be used as a model; ' +
+          "add a nonblank 'model' (or 'name') field to make it usable.",
       },
     ]);
 
@@ -1739,19 +1739,27 @@ describe('malformed model entries', () => {
         severity: 'warning',
         message:
           "[models] entry 'foo.bar' has no usable model name and cannot be used as a model; " +
-          'if the alias contains dots, quote the table name (e.g. [models."foo.bar"]).',
+          "add a nonblank 'model' (or 'name') field, and quote the table name if the alias contains dots (e.g. [models.\"foo.bar\"]).",
       },
     ]);
 
     disposables.dispose();
   });
 
-  it('ignores name-bearing passthrough objects of a valid model', async () => {
+  it('detects name-only aliases beneath usable models', async () => {
     const { config, disposables } = await createConfig(
-      '[models.foo]\nmodel = "foo"\nmax_context_size = 128000\n\n[models.foo.metadata]\nname = "deployment"\n',
+      '[models.foo]\nmodel = "foo"\nmax_context_size = 128000\n\n[models.foo.bar]\nname = "bar"\n',
     );
 
-    expect(config.diagnostics()).toEqual([]);
+    expect(config.diagnostics()).toEqual([
+      {
+        domain: MODELS_SECTION,
+        severity: 'warning',
+        message:
+          "[models] entry 'foo.bar' is nested under 'foo' and cannot be used as a model; " +
+          'if the alias contains dots, quote the table name (e.g. [models."foo.bar"]).',
+      },
+    ]);
 
     disposables.dispose();
   });
@@ -1766,8 +1774,26 @@ describe('malformed model entries', () => {
         domain: MODELS_SECTION,
         severity: 'warning',
         message:
-          '[models] entry \'foo.\u001bbar\' has no usable model name and cannot be used as a model; ' +
-          'if the alias contains dots, quote the table name (e.g. [models."foo.\\u001Bbar"]).',
+          "[models] entry 'foo.\\u001Bbar' has no usable model name and cannot be used as a model; " +
+          "add a nonblank 'model' (or 'name') field to make it usable.",
+      },
+    ]);
+
+    disposables.dispose();
+  });
+
+  it('escapes special characters in the suggested nested table name', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.foo.\'ba"z\']\nnote = "junk"\n',
+    );
+
+    expect(config.diagnostics()).toEqual([
+      {
+        domain: MODELS_SECTION,
+        severity: 'warning',
+        message:
+          '[models] entry \'foo.ba\\"z\' has no usable model name and cannot be used as a model; ' +
+          "add a nonblank 'model' (or 'name') field, and quote the table name if the alias contains dots (e.g. [models.\"foo.ba\\\"z\"]).",
       },
     ]);
 

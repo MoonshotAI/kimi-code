@@ -51,11 +51,6 @@ function subtreeHasModelName(entry: Record<string, unknown>): boolean {
   return childTables(entry).some(([, value]) => subtreeHasModelName(value));
 }
 
-function subtreeHasModelKey(entry: Record<string, unknown>): boolean {
-  if (entry['model'] !== undefined) return true;
-  return childTables(entry).some(([, value]) => subtreeHasModelKey(value));
-}
-
 function tomlBasicString(value: string): string {
   let out = '';
   for (const ch of value) {
@@ -87,19 +82,23 @@ function nestedModelDiagnostic(path: readonly string[]): ConfigDiagnostic {
     domain: 'models',
     severity: 'warning',
     message:
-      `[models] entry '${full}' is nested under '${path[0]}' and cannot be used as a model; ` +
+      `[models] entry '${tomlBasicString(full)}' is nested under '${tomlBasicString(path[0]!)}' and cannot be used as a model; ` +
       `if the alias contains dots, quote the table name (e.g. [models."${tomlBasicString(full)}"]).`,
   };
 }
 
 function missingNameDiagnostic(path: readonly string[]): ConfigDiagnostic {
   const full = path.join('.');
+  const remedy =
+    path.length === 1
+      ? `add a nonblank 'model' (or 'name') field to make it usable.`
+      : `add a nonblank 'model' (or 'name') field, and quote the table name if the alias contains dots (e.g. [models."${tomlBasicString(full)}"]).`;
   return {
     domain: 'models',
     severity: 'warning',
     message:
-      `[models] entry '${full}' has no usable model name and cannot be used as a model; ` +
-      `if the alias contains dots, quote the table name (e.g. [models."${tomlBasicString(full)}"]).`,
+      `[models] entry '${tomlBasicString(full)}' has no usable model name and cannot be used as a model; ` +
+      remedy,
   };
 }
 
@@ -122,10 +121,10 @@ function walkModelEntry(
       continue;
     }
     if (usable) {
-      if (!subtreeHasModelKey(value)) continue;
+      if (!subtreeHasModelName(value)) continue;
       if (isModelShaped(value)) {
         diagnostics.push(nestedModelDiagnostic(childPath));
-      } else if (value['model'] !== undefined) {
+      } else if (hasModelNameKey(value)) {
         diagnostics.push(missingNameDiagnostic(childPath));
       }
       walkModelEntry(childPath, value, diagnostics);
