@@ -497,6 +497,46 @@ describe('GlobalSearchService', () => {
     expect((await reader.search({ query: 'needle' })).items).toHaveLength(2);
   });
 
+  it('bounds outstanding source checks across timed-out searches and verifies fresh state after recovery', async () => {
+    const s1 = summary('s1', 'one', T1);
+    await writeWire(home!, s1.id, 'main', [userLine('needle body', T1)]);
+    const writer = track(makeInlineService(home!, staticIndex([s1])));
+    await writer.reindex();
+    const reader = track(makeInlineService(home!, staticIndex([s1])));
+    await settleSync(reader);
+    writer.queryDeadlineMs = 30;
+    reader.queryDeadlineMs = 30;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let calls = 0;
+    const dir = join(home!, 'sessions', WS, s1.id);
+    const original = fs.stat.bind(fs);
+    const intercept = vi.spyOn(fs, 'stat').mockImplementation((async (path, options) => {
+      const result = await original(path, options);
+      if (path === dir && options?.bigint === true) {
+        calls++;
+        await gate;
+      }
+      return result;
+    }) as typeof fs.stat);
+    syncBuiltinESMExports();
+    try {
+      expect(await reader.search({ query: 'needle' })).toMatchObject({ incomplete: 'deadline', items: [] });
+      const pages = await Promise.all(Array.from({ length: 8 }, (_, i) =>
+        (i % 2 === 0 ? reader : writer).search({ query: 'needle' })));
+      for (const page of pages) expect(page).toMatchObject({ incomplete: 'deadline', items: [] });
+      expect(calls).toBe(1);
+      await rm(dir, { recursive: true });
+      release();
+      expect((await reader.search({ query: 'needle' })).items).toEqual([]);
+    } finally {
+      release();
+      intercept.mockRestore();
+      syncBuiltinESMExports();
+    }
+    expect((await writer.search({ query: 'needle' })).items).toEqual([]);
+  });
+
   it('fails a query when its session source cannot be verified', async () => {
     const s1 = summary('s1', 'one', T1);
     await writeWire(home!, s1.id, 'main', [userLine('needle body', T1)]);
@@ -3272,4 +3312,3 @@ describe('search lifecycle diagnostics (stage 5)', () => {
     expect(status.degraded).toContain('worker');
   });
 });
-
