@@ -72,8 +72,12 @@ import { IAuthLegacyService } from '#/app/authLegacy/authLegacy';
 import { AuthLegacyService } from '#/app/authLegacy/authLegacyService';
 import { type ThinkingConfig } from '#/llm-adapter/model/thinking';
 import {
+  BASH_TASK_TIMEOUT_S_ENV,
   KEEP_ALIVE_ON_EXIT_ENV,
   MAX_RUNNING_TASKS_ENV,
+  PRINT_BACKGROUND_MODE_ENV,
+  PRINT_MAX_TURNS_ENV,
+  PRINT_WAIT_CEILING_S_ENV,
   resolveAgentTaskConfig,
   resolvePrintBackgroundMode,
   type AgentTaskConfig,
@@ -1586,6 +1590,82 @@ describe('task config section', () => {
 
     disposables.dispose();
   });
+
+  it('applies the bashTaskTimeoutS env binding, accepting 0 as no timeout', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = await createTaskConfig(env);
+
+    expect(config.get<AgentTaskConfig>('task')?.bashTaskTimeoutS).toBeUndefined();
+
+    env[BASH_TASK_TIMEOUT_S_ENV] = 'abc';
+    expect(config.get<AgentTaskConfig>('task')?.bashTaskTimeoutS).toBeUndefined();
+    env[BASH_TASK_TIMEOUT_S_ENV] = '-5';
+    expect(config.get<AgentTaskConfig>('task')?.bashTaskTimeoutS).toBeUndefined();
+
+    env[BASH_TASK_TIMEOUT_S_ENV] = '0';
+    expect(config.get<AgentTaskConfig>('task')?.bashTaskTimeoutS).toBe(0);
+    expect(config.get<AgentTaskConfig>('background')?.bashTaskTimeoutS).toBe(0);
+
+    env[BASH_TASK_TIMEOUT_S_ENV] = '30';
+    expect(config.get<AgentTaskConfig>('task')?.bashTaskTimeoutS).toBe(30);
+
+    disposables.dispose();
+  });
+
+  it('applies the print policy env bindings and ignores invalid values', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = await createTaskConfig(env);
+
+    env[PRINT_WAIT_CEILING_S_ENV] = '0';
+    expect(config.get<AgentTaskConfig>('task')?.printWaitCeilingS).toBeUndefined();
+    env[PRINT_WAIT_CEILING_S_ENV] = '3600';
+    expect(config.get<AgentTaskConfig>('task')?.printWaitCeilingS).toBe(3600);
+
+    env[PRINT_MAX_TURNS_ENV] = 'abc';
+    expect(config.get<AgentTaskConfig>('task')?.printMaxTurns).toBeUndefined();
+    env[PRINT_MAX_TURNS_ENV] = '7';
+    expect(config.get<AgentTaskConfig>('task')?.printMaxTurns).toBe(7);
+
+    env[PRINT_BACKGROUND_MODE_ENV] = 'wait';
+    expect(resolvePrintBackgroundMode(config)).toBe('steer');
+    env[PRINT_BACKGROUND_MODE_ENV] = 'exit';
+    expect(resolvePrintBackgroundMode(config)).toBe('exit');
+    env[PRINT_BACKGROUND_MODE_ENV] = ' drain ';
+    expect(resolvePrintBackgroundMode(config)).toBe('drain');
+
+    disposables.dispose();
+  });
+
+  it('lets the print policy env bindings override the config values', async () => {
+    const env: Record<string, string> = {
+      [PRINT_BACKGROUND_MODE_ENV]: 'exit',
+      [PRINT_WAIT_CEILING_S_ENV]: '3600',
+    };
+    const { config, disposables } = await createTaskConfig(
+      env,
+      '[task]\nprint_background_mode = "drain"\nprint_wait_ceiling_s = 60\n',
+    );
+
+    expect(resolvePrintBackgroundMode(config)).toBe('exit');
+    expect(resolveAgentTaskConfig(config)?.printWaitCeilingS).toBe(3600);
+
+    disposables.dispose();
+  });
+
+  it('ignores unsafe integers without discarding sibling env bindings', async () => {
+    const env: Record<string, string> = {
+      [BASH_TASK_TIMEOUT_S_ENV]: '9007199254740992',
+      [PRINT_WAIT_CEILING_S_ENV]: '9007199254740992',
+      [PRINT_BACKGROUND_MODE_ENV]: 'exit',
+    };
+    const { config, disposables } = await createTaskConfig(env);
+
+    expect(config.get<AgentTaskConfig>('task')?.bashTaskTimeoutS).toBeUndefined();
+    expect(config.get<AgentTaskConfig>('task')?.printWaitCeilingS).toBeUndefined();
+    expect(resolvePrintBackgroundMode(config)).toBe('exit');
+
+    disposables.dispose();
+  });
 });
 
 describe('applyPrintModeConfigDefaults', () => {
@@ -1658,6 +1738,19 @@ describe('applyPrintModeConfigDefaults', () => {
     await applyPrintModeConfigDefaults(config);
 
     expect(resolveAgentTaskConfig(config)?.bashTaskTimeoutS).toBe(15);
+
+    disposables.dispose();
+  });
+
+  it('does not override keys set via env bindings', async () => {
+    const { config, disposables } = await createConfig({
+      [BASH_TASK_TIMEOUT_S_ENV]: '30',
+    });
+
+    await applyPrintModeConfigDefaults(config);
+
+    expect(resolveAgentTaskConfig(config)?.bashTaskTimeoutS).toBe(30);
+    expect(config.inspect('task').memoryValue).toBeUndefined();
 
     disposables.dispose();
   });
