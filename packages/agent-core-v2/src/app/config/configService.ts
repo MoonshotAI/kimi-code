@@ -38,7 +38,7 @@ import {
   getConfigSectionContributions,
 } from './configSectionContributions';
 import { getConfigOverlayContributions } from './configOverlayContributions';
-import { collectKeyDeprecations } from './deprecations';
+import { collectKeyDeprecations, collectMalformedModelEntries } from './deprecations';
 import { migrateThinkingEffortMaxToHigh } from './migrations';
 import {
   applySectionToToml,
@@ -545,6 +545,9 @@ export class ConfigService extends Disposable implements IConfigService {
     this.tainted = failed;
     const nextRawSnake = cloneRecord(fileData);
     for (const diagnostic of collectKeyDeprecations(nextRawSnake, this.registry.listSections())) {
+      this.pushDiagnostic(diagnostic);
+    }
+    for (const diagnostic of collectMalformedModelEntries(nextRawSnake)) {
       this.pushDiagnostic(diagnostic);
     }
     if (source !== 'load' && JSON.stringify(nextRawSnake) === JSON.stringify(this.rawSnake)) {

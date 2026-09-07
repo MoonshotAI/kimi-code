@@ -2,6 +2,26 @@ import type { ConfigDiagnostic, ConfigSection } from './config';
 import { isPlainObject } from './configPure';
 import { camelToSnake } from './toml';
 
+export function collectMalformedModelEntries(
+  rawSnake: Record<string, unknown>,
+): ConfigDiagnostic[] {
+  const diagnostics: ConfigDiagnostic[] = [];
+  const rawSection = rawSnake['models'];
+  if (!isPlainObject(rawSection)) return diagnostics;
+  for (const [alias, entry] of Object.entries(rawSection)) {
+    if (!isPlainObject(entry)) continue;
+    if (entry['model'] !== undefined || entry['name'] !== undefined) continue;
+    diagnostics.push({
+      domain: 'models',
+      severity: 'warning',
+      message:
+        `[models] entry '${alias}' is missing the 'model' field and cannot be used as a model; ` +
+        `if the alias contains dots, quote the table name (e.g. [models."${alias}"]).`,
+    });
+  }
+  return diagnostics;
+}
+
 export function collectKeyDeprecations(
   rawSnake: Record<string, unknown>,
   sections: readonly ConfigSection[],

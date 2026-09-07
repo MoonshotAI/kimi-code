@@ -1374,6 +1374,76 @@ describe('config deprecations', () => {
   });
 });
 
+describe('malformed model entries', () => {
+  async function createConfig(toml: string) {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    await storage.write('', 'config.toml', new TextEncoder().encode(toml));
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', {}));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    return { config, disposables };
+  }
+
+  it('warns when an unquoted dotted table name leaves an entry without a model field', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.kimi-k2.7-code]\nprovider = "local"\nmodel = "kimi-k2.7-code"\nmax_context_size = 262144\n',
+    );
+
+    expect(config.diagnostics()).toContainEqual({
+      domain: MODELS_SECTION,
+      severity: 'warning',
+      message:
+        "[models] entry 'kimi-k2' is missing the 'model' field and cannot be used as a model; " +
+        'if the alias contains dots, quote the table name (e.g. [models."kimi-k2"]).',
+    });
+    expect(
+      config.get<Record<string, unknown>>(MODELS_SECTION),
+    ).toHaveProperty('kimi-k2');
+
+    disposables.dispose();
+  });
+
+  it('does not warn when the model field is present', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.good]\nmodel = "good-model"\nmax_context_size = 128000\n',
+    );
+
+    expect(config.diagnostics()).toEqual([]);
+
+    disposables.dispose();
+  });
+
+  it('does not warn when only the name field is present', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.good]\nname = "good-model"\nmax_context_size = 128000\n',
+    );
+
+    expect(config.diagnostics()).toEqual([]);
+
+    disposables.dispose();
+  });
+
+  it('does not warn for a quoted dotted table name with a model field', async () => {
+    const { config, disposables } = await createConfig(
+      '[models."kimi-k2.7-code"]\nprovider = "local"\nmodel = "kimi-k2.7-code"\nmax_context_size = 262144\n',
+    );
+
+    expect(config.diagnostics()).toEqual([]);
+    expect(
+      config.get<Record<string, unknown>>(MODELS_SECTION),
+    ).toHaveProperty('kimi-k2.7-code');
+
+    disposables.dispose();
+  });
+});
+
 describe('task config section', () => {
   it('re-applies the keepAliveOnExit env binding on every get()', async () => {
     const env: Record<string, string> = {};
