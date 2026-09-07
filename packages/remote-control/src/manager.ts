@@ -111,9 +111,15 @@ export function createRemoteControlManager(
 ): RemoteControlManager {
   const actor = createActor(
     createRemoteControlMachine(options, (handle) => {
-      void handle.closed.then(() => {
-        actor.send({ type: 'tunnel.exited' });
-      });
+      void handle.closed.then(
+        () => {
+          actor.send({ type: 'tunnel.exited' });
+        },
+        (error) => {
+          options.stderr?.write(`remote-control lock release failed: ${errorMessage(error)}\n`);
+          actor.send({ type: 'tunnel.exited' });
+        },
+      );
     }),
   );
   actor.start();

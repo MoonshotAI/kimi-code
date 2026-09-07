@@ -86,7 +86,7 @@ export type RemoteControlStatus =
 export interface RemoteControlOptions {
   readonly homeDir: string;
   readonly localOrigin: string;
-  readonly localServerToken: string;
+  readonly localServerToken: string | (() => string);
   readonly clientVersion: string;
   readonly relayOrigin?: string;
   readonly stderr?: Pick<NodeJS.WriteStream, 'write'>;
@@ -220,7 +220,11 @@ export function rewriteRemoteControlResponse(
 export async function startRemoteControl(
   options: RemoteControlOptions,
 ): Promise<RemoteControlHandle> {
-  if (options.localServerToken.length === 0) {
+  const localServerToken =
+    typeof options.localServerToken === 'function'
+      ? options.localServerToken
+      : () => options.localServerToken as string;
+  if (localServerToken().length === 0) {
     throw new Error('Remote Control requires local server authentication.');
   }
   const storage = new FileTokenStorage(join(options.homeDir, 'credentials'));
@@ -241,6 +245,7 @@ export async function startRemoteControl(
   });
   const client = new RemoteControlClient({
     ...options,
+    localServerToken,
     relayOrigin,
     deviceId,
     refreshToken: token.refreshToken,
@@ -251,8 +256,9 @@ export async function startRemoteControl(
     await lock.release();
     throw error;
   }
-  const closed = client.closed;
-  void closed.then(() => lock.release());
+  const closed = client.closed.then(async () => {
+    await lock.release();
+  });
   return {
     deviceId,
     deviceName,
@@ -260,14 +266,14 @@ export async function startRemoteControl(
     closed,
     close: async () => {
       await client.close();
-      await lock.release();
+      await closed;
     },
   };
 }
 
 class RemoteControlClient {
   private readonly localOrigin: string;
-  private readonly localServerToken: string;
+  private readonly localServerToken: () => string;
   private readonly clientVersion: string;
   private readonly relayOrigin: string;
   private readonly deviceId: string;
@@ -292,7 +298,8 @@ class RemoteControlClient {
   private initialReject: ((error: unknown) => void) | undefined;
 
   constructor(
-    options: RemoteControlOptions & {
+    options: Omit<RemoteControlOptions, 'localServerToken'> & {
+      readonly localServerToken: () => string;
       readonly relayOrigin: string;
       readonly deviceId: string;
       readonly refreshToken: string;
@@ -531,7 +538,7 @@ class RemoteControlClient {
       const response = await requestLocalHttp(
         this.localOrigin,
         parsed,
-        this.localServerToken,
+        this.localServerToken(),
         this.publicPrefix(),
       );
       this.sendHttpResponse(requestId, response);
@@ -570,7 +577,7 @@ class RemoteControlClient {
     try {
       local = await connectWebSocket(
         localWebSocketUrl(this.localOrigin, path),
-        this.localServerToken,
+        this.localServerToken(),
         relayHeaders(payload['headers']),
         earlyLocalFrames,
       );

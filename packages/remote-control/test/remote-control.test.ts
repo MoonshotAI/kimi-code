@@ -337,10 +337,11 @@ describe('Remote Control tunnel', () => {
 
     let handle: RemoteControlHandle | undefined;
     cleanups.push(async () => handle?.close());
+    let currentToken = 'local-server-token';
     handle = await startRemoteControl({
       homeDir,
       localOrigin: `http://127.0.0.1:${localPort}`,
-      localServerToken: 'local-server-token',
+      localServerToken: () => currentToken,
       clientVersion: CLIENT_VERSION,
       relayOrigin: `http://127.0.0.1:${relayPort}/coding-relay`,
       stderr: { write: () => true },
@@ -386,6 +387,19 @@ describe('Remote Control tunnel', () => {
     expect(response).toContain('Cache-Control: no-cache');
     expect(response).toContain(`/coding-relay/devices/${handle.deviceId}/boot.js`);
 
+    currentToken = 'rotated-server-token';
+    const rotatedResponsePromise = nextJsonMessage(httpConnections[0]!);
+    httpConnections[0]!.send(
+      JSON.stringify({
+        request_id: 'request-2',
+        type: 'request',
+        is_last: true,
+        body_base64: rawRequest.toString('base64'),
+      }),
+    );
+    await rotatedResponsePromise;
+    await waitFor(() => localHttpRequest?.headers.authorization === 'Bearer rotated-server-token');
+
     managementConnections[0]!.send(
       JSON.stringify({
         type: 'open_ws',
@@ -398,7 +412,7 @@ describe('Remote Control tunnel', () => {
     );
     await waitFor(() => streamConnections.length === 1 && localWs !== undefined);
     expect(localWsRequest?.headers['sec-websocket-protocol']).toBe(
-      'kimi-code.bearer.local-server-token',
+      'kimi-code.bearer.rotated-server-token',
     );
     expect(localWsRequest?.headers.authorization).toBeUndefined();
     expect(localWsRequest?.headers.cookie).toBeUndefined();
@@ -584,7 +598,7 @@ describe('Remote Control single-instance lock', () => {
       JSON.stringify({ type: 'disconnect', payload: { reason: 'user_requested' } }),
     );
     await second.closed;
-    await waitFor(() => !existsSync(remoteControlLockPath(homeDir)));
+    expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
   });
 
   it('does not remove a successor lock when closing', async () => {
