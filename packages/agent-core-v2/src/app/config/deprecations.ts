@@ -2,8 +2,12 @@ import type { ConfigDiagnostic, ConfigSection } from './config';
 import { isPlainObject } from './configPure';
 import { camelToSnake } from './toml';
 
+function isUsableName(value: unknown): boolean {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
 function isModelShaped(entry: Record<string, unknown>): boolean {
-  return entry['model'] !== undefined || entry['name'] !== undefined;
+  return isUsableName(entry['model']) || isUsableName(entry['name']);
 }
 
 function collectNestedModelPaths(
@@ -20,6 +24,17 @@ function collectNestedModelPaths(
     found.push(...collectNestedModelPaths(value, [...path, key]));
   }
   return found;
+}
+
+function collectLeafPaths(
+  entry: Record<string, unknown>,
+  path: readonly string[],
+): (readonly string[])[] {
+  const children = Object.entries(entry).filter(([, value]) => isPlainObject(value));
+  if (children.length === 0) return [path];
+  return children.flatMap(([key, value]) =>
+    collectLeafPaths(value as Record<string, unknown>, [...path, key]),
+  );
 }
 
 export function collectMalformedModelEntries(
@@ -42,13 +57,16 @@ export function collectMalformedModelEntries(
       });
     }
     if (nestedPaths.length > 0 || isModelShaped(entry)) continue;
-    diagnostics.push({
-      domain: 'models',
-      severity: 'warning',
-      message:
-        `[models] entry '${alias}' is missing the 'model' field and cannot be used as a model; ` +
-        `if the alias contains dots, quote the table name (e.g. [models."${alias}"]).`,
-    });
+    for (const leafPath of collectLeafPaths(entry, [alias])) {
+      const full = leafPath.join('.');
+      diagnostics.push({
+        domain: 'models',
+        severity: 'warning',
+        message:
+          `[models] entry '${full}' is missing the 'model' field and cannot be used as a model; ` +
+          `if the alias contains dots, quote the table name (e.g. [models."${full}"]).`,
+      });
+    }
   }
   return diagnostics;
 }

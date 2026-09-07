@@ -1458,6 +1458,38 @@ describe('malformed model entries', () => {
     disposables.dispose();
   });
 
+  it('warns with the leaf path when a dotted leaf itself lacks the model field', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.foo.bar]\nprovider = "local"\nmax_context_size = 262144\n',
+    );
+
+    expect(config.diagnostics()).toContainEqual({
+      domain: MODELS_SECTION,
+      severity: 'warning',
+      message:
+        "[models] entry 'foo.bar' is missing the 'model' field and cannot be used as a model; " +
+        'if the alias contains dots, quote the table name (e.g. [models."foo.bar"]).',
+    });
+
+    disposables.dispose();
+  });
+
+  it('treats a blank model name as missing', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.blank]\nmodel = ""\nmax_context_size = 128000\n',
+    );
+
+    expect(config.diagnostics()).toContainEqual({
+      domain: MODELS_SECTION,
+      severity: 'warning',
+      message:
+        "[models] entry 'blank' is missing the 'model' field and cannot be used as a model; " +
+        'if the alias contains dots, quote the table name (e.g. [models."blank"]).',
+    });
+
+    disposables.dispose();
+  });
+
   it('warns for every nested model path sharing a prefix', async () => {
     const { config, disposables } = await createConfig(
       '[models.openai.gpt-4]\nmodel = "gpt-4"\n\n[models.openai.gpt-4o]\nmodel = "gpt-4o"\n',
