@@ -392,6 +392,10 @@ describe('GlobalSearchService', () => {
       await refreshNow(reader);
       expect((await reader.search({ query: 'replacement' })).items).toEqual([]);
       expect([...db.query({ key: { prefix: 's1/' } })]).toEqual([]);
+      expect(await writer.status()).toMatchObject({ sessions: 0, degraded: 'Skipped 1 session(s) during indexing' });
+      expect((await reader.search({ query: 'replacement' })).indexState).toMatchObject({
+        indexedSessions: 0, degraded: 'Skipped 1 session(s) during indexing',
+      });
     } finally {
       intercept.mockRestore();
       syncBuiltinESMExports();
@@ -399,6 +403,8 @@ describe('GlobalSearchService', () => {
     await settleSync(writer);
     await refreshNow(reader);
     expect((await reader.search({ query: 'replacement' })).items).toHaveLength(1);
+    expect(await writer.status()).toMatchObject({ sessions: 1, degraded: undefined });
+    expect((await reader.search({ query: 'replacement' })).indexState.degraded).toBeUndefined();
     expect((await reader.search({ query: 'original' })).items).toEqual([]);
   });
 

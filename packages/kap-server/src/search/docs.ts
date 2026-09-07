@@ -65,6 +65,7 @@ export interface SessionMetaDoc {
 
 export interface StatsDoc {
   readonly kind: 'stats';
+  readonly degraded?: string;
   readonly sessions: number;
   readonly documents: number;
   readonly lastIndexedAt: number;
