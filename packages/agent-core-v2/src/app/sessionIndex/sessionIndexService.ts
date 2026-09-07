@@ -163,7 +163,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     const published = manifest.sourceMaxMtimeMs;
     if (published === undefined) return false;
     try {
-      return (await scanSessionsMaxMtime(this.storage, this.sessionsScope)) <= published;
+      return (await scanSessionsMaxMtime(this.storage, this.sessionsScope, this.log)) <= published;
     } catch (error) {
       this.log.warn('session index freshness check failed; re-projecting', {
         error: String(error),

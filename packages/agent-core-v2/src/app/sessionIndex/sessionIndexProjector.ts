@@ -198,14 +198,14 @@ export class SessionIndexProjector {
   }
 
   private async scanAuthoritative(): Promise<AuthoritativeScan> {
-    const { storage, docs, sessionsScope } = this.deps;
+    const { storage, docs, sessionsScope, log } = this.deps;
     const summaries: SessionSummary[] = [];
     const counts = new Map<string, { active: number; archived: number }>();
     let sourceMaxMtimeMs = (await storage.mtime(SESSION_INDEX_SCOPE, SESSION_INDEX_KEY)) ?? 0;
     for (const workspaceId of await listWorkspaceIds(storage, sessionsScope)) {
       const sessionIds = await listSessionIds(storage, sessionsScope, workspaceId);
       const found = await mapBounded(sessionIds, SCAN_CONCURRENCY, async (sessionId) => {
-        const mtime = await sessionStateMaxMtime(storage, sessionsScope, workspaceId, sessionId);
+        const mtime = await sessionStateMaxMtime(storage, sessionsScope, workspaceId, sessionId, log);
         if (mtime > sourceMaxMtimeMs) sourceMaxMtimeMs = mtime;
         return readSessionSummary(docs, sessionsScope, workspaceId, sessionId);
       });
