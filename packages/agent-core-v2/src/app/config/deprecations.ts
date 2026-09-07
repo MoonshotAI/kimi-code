@@ -72,7 +72,10 @@ function tomlBasicString(value: string): string {
 function hasSchemaSettingsChild(entry: Record<string, unknown>): boolean {
   return Object.entries(entry).some(
     ([key, value]) =>
-      SCHEMA_CHILD_KEYS.has(key) && isPlainObject(value) && !isModelShaped(value),
+      SCHEMA_CHILD_KEYS.has(key) &&
+      isPlainObject(value) &&
+      !isModelShaped(value) &&
+      !hasModelNameKey(value),
   );
 }
 
@@ -114,6 +117,9 @@ function walkModelEntry(
     if (SCHEMA_CHILD_KEYS.has(key)) {
       if (isModelShaped(value)) {
         diagnostics.push(nestedModelDiagnostic(childPath));
+        walkModelEntry(childPath, value, diagnostics);
+      } else if (hasModelNameKey(value)) {
+        diagnostics.push(missingNameDiagnostic(childPath));
         walkModelEntry(childPath, value, diagnostics);
       } else if (subtreeHasModelName(value)) {
         walkModelEntry(childPath, value, diagnostics);

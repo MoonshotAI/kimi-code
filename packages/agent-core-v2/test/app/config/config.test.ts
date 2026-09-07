@@ -1764,6 +1764,40 @@ describe('malformed model entries', () => {
     disposables.dispose();
   });
 
+  it('diagnoses a blank identity beneath a schema-key segment', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.foo.overrides]\nmodel = " "\n',
+    );
+
+    expect(config.diagnostics()).toEqual([
+      {
+        domain: MODELS_SECTION,
+        severity: 'warning',
+        message:
+          "[models] entry 'foo.overrides' has no usable model name and cannot be used as a model; " +
+          "add a nonblank 'model' (or 'name') field, and quote the table name if the alias contains dots (e.g. [models.\"foo.overrides\"]).",
+      },
+    ]);
+
+    disposables.dispose();
+  });
+
+  it('withdraws the warning after the models section is repaired by a config write', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.kimi-k2.7-code]\nprovider = "local"\nmodel = "kimi-k2.7-code"\nmax_context_size = 262144\n',
+    );
+
+    expect(config.diagnostics()).toHaveLength(1);
+
+    await config.replace(MODELS_SECTION, {
+      'kimi-k2.7-code': { provider: 'local', model: 'kimi-k2.7-code', maxContextSize: 262144 },
+    });
+
+    expect(config.diagnostics()).toEqual([]);
+
+    disposables.dispose();
+  });
+
   it('escapes every TOML control character in suggested keys', async () => {
     const { config, disposables } = await createConfig(
       '[models."foo.\\u001Bbar"]\nnote = "junk"\n',

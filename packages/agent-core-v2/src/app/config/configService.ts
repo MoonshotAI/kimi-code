@@ -310,6 +310,7 @@ export class ConfigService extends Disposable implements IConfigService {
   private lastDiagnosticsSnapshot = '[]';
   private readonly configKey: string;
   private tainted = false;
+  private fileDiagnostics: ConfigDiagnostic[] = [];
 
   constructor(
     @IConfigRegistry private readonly registry: IConfigRegistry,
@@ -364,7 +365,14 @@ export class ConfigService extends Disposable implements IConfigService {
   }
 
   diagnostics(): readonly ConfigDiagnostic[] {
-    return [...this.diagnosticsList];
+    return [...this.fileDiagnostics, ...this.diagnosticsList];
+  }
+
+  private collectFileDiagnostics(rawSnake: ResolvedConfig): ConfigDiagnostic[] {
+    return [
+      ...collectKeyDeprecations(rawSnake, this.registry.listSections()),
+      ...collectMalformedModelEntries(rawSnake),
+    ];
   }
 
   private pushDiagnostic(diagnostic: ConfigDiagnostic): void {
@@ -378,7 +386,7 @@ export class ConfigService extends Disposable implements IConfigService {
   }
 
   private emitDiagnosticsIfChanged(): void {
-    const snapshot = JSON.stringify(this.diagnosticsList);
+    const snapshot = JSON.stringify([this.fileDiagnostics, this.diagnosticsList]);
     if (snapshot === this.lastDiagnosticsSnapshot) return;
     this.lastDiagnosticsSnapshot = snapshot;
     this._onDidChangeDiagnostics.fire(this.diagnostics());
@@ -544,12 +552,7 @@ export class ConfigService extends Disposable implements IConfigService {
     }
     this.tainted = failed;
     const nextRawSnake = cloneRecord(fileData);
-    for (const diagnostic of collectKeyDeprecations(nextRawSnake, this.registry.listSections())) {
-      this.pushDiagnostic(diagnostic);
-    }
-    for (const diagnostic of collectMalformedModelEntries(nextRawSnake)) {
-      this.pushDiagnostic(diagnostic);
-    }
+    this.fileDiagnostics = this.collectFileDiagnostics(nextRawSnake);
     if (source !== 'load' && JSON.stringify(nextRawSnake) === JSON.stringify(this.rawSnake)) {
       const scratch = { ...this.validated };
       this.applySectionEnvBindings(scratch, true);
@@ -572,6 +575,7 @@ export class ConfigService extends Disposable implements IConfigService {
     this.applySectionEnvBindings(next, true);
     this.applyEnvOverlay(next);
     this.effective = next;
+    this.fileDiagnostics = this.collectFileDiagnostics(this.rawSnake);
 
     const candidates = new Set(
       domains ?? [...Object.keys(previous), ...Object.keys(next)],
