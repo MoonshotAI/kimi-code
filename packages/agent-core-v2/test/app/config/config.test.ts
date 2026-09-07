@@ -1616,6 +1616,58 @@ describe('malformed model entries', () => {
     disposables.dispose();
   });
 
+  it('diagnoses a malformed root independently of nested model children', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.foo]\nprovider = "local"\n\n[models.foo.bar]\nmodel = "bar"\n',
+    );
+
+    expect(config.diagnostics()).toContainEqual({
+      domain: MODELS_SECTION,
+      severity: 'warning',
+      message:
+        "[models] entry 'foo' has no usable model name and cannot be used as a model; " +
+        'if the alias contains dots, quote the table name (e.g. [models."foo"]).',
+    });
+    expect(config.diagnostics()).toContainEqual({
+      domain: MODELS_SECTION,
+      severity: 'warning',
+      message:
+        "[models] entry 'foo.bar' is nested under 'foo' and cannot be used as a model; " +
+        'if the alias contains dots, quote the table name (e.g. [models."foo.bar"]).',
+    });
+    expect(config.diagnostics()).toHaveLength(2);
+
+    disposables.dispose();
+  });
+
+  it('traverses below a schema-key segment to find deeper nested aliases', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.foo]\nmodel = "foo"\nmax_context_size = 128000\n\n[models.foo.overrides.deep]\nmodel = "deep"\n',
+    );
+
+    expect(config.diagnostics()).toEqual([
+      {
+        domain: MODELS_SECTION,
+        severity: 'warning',
+        message:
+          "[models] entry 'foo.overrides.deep' is nested under 'foo' and cannot be used as a model; " +
+          'if the alias contains dots, quote the table name (e.g. [models."foo.overrides.deep"]).',
+      },
+    ]);
+
+    disposables.dispose();
+  });
+
+  it('ignores passthrough objects whose fields collide with model record keys', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.foo]\nmodel = "foo"\nmax_context_size = 128000\n\n[models.foo.metadata]\nprovider = "internal"\n',
+    );
+
+    expect(config.diagnostics()).toEqual([]);
+
+    disposables.dispose();
+  });
+
   it('warns for every nested model path sharing a prefix', async () => {
     const { config, disposables } = await createConfig(
       '[models.openai.gpt-4]\nmodel = "gpt-4"\n\n[models.openai.gpt-4o]\nmodel = "gpt-4o"\n',

@@ -46,9 +46,14 @@ function childTables(entry: Record<string, unknown>): [string, Record<string, un
   );
 }
 
-function subtreeHasAliasEvidence(entry: Record<string, unknown>): boolean {
+function subtreeHasModelName(entry: Record<string, unknown>): boolean {
+  if (hasModelNameKey(entry)) return true;
+  return childTables(entry).some(([, value]) => subtreeHasModelName(value));
+}
+
+function subtreeHasModelField(entry: Record<string, unknown>): boolean {
   if (hasModelNameKey(entry) || hasModelRecordField(entry)) return true;
-  return childTables(entry).some(([, value]) => subtreeHasAliasEvidence(value));
+  return childTables(entry).some(([, value]) => subtreeHasModelField(value));
 }
 
 function nestedModelDiagnostic(path: readonly string[]): ConfigDiagnostic {
@@ -78,27 +83,32 @@ function walkModelEntry(
   entry: Record<string, unknown>,
   diagnostics: ConfigDiagnostic[],
 ): void {
-  let emitted = 0;
+  const usable = isModelShaped(entry);
   for (const [key, value] of childTables(entry)) {
     const childPath = [...path, key];
     if (SCHEMA_CHILD_KEYS.has(key)) {
-      if (!isModelShaped(value)) continue;
-      diagnostics.push(nestedModelDiagnostic(childPath));
-      emitted++;
-      walkModelEntry(childPath, value, diagnostics);
+      if (isModelShaped(value)) {
+        diagnostics.push(nestedModelDiagnostic(childPath));
+        walkModelEntry(childPath, value, diagnostics);
+      } else if (subtreeHasModelName(value)) {
+        walkModelEntry(childPath, value, diagnostics);
+      }
       continue;
     }
-    if (!subtreeHasAliasEvidence(value)) continue;
+    const hasEvidence = usable ? subtreeHasModelName(value) : subtreeHasModelField(value);
+    if (!hasEvidence) continue;
     if (isModelShaped(value)) {
       diagnostics.push(nestedModelDiagnostic(childPath));
-      emitted++;
-    } else if (hasModelNameKey(value) || hasModelRecordField(value)) {
+    } else if (hasModelNameKey(value) || (!usable && hasModelRecordField(value))) {
       diagnostics.push(missingNameDiagnostic(childPath));
-      emitted++;
     }
     walkModelEntry(childPath, value, diagnostics);
   }
-  if (path.length === 1 && !isModelShaped(entry) && emitted === 0) {
+  if (
+    path.length === 1 &&
+    !usable &&
+    (hasModelNameKey(entry) || hasModelRecordField(entry) || childTables(entry).length === 0)
+  ) {
     diagnostics.push(missingNameDiagnostic(path));
   }
 }
