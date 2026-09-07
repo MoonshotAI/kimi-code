@@ -78,7 +78,7 @@ function createTestAgentMachine(
 ) {
   return createAgentMachine({
     tools,
-    turnActor: createTurnMachine(createLlmMachine({ requester, retry })),
+    turnActor: createTurnMachine(createLlmMachine({ requester }), { retry }),
     abortTimeoutMs,
   });
 }
@@ -942,8 +942,8 @@ describe('agent machine llm retry', () => {
 
     const delayMs = retrying[0]?.delayMs ?? 0;
     expect(timingPlugin.timing()).toEqual({
-      requestBuildMs: 100000 - 1200 - delayMs,
-      ttftMs: 100100 - 1200 - delayMs,
+      requestBuildMs: 100000 - (1200 + delayMs),
+      ttftMs: 100100 - (1200 + delayMs),
       serverFirstTokenMs: 100,
       streamDurationMs: 100,
       serverDecodeMs: 60,

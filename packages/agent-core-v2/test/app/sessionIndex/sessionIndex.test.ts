@@ -1463,9 +1463,9 @@ describe('FileSessionIndex (read model)', () => {
     const collection = sessionCollection(1);
 
     const seedRows = async (from: number, to: number): Promise<void> => {
-      for (let start = from; start < to; start += 500) {
+      for (let start = from; start < to; start += 5_000) {
         const ops = [];
-        for (let i = start; i < Math.min(start + 500, to); i++) {
+        for (let i = start; i < Math.min(start + 5_000, to); i++) {
           ops.push({
             kind: 'put' as const,
             collection,

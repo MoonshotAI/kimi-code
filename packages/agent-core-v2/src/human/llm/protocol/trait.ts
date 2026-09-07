@@ -18,7 +18,7 @@ export interface ProtocolEndpoint {
 export interface ProtocolTrait {
   readonly strictThinkingValidation?: boolean;
 
-  endpoint?(): ProtocolEndpoint | undefined;
+  endpoint?(ctx?: TraitContext): ProtocolEndpoint | undefined;
 
   defaultHeaders?(ctx: TraitContext): Record<string, string> | undefined;
 
@@ -82,7 +82,7 @@ export function resolveModelConnection(
   model: LlmModel,
   trait: ProtocolTrait | undefined,
 ): LlmModel {
-  const declaration = trait?.endpoint?.();
+  const declaration = trait?.endpoint?.({ model });
   if (declaration === undefined) {
     return model;
   }

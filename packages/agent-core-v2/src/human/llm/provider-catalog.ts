@@ -36,7 +36,6 @@ export interface CatalogModelDefinition extends LlmModel {
   readonly protocol?: ProtocolName;
   readonly defaultEffort?: string;
   readonly adaptiveThinking?: boolean;
-  readonly betaApi?: boolean;
   readonly name?: string;
   readonly aliases?: readonly string[];
   readonly oauth?: CatalogOAuthRef;
@@ -639,6 +638,7 @@ function mergeModel(
     defaultEffort: record.defaultEffort,
     adaptiveThinking: record.adaptiveThinking,
     betaApi: record.betaApi,
+    vertexai: record.vertexai,
     name: record.name,
     aliases: record.aliases,
     oauth: record.oauth,

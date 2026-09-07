@@ -456,6 +456,39 @@ describe('plan', () => {
     expect(missionFile).toContain('- [ ] implement');
   });
 
+  it('carries the mission context into state and renders it in the mission file', async () => {
+    const [mission] = await store.plan([
+      {
+        title: 'Build engine',
+        scope: ['src/engine/**'],
+        tasks: ['scaffold'],
+        context: 'Make it fast, not fancy. The CLI must stay a single binary.',
+      },
+    ]);
+    expect(mission?.context).toBe('Make it fast, not fancy. The CLI must stay a single binary.');
+    expect((await store.load()).missions[0]?.context).toBe(
+      'Make it fast, not fancy. The CLI must stay a single binary.',
+    );
+
+    const missionFile = await readFile(
+      join(repo, '.tower/comms/missions/M1-build-engine.md'),
+      'utf8',
+    );
+    expect(missionFile).toContain("## Context — the user's own words, verbatim");
+    expect(missionFile).toContain('Make it fast, not fancy. The CLI must stay a single binary.');
+  });
+
+  it('records no context and renders no Context section when the plan omits it', async () => {
+    await store.plan([{ title: 'Build engine', scope: ['src/engine/**'] }]);
+
+    expect((await store.load()).missions[0]?.context).toBeUndefined();
+    const missionFile = await readFile(
+      join(repo, '.tower/comms/missions/M1-build-engine.md'),
+      'utf8',
+    );
+    expect(missionFile).not.toContain('## Context');
+  });
+
   it('rejects overlapping scopes', async () => {
     const attempt = store.plan([
       { title: 'outer', scope: ['src/a/**'] },

@@ -125,7 +125,8 @@ export function createGoogleGenAIRequester(
   const vertexai = options?.vertexai === true;
   const resolveClient =
     options?.clientFactory ??
-    ((request: LlmClientContext) => createClient(request.model, request.headers, vertexai));
+    ((request: LlmClientContext) =>
+      createClient(request.model, request.headers, vertexai || request.model.vertexai === true));
   return {
     async generate(
       config: LlmRequestConfig,

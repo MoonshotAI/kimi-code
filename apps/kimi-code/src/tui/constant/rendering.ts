@@ -23,6 +23,27 @@ export const SHELL_OUTPUT_PREVIEW_LINES = 10;
 export const THINKING_PREVIEW_LINES = 2;
 export const COMMAND_PREVIEW_LINES = 10;
 
+// The ellipsis marking a single-row line (card header, outcome row) that was
+// cut to the terminal width or that stands in for hidden output lines.
+export const TRUNCATION_ELLIPSIS = '…';
+// ANSI escape sequences (CSI, OSC) — tool output can carry them — that a
+// width-aware cut must treat as zero-width atomic units: never counted toward
+// the budget, never split in half.
+export const ANSI_ESCAPE_PATTERN = /\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))/g;
+// Code units a single terminal cell may hold before a tail-preserving cut's
+// window can no longer see it: a ZWJ family emoji is about eleven per two
+// cells, and combining sequences run longer.
+export const TAIL_WINDOW_UNITS_PER_CELL = 16;
+// Left indent of a collapsed tool card's outcome rows, aligning them with
+// the message-body indent.
+export const OUTCOME_ROW_INDENT = '  ';
+// Non-empty output lines a collapsed tool card shows in full before it falls
+// back to one telling outcome row.
+export const OUTCOME_MAX_LINES = 3;
+// Path samples a collapsed Grep/Glob card lists in its glance row before
+// counting the rest as "+N more".
+export const OUTCOME_GLANCE_SAMPLES = 3;
+
 // Cap on the step-retry detail line under the waiting spinner, so huge
 // provider error bodies (occasionally whole HTML error pages) can't flood
 // the activity pane.

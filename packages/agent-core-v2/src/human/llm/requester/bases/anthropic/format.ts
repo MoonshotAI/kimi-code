@@ -284,7 +284,7 @@ export function createAnthropicFormat(
       }
       const { betaFeatures, ...restKwargs } = kwargs;
       const betas = Array.isArray(betaFeatures) ? (betaFeatures as string[]) : [];
-      const useBetaApi = betaApi || thinking?.keep !== undefined;
+      const useBetaApi = betaApi || ctx.model.betaApi === true || thinking?.keep !== undefined;
       const createParams: Record<string, unknown> = {
         model: ctx.model.model,
         max_tokens: resolveDefaultMaxTokens(ctx.model.model),

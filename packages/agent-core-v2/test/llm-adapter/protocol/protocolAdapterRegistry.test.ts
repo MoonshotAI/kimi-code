@@ -207,31 +207,24 @@ describe('resolve gateway routes', () => {
     expect(resolved.media?.uploadVideo).toBeUndefined();
   });
 
-  it('selects the anthropic beta base from providerOptions.betaApi', () => {
+  it('reports the wire protocol regardless of beta or vertex provider options', () => {
     const beta = registry.resolve(
       modelWith({ protocol: 'anthropic', providerOptions: { betaApi: true } }),
     );
-    expect(beta.protocol).toBe('anthropic_beta');
-    const plain = registry.resolve(modelWith({ protocol: 'anthropic' }));
-    expect(plain.protocol).toBe('anthropic');
-  });
-
-  it('routes kimi+anthropic through the kimi anthropic trait with media', () => {
-    const resolved = registry.resolve(modelWith({ protocol: 'anthropic', providerType: 'kimi' }));
-    expect(resolved.protocol).toBe('anthropic');
-    expect(typeof resolved.media?.uploadVideo).toBe('function');
-  });
-
-  it('selects the google vertex base from providerOptions.vertexai', () => {
+    expect(beta.protocol).toBe('anthropic');
     const vertex = registry.resolve(
       modelWith({
         protocol: 'google-genai',
         providerOptions: { vertexai: true, project: 'p', location: 'l' },
       }),
     );
-    expect(vertex.protocol).toBe('google-vertex');
-    const gemini = registry.resolve(modelWith({ protocol: 'google-genai' }));
-    expect(gemini.protocol).toBe('google-genai');
+    expect(vertex.protocol).toBe('google-genai');
+  });
+
+  it('routes kimi+anthropic through the kimi anthropic trait with media', () => {
+    const resolved = registry.resolve(modelWith({ protocol: 'anthropic', providerType: 'kimi' }));
+    expect(resolved.protocol).toBe('anthropic');
+    expect(typeof resolved.media?.uploadVideo).toBe('function');
   });
 
   it('carries thinking metadata and model limits onto the resolved LlmModel', () => {

@@ -10,7 +10,7 @@ export const kimiProvider = createProvider({
   id: 'kimi',
   protocols: {
     openai: { base: openAIBase, trait: kimiOpenAITrait },
-    anthropic_beta: { base: anthropicBetaBase, trait: kimiAnthropicTrait },
+    anthropic: { base: anthropicBetaBase, trait: kimiAnthropicTrait },
     openai_responses: { base: openAIResponsesBase, trait: kimiResponsesTrait },
   },
   media: kimiMediaContribution,
