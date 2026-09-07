@@ -346,7 +346,9 @@ export function projectContext(
           },
         };
         const legacyTail = rec.legacyTail === true || rec.keptUserMessageCount === undefined;
-        const summaryIndex = legacyTail ? 0 : shape.messages.length - 1;
+        const summaryIndex = legacyTail
+          ? 0
+          : shape.messages.findIndex((message) => message.origin?.kind === 'compaction_summary');
         const modelSummaryBubble: ProjectedMessage = {
           ...summaryBubble,
           message: modelFacingMessage(shape.messages[summaryIndex] ?? summaryBubble.message),
