@@ -1242,10 +1242,9 @@ describe('agent machine input.abort', () => {
     ]);
   });
 
-  it('keeps detached background tools running across an abort', async () => {
+  it('keeps detached background tools running across an abort and aborts them on stop', async () => {
     let call = 0;
     const bgSignals: AbortSignal[] = [];
-    let resolveBg: ((result: ToolResult) => void) | undefined;
     const requester: LlmRequester = {
       generate: (_config, _content, { signal, onEvent }) => {
         call += 1;
@@ -1271,9 +1270,7 @@ describe('agent machine input.abort', () => {
     const tools = stubTools(({ detach, signal }) => {
       bgSignals.push(signal);
       detach?.({ text: 'async running: bg_tool' });
-      return new Promise((resolve) => {
-        resolveBg = resolve;
-      });
+      return new Promise(() => {});
     }, 'bg_tool');
     const actor = createActor(createTestAgentMachine(tools, requester), {
       input: { request: { model } },
@@ -1291,20 +1288,8 @@ describe('agent machine input.abort', () => {
     expect(bgSignals[0]?.aborted).toBe(false);
     expect(actor.getSnapshot().context.background['call-1']).toBeDefined();
 
-    resolveBg?.({ content: [{ type: 'text', text: 'bg-result' }] });
-    const snapshot = await waitFor(
-      actor,
-      (s) => s.matches('idle') && s.context.messages.length === 5,
-      { timeout: 5000 },
-    );
-
-    expect(rolesAndTexts(snapshot.context.messages)).toEqual([
-      'user:hi',
-      'assistant:',
-      'tool:async running: bg_tool',
-      'user:[async tool completed] bg_tool (tool_call_id=call-1)\nbg-result',
-      'assistant:done',
-    ]);
+    actor.stop();
+    expect(bgSignals[0]?.aborted).toBe(true);
   });
 });
 

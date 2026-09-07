@@ -36,6 +36,7 @@ import { ToolCallIdNormalizer } from '#/llm/toolCallIdNormalizer';
 import { emptyUsage, type TokenUsage } from '#/llm/usage';
 import type { ToolResult } from '#/tool/executor';
 import type { ToolOutput } from '#/tool/machine';
+import { createAbortScope, withAbort, type AbortScope } from '#/utils/abort';
 
 import { MaxStepsExceededError } from './errors';
 import { estimateUsedContextTokens } from './context-usage';
@@ -173,6 +174,7 @@ export interface TurnInput {
   request: LlmRequestConfig;
   history: readonly HistoryMessage[];
   maxSteps?: number;
+  parentSignal?: AbortSignal;
 }
 
 export type TurnToolEvent =
@@ -206,7 +208,7 @@ export interface TurnMachineContext {
   produced: HistoryMessage[];
   accumulator: HistoryAccumulator;
   toolCallIds: ToolCallIdNormalizer;
-  llmController: AbortController;
+  llmScope: AbortScope;
   pendingToolCalls: ToolCall[];
   outcomes: Record<string, ToolOutput>;
   steps: number;
@@ -408,7 +410,7 @@ export function createTurnMachine(
         produced: [],
         accumulator: createHistoryAccumulator(modelMeta(input.request.model), toolCallIds),
         toolCallIds,
-        llmController: new AbortController(),
+        llmScope: createAbortScope(),
         pendingToolCalls: [],
         outcomes: {},
         steps: 1,
@@ -422,7 +424,10 @@ export function createTurnMachine(
         entry: assign({
           accumulator: ({ context }) =>
             createHistoryAccumulator(modelMeta(context.input.request.model), context.toolCallIds),
-          llmController: () => new AbortController(),
+          llmScope: ({ context }) =>
+            context.input.parentSignal !== undefined
+              ? withAbort(context.input.parentSignal)
+              : createAbortScope(),
         }),
         invoke: {
           src: 'llmActor',
@@ -430,7 +435,7 @@ export function createTurnMachine(
             const entries = [...context.input.history, ...context.produced];
             return {
               config: context.input.request,
-              signal: context.llmController.signal,
+              signal: context.llmScope.signal,
               content: {
                 messages: attemptMessages(context, recovery),
                 usedContextTokens: estimateUsedContextTokens(entries, {
@@ -641,7 +646,7 @@ export function createTurnMachine(
             target: 'aborted',
             actions: [
               ({ context }) => {
-                context.llmController.abort();
+                context.llmScope.abort();
               },
               'salvageAborted',
             ],
