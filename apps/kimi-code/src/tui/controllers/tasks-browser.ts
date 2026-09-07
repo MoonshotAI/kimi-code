@@ -1,4 +1,4 @@
-import type { BackgroundTaskInfo, ModelAlias, Session } from '@moonshot-ai/kimi-code-sdk';
+import type { BackgroundTaskInfo, Session } from '@moonshot-ai/kimi-code-sdk';
 import type { ProcessTerminal, TUI } from '@moonshot-ai/pi-tui';
 
 import { AgentActivityViewer, formatSubagentActivityPreview } from '../components/dialogs/agent-activity-viewer';
@@ -6,6 +6,7 @@ import { TaskOutputViewer } from '../components/dialogs/task-output-viewer';
 import { TasksBrowserApp, type TasksFilter } from '../components/dialogs/tasks-browser';
 import type { Theme } from '#/tui/theme';
 import type { CustomEditor } from '../components/editor/custom-editor';
+import type { AppState } from '../types';
 import {
   beginScreenTakeover,
   endScreenTakeover,
@@ -21,9 +22,7 @@ export interface TasksBrowserHost {
     readonly terminal: ProcessTerminal;
     readonly ui: TUI;
     readonly editor: CustomEditor;
-    readonly appState: {
-      readonly availableModels: Record<string, ModelAlias>;
-    };
+    readonly appState: Pick<AppState, 'availableModels'>;
   };
   readonly backgroundTasks: ReadonlyMap<string, BackgroundTaskInfo>;
   readonly sessionEventHandler: SessionEventHandler;
