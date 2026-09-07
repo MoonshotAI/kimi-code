@@ -44,7 +44,7 @@ import { nonEmptyLines, outcomeLine } from './tool-renderers/outcome';
 import { TruncatedOutputComponent } from './tool-renderers/truncated';
 import { isSpilledToolOutput } from './tool-renderers/types';
 import { isGenericToolResult, pickResultRenderer } from './tool-renderers/registry';
-import { buildWaitForHeader } from './tool-renderers/wait-for';
+import { buildWaitForHeader, parseWaitForOutput } from './tool-renderers/wait-for';
 
 const MAX_ARG_LENGTH = 60;
 const MAX_SUB_TOOL_CALLS_SHOWN = 4;
@@ -835,6 +835,13 @@ export class ToolCallComponent extends Container {
         // same way in both states; every other result hides its body.
         return (
           !searchCutShort(this.toolCall, result.output) ||
+          nonEmptyLines(result.output).length > OUTCOME_MAX_LINES
+        );
+      case 'WaitFor':
+        // A parsed wait renders its glance in both states but appends the raw
+        // result only when expanded; anything else follows the line-count rule.
+        return (
+          parseWaitForOutput(result.output) !== undefined ||
           nonEmptyLines(result.output).length > OUTCOME_MAX_LINES
         );
       case 'Read':

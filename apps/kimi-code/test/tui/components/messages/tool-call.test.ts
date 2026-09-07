@@ -2570,3 +2570,18 @@ describe('ToolCallComponent hasHiddenContent for a search cut short before any r
     grep.dispose();
   });
 });
+
+describe('ToolCallComponent hasHiddenContent for WaitFor', () => {
+  it('is true for a parsed wait, whose raw result only appears when expanded', () => {
+    const component = new ToolCallComponent(
+      { id: 'call_wait', name: 'WaitFor', args: { timeout: 30 } },
+      {
+        tool_call_id: 'call_wait',
+        output: 'wait_status: no_tasks\nwaited_ms: 0\ntimeout_ms: 30000',
+        is_error: false,
+      },
+    );
+    expect(component.hasHiddenContent()).toBe(true);
+    component.dispose();
+  });
+});

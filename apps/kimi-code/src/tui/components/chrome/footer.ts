@@ -316,20 +316,29 @@ export class FooterComponent implements Component {
       const slots = this.buildSlots(colors);
       const configured = this.state.statusLine?.items ?? null;
       const order: readonly string[] = configured ?? DEFAULT_STATUS_LINE_ITEMS;
-      const left: string[] = [];
-      for (const slot of order) {
-        const pieces = slots[slot as keyof typeof slots];
-        if (pieces !== undefined) left.push(...pieces);
-      }
-
-      const leftLine = left.join('  ');
-      const leftWidth = visibleWidth(leftLine);
+      const composeLeft = (withTips: boolean): string => {
+        const left: string[] = [];
+        for (const slot of order) {
+          if (!withTips && slot === 'tips') continue;
+          const pieces = slots[slot as keyof typeof slots];
+          if (pieces !== undefined) left.push(...pieces);
+        }
+        return left.join('  ');
+      };
+      let leftLine = composeLeft(true);
+      let leftWidth = visibleWidth(leftLine);
 
       // The right side holds the fixed ctrl+o hint (while the transcript has
       // tool output to expand or collapse) and the rotating tips, unless the
       // tips were given an inline slot in items or dropped from items. The
-      // hint never rotates and wins over a tip that no longer fits.
+      // hint never rotates and wins over a tip that no longer fits — an
+      // inline tip included: it gives way when the hint would not fit beside it.
       const tipsInline = order.includes('tips');
+      const shortcut = this.expandShortcut();
+      if (tipsInline && shortcut !== null && leftWidth + 2 + visibleWidth(shortcut) > width) {
+        leftLine = composeLeft(false);
+        leftWidth = visibleWidth(leftLine);
+      }
       const showTips = !tipsInline && (configured === null || configured.includes('tips'));
       const tipCandidates: string[] = [];
       if (showTips) {

@@ -294,3 +294,29 @@ describe('FooterComponent ctrl+o hint with a status_line command', () => {
     footer.dispose();
   });
 });
+
+describe('FooterComponent ctrl+o hint beside an inline tips slot', () => {
+  function plain(text: string): string {
+    return text.replaceAll(/\[[0-9;]*m/g, '');
+  }
+
+  it('drops the inline tip when the hint would not fit beside it', () => {
+    const noTips = new FooterComponent({
+      ...appState,
+      statusLine: { items: ['mode', 'model', 'cwd'], command: null },
+    });
+    const leftWidth = plain(noTips.render(200)[0] ?? '').trimEnd().length;
+    noTips.dispose();
+
+    const footer = new FooterComponent({
+      ...appState,
+      statusLine: { items: ['mode', 'tips', 'model', 'cwd'], command: null },
+    });
+    footer.setExpandHintProvider(() => 'expand');
+    const width = leftWidth + 2 + 'ctrl+o expand'.length;
+    const line1 = plain(footer.render(width)[0] ?? '');
+    expect(line1.endsWith('ctrl+o expand')).toBe(true);
+    expect(line1.length).toBeLessThanOrEqual(width);
+    footer.dispose();
+  });
+});
