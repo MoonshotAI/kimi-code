@@ -1,4 +1,4 @@
-import type { BackgroundTaskInfo, Session } from '@moonshot-ai/kimi-code-sdk';
+import type { BackgroundTaskInfo, ModelAlias, Session } from '@moonshot-ai/kimi-code-sdk';
 import type { ProcessTerminal, TUI } from '@moonshot-ai/pi-tui';
 
 import { AgentActivityViewer, formatSubagentActivityPreview } from '../components/dialogs/agent-activity-viewer';
@@ -21,6 +21,9 @@ export interface TasksBrowserHost {
     readonly terminal: ProcessTerminal;
     readonly ui: TUI;
     readonly editor: CustomEditor;
+    readonly appState: {
+      readonly availableModels: Record<string, ModelAlias>;
+    };
   };
   readonly backgroundTasks: ReadonlyMap<string, BackgroundTaskInfo>;
   readonly sessionEventHandler: SessionEventHandler;
@@ -86,6 +89,7 @@ export class TasksBrowserController {
         tailOutput: undefined,
         tailLoading: false,
         flashMessage: undefined,
+        availableModels: state.appState.availableModels,
         ...this.buildCallbacks(),
       },
       state.terminal,
@@ -250,6 +254,7 @@ export class TasksBrowserController {
       tailOutput: browser.tailOutput,
       tailLoading: browser.tailLoading,
       flashMessage: browser.flashMessage,
+      availableModels: this.host.state.appState.availableModels,
       ...this.buildCallbacks(),
     });
     this.host.state.ui.requestRender();
