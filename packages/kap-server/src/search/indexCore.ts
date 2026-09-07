@@ -488,8 +488,7 @@ export class SearchIndexCore {
     for (const summary of sessions) {
       if (this.disposed) return { noop: true, sessions: 0, documents: 0 };
       try {
-        await this.syncSession(db, summary);
-        indexed++;
+        if (await this.syncSession(db, summary)) indexed++;
       } catch (error) {
         this.log.warn('global search: failed to index session', {
           sessionId: summary.id,
@@ -502,6 +501,7 @@ export class SearchIndexCore {
     const metaCount = db.query({ key: { prefix: '\0meta\\' }, project: [] }).length;
     const stats: StatsDoc = {
       kind: 'stats',
+      degraded: indexed < sessions.length ? `Skipped ${sessions.length - indexed} session(s) during indexing` : undefined,
       sessions: indexed,
       documents: db.size - metaCount,
       lastIndexedAt: Date.now(),
@@ -539,11 +539,11 @@ export class SearchIndexCore {
     await db.del(SESSION_META_PREFIX + sessionId);
   }
 
-  private async syncSession(db: MiniDb<SearchDoc>, summary: SyncSessionInput): Promise<void> {
+  private async syncSession(db: MiniDb<SearchDoc>, summary: SyncSessionInput): Promise<boolean> {
     const identity = await sessionDirectoryIdentity(summary.dir);
     if (identity === undefined) {
       await this.deleteSessionDocs(db, summary.id);
-      return;
+      return false;
     }
     const title = await sessionDirectoryTitle(summary.dir, this.log);
     const metaKey = SESSION_META_PREFIX + summary.id;
@@ -592,6 +592,7 @@ export class SearchIndexCore {
     } else if (existing !== undefined) {
       await db.del(titleKey);
     }
+    return true;
   }
 
   private async deleteFileDocs(db: MiniDb<SearchDoc>, meta: FileMetaDoc): Promise<void> {
@@ -1017,7 +1018,7 @@ export class SearchIndexCore {
       generation: this.generation,
       readOnly: this.db?.readOnly === true,
       lockToken: this.lockToken,
-      degraded: this.lastRefreshError?.message,
+      degraded: this.lastRefreshError?.message ?? (stats?.kind === 'stats' ? stats.degraded : undefined),
       lifecycle: this.lifecycleState(),
     };
   }
@@ -1032,7 +1033,7 @@ export class SearchIndexCore {
       documents: stats?.kind === 'stats' ? stats.documents : 0,
       readOnly: handle?.readOnly === true,
       freshnessStale: true,
-      degraded: this.lastRefreshError?.message,
+      degraded: this.lastRefreshError?.message ?? (stats?.kind === 'stats' ? stats.degraded : undefined),
       lockToken: this.lockToken,
     };
   }
@@ -1048,7 +1049,7 @@ export class SearchIndexCore {
       documents,
       readOnly: db.readOnly,
       freshnessStale,
-      degraded: this.lastRefreshError?.message,
+      degraded: this.lastRefreshError?.message ?? (stats?.kind === 'stats' ? stats.degraded : undefined),
       lockToken: this.lockToken,
     };
   }
