@@ -65,6 +65,13 @@ function tomlBasicString(value: string): string {
     .replaceAll('\t', '\\t');
 }
 
+function hasSchemaSettingsChild(entry: Record<string, unknown>): boolean {
+  return Object.entries(entry).some(
+    ([key, value]) =>
+      SCHEMA_CHILD_KEYS.has(key) && isPlainObject(value) && !isModelShaped(value),
+  );
+}
+
 function nestedModelDiagnostic(path: readonly string[]): ConfigDiagnostic {
   const full = path.join('.');
   return {
@@ -117,7 +124,10 @@ function walkModelEntry(
   if (
     path.length === 1 &&
     !usable &&
-    (hasModelNameKey(entry) || hasModelRecordField(entry) || diagnostics.length === before)
+    (hasModelNameKey(entry) ||
+      hasModelRecordField(entry) ||
+      hasSchemaSettingsChild(entry) ||
+      diagnostics.length === before)
   ) {
     diagnostics.push(missingNameDiagnostic(path));
   }

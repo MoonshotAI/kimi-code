@@ -1686,6 +1686,30 @@ describe('malformed model entries', () => {
     disposables.dispose();
   });
 
+  it('diagnoses a root with schema settings even when a nested model also warns', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.foo.overrides]\ndefault_effort = "high"\n\n[models.foo.bar]\nmodel = "bar"\n',
+    );
+
+    expect(config.diagnostics()).toContainEqual({
+      domain: MODELS_SECTION,
+      severity: 'warning',
+      message:
+        "[models] entry 'foo' has no usable model name and cannot be used as a model; " +
+        'if the alias contains dots, quote the table name (e.g. [models."foo"]).',
+    });
+    expect(config.diagnostics()).toContainEqual({
+      domain: MODELS_SECTION,
+      severity: 'warning',
+      message:
+        "[models] entry 'foo.bar' is nested under 'foo' and cannot be used as a model; " +
+        'if the alias contains dots, quote the table name (e.g. [models."foo.bar"]).',
+    });
+    expect(config.diagnostics()).toHaveLength(2);
+
+    disposables.dispose();
+  });
+
   it('escapes the alias in the suggested TOML table name', async () => {
     const { config, disposables } = await createConfig(
       '[models.\'foo.bar"baz\']\nnote = "junk"\n',
