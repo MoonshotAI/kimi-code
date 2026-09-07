@@ -77,6 +77,31 @@ async function sessionDirectoryIdentity(dir: string): Promise<string | undefined
   }
 }
 
+const querySourceChecks = { running: false, waiters: new Set<() => void>() };
+
+async function queryDirectoryIdentity(dir: string, deadlineAt: number, deadline: Promise<null>): Promise<string | undefined | null> {
+  while (querySourceChecks.running) {
+    let wake!: () => void;
+    const available = new Promise<boolean>((resolve) => { wake = () => { resolve(true); }; });
+    querySourceChecks.waiters.add(wake);
+    try {
+      if (await Promise.race([available, deadline]) === null) return null;
+    } finally {
+      querySourceChecks.waiters.delete(wake);
+    }
+  }
+  if (Date.now() >= deadlineAt) return null;
+  querySourceChecks.running = true;
+  const identity = sessionDirectoryIdentity(dir);
+  const release = () => {
+    querySourceChecks.running = false;
+    for (const wake of querySourceChecks.waiters) wake();
+    querySourceChecks.waiters.clear();
+  };
+  void identity.then(release, release);
+  return Promise.race([identity, deadline]);
+}
+
 async function sessionDirectoryTitle(dir: string, log: SearchCoreLog): Promise<string> {
   for (const scope of ['', 'session-meta']) {
     try {
@@ -940,7 +965,7 @@ export class SearchIndexCore {
         }
         if (!identities.has(meta.dir)) {
           try {
-            const identity = await Promise.race([sessionDirectoryIdentity(meta.dir), deadline]);
+            const identity = await queryDirectoryIdentity(meta.dir, budget.deadlineAt, deadline);
             if (identity === null || Date.now() > budget.deadlineAt) {
               incomplete ??= 'deadline';
               break;
