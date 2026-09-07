@@ -136,6 +136,35 @@ describe('providerCatalog ping', () => {
     catalog.stop();
   });
 
+  it('carries the model protocol flags into the ping generate config', async () => {
+    const seen: LlmModel[] = [];
+    const provider: Provider = {
+      id: 'test',
+      protocols: ['anthropic'],
+      listModels: () => Promise.resolve([]),
+      resolveModel: () => {
+        throw new Error('unused');
+      },
+      createRequester: () => ({
+        generate: (config) => {
+          seen.push(config.model);
+          return Promise.resolve();
+        },
+      }),
+    };
+    const catalog = await createProviderCatalog();
+    catalog.upsert({
+      provider,
+      models: [{ ...modelDef, protocol: 'anthropic', betaApi: true }],
+    });
+
+    catalog.ping('test', 'm1');
+
+    await until(() => seen.length > 0);
+    expect(seen[0]?.betaApi).toBe(true);
+    catalog.stop();
+  });
+
   it('defers a ping sent while refreshing until the refresh completes', async () => {
     let pulls = 0;
     let resolvePull: (models: readonly LlmModel[]) => void = () => {};

@@ -5,7 +5,7 @@ import type { ProtocolBase, ProtocolName } from '#/llm/protocol/base';
 import type { ProtocolTrait } from '#/llm/protocol/trait';
 import type { LlmRequester } from '#/llm/requester/requester';
 
-export interface ProviderProtocolDefinition {
+export interface ProtocolVariant {
   readonly base: ProtocolBase;
   readonly trait?: ProtocolTrait;
 }
@@ -22,7 +22,7 @@ export type ProviderModelSource = () => Promise<readonly LlmModelSeed[]>;
 
 export interface ProviderDefinition {
   readonly id: string;
-  readonly protocols: Readonly<Partial<Record<ProtocolName, ProviderProtocolDefinition>>>;
+  readonly protocols: Readonly<Partial<Record<ProtocolName, ProtocolVariant>>>;
   readonly media?: ProviderMediaContribution;
   readonly models?: ProviderModelSource;
 }
@@ -40,49 +40,40 @@ export interface Provider {
   createRequester(protocol?: ProtocolName): LlmRequester;
 }
 
-interface ProviderProtocolEntry {
-  readonly name: ProtocolName;
-  readonly base: ProtocolBase;
-  readonly trait?: ProtocolTrait;
-}
-
 export function createProvider(definition: ProviderDefinition): Provider {
-  const entries: ProviderProtocolEntry[] = [];
+  const entries = new Map<ProtocolName, ProtocolVariant>();
   for (const name of Object.keys(definition.protocols) as ProtocolName[]) {
     const protocol = definition.protocols[name];
     if (protocol !== undefined) {
-      entries.push({ name, base: protocol.base, trait: protocol.trait });
+      entries.set(name, protocol);
     }
   }
-  const defaultEntry = entries[0];
-  if (defaultEntry === undefined) {
+  const defaultVariant = entries.values().next().value;
+  if (defaultVariant === undefined) {
     throw new Error(`provider '${definition.id}' declares no protocols`);
   }
 
-  const protocolFor = (name: ProtocolName | undefined): ProviderProtocolEntry => {
+  const variantFor = (name: ProtocolName | undefined): ProtocolVariant => {
     if (name === undefined) {
-      return defaultEntry;
+      return defaultVariant;
     }
-    const found = entries.find((entry) => entry.name === name);
+    const found = entries.get(name);
     if (found === undefined) {
       throw new Error(
-        `provider '${definition.id}' has no protocol '${name}' (available: ${entries.map((entry) => entry.name).join(', ')})`,
+        `provider '${definition.id}' has no protocol '${name}' (available: ${[...entries.keys()].join(', ')})`,
       );
     }
     return found;
   };
 
-  const detectCapability = (
-    entry: ProviderProtocolEntry,
-    modelName: string,
-  ): ModelCapability =>
-    entry.trait?.capability?.(modelName) ??
-    entry.base.capability?.(modelName) ??
+  const detectCapability = (variant: ProtocolVariant, modelName: string): ModelCapability =>
+    variant.trait?.capability?.(modelName) ??
+    variant.base.capability?.(modelName) ??
     UNKNOWN_CAPABILITY;
 
   return {
     id: definition.id,
-    protocols: entries.map((entry) => entry.name),
+    protocols: [...entries.keys()],
     media: definition.media,
     listModels: async () => {
       if (definition.models === undefined) {
@@ -93,29 +84,28 @@ export function createProvider(definition: ProviderDefinition): Provider {
         provider: definition.id,
         model: seed.model,
         capability:
-          defaultEntry.trait?.capability?.(seed.model) ??
+          defaultVariant.trait?.capability?.(seed.model) ??
           seed.capability ??
-          defaultEntry.base.capability?.(seed.model) ??
+          defaultVariant.base.capability?.(seed.model) ??
           UNKNOWN_CAPABILITY,
         maxContextSize: seed.maxContextSize,
         maxInputSize: seed.maxInputSize,
         baseUrl: seed.baseUrl,
       }));
     },
-    resolveModel: (model, options = {}) => {
-      const entry = protocolFor(options.protocol);
-      return {
-        provider: definition.id,
-        model,
-        capability: detectCapability(entry, model),
-        baseUrl: options.baseUrl,
-        apiKey: options.apiKey,
-        defaultHeaders: options.defaultHeaders,
-      };
-    },
+    resolveModel: (model, options = {}) => ({
+      provider: definition.id,
+      model,
+      capability: detectCapability(variantFor(options.protocol), model),
+      baseUrl: options.baseUrl,
+      apiKey: options.apiKey,
+      defaultHeaders: options.defaultHeaders,
+      betaApi: options.betaApi,
+      vertexai: options.vertexai,
+    }),
     createRequester: (protocol) => {
-      const entry = protocolFor(protocol);
-      return entry.base.createRequester(entry.trait);
+      const variant = variantFor(protocol);
+      return variant.base.createRequester(variant.trait);
     },
   };
 }
