@@ -43,7 +43,6 @@ export interface ContextCompactionShapeInput {
   readonly keptUserMessageCount?: number;
   readonly keptHeadUserMessageCount?: number;
   readonly droppedCount?: number;
-  readonly hasContinuation?: boolean;
   readonly legacyTail?: boolean;
 }
 
@@ -56,7 +55,6 @@ export interface ContextCompactionShape {
   readonly keptUserMessageCount: number;
   readonly keptHeadUserMessageCount?: number;
   readonly droppedCount?: number;
-  readonly hasContinuation: boolean;
   readonly messages: readonly ContextMessage[];
 }
 
@@ -79,7 +77,6 @@ export function buildContextCompactionShape(
       tokensAfter: input.tokensAfter ?? estimate.messages(messages),
       keptUserMessageCount: 0,
       droppedCount: input.droppedCount,
-      hasContinuation: false,
       messages,
     };
   }
@@ -98,17 +95,12 @@ export function buildContextCompactionShape(
     ? [...selection.head, ...selection.tail]
     : [...selection.head, elisionMessage, ...selection.tail];
   const contextSummary = input.contextSummary ?? input.summary;
-  const continuationMessage =
-    input.hasContinuation === false ? undefined : createCompactionContinuationMessage();
+  const continuationMessage = createCompactionContinuationMessage();
   const tokensAfter =
     input.tokensAfter ??
     (input.requestOverheadTokens ?? 0) +
       (input.summaryOutputTokens ?? estimate.text(contextSummary)) +
-      estimate.messages(
-        continuationMessage === undefined
-          ? keptMessages
-          : [...keptMessages, continuationMessage],
-      );
+      estimate.messages([...keptMessages, continuationMessage]);
   const keptUserMessageCount =
     input.keptUserMessageCount ?? selection.head.length + selection.tail.length;
   const keptHeadUserMessageCount =
@@ -123,11 +115,11 @@ export function buildContextCompactionShape(
     keptUserMessageCount,
     keptHeadUserMessageCount,
     droppedCount: input.droppedCount,
-    hasContinuation: continuationMessage !== undefined,
-    messages:
-      continuationMessage === undefined
-        ? [...keptMessages, createCompactionSummaryMessage(contextSummary)]
-        : [...keptMessages, createCompactionSummaryMessage(contextSummary), continuationMessage],
+    messages: [
+      ...keptMessages,
+      createCompactionSummaryMessage(contextSummary),
+      continuationMessage,
+    ],
   };
 }
 

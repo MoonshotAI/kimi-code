@@ -190,8 +190,7 @@ function recoverFoldedLength(
   const keptHeadUserMessageCount = readNumber(record, 'keptHeadUserMessageCount');
   const compactedCount = readNumber(record, 'compactedCount');
   if (keptUserMessageCount !== undefined) {
-    const continuation = record['hasContinuation'] === true ? 1 : 0;
-    return keptUserMessageCount + continuation + (keptHeadUserMessageCount === undefined ? 1 : 2);
+    return keptUserMessageCount + (keptHeadUserMessageCount === undefined ? 2 : 3);
   }
   if (compactedCount !== undefined && compactedCount < foldedLength) {
     return 1 + (foldedLength - compactedCount);
