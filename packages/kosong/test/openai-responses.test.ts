@@ -1059,6 +1059,31 @@ describe('OpenAIResponsesChatProvider', () => {
       expect(provider.thinkingEffort).toBe('off');
     });
 
+    it('with_thinking("on") sends reasoning effort medium by default', async () => {
+      const provider = createProvider().withThinking('on');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['reasoning']).toEqual({ effort: 'medium', summary: 'auto' });
+      expect(body['include']).toEqual(['reasoning.encrypted_content']);
+    });
+
+    it('with_thinking("on") sends the configured onEffort for a custom OpenAI-compatible model', async () => {
+      const provider = new OpenAIResponsesChatProvider({
+        model: 'deepseek-v4-flash',
+        apiKey: 'test-key',
+        onEffort: 'high',
+      }).withThinking('on');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['reasoning']).toEqual({ effort: 'high', summary: 'auto' });
+    });
+
     it('with_thinking("low") sends reasoning with effort=low', async () => {
       const provider = createProvider().withThinking('low');
       const history: Message[] = [

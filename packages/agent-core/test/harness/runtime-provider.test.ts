@@ -284,6 +284,44 @@ describe('resolveRuntimeProvider maxOutputSize forwarding', () => {
     });
   });
 
+  it('forwards alias.defaultEffort as onEffort to the openai and openai_responses provider configs', () => {
+    const config = {
+      ...BASE_CONFIG,
+      providers: {
+        ...BASE_CONFIG.providers,
+        gateway: { type: 'openai', apiKey: 'sk-gateway' } as const,
+        responses: { type: 'openai_responses', apiKey: 'sk-responses' } as const,
+      },
+      models: {
+        ...BASE_CONFIG.models!,
+        'gateway/custom': {
+          provider: 'gateway',
+          model: 'deepseek-v4-flash',
+          maxContextSize: 256000,
+          capabilities: ['tool_use', 'thinking'],
+          adaptiveThinking: true,
+          defaultEffort: 'high',
+        },
+        'responses/custom': {
+          provider: 'responses',
+          model: 'deepseek-v4-flash',
+          maxContextSize: 256000,
+          adaptiveThinking: true,
+          defaultEffort: 'high',
+        },
+      },
+    } as KimiConfig;
+
+    expect(resolveRuntimeProvider({ config, model: 'gateway/custom' }).provider).toMatchObject({
+      type: 'openai',
+      onEffort: 'high',
+    });
+    expect(resolveRuntimeProvider({ config, model: 'responses/custom' }).provider).toMatchObject({
+      type: 'openai_responses',
+      onEffort: 'high',
+    });
+  });
+
   it('forwards alias.offEffort to the openai and openai_responses provider configs', () => {
     const config = {
       ...BASE_CONFIG,

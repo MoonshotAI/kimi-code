@@ -28,6 +28,7 @@ function createProvider(
     reasoningKey: string;
     model: string;
     offEffort: string;
+    onEffort: string;
   }>,
 ): OpenAILegacyChatProvider {
   return new OpenAILegacyChatProvider({
@@ -36,6 +37,7 @@ function createProvider(
     stream: options?.stream ?? false,
     reasoningKey: options?.reasoningKey,
     offEffort: options?.offEffort,
+    onEffort: options?.onEffort,
   });
 }
 
@@ -1268,14 +1270,28 @@ describe('OpenAILegacyChatProvider', () => {
       expect(provider.thinkingEffort).toBe('off');
     });
 
-    it('.withThinking("on") sends no reasoning_effort without ThinkPart history and reports "on"', async () => {
+    it('.withThinking("on") sends reasoning_effort medium without ThinkPart history and reports "on"', async () => {
       const provider = createProvider().withThinking('on');
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
       ];
       const body = await captureRequestBody(provider, '', [], history);
 
-      expect(body['reasoning_effort']).toBeUndefined();
+      expect(body['reasoning_effort']).toBe('medium');
+      expect(provider.thinkingEffort).toBe('on');
+    });
+
+    it('.withThinking("on") sends the configured onEffort for a custom OpenAI-compatible model', async () => {
+      const provider = createProvider({
+        model: 'deepseek-v4-flash',
+        onEffort: 'high',
+      }).withThinking('on');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['reasoning_effort']).toBe('high');
       expect(provider.thinkingEffort).toBe('on');
     });
 

@@ -18,6 +18,7 @@ import {
   convertContentPart,
   convertOpenAIError,
   convertToolMessageContent,
+  encodeOpenAIReasoningEffort,
   extractUsage,
   isFunctionToolCall,
   normalizeOpenAIFinishReason,
@@ -88,6 +89,13 @@ export interface OpenAILegacyOptions {
    * whose default is to reason.
    */
   offEffort?: string | undefined;
+  /**
+   * The effort value that encodes "thinking on" on this wire. When set,
+   * `withThinking('on')` sends it as `reasoning_effort`; otherwise the
+   * shared default (`medium`) is sent so boolean Thinking On is not a
+   * silent no-op on OpenAI-compatible endpoints.
+   */
+  onEffort?: string;
   httpClient?: unknown;
   defaultHeaders?: Record<string, string>;
   toolMessageConversion?: ToolMessageConversion | undefined;
@@ -493,6 +501,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
   private _reasoningKeyDialect: ReasoningKeyDialect;
   private _thinkingEffort: ThinkingEffort | undefined;
   private _offEffort: string | undefined;
+  private _onEffort: string | undefined;
   private _generationKwargs: OpenAILegacyGenerationKwargs;
   private _toolMessageConversion: ToolMessageConversion;
   private _client: OpenAI | undefined;
@@ -518,6 +527,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     );
     this._thinkingEffort = undefined;
     this._offEffort = options.offEffort;
+    this._onEffort = options.onEffort;
     this._generationKwargs = {
       ...options.generationKwargs,
       ...(options.maxTokens !== undefined
@@ -574,19 +584,17 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       this._generationKwargs,
     );
 
-    // Determine reasoning_effort. 'on' has no wire encoding on
-    // chat-completions APIs, so it sends no reasoning_effort field; only a
-    // concrete effort (low/medium/high/...) is passed through verbatim.
-    // 'off' sends the model's declared off value (e.g. 'none') when one is
-    // configured — models that reason by default need the explicit value to
-    // actually disable reasoning; otherwise the field is omitted as before.
+    // Determine reasoning_effort. Concrete efforts pass through verbatim.
+    // 'on' has no dedicated chat-completions token, so it is encoded as
+    // onEffort when configured, otherwise 'medium'. 'off' sends the model's
+    // declared off value (e.g. 'none') when one is configured — models that
+    // reason by default need the explicit value to actually disable reasoning;
+    // otherwise the field is omitted as before.
     const effort = this._thinkingEffort;
-    let reasoningEffort: string | undefined =
-      effort === 'off'
-        ? this._offEffort
-        : effort === undefined || effort === 'on'
-          ? undefined
-          : effort;
+    let reasoningEffort: string | undefined = encodeOpenAIReasoningEffort(effort, {
+      offEffort: this._offEffort,
+      onEffort: this._onEffort,
+    });
 
     // Auto-enable reasoning_effort when the history contains ThinkPart but reasoning
     // was not explicitly configured. This prevents server validation errors from APIs
