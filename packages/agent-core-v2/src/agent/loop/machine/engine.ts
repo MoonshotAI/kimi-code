@@ -21,7 +21,12 @@ import { createMachineTools, type ToolResultExtras } from './tools';
 
 export type MachineEngineDelta =
   | { readonly kind: 'assistant'; readonly delta: string }
-  | { readonly kind: 'thinking'; readonly delta: string }
+  | {
+      readonly kind: 'thinking';
+      readonly delta: string;
+      readonly encrypted?: string;
+      readonly detailsIndex?: number;
+    }
   | {
       readonly kind: 'toolCall';
       readonly toolCallId: string;
@@ -151,7 +156,12 @@ function createDeltaSplitter(): (part: StreamedMessagePart) => MachineEngineDelt
       case 'text':
         return { kind: 'assistant', delta: part.text };
       case 'think':
-        return { kind: 'thinking', delta: part.think };
+        return {
+          kind: 'thinking',
+          delta: part.think,
+          encrypted: part.encrypted,
+          detailsIndex: part.detailsIndex,
+        };
       case 'image_url':
       case 'audio_url':
       case 'video_url':

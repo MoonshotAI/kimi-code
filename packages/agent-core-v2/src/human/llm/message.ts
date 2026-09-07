@@ -16,6 +16,7 @@ export interface ThinkPart {
   type: 'think';
   think: string;
   encrypted?: string;
+  detailsIndex?: number;
 }
 
 export interface ImageURLPart {
@@ -101,6 +102,9 @@ export function mergeInPlace(target: StreamedMessagePart, source: StreamedMessag
 
   if (target.type === 'think' && source.type === 'think') {
     if (target.encrypted !== undefined) {
+      return false;
+    }
+    if (target.detailsIndex !== source.detailsIndex) {
       return false;
     }
     target.think += source.think;

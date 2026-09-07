@@ -1052,6 +1052,7 @@ export interface AgentStateSnapshot {
       type: 'think';
       think: string;
       encrypted?: string;
+      detailsIndex?: number;
     } | /* ImageURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
       type: 'image_url';
       imageUrl: {
@@ -1341,6 +1342,7 @@ export interface AgentStateSnapshot {
     type: 'think';
     think: string;
     encrypted?: string;
+    detailsIndex?: number;
   } | /* ImageURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
     type: 'image_url';
     imageUrl: {
