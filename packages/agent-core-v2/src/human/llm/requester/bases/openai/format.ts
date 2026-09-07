@@ -37,6 +37,7 @@ import type { TokenUsage } from '#/llm/usage';
 import { lowerMessage, type OpenAIWireMessage } from './lower';
 import { extractToolMedia } from './patterns';
 import { DEFAULT_REASONING_KEY, extractReasoning } from './reasoning-key';
+import { isOfficialOpenAIBaseUrl } from '../openai-base-url';
 
 function responseFormatToOpenAI(format: ResponseFormat): Record<string, unknown> {
   if (format.type === 'json_object') {
@@ -176,7 +177,9 @@ function resolveRequestKwargs(input: FormatRequestInput): ResolvedRequestKwargs 
   } = input;
   let kwargs: Record<string, unknown> = {};
   if (cacheKey !== undefined) {
-    kwargs = trait?.cacheKey?.(cacheKey, ctx) ?? { prompt_cache_key: cacheKey };
+    kwargs =
+      trait?.cacheKey?.(cacheKey, ctx) ??
+      (isOfficialOpenAIBaseUrl(ctx.model.baseUrl) ? { prompt_cache_key: cacheKey } : {});
   }
   let preserveThinking = false;
   if (thinking !== undefined) {
