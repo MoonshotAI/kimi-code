@@ -48,12 +48,13 @@ function createExecuteActor(executor: ToolExecutor) {
     const controller = new AbortController();
     const toolCallId = input.toolCall.id;
     let detached = false;
+    let settled = false;
     receive((event) => {
       if (event.type === 'tool.abort') {
         controller.abort();
       }
     });
-    void (async () => {
+    void (async (): Promise<ToolEvent> => {
       try {
         const result = await executor.execute({
           toolCall: input.toolCall,
@@ -66,16 +67,19 @@ function createExecuteActor(executor: ToolExecutor) {
           },
           waitForTasks: input.waitForTasks,
         });
-        sendBack({ type: 'tool.done', toolCallId, result });
+        return { type: 'tool.done', toolCallId, result };
       } catch (error) {
-        if (controller.signal.aborted) {
-          sendBack({ type: 'tool.aborted', toolCallId });
-        } else {
-          sendBack({ type: 'tool.failed', toolCallId, error });
-        }
+        return controller.signal.aborted
+          ? { type: 'tool.aborted', toolCallId }
+          : { type: 'tool.failed', toolCallId, error };
       }
-    })();
-    return () => controller.abort();
+    })().then((event) => {
+      settled = true;
+      sendBack(event);
+    });
+    return () => {
+      if (!settled) controller.abort();
+    };
   });
 }
 
@@ -165,6 +169,7 @@ export function createToolMachine(executor: ToolExecutor) {
         },
       },
       executing: {
+        initial: 'running',
         invoke: {
           id: 'execute',
           src: 'executeActor',
@@ -200,8 +205,35 @@ export function createToolMachine(executor: ToolExecutor) {
               'forwardToParent',
             ],
           },
-          'tool.abort': {
-            actions: sendTo('execute', ({ event }) => event),
+        },
+        states: {
+          running: {
+            on: {
+              'tool.abort': {
+                target: 'aborting',
+                actions: sendTo('execute', ({ event }) => event),
+              },
+            },
+          },
+          aborting: {
+            on: {
+              'tool.abort': {
+                target: '#tool.aborted',
+                actions: [
+                  assign({ outcome: 'aborted' as const }),
+                  emit(({ context }) => ({
+                    type: 'tool.aborted' as const,
+                    toolCallId: context.toolCall.id,
+                  })),
+                  ({ self, context }) => {
+                    self._parent?.send({
+                      type: 'tool.aborted',
+                      toolCallId: context.toolCall.id,
+                    });
+                  },
+                ],
+              },
+            },
           },
         },
       },

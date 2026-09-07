@@ -1,4 +1,4 @@
-import { assign, emit, fromCallback, setup } from '#/xstate2';
+import { assign, emit, fromCallback, sendTo, setup } from '#/xstate2';
 
 import type { LlmErrorMessage } from '#/llm/errors';
 import type { Message } from '#/llm/message';
@@ -50,7 +50,8 @@ export type LlmEvent =
       errorName: string;
       errorMessage: string;
       statusCode?: number;
-    };
+    }
+  | { type: 'llm.abort' };
 
 export type LlmOutput = { type: 'succeeded' } | { type: 'failed'; error: LlmErrorMessage };
 
@@ -64,8 +65,14 @@ function createRequestActor(
   requester: LlmRequester,
   messageResolvers: readonly MessageResolver[],
 ) {
-  return fromCallback<LlmEvent, LlmInput>(({ input, sendBack }) => {
+  return fromCallback<LlmEvent, LlmInput>(({ input, sendBack, receive }) => {
     const controller = new AbortController();
+    let settled = false;
+    receive((event) => {
+      if (event.type === 'llm.abort') {
+        controller.abort();
+      }
+    });
     void (async () => {
       let messages = input.content.messages;
       for (const resolver of messageResolvers) {
@@ -82,8 +89,12 @@ function createRequestActor(
           onEvent: sendBack,
         },
       );
-    })();
-    return () => controller.abort();
+    })().finally(() => {
+      settled = true;
+    });
+    return () => {
+      if (!settled) controller.abort();
+    };
   });
 }
 
@@ -117,7 +128,9 @@ export function createLlmMachine(options: CreateLlmMachineOptions) {
     context: ({ input }) => ({ input }),
     states: {
       generating: {
+        initial: 'streaming',
         invoke: {
+          id: 'request',
           src: 'requestActor',
           input: ({ context }) => context.input,
         },
@@ -182,6 +195,17 @@ export function createLlmMachine(options: CreateLlmMachineOptions) {
               'forwardToParent',
             ],
           },
+        },
+        states: {
+          streaming: {
+            on: {
+              'llm.abort': {
+                target: 'aborting',
+                actions: sendTo('request', ({ event }) => event),
+              },
+            },
+          },
+          aborting: {},
         },
       },
       succeeded: { type: 'final' },

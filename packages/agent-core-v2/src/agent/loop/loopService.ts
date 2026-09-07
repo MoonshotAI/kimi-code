@@ -205,6 +205,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.pendingMachineQueueIds.clear();
     this.active?.turn.cancel(reason);
     this.engine?.stop();
+    const active = this.active;
+    if (active !== undefined) {
+      this.interruptMachineRunForCancel(active, reason);
+      void this.endTurn(active, { type: 'cancelled', steps: active.steps, reason });
+    }
     this.maybeSettle();
     super.dispose();
   }

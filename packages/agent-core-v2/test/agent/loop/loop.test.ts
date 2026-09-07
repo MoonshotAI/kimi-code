@@ -2,7 +2,7 @@ import { getMaxListeners } from 'node:events';
 
 import { type ToolCall } from '#human/llm/message';
 import { emptyUsage } from '#human/llm/usage';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { IAgentProfileService } from '#/index';
@@ -58,10 +58,6 @@ describe('Agent loop', () => {
     } finally {
       await ctx.dispose();
     }
-  });
-
-  it('resolves the loop service from the agent scope by interface', () => {
-    expect(loop).toBeDefined();
   });
 
   it('runs a text-only agent turn from prompt to completion', async () => {
@@ -518,6 +514,77 @@ describe('Agent loop', () => {
       assistant: text "I will look it up."  calls call_lookup:Lookup { "query": "moon" }
       tool[call_lookup]: text "lookup-result"
   `);
+  });
+
+  it('does not abort sibling tools when a parallel batch tool completes first', async () => {
+    const local = createTestAgent(permissionModeServices('yolo'));
+    const slowGate = deferred();
+    try {
+      const slowStarted = deferred();
+      let slowSawAbort: boolean | undefined;
+      const fastTool: ExecutableTool = {
+        name: 'Fast',
+        description: 'Return immediately.',
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+        resolveExecution: () => ({
+          approvalRule: 'Fast',
+          execute: async () => ({ output: 'fast result' }),
+        }),
+      };
+      const slowTool: ExecutableTool = {
+        name: 'Slow',
+        description: 'Wait on a gate before returning.',
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+        resolveExecution: () => ({
+          approvalRule: 'Slow',
+          execute: async ({ signal }) => {
+            slowStarted.resolve();
+            await slowGate.promise;
+            slowSawAbort = signal.aborted;
+            return { output: 'slow result' };
+          },
+        }),
+      };
+      local.get(IAgentProfileService).update({ activeToolNames: ['Fast', 'Slow'] });
+      local.get(IAgentToolRegistryService).register(fastTool);
+      local.get(IAgentToolRegistryService).register(slowTool);
+
+      local.mockNextResponse(
+        { type: 'text', text: 'working' },
+        { type: 'function', id: 'call-fast-1', name: 'Fast', arguments: '{}' },
+        { type: 'function', id: 'call-slow-1', name: 'Slow', arguments: '{}' },
+      );
+      local.mockNextResponse({ type: 'text', text: 'all done' });
+
+      const toolResults = (): Array<Extract<LoopRecordedEvent, { type: 'tool.result' }>> =>
+        local.allEvents
+          .filter(
+            (entry) => entry.type === '[wire]' && entry.event === 'context.append_loop_event',
+          )
+          .map((entry) => (entry.args as { event: LoopRecordedEvent }).event)
+          .filter(
+            (event): event is Extract<LoopRecordedEvent, { type: 'tool.result' }> =>
+              event.type === 'tool.result',
+          );
+
+      const { turn } = submitTurn(local.get(IAgentLoopService), 'use both tools');
+      await slowStarted.promise;
+      await vi.waitFor(() => {
+        expect(toolResults().some((event) => event.toolCallId === 'call-fast-1')).toBe(true);
+      });
+      slowGate.resolve();
+      await expect(turn.result).resolves.toMatchObject({ type: 'completed' });
+
+      expect(slowSawAbort).toBe(false);
+      expect(toolResults().map((event) => event.toolCallId).toSorted()).toEqual([
+        'call-fast-1',
+        'call-slow-1',
+      ]);
+      await local.expectResumeMatches();
+    } finally {
+      slowGate.resolve();
+      await local.dispose();
+    }
   });
 
   it('preserves tool call extras (Gemini thought_signature) through to context', async () => {
