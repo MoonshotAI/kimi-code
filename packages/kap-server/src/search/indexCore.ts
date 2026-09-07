@@ -65,6 +65,34 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+async function sessionDirectoryIdentity(dir: string): Promise<string | undefined> {
+  try {
+    const info = await stat(dir, { bigint: true });
+    return info.isDirectory() ? `${info.dev}:${info.ino}:${info.birthtimeNs}` : undefined;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return undefined;
+    throw error;
+  }
+}
+
+async function sessionDirectoryTitle(dir: string, log: SearchCoreLog): Promise<string> {
+  for (const scope of ['', 'session-meta']) {
+    try {
+      const meta: unknown = JSON.parse(await readFile(join(dir, scope, 'state.json'), 'utf8'));
+      if (typeof meta === 'object' && meta !== null && 'title' in meta && typeof meta.title === 'string') {
+        return meta.title;
+      }
+      return '';
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        log.warn('search index: cannot read session title', { dir, error: errorMessage(error) });
+      }
+    }
+  }
+  return '';
+}
+
 const INITIAL_TURN_STATE: TurnCounterState = { next: 0, hasTurn: false, openers: [] };
 
 function initialTurnState(): TurnCounterState {
@@ -511,6 +539,22 @@ export class SearchIndexCore {
   }
 
   private async syncSession(db: MiniDb<SearchDoc>, summary: SyncSessionInput): Promise<void> {
+    const identity = await sessionDirectoryIdentity(summary.dir);
+    if (identity === undefined) {
+      await this.deleteSessionDocs(db, summary.id);
+      return;
+    }
+    const title = await sessionDirectoryTitle(summary.dir, this.log);
+    const metaKey = SESSION_META_PREFIX + summary.id;
+    const previous = db.get(metaKey);
+    if (previous?.kind !== 'sessionMeta' || previous.identity !== identity || previous.dir !== summary.dir) {
+      await this.deleteSessionDocs(db, summary.id);
+      if (previous !== undefined) this.syncReplaced = true;
+    }
+    const meta: SessionMetaDoc = { kind: 'sessionMeta', dir: summary.dir, identity, title };
+    if (previous?.kind !== 'sessionMeta' || previous.identity !== identity || previous.dir !== summary.dir || previous.title !== title) {
+      await db.set(metaKey, meta);
+    }
     const wireFiles = await collectWireFiles(summary.dir);
     const seenPaths = new Set(wireFiles.map((file) => file.path));
 
@@ -523,16 +567,16 @@ export class SearchIndexCore {
     }
 
     for (const file of wireFiles) {
-      await this.syncWireFile(db, summary, file);
+      await this.syncWireFile(db, { ...summary, title, sessionIdentity: identity }, file);
     }
 
-    const title = summary.title ?? '';
     const titleKey = `${summary.id}/$title`;
     const existing = db.get(titleKey);
     if (title.length > 0) {
       if (existing?.kind !== 'title' || existing.text !== title) {
         const doc: TitleDoc = {
           kind: 'title',
+          sessionIdentity: identity,
           sessionId: summary.id,
           workspaceId: summary.workspaceId,
           sessionTitle: title,
@@ -547,10 +591,6 @@ export class SearchIndexCore {
     } else if (existing !== undefined) {
       await db.del(titleKey);
     }
-    if (db.get(SESSION_META_PREFIX + summary.id) === undefined) {
-      const sessionMeta: SessionMetaDoc = { kind: 'sessionMeta' };
-      await db.set(SESSION_META_PREFIX + summary.id, sessionMeta);
-    }
   }
 
   private async deleteFileDocs(db: MiniDb<SearchDoc>, meta: FileMetaDoc): Promise<void> {
@@ -562,7 +602,7 @@ export class SearchIndexCore {
 
   private async syncWireFile(
     db: MiniDb<SearchDoc>,
-    summary: SyncSessionInput,
+    summary: SyncSessionInput & { readonly sessionIdentity: string },
     file: WireFileRef,
   ): Promise<void> {
     let st: { size: number; mtimeMs: number; ino: number };
@@ -693,7 +733,7 @@ export class SearchIndexCore {
 
   private collectWireLine(
     ops: BatchInputOp<SearchDoc>[],
-    summary: SyncSessionInput,
+    summary: SyncSessionInput & { readonly sessionIdentity: string },
     file: WireFileRef,
     line: string,
     lineOffset: number,
@@ -717,6 +757,7 @@ export class SearchIndexCore {
       const stepOrdinal = e.stepUuid !== undefined ? stepState.byUuid[e.stepUuid] : undefined;
       const doc: MessageDoc = {
         kind: 'message',
+        sessionIdentity: summary.sessionIdentity,
         sessionId: summary.id,
         workspaceId: summary.workspaceId,
         sessionTitle: summary.title ?? '',
@@ -865,14 +906,51 @@ export class SearchIndexCore {
     const boundary = page.kind === 'keyset' ? page.boundary : undefined;
     const matched = matchDocs(q, candidates, boundary, budget);
     incomplete ??= matched.incomplete;
-    const { pageRows, hasMore } = paginateRows(q, page, matched.rows);
+    const index = this.readIndexView(serveDb, freshnessStale);
+    const sources = new Map<string, SessionMetaDoc | undefined>();
+    for (const row of matched.rows) {
+      const id = row.value.sessionId;
+      if (sources.has(id)) continue;
+      if (Date.now() > budget.deadlineAt) {
+        incomplete ??= 'deadline';
+        break;
+      }
+      const meta = serveDb.get(SESSION_META_PREFIX + id);
+      sources.set(id, meta?.kind === 'sessionMeta' ? meta : undefined);
+    }
+    const identities = new Map<string, string | undefined>();
+    const visible: MatchedRow[] = [];
+    for (const row of matched.rows) {
+      if (Date.now() > budget.deadlineAt) {
+        incomplete ??= 'deadline';
+        break;
+      }
+      const meta = sources.get(row.value.sessionId);
+      if (meta?.dir === undefined || row.value.sessionIdentity === undefined || meta.identity !== row.value.sessionIdentity) {
+        freshnessStale = true;
+        continue;
+      }
+      if (!identities.has(meta.dir)) {
+        try {
+          identities.set(meta.dir, await sessionDirectoryIdentity(meta.dir));
+        } catch (error) {
+          throw new GlobalSearchError('index_unavailable', `cannot verify search source: ${errorMessage(error)}`);
+        }
+      }
+      if (identities.get(meta.dir) === row.value.sessionIdentity) {
+        visible.push({ ...row, value: { ...row.value, sessionTitle: meta.title ?? '' } });
+      } else {
+        freshnessStale = true;
+      }
+    }
+    const { pageRows, hasMore } = paginateRows(q, page, visible);
     return {
       kind: 'page',
       rows: pageRows,
       hasMore,
       incomplete,
       generation,
-      index: this.readIndexView(serveDb, freshnessStale),
+      index: { ...index, freshnessStale: freshnessStale || this.db !== serveDb },
     };
   }
 

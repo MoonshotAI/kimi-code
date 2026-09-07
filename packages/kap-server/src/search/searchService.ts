@@ -620,7 +620,7 @@ export class GlobalSearchService implements IGlobalSearchService {
     return {
       sessionId: doc.sessionId,
       workspaceId: doc.workspaceId,
-      sessionTitle: this.summaries.get(doc.sessionId)?.title ?? doc.sessionTitle,
+      sessionTitle: doc.sessionTitle,
       agentId: doc.agentId,
       role: doc.role,
       snippet:
