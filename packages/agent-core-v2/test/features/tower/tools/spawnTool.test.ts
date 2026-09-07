@@ -33,6 +33,7 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
   SECONDARY_MODEL_SECTION,
+  SUBAGENT_SECTION,
 } from '#/session/subagent/configSection';
 import {
   ISessionSubagentService,
@@ -81,6 +82,7 @@ describe('TowerSpawnTool', () => {
   let secondaryModel:
     | { readonly model: string; readonly defaultEffort?: string; readonly force?: boolean }
     | undefined;
+  let subagentTimeoutMs: number | undefined;
   let thinkingEnabled: boolean | undefined;
   let modelMeta: Record<string, Partial<Model>>;
   let createdSetMode: Mock<(mode: PermissionMode) => void>;
@@ -107,6 +109,7 @@ describe('TowerSpawnTool', () => {
     release = vi.fn();
     completion = deferred();
     secondaryModel = undefined;
+    subagentTimeoutMs = undefined;
     thinkingEnabled = undefined;
     modelMeta = {};
     createdSetMode = vi.fn();
@@ -191,9 +194,11 @@ describe('TowerSpawnTool', () => {
       get: ((domain: string) =>
         domain === SECONDARY_MODEL_SECTION
           ? secondaryModel
-          : domain === 'thinking' && thinkingEnabled !== undefined
-            ? { enabled: thinkingEnabled }
-            : undefined) as IConfigService['get'],
+          : domain === SUBAGENT_SECTION && subagentTimeoutMs !== undefined
+            ? { timeoutMs: subagentTimeoutMs }
+            : domain === 'thinking' && thinkingEnabled !== undefined
+              ? { enabled: thinkingEnabled }
+              : undefined) as IConfigService['get'],
     });
     ix.stub(IModelCatalog, {
       get: (alias: string) => ({ id: alias, ...modelMeta[alias] }) as Model,
@@ -338,6 +343,30 @@ describe('TowerSpawnTool', () => {
     completion.resolve({ summary: 'worker done' });
     await vi.waitFor(() => {
       expect(release).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('honors the configured [subagent].timeout_ms for the registered task', async () => {
+    subagentTimeoutMs = 30 * 60 * 1000;
+
+    const result = await execute(WORKER_ARGS);
+
+    expect(result.isError).toBeUndefined();
+    expect(registerTask).toHaveBeenCalledWith(expect.any(SubagentTask), {
+      detached: true,
+      timeoutMs: 30 * 60 * 1000,
+      signal: undefined,
+    });
+  });
+
+  it('falls back to the 2h default timeout when no subagent timeout is configured', async () => {
+    const result = await execute(WORKER_ARGS);
+
+    expect(result.isError).toBeUndefined();
+    expect(registerTask).toHaveBeenCalledWith(expect.any(SubagentTask), {
+      detached: true,
+      timeoutMs: DEFAULT_SUBAGENT_TIMEOUT_MS,
+      signal: undefined,
     });
   });
 
