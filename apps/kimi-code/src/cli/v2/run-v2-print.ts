@@ -32,10 +32,12 @@ import {
   IConfigService,
   IEventBus,
   IEventDispatcher,
+  IHostFileSystem,
   IOAuthToolkit,
   ISessionIndex,
   ISessionManager,
   ITelemetryService,
+  IWorkspaceInstanceManager,
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
   applyPrintModeConfigDefaults,
@@ -55,9 +57,11 @@ import {
   type IAgentScopeHandle,
   type ISessionScopeHandle,
   type LoopRunResult,
+  type McpServerConfig,
   type PrintBackgroundMode,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { loadMcpServers } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
 import {
   createKimiDefaultHeaders,
   createKimiDeviceId,
@@ -272,6 +276,15 @@ export async function runV2Print(
       });
     }
 
+    // Print mode has no trust prompt, so the engine's workspace-trust gate
+    // would silently drop project-level MCP servers — say so on stderr.
+    try {
+      const gated = await listTrustGatedMcpServers(app, workDir, homeDir);
+      if (gated.length > 0) stderr.write(formatTrustGatedMcpWarning(gated));
+    } catch {
+      // Best-effort: a broken mcp.json or trust store must not fail the run.
+    }
+
     const resolved = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);
     restorePermission = resolved.restorePermission;
     quiesceAgents = async () => {
@@ -472,6 +485,54 @@ async function resolveNativeSession(
     telemetryModel: model,
     goalModel: model,
   };
+}
+
+export interface TrustGatedMcpServer {
+  readonly name: string;
+  readonly target: string;
+}
+
+/**
+ * Project-level MCP servers the workspace-trust gate leaves out in this
+ * folder: what the config loader sees with project files included vs skipped
+ * (mirrors the SDK's `getWorkspaceTrustInfo`). Empty when the folder is
+ * trusted or nothing project-level is declared.
+ */
+export async function listTrustGatedMcpServers(
+  app: Scope,
+  workDir: string,
+  homeDir: string,
+): Promise<readonly TrustGatedMcpServer[]> {
+  const workspace = await app.accessor
+    .get(IWorkspaceInstanceManager)
+    .getOrCreate({ root: workDir });
+  if (await workspace.program.trust.get()) return [];
+  const fs = app.accessor.get(IHostFileSystem);
+  const [withProject, userOnly] = await Promise.all([
+    loadMcpServers({ fs, cwd: workDir, homeDir, includeProject: true }),
+    loadMcpServers({ fs, cwd: workDir, homeDir, includeProject: false }),
+  ]);
+  return Object.entries(withProject)
+    .filter(([name]) => !(name in userOnly))
+    .map(([name, config]) => ({ name, target: describeMcpTarget(config) }))
+    .toSorted((a, b) => a.name.localeCompare(b.name));
+}
+
+export function formatTrustGatedMcpWarning(servers: readonly TrustGatedMcpServer[]): string {
+  const noun = servers.length === 1 ? 'server' : 'servers';
+  const list = servers.map((server) => `${server.name} (${server.target})`).join(', ');
+  return (
+    `Warning: this folder is not trusted; skipped ${servers.length} project-level MCP ${noun}: ${list}.\n` +
+    '  Run `kimi` here and choose "Trust this folder" to enable them.\n\n'
+  );
+}
+
+function describeMcpTarget(config: McpServerConfig): string {
+  if (config.transport === 'stdio') {
+    const args = config.args === undefined ? '' : ` ${config.args.join(' ')}`;
+    return `stdio: ${config.command}${args}`;
+  }
+  return `${config.transport}: ${config.url}`;
 }
 
 async function runNativeTurn(
