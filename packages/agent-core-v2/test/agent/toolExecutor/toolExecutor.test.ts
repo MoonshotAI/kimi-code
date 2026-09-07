@@ -590,6 +590,28 @@ describe('AgentToolExecutorService', () => {
     });
   });
 
+  it('preserves a display produced at execution time in the final result', async () => {
+    const tool = new TestTool('dynamic-display', {
+      result: {
+        output: 'current state',
+        display: {
+          kind: 'generic',
+          summary: 'Resolved during execution',
+          detail: { value: 2 },
+        },
+      },
+    });
+    registry.register(tool);
+
+    const [result] = await execute([toolCall('call_dynamic_display', 'dynamic-display', {})]);
+
+    expect(result?.display).toEqual({
+      kind: 'generic',
+      summary: 'Resolved during execution',
+      detail: { value: 2 },
+    });
+  });
+
   it('captures tool execution failures as error results', async () => {
     const tool = new TestTool('fail', {
       execute: async () => {

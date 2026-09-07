@@ -882,6 +882,7 @@ function normalizeToolResult(result: ExecutableToolResult): ToolResult {
   }
   const base: {
     output: ToolResult['output'];
+    display?: ToolInputDisplay;
     stopTurn?: boolean;
     stopTurnReason?: string;
     truncated?: true;
@@ -890,6 +891,7 @@ function normalizeToolResult(result: ExecutableToolResult): ToolResult {
     spillExempt?: true;
   } = {
     output,
+    display: result.display,
     stopTurn: result.stopTurn,
     spill: result.spill,
     spillExempt: result.spillExempt,
