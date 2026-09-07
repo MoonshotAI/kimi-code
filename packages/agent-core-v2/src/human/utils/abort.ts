@@ -10,5 +10,8 @@ export function createAbortScope(): AbortScope {
 
 export function withAbort(parent: AbortSignal): AbortScope {
   const scope = createAbortScope();
-  return { signal: AbortSignal.any([parent, scope.signal]), abort: scope.abort };
+  return {
+    signal: AbortSignal.any([parent, scope.signal]),
+    abort: (reason) => scope.abort(reason),
+  };
 }
