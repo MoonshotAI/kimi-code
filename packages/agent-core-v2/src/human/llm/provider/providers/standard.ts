@@ -1,7 +1,7 @@
 import type { ProtocolTrait } from '#/llm/protocol/trait';
 import { createProvider } from '#/llm/provider/definition';
 import { anthropicBase } from '#/llm/requester/bases/anthropic/requester';
-import { createGoogleGenAIBase, googleGenAIBase } from '#/llm/requester/bases/google-genai/requester';
+import { googleGenAIBase } from '#/llm/requester/bases/google-genai/requester';
 import { openAIBase } from '#/llm/requester/bases/openai/requester';
 import { openAIResponsesBase } from '#/llm/requester/bases/openai-responses/requester';
 
@@ -36,12 +36,6 @@ export const googleProvider = createProvider({
       base: googleGenAIBase,
       trait: {
         endpoint: () => ({ apiKeyEnv: 'GOOGLE_API_KEY', baseUrlEnv: 'GOOGLE_GEMINI_BASE_URL' }),
-      },
-    },
-    'google-vertex': {
-      base: createGoogleGenAIBase({ vertexai: true }),
-      trait: {
-        endpoint: () => ({ apiKeyEnv: 'VERTEXAI_API_KEY', baseUrlEnv: 'GOOGLE_VERTEX_BASE_URL' }),
       },
     },
   },

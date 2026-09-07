@@ -301,10 +301,8 @@ function samplingExtraParams(
     case 'openai_responses':
       return { responses: { temperature, top_p: topP } };
     case 'anthropic':
-    case 'anthropic_beta':
       return { anthropic: { temperature, top_p: topP } };
     case 'google-genai':
-    case 'google-vertex':
       return { googleGenai: { temperature, topP } };
   }
 }

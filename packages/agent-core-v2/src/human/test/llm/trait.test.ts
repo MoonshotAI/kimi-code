@@ -496,7 +496,7 @@ describe('endpoint', () => {
   });
 
   it('selects protocols by name and rejects undeclared ones', () => {
-    expect(kimiProvider.protocols).toEqual(['openai', 'anthropic_beta', 'openai_responses']);
+    expect(kimiProvider.protocols).toEqual(['openai', 'anthropic', 'openai_responses']);
     expect(() => kimiProvider.createRequester('google-genai')).toThrow(
       "provider 'kimi' has no protocol 'google-genai'",
     );
