@@ -1117,6 +1117,34 @@ describe('WorkspaceSkillCatalogService', () => {
     }
   });
 
+  it('merges both skill-root candidates into one watch when homeDir equals osHomeDir', async () => {
+    const host = createScopedTestHost([
+      stubPair(IFlagService, stubFlag(true)),
+      stubPair(IBootstrapService, stubBootstrap('/home', {}, {}, '/home')),
+      stubPair(IConfigService, configStub()),
+      stubPair(IPluginService, pluginStub()),
+      stubPair(ILogService, stubLog()),
+      stubPair(ISkillDiscovery, new FileSkillDiscovery(stubLog())),
+    ]);
+    const workspace = host.child('program', 'w1', [
+      stubPair(IWorkspaceContext, workspaceContextStub('/work')),
+    ]);
+
+    try {
+      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+      await catalog.load();
+
+      const homeCalls = watchMockState.calls.filter((call) => call.path === '/home');
+      expect(homeCalls).toHaveLength(1);
+      const ignored = homeCalls[0]?.options?.ignored;
+      expect(ignored?.('/home/skills/demo/SKILL.md')).toBe(false);
+      expect(ignored?.('/home/.agents/skills/demo/SKILL.md')).toBe(false);
+      expect(ignored?.('/home/sessions/s1/state.json')).toBe(true);
+    } finally {
+      host.dispose();
+    }
+  });
+
   it('does not watch the user skill roots when explicit skillDirs are set', async () => {
     const host = createScopedTestHost([
       stubPair(IFlagService, stubFlag(true)),
@@ -1219,7 +1247,6 @@ describe('WorkspaceSkillCatalogService', () => {
         return Promise.race([refreshed, timedOut]);
       };
 
-      // create
       const created = waitForUserChange();
       const skillDir = join(homeDir, 'skills', 'watched-user-skill');
       await mkdir(skillDir, { recursive: true });
@@ -1227,19 +1254,16 @@ describe('WorkspaceSkillCatalogService', () => {
       await created;
       expect(catalog.catalog.getSkill('watched-user-skill')?.description).toBe('v1');
 
-      // modify
       const modified = waitForUserChange();
       await writeSkill(skillDir, 'v2');
       await modified;
       expect(catalog.catalog.getSkill('watched-user-skill')?.description).toBe('v2');
 
-      // delete
       const deleted = waitForUserChange();
       await rm(skillDir, { recursive: true, force: true });
       await deleted;
       expect(catalog.catalog.getSkill('watched-user-skill')).toBeUndefined();
 
-      // create under ~/.agents/skills
       const osCreated = waitForUserChange();
       const osSkillDir = join(osHomeDir, '.agents', 'skills', 'watched-user-skill');
       await mkdir(osSkillDir, { recursive: true });

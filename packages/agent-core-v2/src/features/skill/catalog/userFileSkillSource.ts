@@ -69,21 +69,16 @@ export class UserFileSkillSource extends Disposable implements IUserFileSkillSou
   }
 
   private watchUserSkillRoots(): void {
-    const watchedBases = new Set<string>();
+    const candidatesByBase = new Map<string, string[]>();
+    const addTarget = (base: string, candidate: string): void => {
+      const candidates = candidatesByBase.get(base);
+      if (candidates === undefined) candidatesByBase.set(base, [candidate]);
+      else candidates.push(candidate);
+    };
+    addTarget(this.bootstrap.homeDir, join(this.bootstrap.homeDir, 'skills'));
+    addTarget(this.bootstrap.osHomeDir, join(this.bootstrap.osHomeDir, '.agents', 'skills'));
     const ready: Promise<void>[] = [];
-    const targets = [
-      {
-        base: this.bootstrap.homeDir,
-        candidates: [join(this.bootstrap.homeDir, 'skills')],
-      },
-      {
-        base: this.bootstrap.osHomeDir,
-        candidates: [join(this.bootstrap.osHomeDir, '.agents', 'skills')],
-      },
-    ];
-    for (const { base, candidates } of targets) {
-      if (watchedBases.has(base)) continue;
-      watchedBases.add(base);
+    for (const [base, candidates] of candidatesByBase) {
       const handle = watch(base, {
         ignored: subtreeWatchFilter(base, candidates),
         signal: true,
