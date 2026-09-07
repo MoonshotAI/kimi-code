@@ -8,7 +8,7 @@ import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import type { WillExecuteToolEvent } from '#/agent/toolExecutor/toolHooks';
+import type { ToolDidExecuteContext, WillExecuteToolEvent } from '#/agent/toolExecutor/toolHooks';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -49,6 +49,8 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
   private queue: Promise<void> = Promise.resolve();
   private activeTurnId: number | undefined;
   private lastEndedTurnId: number | undefined;
+  private parentTurnId: number | undefined;
+  private pendingLateCaptures: { path: string; turnId: number }[] = [];
   private orphanSweepDone = false;
 
   constructor(
@@ -68,8 +70,14 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     super();
     this.agentState.contributeState(fileHistoryKey);
     if (this.agentCtx.agentId !== MAIN_AGENT_ID) {
+      this.parentTurnId = this.lookupParentTurnId();
       this._register(
         toolExecutor.onWillExecuteTool((event) => this.onSubagentWillExecuteTool(event)),
+      );
+      this._register(
+        toolExecutor.hooks.onDidExecuteTool.register('fileHistory', (ctx, next) =>
+          this.onSubagentDidExecuteTool(ctx, next),
+        ),
       );
       return;
     }
@@ -258,18 +266,52 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     event.waitUntil(this.enqueue(() => this.capture(path, event.turnId)));
   }
 
+  private lookupParentTurnId(): number | undefined {
+    const main = this.agentLifecycle.handleOf(MAIN_AGENT_ID);
+    if (main === undefined) return undefined;
+    return main.accessor.get(IAgentFileHistoryService).captureTurnId();
+  }
+
   private onSubagentWillExecuteTool(event: WillExecuteToolEvent): void {
     const path = editTargetPath(event.execution.display);
     if (path === undefined) return;
     const main = this.agentLifecycle.handleOf(MAIN_AGENT_ID);
     if (main === undefined) return;
-    event.waitUntil(main.accessor.get(IAgentFileHistoryService).captureForActiveTurn(path));
+    const history = main.accessor.get(IAgentFileHistoryService);
+    const turnId = this.parentTurnId ?? history.captureTurnId();
+    if (turnId === undefined) return;
+    this.pendingLateCaptures.push({ path, turnId });
+    event.waitUntil(history.captureForActiveTurn(path, turnId));
   }
 
-  captureForActiveTurn(path: string): Promise<void> {
-    const turnId = this.activeTurnId ?? this.lastEndedTurnId;
-    if (turnId === undefined) return Promise.resolve();
-    return this.enqueue(() => this.capture(path, turnId));
+  private async onSubagentDidExecuteTool(
+    _ctx: ToolDidExecuteContext,
+    next: (context?: ToolDidExecuteContext) => Promise<void>,
+  ): Promise<void> {
+    const pending = this.pendingLateCaptures.shift();
+    if (pending !== undefined) {
+      const main = this.agentLifecycle.handleOf(MAIN_AGENT_ID);
+      if (main !== undefined) {
+        await main.accessor
+          .get(IAgentFileHistoryService)
+          .captureForActiveTurn(pending.path, pending.turnId);
+      }
+    }
+    await next();
+  }
+
+  captureTurnId(): number | undefined {
+    return this.activeTurnId ?? this.lastEndedTurnId;
+  }
+
+  captureForActiveTurn(path: string, turnId?: number): Promise<void> {
+    const resolved = turnId ?? this.activeTurnId ?? this.lastEndedTurnId;
+    if (resolved === undefined) return Promise.resolve();
+    const needsFinalize = this.activeTurnId !== resolved;
+    return this.enqueue(async () => {
+      await this.capture(path, resolved);
+      if (needsFinalize) await this.endCheckpoint(resolved, [this.pathKey(path)]);
+    });
   }
 
   private enqueue(op: () => Promise<void>): Promise<void> {
@@ -330,11 +372,12 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     );
   }
 
-  private async endCheckpoint(turnId: number): Promise<void> {
+  private async endCheckpoint(turnId: number, onlyPaths?: readonly string[]): Promise<void> {
     const state = this.history();
-    if (state.checkpoints.some((c) => c.turnId === turnId && checkpointPhaseOf(c) === 'end')) {
-      return;
-    }
+    const existingEnd = state.checkpoints.find(
+      (c) => c.turnId === turnId && checkpointPhaseOf(c) === 'end',
+    );
+    if (existingEnd !== undefined && onlyPaths === undefined) return;
     const start = state.checkpoints.find(
       (c) => c.turnId === turnId && checkpointPhaseOf(c) === 'start',
     );
@@ -352,13 +395,23 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
       string,
       FileBackupEntry
     >;
-    for (const [pathKey, before] of Object.entries(start.entries)) {
+    if (existingEnd !== undefined) {
+      for (const [path, entry] of Object.entries(existingEnd.entries)) {
+        entries[path] = entry;
+      }
+    }
+    const pathKeys = onlyPaths ?? Object.keys(start.entries);
+    for (const pathKey of pathKeys) {
+      const before = Object.hasOwn(start.entries, pathKey) ? start.entries[pathKey] : undefined;
+      if (before === undefined) continue;
       const nextVersion = maxVersion(state.checkpoints, pathKey) + 1;
       const current = await this.readCurrent(pathKey);
       if (current === 'unreadable') continue;
       if (current === 'missing') {
         if (before.key !== null || before.oversize === true) {
           entries[pathKey] = { key: null, version: nextVersion };
+        } else {
+          delete entries[pathKey];
         }
         continue;
       }
@@ -375,11 +428,16 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
             size: current.oversizeBytes,
             mtimeMs: current.mtimeMs,
           };
+        } else {
+          delete entries[pathKey];
         }
         continue;
       }
       const contentHash = sha256(current);
-      if (before.contentHash === contentHash) continue;
+      if (before.contentHash === contentHash) {
+        delete entries[pathKey];
+        continue;
+      }
       entries[pathKey] = await this.backup(pathKey, nextVersion, current, contentHash);
     }
 
