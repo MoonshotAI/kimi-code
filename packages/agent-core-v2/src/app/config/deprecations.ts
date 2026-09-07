@@ -12,11 +12,65 @@ function isModelShaped(entry: Record<string, unknown>): boolean {
 
 const SCHEMA_CHILD_KEYS = new Set(['overrides', 'oauth']);
 
+const MODEL_RECORD_KEYS = new Set([
+  'provider',
+  'provider_id',
+  'base_url',
+  'api_key',
+  'protocol',
+  'max_context_size',
+  'max_input_size',
+  'max_output_size',
+  'capabilities',
+  'display_name',
+  'reasoning_key',
+  'adaptive_thinking',
+  'beta_api',
+  'support_efforts',
+  'default_effort',
+  'off_effort',
+  'aliases',
+]);
+
+function hasModelNameKey(entry: Record<string, unknown>): boolean {
+  return entry['model'] !== undefined || entry['name'] !== undefined;
+}
+
+function hasModelRecordField(entry: Record<string, unknown>): boolean {
+  return Object.keys(entry).some((key) => MODEL_RECORD_KEYS.has(key));
+}
+
 function childTables(entry: Record<string, unknown>): [string, Record<string, unknown>][] {
   return Object.entries(entry).filter(
-    (pair): pair is [string, Record<string, unknown>] =>
-      isPlainObject(pair[1]) && !SCHEMA_CHILD_KEYS.has(pair[0]),
+    (pair): pair is [string, Record<string, unknown>] => isPlainObject(pair[1]),
   );
+}
+
+function subtreeHasAliasEvidence(entry: Record<string, unknown>): boolean {
+  if (hasModelNameKey(entry) || hasModelRecordField(entry)) return true;
+  return childTables(entry).some(([, value]) => subtreeHasAliasEvidence(value));
+}
+
+function nestedModelDiagnostic(path: readonly string[]): ConfigDiagnostic {
+  const full = path.join('.');
+  return {
+    domain: 'models',
+    severity: 'warning',
+    message:
+      `[models] entry '${full}' is nested under '${path[0]}' and cannot be used as a model; ` +
+      `if the alias contains dots, quote the table name (e.g. [models."${full}"]).`,
+  };
+}
+
+function missingNameDiagnostic(path: readonly string[]): ConfigDiagnostic {
+  const full = path.join('.');
+  return {
+    domain: 'models',
+    severity: 'warning',
+    message:
+      `[models] entry '${full}' has no usable model name and cannot be used as a model; ` +
+      `if the alias contains dots, quote the table name (e.g. [models."${full}"]).`,
+  };
 }
 
 function walkModelEntry(
@@ -24,30 +78,28 @@ function walkModelEntry(
   entry: Record<string, unknown>,
   diagnostics: ConfigDiagnostic[],
 ): void {
-  const children = childTables(entry);
-  if (!isModelShaped(entry) && children.length === 0) {
-    const full = path.join('.');
-    diagnostics.push({
-      domain: 'models',
-      severity: 'warning',
-      message:
-        `[models] entry '${full}' has no usable model name and cannot be used as a model; ` +
-        `if the alias contains dots, quote the table name (e.g. [models."${full}"]).`,
-    });
-    return;
+  let emitted = 0;
+  for (const [key, value] of childTables(entry)) {
+    const childPath = [...path, key];
+    if (SCHEMA_CHILD_KEYS.has(key)) {
+      if (!isModelShaped(value)) continue;
+      diagnostics.push(nestedModelDiagnostic(childPath));
+      emitted++;
+      walkModelEntry(childPath, value, diagnostics);
+      continue;
+    }
+    if (!subtreeHasAliasEvidence(value)) continue;
+    if (isModelShaped(value)) {
+      diagnostics.push(nestedModelDiagnostic(childPath));
+      emitted++;
+    } else if (hasModelNameKey(value) || hasModelRecordField(value)) {
+      diagnostics.push(missingNameDiagnostic(childPath));
+      emitted++;
+    }
+    walkModelEntry(childPath, value, diagnostics);
   }
-  if (path.length > 1 && isModelShaped(entry)) {
-    const full = path.join('.');
-    diagnostics.push({
-      domain: 'models',
-      severity: 'warning',
-      message:
-        `[models] entry '${full}' is nested under '${path[0]}' and cannot be used as a model; ` +
-        `if the alias contains dots, quote the table name (e.g. [models."${full}"]).`,
-    });
-  }
-  for (const [key, value] of children) {
-    walkModelEntry([...path, key], value, diagnostics);
+  if (path.length === 1 && !isModelShaped(entry) && emitted === 0) {
+    diagnostics.push(missingNameDiagnostic(path));
   }
 }
 

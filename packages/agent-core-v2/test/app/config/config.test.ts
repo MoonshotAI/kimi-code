@@ -1588,6 +1588,34 @@ describe('malformed model entries', () => {
     disposables.dispose();
   });
 
+  it('treats a schema-key segment carrying a model name as an intended alias', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.foo.overrides]\nmodel = "bar"\nmax_context_size = 128000\n',
+    );
+
+    expect(config.diagnostics()).toEqual([
+      {
+        domain: MODELS_SECTION,
+        severity: 'warning',
+        message:
+          "[models] entry 'foo.overrides' is nested under 'foo' and cannot be used as a model; " +
+          'if the alias contains dots, quote the table name (e.g. [models."foo.overrides"]).',
+      },
+    ]);
+
+    disposables.dispose();
+  });
+
+  it('ignores passthrough object fields of a valid model', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.foo]\nmodel = "foo"\nmax_context_size = 128000\n\n[models.foo.metadata]\nregion = "us"\n',
+    );
+
+    expect(config.diagnostics()).toEqual([]);
+
+    disposables.dispose();
+  });
+
   it('warns for every nested model path sharing a prefix', async () => {
     const { config, disposables } = await createConfig(
       '[models.openai.gpt-4]\nmodel = "gpt-4"\n\n[models.openai.gpt-4o]\nmodel = "gpt-4o"\n',
