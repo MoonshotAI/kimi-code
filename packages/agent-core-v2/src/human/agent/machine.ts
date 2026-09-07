@@ -493,6 +493,9 @@ export function createAgentMachine({
           'llm.retrying': {
             actions: [emit(({ event }) => event), 'forwardToParent'],
           },
+          'llm.recovering': {
+            actions: [emit(({ event }) => event), 'forwardToParent'],
+          },
           'llm.usage': {
             actions: [emit(({ event }) => event), 'forwardToParent'],
           },

@@ -10,21 +10,7 @@ import type {
   LlmRequester,
   LlmRequestEvent,
 } from './requester';
-import { withEmptyResponseGuard } from './empty-response';
-import type {
-  LlmRecovery,
-  LlmRecoveryContext,
-  LlmRecoveryProposal,
-  LlmRecoveryRecord,
-} from './recovery';
-import {
-  readRetryAfterMs,
-  resolveMaxAttempts,
-  retryBackoffDelay,
-  retryErrorFields,
-  shouldRetry,
-  type LlmRetryOptions,
-} from './retry';
+import type { LlmRecoveryRecord } from './recovery';
 
 export interface LlmInput {
   readonly config: LlmRequestConfig;
@@ -70,49 +56,8 @@ export type LlmOutput = { type: 'succeeded' } | { type: 'failed'; error: LlmErro
 
 export interface LlmMachineContext {
   input: LlmInput;
-  appliedRecoveries: LlmRecoveryRecord[];
   outcome?: 'succeeded' | 'failed';
   error?: LlmErrorMessage;
-  attempt: number;
-  delayMs: number;
-}
-
-function llmRetryingEvent(
-  retry: LlmRetryOptions | undefined,
-  context: LlmMachineContext,
-  error: LlmErrorMessage,
-): Extract<LlmEvent, { type: 'llm.retrying' }> {
-  return {
-    type: 'llm.retrying',
-    failedAttempt: context.attempt,
-    nextAttempt: context.attempt + 1,
-    maxAttempts: resolveMaxAttempts(retry),
-    delayMs: context.delayMs,
-    ...retryErrorFields(error),
-  };
-}
-
-function llmRecoveringEvent(
-  context: LlmMachineContext,
-  error: LlmErrorMessage,
-): Extract<LlmEvent, { type: 'llm.recovering' }> {
-  const record = context.appliedRecoveries.at(-1) as LlmRecoveryRecord;
-  return {
-    type: 'llm.recovering',
-    strategy: record.strategy,
-    action: record.action,
-    ...retryErrorFields(error),
-  };
-}
-
-function proposeRecovery(
-  recovery: LlmRecovery | undefined,
-  ctx: LlmRecoveryContext,
-): (LlmRecoveryProposal & LlmRecoveryRecord) | undefined {
-  if (recovery === undefined) return undefined;
-  const proposal = recovery.propose(ctx);
-  if (proposal === undefined || proposal.messages === ctx.messages) return undefined;
-  return { strategy: recovery.id, action: proposal.action, messages: proposal.messages };
 }
 
 function createRequestActor(
@@ -132,7 +77,10 @@ function createRequestActor(
       await requester.generate(
         input.config,
         { ...input.content, messages },
-        { signal: controller.signal, onEvent: sendBack },
+        {
+          signal: controller.signal,
+          onEvent: sendBack,
+        },
       );
     })();
     return () => controller.abort();
@@ -142,17 +90,10 @@ function createRequestActor(
 export interface CreateLlmMachineOptions {
   requester: LlmRequester;
   messageResolvers?: readonly MessageResolver[];
-  recovery?: LlmRecovery;
-  retry?: LlmRetryOptions;
 }
 
 export function createLlmMachine(options: CreateLlmMachineOptions) {
-  const retry = options.retry;
-  const recovery = options.recovery;
-  const requestActor = createRequestActor(
-    withEmptyResponseGuard(options.requester),
-    options.messageResolvers ?? [],
-  );
+  const requestActor = createRequestActor(options.requester, options.messageResolvers ?? []);
   return setup({
     types: {
       input: {} as LlmInput,
@@ -170,13 +111,10 @@ export function createLlmMachine(options: CreateLlmMachineOptions) {
         self._parent?.send(params);
       },
     },
-    delays: {
-      retryDelay: ({ context }) => context.delayMs,
-    },
   }).createMachine({
     id: 'llm',
     initial: 'generating',
-    context: ({ input }) => ({ input, appliedRecoveries: [], attempt: 1, delayMs: 0 }),
+    context: ({ input }) => ({ input }),
     states: {
       generating: {
         invoke: {
@@ -186,17 +124,8 @@ export function createLlmMachine(options: CreateLlmMachineOptions) {
         on: {
           'llm.sent': {
             actions: [
-              emit(({ context }) => ({
-                type: 'llm.sent' as const,
-                recovery: context.appliedRecoveries.at(-1),
-              })),
-              {
-                type: 'sendToParent',
-                params: ({ context }) => ({
-                  type: 'llm.sent' as const,
-                  recovery: context.appliedRecoveries.at(-1),
-                }),
-              },
+              emit({ type: 'llm.sent' as const }),
+              { type: 'sendToParent', params: { type: 'llm.sent' as const } },
             ],
           },
           'llm.headers': {
@@ -245,74 +174,14 @@ export function createLlmMachine(options: CreateLlmMachineOptions) {
               'forwardToParent',
             ],
           },
-          'llm.failed.remote': [
-            {
-              target: 'generating',
-              reenter: true,
-              guard: ({ context, event }) =>
-                proposeRecovery(recovery, {
-                  error: event.error,
-                  messages: context.input.content.messages,
-                  applied: context.appliedRecoveries,
-                }) !== undefined,
-              actions: [
-                assign(({ context, event }) => {
-                  const proposal = proposeRecovery(recovery, {
-                    error: event.error,
-                    messages: context.input.content.messages,
-                    applied: context.appliedRecoveries,
-                  });
-                  if (proposal === undefined) return {};
-                  return {
-                    input: {
-                      ...context.input,
-                      content: { ...context.input.content, messages: proposal.messages },
-                    },
-                    appliedRecoveries: [
-                      ...context.appliedRecoveries,
-                      { strategy: proposal.strategy, action: proposal.action },
-                    ],
-                    attempt: 1,
-                  };
-                }),
-                emit(({ context, event }) => llmRecoveringEvent(context, event.error)),
-                {
-                  type: 'sendToParent',
-                  params: ({ context, event }) => llmRecoveringEvent(context, event.error),
-                },
-              ],
-            },
-            {
-              target: 'retrying',
-              guard: ({ context, event }) =>
-                shouldRetry(retry, context.attempt, event.error),
-              actions: [
-                assign({
-                  delayMs: ({ context, event }) =>
-                    readRetryAfterMs(event.error) ?? retryBackoffDelay(context.attempt - 1),
-                }),
-                emit(({ context, event }) => llmRetryingEvent(retry, context, event.error)),
-                {
-                  type: 'sendToParent',
-                  params: ({ context, event }) => llmRetryingEvent(retry, context, event.error),
-                },
-              ],
-            },
-            {
-              target: 'failed',
-              actions: [
-                assign({ outcome: 'failed' as const, error: ({ event }) => event.error }),
-                emit(({ event }) => ({ type: 'llm.failed.remote' as const, error: event.error })),
-                'forwardToParent',
-              ],
-            },
-          ],
-        },
-      },
-      retrying: {
-        entry: assign({ attempt: ({ context }) => context.attempt + 1 }),
-        after: {
-          retryDelay: 'generating',
+          'llm.failed.remote': {
+            target: 'failed',
+            actions: [
+              assign({ outcome: 'failed' as const, error: ({ event }) => event.error }),
+              emit(({ event }) => ({ type: 'llm.failed.remote' as const, error: event.error })),
+              'forwardToParent',
+            ],
+          },
         },
       },
       succeeded: { type: 'final' },

@@ -1,18 +1,30 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createActor } from '#/xstate2';
+import { assign, createActor, emit, setup } from '#/xstate2';
 
 import { UNKNOWN_CAPABILITY } from '#/llm/capability';
 import type { LlmErrorMessage } from '#/llm/errors';
-import type { ContentPart, Message } from '#/llm/message';
+import type { ContentPart, Message, UserMessage } from '#/llm/message';
 import { createMediaDegradeRecovery } from '#/llm/media/degrade';
 import type { LlmModel } from '#/llm/model';
 import { createLlmMachine, type LlmEvent } from '#/llm/requester/machine';
+import type { LlmRecovery } from '#/llm/requester/recovery';
 import type { LlmRequester } from '#/llm/requester/requester';
 import type { LlmRetryOptions } from '#/llm/requester/retry';
+import {
+  createTurnMachine,
+  createUserEntry,
+  type CreateTurnMachineOptions,
+  type TurnEvent,
+  type TurnInput,
+  type TurnLlmEvent,
+  type TurnOutput,
+} from '#/agent/turn';
 
 const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
 
 type RetryingEvent = Extract<LlmEvent, { type: 'llm.retrying' }>;
+type RecoveringEvent = Extract<LlmEvent, { type: 'llm.recovering' }>;
+type SentEvent = Extract<LlmEvent, { type: 'llm.sent' }>;
 
 function statusError(
   statusCode: number,
@@ -63,24 +75,74 @@ function createStubRequester(
   return { requester, calls: () => calls };
 }
 
-function startRetryingActor(requester: LlmRequester, retry?: LlmRetryOptions) {
-  const actor = createActor(createLlmMachine({ requester, retry }), {
-    input: { config: { model }, content: { messages: [] as readonly Message[] } },
+interface HarnessContext {
+  turnInput: TurnInput;
+  turnOutput?: TurnOutput;
+}
+
+function startTurnActor(
+  requester: LlmRequester,
+  options?: CreateTurnMachineOptions,
+  turnInput?: Partial<TurnInput>,
+) {
+  const harness = setup({
+    types: {
+      input: {} as TurnInput,
+      context: {} as HarnessContext,
+      events: {} as TurnEvent,
+      emitted: {} as TurnLlmEvent,
+    },
+    actors: { turn: createTurnMachine(createLlmMachine({ requester }), options) },
+  }).createMachine({
+    id: 'harness',
+    initial: 'running',
+    context: ({ input }) => ({ turnInput: input }),
+    states: {
+      running: {
+        invoke: {
+          src: 'turn',
+          input: ({ context }) => context.turnInput,
+          onDone: {
+            target: 'completed',
+            actions: assign({ turnOutput: ({ event }) => event.output }),
+          },
+        },
+        on: {
+          '*': {
+            actions: emit(({ event }) => event as TurnLlmEvent),
+          },
+        },
+      },
+      completed: { type: 'final' },
+    },
   });
   const retrying: RetryingEvent[] = [];
+  const recovering: RecoveringEvent[] = [];
+  const sent: SentEvent[] = [];
   const failed: unknown[] = [];
+  const actor = createActor(harness, {
+    input: { request: { model }, history: [], ...turnInput },
+  });
   actor.on('llm.retrying', (event) => retrying.push(event));
+  actor.on('llm.recovering', (event) => recovering.push(event));
+  actor.on('llm.sent', (event) => sent.push(event));
   actor.on('llm.failed.syntax', (event) => failed.push(event.error));
   actor.on('llm.failed.remote', (event) => failed.push(event.error));
   actor.start();
-  return { actor, retrying, failed };
+  return { actor, retrying, recovering, sent, failed };
 }
 
 async function flush(): Promise<void> {
   await vi.advanceTimersByTimeAsync(0);
 }
 
-describe('llm machine retry', () => {
+async function drain(): Promise<void> {
+  for (let index = 0; index < 10; index += 1) {
+    await flush();
+  }
+}
+
+describe('turn machine llm retry', () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -98,8 +160,8 @@ describe('llm machine retry', () => {
       { kind: 'provider', message: 'Error: upstream error, status_code=429: too many requests' },
       'ok',
     ]);
-    const { actor, retrying, failed } = startRetryingActor(requester, {
-      maxAttemptsPerStep: 6,
+    const { actor, retrying, failed } = startTurnActor(requester, {
+      retry: { maxAttemptsPerStep: 6 },
     });
 
     await flush();
@@ -157,7 +219,7 @@ describe('llm machine retry', () => {
 
     await vi.advanceTimersByTimeAsync((retrying[4] as RetryingEvent).delayMs + 1);
     await flush();
-    expect(actor.getSnapshot().value).toBe('succeeded');
+    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'done' });
     expect(calls()).toBe(6);
     expect(failed).toHaveLength(0);
   });
@@ -168,8 +230,8 @@ describe('llm machine retry', () => {
       statusError(503, 'unavailable'),
       statusError(503, 'unavailable'),
     ]);
-    const { actor, retrying, failed } = startRetryingActor(requester, {
-      maxAttemptsPerStep: 3,
+    const { actor, retrying, failed } = startTurnActor(requester, {
+      retry: { maxAttemptsPerStep: 3 },
     });
 
     await flush();
@@ -180,7 +242,7 @@ describe('llm machine retry', () => {
 
     expect(retrying).toHaveLength(2);
     expect(calls()).toBe(3);
-    expect(actor.getSnapshot().value).toBe('failed');
+    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'failed' });
     expect(failed).toHaveLength(1);
   });
 
@@ -202,26 +264,26 @@ describe('llm machine retry', () => {
     ];
     for (const error of cases) {
       const { requester, calls } = createStubRequester([error, 'ok']);
-      const { actor, retrying, failed } = startRetryingActor(requester, {
-        maxAttemptsPerStep: 5,
+      const { actor, retrying, failed } = startTurnActor(requester, {
+        retry: { maxAttemptsPerStep: 5 },
       });
 
       await flush();
 
       expect(retrying).toHaveLength(0);
       expect(calls()).toBe(1);
-      expect(actor.getSnapshot().value).toBe('failed');
+      expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'failed' });
       expect(failed).toHaveLength(1);
     }
 
     const filtered = createStubRequester(['filtered_empty', 'ok']);
-    const filteredRun = startRetryingActor(filtered.requester, { maxAttemptsPerStep: 5 });
+    const filteredRun = startTurnActor(filtered.requester, { retry: { maxAttemptsPerStep: 5 } });
 
     await flush();
 
     expect(filteredRun.retrying).toHaveLength(0);
     expect(filtered.calls()).toBe(1);
-    expect(filteredRun.actor.getSnapshot().value).toBe('failed');
+    expect(filteredRun.actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'failed' });
     expect(filteredRun.failed[0]).toMatchObject({
       kind: 'empty_response',
       finishReason: 'filtered',
@@ -231,7 +293,7 @@ describe('llm machine retry', () => {
 
   it('retries a non-retryable error when infiniteRetry is on', async () => {
     const { requester, calls } = createStubRequester([statusError(400, 'bad request'), 'ok']);
-    const { actor, retrying } = startRetryingActor(requester, { infiniteRetry: true });
+    const { actor, retrying } = startTurnActor(requester, { retry: { infiniteRetry: true } });
 
     await flush();
     expect(retrying).toHaveLength(1);
@@ -239,7 +301,7 @@ describe('llm machine retry', () => {
 
     await vi.advanceTimersByTimeAsync((retrying[0] as RetryingEvent).delayMs + 1);
     await flush();
-    expect(actor.getSnapshot().value).toBe('succeeded');
+    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'done' });
     expect(calls()).toBe(2);
   });
 
@@ -260,7 +322,7 @@ describe('llm machine retry', () => {
     ];
     for (const [error, delayMs] of cases) {
       const { requester } = createStubRequester([error, 'ok']);
-      const { retrying } = startRetryingActor(requester, { maxAttemptsPerStep: 3 });
+      const { retrying } = startTurnActor(requester, { retry: { maxAttemptsPerStep: 3 } });
 
       await flush();
 
@@ -271,7 +333,7 @@ describe('llm machine retry', () => {
 
   it('falls back to the backoff delay without retryAfterMs', async () => {
     const { requester } = createStubRequester([statusError(500, 'server error'), 'ok']);
-    const { retrying } = startRetryingActor(requester, { maxAttemptsPerStep: 3 });
+    const { retrying } = startTurnActor(requester, { retry: { maxAttemptsPerStep: 3 } });
 
     await flush();
 
@@ -291,29 +353,26 @@ describe('llm machine retry', () => {
       headers: null,
     };
     const { requester, calls } = createStubRequester([error]);
-    const { actor, retrying } = startRetryingActor(requester, { maxAttemptsPerStep: 5 });
+    const { actor, retrying } = startTurnActor(requester, { retry: { maxAttemptsPerStep: 5 } });
 
     await flush();
 
     expect(retrying).toHaveLength(0);
     expect(calls()).toBe(1);
-    expect(actor.getSnapshot().value).toBe('failed');
+    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'failed' });
   });
 
   it('does not retry without failure', async () => {
     const { requester, calls } = createStubRequester(['ok']);
-    const { actor, retrying } = startRetryingActor(requester, { maxAttemptsPerStep: 5 });
+    const { actor, retrying } = startTurnActor(requester, { retry: { maxAttemptsPerStep: 5 } });
 
     await flush();
 
-    expect(actor.getSnapshot().value).toBe('succeeded');
+    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'done' });
     expect(retrying).toHaveLength(0);
     expect(calls()).toBe(1);
   });
 });
-
-type RecoveringEvent = Extract<LlmEvent, { type: 'llm.recovering' }>;
-type SentEvent = Extract<LlmEvent, { type: 'llm.sent' }>;
 
 function tooLargeError(): LlmErrorMessage {
   return {
@@ -337,7 +396,7 @@ function imageFormatError(): LlmErrorMessage {
   };
 }
 
-function mediaMessage(text: string, images: number): Message {
+function mediaMessage(text: string, images: number): UserMessage {
   const content: ContentPart[] = [{ type: 'text', text }];
   for (let index = 0; index < images; index += 1) {
     content.push({ type: 'image_url', imageUrl: { url: `media://img-${text}-${index}` } });
@@ -378,13 +437,11 @@ function createCapturingRequester(plan: readonly (LlmErrorMessage | 'ok')[]) {
   return { requester, calls: () => calls, seen };
 }
 
-async function drain(): Promise<void> {
-  for (let index = 0; index < 10; index += 1) {
-    await flush();
-  }
+function mediaHistory(messages: readonly UserMessage[]): Partial<TurnInput> {
+  return { history: messages.map((message) => createUserEntry(message)) };
 }
 
-describe('llm machine media recovery', () => {
+describe('turn machine media recovery', () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -400,22 +457,16 @@ describe('llm machine media recovery', () => {
       tooLargeError(),
       tooLargeError(),
     ]);
-    const actor = createActor(
-      createLlmMachine({ requester, recovery: createMediaDegradeRecovery() }),
-      { input: { config: { model }, content: { messages } } },
+    const { actor, recovering, sent, failed } = startTurnActor(
+      requester,
+      { recovery: createMediaDegradeRecovery() },
+      mediaHistory(messages),
     );
-    const recovering: RecoveringEvent[] = [];
-    const sent: SentEvent[] = [];
-    const failed: unknown[] = [];
-    actor.on('llm.recovering', (event) => recovering.push(event));
-    actor.on('llm.sent', (event) => sent.push(event));
-    actor.on('llm.failed.remote', (event) => failed.push(event.error));
-    actor.start();
 
     await drain();
 
     expect(calls()).toBe(3);
-    expect(actor.getSnapshot().value).toBe('failed');
+    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'failed' });
     expect(recovering.map((event) => `${event.strategy}:${event.action}`)).toEqual([
       'media-degrade:degraded',
       'media-degrade:stripped',
@@ -434,18 +485,16 @@ describe('llm machine media recovery', () => {
   it('succeeds with degraded media after a request_too_large error', async () => {
     const messages = [mediaMessage('a', 2), mediaMessage('b', 1), mediaMessage('c', 1)];
     const { requester, calls, seen } = createCapturingRequester([tooLargeError(), 'ok']);
-    const actor = createActor(
-      createLlmMachine({ requester, recovery: createMediaDegradeRecovery() }),
-      { input: { config: { model }, content: { messages } } },
+    const { actor, recovering } = startTurnActor(
+      requester,
+      { recovery: createMediaDegradeRecovery() },
+      mediaHistory(messages),
     );
-    const recovering: RecoveringEvent[] = [];
-    actor.on('llm.recovering', (event) => recovering.push(event));
-    actor.start();
 
     await drain();
 
     expect(calls()).toBe(2);
-    expect(actor.getSnapshot().value).toBe('succeeded');
+    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'done' });
     expect(recovering).toHaveLength(1);
     expect(countImageParts(seen[1] ?? [])).toBe(2);
   });
@@ -453,20 +502,16 @@ describe('llm machine media recovery', () => {
   it('strips media directly on image_format without degrading first', async () => {
     const messages = [mediaMessage('a', 2), mediaMessage('b', 1), mediaMessage('c', 1)];
     const { requester, calls, seen } = createCapturingRequester([imageFormatError(), 'ok']);
-    const actor = createActor(
-      createLlmMachine({ requester, recovery: createMediaDegradeRecovery() }),
-      { input: { config: { model }, content: { messages } } },
+    const { actor, recovering, sent } = startTurnActor(
+      requester,
+      { recovery: createMediaDegradeRecovery() },
+      mediaHistory(messages),
     );
-    const recovering: RecoveringEvent[] = [];
-    const sent: SentEvent[] = [];
-    actor.on('llm.recovering', (event) => recovering.push(event));
-    actor.on('llm.sent', (event) => sent.push(event));
-    actor.start();
 
     await drain();
 
     expect(calls()).toBe(2);
-    expect(actor.getSnapshot().value).toBe('succeeded');
+    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'done' });
     expect(recovering.map((event) => `${event.strategy}:${event.action}`)).toEqual([
       'media-degrade:stripped',
     ]);
@@ -475,20 +520,17 @@ describe('llm machine media recovery', () => {
   });
 
   it('fails immediately on request_too_large without media', async () => {
-    const messages = [mediaMessage('plain', 0)];
     const { requester, calls } = createCapturingRequester([tooLargeError()]);
-    const actor = createActor(
-      createLlmMachine({ requester, recovery: createMediaDegradeRecovery() }),
-      { input: { config: { model }, content: { messages } } },
+    const { actor, recovering } = startTurnActor(
+      requester,
+      { recovery: createMediaDegradeRecovery() },
+      mediaHistory([mediaMessage('plain', 0)]),
     );
-    const recovering: RecoveringEvent[] = [];
-    actor.on('llm.recovering', (event) => recovering.push(event));
-    actor.start();
 
     await drain();
 
     expect(calls()).toBe(1);
+    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'failed' });
     expect(recovering).toHaveLength(0);
-    expect(actor.getSnapshot().value).toBe('failed');
   });
 });

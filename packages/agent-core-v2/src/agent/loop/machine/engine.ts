@@ -219,9 +219,11 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
       turnActor: createTurnMachine(
         createLlmMachine({
           requester: requester.requester,
+        }),
+        {
           retry: { maxAttemptsPerStep: options.maxAttemptsPerStep },
           recovery: options.recovery,
-        }),
+        },
       ),
       abortTimeoutMs: options.abortTimeoutMs,
     }),
