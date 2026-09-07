@@ -357,6 +357,51 @@ describe('GlobalSearchService', () => {
     expect((await reader.search({ query: 'replacement', role: 'user' })).items[0]?.sessionTitle).toBe('replacement title');
   });
 
+  it.each(['inode', 'birthtime', 'both'])('rejects matching stored identities with unavailable %s and recovers after reindexing', async (missing) => {
+    const s1 = summary('s1', 'one', T1);
+    await writeWire(home!, s1.id, 'main', [userLine('original secret', T1)]);
+    const dir = join(home!, 'sessions', WS, s1.id);
+    const writer = track(makeInlineService(home!, staticIndex([s1])));
+    await writer.reindex();
+    const info = await stat(dir, { bigint: true });
+    const ino = missing === 'birthtime' ? info.ino : 0n;
+    const birthtimeNs = missing === 'inode' ? info.birthtimeNs : 0n;
+    const identity = `${info.dev}:${ino}:${birthtimeNs}`;
+    const db = coreOf(writer).db!;
+    for (const row of db.query({ key: { prefix: 's1/' } })) {
+      await db.set(row.key, { ...row.value, sessionIdentity: identity });
+    }
+    await db.set('\0meta\\session\\s1', { kind: 'sessionMeta', dir, identity });
+    const original = fs.stat.bind(fs);
+    const intercept = vi.spyOn(fs, 'stat').mockImplementation((async (path, options) => {
+      const result = await original(path, options);
+      if (path === dir && options?.bigint === true) {
+        return Object.assign(result, { ino, birthtimeNs });
+      }
+      return result;
+    }) as typeof fs.stat);
+    syncBuiltinESMExports();
+    const reader = track(makeInlineService(home!, staticIndex([s1])));
+    try {
+      await settleSync(reader);
+      expect((await reader.search({ query: 'original' })).items).toEqual([]);
+      await rm(dir, { recursive: true });
+      await writeWire(home!, s1.id, 'main', [userLine('replacement message', T2)]);
+      expect((await reader.search({ query: 'original' })).items).toEqual([]);
+      await settleSync(writer);
+      await refreshNow(reader);
+      expect((await reader.search({ query: 'replacement' })).items).toEqual([]);
+      expect([...db.query({ key: { prefix: 's1/' } })]).toEqual([]);
+    } finally {
+      intercept.mockRestore();
+      syncBuiltinESMExports();
+    }
+    await settleSync(writer);
+    await refreshNow(reader);
+    expect((await reader.search({ query: 'replacement' })).items).toHaveLength(1);
+    expect((await reader.search({ query: 'original' })).items).toEqual([]);
+  });
+
   it('keeps a query valid when readonly refresh replaces its handle during source validation', async () => {
     const s1 = summary('s1', 'one', T1);
     await writeWire(home!, s1.id, 'main', [userLine('needle body', T1)]);

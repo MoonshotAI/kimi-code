@@ -68,7 +68,8 @@ function errorMessage(error: unknown): string {
 async function sessionDirectoryIdentity(dir: string): Promise<string | undefined> {
   try {
     const info = await stat(dir, { bigint: true });
-    return info.isDirectory() ? `${info.dev}:${info.ino}:${info.birthtimeNs}` : undefined;
+    if (!info.isDirectory() || info.ino <= 0n || info.birthtimeNs <= 0n) return undefined;
+    return `${info.dev}:${info.ino}:${info.birthtimeNs}`;
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === 'ENOENT' || code === 'ENOTDIR') return undefined;
