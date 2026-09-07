@@ -4,7 +4,6 @@ import { WebSocketServer } from 'ws';
 import type { CredentialValidator } from '../../../services/auth/credentials';
 import { type IConnectionRegistry } from '../connectionRegistry';
 import type { SessionEventBroadcaster } from './sessionEventBroadcaster';
-import type { FsWatchBridge } from './fsWatchBridge';
 import type { JournalLogger } from './sessionEventJournal';
 import { WsConnectionV1 } from './wsConnectionV1';
 import { selectWsBearerProtocol } from '../bearerProtocol';
@@ -15,7 +14,6 @@ export interface RegisterWsV1Options {
   readonly validateCredential?: CredentialValidator;
   readonly registry: IConnectionRegistry;
   readonly broadcaster: SessionEventBroadcaster;
-  readonly fsWatchBridge: FsWatchBridge;
   readonly logger?: JournalLogger;
   readonly maxBufferSize?: number;
   readonly flushIntervalMs?: number;
@@ -33,7 +31,6 @@ export function registerWsV1(core: Scope, opts: RegisterWsV1Options): WebSocketS
     const conn = new WsConnectionV1({
       socket,
       broadcaster,
-      fsWatchBridge: opts.fsWatchBridge,
       connectionRegistry: registry,
       validateCredential: opts.validateCredential,
       remoteAddress: req.socket.remoteAddress ?? null,

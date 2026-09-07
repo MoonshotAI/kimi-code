@@ -83,7 +83,7 @@ above handles them. `transport` is inferred from `command` vs `url`, so
 omit it. For less common fields (`enabled`, `startupTimeoutMs`,
 `toolTimeoutMs`, `enabledTools`, `disabledTools`, `headers`) the source of
 truth is `McpServerStdioConfigSchema` / `McpServerHttpConfigSchema` in
-`packages/agent-core/src/config/schema.ts`.
+`packages/node-sdk/src/config/schema.ts`.
 
 When the user wants to change a timeout for *every* server, don't write
 `startupTimeoutMs` / `toolTimeoutMs` into each entry — the global defaults

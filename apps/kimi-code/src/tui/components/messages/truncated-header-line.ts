@@ -14,7 +14,11 @@
 import type { Component } from '@moonshot-ai/pi-tui';
 import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 
-const ELLIPSIS = '…';
+import {
+  ANSI_ESCAPE_PATTERN,
+  TAIL_WINDOW_UNITS_PER_CELL,
+  TRUNCATION_ELLIPSIS,
+} from '#/tui/constant/rendering';
 
 export interface HeaderFlex {
   /** Plain text; `style` is applied after the cut so the ellipsis is styled too. */
@@ -35,56 +39,138 @@ export type HeaderContent = string | HeaderSegments;
 // hand here: pi-tui's truncateToWidth wraps its ellipsis in a reset sequence,
 // which would break the caller's styling around it.
 
-/** Grapheme clusters, so an emoji or a combining sequence is never split by a cut. */
-function graphemes(text: string): string[] {
-  return Array.from(new Intl.Segmenter().segment(text), (segment) => segment.segment);
+interface TextUnit {
+  readonly text: string;
+  readonly width: number;
+}
+
+/** Grapheme clusters and whole escape sequences, in order; escape sequences measure zero width. */
+function* textUnits(text: string): Generator<TextUnit> {
+  const segmenter = new Intl.Segmenter();
+  let offset = 0;
+  for (const match of text.matchAll(ANSI_ESCAPE_PATTERN)) {
+    if (match.index > offset) {
+      for (const segment of segmenter.segment(text.slice(offset, match.index))) {
+        yield { text: segment.segment, width: visibleWidth(segment.segment) };
+      }
+    }
+    yield { text: match[0], width: 0 };
+    offset = match.index + match[0].length;
+  }
+  for (const segment of segmenter.segment(text.slice(offset))) {
+    yield { text: segment.segment, width: visibleWidth(segment.segment) };
+  }
 }
 
 /** Keep the start of `text` up to a trailing ellipsis, within `width` cells. */
 function keepHead(text: string, width: number): string {
-  const budget = width - visibleWidth(ELLIPSIS);
+  const budget = width - visibleWidth(TRUNCATION_ELLIPSIS);
   let out = '';
   let used = 0;
-  for (const cluster of graphemes(text)) {
-    const clusterWidth = visibleWidth(cluster);
-    if (used + clusterWidth > budget) break;
-    out += cluster;
-    used += clusterWidth;
+  let truncated = false;
+  // Lazy iteration: only about one row of clusters is ever walked, so a huge
+  // argument (a base64 payload in an MCP call) costs nothing here.
+  for (const unit of textUnits(text)) {
+    if (used + unit.width > budget) {
+      truncated = true;
+      break;
+    }
+    out += unit.text;
+    used += unit.width;
   }
-  return `${out}${ELLIPSIS}`;
+  return truncated ? `${out}${TRUNCATION_ELLIPSIS}` : out;
 }
 
 /** Keep the end of `text` behind a leading ellipsis, within `width` cells. */
 function keepTail(text: string, width: number): string {
-  const budget = width - visibleWidth(ELLIPSIS);
+  const budget = width - visibleWidth(TRUNCATION_ELLIPSIS);
+  // The segmented slice stays bounded by the terminal width instead of the
+  // whole argument. ZWJ emoji and combining sequences pack many code units
+  // into one cell, so the window keeps TAIL_WINDOW_UNITS_PER_CELL per cell
+  // plus headroom for zero-width escape sequences; only sequences denser than
+  // that lose fitting clusters to the cut.
+  const window = budget * TAIL_WINDOW_UNITS_PER_CELL + 64;
+  const windowed = text.length > window ? text.slice(-window) : text;
+  const units = [...textUnits(windowed)];
+  // The window edge may have split a grapheme or an escape sequence; drop
+  // whatever partial unit it left behind the leading ellipsis.
+  if (windowed.length < text.length) units.shift();
   let out = '';
   let used = 0;
-  for (const cluster of graphemes(text).toReversed()) {
-    const clusterWidth = visibleWidth(cluster);
-    if (used + clusterWidth > budget) break;
-    out = cluster + out;
-    used += clusterWidth;
+  let truncated = windowed.length < text.length;
+  for (const unit of units.toReversed()) {
+    if (used + unit.width > budget) {
+      truncated = true;
+      break;
+    }
+    out = unit.text + out;
+    used += unit.width;
   }
-  return `${ELLIPSIS}${out}`;
+  return truncated ? `${TRUNCATION_ELLIPSIS}${out}` : out;
+}
+
+/** Whether `text` fits `width` cells, measured lazily so a huge argument is never walked whole. */
+function fits(text: string, width: number): boolean {
+  let used = 0;
+  for (const unit of textUnits(text)) {
+    used += unit.width;
+    if (used > width) return false;
+  }
+  return true;
 }
 
 function fitFlex(flex: HeaderFlex, width: number): string {
-  if (visibleWidth(flex.text) <= width) return flex.text;
+  if (fits(flex.text, width)) return flex.text;
   return flex.keep === 'tail' ? keepTail(flex.text, width) : keepHead(flex.text, width);
 }
 
-export function renderHeaderContent(content: HeaderContent, width: number): string {
+function layoutHeaderContent(
+  content: HeaderContent,
+  width: number,
+): { line: string; truncated: boolean } {
   const safeWidth = Math.max(1, width);
-  if (typeof content === 'string') return truncateToWidth(content, safeWidth, ELLIPSIS);
+  if (typeof content === 'string') {
+    return {
+      line: truncateToWidth(content, safeWidth, TRUNCATION_ELLIPSIS),
+      truncated: visibleWidth(content) > safeWidth,
+    };
+  }
   const { head, flex, tail } = content;
   const style = flex.style ?? ((text: string) => text);
   const available = safeWidth - visibleWidth(head) - visibleWidth(tail);
   // Below two cells there is no room for even an ellipsis plus one character
-  // of the middle: give up on the layout and cut the whole row from the end.
+  // of the middle: drop the middle and keep the fixed parts, cutting the head
+  // from its end when even those overflow, so the tail (the result chip)
+  // stays visible whenever it can fit at all.
   if (available < 2) {
-    return truncateToWidth(`${head}${style(flex.text)}${tail}`, safeWidth, ELLIPSIS);
+    const headWidth = visibleWidth(head);
+    const tailWidth = visibleWidth(tail);
+    if (headWidth + tailWidth <= safeWidth) {
+      const marker =
+        flex.text.length > 0 && safeWidth - headWidth - tailWidth >= 1
+          ? style(TRUNCATION_ELLIPSIS)
+          : '';
+      return { line: `${head}${marker}${tail}`, truncated: flex.text.length > 0 };
+    }
+    if (safeWidth - tailWidth >= 2) {
+      // The head is already styled, so pi-tui's cutter (which resets styles
+      // around its ellipsis) is the right tool here.
+      return {
+        line: `${truncateToWidth(head, safeWidth - tailWidth, TRUNCATION_ELLIPSIS)}${tail}`,
+        truncated: true,
+      };
+    }
+    return {
+      line: truncateToWidth(`${head}${tail}`, safeWidth, TRUNCATION_ELLIPSIS),
+      truncated: true,
+    };
   }
-  return `${head}${style(fitFlex(flex, available))}${tail}`;
+  const fitted = fitFlex(flex, available);
+  return { line: `${head}${style(fitted)}${tail}`, truncated: fitted !== flex.text };
+}
+
+export function renderHeaderContent(content: HeaderContent, width: number): string {
+  return layoutHeaderContent(content, width).line;
 }
 
 function sameContent(a: HeaderContent, b: HeaderContent): boolean {
@@ -102,7 +188,9 @@ export class TruncatedHeaderLine implements Component {
   // The card and the gutter container reuse a child's output by array
   // identity, so an unchanged header must hand back the same array — a fresh
   // one per frame would defeat both caches on every paint.
-  private cache: { content: HeaderContent; width: number; lines: string[] } | undefined;
+  private cache:
+    | { content: HeaderContent; width: number; lines: string[]; truncated: boolean }
+    | undefined;
 
   constructor(private content: HeaderContent) {}
 
@@ -116,13 +204,23 @@ export class TruncatedHeaderLine implements Component {
     this.cache = undefined;
   }
 
+  /**
+   * Whether the last render cut any part of the row — an outcome row cut to
+   * the terminal width hides the remainder of a long line, which ctrl+o
+   * reveals wrapped. Drives the footer's ctrl+o hint.
+   */
+  wasTruncated(): boolean {
+    return this.cache?.truncated ?? false;
+  }
+
   render(width: number): string[] {
     const cache = this.cache;
     if (cache !== undefined && cache.content === this.content && cache.width === width) {
       return cache.lines;
     }
-    const lines = [renderHeaderContent(this.content, width)];
-    this.cache = { content: this.content, width, lines };
+    const { line, truncated } = layoutHeaderContent(this.content, width);
+    const lines = [line];
+    this.cache = { content: this.content, width, lines, truncated };
     return lines;
   }
 }

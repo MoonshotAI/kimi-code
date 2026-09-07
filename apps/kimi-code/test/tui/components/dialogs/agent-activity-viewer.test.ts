@@ -125,7 +125,7 @@ describe('AgentActivityViewer', () => {
               {
                 id: 't1',
                 name: 'Grep',
-                args: { pattern: 'IEventBus' },
+                args: { pattern: 'IEventBus', output_mode: 'content' },
                 status: 'done',
                 startedAt: 0,
                 result: {
@@ -143,7 +143,7 @@ describe('AgentActivityViewer', () => {
     const text = renderPlain(viewer);
     expect(text).toContain('── step 0 ──');
     expect(text).toContain('Looking for the event bus definition.');
-    expect(text).toContain('Used Grep (IEventBus) · 2 matches');
+    expect(text).toContain('Used Grep (IEventBus) · 2 matches across 2 files');
     // The grep glance (path samples in `path:line` form) is the collapsed
     // card's outcome row.
     expect(text).toContain('src/a.ts:1, src/b.ts:2');
@@ -251,7 +251,7 @@ describe('formatSubagentActivityPreview', () => {
               {
                 id: 't1',
                 name: 'Grep',
-                args: { pattern: 'IEventBus' },
+                args: { pattern: 'IEventBus', output_mode: 'content' },
                 status: 'done',
                 startedAt: 0,
                 result: {
@@ -275,7 +275,7 @@ describe('formatSubagentActivityPreview', () => {
     );
     expect(text).toContain('── step 0 ──');
     expect(text).toContain('Looking around.');
-    expect(text).toContain('✓ Used Grep (IEventBus) · 2 matches');
+    expect(text).toContain('✓ Used Grep (IEventBus) · 2 matches across 2 files');
     expect(text).toContain('● Using Read (/repo/src/a.ts)');
     expect(text).toContain('│ reading…'); // live tail for the in-flight call
     expect(text).toContain('Result:');

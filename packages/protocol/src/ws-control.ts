@@ -143,15 +143,9 @@ export const helloAckPayloadSchema = clientHelloAckPayloadSchema;
 
 export const clientHelloAckMessageSchema = wsAckEnvelopeSchema(clientHelloAckPayloadSchema);
 
-export const watchFsConfigSchema = z.object({
-  paths: z.array(z.string()),
-  recursive: z.boolean().optional(),
-});
-
 export const subscribePayloadSchema = z.object({
   session_ids: z.array(z.string()),
   cursors: cursorsBySessionSchema.optional(),
-  watch_fs: z.record(z.string(), watchFsConfigSchema).optional(),
   agent_filter: agentFilterSchema.optional(),
 });
 
@@ -188,40 +182,6 @@ export type UnsubscribeMessage = z.infer<typeof unsubscribeMessageSchema>;
 export const unsubscribeAckPayloadSchema = subscribeAckPayloadSchema;
 
 export const unsubscribeAckMessageSchema = wsAckEnvelopeSchema(unsubscribeAckPayloadSchema);
-
-export const watchFsAddPayloadSchema = z.object({
-  session_id: z.string(),
-  paths: z.array(z.string()),
-  recursive: z.boolean().optional(),
-});
-
-export const watchFsAddMessageSchema = z.object({
-  type: z.literal('watch_fs_add'),
-  id: z.string(),
-  payload: watchFsAddPayloadSchema,
-});
-
-export type WatchFsAddMessage = z.infer<typeof watchFsAddMessageSchema>;
-
-export const watchFsRemovePayloadSchema = z.object({
-  session_id: z.string(),
-  paths: z.array(z.string()),
-});
-
-export const watchFsRemoveMessageSchema = z.object({
-  type: z.literal('watch_fs_remove'),
-  id: z.string(),
-  payload: watchFsRemovePayloadSchema,
-});
-
-export type WatchFsRemoveMessage = z.infer<typeof watchFsRemoveMessageSchema>;
-
-export const watchFsAckPayloadSchema = z.object({
-  watched_paths: z.array(z.string()).optional(),
-  current_count: z.number().int().nonnegative().optional(),
-});
-
-export const watchFsAckMessageSchema = wsAckEnvelopeSchema(watchFsAckPayloadSchema);
 
 export const abortPayloadSchema = z.object({
   session_id: z.string(),
@@ -443,8 +403,6 @@ export const clientControlMessageSchema = z.discriminatedUnion('type', [
   clientHelloMessageSchema,
   subscribeMessageSchema,
   unsubscribeMessageSchema,
-  watchFsAddMessageSchema,
-  watchFsRemoveMessageSchema,
   abortMessageSchema,
   terminalAttachMessageSchema,
   terminalDetachMessageSchema,
@@ -502,22 +460,6 @@ export const clientControlOperations = [
     messageSchema: unsubscribeMessageSchema,
     ackSchema: unsubscribeAckMessageSchema,
     description: 'Remove one or more session event stream subscriptions.',
-  },
-  {
-    type: 'watch_fs_add',
-    direction: 'client_to_server',
-    kind: 'control',
-    messageSchema: watchFsAddMessageSchema,
-    ackSchema: watchFsAckMessageSchema,
-    description: 'Add filesystem watch paths for a subscribed session.',
-  },
-  {
-    type: 'watch_fs_remove',
-    direction: 'client_to_server',
-    kind: 'control',
-    messageSchema: watchFsRemoveMessageSchema,
-    ackSchema: watchFsAckMessageSchema,
-    description: 'Remove filesystem watch paths for a subscribed session.',
   },
   {
     type: 'abort',

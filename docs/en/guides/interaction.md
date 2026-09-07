@@ -33,7 +33,7 @@ Type `/` to open the completion menu — it filters as you type, `Esc` closes it
 | `/undo` | Undo recent prompts |
 | `/model` | Switch the model used in the current session |
 | `/plan` | Toggle Plan mode (plan first, then execute) |
-| `/ask-when-needed` | Toggle Ask When Needed mode (routine edits and commands run automatically) |
+| `/yolo` | Open the permission mode list with Ask When Needed preselected (routine edits and commands run automatically) |
 | `/goal` | Start or manage goal mode |
 | `/help` | Show all commands |
 
@@ -64,9 +64,9 @@ Approvals are not triggered for regular tool calls in Ask When Needed mode, nor 
 
 **Always Ask mode** (formerly Manual) is the default: read-only operations run automatically, while every other action — editing files, running commands — asks for your confirmation one by one. Use it when you want full control over every change.
 
-**Ask When Needed mode** (formerly YOLO), toggled with `/ask-when-needed`, auto-approves regular tool calls, making it suitable for batch tasks you know are safe. It still asks before sensitive actions — accessing sensitive files such as `.env` or SSH keys, running dangerous commands such as `shutdown` or `rm -rf`, or exiting Plan mode — and the agent can still ask you questions.
+**Ask When Needed mode** (formerly YOLO), enabled with `/yolo`, auto-approves regular tool calls, making it suitable for batch tasks you know are safe. It still asks before sensitive actions — accessing sensitive files such as `.env` or SSH keys, running dangerous commands such as `shutdown` or `rm -rf`, or exiting Plan mode — and the agent can still ask you questions.
 
-**Never Ask mode** (formerly Auto), toggled with `/never-ask`, is the fully unattended mode: every tool approval is handled automatically, including sensitive files and plan exits, and the agent never asks you questions — it decides everything on its own. The built-in dangerous-command guard asks for your confirmation before commands such as `shutdown`, `reboot`, or `rm -rf` in Always Ask and Ask When Needed mode; in Never Ask mode these commands run without interruption.
+**Never Ask mode** (formerly Auto), enabled with `/auto`, is the fully unattended mode: every tool approval is handled automatically, including sensitive files and plan exits, and the agent never asks you questions — it decides everything on its own. The built-in dangerous-command guard asks for your confirmation before commands such as `shutdown`, `reboot`, or `rm -rf` in Always Ask and Ask When Needed mode; in Never Ask mode these commands run without interruption.
 
 
 ## Mode switching

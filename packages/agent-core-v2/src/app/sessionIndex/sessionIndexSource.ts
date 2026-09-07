@@ -1,6 +1,11 @@
+import { ILogService } from '#/_base/log/log';
 import { SESSION_INDEX_KEY, SESSION_INDEX_SCOPE } from '#/app/workspace/workspaceAlias';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import {
+  IFileSystemStorageService,
+  StorageError,
+  StorageErrors,
+} from '#/persistence/interface/storage';
 
 import { CHILD_SESSION_KIND, CHILD_SESSION_KIND_KEY, type SessionSummary } from './sessionIndex';
 
@@ -171,27 +176,49 @@ export async function mapBounded<T, R>(
   return out;
 }
 
+async function stateFileMtime(
+  storage: IFileSystemStorageService,
+  scope: string,
+  log: ILogService | undefined,
+): Promise<number | undefined> {
+  try {
+    return await storage.mtime(scope, META_KEY);
+  } catch (error) {
+    if (
+      error instanceof StorageError &&
+      error.code === StorageErrors.codes.STORAGE_IO_FAILED &&
+      error.details?.['errno'] === 'ENOTDIR'
+    ) {
+      log?.warn('session index skips a non-directory entry', { path: error.details['path'] });
+      return undefined;
+    }
+    throw error;
+  }
+}
+
 export async function sessionStateMaxMtime(
   storage: IFileSystemStorageService,
   sessionsScope: string,
   workspaceId: string,
   sessionId: string,
+  log?: ILogService,
 ): Promise<number> {
   const base = `${sessionsScope}/${workspaceId}/${sessionId}`;
-  const direct = await storage.mtime(base, META_KEY);
-  const nested = await storage.mtime(`${base}/${META_SCOPE}`, META_KEY);
+  const direct = await stateFileMtime(storage, base, log);
+  const nested = await stateFileMtime(storage, `${base}/${META_SCOPE}`, log);
   return Math.max(direct ?? 0, nested ?? 0);
 }
 
 export async function scanSessionsMaxMtime(
   storage: IFileSystemStorageService,
   sessionsScope: string,
+  log?: ILogService,
 ): Promise<number> {
   let max = (await storage.mtime(SESSION_INDEX_SCOPE, SESSION_INDEX_KEY)) ?? 0;
   for (const workspaceId of await listWorkspaceIds(storage, sessionsScope)) {
     const sessionIds = await listSessionIds(storage, sessionsScope, workspaceId);
     const mtimes = await mapBounded(sessionIds, MTIME_SCAN_CONCURRENCY, (sessionId) =>
-      sessionStateMaxMtime(storage, sessionsScope, workspaceId, sessionId),
+      sessionStateMaxMtime(storage, sessionsScope, workspaceId, sessionId, log),
     );
     for (const mtime of mtimes) {
       if (mtime > max) max = mtime;

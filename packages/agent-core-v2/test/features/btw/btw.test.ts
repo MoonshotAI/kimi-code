@@ -13,7 +13,7 @@ import {
 } from '#/features/btw/btw';
 import { SessionBtwService } from '#/features/btw/btwService';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
-import type { ToolCall } from '#/kosong/contract/message';
+import type { ToolCall } from '#human/llm/message';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';

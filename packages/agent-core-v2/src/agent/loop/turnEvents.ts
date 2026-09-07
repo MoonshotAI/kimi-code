@@ -4,9 +4,9 @@ import { z } from 'zod';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { parseDaemonFileUrl } from '#/agent/media/mediaRef';
 import { AgentEvent2, registerEvent2Class } from '#/app/event/event2';
-import type { FinishReason } from '#/kosong/contract/provider';
-import type { ContentPart, TextPart } from '#/kosong/contract/message';
-import type { TokenUsage } from '#/kosong/contract/usage';
+import type { FinishReason } from '#human/llm/finish-reason';
+import type { ContentPart, TextPart } from '#human/llm/message';
+import type { TokenUsage } from '#human/llm/usage';
 
 export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'blocked';
 
@@ -27,7 +27,7 @@ export interface TurnPromptAttachmentFile {
 }
 
 export type TurnPromptAttachment =
-  | { readonly kind: 'image' | 'video' | 'audio'; readonly fileId: string }
+  | { readonly kind: 'image' | 'video' | 'audio'; readonly fileId: string; readonly name?: string }
   | TurnPromptAttachmentFile;
 
 export interface TurnStartedPayload {
@@ -71,10 +71,10 @@ export function turnPromptAttachments(
   for (const part of input) {
     if (part.type === 'image_url') {
       const fileId = promptMediaFileId(part.imageUrl.url, part.imageUrl.id);
-      if (fileId !== undefined) attachments.push({ kind: 'image', fileId });
+      if (fileId !== undefined) attachments.push({ kind: 'image', fileId, name: part.imageUrl.name });
     } else if (part.type === 'video_url') {
       const fileId = promptMediaFileId(part.videoUrl.url, part.videoUrl.id);
-      if (fileId !== undefined) attachments.push({ kind: 'video', fileId });
+      if (fileId !== undefined) attachments.push({ kind: 'video', fileId, name: part.videoUrl.name });
     } else if (part.type === 'audio_url') {
       const fileId = promptMediaFileId(part.audioUrl.url, part.audioUrl.id);
       if (fileId !== undefined) attachments.push({ kind: 'audio', fileId });
@@ -123,6 +123,7 @@ export interface TurnStepCompletedPayload {
   readonly llmServerFirstTokenMs?: number;
   readonly llmServerDecodeMs?: number;
   readonly llmClientConsumeMs?: number;
+  readonly llmClientBlockedMs?: number;
   readonly providerFinishReason?: FinishReason;
   readonly rawFinishReason?: string;
 }
@@ -158,6 +159,42 @@ export class TurnStepInterrupted extends AgentEvent2<TurnStepInterruptedPayload>
   static override readonly schema = turnStepInterruptedSchema;
 }
 export interface TurnStepInterrupted extends TurnStepInterruptedPayload {}
+
+export interface TurnStepRetryingPayload {
+  readonly agentId: string;
+  readonly turnId: number;
+  readonly step: number;
+  readonly stepId?: string;
+  readonly failedAttempt: number;
+  readonly nextAttempt: number;
+  readonly maxAttempts: number;
+  readonly delayMs: number;
+  readonly errorName: string;
+  readonly errorMessage: string;
+  readonly statusCode?: number;
+}
+
+const turnStepRetryingSchema = z.object({
+  agentId: z.string(),
+  turnId: z.number(),
+  step: z.number(),
+  stepId: z.string().optional(),
+  failedAttempt: z.number(),
+  nextAttempt: z.number(),
+  maxAttempts: z.number(),
+  delayMs: z.number(),
+  errorName: z.string(),
+  errorMessage: z.string(),
+  statusCode: z.number().optional(),
+});
+
+export class TurnStepRetrying extends AgentEvent2<TurnStepRetryingPayload> {
+  static override readonly type = 'turn.step.retrying';
+  static override readonly durable = true;
+  static override readonly observable = true;
+  static override readonly schema = turnStepRetryingSchema;
+}
+export interface TurnStepRetrying extends TurnStepRetryingPayload {}
 
 export interface AssistantDeltaPayload {
   readonly agentId: string;
@@ -198,3 +235,4 @@ export class ToolCallDelta extends AgentEvent2<ToolCallDeltaPayload> {
 export interface ToolCallDelta extends ToolCallDeltaPayload {}
 
 registerEvent2Class(TurnStepInterrupted);
+registerEvent2Class(TurnStepRetrying);

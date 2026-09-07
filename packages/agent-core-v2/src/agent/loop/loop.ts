@@ -1,11 +1,11 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Error2, isError2, type Error2Options } from '#/_base/errors/errors';
-import type { FinishReason } from '#/kosong/contract/provider';
-import type { TokenUsage } from '#/kosong/contract/usage';
+import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
+import type { FinishReason } from '#human/llm/finish-reason';
+import type { TokenUsage } from '#human/llm/usage';
 import type { Hooks } from '#/hooks';
 import { LoopErrors } from './errors';
-import type { StepRequest } from './stepRequest';
 
 export type LoopErrorCode = (typeof LoopErrors.codes)[keyof typeof LoopErrors.codes];
 
@@ -43,14 +43,12 @@ export interface AfterStepContext extends BeforeStepContext {
 }
 
 export interface LoopErrorContext {
-  readonly currentStep?: Step;
   readonly turnId: number;
   readonly step?: number;
   readonly stepId?: string;
   readonly signal: AbortSignal;
   readonly error: unknown;
-  readonly failedDriver?: StepRequest;
-  retry(request: StepRequest, options?: StepEnqueueOptions): Step;
+  retry(): void;
 }
 
 export interface LoopErrorHandler {
@@ -62,12 +60,6 @@ export interface LoopErrorHandler {
 export interface LoopErrorHandlerRegistrationOptions {
   readonly before?: string;
   readonly after?: string;
-}
-
-export interface LoopRunOptions {
-  readonly turnId: number;
-  readonly signal?: AbortSignal;
-  readonly onStarted?: (step: number) => void;
 }
 
 export type LoopRunResult =
@@ -90,22 +82,6 @@ export type LoopRunResult =
 
 export type TurnResult = LoopRunResult;
 
-export type StepState = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
-
-export type StepResult =
-  | { readonly type: 'completed' }
-  | { readonly type: 'failed'; readonly error: unknown }
-  | { readonly type: 'cancelled'; readonly reason: unknown };
-
-export interface Step {
-  readonly id: string;
-  readonly turnId: number;
-  readonly state: StepState;
-  readonly signal: AbortSignal;
-  readonly result: Promise<StepResult>;
-  cancel(reason?: unknown): boolean;
-}
-
 export interface Turn {
   readonly id: number;
   readonly state?: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -113,16 +89,6 @@ export interface Turn {
   readonly ready: Promise<void>;
   readonly result: Promise<LoopRunResult>;
   cancel(reason?: unknown): boolean;
-}
-
-export interface StepAssignment {
-  readonly turn: Turn;
-  readonly step: Step;
-}
-
-export interface EnqueueReceipt {
-  readonly assigned: Promise<StepAssignment>;
-  abort(reason?: unknown): boolean;
 }
 
 export interface AgentLoopStatus {
@@ -133,22 +99,40 @@ export interface AgentLoopStatus {
   readonly activeTraceId?: string;
 }
 
-export interface StepEnqueueOptions {
-  readonly at?: 'head' | 'tail';
+export interface LoopPromptSubmit {
+  readonly message: ContextMessage;
+  readonly origin?: PromptOrigin;
+  readonly promptId?: string;
+  readonly onMaterialize?: () => void;
+}
+
+export interface LoopNotify {
+  readonly message?: ContextMessage;
+  readonly turnScoped?: boolean;
+  readonly bypassMaxSteps?: boolean;
+  readonly onConsume?: () => void;
+  readonly onDrop?: () => void;
+}
+
+export interface LoopNotifyHandle {
+  readonly dropped: boolean;
+  drop(): void;
 }
 
 export interface IAgentLoopService {
   readonly _serviceBrand: undefined;
 
-  enqueue(request: StepRequest, options?: StepEnqueueOptions): EnqueueReceipt;
+  submit(prompt: LoopPromptSubmit): { readonly turn: Turn };
 
-  run(options: LoopRunOptions): Promise<LoopRunResult>;
+  steer(prompt: LoopPromptSubmit): Turn | undefined;
 
-  status(): AgentLoopStatus;
+  notify(note?: LoopNotify): LoopNotifyHandle;
 
   cancel(turnId?: number, reason?: unknown): boolean;
 
   cancelFromUser(turnId?: number): void;
+
+  status(): AgentLoopStatus;
 
   tryAcquireQuiescence(): IDisposable | undefined;
 

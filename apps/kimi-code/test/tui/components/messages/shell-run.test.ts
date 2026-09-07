@@ -175,3 +175,54 @@ describe('ShellRunComponent finished collapse', () => {
     expect(expanded).toContain('boom');
   });
 });
+
+describe('ShellRunComponent hasHiddenContent', () => {
+  let component: ShellRunComponent | undefined;
+
+  afterEach(() => {
+    component?.dispose();
+    component = undefined;
+  });
+
+  function create(): ShellRunComponent {
+    component = new ShellRunComponent(() => {});
+    return component;
+  }
+
+  it('reports hidden rows while the running tail leaves earlier output behind', () => {
+    const c = create();
+    c.append('one\ntwo\nthree\n');
+    expect(c.hasHiddenContent()).toBe(false);
+    c.append('four\nfive\nsix\nseven\n');
+    expect(c.hasHiddenContent()).toBe(true);
+  });
+
+  it('follows the finished preview cap after a collapsed render', () => {
+    const c = create();
+    c.finish(Array.from({ length: 20 }, (_, i) => `row ${String(i + 1)}`).join('\n'), '', false);
+    c.render(100);
+    expect(c.hasHiddenContent()).toBe(true);
+
+    const short = create();
+    short.finish('done', '', false);
+    short.render(100);
+    expect(short.hasHiddenContent()).toBe(false);
+  });
+});
+
+describe('ShellRunComponent hasHiddenContent when finished while expanded', () => {
+  let component: ShellRunComponent | undefined;
+
+  afterEach(() => {
+    component?.dispose();
+    component = undefined;
+  });
+
+  it('still reports the rows a collapse would hide, without a prior collapsed render', () => {
+    component = new ShellRunComponent(() => {});
+    component.setExpanded(true);
+    component.finish(Array.from({ length: 20 }, (_, i) => `row ${String(i + 1)}`).join('\n'), '', false);
+    component.render(100);
+    expect(component.hasHiddenContent()).toBe(true);
+  });
+});

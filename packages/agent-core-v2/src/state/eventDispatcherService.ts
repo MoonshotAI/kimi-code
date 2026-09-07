@@ -18,7 +18,7 @@ import {
   type Event2Class,
 } from '#/app/event/event2';
 import { IEventBus } from '#/app/event/eventBus';
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 import { OrderedHookSlot } from '#/hooks';
 import { IWireService } from '#/wire/wire';
 import { WireError, WireErrors } from '#/wire/errors';

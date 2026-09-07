@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Collapse finished tool calls in the transcript to two lines: the header names the call (a Bash card carries the command and its line count) and one outcome row shows the command's last output line, a Grep/Glob path sample, or a tool's first output line; the full output and a Read group's file list appear after `Ctrl+O`. Failed calls keep their output preview, and Edit/Write previews are unchanged.
+Collapse finished tool calls in the transcript to a header plus one marked outcome row: short output is shown whole, hidden output is counted (`N more lines`, `+N more`) and revealed by `Ctrl+O`, which the footer advertises while it is available.

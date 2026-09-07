@@ -654,7 +654,7 @@ describe('TasksBrowserController — opening an agent task', () => {
       turnId: 1,
       toolCallId: 't1',
       name: 'Grep',
-      args: { pattern: 'foo' },
+      args: { pattern: 'foo', output_mode: 'content' },
     } as Event);
     store.applyEvent({
       sessionId: 's1',
@@ -672,7 +672,7 @@ describe('TasksBrowserController — opening an agent task', () => {
 
     const browser = state.tasksBrowser as { tailOutput?: string };
     expect(browser.tailOutput).toContain('── step 0 ──');
-    expect(browser.tailOutput).toContain('✓ Used Grep (foo) · 2 matches');
+    expect(browser.tailOutput).toContain('✓ Used Grep (foo) · 2 matches across 2 files');
     controller.close();
   });
 });

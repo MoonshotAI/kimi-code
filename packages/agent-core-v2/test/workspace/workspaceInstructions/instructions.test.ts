@@ -3,7 +3,7 @@ import { rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
@@ -13,11 +13,6 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import {
-  IHostFsWatchService,
-  type HostFsChange,
-  type IHostFsWatchHandle,
-} from '#/os/interface/hostFsWatch';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
@@ -25,23 +20,36 @@ import {
   WorkspaceInstructionsService,
   workspaceInstructionsCurrentKey,
 } from '#/workspace/workspaceInstructions/workspaceInstructionsService';
+import type { WatchChange } from '#human/utils/watch';
 
 import { stubLog } from '../../_base/log/stubs';
 import { registerStateServices } from '../../state/stubs';
+
+const watchFires = new Map<string, Emitter<WatchChange>>();
+
+vi.mock('#human/utils/watch', () => ({
+  watch: (path: string) => {
+    let emitter = watchFires.get(path);
+    if (emitter === undefined) {
+      emitter = new Emitter<WatchChange>();
+      watchFires.set(path, emitter);
+    }
+    return { ready: Promise.resolve(), onDidChange: emitter.event, dispose: () => {} };
+  },
+}));
 
 describe('WorkspaceInstructionsService', () => {
   let workDir: string;
   let osHomeDir: string;
   let brandHomeDir: string;
   let disposables: DisposableStore;
-  let watchFires: Map<string, Emitter<HostFsChange>>;
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), 'kimi-instructions-work-'));
     osHomeDir = mkdtempSync(join(tmpdir(), 'kimi-instructions-os-'));
     brandHomeDir = mkdtempSync(join(tmpdir(), 'kimi-instructions-brand-'));
     disposables = new DisposableStore();
-    watchFires = new Map();
+    watchFires.clear();
   });
 
   afterEach(async () => {
@@ -52,20 +60,6 @@ describe('WorkspaceInstructionsService', () => {
       rm(brandHomeDir, { recursive: true, force: true }),
     ]);
   });
-
-  function fsWatchStub(): IHostFsWatchService {
-    return {
-      _serviceBrand: undefined,
-      watch: (path: string): IHostFsWatchHandle => {
-        let emitter = watchFires.get(path);
-        if (emitter === undefined) {
-          emitter = new Emitter<HostFsChange>();
-          watchFires.set(path, emitter);
-        }
-        return { ready: Promise.resolve(), onDidChange: emitter.event, dispose: () => {} };
-      },
-    };
-  }
 
   function fireWatch(path: string): void {
     for (const [root, emitter] of watchFires) {
@@ -87,7 +81,6 @@ describe('WorkspaceInstructionsService', () => {
         reg.defineInstance(IHostFileSystem, new HostFileSystem());
         reg.definePartialInstance(IHostEnvironment, { homeDir: osHomeDir });
         reg.definePartialInstance(IBootstrapService, { homeDir: brandHomeDir });
-        reg.defineInstance(IHostFsWatchService, fsWatchStub());
         reg.defineInstance(ILogService, stubLog());
         reg.define(IWorkspaceInstructionsService, WorkspaceInstructionsService);
       },
@@ -130,7 +123,7 @@ describe('WorkspaceInstructionsService', () => {
     const { service } = createService();
     await service.ready;
 
-    const changed = new Promise<readonly HostFsChange[]>((resolvePromise) => {
+    const changed = new Promise<readonly WatchChange[]>((resolvePromise) => {
       const d = service.onDidChange((changes) => {
         d.dispose();
         resolvePromise(changes);

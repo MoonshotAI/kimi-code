@@ -1,6 +1,6 @@
 import { Error2, ErrorCodes } from '#/errors';
 import { FILE_HISTORY_RECORD_PREFIX } from '#/features/fileHistory/fileHistoryOps';
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 import {
   promptMetadataTextFromContentParts,
   promptMetadataTextFromText,

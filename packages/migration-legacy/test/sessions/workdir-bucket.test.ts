@@ -4,7 +4,7 @@ import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir
 import { createHash } from 'node:crypto';
 
 /**
- * `computeWorkdirBucket` now aliases agent-core's `encodeWorkDirKey`, so the
+ * `computeWorkdirBucket` now aliases agent-core-v2's `encodeWorkDirKey`, so the
  * migrator and the running app share one implementation. The `byte-identical`
  * suite below guards against regressing back to a divergent local copy.
  */

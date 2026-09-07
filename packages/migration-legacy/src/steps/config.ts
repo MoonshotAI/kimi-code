@@ -23,11 +23,10 @@ import '@moonshot-ai/agent-core-v2/features/skill/catalog/configSection';
 
 import '@moonshot-ai/agent-core-v2/session/subagent/flag';
 import '@moonshot-ai/agent-core-v2/session/sessionTitle/flag';
-import '@moonshot-ai/agent-core-v2/persistence/backends/minidb/flag';
 import '@moonshot-ai/agent-core-v2/features/tower/flag';
-import '@moonshot-ai/agent-core-v2/app/remoteControl/flag';
 import '@moonshot-ai/agent-core-v2/agent/toolSelect/flag';
 import '@moonshot-ai/agent-core-v2/agent/tools/task/task-wait/flag';
+import '@moonshot-ai/agent-core-v2/persistence/configSection';
 
 import { atomicWrite } from '../atomic-write.js';
 import { DEFAULT_CONFIG_FILE_TEXT, isTuiStubOrMissing } from '../stub-detect.js';

@@ -3,13 +3,13 @@ import { Service } from "#/_base/di/service";
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
-import { estimateTokensForMessage } from "#/kosong/contract/tokens";
+import { estimateTokensForMessage } from "#/llm-adapter/contract/tokens";
 import { buildCompactionSummaryText, isRealUserInput } from '#/agent/contextMemory/compactionHandoff';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentLLMRequesterService, type AgentLLMRequestFinish } from '#/agent/llmRequester/llmRequester';
-import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
+import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import { retryBackoffDelays, sleepForRetry } from '#/_base/utils/retry';
 import { IAgentLoopService, type LoopErrorContext } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
@@ -26,10 +26,6 @@ import { stripDynamicToolContext } from '#/agent/toolSelect/dynamicTools';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentTodoService } from '#/features/todo/todoService';
 import { renderTodoList } from '#/features/todo/todoItem';
-import {
-  isContextBudgetReminder,
-  summarizeCompactionAheadFollowUp,
-} from '#/features/contextBudget/contextBudgetReminder';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import type { WireLineRange } from '#/wire/record';
 import { IWireService } from '#/wire/wire';
@@ -38,10 +34,10 @@ import {
   APIEmptyResponseError,
   APIStatusError,
   isRetryableGenerateError,
-} from '#/kosong/contract/errors';
-import { createUserMessage, type Message } from '#/kosong/contract/message';
-import type { Tool } from '#/kosong/contract/tool';
-import { inputTotal, type TokenUsage } from '#/kosong/contract/usage';
+} from '#/llm-adapter/contract/errors';
+import { createUserMessage, type Message } from '#/llm-adapter/contract/message';
+import type { ToolDescription as Tool } from '#human/llm/message';
+import { inputTotal, type TokenUsage } from '#human/llm/usage';
 import { IEventBus } from '#/app/event/eventBus';
 import type { CompactionFailedEvent, CompactionFinishedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -52,7 +48,6 @@ import { renderCompactionInstruction } from './compactionInstruction';
 import { renderContextRecoveryPointer } from './contextRecovery';
 import {
   IAgentFullCompactionService,
-  type CompactionBudget,
   type FullCompactionInput,
   type FullCompactionTask,
 } from './fullCompaction';
@@ -246,10 +241,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
   get compacting(): FullCompactionTask | null {
     return this._compacting;
-  }
-
-  budget(): CompactionBudget {
-    return { used: this.tokenCountWithPending(), ...this.strategy.budget() };
   }
 
   cancel(): void {
@@ -497,9 +488,8 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   }
 
   private retryFailedDriver(context: LoopErrorContext): boolean {
-    const driver = context.failedDriver;
-    if (driver === undefined || context.currentStep?.signal.aborted === true) return false;
-    context.retry(driver, { at: 'head' });
+    if (context.signal.aborted) return false;
+    context.retry();
     return true;
   }
 
@@ -652,9 +642,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
       const delays = retryBackoffDelays(MAX_COMPACTION_RETRY_ATTEMPTS);
       let attempt: CompactionAttemptResult | undefined;
-      let historyForModel: readonly ContextMessage[] = stripDynamicToolContext(originalHistory).filter(
-        (message) => !isContextBudgetReminder(message),
-      );
+      let historyForModel: readonly ContextMessage[] = stripDynamicToolContext(originalHistory);
       let droppedCount = 0;
       let overflowShrinkCount = 0;
       let emptyOrTruncatedShrinkCount = 0;
@@ -781,7 +769,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         thinking_effort: thinkingEffort,
         trace_id: attempt.traceId,
         ...usageTelemetry(attempt.usage),
-        ...aheadReminderTelemetry(originalHistory),
       };
       this.telemetry.track2('compaction_finished', properties);
       return result;
@@ -843,29 +830,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   private tokenCountWithPending(): number {
     return this.tokenCounting.get(agentContextOfScope(this.agent)).size;
   }
-}
-
-type CompactionAheadTelemetryProperties = Pick<
-  CompactionFinishedEvent,
-  | 'ahead_reminder_delivered'
-  | 'ahead_steps_count'
-  | 'ahead_write_calls_count'
-  | 'ahead_bash_calls_count'
-  | 'ahead_todo_calls_count'
->;
-
-function aheadReminderTelemetry(
-  history: readonly ContextMessage[],
-): CompactionAheadTelemetryProperties {
-  const followUp = summarizeCompactionAheadFollowUp(history);
-  if (followUp === undefined) return { ahead_reminder_delivered: false };
-  return {
-    ahead_reminder_delivered: true,
-    ahead_steps_count: followUp.stepCount,
-    ahead_write_calls_count: followUp.writeCallCount,
-    ahead_bash_calls_count: followUp.bashCallCount,
-    ahead_todo_calls_count: followUp.todoCallCount,
-  };
 }
 
 function findAPIStatusError(error: unknown): APIStatusError | undefined {

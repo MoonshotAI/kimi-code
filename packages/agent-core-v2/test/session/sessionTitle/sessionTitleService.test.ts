@@ -11,12 +11,12 @@ import { IOAuthService } from '#/app/auth/auth';
 import { IFlagService } from '#/app/flag/flag';
 import { IEventService } from '#/app/event/event';
 import type { Event2 } from '#/app/event/event2';
-import { IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
+import { IHostRequestHeaders } from '#/llm-adapter/model/host-request-headers';
 import {
   IProviderService,
   type OAuthRef,
   type ProviderConfig,
-} from '#/kosong/provider/provider';
+} from '#/llm-adapter/provider/provider';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import {
   IAgentLifecycleService,
@@ -36,7 +36,6 @@ import {
   type SessionMetadataChangedEvent,
 } from '#/session/sessionMetadata/sessionMetadata';
 import { SessionMetaUpdated } from '#/session/sessionMetadata/sessionMetaEvents';
-import '#/kosong/provider/providers/kimi/kimi.contrib';
 
 import { registerLogServices } from '../../_base/log/stubs';
 import { stubProviderService } from '../../app/provider/stubs';

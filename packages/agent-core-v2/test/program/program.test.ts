@@ -10,9 +10,9 @@ function runtime(generation: string, status: RuntimeStatus = 'ready'): FakeRunti
   return Object.assign(
     new FakeRuntime(
       { workspaceId: 'workspace', runtimeId: 'local', generation },
-      { status, capabilities: ['fs', 'process', 'watch'] },
+      { status, capabilities: ['fs', 'process'] },
     ),
-    { fs: {}, process: {}, watch: {} },
+    { fs: {}, process: {} },
   ) as FakeRuntime;
 }
 
@@ -51,7 +51,7 @@ function setup(readiness = new Map<string, Promise<void>>(), order: string[] = [
     } as never,
   );
   const create = vi.fn(() => {
-    const lease = registry.acquire(program.binding, ['fs', 'process', 'watch']);
+    const lease = registry.acquire(program.binding, ['fs', 'process']);
     const id = lease.runtime.identity.generation;
     const behavior = {
       ready: readiness.get(id) ?? Promise.resolve(),
@@ -69,7 +69,6 @@ function setup(readiness = new Map<string, Promise<void>>(), order: string[] = [
       state: behavior,
       dirs: behavior,
       fs: behavior,
-      watch: behavior,
       git: behavior,
       instructions: { ...behavior, snapshot: {} },
       mcpConfig: { ...behavior, servers: () => ({}) },

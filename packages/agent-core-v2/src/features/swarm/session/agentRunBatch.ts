@@ -1,5 +1,5 @@
-import { isProviderRateLimitError } from '#/kosong/contract/errors';
-import { type TokenUsage } from '#/kosong/contract/usage';
+import { isProviderRateLimitError } from '#/llm-adapter/contract/errors';
+import { type TokenUsage } from '#human/llm/usage';
 import * as retry from 'retry';
 
 import { isUserCancellation } from '#/_base/utils/abort';

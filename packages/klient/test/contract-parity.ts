@@ -30,7 +30,7 @@ import type { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/prof
 import type { IAgentPromptService } from '@moonshot-ai/agent-core-v2/agent/prompt/prompt';
 import type { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
 import type { IAgentSkillService } from '@moonshot-ai/agent-core-v2/features/skill/skillService';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 import type { PlanData } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 import type { SkillSummary } from '@moonshot-ai/agent-core-v2/features/skill/catalog/types';
@@ -110,8 +110,8 @@ import type {
   FsBrowseResponse,
   FsHomeResponse,
 } from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
-import type { ModelRecord } from '@moonshot-ai/agent-core-v2/kosong/model/model';
-import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
+import type { ModelRecord } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
+import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
 import type {
   GetPluginInfoInput,
@@ -131,7 +131,7 @@ import type {
   PluginUpdateStatus,
   ReloadSummary,
 } from '@moonshot-ai/agent-core-v2/app/plugin/types';
-import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
+import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/llm-adapter/provider/provider';
 import type {
   SessionListQuery,
   SessionSummary,

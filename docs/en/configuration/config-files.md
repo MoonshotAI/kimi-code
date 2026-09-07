@@ -355,7 +355,7 @@ Retries only apply to transient failures: connection errors, timeouts, HTTP 429 
 | `print_wait_ceiling_s` | `integer` | `2147483` | Wall-clock ceiling (seconds) for the print-mode wait/steer loop; no effect outside print mode or with `"exit"` |
 | `print_max_turns` | `integer` | `100000` | Maximum number of new turns triggered by background-task completions in `"steer"` mode; keeps the steering loop bounded |
 
-`keep_alive_on_exit` can be overridden by the `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` environment variable, and `max_running_tasks` by `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS`; both take higher priority than `config.toml`.
+`keep_alive_on_exit` can be overridden by the `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` environment variable, `max_running_tasks` by `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS`, `bash_task_timeout_s` by `KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S`, and `print_background_mode`, `print_wait_ceiling_s`, and `print_max_turns` by `KIMI_CODE_BACKGROUND_PRINT_BACKGROUND_MODE`, `KIMI_CODE_BACKGROUND_PRINT_WAIT_CEILING_S`, and `KIMI_CODE_BACKGROUND_PRINT_MAX_TURNS`; all take higher priority than `config.toml`.
 
 In print mode (`kimi -p "<prompt>"`), Kimi Code stays alive after the main agent's turn as long as background tasks are still pending: each completion is fed back to the main agent as a synthetic user message, steering it into a new turn (`print_background_mode = "steer"` by default), and the run exits once a turn ends with nothing pending. The loop is bounded by `print_wait_ceiling_s` and `print_max_turns`, both effectively unbounded by default. Background work is never killed by a wall-clock cap in print mode either: background `Bash` tasks default to no timeout (`bash_task_timeout_s = 0`), and subagents run without a timeout (`[subagent] timeout_ms` and `[swarm] timeout_ms` both default to `0` unless explicitly set), so only the model itself stops a task. Set `print_background_mode` to `"drain"` to wait for tasks without feeding results back, or `"exit"` to end the run as soon as the main agent finishes.
 
@@ -409,7 +409,7 @@ A name that contains no ASCII letters or digits (for example a purely Chinese na
 
 The identity is resolved once at startup and holds for the life of the process: it is announced to MCP servers and providers when connections are made, so it cannot change midway. Edits to this section take effect on the next start, for new sessions: a resumed session keeps the system prompt it was recorded with, since its past turns already speak under that identity. Likewise, an MCP OAuth authorization keeps the client registration it was granted under; reset that server's authentication to register under the new identity.
 
-This section is read by the default `agent-core-v2` engine. It is ignored by the legacy `kimi` / `kimi -p` path selected with `KIMI_CODE_LEGACY_FLAG=1`; `kimi web` always uses `agent-core-v2`.
+This section is read by the `agent-core-v2` engine, which powers every Kimi Code surface.
 
 ## `tools`
 
@@ -441,6 +441,17 @@ Like the `tools` / `disallowedTools` fields of an agent file, this section shape
 | `read_byte_budget` | `integer` | `262144` (256 KB) | Per-image byte budget for images the model reads for itself (`ReadMediaFile` default reads); `region` and `full_resolution` read-backs are exempt |
 
 `max_edge_px` can be overridden by the `KIMI_IMAGE_MAX_EDGE_PX` environment variable and `read_byte_budget` by `KIMI_IMAGE_READ_BYTE_BUDGET`; both take higher priority than `config.toml`.
+
+## `database`
+
+`database` controls the embedded storage engines behind session indexing and global search. Both keys default to `true` and act as kill switches that fall back to the legacy behavior when set to `false`.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `base` | `boolean` | `true` | Use the minidb-backed read model for session indexing; `false` falls back to reading session metadata directly |
+| `search` | `boolean` | `true` | Run the global search index in a dedicated worker thread; `false` runs it in the server process |
+
+`base` can be overridden by the `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` environment variable and `search` by `KIMI_CODE_SEARCH_WORKER`; both take higher priority than `config.toml`.
 
 <!--
 ## `experimental`

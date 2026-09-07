@@ -4,7 +4,7 @@ import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentStateService } from '#/agent/state/agentState';
-import type { Message } from '#/kosong/contract/message';
+import type { Message } from '#/llm-adapter/contract/message';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
   IAgentContextProjectorService,

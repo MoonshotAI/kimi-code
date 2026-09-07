@@ -11,9 +11,9 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IConfigService } from '#/app/config/config';
-import { IModelCatalog } from '#/kosong/model/catalog';
-import { type ModelsSection } from '#/kosong/model/model';
-import { type ProviderConfig, type ProvidersSection } from '#/kosong/provider/provider';
+import { IModelCatalog } from '#/llm-adapter/model/catalog';
+import { type ModelsSection } from '#/llm-adapter/model/model';
+import { type ProviderConfig, type ProvidersSection } from '#/llm-adapter/provider/provider';
 import { modelsDevProviderModels, resolveModelsDevImport } from './modelsDev';
 
 import { DEFAULT_MODEL_SECTION, MODELS_SECTION, PROVIDERS_SECTION } from './configSection';

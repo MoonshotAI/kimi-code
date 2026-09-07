@@ -2,12 +2,12 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
-import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/kosong/contract/capability';
-import { type SamplingOptions, type ThinkingEffort } from '#/kosong/contract/provider';
-import { IModelCatalog, type Model } from '#/kosong/model/catalog';
-import { type ModelOverrides } from '#/kosong/model/model.types';
-import { type ModelRequestParams } from '#/kosong/model/modelRequester';
-import { IProtocolAdapterRegistry } from '#/kosong/protocol/protocol';
+import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/llm-adapter/contract/capability';
+import { type ThinkingEffort } from '#human/llm/thinking';
+import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
+import { type ModelOverrides } from '#/llm-adapter/model/model.types';
+import { type ModelRequestParams, type SamplingOptions } from '#/llm-adapter/model/model-requester';
+import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import {
   drivesThinkingThroughTraits,
   modelSupportsThinkingEffort,
@@ -17,7 +17,7 @@ import {
   resolveThinkingKeep,
   requiresStrictThinkingValidation,
   type ThinkingConfig,
-} from '#/kosong/model/thinking';
+} from '#/llm-adapter/model/thinking';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';

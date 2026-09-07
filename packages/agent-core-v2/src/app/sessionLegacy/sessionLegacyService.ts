@@ -24,8 +24,8 @@ import {
   getLiveSessionById,
   resumeSessionById,
 } from '#/app/sessionManager/sessionLookup';
-import { IModelCatalog } from '#/kosong/model/catalog';
-import { IModelService } from '#/kosong/model/model';
+import { IModelCatalog } from '#/llm-adapter/model/catalog';
+import { IModelService } from '#/llm-adapter/model/model';
 import { ErrorCodes, Error2 } from '#/errors';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
