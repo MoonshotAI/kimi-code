@@ -2,6 +2,23 @@ import type { ConfigDiagnostic, ConfigSection } from './config';
 import { isPlainObject } from './configPure';
 import { camelToSnake } from './toml';
 
+function isModelShaped(entry: Record<string, unknown>): boolean {
+  return entry['model'] !== undefined || entry['name'] !== undefined;
+}
+
+function findNestedModelPath(
+  entry: Record<string, unknown>,
+  path: readonly string[],
+): readonly string[] | undefined {
+  for (const [key, value] of Object.entries(entry)) {
+    if (!isPlainObject(value)) continue;
+    if (isModelShaped(value)) return [...path, key];
+    const nested = findNestedModelPath(value, [...path, key]);
+    if (nested !== undefined) return nested;
+  }
+  return undefined;
+}
+
 export function collectMalformedModelEntries(
   rawSnake: Record<string, unknown>,
 ): ConfigDiagnostic[] {
@@ -10,7 +27,19 @@ export function collectMalformedModelEntries(
   if (!isPlainObject(rawSection)) return diagnostics;
   for (const [alias, entry] of Object.entries(rawSection)) {
     if (!isPlainObject(entry)) continue;
-    if (entry['model'] !== undefined || entry['name'] !== undefined) continue;
+    const nestedPath = findNestedModelPath(entry, []);
+    if (nestedPath !== undefined) {
+      const full = [alias, ...nestedPath].join('.');
+      diagnostics.push({
+        domain: 'models',
+        severity: 'warning',
+        message:
+          `[models] entry '${full}' is nested under '${alias}' and cannot be used as a model; ` +
+          `if the alias contains dots, quote the table name (e.g. [models."${full}"]).`,
+      });
+      continue;
+    }
+    if (isModelShaped(entry)) continue;
     diagnostics.push({
       domain: 'models',
       severity: 'warning',

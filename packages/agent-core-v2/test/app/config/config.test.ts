@@ -1391,7 +1391,7 @@ describe('malformed model entries', () => {
     return { config, disposables };
   }
 
-  it('warns when an unquoted dotted table name leaves an entry without a model field', async () => {
+  it('warns with the full dotted path when an unquoted dotted table name nests the entry', async () => {
     const { config, disposables } = await createConfig(
       '[models.kimi-k2.7-code]\nprovider = "local"\nmodel = "kimi-k2.7-code"\nmax_context_size = 262144\n',
     );
@@ -1400,12 +1400,60 @@ describe('malformed model entries', () => {
       domain: MODELS_SECTION,
       severity: 'warning',
       message:
-        "[models] entry 'kimi-k2' is missing the 'model' field and cannot be used as a model; " +
-        'if the alias contains dots, quote the table name (e.g. [models."kimi-k2"]).',
+        "[models] entry 'kimi-k2.7-code' is nested under 'kimi-k2' and cannot be used as a model; " +
+        'if the alias contains dots, quote the table name (e.g. [models."kimi-k2.7-code"]).',
     });
     expect(
       config.get<Record<string, unknown>>(MODELS_SECTION),
     ).toHaveProperty('kimi-k2');
+
+    disposables.dispose();
+  });
+
+  it('warns for a nested model-shaped child even when the alias itself is valid', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.kimi-k2]\nmodel = "kimi-k2"\nmax_context_size = 128000\n\n[models.kimi-k2.7-code]\nprovider = "local"\nmodel = "kimi-k2.7-code"\nmax_context_size = 262144\n',
+    );
+
+    expect(config.diagnostics()).toContainEqual({
+      domain: MODELS_SECTION,
+      severity: 'warning',
+      message:
+        "[models] entry 'kimi-k2.7-code' is nested under 'kimi-k2' and cannot be used as a model; " +
+        'if the alias contains dots, quote the table name (e.g. [models."kimi-k2.7-code"]).',
+    });
+
+    disposables.dispose();
+  });
+
+  it('warns with the complete path for deeper nesting', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.a.b.c]\nmodel = "deep-model"\n',
+    );
+
+    expect(config.diagnostics()).toContainEqual({
+      domain: MODELS_SECTION,
+      severity: 'warning',
+      message:
+        "[models] entry 'a.b.c' is nested under 'a' and cannot be used as a model; " +
+        'if the alias contains dots, quote the table name (e.g. [models."a.b.c"]).',
+    });
+
+    disposables.dispose();
+  });
+
+  it('warns generically when an entry has no model-shaped descendant', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.junk]\nnote = "not a model"\n',
+    );
+
+    expect(config.diagnostics()).toContainEqual({
+      domain: MODELS_SECTION,
+      severity: 'warning',
+      message:
+        "[models] entry 'junk' is missing the 'model' field and cannot be used as a model; " +
+        'if the alias contains dots, quote the table name (e.g. [models."junk"]).',
+    });
 
     disposables.dispose();
   });
