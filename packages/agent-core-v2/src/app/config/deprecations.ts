@@ -56,6 +56,15 @@ function subtreeHasModelField(entry: Record<string, unknown>): boolean {
   return childTables(entry).some(([, value]) => subtreeHasModelField(value));
 }
 
+function tomlBasicString(value: string): string {
+  return value
+    .replaceAll('\\', '\\\\')
+    .replaceAll('"', '\\"')
+    .replaceAll('\n', '\\n')
+    .replaceAll('\r', '\\r')
+    .replaceAll('\t', '\\t');
+}
+
 function nestedModelDiagnostic(path: readonly string[]): ConfigDiagnostic {
   const full = path.join('.');
   return {
@@ -63,7 +72,7 @@ function nestedModelDiagnostic(path: readonly string[]): ConfigDiagnostic {
     severity: 'warning',
     message:
       `[models] entry '${full}' is nested under '${path[0]}' and cannot be used as a model; ` +
-      `if the alias contains dots, quote the table name (e.g. [models."${full}"]).`,
+      `if the alias contains dots, quote the table name (e.g. [models."${tomlBasicString(full)}"]).`,
   };
 }
 
@@ -74,7 +83,7 @@ function missingNameDiagnostic(path: readonly string[]): ConfigDiagnostic {
     severity: 'warning',
     message:
       `[models] entry '${full}' has no usable model name and cannot be used as a model; ` +
-      `if the alias contains dots, quote the table name (e.g. [models."${full}"]).`,
+      `if the alias contains dots, quote the table name (e.g. [models."${tomlBasicString(full)}"]).`,
   };
 }
 
@@ -84,6 +93,7 @@ function walkModelEntry(
   diagnostics: ConfigDiagnostic[],
 ): void {
   const usable = isModelShaped(entry);
+  const before = diagnostics.length;
   for (const [key, value] of childTables(entry)) {
     const childPath = [...path, key];
     if (SCHEMA_CHILD_KEYS.has(key)) {
@@ -107,7 +117,7 @@ function walkModelEntry(
   if (
     path.length === 1 &&
     !usable &&
-    (hasModelNameKey(entry) || hasModelRecordField(entry) || childTables(entry).length === 0)
+    (hasModelNameKey(entry) || hasModelRecordField(entry) || diagnostics.length === before)
   ) {
     diagnostics.push(missingNameDiagnostic(path));
   }
