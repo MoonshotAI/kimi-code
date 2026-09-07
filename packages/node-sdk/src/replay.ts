@@ -113,10 +113,11 @@ function isAgentReplayUserTurnRecord(record: AgentReplayRecord): boolean {
       return message.origin.trigger === 'user-slash';
     case 'shell_command':
       return message.origin.phase === 'input';
-    case 'background_task':
-    case 'compaction_summary':
     case 'cron_job':
     case 'cron_missed':
+      return true;
+    case 'background_task':
+    case 'compaction_summary':
     case 'hook_result':
     case 'injection':
     case 'retry':
