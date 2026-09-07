@@ -7,8 +7,10 @@ function isUsableName(value: unknown): boolean {
 }
 
 function isModelShaped(entry: Record<string, unknown>): boolean {
-  return isUsableName(entry['model']) || isUsableName(entry['name']);
+  return isUsableName(entry['name'] ?? entry['model']);
 }
+
+const SCHEMA_CHILD_KEYS = new Set(['overrides']);
 
 function collectNestedModelPaths(
   entry: Record<string, unknown>,
@@ -16,7 +18,7 @@ function collectNestedModelPaths(
 ): (readonly string[])[] {
   const found: (readonly string[])[] = [];
   for (const [key, value] of Object.entries(entry)) {
-    if (!isPlainObject(value)) continue;
+    if (!isPlainObject(value) || SCHEMA_CHILD_KEYS.has(key)) continue;
     if (isModelShaped(value)) {
       found.push([...path, key]);
       continue;
@@ -30,7 +32,9 @@ function collectLeafPaths(
   entry: Record<string, unknown>,
   path: readonly string[],
 ): (readonly string[])[] {
-  const children = Object.entries(entry).filter(([, value]) => isPlainObject(value));
+  const children = Object.entries(entry).filter(
+    ([key, value]) => isPlainObject(value) && !SCHEMA_CHILD_KEYS.has(key),
+  );
   if (children.length === 0) return [path];
   return children.flatMap(([key, value]) =>
     collectLeafPaths(value as Record<string, unknown>, [...path, key]),
@@ -63,7 +67,7 @@ export function collectMalformedModelEntries(
         domain: 'models',
         severity: 'warning',
         message:
-          `[models] entry '${full}' is missing the 'model' field and cannot be used as a model; ` +
+          `[models] entry '${full}' has no usable model name and cannot be used as a model; ` +
           `if the alias contains dots, quote the table name (e.g. [models."${full}"]).`,
       });
     }

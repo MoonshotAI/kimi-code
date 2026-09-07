@@ -1451,7 +1451,7 @@ describe('malformed model entries', () => {
       domain: MODELS_SECTION,
       severity: 'warning',
       message:
-        "[models] entry 'junk' is missing the 'model' field and cannot be used as a model; " +
+        "[models] entry 'junk' has no usable model name and cannot be used as a model; " +
         'if the alias contains dots, quote the table name (e.g. [models."junk"]).',
     });
 
@@ -1467,7 +1467,7 @@ describe('malformed model entries', () => {
       domain: MODELS_SECTION,
       severity: 'warning',
       message:
-        "[models] entry 'foo.bar' is missing the 'model' field and cannot be used as a model; " +
+        "[models] entry 'foo.bar' has no usable model name and cannot be used as a model; " +
         'if the alias contains dots, quote the table name (e.g. [models."foo.bar"]).',
     });
 
@@ -1483,9 +1483,42 @@ describe('malformed model entries', () => {
       domain: MODELS_SECTION,
       severity: 'warning',
       message:
-        "[models] entry 'blank' is missing the 'model' field and cannot be used as a model; " +
+        "[models] entry 'blank' has no usable model name and cannot be used as a model; " +
         'if the alias contains dots, quote the table name (e.g. [models."blank"]).',
     });
+
+    disposables.dispose();
+  });
+
+  it('treats a blank name as shadowing a valid model', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.shadowed]\nname = ""\nmodel = "good-model"\nmax_context_size = 128000\n',
+    );
+
+    expect(config.diagnostics()).toContainEqual({
+      domain: MODELS_SECTION,
+      severity: 'warning',
+      message:
+        "[models] entry 'shadowed' has no usable model name and cannot be used as a model; " +
+        'if the alias contains dots, quote the table name (e.g. [models."shadowed"]).',
+    });
+
+    disposables.dispose();
+  });
+
+  it('reports the alias itself when only an overrides subtable is present', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.foo]\nmax_context_size = 262144\n\n[models.foo.overrides]\ndefault_effort = "high"\n',
+    );
+
+    expect(config.diagnostics()).toContainEqual({
+      domain: MODELS_SECTION,
+      severity: 'warning',
+      message:
+        "[models] entry 'foo' has no usable model name and cannot be used as a model; " +
+        'if the alias contains dots, quote the table name (e.g. [models."foo"]).',
+    });
+    expect(config.diagnostics()).toHaveLength(1);
 
     disposables.dispose();
   });
