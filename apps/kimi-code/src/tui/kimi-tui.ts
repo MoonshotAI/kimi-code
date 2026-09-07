@@ -40,6 +40,8 @@ import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { appendInputHistory, loadInputHistory } from '#/utils/history/input-history';
 import { openUrl } from '#/utils/open-url';
 import { getInputHistoryFile } from '#/utils/paths';
+import { applyRecommendedEffort } from '#/utils/recommended-effort';
+import { getRecommendedEffortConfig } from '#/utils/recommended-effort-config';
 import { detectFdPath, ensureFdPath } from '#/utils/process/fd-detect';
 import { quoteShellArg } from '#/utils/shell-quote';
 import { restoreTerminalModes } from '#/utils/terminal-restore';
@@ -728,6 +730,7 @@ export class KimiTUI {
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(this.state.editor);
     this.state.ui.setFocus(this.state.editor);
+    this.applyRecommendedEffortInBackground();
     return shouldReplayHistory;
   }
 
@@ -772,6 +775,22 @@ export class KimiTUI {
       .catch(() => {
         // Best-effort background bootstrap: autocomplete keeps using the filesystem fallback.
       });
+  }
+
+  private applyRecommendedEffortInBackground(): void {
+    void this.backgroundRefreshPromise?.then(async () => {
+      await applyRecommendedEffort({
+        fetchConfig: async () =>
+          getRecommendedEffortConfig({
+            accessToken: await this.harness.auth.getCachedAccessToken(),
+          }),
+        getConfig: () => this.harness.getConfig(),
+        setConfig: (patch) => this.harness.setConfig(patch),
+        track: (event, properties) => {
+          this.track(event, properties);
+        },
+      });
+    });
   }
 
   private async refreshProviderModelsInBackground(): Promise<void> {

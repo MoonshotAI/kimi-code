@@ -751,31 +751,3 @@ export function planConfigWriteback(
   if (!verifyPlannedText(text, expected)) return undefined;
   return text;
 }
-
-export function replaceThinkingEffortMax(originalText: string): string | undefined {
-  const scanned = scanRootRegions(originalText);
-  if (scanned === undefined) return undefined;
-  const regions = scanned.segments.flatMap((segment) =>
-    segment.kind === 'region' && segment.region.rootKey === 'thinking' ? [segment.region] : [],
-  );
-  const region = regions.length === 1 ? regions[0]! : undefined;
-  if (region === undefined || region.dotted) return undefined;
-  const scan = scanDomainRegion(originalText, scanned.lines, scanned.offsets, region, 'thinking');
-  if (scan === undefined || scan.ambiguous) return undefined;
-  const block = scan.blocks.find((candidate) => candidate.path.length === 0 && !candidate.isArray);
-  const statement = block?.statements.find((candidate) => candidate.key === 'effort');
-  if (block === undefined || statement === undefined) return undefined;
-  if (originalText.slice(statement.valueStart, statement.valueEnd) !== '"max"') return undefined;
-  return applyLineEdits(
-    scanned.lines,
-    [
-      {
-        type: 'replace',
-        startLine: statement.startLine,
-        endLine: statement.endLine,
-        text: renderStatement(originalText, statement, '"high"', scanned.eol),
-      },
-    ],
-    scanned.eol,
-  );
-}

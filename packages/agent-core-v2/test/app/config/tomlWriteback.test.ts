@@ -12,7 +12,7 @@ import { IMAGE_SECTION, type ImageConfig } from '#/agent/media/configSection';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
-import { planConfigWriteback, replaceThinkingEffortMax, type DomainUpdate } from '#/app/config/tomlWriteback';
+import { planConfigWriteback, type DomainUpdate } from '#/app/config/tomlWriteback';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { TomlAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -309,33 +309,6 @@ describe('planConfigWriteback', () => {
     expect(
       edit('[models."a\\qb"]\nname = "m1"\n', 'image', { max_edge_px: 1500 }, { max_edge_px: 2000 }, expected),
     ).toBeUndefined();
-  });
-});
-
-describe('replaceThinkingEffortMax', () => {
-  it('replaces effort = "max" with "high" inside the thinking region', () => {
-    const text = '# thinking config\n[thinking]\n# do not touch\neffort = "max"\n';
-    expect(replaceThinkingEffortMax(text)).toBe('# thinking config\n[thinking]\n# do not touch\neffort = "high"\n');
-  });
-
-  it('keeps the trailing comment on the effort line', () => {
-    const text = '[thinking]\neffort = "max"  # legacy\n';
-    expect(replaceThinkingEffortMax(text)).toBe('[thinking]\neffort = "high"  # legacy\n');
-  });
-
-  it('handles CRLF files', () => {
-    const text = '[thinking]\r\neffort = "max"\r\n';
-    expect(replaceThinkingEffortMax(text)).toBe('[thinking]\r\neffort = "high"\r\n');
-  });
-
-  it('returns undefined when there is no single thinking region', () => {
-    expect(replaceThinkingEffortMax('[other]\nx = 1\n')).toBeUndefined();
-    expect(replaceThinkingEffortMax('[thinking]\neffort = "high"\n[thinking]\neffort = "max"\n')).toBeUndefined();
-  });
-
-  it('returns undefined when effort is not a plain "max" literal', () => {
-    expect(replaceThinkingEffortMax('[thinking]\neffort = "medium"\n')).toBeUndefined();
-    expect(replaceThinkingEffortMax('[thinking]\neffort = """\nmax\n"""\n')).toBeUndefined();
   });
 });
 
