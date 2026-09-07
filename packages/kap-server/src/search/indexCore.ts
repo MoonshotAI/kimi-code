@@ -921,28 +921,42 @@ export class SearchIndexCore {
     }
     const identities = new Map<string, string | undefined>();
     const visible: MatchedRow[] = [];
-    for (const row of matched.rows) {
-      if (Date.now() > budget.deadlineAt) {
-        incomplete ??= 'deadline';
-        break;
-      }
-      const meta = sources.get(row.value.sessionId);
-      if (meta?.dir === undefined || row.value.sessionIdentity === undefined || meta.identity !== row.value.sessionIdentity) {
-        freshnessStale = true;
-        continue;
-      }
-      if (!identities.has(meta.dir)) {
-        try {
-          identities.set(meta.dir, await sessionDirectoryIdentity(meta.dir));
-        } catch (error) {
-          throw new GlobalSearchError('index_unavailable', `cannot verify search source: ${errorMessage(error)}`);
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<null>((resolve) => {
+      deadlineTimer = setTimeout(() => resolve(null), Math.max(0, budget.deadlineAt - Date.now()));
+      deadlineTimer.unref?.();
+    });
+    try {
+      for (const row of matched.rows) {
+        if (Date.now() > budget.deadlineAt) {
+          incomplete ??= 'deadline';
+          break;
+        }
+        const meta = sources.get(row.value.sessionId);
+        if (meta?.dir === undefined || row.value.sessionIdentity === undefined || meta.identity !== row.value.sessionIdentity) {
+          freshnessStale = true;
+          continue;
+        }
+        if (!identities.has(meta.dir)) {
+          try {
+            const identity = await Promise.race([sessionDirectoryIdentity(meta.dir), deadline]);
+            if (identity === null || Date.now() > budget.deadlineAt) {
+              incomplete ??= 'deadline';
+              break;
+            }
+            identities.set(meta.dir, identity);
+          } catch (error) {
+            throw new GlobalSearchError('index_unavailable', `cannot verify search source: ${errorMessage(error)}`);
+          }
+        }
+        if (identities.get(meta.dir) === row.value.sessionIdentity) {
+          visible.push({ ...row, value: { ...row.value, sessionTitle: meta.title ?? '' } });
+        } else {
+          freshnessStale = true;
         }
       }
-      if (identities.get(meta.dir) === row.value.sessionIdentity) {
-        visible.push({ ...row, value: { ...row.value, sessionTitle: meta.title ?? '' } });
-      } else {
-        freshnessStale = true;
-      }
+    } finally {
+      if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
     }
     const { pageRows, hasMore } = paginateRows(q, page, visible);
     return {

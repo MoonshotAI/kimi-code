@@ -437,6 +437,60 @@ describe('GlobalSearchService', () => {
     }
   });
 
+  it.each(['resolve', 'reject'])('returns verified partial results when a source stat outlives the deadline and later %ss', async (outcome) => {
+    const slow = summary('slow', 'slow', T1);
+    const healthy = summary('healthy', 'healthy', T2);
+    await writeWire(home!, slow.id, 'main', [userLine('needle slow extra text', T1)]);
+    await writeWire(home!, healthy.id, 'main', [userLine('needle', T2)]);
+    const writer = track(makeInlineService(home!, staticIndex([slow, healthy])));
+    await writer.reindex();
+    const reader = track(makeInlineService(home!, staticIndex([slow, healthy])));
+    await settleSync(reader);
+    expect((await reader.search({ query: 'needle' })).items).toHaveLength(2);
+    let enter!: () => void;
+    let release!: () => void;
+    let finish!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const finished = new Promise<void>((resolve) => { finish = resolve; });
+    const original = fs.stat.bind(fs);
+    const intercept = vi.spyOn(fs, 'stat').mockImplementation((async (path, options) => {
+      const result = await original(path, options);
+      if (path === join(home!, 'sessions', WS, slow.id) && options?.bigint === true) {
+        enter();
+        try {
+          await gate;
+          if (outcome === 'reject') throw Object.assign(new Error('disconnected source'), { code: 'EIO' });
+        } finally {
+          finish();
+        }
+      }
+      return result;
+    }) as typeof fs.stat);
+    syncBuiltinESMExports();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    reader.queryDeadlineMs = 100;
+    let completed: Awaited<ReturnType<GlobalSearchService['search']>> | undefined;
+    const searching = reader.search({ query: 'needle', sort: 'time_desc' }).then((page) => { completed = page; });
+    try {
+      await entered;
+      await vi.advanceTimersByTimeAsync(100);
+      expect(completed).toMatchObject({ incomplete: 'deadline', items: [{ sessionId: healthy.id }] });
+      expect(completed?.items).toHaveLength(1);
+      release();
+      await finished;
+      await searching;
+      expect(completed?.items).toHaveLength(1);
+    } finally {
+      release();
+      await searching.catch(() => {});
+      intercept.mockRestore();
+      syncBuiltinESMExports();
+      vi.useRealTimers();
+    }
+    expect((await reader.search({ query: 'needle' })).items).toHaveLength(2);
+  });
+
   it('fails a query when its session source cannot be verified', async () => {
     const s1 = summary('s1', 'one', T1);
     await writeWire(home!, s1.id, 'main', [userLine('needle body', T1)]);
