@@ -194,8 +194,8 @@ describe('built-in slash command registry', () => {
         'undo',
         'usage',
         'version',
-        'ask-when-needed',
-        'never-ask',
+        'yolo',
+        'auto',
       ]),
     );
   });
@@ -217,11 +217,10 @@ describe('built-in slash command registry', () => {
     expect(resolveSlashCommandAvailability(command!, '')).toBe('always');
   });
 
-  it('gates tower behind the tower experiment and the v2 engine', () => {
+  it('gates tower behind the tower experiment', () => {
     const command = findBuiltInSlashCommand('tower');
     expect(command).toBeDefined();
     expect((command as KimiSlashCommand).experimentalFlag).toBe('tower');
-    expect((command as KimiSlashCommand).requiresEngineV2).toBe(true);
   });
 
   it('keeps every tower subcommand always available, including objectives', () => {
@@ -235,10 +234,10 @@ describe('built-in slash command registry', () => {
     expect(resolveSlashCommandAvailability(command!, 'Ship feature X')).toBe('always');
   });
 
-  it('gates remote-control behind the remote-control experiment, always available', () => {
+  it('registers remote-control as always available', () => {
     const command = findBuiltInSlashCommand('remote-control');
     expect(command).toBeDefined();
-    expect((command as KimiSlashCommand).experimentalFlag).toBe('remote-control');
+    expect((command as KimiSlashCommand).experimentalFlag).toBeUndefined();
     expect(resolveSlashCommandAvailability(command!, '')).toBe('always');
   });
 

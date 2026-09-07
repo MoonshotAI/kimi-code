@@ -146,16 +146,16 @@ function formatDirectoryCompletionValue(argumentPrefix: string, parentInput: str
 
 export const BUILTIN_SLASH_COMMANDS = [
   {
-    name: 'ask-when-needed',
-    aliases: ['yolo', 'yes'],
-    description: 'Toggle Ask When Needed mode: routine edits and commands run automatically; risky actions, questions, and plans still ask.',
+    name: 'yolo',
+    aliases: ['yes'],
+    description: 'Ask When Needed mode: routine edits and commands run automatically; risky actions, questions, and plans still ask.',
     priority: 101,
     availability: 'always',
   },
   {
-    name: 'never-ask',
-    aliases: ['auto'],
-    description: 'Toggle Never Ask mode: never interrupts you; everything runs and is decided automatically.',
+    name: 'auto',
+    aliases: [],
+    description: 'Never Ask mode: never interrupts you; everything runs and is decided automatically.',
     priority: 99,
     availability: 'always',
   },
@@ -201,7 +201,6 @@ export const BUILTIN_SLASH_COMMANDS = [
     // for the previous one to finish.
     availability: 'always',
     experimentalFlag: 'tower',
-    requiresEngineV2: true,
   },
   {
     name: 'model',
@@ -434,10 +433,9 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'remote-control',
     aliases: ['rc'],
-    description: 'Open the current session through Kimi Remote Control (experimental)',
+    description: 'Open the current session through Kimi Remote Control',
     priority: 40,
     availability: 'always',
-    experimentalFlag: 'remote-control',
   },
   {
     name: 'exit',

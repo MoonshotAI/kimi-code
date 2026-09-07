@@ -2,9 +2,10 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { IConfigService } from '@moonshot-ai/agent-core-v2';
 import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureManager';
 import { getFeatureRecipes } from '@moonshot-ai/agent-core-v2/features/featureRegistry';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -19,6 +20,17 @@ describe('/api/v1/meta experimental_flags', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
 
+  beforeAll(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-meta-'));
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+  });
+
   beforeEach(() => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOOL_SELECT', undefined);
@@ -26,6 +38,9 @@ describe('/api/v1/meta experimental_flags', () => {
 
   afterEach(async () => {
     vi.unstubAllEnvs();
+  });
+
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -37,18 +52,9 @@ describe('/api/v1/meta experimental_flags', () => {
   });
 
   async function boot(toml?: string): Promise<string> {
-    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-meta-'));
-    if (toml !== undefined) {
-      await writeFile(join(home, 'config.toml'), toml, 'utf-8');
-    }
-    server = await startServer({
-      hostIdentity: TEST_HOST_IDENTITY,
-      host: '127.0.0.1',
-      port: 0,
-      homeDir: home,
-      logLevel: 'silent',
-    });
-    return `http://127.0.0.1:${server.port}`;
+    await writeFile(join(home as string, 'config.toml'), toml ?? '', 'utf-8');
+    await (server as RunningServer).core.accessor.get(IConfigService).reload();
+    return `http://127.0.0.1:${(server as RunningServer).port}`;
   }
 
   async function getMetaFlags(base: string): Promise<Record<string, boolean>> {
@@ -164,7 +170,18 @@ describe('/api/v1/meta features', () => {
     meta: Record<string, unknown>;
   }
 
-  afterEach(async () => {
+  beforeAll(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-meta-features-'));
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+  });
+
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -176,15 +193,7 @@ describe('/api/v1/meta features', () => {
   });
 
   async function boot(): Promise<string> {
-    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-meta-features-'));
-    server = await startServer({
-      hostIdentity: TEST_HOST_IDENTITY,
-      host: '127.0.0.1',
-      port: 0,
-      homeDir: home,
-      logLevel: 'silent',
-    });
-    return `http://127.0.0.1:${server.port}`;
+    return `http://127.0.0.1:${(server as RunningServer).port}`;
   }
 
   async function getMetaFeatures(base: string): Promise<FeatureWire[]> {

@@ -2,47 +2,42 @@ import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 
 import type {
+  TelemetryContextPatch,
+  TelemetryPrimitive,
+  TelemetryProperties,
+} from './context';
+import type {
   StrictPropertyCheck,
   TelemetryEventName,
   TelemetryEventPayload,
 } from './events';
 
-export type TelemetryPrimitive = string | number | boolean | null | undefined;
+export type { TelemetryContextPatch, TelemetryPrimitive, TelemetryProperties } from './context';
 
-export type TelemetryProperties = Readonly<Record<string, TelemetryPrimitive>>;
-
-export type TelemetryContextPatch = TelemetryProperties;
-
-export interface ITelemetryAppender {
-  track(event: string, properties?: TelemetryProperties): void;
-  withContext?(patch: TelemetryContextPatch): ITelemetryAppender;
-  setContext?(patch: TelemetryContextPatch): void;
-  flush?(): Promise<void> | void;
-  shutdown?(): Promise<void> | void;
+export interface TelemetryAppenderRecord {
+  readonly event: string;
+  readonly context: TelemetryProperties;
+  readonly properties: TelemetryProperties;
 }
 
-export interface TelemetryServiceOptions {
-  readonly appender?: ITelemetryAppender;
-  readonly appenders?: readonly ITelemetryAppender[];
-  readonly context?: TelemetryProperties;
-  readonly sessionId?: string;
-  readonly agentId?: string;
-  readonly turnId?: string;
+export interface ITelemetryAppender {
+  track(record: TelemetryAppenderRecord): void;
+  flush?(): Promise<void> | void;
+  shutdown?(): Promise<void> | void;
 }
 
 export interface ITelemetryService {
   readonly _serviceBrand: undefined;
 
-  track(event: string, properties?: TelemetryProperties): void;
   track2<K extends TelemetryEventName, E extends TelemetryEventPayload<K> = never>(
     event: K,
     properties?: StrictPropertyCheck<TelemetryEventPayload<K>, E>,
   ): void;
   withContext(patch: TelemetryContextPatch): ITelemetryService;
   setContext(patch: TelemetryContextPatch): void;
+  getContext(): Readonly<TelemetryContextPatch>;
   addAppender(appender: ITelemetryAppender): IDisposable;
   removeAppender(appender: ITelemetryAppender): void;
-  setAppender(appender: ITelemetryAppender): void;
   setEnabled(enabled: boolean): void;
   flush(): Promise<void>;
   shutdown(): Promise<void>;
@@ -50,21 +45,20 @@ export interface ITelemetryService {
 
 export const nullTelemetryAppender: ITelemetryAppender = {
   track: () => {},
-  withContext: () => nullTelemetryAppender,
-  setContext: () => {},
   flush: () => {},
   shutdown: () => {},
 };
 
+const EMPTY_CONTEXT: Readonly<TelemetryContextPatch> = Object.freeze({});
+
 export const noopTelemetryService: ITelemetryService = {
   _serviceBrand: undefined,
-  track: () => {},
   track2: () => {},
   withContext: () => noopTelemetryService,
   setContext: () => {},
+  getContext: () => EMPTY_CONTEXT,
   addAppender: () => ({ dispose: () => {} }),
   removeAppender: () => {},
-  setAppender: () => {},
   setEnabled: () => {},
   flush: async () => {},
   shutdown: async () => {},

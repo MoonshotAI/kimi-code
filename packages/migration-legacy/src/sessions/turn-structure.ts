@@ -1,15 +1,5 @@
 import type { NormalizedContentPart } from './content-part.js';
 
-// Format version of an imported session, stamped into state.json
-// `custom.import_format_version`. Absent means an old message-only import
-// (treated as 0). Bump when the migrator starts writing new wire/meta data so
-// detection can offer an in-place repair run instead of letting a completed
-// marker hide the missing data forever.
-//   1 = turn-structure records + token_counting.measured + lastTurnReason +
-//       imported todo list
-//   2 = subagent wires + subagent task records + plans copy + device_id copy
-export const IMPORT_FORMAT_VERSION = 2;
-
 export interface TurnMessage {
   readonly role: string;
   readonly content?: readonly NormalizedContentPart[];

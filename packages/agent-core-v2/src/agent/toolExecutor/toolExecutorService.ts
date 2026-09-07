@@ -3,7 +3,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { AsyncEmitter, type Event } from '#/_base/event';
 import { defineState } from '#/state/state';
-import type { ContentPart, ToolCall } from '#/kosong/contract/message';
+import type { ContentPart, ToolCall } from '#human/llm/message';
 import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 
 import {
@@ -401,7 +401,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     if (options.signal.aborted) {
       return settleError(
         call.args,
-        abortedToolOutput(call.toolName, options.signal),
+        abortedToolOutput(call.toolName, options.signal.reason),
         'aborted',
         displayFields,
       );
@@ -513,7 +513,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         result: makeErrorToolResult(
           call,
           call.args,
-          abortedToolOutput(call.toolName, signal),
+          abortedToolOutput(call.toolName, signal.reason),
         ).result,
         outcome: 'aborted',
       };
@@ -536,7 +536,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     } catch (error) {
       const aborted = isAbortError(error) || signal.aborted;
       const output = aborted
-        ? abortedToolOutput(call.toolName, signal)
+        ? abortedToolOutput(call.toolName, signal.reason)
         : `Tool "${call.toolName}" failed: ${errorMessage(error)}`;
       return {
         result: makeErrorToolResult(call, call.args, output).result,
@@ -588,6 +588,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       toolCallId: call.toolCall.id,
       name: call.toolName,
       args,
+      display: displayFields?.display,
     });
   }
 
@@ -883,6 +884,7 @@ function normalizeToolResult(result: ExecutableToolResult): ToolResult {
   const base: {
     output: ToolResult['output'];
     stopTurn?: boolean;
+    stopTurnReason?: string;
     truncated?: true;
     note?: string;
     spill?: ToolResultSpill;
@@ -893,6 +895,7 @@ function normalizeToolResult(result: ExecutableToolResult): ToolResult {
     spill: result.spill,
     spillExempt: result.spillExempt,
   };
+  if (result.stopTurnReason !== undefined) base.stopTurnReason = result.stopTurnReason;
   if (result.truncated === true) base.truncated = true;
   if (typeof result.note === 'string' && result.note.length > 0) base.note = result.note;
   if (result.isError === true) {
@@ -931,8 +934,8 @@ function isMediaContentPart(part: ContentPart): boolean {
   return part.type === 'image_url' || part.type === 'audio_url' || part.type === 'video_url';
 }
 
-function abortedToolOutput(toolName: string, signal: AbortSignal): string {
-  if (isUserCancellation(signal.reason)) {
+export function abortedToolOutput(toolName: string, reason: unknown): string {
+  if (isUserCancellation(reason)) {
     return `The user manually interrupted "${toolName}" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user's next instruction.`;
   }
   return `Tool "${toolName}" was aborted`;
@@ -950,7 +953,7 @@ async function raceWithAbortGrace<Result>(
     const armTimer = (): void => {
       graceTimer = setTimeout(() => {
         resolve({
-          output: abortedToolOutput(toolName, signal),
+          output: abortedToolOutput(toolName, signal.reason),
           isError: true,
         } as unknown as Result);
       }, ABORT_GRACE_MS);

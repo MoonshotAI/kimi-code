@@ -1,4 +1,4 @@
-import type { Tool as KosongTool } from '#/kosong/contract/tool';
+import type { ToolDescription as KosongTool } from '#human/llm/message';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import { Error2, ErrorCodes, toErrorMessage } from '#/errors';
 import { isAbortError } from '#/_base/utils/abort';

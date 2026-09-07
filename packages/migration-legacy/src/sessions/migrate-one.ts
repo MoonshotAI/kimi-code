@@ -17,14 +17,11 @@ import { readMergedSessionState, type LegacySessionRef } from './source.js';
 import { writeMainAgentWire } from './wire-writer.js';
 import { writeSessionState } from './state-writer.js';
 import { extractToolCallDisplays } from './tool-call-display.js';
-import { repairImportedSessionWire } from './repair-imported.js';
 import { buildSubagentTaskRecords, migrateLegacySubagents } from './subagents.js';
-import { IMPORT_FORMAT_VERSION } from './turn-structure.js';
 
 export type MigrateOneResult =
   | { readonly outcome: 'migrated'; readonly targetDir: string }
   | { readonly outcome: 'already-migrated'; readonly targetDir: string }
-  | { readonly outcome: 'repaired'; readonly targetDir: string }
   | { readonly outcome: 'conflict'; readonly targetDir: string }
   | { readonly outcome: 'empty' }
   | { readonly outcome: 'failed'; readonly reason: string };
@@ -41,23 +38,9 @@ export async function migrateOneSession(input: MigrateOneInput): Promise<Migrate
 
   if (existsSync(targetDir)) {
     const cls = await classifyExistingTarget(targetDir);
-    // A dir we wrote ourselves on a previous run — idempotent re-run. Sessions
-    // imported before the current import format existed get repaired in place;
-    // a repair that cannot be applied is a real failure, not a silent skip:
-    // reporting success would leave the session permanently needing repair
-    // while every run misleadingly completes.
+    // A dir we wrote ourselves on a previous run — idempotent re-run.
     if (cls === 'imported') {
-      const formatVersion = await readImportFormatVersion(targetDir);
-      if (formatVersion >= IMPORT_FORMAT_VERSION) {
-        return { outcome: 'already-migrated', targetDir };
-      }
-      const repaired = await repairImportedSessionWire(targetDir).catch(() => false);
-      if (repaired) return { outcome: 'repaired', targetDir };
-      return {
-        outcome: 'failed',
-        reason:
-          'imported session needs repair but its wire could not be repaired (missing, corrupt, or unwritable)',
-      };
+      return { outcome: 'already-migrated', targetDir };
     }
     // A real, unrelated kimi-code session occupies the path — a true conflict.
     if (cls === 'foreign') {
@@ -228,19 +211,6 @@ async function applyOriginalMtime(targetDir: string, createdAtMs: number): Promi
     await utimes(targetDir, stamp, stamp);
   } catch {
     // Non-fatal: ordering may be slightly off, but the migration succeeded.
-  }
-}
-
-async function readImportFormatVersion(targetDir: string): Promise<number> {
-  try {
-    const parsed: unknown = JSON.parse(await readFile(join(targetDir, 'state.json'), 'utf-8'));
-    if (typeof parsed !== 'object' || parsed === null) return 0;
-    const custom = (parsed as { custom?: unknown }).custom;
-    if (typeof custom !== 'object' || custom === null) return 0;
-    const version = (custom as Record<string, unknown>)['import_format_version'];
-    return typeof version === 'number' ? version : 0;
-  } catch {
-    return 0;
   }
 }
 

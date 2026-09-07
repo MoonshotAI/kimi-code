@@ -29,7 +29,16 @@ const WIRE = `${META_LINE}\n`;
 
 function validBundle(): Record<string, string> {
   return {
-    'manifest.json': JSON.stringify({ sessionId: 'session_orig', kimiCodeVersion: '0.20.2', workspaceDir: '/home/u/proj', title: 'imported demo' }),
+    'manifest.json': JSON.stringify({
+      sessionId: 'session_orig',
+      kimiCodeVersion: '0.20.2',
+      workspaceDir: '/home/u/proj',
+      title: 'imported demo',
+      desktopLogPath: 'logs/kimi-desktop.log',
+      webLogPath: 'logs/kimi-web.jsonl',
+      desktopVersion: '1.2.3',
+      shellEnv: { shell: '/bin/zsh', term: 'xterm-256color', ignored: 42 },
+    }),
     'state.json': JSON.stringify({ createdAt: '2026-06-01T00:00:00.000Z', updatedAt: '2026-06-01T01:00:00.000Z', title: 'imported demo', agents: { main: { homedir: '/orig/agents/main', type: 'main', parentAgentId: null } }, custom: {} }),
     'agents/main/wire.jsonl': WIRE,
     'logs/kimi-code.log': '2026-06-01T00:00:00.000Z INFO  hello  k=v\n',
@@ -49,6 +58,10 @@ describe('import-store', () => {
     expect(meta.originalName).toBe('demo.zip');
     expect(meta.manifest?.sessionId).toBe('session_orig');
     expect(meta.manifest?.workspaceDir).toBe('/home/u/proj');
+    expect(meta.manifest?.desktopLogPath).toBe('logs/kimi-desktop.log');
+    expect(meta.manifest?.webLogPath).toBe('logs/kimi-web.jsonl');
+    expect(meta.manifest?.desktopVersion).toBe('1.2.3');
+    expect(meta.manifest?.shellEnv).toEqual({ shell: '/bin/zsh', term: 'xterm-256color' });
 
     // Extracted to imported/<id>/ with the session shape intact.
     const dir = join(home, 'imported', meta.importId);

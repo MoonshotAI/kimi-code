@@ -7,7 +7,6 @@ import { existsSync } from 'node:fs';
 
 import {
   detectMigration,
-  countImportedSessionsNeedingRepair,
   shouldSuppressMigration,
   type MigrationPlan,
 } from '@moonshot-ai/migration-legacy';
@@ -35,16 +34,8 @@ export async function detectPendingMigration(
 ): Promise<MigrationPlan | null> {
   const { sourceHome, targetHome } = input;
   if (!existsSync(sourceHome)) return null;
-  // Imported sessions an older migrator left without turn-structure records
-  // are unfinished migration work the completion marker must not hide — a
-  // repair need lifts the suppression. The scan is cheap (one state.json plus
-  // a wire-head read per imported session) and failure-tolerant.
-  const sessionsNeedingRepair = await countImportedSessionsNeedingRepair(targetHome).catch(
-    () => 0,
-  );
   if (
     input.ignoreMarker !== true &&
-    sessionsNeedingRepair === 0 &&
     shouldSuppressMigration({ sourceHome, targetHome })
   ) {
     return null;
@@ -73,9 +64,8 @@ export async function detectPendingMigration(
     !plan.hasUserHistory &&
     !plan.hasSkills &&
     !plan.hasPlans &&
-    sessionsNeedingRepair === 0 &&
     (plan.sessionScanFailures?.length ?? 0) === 0;
   if (nothingToMigrate) return null;
 
-  return { ...plan, sessionsNeedingRepair };
+  return plan;
 }

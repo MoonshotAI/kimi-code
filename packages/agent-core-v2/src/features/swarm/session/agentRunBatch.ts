@@ -1,5 +1,5 @@
-import { isProviderRateLimitError } from '#/kosong/contract/errors';
-import { type TokenUsage } from '#/kosong/contract/usage';
+import { isProviderRateLimitError } from '#/llm-adapter/contract/errors';
+import { type TokenUsage } from '#human/llm/usage';
 import * as retry from 'retry';
 
 import { isUserCancellation } from '#/_base/utils/abort';
@@ -32,6 +32,7 @@ export type AgentRunAttemptHandle = {
   readonly completion: Promise<{
     readonly result: string;
     readonly usage?: TokenUsage;
+    readonly stopReason?: string;
   }>;
 };
 
@@ -311,6 +312,7 @@ export class AgentRunBatch<T> {
         status: 'completed',
         result: completion.result,
         usage: completion.usage,
+        stopReason: completion.stopReason,
       };
     } catch (error) {
       if (isProviderRateLimitError(error)) {

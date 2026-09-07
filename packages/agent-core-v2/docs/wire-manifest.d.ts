@@ -24,7 +24,7 @@
 // cross-reducers), blobs (the folding states whose blob codec offloads inline
 // media to blob storage), owner (the source file declaring the class).
 
-// Index (62 record types)
+// Index (60 record types)
 //   config.update                      profile                                               src/agent/profile/profileOps.ts
 //   context.append_loop_event          contextMemory, turn                                   src/agent/contextMemory/contextEvents.ts
 //   context.append_message             contextMemory, plan, task.notificationDelivery        src/agent/contextMemory/contextEvents.ts
@@ -62,8 +62,6 @@
 //   prompt.completed                   promptResolution                                      src/agent/prompt/promptService.ts
 //   prompt.steered                     promptResolution                                      src/agent/prompt/promptService.ts
 //   runtime.set_binding                runtimeBinding                                        src/agent/runtimeBinding/runtimeBindingOps.ts
-//   staleGuard.cleared                 staleGuard                                            src/features/staleGuard/staleGuardOps.ts
-//   staleGuard.recorded                staleGuard                                            src/features/staleGuard/staleGuardOps.ts
 //   swarm_mode.enter                   swarm                                                 src/features/swarm/swarmOps.ts
 //   swarm_mode.exit                    contextMemory, swarm                                  src/features/swarm/swarmOps.ts
 //   task.started                       task                                                  src/agent/task/taskOps.ts
@@ -85,7 +83,7 @@
 //   turn.prompt                        turn                                                  src/agent/loop/turnOps.ts
 //   turn.steer                         turn                                                  src/agent/loop/turnOps.ts
 //   turn.step.interrupted              (none)                                                src/agent/loop/turnEvents.ts
-//   turn.step.retrying                 (none)                                                src/agent/stepRetry/stepRetryService.ts
+//   turn.step.retrying                 (none)                                                src/agent/loop/turnEvents.ts
 //   usage.record                       (none)                                                src/agent/usage/usageOps.ts
 
 /**
@@ -97,10 +95,8 @@ interface ConfigUpdatePayload {
   agentId: string;
   modelAlias?: string;
   profileName?: string;
-  /** ThinkingEffort */
-  thinkingEffort?: 'off' | 'on' | (string & {});
-  /** ThinkingEffort */
-  thinkingLevel?: 'off' | 'on' | (string & {});
+  thinkingEffort?: ThinkingEffort;
+  thinkingLevel?: ThinkingEffort;
   systemPrompt?: string;
   /** EnvironmentDisclosureSnapshot */
   environmentDisclosure?: {
@@ -131,29 +127,18 @@ interface ContextAppendMessagePayload {
   agentId: string;
   /** ContextMessage */
   message: {
-    role: 'system' | 'user' | 'assistant' | 'tool';
+    role: Role;
     name?: string;
-    content: ('text' | 'think' | 'image_url' | 'audio_url' | 'video_url')[];
-    toolCalls: {
-      type: 'function';
-      id: string;
-      name: string;
-      arguments: string | null;
-      extras?: Record<string, unknown>;
-      _streamIndex?: number | string;
-    }[];
+    content: ContentPart[];
+    toolCalls: ToolCall[];
     toolCallId?: string;
     partial?: boolean;
-    tools?: {
-      name: string;
-      description: string;
-      parameters: Record<string, unknown>;
-      deferred?: true;
-    }[];
+    tools?: ToolDescription[];
     id?: string;
     providerMessageId?: string;
     origin?: 'user' | 'skill_activation' | 'plugin_command' | 'injection' | 'shell_command' | 'compaction_summary' | 'system_trigger' | 'task' | 'cron_job' | 'cron_missed' | 'hook_result' | 'retry' | undefined;
     isError?: boolean;
+    toolCallDisplays?: Record<string, ToolInputDisplay>;
     note?: string;
   };
 }
@@ -386,8 +371,7 @@ interface LlmRequestPayload {
   provider: string;
   model: string;
   modelAlias?: string;
-  /** ThinkingEffort */
-  thinkingEffort?: 'off' | 'on' | (string & {});
+  thinkingEffort?: ThinkingEffort;
   thinkingKeep?: string;
   temperature?: number;
   topP?: number;
@@ -527,8 +511,7 @@ interface ProfileBindPayload {
   agentId: string;
   modelAlias?: string;
   profileName?: string;
-  /** ThinkingEffort */
-  thinkingEffort: 'off' | 'on' | (string & {});
+  thinkingEffort: ThinkingEffort;
   systemPrompt: string;
   /** EnvironmentDisclosureSnapshot */
   environmentDisclosure?: {
@@ -597,24 +580,6 @@ interface RuntimeSetBindingPayload {
   agentId: string;
   workspaceId: string;
   runtimeId: string;
-}
-
-/**
- * states: staleGuard
- * owner: src/features/staleGuard/staleGuardOps.ts
- */
-interface StaleGuardClearedPayload {
-  _name: 'staleGuard.cleared';
-}
-
-/**
- * states: staleGuard
- * owner: src/features/staleGuard/staleGuardOps.ts
- */
-interface StaleGuardRecordedPayload {
-  _name: 'staleGuard.recorded';
-  path: string;
-  mtimeMs: number;
 }
 
 /**
@@ -855,6 +820,7 @@ interface TurnEndedPayload {
     };
   };
   durationMs?: number;
+  stopReason?: string;
 }
 
 /**
@@ -898,7 +864,7 @@ interface TurnStepInterruptedPayload {
 
 /**
  * states: (none)
- * owner: src/agent/stepRetry/stepRetryService.ts
+ * owner: src/agent/loop/turnEvents.ts
  */
 interface TurnStepRetryingPayload {
   _name: 'turn.step.retrying';
@@ -923,13 +889,7 @@ interface UsageRecordPayload {
   _name: 'usage.record';
   agentId: string;
   model: string;
-  /** TokenUsage */
-  usage: {
-    inputOther: number;
-    output: number;
-    inputCacheRead: number;
-    inputCacheCreation: number;
-  };
+  usage: TokenUsage;
   /** UsageRecordScope */
   usageScope?: 'session' | 'turn';
 }
@@ -973,8 +933,6 @@ interface WirePayloadMap {
   "prompt.completed": PromptCompletedPayload;
   "prompt.steered": PromptSteeredPayload;
   "runtime.set_binding": RuntimeSetBindingPayload;
-  "staleGuard.cleared": StaleGuardClearedPayload;
-  "staleGuard.recorded": StaleGuardRecordedPayload;
   "swarm_mode.enter": SwarmModeEnterPayload;
   "swarm_mode.exit": SwarmModeExitPayload;
   "task.started": TaskStartedPayload;

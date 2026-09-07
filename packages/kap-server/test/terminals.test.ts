@@ -12,7 +12,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import { ErrorCode } from '../src/protocol/error-codes';
 import type { Terminal } from '@moonshot-ai/agent-core-v2/os/interface/terminal';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -90,11 +90,8 @@ describe('server-v2 /api/v1/sessions/{sid}/terminals', () => {
   let work: string | undefined;
   let base: string;
 
-  beforeEach(async () => {
-    spawnOptions.length = 0;
-    processes.length = 0;
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-term-home-'));
-    work = await mkdtemp(join(tmpdir(), 'kimi-server-v2-term-work-'));
     await writeFile(
       join(home, 'config.toml'),
       [
@@ -120,7 +117,20 @@ describe('server-v2 /api/v1/sessions/{sid}/terminals', () => {
     base = `http://127.0.0.1:${server.port}`;
   });
 
+  beforeEach(async () => {
+    spawnOptions.length = 0;
+    processes.length = 0;
+    work = await mkdtemp(join(tmpdir(), 'kimi-server-v2-term-work-'));
+  });
+
   afterEach(async () => {
+    if (work !== undefined) {
+      await rm(work, { recursive: true, force: true });
+      work = undefined;
+    }
+  });
+
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -128,10 +138,6 @@ describe('server-v2 /api/v1/sessions/{sid}/terminals', () => {
     if (home !== undefined) {
       await rm(home, { recursive: true, force: true });
       home = undefined;
-    }
-    if (work !== undefined) {
-      await rm(work, { recursive: true, force: true });
-      work = undefined;
     }
   });
 

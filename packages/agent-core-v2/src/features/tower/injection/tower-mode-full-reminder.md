@@ -16,10 +16,7 @@ Working principles:
 
 ## Prepare (only when the directory is not a tower-ready git repo)
 
-`TowerInit` requires a git repository with at least one commit. If `git rev-parse --is-inside-work-tree` fails:
-
-- **Empty directory** → `git init` + `git commit --allow-empty -m "tower: init"`, then proceed. No confirmation needed.
-- **Non-empty directory** → never `git add -A`: a blind initial commit can seal secrets, large binaries, or dependency directories into history irreversibly. Survey the directory (file count, largest files, secret-looking names like `.env` or `*.pem`), present the summary, and ask the human **exactly once** whether to initialize and commit the existing files — but only when asking is possible. Under auto permission mode `AskUserQuestion` is disabled: do not call it into a deny error. Default to the safe behavior instead — do NOT commit existing files; stop tower there and tell the human in your reply the two commands to run themselves (`git init` plus an initial commit of their choosing). If they agree to the commit, write a conservative `.gitignore` (dependencies, build output, secrets), show the staged list, commit, proceed.
+`TowerInit` requires a git repository with at least one commit. If the session working directory is not inside one, the engine bootstraps it for you: `git init`, then an initial commit on the base branch — an empty directory gets `git commit --allow-empty -m "tower: init"`; a non-empty directory gets every present file committed as a dirty-base snapshot (`tower: snapshot of uncommitted base checkout changes (base <base>)` — the same semantics as starting a tower over an uncommitted checkout). If the directory holds secrets or large files that must not enter history, move them out or add a `.gitignore` BEFORE starting the tower — the snapshot commits everything present.
 
 ## Tower workflow
 

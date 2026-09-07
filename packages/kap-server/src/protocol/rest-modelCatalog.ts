@@ -4,7 +4,7 @@ import { PROVIDER_ID_PATTERN } from '@moonshot-ai/agent-core-v2';
 import {
   modelCatalogItemSchema,
   providerCatalogItemSchema,
-} from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
+} from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 
 export const listModelsResponseSchema = z.object({
   items: z.array(modelCatalogItemSchema),

@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -39,7 +39,7 @@ describe('server-v2 /api/v1 fs folder picker', () => {
   let instancesDir: string | undefined;
   let base: string;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-'));
     instancesDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-instances-'));
     server = await startServer({
@@ -53,7 +53,7 @@ describe('server-v2 /api/v1 fs folder picker', () => {
     base = `http://127.0.0.1:${server.port}`;
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -108,7 +108,7 @@ describe('server-v2 /api/v1 fs folder picker', () => {
   });
 
   it('lists only directories and filters files', async () => {
-    const root = home as string;
+    const root = await mkdtemp(join(home as string, 'browse-filter-'));
     await mkdir(join(root, 'alpha'));
     await mkdir(join(root, 'beta'));
     await writeFile(join(root, 'README.md'), 'hi');
@@ -127,7 +127,7 @@ describe('server-v2 /api/v1 fs folder picker', () => {
   });
 
   it('sorts dot-directories after regular ones', async () => {
-    const root = home as string;
+    const root = await mkdtemp(join(home as string, 'browse-dots-'));
     await mkdir(join(root, '.zeta'));
     await mkdir(join(root, 'alpha'));
 
@@ -183,7 +183,7 @@ describe('server-v2 /api/v1 fs:mkdir', () => {
   let instancesDir: string | undefined;
   let base: string;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fsmkdir-'));
     instancesDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fsmkdir-instances-'));
     server = await startServer({
@@ -197,7 +197,7 @@ describe('server-v2 /api/v1 fs:mkdir', () => {
     base = `http://127.0.0.1:${server.port}`;
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -285,7 +285,7 @@ describe('server-v2 /api/v1 fs:content', () => {
   let instancesDir: string | undefined;
   let base: string;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fscontent-'));
     instancesDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fscontent-instances-'));
     server = await startServer({
@@ -299,7 +299,7 @@ describe('server-v2 /api/v1 fs:content', () => {
     base = `http://127.0.0.1:${server.port}`;
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;

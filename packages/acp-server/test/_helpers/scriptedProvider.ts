@@ -19,16 +19,19 @@
  */
 
 import {
-  type FinishReason,
   IProtocolAdapterRegistry,
   type IProtocolAdapterRegistry as IProtocolAdapterRegistryType,
   type Message,
+  type Model,
   ProtocolAdapterRegistry,
   type ProtocolAdapterConfig,
   type StreamedMessagePart,
   type TokenUsage,
   type Tool,
 } from '@moonshot-ai/agent-core-v2';
+import type { FinishReason } from '@moonshot-ai/agent-core-v2/human/llm/finish-reason';
+import { fromLlmMessage } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/message';
+import type { LlmRequester } from '@moonshot-ai/agent-core-v2/human/llm/requester/requester';
 
 interface ScriptedResponse {
   readonly parts: readonly StreamedMessagePart[];
@@ -137,11 +140,47 @@ export function createScriptedProvider(): ScriptedProvider {
   // Single shared provider so every ModelImpl in the process (main agent,
   // sub-agents) draws from the same FIFO queue.
   const provider = new ScriptedChatProvider(queue, calls);
-  // Identity/capability resolution delegates to the real registry (the
+  const requester: LlmRequester = {
+    async generate(config, content, control) {
+      control.onEvent?.({ type: 'llm.sent' });
+      try {
+        const stream = await provider.generate(
+          config.systemPrompt ?? '',
+          [...(config.tools ?? [])],
+          content.messages.map(fromLlmMessage),
+          { signal: control.signal },
+        );
+        for await (const part of stream) {
+          control.onEvent?.({ type: 'llm.delta', part });
+          control.signal.throwIfAborted();
+        }
+        control.onEvent?.({ type: 'llm.usage', usage: stream.usage ?? ZERO_USAGE });
+        control.onEvent?.({
+          type: 'llm.finish',
+          finish: {
+            finishReason: stream.finishReason,
+            rawFinishReason: stream.rawFinishReason,
+          },
+        });
+        if (stream.id !== null) {
+          control.onEvent?.({ type: 'llm.message-id', messageId: stream.id });
+        }
+        control.onEvent?.({ type: 'llm.done' });
+      } catch (error) {
+        control.onEvent?.({
+          type: 'llm.failed.remote',
+          error: {
+            kind: 'unknown',
+            message: error instanceof Error ? error.message : String(error),
+          },
+        });
+      }
+    },
+  };
+  // Identity/capability/model resolution delegates to the real registry (the
   // interface grew `resolveAdapterIdentity` / `resolveProviderBaseId` /
-  // `resolveCapability` / `explainCapability` — delegating keeps the stub
-  // truthful and immune to further growth); only `createChatProvider` is
-  // scripted.
+  // `resolveCapability` / `explainCapability` / `resolve` — delegating keeps the
+  // stub truthful and immune to further growth); only the requester is scripted.
   const real = new ProtocolAdapterRegistry();
   const registry: IProtocolAdapterRegistryType = {
     _serviceBrand: undefined,
@@ -150,6 +189,7 @@ export function createScriptedProvider(): ScriptedProvider {
     resolveProviderBaseId: real.resolveProviderBaseId.bind(real),
     resolveCapability: real.resolveCapability.bind(real),
     explainCapability: real.explainCapability.bind(real),
+    resolve: (model: Model) => ({ ...real.resolve(model), requester }),
     // `createChatProvider` is called by `ModelImpl` (a package-internal method
     // not on the public interface); present at runtime, cast for the type gap.
     createChatProvider: (_input: ProtocolAdapterConfig) => provider,

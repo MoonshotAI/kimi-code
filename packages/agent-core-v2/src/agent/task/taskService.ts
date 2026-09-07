@@ -3,7 +3,7 @@ import { join } from 'pathe';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { ILogService } from '#/_base/log/log';
@@ -13,7 +13,7 @@ import {
   userCancellationReason,
 } from '#/_base/utils/abort';
 import { setClampedTimeout } from '#/_base/utils/timer';
-import { escapeXml, escapeXmlAttr } from '#/_base/utils/xml-escape';
+import { escapeXml, escapeXmlAttr, escapeXmlTags } from '#/_base/utils/xml-escape';
 import { IEventBus } from '#/app/event/eventBus';
 import { Error2, ErrorCodes } from '#/errors';
 import { z } from 'zod';
@@ -24,10 +24,9 @@ import {
 import '#/agent/contextMemory/conversationTime';
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import type { ContextMessage, TaskOrigin } from '#/agent/contextMemory/types';
+import type { TaskOrigin } from '#/agent/contextMemory/types';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
-import { IAgentLoopService } from '#/agent/loop/loop';
-import { MessageStepRequest } from '#/agent/loop/stepRequest';
+import { IAgentLoopService, type LoopNotifyHandle } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { ITaskService, type ITaskHandle, TERMINAL_TASK_STATES } from '#/app/task/task';
@@ -163,6 +162,7 @@ const SIGTERM_GRACE_MS = 5_000;
 const TASK_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
 const SESSION_CLOSED_REASON = 'Session closed';
 const NOTIFICATION_FALLBACK_PREVIEW_BYTES = 3_000;
+const QUESTION_ANSWER_INLINE_BYTES = 16_000;
 const ACTIVE_BACKGROUND_TASK_INJECTION_VARIANT = 'background_task_status';
 const TASK_RESUME_TERMINATION_VARIANT = 'task_resume_termination';
 const ACTIVE_BACKGROUND_TASK_GUIDANCE = [
@@ -182,24 +182,6 @@ function coerceTimeoutSettlement(
     return { ...settlement, status: 'timed_out' };
   }
   return settlement;
-}
-
-export class TaskNotificationStepRequest extends MessageStepRequest {
-  constructor(
-    message: ContextMessage,
-    private readonly onWillDeliver?: () => void,
-  ) {
-    super(message, {
-      kind: 'task_notification',
-      mergeable: true,
-      turnScoped: false,
-      admission: 'activeOrNewTurn',
-    });
-  }
-
-  override onWillMaterialize(): void {
-    this.onWillDeliver?.();
-  }
 }
 
 export const taskGhostsKey = defineState<Map<string, AgentTaskInfo>>(
@@ -224,7 +206,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
 
   private readonly tasks = new Map<string, ManagedTask>();
   private readonly buildingNotificationKeys = new Set<string>();
-  private readonly pendingNotificationRequests = new Map<string, TaskNotificationStepRequest>();
+  private readonly pendingNotificationRequests = new Map<string, LoopNotifyHandle>();
   private readonly persistence: AgentTaskPersistence;
   private notificationRestoreQueue: Promise<void> = Promise.resolve();
 
@@ -518,7 +500,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   private async reconcileNotificationDeliveryAfterUndo(): Promise<void> {
     const restoredKeys = new Set(this.states.get(taskNotificationDeliveryKey));
     for (const [key, request] of this.pendingNotificationRequests) {
-      if (request.aborted) this.clearPendingNotification(key, request);
+      if (request.dropped) this.clearPendingNotification(key, request);
     }
     this.deliveredNotificationKeys.clear();
     for (const key of restoredKeys) this.deliveredNotificationKeys.add(key);
@@ -625,7 +607,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
         notificationId: taskNotificationId(taskId, status),
       };
       const key = notificationKey(origin);
-      this.pendingNotificationRequests.get(key)?.abort();
+      this.pendingNotificationRequests.get(key)?.drop();
       this.markDeliveredNotification(origin);
       keys.push(key);
     }
@@ -799,10 +781,17 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   async stopAllOnExit(reason: string): Promise<readonly AgentTaskInfo[]> {
     if (this.keepAliveOnExit()) return [];
     const active = this.list(true);
-    await Promise.all(
+    await Promise.allSettled(
       active
         .filter((task) => task.detached === true)
-        .map((task) => this.suppressTerminalNotification(task.taskId)),
+        .map((task) =>
+          this.suppressTerminalNotification(task.taskId).catch((error: unknown) => {
+            this.log.error('terminal notification suppression failed', {
+              taskId: task.taskId,
+              error,
+            });
+          }),
+        ),
     );
     return this.stopAll(reason);
   }
@@ -1098,30 +1087,21 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     if (context === undefined) return;
     const key = notificationKey(context.origin);
     if (this.deliveredNotificationKeys.has(key)) return;
-    const request = new TaskNotificationStepRequest(
-      {
+    const handle = this.loop.notify({
+      message: {
         role: 'user',
         content: [...context.content],
         toolCalls: [],
         origin: context.origin,
       },
-      () => this.fireNotificationHook(context.notification),
-    );
-    this.pendingNotificationRequests.set(key, request);
-    try {
-      const receipt = this.loop.enqueue(request);
-      void receipt.assigned
-        .then(({ step }) => step.result)
-        .then(
-          () => {
-            if (request.aborted) this.clearPendingNotification(key, request);
-          },
-          () => this.clearPendingNotification(key, request),
-        );
-    } catch (error) {
-      this.clearPendingNotification(key, request);
-      throw error;
-    }
+      turnScoped: false,
+      onConsume: () => {
+        this.pendingNotificationRequests.delete(key);
+        this.fireNotificationHook(context.notification);
+      },
+      onDrop: () => this.clearPendingNotification(key, handle),
+    });
+    this.pendingNotificationRequests.set(key, handle);
   }
 
   private restoreAgentTaskNotifications(): Promise<void> {
@@ -1260,10 +1240,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     try {
       let output = emptyOutputSnapshot();
       try {
-        output = await this.getOutputSnapshot(info.taskId, 0);
-        if (!output.fullOutputAvailable) {
-          output = await this.getOutputSnapshot(info.taskId, NOTIFICATION_FALLBACK_PREVIEW_BYTES);
-        }
+        output = await this.notificationOutputSnapshot(info);
       } catch (error) {
         this.log.error('task notification output read failed; delivering without output', {
           taskId: info.taskId,
@@ -1275,10 +1252,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       if (this.deliveredNotificationKeys.has(key)) return undefined;
       if (this.hasDeliveredNotification(key)) return undefined;
       this.scheduledNotificationKeys.add(key);
-      const notification = buildAgentTaskNotification(
-        info,
-        agentTaskNotificationChildren(output),
-      );
+      const notification = buildAgentTaskNotification(info, output);
       const content = [
         {
           type: 'text',
@@ -1289,6 +1263,15 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     } finally {
       this.buildingNotificationKeys.delete(key);
     }
+  }
+
+  private async notificationOutputSnapshot(info: AgentTaskInfo): Promise<AgentTaskOutputSnapshot> {
+    if (info.kind === 'question') {
+      return this.getOutputSnapshot(info.taskId, QUESTION_ANSWER_INLINE_BYTES);
+    }
+    const persisted = await this.getOutputSnapshot(info.taskId, 0);
+    if (persisted.fullOutputAvailable) return persisted;
+    return this.getOutputSnapshot(info.taskId, NOTIFICATION_FALLBACK_PREVIEW_BYTES);
   }
 
   private fireNotificationHook(notification: AgentTaskNotification): void {
@@ -1321,7 +1304,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     this.deliveredNotificationKeys.add(key);
   }
 
-  private clearPendingNotification(key: string, request: TaskNotificationStepRequest): void {
+  private clearPendingNotification(key: string, request: LoopNotifyHandle): void {
     if (this.pendingNotificationRequests.get(key) !== request) return;
     this.pendingNotificationRequests.delete(key);
     if (!this.deliveredNotificationKeys.has(key) && !this.hasDeliveredNotification(key)) {
@@ -1391,13 +1374,62 @@ function emptyOutputSnapshot(): AgentTaskOutputSnapshot {
 }
 
 function agentTaskNotificationChildren(
-  output: AgentTaskOutputSnapshot,
+  info: AgentTaskInfo,
+  output: AgentTaskOutputSnapshot | undefined,
 ): readonly string[] | undefined {
+  if (output === undefined) return undefined;
+  if (inlinesQuestionAnswer(info, output)) {
+    return output.preview.length === 0 ? undefined : [renderAnswerBlock(output.preview)];
+  }
   if (output.fullOutputAvailable && output.outputPath !== undefined) {
     return [renderOutputFileBlock(output.outputPath, output.outputSizeBytes)];
   }
   if (output.preview.length === 0) return undefined;
   return [renderOutputPreviewBlock(output)];
+}
+
+function inlinesQuestionAnswer(info: AgentTaskInfo, output: AgentTaskOutputSnapshot): boolean {
+  return info.kind === 'question' && !output.truncated;
+}
+
+function renderAnswerBlock(answer: string): string {
+  return ['<answer>', escapeXmlTags(answer), '</answer>'].join('\n');
+}
+
+function questionNotificationText(
+  info: AgentTaskInfo,
+  output: AgentTaskOutputSnapshot | undefined,
+): { readonly title: string; readonly body: string } | undefined {
+  if (info.status !== 'completed' || output === undefined || !inlinesQuestionAnswer(info, output)) {
+    return undefined;
+  }
+  const outcome = questionOutcome(output.preview);
+  if (outcome === 'answered') {
+    return {
+      title: 'Background question answered',
+      body: `The user answered "${info.description}".`,
+    };
+  }
+  if (outcome === 'dismissed') {
+    return {
+      title: 'Background question dismissed',
+      body: `The user dismissed "${info.description}" without answering.`,
+    };
+  }
+  return undefined;
+}
+
+function questionOutcome(output: string): 'answered' | 'dismissed' | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return undefined;
+  const answers = (parsed as { readonly answers?: unknown }).answers;
+  if (typeof answers !== 'object' || answers === null || Array.isArray(answers)) return undefined;
+  return Object.keys(answers).length > 0 ? 'answered' : 'dismissed';
 }
 
 function renderOutputFileBlock(outputPath: string, outputSizeBytes: number): string {
@@ -1506,8 +1538,9 @@ function buildAgentTaskNotificationBody(info: AgentTaskInfo): string {
 
 function buildAgentTaskNotification(
   info: AgentTaskInfo,
-  children?: readonly string[],
+  output?: AgentTaskOutputSnapshot,
 ): AgentTaskNotification {
+  const question = questionNotificationText(info, output);
   return {
     id: taskNotificationId(info.taskId, info.status),
     category: 'task',
@@ -1515,10 +1548,10 @@ function buildAgentTaskNotification(
     source_kind: 'background_task',
     source_id: info.taskId,
     agent_id: info.kind === 'agent' ? info.agentId : undefined,
-    title: `Background ${info.kind} ${info.status}`,
+    title: question?.title ?? `Background ${info.kind} ${info.status}`,
     severity: info.status === 'completed' ? 'info' : 'warning',
-    body: buildAgentTaskNotificationBody(info),
-    children,
+    body: question?.body ?? buildAgentTaskNotificationBody(info),
+    children: agentTaskNotificationChildren(info, output),
   };
 }
 

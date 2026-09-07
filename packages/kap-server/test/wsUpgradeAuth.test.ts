@@ -1,15 +1,7 @@
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
 
-import { type RunningServer, startServer } from '../src/start';
-import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
-import { fixedTokenAuth } from './helpers/fixedAuth';
-
-const TOKEN = 'test-token';
+import { sharedServer } from './helpers/sharedServer';
 
 function rawToString(data: RawData): string {
   if (typeof data === 'string') return data;
@@ -61,57 +53,41 @@ function expectRejected(url: string, opts?: ConnectOptions): Promise<void> {
 }
 
 describe('WS upgrade auth', () => {
-  let server: RunningServer | undefined;
-  let home: string | undefined;
-  let v1Url: string;
   const sockets: WebSocket[] = [];
 
-  beforeEach(async () => {
-    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-ws-upgrade-auth-'));
-    server = await startServer({
-      hostIdentity: TEST_HOST_IDENTITY,
-      host: '127.0.0.1',
-      port: 0,
-      homeDir: home,
-      logLevel: 'silent',
-      authTokenService: fixedTokenAuth(TOKEN),
-    });
-    v1Url = `ws://127.0.0.1:${server.port}/api/v1/ws`;
-  });
-
-  afterEach(async () => {
+  afterEach(() => {
     for (const ws of sockets.splice(0)) {
       try {
         ws.close();
       } catch {
       }
     }
-    if (server !== undefined) {
-      await server.close();
-      server = undefined;
-    }
-    if (home !== undefined) {
-      await rm(home, { recursive: true, force: true });
-      home = undefined;
-    }
   });
+
+  function v1Url(): string {
+    return `${sharedServer().base.replace(/^http/, 'ws')}/api/v1/ws`;
+  }
+
+  function token(): string {
+    return sharedServer().token;
+  }
 
   describe('/api/v1/ws', () => {
     const firstType = 'server_hello';
-    const url = (): string => v1Url;
+    const url = (): string => v1Url();
 
     it('accepts a valid bearer subprotocol and echoes it', async () => {
       const { ws, firstFrame } = await openConn(url(), {
-        protocols: [`kimi-code.bearer.${TOKEN}`],
+        protocols: [`kimi-code.bearer.${token()}`],
       });
       sockets.push(ws);
-      expect(ws.protocol).toBe(`kimi-code.bearer.${TOKEN}`);
+      expect(ws.protocol).toBe(`kimi-code.bearer.${token()}`);
       expect(firstFrame).toMatchObject({ type: firstType });
     });
 
     it('accepts a valid Authorization bearer header', async () => {
       const { ws, firstFrame } = await openConn(url(), {
-        headers: { Authorization: `Bearer ${TOKEN}` },
+        headers: { Authorization: `Bearer ${token()}` },
       });
       sockets.push(ws);
       expect(firstFrame).toMatchObject({ type: firstType });
@@ -127,7 +103,7 @@ describe('WS upgrade auth', () => {
   });
 
   it('rejects upgrades to a non-WS path', async () => {
-    const badUrl = `ws://127.0.0.1:${(server as RunningServer).port}/api/v1/other`;
-    await expectRejected(badUrl, { protocols: [`kimi-code.bearer.${TOKEN}`] });
+    const badUrl = `${v1Url().replace('/api/v1/ws', '/api/v1/other')}`;
+    await expectRejected(badUrl, { protocols: [`kimi-code.bearer.${token()}`] });
   });
 });

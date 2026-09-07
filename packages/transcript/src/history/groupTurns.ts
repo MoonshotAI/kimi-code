@@ -9,12 +9,12 @@ import { projectTranscriptUserOrigin } from '../contract/origin';
 export type HistoryMediaSource =
   | { readonly kind: 'url'; readonly url: string }
   | { readonly kind: 'base64'; readonly media_type: string; readonly data: string }
-  | { readonly kind: 'file'; readonly file_id: string };
+  | { readonly kind: 'file' | 'session_media'; readonly file_id: string };
 
 export type HistoryContentPart =
   | { readonly type: 'text'; readonly text: string }
   | { readonly type: 'think'; readonly think: string }
-  | { readonly type: 'image' | 'video' | 'audio'; readonly source: HistoryMediaSource }
+  | { readonly type: 'image' | 'video' | 'audio'; readonly source: HistoryMediaSource; readonly name?: string }
   | {
       readonly type: 'file';
       readonly file_id: string;
@@ -108,11 +108,12 @@ export function groupMessagesIntoSnapshot(
           attachmentId: `att_${attachments.length + 1}`,
           mediaType:
             source.kind === 'base64' ? source.media_type : `${part.type}/*`,
+          name: part.name,
           source:
             source.kind === 'url'
               ? { kind: 'url', url: source.url }
-              : source.kind === 'file'
-                ? { kind: 'file', fileId: source.file_id }
+              : source.kind === 'file' || source.kind === 'session_media'
+                ? { kind: source.kind, fileId: source.file_id }
                 : undefined,
         };
         attachments.push(entity);
@@ -136,6 +137,7 @@ export function groupMessagesIntoSnapshot(
         const entity: TranscriptAttachment = {
           attachmentId: `att_${attachments.length + 1}`,
           mediaType: `${ref.kind}/*`,
+          name: ref.name,
           source: { kind: 'session_media', fileId: ref.ref.fileId },
         };
         attachments.push(entity);
@@ -401,7 +403,11 @@ function notificationFrameText(text: string): string {
   const bodyLines = lines.slice(bodyStart);
   const childStart = bodyLines.findIndex((line) => {
     const trimmed = line.trimStart();
-    return trimmed.startsWith('<output-file') || trimmed.startsWith('<output-preview');
+    return (
+      trimmed.startsWith('<output-file') ||
+      trimmed.startsWith('<output-preview') ||
+      trimmed.startsWith('<answer')
+    );
   });
   const body = (childStart === -1 ? bodyLines : bodyLines.slice(0, childStart)).join('\n').trim();
   if (title.length > 0 && body.length > 0) return `${title}\n${body}`;

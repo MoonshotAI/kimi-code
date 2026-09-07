@@ -30,7 +30,7 @@ import type {
   WorkspaceInstanceSnapshot,
 } from '@moonshot-ai/agent-core-v2';
 import { FakeRuntime } from '@moonshot-ai/agent-core-v2/runtime/fakeRuntime';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -69,13 +69,13 @@ describe('server-v2 /api/v1/debug RPC', () => {
   let home: string | undefined;
   let base: string;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-rpc-'));
     server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent', debugEndpoints: true });
     base = `http://127.0.0.1:${server.port}`;
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -729,7 +729,7 @@ describe('server-v2 /api/v1/debug RPC auth', () => {
   let base: string;
   const token = 'test-secret-token';
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-rpc-auth-'));
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
@@ -742,7 +742,7 @@ describe('server-v2 /api/v1/debug RPC auth', () => {
     base = `http://127.0.0.1:${server.port}`;
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -797,7 +797,7 @@ describe('server-v2 /api/v1/debug RPC (dev-only, whitelist-free)', () => {
   let home: string | undefined;
   let base: string;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-debug-rpc-'));
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
@@ -810,7 +810,7 @@ describe('server-v2 /api/v1/debug RPC (dev-only, whitelist-free)', () => {
     base = `http://127.0.0.1:${server.port}`;
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;

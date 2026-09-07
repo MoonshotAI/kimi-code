@@ -61,7 +61,7 @@ import type {
   ShellStartedPayload,
 } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommandService';
 
-import type { TurnStepRetryingPayload } from '@moonshot-ai/agent-core-v2/agent/stepRetry/stepRetryService';
+import type { TurnStepRetryingPayload } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { AgentTaskStatus } from '@moonshot-ai/agent-core-v2/agent/task/types';
 import type {
   ToolCallStartedPayload,
@@ -69,8 +69,8 @@ import type {
   ToolResultEventPayload,
 } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
-import type { FinishReason } from '@moonshot-ai/agent-core-v2/kosong/contract/provider';
-import type { TokenUsage } from '@moonshot-ai/agent-core-v2/kosong/contract/usage';
+import type { FinishReason } from '@moonshot-ai/agent-core-v2/human/llm/finish-reason';
+import type { TokenUsage } from '@moonshot-ai/agent-core-v2/human/llm/usage';
 import type {
   SubagentCompletedPayload,
   SubagentFailedPayload,

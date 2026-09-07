@@ -1,7 +1,8 @@
-import type { Message, ToolCall } from '#/kosong/contract/message';
+import type { Message } from '#/llm-adapter/contract/message';
+import type { ToolCall } from '#human/llm/message';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { estimateTokens, estimateTokensForMessages } from '#/kosong/contract/tokens';
+import { estimateTokens, estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
 import { buildImageCompressionCaption } from '#/agent/media/image-compress';
 import {
   buildContextCompactionShape,

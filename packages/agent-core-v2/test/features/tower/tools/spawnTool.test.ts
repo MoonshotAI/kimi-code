@@ -26,8 +26,8 @@ import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IFlagService } from '#/app/flag/flag';
-import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
-import { IModelCatalog, type Model } from '#/kosong/model/catalog';
+import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
+import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import {
@@ -132,7 +132,7 @@ describe('TowerSpawnTool', () => {
       get requestedBase() {
         return undefined;
       },
-      enter: () => {},
+      enter: () => Promise.resolve({ entered: true as const }),
       exit: () => {},
     } as unknown as IAgentTowerService);
     ix.stub(ITowerRateLimitService, {

@@ -23,7 +23,7 @@ import { IAgentTowerService, TOWER_WORKER_PROFILE } from '#/features/tower/tower
 import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
-import { IModelCatalog } from '#/kosong/model/catalog';
+import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import {
   type ExecutableToolContext,

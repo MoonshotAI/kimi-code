@@ -3,6 +3,12 @@ import { z } from 'zod';
 
 import { AgentEvent2, type AgentDomainTrait } from '#/app/event/event2';
 import { defineState } from '#/state/state';
+import {
+  ContextApplyCompaction,
+  ContextClear,
+  type ContextApplyCompactionPayload,
+} from '#/agent/contextMemory/contextEvents';
+import type { WireLineRange } from '#/wire/record';
 
 import type { CompactionBeginData, CompactionResult, CompactionSource } from './types';
 
@@ -123,3 +129,14 @@ export const fullCompactionKey = defineState(
       s.phase = 'idle';
     }
   });
+
+export const fullCompactionWireRangesKey = defineState<readonly WireLineRange[]>(
+  'fullCompaction.wireRanges',
+  () => [],
+)
+  .replayable({ schema: z.custom<readonly WireLineRange[]>() })
+  .on(ContextApplyCompaction, (s, e) => {
+    const wireLines = (e as unknown as ContextApplyCompactionPayload).wireLines;
+    return wireLines === undefined ? undefined : [...s, wireLines];
+  })
+  .on(ContextClear, (s) => (s.length === 0 ? undefined : []));

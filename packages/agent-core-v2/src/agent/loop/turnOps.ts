@@ -11,7 +11,7 @@ import {
 import { isUndoAnchorOrigin } from '#/agent/contextMemory/conversationTime';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { AgentEvent2, type SerializedEvent2 } from '#/app/event/event2';
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 import { defineState } from '#/state/state';
 
 import type { TurnInterruptReason } from './turnEvents';
@@ -91,6 +91,7 @@ const turnEndedSchema = z.object({
   reason: z.enum(['completed', 'cancelled', 'failed', 'blocked']),
   error: z.custom<KimiErrorPayload>().optional(),
   durationMs: z.number().optional(),
+  stopReason: z.string().optional(),
 });
 
 export interface TurnEndedPayload {
@@ -100,6 +101,7 @@ export interface TurnEndedPayload {
   readonly error?: KimiErrorPayload;
   readonly durationMs?: number;
   readonly interruptReason?: TurnInterruptReason;
+  readonly stopReason?: string;
 }
 
 export class TurnEnded extends AgentEvent2<TurnEndedPayload> {
@@ -117,6 +119,7 @@ export class TurnEnded extends AgentEvent2<TurnEndedPayload> {
     };
     if (this.error !== undefined) record['error'] = this.error;
     if (this.durationMs !== undefined) record['durationMs'] = this.durationMs;
+    if (this.stopReason !== undefined) record['stopReason'] = this.stopReason;
     record['time'] = this.time;
     return record as SerializedEvent2;
   }

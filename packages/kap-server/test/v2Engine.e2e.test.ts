@@ -8,7 +8,6 @@ import {
   IProtocolAdapterRegistry,
   ProtocolAdapterRegistry,
   type IProtocolAdapterRegistry as IProtocolAdapterRegistryType,
-  type ProtocolAdapterConfig,
   type StreamedMessagePart,
   type TokenUsage,
 } from '@moonshot-ai/agent-core-v2';
@@ -17,7 +16,7 @@ import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 
 interface ScriptedResponse {
   readonly parts: readonly StreamedMessagePart[];
-  readonly finishReason?: string | null;
+  readonly finishReason?: 'completed' | 'tool_calls' | null;
   readonly delays?: readonly number[];
 }
 
@@ -33,69 +32,43 @@ function sleepAbort(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-class ScriptedStream {
-  id: string | null = null;
-  usage: TokenUsage | null = null;
-  finishReason: string | null = null;
-  rawFinishReason: string | null = null;
-
-  constructor(
-    private readonly response: ScriptedResponse,
-    private readonly signal?: AbortSignal,
-  ) {}
-
-  async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
-    for (let i = 0; i < this.response.parts.length; i++) {
-      const delay = this.response.delays?.[i] ?? 0;
-      if (delay > 0) await sleepAbort(delay, this.signal);
-      yield this.response.parts[i]!;
-    }
-    const hasToolCall = this.response.parts.some((p) => p.type === 'function');
-    this.id = 'scripted';
-    this.usage = { ...ZERO_USAGE, output: this.response.parts.length };
-    this.finishReason = this.response.finishReason ?? (hasToolCall ? 'tool_calls' : 'completed');
-    this.rawFinishReason = this.finishReason === 'completed' ? 'stop' : this.finishReason;
-  }
-}
-
-class ScriptedChatProvider {
-  readonly name = 'scripted';
-  readonly modelName = 'scripted';
-  readonly thinkingEffort = null;
-
-  constructor(private readonly queue: ScriptedResponse[]) {}
-
-  async generate(_systemPrompt?: unknown, _tools?: unknown, _history?: unknown, options?: { signal?: AbortSignal }): Promise<ScriptedStream> {
-    const response = this.queue.shift();
-    if (response === undefined) throw new Error('scriptedProvider: queue exhausted');
-    return new ScriptedStream(response, options?.signal);
-  }
-
-  withThinking(): this {
-    return this;
-  }
-
-  withMaxCompletionTokens(): this {
-    return this;
-  }
-}
-
 function createScriptedSeed(): {
   readonly seed: readonly [typeof IProtocolAdapterRegistry, IProtocolAdapterRegistryType];
   readonly push: (response: ScriptedResponse) => void;
 } {
   const queue: ScriptedResponse[] = [];
-  const provider = new ScriptedChatProvider(queue);
   const real = new ProtocolAdapterRegistry();
-  const registry = {
+  const registry: IProtocolAdapterRegistryType = {
     _serviceBrand: undefined,
     supportedProtocols: () => real.supportedProtocols(),
     resolveAdapterIdentity: real.resolveAdapterIdentity.bind(real),
     resolveProviderBaseId: real.resolveProviderBaseId.bind(real),
     resolveCapability: real.resolveCapability.bind(real),
     explainCapability: real.explainCapability.bind(real),
-    createChatProvider: (_input: ProtocolAdapterConfig) => provider,
-  } as unknown as IProtocolAdapterRegistryType;
+    resolve(model) {
+      return {
+        ...real.resolve(model),
+        requester: {
+          async generate(_config, _content, control) {
+            const response = queue.shift();
+            if (response === undefined) throw new Error('scriptedProvider: queue exhausted');
+            control.onEvent?.({ type: 'llm.sent' });
+            for (let i = 0; i < response.parts.length; i++) {
+              const delay = response.delays?.[i] ?? 0;
+              if (delay > 0) await sleepAbort(delay, control.signal);
+              control.onEvent?.({ type: 'llm.delta', part: response.parts[i]! });
+            }
+            const hasToolCall = response.parts.some((part) => part.type === 'function');
+            const finishReason = response.finishReason ?? (hasToolCall ? 'tool_calls' : 'completed');
+            control.onEvent?.({ type: 'llm.message-id', messageId: 'scripted' });
+            control.onEvent?.({ type: 'llm.usage', usage: { ...ZERO_USAGE, output: response.parts.length } });
+            control.onEvent?.({ type: 'llm.finish', finish: { finishReason, rawFinishReason: finishReason === 'completed' ? 'stop' : finishReason } });
+            control.onEvent?.({ type: 'llm.done' });
+          },
+        },
+      };
+    },
+  };
   return {
     seed: [IProtocolAdapterRegistry, registry],
     push: (response) => queue.push(response),

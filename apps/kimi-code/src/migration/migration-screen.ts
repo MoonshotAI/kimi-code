@@ -304,11 +304,6 @@ export class MigrationScreenComponent extends Container implements Focusable {
           chalk.hex(colors.success)(`  ✓ ${sum.sessions.sessionsMigrated} sessions migrated`),
         );
       }
-      if (sum.sessions.sessionsRepaired > 0) {
-        lines.push(
-          chalk.hex(colors.success)(`  ✓ ${sum.sessions.sessionsRepaired} sessions repaired`),
-        );
-      }
       if (sum.plans.copied > 0) {
         lines.push(chalk.hex(colors.success)(`  ✓ ${sum.plans.copied} plan files copied`));
       }
@@ -325,7 +320,6 @@ export class MigrationScreenComponent extends Container implements Focusable {
       }
       if (
         sum.sessions.sessionsMigrated === 0 &&
-        sum.sessions.sessionsRepaired === 0 &&
         sum.plans.copied === 0 &&
         migratedKinds.length === 0
       ) {

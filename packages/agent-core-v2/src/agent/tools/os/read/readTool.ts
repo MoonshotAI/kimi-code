@@ -21,6 +21,7 @@ import { makeCarriageReturnsVisible, splitLinesKeepingTerminator, type LineEndin
 import { decodeUtfText, detectTextEncoding, type UtfTextEncoding } from '#/_base/text/encoding';
 import { renderPrompt } from '#/_base/utils/render-prompt';
 import {
+  EVENT_LOG_MAX_LINE_LENGTH,
   IReadTool,
   MAX_BYTES,
   MAX_LINE_LENGTH,
@@ -58,6 +59,11 @@ interface FinishReadResultInput {
   readonly totalLines: number;
   readonly requestedLines: number;
   readonly detectedEncoding?: UtfTextEncoding;
+  readonly eventLog: boolean;
+}
+
+function lineLengthLimit(eventLog: boolean): number {
+  return eventLog ? EVENT_LOG_MAX_LINE_LENGTH : MAX_LINE_LENGTH;
 }
 
 function truncateLine(line: string, maxLength: number): string {
@@ -93,12 +99,16 @@ function lineEndingStyleFromFlags(flags: LineEndingFlags): LineEndingStyle {
   return 'lf';
 }
 
-function renderLine(entry: ReadLineEntry, lineEndingStyle: LineEndingStyle): RenderedLine {
+function renderLine(
+  entry: ReadLineEntry,
+  lineEndingStyle: LineEndingStyle,
+  maxLineLength: number,
+): RenderedLine {
   const modelContent =
     lineEndingStyle === 'crlf' && entry.rawContent.endsWith('\r')
       ? entry.rawContent.slice(0, -1)
       : entry.rawContent;
-  const truncated = truncateLine(modelContent, MAX_LINE_LENGTH);
+  const truncated = truncateLine(modelContent, maxLineLength);
   const renderedContent =
     lineEndingStyle === 'mixed' ? makeCarriageReturnsVisible(truncated) : truncated;
   return {
@@ -114,6 +124,7 @@ function renderedLineBytes(renderedLine: string, isFirst: boolean): number {
 function renderEntries(
   entries: readonly ReadLineEntry[],
   lineEndingStyle: LineEndingStyle,
+  maxLineLength: number,
 ): {
   renderedLines: string[];
   truncatedLineNumbers: number[];
@@ -125,7 +136,7 @@ function renderEntries(
   let maxBytesReached = false;
 
   for (const entry of entries) {
-    const rendered = renderLine(entry, lineEndingStyle);
+    const rendered = renderLine(entry, lineEndingStyle, maxLineLength);
     const lineBytes = renderedLineBytes(rendered.line, renderedLines.length === 0);
     if (renderedLines.length > 0 && bytes + lineBytes > MAX_BYTES) {
       maxBytesReached = true;
@@ -245,8 +256,9 @@ export class ReadTool implements IReadTool {
           if (lease.runtime.identity.generation !== inspected.identity.generation) {
             return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
           }
-          const result = await this.execution(lease.runtime.fs!, args, path);
-          return this.resultTruncation.isSpillFilePath(path)
+          const eventLog = this.resultTruncation.isWireJournalPath(path);
+          const result = await this.execution(lease.runtime.fs!, args, path, eventLog);
+          return eventLog || this.resultTruncation.isSpillFilePath(path)
             ? { ...result, spillExempt: true as const }
             : result;
         } finally {
@@ -256,7 +268,12 @@ export class ReadTool implements IReadTool {
     };
   }
 
-  private async execution(fs: IHostFileSystem, args: ReadInput, safePath: string): Promise<ExecutableToolResult> {
+  private async execution(
+    fs: IHostFileSystem,
+    args: ReadInput,
+    safePath: string,
+    eventLog: boolean,
+  ): Promise<ExecutableToolResult> {
     try {
       let stat: Awaited<ReturnType<IHostFileSystem['stat']>>;
       try {
@@ -316,6 +333,7 @@ export class ReadTool implements IReadTool {
           lineOffset,
           effectiveLimit,
           requestedLines,
+          eventLog,
           detectedEncoding,
         );
       }
@@ -325,6 +343,7 @@ export class ReadTool implements IReadTool {
         lineOffset,
         effectiveLimit,
         requestedLines,
+        eventLog,
         detectedEncoding,
       );
     } catch (error) {
@@ -344,6 +363,7 @@ export class ReadTool implements IReadTool {
     lineOffset: number,
     effectiveLimit: number,
     requestedLines: number,
+    eventLog: boolean,
     detectedEncoding?: UtfTextEncoding,
   ): Promise<ExecutableToolResult> {
     const selectedEntries: ReadLineEntry[] = [];
@@ -382,7 +402,7 @@ export class ReadTool implements IReadTool {
     }
 
     const lineEndingStyle = lineEndingStyleFromFlags(flags);
-    const rendered = renderEntries(selectedEntries, lineEndingStyle);
+    const rendered = renderEntries(selectedEntries, lineEndingStyle, lineLengthLimit(eventLog));
 
     return this.finishReadResult({
       renderedLines: rendered.renderedLines,
@@ -394,6 +414,7 @@ export class ReadTool implements IReadTool {
       totalLines: currentLineNo,
       requestedLines,
       detectedEncoding,
+      eventLog,
     });
   }
 
@@ -403,6 +424,7 @@ export class ReadTool implements IReadTool {
     lineOffset: number,
     effectiveLimit: number,
     requestedLines: number,
+    eventLog: boolean,
     detectedEncoding?: UtfTextEncoding,
   ): Promise<ExecutableToolResult> {
     const tailCount = Math.abs(lineOffset);
@@ -431,6 +453,7 @@ export class ReadTool implements IReadTool {
       effectiveLimit,
       totalLines: currentLineNo,
       requestedLines,
+      eventLog,
       detectedEncoding,
     });
   }
@@ -441,11 +464,13 @@ export class ReadTool implements IReadTool {
     effectiveLimit: number;
     totalLines: number;
     requestedLines: number;
+    eventLog: boolean;
     detectedEncoding?: UtfTextEncoding;
   }): ExecutableToolResult {
     const lineEndingStyle = lineEndingStyleFromFlags(input.lineEndingFlags);
+    const maxLineLength = lineLengthLimit(input.eventLog);
     let renderedCandidates = input.entries.slice(0, input.effectiveLimit).map((entry) => {
-      return { entry, rendered: renderLine(entry, lineEndingStyle) };
+      return { entry, rendered: renderLine(entry, lineEndingStyle, maxLineLength) };
     });
 
     let totalBytes = 0;
@@ -462,7 +487,7 @@ export class ReadTool implements IReadTool {
         const candidate = renderedCandidates[i];
         if (candidate === undefined) continue;
         const lineBytes = renderedLineBytes(candidate.rendered.line, kept.length === 0);
-        if (bytes + lineBytes > MAX_BYTES) break;
+        if (kept.length > 0 && bytes + lineBytes > MAX_BYTES) break;
         kept.unshift(candidate);
         bytes += lineBytes;
       }
@@ -488,6 +513,7 @@ export class ReadTool implements IReadTool {
       totalLines: input.totalLines,
       requestedLines: input.requestedLines,
       detectedEncoding: input.detectedEncoding,
+      eventLog: input.eventLog,
     });
   }
 
@@ -518,7 +544,12 @@ export class ReadTool implements IReadTool {
     }
     if (input.truncatedLineNumbers.length > 0) {
       parts.push(
-        `Lines [${input.truncatedLineNumbers.join(', ')}] were truncated to ${String(MAX_LINE_LENGTH)} characters; use Bash (e.g. cut or sed) to read the elided content of those lines.`,
+        `Lines [${input.truncatedLineNumbers.join(', ')}] were truncated to ${String(lineLengthLimit(input.eventLog))} characters; use Bash (e.g. cut or sed) to read the elided content of those lines.`,
+      );
+    }
+    if (input.eventLog) {
+      parts.push(
+        `Kimi Code agent event log: records are returned whole up to ${String(EVENT_LOG_MAX_LINE_LENGTH)} characters per line; read one record at a time (n_lines=1). For a longer record, extract fields with Bash: sed -n 'Np' <file> | jq. A primer on this format appears in your compaction note once a compaction has run.`,
       );
     }
     if (input.lineEndingStyle === 'mixed') {

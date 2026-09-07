@@ -1,4 +1,4 @@
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 
@@ -139,10 +139,8 @@ export async function mcpResultToExecutableOutput(
   }
 
   const compressed = await compressImageContentParts(wrapped, {
-    telemetry:
-      options.telemetry === undefined
-        ? undefined
-        : { client: options.telemetry, source: 'mcp_tool_result' },
+    telemetry: options.telemetry,
+    telemetrySource: 'mcp_tool_result',
     annotate: {
       persistOriginal: (bytes, mimeType) =>
         persistOriginalImage(

@@ -1,5 +1,5 @@
 import { ContentBlockSchema } from '@modelcontextprotocol/sdk/types.js';
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 import { Jimp } from 'jimp';
 import { mkdtemp, readFile, rm, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -36,15 +36,14 @@ interface TelemetryRecord {
 function recordingTelemetry(records: TelemetryRecord[]): ITelemetryService {
   const telemetry: ITelemetryService = {
     _serviceBrand: undefined,
-    track(event, properties) {
-      records.push({ event, properties });
+    track2(event, properties) {
+      records.push({ event, properties: properties as TelemetryProperties });
     },
-    track2: (event, properties) => telemetry.track(event, properties as TelemetryProperties),
     withContext: () => telemetry,
     setContext: () => {},
+    getContext: () => ({}),
     addAppender: () => ({ dispose: () => {} }),
     removeAppender: () => {},
-    setAppender: () => {},
     setEnabled: () => {},
     flush: async () => {},
     shutdown: async () => {},

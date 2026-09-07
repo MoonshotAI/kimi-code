@@ -4119,5 +4119,3 @@ describe('WS v2 全消息面', () => {
     expect(out[1]).toMatchObject({ payload: { message: 'compact' } });
   });
 });
-
-

@@ -16,8 +16,8 @@ import {
   type ISkillSource,
   type SkillContribution,
 } from '#/features/skill/catalog/skillSource';
-import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { watch } from '#human/utils/watch';
 
 export const WORKSPACE_ROOT_SKILL_SOURCE_ID = 'workspace';
 
@@ -48,7 +48,6 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
     @IWorkspaceContext private readonly workspace: IWorkspaceContext,
     @IConfigService private readonly config: IConfigService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
-    @IHostFsWatchService private readonly fsWatch: IHostFsWatchService,
   ) {
     super();
     this._register(
@@ -85,7 +84,7 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
     const signature = [...scannedDirectories].toSorted().join('\0');
     if (signature === this.watchSignature) return false;
     const resources = this.watchResources.add(new DisposableStore());
-    const handle = this.fsWatch.watch(projectRoot, {
+    const handle = watch(projectRoot, {
       ignored: subtreeWatchFilter(projectRoot, candidates, {
         scannedDirectories,
         keepEntryFile: 'SKILL.md',

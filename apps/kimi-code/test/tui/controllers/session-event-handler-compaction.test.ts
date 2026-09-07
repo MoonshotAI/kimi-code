@@ -59,6 +59,7 @@ function makeHost() {
     sendQueuedMessage: vi.fn(),
     shiftQueuedMessage: vi.fn(),
     btwPanelController: { routeEvent: vi.fn(() => false) },
+    surveyController: { notifyCompactionFinished: vi.fn() },
     tasksBrowserController: {},
   };
   return { host: host as any };

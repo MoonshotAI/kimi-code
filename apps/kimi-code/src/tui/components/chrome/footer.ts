@@ -2,7 +2,7 @@
  * Footer/status bar — multi-line status display at the bottom of the TUI.
  *
  * Layout:
- *   Line 1: [ask-when-needed] [plan] <model> <cwd>  <git-badge>  <shortcut hints>
+ *   Line 1: [Ask When Needed] [plan] <model> <cwd>  <git-badge>  <shortcut hints>
  *   Line 2: context: N% (tokens/max)
  */
 

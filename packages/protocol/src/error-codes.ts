@@ -122,9 +122,6 @@ export const ErrorCode = {
   /** fs.grep 执行 >30s */
   FS_GREP_TIMEOUT: 41305,
 
-  /** WS 单连接 watch_paths > 100 */
-  FS_WATCH_LIMIT_EXCEEDED: 42902,
-
   /** 兜底 */
   INTERNAL_ERROR: 50001,
   /** 写入 session 持久化失败 */
@@ -210,8 +207,6 @@ export const ErrorCodeReason: Readonly<Record<ErrorCode, string>> = {
   [ErrorCode.FS_TOO_MANY_RESULTS]: 'fs.too_many_results',
   [ErrorCode.FS_PATH_ESCAPES_SESSION]: 'fs.path_escapes_session',
   [ErrorCode.FS_GREP_TIMEOUT]: 'fs.grep_timeout',
-
-  [ErrorCode.FS_WATCH_LIMIT_EXCEEDED]: 'fs.watch_limit_exceeded',
 
   [ErrorCode.INTERNAL_ERROR]: 'internal.error',
   [ErrorCode.PERSISTENCE_FAILURE]: 'persistence.failure',

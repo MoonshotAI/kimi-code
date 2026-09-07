@@ -42,7 +42,10 @@ function stubWireJournal(journal: WireRecord[]): IWireService {
     readJournal: async function* () {
       for (const record of journal) yield record;
     },
-    flush: async () => {},
+    flush: async () => {}, drainPersisted: async () => {},
+    lineCount: () => journal.length,
+    lastContextClearLine: () => undefined,
+    journalPath: () => undefined,
   };
 }
 
@@ -368,6 +371,8 @@ describe('EventDispatcherService', () => {
         IWireService,
         stubWireJournal([
           { type: 'state.test.unknown', value: 1, time: 1 },
+          { type: 'staleGuard.recorded', path: '/tmp/a.txt', mtimeMs: 111, time: 1 },
+          { type: 'staleGuard.cleared', time: 1 },
           { type: 'state.test.item.add', item: 42, time: 2 },
           { type: 'state.test.item.add', item: 'ok', time: 3 },
         ]),

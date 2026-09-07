@@ -9,7 +9,6 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 import { IHostTerminalService } from '#/os/interface/terminal';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -95,10 +94,9 @@ class TestRuntimeResolver implements IRuntimeResolver {
     @IHostEnvironment environment: IHostEnvironment,
     @IHostFileSystem fs: IHostFileSystem,
     @IHostProcessService processes: IHostProcessService,
-    @IHostFsWatchService watch: IHostFsWatchService,
     @IHostTerminalService terminal: IHostTerminalService,
   ) {
-    this.runtime = new LocalRuntime('test-workspace', environment, fs, processes, watch, terminal);
+    this.runtime = new LocalRuntime('test-workspace', environment, fs, processes, terminal);
   }
 
   inspect(_binding: RuntimeBinding): Runtime {
@@ -112,10 +110,7 @@ class TestRuntimeResolver implements IRuntimeResolver {
 
 const PARENT_SYSTEM_PROMPT = 'You are the parity probe parent.';
 const ACTIVE_TOOL_NAMES = ['Agent', 'Bash', 'Read'];
-const CHILD_FINAL_TEXT =
-  'The inherited task is done. This closing summary is intentionally long so that any ' +
-  'profile summary policy with a minimum character threshold considers it adequate and no ' +
-  'extra continuation request is scripted for the child agent turn.';
+const CHILD_FINAL_TEXT = 'The inherited task is done.';
 
 describe('fork subagent first-request parity', () => {
   let ctx: TestAgentContext;

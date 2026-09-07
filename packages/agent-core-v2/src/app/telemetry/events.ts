@@ -342,6 +342,11 @@ export interface ToolCallTurnRepeatEvent {
   trace_id?: string;
 }
 
+export interface ToolCallRepeatHandoffEvent {
+  turn_id?: number;
+  outcome: 'text' | 'vetoed';
+}
+
 export interface AgentsMdReminderShownEvent {
   turn_id: number;
   tool_name: string;
@@ -954,6 +959,14 @@ export const telemetryEventDefinitions = {
       args_hash: 'Hash of the tool call arguments',
       trace_id:
         'Trace id of the LLM request that produced the repeated tool call; absent for non-Kimi protocols',
+    },
+  }),
+  tool_call_repeat_handoff: defineAgentTelemetryEvent<ToolCallRepeatHandoffEvent>({
+    owner: 'kimi-code',
+    comment: 'The text-only handoff step that follows a repeat-breaker force stop finished.',
+    properties: {
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session; omitted when no turn is active',
+      outcome: 'Whether the model answered in text or its tool calls were vetoed',
     },
   }),
   agents_md_reminder_shown: defineAgentTelemetryEvent<AgentsMdReminderShownEvent>({

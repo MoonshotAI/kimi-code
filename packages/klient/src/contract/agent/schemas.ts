@@ -3,7 +3,7 @@
  * the per-domain contracts in `agent/services.ts` and pinned against the
  * engine types by `test/contract-parity.ts`. `PromptPayload.input` mirrors the
  * `PromptPart` subset of `ContentPart` (text / image_url / video_url) from
- * `agent-core-v2/kosong/contract/message.ts`. Task wire shapes mirror the
+ * `agent-core-v2/llm-adapter/contract/message.ts`. Task wire shapes mirror the
  * `TaskInfo` union in `protocol/src/events.ts`.
  */
 

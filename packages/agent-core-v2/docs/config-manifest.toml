@@ -8,10 +8,11 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (26 sections · 2 overlay(s))
+# Index (27 sections · 2 overlay(s))
 #   background               src/agent/task/configSection.ts
 #   builtinProductSkills     src/features/skill/catalog/configSection.ts
 #   cron                     src/features/cron/configSection.ts
+#   database                 src/persistence/configSection.ts
 #   defaultPermissionMode    src/agent/permissionMode/configSection.ts
 #   defaultPlanMode          src/features/plan/configSection.ts
 #   experimental             src/app/flag/flag.ts
@@ -46,6 +47,10 @@
 #   env:
 #     keep_alive_on_exit <- KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT (custom parse)
 #     max_running_tasks <- KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS (custom parse)
+#     bash_task_timeout_s <- KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S (custom parse)
+#     print_wait_ceiling_s <- KIMI_CODE_BACKGROUND_PRINT_WAIT_CEILING_S (custom parse)
+#     print_background_mode <- KIMI_CODE_BACKGROUND_PRINT_BACKGROUND_MODE (custom parse)
+#     print_max_turns <- KIMI_CODE_BACKGROUND_PRINT_MAX_TURNS (custom parse)
 # ##########################################################################
 
 [background]
@@ -91,6 +96,20 @@ no_jitter = false
 no_stale = false
 disabled = false
 manual_tick = false
+
+# ##########################################################################
+# database
+#   owner: src/persistence/configSection.ts
+#   scope: core
+#   hooks: stripEnv
+#   env:
+#     base <- KIMI_CODE_PERSISTENCE_MINIDB_READMODEL (custom parse)
+#     search <- KIMI_CODE_SEARCH_WORKER (custom parse)
+# ##########################################################################
+
+[database]
+# base: boolean
+# search: boolean
 
 # ##########################################################################
 # defaultPermissionMode (config.toml: default_permission_mode)
@@ -405,6 +424,10 @@ timeout_ms = 7200000
 #   env:
 #     keep_alive_on_exit <- KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT (custom parse)
 #     max_running_tasks <- KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS (custom parse)
+#     bash_task_timeout_s <- KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S (custom parse)
+#     print_wait_ceiling_s <- KIMI_CODE_BACKGROUND_PRINT_WAIT_CEILING_S (custom parse)
+#     print_background_mode <- KIMI_CODE_BACKGROUND_PRINT_BACKGROUND_MODE (custom parse)
+#     print_max_turns <- KIMI_CODE_BACKGROUND_PRINT_MAX_TURNS (custom parse)
 # ##########################################################################
 
 [task]

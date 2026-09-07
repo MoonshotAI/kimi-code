@@ -9,9 +9,13 @@ import { parseFrontmatter, renderFrontmatter } from './frontmatter';
 import {
   branchExists,
   branchTip,
+  checkoutNewLocalBranch,
+  commitAllowEmpty,
+  commitPaths,
   currentBranch,
   diffNameOnly,
   hasAnyCommit,
+  initRepository,
   isAncestor,
   isInsideRepo,
   isWorktreeDirty,
@@ -155,12 +159,28 @@ export class TowerStore {
     }
   }
 
-  async init(sessionId?: string, base?: string): Promise<TowerInitResult> {
-    if (!(await isInsideRepo(this.repoRoot))) {
-      throw new TowerProtocolError(
-        'tower needs a git repository (the session working directory is not inside one)',
-      );
+  async ensureRepository(base?: string): Promise<void> {
+    if (await isInsideRepo(this.repoRoot)) return;
+    await initRepository(this.repoRoot);
+    const unborn = (await tryGit(this.repoRoot, ['symbolic-ref', '--short', 'HEAD'])) ?? 'main';
+    const resolvedBase = base ?? unborn;
+    if (resolvedBase !== unborn) {
+      await checkoutNewLocalBranch(this.repoRoot, resolvedBase);
     }
+    const dirty = await listBaseDirtyEntries(this.repoRoot);
+    if (dirty.length === 0) {
+      await commitAllowEmpty(this.repoRoot, 'tower: init');
+      return;
+    }
+    await commitPaths(
+      this.repoRoot,
+      dirty.map((entry) => entry.path),
+      `tower: snapshot of uncommitted base checkout changes (base ${resolvedBase})`,
+    );
+  }
+
+  async init(sessionId?: string, base?: string): Promise<TowerInitResult> {
+    await this.ensureRepository(base);
     if (!(await hasAnyCommit(this.repoRoot))) {
       throw new TowerProtocolError(
         'the repository has no commits yet — create an initial commit first',
@@ -253,6 +273,15 @@ export class TowerStore {
       retired: stale.length > 0 ? stale.map((agent) => agent.name).join(',') : undefined,
     });
     return stale.map((agent) => agent.name);
+  }
+
+  async release(sessionId: string): Promise<void> {
+    if (!(await this.isInitialized())) return;
+    const state = await this.load();
+    if (state.sessionId !== sessionId) return;
+    state.sessionId = undefined;
+    await this.save(state);
+    await this.appendLog(TOWER_NAME, 'release', { session: sessionId });
   }
 
   private async ensureGitExclude(): Promise<void> {

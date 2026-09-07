@@ -140,13 +140,8 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
       isError: false,
       output:
         `task_id: ${taskId}\n` +
-        `description: ${description}\n` +
         `status: ${status}\n` +
-        `automatic_notification: true\n` +
-        'next_step: Continue your current work; the answer will arrive automatically when the user responds.\n' +
-        'next_step: Use TaskOutput with this task_id for a non-blocking status/answer snapshot.\n' +
-        'next_step: Use TaskStop only if the question should be cancelled.\n' +
-        'human_shell_hint: The pending question is also visible in the client UI.',
+        'next_step: Continue your work; the answer arrives automatically in a later message. Use TaskStop only to cancel the question.',
     };
   }
 
@@ -174,7 +169,7 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
             multiSelect: q.multi_select,
           })),
         },
-        { signal, agentId: this.scopeContext.agentId },
+        { signal, agentId: this.scopeContext.agentId, detached: args.background === true },
       );
 
       const normalized = normalizeQuestionResult(result);

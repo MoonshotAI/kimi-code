@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { migrateOneSession, type MigrateOneResult } from '../../src/sessions/migrate-one.js';
-import { countImportedSessionsNeedingRepair } from '../../src/sessions/repair-imported.js';
 import { computeWorkdirBucket } from '../../src/sessions/workdir-bucket.js';
 import { targetSessionsDir } from '../../src/paths.js';
 
@@ -318,241 +317,38 @@ describe('migrateOneSession (tiny-hello-world fixture)', () => {
   });
 });
 
-describe('migrateOneSession repair of message-only imports', () => {
-  const workdirPath = '/Users/me/proj';
-
-  async function seedImportedTarget(
-    wireLines: string[],
-    stateExtra: Record<string, unknown> = {},
-  ): Promise<string> {
+describe('migrateOneSession with a pre-existing old-format import', () => {
+  it('leaves an old message-only import untouched as already-migrated', async () => {
+    const workdirPath = '/Users/me/proj';
     const targetDir = join(
       targetSessionsDir(targetHome),
       computeWorkdirBucket(workdirPath),
-      'ses_repair-uuid',
+      'ses_old-import-uuid',
     );
     await mkdir(join(targetDir, 'agents', 'main'), { recursive: true });
+    const wireLines = [
+      '{"type":"metadata","protocol_version":"1.0","created_at":1700000000000}',
+      '{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"old question"}],"toolCalls":[]}}',
+    ];
     await writeFile(join(targetDir, 'agents', 'main', 'wire.jsonl'), wireLines.join('\n') + '\n');
     await writeFile(
       join(targetDir, 'state.json'),
       JSON.stringify({
-        id: 'ses_repair-uuid',
+        id: 'ses_old-import-uuid',
         title: 'old import',
-        custom: { imported_from_kimi_cli: true, kimi_cli_session_id: 'repair-uuid' },
-        ...stateExtra,
+        custom: { imported_from_kimi_cli: true, kimi_cli_session_id: 'old-import-uuid' },
       }),
     );
-    return targetDir;
-  }
 
-  const importedWire = [
-    '{"type":"metadata","protocol_version":"1.0","created_at":1700000000000}',
-    '{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"old question"}],"toolCalls":[]}}',
-    '{"type":"context.append_message","message":{"role":"assistant","content":[{"type":"text","text":"old answer"}],"toolCalls":[]}}',
-  ];
-
-  function runMigrate() {
-    return migrateOneSession({
-      source: { uuid: 'repair-uuid', sessionDir: join(FIXTURES, 'tiny-hello-world'), contextPath: join(FIXTURES, 'tiny-hello-world', 'context.jsonl') },
+    const result = await migrateOneSession({
+      source: { uuid: 'old-import-uuid', sessionDir: join(FIXTURES, 'tiny-hello-world'), contextPath: join(FIXTURES, 'tiny-hello-world', 'context.jsonl') },
       workdirPath,
       targetHome,
     });
-  }
-
-  it('inserts turn structure into a message-only imported wire, once', async () => {
-    const targetDir = await seedImportedTarget(importedWire);
-
-    const first = await runMigrate();
-    expect(first.outcome).toBe('repaired');
-
-    const records = (await readFile(join(targetDir, 'agents', 'main', 'wire.jsonl'), 'utf-8'))
-      .split('\n')
-      .filter((l) => l.length > 0)
-      .map((l) => JSON.parse(l) as { type: string });
-    expect(records.map((r) => r.type)).toEqual([
-      'metadata',
-      'turn.prompt',
-      'context.append_message',
-      'context.append_message',
-      'turn.ended',
-    ]);
-    expect(records[1]).toMatchObject({
-      agentId: 'main',
-      origin: { kind: 'user' },
-      input: [{ type: 'text', text: 'old question' }],
-      time: 1700000000000,
-    });
-    expect(records[4]).toMatchObject({ agentId: 'main', turnId: 0, reason: 'completed' });
-
-    const state = JSON.parse(await readFile(join(targetDir, 'state.json'), 'utf-8'));
-    expect(state.lastTurnReason).toBe('completed');
-    expect(state.custom.import_format_version).toBe(2);
-
-    const second = await runMigrate();
-    expect(second.outcome).toBe('already-migrated');
-  });
-
-  it('imports the legacy todo list as a tools.update_store record', async () => {
-    const sourceDir = join(targetHome, 'src-with-todos');
-    await mkdir(sourceDir, { recursive: true });
-    await writeFile(
-      join(sourceDir, 'state.json'),
-      JSON.stringify({
-        todos: [
-          { title: '创建 f1.txt', status: 'done' },
-          { title: '创建 f2.txt', status: 'in_progress' },
-          { title: 'bogus', status: 'weird' },
-        ],
-      }),
-    );
-    const liveSuffix = [
-      '{"type":"prompt.completed","agentId":"main","promptId":"msg_live1","time":1800000000002}',
-    ];
-    const targetDir = await seedImportedTarget([...importedWire, ...liveSuffix], {
-      custom: {
-        imported_from_kimi_cli: true,
-        kimi_cli_session_id: 'repair-uuid',
-        kimi_cli_source_path: sourceDir,
-      },
-    });
-
-    const first = await runMigrate();
-    expect(first.outcome).toBe('repaired');
-
-    const lines = (await readFile(join(targetDir, 'agents', 'main', 'wire.jsonl'), 'utf-8'))
-      .split('\n')
-      .filter((l) => l.length > 0);
-    expect(lines.map((l) => (JSON.parse(l) as { type: string }).type)).toEqual([
-      'metadata',
-      'turn.prompt',
-      'context.append_message',
-      'context.append_message',
-      'turn.ended',
-      'tools.update_store',
-      'prompt.completed',
-    ]);
-    const todoRecord = JSON.parse(lines[5]!);
-    // Invalid entries are filtered out; order is preserved.
-    expect(todoRecord.value).toEqual([
-      { title: '创建 f1.txt', status: 'done' },
-      { title: '创建 f2.txt', status: 'in_progress' },
-    ]);
-    expect(todoRecord.time).toBe(1700000000000);
-    expect(lines[6]).toBe(liveSuffix[0]);
-
-    const second = await runMigrate();
-    expect(second.outcome).toBe('already-migrated');
-  });
-
-  it('preserves a live suffix verbatim while repairing the imported prefix', async () => {
-    const liveSuffix = [
-      '{"type":"turn.prompt","agentId":"main","input":[{"type":"text","text":"new question"}],"origin":{"kind":"user"},"time":1800000000000}',
-      '{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"new question"}],"toolCalls":[],"origin":{"kind":"user"},"id":"msg_live1"}}',
-      '{"type":"turn.ended","agentId":"main","turnId":0,"reason":"completed","time":1800000000001}',
-    ];
-    const targetDir = await seedImportedTarget(
-      [...importedWire, ...liveSuffix],
-      { lastTurnReason: 'completed' },
-    );
-
-    const first = await runMigrate();
-    expect(first.outcome).toBe('repaired');
-
-    const lines = (await readFile(join(targetDir, 'agents', 'main', 'wire.jsonl'), 'utf-8'))
-      .split('\n')
-      .filter((l) => l.length > 0);
-    expect(lines.map((l) => (JSON.parse(l) as { type: string }).type)).toEqual([
-      'metadata',
-      'turn.prompt',
-      'context.append_message',
-      'context.append_message',
-      'turn.ended',
-      'turn.prompt',
-      'context.append_message',
-      'turn.ended',
-    ]);
-    expect(lines.slice(5)).toEqual(liveSuffix);
-
-    const state = JSON.parse(await readFile(join(targetDir, 'state.json'), 'utf-8'));
-    expect(state.lastTurnReason).toBe('completed');
-  });
-
-  it('reports failed when a session needing repair has an unrepairable wire', async () => {
-    await seedImportedTarget(['{"type":"metadata","protocol_version":"1.0","created_at":1}', '{broken']);
-    const result = await runMigrate();
-    expect(result.outcome).toBe('failed');
-    if (result.outcome === 'failed') {
-      expect(result.reason).toMatch(/repair/i);
-    }
-  });
-
-  it('stays already-migrated for an import at the current format version', async () => {
-    const targetDir = join(
-      targetSessionsDir(targetHome),
-      computeWorkdirBucket(workdirPath),
-      'ses_repair-uuid',
-    );
-    await mkdir(join(targetDir, 'agents', 'main'), { recursive: true });
-    await writeFile(
-      join(targetDir, 'state.json'),
-      JSON.stringify({
-        id: 'ses_repair-uuid',
-        title: 'current import',
-        custom: {
-          imported_from_kimi_cli: true,
-          kimi_cli_session_id: 'repair-uuid',
-          import_format_version: 2,
-        },
-      }),
-    );
-    const result = await runMigrate();
     expect(result.outcome).toBe('already-migrated');
-  });
-});
 
-describe('countImportedSessionsNeedingRepair', () => {
-  it('counts imported sessions whose import format predates the current migrator', async () => {
-    const workdirPath = '/Users/me/proj';
-    const bucket = join(targetSessionsDir(targetHome), computeWorkdirBucket(workdirPath));
-
-    const needsRepair = join(bucket, 'ses_old-import');
-    await mkdir(join(needsRepair, 'agents', 'main'), { recursive: true });
-    await writeFile(
-      join(needsRepair, 'agents', 'main', 'wire.jsonl'),
-      '{"type":"metadata","protocol_version":"1.0","created_at":1}\n' +
-        '{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"x"}],"toolCalls":[]}}\n',
-    );
-    await writeFile(
-      join(needsRepair, 'state.json'),
-      JSON.stringify({ custom: { imported_from_kimi_cli: true } }),
-    );
-
-    const current = join(bucket, 'ses_current-import');
-    await mkdir(join(current, 'agents', 'main'), { recursive: true });
-    await writeFile(
-      join(current, 'agents', 'main', 'wire.jsonl'),
-      '{"type":"metadata","protocol_version":"1.0","created_at":1}\n' +
-        '{"type":"turn.prompt","agentId":"main","input":[],"origin":{"kind":"user"},"time":1}\n' +
-        '{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"x"}],"toolCalls":[]}}\n',
-    );
-    await writeFile(
-      join(current, 'state.json'),
-      JSON.stringify({ custom: { imported_from_kimi_cli: true, import_format_version: 2 } }),
-    );
-
-    const native = join(bucket, 'ses_native');
-    await mkdir(join(native, 'agents', 'main'), { recursive: true });
-    await writeFile(
-      join(native, 'agents', 'main', 'wire.jsonl'),
-      '{"type":"metadata","protocol_version":"1.5","created_at":1}\n' +
-        '{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"x"}],"toolCalls":[]}}\n',
-    );
-    await writeFile(join(native, 'state.json'), JSON.stringify({ title: 'real session' }));
-
-    expect(await countImportedSessionsNeedingRepair(targetHome)).toBe(1);
-  });
-
-  it('returns 0 for a missing sessions root', async () => {
-    expect(await countImportedSessionsNeedingRepair(join(targetHome, 'nope'))).toBe(0);
+    const wire = await readFile(join(targetDir, 'agents', 'main', 'wire.jsonl'), 'utf-8');
+    expect(wire).toBe(wireLines.join('\n') + '\n');
   });
 });
 
@@ -595,7 +391,7 @@ describe('migrateOneSession todo list migration', () => {
       ],
     });
     const state = JSON.parse(await readFile(join(targetDir, 'state.json'), 'utf-8'));
-    expect(state.custom.import_format_version).toBe(2);
+    expect(state.custom.imported_from_kimi_cli).toBe(true);
   });
 });
 
@@ -722,71 +518,4 @@ describe('migrateOneSession subagent migration', () => {
     expect(second.outcome).toBe('already-migrated');
   });
 
-  it('repairs a message-only import by adding subagent wires and task records', async () => {
-    const srcDir = await seedSourceWithSubagent();
-    const targetDir = join(
-      targetSessionsDir(targetHome),
-      computeWorkdirBucket(workdirPath),
-      'ses_repair-sub-uuid',
-    );
-    await mkdir(join(targetDir, 'agents', 'main'), { recursive: true });
-    await writeFile(
-      join(targetDir, 'agents', 'main', 'wire.jsonl'),
-      [
-        '{"type":"metadata","protocol_version":"1.0","created_at":1700000000000}',
-        '{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"run a subagent"}],"toolCalls":[]}}',
-        '{"type":"context.append_message","message":{"role":"assistant","content":[],"toolCalls":[{"type":"function","id":"tool_X","function":{"name":"Agent","arguments":"{}"}}]}}',
-        '{"type":"context.append_message","message":{"role":"tool","content":[{"type":"text","text":"56088"}],"toolCalls":[],"toolCallId":"tool_X"}}',
-      ].join('\n') + '\n',
-    );
-    await writeFile(
-      join(targetDir, 'state.json'),
-      JSON.stringify({
-        id: 'ses_repair-sub-uuid',
-        title: 'old import',
-        custom: {
-          imported_from_kimi_cli: true,
-          kimi_cli_session_id: 'repair-sub-uuid',
-          kimi_cli_source_path: srcDir,
-        },
-      }),
-    );
-
-    const result = await migrateOneSession({
-      source: { uuid: 'repair-sub-uuid', sessionDir: srcDir, contextPath: join(srcDir, 'context.jsonl') },
-      workdirPath,
-      targetHome,
-    });
-    expect(result.outcome).toBe('repaired');
-
-    const subWire = await readFile(join(targetDir, 'agents', 'sub1', 'wire.jsonl'), 'utf-8');
-    expect(subWire).toContain('"agentId":"sub1"');
-
-    const mainWire = (await readFile(join(targetDir, 'agents', 'main', 'wire.jsonl'), 'utf-8'))
-      .split('\n')
-      .filter((l) => l.length > 0)
-      .map((l) => JSON.parse(l) as { type: string });
-    expect(mainWire.map((r) => r.type)).toEqual([
-      'metadata',
-      'turn.prompt',
-      'context.append_message',
-      'task.started',
-      'context.append_message',
-      'context.append_message',
-      'task.terminated',
-      'turn.ended',
-    ]);
-    expect(mainWire[3]).toMatchObject({ info: { taskId: 'sub1', parentToolCallId: 'tool_X' } });
-
-    const state = JSON.parse(await readFile(join(targetDir, 'state.json'), 'utf-8'));
-    expect(state.agents.sub1).toBeDefined();
-    expect(state.custom.import_format_version).toBe(2);
-
-    const second = await migrateOneSession({
-      source: { uuid: 'repair-sub-uuid', sessionDir: srcDir, contextPath: join(srcDir, 'context.jsonl') },
-      workdirPath,
-      targetHome,
-    });
-    expect(second.outcome).toBe('already-migrated');
-  });
 });

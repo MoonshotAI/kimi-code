@@ -29,7 +29,7 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { TokenCountingMeasured } from '#/agent/tokenCounting/tokenCountingOps';
 import { TurnStepInterrupted } from '#/agent/loop/turnEvents';
-import { TurnStepRetrying } from '#/agent/stepRetry/stepRetryService';
+import { TurnStepRetrying } from '#/agent/loop/turnEvents';
 import { ToolsUpdateStore } from '#/features/todo/todoOps';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { Event2Class } from '#/app/event/event2';
@@ -83,8 +83,6 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'task.started',
   'task.terminated',
   'task.waitDelivered',
-  'staleGuard.recorded',
-  'staleGuard.cleared',
   'interaction.request',
   'interaction.resolved',
   'plan.revision',
@@ -275,6 +273,7 @@ describe('conversation-time checkpoint registration', () => {
   const CHECKPOINT_EXEMPT_STATES: ReadonlySet<string> = new Set([
     'goalForkNotice',
     'turn',
+    'fullCompaction.wireRanges',
   ]);
   const CONTEXT_OWNER_STATE = 'contextMemory';
   const CONTEXT_EVENTS: readonly Event2Class[] = [

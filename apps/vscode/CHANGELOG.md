@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.7.5
+
+### Patch Changes
+
+- [#3453](https://github.com/MoonshotAI/kimi-code/pull/3453) [`411572e`](https://github.com/MoonshotAI/kimi-code/commit/411572e166edee8581ba9c5a7f1bbf6c8b405606) Thanks [@Grapedge](https://github.com/Grapedge)! - Highlight matched characters in @ file suggestions and allow folders to be inserted as mentions.
+
+- [#3453](https://github.com/MoonshotAI/kimi-code/pull/3453) [`411572e`](https://github.com/MoonshotAI/kimi-code/commit/411572e166edee8581ba9c5a7f1bbf6c8b405606) Thanks [@Grapedge](https://github.com/Grapedge)! - Show the image/video picker entry in the @ menu only before a search query is typed, and remove the Browse folders mode.
+
+- [#3453](https://github.com/MoonshotAI/kimi-code/pull/3453) [`411572e`](https://github.com/MoonshotAI/kimi-code/commit/411572e166edee8581ba9c5a7f1bbf6c8b405606) Thanks [@Grapedge](https://github.com/Grapedge)! - Fix the @ and / suggestion lists jittering when the mouse rests at the scroll edge.
+
+- Updated dependencies [[`411572e`](https://github.com/MoonshotAI/kimi-code/commit/411572e166edee8581ba9c5a7f1bbf6c8b405606)]:
+  - @moonshot-ai/kimi-code-sdk@0.20.0
+
 ## 0.7.4
 
 ### Patch Changes
