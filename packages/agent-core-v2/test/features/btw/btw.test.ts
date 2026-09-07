@@ -112,10 +112,11 @@ describe('SessionBtwService', () => {
     expect(formatDenyMessage).toHaveBeenCalledWith(TOOL_CALL_DISABLED_MESSAGE);
   });
 
-  it('allows read-only tool calls (Read, Grep, Glob) on the child', async () => {
+  it('allows read-only tool calls (Read, Grep, Glob, ReadMediaFile) on the child', async () => {
     const svc = ix.get(ISessionBtwService);
     await svc.start();
 
+    expect([...BTW_READONLY_TOOLS].toSorted()).toEqual(['Glob', 'Grep', 'Read', 'ReadMediaFile']);
     for (const name of BTW_READONLY_TOOLS) {
       const toolCall: ToolCall = { type: 'function', id: `call_${name}`, name, arguments: '{}' };
       const decision = await executorEvents.fireBeforeExecute({

@@ -120,7 +120,7 @@ import { MEDIA_INGESTION_SUBMIT_WAIT_MS } from './constant/media';
 import { CHROME_GUTTER } from './constant/rendering';
 import { MAX_TERMINAL_TITLE_LENGTH } from './constant/terminal';
 import { AuthFlowController } from './controllers/auth-flow';
-import { BtwPanelController } from './controllers/btw-panel';
+import { BtwPanelController, type BtwPreparedPrompt } from './controllers/btw-panel';
 import { ClipboardImageHintController } from './controllers/clipboard-image-hint';
 import { EditorKeyboardController } from './controllers/editor-keyboard';
 import { SessionEventHandler } from './controllers/session-event-handler';
@@ -1519,6 +1519,66 @@ export class KimiTUI {
       imageAttachmentIds:
         extraction.imageAttachmentIds.length > 0 ? extraction.imageAttachmentIds : undefined,
     });
+  }
+
+  /**
+   * /btw counterpart of the send path's media preparation (see
+   * sendNormalUserInput): expands pasted image/video placeholders into daemon
+   * file-ref parts for the side agent. The side panel has no queue or
+   * cache-hint interception, so this stops at extraction + validation; staged
+   * prompts also get a media lease with an exact-binding submission id, while
+   * unstaged ones (skill bundles) match the main inline-skill path.
+   */
+  async prepareBtwPrompt(
+    text: string,
+    opts: { readonly stage: boolean },
+  ): Promise<BtwPreparedPrompt | undefined> {
+    const ingestionWait = pendingMediaIngestions(
+      text,
+      this.imageStore,
+      MEDIA_INGESTION_SUBMIT_WAIT_MS,
+    );
+    if (ingestionWait !== undefined) await ingestionWait;
+    let extraction: ReturnType<typeof extractMediaAttachments>;
+    try {
+      extraction = extractMediaAttachments(text, this.imageStore);
+    } catch (error) {
+      this.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
+      return undefined;
+    }
+    if (!extraction.hasMedia) return {};
+    const stagingLease = opts.stage
+      ? this.staging.create(
+          // One retain per unique id per extraction, exactly like the main
+          // send path's lease (see sendNormalUserInput).
+          [...new Set([...extraction.imageAttachmentIds, ...extraction.videoAttachmentIds])],
+          [],
+          'user',
+          randomUUID(),
+        )
+      : undefined;
+    if (!this.validateMediaCapabilities(extraction)) {
+      this.staging.release(stagingLease);
+      return undefined;
+    }
+    return {
+      input: resolveOriginalCaptions(
+        extraction.parts,
+        extraction.imageAttachmentIds,
+        this.imageStore,
+        originalsDirForSession(this.session),
+      ),
+      lease: stagingLease,
+      submissionId: stagingLease?.submissionId,
+    };
+  }
+
+  trackBtwDispatch(
+    lease: StagingLease | undefined,
+    request: Promise<unknown>,
+    onError: (error: unknown) => void,
+  ): void {
+    this.staging.trackDispatch(lease, request, onError);
   }
 
   validateMediaCapabilities(extraction: {

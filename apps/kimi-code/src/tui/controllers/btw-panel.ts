@@ -2,6 +2,7 @@ import { Spacer } from '@moonshot-ai/pi-tui';
 import type {
   Event,
   KimiHarness,
+  PromptInput,
   Session,
   TurnEndedEvent,
 } from '@moonshot-ai/kimi-code-sdk';
@@ -14,7 +15,17 @@ import { createMarkdownTheme } from '../theme/pi-tui-theme';
 import type { InlineSkillActivation } from '../types';
 import type { TUIState } from '../tui-state';
 
+import type { StagingLease } from './staging-leases';
+
 const BTW_BUSY_NOTICE = 'Wait for /btw to finish before sending another question.';
+
+export interface BtwPreparedPrompt {
+  /** Media-expanded RPC input; undefined means send the plain text prompt. */
+  readonly input?: PromptInput;
+  /** Staged-media lease and its exact-binding submission id (plain prompts only). */
+  readonly lease?: StagingLease;
+  readonly submissionId?: string;
+}
 
 export interface BtwPanelHost {
   state: TUIState;
@@ -22,6 +33,22 @@ export interface BtwPanelHost {
   readonly harness: KimiHarness;
 
   showError(msg: string): void;
+  /**
+   * Expand pasted image/video placeholders into daemon file-ref parts for the
+   * side agent (the /btw counterpart of the main send path's media
+   * preparation). Returns undefined when preparation failed — the error was
+   * already shown.
+   */
+  prepareBtwPrompt(
+    text: string,
+    opts: { readonly stage: boolean },
+  ): Promise<BtwPreparedPrompt | undefined>;
+  /** Track a prompt dispatch carrying staged media; see StagingLeaseTracker.trackDispatch. */
+  trackBtwDispatch(
+    lease: StagingLease | undefined,
+    request: Promise<unknown>,
+    onError: (error: unknown) => void,
+  ): void;
 }
 
 export class BtwPanelController {
@@ -180,27 +207,51 @@ export class BtwPanelController {
     panel: BtwPanelComponent,
     inlineSkillActivations?: readonly InlineSkillActivation[],
   ): void {
+    void this.prepareAndPrompt(agentId, prompt, panel, inlineSkillActivations);
+  }
+
+  private async prepareAndPrompt(
+    agentId: string,
+    prompt: string,
+    panel: BtwPanelComponent,
+    inlineSkillActivations?: readonly InlineSkillActivation[],
+  ): Promise<void> {
     const session = this.host.session;
     if (session === undefined) {
       panel.markFailed(NO_ACTIVE_SESSION_MESSAGE);
       this.host.state.ui.requestRender();
       return;
     }
-    const send =
-      inlineSkillActivations !== undefined && inlineSkillActivations.length > 0
-        ? () =>
-            session.promptWithSkills(
-              prompt,
-              inlineSkillActivations.map((activation) => ({
-                name: activation.skillName,
-                args: activation.args,
-              })),
-            )
-        : () => session.prompt(prompt);
-    void this.withInteractiveAgent(agentId, send).catch((error: unknown) => {
-      panel.markFailed(`Failed to send /btw prompt: ${formatErrorMessage(error)}`);
+    const useSkills = inlineSkillActivations !== undefined && inlineSkillActivations.length > 0;
+    // Skill bundles have no prompt-id channel, so they match the main turn's
+    // inline-skill path: media rides along without a staged lease.
+    const prepared = await this.host.prepareBtwPrompt(prompt, { stage: !useSkills });
+    if (prepared === undefined) {
+      panel.markFailed('Failed to prepare the media attachment.');
       this.host.state.ui.requestRender();
-    });
+      return;
+    }
+    const input = prepared.input ?? prompt;
+    const send = useSkills
+      ? () =>
+          session.promptWithSkills(
+            input,
+            inlineSkillActivations.map((activation) => ({
+              name: activation.skillName,
+              args: activation.args,
+            })),
+          )
+      : prepared.submissionId !== undefined
+        ? () => session.prompt(input, { promptId: prepared.submissionId })
+        : () => session.prompt(input);
+    this.host.trackBtwDispatch(
+      prepared.lease,
+      this.withInteractiveAgent(agentId, send),
+      (error: unknown) => {
+        panel.markFailed(`Failed to send /btw prompt: ${formatErrorMessage(error)}`);
+        this.host.state.ui.requestRender();
+      },
+    );
   }
 
   private async cancelAgent(agentId: string): Promise<void> {

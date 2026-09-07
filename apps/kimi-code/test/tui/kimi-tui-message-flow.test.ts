@@ -4708,6 +4708,56 @@ command = "vim"
     expect(stripSgr(renderBtwPanel(driver))).toContain('Q: What are you working on right now?');
   });
 
+  it('sends a pasted image in the initial /btw prompt as daemon file-ref parts', async () => {
+    const session = makeSession();
+    const { driver, harness } = await makeDriver(session);
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = stagedImage(imageStore, 'file-btw');
+
+    driver.handleUserInput(`/btw describe ${attachment.placeholder}`);
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith(
+        [
+          { type: 'text', text: 'describe ' },
+          { type: 'image_url', imageUrl: { url: 'kimi-file://file-btw' } },
+        ],
+        { promptId: expect.any(String) },
+      );
+    });
+    expect(harness.deleteFile).not.toHaveBeenCalled();
+    emitTurn(driver, 1, () => {
+      expect(harness.deleteFile).not.toHaveBeenCalled();
+    });
+    await vi.waitFor(() => {
+      expect(harness.deleteFile).toHaveBeenCalledWith('file-btw');
+    });
+  });
+
+  it('sends a pasted image in follow-up /btw panel input as daemon file-ref parts', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    driver.handleUserInput('/btw');
+    await vi.waitFor(() => {
+      expect(session.startBtw).toHaveBeenCalled();
+      expect(driver.state.btwPanelContainer.children).toHaveLength(2);
+    });
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = stagedImage(imageStore, 'file-btw-2');
+
+    driver.handleUserInput(`look at ${attachment.placeholder}`);
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith(
+        [
+          { type: 'text', text: 'look at ' },
+          { type: 'image_url', imageUrl: { url: 'kimi-file://file-btw-2' } },
+        ],
+        { promptId: expect.any(String) },
+      );
+    });
+  });
+
   it('sends /btw panel input with inline skills via promptWithSkills (v2 engine)', async () => {
     const session = makeSession({
       id: 'ses-lazy',
