@@ -1,7 +1,8 @@
 import { visibleWidth, type TUI } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
+import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { darkColors } from '#/tui/theme/colors';
@@ -27,6 +28,7 @@ function stubTui(rows: number): TUI {
 describe('ToolCallComponent', () => {
   afterEach(() => {
     vi.useRealTimers();
+    setExperimentalFeatures([]);
   });
 
   it('uses the shared non-emoji tool status bullet', () => {
@@ -321,6 +323,9 @@ describe('ToolCallComponent', () => {
   });
 
   describe('NotifyUser card', () => {
+    beforeEach(() => {
+      setExperimentalFeatures([{ id: 'notify_user', enabled: true }]);
+    });
     const message = 'Login module is clean.\n\nThe bug must be in **session expiry**.';
 
     it('collapses to a header with the first line and expands to the full message', () => {
@@ -342,6 +347,18 @@ describe('ToolCallComponent', () => {
       expect(expanded).toContain('session expiry');
       expect(expanded).not.toContain('Update shown');
       expect(component.hasHiddenContent()).toBe(true);
+    });
+
+    it('renders historical calls as ordinary tool records when disabled', () => {
+      setExperimentalFeatures([]);
+      const component = new ToolCallComponent(
+        { id: 'notify-old', name: 'NotifyUser', args: { message: 'Past progress' } },
+        { tool_call_id: 'notify-old', output: 'Update shown to the user.', is_error: false },
+      );
+      const output = strip(component.render(100).join('\n'));
+      expect(output).toContain('Used NotifyUser');
+      expect(output).not.toContain('Sent you an update');
+      expect(output).toContain('Update shown to the user.');
     });
 
     it('labels the in-flight call as sending', () => {
@@ -390,6 +407,7 @@ describe('ToolCallComponent', () => {
     });
 
     it('truncates a long NotifyUser preview the same way', () => {
+      setExperimentalFeatures([{ id: 'notify_user', enabled: true }]);
       const component = new ToolCallComponent(
         {
           id: 'call_notify_narrow',

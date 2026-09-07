@@ -96,7 +96,13 @@ Plan 模式是一种受约束的工作状态：进入后 `Write` 与 `Edit` 只�
 
 **`AskUserQuestion`** 以结构化多选题的形式向用户提问，适用于需要消歧或选择方案的场景。`questions` 参数接受 1–4 道题，每道题需提供 `question`（以 `?` 结尾）、`options`（2–4 个选项，每项含 `label` 和 `description`）以及可选的 `header`（最多 12 字符）和 `multi_select`（默认 false）。系统自动附加"其他"选项。`background` 为 true 时启动后台问题任务并立即返回任务 ID；问题在本轮结束后仍保持待答，用户作答后答案会以通知形式直接送回 Agent。宿主未实现交互式提问能力时返回失败提示，Agent 应改为在文本回复中直接提问。
 
-**`NotifyUser`** 在轮次仍在进行时向用户展示一条简短的进展更新。唯一参数 `message` 是用户语言的轻量 Markdown。在 TUI 中，当前轮次的更新会按时间顺序堆叠在输入框上方的 `Update` 面板里，最新的在最下面；内容超出面板时，按 `Ctrl-N` 往前翻看更早的更新。下一轮次开始时面板会被清空，因此 Agent 会在最终回复中重述用户需要保留的内容。只有 main agent 可以调用。该工具是实验特性，默认关闭：设置 `KIMI_CODE_EXPERIMENTAL_NOTIFY_USER=1`，或在 `config.toml` 中配置 `[experimental] notify_user = true` 即可启用。只有 TUI 会提供这个工具；print 模式、Web UI 和其他宿主不会把它暴露给模型。
+**`NotifyUser`** 让 main agent 和 subagent 发送简短进展更新，唯一参数 `message` 接受轻量 Markdown。TUI 的 `Updates` 面板会按顺序保留每条更新，同一来源的多条消息也不会互相覆盖。subagent 的消息使用已有的 agent ID（如 `[agent-7]`）作为同一行的来源标签；main agent 的消息不加前缀。完整消息通过分页阅读，不会被替换为一行摘要。
+
+面板默认显示最新页，从末尾向前将渲染后的正文分组，每页最多八行。例如，十条单行更新会分为第一页两条、最后一页八条；不足八行的页面按实际内容占用空间。按 `Ctrl-P` 查看上一页，按 `Ctrl-N` 查看下一页。翻页直接在原面板中进行，不切换输入焦点、不改变草稿；到达第一页或最后一页时停止，不循环跳转。阅读旧页时，新追加的更新保持已有分页边界，并提示新增数量；回到最新页后，重新从末尾填满页面，并恢复跟随新更新。只有一页时，这两个按键保持原有编辑器行为。
+
+轮次结束后，消息和当前页继续保留显示；下一次 main agent 轮次开始时才清空，subagent 自己的轮次不会清空面板。新会话、`/clear` 和重新打开会话时，面板从空白开始。失败或中断的通知会被移除，对话中的工具调用记录仍保留。重要发现仍须写入最终回复或 subagent 的最终汇报。
+
+整个功能都是默认关闭的实验特性。通过 `KIMI_CODE_EXPERIMENTAL_NOTIFY_USER=1`、`config.toml` 中的 `[experimental] notify_user = true` 或 `/experiments` 启用。只有 TUI 会提供这个工具。关闭后，面板及其翻页快捷键都不生效。
 
 **`Skill`** 允许 Agent 主动调用已注册的 inline 类型 Skill。接受 `skill`（Skill 名称）和可选的 `args`（附加参数文本）。只有 `type = "inline"` 的 Skill 能通过此工具调用；`disableModelInvocation: true` 的 Skill 会被拒绝。嵌套调用深度上限 3 层。Skill 体系细节见 [Agent Skills](../customization/skills.md)。
 

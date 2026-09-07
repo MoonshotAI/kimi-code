@@ -123,6 +123,7 @@ interface MessageDriver {
   sessionReplay: SessionReplayRenderer;
   pluginCommandMap: Map<string, string>;
   sessionEventHandler: {
+    notifications: import('#/tui/controllers/notify').NotifyController;
     startSubscription(): void;
     handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void;
   };
@@ -1048,13 +1049,34 @@ describe('KimiTUI message flow', () => {
     expect(turns[2]!.entries[1]!.content).toBe('please /commit');
   });
 
-  it('does not resurrect an earlier turn\'s NotifyUser updates when the latest turn had none', async () => {
+  it('pages Updates with Ctrl+P / Ctrl+N while keeping the editor focused', async () => {
+    const { driver } = await makeDriver(makeSession());
+    const notifications = driver.sessionEventHandler.notifications;
+    notifications.setEnabled(true);
+    notifications.handleEvent({ type: 'turn.started', agentId: 'main', sessionId: 's1', turnId: 1, origin: { kind: 'user' } });
+    notifications.handleEvent({ type: 'tool.call.started', agentId: 'main', sessionId: 's1', turnId: 1, toolCallId: 'n1', name: 'NotifyUser', args: { message: Array.from({ length: 24 }, (_, i) => `- line ${i + 1}`).join('\n') } });
+    notifications.handleEvent({ type: 'tool.result', agentId: 'main', sessionId: 's1', turnId: 1, toolCallId: 'n1', output: 'Update shown to the user.' });
+    driver.state.editor.setText('unsent follow-up');
+    const cursor = driver.state.editor.getCursor();
+    const setFocus = vi.spyOn(driver.state.ui, 'setFocus');
+    expect(driver.state.notifyPanel.render(100)[0]).toContain('3/3');
+    driver.state.editor.handleInput('\u0010');
+    expect(driver.state.notifyPanel.render(100)[0]).toContain('2/3');
+    driver.state.editor.handleInput('\u000E');
+    expect(driver.state.notifyPanel.render(100)[0]).toContain('3/3');
+    expect(setFocus).not.toHaveBeenCalled();
+    expect(driver.state.editor.getText()).toBe('unsent follow-up');
+    expect(driver.state.editor.getCursor()).toEqual(cursor);
+  });
+
+  it('does not restore old NotifyUser updates into the panel', async () => {
     const session = makeSession({ id: 'ses-notify-replay' });
     const startupInput: KimiTUIStartupInput = {
       ...makeStartupInput(),
       cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
     };
     const { driver } = await makeDriver(session, {}, startupInput);
+    driver.sessionEventHandler.notifications.setEnabled(true);
     (session.getResumeState as ReturnType<typeof vi.fn>).mockReturnValue({
       sessionMetadata: {},
       agents: {
@@ -1139,19 +1161,18 @@ describe('KimiTUI message flow', () => {
     const replayed = await driver.sessionReplay.hydrateFromReplay(session as unknown as Session);
     expect(replayed).toBe(true);
 
-    // The first turn's update was mounted while replaying that turn, and the
-    // second turn's start closed it again — exactly like the live path.
     expect(driver.state.notifyPanel.isEmpty()).toBe(true);
     expect(driver.state.notifyPanelContainer.children).toHaveLength(0);
   });
 
-  it('closes an earlier turn\'s update panel when a replayed cron fire starts the next turn', async () => {
+  it('leaves the panel empty when replaying previous cron turns', async () => {
     const session = makeSession({ id: 'ses-notify-cron' });
     const startupInput: KimiTUIStartupInput = {
       ...makeStartupInput(),
       cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
     };
     const { driver } = await makeDriver(session, {}, startupInput);
+    driver.sessionEventHandler.notifications.setEnabled(true);
     (session.getResumeState as ReturnType<typeof vi.fn>).mockReturnValue({
       sessionMetadata: {},
       agents: {

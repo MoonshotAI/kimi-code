@@ -1,3 +1,5 @@
+import { Container } from '@moonshot-ai/pi-tui';
+import { NotifyPanelComponent } from '#/tui/components/chrome/notify-panel';
 import type { Event } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -7,6 +9,8 @@ import { getBuiltInPalette } from '#/tui/theme';
 function makeHost() {
   const host = {
     state: {
+      notifyPanel: new NotifyPanelComponent(),
+      notifyPanelContainer: new Container(),
       appState: {
         sessionId: 's1',
         streamingPhase: 'idle',
@@ -87,37 +91,26 @@ function turnEnded(): Event {
 }
 
 describe('SessionEventHandler — update panel lifecycle', () => {
-  it('closes the panel when a user turn starts', () => {
+  it.each(['user', 'cron_job', 'background_task'])('clears old updates at a new main %s turn', (kind) => {
     const { host } = makeHost();
     const handler = new SessionEventHandler(host);
-
-    handler.handleEvent(turnStarted({ kind: 'user' }), vi.fn());
-
-    expect(host.streamingUI.clearNotifyPanel).toHaveBeenCalledOnce();
-    expect(host.streamingUI.markNotifyPanelEnded).not.toHaveBeenCalled();
-  });
-
-  it('closes the panel on a cron-fired turn too, so it reopens fresh', () => {
-    const { host } = makeHost();
-    const handler = new SessionEventHandler(host);
-
-    handler.handleEvent(
-      turnStarted({ kind: 'cron_job', jobId: 'j1', cron: '* * * * *', recurring: true }),
-      vi.fn(),
-    );
-
-    expect(host.streamingUI.clearNotifyPanel).toHaveBeenCalledOnce();
-  });
-
-  it('keeps the panel but marks it ended when the turn ends', () => {
-    const { host } = makeHost();
-    const handler = new SessionEventHandler(host);
-
-    handler.handleEvent(turnStarted({ kind: 'user' }), vi.fn());
-    host.streamingUI.clearNotifyPanel.mockClear();
+    handler.notifications.setEnabled(true);
+    handler.notifications.handleEvent({ type: 'tool.call.started', sessionId: 's1', agentId: 'main', turnId: 0, toolCallId: 'n1', name: 'NotifyUser', args: { message: 'Earlier finding' } } as Event);
+    handler.notifications.handleEvent({ type: 'tool.result', sessionId: 's1', agentId: 'main', turnId: 0, toolCallId: 'n1', output: 'Update shown to the user.' } as Event);
+    handler.handleEvent(turnStarted({ kind }), vi.fn());
     handler.handleEvent(turnEnded(), vi.fn());
-
-    expect(host.streamingUI.markNotifyPanelEnded).toHaveBeenCalledOnce();
+    expect(host.state.notifyPanel.getEntries().map((entry: { text: string }) => entry.text)).toEqual([]);
     expect(host.streamingUI.clearNotifyPanel).not.toHaveBeenCalled();
+  });
+
+  it('collects child notifications before child routing without changing the main turn', () => {
+    const { host } = makeHost();
+    const handler = new SessionEventHandler(host);
+    handler.notifications.setEnabled(true);
+    handler.handleEvent({ type: 'tool.call.started', sessionId: 's1', agentId: 'worker-1', turnId: 9, toolCallId: 'n1', name: 'NotifyUser', args: { message: 'Child finding' } } as Event, vi.fn());
+    handler.handleEvent({ type: 'tool.result', sessionId: 's1', agentId: 'worker-1', turnId: 9, toolCallId: 'n1', output: 'Update shown to the user.' } as Event, vi.fn());
+    expect(host.state.notifyPanel.getEntries()[0]).toMatchObject({ agentId: 'worker-1', text: 'Child finding' });
+    expect(host.streamingUI.setTurnId).not.toHaveBeenCalled();
+    expect(host.streamingUI.completeToolResult).not.toHaveBeenCalled();
   });
 });

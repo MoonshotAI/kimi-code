@@ -1,77 +1,65 @@
-/**
- * NotifyPanel — the model's mid-turn updates, shown right above the input
- * area (below the Todo panel).
- *
- * Fed by `NotifyUser` tool calls: every call is one entry, and the entries
- * of the current turn stack chronologically, newest at the bottom, each
- * rendered as Markdown behind a marker (`◆` newest, `◇` earlier). The body
- * is a window of {@link NOTIFY_PANEL_MAX_BODY_LINES} rows that follows the
- * tail, so the latest updates are always in view; `Ctrl+N` pages up through
- * earlier rows and wraps back to the tail, and a new update snaps the view
- * back to the tail. The host clears the panel when the next turn starts, so
- * it never mixes turns; a finished turn only dims the title.
- */
-
 import type { Component } from '@moonshot-ai/pi-tui';
-import { Markdown, truncateToWidth } from '@moonshot-ai/pi-tui';
-import chalk from 'chalk';
+import { Markdown, truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 
-import { NOTIFY_PANEL_MAX_BODY_LINES } from '#/tui/constant/rendering';
+import { MAIN_AGENT_ID } from '#/tui/constant/kimi-tui';
+import { NOTIFY_PANEL_PAGE_LINES } from '#/tui/constant/rendering';
 import { currentTheme } from '#/tui/theme';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 import { createMarkdownOptions } from '#/tui/utils/markdown-options';
 
-const BODY_INDENT = '  ';
-/** `◆ ` in front of an entry's first row; continuation rows get the same width of spaces. */
-const MARKER_INDENT = '  ';
-const PAGE_KEY_HINT = 'ctrl+n earlier';
-
-interface NotifyEntry {
+export interface NotifyEntry {
   readonly id: string;
-  text: string;
+  readonly agentId: string;
+  readonly time: number;
+  readonly text: string;
 }
 
 export class NotifyPanelComponent implements Component {
   private readonly entries: NotifyEntry[] = [];
-  /** First body row in view; `null` follows the tail. */
-  private scrollTop: number | null = null;
-  private ended = false;
-  /** Total stacked body rows from the last render; drives paging. */
-  private lastTotalRows = 0;
+  private pageIndex: number | undefined;
+  private firstPageLines: number | undefined;
+  private readonly unseen = new Set<string>();
+  private rows: Array<{ line: string; prefix: string; indent: number; first: boolean }> = [];
+  private width: number | undefined;
+  private palette: typeof currentTheme.palette | undefined;
+  private dirty = true;
+  private frame: string[] | undefined;
+  private readonly bodies = new Map<
+    string,
+    { text: string; width: number; palette: typeof currentTheme.palette; lines: string[] }
+  >();
 
-  /**
-   * Add or update an entry. A repeated `id` updates the entry in place (the
-   * same tool call streaming its `message`); a new id appends and snaps the
-   * view back to the tail.
-   */
-  upsert(id: string, text: string): void {
-    const existing = this.entries.find((entry) => entry.id === id);
-    if (existing !== undefined) {
-      existing.text = text;
-      return;
+  upsert(entry: NotifyEntry): void {
+    const index = this.entries.findIndex((item) => item.id === entry.id);
+    if (index >= 0) this.entries[index] = entry;
+    else {
+      this.entries.push(entry);
+      if (this.pageIndex !== undefined) this.unseen.add(entry.id);
     }
-    this.entries.push({ id, text });
-    this.scrollTop = null;
-    this.ended = false;
+    this.dirty = true;
+    this.frame = undefined;
   }
 
   clear(): void {
     this.entries.length = 0;
-    this.scrollTop = null;
-    this.ended = false;
-    this.lastTotalRows = 0;
+    this.rows = [];
+    this.pageIndex = undefined;
+    this.firstPageLines = undefined;
+    this.unseen.clear();
+    this.bodies.clear();
+    this.dirty = true;
+    this.frame = undefined;
   }
 
-  /**
-   * Drop one entry — a call that was denied, failed, or never completed. The
-   * view snaps back to the tail. Returns false when the id is unknown.
-   */
   remove(id: string): boolean {
     const index = this.entries.findIndex((entry) => entry.id === id);
-    if (index === -1) return false;
+    if (index < 0) return false;
     this.entries.splice(index, 1);
-    this.scrollTop = null;
-    if (this.entries.length === 0) this.lastTotalRows = 0;
+    this.bodies.delete(id);
+    this.unseen.delete(id);
+    if (this.entries.length === 0) this.clear();
+    this.dirty = true;
+    this.frame = undefined;
     return true;
   }
 
@@ -79,103 +67,113 @@ export class NotifyPanelComponent implements Component {
     return this.entries.length === 0;
   }
 
-  getEntries(): readonly { readonly id: string; readonly text: string }[] {
-    return this.entries.map((entry) => ({ id: entry.id, text: entry.text }));
+  getEntries(): readonly NotifyEntry[] {
+    return this.entries;
   }
 
-  /** The turn that produced these updates has ended; keep them, dim the title. */
-  setEnded(ended: boolean): void {
-    this.ended = ended;
-  }
-
-  /** True when the stacked rows overflow the window, so Ctrl+N has somewhere to go. */
-  hasMorePages(): boolean {
-    return this.lastTotalRows > NOTIFY_PANEL_MAX_BODY_LINES;
-  }
-
-  /**
-   * Page up one window through earlier rows; from the top, wrap back to the
-   * tail. Returns false when everything already fits so the key can fall
-   * through.
-   */
-  nextPage(): boolean {
-    if (!this.hasMorePages()) return false;
-    const cap = NOTIFY_PANEL_MAX_BODY_LINES;
-    const tailStart = this.lastTotalRows - cap;
-    const current = this.scrollTop ?? tailStart;
-    if (current <= 0) {
-      this.scrollTop = null;
-      return true;
+  changePage(direction: -1 | 1): boolean {
+    if (this.width === undefined) return false;
+    this.updateRows(this.width);
+    const lastPage = this.lastPage();
+    if (lastPage === 0) return false;
+    this.firstPageLines = this.firstPageSize();
+    const target = Math.max(0, Math.min(lastPage, (this.pageIndex ?? lastPage) + direction));
+    this.pageIndex = target === lastPage ? undefined : target;
+    if (this.pageIndex === undefined) {
+      this.firstPageLines = undefined;
+      this.unseen.clear();
     }
-    this.scrollTop = Math.max(0, current - cap);
+    this.frame = undefined;
     return true;
   }
 
-  invalidate(): void {}
+  invalidate(): void {
+    this.bodies.clear();
+    this.dirty = true;
+    this.frame = undefined;
+  }
 
   render(width: number): string[] {
-    if (this.entries.length === 0) return [];
-    const c = currentTheme.palette;
-    const rows = this.renderRows(width);
-    this.lastTotalRows = rows.length;
-
-    const cap = NOTIFY_PANEL_MAX_BODY_LINES;
-    const tailStart = Math.max(0, rows.length - cap);
-    let start = this.scrollTop ?? tailStart;
-    if (start > tailStart) {
-      start = tailStart;
-      this.scrollTop = null;
-    }
-    const shown = rows.slice(start, start + cap);
-    const later = rows.length - (start + shown.length);
-
-    const lines: string[] = [chalk.hex(c.border)('─'.repeat(width)), this.renderTitle()];
-    if (start > 0) {
-      lines.push(chalk.hex(c.textDim)(`${BODY_INDENT}… ${String(start)} earlier lines`));
-    }
-    lines.push(...shown);
-    if (later > 0) {
-      lines.push(chalk.hex(c.textDim)(`${BODY_INDENT}… ${String(later)} later lines`));
-    }
-    return lines.map((line) => truncateToWidth(line, width));
+    if (width <= 0 || this.entries.length === 0) return [];
+    this.updateRows(width);
+    if (this.frame !== undefined) return this.frame;
+    const lastPage = this.lastPage();
+    const page = this.pageIndex ?? lastPage;
+    const hints = [`${String(page + 1)}/${String(lastPage + 1)}`];
+    if (lastPage > 0) hints.push('Ctrl+P prev', 'Ctrl+N next');
+    if (this.unseen.size > 0)
+      hints.push(
+        `${String(this.unseen.size)} new ${this.unseen.size === 1 ? 'update' : 'updates'}`,
+      );
+    const title =
+      currentTheme.boldFg('primary', '  Updates') +
+      currentTheme.fg('textMuted', ` · ${hints.join(' · ')}`);
+    const end = this.firstPageSize() + page * NOTIFY_PANEL_PAGE_LINES;
+    const body = this.rows
+      .slice(Math.max(0, end - NOTIFY_PANEL_PAGE_LINES), end)
+      .map(
+        (row, index) =>
+          `${row.first || index === 0 ? row.prefix : ' '.repeat(row.indent)}${row.line}`,
+      );
+    this.frame = [title, ...body].map((line) => truncateToWidth(line, width));
+    return this.frame;
   }
 
-  /** Every entry's Markdown rows, stacked in order, each behind its marker. */
-  private renderRows(width: number): string[] {
-    const c = currentTheme.palette;
-    const markdownWidth = Math.max(1, width - BODY_INDENT.length - MARKER_INDENT.length);
-    const rows: string[] = [];
-    for (const [index, entry] of this.entries.entries()) {
-      const newest = index === this.entries.length - 1;
-      const marker = newest ? chalk.hex(c.primary)('◆') : chalk.hex(c.textDim)('◇');
-      const body = new Markdown(
-        entry.text.trim(),
-        0,
-        0,
-        createMarkdownTheme(),
-        undefined,
-        createMarkdownOptions(),
-      ).render(markdownWidth);
-      for (const [i, row] of body.entries()) {
-        rows.push(i === 0 ? `${BODY_INDENT}${marker} ${row}` : `${BODY_INDENT}${MARKER_INDENT}${row}`);
+  private lastPage(): number {
+    return Math.max(
+      0,
+      Math.ceil((this.rows.length - this.firstPageSize()) / NOTIFY_PANEL_PAGE_LINES),
+    );
+  }
+
+  private firstPageSize(): number {
+    return this.firstPageLines ?? ((this.rows.length - 1) % NOTIFY_PANEL_PAGE_LINES) + 1;
+  }
+
+  private updateRows(width: number): void {
+    if (!this.dirty && this.width === width && this.palette === currentTheme.palette) return;
+    if (this.width !== width) this.firstPageLines = undefined;
+    this.width = width;
+    this.palette = currentTheme.palette;
+    this.rows = [];
+    for (const entry of this.entries) {
+      let prefix = '  ';
+      if (entry.agentId !== MAIN_AGENT_ID) {
+        prefix += currentTheme.fg('textMuted', `[${entry.agentId}] `);
       }
+      const indent = Math.min(visibleWidth(prefix), Math.max(0, width - 1));
+      const bodyWidth = Math.max(1, width - indent);
+      let body = this.bodies.get(entry.id);
+      if (
+        body === undefined ||
+        body.text !== entry.text ||
+        body.width !== bodyWidth ||
+        body.palette !== currentTheme.palette
+      ) {
+        const lines = new Markdown(
+          entry.text.trim(),
+          0,
+          0,
+          createMarkdownTheme(),
+          undefined,
+          createMarkdownOptions(),
+        ).render(bodyWidth);
+        body = { text: entry.text, width: bodyWidth, palette: currentTheme.palette, lines };
+        this.bodies.set(entry.id, body);
+      }
+      const firstPrefix =
+        visibleWidth(prefix) <= indent ? prefix : truncateToWidth(prefix, indent, '');
+      for (const [row, line] of body.lines.entries())
+        this.rows.push({ line, prefix: firstPrefix, indent, first: row === 0 });
     }
-    return rows;
-  }
-
-  private renderTitle(): string {
-    const c = currentTheme.palette;
-    const marker = this.ended ? '◇' : '◆';
-    const label =
-      this.entries.length > 1 ? `Updates (${String(this.entries.length)})` : 'Update';
-    const title = `${BODY_INDENT}${marker} ${label}`;
-    const styledTitle = this.ended
-      ? chalk.hex(c.textDim).bold(title)
-      : chalk.hex(c.primary).bold(title);
-    const hints: string[] = [];
-    if (this.hasMorePages()) hints.push(PAGE_KEY_HINT);
-    if (this.ended) hints.push('turn ended · next message clears');
-    const hint = hints.length > 0 ? chalk.hex(c.textDim)(` · ${hints.join(' · ')}`) : '';
-    return `${styledTitle}${hint}`;
+    if (this.pageIndex !== undefined && this.pageIndex >= this.lastPage()) {
+      this.pageIndex = undefined;
+      this.firstPageLines = undefined;
+      this.unseen.clear();
+    } else if (this.pageIndex !== undefined) {
+      this.firstPageLines = this.firstPageSize();
+    }
+    this.dirty = false;
+    this.frame = undefined;
   }
 }

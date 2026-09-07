@@ -1,10 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import { NOTIFY_USER_MAIN_AGENT_ONLY } from '#/agent/tools/mainAgentOnly';
-import type { HostUiCapability, IBootstrapService } from '#/app/bootstrap/bootstrap';
-import type { IFlagService } from '#/app/flag/flag';
+import { type HostUiCapability, IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IFlagService } from '#/app/flag/flag';
 import { NOTIFY_USER_FLAG_ENV, NOTIFY_USER_FLAG_ID, notifyUserFlag } from '#/features/notify/flag';
 import {
   NOTIFY_USER_UI_CAPABILITY,
@@ -18,7 +16,7 @@ import {
 import {
   NOTIFY_USER_DELIVERED_OUTPUT,
   NOTIFY_USER_EMPTY_MESSAGE,
-  NotifyUserTool,
+  NOTIFY_USER_UNAVAILABLE,
 } from '#/features/notify/tools/notify-user/notifyUserTool';
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 
@@ -31,6 +29,8 @@ describe('NotifyUserTool', () => {
 
   beforeEach(async () => {
     ctx = createTestAgent();
+    ctx.get(IFlagService).setConfigOverrides({ notify_user: true });
+    Object.assign(ctx.get(IBootstrapService).args, { uiCapabilities: [NOTIFY_USER_UI_CAPABILITY] });
     await ctx.restorePersisted();
   });
 
@@ -108,18 +108,21 @@ describe('NotifyUserTool', () => {
     expect(result).toEqual({ isError: true, output: NOTIFY_USER_EMPTY_MESSAGE });
   });
 
-  it('refuses to run on a subagent', async () => {
-    const tool = new NotifyUserTool(
-      makeAgentScopeContext({ agentId: 'agent-1', agentScope: '' }),
-    );
-
-    const result = await executeTool(tool, {
-      turnId: 1,
-      toolCallId: 'call_1',
-      args: { message: 'Should not be shown.' },
-      signal,
+  it('rejects execution after the feature is disabled', async () => {
+    const tool = ctx.get(INotifyUserTool);
+    const execution = tool.resolveExecution({ message: 'Starting the checks.' });
+    ctx.get(IFlagService).setConfigOverrides({ notify_user: false });
+    expect(tool.resolveExecution({ message: 'Should not appear.' })).toEqual({
+      isError: true, output: NOTIFY_USER_UNAVAILABLE,
     });
+    if (!('execute' in execution)) throw new Error('Expected executable tool');
+    expect(await execution.execute({ signal } as never)).toEqual({ isError: true, output: NOTIFY_USER_UNAVAILABLE });
+  });
 
-    expect(result).toEqual({ isError: true, output: NOTIFY_USER_MAIN_AGENT_ONLY });
+  it('rejects execution in a host without the panel even when the flag is on', () => {
+    Object.assign(ctx.get(IBootstrapService).args, { uiCapabilities: [] });
+    expect(ctx.get(INotifyUserTool).resolveExecution({ message: 'Should not appear.' })).toEqual({
+      isError: true, output: NOTIFY_USER_UNAVAILABLE,
+    });
   });
 });

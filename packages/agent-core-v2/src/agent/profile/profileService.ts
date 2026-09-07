@@ -66,7 +66,7 @@ import { isToolActiveComposed, findInactiveToolPatterns, literalToolNames, type 
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { notifyUserAvailable } from '#/features/notify/notifyUserAvailability';
 import { NOTIFY_USER_TOOL_NAME } from '#/features/notify/tools/notify-user/notify-user';
-import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { renderAgentProfilePrompt } from '#/app/agentProfileCatalog/profile-shared';
 import { getAgentToolContributions } from '#/agent/toolRegistry/toolContribution';
 import {
   profileActiveToolsKey,
@@ -308,7 +308,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     const context = await this.buildSystemPromptContext(profile);
     this.assertBindable(profile.name);
     const currentProfileName = this.profileName;
-    const rendered = profile.renderSystemPrompt(context);
+    const rendered = renderAgentProfilePrompt(profile, context);
     this.activeProfile = profile;
     this.cacheAgentsMdWarning(context);
 
@@ -394,7 +394,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   useProfile(profile: ResolvedAgentProfile, context: SystemPromptContext): void {
     this.activeProfile = profile;
-    const rendered = profile.renderSystemPrompt(context);
+    const rendered = renderAgentProfilePrompt(profile, context);
     this.update({
       profileName: profile.name,
       systemPrompt: rendered.text,
@@ -844,7 +844,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       replyStyleGuide: this.bootstrap.args.replyStyleGuide,
       notifyUserActive:
         notifyUserAvailable(this.flags, this.bootstrap) &&
-        this.scopeContext.agentId === MAIN_AGENT_ID &&
         this.isToolActiveForProfile(profile, NOTIFY_USER_TOOL_NAME),
     };
   }

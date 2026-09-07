@@ -28,6 +28,7 @@ import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 import type { TokenUsage } from '@moonshot-ai/kimi-code-sdk';
 import { appendStreamingArgsPreview } from '#/tui/utils/event-payload';
 import { createMarkdownOptions } from '#/tui/utils/markdown-options';
+import { isExperimentalFlagEnabled } from '#/tui/commands/experimental-flags';
 import { decodeMcpToolName } from '#/tui/utils/mcp-tool-name';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 import { formatTokenCount } from '#/utils/usage/usage-format';
@@ -910,7 +911,7 @@ export class ToolCallComponent extends Container {
     const { name, args } = this.toolCall;
     switch (name) {
       case 'NotifyUser':
-        return str(args['message']).trim().length > 0;
+        return isExperimentalFlagEnabled('notify_user') && str(args['message']).trim().length > 0;
       case 'Bash':
         return str(args['command']).includes('\n');
       case 'Edit': {
@@ -1705,7 +1706,7 @@ export class ToolCallComponent extends Container {
       return `${bullet}${currentTheme.boldFg(tone, label)}`;
     }
 
-    if (toolCall.name === 'NotifyUser') {
+    if (toolCall.name === 'NotifyUser' && isExperimentalFlagEnabled('notify_user')) {
       // The update itself lives in the panel above the input box; the card
       // is the durable trace in the transcript, so the header carries the
       // first line and ctrl+o shows the whole message.
@@ -2254,7 +2255,7 @@ export class ToolCallComponent extends Container {
       );
       return;
     }
-    if (name === 'NotifyUser') {
+    if (name === 'NotifyUser' && isExperimentalFlagEnabled('notify_user')) {
       // Collapsed: header only (the panel shows the live text). Expanded:
       // the full message as Markdown, indented under the header.
       if (!this.expanded) return;
@@ -2504,7 +2505,7 @@ export class ToolCallComponent extends Container {
 
     // NotifyUser: the message is the call's argument (rendered by
     // buildCallPreview when expanded); the acknowledgement output is noise.
-    if (this.toolCall.name === 'NotifyUser' && !result.is_error) {
+    if (this.toolCall.name === 'NotifyUser' && isExperimentalFlagEnabled('notify_user') && !result.is_error) {
       return;
     }
 

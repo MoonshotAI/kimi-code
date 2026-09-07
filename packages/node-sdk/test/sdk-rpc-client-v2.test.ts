@@ -42,6 +42,10 @@ import {
   IAgentIdentity,
   IAgentTodoService,
   IAgentLifecycleService,
+  IAgentProfileService,
+  IAgentToolActivationService,
+  IAgentToolRegistryService,
+  INotifyUserTool,
   IAgentTowerService,
   IHostRequestHeaders,
   IMcpManagementService,
@@ -1038,6 +1042,71 @@ key = "${titleOAuthRef.key}"
       await harness.close();
     }
   });
+
+  it.each([
+    { enabled: false, panel: true },
+    { enabled: true, panel: false },
+    { enabled: true, panel: true },
+  ])('gates NotifyUser for all profiles and preserves fork prompts: %j', async ({ enabled, panel }) => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_NOTIFY_USER', '');
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-notify-home-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-notify-work-'));
+    tempDirs.push(homeDir, workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY, uiCapabilities: panel ? ['update_panel'] : [] });
+    try {
+      await client.setConfig({
+        providers: { stub: { type: 'openai', baseUrl: 'https://model.example.test/v1', apiKey: 'YOUR_API_KEY' } },
+        models: { stub: { provider: 'stub', model: 'stub', maxContextSize: 32000 } },
+        defaultModel: 'stub',
+        experimental: { notify_user: enabled },
+      });
+      await client.createSession({ id: 'ses_notify', workDir });
+      const session = getLiveSessionById(client.engineAccessor, 'ses_notify')!;
+      const lifecycle = session.accessor.get(IAgentLifecycleService);
+      for (const profile of ['agent', 'coder', 'explore', 'plan']) {
+        const id = profile === 'agent' ? 'main' : `worker-${profile}`;
+        if (lifecycle.get(id) === undefined) await lifecycle.create({ agentId: id, binding: { profile, model: 'stub' } });
+        const agent = lifecycle.handleOf(id)!;
+        await agent.accessor.get(IAgentToolActivationService).activate();
+        const offered = agent.accessor.get(IAgentToolRegistryService).list().some((tool) => tool.name === 'NotifyUser');
+        expect(offered).toBe(enabled && panel);
+        if (profile === 'agent') {
+          const delegation = agent.accessor.get(IAgentToolRegistryService).list().find((tool) => tool.name === 'Agent');
+          expect(delegation?.description.includes('NotifyUser')).toBe(enabled && panel);
+        }
+        const prompt = agent.accessor.get(IAgentProfileService).getSystemPrompt();
+        expect(prompt.includes('When `NotifyUser` is available')).toBe(enabled && panel);
+        if (offered) {
+          expect(agent.accessor.get(INotifyUserTool).resolveExecution({ message: 'Checking this subtask.' })).toMatchObject({ accesses: [], approvalRule: 'NotifyUser' });
+        }
+      }
+      const main = lifecycle.handleOf('main')!;
+      const originalPrompt = main.accessor.get(IAgentProfileService).getSystemPrompt();
+      const fork = await lifecycle.fork(lifecycle.get('main')!, { agentId: 'fork-worker' });
+      expect(lifecycle.handleOf(fork.agentId)!.accessor.get(IAgentProfileService).getSystemPrompt()).toBe(originalPrompt);
+      if (enabled && panel) {
+        const oldTool = main.accessor.get(INotifyUserTool);
+        await client.setConfig({ experimental: { notify_user: false } });
+        expect(oldTool.resolveExecution({ message: 'Should be rejected.' })).toMatchObject({ isError: true });
+        await client.reloadSession({ sessionId: 'ses_notify' });
+        const reloaded = getLiveSessionById(client.engineAccessor, 'ses_notify')!.accessor.get(IAgentLifecycleService).handleOf('main')!;
+        expect(reloaded.accessor.get(IAgentToolRegistryService).list().some((tool) => tool.name === 'NotifyUser')).toBe(false);
+        expect(reloaded.accessor.get(IAgentProfileService).getSystemPrompt()).toBe(originalPrompt);
+        await client.createSession({ id: 'ses_notify_disabled', workDir });
+        await client.getStatus({ sessionId: 'ses_notify_disabled' });
+        const fresh = getLiveSessionById(client.engineAccessor, 'ses_notify_disabled')!.accessor.get(IAgentLifecycleService).handleOf('main')!;
+        expect(fresh.accessor.get(IAgentProfileService).getSystemPrompt()).not.toContain('When `NotifyUser` is available');
+        await client.setConfig({ experimental: { notify_user: true } });
+        await client.reloadSession({ sessionId: 'ses_notify' });
+        const enabledAgain = getLiveSessionById(client.engineAccessor, 'ses_notify')!.accessor.get(IAgentLifecycleService).handleOf('main')!;
+        expect(enabledAgain.accessor.get(IAgentToolRegistryService).list().some((tool) => tool.name === 'NotifyUser')).toBe(true);
+      }
+    } finally {
+      await client.close();
+      vi.unstubAllEnvs();
+    }
+  }, 30_000);
 
   it('serves getTodos from the live session todo state', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
