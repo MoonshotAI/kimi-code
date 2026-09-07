@@ -1523,6 +1523,71 @@ describe('malformed model entries', () => {
     disposables.dispose();
   });
 
+  it('reports the alias itself when only an oauth settings object is present', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.foo]\nmax_context_size = 262144\n\n[models.foo.oauth]\nstorage = "file"\nkey = "x"\n',
+    );
+
+    expect(config.diagnostics()).toContainEqual({
+      domain: MODELS_SECTION,
+      severity: 'warning',
+      message:
+        "[models] entry 'foo' has no usable model name and cannot be used as a model; " +
+        'if the alias contains dots, quote the table name (e.g. [models."foo"]).',
+    });
+    expect(config.diagnostics()).toHaveLength(1);
+
+    disposables.dispose();
+  });
+
+  it('keeps collecting malformed siblings after a nested model match', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.openai.good]\nmodel = "good"\n\n[models.openai.bad]\nprovider = "local"\n',
+    );
+
+    expect(config.diagnostics()).toContainEqual({
+      domain: MODELS_SECTION,
+      severity: 'warning',
+      message:
+        "[models] entry 'openai.good' is nested under 'openai' and cannot be used as a model; " +
+        'if the alias contains dots, quote the table name (e.g. [models."openai.good"]).',
+    });
+    expect(config.diagnostics()).toContainEqual({
+      domain: MODELS_SECTION,
+      severity: 'warning',
+      message:
+        "[models] entry 'openai.bad' has no usable model name and cannot be used as a model; " +
+        'if the alias contains dots, quote the table name (e.g. [models."openai.bad"]).',
+    });
+    expect(config.diagnostics()).toHaveLength(2);
+
+    disposables.dispose();
+  });
+
+  it('traverses below a nested model-shaped table to find deeper declarations', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.a.b]\nmodel = "b"\n\n[models.a.b.c]\nmodel = "c"\n',
+    );
+
+    expect(config.diagnostics()).toContainEqual({
+      domain: MODELS_SECTION,
+      severity: 'warning',
+      message:
+        "[models] entry 'a.b' is nested under 'a' and cannot be used as a model; " +
+        'if the alias contains dots, quote the table name (e.g. [models."a.b"]).',
+    });
+    expect(config.diagnostics()).toContainEqual({
+      domain: MODELS_SECTION,
+      severity: 'warning',
+      message:
+        "[models] entry 'a.b.c' is nested under 'a' and cannot be used as a model; " +
+        'if the alias contains dots, quote the table name (e.g. [models."a.b.c"]).',
+    });
+    expect(config.diagnostics()).toHaveLength(2);
+
+    disposables.dispose();
+  });
+
   it('warns for every nested model path sharing a prefix', async () => {
     const { config, disposables } = await createConfig(
       '[models.openai.gpt-4]\nmodel = "gpt-4"\n\n[models.openai.gpt-4o]\nmodel = "gpt-4o"\n',

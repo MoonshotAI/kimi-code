@@ -10,35 +10,45 @@ function isModelShaped(entry: Record<string, unknown>): boolean {
   return isUsableName(entry['name'] ?? entry['model']);
 }
 
-const SCHEMA_CHILD_KEYS = new Set(['overrides']);
+const SCHEMA_CHILD_KEYS = new Set(['overrides', 'oauth']);
 
-function collectNestedModelPaths(
-  entry: Record<string, unknown>,
-  path: readonly string[],
-): (readonly string[])[] {
-  const found: (readonly string[])[] = [];
-  for (const [key, value] of Object.entries(entry)) {
-    if (!isPlainObject(value) || SCHEMA_CHILD_KEYS.has(key)) continue;
-    if (isModelShaped(value)) {
-      found.push([...path, key]);
-      continue;
-    }
-    found.push(...collectNestedModelPaths(value, [...path, key]));
-  }
-  return found;
+function childTables(entry: Record<string, unknown>): [string, Record<string, unknown>][] {
+  return Object.entries(entry).filter(
+    (pair): pair is [string, Record<string, unknown>] =>
+      isPlainObject(pair[1]) && !SCHEMA_CHILD_KEYS.has(pair[0]),
+  );
 }
 
-function collectLeafPaths(
-  entry: Record<string, unknown>,
+function walkModelEntry(
   path: readonly string[],
-): (readonly string[])[] {
-  const children = Object.entries(entry).filter(
-    ([key, value]) => isPlainObject(value) && !SCHEMA_CHILD_KEYS.has(key),
-  );
-  if (children.length === 0) return [path];
-  return children.flatMap(([key, value]) =>
-    collectLeafPaths(value as Record<string, unknown>, [...path, key]),
-  );
+  entry: Record<string, unknown>,
+  diagnostics: ConfigDiagnostic[],
+): void {
+  const children = childTables(entry);
+  if (!isModelShaped(entry) && children.length === 0) {
+    const full = path.join('.');
+    diagnostics.push({
+      domain: 'models',
+      severity: 'warning',
+      message:
+        `[models] entry '${full}' has no usable model name and cannot be used as a model; ` +
+        `if the alias contains dots, quote the table name (e.g. [models."${full}"]).`,
+    });
+    return;
+  }
+  if (path.length > 1 && isModelShaped(entry)) {
+    const full = path.join('.');
+    diagnostics.push({
+      domain: 'models',
+      severity: 'warning',
+      message:
+        `[models] entry '${full}' is nested under '${path[0]}' and cannot be used as a model; ` +
+        `if the alias contains dots, quote the table name (e.g. [models."${full}"]).`,
+    });
+  }
+  for (const [key, value] of children) {
+    walkModelEntry([...path, key], value, diagnostics);
+  }
 }
 
 export function collectMalformedModelEntries(
@@ -49,28 +59,7 @@ export function collectMalformedModelEntries(
   if (!isPlainObject(rawSection)) return diagnostics;
   for (const [alias, entry] of Object.entries(rawSection)) {
     if (!isPlainObject(entry)) continue;
-    const nestedPaths = collectNestedModelPaths(entry, []);
-    for (const nestedPath of nestedPaths) {
-      const full = [alias, ...nestedPath].join('.');
-      diagnostics.push({
-        domain: 'models',
-        severity: 'warning',
-        message:
-          `[models] entry '${full}' is nested under '${alias}' and cannot be used as a model; ` +
-          `if the alias contains dots, quote the table name (e.g. [models."${full}"]).`,
-      });
-    }
-    if (nestedPaths.length > 0 || isModelShaped(entry)) continue;
-    for (const leafPath of collectLeafPaths(entry, [alias])) {
-      const full = leafPath.join('.');
-      diagnostics.push({
-        domain: 'models',
-        severity: 'warning',
-        message:
-          `[models] entry '${full}' has no usable model name and cannot be used as a model; ` +
-          `if the alias contains dots, quote the table name (e.g. [models."${full}"]).`,
-      });
-    }
+    walkModelEntry([alias], entry, diagnostics);
   }
   return diagnostics;
 }
