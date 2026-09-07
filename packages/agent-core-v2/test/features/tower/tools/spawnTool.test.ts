@@ -84,6 +84,7 @@ describe('TowerSpawnTool', () => {
   let thinkingEnabled: boolean | undefined;
   let modelMeta: Record<string, Partial<Model>>;
   let createdSetMode: Mock<(mode: PermissionMode) => void>;
+  let createdThinkingEffort: string;
 
   async function git(cwd: string, ...args: string[]): Promise<void> {
     await execFileAsync('git', args, { cwd });
@@ -109,6 +110,7 @@ describe('TowerSpawnTool', () => {
     thinkingEnabled = undefined;
     modelMeta = {};
     createdSetMode = vi.fn();
+    createdThinkingEffort = 'off';
     createAgent = vi.fn(async () => stubAgentContext('agent-7', 1));
     runAgent = vi.fn(
       async (agent: AgentContext) =>
@@ -147,6 +149,9 @@ describe('TowerSpawnTool', () => {
         get: (id: unknown) => {
           if (id === (IAgentPermissionModeService as unknown)) {
             return { setMode: createdSetMode };
+          }
+          if (id === (IAgentProfileService as unknown)) {
+            return { getEffectiveThinkingLevel: () => createdThinkingEffort };
           }
           if (id === (IAgentScopeContext as unknown)) {
             return {
@@ -341,6 +346,39 @@ describe('TowerSpawnTool', () => {
 
     expect(result.isError).toBeUndefined();
     expect(createdSetMode).toHaveBeenCalledWith('auto');
+  });
+
+  it('carries the bound model and the spawned agent thinking effort into the registered task info', async () => {
+    createdThinkingEffort = 'high';
+
+    const result = await execute(WORKER_ARGS);
+
+    expect(result.isError).toBeUndefined();
+    const task = registerTask.mock.calls[0]?.[0] as SubagentTask;
+    const info = task.toInfo({
+      taskId: 'task-1',
+      description: task.description,
+      status: 'running',
+      startedAt: 1,
+      endedAt: null,
+    });
+    expect(info).toMatchObject({
+      kind: 'agent',
+      agentId: 'agent-7',
+      subagentType: 'tower-worker',
+      model: 'kimi-code',
+      thinkingEffort: 'high',
+    });
+  });
+
+  it('carries the configured secondary model into the registered task info', async () => {
+    secondaryModel = { model: 'cheap/fast' };
+
+    const result = await execute(WORKER_ARGS);
+
+    expect(result.isError).toBeUndefined();
+    const task = registerTask.mock.calls[0]?.[0] as SubagentTask;
+    expect(task.model).toBe('cheap/fast');
   });
 
   it('binds the configured secondary model and reports it in the output and activity log', async () => {
