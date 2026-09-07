@@ -51,18 +51,27 @@ function subtreeHasModelName(entry: Record<string, unknown>): boolean {
   return childTables(entry).some(([, value]) => subtreeHasModelName(value));
 }
 
-function subtreeHasModelField(entry: Record<string, unknown>): boolean {
-  if (hasModelNameKey(entry) || hasModelRecordField(entry)) return true;
-  return childTables(entry).some(([, value]) => subtreeHasModelField(value));
+function subtreeHasModelKey(entry: Record<string, unknown>): boolean {
+  if (entry['model'] !== undefined) return true;
+  return childTables(entry).some(([, value]) => subtreeHasModelKey(value));
 }
 
 function tomlBasicString(value: string): string {
-  return value
-    .replaceAll('\\', '\\\\')
-    .replaceAll('"', '\\"')
-    .replaceAll('\n', '\\n')
-    .replaceAll('\r', '\\r')
-    .replaceAll('\t', '\\t');
+  let out = '';
+  for (const ch of value) {
+    const code = ch.codePointAt(0)!;
+    if (ch === '\\') out += '\\\\';
+    else if (ch === '"') out += '\\"';
+    else if (code === 0x08) out += '\\b';
+    else if (code === 0x09) out += '\\t';
+    else if (code === 0x0a) out += '\\n';
+    else if (code === 0x0c) out += '\\f';
+    else if (code === 0x0d) out += '\\r';
+    else if (code < 0x20 || code === 0x7f) {
+      out += `\\u${code.toString(16).toUpperCase().padStart(4, '0')}`;
+    } else out += ch;
+  }
+  return out;
 }
 
 function hasSchemaSettingsChild(entry: Record<string, unknown>): boolean {
@@ -112,11 +121,24 @@ function walkModelEntry(
       }
       continue;
     }
-    const hasEvidence = usable ? subtreeHasModelName(value) : subtreeHasModelField(value);
-    if (!hasEvidence) continue;
+    if (usable) {
+      if (!subtreeHasModelKey(value)) continue;
+      if (isModelShaped(value)) {
+        diagnostics.push(nestedModelDiagnostic(childPath));
+      } else if (value['model'] !== undefined) {
+        diagnostics.push(missingNameDiagnostic(childPath));
+      }
+      walkModelEntry(childPath, value, diagnostics);
+      continue;
+    }
     if (isModelShaped(value)) {
       diagnostics.push(nestedModelDiagnostic(childPath));
-    } else if (hasModelNameKey(value) || (!usable && hasModelRecordField(value))) {
+    } else if (
+      hasModelNameKey(value) ||
+      hasModelRecordField(value) ||
+      hasSchemaSettingsChild(value) ||
+      childTables(value).length === 0
+    ) {
       diagnostics.push(missingNameDiagnostic(childPath));
     }
     walkModelEntry(childPath, value, diagnostics);

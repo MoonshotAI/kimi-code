@@ -1728,6 +1728,52 @@ describe('malformed model entries', () => {
     disposables.dispose();
   });
 
+  it('preserves a dotted leaf that contains only passthrough fields', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.foo.bar]\nnote = "local model"\n',
+    );
+
+    expect(config.diagnostics()).toEqual([
+      {
+        domain: MODELS_SECTION,
+        severity: 'warning',
+        message:
+          "[models] entry 'foo.bar' has no usable model name and cannot be used as a model; " +
+          'if the alias contains dots, quote the table name (e.g. [models."foo.bar"]).',
+      },
+    ]);
+
+    disposables.dispose();
+  });
+
+  it('ignores name-bearing passthrough objects of a valid model', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.foo]\nmodel = "foo"\nmax_context_size = 128000\n\n[models.foo.metadata]\nname = "deployment"\n',
+    );
+
+    expect(config.diagnostics()).toEqual([]);
+
+    disposables.dispose();
+  });
+
+  it('escapes every TOML control character in suggested keys', async () => {
+    const { config, disposables } = await createConfig(
+      '[models."foo.\\u001Bbar"]\nnote = "junk"\n',
+    );
+
+    expect(config.diagnostics()).toEqual([
+      {
+        domain: MODELS_SECTION,
+        severity: 'warning',
+        message:
+          '[models] entry \'foo.\u001bbar\' has no usable model name and cannot be used as a model; ' +
+          'if the alias contains dots, quote the table name (e.g. [models."foo.\\u001Bbar"]).',
+      },
+    ]);
+
+    disposables.dispose();
+  });
+
   it('warns for every nested model path sharing a prefix', async () => {
     const { config, disposables } = await createConfig(
       '[models.openai.gpt-4]\nmodel = "gpt-4"\n\n[models.openai.gpt-4o]\nmodel = "gpt-4o"\n',
