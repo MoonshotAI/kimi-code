@@ -108,6 +108,9 @@ importers:
       '@moonshot-ai/pi-tui':
         specifier: workspace:^
         version: link:../../packages/pi-tui
+      '@moonshot-ai/remote-control':
+        specifier: workspace:^
+        version: link:../../packages/remote-control
       '@moonshot-ai/vis-server':
         specifier: workspace:^
         version: link:../vis/server
@@ -659,6 +662,9 @@ importers:
       '@moonshot-ai/minidb':
         specifier: workspace:*
         version: link:../minidb
+      '@moonshot-ai/remote-control':
+        specifier: workspace:^
+        version: link:../remote-control
       '@moonshot-ai/transcript':
         specifier: workspace:^
         version: link:../transcript
@@ -842,6 +848,19 @@ importers:
       zod:
         specifier: ^4.3.6
         version: 4.3.6
+
+  packages/remote-control:
+    dependencies:
+      '@moonshot-ai/kimi-code-oauth':
+        specifier: workspace:^
+        version: link:../oauth
+      ws:
+        specifier: ^8.18.0
+        version: 8.20.0
+    devDependencies:
+      '@types/ws':
+        specifier: ^8.18.0
+        version: 8.18.1
 
   packages/telemetry: {}
 

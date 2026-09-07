@@ -224,6 +224,7 @@ export async function handleWebCommand(
           homeDir: dataDir,
           localOrigin: origin,
           localServerToken: token,
+          clientVersion: `kimi-code/${getVersion()}`,
           stderr: deps.stderr,
           onStatus,
         });
