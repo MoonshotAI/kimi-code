@@ -4,8 +4,8 @@ import { IAgentContextMemoryService, IAgentProfileService } from '#/index';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { TokenCountingMeasured } from '#/agent/tokenCounting/tokenCountingOps';
 import { TokenCountingAgentModelDefinition } from '#/session/tokenCounting/tokenCountingAgentModel';
-import { estimateTokensForMessages } from '#/kosong/contract/tokens';
-import type { TokenUsage } from '#/kosong/contract/usage';
+import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
+import type { TokenUsage } from '#human/llm/usage';
 import { IWireService } from '#/wire/wire';
 
 import { createTestAgent, InMemoryWireRecordPersistence, type TestAgentContext } from '../../harness';

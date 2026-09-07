@@ -158,6 +158,7 @@ export function stubAgentWire(
     appendRecord: () => {},
     readJournal: async function* () {},
     flush,
+    drainPersisted: async () => {},
     lineCount: () => 0,
     lastContextClearLine: () => undefined,
     journalPath: () => undefined,

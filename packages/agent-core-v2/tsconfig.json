@@ -3,5 +3,6 @@
   "compilerOptions": {
     "experimentalDecorators": true
   },
-  "include": ["src", "test"]
+  "include": ["src", "test"],
+  "exclude": ["src/human/test"]
 }

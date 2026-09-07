@@ -12,9 +12,9 @@ import {
   TurnStepStarted,
   TurnStepCompleted,
   TurnStepInterrupted,
+  TurnStepRetrying,
 } from '#/agent/loop/turnEvents';
 import { TurnEnded, turnKey } from '#/agent/loop/turnOps';
-import { TurnStepRetrying } from '#/agent/stepRetry/stepRetryService';
 import { ToolCallStarted, ToolResultEvent } from '#/agent/toolExecutor/toolExecutorEvents';
 import {
   PermissionApprovalRequested,

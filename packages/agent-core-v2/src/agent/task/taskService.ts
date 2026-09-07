@@ -3,7 +3,7 @@ import { join } from 'pathe';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { ILogService } from '#/_base/log/log';
@@ -24,10 +24,9 @@ import {
 import '#/agent/contextMemory/conversationTime';
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import type { ContextMessage, TaskOrigin } from '#/agent/contextMemory/types';
+import type { TaskOrigin } from '#/agent/contextMemory/types';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
-import { IAgentLoopService } from '#/agent/loop/loop';
-import { MessageStepRequest } from '#/agent/loop/stepRequest';
+import { IAgentLoopService, type LoopNotifyHandle } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { ITaskService, type ITaskHandle, TERMINAL_TASK_STATES } from '#/app/task/task';
@@ -185,24 +184,6 @@ function coerceTimeoutSettlement(
   return settlement;
 }
 
-export class TaskNotificationStepRequest extends MessageStepRequest {
-  constructor(
-    message: ContextMessage,
-    private readonly onWillDeliver?: () => void,
-  ) {
-    super(message, {
-      kind: 'task_notification',
-      mergeable: true,
-      turnScoped: false,
-      admission: 'activeOrNewTurn',
-    });
-  }
-
-  override onWillMaterialize(): void {
-    this.onWillDeliver?.();
-  }
-}
-
 export const taskGhostsKey = defineState<Map<string, AgentTaskInfo>>(
   'task.ghosts',
   () => new Map(),
@@ -225,7 +206,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
 
   private readonly tasks = new Map<string, ManagedTask>();
   private readonly buildingNotificationKeys = new Set<string>();
-  private readonly pendingNotificationRequests = new Map<string, TaskNotificationStepRequest>();
+  private readonly pendingNotificationRequests = new Map<string, LoopNotifyHandle>();
   private readonly persistence: AgentTaskPersistence;
   private notificationRestoreQueue: Promise<void> = Promise.resolve();
 
@@ -519,7 +500,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   private async reconcileNotificationDeliveryAfterUndo(): Promise<void> {
     const restoredKeys = new Set(this.states.get(taskNotificationDeliveryKey));
     for (const [key, request] of this.pendingNotificationRequests) {
-      if (request.aborted) this.clearPendingNotification(key, request);
+      if (request.dropped) this.clearPendingNotification(key, request);
     }
     this.deliveredNotificationKeys.clear();
     for (const key of restoredKeys) this.deliveredNotificationKeys.add(key);
@@ -626,7 +607,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
         notificationId: taskNotificationId(taskId, status),
       };
       const key = notificationKey(origin);
-      this.pendingNotificationRequests.get(key)?.abort();
+      this.pendingNotificationRequests.get(key)?.drop();
       this.markDeliveredNotification(origin);
       keys.push(key);
     }
@@ -1106,30 +1087,21 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     if (context === undefined) return;
     const key = notificationKey(context.origin);
     if (this.deliveredNotificationKeys.has(key)) return;
-    const request = new TaskNotificationStepRequest(
-      {
+    const handle = this.loop.notify({
+      message: {
         role: 'user',
         content: [...context.content],
         toolCalls: [],
         origin: context.origin,
       },
-      () => this.fireNotificationHook(context.notification),
-    );
-    this.pendingNotificationRequests.set(key, request);
-    try {
-      const receipt = this.loop.enqueue(request);
-      void receipt.assigned
-        .then(({ step }) => step.result)
-        .then(
-          () => {
-            if (request.aborted) this.clearPendingNotification(key, request);
-          },
-          () => this.clearPendingNotification(key, request),
-        );
-    } catch (error) {
-      this.clearPendingNotification(key, request);
-      throw error;
-    }
+      turnScoped: false,
+      onConsume: () => {
+        this.pendingNotificationRequests.delete(key);
+        this.fireNotificationHook(context.notification);
+      },
+      onDrop: () => this.clearPendingNotification(key, handle),
+    });
+    this.pendingNotificationRequests.set(key, handle);
   }
 
   private restoreAgentTaskNotifications(): Promise<void> {
@@ -1330,7 +1302,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     this.deliveredNotificationKeys.add(key);
   }
 
-  private clearPendingNotification(key: string, request: TaskNotificationStepRequest): void {
+  private clearPendingNotification(key: string, request: LoopNotifyHandle): void {
     if (this.pendingNotificationRequests.get(key) !== request) return;
     this.pendingNotificationRequests.delete(key);
     if (!this.deliveredNotificationKeys.has(key) && !this.hasDeliveredNotification(key)) {

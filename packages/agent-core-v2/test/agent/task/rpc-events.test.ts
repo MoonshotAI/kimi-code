@@ -22,7 +22,6 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { IEventBus } from '#/app/event/eventBus';
 import type { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { MessageStepRequest } from '#/agent/loop/stepRequest';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { ErrorCodes } from '#/errors';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -922,19 +921,14 @@ describe('AgentTaskService — notification delivery', () => {
 
     try {
       ctx.appendTurnExchange('kept prompt', 'kept answer');
-      const active = (
-        await loop.enqueue(
-          new MessageStepRequest(
-            {
-              role: 'user',
-              content: [{ type: 'text', text: 'remove me' }],
-              toolCalls: [],
-              origin: { kind: 'user' },
-            },
-            { admission: 'newTurn' },
-          ),
-        ).assigned
-      ).turn;
+      const active = loop.submit({
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'remove me' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      }).turn;
       await started;
       const taskId = registerProcess(manager, immediateProcess(0, 'done'), 'echo done', 'done');
       await vi.waitFor(() => {

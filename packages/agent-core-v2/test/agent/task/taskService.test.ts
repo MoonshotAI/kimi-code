@@ -82,7 +82,7 @@ function stubWireService(): IWireService {
     seal: async () => {},
     appendRecord: () => {},
     readJournal: async function* () {},
-    flush: async () => {},
+    flush: async () => {}, drainPersisted: async () => {},
     lineCount: () => 0,
     lastContextClearLine: () => undefined,
     journalPath: () => undefined,

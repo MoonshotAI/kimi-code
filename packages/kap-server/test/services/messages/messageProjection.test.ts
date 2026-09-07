@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { ContextMessage } from '@moonshot-ai/agent-core-v2';
 
-import { toProtocolMessage } from '../../../src/services/messages/messageProjection';
+import { projectPromptContentParts, toProtocolMessage } from '../../../src/services/messages/messageProjection';
 
 const SESSION_ID = 'session_1';
 const CREATED_AT = 1_700_000_000_000;
@@ -47,6 +47,21 @@ describe('toProtocolMessage', () => {
     expect(toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content).toEqual([
       { type: 'text', text: 'what is this?' },
       { type: 'image', source: { kind: 'session_media', file_id: 'file_9' } },
+    ]);
+  });
+
+  it('preserves media names in live and prompt projections', () => {
+    const part = {
+      type: 'image_url' as const,
+      imageUrl: { url: 'kimi-file://file_9', id: 'file_9', name: 'photo.png' },
+    };
+    const msg: ContextMessage = { role: 'user', content: [part], toolCalls: [] };
+
+    expect(toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content).toEqual([
+      { type: 'image', source: { kind: 'session_media', file_id: 'file_9' }, name: 'photo.png' },
+    ]);
+    expect(projectPromptContentParts([part])).toEqual([
+      { type: 'image', source: { kind: 'session_media', file_id: 'file_9' }, name: 'photo.png' },
     ]);
   });
 

@@ -11,11 +11,11 @@ import {
 } from '#/app/config/config';
 import { registerConfigSection } from '#/app/config/configSectionContributions';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
-import type { IModelCatalog, Model } from '#/kosong/model/catalog';
+import type { IModelCatalog, Model } from '#/llm-adapter/model/catalog';
 import {
   declaredDefaultEffortForModel,
   type ThinkingConfig,
-} from '#/kosong/model/thinking';
+} from '#/llm-adapter/model/thinking';
 
 import { SECONDARY_MODEL_FLAG_ID } from './flag';
 

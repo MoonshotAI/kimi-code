@@ -16,7 +16,7 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IPluginService } from '#/app/plugin/plugin';
 import { PluginService } from '#/app/plugin/pluginService';
 import type { PluginReloadEvent } from '#/app/plugin/types';
-import { IProviderService } from '#/kosong/provider/provider';
+import { IProviderService } from '#/llm-adapter/provider/provider';
 import {
   IHostFsWatchService,
   type HostFsChange,

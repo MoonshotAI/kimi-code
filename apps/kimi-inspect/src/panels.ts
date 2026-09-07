@@ -28,7 +28,7 @@ import { IAgentToolRegistryService } from '@moonshot-ai/agent-core-v2/agent/tool
 import { IAuthSummaryService } from '@moonshot-ai/agent-core-v2/app/auth/auth';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
-import { IProviderService } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
+import { IProviderService } from '@moonshot-ai/agent-core-v2/llm-adapter/provider/provider';
 import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
 import { ISessionQuestionService } from '@moonshot-ai/agent-core-v2/session/question/question';
 import { ISessionInitService } from '@moonshot-ai/agent-core-v2/features/sessionInit/sessionInit';

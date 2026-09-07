@@ -5,7 +5,7 @@ import { IInstantiationService } from '#/_base/di/instantiation';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
-import { extractImageCompressionCaptions } from '#/agent/media/image-compress';
+import { extractImageCompressionCaptions, gateImageFormatParts } from '#/agent/media/image-compress';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { newMessageId } from '#/agent/contextMemory/messageId';
@@ -20,7 +20,7 @@ import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IFileService } from '#/app/file/fileService';
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 import { IEventService } from '#/app/event/event';
 import { AgentEvent2 } from '#/app/event/event2';
 import { ErrorCodes, Error2, isError2 } from '#/errors';
@@ -49,7 +49,6 @@ import {
   type SteerPayload,
 } from './prompt';
 import { promptMetadataTextFromContentParts } from './promptMetadataText';
-import { PromptStepRequest, RetryStepRequest, SteerStepRequest } from './promptStepRequests';
 import { PromptAccepted, promptAdmissionKey } from './promptOps';
 import { daemonFileRefFromPart } from '#/agent/media/mediaRef';
 import { materializePromptDaemonRefs } from '#/agent/media/promptMediaIntake';
@@ -412,18 +411,24 @@ export class AgentPromptService implements IAgentPromptService {
       removed.push({ item, index });
       this.pending.splice(index, 1);
     }
-    const request = new SteerStepRequest(rerouted, captions, this.reminder, (materialized) => {
-      void this.dispatcher.dispatch(
-        new TurnSteer({
-          agentId: this.scopeContext.agentId,
-          input: materialized.content,
-          origin: materialized.origin ?? USER_PROMPT_ORIGIN,
-        }),
-      );
-    }, () => {});
+    const ownerPromptId = rerouted.id ?? newMessageId();
+    const message = { ...rerouted, id: ownerPromptId, content: gateImageFormatParts(rerouted.content) };
     let turn: Turn | undefined;
     try {
-      turn = (await this.loop.enqueue(request).assigned).turn;
+      turn = this.loop.steer({
+        message,
+        promptId: ownerPromptId,
+        onMaterialize: () => {
+          void this.dispatcher.dispatch(
+            new TurnSteer({
+              agentId: this.scopeContext.agentId,
+              input: message.content,
+              origin: message.origin ?? USER_PROMPT_ORIGIN,
+            }),
+          );
+          this.notifyCaptions(captions, ownerPromptId);
+        },
+      });
     } catch {
       turn = undefined;
     } finally {
@@ -461,19 +466,30 @@ export class AgentPromptService implements IAgentPromptService {
   async inject(message: ContextMessage): Promise<Turn | undefined> {
     const { message: rerouted, captions } = this.extractCompressionCaptions(message);
     await this.materializeDaemonRefs(rerouted);
-    const request = new SteerStepRequest(rerouted, captions, this.reminder, (materialized) => {
-      void this.dispatcher.dispatch(
-        new TurnSteer({
-          agentId: this.scopeContext.agentId,
-          input: materialized.content,
-          origin: materialized.origin ?? USER_PROMPT_ORIGIN,
-        }),
-      );
-    }, () => {}, 'activeOrNewTurn');
-    return (await this.loop.enqueue(request).assigned).turn;
+    const ownerPromptId = rerouted.id ?? newMessageId();
+    const gated = { ...rerouted, id: ownerPromptId, content: gateImageFormatParts(rerouted.content) };
+    const request = {
+      message: gated,
+      promptId: ownerPromptId,
+      onMaterialize: () => {
+        void this.dispatcher.dispatch(
+          new TurnSteer({
+            agentId: this.scopeContext.agentId,
+            input: gated.content,
+            origin: gated.origin ?? USER_PROMPT_ORIGIN,
+          }),
+        );
+        this.notifyCaptions(captions, ownerPromptId);
+      },
+    };
+    return this.loop.steer(request) ?? this.loop.submit(request).turn;
   }
 
-  async retry(): Promise<Turn | undefined> { return (await this.loop.enqueue(new RetryStepRequest()).assigned).turn; }
+  async retry(): Promise<Turn | undefined> {
+    return this.loop.submit({
+      message: { role: 'user', content: [], toolCalls: [], origin: { kind: 'retry' } },
+    }).turn;
+  }
 
   clear(): void {
     for (const item of this.pending.slice()) this.abort(item.id);
@@ -494,7 +510,13 @@ export class AgentPromptService implements IAgentPromptService {
         item.completionDeferred.resolve({ promptId: item.id, result: undefined, state: 'blocked' });
         this.publishCompleted(item.id, 'blocked'); return;
       }
-      const turn = (await this.loop.enqueue(new PromptStepRequest(message, captions, this.reminder)).assigned).turn;
+      const turn = this.loop.submit({
+        message: { ...message, content: gateImageFormatParts(message.content) },
+        promptId: item.id,
+        onMaterialize: () => {
+          this.notifyCaptions(captions, item.id);
+        },
+      }).turn;
       if (turn === undefined) { this.pending.unshift(item); return; }
       item.state = 'running'; item.launchedDeferred.resolve(turn); this.active = Object.assign(item, { turn });
       this.publishStarted(item);
@@ -557,6 +579,14 @@ export class AgentPromptService implements IAgentPromptService {
       });
     }
     if (message.content.length > 0) this.context.append({ ...message, id: ownerPromptId });
+  }
+  private notifyCaptions(captions: readonly string[], ownerPromptId: string): void {
+    for (const caption of captions) {
+      this.reminder.notify(caption, {
+        variant: 'image_compression',
+        ownerPromptId,
+      });
+    }
   }
   private async deliverToolResult(ctx: ToolDidExecuteContext): Promise<void> {
     const delivery = ctx.result.delivery; if (delivery === undefined) return;

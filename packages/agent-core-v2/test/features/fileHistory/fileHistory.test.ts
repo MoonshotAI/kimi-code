@@ -19,7 +19,7 @@ import { IAgentFileHistoryService } from '#/features/fileHistory/fileHistory';
 import { AgentFileHistoryService, countLineDiff } from '#/features/fileHistory/fileHistoryService';
 import { displacedCheckpoints } from '#/features/fileHistory/fileHistoryOps';
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import type { ToolCall } from '#/kosong/contract/message';
+import type { ToolCall } from '#human/llm/message';
 import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';

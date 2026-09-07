@@ -1,6 +1,6 @@
-import type { ModelCapability } from '#/kosong/contract/capability';
-import type { ContentPart } from '#/kosong/contract/message';
-import { VideoUploadUnsupportedError } from '#/kosong/contract/errors';
+import type { ModelCapability } from '#human/llm/capability';
+import type { ContentPart } from '#human/llm/message';
+import { VideoUploadUnsupportedError } from '#/llm-adapter/contract/errors';
 import { inlineVideoPart, isVideoUploadAuthError } from '#/agent/media/videoUpload';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 

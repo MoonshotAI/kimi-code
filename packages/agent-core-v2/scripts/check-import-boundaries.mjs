@@ -8,75 +8,69 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(__dirname, '..');
 export const SRC_ROOT = join(PKG_ROOT, 'src');
 const TEST_ROOT = join(PKG_ROOT, 'test');
+const HUMAN_ROOT = join(SRC_ROOT, 'human');
+const ADAPTER_ROOT = join(SRC_ROOT, 'llm-adapter');
+const LOOP_MACHINE_ADAPTER_ROOT = join(SRC_ROOT, 'agent/loop/machine');
 
 const V1_PACKAGE = '@moonshot-ai/agent-core';
 const SELF_PACKAGE_PREFIX = '@moonshot-ai/agent-core-v2/';
+const KOSONG_PATH_RE = /(?:^|\/)kosong(?:\/|$)/;
 
-const SCOPE_DIRS = new Set(['app', 'workspace', 'session', 'agent', 'persistence', 'os', 'kosong']);
-
-const TWO_LEVEL_SCOPES = new Set(['persistence', 'os', 'kosong']);
-
-const KOSONG_LAYER = new Map([
-  ['contract', 0],
-  ['protocol', 1],
-  ['provider', 2],
-  ['model', 2],
+const HUMAN_VOCABULARY = new Set([
+  'llm/message',
+  'llm/usage',
+  'llm/capability',
+  'llm/thinking',
+  'llm/finish-reason',
+  'llm/response-format',
+  'llm/media/upload',
+  'llm/requester/requester',
+  'llm/toolCallIdNormalizer',
+  'llm-kimi/trait',
 ]);
 
-const KOSONG_BASE_ONLY_SUBDOMAINS = new Set(['contract', 'protocol', 'provider', 'model']);
+const V2_ONLY_FIRST_SEGMENTS = new Set([
+  'llm-adapter',
+  'app',
+  'workspace',
+  'features',
+  'state',
+  'wire',
+  'persistence',
+  'os',
+  'mcpCore',
+  'errors',
+  'debug',
+  'program',
+  'runtime',
+  '_base',
+]);
 
-const KOSONG_ALLOWED_VOCABULARY = new Set(['app/scopes']);
-
-const KOSONG_BANNED_SDK_PACKAGES = ['@anthropic-ai/sdk', '@google/genai', 'openai'];
-
-function kosongInfoOf(absPath) {
-  const rel = relative(SRC_ROOT, absPath);
-  if (rel.startsWith('..') || rel === '') return undefined;
-  const segments = rel.split(/[\\/]/);
-  if (segments[0] !== 'kosong') return undefined;
-  const sub = segments[1];
-  const last = segments[segments.length - 1] ?? '';
-  return {
-    sub: sub === undefined || sub.endsWith('.ts') ? undefined : sub,
-    inBases: sub === 'provider' && segments[2] === 'bases',
-    isContrib: last.endsWith('.contrib.ts'),
-    isIndex: last === 'index.ts',
-  };
+function isInside(root, absPath) {
+  const rel = relative(root, absPath);
+  return rel !== '' && !rel.startsWith('..');
 }
 
-function isKosongBasesBannedTarget(targetAbs) {
-  const rel = relative(SRC_ROOT, targetAbs).split(/[\\/]/).join('/');
-  const stripped = rel.endsWith('.ts') ? rel.slice(0, -'.ts'.length) : rel;
-  if (stripped.endsWith('.contrib')) return true;
-  return (
-    /(^|\/)kosong\/provider\/providerDefinition$/.test(stripped) ||
-    /(^|\/)kosong\/provider\/protocolAdapterRegistry$/.test(stripped) ||
-    /(^|\/)kosong\/protocol\/protocolBase$/.test(stripped)
-  );
-}
-
-function domainFromRel(rel) {
-  const segments = rel.split(/[\\/]/);
-  if (TWO_LEVEL_SCOPES.has(segments[0])) {
-    return segments[1] ? `${segments[0]}/${segments[1]}` : segments[0];
+function humanSubpathOf(specifier) {
+  if (specifier.startsWith('#human/')) return specifier.slice('#human/'.length);
+  if (specifier.startsWith(`${SELF_PACKAGE_PREFIX}human/`)) {
+    return specifier.slice(`${SELF_PACKAGE_PREFIX}human/`.length);
   }
-  if (SCOPE_DIRS.has(segments[0])) {
-    if (segments.length === 2 && segments[1]?.endsWith('.ts')) return segments[0];
-    if (segments[0] === 'agent' && segments[1] === 'task') return 'agentTask';
-    if (segments[0] === 'agent' && segments[1] === 'plugin') return 'agentPlugin';
-    return segments[1];
-  }
-  return segments[0];
+  return undefined;
 }
 
-function targetDomainOf(targetAbs) {
-  const rel = relative(SRC_ROOT, targetAbs);
-  if (rel.startsWith('..') || rel === '') return undefined;
-  return domainFromRel(rel);
+function stripTs(path) {
+  return path.endsWith('.ts') ? path.slice(0, -'.ts'.length) : path;
 }
 
 function resolveIntraV2(specifier, fromFile) {
+  if (specifier.startsWith('#human/')) {
+    return join(HUMAN_ROOT, specifier.slice('#human/'.length));
+  }
   if (specifier.startsWith('#/')) {
+    if (isInside(HUMAN_ROOT, fromFile)) {
+      return join(HUMAN_ROOT, specifier.slice(2));
+    }
     return join(SRC_ROOT, specifier.slice(2));
   }
   if (specifier.startsWith(SELF_PACKAGE_PREFIX)) {
@@ -94,6 +88,8 @@ const IMPORT_RE =
 export function checkSource(source, absFile) {
   const violations = [];
   const inSrc = !relative(SRC_ROOT, absFile).startsWith('..');
+  const inHuman = isInside(HUMAN_ROOT, absFile);
+  const inAdapter = isInside(ADAPTER_ROOT, absFile) || isInside(LOOP_MACHINE_ADAPTER_ROOT, absFile);
 
   let match;
   IMPORT_RE.lastIndex = 0;
@@ -111,78 +107,47 @@ export function checkSource(source, absFile) {
       continue;
     }
 
-    if (!inSrc) continue;
-    const targetAbs = resolveIntraV2(specifier, absFile);
-    const sourceKosong = kosongInfoOf(absFile);
-    if (sourceKosong === undefined) continue;
-
-    if (targetAbs === undefined) {
-      if (sourceKosong.sub === 'contract') {
-        violations.push({
-          file: absFile,
-          line,
-          message: `kosong/contract must not import external package '${specifier}' — the L0 wire contract is pure (no SDK, no I/O, no third-party dependencies)`,
-        });
-      } else if (
-        sourceKosong.sub === 'protocol' &&
-        KOSONG_BANNED_SDK_PACKAGES.some(
-          (pkg) => specifier === pkg || specifier.startsWith(`${pkg}/`),
-        )
-      ) {
-        violations.push({
-          file: absFile,
-          line,
-          message: `kosong/protocol must not import wire SDK '${specifier}' — L1 trait interfaces are SDK-free`,
-        });
-      }
+    if (KOSONG_PATH_RE.test(specifier)) {
+      violations.push({
+        file: absFile,
+        line,
+        message: `the kosong kernel is deleted (${specifier}) — request/provider code lives in #human/llm, the v2 compatibility boundary is #/llm-adapter`,
+      });
       continue;
     }
 
-    const targetKosong = kosongInfoOf(targetAbs);
-    if (targetKosong !== undefined) {
-      const sourceKosongLayer = KOSONG_LAYER.get(sourceKosong.sub);
-      const targetKosongLayer = KOSONG_LAYER.get(targetKosong.sub);
-      if (sourceKosongLayer !== undefined && targetKosongLayer !== undefined) {
-        if (targetKosongLayer > sourceKosongLayer) {
+    if (!inSrc) continue;
+
+    if (inHuman) {
+      if (specifier.startsWith('#/')) {
+        const first = specifier.slice(2).split('/')[0];
+        if (first !== undefined && V2_ONLY_FIRST_SEGMENTS.has(first)) {
           violations.push({
             file: absFile,
             line,
-            message: `kosong layer violation: 'kosong/${sourceKosong.sub}' (L${sourceKosongLayer}) imports 'kosong/${targetKosong.sub}' (L${targetKosongLayer}) via '${specifier}' — kosong layers are contract(L0) ← protocol(L1) ← provider/model(L2)`,
+            message: `human must not import outside its kernel ('${specifier}') — human is the pure LLM/agent kernel: it never imports llm-adapter or v2 domains`,
           });
-        } else if (sourceKosong.sub === 'provider' && targetKosong.sub === 'model') {
-          violations.push({
-            file: absFile,
-            line,
-            message: `kosong peer violation: 'kosong/provider' must not import 'kosong/model' via '${specifier}' — the peer dependency runs model → provider only`,
-          });
+          continue;
         }
       }
-      if (
-        sourceKosong.inBases &&
-        !sourceKosong.isContrib &&
-        !sourceKosong.isIndex &&
-        isKosongBasesBannedTarget(targetAbs)
-      ) {
+      const targetAbs = resolveIntraV2(specifier, absFile);
+      if (targetAbs !== undefined && !isInside(HUMAN_ROOT, targetAbs)) {
         violations.push({
           file: absFile,
           line,
-          message: `kosong bases boundary: base implementation files under 'kosong/provider/bases' must not import registries (protocolBase/protocolAdapterRegistry), providerDefinition, or contrib modules (via '${specifier}') — registration lives in *.contrib.ts and the directory index.ts`,
+          message: `human must not import outside its kernel ('${specifier}') — human is the pure LLM/agent kernel: it never imports llm-adapter or v2 domains`,
         });
       }
       continue;
     }
 
-    if (KOSONG_BASE_ONLY_SUBDOMAINS.has(sourceKosong.sub)) {
-      const targetDomain = targetDomainOf(targetAbs);
-      const targetRel = relative(SRC_ROOT, targetAbs).split(/[\\/]/).join('/');
-      const targetStripped = targetRel.endsWith('.ts') ? targetRel.slice(0, -'.ts'.length) : targetRel;
-      if (targetDomain !== '_base' && !KOSONG_ALLOWED_VOCABULARY.has(targetStripped)) {
-        violations.push({
-          file: absFile,
-          line,
-          message: `'kosong/${sourceKosong.sub}' must not import domain '${targetDomain ?? specifier}' via '${specifier}' — kosong is a pure abstraction layer: only _base utilities are allowed outside the kosong subtree (persistence/OAuth/discovery live in app/kosongConfig)`,
-        });
-      }
+    const humanSub = humanSubpathOf(specifier);
+    if (humanSub !== undefined && !inAdapter && !HUMAN_VOCABULARY.has(stripTs(humanSub))) {
+      violations.push({
+        file: absFile,
+        line,
+        message: `only llm-adapter and agent/loop/machine may import the human implementation ('${specifier}') — v2 code outside those adapter layers is limited to the vocabulary modules (${[...HUMAN_VOCABULARY].join(', ')})`,
+      });
     }
   }
 

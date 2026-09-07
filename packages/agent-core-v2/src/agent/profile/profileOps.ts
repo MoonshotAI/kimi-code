@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 import type { EnvironmentDisclosureSnapshot } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { AgentEvent2 } from '#/app/event/event2';
-import type { ThinkingEffort } from '#/kosong/contract/provider';
+import type { ThinkingEffort } from '#human/llm/thinking';
 import { defineState } from '#/state/state';
 
 import { ProfileError, ProfileErrors } from './profile';

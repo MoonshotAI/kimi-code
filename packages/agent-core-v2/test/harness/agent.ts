@@ -103,22 +103,20 @@ import type { StateKey } from '#/state/state';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { EVENT2_REGISTRY, event2FromRecord } from '#/app/event/event2';
-import { IProtocolAdapterRegistry, type ProtocolAdapterConfig } from '#/kosong/protocol/protocol';
-import { ProtocolAdapterRegistry } from '#/kosong/provider/protocolAdapterRegistry';
-import { hasProviderDefinition } from '#/kosong/provider/providerDefinition';
+import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
+import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
 import { summarizeSkill, type SkillCatalog } from '#/features/skill/catalog/types';
-import { type ModelCapability } from '#/kosong/contract/capability';
-import { isToolCall, isToolCallPart, type ContentPart, type Message as KosongMessage, type StreamedMessagePart } from '#/kosong/contract/message';
-import { type ThinkingEffort } from '#/kosong/contract/provider';
-import { type Tool as KosongTool } from '#/kosong/contract/tool';
-import { type TokenUsage } from '#/kosong/contract/usage';
+import { type ModelCapability } from '#/llm-adapter/contract/capability';
+import { isToolCall, isToolCallPart, type ContentPart, type Message as KosongMessage, type StreamedMessagePart } from '#/llm-adapter/contract/message';
+import { type ThinkingEffort } from '#human/llm/thinking';
+import { type Tool as KosongTool } from '#/llm-adapter/contract/message';
+import { type TokenUsage } from '#human/llm/usage';
 import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
 import { type AgentModelDefinition } from '#/state/agentModel';
 import { type AgentModelInstanceOf } from '#/agent/agentContext/agentSpace';
 import { IAgentTodoService } from '#/features/todo/todoService';
 import { type TodoItem } from '#/features/todo/todoItem';
-import type { generate as kosongGenerate } from '#/kosong/contract/generate';
-import type { ChatProvider, GenerateOptions, StreamedMessage } from '#/kosong/contract/provider';
+import type { LlmRequester } from '#human/llm/requester/requester';
 import type { ILogger, LogContext, LogLevel } from '#/_base/log/log';
 import { ILogOptions } from '#/_base/log/logConfig';
 import {
@@ -156,8 +154,6 @@ import {
   IAgentScopeContext,
   makeAgentScopeContext,
   IAgentShellCommandService,
-  IAgentStepRetryService,
-  IAgentLoopContinuationService,
   IAgentSwarmService,
   AgentSwarmService,
   ISessionTokenCountingService,
@@ -197,23 +193,23 @@ import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IWireService } from '#/wire/wire';
 import { WireService } from '#/wire/wireService';
 import { TurnPrompt } from '#/agent/loop/turnOps';
-import { IModelService, type ModelsSection } from '#/kosong/model/model';
+import { IModelService, type ModelsSection } from '#/llm-adapter/model/model';
 import {
   DEFAULT_MODEL_SECTION,
   DEFAULT_PROVIDER_SECTION,
   MODELS_SECTION,
   PROVIDERS_SECTION,
 } from '#/app/kosongConfig/configSection';
-import { IModelCatalog, type Model } from '#/kosong/model/catalog';
-import { ModelCatalog } from '#/kosong/model/catalogService';
-import { IModelOAuthTokens } from '#/kosong/model/modelOAuth';
-import type { ModelRequestParams, ModelRequester } from '#/kosong/model/modelRequester';
-import { IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
+import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
+import { ModelCatalog } from '#/llm-adapter/model/catalog-service';
+import { IModelOAuthTokens } from '#/llm-adapter/model/model-oauth';
+import type { ModelRequestParams, ModelRequester } from '#/llm-adapter/model/model-requester';
+import { IHostRequestHeaders } from '#/llm-adapter/model/host-request-headers';
 import {
   IProviderService,
   type ProviderConfig,
   type ProvidersSection,
-} from '#/kosong/provider/provider';
+} from '#/llm-adapter/provider/provider';
 import type { ApprovalResponse } from '#/session/approval/approval';
 import type { InteractionRequest } from '#/features/interaction/interaction';
 import { IAgentInteractionService } from '#/features/interaction/interactionService';
@@ -392,7 +388,6 @@ interface AgentRpcPassthroughAPI {
 }
 
 type PromiseAgentAPI = PromisifyMethods<AgentRpcPassthroughAPI>;
-type GenerateFn = typeof kosongGenerate;
 
 type TestToolResult = ExecutableToolResult & {
   readonly content?: unknown;
@@ -431,7 +426,7 @@ interface ConfigureOptions {
 export type TestAgentContext = AgentTestContext;
 
 export interface TestAgentOptions {
-  readonly generate?: GenerateFn | undefined;
+  readonly generate?: LlmRequester | undefined;
   readonly telemetry?: ITelemetryService | undefined;
   readonly persistence?: WireRecordPersistence | undefined;
   readonly hookEngine?:
@@ -663,8 +658,8 @@ export function logServices(logger: Logger): TestAgentServiceOverride {
   ];
 }
 
-export function llmGenerateServices(generate: GenerateFn): TestAgentServiceOverride {
-  return appService(IProtocolAdapterRegistry, createGenerateBackedProtocolRegistry(generate));
+export function llmGenerateServices(requester: LlmRequester): TestAgentServiceOverride {
+  return appService(IProtocolAdapterRegistry, createGenerateBackedGateway(requester));
 }
 
 export function telemetryServices(telemetry: ITelemetryService): TestAgentServiceOverride {
@@ -1139,8 +1134,8 @@ export class AgentTestContext {
           );
           reg.defineInstance(
             IProtocolAdapterRegistry,
-            createGenerateBackedProtocolRegistry(
-              options.generate ?? this.scriptedGenerate.generate,
+            createGenerateBackedGateway(
+              options.generate ?? this.scriptedGenerate.requester,
             ),
           );
           reg.defineInstance(
@@ -1556,8 +1551,6 @@ export class AgentTestContext {
     void this.get(IAgentToolActivationService).activate();
     this.get(IAgentToolDedupeService);
     this.get(IAgentExternalHooksService);
-    this.get(IAgentStepRetryService);
-    this.get(IAgentLoopContinuationService);
     const tasks = this.get(IAgentTaskService);
     const permission = this.get(IAgentPermissionGate);
     const swarm = this.get(IAgentSwarmService);
@@ -1924,7 +1917,7 @@ export class AgentTestContext {
       { autoConfigure: false, cwd: this.cwd },
       ...this.serviceOverrides,
       configServices(() => configSnapshot),
-      llmGenerateServices(failOnResumeGenerate),
+      llmGenerateServices(failOnResumeRequester),
       wireRecordPersistenceServices(
         new InMemoryWireRecordPersistence(withMetadata(wireHistory)),
       ),
@@ -2350,8 +2343,8 @@ function createHostTerminalService(): IHostTerminalService {
   };
 }
 
-const failOnResumeGenerate: GenerateFn = async () => {
-  throw new Error('Resume replay unexpectedly called the LLM');
+const failOnResumeRequester: LlmRequester = {
+  generate: () => Promise.reject(new Error('Resume replay unexpectedly called the LLM')),
 };
 
 function resumeStateSnapshot(ctx: AgentTestContext): ResumeStateSnapshot {
@@ -2754,7 +2747,7 @@ function createLogService(logger: Logger | undefined, bindings: LogContext = {})
   };
 }
 
-function createGenerateBackedProtocolRegistry(generate: GenerateFn): IProtocolAdapterRegistry {
+function createGenerateBackedGateway(requester: LlmRequester): IProtocolAdapterRegistry {
   const real = new ProtocolAdapterRegistry();
   return {
     _serviceBrand: undefined,
@@ -2767,185 +2760,7 @@ function createGenerateBackedProtocolRegistry(generate: GenerateFn): IProtocolAd
       real.resolveCapability(protocol, modelName, providerType),
     explainCapability: (protocol, modelName, providerType) =>
       real.explainCapability(protocol, modelName, providerType),
-    createChatProvider: (input: ProtocolAdapterConfig) => {
-      if (input.providerType !== undefined && hasProviderDefinition(input.providerType)) {
-        return replaceProviderGenerate(real.createChatProvider(input), generate);
-      }
-      return new GenerateBackedChatProvider(input, generate);
-    },
-  } as IProtocolAdapterRegistry;
-}
-
-function replaceProviderGenerate(provider: ChatProvider, generate: GenerateFn): ChatProvider {
-  const replaced: ChatProvider = {
-    get name() {
-      return provider.name;
-    },
-    get modelName() {
-      return provider.modelName;
-    },
-    get thinkingEffort() {
-      return provider.thinkingEffort;
-    },
-    get maxCompletionTokens() {
-      return provider.maxCompletionTokens;
-    },
-    generate: (systemPrompt, tools, history, options) =>
-      generateBackedResponse(provider, generate, systemPrompt, tools, history, options),
-  };
-  if (provider.uploadVideo !== undefined) {
-    replaced.uploadVideo = (input, options) => provider.uploadVideo!(input, options);
-  }
-  return replaced;
-}
-
-class GenerateBackedChatProvider implements ChatProvider {
-  readonly name: string;
-  readonly modelName: string;
-  readonly thinkingEffort: ThinkingEffort | null = null;
-  readonly maxCompletionTokens: number | undefined;
-
-  constructor(
-    config: ProtocolAdapterConfig,
-    private readonly generateFn: GenerateFn,
-  ) {
-    this.name = config.providerType ?? config.protocol;
-    this.modelName = config.modelName;
-    this.maxCompletionTokens = config.providerOptions?.defaultMaxTokens;
-  }
-
-  async generate(
-    systemPrompt: string,
-    tools: KosongTool[],
-    history: KosongMessage[],
-    options?: GenerateOptions,
-  ): Promise<StreamedMessage> {
-    return generateBackedResponse(this, this.generateFn, systemPrompt, tools, history, options);
-  }
-}
-
-async function generateBackedResponse(
-  provider: ChatProvider,
-  generateFn: GenerateFn,
-  systemPrompt: string,
-  tools: KosongTool[],
-  history: KosongMessage[],
-  options?: GenerateOptions,
-): Promise<StreamedMessage> {
-  const parts: StreamedMessagePart[] = [];
-  let result: Awaited<ReturnType<GenerateFn>>;
-  try {
-    result = await generateFn(
-      provider,
-      systemPrompt,
-      tools,
-      history,
-      {
-        onMessagePart: (part) => {
-          parts.push(structuredClone(part));
-        },
-      },
-      {
-        signal: options?.signal,
-        auth: options?.auth,
-        cacheKey: options?.cacheKey,
-        sampling: options?.sampling,
-        thinking: options?.thinking,
-        maxCompletionTokens: options?.maxCompletionTokens,
-        usedContextTokens: options?.usedContextTokens,
-        maxContextTokens: options?.maxContextTokens,
-        responseFormat: options?.responseFormat,
-        onTraceId: options?.onTraceId,
-      },
-    );
-  } catch (error) {
-    if (parts.length === 0) throw error;
-    return createStreamedMessage(normalizeProviderStreamParts(parts), {
-      id: null,
-      usage: null,
-      finishReason: null,
-      rawFinishReason: null,
-      error: error instanceof Error ? error : new Error('generateBackedResponse failed'),
-    });
-  }
-  return createStreamedMessage(
-    parts.length > 0
-      ? normalizeProviderStreamParts(parts)
-      : partsFromGeneratedMessage(result.message),
-    {
-      id: result.id,
-      usage: result.usage,
-      finishReason: result.finishReason,
-      rawFinishReason: result.rawFinishReason,
-      traceId: result.traceId,
-    },
-  );
-}
-
-function partsFromGeneratedMessage(
-  message: Awaited<ReturnType<GenerateFn>>['message'],
-): StreamedMessagePart[] {
-  const parts: StreamedMessagePart[] = [
-    ...message.content.map((part) => structuredClone(part)),
-    ...message.toolCalls.map((part) => structuredClone(part)),
-  ];
-  return parts.length > 0 ? parts : [{ type: 'text', text: '' }];
-}
-
-function normalizeProviderStreamParts(
-  parts: readonly StreamedMessagePart[],
-): StreamedMessagePart[] {
-  const normalized: StreamedMessagePart[] = [];
-  const pendingIndexedDeltas = new Map<number | string, StreamedMessagePart[]>();
-  const seenIndexes = new Set<number | string>();
-
-  for (const part of parts) {
-    if (isToolCallPart(part) && part.index !== undefined && !seenIndexes.has(part.index)) {
-      const pending = pendingIndexedDeltas.get(part.index) ?? [];
-      pending.push(structuredClone(part));
-      pendingIndexedDeltas.set(part.index, pending);
-      continue;
-    }
-
-    normalized.push(structuredClone(part));
-
-    if (isToolCall(part) && part._streamIndex !== undefined) {
-      seenIndexes.add(part._streamIndex);
-      const pending = pendingIndexedDeltas.get(part._streamIndex);
-      if (pending !== undefined) {
-        pendingIndexedDeltas.delete(part._streamIndex);
-        normalized.push(...pending);
-      }
-    }
-  }
-
-  for (const pending of pendingIndexedDeltas.values()) {
-    normalized.push(...pending);
-  }
-
-  return normalized;
-}
-
-function createStreamedMessage(
-  parts: readonly StreamedMessagePart[],
-  meta: Pick<
-    Awaited<ReturnType<GenerateFn>>,
-    'id' | 'usage' | 'finishReason' | 'rawFinishReason'
-  > &
-    Partial<Pick<Awaited<ReturnType<GenerateFn>>, 'traceId'>> & { error?: Error },
-): StreamedMessage {
-  return {
-    id: meta.id,
-    usage: meta.usage,
-    finishReason: meta.finishReason ?? null,
-    rawFinishReason: meta.rawFinishReason ?? null,
-    traceId: meta.traceId,
-    async *[Symbol.asyncIterator]() {
-      for (const part of parts) {
-        yield structuredClone(part);
-      }
-      if (meta.error !== undefined) throw meta.error;
-    },
+    resolve: (model) => ({ ...real.resolve(model), requester }),
   };
 }
 

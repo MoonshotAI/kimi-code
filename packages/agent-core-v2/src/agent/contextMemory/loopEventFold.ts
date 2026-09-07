@@ -1,8 +1,9 @@
 import { isDraft, original } from 'immer';
 
-import type { FinishReason } from '#/kosong/contract/provider';
-import { createToolMessage, type ContentPart, type ToolCall } from '#/kosong/contract/message';
-import type { TokenUsage } from '#/kosong/contract/usage';
+import type { FinishReason } from '#human/llm/finish-reason';
+import { createToolMessage } from '#/llm-adapter/contract/message';
+import type { ContentPart, ToolCall } from '#human/llm/message';
+import type { TokenUsage } from '#human/llm/usage';
 
 import type { ContextMessage } from './types';
 import { isVacuousContentPart } from './vacuousContent';
