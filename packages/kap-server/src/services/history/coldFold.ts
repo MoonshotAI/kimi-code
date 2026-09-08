@@ -1,9 +1,9 @@
 import {
   daemonFileRefFromPart,
   parseDaemonFileUrl,
+  type ContentPart,
   type TokenUsage,
 } from '@moonshot-ai/agent-core-v2';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
 
 import type {
   HistoryMessage,
@@ -625,6 +625,7 @@ export function foldWireHistory(
         const kind = e.part.type === 'text' ? 'assistant' : e.part.type === 'think' ? 'thinking' : undefined;
         const partText = e.part.type === 'think' ? e.part.think : e.part.text;
         if (kind === undefined || typeof partText !== 'string') return;
+        if (kind === 'thinking' && partText.length === 0) return;
         const stepId = draft.stepId;
         const existingId = stepTextIds.get(stepId)?.[kind];
         const text = existingId === undefined ? undefined : texts.get(existingId);

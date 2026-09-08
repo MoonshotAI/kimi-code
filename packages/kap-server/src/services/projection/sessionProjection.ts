@@ -13,13 +13,14 @@ import {
   IAgentTaskService,
   IAgentTodoService,
   IEventBus,
+  INTERACTION_TAG_AGENT_ID,
+  INTERACTION_TAG_SESSION_ID,
   ISessionActivityView,
   ISessionIndex,
   IWireService,
   MAIN_AGENT_ID,
-  listSessionPendingInteractions,
-  onSessionInteractionDidChangePending,
-  onSessionInteractionDidResolve,
+  interactions,
+  toDisposable,
   type AgentTaskInfo,
   type IAgentScopeHandle,
   type IDisposable,
@@ -87,20 +88,22 @@ export class SessionProjection {
           this.dropAgent(context.agentId);
         }),
       ),
-      onSessionInteractionDidChangePending(
-        agents,
-        this.guard(() => {
-          this.onInteractionsChanged(agents);
-        }),
+      toDisposable(
+        interactions.onDidChangePending(
+          this.guard(() => {
+            this.onInteractionsChanged();
+          }),
+        ),
       ),
-      onSessionInteractionDidResolve(
-        agents,
-        this.guard(({ id, response }) => {
-          this.onInteractionResolve(id, response);
-        }),
+      toDisposable(
+        interactions.onDidResolve(
+          this.guard(({ id, response }) => {
+            this.onInteractionResolve(id, response);
+          }),
+        ),
       ),
     );
-    for (const pending of listSessionPendingInteractions(agents)) {
+    for (const pending of this.pendingInteractions()) {
       this.announce(pending, false);
     }
     const activity = session.accessor.get(ISessionActivityView) as
@@ -350,8 +353,15 @@ export class SessionProjection {
     };
   }
 
-  private onInteractionsChanged(agents: IAgentLifecycleService): void {
-    for (const pending of listSessionPendingInteractions(agents)) {
+  private pendingInteractions(): readonly Interaction[] {
+    return interactions.findAll({
+      resolved: false,
+      tags: { [INTERACTION_TAG_SESSION_ID]: this.sessionId },
+    });
+  }
+
+  private onInteractionsChanged(): void {
+    for (const pending of this.pendingInteractions()) {
       if (this.knownInteractions.has(pending.id)) continue;
       this.announce(pending, true);
     }
@@ -368,7 +378,6 @@ export class SessionProjection {
       id: interaction.id,
       kind: interaction.kind,
       payload: interaction.payload,
-      origin: interaction.origin,
       createdAt: interaction.createdAt,
     };
     const ops = projector.interactionRequested(request);
@@ -537,8 +546,9 @@ export class SessionProjection {
 
 function interactionAgentId(interaction: Interaction): string {
   const payloadAgent = (interaction.payload as { agentId?: unknown }).agentId;
+  const tag = interaction.tags[INTERACTION_TAG_AGENT_ID];
   return (
-    interaction.origin.agentId ??
+    (typeof tag === 'string' ? tag : undefined) ??
     (typeof payloadAgent === 'string' ? payloadAgent : undefined) ??
     MAIN_AGENT_ID
   );

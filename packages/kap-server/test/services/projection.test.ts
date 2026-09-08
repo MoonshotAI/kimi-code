@@ -1,7 +1,6 @@
 import {
   IAgentActivityView,
   IAgentGoalService,
-  IAgentInteractionService,
   IAgentLifecycleService,
   IAgentLoopService,
   IAgentPermissionModeService,
@@ -15,15 +14,15 @@ import {
   ISessionActivityView,
   ISessionTokenCountingService,
   ISessionUsageService,
+  interactions,
   makeAgentScopeContext,
   type AgentContext,
   type Event2,
-  type Interaction,
   type ISessionScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { Emitter, Event } from '@moonshot-ai/agent-core-v2/_base/event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { serverMessageSchema, type ServerMessage } from '../../src/protocol/messages';
 import { AgentMessageProjector } from '../../src/services/projection/agentProjector';
@@ -78,6 +77,8 @@ function runFullTurn(projector: AgentMessageProjector, sink: ServerMessage[]): v
   feed(projector, ev({ type: 'turn.step.started', turnId: 1, step: 1 }), sink);
   feed(projector, ev({ type: 'assistant.delta', turnId: 1, delta: 'Hello' }), sink);
   feed(projector, ev({ type: 'assistant.delta', turnId: 1, delta: ' world' }), sink);
+  feed(projector, ev({ type: 'thinking.delta', turnId: 1, delta: '' }), sink);
+  feed(projector, ev({ type: 'thinking.delta', turnId: 1, delta: 'hmm' }), sink);
   feed(
     projector,
     ev({ type: 'tool.call.delta', turnId: 1, toolCallId: 'call_1', name: 'Bash', argumentsPart: '{"command":"ls"}' }),
@@ -138,6 +139,13 @@ describe('AgentMessageProjector', () => {
     expect(deltas.map((d) => d.text)).toEqual(['Hello', ' world']);
     const assistantFinal = ofType(messages, 'assistant').at(-1)!;
     expect(assistantFinal).toMatchObject({ message_id: 't1.1.a1', status: 'completed', text: 'Hello world' });
+
+    const thinking = ofType(messages, 'thinking');
+    expect(thinking).toHaveLength(2);
+    expect(thinking[0]).toMatchObject({ status: 'streaming', text: '' });
+    expect(thinking.at(-1)).toMatchObject({ status: 'completed', text: 'hmm' });
+    const thinkingDeltas = ofType(messages, 'thinking.delta');
+    expect(thinkingDeltas.map((d) => d.text)).toEqual(['hmm']);
 
     const toolRunning = ofType(messages, 'tool_call')[0]!;
     expect(toolRunning).toMatchObject({
@@ -247,7 +255,6 @@ describe('AgentMessageProjector', () => {
         id: 'apr-1',
         kind: 'approval',
         payload: { toolCallId: 'call_1', toolName: 'Bash', action: 'Run ls', display: { kind: 'command' } },
-        origin: { agentId: 'main', turnId: 1 },
         createdAt: T0,
       }),
     );
@@ -692,7 +699,6 @@ describe('AgentMessageProjector', () => {
         id: 'apr-1',
         kind: 'approval',
         payload: { toolCallId: 'call_1', toolName: 'Bash', action: 'Run ls' },
-        origin: {},
         createdAt: T0,
       }),
     );
@@ -1016,6 +1022,10 @@ describe('SessionStateAggregator', () => {
 });
 
 describe('SessionProjection', () => {
+  afterEach(() => {
+    interactions.purgeSession(SESSION);
+  });
+
   class FakeBus {
     private readonly handlers = new Set<(event: Event2<any>) => void>();
     subscribe(cb: (event: Event2<any>) => void): { dispose: () => void } {
@@ -1031,9 +1041,6 @@ describe('SessionProjection', () => {
     readonly id: string;
     readonly bus: FakeBus;
     readonly todoEmitter: Emitter<readonly { title: string; status: 'pending' | 'in_progress' | 'done' }[]>;
-    readonly interactionEmitter: Emitter<{ pending: readonly string[] }>;
-    readonly resolveEmitter: Emitter<{ id: string; response: unknown }>;
-    pendings: Interaction[];
     planActive: boolean;
     swarmTrigger: string | null;
     readonly accessor: { get: (token: unknown) => unknown };
@@ -1043,15 +1050,10 @@ describe('SessionProjection', () => {
     const bus = new FakeBus();
     const scope = makeAgentScopeContext({ agentId: id, agentScope: `agents/${id}`, generation: 1 });
     const todoEmitter = new Emitter<readonly { title: string; status: 'pending' | 'in_progress' | 'done' }[]>();
-    const interactionEmitter = new Emitter<{ pending: readonly string[] }>();
-    const resolveEmitter = new Emitter<{ id: string; response: unknown }>();
     const agent: FakeAgent = {
       id,
       bus,
       todoEmitter,
-      interactionEmitter,
-      resolveEmitter,
-      pendings: [],
       planActive: false,
       swarmTrigger: null,
       accessor: {
@@ -1079,13 +1081,6 @@ describe('SessionProjection', () => {
               has: (key: { name: string }) => key.name === 'plan' || key.name === 'swarm',
               get: (key: { name: string }) =>
                 key.name === 'plan' ? { active: agent.planActive } : agent.swarmTrigger,
-            };
-          }
-          if (token === IAgentInteractionService) {
-            return {
-              listPending: () => agent.pendings,
-              onDidChangePending: interactionEmitter.event,
-              onDidResolve: resolveEmitter.event,
             };
           }
           if (token === IAgentActivityView) return { state: () => ({ lifecycle: 'ready', background: [] }) };
@@ -1236,42 +1231,33 @@ describe('SessionProjection', () => {
   it('emits the interaction lifecycle and drops outbound messages that fail schema validation', () => {
     const agent = makeAgent('main');
     const { projection, received, logger } = makeProjection(agent);
-    agent.pendings = [
-      {
-        id: 'q-1',
-        kind: 'question',
-        payload: {
-          questions: [
-            {
-              question: 'pick many',
-              options: [{ label: 42 }],
-            },
-          ],
-        },
-        origin: { agentId: 'main' },
-        createdAt: T0,
+    interactions.enqueue({
+      id: 'q-1',
+      kind: 'question',
+      payload: {
+        questions: [
+          {
+            question: 'pick many',
+            options: [{ label: 42 }],
+          },
+        ],
       },
-    ];
-    agent.interactionEmitter.fire({ pending: ['q-1'] });
+      tags: { agentId: 'main', sessionId: SESSION },
+    });
     expect(ofType(received, 'interaction')).toHaveLength(0);
     expect(logger.warn).toHaveBeenCalled();
 
     agent.bus.emit(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'go' }) as Event2<any>);
-    agent.pendings = [
-      {
-        id: 'apr-1',
-        kind: 'approval',
-        payload: { toolCallId: 'call_1', toolName: 'Bash', action: 'Run ls' },
-        origin: { agentId: 'main', turnId: 1 },
-        createdAt: T0,
-      },
-    ];
-    agent.interactionEmitter.fire({ pending: ['apr-1'] });
+    interactions.enqueue({
+      id: 'apr-1',
+      kind: 'approval',
+      payload: { toolCallId: 'call_1', toolName: 'Bash', action: 'Run ls' },
+      tags: { agentId: 'main', sessionId: SESSION, turnId: 1 },
+    });
     const pending = ofType(received, 'interaction').at(-1)!;
     expect(pending).toMatchObject({ interaction_id: 'apr-1', state: 'pending', kind: 'approval' });
 
-    agent.pendings = [];
-    agent.resolveEmitter.fire({ id: 'apr-1', response: { decision: 'rejected', feedback: 'no' } });
+    interactions.respond('apr-1', { decision: 'rejected', feedback: 'no' });
     const resolved = ofType(received, 'interaction').at(-1)!;
     expect(resolved).toMatchObject({
       state: 'rejected',
@@ -1305,34 +1291,24 @@ describe('SessionProjection', () => {
     agent.bus.emit(
       ev({ type: 'tool.call.started', turnId: 1, toolCallId: 'call_plan', name: 'ExitPlanMode', args: '{}' }) as Event2<any>,
     );
-    agent.pendings = [
-      {
-        id: 'apr-plan',
-        kind: 'approval',
-        payload: { toolCallId: 'call_plan', toolName: 'ExitPlanMode', action: 'review plan' },
-        origin: { agentId: 'main', turnId: 1 },
-        createdAt: T0,
-      },
-    ];
-    agent.interactionEmitter.fire({ pending: ['apr-plan'] });
-    agent.pendings = [];
-    agent.resolveEmitter.fire({ id: 'apr-plan', response: { decision: 'rejected', feedback: 'revise' } });
+    interactions.enqueue({
+      id: 'apr-plan',
+      kind: 'approval',
+      payload: { toolCallId: 'call_plan', toolName: 'ExitPlanMode', action: 'review plan' },
+      tags: { agentId: 'main', sessionId: SESSION, turnId: 1 },
+    });
+    interactions.respond('apr-plan', { decision: 'rejected', feedback: 'revise' });
     agent.bus.emit(ev({ type: 'agent.status.updated', agentId: 'main', planMode: false }) as Event2<any>);
     expect(ofType(received, 'system').map((m) => m.subtype)).not.toContain('plan.exit');
 
     agent.bus.emit(ev({ type: 'agent.status.updated', agentId: 'main', planMode: true }) as Event2<any>);
-    agent.pendings = [
-      {
-        id: 'apr-plan-2',
-        kind: 'approval',
-        payload: { toolCallId: 'call_plan', toolName: 'ExitPlanMode', action: 'review plan' },
-        origin: { agentId: 'main', turnId: 1 },
-        createdAt: T0,
-      },
-    ];
-    agent.interactionEmitter.fire({ pending: ['apr-plan-2'] });
-    agent.pendings = [];
-    agent.resolveEmitter.fire({ id: 'apr-plan-2', response: { decision: 'approved' } });
+    interactions.enqueue({
+      id: 'apr-plan-2',
+      kind: 'approval',
+      payload: { toolCallId: 'call_plan', toolName: 'ExitPlanMode', action: 'review plan' },
+      tags: { agentId: 'main', sessionId: SESSION, turnId: 1 },
+    });
+    interactions.respond('apr-plan-2', { decision: 'approved' });
     agent.bus.emit(ev({ type: 'agent.status.updated', agentId: 'main', planMode: false }) as Event2<any>);
     expect(ofType(received, 'system').map((m) => m.subtype)).toContain('plan.exit');
     projection.dispose();

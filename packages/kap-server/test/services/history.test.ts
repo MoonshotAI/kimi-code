@@ -92,7 +92,11 @@ describe('foldWireHistory turn lifecycle', () => {
       },
       T0 + 7,
     ),
-    rec('turn.ended', { turnId: 0, reason: 'completed', durationMs: 1500 }, T0 + 8),
+    loopEvent({ type: 'step.begin', uuid: 'u2', turnId: '0', step: 2 }, T0 + 8),
+    loopEvent({ type: 'content.part', stepUuid: 'u2', part: { type: 'think', think: '' } }, T0 + 9),
+    loopEvent({ type: 'content.part', stepUuid: 'u2', part: { type: 'text', text: 'done' } }, T0 + 10),
+    loopEvent({ type: 'step.end', uuid: 'u2', finishReason: 'stop' }, T0 + 11),
+    rec('turn.ended', { turnId: 0, reason: 'completed', durationMs: 1500 }, T0 + 12),
   ];
 
   it('rebuilds a full turn into flat entity messages with shared id rules', () => {
@@ -104,6 +108,8 @@ describe('foldWireHistory turn lifecycle', () => {
       'thinking',
       'assistant',
       'tool_call',
+      'step',
+      'assistant',
     ]);
     const turn = ofType(messages, 'turn')[0]!;
     expect(turn).toMatchObject({
@@ -113,7 +119,7 @@ describe('foldWireHistory turn lifecycle', () => {
       origin: { kind: 'user' },
       user_message_id: 't0.u0',
       started_at: iso(T0),
-      ended_at: iso(T0 + 8),
+      ended_at: iso(T0 + 12),
       duration_ms: 1500,
       usage: { input_tokens: 11, output_tokens: 5, cached_tokens: 2 },
     });
@@ -124,7 +130,7 @@ describe('foldWireHistory turn lifecycle', () => {
       text: 'fix the bug',
       status: 'completed',
       created_at: iso(T0),
-      finished_at: iso(T0 + 8),
+      finished_at: iso(T0 + 12),
     });
     const step = ofType(messages, 'step')[0]!;
     expect(step).toMatchObject({
@@ -139,6 +145,7 @@ describe('foldWireHistory turn lifecycle', () => {
     });
     const thinking = ofType(messages, 'thinking')[0]!;
     expect(thinking).toMatchObject({ message_id: 't0.1.a1', status: 'completed', text: 'hmm' });
+    expect(ofType(messages, 'thinking')).toHaveLength(1);
     const assistant = ofType(messages, 'assistant')[0]!;
     expect(assistant).toMatchObject({ message_id: 't0.1.a2', status: 'completed', text: 'Hello' });
     const tool = ofType(messages, 'tool_call')[0]!;
@@ -149,6 +156,13 @@ describe('foldWireHistory turn lifecycle', () => {
       state: 'done',
       input: { command: 'ls' },
       output: 'file.txt',
+    });
+    const stepTwoAssistant = ofType(messages, 'assistant')[1]!;
+    expect(stepTwoAssistant).toMatchObject({
+      message_id: 't0.2.a1',
+      step_id: 't0.2',
+      status: 'completed',
+      text: 'done',
     });
   });
 
@@ -1036,7 +1050,6 @@ describe('live and cold rebuild id consistency', () => {
         id: 'apr-1',
         kind: 'approval',
         payload: { toolCallId: 'call_1', toolName: 'Bash', action: 'Run ls' },
-        origin: {},
         createdAt: T0,
       }),
     );

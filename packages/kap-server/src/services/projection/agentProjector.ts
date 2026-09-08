@@ -2,9 +2,9 @@ import {
   daemonFileRefFromPart,
   readTodoItems,
   type AgentTaskInfo,
+  type ContentPart,
   type TokenUsage,
 } from '@moonshot-ai/agent-core-v2';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
 
 import type {
   AssistantMessage,
@@ -50,7 +50,6 @@ export interface ProjectorInteraction {
   readonly id: string;
   readonly kind: 'approval' | 'question';
   readonly payload: unknown;
-  readonly origin: { readonly agentId?: string; readonly turnId?: number };
   readonly createdAt: number;
 }
 
@@ -961,6 +960,7 @@ export class AgentMessageProjector {
     event: { time: number; turnId: number; delta: string },
     kind: 'assistant' | 'thinking',
   ): ServerMessage[] {
+    if (kind === 'thinking' && event.delta.length === 0) return [];
     const ops = this.settlePendingClear();
     const turnId = turnIdOf(event.turnId);
     this.ensureTurn(turnId, event.time, ops);
