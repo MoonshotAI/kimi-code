@@ -189,7 +189,7 @@ export class NotifyController {
           const text = delegationText(event.name, argsRecord(event.args));
           if (text !== undefined) {
             this.state.notifyPanel.upsert({
-              id: `delegation:${event.toolCallId}`,
+              id: `delegation:${String(event.turnId)}:${event.toolCallId}`,
               agentId,
               time: Date.now(),
               text,
@@ -216,8 +216,9 @@ export class NotifyController {
         const update = this.pending.get(key);
         if (update === undefined) {
           if (
+            agentId === MAIN_AGENT_ID &&
             (event.isError === true || event.synthetic === true) &&
-            this.state.notifyPanel.remove(`delegation:${event.toolCallId}`)
+            this.state.notifyPanel.remove(`delegation:${String(event.turnId)}:${event.toolCallId}`)
           ) {
             this.render();
           }

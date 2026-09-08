@@ -549,7 +549,7 @@ describe('CustomEditor paste marker expansion', () => {
     expect(editor.getText()).toContain(longText);
 
     // Undo (Ctrl+-) restores both the marker text and its paste-registry entry.
-    editor.handleInput('\x1B[45;5u');
+    editor.handleInput('\u001B[45;5u');
     expect(editor.getText()).toContain('[paste #1');
 
     simulateLargePaste(editor, 'anything');
@@ -696,6 +696,23 @@ describe('CustomEditor shortcut telemetry hooks', () => {
     expect(onNotifyPanelKey).toHaveBeenCalledWith(panelKey);
     expect(editor.getText()).toBe('draft');
   });
+
+  it.each(['\u001B[D', '\u001B[A', '\u001B'] as const)(
+    'leaves %j to autocomplete even when the Updates panel is focused',
+    (key) => {
+      const editor = makeEditor();
+      const onNotifyPanelKey = vi.fn();
+      editor.onNotifyPanelKey = onNotifyPanelKey;
+      const internals = editor as unknown as { cancelAutocompleteActivity: () => void };
+      const cancelAutocomplete = vi.spyOn(internals, 'cancelAutocompleteActivity');
+      cancelAutocomplete.mockImplementation(() => {});
+      vi.spyOn(editor, 'hasAutocompleteActivity').mockReturnValue(true);
+      editor.setText('/rev');
+      editor.handleInput(key);
+      expect(onNotifyPanelKey).not.toHaveBeenCalled();
+      if (key === '\u001B') expect(cancelAutocomplete).toHaveBeenCalledOnce();
+    },
+  );
 
   it('keeps the original editor bindings when Updates paging is unavailable', () => {
     const editor = makeEditor();

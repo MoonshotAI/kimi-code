@@ -694,6 +694,19 @@ describe('NotifyController', () => {
     expect(h.controller.handlePanelKey('down')).toBe(false);
   });
 
+  it('keeps the delegation entry when another agent errors with the same tool call id', () => {
+    const h = makeHarness();
+    h.emit('tool.call.started', {
+      toolCallId: 'a1',
+      name: 'Agent',
+      args: { description: 'keep me', subagent_type: 'explore', prompt: '…' },
+    });
+    h.emit('subagent.spawned', { subagentId: 'agent-9', subagentName: 'coder' });
+
+    h.emit('tool.result', { toolCallId: 'a1', isError: true, output: 'subagent tool failed' }, 'agent-9');
+    expect(h.texts()).toEqual(['▸ Delegated to explore: **keep me**']);
+  });
+
   it('folds the panel to a one-line preview stub when the main turn ends', () => {
     const h = makeHarness();
     h.send('n1', 'phase report intro\n\n- detail A');

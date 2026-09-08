@@ -496,13 +496,15 @@ export class CustomEditor extends Editor {
     // A focused Updates panel owns ←/→ (channel switching), ↑/↓ (paging the
     // channel's updates) and Esc (release focus); when it is not focused the
     // handler returns false and every key falls through to the normal editor
-    // behavior below.
+    // behavior below. Active autocomplete outranks the panel: its menu needs
+    // the same keys for selection and dismissal.
     if (
-      matchesKey(normalized, Key.left) ||
-      matchesKey(normalized, Key.right) ||
-      matchesKey(normalized, Key.up) ||
-      matchesKey(normalized, Key.down) ||
-      matchesKey(normalized, Key.escape)
+      !this.hasAutocompleteActivity() &&
+      (matchesKey(normalized, Key.left) ||
+        matchesKey(normalized, Key.right) ||
+        matchesKey(normalized, Key.up) ||
+        matchesKey(normalized, Key.down) ||
+        matchesKey(normalized, Key.escape))
     ) {
       const panelKey = matchesKey(normalized, Key.left)
         ? ('left' as const)
