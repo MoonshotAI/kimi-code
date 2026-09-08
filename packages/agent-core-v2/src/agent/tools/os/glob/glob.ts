@@ -5,6 +5,22 @@ import { type AgentTool } from '#/tool/toolContract';
 
 export const GlobInputSchema = z.object({
   pattern: z.string().describe('Glob pattern to match files.'),
+  head_limit: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .describe(
+      'Maximum number of matching paths to return after offset. Defaults to 100. Pass 0 for all collected matches; large results are saved to a file for Read. Search time and output capture limits still apply.',
+    ),
+  offset: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .describe(
+      'Number of matching paths to skip. Defaults to 0. Each call searches the current filesystem again; changes can shift results between pages.',
+    ),
   path: z
     .string()
     .optional()
@@ -27,7 +43,7 @@ export const GlobInputSchema = z.object({
 
 export type GlobInput = z.infer<typeof GlobInputSchema>;
 
-export const MAX_MATCHES = 100;
+export const DEFAULT_HEAD_LIMIT = 100;
 
 export const WINDOWS_PATH_HINT =
   '\n\nWindows note: the `path` argument accepts both Windows paths ' +

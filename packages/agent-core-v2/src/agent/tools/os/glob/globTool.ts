@@ -37,7 +37,7 @@ import {
   type GlobInput,
   GlobInputSchema,
   IGlobTool,
-  MAX_MATCHES,
+  DEFAULT_HEAD_LIMIT,
   WINDOWS_PATH_HINT,
 } from './glob';
 
@@ -238,17 +238,11 @@ export class GlobTool implements IGlobTool {
       }
     }
 
-    const truncated = kept.length > MAX_MATCHES;
-    const limited = truncated ? kept.slice(0, MAX_MATCHES) : kept;
-
-    if (limited.length === 0 && !timedOut) {
-      if (filteredSensitive > 0) {
-        return {
-          output: `No non-sensitive matches found (${String(filteredSensitive)} sensitive file(s) filtered).`,
-        };
-      }
-      return { output: 'No matches found' };
-    }
+    const offset = args.offset ?? 0;
+    const headLimit = args.head_limit ?? DEFAULT_HEAD_LIMIT;
+    const limited = headLimit === 0 ? kept.slice(offset) : kept.slice(offset, offset + headLimit);
+    const truncated = offset + limited.length < kept.length;
+    const partial = bufferTruncated || timedOut || traversalWarning !== undefined;
 
     const pathClass = env.pathClass;
     const shouldRelativize = isWithinDirectory(searchRoot, workspace.workspaceDir, pathClass);
@@ -270,15 +264,38 @@ export class GlobTool implements IGlobTool {
     if (traversalWarning !== undefined) {
       lines.push(traversalWarning);
     }
+    if (limited.length === 0) {
+      if (kept.length > 0) {
+        const resultSet = partial ? 'collected partial result set' : 'current result set';
+        lines.push(
+          `No more matches at offset=${String(offset)} in the ${resultSet} (${String(kept.length)} matches).`,
+        );
+      } else if (partial) {
+        lines.push('No matches collected; search incomplete.');
+      } else if (filteredSensitive > 0) {
+        lines.push(
+          `No non-sensitive matches found (${String(filteredSensitive)} sensitive file(s) filtered).`,
+        );
+      } else {
+        lines.push('No matches found');
+      }
+    } else if (truncated || offset > 0 || partial) {
+      const total = partial
+        ? `${String(kept.length)} collected matches (partial result set)`
+        : String(kept.length);
+      lines.push(`Showing matches ${String(offset + 1)}–${String(offset + limited.length)} of ${total}.`);
+    }
     if (truncated) {
-      lines.push(`[Truncated at ${String(MAX_MATCHES)} matches — use a more specific pattern]`);
-      lines.push(`Only the first ${String(MAX_MATCHES)} matches are returned.`);
+      lines.push(
+        `Continue with the same search arguments and offset=${String(offset + limited.length)}.`,
+      );
+      lines.push('To retrieve all collected matches in one search, omit offset and use head_limit=0.');
     }
     lines.push(...displayLines);
-    if (filteredSensitive > 0) {
+    if (filteredSensitive > 0 && (kept.length > 0 || partial)) {
       lines.push(`Filtered ${String(filteredSensitive)} sensitive file(s).`);
     }
-    if (!truncated && limited.length === MAX_MATCHES) {
+    if (!truncated && !partial && offset === 0 && headLimit > 0 && limited.length === headLimit) {
       lines.push(`Found ${String(limited.length)} matches`);
     }
     return { output: lines.join('\n') };

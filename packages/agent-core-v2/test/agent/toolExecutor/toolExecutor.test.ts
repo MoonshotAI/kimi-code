@@ -37,9 +37,11 @@ import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { ToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncationService';
 import { ReadTool } from '#/agent/tools/os/read/readTool';
+import { GlobTool } from '#/agent/tools/os/glob/globTool';
 import { ReadInputSchema, type ReadInput } from '#/agent/tools/os/read/read';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
 import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
@@ -54,7 +56,7 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IEventBus } from '#/app/event/eventBus';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
-import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -1071,8 +1073,8 @@ describe('truncation pipeline', () => {
     await readConfig.ready;
     const runtime = Object.assign(new FakeRuntime(
       { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
-      { capabilities: ['fs'] },
-    ), { fs: new HostFileSystem() });
+      { capabilities: ['fs', 'process'] },
+    ), { fs: new HostFileSystem(), process: new HostProcessService() });
     const binding: IAgentRuntimeService = {
       _serviceBrand: undefined,
       onDidChange: () => ({ dispose: () => {} }),
@@ -1087,6 +1089,7 @@ describe('truncation pipeline', () => {
       truncation,
       readConfig,
     ));
+    registry.register(new GlobTool(binding, stubWorkspaceContext(homeDir), noopTelemetryService));
   });
 
   afterEach(async () => {
@@ -1127,6 +1130,34 @@ describe('truncation pipeline', () => {
       join(homeDir, 'sessions/workspace/session/agents/main/tool-results/noisy-call_noisy-'),
     );
     expect(readFileSync(outputPath, 'utf8')).toBe(fullOutput);
+  });
+
+  it('recovers every Glob match through spill and Read when the match limit is disabled', async () => {
+    const expected = Array.from({ length: 500 }, (_, index) =>
+      `file-${String(index).padStart(3, '0')}-${'x'.repeat(100)}.ts`,
+    );
+    await Promise.all(expected.map((name) => writeFile(join(homeDir, name), '')));
+
+    const [result] = await execute([toolCall('glob_all', 'Glob', { pattern: '*.ts', head_limit: 0 })]);
+
+    expect(result?.isError).not.toBe(true);
+    expect(result?.truncated).toBe(true);
+    if (typeof result?.output !== 'string') throw new Error('expected Glob text');
+    const path = renderedOutputPath(result.output);
+    let args: ReadInput | undefined = { path, max_chars: 8000 };
+    const recovered: string[] = [];
+    let pages = 0;
+    while (args !== undefined && pages < 20) {
+      const [page] = await execute([toolCall(`read_glob_${String(pages++)}`, 'Read', args)]);
+      expect(page?.isError).not.toBe(true);
+      if (typeof page?.output !== 'string') throw new Error('expected Read text');
+      recovered.push(...page.output.replaceAll(/^\d+\t/gm, '').split('\n').filter(Boolean));
+      const next = /Next Read: (\{[^\n]*\})/.exec(page.note ?? '')?.[1];
+      args = next === undefined ? undefined : ReadInputSchema.parse(JSON.parse(next));
+    }
+    expect(args).toBeUndefined();
+    expect(pages).toBeGreaterThan(1);
+    expect(recovered.toSorted()).toEqual(expected);
   });
 
   it('recovers MCP structured records through spill and Read without repeating the MCP call', async () => {
