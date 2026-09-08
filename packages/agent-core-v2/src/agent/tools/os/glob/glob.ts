@@ -11,7 +11,7 @@ export const GlobInputSchema = z.object({
     .nonnegative()
     .optional()
     .describe(
-      'Maximum number of matching paths to return after offset. Defaults to 100. Pass 0 for all collected matches; large results are saved to a file for Read. Search time and output capture limits still apply.',
+      'Maximum number of matching paths to return after offset. Defaults to 100. Pass 0 to remove the match-count limit. The character limit still applies: large pages are saved for Read, and a continuation offset is provided when more paths remain. Search time and output capture limits still apply.',
     ),
   offset: z
     .number()

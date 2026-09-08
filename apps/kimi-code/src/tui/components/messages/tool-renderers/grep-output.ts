@@ -64,6 +64,10 @@ const PAGINATION_TOTAL = /^Results truncated to \d+ lines \(total: (\d+)/m;
 const INCOMPLETE =
   /^(?:\[Output truncated at \d+ bytes|Grep timed out after |Glob timed out after |Glob completed with warnings|\[stdout truncated at |\[Truncated at \d+ matches|Only the first \d+ matches)/m;
 
+const GLOB_PAGE = /^Showing matches (\d+)–(\d+) of (\d+)( collected matches \(partial result set\))?\.$/m;
+const GLOB_CONTINUATION = /^(?:Continue with the same search arguments and offset=\d+\.|(?:To retrieve all collected matches in one search|To remove the match-count limit), omit offset and use head_limit=0\.|Character limit reached; only complete paths are returned\.)$/;
+const GLOB_EMPTY = /^(?:No more matches at offset=\d+ in the (?:current|collected partial) result set \(\d+ matches\)\.|No matches collected; search incomplete\.)$/m;
+
 // `path:line:text`; context lines use `-` separators and are not matches.
 const CONTENT_MATCH = /^(.+?):(\d+):/;
 const COUNT_LINE = /^(.+):(\d+)$/;
@@ -177,7 +181,13 @@ export function parseGrepOutput(toolCall: ToolCallBlockData, output: string): Gr
 }
 
 export function parseGlobOutput(output: string): GlobStats {
-  return { entries: resultLines(output), partial: INCOMPLETE.test(output) };
+  const page = GLOB_PAGE.exec(output);
+  const entries = resultLines(output).filter((line) =>
+    !GLOB_PAGE.test(line) && !GLOB_CONTINUATION.test(line) && !GLOB_EMPTY.test(line),
+  );
+  const partial = INCOMPLETE.test(output) ||
+    (page !== null && (Number(page[2]) < Number(page[3]) || page[4] !== undefined));
+  return { entries, partial };
 }
 
 // Every match was a file the tool excludes as sensitive: the search did find
@@ -195,5 +205,8 @@ export function searchNoticeOnly(toolCall: ToolCallBlockData, output: string): b
     toolCall.name === 'Glob'
       ? parseGlobOutput(output).entries.length === 0
       : parseGrepOutput(toolCall, output).entries.length === 0;
-  return noRows && (INCOMPLETE.test(output) || SENSITIVE_ONLY.test(output));
+  return noRows && (
+    INCOMPLETE.test(output) || SENSITIVE_ONLY.test(output) ||
+    (toolCall.name === 'Glob' && GLOB_EMPTY.test(output))
+  );
 }

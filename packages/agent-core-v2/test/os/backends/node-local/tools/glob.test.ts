@@ -411,7 +411,7 @@ describe('GlobTool', () => {
 
     const result = await execute(tool, { pattern: '*.txt' });
 
-    expect(result.output).toContain('To retrieve all collected matches in one search, omit offset and use head_limit=0.');
+    expect(result.output).toContain('To remove the match-count limit, omit offset and use head_limit=0.');
   });
 
   it('returns a "Found N matches" footer at exactly DEFAULT_HEAD_LIMIT without truncation', async () => {
@@ -493,6 +493,26 @@ describe('GlobTool', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it.each([0, 60_000])('keeps expanded paths within spill retention and continues with head_limit=%s', async (head_limit) => {
+    const root = `/${'r'.repeat(180)}`;
+    const names = Array.from({ length: 60_000 }, (_, i) => `file-${String(i).padStart(6, '0')}.ts`);
+    const stdout = names.map((name) => `./${name}`).join('\n') + '\n';
+    const { tool } = makeTool(workspace, { exec: vi.fn(async () => fakeProcess(stdout)) });
+    const first = toolContentString(await execute(tool, { pattern: '*.ts', path: root, head_limit }));
+    expect(first.length).toBeLessThanOrEqual(10_000_000);
+    expect(first).toContain('Character limit reached; only complete paths are returned.');
+    expect(first).not.toContain('head_limit=0');
+    const next = /Continue with the same search arguments and offset=(\d+)\./.exec(first)?.[1];
+    expect(next).toBeDefined();
+    const second = toolContentString(await execute(tool, {
+      pattern: '*.ts', path: root, head_limit, offset: Number(next),
+    }));
+    expect(second.length).toBeLessThanOrEqual(10_000_000);
+    expect(second).not.toContain('Continue with');
+    const recovered = [...first.split('\n'), ...second.split('\n')].filter((line) => line.startsWith('/'));
+    expect(recovered).toEqual(names.map((name) => `${root}/${name}`));
   });
 
   it('filters sensitive files from results', async () => {

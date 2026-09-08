@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PassThrough, Readable } from 'node:stream';
 
 import type { ToolCall } from '#human/llm/message';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
@@ -1046,6 +1047,7 @@ describe('parseToolCallArguments', () => {
 describe('truncation pipeline', () => {
   let homeDir: string;
   let readConfig: IConfigService;
+  let globProcess: HostProcessService;
 
   beforeEach(async () => {
     homeDir = await mkdtemp(join(tmpdir(), 'tool-executor-truncation-'));
@@ -1071,10 +1073,11 @@ describe('truncation pipeline', () => {
     truncationContainer.set(IConfigService, new SyncDescriptor(ConfigService));
     readConfig = truncationContainer.get(IConfigService);
     await readConfig.ready;
+    globProcess = new HostProcessService();
     const runtime = Object.assign(new FakeRuntime(
       { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
       { capabilities: ['fs', 'process'] },
-    ), { fs: new HostFileSystem(), process: new HostProcessService() });
+    ), { fs: new HostFileSystem(), process: globProcess });
     const binding: IAgentRuntimeService = {
       _serviceBrand: undefined,
       onDidChange: () => ({ dispose: () => {} }),
@@ -1158,6 +1161,55 @@ describe('truncation pipeline', () => {
     expect(args).toBeUndefined();
     expect(pages).toBeGreaterThan(1);
     expect(recovered.toSorted()).toEqual(expected);
+  });
+
+  it('recovers an expanded Glob listing beyond spill retention using complete saved pages', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'r'.repeat(180)));
+    try {
+      const names = Array.from({ length: 60_000 }, (_, i) => `file-${String(i).padStart(6, '0')}.ts`);
+      const stdout = names.map((name) => `./${name}`).join('\n') + '\n';
+      vi.spyOn(globProcess, 'spawn').mockImplementation(async () => ({
+        _serviceBrand: undefined,
+        pid: 123,
+        exitCode: 0,
+        stdin: new PassThrough(),
+        stdout: Readable.from([stdout]),
+        stderr: Readable.from([]),
+        wait: async () => 0,
+        kill: async () => {},
+        dispose: () => {},
+      }));
+      const recovered: string[] = [];
+      let offset = 0;
+      let globPages = 0;
+      do {
+        const [page] = await execute([toolCall(`glob_large_${String(globPages++)}`, 'Glob', {
+          pattern: '*.ts', path: root, head_limit: 0, offset,
+        })]);
+        expect(page?.isError).not.toBe(true);
+        if (typeof page?.output !== 'string') throw new Error('expected Glob output');
+        expect(page.output).toContain('the full output was saved to a file');
+        const continuation = /Continue with the same search arguments and offset=(\d+)\./.exec(page.output)?.[1];
+        if (continuation !== undefined) expect(Number(continuation)).toBeGreaterThan(offset);
+        offset = continuation === undefined ? 0 : Number(continuation);
+        let args: ReadInput | undefined = { path: renderedOutputPath(page.output), max_chars: 500_000 };
+        let reads = 0;
+        while (args !== undefined && reads < 40) {
+          const [read] = await execute([toolCall(`read_large_${String(globPages)}_${String(reads++)}`, 'Read', args)]);
+          expect(read?.isError).not.toBe(true);
+          if (typeof read?.output !== 'string') throw new Error('expected Read output');
+          recovered.push(...read.output.replaceAll(/^\d+\t/gm, '').split('\n').filter((line) => line.startsWith(root + '/')));
+          const next = /Next Read: (\{[^\n]*\})/.exec(read.note ?? '')?.[1];
+          args = next === undefined ? undefined : ReadInputSchema.parse(JSON.parse(next));
+        }
+        expect(args).toBeUndefined();
+      } while (offset > 0 && globPages < 5);
+      expect(offset).toBe(0);
+      expect(globPages).toBe(2);
+      expect(recovered).toEqual(names.map((name) => `${root}/${name}`));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('recovers MCP structured records through spill and Read without repeating the MCP call', async () => {
