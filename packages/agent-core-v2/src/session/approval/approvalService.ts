@@ -3,13 +3,13 @@ import { randomUUID } from 'node:crypto';
 import { LifecycleScope } from '#/app/scopes';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import {
-  enqueueSessionInteraction,
-  listSessionPendingInteractions,
-  requestSessionInteraction,
-  respondSessionInteraction,
-} from '#/features/interaction/sessionInteractions';
+  INTERACTION_TAG_AGENT_ID,
+  INTERACTION_TAG_TOOL_CALL_ID,
+  INTERACTION_TAG_TURN_ID,
+  type InteractionTags,
+} from '#/human/interaction/interaction';
+import { ISessionInteractionService } from '#/session/interaction/sessionInteractionService';
 
 import {
   type ApprovalRequest,
@@ -20,34 +20,36 @@ import {
 export class SessionApprovalService implements ISessionApprovalService {
   declare readonly _serviceBrand: undefined;
 
-  constructor(@IAgentLifecycleService private readonly agents: IAgentLifecycleService) {}
+  constructor(
+    @ISessionInteractionService private readonly interactions: ISessionInteractionService,
+  ) {}
 
   request(req: ApprovalRequest): Promise<ApprovalResponse> {
-    return requestSessionInteraction<ApprovalRequest, ApprovalResponse>(this.agents, {
+    return this.interactions.request<ApprovalRequest, ApprovalResponse>({
       id: requestId(req),
       kind: 'approval',
       payload: req,
-      origin: { agentId: req.agentId, turnId: req.turnId },
+      tags: approvalTags(req),
     });
   }
 
   enqueue(req: ApprovalRequest): ApprovalRequest & { readonly id: string } {
     const id = requestId(req);
-    enqueueSessionInteraction<ApprovalRequest>(this.agents, {
+    this.interactions.enqueue<ApprovalRequest>({
       id,
       kind: 'approval',
       payload: req,
-      origin: { agentId: req.agentId, turnId: req.turnId },
+      tags: approvalTags(req),
     });
     return { ...req, id };
   }
 
   decide(id: string, response: ApprovalResponse): void {
-    respondSessionInteraction(this.agents, id, response);
+    this.interactions.respond(id, response);
   }
 
   listPending(): readonly ApprovalRequest[] {
-    return listSessionPendingInteractions(this.agents, 'approval').map((i) => ({
+    return this.interactions.findAll({ kind: 'approval', resolved: false }).map((i) => ({
       ...(i.payload as ApprovalRequest),
       id: i.id,
     }));
@@ -56,6 +58,14 @@ export class SessionApprovalService implements ISessionApprovalService {
 
 function requestId(req: ApprovalRequest): string {
   return req.id ?? `approval_${randomUUID()}`;
+}
+
+function approvalTags(req: ApprovalRequest): InteractionTags {
+  const tags: InteractionTags = {};
+  if (req.agentId !== undefined) tags[INTERACTION_TAG_AGENT_ID] = req.agentId;
+  if (req.turnId !== undefined) tags[INTERACTION_TAG_TURN_ID] = req.turnId;
+  if (req.toolCallId !== undefined) tags[INTERACTION_TAG_TOOL_CALL_ID] = req.toolCallId;
+  return tags;
 }
 
 registerScopedService(LifecycleScope.Session, ISessionApprovalService, SessionApprovalService, ScopeActivation.OnScopeCreated, 'approval');

@@ -15,11 +15,8 @@ import {
 } from '#/agent/activityView/activityView';
 import type { TurnEndReason } from '#/agent/loop/turnEvents';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
-import type { Interaction } from '#/features/interaction/interaction';
-import {
-  listSessionPendingInteractions,
-  onSessionInteractionDidChangePending,
-} from '#/features/interaction/sessionInteractions';
+import type { Interaction } from '#/human/interaction/interaction';
+import { ISessionInteractionService } from '#/session/interaction/sessionInteractionService';
 import { ISessionStateService } from '#/session/state/sessionState';
 
 import {
@@ -59,6 +56,7 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
   constructor(
     @ISessionStateService private readonly states: ISessionStateService,
     @IAgentLifecycleService private readonly agents: IAgentLifecycleService,
+    @ISessionInteractionService private readonly interactions: ISessionInteractionService,
   ) {
     super();
     this.states.contributeState(sessionActivityFoldsKey);
@@ -82,7 +80,7 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
       }),
     );
     this._register(
-      onSessionInteractionDidChangePending(this.agents, () => this.recompute('interaction')),
+      this.interactions.onDidChangePending(() => this.recompute('interaction')),
     );
     this._register(
       toDisposable(() => {
@@ -156,7 +154,7 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
     return {
       busy,
       mainTurnActive: this.folds.get(MAIN_AGENT_ID)?.turnActive ?? false,
-      pendingInteraction: resolvePendingInteraction(listSessionPendingInteractions(this.agents)),
+      pendingInteraction: resolvePendingInteraction(this.interactions.findAll({ resolved: false })),
       lastTurnReason: this.folds.get(MAIN_AGENT_ID)?.lastTurnReason,
     };
   }

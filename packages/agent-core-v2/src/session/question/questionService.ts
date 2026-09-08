@@ -3,14 +3,14 @@ import { randomUUID } from 'node:crypto';
 import { LifecycleScope } from '#/app/scopes';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { isInteractionCancellation } from '#/features/interaction/interaction';
 import {
-  enqueueSessionInteraction,
-  listSessionPendingInteractions,
-  requestSessionInteraction,
-  respondSessionInteraction,
-} from '#/features/interaction/sessionInteractions';
+  INTERACTION_TAG_AGENT_ID,
+  INTERACTION_TAG_TOOL_CALL_ID,
+  INTERACTION_TAG_TURN_ID,
+  isInteractionCancellation,
+  type InteractionTags,
+} from '#/human/interaction/interaction';
+import { ISessionInteractionService } from '#/session/interaction/sessionInteractionService';
 
 import {
   type QuestionRequest,
@@ -21,22 +21,23 @@ import {
 export class SessionQuestionService implements ISessionQuestionService {
   declare readonly _serviceBrand: undefined;
 
-  constructor(@IAgentLifecycleService private readonly agents: IAgentLifecycleService) {}
+  constructor(
+    @ISessionInteractionService private readonly interactions: ISessionInteractionService,
+  ) {}
 
   request(
     req: QuestionRequest,
     options?: { signal?: AbortSignal; agentId?: string; detached?: boolean },
   ): Promise<QuestionResult> {
     const id = requestId(req);
-    const pending = requestSessionInteraction<QuestionRequest, unknown>(this.agents, {
-      id,
-      kind: 'question',
-      payload: req,
-      origin: {
-        turnId: options?.detached === true ? undefined : req.turnId,
-        agentId: options?.agentId,
-      },
-    }).then((response) => (isInteractionCancellation(response) ? null : (response as QuestionResult)));
+    const pending = this.interactions
+      .request<QuestionRequest, unknown>({
+        id,
+        kind: 'question',
+        payload: req,
+        tags: questionTags(req, options),
+      })
+      .then((response) => (isInteractionCancellation(response) ? null : (response as QuestionResult)));
 
     const signal = options?.signal;
     if (signal !== undefined) {
@@ -57,31 +58,44 @@ export class SessionQuestionService implements ISessionQuestionService {
 
   enqueue(req: QuestionRequest): QuestionRequest & { readonly id: string } {
     const id = requestId(req);
-    enqueueSessionInteraction<QuestionRequest>(this.agents, {
+    this.interactions.enqueue<QuestionRequest>({
       id,
       kind: 'question',
       payload: req,
-      origin: { turnId: req.turnId },
+      tags: questionTags(req),
     });
     return { ...req, id };
   }
 
   answer(id: string, result: QuestionResult): void {
-    respondSessionInteraction(this.agents, id, result);
+    this.interactions.respond(id, result);
   }
 
   dismiss(id: string): void {
-    respondSessionInteraction(this.agents, id, null);
+    this.interactions.respond(id, null);
   }
 
   listPending(): readonly QuestionRequest[] {
-    return listSessionPendingInteractions(this.agents, 'question')
+    return this.interactions
+      .findAll({ kind: 'question', resolved: false })
       .map((i) => ({ ...(i.payload as QuestionRequest), id: i.id }));
   }
 }
 
 function requestId(req: QuestionRequest): string {
   return req.id ?? `question_${randomUUID()}`;
+}
+
+function questionTags(
+  req: QuestionRequest,
+  options?: { agentId?: string; detached?: boolean },
+): InteractionTags {
+  const tags: InteractionTags = {};
+  const turnId = options?.detached === true ? undefined : req.turnId;
+  if (turnId !== undefined) tags[INTERACTION_TAG_TURN_ID] = turnId;
+  if (options?.agentId !== undefined) tags[INTERACTION_TAG_AGENT_ID] = options.agentId;
+  if (req.toolCallId !== undefined) tags[INTERACTION_TAG_TOOL_CALL_ID] = req.toolCallId;
+  return tags;
 }
 
 registerScopedService(LifecycleScope.Session, ISessionQuestionService, SessionQuestionService, ScopeActivation.OnScopeCreated, 'question');

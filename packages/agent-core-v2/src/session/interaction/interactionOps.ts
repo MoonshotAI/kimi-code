@@ -2,20 +2,7 @@
 import { z } from 'zod';
 
 import { AgentEvent2 } from '#/app/event/event2';
-
-import type { InteractionKind } from './interaction';
-
-export interface InteractionRecord {
-  readonly id: string;
-  readonly kind: InteractionKind;
-  readonly toolCallId?: string;
-  readonly agentId: string;
-  readonly request: unknown;
-  readonly resolved: boolean;
-  readonly response?: unknown;
-}
-
-export type InteractionModelState = Map<string, InteractionRecord>;
+import type { InteractionKind } from '#/human/interaction/interaction';
 
 const interactionRequestSchema = z.object({
   agentId: z.string(),

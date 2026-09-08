@@ -13,7 +13,13 @@ import type {
 } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentInteractionService } from '#/features/interaction/interactionService';
+import {
+  INTERACTION_TAG_AGENT_ID,
+  INTERACTION_TAG_TOOL_CALL_ID,
+  INTERACTION_TAG_TURN_ID,
+  type InteractionTags,
+} from '#/human/interaction/interaction';
+import { ISessionInteractionService } from '#/session/interaction/sessionInteractionService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
@@ -40,7 +46,7 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
-    @IAgentInteractionService private readonly interaction: IAgentInteractionService,
+    @ISessionInteractionService private readonly interaction: ISessionInteractionService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentStateService private readonly agentState: IAgentStateService,
   ) {
@@ -131,6 +137,9 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
     args: unknown,
   ): Promise<ExecutableToolResult> {
     const id = `user_tool_${randomUUID()}`;
+    const tags: InteractionTags = { [INTERACTION_TAG_AGENT_ID]: this.scopeContext.agentId };
+    if (context.turnId !== undefined) tags[INTERACTION_TAG_TURN_ID] = context.turnId;
+    tags[INTERACTION_TAG_TOOL_CALL_ID] = context.toolCallId;
     const request = this.interaction.request<UserToolExecutionRequest, ExecutableToolResult>({
       id,
       kind: 'user_tool',
@@ -140,9 +149,7 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
         name,
         args,
       },
-      origin: {
-        turnId: context.turnId,
-      },
+      tags,
     });
     try {
       return await abortable(request, context.signal);

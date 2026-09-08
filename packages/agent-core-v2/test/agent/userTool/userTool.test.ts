@@ -15,7 +15,7 @@ import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { IAgentInteractionService } from '#/features/interaction/interactionService';
+import { ISessionInteractionService } from '#/session/interaction/sessionInteractionService';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
@@ -65,11 +65,11 @@ function createProfileStub(activeToolNames?: readonly string[]): IAgentProfileSe
   } as unknown as IAgentProfileService & ProfileStub;
 }
 
-function createInteractionStub(): IAgentInteractionService {
+function createInteractionStub(): ISessionInteractionService {
   return {
     request: () => Promise.reject(new Error('not exercised')),
     respond: () => false,
-  } as unknown as IAgentInteractionService;
+  } as unknown as ISessionInteractionService;
 }
 
 let disposables: DisposableStore;
@@ -189,7 +189,7 @@ describe('AgentUserToolService (wire-backed)', () => {
     ixChild.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     const childProfile = createProfileStub();
     ixChild.stub(IAgentProfileService, childProfile);
-    ixChild.stub(IAgentInteractionService, createInteractionStub());
+    ixChild.stub(ISessionInteractionService, createInteractionStub());
     ixChild.set(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));
 
     registerTestAgentWire(ixChild, testWireScope(SCOPE, 'user-tool-child'), {
@@ -234,7 +234,7 @@ describe('AgentUserToolService (wire-backed)', () => {
     ixChild.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     const childProfile = createProfileStub([]);
     ixChild.stub(IAgentProfileService, childProfile);
-    ixChild.stub(IAgentInteractionService, createInteractionStub());
+    ixChild.stub(ISessionInteractionService, createInteractionStub());
     ixChild.set(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));
     registerTestAgentWire(ixChild, testWireScope(SCOPE, 'inactive-user-tool-child'), {
       log: ixChild.get(IAppendLogStore),
@@ -267,12 +267,12 @@ describe('AgentUserToolService (wire-backed)', () => {
         return new Promise<unknown>((resolve) => {
           settle = resolve;
         });
-      }) as IAgentInteractionService['request'],
+      }) as ISessionInteractionService['request'],
       respond: (id: string, response: unknown) => {
         responses.push({ id, response });
         return true;
       },
-    } as unknown as IAgentInteractionService;
+    } as unknown as ISessionInteractionService;
 
     const ixExec = disposables.add(new TestInstantiationService());
     ixExec.stub(IFileSystemStorageService, new InMemoryStorageService());
@@ -280,7 +280,7 @@ describe('AgentUserToolService (wire-backed)', () => {
     ixExec.set(IAgentStateService, new AgentStateService());
     ixExec.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     ixExec.stub(IAgentProfileService, createProfileStub());
-    ixExec.stub(IAgentInteractionService, interactionStub);
+    ixExec.stub(ISessionInteractionService, interactionStub);
     ixExec.set(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));
     registerTestAgentWire(ixExec, testWireScope(SCOPE, 'user-tool-exec'), {
       log: ixExec.get(IAppendLogStore),
@@ -354,7 +354,7 @@ describe('AgentUserToolService (wire-backed)', () => {
     ix2.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     const profile2 = createProfileStub();
     ix2.stub(IAgentProfileService, profile2);
-    ix2.stub(IAgentInteractionService, createInteractionStub());
+    ix2.stub(ISessionInteractionService, createInteractionStub());
     ix2.set(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));
 
     registerTestAgentWire(ix2, testWireScope(SCOPE, 'user-tool-replay'), {

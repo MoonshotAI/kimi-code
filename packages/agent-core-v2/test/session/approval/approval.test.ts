@@ -6,11 +6,11 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { type ApprovalRequest, ISessionApprovalService } from '#/session/approval/approval';
 import { SessionApprovalService } from '#/session/approval/approvalService';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionInteractionService } from '#/session/interaction/sessionInteractionService';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
 
-import { stubInteractionManager, type InteractionManagerStub } from '../../features/interaction/stubs';
+import { stubSessionInteraction, type SessionInteractionStub } from '../interaction/stubs';
 
 const display: ToolInputDisplay = { kind: 'command', command: 'bash' };
 
@@ -21,14 +21,14 @@ function makeRequest(id: string): ApprovalRequest {
 describe('SessionApprovalService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
-  let interactions: InteractionManagerStub;
+  let interactions: SessionInteractionStub;
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    interactions = stubInteractionManager();
+    interactions = stubSessionInteraction();
     disposables.add(interactions.disposables);
     ix = disposables.add(new TestInstantiationService());
-    ix.stub(IAgentLifecycleService, interactions.manager);
+    ix.stub(ISessionInteractionService, interactions.service);
     ix.set(ISessionStateService, new SessionStateService());
     ix.set(ISessionApprovalService, new SyncDescriptor(SessionApprovalService));
   });
@@ -60,7 +60,6 @@ describe('SessionApprovalService', () => {
 
   it('mints distinct interaction ids when the provider reuses a toolCallId within one step', async () => {
     const svc = ix.get(ISessionApprovalService);
-    const interaction = interactions.serviceOf('main');
     const req = (): ApprovalRequest => ({
       toolCallId: 'Bash_0',
       toolName: 'bash',
@@ -71,12 +70,9 @@ describe('SessionApprovalService', () => {
     const first = svc.request(req());
     const second = svc.request(req());
 
-    const pending = interaction.listPending();
-    expect(pending.map((i) => (i.payload as ApprovalRequest).toolCallId)).toEqual([
-      'Bash_0',
-      'Bash_0',
-    ]);
-    const ids = pending.map((i) => i.id);
+    const pending = svc.listPending();
+    expect(pending.map((i) => i.toolCallId)).toEqual(['Bash_0', 'Bash_0']);
+    const ids = pending.map((i) => i.id!);
     expect(new Set(ids).size).toBe(2);
     expect(ids.every((id) => id.startsWith('approval_'))).toBe(true);
 
@@ -88,7 +84,6 @@ describe('SessionApprovalService', () => {
 
   it('a toolCallId repeated across steps still gets a fresh id after the first request resolved', async () => {
     const svc = ix.get(ISessionApprovalService);
-    const interaction = interactions.serviceOf('main');
     const req = (): ApprovalRequest => ({
       toolCallId: 'Bash_0',
       toolName: 'bash',
@@ -97,12 +92,12 @@ describe('SessionApprovalService', () => {
     });
 
     const first = svc.request(req());
-    const firstId = interaction.listPending()[0]!.id;
+    const firstId = svc.listPending()[0]!.id!;
     svc.decide(firstId, { decision: 'approved' });
     await expect(first).resolves.toEqual({ decision: 'approved' });
 
     const second = svc.request(req());
-    const secondId = interaction.listPending()[0]!.id;
+    const secondId = svc.listPending()[0]!.id!;
     expect(secondId).not.toBe(firstId);
     svc.decide(secondId, { decision: 'approved' });
     await expect(second).resolves.toEqual({ decision: 'approved' });

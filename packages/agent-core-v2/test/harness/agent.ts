@@ -214,8 +214,8 @@ import {
   type ProvidersSection,
 } from '#/llm-adapter/provider/provider';
 import type { ApprovalResponse } from '#/session/approval/approval';
-import type { InteractionRequest } from '#/features/interaction/interaction';
-import { IAgentInteractionService } from '#/features/interaction/interactionService';
+import type { InteractionRequest } from '#/human/interaction/interaction';
+import { ISessionInteractionService } from '#/session/interaction/sessionInteractionService';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import type { EnvironmentDisclosureSnapshot } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionQuestionService, type QuestionResult } from '#/session/question/question';
@@ -1399,7 +1399,7 @@ export class AgentTestContext {
       .get(ISessionEventBus)
       .activateAgent(harnessAgentContext);
     adoptAgent!();
-    this.installInteractionBridge(harnessAgentContext);
+    this.installInteractionBridge();
     reassertServiceOverrides(this.serviceOverrides, 'agent', this.agent.instantiation);
 
     this.initializeRestorableServices();
@@ -1533,13 +1533,13 @@ export class AgentTestContext {
     await this.wire.flush();
   }
 
-  private installInteractionBridge(agent: AgentContext): void {
-    const interaction = this.session.accessor.get(IAgentLifecycleService).handleOf(agent.agentId)!.accessor.get(IAgentInteractionService);
+  private installInteractionBridge(): void {
+    const interaction = this.session.accessor.get(ISessionInteractionService);
     const request = interaction.request.bind(interaction);
     interaction.request = (<TPayload, TResponse>(req: InteractionRequest<TPayload>) => {
       if (req.kind !== 'user_tool') return request<TPayload, TResponse>(req);
       const pending = request<TPayload, TResponse>(req);
-      const parked = interaction.listPending('user_tool').at(-1)!;
+      const parked = interaction.findAll({ kind: 'user_tool', resolved: false }).at(-1)!;
       const payload = req.payload as UserToolInteractionPayload;
       const response = this.createRpcPromise<ExecutableToolResult>();
       void response.then(
@@ -1556,7 +1556,7 @@ export class AgentTestContext {
         response,
       );
       return pending;
-    }) as IAgentInteractionService['request'];
+    }) as ISessionInteractionService['request'];
   }
 
   private initializeRestorableServices(): void {

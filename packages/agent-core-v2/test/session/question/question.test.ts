@@ -10,7 +10,11 @@ import {
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair, type ScopedTestHost } from '#/_base/di/test';
 import { IEventBus } from '#/app/event/eventBus';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import {
+  INTERACTION_TAG_AGENT_ID,
+  INTERACTION_TAG_TURN_ID,
+} from '#/human/interaction/interaction';
+import { ISessionInteractionService } from '#/session/interaction/sessionInteractionService';
 import { type QuestionRequest, ISessionQuestionService } from '#/session/question/question';
 import { SessionQuestionService } from '#/session/question/questionService';
 import { ISessionStateService } from '#/session/state/sessionState';
@@ -18,7 +22,7 @@ import { SessionStateService } from '#/session/state/sessionStateService';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 
-import { stubInteractionManagerFor, type InteractionManagerStub } from '../../features/interaction/stubs';
+import { stubSessionInteraction, type SessionInteractionStub } from '../interaction/stubs';
 
 const noopEventBus: IEventBus = {
   _serviceBrand: undefined,
@@ -43,7 +47,7 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
   let disposables: DisposableStore;
   let host: ScopedTestHost;
   let session: Scope;
-  let interactions: InteractionManagerStub;
+  let interactions: SessionInteractionStub;
 
   beforeEach(() => {
     _clearScopedRegistryForTests();
@@ -51,12 +55,12 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
     registerScopedService(LifecycleScope.Session, ISessionQuestionService, SessionQuestionService, ScopeActivation.OnDemand, 'question');
 
     disposables = new DisposableStore();
-    interactions = stubInteractionManagerFor(['main', 'sub-1']);
+    interactions = stubSessionInteraction(['main', 'sub-1']);
     disposables.add(interactions.disposables);
     host = createScopedTestHost([stubPair(IEventBus, noopEventBus)]);
     session = host.child(LifecycleScope.Session, 'session-a', [
       stubPair(IWorkspaceStateService, new WorkspaceStateService()),
-      stubPair(IAgentLifecycleService, interactions.manager),
+      stubPair(ISessionInteractionService, interactions.service),
     ]);
   });
 
@@ -77,7 +81,7 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
   });
 
   it('enqueue returns immediately and the answer streams over onDidResolve', () => {
-    const interaction = interactions.serviceOf('main');
+    const interaction = interactions.service;
     const questions = session.accessor.get(ISessionQuestionService);
 
     const resolved: { id: string; response: unknown }[] = [];
@@ -115,20 +119,21 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
     });
   });
 
-  it('records the owning agent on the interaction origin', async () => {
+  it('records the owning agent on the interaction tags', async () => {
     const questions = session.accessor.get(ISessionQuestionService);
 
     const sub = questions.request(makeRequest('q-sub'), { agentId: 'sub-1' });
     expect(
-      interactions.serviceOf('sub-1').listPending().find((i) => i.id === 'q-sub')?.origin,
+      interactions.service.findAll({ resolved: false }).find((i) => i.id === 'q-sub')?.tags,
     ).toMatchObject({
-      agentId: 'sub-1',
+      [INTERACTION_TAG_AGENT_ID]: 'sub-1',
     });
 
     const main = questions.request(makeRequest('q-main'));
     expect(
-      interactions.serviceOf('main').listPending().find((i) => i.id === 'q-main')?.origin.agentId,
-    ).toBeUndefined();
+      interactions.service.findAll({ resolved: false }).find((i) => i.id === 'q-main')
+        ?.tags[INTERACTION_TAG_AGENT_ID],
+    ).toBe('main');
 
     questions.dismiss('q-sub');
     questions.dismiss('q-main');
@@ -137,15 +142,21 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
   });
 
   it('a detached request is not bound to the asking turn', async () => {
-    const interaction = interactions.serviceOf('main');
+    const interaction = interactions.service;
     const questions = session.accessor.get(ISessionQuestionService);
 
     const foreground = questions.request({ ...makeRequest('q-fg'), turnId: 3 });
     const detached = questions.request({ ...makeRequest('q-bg'), turnId: 3 }, { detached: true });
-    expect(interaction.listPending().find((i) => i.id === 'q-fg')?.origin.turnId).toBe(3);
-    expect(interaction.listPending().find((i) => i.id === 'q-bg')?.origin.turnId).toBeUndefined();
+    expect(
+      interaction.findAll({ resolved: false }).find((i) => i.id === 'q-fg')
+        ?.tags[INTERACTION_TAG_TURN_ID],
+    ).toBe(3);
+    expect(
+      interaction.findAll({ resolved: false }).find((i) => i.id === 'q-bg')
+        ?.tags[INTERACTION_TAG_TURN_ID],
+    ).toBeUndefined();
 
-    interaction.cancelPendingForTurn(3);
+    interaction.cancelForTurn('main', 3);
 
     await expect(foreground).resolves.toBeNull();
     expect(questions.listPending().map((r) => r.id)).toEqual(['q-bg']);
@@ -156,13 +167,13 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
   });
 
   it('resolves a request cancelled by its turn ending as a dismissal', async () => {
-    const interaction = interactions.serviceOf('main');
+    const interaction = interactions.service;
     const questions = session.accessor.get(ISessionQuestionService);
     const resolved: { id: string; response: unknown }[] = [];
     disposables.add(interaction.onDidResolve((r) => resolved.push(r)));
 
     const pending = questions.request({ ...makeRequest('q1'), turnId: 2 });
-    interaction.cancelPendingForTurn(2);
+    interaction.cancelForTurn('main', 2);
 
     await expect(pending).resolves.toBeNull();
     expect(resolved).toEqual([{ id: 'q1', response: { cancelled: true, reason: 'turn_ended' } }]);
@@ -181,7 +192,7 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
   });
 
   it('aborting a parked request dismisses it and resolves the caller with null', async () => {
-    const interaction = interactions.serviceOf('main');
+    const interaction = interactions.service;
     const questions = session.accessor.get(ISessionQuestionService);
 
     const resolved: { id: string; response: unknown }[] = [];
@@ -212,11 +223,11 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
   });
 
   it('Session scope isolates brokers: a question parked in A is invisible to B', () => {
-    const interactionsB = stubInteractionManagerFor(['main']);
+    const interactionsB = stubSessionInteraction(['main']);
     disposables.add(interactionsB.disposables);
     const sessionB = host.child(LifecycleScope.Session, 'session-b', [
       stubPair(IWorkspaceStateService, new WorkspaceStateService()),
-      stubPair(IAgentLifecycleService, interactionsB.manager),
+      stubPair(ISessionInteractionService, interactionsB.service),
     ]);
     const questionsA = session.accessor.get(ISessionQuestionService);
     const questionsB = sessionB.accessor.get(ISessionQuestionService);
@@ -230,7 +241,6 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
   });
 
   it('mints distinct interaction ids when the provider reuses a toolCallId', async () => {
-    const interaction = interactions.serviceOf('main');
     const questions = session.accessor.get(ISessionQuestionService);
     const req = (): QuestionRequest => ({
       toolCallId: 'AskUserQuestion:0',
@@ -240,12 +250,9 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
     const first = questions.request(req());
     const second = questions.request(req());
 
-    const pending = interaction.listPending();
-    expect(pending.map((i) => (i.payload as QuestionRequest).toolCallId)).toEqual([
-      'AskUserQuestion:0',
-      'AskUserQuestion:0',
-    ]);
-    const ids = pending.map((i) => i.id);
+    const pending = questions.listPending();
+    expect(pending.map((i) => i.toolCallId)).toEqual(['AskUserQuestion:0', 'AskUserQuestion:0']);
+    const ids = pending.map((i) => i.id!);
     expect(new Set(ids).size).toBe(2);
     expect(ids.every((id) => id.startsWith('question_'))).toBe(true);
 

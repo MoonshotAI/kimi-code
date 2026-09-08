@@ -510,11 +510,10 @@ export * from '#/app/sessionExport/wire-scan';
 export * from '#/app/sessionExport/zip';
 export * from '#/app/sessionLegacy/sessionLegacy';
 export * from '#/app/sessionLegacy/sessionLegacyService';
-export * from '#/features/interaction/interaction';
-export * from '#/features/interaction/interactionOps';
-export * from '#/features/interaction/interactionService';
-export * from '#/features/interaction/sessionInteractions';
-import '#/features/interaction/interactionFeature';
+export * from '#/human/interaction/interaction';
+import '#/session/interaction/sessionInteractionService';
+export { ISessionInteractionService } from '#/session/interaction/sessionInteractionService';
+export * from '#/session/interaction/interactionOps';
 export * from '#/session/sessionContext/sessionContext';
 
 import '#/session/approval/approval';
