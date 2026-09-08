@@ -324,7 +324,7 @@ export class AcpSession {
       }),
       events.on('compaction.blocked', () => {
         this.emitLocalChunk(
-          'Compaction is blocked by the current turn; retry when the turn is idle.',
+          'Waiting for context compaction to finish; the turn will continue automatically.',
         );
       }),
     );
