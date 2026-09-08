@@ -11,6 +11,7 @@ import { encodeReasoningEffortFallback } from '#/llm/thinking';
 import type { TokenUsage } from '#/llm/usage';
 
 import { isContextOverflowErrorCode, isOpenAIInsufficientQuotaCode } from '../openai/format';
+import { isOfficialOpenAIBaseUrl } from '../openai-base-url';
 import { lowerMessage, type ResponsesInputItem } from './lower';
 
 type RawObject = Record<string, unknown>;
@@ -365,7 +366,9 @@ function resolveRequestKwargs(input: FormatRequestInput): Record<string, unknown
   } = input;
   let kwargs: Record<string, unknown> = {};
   if (cacheKey !== undefined) {
-    kwargs = trait?.cacheKey?.(cacheKey, ctx) ?? { prompt_cache_key: cacheKey };
+    kwargs =
+      trait?.cacheKey?.(cacheKey, ctx) ??
+      (isOfficialOpenAIBaseUrl(ctx.model.baseUrl) ? { prompt_cache_key: cacheKey } : {});
   }
   if (thinking !== undefined) {
     kwargs = applyThinking(kwargs, thinking, trait, ctx, (t) =>
