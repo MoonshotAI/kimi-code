@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Report malformed UTF-16 text as a file-read error.
+Read malformed UTF-16 files with an explicit lossy-decoding warning.

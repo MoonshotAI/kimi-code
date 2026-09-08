@@ -1251,6 +1251,26 @@ describe('truncation pipeline', () => {
     expect(fragments.join('')).toBe(content);
   });
 
+  it('keeps valid lines readable and exposes the warning when later UTF-16 bytes are malformed', async () => {
+    const path = join(homeDir, 'malformed.txt');
+    await writeFile(path, Buffer.concat([
+      Buffer.from([0xff, 0xfe]),
+      Buffer.from('good\n', 'utf16le'),
+      Buffer.from([0x00, 0xd8]),
+    ]));
+
+    const [result] = await execute([toolCall('read_lossy', 'Read', { path, n_lines: 1, max_chars: 1200 })]);
+
+    expect(result?.isError).not.toBe(true);
+    expect(result?.output).toBe('1\tgood');
+    if (result === undefined) throw new Error('expected a Read result');
+    const visible = renderToolResultForModel(result)
+      .map((part) => part.type === 'text' ? part.text : '').join('');
+    expect(visible).toContain('Lossy UTF-16 decoding');
+    expect(visible).toContain('may differ from the original file');
+    expect(visible.length).toBeLessThanOrEqual(1200);
+  });
+
   it('applies persisted Read defaults and caps explicit character requests', async () => {
     await readConfig.set('read', { defaultMaxChars: 1500, maxChars: 3000 });
     await readConfig.reload();

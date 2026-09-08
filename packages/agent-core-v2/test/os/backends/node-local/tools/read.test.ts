@@ -11,6 +11,7 @@ import {
   TRANSCODE_MAX_BYTES,
 } from '#/agent/tools/os/read/read';
 import { ReadTool } from '#/agent/tools/os/read/readTool';
+import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { stubToolResultTruncationService } from '../../../../agent/toolResultTruncation/stubs';
 import { stubConfigService } from '../../../../app/config/stubs';
 import type { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
@@ -724,14 +725,78 @@ describe('ReadTool', () => {
     ['utf16-le-unpaired', [0xff, 0xfe, 0x00, 0xd8]],
     ['utf16-be-unpaired', [0xfe, 0xff, 0xd8, 0x00]],
     ['utf16-le-truncated', [0xff, 0xfe, 0x41]],
-  ] as const)('rejects malformed %s instead of silently replacing its content', async (name, bytes) => {
+  ] as const)('returns malformed %s with an explicit lossy-decoding warning', async (name, bytes) => {
     const path = `/tmp/${name}.txt`;
     const { fs } = createSpiedMapFs({ [path]: { bytes: Buffer.from(bytes) } });
     const result = await execute(createReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE), { path });
 
+    expect(result.isError).not.toBe(true);
+    expect(result.output).toBe('1\t\uFFFD');
+    expect(result.note).toContain('Lossy UTF-16 decoding');
+    expect(result.note).toContain('may differ from the original file');
+    expect(result.note).toContain('Requested range complete.');
+  });
+
+  it.each(['utf8', 'utf16le'] as const)('does not flag a literal replacement character in valid %s text', async (encoding) => {
+    const content = 'valid \uFFFD and 🙂';
+    const encoded = Buffer.from(content, encoding);
+    const bytes = encoding === 'utf16le' ? Buffer.concat([Buffer.from([0xff, 0xfe]), encoded]) : encoded;
+    const { fs } = createSpiedMapFs({ '/tmp/literal.txt': { bytes } });
+    const result = await execute(createReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE), { path: '/tmp/literal.txt' });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.output).toBe(`1\t${content}`);
+    expect(result.note).not.toContain('Lossy');
+  });
+
+  it.each([2, -2])('preserves the lossy warning and budget through Read continuation from offset %i', async (lineOffset) => {
+    const rawLine = '文'.repeat(1000) + '\uD800' + '🙂'.repeat(500) + 'tail';
+    const expected = '文'.repeat(1000) + '\uFFFD' + '🙂'.repeat(500) + 'tail';
+    const bytes = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(`first\n${rawLine}\nlast`, 'utf16le')]);
+    const path = '/tmp/lossy-range.txt';
+    const { fs } = createSpiedMapFs({ [path]: { bytes } });
+    const tool = createReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+    const fragments: string[] = [];
+    let args: ReadInput | undefined = { path, line_offset: lineOffset, n_lines: 1, max_chars: 1200 };
+
+    for (let page = 0; args !== undefined && page < 20; page += 1) {
+      const result = await execute(tool, args);
+      expect(result.note).toContain('Lossy UTF-16 decoding');
+      if (result.isError) {
+        expect(lineOffset).toBe(-2);
+        expect(page).toBe(0);
+        expect(result.note).toContain('Next Read:');
+      } else {
+        const output = toolContentString(result);
+        expect(output.startsWith('2\t')).toBe(true);
+        expect(output.length + 1 + (result.note?.length ?? 0)).toBeLessThanOrEqual(1200);
+        fragments.push(output.slice(2));
+      }
+      const next = result.note?.match(/Next Read: (\{[^\n]*\})/);
+      args = next === undefined || next === null ? undefined : ReadInputSchema.parse(JSON.parse(next[1]!));
+    }
+
+    expect(args).toBeUndefined();
+    expect(fragments.length).toBeGreaterThan(1);
+    expect(fragments.join('')).toBe(expected);
+  });
+
+  it('fits a lossy tail recovery hint within the model-visible character budget', async () => {
+    const path = '/tmp/edge.txt';
+    const bytes = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('x'.repeat(2000) + '\uD800', 'utf16le')]);
+    const { fs } = createSpiedMapFs({ [path]: { bytes } });
+    const result = await execute(createReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE), {
+      path,
+      line_offset: -1,
+      max_chars: 650,
+    });
+
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('not valid UTF-8 or UTF-16');
-    expect(result.output).not.toContain('\uFFFD');
+    expect(result.note).toContain('Lossy UTF-16 decoding');
+    expect(result.note).toContain('Next Read:');
+    const visible = renderToolResultForModel(result)
+      .map((part) => part.type === 'text' ? part.text : '').join('');
+    expect(visible.length).toBeLessThanOrEqual(650);
   });
 
   it('reads a UTF-16 LE file with BOM by transcoding to UTF-8', async () => {

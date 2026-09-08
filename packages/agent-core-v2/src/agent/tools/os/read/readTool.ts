@@ -50,6 +50,7 @@ interface ReadRequest {
   readonly maxChars: number;
   readonly maxCharsLimit: number;
   readonly detectedEncoding?: UtfTextEncoding;
+  readonly lossyDecoding: boolean;
   readonly eventLog: boolean;
 }
 
@@ -260,6 +261,7 @@ export class ReadTool implements IReadTool {
       const detection = detectTextEncoding(header);
       let readLines: () => AsyncIterable<string>;
       let detectedEncoding: UtfTextEncoding | undefined;
+      let lossyDecoding = false;
       if (!detection.seemsBinary && detection.encoding !== 'utf-8') {
         if (stat.size > TRANSCODE_MAX_BYTES) {
           return {
@@ -270,7 +272,15 @@ export class ReadTool implements IReadTool {
               'Convert it to UTF-8 first (e.g. with `iconv`).',
           };
         }
-        const decoded = new TextDecoder(detection.encoding, { fatal: true }).decode(await fs.readBytes(safePath));
+        const bytes = await fs.readBytes(safePath);
+        let decoded: string;
+        try {
+          decoded = new TextDecoder(detection.encoding, { fatal: true }).decode(bytes);
+        } catch (error) {
+          if (!isTextDecodeError(error)) throw error;
+          decoded = new TextDecoder(detection.encoding, { fatal: false }).decode(bytes);
+          lossyDecoding = true;
+        }
         detectedEncoding = detection.encoding;
         const decodedContent = splitLinesKeepingTerminator(decoded);
         readLines = () => decodedLines(decodedContent);
@@ -289,6 +299,7 @@ export class ReadTool implements IReadTool {
         maxChars: Math.min(args.max_chars ?? limits.defaultMaxChars, limits.maxChars),
         maxCharsLimit: limits.maxChars,
         detectedEncoding,
+        lossyDecoding,
         eventLog,
       };
       return (args.line_offset ?? 1) < 0
@@ -378,7 +389,7 @@ export class ReadTool implements IReadTool {
   }
 
   private finishPage(page: ReadPage): ExecutableToolResult {
-    const { args, maxChars, maxCharsLimit, eventLog, detectedEncoding } = page.request;
+    const { args, maxChars, maxCharsLimit, eventLog, detectedEncoding, lossyDecoding } = page.request;
     let first = 0;
     let end = page.renderedLines.length;
     let contentChars = page.renderedLines.reduce((sum, line) => sum + line.length + 1, -1);
@@ -432,6 +443,9 @@ export class ReadTool implements IReadTool {
       if (detectedEncoding !== undefined) {
         parts.push(`Detected file encoding: ${encodingDisplayName(detectedEncoding)}; content transcoded to UTF-8 for display. Edit and Write expect UTF-8 — convert the file's encoding first (e.g. \`iconv\` via Bash).`);
       }
+      if (lossyDecoding) {
+        parts.push('Lossy UTF-16 decoding: malformed sequences were replaced with U+FFFD. The decoded text may differ from the original file.');
+      }
       const note = `<system>${parts.join(' ')}</system>`;
       const renderedChars = count === 0
         ? renderToolResultForModel({ output: '', note }).reduce(
@@ -459,14 +473,20 @@ export class ReadTool implements IReadTool {
         continue;
       }
       if (count === 0) {
-        return complete
-          ? { isError: true, output: `max_chars=${String(maxChars)} is too small for the Read status. Increase max_chars.` }
-          : {
+        if (!complete) {
+          const recovery: ExecutableToolResult = {
             isError: true,
-            output: 'No complete line fits the tail budget. Continue with the forward Next Read arguments to read the entire requested range.',
+            output: 'No complete line fits. Continue with the forward Next Read.',
             note,
             truncated: true,
           };
+          const recoveryChars = renderToolResultForModel(recovery).reduce(
+            (sum, part) => sum + (part.type === 'text' ? part.text.length : 0),
+            0,
+          );
+          if (recoveryChars <= maxChars) return recovery;
+        }
+        return { isError: true, output: `max_chars=${String(maxChars)} is too small for the Read status. Increase max_chars.` };
       }
       const dropped = page.fromTail ? first++ : --end;
       contentChars -= page.renderedLines[dropped]!.length + 1;
