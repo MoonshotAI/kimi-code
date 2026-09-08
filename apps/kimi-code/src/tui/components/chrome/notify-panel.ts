@@ -199,11 +199,7 @@ export class NotifyPanelComponent implements Component {
     const paint = chalk.hex(this.focused ? c.primary : c.border);
 
     if (this.collapsed) {
-      const stub = `   ${padToVisibleWidth(chalk.hex(c.textDim)('…'), width - 6)}   `;
-      const boxed = wrapWithSideBorders(['─'.repeat(width), stub, '─'.repeat(width)], paint, {
-        label: this.title(width),
-      });
-      return ['', ...boxed].map((line) => truncateToWidth(line, width));
+      return ['', this.stubLine(width)].map((line) => truncateToWidth(line, width));
     }
 
     const innerWidth = Math.max(1, width - 6);
@@ -264,6 +260,46 @@ export class NotifyPanelComponent implements Component {
   }
 
   /**
+   * The collapsed one-liner: an expand hint marker, the channel tabs, the
+   * total update count, and a preview of the current entry's first line —
+   * everything the user needs to decide whether to open the box.
+   */
+  private stubLine(width: number): string {
+    const c = currentTheme.palette;
+    const dim = chalk.hex(c.textDim);
+    const marker = chalk.hex(c.primary)('▸');
+    const tabs = this.channels
+      .map((channel) => this.renderTab(channel, channel.key === this.activeKey))
+      .join(dim(' · '));
+    const total = this.channels.reduce((sum, ch) => sum + ch.entries.length, 0);
+    const noun = total === 1 ? 'update' : 'updates';
+    const head = ` ${marker} ${tabs} ${dim(`· ${String(total)} ${noun}`)}`;
+    const tail = ` ${dim('· ctrl+n')}`;
+    const preview = this.stubPreviewText();
+    if (preview !== undefined) {
+      const budget = width - visibleWidth(head) - visibleWidth(tail) - 3;
+      if (budget >= 12) return `${head} ${dim('·')} ${dim(truncateToWidth(preview, budget))}${tail}`;
+    }
+    if (visibleWidth(head) + visibleWidth(tail) <= width) return `${head}${tail}`;
+    return ` ${marker} ${dim(`${String(total)} ${noun} · ctrl+n`)}`;
+  }
+
+  /** First non-empty line of the current entry, stripped of list/bold markers. */
+  private stubPreviewText(): string | undefined {
+    const ch = this.activeChannel();
+    const entry = ch.entries[Math.min(ch.page, ch.entries.length - 1)];
+    if (entry === undefined) return undefined;
+    const firstLine = entry.text
+      .trim()
+      .split('\n')
+      .find((line) => line.trim().length > 0)
+      ?.trim()
+      .replace(/^[-*#>\s]+/, '')
+      .replaceAll('**', '');
+    return firstLine === undefined || firstLine.length === 0 ? undefined : firstLine;
+  }
+
+  /**
    * The styled top-border label: a tab strip of channel labels (active tab
    * highlighted, background channels with unread dotted), then the page
    * indicator and key hints, slimmed down progressively as width shrinks.
@@ -273,11 +309,7 @@ export class NotifyPanelComponent implements Component {
     const ch = this.activeChannel();
     const page = `${String(ch.page + 1)}/${String(ch.entries.length)}`;
     const state = this.ended ? ' · turn ended' : '';
-    const hint = this.focused
-      ? ' · ← → agent · ↑ ↓ update · esc close'
-      : this.collapsed
-        ? ' · ctrl+n expand'
-        : ' · ctrl+n page';
+    const hint = this.focused ? ' · ← → agent · ↑ ↓ update · esc close' : ' · ctrl+n page';
     const paintTitle = this.ended ? chalk.hex(c.textDim).bold : chalk.hex(c.primary).bold;
     const tabs = this.channels
       .map((channel) => this.renderTab(channel, channel.key === this.activeKey))

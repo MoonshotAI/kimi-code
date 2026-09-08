@@ -153,26 +153,29 @@ describe('NotifyPanelComponent', () => {
     expect(titleOf(panel)).toContain('ctrl+n page');
   });
 
-  it('folds to a stub when the turn ends, expands on focus', () => {
+  it('folds to a one-line preview stub when the turn ends, expands on focus', () => {
     const panel = new NotifyPanelComponent();
-    panel.upsert(entry('tc-1', 'done with phase one'));
+    panel.upsert(entry('tc-1', 'phase one intro\n\n- detail one\n- detail two'));
     panel.setEnded(true);
 
     const collapsed = render(panel);
-    expect(collapsed).toHaveLength(4);
+    expect(collapsed).toHaveLength(2);
     expect(collapsed[0]).toBe('');
-    expect(collapsed[1]).toContain('turn ended');
-    expect(collapsed[1]).toContain('ctrl+n expand');
-    expect(collapsed[2]).toContain('…');
-    expect(collapsed.join('\n')).not.toContain('done with phase one');
+    expect(collapsed[1]).toContain('▸');
+    expect(collapsed[1]).toContain('main');
+    expect(collapsed[1]).toContain('1 update');
+    expect(collapsed[1]).toContain('phase one intro');
+    expect(collapsed[1]).toContain('ctrl+n');
+    expect(collapsed[1]).not.toContain('detail one');
+    expect(collapsed[1]).not.toMatch(/[╭╮╰╯│]/);
 
     panel.focus();
     const expanded = render(panel);
-    expect(expanded.join('\n')).toContain('done with phase one');
-    expect(expanded.length).toBeGreaterThan(4);
+    expect(expanded.join('\n')).toContain('detail one');
+    expect(expanded.length).toBeGreaterThan(2);
 
     panel.blur();
-    expect(render(panel)).toHaveLength(4);
+    expect(render(panel)).toHaveLength(2);
   });
 
   it('stays expanded when the turn ends while the user is reading, folds on blur', () => {
@@ -184,14 +187,14 @@ describe('NotifyPanelComponent', () => {
     expect(render(panel).join('\n')).toContain('phase one');
 
     panel.blur();
-    expect(render(panel)).toHaveLength(4);
+    expect(render(panel)).toHaveLength(2);
   });
 
   it('unfolds and undims when a fresh update arrives after the turn ended', () => {
     const panel = new NotifyPanelComponent();
     panel.upsert(entry('tc-1', 'done with phase one'));
     panel.setEnded(true);
-    expect(render(panel)).toHaveLength(4);
+    expect(render(panel)).toHaveLength(2);
 
     panel.upsert(entry('tc-2', 'fresh turn update'));
     const lines = render(panel);
@@ -209,11 +212,12 @@ describe('NotifyPanelComponent', () => {
     expect(panel.remove('missing')).toBe(false);
   });
 
-  it('dims the title and notes the ended turn, and clears wholesale', () => {
+  it('dims to a stub and notes the ended turn, and clears wholesale', () => {
     const panel = new NotifyPanelComponent();
     panel.upsert(entry('tc-1', 'done with phase one'));
     panel.setEnded(true);
-    expect(titleOf(panel)).toContain('turn ended');
+    expect(render(panel)).toHaveLength(2);
+    expect(titleOf(panel)).toContain('ctrl+n');
 
     panel.clear();
     expect(panel.isEmpty()).toBe(true);

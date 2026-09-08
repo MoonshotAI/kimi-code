@@ -261,7 +261,7 @@ describe('NotifyController', () => {
     h.emit('turn.started', {}, 'agent-1');
     h.send('n1', 'main done');
     h.emit('turn.ended', { reason: 'completed' });
-    expect(h.rendered()).toContain('turn ended');
+    expect(h.rendered()).toContain('ctrl+n');
     h.controller.toggleFocus();
     expect(h.rendered()).toContain('main done');
     h.send('n2', 'background finding', 'agent-1');
@@ -513,8 +513,9 @@ describe('NotifyController', () => {
         if (h.ui instanceof TuiAltScreen) expect(h.ui.getLayoutRoot()).toBe(root);
         else expect(h.ui.children).toEqual(root);
         h.input('\u001B');
-        expect(h.rendered()).toContain('ctrl+n expand');
-        expect(h.rendered()).not.toContain('update two');
+        expect(h.rendered()).toContain('ctrl+n');
+        expect(h.rendered()).toContain('update two');
+        expect(h.rendered()).not.toContain('update three');
         h.emit('turn.started', {}, 'main', 2);
         expect(h.texts()).toEqual([]);
         expect(h.notifyPanelContainer.children).toEqual([]);
@@ -596,16 +597,18 @@ describe('NotifyController', () => {
     ]);
   });
 
-  it('folds the panel to a stub when the main turn ends and expands on focus', () => {
+  it('folds the panel to a one-line preview stub when the main turn ends', () => {
     const h = makeHarness();
-    h.send('n1', 'phase report');
+    h.send('n1', 'phase report intro\n\n- detail A');
     h.emit('turn.ended', { reason: 'completed' });
-    expect(h.rendered()).toContain('ctrl+n expand');
-    expect(h.rendered()).not.toContain('phase report');
+    expect(h.rendered()).toContain('ctrl+n');
+    expect(h.rendered()).toContain('phase report intro');
+    expect(h.rendered()).not.toContain('detail A');
 
     h.controller.toggleFocus();
-    expect(h.rendered()).toContain('phase report');
+    expect(h.rendered()).toContain('detail A');
     h.controller.handlePanelKey('escape');
-    expect(h.rendered()).toContain('ctrl+n expand');
+    expect(h.rendered()).toContain('ctrl+n');
+    expect(h.rendered()).not.toContain('detail A');
   });
 });
