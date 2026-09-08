@@ -81,6 +81,24 @@ function retryPrompt(): ContextMessage {
   };
 }
 
+function subagentTriggerPrompt(): ContextMessage {
+  return {
+    role: 'user',
+    content: [{ type: 'text', text: 'resume the subagent' }],
+    toolCalls: [],
+    origin: { kind: 'system_trigger', name: 'subagent' },
+  };
+}
+
+function stopHookContinuation(): ContextMessage {
+  return {
+    role: 'user',
+    content: [{ type: 'text', text: 'stop hook asks to continue' }],
+    toolCalls: [],
+    origin: { kind: 'system_trigger', name: 'stop_hook' },
+  };
+}
+
 function assistantWithTools(...names: string[]): ContextMessage {
   return {
     role: 'assistant',
@@ -182,6 +200,24 @@ describe('toolCallsSinceLastNotify', () => {
       assistantWithTools('Read'),
     ];
     expect(toolCallsSinceLastNotify(retryTurn)).toBe(1);
+  });
+
+  it('stops at a subagent system trigger but not at a stop-hook continuation', () => {
+    const subagentTurn = [
+      userPrompt(),
+      assistantWithTools('Bash', 'Bash', 'Bash'),
+      subagentTriggerPrompt(),
+      assistantWithTools('Read'),
+    ];
+    expect(toolCallsSinceLastNotify(subagentTurn)).toBe(1);
+
+    const continued = [
+      userPrompt(),
+      assistantWithTools('Bash', 'Bash'),
+      stopHookContinuation(),
+      assistantWithTools('Read'),
+    ];
+    expect(toolCallsSinceLastNotify(continued)).toBe(3);
   });
 });
 
@@ -287,6 +323,17 @@ describe('lastMidResponsePosition', () => {
       assistantWithTools('Bash'),
     ];
     expect(lastMidResponsePosition(acrossRetry)).toBe(-1);
+  });
+
+  it('still finds mid-turn text that precedes a stop-hook continuation', () => {
+    const history = [
+      userPrompt(),
+      assistantWithText('中段说明', 'WebSearch'),
+      stopHookContinuation(),
+      assistantWithTools('FetchURL'),
+    ];
+
+    expect(lastMidResponsePosition(history)).toBe(1);
   });
 });
 

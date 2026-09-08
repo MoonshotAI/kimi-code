@@ -12,10 +12,11 @@ function startsNewTurn(message: ContextMessage): boolean {
     case 'user':
     case 'cron_job':
     case 'cron_missed':
-    case 'system_trigger':
     case 'task':
     case 'retry':
       return true;
+    case 'system_trigger':
+      return origin.name !== 'stop_hook';
     case 'skill_activation':
       return origin.trigger === 'user-slash';
     case 'plugin_command':
