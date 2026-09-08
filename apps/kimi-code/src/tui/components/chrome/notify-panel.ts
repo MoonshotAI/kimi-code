@@ -44,7 +44,8 @@ interface NotifyChannel {
   readonly entries: NotifyEntry[];
   /** Page (entry index) the user last read in this channel. */
   page: number;
-  unread: number;
+  /** Ids of entries that arrived while the user was reading another channel. */
+  readonly unreadIds: Set<string>;
 }
 
 function padToVisibleWidth(text: string, target: number): string {
@@ -77,9 +78,9 @@ export class NotifyPanelComponent implements Component {
     if (!this.focused) {
       this.activeKey = ch.key;
       ch.page = ch.entries.length - 1;
-      ch.unread = 0;
+      ch.unreadIds.clear();
     } else if (isNew && ch.key !== this.activeKey) {
-      ch.unread += 1;
+      ch.unreadIds.add(entry.id);
     }
     this.ended = false;
     this.collapsed = false;
@@ -95,7 +96,7 @@ export class NotifyPanelComponent implements Component {
       if (ch.key === this.activeKey) this.activeKey = this.channels.at(-1)?.key ?? MAIN_AGENT_ID;
     } else {
       ch.page = Math.min(ch.page, ch.entries.length - 1);
-      if (this.focused && ch.key !== this.activeKey && ch.unread > 0) ch.unread -= 1;
+      ch.unreadIds.delete(id);
     }
     if (this.channels.length === 0) this.focused = false;
     return true;
@@ -117,7 +118,7 @@ export class NotifyPanelComponent implements Component {
     return this.channels.map((ch) => ({
       label: ch.label,
       entries: ch.entries.map((entry) => ({ id: entry.id, text: entry.text })),
-      unread: ch.unread,
+      unread: ch.unreadIds.size,
     }));
   }
 
@@ -142,7 +143,7 @@ export class NotifyPanelComponent implements Component {
     if (this.channels.length === 0) return false;
     this.focused = true;
     this.collapsed = false;
-    this.activeChannel().unread = 0;
+    this.activeChannel().unreadIds.clear();
     return true;
   }
 
@@ -164,7 +165,7 @@ export class NotifyPanelComponent implements Component {
     this.activeKey = this.channels[index - 1]!.key;
     const ch = this.activeChannel();
     ch.page = ch.entries.length - 1;
-    ch.unread = 0;
+    ch.unreadIds.clear();
     return true;
   }
 
@@ -175,7 +176,7 @@ export class NotifyPanelComponent implements Component {
     this.activeKey = this.channels[index + 1]!.key;
     const ch = this.activeChannel();
     ch.page = ch.entries.length - 1;
-    ch.unread = 0;
+    ch.unreadIds.clear();
     return true;
   }
 
@@ -241,7 +242,7 @@ export class NotifyPanelComponent implements Component {
       label: this.labelFor(entry.agentName ?? key),
       entries: [],
       page: 0,
-      unread: 0,
+      unreadIds: new Set(),
     };
     if (key === MAIN_AGENT_ID) this.channels.unshift(created);
     else this.channels.push(created);
@@ -329,7 +330,7 @@ export class NotifyPanelComponent implements Component {
   private renderTab(channel: NotifyChannel, active: boolean): string {
     const c = currentTheme.palette;
     if (active) return chalk.hex(c.primary).bold(channel.label);
-    const label = channel.unread > 0 ? `${channel.label}●` : channel.label;
-    return channel.unread > 0 ? chalk.hex(c.primary)(label) : chalk.hex(c.textDim)(label);
+    const label = channel.unreadIds.size > 0 ? `${channel.label}●` : channel.label;
+    return channel.unreadIds.size > 0 ? chalk.hex(c.primary)(label) : chalk.hex(c.textDim)(label);
   }
 }

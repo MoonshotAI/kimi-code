@@ -250,6 +250,24 @@ describe('NotifyPanelComponent', () => {
     expect(after?.unread).toBe(0);
   });
 
+  it('keeps the unread count when a retracted entry was already read', () => {
+    const panel = new NotifyPanelComponent();
+    panel.upsert(entry('tc-1', 'main one'));
+    panel.upsert(entry('a0:c1', 'explore one', 'a0', 'explore'));
+    expect(panel.focus()).toBe(true);
+
+    panel.upsert(entry('tc-2', 'delegation'));
+    expect(panel.getChannels().find((ch) => ch.label === 'main')?.unread).toBe(1);
+
+    expect(panel.prevChannel()).toBe(true);
+    expect(panel.nextChannel()).toBe(true);
+    panel.upsert(entry('tc-3', 'main three'));
+    expect(panel.getChannels().find((ch) => ch.label === 'main')?.unread).toBe(1);
+
+    expect(panel.remove('tc-2')).toBe(true);
+    expect(panel.getChannels().find((ch) => ch.label === 'main')?.unread).toBe(1);
+  });
+
   it('dims to a stub and notes the ended turn, and clears wholesale', () => {
     const panel = new NotifyPanelComponent();
     panel.upsert(entry('tc-1', 'done with phase one'));
