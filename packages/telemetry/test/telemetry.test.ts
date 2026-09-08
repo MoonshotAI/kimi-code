@@ -210,6 +210,8 @@ describe('TelemetryClient', () => {
     const client = new TelemetryClient();
     const properties = { nested: { a: 1 }, keep: 1 } as unknown as TelemetryProperties;
     client.track('early_bad', properties);
+    (properties as Record<string, unknown>)['keep'] = 2;
+    (properties as Record<string, unknown>)['added'] = 'later';
 
     const onUnexpectedError = vi.fn();
     client.setUnexpectedErrorHandler(onUnexpectedError);
@@ -218,6 +220,7 @@ describe('TelemetryClient', () => {
     await client.flush();
 
     expect(onUnexpectedError).toHaveBeenCalledTimes(1);
+    expect(String(onUnexpectedError.mock.calls[0]?.[0])).toContain('"nested"');
     expect(transport.sent[0]?.[0]?.properties).toEqual({ keep: 1 });
   });
 
