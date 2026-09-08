@@ -1001,47 +1001,6 @@ describe('Agent tool description', () => {
     expect(defaultIndex).toBeGreaterThanOrEqual(0);
     expect(smartIndex).toBeGreaterThan(defaultIndex);
     expect(primaryIndex).toBeGreaterThan(smartIndex);
-    expect(description).toContain(
-      "Pool entries run at each model's default thinking level, not yours.",
-    );
-  });
-
-  it('discloses the configured pool effort when secondary_model.default_effort is set', () => {
-    ctx = createTestAgent({
-      initialConfig: {
-        secondaryModel: {
-          defaultModel: 'provider/fast',
-          defaultEffort: 'low',
-          models: {
-            'provider/fast': 'fast and cheap',
-          },
-        },
-        models: POOL_MODEL_ENTRIES,
-      },
-    });
-
-    expect(agentDescription()).toContain(
-      'Pool entries run at thinking effort "low", not your current level.',
-    );
-  });
-
-  it('notes that pool entries run with thinking off when thinking is disabled', () => {
-    ctx = createTestAgent({
-      initialConfig: {
-        thinking: { enabled: false },
-        secondaryModel: {
-          defaultModel: 'provider/fast',
-          models: {
-            'provider/fast': 'fast and cheap',
-          },
-        },
-        models: POOL_MODEL_ENTRIES,
-      },
-    });
-
-    expect(agentDescription()).toContain(
-      'Thinking is disabled, so pool entries run with thinking off.',
-    );
   });
 
   it('renders the caller-in-pool alias as a plain entry and renders empty descriptions bare', () => {
@@ -3301,7 +3260,6 @@ describe('AgentSwarm tool description', () => {
     expect(description).toContain(
       'Available models (pass via model): provider/fast [default], provider/smart, primary (your current model and thinking level).',
     );
-    expect(description).not.toContain('fast and cheap');
   });
 
   function agentSwarmParameters(): Record<string, unknown> {

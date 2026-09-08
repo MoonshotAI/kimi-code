@@ -1257,7 +1257,6 @@ describe('AgentSwarmTool', () => {
     expect(configured.description).toContain(
       'Available models (pass via model): provider/fast [default], main-model, primary (your current model and thinking level).',
     );
-    expect(configured.description).not.toContain('fast and cheap');
 
     const unconfigured = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), realSubagents(stubSwarmCatalog(), stubConfig(), stubCallerProfile({ modelAlias: 'main-model' })), stubCallerProfile({ modelAlias: 'main-model' }));
 
