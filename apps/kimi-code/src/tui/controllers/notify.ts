@@ -244,6 +244,7 @@ export class NotifyController {
       default:
         return;
     }
+    if (this.running.size === 0) this.state.notifyPanel.setEnded(true);
     this.render();
   }
 

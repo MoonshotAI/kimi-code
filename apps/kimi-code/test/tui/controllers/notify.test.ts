@@ -708,4 +708,32 @@ describe('NotifyController', () => {
     expect(h.rendered()).toContain('ctrl+n');
     expect(h.rendered()).not.toContain('detail A');
   });
+
+  it('re-collapses the panel once the last background agent completes', () => {
+    const h = makeHarness();
+    h.emit('subagent.spawned', { subagentId: 'agent-1', subagentName: 'explore' });
+    h.emit('turn.ended', { reason: 'completed' });
+
+    h.send('s1', 'bg intro\n\n- bg detail', 'agent-1');
+    expect(h.rendered()).toContain('bg detail');
+
+    h.emit('subagent.completed', { subagentId: 'agent-1' });
+    expect(h.rendered()).toContain('ctrl+n');
+    expect(h.rendered()).toContain('bg intro');
+    expect(h.rendered()).not.toContain('bg detail');
+  });
+
+  it('keeps the panel expanded while a background agent is still running', () => {
+    const h = makeHarness();
+    h.emit('subagent.spawned', { subagentId: 'agent-1', subagentName: 'explore' });
+    h.emit('subagent.spawned', { subagentId: 'agent-2', subagentName: 'coder' });
+    h.emit('turn.ended', { reason: 'completed' });
+
+    h.send('s1', 'bg intro\n\n- bg detail', 'agent-1');
+    h.emit('subagent.completed', { subagentId: 'agent-1' });
+    expect(h.rendered()).toContain('bg detail');
+
+    h.emit('subagent.completed', { subagentId: 'agent-2' });
+    expect(h.rendered()).not.toContain('bg detail');
+  });
 });

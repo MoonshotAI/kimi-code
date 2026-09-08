@@ -5,11 +5,29 @@ import { NOTIFY_USER_TOOL_NAME } from './tools/notify-user/notify-user';
 export const NOTIFY_USER_NUDGE_VARIANT = 'notify_user_nudge';
 export const NOTIFY_USER_NUDGE_THRESHOLD = 8;
 
+function startsNewTurn(message: ContextMessage): boolean {
+  const origin = message.origin;
+  if (origin === undefined) return false;
+  switch (origin.kind) {
+    case 'user':
+    case 'cron_job':
+    case 'cron_missed':
+    case 'system_trigger':
+      return true;
+    case 'skill_activation':
+      return origin.trigger === 'user-slash';
+    case 'plugin_command':
+      return true;
+    default:
+      return false;
+  }
+}
+
 export function toolCallsSinceLastNotify(history: readonly ContextMessage[]): number {
   let count = 0;
   for (let index = history.length - 1; index >= 0; index -= 1) {
     const message = history[index]!;
-    if (message.origin?.kind === 'user') break;
+    if (startsNewTurn(message)) break;
     if (message.role !== 'assistant') continue;
     if (message.toolCalls.some((call) => call.name === NOTIFY_USER_TOOL_NAME)) break;
     count += message.toolCalls.length;
@@ -32,7 +50,7 @@ export function toolCallsSincePosition(
 export function lastMidResponsePosition(history: readonly ContextMessage[]): number {
   for (let index = history.length - 1; index >= 0; index -= 1) {
     const message = history[index]!;
-    if (message.origin?.kind === 'user') break;
+    if (startsNewTurn(message)) break;
     if (message.role !== 'assistant') continue;
     if (message.toolCalls.some((call) => call.name === NOTIFY_USER_TOOL_NAME)) break;
     const hasVisibleText = message.content.some(

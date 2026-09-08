@@ -29,6 +29,40 @@ function nudgeInjection(): ContextMessage {
   };
 }
 
+function cronPrompt(): ContextMessage {
+  return {
+    role: 'user',
+    content: [{ type: 'text', text: 'cron fired' }],
+    toolCalls: [],
+    origin: {
+      kind: 'cron_job',
+      jobId: 'j1',
+      cron: '* * * * *',
+      recurring: true,
+      coalescedCount: 0,
+      stale: false,
+    },
+  };
+}
+
+function slashSkillPrompt(): ContextMessage {
+  return {
+    role: 'user',
+    content: [{ type: 'text', text: '/review' }],
+    toolCalls: [],
+    origin: { kind: 'skill_activation', activationId: 'a1', skillName: 'review', trigger: 'user-slash' },
+  };
+}
+
+function modelSkillPrompt(): ContextMessage {
+  return {
+    role: 'user',
+    content: [{ type: 'text', text: 'skill content' }],
+    toolCalls: [],
+    origin: { kind: 'skill_activation', activationId: 'a2', skillName: 'pdf', trigger: 'model-tool' },
+  };
+}
+
 function assistantWithTools(...names: string[]): ContextMessage {
   return {
     role: 'assistant',
@@ -83,6 +117,35 @@ describe('toolCallsSinceLastNotify', () => {
     ];
 
     expect(toolCallsSinceLastNotify(history)).toBe(1);
+  });
+
+  it('stops at non-user turn boundaries such as cron and slash-skill prompts', () => {
+    const cronTurn = [
+      userPrompt(),
+      assistantWithTools('Bash', 'Bash', 'Bash'),
+      cronPrompt(),
+      assistantWithTools('Read'),
+    ];
+    expect(toolCallsSinceLastNotify(cronTurn)).toBe(1);
+
+    const slashTurn = [
+      userPrompt(),
+      assistantWithTools('Bash', 'Bash', 'Bash'),
+      slashSkillPrompt(),
+      assistantWithTools('Read'),
+    ];
+    expect(toolCallsSinceLastNotify(slashTurn)).toBe(1);
+  });
+
+  it('does not stop at a model-invoked skill in the middle of a turn', () => {
+    const history = [
+      userPrompt(),
+      assistantWithTools('Bash', 'Bash'),
+      modelSkillPrompt(),
+      assistantWithTools('Read'),
+    ];
+
+    expect(toolCallsSinceLastNotify(history)).toBe(3);
   });
 });
 
@@ -158,6 +221,22 @@ describe('lastMidResponsePosition', () => {
       assistantWithTools('Bash'),
     ];
     expect(lastMidResponsePosition(previousTurn)).toBe(-1);
+  });
+
+  it('does not treat the previous turn\'s reply as mid-response across non-user boundaries', () => {
+    const acrossCron = [
+      assistantWithText('上一轮的正文', 'Bash'),
+      cronPrompt(),
+      assistantWithTools('Bash'),
+    ];
+    expect(lastMidResponsePosition(acrossCron)).toBe(-1);
+
+    const acrossSlashSkill = [
+      assistantWithText('上一轮的正文', 'Bash'),
+      slashSkillPrompt(),
+      assistantWithTools('Bash'),
+    ];
+    expect(lastMidResponsePosition(acrossSlashSkill)).toBe(-1);
   });
 });
 
