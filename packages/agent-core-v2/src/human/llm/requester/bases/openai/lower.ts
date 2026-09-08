@@ -1,5 +1,6 @@
 import { extractText, type ContentPart, type Message } from '#/llm/message';
 import type { ProtocolTrait, TraitContext } from '#/llm/protocol/trait';
+import type { ToolMessageConversion } from '#/llm/requester/requester';
 
 import { TOOL_RESULT_MEDIA_PLACEHOLDER } from './patterns';
 
@@ -86,6 +87,7 @@ export interface OpenAILowerContext {
   readonly ctx: TraitContext;
   readonly reasoningKey: string;
   readonly preserveThinking: boolean;
+  readonly toolMessageConversion: ToolMessageConversion | undefined;
 }
 
 export function lowerMessage(message: Message, lower: OpenAILowerContext): OpenAIWireMessage[] {
@@ -102,7 +104,7 @@ export function lowerMessage(message: Message, lower: OpenAILowerContext): OpenA
     }
   }
   let content: string | OpenAIContentPart[] | undefined;
-  if (message.role === 'tool' && trait?.toolMessageConversion?.(ctx) !== 'keep_parts') {
+  if (message.role === 'tool' && lower.toolMessageConversion !== 'keep_parts') {
     content = message.content.some((part) => part.type !== 'text' && part.type !== 'think')
       ? convertToolMessageMediaText(message)
       : extractText(message);

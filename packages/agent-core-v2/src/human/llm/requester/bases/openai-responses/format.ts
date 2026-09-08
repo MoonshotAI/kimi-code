@@ -418,7 +418,8 @@ export const openAIResponsesFormat: ProtocolFormat<OpenAIResponsesRequestParams>
     const inputItems = messages.flatMap((message) =>
       lowerMessage(message, {
         modelName: ctx.model.model,
-        extractText: trait?.toolMessageConversion?.(ctx) === 'extract_text',
+        extractText:
+          (input.toolMessageConversion ?? trait?.toolMessageConversion?.(ctx)) === 'extract_text',
       }),
     );
     const finalInput =

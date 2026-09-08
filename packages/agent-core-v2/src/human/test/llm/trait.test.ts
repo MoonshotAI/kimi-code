@@ -1065,6 +1065,88 @@ describe('mergeHistory', () => {
   });
 });
 
+describe('toolMessageConversion request config', () => {
+  const toolHistory: readonly Message[] = [
+    createUserMessage('hi'),
+    createAssistantMessage(
+      [{ type: 'text', text: '' }],
+      [{ type: 'function', id: 'call_1', name: 'get_weather', arguments: '{}' }],
+    ),
+    {
+      role: 'tool',
+      toolCallId: 'call_1',
+      content: [
+        { type: 'text', text: 'sunny' },
+        { type: 'image_url', imageUrl: { url: 'https://example.test/x.png' } },
+      ],
+    },
+  ];
+
+  it('applies request-level extract_text on the openai path', async () => {
+    const client = stubOpenAIClient(chatCompletionChunks);
+    const requester = createOpenAIRequester(undefined, { clientFactory: client.clientFactory });
+    await requester.generate(
+      { model, toolMessageConversion: 'extract_text' },
+      { messages: toolHistory },
+      { signal: new AbortController().signal },
+    );
+    const bodyMessages = client.body()['messages'] as Record<string, unknown>[];
+    const tool = bodyMessages.find((message) => message['role'] === 'tool');
+    expect(tool?.['content']).toBe('sunny\n(image omitted: tool result converted to plain text)');
+    expect(
+      bodyMessages.some((message) => message['role'] === 'user' && Array.isArray(message['content'])),
+    ).toBe(false);
+  });
+
+  it('applies request-level keep_parts on the openai path', async () => {
+    const client = stubOpenAIClient(chatCompletionChunks);
+    const requester = createOpenAIRequester(undefined, { clientFactory: client.clientFactory });
+    await requester.generate(
+      { model, toolMessageConversion: 'keep_parts' },
+      { messages: toolHistory },
+      { signal: new AbortController().signal },
+    );
+    const bodyMessages = client.body()['messages'] as Record<string, unknown>[];
+    const tool = bodyMessages.find((message) => message['role'] === 'tool');
+    expect(tool?.['content']).toEqual([
+      { type: 'text', text: 'sunny' },
+      { type: 'image_url', image_url: { url: 'https://example.test/x.png' } },
+    ]);
+  });
+
+  it('lets the request config override the trait default', async () => {
+    const client = stubOpenAIClient(chatCompletionChunks);
+    const requester = createOpenAIRequester(kimiOpenAITrait, {
+      clientFactory: client.clientFactory,
+    });
+    await requester.generate(
+      { model, toolMessageConversion: 'extract_text' },
+      { messages: toolHistory },
+      { signal: new AbortController().signal },
+    );
+    const bodyMessages = client.body()['messages'] as Record<string, unknown>[];
+    const tool = bodyMessages.find((message) => message['role'] === 'tool');
+    expect(tool?.['content']).toBe('sunny\n(image omitted: tool result converted to plain text)');
+  });
+
+  it('applies request-level extract_text on the responses path', async () => {
+    const client = stubResponsesClient([
+      { type: 'response.completed', response: { id: 'resp_1', status: 'completed' } },
+    ]);
+    const requester = createOpenAIResponsesRequester(undefined, {
+      clientFactory: client.clientFactory,
+    });
+    await requester.generate(
+      { model, toolMessageConversion: 'extract_text' },
+      { messages: toolHistory },
+      { signal: new AbortController().signal },
+    );
+    const input = client.body()['input'] as Record<string, unknown>[];
+    const output = input.find((item) => item['type'] === 'function_call_output');
+    expect(output?.['output']).toBe('sunny\n(image omitted: tool result converted to plain text)');
+  });
+});
+
 describe('anthropic trait dialect', () => {
   it('lets the trait reshape messages, history, and tools', async () => {
     const client = stubAnthropicClient(anthropicStreamEvents);

@@ -231,7 +231,7 @@ export const openAIFormat: ProtocolFormat<OpenAIRequestParams, RawResponse, RawC
     const reasoningKey = options?.reasoningKey ?? DEFAULT_REASONING_KEY;
     const { kwargs, preserveThinking } = resolveRequestKwargs(input);
 
-    const conversion = trait?.toolMessageConversion?.(ctx);
+    const conversion = input.toolMessageConversion ?? trait?.toolMessageConversion?.(ctx);
     const mediaPattern =
       conversion === 'extract_text'
         ? toolResultToPlainText
@@ -245,7 +245,15 @@ export const openAIFormat: ProtocolFormat<OpenAIRequestParams, RawResponse, RawC
       converted.push({ role: 'system', content: systemPrompt });
     }
     for (const message of normalized) {
-      converted.push(...lowerMessage(message, { trait, ctx, reasoningKey, preserveThinking }));
+      converted.push(
+        ...lowerMessage(message, {
+          trait,
+          ctx,
+          reasoningKey,
+          preserveThinking,
+          toolMessageConversion: conversion,
+        }),
+      );
     }
     const finalMessages =
       (trait?.mergeHistory?.(converted, ctx) as OpenAIWireMessage[] | undefined) ?? converted;
