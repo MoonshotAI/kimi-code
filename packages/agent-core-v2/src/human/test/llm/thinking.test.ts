@@ -335,7 +335,7 @@ describe('openai requester thinking', () => {
     expect(client.body()['reasoning_effort']).toBe('medium');
   });
 
-  it('echoes think parts under reasoning_content by default', async () => {
+  it('echoes think parts under reasoning_content by default and restores marked reasoning_details', async () => {
     const client = stubOpenAIClient(chatCompletionChunks());
     const requester = createOpenAIRequester(undefined, { clientFactory: client.clientFactory });
     await requester.generate(
@@ -351,6 +351,33 @@ describe('openai requester thinking', () => {
     const assistant = bodyMessages(client.body())[1]!;
     expect(assistant['reasoning_content']).toBe('abc');
     expect(assistant['content']).toBe('hello');
+
+    const marked = stubOpenAIClient(chatCompletionChunks());
+    const markedRequester = createOpenAIRequester(undefined, {
+      clientFactory: marked.clientFactory,
+    });
+    await markedRequester.generate(
+      { model, thinking: { effort: 'off' } },
+      {
+        messages: [
+          createUserMessage('hi'),
+          createAssistantMessage([
+            { type: 'think', think: '第一段续', detailsIndex: 0 },
+            { type: 'think', think: '第二段', detailsIndex: 1 },
+            { type: 'think', think: '', encrypted: 'cipher', detailsIndex: 2 },
+            { type: 'text', text: 'ok' },
+          ]),
+        ],
+      },
+      { signal: new AbortController().signal },
+    );
+    const markedAssistant = bodyMessages(marked.body())[1]!;
+    expect(markedAssistant['reasoning_details']).toEqual([
+      { type: 'summary', summary: '第一段续' },
+      { type: 'summary', summary: '第二段' },
+      { type: 'encrypted', encrypted: 'cipher' },
+    ]);
+    expect(markedAssistant['reasoning_content']).toBe('第一段续第二段');
   });
 
   it('echoes an empty reasoning_content on think-less assistant messages only when keeping all', async () => {
@@ -426,6 +453,34 @@ describe('openai requester thinking', () => {
     const detectedAssistant = bodyMessages(captured[1]!)[1]!;
     expect(detectedAssistant['reasoning']).toBe('abc');
     expect('reasoning_content' in detectedAssistant).toBe(false);
+
+    const explicit = stubOpenAIClient(
+      chatCompletionChunks([
+        {
+          reasoning_details: [
+            { index: 0, type: 'summary', summary: 'ignored' },
+            { index: 1, type: 'encrypted', encrypted: 'cipher' },
+          ],
+        },
+        { content: 'ok' },
+      ]),
+    );
+    const explicitRequester = createOpenAIRequester(
+      { reasoningKey: () => 'reasoning' },
+      { clientFactory: explicit.clientFactory },
+    );
+    const explicitParts: unknown[] = [];
+    await explicitRequester.generate(
+      { model },
+      { messages },
+      {
+        signal: new AbortController().signal,
+        onEvent: (event) => {
+          if (event.type === 'llm.streaming.part') explicitParts.push(event.part);
+        },
+      },
+    );
+    expect(explicitParts).toEqual([{ type: 'text', text: 'ok' }]);
   });
 
   it('parses reasoning from stream deltas', async () => {
@@ -439,7 +494,7 @@ describe('openai requester thinking', () => {
         {
           signal: new AbortController().signal,
           onEvent: (event) => {
-            if (event.type === 'llm.delta') {
+            if (event.type === 'llm.streaming.part') {
               accumulator.push(event.part);
             }
           },
@@ -469,6 +524,45 @@ describe('openai requester thinking', () => {
     ).resolves.toEqual([
       { type: 'text', text: 'hi' },
       { type: 'think', think: '' },
+    ]);
+    await expect(
+      collect(
+        chatCompletionChunks([
+          {
+            reasoning_content: '第一段',
+            reasoning_details: [{ index: 0, type: 'summary', summary: '第一段' }],
+          },
+          {
+            reasoning_details: [
+              { index: 0, summary: '续' },
+              { index: 1, type: 'summary', summary: '第二段' },
+            ],
+          },
+          { reasoning_details: [{ index: 2, type: 'encrypted', encrypted: 'cipher' }] },
+          { content: 'ok' },
+        ]),
+      ),
+    ).resolves.toEqual([
+      { type: 'think', think: '第一段续', detailsIndex: 0 },
+      { type: 'think', think: '第二段', detailsIndex: 1 },
+      { type: 'think', think: '', encrypted: 'cipher', detailsIndex: 2 },
+      { type: 'text', text: 'ok' },
+    ]);
+    await expect(
+      collect(
+        chatCompletionChunks([
+          {
+            reasoning_details: [
+              { index: 0, type: 'reasoning.text', text: 'foreign', format: 'unknown' },
+              { index: 1, type: 'summary', summary: 'kept' },
+            ],
+          },
+          { content: 'ok' },
+        ]),
+      ),
+    ).resolves.toEqual([
+      { type: 'think', think: 'kept', detailsIndex: 1 },
+      { type: 'text', text: 'ok' },
     ]);
   });
 });

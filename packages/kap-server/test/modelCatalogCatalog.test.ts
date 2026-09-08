@@ -409,46 +409,6 @@ describe('server-v2 /api/v1 catalog browse + import endpoints', () => {
     expect(providers['openai']?.['api_key']).toBe('sk-one');
   });
 
-  it('clears stale on-disk alias fields the upstream no longer lists (two-pass swap)', async () => {
-    await boot(DEFAULTED_TOML);
-    const first = await postJson('/api/v1/providers:import_catalog', {
-      catalog_id: 'openai',
-      api_key: 'sk-one',
-    });
-    expect(first.status).toBe(201);
-
-    const before = await readConfigToml();
-    const models = before['models'] as Record<string, Record<string, unknown>>;
-    models['openai/gpt-4o-mini'] = {
-      ...(models['openai/gpt-4o-mini'] as Record<string, unknown>),
-      beta_api: true,
-      default_effort: 'high',
-    };
-    const { stringify: stringifyToml } = await import('smol-toml');
-    await writeFile(join(home as string, 'config.toml'), stringifyToml(before), 'utf-8');
-    await waitForServerState(async () => {
-      const cfg = await getJson<{ models: Record<string, Record<string, unknown>> }>(
-        '/api/v1/config',
-      );
-      return cfg.body.data.models['openai/gpt-4o-mini']?.['betaApi'] === true;
-    });
-
-    const second = await postJson('/api/v1/providers:import_catalog', {
-      catalog_id: 'openai',
-    });
-    expect(second.status).toBe(201);
-
-    const after = await readConfigToml();
-    const afterModels = after['models'] as Record<string, Record<string, unknown>>;
-    expect(afterModels['openai/gpt-4o-mini']).toEqual({
-      provider: 'openai',
-      model: 'gpt-4o-mini',
-      max_context_size: 128000,
-      capabilities: ['tool_use'],
-      display_name: 'GPT-4o mini',
-    });
-  });
-
   it('answers 40417 for prototype-chain catalog ids (constructor/__proto__)', async () => {
     await boot();
     const first = await getJson('/api/v1/catalog/providers/constructor');

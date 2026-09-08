@@ -47,6 +47,7 @@ export interface TowerMission {
   readonly deps: readonly string[];
   status: TowerMissionStatus;
   owner?: string;
+  context?: string;
   tasks: TowerMissionTask[];
   notes: string[];
   blockers: string[];

@@ -122,7 +122,7 @@ function pluralizeTasks(count: number): string {
   return `${String(count)} background task${count === 1 ? '' : 's'}`;
 }
 
-function parseWaitForOutput(output: string): WaitForResultView | undefined {
+export function parseWaitForOutput(output: string): WaitForResultView | undefined {
   const status = field(output, 'wait_status');
   if (status !== 'completed' && status !== 'timed_out' && status !== 'no_tasks') return undefined;
   const waitedMs = Number(field(output, 'waited_ms') ?? 0);

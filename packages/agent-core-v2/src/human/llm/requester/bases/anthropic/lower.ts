@@ -1,6 +1,7 @@
 import type { Message, TextPart } from '#/llm/message';
 import type { ProtocolTrait, TraitContext } from '#/llm/protocol/trait';
 import { SyntaxRequestFormatError } from '#/llm/syntax-errors';
+import { providerImagePolicy } from '#/llm/media/image-formats';
 
 export type AnthropicWireContentBlock =
   | { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }
@@ -43,8 +44,6 @@ type AnthropicWireImageBlock = Extract<AnthropicWireContentBlock, { type: 'image
 
 type AnthropicWireVideoBlock = Extract<AnthropicWireContentBlock, { type: 'video' }>;
 
-const SUPPORTED_B64_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
-
 const SUPPORTED_B64_VIDEO_TYPES = new Set([
   'video/mp4',
   'video/mpeg',
@@ -56,7 +55,10 @@ const SUPPORTED_B64_VIDEO_TYPES = new Set([
   'video/3gpp',
 ]);
 
-function imageUrlPartToAnthropic(url: string): AnthropicWireImageBlock {
+function imageUrlPartToAnthropic(
+  url: string,
+  acceptedMimes: ReadonlySet<string>,
+): AnthropicWireImageBlock {
   if (url.startsWith('data:')) {
     const withoutScheme = url.slice(5);
     const parts = withoutScheme.split(';base64,', 2);
@@ -65,7 +67,7 @@ function imageUrlPartToAnthropic(url: string): AnthropicWireImageBlock {
     }
     const mediaType = parts[0];
     const data = parts[1];
-    if (!SUPPORTED_B64_MEDIA_TYPES.has(mediaType)) {
+    if (!acceptedMimes.has(mediaType)) {
       throw new SyntaxRequestFormatError(
         `Unsupported media type for base64 image: ${mediaType}, url: ${url}`,
       );
@@ -132,6 +134,7 @@ export function lowerMessage(
   lower: AnthropicLowerContext,
 ): AnthropicWireMessage[] {
   const { trait, ctx } = lower;
+  const acceptedMimes = trait?.acceptedImageMimes?.(ctx) ?? providerImagePolicy().acceptedMimes;
   const content: AnthropicWireContentBlock[] = [];
   if (message.role === 'system') {
     const text = message.content
@@ -147,7 +150,7 @@ export function lowerMessage(
           blocks.push({ type: 'text', text: part.text });
         }
       } else if (part.type === 'image_url') {
-        blocks.push(imageUrlPartToAnthropic(part.imageUrl.url));
+        blocks.push(imageUrlPartToAnthropic(part.imageUrl.url, acceptedMimes));
       } else if (part.type === 'video_url') {
         blocks.push(videoUrlPartToAnthropic(part.videoUrl.url));
       }
@@ -168,7 +171,7 @@ export function lowerMessage(
       } else if (part.type === 'text') {
         content.push({ type: 'text', text: part.text });
       } else if (part.type === 'image_url') {
-        content.push(imageUrlPartToAnthropic(part.imageUrl.url));
+        content.push(imageUrlPartToAnthropic(part.imageUrl.url, acceptedMimes));
       } else if (part.type === 'video_url') {
         content.push(videoUrlPartToAnthropic(part.videoUrl.url));
       }

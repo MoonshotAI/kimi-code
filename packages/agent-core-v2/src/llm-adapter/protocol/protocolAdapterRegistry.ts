@@ -5,7 +5,7 @@ import { UNKNOWN_CAPABILITY, toLlmCapability, type ModelCapability } from '../co
 import type { ModelThinkingMetadata } from '#human/llm/thinking';
 import type { ProviderMediaContribution } from '#human/llm/media/upload';
 import type { LlmModel } from '#human/llm/model';
-import type { ProtocolBase, ProtocolName } from '#human/llm/protocol/base';
+import type { ProtocolBase } from '#human/llm/protocol/base';
 import type { ProtocolTrait } from '#human/llm/protocol/trait';
 import { anthropicBase, anthropicBetaBase } from '#human/llm/requester/bases/anthropic/requester';
 import {
@@ -182,20 +182,7 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
       alwaysThinking: model.alwaysThinking,
       adaptiveThinking: model.providerOptions?.adaptiveThinking,
     };
-    return { requester, protocol: protocolNameFor(model, route), model: llmModel, media: route.media };
-  }
-}
-
-function protocolNameFor(model: Model, route: AdapterRoute): ProtocolName {
-  switch (model.protocol) {
-    case 'openai':
-      return 'openai';
-    case 'openai_responses':
-      return 'openai_responses';
-    case 'anthropic':
-      return route.base === anthropicBetaBase ? 'anthropic_beta' : 'anthropic';
-    case 'google-genai':
-      return route.base === vertexGenAIBase ? 'google-vertex' : 'google-genai';
+    return { requester, protocol: model.protocol, model: llmModel, media: route.media };
   }
 }
 

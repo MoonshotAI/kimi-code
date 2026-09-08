@@ -103,6 +103,22 @@ export class CompactionCompleted extends AgentEvent2<CompactionCompletedPayload>
 }
 export interface CompactionCompleted extends CompactionCompletedPayload {}
 
+export interface CompactionStartedEvent extends Omit<CompactionStartedPayload, 'agentId'> {
+  readonly type: 'compaction.started';
+}
+
+export interface CompactionBlockedEvent extends Omit<CompactionBlockedPayload, 'agentId'> {
+  readonly type: 'compaction.blocked';
+}
+
+export interface CompactionCancelledEvent {
+  readonly type: 'compaction.cancelled';
+}
+
+export interface CompactionCompletedEvent extends Omit<CompactionCompletedPayload, 'agentId'> {
+  readonly type: 'compaction.completed';
+}
+
 export const fullCompactionKey = defineState(
   'fullCompaction',
   (): CompactionState => ({ phase: 'idle' }),

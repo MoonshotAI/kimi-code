@@ -30,7 +30,7 @@ function createEchoRequester(): LlmRequester {
     generate: (_config, { messages }, { onEvent }) => {
       const last = messages.at(-1);
       const text = last !== undefined && last.role === 'user' ? extractText(last) : '';
-      onEvent?.({ type: 'llm.delta', part: { type: 'text', text: `echo:${text}` } });
+      onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: `echo:${text}` } });
       onEvent?.({ type: 'llm.done' });
       return Promise.resolve();
     },
@@ -83,7 +83,7 @@ afterEach(async () => {
 });
 
 async function makeV2SessionDir(fixture: V2SessionFixture): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'v3-migrate-v2-'));
+  const dir = await mkdtemp(join(tmpdir(), 'migrate-v2-'));
   dirs.push(dir);
   const meta = fixture.meta ?? {
     id: 'session_test',
@@ -555,7 +555,7 @@ describe('migrateV2Session', () => {
       'first-reply',
     ]);
     const names = await readdir(dir);
-    expect(names.filter((name) => name.startsWith('.v3-migrate'))).toEqual([]);
+    expect(names.filter((name) => name.startsWith('.migrate'))).toEqual([]);
     expect(names).toContain('state.json');
     expect(names).toContain('agents');
     expect(names).toContain('trees');

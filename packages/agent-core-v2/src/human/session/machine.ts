@@ -34,7 +34,7 @@ export type SessionEmitted =
   | { type: 'agent.forked'; sourceId: string; agentId: string; branchId: string; ref: AgentActorRef }
   | { type: 'agent.switched'; agentId: string; branchId: string; reason?: string }
   | { type: 'agent.stopped'; agentId: string }
-  | { type: 'agent.error'; agentId: string; error: string };
+  | { type: 'agent.failed'; agentId: string; error: string };
 
 export interface SessionMachineContext {
   input: SessionInput;
@@ -75,16 +75,12 @@ export function createSessionMachine({ agent }: CreateSessionMachineOptions) {
     }),
     on: {
       'llm.sent': {},
-      'llm.delta': {},
-      'llm.headers': {},
+      'llm.streaming.*': {},
       'llm.done': {},
       'llm.failed.syntax': {},
       'llm.failed.remote': {},
       'llm.retrying': {},
-      'llm.usage': {},
-      'llm.finish': {},
-      'llm.message-id': {},
-      'tool.async': {},
+      'tool.detached': {},
       'tool.update': {},
       'tool.done': {},
       'tool.failed': {},
@@ -99,7 +95,7 @@ export function createSessionMachine({ agent }: CreateSessionMachineOptions) {
               guard: ({ context, event }) =>
                 event.agentId !== undefined && context.agents[event.agentId] !== undefined,
               actions: emit(({ event }) => ({
-                type: 'agent.error' as const,
+                type: 'agent.failed' as const,
                 agentId: event.agentId as string,
                 error: `duplicate agent id: '${event.agentId}'`,
               })),
@@ -145,7 +141,7 @@ export function createSessionMachine({ agent }: CreateSessionMachineOptions) {
                 context.agents[event.sourceId] === undefined ||
                 (event.agentId !== undefined && context.agents[event.agentId] !== undefined),
               actions: emit(({ context, event }) => ({
-                type: 'agent.error' as const,
+                type: 'agent.failed' as const,
                 agentId: event.agentId ?? event.sourceId,
                 error:
                   context.agents[event.sourceId] === undefined
@@ -194,7 +190,7 @@ export function createSessionMachine({ agent }: CreateSessionMachineOptions) {
             {
               guard: ({ context, event }) => context.agents[event.agentId] === undefined,
               actions: emit(({ event }) => ({
-                type: 'agent.error' as const,
+                type: 'agent.failed' as const,
                 agentId: event.agentId,
                 error: `unknown agent: '${event.agentId}'`,
               })),
@@ -203,7 +199,7 @@ export function createSessionMachine({ agent }: CreateSessionMachineOptions) {
               guard: ({ context, event }) =>
                 !(context.agents[event.agentId] as AgentEntry).ref.getSnapshot().matches('idle'),
               actions: emit(({ event }) => ({
-                type: 'agent.error' as const,
+                type: 'agent.failed' as const,
                 agentId: event.agentId,
                 error: `agent is busy: '${event.agentId}'`,
               })),
@@ -232,7 +228,7 @@ export function createSessionMachine({ agent }: CreateSessionMachineOptions) {
             {
               guard: ({ context, event }) => context.agents[event.agentId] === undefined,
               actions: emit(({ event }) => ({
-                type: 'agent.error' as const,
+                type: 'agent.failed' as const,
                 agentId: event.agentId,
                 error: `unknown agent: '${event.agentId}'`,
               })),
@@ -248,7 +244,7 @@ export function createSessionMachine({ agent }: CreateSessionMachineOptions) {
             {
               guard: ({ context, event }) => context.agents[event.agentId] === undefined,
               actions: emit(({ event }) => ({
-                type: 'agent.error' as const,
+                type: 'agent.failed' as const,
                 agentId: event.agentId,
                 error: `unknown agent: '${event.agentId}'`,
               })),

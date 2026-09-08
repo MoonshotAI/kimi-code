@@ -77,8 +77,8 @@ function emitAll(emit: (event: LlmRequestEvent) => void, events: readonly LlmReq
 function textStream(emit: (event: LlmRequestEvent) => void, text = 'hello'): void {
   emitAll(emit, [
     { type: 'llm.sent' },
-    { type: 'llm.delta', part: { type: 'text', text } },
-    { type: 'llm.finish', finish: { finishReason: 'completed', rawFinishReason: 'stop' } },
+    { type: 'llm.streaming.part', part: { type: 'text', text } },
+    { type: 'llm.streaming.finish', finish: { finishReason: 'completed', rawFinishReason: 'stop' } },
     { type: 'llm.done' },
   ]);
 }
@@ -210,18 +210,18 @@ describe('ModelRequesterImpl request execution', () => {
     requester.handler = (_i, emit) =>
       emitAll(emit, [
         { type: 'llm.sent' },
-        { type: 'llm.headers', headers: { 'x-trace-id': 'trace-1' } },
-        { type: 'llm.delta', part: { type: 'text', text: 'he' } },
-        { type: 'llm.delta', part: { type: 'text', text: 'llo' } },
+        { type: 'llm.streaming.headers', headers: { 'x-trace-id': 'trace-1' } },
+        { type: 'llm.streaming.part', part: { type: 'text', text: 'he' } },
+        { type: 'llm.streaming.part', part: { type: 'text', text: 'llo' } },
         {
-          type: 'llm.delta',
+          type: 'llm.streaming.part',
           part: { type: 'function', id: 'call-1', name: 'do', arguments: '{"a"', _streamIndex: 0 },
         },
-        { type: 'llm.delta', part: { type: 'tool_call_part', argumentsPart: ':1}', index: 0 } },
-        { type: 'llm.usage', usage: { inputOther: 10 } },
-        { type: 'llm.usage', usage: { output: 7 } },
-        { type: 'llm.finish', finish: { finishReason: 'tool_calls', rawFinishReason: 'tool_calls' } },
-        { type: 'llm.message-id', messageId: 'msg-42' },
+        { type: 'llm.streaming.part', part: { type: 'tool_call_part', argumentsPart: ':1}', index: 0 } },
+        { type: 'llm.streaming.usage', usage: { inputOther: 10 } },
+        { type: 'llm.streaming.usage', usage: { output: 7 } },
+        { type: 'llm.streaming.finish', finish: { finishReason: 'tool_calls', rawFinishReason: 'tool_calls' } },
+        { type: 'llm.streaming.message_id', messageId: 'msg-42' },
         { type: 'llm.done' },
       ]);
     const traceIds: Array<string | null> = [];
@@ -417,6 +417,26 @@ describe('ModelRequesterImpl request execution', () => {
     expect(part).toEqual({ type: 'video_url', videoUrl: { url: 'https://cdn.example.test/v.mp4' } });
     expect(seen).toEqual(['sk-1']);
   });
+
+  it('reports the event-loop-busy overlap of the decode window as clientBlockedMs', async () => {
+    const requester = new FakeLlmRequester();
+    requester.handler = (_i, emit) => {
+      emit({ type: 'llm.sent' });
+      emit({ type: 'llm.streaming.part', part: { type: 'text', text: 'a' } });
+      const spinUntil = Date.now() + 150;
+      while (Date.now() < spinUntil) {}
+      emit({ type: 'llm.streaming.part', part: { type: 'text', text: 'b' } });
+      emit({ type: 'llm.streaming.finish', finish: { finishReason: 'completed', rawFinishReason: 'stop' } });
+      emit({ type: 'llm.done' });
+    };
+    const impl = new ModelRequesterImpl(modelWith(staticAuth()), gatewayReturning(requester));
+    const events = await collect(impl.request(INPUT));
+    const timing = events.find((event) => event.type === 'timing');
+    expect(timing).toBeDefined();
+    if (timing?.type !== 'timing') return;
+    expect(timing.serverDecodeMs).toBeGreaterThanOrEqual(140);
+    expect(timing.clientBlockedMs).toBeGreaterThanOrEqual(100);
+  });
 });
 
 describe('effectiveMaxCompletionTokens', () => {
@@ -454,6 +474,24 @@ describe('buildStreamTiming', () => {
       serverFirstTokenMs: 130,
       serverDecodeMs: 90,
       clientConsumeMs: 60,
+    });
+  });
+
+  it('adds the blocked share of the decode window when reported', () => {
+    expect(
+      buildStreamTiming(100, 120, 250, 400, {
+        serverDecodeMs: 10,
+        clientConsumeMs: 60,
+        clientBlockedMs: 80,
+      }),
+    ).toEqual({
+      firstTokenLatencyMs: 150,
+      streamDurationMs: 150,
+      requestBuildMs: 20,
+      serverFirstTokenMs: 130,
+      serverDecodeMs: 10,
+      clientConsumeMs: 60,
+      clientBlockedMs: 80,
     });
   });
 });

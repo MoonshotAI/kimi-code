@@ -89,7 +89,6 @@ export interface ProjectorInteraction {
   readonly id: string;
   readonly kind: 'approval' | 'question';
   readonly payload: unknown;
-  readonly origin: { readonly agentId?: string; readonly turnId?: number };
   readonly createdAt: number;
 }
 
@@ -559,6 +558,7 @@ export class AgentTranscriptProjector {
     llmServerFirstTokenMs?: number;
     llmServerDecodeMs?: number;
     llmClientConsumeMs?: number;
+    llmClientBlockedMs?: number;
   }): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
     this.flushOpenFrames(ops);
@@ -587,6 +587,7 @@ export class AgentTranscriptProjector {
         llmServerFirstTokenMs: event.llmServerFirstTokenMs,
         llmServerDecodeMs: event.llmServerDecodeMs,
         llmClientConsumeMs: event.llmClientConsumeMs,
+        llmClientBlockedMs: event.llmClientBlockedMs,
       },
     };
     ops.push({ op: 'step.upsert', turnId, step: this.currentStep });

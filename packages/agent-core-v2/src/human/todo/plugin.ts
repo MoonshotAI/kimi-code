@@ -20,8 +20,8 @@ export function createTodoPlugin(state: TodoState = createTodoState()): TodoPlug
     tools: () => [tool],
     connect(target) {
       if (target.kind !== 'agent') return;
-      target.on('turn.start', (event) => {
-        if (event.type !== 'turn.start') return;
+      target.on('turn.started', (event) => {
+        if (event.type !== 'turn.started') return;
         state.currentTurn += 1;
         if (state.todos.length === 0) return;
         if (state.todos.every((todo) => todo.status === 'done')) return;

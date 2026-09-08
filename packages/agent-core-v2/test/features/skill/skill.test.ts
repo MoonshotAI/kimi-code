@@ -280,16 +280,16 @@ describe('AgentSkillService busy delivery (harness)', () => {
         if (n === 1) await gate;
         control.signal.throwIfAborted();
         const text = `response-${String(n)}`;
-        control.onEvent?.({ type: 'llm.delta', part: { type: 'text', text } });
+        control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text } });
         control.onEvent?.({
-          type: 'llm.usage',
+          type: 'llm.streaming.usage',
           usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
         });
         control.onEvent?.({
-          type: 'llm.finish',
+          type: 'llm.streaming.finish',
           finish: { finishReason: 'completed', rawFinishReason: 'stop' },
         });
-        control.onEvent?.({ type: 'llm.message-id', messageId: `mock-${String(n)}` });
+        control.onEvent?.({ type: 'llm.streaming.message_id', messageId: `mock-${String(n)}` });
         control.onEvent?.({ type: 'llm.done' });
       },
     };

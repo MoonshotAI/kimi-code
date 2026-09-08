@@ -4,19 +4,16 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IConfigService } from '#/app/config/config';
-import { IFlagService } from '#/app/flag/flag';
 import { ErrorCodes, Error2, isError2 } from '#/errors';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import {
   SECONDARY_MODEL_SECTION,
   SUBAGENT_SECTION,
 } from '#/session/subagent/configSection';
-import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import { ISessionSubagentModelsValidationService } from '#/session/subagent/subagentModelsValidation';
 import { SessionSubagentModelsValidationService } from '#/session/subagent/subagentModelsValidationService';
 
 import { StubConfigService } from '../../stubs';
-import { stubFlag } from '../../app/flag/stubs';
 
 describe('SessionSubagentModelsValidationService', () => {
   let disposables: DisposableStore;
@@ -32,9 +29,8 @@ describe('SessionSubagentModelsValidationService', () => {
     disposables.dispose();
   });
 
-  function setup(configValues: Record<string, unknown>, flagEnabled = true): void {
+  function setup(configValues: Record<string, unknown>): void {
     ix.stub(IConfigService, new StubConfigService(configValues));
-    ix.stub(IFlagService, stubFlag((id) => flagEnabled && id === SECONDARY_MODEL_FLAG_ID));
     ix.stub(IModelCatalog, {
       _serviceBrand: undefined,
       get: (id: string) => {
@@ -70,11 +66,6 @@ describe('SessionSubagentModelsValidationService', () => {
 
   it('is a no-op when only the [subagent] timeout is configured', () => {
     setup({ [SUBAGENT_SECTION]: { timeoutMs: 5000 } });
-    expect(resolve()).toBeUndefined();
-  });
-
-  it('skips a broken pool when secondary-model is disabled', () => {
-    setup({ [SECONDARY_MODEL_SECTION]: { defaultModel: 'provider/typo' } }, false);
     expect(resolve()).toBeUndefined();
   });
 

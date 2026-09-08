@@ -30,6 +30,7 @@ const AGENT_TOOLS = [
   'AgentSwarm',
   'FetchURL',
   'AskUserQuestion',
+  'NotifyUser',
   'EnterPlanMode',
   'ExitPlanMode',
   'CreateGoal',
@@ -43,6 +44,7 @@ const AGENT_TOOLS = [
 ] as const;
 
 const CODER_TOOLS = [
+  'NotifyUser',
   'Bash',
   'CronCreate',
   'CronDelete',
@@ -67,6 +69,7 @@ const CODER_TOOLS = [
 ] as const;
 
 const EXPLORE_TOOLS = [
+  'NotifyUser',
   'Bash',
   'Read',
   'ReadMediaFile',

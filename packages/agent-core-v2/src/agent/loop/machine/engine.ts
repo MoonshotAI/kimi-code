@@ -21,7 +21,12 @@ import { createMachineTools, type ToolResultExtras } from './tools';
 
 export type MachineEngineDelta =
   | { readonly kind: 'assistant'; readonly delta: string }
-  | { readonly kind: 'thinking'; readonly delta: string }
+  | {
+      readonly kind: 'thinking';
+      readonly delta: string;
+      readonly encrypted?: string;
+      readonly detailsIndex?: number;
+    }
   | {
       readonly kind: 'toolCall';
       readonly toolCallId: string;
@@ -151,7 +156,12 @@ function createDeltaSplitter(): (part: StreamedMessagePart) => MachineEngineDelt
       case 'text':
         return { kind: 'assistant', delta: part.text };
       case 'think':
-        return { kind: 'thinking', delta: part.think };
+        return {
+          kind: 'thinking',
+          delta: part.think,
+          encrypted: part.encrypted,
+          detailsIndex: part.detailsIndex,
+        };
       case 'image_url':
       case 'audio_url':
       case 'video_url':
@@ -219,16 +229,18 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
       turnActor: createTurnMachine(
         createLlmMachine({
           requester: requester.requester,
+        }),
+        {
           retry: { maxAttemptsPerStep: options.maxAttemptsPerStep },
           recovery: options.recovery,
-        }),
+        },
       ),
       abortTimeoutMs: options.abortTimeoutMs,
     }),
     { input: { request: { model: options.model, systemPrompt: options.systemPrompt } } },
   );
   const subscriptions: Subscription[] = [
-    actor.on('turn.start', (event) => {
+    actor.on('turn.started', (event) => {
       currentStep = 0;
       split = createDeltaSplitter();
       pendingFailure = undefined;
@@ -240,7 +252,7 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
       tools.beginBatch();
       publish({ type: 'stepStarted', step: currentStep, recovery: event.recovery });
     }),
-    actor.on('llm.delta', (event) => {
+    actor.on('llm.streaming.part', (event) => {
       const delta = split(event.part);
       if (delta !== undefined) publish({ type: 'delta', delta });
     }),
@@ -303,7 +315,7 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
     actor.on('tool.update', (event) => {
       publish({ type: 'toolUpdate', toolCallId: event.toolCallId, update: event.update });
     }),
-    actor.on('tool.async', (event) => {
+    actor.on('tool.detached', (event) => {
       publish({ type: 'toolAsync', toolCallId: event.toolCallId, text: event.text });
     }),
     actor.on('tool.done', (event) => {
@@ -315,7 +327,7 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
     actor.on('tool.aborted', (event) => {
       publish({ type: 'toolAborted', toolCallId: event.toolCallId });
     }),
-    actor.on('turn.remindersConsumed', (event) => {
+    actor.on('turn.reminders_consumed', (event) => {
       publish({ type: 'remindersConsumed', reminders: event.reminders });
     }),
     actor.on('turn.aborting', () => {
@@ -358,7 +370,7 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
       actor.send({ type: 'input.notify', message });
     },
     remind: (key, message) => {
-      actor.send({ type: 'input.reminder', key, message });
+      actor.send({ type: 'input.remind', key, message });
     },
     abort: () => {
       actor.send({ type: 'input.abort' });

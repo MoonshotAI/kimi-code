@@ -344,6 +344,25 @@ describe('TowerPlanTool', () => {
     expect(result.output).toContain('| M1 | Build engine | build | feat/build-engine | wt-1 | src/engine/** |');
     expect(result.output).toContain('| M2 | Build UI | build | feat/build-ui | wt-2 | src/ui/** |');
   });
+
+  it('passes mission context through to the stored mission', async () => {
+    await initViaTool();
+
+    const result = await run(ix.get(ITowerPlanTool), {
+      missions: [
+        {
+          title: 'Build engine',
+          scope: ['src/engine/**'],
+          tasks: ['scaffold'],
+          context: 'Ship it as a single binary.',
+        },
+      ],
+    });
+
+    expect(result.isError).toBeFalsy();
+    const state = await new TowerStore(repo).load();
+    expect(state.missions[0]?.context).toBe('Ship it as a single binary.');
+  });
 });
 
 describe('TowerTeardownTool', () => {

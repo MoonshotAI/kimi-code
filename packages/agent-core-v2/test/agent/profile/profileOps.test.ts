@@ -530,6 +530,66 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     });
   });
 
+  it('exposes the provider type of the bound model, or nothing before a model binds', () => {
+    modelCatalog = createModelCatalogStub({
+      'kimi-code': createTestModel({ providerType: 'kimi' }),
+      'claude-code': createTestModel({ id: 'claude-code', protocol: 'anthropic' }),
+    });
+    const host = buildHost('profile-provider-type');
+    host.svc.configure({ emitStatusUpdated: () => undefined });
+
+    expect(host.svc.getModelProviderType()).toBeUndefined();
+    host.svc.update({ modelAlias: 'kimi-code' });
+    expect(host.svc.getModelProviderType()).toBe('kimi');
+    host.svc.update({ modelAlias: 'claude-code' });
+    expect(host.svc.getModelProviderType()).toBeUndefined();
+    host.svc.update({ modelAlias: 'unknown-model' });
+    expect(host.svc.getModelProviderType()).toBeUndefined();
+  });
+
+  it('resolves the provider type of another catalog model without rebinding', () => {
+    modelCatalog = createModelCatalogStub({
+      'kimi-code': createTestModel({ providerType: 'kimi' }),
+      'claude-code': createTestModel({ id: 'claude-code', protocol: 'anthropic' }),
+    });
+    const host = buildHost('profile-provider-type-of-alias');
+    host.svc.configure({ emitStatusUpdated: () => undefined });
+    host.svc.update({ modelAlias: 'claude-code' });
+
+    expect(host.svc.getModelProviderType('kimi-code')).toBe('kimi');
+    expect(host.svc.getModelProviderType('missing-model')).toBeUndefined();
+    expect(host.svc.getModel()).toBe('claude-code');
+  });
+
+  it('falls back to the configured default model when nothing binds and no alias is given', () => {
+    modelCatalog = createModelCatalogStub({
+      'kimi-code': createTestModel({ providerType: 'kimi' }),
+      'claude-code': createTestModel({ id: 'claude-code', protocol: 'anthropic' }),
+    });
+    configValues['defaultModel'] = 'kimi-code';
+    const host = buildHost('profile-provider-type-default-fallback');
+    host.svc.configure({ emitStatusUpdated: () => undefined });
+
+    expect(host.svc.getModelProviderType()).toBe('kimi');
+    host.svc.update({ modelAlias: 'claude-code' });
+    expect(host.svc.getModelProviderType()).toBeUndefined();
+    expect(host.svc.getModelProviderType('kimi-code')).toBe('kimi');
+  });
+
+  it('stays undefined when the configured default model resolves outside the kimi set or nowhere', () => {
+    modelCatalog = createModelCatalogStub({
+      'claude-code': createTestModel({ id: 'claude-code', protocol: 'anthropic' }),
+    });
+    configValues['defaultModel'] = 'claude-code';
+    const host = buildHost('profile-provider-type-default-outside');
+    host.svc.configure({ emitStatusUpdated: () => undefined });
+
+    expect(host.svc.getModelProviderType()).toBeUndefined();
+
+    configValues['defaultModel'] = 'missing-model';
+    expect(host.svc.getModelProviderType()).toBeUndefined();
+  });
+
   it('uses the resolved Kimi effort instead of the configured default', () => {
     modelCatalog = createModelCatalogStub({
       'kimi-code': createTestModel({ providerType: 'kimi' }),

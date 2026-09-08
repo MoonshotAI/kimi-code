@@ -173,7 +173,7 @@ describe('tool select plugin', () => {
     const { target, reminded, emit } = createTarget();
     plugin.connect?.(target);
 
-    emit({ type: 'turn.start', turnId: 1, branchId: 'main' });
+    emit({ type: 'turn.started', turnId: 1, branchId: 'main' });
     expect(reminded).toHaveLength(1);
     expect(reminded[0]?.key).toBe(LOADABLE_TOOLS_REMINDER_KEY);
     expect(extractText(reminded[0]?.message as UserMessage)).toContain('get_weather');
@@ -187,7 +187,7 @@ describe('tool select plugin', () => {
     expect(schemaMessage.tools?.map((tool) => tool.name)).toEqual(['get_weather']);
 
     emit({
-      type: 'turn.remindersConsumed',
+      type: 'turn.reminders_consumed',
       reminders: [
         { message: reminded[0]?.message as UserMessage, meta: { source: 'reminder', key: LOADABLE_TOOLS_REMINDER_KEY } },
         { message: schemaMessage, meta: { source: 'reminder', key: DYNAMIC_TOOL_SCHEMA_REMINDER_KEY } },
@@ -206,7 +206,7 @@ describe('tool select plugin', () => {
     const { target, emit } = createTarget();
     plugin.connect?.(target);
 
-    emit({ type: 'turn.start', turnId: 1, branchId: 'main' });
+    emit({ type: 'turn.started', turnId: 1, branchId: 'main' });
     state.load(['get_weather']);
     emit({ type: 'context.reset', branchId: 'main' });
     expect(state.isLoaded('get_weather')).toBe(false);
@@ -252,10 +252,10 @@ describe('tool select agent flow', () => {
     onEvent: ((event: LlmRequestEvent) => void) | undefined,
   ): void {
     for (const part of [...message.content, ...message.toolCalls]) {
-      onEvent?.({ type: 'llm.delta', part });
+      onEvent?.({ type: 'llm.streaming.part', part });
     }
     onEvent?.({
-      type: 'llm.finish',
+      type: 'llm.streaming.finish',
       finish: { finishReason: 'completed', rawFinishReason: 'stop' },
     });
     onEvent?.({ type: 'llm.done' });

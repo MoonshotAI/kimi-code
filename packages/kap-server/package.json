@@ -16,6 +16,10 @@
     "./search-worker-runtime": {
       "types": "./src/search/worker/runtime.ts",
       "default": "./src/search/worker/runtime.ts"
+    },
+    "./protocol/*": {
+      "types": "./src/protocol/*.ts",
+      "default": "./src/protocol/*.ts"
     }
   },
   "scripts": {

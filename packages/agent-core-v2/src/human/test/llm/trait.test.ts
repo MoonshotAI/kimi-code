@@ -28,7 +28,7 @@ import {
   kimiAnthropicTrait,
   kimiOpenAITrait,
 } from '#/llm-kimi/trait';
-import { anthropicProvider, openaiProvider } from '#/llm/provider/providers/standard';
+import { anthropicProvider, googleGenAITrait, openaiProvider } from '#/llm/provider/providers/standard';
 import type { LlmClientContext, LlmRequester, LlmRequestEvent } from '#/llm/requester/requester';
 import type { TokenUsage } from '#/llm/usage';
 import {
@@ -61,7 +61,7 @@ async function generateAndCollectUsage(
     {
       signal: new AbortController().signal,
       onEvent: (event) => {
-        if (event.type === 'llm.usage') {
+        if (event.type === 'llm.streaming.usage') {
           usage = event.usage;
         }
       },
@@ -266,8 +266,8 @@ describe('defaultHeaders', () => {
       {
         signal: new AbortController().signal,
         onEvent: (event) => {
-          if (event.type === 'llm.finish') finish = event.finish;
-          if (event.type === 'llm.message-id') messageId = event.messageId;
+          if (event.type === 'llm.streaming.finish') finish = event.finish;
+          if (event.type === 'llm.streaming.message_id') messageId = event.messageId;
         },
       },
     );
@@ -496,7 +496,7 @@ describe('endpoint', () => {
   });
 
   it('selects protocols by name and rejects undeclared ones', () => {
-    expect(kimiProvider.protocols).toEqual(['openai', 'anthropic_beta', 'openai_responses']);
+    expect(kimiProvider.protocols).toEqual(['openai', 'anthropic', 'openai_responses']);
     expect(() => kimiProvider.createRequester('google-genai')).toThrow(
       "provider 'kimi' has no protocol 'google-genai'",
     );
@@ -526,6 +526,82 @@ describe('endpoint', () => {
       defaultHeaders: { 'x-h': 'v' },
     });
     expect(isUnknownCapability(resolved.capability)).toBe(true);
+  });
+
+  it('passes protocol flags through resolveModel', () => {
+    const resolved = anthropicProvider.resolveModel('claude-sonnet-4-20250514', {
+      betaApi: true,
+      vertexai: true,
+    });
+    expect(resolved.betaApi).toBe(true);
+    expect(resolved.vertexai).toBe(true);
+    const plain = anthropicProvider.resolveModel('claude-sonnet-4-20250514');
+    expect(plain.betaApi).toBeUndefined();
+    expect(plain.vertexai).toBeUndefined();
+  });
+});
+
+
+describe('protocol variant flags', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('uses the anthropic beta api when the model opts in', async () => {
+    const client = stubAnthropicClient(anthropicStreamEvents);
+    const requester = createAnthropicRequester(undefined, {
+      clientFactory: client.clientFactory,
+    });
+    await requester.generate(
+      { model: { ...model, betaApi: true } },
+      { messages },
+      { signal: new AbortController().signal },
+    );
+    expect(client.betaCalled()).toBe(true);
+  });
+
+  it('switches google env names when the model opts into vertex', async () => {
+    vi.stubEnv('GOOGLE_API_KEY', 'gemini-key');
+    vi.stubEnv('VERTEXAI_API_KEY', 'vertex-key');
+    const chunks = [
+      {
+        responseId: 'gemini-resp-1',
+        candidates: [
+          {
+            content: { role: 'model', parts: [{ text: 'hi' }] },
+            finishReason: 'STOP',
+          },
+        ],
+        usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 },
+      },
+    ];
+    const seen: LlmModel[] = [];
+    const client = createClientStub((captured, request) => {
+      seen.push(request.model);
+      return {
+        models: {
+          generateContentStream: async (params: Record<string, unknown>) => {
+            captured.push({ params, headers: request.headers });
+            return createAsyncStream(chunks);
+          },
+        },
+      };
+    });
+    const requester = createGoogleGenAIRequester(googleGenAITrait, {
+      clientFactory: client.clientFactory,
+    });
+    const signal = new AbortController().signal;
+    await requester.generate(
+      { model: { ...model, model: 'gemini-2.5-flash' } },
+      { messages },
+      { signal },
+    );
+    await requester.generate(
+      { model: { ...model, model: 'gemini-2.5-flash', vertexai: true } },
+      { messages },
+      { signal },
+    );
+    expect(seen.map((entry) => entry.apiKey)).toEqual(['gemini-key', 'vertex-key']);
   });
 });
 
@@ -796,9 +872,9 @@ describe('extractUsage', () => {
       {
         signal: new AbortController().signal,
         onEvent: (event) => {
-          if (event.type === 'llm.usage') usage = event.usage;
-          if (event.type === 'llm.finish') finish = event.finish;
-          if (event.type === 'llm.message-id') messageId = event.messageId;
+          if (event.type === 'llm.streaming.usage') usage = event.usage;
+          if (event.type === 'llm.streaming.finish') finish = event.finish;
+          if (event.type === 'llm.streaming.message_id') messageId = event.messageId;
         },
       },
     );
@@ -1203,7 +1279,7 @@ describe('anthropic thinking kwargs', () => {
       {
         signal: new AbortController().signal,
         onEvent: (event) => {
-          if (event.type === 'llm.delta') parts.push(event.part);
+          if (event.type === 'llm.streaming.part') parts.push(event.part);
         },
       },
     );
@@ -1506,10 +1582,10 @@ describe('openai responses base', () => {
       {
         signal: new AbortController().signal,
         onEvent: (event) => {
-          if (event.type === 'llm.delta') parts.push(event.part);
-          if (event.type === 'llm.usage') usage = event.usage;
-          if (event.type === 'llm.finish') finish = event.finish;
-          if (event.type === 'llm.message-id') messageId = event.messageId;
+          if (event.type === 'llm.streaming.part') parts.push(event.part);
+          if (event.type === 'llm.streaming.usage') usage = event.usage;
+          if (event.type === 'llm.streaming.finish') finish = event.finish;
+          if (event.type === 'llm.streaming.message_id') messageId = event.messageId;
         },
       },
     );
@@ -1647,10 +1723,10 @@ describe('google genai base', () => {
       {
         signal: new AbortController().signal,
         onEvent: (event) => {
-          if (event.type === 'llm.delta') parts.push(event.part);
-          if (event.type === 'llm.usage') usage = event.usage;
-          if (event.type === 'llm.finish') finish = event.finish;
-          if (event.type === 'llm.message-id') messageId = event.messageId;
+          if (event.type === 'llm.streaming.part') parts.push(event.part);
+          if (event.type === 'llm.streaming.usage') usage = event.usage;
+          if (event.type === 'llm.streaming.finish') finish = event.finish;
+          if (event.type === 'llm.streaming.message_id') messageId = event.messageId;
         },
       },
     );

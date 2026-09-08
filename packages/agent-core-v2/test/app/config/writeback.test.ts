@@ -178,16 +178,4 @@ describe('config.toml writeback preservation', () => {
     disposables.dispose();
   });
 
-  it('migrates thinking effort max to high without dropping the surrounding comments', async () => {
-    const seed = '# 思考配置\n[thinking]\n# 不要动我\neffort = "max"\n';
-    const { config, disposables, readText } = await setup(seed);
-
-    const text = await readText();
-    expect(text.includes('# 思考配置')).toBe(true);
-    expect(text.includes('effort = "high"')).toBe(true);
-    expect(text.includes('effort = "max"')).toBe(false);
-    expect(config.get<ThinkingConfig>(THINKING_SECTION)).toEqual({ effort: 'high' });
-
-    disposables.dispose();
-  });
 });

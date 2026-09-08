@@ -711,7 +711,7 @@ export async function applyExperimentalFeatureChanges(
     setExperimentalFeatures(features);
     host.refreshSlashCommandAutocomplete();
     host.restoreEditor();
-    if (host.session !== undefined) {
+    if (host.session !== undefined && changes.some((change) => change.id !== 'notify_user')) {
       const reloadedSession = await host.harness.reloadSession({ id: host.session.id });
       await host.reloadCurrentSessionView(
         reloadedSession,
@@ -719,6 +719,14 @@ export async function applyExperimentalFeatureChanges(
       );
     } else {
       host.showStatus('Experimental features updated.', 'success');
+    }
+    if (
+      host.session !== undefined &&
+      changes.some((change) => change.id === 'notify_user' && change.enabled)
+    ) {
+      host.showNotice(
+        'Start a new session to use Updates if this session was created with the feature disabled.',
+      );
     }
     if (changes.some((change) => change.id === 'tower')) {
       // TowerFeature assembles its tool/profile contributions once at App

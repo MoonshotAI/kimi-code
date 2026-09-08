@@ -12,6 +12,7 @@ import type { ContentPart } from '#human/llm/message';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { TurnSteer } from '#/agent/loop/turnOps';
+import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { AgentPromptService, PromptAborted, PromptCompleted, PromptQueued, PromptStarted, PromptSteered, PromptSubmitted } from '#/agent/prompt/promptService';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -58,7 +59,10 @@ const noopBlob: IAgentBlobService = {
   isBlobRef: () => false,
 };
 
-function harness(loopOptions: StubLoopOptions = { pendingTurnResult: true }) {
+function harness(
+  loopOptions: StubLoopOptions = { pendingTurnResult: true },
+  providerType?: string,
+) {
   const disposables = new DisposableStore();
   onTestFinished(() => disposables.dispose());
   const context = stubContextMemory();
@@ -108,6 +112,9 @@ function harness(loopOptions: StubLoopOptions = { pendingTurnResult: true }) {
       reg.defineInstance(IAgentReminderService, reminder);
       reg.define(IAgentPromptService, AgentPromptService);
       reg.definePartialInstance(ITelemetryService, { track2: () => {} });
+      reg.definePartialInstance(IAgentProfileService, {
+        getModelProviderType: () => providerType,
+      });
       reg.definePartialInstance(ISessionMetadata, {
         read: async () => ({ id: 'test-session', createdAt: 0, updatedAt: 0, archived: false }),
         update: async () => {},
@@ -337,6 +344,27 @@ describe('AgentPromptService', () => {
     expect(parts.some((part) => part.type === 'image_url')).toBe(false);
     expect(parts[0]).toMatchObject({ type: 'text' });
     expect((parts[0] as { text: string }).text).toContain('image/avif');
+  });
+
+  it('keeps a prompt image whose format the bound provider accepts', async () => {
+    const { prompt, context, loop } = harness({ pendingTurnResult: true }, 'kimi');
+    const heicUrl = `data:image/heic;base64,${Buffer.from([
+      0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63,
+    ]).toString('base64')}`;
+    const handle = await prompt.enqueue({
+      id: 'prompt-heic',
+      message: {
+        role: 'user',
+        content: [{ type: 'image_url', imageUrl: { url: heicUrl } }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    });
+    await handle.launched;
+    loop.drainNextBatch(context);
+
+    const parts = context.get()[0]!.content;
+    expect(parts).toEqual([{ type: 'image_url', imageUrl: { url: heicUrl } }]);
   });
 
   it('gates steered prompt images too', async () => {

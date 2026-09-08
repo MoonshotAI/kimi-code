@@ -274,6 +274,7 @@ export async function runV2Print(
         endpoint: () => currentKimiProfile().telemetryEndpoint,
         getAccessToken: async () =>
           (await auth.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME)) ?? null,
+        onUnexpectedError: (error) => console.error('[unexpected]', error),
       });
     }
 

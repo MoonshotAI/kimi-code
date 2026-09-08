@@ -1,5 +1,6 @@
 import type { ProtocolEndpoint, ProtocolTrait } from '#/llm/protocol/trait';
 import type { ContentPart, ToolDescription } from '#/llm/message';
+import { providerImagePolicy } from '#/llm/media/image-formats';
 import { CONTEXT_MANAGEMENT_BETA } from '#/llm/requester/bases/anthropic/format';
 
 import { classifyKimiQuotaError } from './errors';
@@ -56,10 +57,14 @@ function convertKimiTool(tool: ToolDescription): Record<string, unknown> {
   };
 }
 
+const kimiAcceptedImageMimes = (): ReadonlySet<string> => providerImagePolicy('kimi').acceptedMimes;
+
 export const kimiOpenAITrait: ProtocolTrait = {
   strictThinkingValidation: true,
 
   endpoint: () => kimiEndpoint,
+
+  acceptedImageMimes: kimiAcceptedImageMimes,
 
   convertError: (error) => classifyKimiQuotaError(error),
 
@@ -160,6 +165,8 @@ export const kimiOpenAITrait: ProtocolTrait = {
 export const kimiAnthropicTrait: ProtocolTrait = {
   endpoint: () => kimiEndpoint,
 
+  acceptedImageMimes: kimiAcceptedImageMimes,
+
   convertError: (error) => classifyKimiQuotaError(error),
 
   withThinking: (thinking) => {
@@ -176,6 +183,8 @@ export const kimiAnthropicTrait: ProtocolTrait = {
 
 export const kimiResponsesTrait: ProtocolTrait = {
   endpoint: () => kimiEndpoint,
+
+  acceptedImageMimes: kimiAcceptedImageMimes,
 
   convertError: (error) => classifyKimiQuotaError(error),
 };

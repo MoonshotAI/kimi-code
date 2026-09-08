@@ -38,7 +38,7 @@ function createStubRequester(responses: readonly AssistantMessage[]): LlmRequest
       const message = responses[Math.min(call, responses.length - 1)];
       call += 1;
       for (const part of [...message.content, ...message.toolCalls]) {
-        onEvent?.({ type: 'llm.delta', part });
+        onEvent?.({ type: 'llm.streaming.part', part });
       }
       onEvent?.({ type: 'llm.done' });
       return Promise.resolve();
@@ -51,7 +51,7 @@ function createEchoRequester(): LlmRequester {
     generate: (_config, { messages }, { onEvent }) => {
       const last = messages.at(-1);
       const text = last !== undefined && last.role === 'user' ? extractText(last) : '';
-      onEvent?.({ type: 'llm.delta', part: { type: 'text', text: `echo:${text}` } });
+      onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: `echo:${text}` } });
       onEvent?.({ type: 'llm.done' });
       return Promise.resolve();
     },
@@ -352,7 +352,7 @@ describe('undoAgentTurns', () => {
       generate: (_config, _content, { onEvent }) =>
         new Promise<void>((resolve) => {
           release = () => {
-            onEvent?.({ type: 'llm.delta', part: { type: 'text', text: 'late' } });
+            onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'late' } });
             onEvent?.({ type: 'llm.done' });
             resolve();
           };

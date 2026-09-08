@@ -205,6 +205,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.pendingMachineQueueIds.clear();
     this.active?.turn.cancel(reason);
     this.engine?.stop();
+    const active = this.active;
+    if (active !== undefined) {
+      this.interruptMachineRunForCancel(active, reason);
+      void this.endTurn(active, { type: 'cancelled', steps: active.steps, reason });
+    }
     this.maybeSettle();
     super.dispose();
   }
@@ -809,7 +814,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
             );
             return;
           case 'thinking':
-            this.accumulateMachinePart(turn, { type: 'think', think: delta.delta });
+            this.accumulateMachinePart(turn, {
+              type: 'think',
+              think: delta.delta,
+              encrypted: delta.encrypted,
+              detailsIndex: delta.detailsIndex,
+            });
             void this.dispatcher.dispatch(
               new ThinkingDelta({ agentId: this.scopeContext.agentId, turnId: turn.id, delta: delta.delta }),
             );
@@ -1085,7 +1095,16 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   private drainMachinePartials(turn: ActiveTurn, step: MachineStepState): void {
-    for (const part of turn.partials.splice(0).filter((entry) => !isVacuousContentPart(entry))) {
+    const drained = turn.partials.splice(0).filter((entry) => !isVacuousContentPart(entry));
+    let lastCompleteThink = -1;
+    for (const [index, part] of drained.entries()) {
+      if (part.type === 'think' && part.encrypted !== undefined) {
+        lastCompleteThink = index;
+      }
+    }
+    for (const part of drained.filter(
+      (part, index) => part.type !== 'think' || index <= lastCompleteThink,
+    )) {
       this.context.appendLoopEvent({
         type: 'content.part',
         uuid: randomUUID(),
@@ -1162,6 +1181,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       llmServerFirstTokenMs: step.timing?.serverFirstTokenMs,
       llmServerDecodeMs: step.timing?.serverDecodeMs,
       llmClientConsumeMs: step.timing?.clientConsumeMs,
+      llmClientBlockedMs: step.timing?.clientBlockedMs,
       messageId: step.messageId,
       providerFinishReason: step.providerFinishReason,
       rawFinishReason: step.rawFinishReason,
@@ -1180,6 +1200,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         llmServerFirstTokenMs: step.timing?.serverFirstTokenMs,
         llmServerDecodeMs: step.timing?.serverDecodeMs,
         llmClientConsumeMs: step.timing?.clientConsumeMs,
+        llmClientBlockedMs: step.timing?.clientBlockedMs,
         providerFinishReason: step.providerFinishReason,
         rawFinishReason: step.rawFinishReason,
       }),
@@ -1437,6 +1458,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       reason: result.type,
       duration_ms: durationMs,
       mode: turn.mode ?? 'agent',
+      error_type: error?.code,
       provider_type: turn.providerType,
       protocol: turn.protocol,
       trace_id: traceId,

@@ -133,3 +133,9 @@ export class GoalUpdated extends AgentEvent2<GoalUpdatedPayload> {
   static override readonly observable = true;
 }
 export interface GoalUpdated extends GoalUpdatedPayload {}
+
+export interface GoalUpdatedEvent {
+  readonly type: 'goal.updated';
+  readonly snapshot: GoalSnapshot | null;
+  readonly change?: GoalChange;
+}
