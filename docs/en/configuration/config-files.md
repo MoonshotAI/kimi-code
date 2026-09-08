@@ -192,7 +192,7 @@ Subagents inherit the model the main agent is running by default. The `[secondar
 
 ### Subagent model pool
 
-The pool is enabled by default and needs no configuration. Set `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=0` to disable it; while disabled, the pool keys stay inert, subagents inherit the caller's model, and session startup skips the pool validation.
+The pool is always available and needs no opt-in; with no `[secondary_model]` keys configured, subagents simply inherit the caller's model.
 
 The minimal configuration is one line. A lone `default_model` is a pool with a single entry:
 

@@ -25,7 +25,6 @@ import { TOWER_MODE_USER_ENABLED_ONLY } from '#/features/tower/tools/support';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
-import { IFlagService } from '#/app/flag/flag';
 import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -44,7 +43,6 @@ import type { ExecutableToolResult } from '#/tool/toolContract';
 
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../../../agent/agentContext/stubs';
-import { stubFlag } from '../../../app/flag/stubs';
 
 const execFileAsync = promisify(execFile);
 const signal = new AbortController().signal;
@@ -128,7 +126,6 @@ describe('TowerSpawnTool', () => {
 
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
-    ix.stub(IFlagService, stubFlag(true));
     ix.set(IEventBus, new SyncDescriptor(EventBusService));
     ix.stub(IAgentTowerService, {
       get isActive() {

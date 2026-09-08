@@ -74,7 +74,7 @@ export class AgentSwarmTool implements IAgentSwarmTool {
   readonly name = 'AgentSwarm' as const;
 
   get parameters(): Record<string, unknown> {
-    const parameters = exposesSubagentModelChoice(this.config, this.flags)
+    const parameters = exposesSubagentModelChoice(this.config)
       ? AGENT_SWARM_PARAMETERS
       : AGENT_SWARM_PARAMETERS_NO_MODEL;
     return this.flags.enabled(SUBAGENT_FORK_FLAG_ID)
@@ -103,7 +103,6 @@ export class AgentSwarmTool implements IAgentSwarmTool {
     }
     const modelLines = buildSubagentModelDescriptions(
       this.config,
-      this.flags,
       this.profile.data().modelAlias,
     );
     return modelLines === undefined ? description : `${description}\n\n${modelLines}`;

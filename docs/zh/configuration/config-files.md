@@ -192,7 +192,7 @@ subagent 默认继承 main agent 正在运行的模型。`[secondary_model]` 节
 
 ### subagent 模型池
 
-该功能默认开启，无需配置即可使用。设置 `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=0` 可关闭：关闭后模型池配置不生效，subagent 继承调用方模型，会话启动也会跳过池校验。
+模型池始终可用，无需任何开启动作；未配置 `[secondary_model]` 时，subagent 继承调用方模型。
 
 最小配置只有一行：单独写下的 `default_model` 就是只含一个条目的模型池：
 
