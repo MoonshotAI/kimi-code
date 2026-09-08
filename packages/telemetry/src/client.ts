@@ -33,10 +33,15 @@ export class TelemetryClient {
   private deviceId: string | null = null;
   private sessionId: string | null = null;
   private disabled = false;
+  private unexpectedErrorHandler: ((error: Error) => void) | null = null;
 
   setContext(input: TelemetryContextIds): void {
     if (input.deviceId !== undefined) this.deviceId = input.deviceId;
     if (input.sessionId !== undefined) this.sessionId = input.sessionId;
+  }
+
+  setUnexpectedErrorHandler(handler: ((error: Error) => void) | null): void {
+    this.unexpectedErrorHandler = handler;
   }
 
   withContext(input: TelemetryContextIds): TelemetryClient {
@@ -101,7 +106,7 @@ export class TelemetryClient {
       session_id: context.sessionId === undefined ? this.sessionId : context.sessionId,
       event,
       timestamp: Date.now() / 1000,
-      properties: sanitizeProperties(properties),
+      properties: sanitizeProperties(properties, this.unexpectedErrorHandler),
       contextOverrides: {
         deviceId: context.deviceId !== undefined,
         sessionId: context.sessionId !== undefined,
@@ -162,6 +167,7 @@ export class TelemetryClient {
     this.deviceId = null;
     this.sessionId = null;
     this.disabled = false;
+    this.unexpectedErrorHandler = null;
   }
 }
 
@@ -175,6 +181,10 @@ class ScopedTelemetryClient extends TelemetryClient {
 
   override setContext(input: TelemetryContextIds): void {
     this.parent.setContext(input);
+  }
+
+  override setUnexpectedErrorHandler(handler: ((error: Error) => void) | null): void {
+    this.parent.setUnexpectedErrorHandler(handler);
   }
 
   override withContext(input: TelemetryContextIds): TelemetryClient {
@@ -226,6 +236,10 @@ const defaultClient = new TelemetryClient();
 
 export function setContext(input: TelemetryContextIds): void {
   defaultClient.setContext(input);
+}
+
+export function setUnexpectedErrorHandler(handler: ((error: Error) => void) | null): void {
+  defaultClient.setUnexpectedErrorHandler(handler);
 }
 
 export function attachSink(sink: EventSink): void {
@@ -286,11 +300,18 @@ function toTelemetryEvent(event: PendingTelemetryEvent): TelemetryEvent {
   };
 }
 
-function sanitizeProperties(input: TelemetryProperties): TelemetryProperties {
+function sanitizeProperties(
+  input: TelemetryProperties,
+  onUnexpectedError?: ((error: Error) => void) | null,
+): TelemetryProperties {
   const out: TelemetryProperties = {};
   for (const [key, value] of Object.entries(input)) {
     if (isTelemetryPrimitive(value)) {
       out[key] = value;
+    } else {
+      onUnexpectedError?.(
+        new Error(`telemetry property "${key}" is not a primitive and was dropped`),
+      );
     }
   }
   return out;

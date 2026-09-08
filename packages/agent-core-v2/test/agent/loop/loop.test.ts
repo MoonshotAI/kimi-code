@@ -1340,7 +1340,47 @@ describe('turn telemetry', () => {
           turn_id: 0,
           reason: 'failed',
           mode: 'agent',
+          error_type: 'provider.filtered',
           trace_id: 'trace-turn-2',
+        }),
+      });
+    } finally {
+      await local.dispose();
+    }
+  });
+
+  it('emits turn_ended with error_type for an uncoded failure', async () => {
+    const records: TelemetryRecord[] = [];
+    const local = createTestAgent({ telemetry: recordingTelemetry(records) });
+    try {
+      const workTool: ExecutableTool = {
+        name: 'Work',
+        description: 'Pretend to work.',
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+        resolveExecution: () => ({
+          approvalRule: 'Work',
+          execute: async () => ({ output: 'should never run' }),
+        }),
+      };
+      local.get(IAgentToolRegistryService).register(workTool);
+      local.get(IAgentProfileService).update({ activeToolNames: ['Work'] });
+      const subscription = local.get(IAgentToolExecutorService).onBeforeExecuteTool(() => {
+        throw new Error('beforeExecute blew up');
+      });
+      local.mockNextResponse(
+        { type: 'text', text: 'working' },
+        { type: 'function', id: 'call-work-1', name: 'Work', arguments: '{}' },
+      );
+      await local.rpc.prompt({ input: [{ type: 'text', text: 'use the tool' }] });
+      await local.untilTurnEnd();
+      subscription.dispose();
+
+      expect(records).toContainEqual({
+        event: 'turn_ended',
+        properties: expect.objectContaining({
+          turn_id: 0,
+          reason: 'failed',
+          error_type: 'internal',
         }),
       });
     } finally {

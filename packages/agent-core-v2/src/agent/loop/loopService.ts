@@ -1444,6 +1444,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       reason: result.type,
       duration_ms: durationMs,
       mode: turn.mode ?? 'agent',
+      error_type: error?.code,
       provider_type: turn.providerType,
       protocol: turn.protocol,
       trace_id: traceId,
