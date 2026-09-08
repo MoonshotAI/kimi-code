@@ -31,6 +31,13 @@ import {
   makeAgentScopeContext,
 } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { TurnEnded } from '#/agent/loop/turnOps';
+import {
+  attachInteractionAgent,
+  cancelInteractionsForTurn,
+  detachInteractionAgent,
+} from '#/agent/interaction/interactionWiring';
+import { interactions } from '#/human/interaction/facade';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { abortError } from '#/_base/utils/abort';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
@@ -92,8 +99,24 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IConfigService private readonly config: IConfigService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @ISessionEventBus bus: ISessionEventBus,
   ) {
     super();
+    this._register(
+      bus.subscribe(TurnEnded, (event) => {
+        cancelInteractionsForTurn(event.agentId, this.ctx.sessionId, event.turnId);
+      }),
+    );
+    this._register(
+      this.onDidClose((context) => {
+        detachInteractionAgent(context.agentId, this.ctx.sessionId);
+      }),
+    );
+    this._register({
+      dispose: () => {
+        interactions.purgeSession(this.ctx.sessionId);
+      },
+    });
   }
 
   async create(opts: CreateAgentOptions = {}): Promise<AgentContext> {
@@ -208,6 +231,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       this.onDidCreateScopeEmitter.fire({ context: agent, handle });
       stage = 'restore';
       await handle.accessor.get(IEventDispatcher).restore();
+      attachInteractionAgent(agentId, this.ctx.sessionId, handle.accessor.get(IEventDispatcher));
       stage = 'bootstrap';
       await this.bindBootstrap(handle, opts);
       stage = 'toolActivation';
@@ -339,6 +363,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const agent = this.rosterAdopt(handle);
     this.onDidCreateEmitter.fire(agent);
     this.onDidCreateScopeEmitter.fire({ context: agent, handle });
+    attachInteractionAgent(agent.agentId, this.ctx.sessionId, handle.accessor.get(IEventDispatcher));
     return agent;
   }
 

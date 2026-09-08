@@ -101,13 +101,13 @@ describe('usage machine', () => {
 });
 
 describe('usage plugin', () => {
-  it('collects usage from every llm.usage and groups it by turn', async () => {
+  it('collects usage from every llm.streaming.usage and groups it by turn', async () => {
     const ticks = [1000, 1100, 1200, 1230, 1300, 2000, 2100, 2200, 2240, 2300];
     const requester: LlmRequester = {
       generate: (_config, _content, { onEvent }) => {
         onEvent?.({ type: 'llm.sent' });
-        onEvent?.({ type: 'llm.delta', part: { type: 'text', text: 'ok' } });
-        onEvent?.({ type: 'llm.usage', usage: usage(10, 2) });
+        onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'ok' } });
+        onEvent?.({ type: 'llm.streaming.usage', usage: usage(10, 2) });
         onEvent?.({ type: 'llm.done' });
         return Promise.resolve();
       },

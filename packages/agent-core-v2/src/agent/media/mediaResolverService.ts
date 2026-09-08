@@ -63,7 +63,10 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     return this.states.get(mediaResolvedKey);
   }
 
-  private readonly imageMemo = new Map<string, { part: ContentPart; bytes: number }>();
+  private readonly imageMemo = new Map<
+    string,
+    { part: ContentPart; bytes: number; mimeType: string }
+  >();
   private imageMemoBytes = 0;
 
   async resolve(
@@ -125,7 +128,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       return degradedImage(await this.displayPath(ref));
     }
     const cacheKey = `image\0${ref.fileId}`;
-    const memoed = this.memoedImage(cacheKey);
+    const memoed = this.memoedImage(cacheKey, requester.model.providerType);
     if (memoed !== undefined) return memoed;
     const path = await this.displayPath(ref);
 
@@ -147,7 +150,11 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       source.bytes.subarray(0, MEDIA_SNIFF_BYTES),
       'media',
     );
-    if (fileType.kind !== 'image' || !isModelAcceptedImageMime(fileType.mimeType)) {
+    const mimeType = normalizeImageMime(fileType.mimeType);
+    if (
+      fileType.kind !== 'image' ||
+      !isModelAcceptedImageMime(mimeType, requester.model.providerType)
+    ) {
       this.telemetry.track2('media_resolve_fallback', {
         kind: 'image',
         reason: 'invalid',
@@ -158,26 +165,30 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
 
     const part: ContentPart = {
       type: 'image_url',
-      imageUrl: {
-        url: `data:${normalizeImageMime(fileType.mimeType)};base64,${source.bytes.toString('base64')}`,
-      },
+      imageUrl: { url: `data:${mimeType};base64,${source.bytes.toString('base64')}` },
     };
     if (source.bytes.length <= IMAGE_MEMO_MAX_BYTES) {
-      this.memoizeImage(cacheKey, part, source.bytes.length);
+      this.memoizeImage(cacheKey, part, source.bytes.length, mimeType);
     }
     return part;
   }
 
-  private memoedImage(cacheKey: string): ContentPart | undefined {
+  private memoedImage(cacheKey: string, providerType: string | undefined): ContentPart | undefined {
     const entry = this.imageMemo.get(cacheKey);
     if (entry === undefined) return undefined;
+    if (!isModelAcceptedImageMime(entry.mimeType, providerType)) return undefined;
     this.imageMemo.delete(cacheKey);
     this.imageMemo.set(cacheKey, entry);
     return entry.part;
   }
 
-  private memoizeImage(cacheKey: string, part: ContentPart, bytes: number): void {
-    this.imageMemo.set(cacheKey, { part, bytes });
+  private memoizeImage(
+    cacheKey: string,
+    part: ContentPart,
+    bytes: number,
+    mimeType: string,
+  ): void {
+    this.imageMemo.set(cacheKey, { part, bytes, mimeType });
     this.imageMemoBytes += bytes;
     for (const [key, entry] of this.imageMemo) {
       if (this.imageMemoBytes <= IMAGE_MEMO_MAX_TOTAL_BYTES) return;

@@ -45,6 +45,10 @@ export class SubagentSuspended extends Event2<SubagentSuspendedPayload> {
 }
 export interface SubagentSuspended extends SubagentSuspendedPayload {}
 
+export interface SubagentSuspendedEvent extends SubagentSuspendedPayload {
+  readonly type: 'subagent.suspended';
+}
+
 const RESUMED_PROFILE_FALLBACK = 'subagent';
 
 export class SessionSwarmService implements ISessionSwarmService {

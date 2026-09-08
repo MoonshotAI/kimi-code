@@ -63,6 +63,9 @@ import { IAgentProfileService, ProfileError, ProfileErrors } from './profile';
 import { TOOLS_SECTION, type ToolsConfig } from '#/agent/toolPolicy/configSection';
 import { isToolActiveComposed, findInactiveToolPatterns, literalToolNames, type InactiveToolPattern } from '#/agent/toolPolicy/evaluate';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { ISessionNotify } from '#/features/notify/sessionNotify';
+import { NOTIFY_USER_TOOL_NAME } from '#/features/notify/tools/notify-user/notify-user';
+import { renderAgentProfilePrompt } from '#/app/agentProfileCatalog/profile-shared';
 import { getAgentToolContributions } from '#/agent/toolRegistry/toolContribution';
 import {
   profileActiveToolsKey,
@@ -79,11 +82,7 @@ import {
 
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 
-export interface WarningEvent {
-  readonly type: 'warning';
-  readonly message: string;
-  readonly code?: string;
-}
+export type { WarningEvent } from '#/errors';
 
 function describeInactiveToolPattern(
   context: string,
@@ -149,6 +148,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @ISessionNotify private readonly notify: ISessionNotify,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
@@ -303,7 +303,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     const context = await this.buildSystemPromptContext(profile);
     this.assertBindable(profile.name);
     const currentProfileName = this.profileName;
-    const rendered = profile.renderSystemPrompt(context);
+    const rendered = renderAgentProfilePrompt(profile, context);
     this.activeProfile = profile;
     this.cacheAgentsMdWarning(context);
 
@@ -389,7 +389,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   useProfile(profile: ResolvedAgentProfile, context: SystemPromptContext): void {
     this.activeProfile = profile;
-    const rendered = profile.renderSystemPrompt(context);
+    const rendered = renderAgentProfilePrompt(profile, context);
     this.update({
       profileName: profile.name,
       systemPrompt: rendered.text,
@@ -481,6 +481,11 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   getModelCapabilities(): ModelCapability {
     return this.tryResolveRawModel()?.capabilities ?? UNKNOWN_CAPABILITY;
+  }
+
+  getModelProviderType(alias?: string): string | undefined {
+    const effective = alias ?? this.modelAlias ?? this.config.get<string>('defaultModel');
+    return this.resolveModelForThinking(effective)?.providerType;
   }
 
   getMaxOutputSize(): number | undefined {
@@ -800,6 +805,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     profile: ResolvedAgentProfile,
     options?: ApplyProfileOptions,
   ): Promise<SystemPromptContext> {
+    await this.notify.ready;
     const preloadedAgentsMd = await this.workspaceInstructionsSnapshot();
     const fsAvailable = this.runtime.isAvailable(['fs']);
     const lease = this.runtime.acquire(fsAvailable ? ['fs'] : []);
@@ -837,6 +843,9 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       skillActive: this.isToolActiveForProfile(profile, 'Skill'),
       productName: (await this.identity.resolved()).displayName,
       replyStyleGuide: this.bootstrap.args.replyStyleGuide,
+      notifyUserActive:
+        this.notify.enabled &&
+        this.isToolActiveForProfile(profile, NOTIFY_USER_TOOL_NAME),
     };
   }
 

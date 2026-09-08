@@ -1,4 +1,4 @@
-import { assign, emit, fromCallback, fromPromise, sendTo, setup } from '#/xstate2';
+import { assign, emit, fromCallback, fromPromise, setup } from '#/xstate2';
 
 import type { ToolCall } from '#/llm/message';
 
@@ -6,12 +6,13 @@ import type { TaskWaitInput, TaskWaitOutcome, ToolExecutor, ToolResult, ToolUpda
 
 export interface ToolInput {
   toolCall: ToolCall;
+  signal: AbortSignal;
   waitForTasks?: (input: TaskWaitInput) => Promise<TaskWaitOutcome>;
 }
 
 export type ToolEvent =
   | { type: 'tool.update'; toolCallId: string; update: ToolUpdate }
-  | { type: 'tool.async'; toolCallId: string; text: string }
+  | { type: 'tool.detached'; toolCallId: string; text: string }
   | { type: 'tool.done'; toolCallId: string; result: ToolResult }
   | { type: 'tool.failed'; toolCallId: string; error: unknown }
   | { type: 'tool.aborted'; toolCallId: string }
@@ -44,38 +45,31 @@ export interface ToolMachineContext {
 }
 
 function createExecuteActor(executor: ToolExecutor) {
-  return fromCallback<ToolEvent, ToolInput>(({ input, sendBack, receive }) => {
-    const controller = new AbortController();
+  return fromCallback<ToolEvent, ToolInput>(({ input, sendBack }) => {
     const toolCallId = input.toolCall.id;
     let detached = false;
-    receive((event) => {
-      if (event.type === 'tool.abort') {
-        controller.abort();
-      }
-    });
     void (async () => {
       try {
         const result = await executor.execute({
           toolCall: input.toolCall,
-          signal: controller.signal,
+          signal: input.signal,
           onUpdate: (update) => sendBack({ type: 'tool.update', toolCallId, update }),
           detach: (ack) => {
             if (detached) return;
             detached = true;
-            sendBack({ type: 'tool.async', toolCallId, text: ack.text });
+            sendBack({ type: 'tool.detached', toolCallId, text: ack.text });
           },
           waitForTasks: input.waitForTasks,
         });
         sendBack({ type: 'tool.done', toolCallId, result });
       } catch (error) {
-        if (controller.signal.aborted) {
-          sendBack({ type: 'tool.aborted', toolCallId });
-        } else {
-          sendBack({ type: 'tool.failed', toolCallId, error });
-        }
+        sendBack(
+          input.signal.aborted
+            ? { type: 'tool.aborted', toolCallId }
+            : { type: 'tool.failed', toolCallId, error },
+        );
       }
     })();
-    return () => controller.abort();
   });
 }
 
@@ -90,11 +84,11 @@ export function createToolMachine(executor: ToolExecutor) {
       output: {} as ToolOutput,
     },
     actors: {
-      beforeActor: fromPromise<ToolBeforeDecision, ToolBeforeInput>(
+      preparingActor: fromPromise<ToolBeforeDecision, ToolBeforeInput>(
         async ({ input }) => ({ type: 'proceed', toolCall: input.toolCall }),
       ),
       executeActor,
-      afterActor: fromPromise<ToolResult, ToolAfterInput>(async ({ input }) => input.result),
+      finishingActor: fromPromise<ToolResult, ToolAfterInput>(async ({ input }) => input.result),
     },
     actions: {
       forwardToParent: ({ self, event }) => {
@@ -103,17 +97,17 @@ export function createToolMachine(executor: ToolExecutor) {
     },
   }).createMachine({
     id: 'tool',
-    initial: 'before',
+    initial: 'preparing',
     context: ({ input }) => ({ input, toolCall: input.toolCall }),
     states: {
-      before: {
+      preparing: {
         invoke: {
-          src: 'beforeActor',
+          src: 'preparingActor',
           input: ({ context }) => ({ toolCall: context.toolCall }),
           onDone: [
             {
               guard: ({ event }) => event.output.type === 'denied',
-              target: 'after',
+              target: 'finishing',
               actions: assign({
                 result: ({ event }) => (event.output as { result: ToolResult }).result,
               }),
@@ -166,22 +160,23 @@ export function createToolMachine(executor: ToolExecutor) {
       },
       executing: {
         invoke: {
-          id: 'execute',
           src: 'executeActor',
           input: ({ context }) => ({
             toolCall: context.toolCall,
+            signal: context.input.signal,
             waitForTasks: context.input.waitForTasks,
           }),
         },
         on: {
+          'tool.abort': {},
           'tool.update': {
             actions: [emit(({ event }) => event), 'forwardToParent'],
           },
-          'tool.async': {
+          'tool.detached': {
             actions: [emit(({ event }) => event), 'forwardToParent'],
           },
           'tool.done': {
-            target: 'after',
+            target: 'finishing',
             actions: assign({ result: ({ event }) => event.result }),
           },
           'tool.failed': {
@@ -200,14 +195,11 @@ export function createToolMachine(executor: ToolExecutor) {
               'forwardToParent',
             ],
           },
-          'tool.abort': {
-            actions: sendTo('execute', ({ event }) => event),
-          },
         },
       },
-      after: {
+      finishing: {
         invoke: {
-          src: 'afterActor',
+          src: 'finishingActor',
           input: ({ context }) => ({
             toolCall: context.toolCall,
             result: context.result as ToolResult,

@@ -29,7 +29,7 @@
     "version": "changeset version",
     "version:release": "changeset version",
     "publish": "pnpm run typecheck && pnpm run lint && pnpm run sherif && pnpm run test && pnpm run build && pnpm run lint:pkg && changeset publish",
-    "prepare": "simple-git-hooks"
+    "prepare": "node .husky/install.mjs"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "0.18.2",
@@ -38,19 +38,17 @@
     "@microsoft/api-extractor": "7.58.7",
     "@types/node": "^22.15.3",
     "@vitest/coverage-v8": "4.1.4",
+    "husky": "^9.1.7",
     "lint-staged": "16.4.0",
     "oxlint": "1.59.0",
     "oxlint-tsgolint": "0.20.0",
     "pkg-pr-new": "0.0.75",
     "publint": "0.3.18",
     "sherif": "1.11.1",
-    "simple-git-hooks": "2.13.1",
     "tsdown": "0.22.0",
     "tsx": "^4.21.0",
     "typescript": "6.0.2",
     "vitest": "4.1.4"
-  },
-  "simple-git-hooks": {
   },
   "lint-staged": {
     "*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}": [

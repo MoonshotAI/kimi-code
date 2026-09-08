@@ -17,7 +17,7 @@ The **Agent scope** stays in the Chat view's right dock (`src/components/RightPa
 - `Agent` tab — `Inspector`: agent switcher + a Plan lookup card (`PlanCard` in `src/components/Inspector.tsx` — querying `GET /sessions/{id}/transcript/plan` (one tool_call_id, or every plan of the agent) via `src/transcript/api.ts`'s `fetchTranscriptPlan`) plus the agent Service panels.
 - `State` tab — every key an Agent Service registered into the agent-state container, polled live via `IAgentStateService.snapshot()` — the same live diff-tree view as the session State tab, sharing `StateCard` from `src/components/StateCard.tsx`.
 
-The **Session scope** lives in the same right dock as the `Session` tab (`src/components/SessionPane.tsx`, embedded by `RightPanel`) with two sub-tabs: Services (the pending-interactions card — `src/components/InteractionsCard.tsx` — plus the session Service panels) and State (every key a Session Service registered into the session-state container, read on demand via `ISessionStateService.snapshot()`).
+The **Session scope** lives in the same right dock as the `Session` tab (`src/components/SessionPane.tsx`, embedded by `RightPanel`) with two sub-tabs: Services (the pending-interactions card — `src/components/InteractionsCard.tsx`, which lists and answers approvals/questions over the public REST endpoints `/api/v1/sessions/{id}/approvals|questions` via `src/interactions/api.ts`, since the interaction kernel is a process-global singleton with no debug channel — plus the session Service panels) and State (every key a Session Service registered into the session-state container, read on demand via `ISessionStateService.snapshot()`).
 
 ## Channel layer
 

@@ -28,6 +28,7 @@ import {
   sessionDirOf,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
+import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
 import { TurnStarted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import { sessionWarningsResponseSchema } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
@@ -950,6 +951,137 @@ describe('server-v2 /api/v1/sessions', () => {
 
   it('returns 40401 when restoring a missing session', async () => {
     const { body } = await postJson<null>('/api/v1/sessions/sess_missing:restore');
+    expect(body.code).toBe(40401);
+  });
+
+  it('deletes a session via :delete and publishes event.session.deleted', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const id = created.body.data.id;
+    const workspaceId = created.body.data.workspace_id;
+
+    const events: Event2<any>[] = [];
+    const sub = (server as RunningServer).core.accessor
+      .get(IEventService)
+      .subscribe((event) => events.push(event));
+    try {
+      const deleted = await postJson<{ deleted: boolean }>(`/api/v1/sessions/${id}:delete`);
+      expect(deleted.body.code).toBe(0);
+      expect(deleted.body.data).toEqual({ deleted: true });
+
+      const got = await getJson<null>(`/api/v1/sessions/${id}`);
+      expect(got.body.code).toBe(40401);
+      await expect(readFile(join(home!, 'server', 'events', `${id}.jsonl`))).rejects.toMatchObject({ code: 'ENOENT' });
+
+      expect(
+        events
+          .filter((event) => event.type === 'event.session.deleted')
+          .map((event) => (event as { readonly payload?: unknown }).payload),
+      ).toEqual([{ sessionId: id, workspaceId }]);
+    } finally {
+      sub.dispose();
+    }
+  });
+
+  it('deletes a cold session via :delete and publishes event.session.deleted', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const id = created.body.data.id;
+    const workspaceId = created.body.data.workspace_id;
+    await closeSessionById((server as RunningServer).core.accessor, id);
+    expect(getLiveSessionById((server as RunningServer).core.accessor, id)).toBeUndefined();
+
+    const events: Event2<any>[] = [];
+    const sub = (server as RunningServer).core.accessor
+      .get(IEventService)
+      .subscribe((event) => events.push(event));
+    try {
+      const deleted = await postJson<{ deleted: boolean }>(`/api/v1/sessions/${id}:delete`);
+      expect(deleted.body.code).toBe(0);
+      expect(deleted.body.data).toEqual({ deleted: true });
+
+      expect(
+        events
+          .filter((event) => event.type === 'event.session.deleted')
+          .map((event) => (event as { readonly payload?: unknown }).payload),
+      ).toEqual([{ sessionId: id, workspaceId }]);
+    } finally {
+      sub.dispose();
+    }
+  });
+
+  it('keeps failed journal cleanup retriable without publishing deletion', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
+    const id = created.body.data.id;
+    const journalPath = join(home!, 'server', 'events', `${id}.jsonl`);
+    await vi.waitFor(async () => expect(await readFile(journalPath, 'utf8')).toContain('journal_header'));
+    await closeSessionById(server!.core.accessor, id);
+    await rm(journalPath);
+    await mkdir(journalPath);
+    const events: Event2<any>[] = [];
+    const sub = server!.core.accessor.get(IEventService).subscribe((event) => events.push(event));
+    try {
+      const failed = await postJson(`/api/v1/sessions/${id}:delete`);
+      expect(failed.body.code).not.toBe(0);
+      expect(await server!.core.accessor.get(ISessionManager).status(id)).toBeDefined();
+      expect(events.filter((event) => event.type === 'event.session.deleted')).toEqual([]);
+      await rm(journalPath, { recursive: true });
+      const retried = await postJson<{ deleted: boolean }>(`/api/v1/sessions/${id}:delete`);
+      expect(retried.body.data).toEqual({ deleted: true });
+      expect(events.filter((event) => event.type === 'event.session.deleted')).toHaveLength(1);
+      await expect(readFile(journalPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      sub.dispose();
+    }
+  });
+
+  it.each(['closing', 'cleanup'] as const)('waits for %s before recreating an explicit session id', async (phase) => {
+    const manager = server!.core.accessor.get(ISessionManager);
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
+    const id = created.body.data.id;
+    const journalPath = join(home!, 'server', 'events', `${id}.jsonl`);
+    await vi.waitFor(async () => expect(await readFile(journalPath, 'utf8')).toContain('journal_header'));
+    const oldJournal = await readFile(journalPath, 'utf8');
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const event = phase === 'closing' ? manager.onWillCloseSession! : manager.onWillDeleteSession!;
+    const sub = event((event) => {
+      if (event.sessionId !== id) return;
+      event.waitUntil(gate);
+      enter();
+    });
+    try {
+      const deletion = manager.delete(id);
+      await entered;
+      let recreated = false;
+      const creation = manager.create({ sessionId: id, workDir: home! }).then((handle) => {
+        recreated = true;
+        return handle;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(recreated).toBe(false);
+      release();
+      await deletion;
+      await creation;
+      server!.core.accessor.get(IEventService).publish(new SessionMetaUpdated({
+        payload: { sessionId: id, agentId: 'main', patch: { title: 'Recreated session' } },
+      }));
+      await vi.waitFor(async () => {
+        const journal = await readFile(journalPath, 'utf8');
+        expect(journal).toContain('journal_header');
+        expect(JSON.parse(journal.split('\n')[0]!).epoch).not.toBe(JSON.parse(oldJournal.split('\n')[0]!).epoch);
+      });
+      expect(manager.get(id)).toBeDefined();
+    } finally {
+      release();
+      sub.dispose();
+    }
+  });
+
+  it('returns 40401 when deleting a missing session', async () => {
+    const { body } = await postJson<null>('/api/v1/sessions/sess_missing:delete');
     expect(body.code).toBe(40401);
   });
 

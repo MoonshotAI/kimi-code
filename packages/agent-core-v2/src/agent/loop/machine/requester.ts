@@ -82,23 +82,23 @@ export function createMachineRequester(
         : baseSource;
     const task = service.start(
       { source },
-      (part) => control.onEvent?.({ type: 'llm.delta', part }),
+      (part) => control.onEvent?.({ type: 'llm.streaming.part', part }),
       signal,
     );
     options?.onTrace?.(task.trace);
     try {
       const finish = await task.result;
       lastFinish = finish;
-      control.onEvent?.({ type: 'llm.usage', usage: finish.usage });
+      control.onEvent?.({ type: 'llm.streaming.usage', usage: finish.usage });
       control.onEvent?.({
-        type: 'llm.finish',
+        type: 'llm.streaming.finish',
         finish: {
           finishReason: finish.providerFinishReason ?? null,
           rawFinishReason: finish.rawFinishReason ?? null,
         },
       });
       if (finish.providerMessageId !== undefined) {
-        control.onEvent?.({ type: 'llm.message-id', messageId: finish.providerMessageId });
+        control.onEvent?.({ type: 'llm.streaming.message_id', messageId: finish.providerMessageId });
       }
       control.onEvent?.({ type: 'llm.done' });
     } catch (error) {

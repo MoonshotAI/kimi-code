@@ -1,4 +1,4 @@
-import { assign, emit, enqueueActions, sendTo, setup } from '#/xstate2';
+import { assign, emit, enqueueActions, fromCallback, sendTo, setup } from '#/xstate2';
 
 import {
   createUserMessage,
@@ -14,6 +14,7 @@ import type { ToolDefinition } from '#/tool/tool';
 import { createWaitForTasks, type ToolActorRef } from './wait-for';
 import { interruptReasonOf, type TurnInterruptReason } from './errors';
 import { createSystemEntry, createUserEntry } from './turn';
+import { createAbortScope, withAbort, type AbortScope } from '#/utils/abort';
 import type {
   createTurnMachine,
   HistoryMessage,
@@ -34,20 +35,20 @@ export type AgentEvent =
   | ToolEvent
   | { type: 'input.submit'; id?: string; message: UserMessage }
   | { type: 'input.notify'; message: UserMessage }
-  | { type: 'input.reminder'; key: string; message: UserMessage | SystemMessage }
+  | { type: 'input.remind'; key: string; message: UserMessage | SystemMessage }
   | { type: 'input.steer'; id: string }
   | { type: 'input.abort' }
-  | { type: 'turn.spawnTools'; toolCalls: ToolCall[] }
+  | { type: 'turn.spawn_tools'; toolCalls: ToolCall[] }
   | { type: 'turn.drain' }
-  | { type: 'turn.remindersConsumed'; reminders: HistoryMessage[] }
+  | { type: 'turn.reminders_consumed'; reminders: HistoryMessage[] }
   | { type: 'context.reset'; history: readonly HistoryMessage[]; turnId: number; branchId?: string };
 
 export type AgentEmitted =
   | TurnLlmEvent
   | ToolEvent
-  | { type: 'turn.start'; turnId: number; branchId: string }
+  | { type: 'turn.started'; turnId: number; branchId: string }
   | { type: 'turn.aborting' }
-  | { type: 'turn.remindersConsumed'; reminders: HistoryMessage[] }
+  | { type: 'turn.reminders_consumed'; reminders: HistoryMessage[] }
   | { type: 'turn.done'; messages: HistoryMessage[]; branchId: string }
   | {
       type: 'turn.failed';
@@ -61,6 +62,7 @@ export type AgentEmitted =
 
 interface ToolEntry {
   toolCall: ToolCall;
+  scope: AbortScope;
   ref: ToolActorRef;
 }
 
@@ -74,6 +76,7 @@ export interface AgentMachineContext {
   messages: HistoryMessage[];
   turnTools: Record<string, ToolEntry>;
   background: Record<string, ToolEntry>;
+  scope: AbortScope;
   notifications: UserEntry[];
   reminders: HistoryMessage[];
   queue: QueuedPrompt[];
@@ -239,35 +242,43 @@ export function createAgentMachine({
     actors: {
       turnActor,
       toolActor: createToolMachine(executor),
+      controllerGuard: fromCallback<AgentEvent, { scope: AbortScope }>(
+        ({ input }) =>
+          () =>
+            input.scope.abort(),
+      ),
     },
     actions: {
       forwardToParent: ({ self, event }) => {
         self._parent?.send(event);
       },
       spawnTurnTools: assign(({ context, spawn, self, event }) => {
-        if (event.type !== 'turn.spawnTools') {
+        if (event.type !== 'turn.spawn_tools') {
           return {};
         }
         const waitForTasks = createWaitForTasks(self);
         const turnTools = { ...context.turnTools };
         for (const toolCall of event.toolCalls) {
+          const scope = withAbort(context.scope.signal);
           turnTools[toolCall.id] = {
             toolCall,
+            scope,
             ref: spawn('toolActor', {
               id: toolCall.id,
-              input: { toolCall, waitForTasks },
+              input: { toolCall, signal: scope.signal, waitForTasks },
             }),
           };
         }
         return { turnTools };
       }),
       abortSpawnedTools: enqueueActions(({ context, event, enqueue }) => {
-        if (event.type !== 'turn.spawnTools') {
+        if (event.type !== 'turn.spawn_tools') {
           return;
         }
         for (const toolCall of event.toolCalls) {
           const entry = context.turnTools[toolCall.id];
           if (entry !== undefined) {
+            entry.scope.abort();
             enqueue.sendTo(entry.ref, { type: 'tool.abort' as const });
           }
         }
@@ -275,11 +286,13 @@ export function createAgentMachine({
       abortTurn: sendTo('turn', { type: 'turn.abort' as const }),
       abortTurnTools: enqueueActions(({ context, enqueue }) => {
         for (const entry of Object.values(context.turnTools)) {
+          entry.scope.abort();
           enqueue.sendTo(entry.ref, { type: 'tool.abort' as const });
         }
       }),
       stopTurnTools: enqueueActions(({ context, enqueue }) => {
-        for (const toolCallId of Object.keys(context.turnTools)) {
+        for (const [toolCallId, entry] of Object.entries(context.turnTools)) {
+          entry.scope.abort();
           enqueue.stopChild(toolCallId);
         }
       }),
@@ -295,12 +308,17 @@ export function createAgentMachine({
       messages: [...(input.history ?? [])],
       turnTools: {},
       background: {},
+      scope: createAbortScope(),
       notifications: [],
       reminders: [],
       queue: [],
       turnId: input.turnId ?? 0,
       branchId: input.branchId ?? 'main',
     }),
+    invoke: {
+      src: 'controllerGuard',
+      input: ({ context }) => ({ scope: context.scope }),
+    },
     on: {
       'input.submit': {
         actions: assign({
@@ -318,7 +336,7 @@ export function createAgentMachine({
           ],
         }),
       },
-      'input.reminder': {
+      'input.remind': {
         actions: assign({
           reminders: ({ context, event }) => [
             ...context.reminders.filter((entry) => entry.meta.key !== event.key),
@@ -390,6 +408,7 @@ export function createAgentMachine({
             request: { ...context.input.request, tools: tools?.filter((tool) => tool.deferred !== true) },
             history: context.messages,
             maxSteps: maxStepsPerTurn,
+            parentSignal: context.scope.signal,
           }),
           onDone: {
             target: '#agent.idle',
@@ -411,7 +430,7 @@ export function createAgentMachine({
         },
         entry: [
           assign({ turnId: ({ context }) => context.turnId + 1 }),
-          emit(({ context }) => ({ type: 'turn.start' as const, turnId: context.turnId, branchId: context.branchId })),
+          emit(({ context }) => ({ type: 'turn.started' as const, turnId: context.turnId, branchId: context.branchId })),
         ],
         exit: assign({ turnTools: {} }),
         initial: 'active',
@@ -419,13 +438,13 @@ export function createAgentMachine({
           'turn.drain': {
             actions: [
               sendTo('turn', ({ context }) => ({
-                type: 'turn.notifications' as const,
+                type: 'turn.notify' as const,
                 messages: [...context.notifications, ...context.reminders],
               })),
               assign({ notifications: [], reminders: [] }),
             ],
           },
-          'tool.async': {
+          'tool.detached': {
             guard: ({ context, event }) => context.turnTools[event.toolCallId] !== undefined,
             actions: [
               assign(({ context, event }) => {
@@ -475,10 +494,7 @@ export function createAgentMachine({
           'llm.sent': {
             actions: [emit(({ event }) => event), 'forwardToParent'],
           },
-          'llm.delta': {
-            actions: [emit(({ event }) => event), 'forwardToParent'],
-          },
-          'llm.headers': {
+          'llm.streaming.*': {
             actions: [emit(({ event }) => event), 'forwardToParent'],
           },
           'llm.done': {
@@ -493,23 +509,17 @@ export function createAgentMachine({
           'llm.retrying': {
             actions: [emit(({ event }) => event), 'forwardToParent'],
           },
-          'llm.usage': {
+          'llm.recovering': {
             actions: [emit(({ event }) => event), 'forwardToParent'],
           },
-          'llm.finish': {
-            actions: [emit(({ event }) => event), 'forwardToParent'],
-          },
-          'llm.message-id': {
-            actions: [emit(({ event }) => event), 'forwardToParent'],
-          },
-          'turn.remindersConsumed': {
+          'turn.reminders_consumed': {
             actions: [emit(({ event }) => event), 'forwardToParent'],
           },
         },
         states: {
           active: {
             on: {
-              'turn.spawnTools': {
+              'turn.spawn_tools': {
                 actions: 'spawnTurnTools',
               },
               'input.abort': {
@@ -527,7 +537,7 @@ export function createAgentMachine({
               abortTimeout: { actions: ['abortTurn', 'stopTurnTools'] },
             },
             on: {
-              'turn.spawnTools': {
+              'turn.spawn_tools': {
                 actions: ['spawnTurnTools', 'abortSpawnedTools'],
               },
               'input.abort': {

@@ -1,14 +1,15 @@
 import * as fs from 'node:fs';
 import * as nodePath from 'node:path';
+import { performance, type EventLoopUtilization } from 'node:perf_hooks';
 
 import { AsyncEventQueue } from '#/_base/asyncEventQueue';
 import type { LlmErrorMessage } from '#human/llm/errors';
-import type { FinishInfo } from '#human/llm/finish-reason';
+import { emptyResponseError } from '#human/llm/empty-response';
+import { NO_FINISH, type FinishInfo } from '#human/llm/finish-reason';
 import type { ProviderMediaContribution, VideoUploadInput } from '#human/llm/media/upload';
 import { createMessageAccumulator, type VideoURLPart } from '#human/llm/message';
 import type { LlmModel } from '#human/llm/model';
 import type { ProtocolName } from '#human/llm/protocol/base';
-import { withEmptyResponseGuard } from '#human/llm/requester/empty-response';
 import {
   mergeRequestHeaders,
   type ExtraParams,
@@ -61,6 +62,7 @@ export interface ModelLlmGateway {
 interface StreamDecodeStats {
   readonly serverDecodeMs: number;
   readonly clientConsumeMs: number;
+  readonly clientBlockedMs?: number;
 }
 
 export class ModelRequesterImpl implements ModelRequester {
@@ -81,9 +83,7 @@ export class ModelRequesterImpl implements ModelRequester {
 
   private requesterFor(resolved: ResolvedLlmModel): LlmRequester {
     if (this.cachedRequester === undefined) {
-      this.cachedRequester = withEmptyResponseGuard(
-        withAuth(throwToEvent(resolved.requester), this.credentialSource),
-      );
+      this.cachedRequester = withAuth(throwToEvent(resolved.requester), this.credentialSource);
     }
     return this.cachedRequester;
   }
@@ -143,6 +143,8 @@ export class ModelRequesterImpl implements ModelRequester {
     let serverDecodeMs = 0;
     let clientConsumeMs = 0;
     let lastResumeAt = 0;
+    let decodeEluStart: EventLoopUtilization | undefined;
+    let decodeEluEnd: EventLoopUtilization | undefined;
 
     let accumulator = createMessageAccumulator();
     let usage: TokenUsage | undefined;
@@ -186,15 +188,16 @@ export class ModelRequesterImpl implements ModelRequester {
             requestSentAt = now;
             return;
           }
-          case 'llm.headers': {
+          case 'llm.streaming.headers': {
             traceId = traceIdFromHeadersRecord(event.headers);
             params?.onTraceId?.(traceId);
             return;
           }
-          case 'llm.delta': {
+          case 'llm.streaming.part': {
             const arrivedAt = Date.now();
             if (firstChunkAt === undefined) {
               firstChunkAt = arrivedAt;
+              decodeEluStart = performance.eventLoopUtilization();
             } else {
               serverDecodeMs += arrivedAt - lastResumeAt;
             }
@@ -204,15 +207,15 @@ export class ModelRequesterImpl implements ModelRequester {
             clientConsumeMs += lastResumeAt - arrivedAt;
             return;
           }
-          case 'llm.usage': {
+          case 'llm.streaming.usage': {
             usage = mergeUsagePatch(usage, event.usage);
             return;
           }
-          case 'llm.finish': {
+          case 'llm.streaming.finish': {
             finish = event.finish;
             return;
           }
-          case 'llm.message-id': {
+          case 'llm.streaming.message_id': {
             messageId = event.messageId;
             return;
           }
@@ -225,6 +228,9 @@ export class ModelRequesterImpl implements ModelRequester {
             streamEndedAt = Date.now();
             if (firstChunkAt !== undefined) {
               serverDecodeMs += streamEndedAt - lastResumeAt;
+              if (decodeEluStart !== undefined) {
+                decodeEluEnd = performance.eventLoopUtilization(decodeEluStart);
+              }
             }
             return;
           }
@@ -234,6 +240,11 @@ export class ModelRequesterImpl implements ModelRequester {
 
     if (failed !== undefined) {
       throw errorFromLlmMessage(failed);
+    }
+
+    const emptyError = emptyResponseError(accumulator.finish(), config.model, finish ?? NO_FINISH);
+    if (emptyError !== null) {
+      throw errorFromLlmMessage(emptyError);
     }
 
     if (usage !== undefined) {
@@ -248,15 +259,38 @@ export class ModelRequesterImpl implements ModelRequester {
       traceId: traceId ?? undefined,
     });
     if (firstChunkAt !== undefined) {
+      const elu =
+        decodeEluEnd ??
+        (decodeEluStart === undefined
+          ? undefined
+          : performance.eventLoopUtilization(decodeEluStart));
       queue.push({
         type: 'timing',
-        ...buildStreamTiming(requestStartedAt, requestSentAt, firstChunkAt, streamEndedAt, {
-          serverDecodeMs,
-          clientConsumeMs,
-        }),
+        ...buildStreamTiming(
+          requestStartedAt,
+          requestSentAt,
+          firstChunkAt,
+          streamEndedAt,
+          finalizeDecodeStats(elu, {
+            serverDecodeMs,
+            clientConsumeMs,
+          }),
+        ),
       });
     }
   }
+}
+
+function finalizeDecodeStats(
+  elu: EventLoopUtilization | undefined,
+  raw: StreamDecodeStats,
+): StreamDecodeStats {
+  if (elu === undefined) return raw;
+  return {
+    serverDecodeMs: raw.serverDecodeMs,
+    clientConsumeMs: raw.clientConsumeMs,
+    clientBlockedMs: Math.max(0, Math.round(elu.active) - raw.clientConsumeMs),
+  };
 }
 
 function applyAuth(model: LlmModel, auth: ProviderRequestAuth | undefined): LlmModel {
@@ -301,10 +335,8 @@ function samplingExtraParams(
     case 'openai_responses':
       return { responses: { temperature, top_p: topP } };
     case 'anthropic':
-    case 'anthropic_beta':
       return { anthropic: { temperature, top_p: topP } };
     case 'google-genai':
-    case 'google-vertex':
       return { googleGenai: { temperature, topP } };
   }
 }
@@ -358,6 +390,9 @@ export function buildStreamTiming(
   if (decodeStats !== undefined) {
     timing.serverDecodeMs = Math.max(0, decodeStats.serverDecodeMs);
     timing.clientConsumeMs = Math.max(0, decodeStats.clientConsumeMs);
+    if (decodeStats.clientBlockedMs !== undefined) {
+      timing.clientBlockedMs = Math.max(0, decodeStats.clientBlockedMs);
+    }
   }
   return timing;
 }

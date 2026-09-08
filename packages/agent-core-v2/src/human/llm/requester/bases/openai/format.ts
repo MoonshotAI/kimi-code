@@ -36,7 +36,12 @@ import type { TokenUsage } from '#/llm/usage';
 
 import { lowerMessage, type OpenAIWireMessage } from './lower';
 import { extractToolMedia } from './patterns';
-import { DEFAULT_REASONING_KEY, extractReasoning } from './reasoning-key';
+import {
+  convertReasoningDetails,
+  DEFAULT_REASONING_KEY,
+  extractReasoning,
+  extractReasoningDetails,
+} from './reasoning-key';
 
 function responseFormatToOpenAI(format: ResponseFormat): Record<string, unknown> {
   if (format.type === 'json_object') {
@@ -265,6 +270,7 @@ export const openAIFormat: ProtocolFormat<OpenAIRequestParams, RawResponse, RawC
   },
 
   createStreamParser(options?: StreamParserOptions) {
+    const explicitReasoningKey = options?.trait?.reasoningKey?.(options.ctx);
     const bufferedToolCalls = new Map<number | string, BufferedStreamToolCall>();
 
     function convertStreamToolCall(toolCall: RawStreamToolCallDelta): StreamedMessagePart[] {
@@ -351,9 +357,17 @@ export const openAIFormat: ProtocolFormat<OpenAIRequestParams, RawResponse, RawC
       if (!delta) {
         return;
       }
-      const reasoning = extractReasoning(delta);
-      if (reasoning !== undefined) {
-        sink.onDelta({ type: 'think', think: reasoning.value });
+      const reasoningDetails =
+        explicitReasoningKey === undefined ? extractReasoningDetails(delta) : undefined;
+      if (reasoningDetails !== undefined) {
+        for (const part of convertReasoningDetails(reasoningDetails)) {
+          sink.onDelta(part);
+        }
+      } else {
+        const reasoning = extractReasoning(delta);
+        if (reasoning !== undefined) {
+          sink.onDelta({ type: 'think', think: reasoning.value });
+        }
       }
       if (typeof delta.content === 'string' && delta.content.length > 0) {
         sink.onDelta({ type: 'text', text: delta.content });

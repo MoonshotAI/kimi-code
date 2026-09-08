@@ -17,8 +17,8 @@ export function createToolSelectPlugin(state: ToolSelectState): ToolSelectPlugin
     tools: () => [createSelectToolsTool(state)],
     connect(target) {
       if (target.kind !== 'agent') return;
-      target.on('turn.start', (event) => {
-        if (event.type !== 'turn.start') return;
+      target.on('turn.started', (event) => {
+        if (event.type !== 'turn.started') return;
         if (!state.enabled()) return;
         const announcement = state.announcement();
         if (announcement === undefined) return;
@@ -32,8 +32,8 @@ export function createToolSelectPlugin(state: ToolSelectState): ToolSelectPlugin
       };
       target.on('tool.done', pushSchemas);
       target.on('tool.failed', pushSchemas);
-      target.on('turn.remindersConsumed', (event) => {
-        if (event.type !== 'turn.remindersConsumed') return;
+      target.on('turn.reminders_consumed', (event) => {
+        if (event.type !== 'turn.reminders_consumed') return;
         for (const entry of event.reminders) {
           if (entry.meta.key === LOADABLE_TOOLS_REMINDER_KEY) state.markAnnounced();
           if (entry.meta.key === DYNAMIC_TOOL_SCHEMA_REMINDER_KEY) state.markSchemasLanded();

@@ -93,7 +93,8 @@ const M_GOOGLE = 'matrix-google';
 
 const KIMI_PROVIDER = 'matrix-kimi-provider';
 
-const IMAGE_BAD_MIME_URL = 'data:image/bmp;base64,QUJD'; // bmp is outside every base's allowlist
+const IMAGE_BAD_MIME_URL = 'data:image/tiff;base64,QUJD'; // tiff is outside every provider's accepted set
+const IMAGE_KIMI_ONLY_MIME_URL = 'data:image/bmp;base64,QUJD'; // bmp is accepted by Kimi alone
 const IMAGE_BAD_BASE64_URL = 'data:image/png;base64,%%%not-base64%%%';
 const VIDEO_HTTP_URL = 'https://example.com/clip.mp4';
 const VIDEO_BAD_MIME_URL = 'data:video/x-ms-wmv;base64,QUJD';
@@ -545,15 +546,15 @@ describe('l1: klient input validation', () => {
 describe('image blocks with invalid data', () => {
   it('a data-URL image with an unaccepted mime is replaced at prompt ingestion on EVERY provider (l2)', async () => {
     // PromptStepRequest gates image parts through gateImageFormatParts before
-    // the turn starts: image/bmp never reaches any provider's conversion
+    // the turn starts: image/tiff never reaches any provider's conversion
     // layer — it becomes a text notice, the request goes out without the
     // image, and the turn completes. This is the engine's "session
-    // poisoning" defense and is provider-independent.
+    // poisoning" defense and holds for every provider.
     const cases = [
-      { label: 'bmp-openai', model: M_OPENAI, reply: OK_OPENAI },
-      { label: 'bmp-kimi', model: M_KIMI, reply: OK_OPENAI },
-      { label: 'bmp-anthropic', model: M_ANTHROPIC, reply: OK_ANTHROPIC },
-      { label: 'bmp-google', model: M_GOOGLE, reply: OK_GOOGLE },
+      { label: 'tiff-openai', model: M_OPENAI, reply: OK_OPENAI },
+      { label: 'tiff-kimi', model: M_KIMI, reply: OK_OPENAI },
+      { label: 'tiff-anthropic', model: M_ANTHROPIC, reply: OK_ANTHROPIC },
+      { label: 'tiff-google', model: M_GOOGLE, reply: OK_GOOGLE },
     ] as const;
     for (const { label, model, reply } of cases) {
       const ctx = await newCase(model, label);
@@ -564,8 +565,31 @@ describe('image blocks with invalid data', () => {
       ]);
       expect(requests, label).toHaveLength(1);
       const wireText = JSON.stringify(requests[0]?.json);
-      expect(wireText, label).toContain('unsupported image format image/bmp');
-      expect(wireText, label).not.toContain('image/bmp;base64');
+      expect(wireText, label).toContain('unsupported image format image/tiff');
+      expect(wireText, label).not.toContain('image/tiff;base64');
+      expect(ctx.payloads('prompt.completed')[0]?.['reason'], label).toBe('completed');
+    }
+  }, 60_000);
+
+  it('a data-URL image in a Kimi-only format reaches a Kimi model but is replaced elsewhere (l2)', async () => {
+    // The accepted set is keyed by the provider the agent is bound to: Kimi
+    // takes BMP/HEIC/HEIF on top of the baseline, the other providers do not.
+    const cases = [
+      { label: 'bmp-kimi', model: M_KIMI, reply: OK_OPENAI, accepted: true },
+      { label: 'bmp-openai', model: M_OPENAI, reply: OK_OPENAI, accepted: false },
+      { label: 'bmp-anthropic', model: M_ANTHROPIC, reply: OK_ANTHROPIC, accepted: false },
+    ] as const;
+    for (const { label, model, reply, accepted } of cases) {
+      const ctx = await newCase(model, label);
+      resetMock(queueScript(reply));
+      await promptAndWait(ctx, [
+        { type: 'text', text: 'what is this?' },
+        { type: 'image_url', imageUrl: { url: IMAGE_KIMI_ONLY_MIME_URL } },
+      ]);
+      expect(requests, label).toHaveLength(1);
+      const wireText = JSON.stringify(requests[0]?.json);
+      expect(wireText.includes('image/bmp;base64'), label).toBe(accepted);
+      expect(wireText.includes('unsupported image format image/bmp'), label).toBe(!accepted);
       expect(ctx.payloads('prompt.completed')[0]?.['reason'], label).toBe('completed');
     }
   }, 60_000);

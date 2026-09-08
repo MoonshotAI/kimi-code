@@ -831,14 +831,14 @@ describe('ModelCatalog ping', () => {
       const fakeRequester: LlmRequester = {
         generate: (_config, _content, control) => {
           control.onEvent?.({ type: 'llm.sent' });
-          control.onEvent?.({ type: 'llm.headers', headers: {} });
-          control.onEvent?.({ type: 'llm.delta', part: { type: 'text', text: 'pong' } });
-          control.onEvent?.({ type: 'llm.usage', usage: emptyUsage() });
+          control.onEvent?.({ type: 'llm.streaming.headers', headers: {} });
+          control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'pong' } });
+          control.onEvent?.({ type: 'llm.streaming.usage', usage: emptyUsage() });
           control.onEvent?.({
-            type: 'llm.finish',
+            type: 'llm.streaming.finish',
             finish: { finishReason: 'completed', rawFinishReason: 'stop' },
           });
-          control.onEvent?.({ type: 'llm.message-id', messageId: 'msg-1' });
+          control.onEvent?.({ type: 'llm.streaming.message_id', messageId: 'msg-1' });
           control.onEvent?.({ type: 'llm.done' });
           return Promise.resolve();
         },

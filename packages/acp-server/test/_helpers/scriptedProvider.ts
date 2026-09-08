@@ -151,19 +151,19 @@ export function createScriptedProvider(): ScriptedProvider {
           { signal: control.signal },
         );
         for await (const part of stream) {
-          control.onEvent?.({ type: 'llm.delta', part });
+          control.onEvent?.({ type: 'llm.streaming.part', part });
           control.signal.throwIfAborted();
         }
-        control.onEvent?.({ type: 'llm.usage', usage: stream.usage ?? ZERO_USAGE });
+        control.onEvent?.({ type: 'llm.streaming.usage', usage: stream.usage ?? ZERO_USAGE });
         control.onEvent?.({
-          type: 'llm.finish',
+          type: 'llm.streaming.finish',
           finish: {
             finishReason: stream.finishReason,
             rawFinishReason: stream.rawFinishReason,
           },
         });
         if (stream.id !== null) {
-          control.onEvent?.({ type: 'llm.message-id', messageId: stream.id });
+          control.onEvent?.({ type: 'llm.streaming.message_id', messageId: stream.id });
         }
         control.onEvent?.({ type: 'llm.done' });
       } catch (error) {

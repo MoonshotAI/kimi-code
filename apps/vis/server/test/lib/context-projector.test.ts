@@ -1,6 +1,7 @@
 // apps/vis/server/test/lib/context-projector.test.ts
 import { describe, it, expect, afterEach } from 'vitest';
 import { estimateTokensForMessages } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/tokens';
+import { buildCompactionContinuationText } from '@moonshot-ai/agent-core-v2/agent/contextMemory/compactionHandoff';
 import { buildSessionFixture } from '../fixtures/build';
 import { projectContext } from '../../src/lib/context-projector';
 import { readAgentWire } from '../../src/lib/wire-reader';
@@ -440,16 +441,23 @@ describe('context-projector', () => {
           keptUserMessageCount: 2 }, raw: {} },
     ];
     const proj = projectContext(entries as any);
-    // [m0, m1, summary] — real user prompts are kept verbatim, the assistant
-    // tail is dropped.
-    expect(proj.messages).toHaveLength(3);
+    // [m0, m1, summary, anchor] — real user prompts are kept verbatim, the
+    // assistant tail is dropped, and the continuation anchor follows the summary.
+    expect(proj.messages).toHaveLength(4);
     expect(proj.messages.map((m) => m.source)).toEqual([
-      'append_message', 'append_message', 'compaction_summary',
+      'append_message', 'append_message', 'compaction_summary', 'append_message',
     ]);
     expect(proj.messages[0]!.message.content[0]).toMatchObject({ text: 'm0' });
     expect(proj.messages[1]!.message.content[0]).toMatchObject({ text: 'm1' });
     expect(proj.messages[2]!.compaction).toEqual({ compactedCount: 3, tokensBefore: 100, tokensAfter: 10 });
     expect(proj.messages[2]!.message.content[0]).toMatchObject({ text: 'sum' });
+    expect(proj.messages[3]!.message.origin).toEqual({
+      kind: 'injection',
+      variant: 'compaction_continuation',
+    });
+    expect(proj.messages[3]!.message.content[0]).toMatchObject({
+      text: buildCompactionContinuationText(),
+    });
   });
 
   it('apply_compaction mirrors the legacy verbatim tail for records without keptUserMessageCount (model)', () => {
@@ -499,9 +507,10 @@ describe('context-projector', () => {
     ];
 
     const proj = projectContext(entries as any);
-    // [FIRST, head slice of middle, marker, tail slice of middle, LAST, summary]
-    // — mirrors the engine's selectCompactionUserMessages + elision marker.
-    expect(proj.messages).toHaveLength(6);
+    // [FIRST, head slice of middle, marker, tail slice of middle, LAST, summary, anchor]
+    // — mirrors the engine's selectCompactionUserMessages + elision marker, with
+    // the continuation anchor after the summary.
+    expect(proj.messages).toHaveLength(7);
     const texts = proj.messages.map((m) =>
       m.message.content.map((p: any) => (p.type === 'text' ? p.text : '')).join(''),
     );
@@ -517,9 +526,14 @@ describe('context-projector', () => {
     expect(middle.endsWith(texts[3]!)).toBe(true);
     expect(texts[4]).toBe(last);
     expect(proj.messages[5]!.source).toBe('compaction_summary');
+    expect(proj.messages[6]!.message.origin).toEqual({
+      kind: 'injection',
+      variant: 'compaction_continuation',
+    });
+    expect(texts[6]).toBe(buildCompactionContinuationText());
     // Synthesized entries (the head slice of the same message that anchors the
     // tail, and the marker) get fractional lineNos so keys stay unique.
-    expect(new Set(proj.messages.map((m) => m.lineNo)).size).toBe(6);
+    expect(new Set(proj.messages.map((m) => m.lineNo)).size).toBe(7);
   });
 
   it('apply_compaction drops shell/local-command/background messages in model mode only', () => {
@@ -543,10 +557,10 @@ describe('context-projector', () => {
 
     const model = projectContext(entries as any);
     expect(model.messages.map((m) => m.source)).toEqual([
-      'append_message', 'compaction_summary', 'append_message',
+      'append_message', 'compaction_summary', 'append_message', 'append_message',
     ]);
     expect(model.messages.map((m) => m.message.content[0])).toMatchObject([
-      { text: 'real user' }, { text: 'sum' }, { text: 'new' },
+      { text: 'real user' }, { text: 'sum' }, { text: buildCompactionContinuationText() }, { text: 'new' },
     ]);
 
     const full = projectContext(entries as any, 'full');
@@ -591,12 +605,14 @@ describe('context-projector', () => {
           keptUserMessageCount: 3 }, raw: {} },
     ];
     const proj = projectContext(entries as any);
-    // Correct: [u1, u3, u4, summary]. The marker is gone, all real prompts kept.
+    // Correct: [u1, u3, u4, summary, anchor]. The marker is gone, all real
+    // prompts kept, and the continuation anchor follows the summary.
     expect(proj.messages.map((m) => m.source)).toEqual([
-      'append_message', 'append_message', 'append_message', 'compaction_summary',
+      'append_message', 'append_message', 'append_message', 'compaction_summary', 'append_message',
     ]);
     expect(proj.messages.map((m) => m.message.content[0])).toMatchObject([
       { text: 'u1' }, { text: 'u3' }, { text: 'u4' }, { text: 'sum' },
+      { text: buildCompactionContinuationText() },
     ]);
   });
 
@@ -994,10 +1010,10 @@ describe('context-projector', () => {
           keptUserMessageCount: 2 }, raw: {} },
     ];
     // No 2nd arg → 'model' default: the real user prompts are kept verbatim and
-    // the summary is appended after them.
+    // the summary is appended after them, followed by the continuation anchor.
     const proj = projectContext(entries as any);
     expect(proj.messages.map((m) => m.source)).toEqual([
-      'append_message', 'append_message', 'compaction_summary',
+      'append_message', 'append_message', 'compaction_summary', 'append_message',
     ]);
     expect(proj.messages[0]!.message.content[0]).toMatchObject({ text: 'm0' });
     expect(proj.messages[1]!.message.content[0]).toMatchObject({ text: 'm1' });

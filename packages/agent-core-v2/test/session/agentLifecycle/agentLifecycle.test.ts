@@ -42,6 +42,11 @@ import { SessionStateService } from '#/session/state/sessionStateService';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleService';
+import {
+  cancelInteractionsForTurn,
+  detachInteractionAgent,
+} from '#/agent/interaction/interactionWiring';
+import { interactions } from '#/human/interaction/facade';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
@@ -65,6 +70,8 @@ import { AgentTodoService, IAgentTodoService } from '#/features/todo/todoService
 import '#/agent/toolDedupe/toolDedupeService';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
+import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import '#/app/event/eventBusService';
@@ -257,6 +264,11 @@ describe('AgentLifecycleService', () => {
       homeDir: '/tmp/kimi-agentLifecycle-home',
       cwd: '/tmp/kimi-agentLifecycle-home',
     } as unknown as IBootstrapService);
+    ix.stub(IFlagService, {
+      _serviceBrand: undefined,
+      enabled: () => false,
+    } as unknown as IFlagService);
+    ix.stub(ISessionNotify, { _serviceBrand: undefined, ready: Promise.resolve(), enabled: false });
     ix.stub(ISessionWorkspaceContext, {
       _serviceBrand: undefined,
       workDir: '/tmp/kimi-agentLifecycle-work',
@@ -1446,5 +1458,32 @@ describe('AgentLifecycleService', () => {
 
     expect(second).toBe(first);
     expect(registerAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancelInteractionsForTurn and detachInteractionAgent stay within their session', () => {
+    const own = interactions.enqueue({
+      kind: 'approval',
+      payload: {},
+      tags: { agentId: 'main', sessionId: 'sess_test', turnId: 1 },
+    });
+    const other = interactions.enqueue({
+      kind: 'approval',
+      payload: {},
+      tags: { agentId: 'main', sessionId: 'sess_other', turnId: 1 },
+    });
+
+    cancelInteractionsForTurn('main', 'sess_test', 1);
+    expect(interactions.findOne({ id: own.id })).toMatchObject({
+      resolved: true,
+      response: { cancelled: true, reason: 'turn_ended' },
+    });
+    expect(interactions.findOne({ id: other.id, resolved: false })).toBeDefined();
+
+    detachInteractionAgent('main', 'sess_test');
+    expect(interactions.findOne({ id: other.id, resolved: false })).toBeDefined();
+
+    interactions.respond(other.id, { decision: 'approved' });
+    interactions.purgeSession('sess_test');
+    interactions.purgeSession('sess_other');
   });
 });

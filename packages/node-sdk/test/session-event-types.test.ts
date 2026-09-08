@@ -40,6 +40,9 @@ describe('Event public types', () => {
     expectTypeOf<EventByType<'turn.step.completed'>['llmClientConsumeMs']>().toEqualTypeOf<
       number | undefined
     >();
+    expectTypeOf<EventByType<'turn.step.completed'>['llmClientBlockedMs']>().toEqualTypeOf<
+      number | undefined
+    >();
   });
 
   it('narrows subagent lifecycle events by type', () => {

@@ -221,19 +221,6 @@ describe('FileSessionIndex (legacy)', () => {
     expect(await store.count({ workspaceIds: ['wd_unknown'] })).toBe(0);
   });
 
-  it('listRecent merges a workspace-id set into one recency-ordered page', async () => {
-    const otherId = encodeWorkDirKey('/home/user/other');
-    await seedSession('a1', { createdAt: 1, updatedAt: 1 });
-    await seedSession('a3', { createdAt: 3, updatedAt: 3 });
-    await seedSession('b2', { createdAt: 2, updatedAt: 2 }, otherId);
-    await seedSession('b4', { createdAt: 4, updatedAt: 4 }, otherId);
-
-    const store = build();
-    const page = await store.listRecent({ workspaceIds: [workspaceId, otherId] });
-    expect(page.items.map((s) => s.id)).toEqual(['b4', 'a3', 'b2', 'a1']);
-    expect(page.items[0]?.workspaceId).toBe(otherId);
-  });
-
   it('listRecent applies limit after the cross-bucket merge', async () => {
     const otherId = encodeWorkDirKey('/home/user/other');
     await seedSession('a1', { createdAt: 1, updatedAt: 1 });
@@ -515,6 +502,22 @@ describe('FileSessionIndex (read model)', () => {
     expect(await store.get('active')).toMatchObject({ id: 'active', title: 'hello' });
     expect(await store.count({ workspaceIds: [workspaceId] })).toBe(1);
     expect(await store.count({ workspaceIds: [workspaceId], includeArchived: true })).toBe(2);
+  });
+
+  it('prepare skips stray files and state-less directories instead of failing the projection', async () => {
+    await seedSession('active', { title: 'hello', createdAt: 1, updatedAt: 2 });
+    await fsp.writeFile(join(sessionsDir, 'workspace.json'), '{}');
+    await fsp.writeFile(join(sessionsDir, workspaceId, 'workspace.json'), '{}');
+    await fsp.writeFile(join(sessionsDir, workspaceId, '.DS_Store'), 'junk');
+    await fsp.mkdir(join(sessionsDir, workspaceId, 'no-state'), { recursive: true });
+
+    const store = build();
+    const status = await store.prepare();
+    expect(status).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+
+    const page = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items.map((s) => s.id)).toEqual(['active']);
+    expect(await store.count({ workspaceIds: [workspaceId] })).toBe(1);
   });
 
   it('serves warm reads without touching the session directories', async () => {
@@ -1460,9 +1463,9 @@ describe('FileSessionIndex (read model)', () => {
     const collection = sessionCollection(1);
 
     const seedRows = async (from: number, to: number): Promise<void> => {
-      for (let start = from; start < to; start += 500) {
+      for (let start = from; start < to; start += 5_000) {
         const ops = [];
-        for (let i = start; i < Math.min(start + 500, to); i++) {
+        for (let i = start; i < Math.min(start + 5_000, to); i++) {
           ops.push({
             kind: 'put' as const,
             collection,

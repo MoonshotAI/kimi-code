@@ -615,6 +615,7 @@ describe('runV2Print', () => {
       model: 'k2',
       endpoint: expect.any(Function),
       getAccessToken: expect.any(Function),
+      onUnexpectedError: expect.any(Function),
     });
     // The resolved session id is synced onto the v1 client so crash events and
     // system metrics carry it; the sink model is reconciled too (same value

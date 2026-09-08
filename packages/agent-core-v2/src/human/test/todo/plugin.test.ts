@@ -39,7 +39,7 @@ function createTarget() {
   };
   const turnStart = () => {
     for (const handler of handlers) {
-      handler({ type: 'turn.start', turnId: handlers.length, branchId: 'main' });
+      handler({ type: 'turn.started', turnId: handlers.length, branchId: 'main' });
     }
   };
   return { target, notified, reminded, turnStart };

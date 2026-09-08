@@ -15,11 +15,12 @@ import {
 } from '#/agent/activityView/activityView';
 import type { TurnEndReason } from '#/agent/loop/turnEvents';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
-import type { Interaction } from '#/features/interaction/interaction';
 import {
-  listSessionPendingInteractions,
-  onSessionInteractionDidChangePending,
-} from '#/features/interaction/sessionInteractions';
+  INTERACTION_TAG_SESSION_ID,
+  type Interaction,
+} from '#/human/interaction/interaction';
+import { interactions } from '#/human/interaction/facade';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
 
 import {
@@ -59,6 +60,7 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
   constructor(
     @ISessionStateService private readonly states: ISessionStateService,
     @IAgentLifecycleService private readonly agents: IAgentLifecycleService,
+    @ISessionContext private readonly ctx: ISessionContext,
   ) {
     super();
     this.states.contributeState(sessionActivityFoldsKey);
@@ -82,7 +84,9 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
       }),
     );
     this._register(
-      onSessionInteractionDidChangePending(this.agents, () => this.recompute('interaction')),
+      toDisposable(
+        interactions.onDidChangePending(() => this.recompute('interaction')),
+      ),
     );
     this._register(
       toDisposable(() => {
@@ -156,7 +160,12 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
     return {
       busy,
       mainTurnActive: this.folds.get(MAIN_AGENT_ID)?.turnActive ?? false,
-      pendingInteraction: resolvePendingInteraction(listSessionPendingInteractions(this.agents)),
+      pendingInteraction: resolvePendingInteraction(
+        interactions.findAll({
+          resolved: false,
+          tags: { [INTERACTION_TAG_SESSION_ID]: this.ctx.sessionId },
+        }),
+      ),
       lastTurnReason: this.folds.get(MAIN_AGENT_ID)?.lastTurnReason,
     };
   }

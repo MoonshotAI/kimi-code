@@ -201,6 +201,7 @@ function makeTool(
   videoUploader?: VideoUploader,
   telemetry?: ITelemetryService,
   inlineVideoSupported?: boolean,
+  providerType?: string,
 ): ReadMediaFileTool {
   return new ReadMediaFileTool(
     runtimeFor(createTestFs(files)),
@@ -209,6 +210,7 @@ function makeTool(
     videoUploader,
     telemetry,
     inlineVideoSupported,
+    providerType,
   );
 }
 
@@ -857,7 +859,10 @@ describe('AgentMediaToolsRegistrar', () => {
     capabilities: ModelCapability;
   }
 
-  function createRegistrarHarness() {
+  function createRegistrarHarness(
+    files: Record<string, FakeFile> = {},
+    providerTypes: Record<string, string> = {},
+  ) {
     const registry = new AgentToolRegistryService();
     const eventBus = new EventBusService();
     const agentContext = stubAgentContext('main', 1);
@@ -871,19 +876,27 @@ describe('AgentMediaToolsRegistrar', () => {
       getModel: () => state.alias,
     } as unknown as IAgentProfileService;
     const brokenAliases = new Set<string>();
+    const catalogModel = (id: string) => {
+      if (brokenAliases.has(id)) {
+        throw new Error(`Model "${id}" is not configured in config.toml.`);
+      }
+      return {
+        id,
+        name: id,
+        providerName: 'test',
+        protocol: 'openai',
+        providerType: providerTypes[id],
+      };
+    };
     const modelCatalog = {
-      getRequester: (id: string) => {
-        if (brokenAliases.has(id)) {
-          throw new Error(`Model "${id}" is not configured in config.toml.`);
-        }
-        return { model: { id, name: id, providerName: 'test', protocol: 'openai' } };
-      },
+      get: catalogModel,
+      getRequester: (id: string) => ({ model: catalogModel(id) }),
     } as unknown as IModelCatalog;
     const workspaceCtx = {
       workDir: '/workspace',
       additionalDirs: [],
     } as unknown as ISessionWorkspaceContext;
-    const baseRuntime = runtimeFor(createTestFs({}));
+    const baseRuntime = runtimeFor(createTestFs(files));
     const runtimeChanges = new Emitter<void>();
     let runtimeAvailable = true;
     const runtime: IAgentRuntimeService = {
@@ -936,6 +949,46 @@ describe('AgentMediaToolsRegistrar', () => {
     const tool = registry.resolve('ReadMediaFile');
     expect(tool).toBeInstanceOf(ReadMediaFileTool);
     expect((tool as ReadMediaFileTool).description).toContain('Video files are not supported');
+  });
+
+  it('hands the bound model provider type to ReadMediaFile', async () => {
+    const heic = Buffer.from([
+      0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63, 0x00, 0x00, 0x00, 0x00,
+      0x68, 0x65, 0x69, 0x63, 0x00, 0x00, 0x00, 0x00,
+    ]);
+    const { registry, bindModel } = createRegistrarHarness(
+      { '/workspace/photo.heic': { data: heic } },
+      { 'kimi-vision': 'kimi' },
+    );
+    const readWith = async (alias: string) => {
+      bindModel(alias, capabilities({ image_in: true, video_in: false }));
+      const tool = registry.resolve('ReadMediaFile') as ReadMediaFileTool;
+      return execute(tool, { path: '/workspace/photo.heic' });
+    };
+
+    expect((await readWith('kimi-vision')).isError).toBeFalsy();
+    expect((await readWith('other-vision')).isError).toBe(true);
+  });
+
+  it('rebuilds ReadMediaFile when a reload changes the provider type behind the same alias', async () => {
+    const heic = Buffer.from([
+      0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63, 0x00, 0x00, 0x00, 0x00,
+      0x68, 0x65, 0x69, 0x63, 0x00, 0x00, 0x00, 0x00,
+    ]);
+    const providerTypes: Record<string, string> = {};
+    const { registry, bindModel } = createRegistrarHarness(
+      { '/workspace/photo.heic': { data: heic } },
+      providerTypes,
+    );
+    const read = async () => {
+      bindModel('vision', capabilities({ image_in: true, video_in: false }));
+      const tool = registry.resolve('ReadMediaFile') as ReadMediaFileTool;
+      return execute(tool, { path: '/workspace/photo.heic' });
+    };
+
+    expect((await read()).isError).toBe(true);
+    providerTypes['vision'] = 'kimi';
+    expect((await read()).isError).toBeFalsy();
   });
 
   it('drops the tool when the model loses media input', () => {
@@ -1121,5 +1174,57 @@ describe('createVideoUploader', () => {
     expect(result.output).toContain('/workspace/photo.jpg');
     expect(result.output).toMatch(/sips -s format jpeg|magick/);
     expect(result.output).not.toContain('heif-convert');
+  });
+
+  function kimiTool(files: Record<string, FakeFile>): ReadMediaFileTool {
+    return makeTool(files, capabilities(), undefined, undefined, undefined, 'kimi');
+  }
+
+  it('sends HEIC untouched when the provider is kimi', async () => {
+    const result = await execute(kimiTool({ '/workspace/photo.heic': { data: heicBytes() } }), {
+      path: '/workspace/photo.heic',
+    });
+
+    expect(result.isError).toBeFalsy();
+    const parts = outputParts(result);
+    expect(parts[1]).toEqual({
+      type: 'image_url',
+      imageUrl: { url: `data:image/heic;base64,${heicBytes().toString('base64')}` },
+    });
+    expect(noteText(result)).toContain('Mime type: image/heic.');
+  });
+
+  it('passes a HEIC above the read budget through inline up to the kimi limit', async () => {
+    const heic = Buffer.concat([heicBytes(), Buffer.alloc(4 * 1024 * 1024, 1)]);
+    const result = await execute(kimiTool({ '/workspace/photo.heic': { data: heic } }), {
+      path: '/workspace/photo.heic',
+    });
+
+    expect(result.isError).toBeFalsy();
+    const url = (outputParts(result)[1] as { imageUrl: { url: string } }).imageUrl.url;
+    expect(url).toBe(`data:image/heic;base64,${heic.toString('base64')}`);
+  });
+
+  it('refuses a HEIC above the kimi inline limit with a conversion command', async () => {
+    const heic = Buffer.concat([heicBytes(), Buffer.alloc(5 * 1024 * 1024, 1)]);
+    const result = await execute(kimiTool({ '/workspace/photo.heic': { data: heic } }), {
+      path: '/workspace/photo.heic',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('image/heic');
+    expect(result.output).toContain(String(5 * 1024 * 1024));
+    expect(result.output).not.toContain('does not accept');
+    expect(result.output).toContain('/workspace/photo.jpg');
+    expect(result.output).toMatch(/sips -s format jpeg|heif-convert|magick/);
+  });
+
+  it('still refuses formats outside the kimi set with conversion guidance', async () => {
+    const tool = kimiTool({ '/workspace/photo.avif': { data: ftypBytes('avif') } });
+    const result = await execute(tool, { path: '/workspace/photo.avif' });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('image/avif');
+    expect(result.output).toContain('Convert it to JPEG first');
   });
 });

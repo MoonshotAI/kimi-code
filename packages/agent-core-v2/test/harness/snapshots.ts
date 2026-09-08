@@ -237,7 +237,7 @@ function formatText(text: string): string {
   if (isDateReminder(text)) {
     return '<date-reminder>';
   }
-  if (text.includes('first-person handoff note')) {
+  if (text.includes('You are about to run out of context.')) {
     return '<compaction-instruction>';
   }
   return JSON.stringify(text);
@@ -356,6 +356,7 @@ function isVolatileDurationKey(key: string): boolean {
     key === 'llmServerFirstTokenMs' ||
     key === 'llmServerDecodeMs' ||
     key === 'llmClientConsumeMs' ||
+    key === 'llmClientBlockedMs' ||
     key === 'durationMs'
   );
 }

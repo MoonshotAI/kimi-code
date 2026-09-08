@@ -192,7 +192,7 @@ Subagents inherit the model the main agent is running by default. The `[secondar
 
 ### Subagent model pool
 
-The pool is enabled by default and needs no configuration. Set `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=0` to disable it; while disabled, the pool keys stay inert, subagents inherit the caller's model, and session startup skips the pool validation.
+The pool is always available and needs no opt-in; with no `[secondary_model]` keys configured, subagents simply inherit the caller's model.
 
 The minimal configuration is one line. A lone `default_model` is a pool with a single entry:
 
@@ -430,6 +430,23 @@ disabled = ["EnterPlanMode", "ExitPlanMode", "mcp__github__*"]
 ::: warning Note
 Like the `tools` / `disallowedTools` fields of an agent file, this section shapes the tools shown to the model and is enforced again before execution. [Permission rules](#permission) remain a separate control for operations that require approval.
 :::
+
+## `read`
+
+`read` controls the character limits for the [`Read` tool](../reference/tools.md). The limit includes file content, line numbers, and the status block; it does not impose a separate line-count or UTF-8 byte limit.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `default_max_chars` | `integer` | `100000` | Character budget when the tool call omits `max_chars` |
+| `max_chars` | `integer` | `500000` | Maximum character budget a tool call may request |
+
+```toml
+[read]
+default_max_chars = 100000
+max_chars = 500000
+```
+
+Both values must be positive integers. A call's `max_chars` overrides the default, but is capped at the configured maximum; the result reports the effective budget. If the configured default exceeds the maximum, the maximum also limits default reads. Raise `default_max_chars` when you want larger documents to be returned in one call without the agent requesting a larger budget.
 
 ## `image`
 

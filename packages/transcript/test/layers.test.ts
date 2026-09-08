@@ -336,6 +336,7 @@ describe('contract schemas', () => {
             llmServerFirstTokenMs: 110,
             llmServerDecodeMs: 700,
             llmClientConsumeMs: 950,
+            llmClientBlockedMs: 25,
           },
           retry: { failedAttempt: 1, nextAttempt: 2, maxAttempts: 3, delayMs: 500, errorName: 'RateLimit', errorMessage: 'slow down', statusCode: 429 },
           endReason: 'aborted',

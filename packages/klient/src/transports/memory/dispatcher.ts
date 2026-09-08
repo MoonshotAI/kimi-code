@@ -20,28 +20,23 @@ import { IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2/workspace/
 import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
 import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionLookup';
 import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
+import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/mainAgent';
 import { agentContextOf } from '@moonshot-ai/agent-core-v2/agent/scopeContext/scopeContext';
-import { IAgentInteractionService } from '@moonshot-ai/agent-core-v2/features/interaction/interactionService';
-import type {
-  InteractionKind,
-  InteractionRequest,
-} from '@moonshot-ai/agent-core-v2/features/interaction/interaction';
+import {
+  INTERACTION_TAG_AGENT_ID,
+  INTERACTION_TAG_SESSION_ID,
+  type Interaction,
+  type InteractionKind,
+  type InteractionRequest,
+} from '@moonshot-ai/agent-core-v2/human/interaction/interaction';
+import { interactions } from '@moonshot-ai/agent-core-v2/human/interaction/facade';
 import type { SkillActivationOrigin } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import type {
   PromptWithSkillsInput,
   SkillActivationInput,
 } from '@moonshot-ai/agent-core-v2/features/skill/skill';
 import { IAgentSkillService } from '@moonshot-ai/agent-core-v2/features/skill/skillService';
-import {
-  enqueueSessionInteraction,
-  isSessionInteractionRecentlyResolved,
-  listSessionPendingInteractions,
-  onSessionInteractionDidChangePending,
-  onSessionInteractionDidResolve,
-  requestSessionInteraction,
-  respondSessionInteraction,
-} from '@moonshot-ai/agent-core-v2/features/interaction/sessionInteractions';
 import { IEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
 import type {
   FileMeta,
@@ -72,32 +67,105 @@ export function wireClone<T>(value: T): T {
 
 /**
  * `sessionInteractionService` stays on the wire after the engine moved the
- * interaction kernel into per-agent services: the view aggregates the live
- * agents' `IAgentInteractionService` facades through the session's agent
- * lifecycle.
+ * interaction kernel into a process-global module singleton: the view
+ * forwards to the singleton, scoping every call by the `sessionId` tag.
  */
-function interactionServiceView(session: ScopeLike): Record<string, unknown> {
-  const manager = session.accessor.get(IAgentLifecycleService);
+function pendingInteractionsOfSession(sessionId: string): readonly Interaction[] {
+  return interactions.findAll({
+    resolved: false,
+    tags: { [INTERACTION_TAG_SESSION_ID]: sessionId },
+  });
+}
+
+function pendingIdsOfSession(sessionId: string): readonly string[] {
+  return pendingInteractionsOfSession(sessionId).map((i) => i.id);
+}
+
+function respondScoped(sessionId: string, id: string, response: unknown): boolean {
+  if (
+    interactions.findOne({
+      id,
+      resolved: false,
+      tags: { [INTERACTION_TAG_SESSION_ID]: sessionId },
+    }) === undefined
+  ) {
+    return false;
+  }
+  return interactions.respond(id, response);
+}
+
+function withSessionTags<TPayload>(
+  sessionId: string,
+  req: InteractionRequest<TPayload>,
+): InteractionRequest<TPayload> {
   return {
-    request: (req: InteractionRequest<unknown>) => requestSessionInteraction(manager, req),
-    enqueue: (req: InteractionRequest<unknown>) => enqueueSessionInteraction(manager, req),
+    ...req,
+    tags: {
+      ...req.tags,
+      [INTERACTION_TAG_AGENT_ID]: req.tags?.[INTERACTION_TAG_AGENT_ID] ?? MAIN_AGENT_ID,
+      [INTERACTION_TAG_SESSION_ID]: sessionId,
+    },
+  };
+}
+
+function interactionServiceView(sessionId: string): Record<string, unknown> {
+  return {
+    request: (req: InteractionRequest<unknown>) =>
+      interactions.request(withSessionTags(sessionId, req)),
+    enqueue: (req: InteractionRequest<unknown>) =>
+      interactions.enqueue(withSessionTags(sessionId, req)),
     respond: (id: string, response: unknown) => {
-      respondSessionInteraction(manager, id, response);
+      respondScoped(sessionId, id, response);
     },
-    listPending: (kind?: InteractionKind) => listSessionPendingInteractions(manager, kind),
-    isRecentlyResolved: (id: string) => isSessionInteractionRecentlyResolved(manager, id),
-    cancelPendingForTurn: (turnId: number) => {
-      for (const context of manager.list()) {
-        manager
-          .handleOf(context.agentId)
-          ?.accessor.get(IAgentInteractionService)
-          .cancelPendingForTurn(turnId);
-      }
-    },
+    listPending: (kind?: InteractionKind) =>
+      interactions.findAll({
+        kind,
+        resolved: false,
+        tags: { [INTERACTION_TAG_SESSION_ID]: sessionId },
+      }),
+    isRecentlyResolved: (id: string) =>
+      interactions.findOne({
+        id,
+        resolved: true,
+        tags: { [INTERACTION_TAG_SESSION_ID]: sessionId },
+      }) !== undefined,
     onDidChangePending: (listener: (event: unknown) => void) =>
-      onSessionInteractionDidChangePending(manager, listener),
+      interactions.onDidChangePending(listener),
     onDidResolve: (listener: (event: unknown) => void) =>
-      onSessionInteractionDidResolve(manager, listener),
+      interactions.onDidResolve(listener),
+  };
+}
+
+/**
+ * `sessionApprovalService` / `sessionQuestionService` stay on the wire as
+ * facade views over the same singleton: lists are the session's pending
+ * payloads with their interaction ids, decisions write back through
+ * `respond`.
+ */
+function approvalServiceView(sessionId: string): Record<string, unknown> {
+  return {
+    listPending: () =>
+      pendingInteractionsOfSession(sessionId)
+        .filter((i) => i.kind === 'approval')
+        .map((i) => ({ ...(i.payload as Record<string, unknown>), id: i.id })),
+    decide: (id: string, response: unknown) => {
+      respondScoped(sessionId, id, response);
+    },
+  };
+}
+
+function questionServiceView(sessionId: string): Record<string, unknown> {
+  return {
+    listPending: () =>
+      pendingInteractionsOfSession(sessionId)
+        .filter((i) => i.kind === 'question')
+        .map((i) => ({ ...(i.payload as Record<string, unknown>), id: i.id })),
+    answer: (id: string, result: unknown) => {
+      respondScoped(sessionId, id, result);
+    },
+    dismiss: (id: string) => {
+      respondScoped(sessionId, id, null);
+    },
   };
 }
 
@@ -190,6 +258,7 @@ type ScopeKind = 'core' | 'workspace' | 'session' | 'agent';
 interface ResolvedScope {
   readonly kind: ScopeKind;
   readonly like: ScopeLike;
+  readonly sessionId?: string;
 }
 
 /** Structural view of the engine's `IFileService` used by the wire adaptation. */
@@ -213,7 +282,9 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
     if (session === undefined) {
       throw new RPCError(NOT_FOUND, `session not found: ${scope.sessionId}`);
     }
-    if (scope.agentId === undefined) return { kind: 'session', like: session };
+    if (scope.agentId === undefined) {
+      return { kind: 'session', like: session, sessionId: scope.sessionId };
+    }
     if (scope.agentId === 'main') {
       const context = await ensureMainAgent(session);
       const handle = session.accessor.get(IAgentLifecycleService).handleOf(context.agentId);
@@ -229,12 +300,29 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
     return { kind: 'agent', like: agent };
   }
 
+  function sessionInteractionView(
+    resolved: ResolvedScope,
+    service: string,
+  ): Record<string, unknown> | undefined {
+    if (resolved.kind !== 'session') return undefined;
+    const sessionId = resolved.sessionId as string;
+    if (service === 'sessionInteractionService') return interactionServiceView(sessionId);
+    if (service === 'sessionApprovalService') return approvalServiceView(sessionId);
+    if (service === 'sessionQuestionService') return questionServiceView(sessionId);
+    return undefined;
+  }
+
   function resolveService(resolved: ResolvedScope, service: string): Record<string, unknown> {
-    if (service === 'sessionInteractionService') {
-      if (resolved.kind !== 'session') {
+    if (
+      service === 'sessionInteractionService' ||
+      service === 'sessionApprovalService' ||
+      service === 'sessionQuestionService'
+    ) {
+      const view = sessionInteractionView(resolved, service);
+      if (view === undefined) {
         throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
       }
-      return interactionServiceView(resolved.like);
+      return view;
     }
     if (service === 'agentSkillService') {
       if (resolved.kind !== 'agent') {
@@ -262,15 +350,33 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
       });
     }
     if (resolved.kind === 'session' && name === 'interactions') {
-      const manager = resolved.like.accessor.get(IAgentLifecycleService);
-      return onSessionInteractionDidChangePending(manager, () => {
-        handler(wireClone(listSessionPendingInteractions(manager)));
-      });
+      const sessionId = resolved.sessionId as string;
+      let last = pendingIdsOfSession(sessionId).join('');
+      return {
+        dispose: interactions.onDidChangePending(() => {
+          const next = pendingIdsOfSession(sessionId).join('');
+          if (next === last) return;
+          last = next;
+          handler(wireClone(pendingInteractionsOfSession(sessionId)));
+        }),
+      };
     }
     if (resolved.kind === 'session' && name === 'interactions:resolved') {
-      return onSessionInteractionDidResolve(resolved.like.accessor.get(IAgentLifecycleService), (resolution) => {
+      const sessionId = resolved.sessionId as string;
+      const known = new Set(pendingIdsOfSession(sessionId));
+      const detachChange = interactions.onDidChangePending(() => {
+        for (const id of pendingIdsOfSession(sessionId)) known.add(id);
+      });
+      const detachResolve = interactions.onDidResolve((resolution) => {
+        if (!known.delete(resolution.id)) return;
         handler(wireClone(resolution));
       });
+      return {
+        dispose: () => {
+          detachChange();
+          detachResolve();
+        },
+      };
     }
     if (resolved.kind === 'agent' && name === 'events') {
       const bus = resolved.like.accessor.get(IEventBus);

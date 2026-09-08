@@ -1,7 +1,7 @@
 import type { RequestPermissionResponse } from '@agentclientprotocol/sdk';
 import type { Interaction } from '@moonshot-ai/agent-core-v2';
 import type { SessionHandle } from '@moonshot-ai/klient';
-import type { ToolInputDisplay } from '@moonshot-ai/protocol';
+import type { ToolInputDisplay } from '@moonshot-ai/agent-core-v2/tool/toolInputDisplay';
 import { describe, expect, it } from 'vitest';
 
 import type { AcpClient } from '../src/acp-client';
@@ -91,7 +91,7 @@ const approvalInteraction: Interaction = {
     turnId: 3,
     display: commandDisplay,
   },
-  origin: { turnId: 3 },
+  tags: { turnId: 3 },
   createdAt: 0,
 };
 
@@ -167,7 +167,7 @@ describe('AcpInteractionBridge', () => {
           options: [{ label: 'Fast path' }, { label: 'Safe path' }],
         },
       },
-      origin: { turnId: 7 },
+      tags: { turnId: 7 },
       createdAt: 0,
     };
     session.setPending([planInteraction]);
@@ -199,7 +199,7 @@ describe('AcpInteractionBridge', () => {
         turnId: 5,
         questions: [{ question: 'Pick one', options: [{ label: 'A' }, { label: 'B' }] }],
       },
-      origin: { turnId: 5 },
+      tags: { turnId: 5 },
       createdAt: 0,
     };
     session.setPending([questionInteraction]);
@@ -220,7 +220,7 @@ describe('AcpInteractionBridge', () => {
       id: 'ut-1',
       kind: 'user_tool',
       payload: {},
-      origin: {},
+      tags: {},
       createdAt: 0,
     };
     session.setPending([userToolInteraction]);
@@ -290,7 +290,7 @@ describe('AcpInteractionBridge', () => {
         },
       ],
     },
-    origin: { turnId: 5 },
+    tags: { turnId: 5 },
     createdAt: 0,
   };
 

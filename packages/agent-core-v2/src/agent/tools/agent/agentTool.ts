@@ -45,6 +45,8 @@ import { ILogService } from '#/_base/log/log';
 import { hasPinnedPermissionMode } from '#/features/tower/tower';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
+import { ISessionNotify } from '#/features/notify/sessionNotify';
+import { NOTIFY_USER_TOOL_NAME } from '#/features/notify/tools/notify-user/notify-user';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import {
   isSubagentMeta,
@@ -95,7 +97,7 @@ export class SubagentTool implements ISubagentTool {
   readonly name: string = 'Agent';
 
   get parameters(): Record<string, unknown> {
-    const parameters = exposesSubagentModelChoice(this.config, this.flags)
+    const parameters = exposesSubagentModelChoice(this.config)
       ? SUBAGENT_TOOL_PARAMETERS
       : SUBAGENT_TOOL_PARAMETERS_NO_MODEL;
     return this.flags.enabled(SUBAGENT_FORK_FLAG_ID)
@@ -122,6 +124,7 @@ export class SubagentTool implements ISubagentTool {
     @ILogService private readonly log: ILogService,
     @IConfigService private readonly config: IConfigService,
     @IFlagService private readonly flags: IFlagService,
+    @ISessionNotify private readonly notify: ISessionNotify,
     @AgentToolContribution private readonly contributions: CollectionView<AgentToolContribution>,
   ) {
     this.callerAgentId = scopeContext.agentId;
@@ -149,8 +152,12 @@ export class SubagentTool implements ISubagentTool {
       allowlist === undefined
         ? catalogProfiles
         : catalogProfiles.filter((profile) => allowlist.includes(profile.name));
+    const notifyAvailable = this.notify.enabled;
     const typeLines = buildProfileDescriptions(
-      profiles,
+      profiles.map((profile) => ({
+        ...profile,
+        tools: profile.tools?.filter((name) => name !== NOTIFY_USER_TOOL_NAME || notifyAvailable),
+      })),
       this.knownToolReferences(),
       (profile, name, source) =>
         this.toolPolicy.isToolActiveForProfile(profile, name, source),
@@ -160,7 +167,6 @@ export class SubagentTool implements ISubagentTool {
     }
     const modelLines = buildSubagentModelDescriptions(
       this.config,
-      this.flags,
       this.profile.data().modelAlias,
     );
     if (modelLines !== undefined) {

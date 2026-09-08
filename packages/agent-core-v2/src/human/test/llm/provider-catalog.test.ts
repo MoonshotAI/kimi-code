@@ -79,7 +79,7 @@ describe('providerCatalog ping', () => {
             },
           });
         } else {
-          onEvent?.({ type: 'llm.delta', part: { type: 'text', text: 'pong' } });
+          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'pong' } });
           onEvent?.({ type: 'llm.done' });
         }
         return Promise.resolve();
@@ -133,6 +133,35 @@ describe('providerCatalog ping', () => {
 
     await until(() => catalog.models('test').at(0)?.pingError === 'second');
     expect(catalog.models('test').at(0)?.pingError).toBe('second');
+    catalog.stop();
+  });
+
+  it('carries the model protocol flags into the ping generate config', async () => {
+    const seen: LlmModel[] = [];
+    const provider: Provider = {
+      id: 'test',
+      protocols: ['anthropic'],
+      listModels: () => Promise.resolve([]),
+      resolveModel: () => {
+        throw new Error('unused');
+      },
+      createRequester: () => ({
+        generate: (config) => {
+          seen.push(config.model);
+          return Promise.resolve();
+        },
+      }),
+    };
+    const catalog = await createProviderCatalog();
+    catalog.upsert({
+      provider,
+      models: [{ ...modelDef, protocol: 'anthropic', betaApi: true }],
+    });
+
+    catalog.ping('test', 'm1');
+
+    await until(() => seen.length > 0);
+    expect(seen[0]?.betaApi).toBe(true);
     catalog.stop();
   });
 

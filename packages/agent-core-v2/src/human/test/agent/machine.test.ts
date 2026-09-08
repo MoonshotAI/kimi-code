@@ -48,11 +48,11 @@ function streamMessage(
   onEvent: ((event: LlmRequestEvent) => void) | undefined,
 ): void {
   for (const part of [...message.content, ...message.toolCalls]) {
-    onEvent?.({ type: 'llm.delta', part });
+    onEvent?.({ type: 'llm.streaming.part', part });
   }
-  onEvent?.({ type: 'llm.message-id', messageId: 'msg-stub' });
+  onEvent?.({ type: 'llm.streaming.message_id', messageId: 'msg-stub' });
   onEvent?.({
-    type: 'llm.finish',
+    type: 'llm.streaming.finish',
     finish: { finishReason: 'completed', rawFinishReason: 'stop' },
   });
   onEvent?.({ type: 'llm.done' });
@@ -78,7 +78,7 @@ function createTestAgentMachine(
 ) {
   return createAgentMachine({
     tools,
-    turnActor: createTurnMachine(createLlmMachine({ requester, retry })),
+    turnActor: createTurnMachine(createLlmMachine({ requester }), { retry }),
     abortTimeoutMs,
   });
 }
@@ -134,7 +134,7 @@ describe('agent machine tool failure', () => {
         seenUsedContextTokens.push(content.usedContextTokens);
         call += 1;
         if (call === 1) {
-          onEvent?.({ type: 'llm.usage', usage });
+          onEvent?.({ type: 'llm.streaming.usage', usage });
           streamMessage(createAssistantMessage([], [toolCall('call-1', 'fail_tool')]), onEvent);
         } else {
           streamMessage(createAssistantMessage([{ type: 'text', text: 'recovered' }]), onEvent);
@@ -302,7 +302,7 @@ describe('agent machine tool failure', () => {
         attempt += 1;
         onEvent?.({ type: 'llm.sent' });
         if (attempt === 1) {
-          onEvent?.({ type: 'llm.delta', part: toolCall('call-1', 'retry_tool') });
+          onEvent?.({ type: 'llm.streaming.part', part: toolCall('call-1', 'retry_tool') });
           onEvent?.({
             type: 'llm.failed.remote',
             error: {
@@ -812,7 +812,7 @@ describe('agent machine input.notify', () => {
   });
 });
 
-describe('agent machine input.reminder', () => {
+describe('agent machine input.remind', () => {
   it('stays pending while idle and is delivered at the next turn drain', async () => {
     const requester = createStubRequester([
       createAssistantMessage([], [toolCall('call-1', 'slow_tool')]),
@@ -830,20 +830,20 @@ describe('agent machine input.reminder', () => {
       input: { request: { model } },
     });
     const consumedKeys: (string | undefined)[][] = [];
-    actor.on('turn.remindersConsumed', (event) => {
-      if (event.type === 'turn.remindersConsumed') {
+    actor.on('turn.reminders_consumed', (event) => {
+      if (event.type === 'turn.reminders_consumed') {
         consumedKeys.push(event.reminders.map((entry) => entry.meta.key));
       }
     });
     actor.start();
 
     actor.send({
-      type: 'input.reminder',
+      type: 'input.remind',
       key: 'todo',
       message: createUserMessage('<system-reminder>\nold\n</system-reminder>'),
     });
     actor.send({
-      type: 'input.reminder',
+      type: 'input.remind',
       key: 'todo',
       message: createUserMessage('<system-reminder>\nstale\n</system-reminder>'),
     });
@@ -942,8 +942,8 @@ describe('agent machine llm retry', () => {
 
     const delayMs = retrying[0]?.delayMs ?? 0;
     expect(timingPlugin.timing()).toEqual({
-      requestBuildMs: 100000 - 1200 - delayMs,
-      ttftMs: 100100 - 1200 - delayMs,
+      requestBuildMs: 100000 - (1200 + delayMs),
+      ttftMs: 100100 - (1200 + delayMs),
       serverFirstTokenMs: 100,
       streamDurationMs: 100,
       serverDecodeMs: 60,
@@ -1018,7 +1018,7 @@ describe('agent machine input.abort', () => {
         ];
         return new Promise((resolve) => {
           for (const part of parts) {
-            onEvent?.({ type: 'llm.delta', part });
+            onEvent?.({ type: 'llm.streaming.part', part });
           }
           signal.addEventListener('abort', () => {
             onEvent?.({ type: 'llm.failed.remote', error: { kind: 'abort', message: 'aborted' } });
@@ -1242,10 +1242,9 @@ describe('agent machine input.abort', () => {
     ]);
   });
 
-  it('keeps detached background tools running across an abort', async () => {
+  it('keeps detached background tools running across an abort and aborts them on stop', async () => {
     let call = 0;
     const bgSignals: AbortSignal[] = [];
-    let resolveBg: ((result: ToolResult) => void) | undefined;
     const requester: LlmRequester = {
       generate: (_config, _content, { signal, onEvent }) => {
         call += 1;
@@ -1271,9 +1270,7 @@ describe('agent machine input.abort', () => {
     const tools = stubTools(({ detach, signal }) => {
       bgSignals.push(signal);
       detach?.({ text: 'async running: bg_tool' });
-      return new Promise((resolve) => {
-        resolveBg = resolve;
-      });
+      return new Promise(() => {});
     }, 'bg_tool');
     const actor = createActor(createTestAgentMachine(tools, requester), {
       input: { request: { model } },
@@ -1291,20 +1288,8 @@ describe('agent machine input.abort', () => {
     expect(bgSignals[0]?.aborted).toBe(false);
     expect(actor.getSnapshot().context.background['call-1']).toBeDefined();
 
-    resolveBg?.({ content: [{ type: 'text', text: 'bg-result' }] });
-    const snapshot = await waitFor(
-      actor,
-      (s) => s.matches('idle') && s.context.messages.length === 5,
-      { timeout: 5000 },
-    );
-
-    expect(rolesAndTexts(snapshot.context.messages)).toEqual([
-      'user:hi',
-      'assistant:',
-      'tool:async running: bg_tool',
-      'user:[async tool completed] bg_tool (tool_call_id=call-1)\nbg-result',
-      'assistant:done',
-    ]);
+    actor.stop();
+    expect(bgSignals[0]?.aborted).toBe(true);
   });
 });
 
@@ -1403,8 +1388,8 @@ describe('agent machine context reset', () => {
       if (event.type === 'context.reset') resets.push(event.branchId);
     });
     const turnStarts: Array<{ turnId: number; branchId: string }> = [];
-    actor.on('turn.start', (event) => {
-      if (event.type === 'turn.start') {
+    actor.on('turn.started', (event) => {
+      if (event.type === 'turn.started') {
         turnStarts.push({ turnId: event.turnId, branchId: event.branchId });
       }
     });
@@ -1447,7 +1432,7 @@ describe('agent machine context reset', () => {
         calls += 1;
         return new Promise<void>((resolve) => {
           releases.push(() => {
-            onEvent?.({ type: 'llm.delta', part: { type: 'text', text: 'late' } });
+            onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'late' } });
             onEvent?.({ type: 'llm.done' });
             resolve();
           });

@@ -61,8 +61,8 @@ export function persistAgent(actor: AgentActor, branch: Branch, opts?: PersistAg
   }
 
   const subscriptions = [
-    actor.on('turn.start', (event) => {
-      if (event.type !== 'turn.start') return;
+    actor.on('turn.started', (event) => {
+      if (event.type !== 'turn.started') return;
       currentTurnId = event.turnId;
       buffered.push({ kind: 'start', turnId: event.turnId });
     }),

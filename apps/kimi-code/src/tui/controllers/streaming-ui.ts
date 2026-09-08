@@ -894,6 +894,7 @@ export class StreamingUIController {
   private upgradeSoloReadToGroup(solo: ToolCallComponent): ReadGroupComponent {
     const { state } = this.host;
     const group = new ReadGroupComponent(state.ui);
+    if (state.toolOutputExpanded) group.setExpanded(true);
     const children = state.transcriptContainer.children;
     const idx = children.indexOf(solo);
     if (idx >= 0) {

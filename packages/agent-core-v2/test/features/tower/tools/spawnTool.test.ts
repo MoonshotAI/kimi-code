@@ -25,7 +25,6 @@ import { TOWER_MODE_USER_ENABLED_ONLY } from '#/features/tower/tools/support';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
-import { IFlagService } from '#/app/flag/flag';
 import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -33,6 +32,7 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
   SECONDARY_MODEL_SECTION,
+  SUBAGENT_SECTION,
 } from '#/session/subagent/configSection';
 import {
   ISessionSubagentService,
@@ -43,7 +43,6 @@ import type { ExecutableToolResult } from '#/tool/toolContract';
 
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../../../agent/agentContext/stubs';
-import { stubFlag } from '../../../app/flag/stubs';
 
 const execFileAsync = promisify(execFile);
 const signal = new AbortController().signal;
@@ -81,9 +80,11 @@ describe('TowerSpawnTool', () => {
   let secondaryModel:
     | { readonly model: string; readonly defaultEffort?: string; readonly force?: boolean }
     | undefined;
+  let subagentTimeoutMs: number | undefined;
   let thinkingEnabled: boolean | undefined;
   let modelMeta: Record<string, Partial<Model>>;
   let createdSetMode: Mock<(mode: PermissionMode) => void>;
+  let createdThinkingEffort: string;
 
   async function git(cwd: string, ...args: string[]): Promise<void> {
     await execFileAsync('git', args, { cwd });
@@ -106,9 +107,11 @@ describe('TowerSpawnTool', () => {
     release = vi.fn();
     completion = deferred();
     secondaryModel = undefined;
+    subagentTimeoutMs = undefined;
     thinkingEnabled = undefined;
     modelMeta = {};
     createdSetMode = vi.fn();
+    createdThinkingEffort = 'off';
     createAgent = vi.fn(async () => stubAgentContext('agent-7', 1));
     runAgent = vi.fn(
       async (agent: AgentContext) =>
@@ -123,7 +126,6 @@ describe('TowerSpawnTool', () => {
 
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
-    ix.stub(IFlagService, stubFlag(true));
     ix.set(IEventBus, new SyncDescriptor(EventBusService));
     ix.stub(IAgentTowerService, {
       get isActive() {
@@ -147,6 +149,9 @@ describe('TowerSpawnTool', () => {
         get: (id: unknown) => {
           if (id === (IAgentPermissionModeService as unknown)) {
             return { setMode: createdSetMode };
+          }
+          if (id === (IAgentProfileService as unknown)) {
+            return { getEffectiveThinkingLevel: () => createdThinkingEffort };
           }
           if (id === (IAgentScopeContext as unknown)) {
             return {
@@ -186,9 +191,11 @@ describe('TowerSpawnTool', () => {
       get: ((domain: string) =>
         domain === SECONDARY_MODEL_SECTION
           ? secondaryModel
-          : domain === 'thinking' && thinkingEnabled !== undefined
-            ? { enabled: thinkingEnabled }
-            : undefined) as IConfigService['get'],
+          : domain === SUBAGENT_SECTION && subagentTimeoutMs !== undefined
+            ? { timeoutMs: subagentTimeoutMs }
+            : domain === 'thinking' && thinkingEnabled !== undefined
+              ? { enabled: thinkingEnabled }
+              : undefined) as IConfigService['get'],
     });
     ix.stub(IModelCatalog, {
       get: (alias: string) => ({ id: alias, ...modelMeta[alias] }) as Model,
@@ -336,11 +343,68 @@ describe('TowerSpawnTool', () => {
     });
   });
 
+  it('honors the configured [subagent].timeout_ms for the registered task', async () => {
+    subagentTimeoutMs = 30 * 60 * 1000;
+
+    const result = await execute(WORKER_ARGS);
+
+    expect(result.isError).toBeUndefined();
+    expect(registerTask).toHaveBeenCalledWith(expect.any(SubagentTask), {
+      detached: true,
+      timeoutMs: 30 * 60 * 1000,
+      signal: undefined,
+    });
+  });
+
+  it('falls back to the 2h default timeout when no subagent timeout is configured', async () => {
+    const result = await execute(WORKER_ARGS);
+
+    expect(result.isError).toBeUndefined();
+    expect(registerTask).toHaveBeenCalledWith(expect.any(SubagentTask), {
+      detached: true,
+      timeoutMs: DEFAULT_SUBAGENT_TIMEOUT_MS,
+      signal: undefined,
+    });
+  });
+
   it('pins the spawned agent to the auto permission mode', async () => {
     const result = await execute(WORKER_ARGS);
 
     expect(result.isError).toBeUndefined();
     expect(createdSetMode).toHaveBeenCalledWith('auto');
+  });
+
+  it('carries the bound model and the spawned agent thinking effort into the registered task info', async () => {
+    createdThinkingEffort = 'high';
+
+    const result = await execute(WORKER_ARGS);
+
+    expect(result.isError).toBeUndefined();
+    const task = registerTask.mock.calls[0]?.[0] as SubagentTask;
+    const info = task.toInfo({
+      taskId: 'task-1',
+      description: task.description,
+      status: 'running',
+      startedAt: 1,
+      endedAt: null,
+    });
+    expect(info).toMatchObject({
+      kind: 'agent',
+      agentId: 'agent-7',
+      subagentType: 'tower-worker',
+      model: 'kimi-code',
+      thinkingEffort: 'high',
+    });
+  });
+
+  it('carries the configured secondary model into the registered task info', async () => {
+    secondaryModel = { model: 'cheap/fast' };
+
+    const result = await execute(WORKER_ARGS);
+
+    expect(result.isError).toBeUndefined();
+    const task = registerTask.mock.calls[0]?.[0] as SubagentTask;
+    expect(task.model).toBe('cheap/fast');
   });
 
   it('binds the configured secondary model and reports it in the output and activity log', async () => {
@@ -540,5 +604,72 @@ describe('TowerSpawnTool', () => {
     expect(result.output).not.toContain('base snapshot:');
     const mission = (await store.load()).missions.find((m) => m.id === 'M1');
     expect(mission?.spawnBase).toBeUndefined();
+  });
+
+  it('briefs the worker with the mission context and the clarify-first discipline', async () => {
+    const [docs] = await store.plan([
+      {
+        title: 'Docs polish',
+        scope: ['docs/**'],
+        tasks: ['rewrite the intro'],
+        context: 'Keep the tone friendly. Do not document internals.',
+      },
+    ]);
+
+    const result = await execute({ name: 'agent-docs', kind: 'worker', mission_id: docs!.id });
+
+    expect(result.isError).toBeUndefined();
+    const prompt = (runAgent.mock.calls.at(-1)?.[1] as { prompt: string }).prompt;
+    expect(prompt).toContain("## Context — the user's own words, verbatim");
+    expect(prompt).toContain('Keep the tone friendly. Do not document internals.');
+    expect(prompt).toContain('Ambiguity is escalated, not guessed');
+    expect(prompt).toContain('subject="clarify-request"');
+  });
+
+  it('briefs the reviewer with the mission text and the worker self-report', async () => {
+    const [docs] = await store.plan([
+      {
+        title: 'Docs polish',
+        scope: ['docs/**'],
+        tasks: ['rewrite the intro'],
+        context: 'Keep the tone friendly. Do not document internals.',
+      },
+    ]);
+    const workerResult = await execute({ name: 'agent-docs', kind: 'worker', mission_id: docs!.id });
+    expect(workerResult.isError).toBeUndefined();
+    await store.send('agent-docs', {
+      to: 'tower',
+      subject: 'review-request',
+      body: 'Rewrote the intro; tone kept friendly, internals left out.',
+    });
+
+    const result = await execute({
+      name: 'reviewer-a',
+      kind: 'reviewer',
+      review_target: docs!.branch,
+    });
+
+    expect(result.isError).toBeUndefined();
+    const prompt = (runAgent.mock.calls.at(-1)?.[1] as { prompt: string }).prompt;
+    expect(prompt).toContain('# Mission under review');
+    expect(prompt).toContain('# Mission M2: Docs polish');
+    expect(prompt).toContain('- [ ] rewrite the intro');
+    expect(prompt).toContain('Keep the tone friendly. Do not document internals.');
+    expect(prompt).toContain("# The author's own account");
+    expect(prompt).toContain('Rewrote the intro; tone kept friendly, internals left out.');
+    expect(prompt).toContain('1. Intent');
+  });
+
+  it('falls back to the generic checklist when the review target owns no mission', async () => {
+    const result = await execute({
+      name: 'reviewer-a',
+      kind: 'reviewer',
+      review_target: 'feat/orphan-branch',
+    });
+
+    expect(result.isError).toBeUndefined();
+    const prompt = (runAgent.mock.calls.at(-1)?.[1] as { prompt: string }).prompt;
+    expect(prompt).not.toContain('# Mission under review');
+    expect(prompt).toContain('1. Security\n2. Data integrity');
   });
 });

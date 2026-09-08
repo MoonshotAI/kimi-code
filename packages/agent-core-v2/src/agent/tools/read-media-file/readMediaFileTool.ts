@@ -21,19 +21,21 @@ import {
   sniffImageDimensions,
 } from '#/agent/media/file-type';
 import {
-  IMAGE_BYTE_BUDGET,
   MAX_IMAGE_DECODE_BYTES,
   compressImageForModel,
   cropImageForModel,
   formatByteSize,
+  isRecodableImage,
   resolveMaxImageEdgePx,
   resolveReadImageByteBudget,
   type ImageCropRegion,
 } from '#/agent/media/image-compress';
 import {
   buildImageConversionGuidance,
+  buildOversizedImageConversionGuidance,
   isModelAcceptedImageMime,
 } from '#/agent/media/image-format-policy';
+import { providerImagePolicy } from '#human/llm/media/image-formats';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
 import { renderPrompt } from '#/_base/utils/render-prompt';
@@ -157,10 +159,14 @@ function buildImageDecodeLimitError(finalBytes: number): string {
   );
 }
 
-function buildFullResolutionLimitError(path: string, finalBytes: number): string {
+function buildFullResolutionLimitError(
+  path: string,
+  finalBytes: number,
+  inlineByteBudget: number,
+): string {
   return (
     `"${path}" is ${String(finalBytes)} bytes (${formatByteSize(finalBytes)}), ` +
-    `over the ${String(IMAGE_BYTE_BUDGET)}-byte (${formatByteSize(IMAGE_BYTE_BUDGET)}) ` +
+    `over the ${String(inlineByteBudget)}-byte (${formatByteSize(inlineByteBudget)}) ` +
     'per-image limit, so full_resolution cannot be honored. ' +
     'Use region to view a crop at full fidelity instead.'
   );
@@ -178,6 +184,8 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadMediaFileInputSchema);
   private readonly telemetry: ITelemetryService | undefined;
   private readonly inlineVideoSupported: boolean;
+  private readonly providerType: string | undefined;
+  private readonly inlineImageByteBudget: number;
   constructor(
     private readonly runtime: IAgentRuntimeService,
     private readonly workspace: WorkspaceConfig,
@@ -185,10 +193,13 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     private readonly videoUploader?: VideoUploader,
     telemetry?: ITelemetryService,
     inlineVideoSupported?: boolean,
+    providerType?: string,
   ) {
     this.description = buildDescription(capabilities);
     this.telemetry = telemetry;
     this.inlineVideoSupported = inlineVideoSupported ?? false;
+    this.providerType = providerType;
+    this.inlineImageByteBudget = providerImagePolicy(providerType).inlineByteBudget;
   }
 
   private async videoContentPart(
@@ -288,7 +299,10 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
             'Tell the user to use a model with image input capability.',
         };
       }
-      if (fileType.kind === 'image' && !isModelAcceptedImageMime(fileType.mimeType)) {
+      if (
+        fileType.kind === 'image' &&
+        !isModelAcceptedImageMime(fileType.mimeType, this.providerType)
+      ) {
         return {
           isError: true,
           output: buildImageConversionGuidance(args.path, fileType.mimeType, env.osKind),
@@ -338,11 +352,11 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
         fileType.kind === 'image' &&
         args.region === undefined &&
         args.full_resolution === true &&
-        stat.size > IMAGE_BYTE_BUDGET
+        stat.size > this.inlineImageByteBudget
       ) {
         return {
           isError: true,
-          output: buildFullResolutionLimitError(args.path, stat.size),
+          output: buildFullResolutionLimitError(args.path, stat.size, this.inlineImageByteBudget),
         };
       }
 
@@ -396,10 +410,14 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
           };
           dimensions = { width: outcome.originalWidth, height: outcome.originalHeight };
         } else if (args.full_resolution === true) {
-          if (data.length > IMAGE_BYTE_BUDGET) {
+          if (data.length > this.inlineImageByteBudget) {
             return {
               isError: true,
-              output: buildFullResolutionLimitError(args.path, data.length),
+              output: buildFullResolutionLimitError(
+                args.path,
+                data.length,
+                this.inlineImageByteBudget,
+              ),
             };
           }
           const base64 = data.toString('base64');
@@ -416,13 +434,28 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
           };
         } else {
           const { readByteBudget, maxEdge } = imageDeliveryLimits;
+          const inlineOnly = !isRecodableImage(data, fileType.mimeType);
           const compressed = await compressImageForModel(data, fileType.mimeType, {
             byteBudget: readByteBudget,
             maxEdge,
             telemetry: this.telemetry,
             telemetrySource: 'read_media',
           });
-          if (
+          if (inlineOnly) {
+            const inlineLimit = Math.max(readByteBudget, this.inlineImageByteBudget);
+            if (compressed.finalByteLength > inlineLimit) {
+              return {
+                isError: true,
+                output: buildOversizedImageConversionGuidance(
+                  args.path,
+                  fileType.mimeType,
+                  env.osKind,
+                  compressed.finalByteLength,
+                  inlineLimit,
+                ),
+              };
+            }
+          } else if (
             compressed.finalByteLength > readByteBudget ||
             Math.max(compressed.width, compressed.height) > maxEdge
           ) {

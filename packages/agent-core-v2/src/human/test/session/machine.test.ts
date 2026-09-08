@@ -33,7 +33,7 @@ function createEchoRequester(): LlmRequester {
     generate: (_config, { messages }, { onEvent }) => {
       const last = messages.at(-1);
       const text = last !== undefined && last.role === 'user' ? extractText(last) : '';
-      onEvent?.({ type: 'llm.delta', part: { type: 'text', text: `echo:${text}` } });
+      onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: `echo:${text}` } });
       onEvent?.({ type: 'llm.done' });
       return Promise.resolve();
     },
@@ -121,7 +121,7 @@ describe('session machine agent lifecycle', () => {
   it('rejects a duplicate agent id and keeps the existing agent', async () => {
     const session = createTestSession(createEchoRequester());
     const errors: string[] = [];
-    session.on('agent.error', (event) => errors.push(event.error));
+    session.on('agent.failed', (event) => errors.push(event.error));
 
     session.send({ type: 'agent.create', agentId: 'a' });
     const first = agentRef(session, 'a');
@@ -145,10 +145,10 @@ describe('session machine agent lifecycle', () => {
     expect(ref.getSnapshot().status).toBe('stopped');
   });
 
-  it('emits agent.error when routing to an unknown agent', async () => {
+  it('emits agent.failed when routing to an unknown agent', async () => {
     const session = createTestSession(createEchoRequester());
     const errors: string[] = [];
-    session.on('agent.error', (event) => errors.push(event.error));
+    session.on('agent.failed', (event) => errors.push(event.error));
 
     submit(session, 'nope', 'hi');
     session.send({ type: 'agent.stop', agentId: 'nope' });
@@ -168,7 +168,7 @@ describe('session machine concurrent agents', () => {
         seen.push(text);
         return new Promise<void>((resolve) => {
           resolvers.set(text, () => {
-            onEvent?.({ type: 'llm.delta', part: { type: 'text', text: `echo:${text}` } });
+            onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: `echo:${text}` } });
             onEvent?.({ type: 'llm.done' });
             resolve();
           });
@@ -242,10 +242,10 @@ describe('session machine agent fork', () => {
     expect(agentRef(session, 'a').getSnapshot().context.turnId).toBe(1);
   });
 
-  it('emits agent.error when forking an unknown source', async () => {
+  it('emits agent.failed when forking an unknown source', async () => {
     const session = createTestSession(createEchoRequester());
     const errors: string[] = [];
-    session.on('agent.error', (event) => errors.push(event.error));
+    session.on('agent.failed', (event) => errors.push(event.error));
 
     session.send({ type: 'agent.fork', sourceId: 'nope', agentId: 'b' });
 
@@ -282,13 +282,13 @@ describe('session machine agent switch', () => {
     expect(snapshot.context.turnId).toBe(0);
   });
 
-  it('emits agent.error when switching an unknown or busy agent', async () => {
+  it('emits agent.failed when switching an unknown or busy agent', async () => {
     let release: (() => void) | undefined;
     const requester: LlmRequester = {
       generate: (_config, _content, { onEvent }) =>
         new Promise<void>((resolve) => {
           release = () => {
-            onEvent?.({ type: 'llm.delta', part: { type: 'text', text: 'late' } });
+            onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'late' } });
             onEvent?.({ type: 'llm.done' });
             resolve();
           };
@@ -296,7 +296,7 @@ describe('session machine agent switch', () => {
     };
     const session = createTestSession(requester);
     const errors: string[] = [];
-    session.on('agent.error', (event) => errors.push(event.error));
+    session.on('agent.failed', (event) => errors.push(event.error));
     session.send({ type: 'agent.create', agentId: 'main' });
 
     session.send({

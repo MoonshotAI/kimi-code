@@ -640,13 +640,12 @@ export class KimiHarness {
       ...this.sessionStartedDynamicProperties?.(),
       // Canonical fields are owned by the harness and must win over any
       // caller-supplied sessionStartedProperties that happen to share a key.
-      // `client_id` is always null here: a single-process host has no
-      // per-connection client id (that concept only exists for daemon clients,
-      // see core-impl.ts). Kept as an explicit key so this row carries the
-      // same client-attribution shape as the daemon-client producer there.
-      client_id: null,
-      client_name: this.identity?.productName ?? null,
-      client_version: this.identity?.version ?? null,
+      // A single-process host has no per-connection client id, so `client_id`
+      // stays empty; empty strings (unlike null) survive payload flattening,
+      // keeping the client-attribution keys present on every row.
+      client_id: '',
+      client_name: this.identity?.productName ?? '',
+      client_version: this.identity?.version ?? '',
       ui_mode: this.uiMode,
       resumed,
     });

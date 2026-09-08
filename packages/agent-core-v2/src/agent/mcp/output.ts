@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util';
+
 import type { ContentPart } from '#human/llm/message';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ExecutableToolResult } from '#/tool/toolContract';
@@ -13,6 +15,7 @@ import type { MCPContentBlock, MCPToolResult } from '#/mcpCore/types';
 export interface McpOutputOptions {
   readonly originalsDir?: string;
   readonly telemetry?: ITelemetryService;
+  readonly providerType?: string;
 }
 
 export const MCP_MAX_BINARY_PART_BYTES = 10 * 1024 * 1024;
@@ -28,7 +31,7 @@ function droppedBlockNotice(reason: string): ContentPart {
   return { type: 'text', text: `[MCP content dropped: ${reason}]` };
 }
 
-export function convertMCPContentBlock(block: MCPContentBlock): ContentPart {
+export function convertMCPContentBlock(block: MCPContentBlock, providerType?: string): ContentPart {
   if (block.type === 'text' && typeof block.text === 'string') {
     return { type: 'text', text: block.text };
   }
@@ -85,8 +88,11 @@ export function convertMCPContentBlock(block: MCPContentBlock): ContentPart {
   if (block.type === 'resource_link' && typeof block.uri === 'string') {
     const mimeType = block.mimeType ?? 'application/octet-stream';
     if (mimeType.startsWith('image/')) {
-      if (!isModelAcceptedImageMime(mimeType)) {
-        return { type: 'text', text: buildUnsupportedImageNotice(mimeType, block.uri) };
+      if (!isModelAcceptedImageMime(mimeType, providerType)) {
+        return {
+          type: 'text',
+          text: buildUnsupportedImageNotice(mimeType, block.uri, providerType),
+        };
       }
       return { type: 'image_url', imageUrl: { url: block.uri } };
     }
@@ -111,15 +117,20 @@ export async function mcpResultToExecutableOutput(
 ): Promise<ExecutableToolResult> {
   const converted: ContentPart[] = [];
   for (const block of result.content) {
-    converted.push(convertMCPContentBlock(block));
+    converted.push(convertMCPContentBlock(block, options.providerType));
   }
 
   const wrapped = wrapMediaOnly(converted, qualifiedToolName);
-  const hasUsableContent = converted.some((part) =>
-    part.type === 'text' ? part.text.trim().length > 0 : true,
-  );
+  const hasStructuredCopy = result.structuredContent !== undefined && converted.some((part) => {
+    if (part.type !== 'text') return false;
+    try {
+      return isDeepStrictEqual(parseComparableJson(part.text), result.structuredContent);
+    } catch {
+      return false;
+    }
+  });
   const structuredExtras: Record<string, unknown> = {};
-  if (result.structuredContent !== undefined && !hasUsableContent) {
+  if (result.structuredContent !== undefined && !hasStructuredCopy) {
     structuredExtras['structuredContent'] = result.structuredContent;
   }
   if (result._meta !== undefined) {
@@ -141,6 +152,7 @@ export async function mcpResultToExecutableOutput(
   const compressed = await compressImageContentParts(wrapped, {
     telemetry: options.telemetry,
     telemetrySource: 'mcp_tool_result',
+    providerType: options.providerType,
     annotate: {
       persistOriginal: (bytes, mimeType) =>
         persistOriginalImage(
@@ -162,9 +174,18 @@ export async function mcpResultToExecutableOutput(
   return result.isError ? { ...base, isError: true } : base;
 }
 
+function parseComparableJson(text: string): unknown {
+  return JSON.parse(text, (_key: string, value: unknown, context?: { source?: string }) => {
+    if (typeof value === 'number' && context?.source !== JSON.stringify(value)) {
+      throw new Error('JSON number cannot be compared without normalization');
+    }
+    return value;
+  });
+}
+
 function serializeStructuredExtras(extras: Record<string, unknown>): string | undefined {
   try {
-    return JSON.stringify(extras).replaceAll('</mcp-result-extras>', '');
+    return JSON.stringify(extras).replaceAll('<', '\\u003c');
   } catch {
     return undefined;
   }

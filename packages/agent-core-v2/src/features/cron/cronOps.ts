@@ -65,3 +65,7 @@ export class CronFired extends Event2<CronFiredPayload> {
   static override readonly observable = true;
 }
 export interface CronFired extends CronFiredPayload {}
+
+export interface CronFiredEvent extends CronFiredPayload {
+  readonly type: 'cron.fired';
+}

@@ -378,6 +378,23 @@ describe('AgentRecords persistence metadata', () => {
     expect(persistence.records.filter((record) => record.type === 'metadata')).toHaveLength(1);
   });
 
+  it('keeps restore history stable after a consumer stops reading the journal early', async () => {
+    persistence.records.push(
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      ...['first', 'second'].map((text) => ({
+        type: 'context.append_message',
+        message: {
+          role: 'user', content: [{ type: 'text', text }], toolCalls: [], origin: { kind: 'user' },
+        },
+      })),
+    );
+    for await (const record of ctx.get(IAppendLogStore).read<WireRecord>('', AGENT_WIRE_RECORD_KEY)) {
+      if (record.type === 'context.append_message') break;
+    }
+    await ctx.restorePersisted();
+    expect(ctx.context.get()).toHaveLength(2);
+  });
+
   it('rewrites migrated records to the current wire version after replay', async () => {
     persistence.records.push(
       {

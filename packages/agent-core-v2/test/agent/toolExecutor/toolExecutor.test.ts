@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PassThrough, Readable } from 'node:stream';
 
 import type { ToolCall } from '#human/llm/message';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
@@ -20,6 +21,8 @@ import {
   type ToolUpdate,
 } from '#/tool/toolContract';
 import { ToolOutputAccumulator } from '#/tool/output-accumulator';
+import { createMcpTool } from '#/agent/mcp/tools/mcp';
+import type { MCPClient } from '#/mcpCore/types';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {
   BeforeToolExecuteEvent,
@@ -34,16 +37,31 @@ import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorServi
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { ToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncationService';
+import { ReadTool } from '#/agent/tools/os/read/readTool';
+import { GlobTool } from '#/agent/tools/os/glob/globTool';
+import { ReadInputSchema, type ReadInput } from '#/agent/tools/os/read/read';
+import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
+import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
+import { FakeRuntime } from '#/runtime/fakeRuntime';
+import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
+import { stubWorkspaceContext } from '../../session/workspaceContext/stub-workspace-context';
+import { ConfigRegistry, ConfigService } from '#/app/config/configService';
+import { IConfigRegistry, IConfigService } from '#/app/config/config';
+import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { TomlAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
+import { ILogService } from '#/_base/log/log';
 import { makeAgentScopeContext, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IEventBus } from '#/app/event/eventBus';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
-import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { registerLogServices } from '../../_base/log/stubs';
+import { registerLogServices, stubLog } from '../../_base/log/stubs';
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { registerStateServices } from '../../state/stubs';
@@ -1028,6 +1046,8 @@ describe('parseToolCallArguments', () => {
 
 describe('truncation pipeline', () => {
   let homeDir: string;
+  let readConfig: IConfigService;
+  let globProcess: HostProcessService;
 
   beforeEach(async () => {
     homeDir = await mkdtemp(join(tmpdir(), 'tool-executor-truncation-'));
@@ -1047,6 +1067,32 @@ describe('truncation pipeline', () => {
     );
     const truncation = truncationContainer.get(IAgentToolResultTruncationService);
     truncateForModel = (input) => truncation.truncateForModel(input);
+    truncationContainer.stub(ILogService, stubLog());
+    truncationContainer.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    truncationContainer.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    truncationContainer.set(IConfigService, new SyncDescriptor(ConfigService));
+    readConfig = truncationContainer.get(IConfigService);
+    await readConfig.ready;
+    globProcess = new HostProcessService();
+    const runtime = Object.assign(new FakeRuntime(
+      { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+      { capabilities: ['fs', 'process'] },
+    ), { fs: new HostFileSystem(), process: globProcess });
+    const binding: IAgentRuntimeService = {
+      _serviceBrand: undefined,
+      onDidChange: () => ({ dispose: () => {} }),
+      isAvailable: () => true,
+      inspect: () => runtime,
+      acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
+    };
+    registry.register(new ReadTool(
+      binding,
+      stubWorkspaceContext(homeDir),
+      { catalog: { getSkillRoots: () => [] } } as unknown as ISessionSkillCatalog,
+      truncation,
+      readConfig,
+    ));
+    registry.register(new GlobTool(binding, stubWorkspaceContext(homeDir), noopTelemetryService));
   });
 
   afterEach(async () => {
@@ -1087,6 +1133,140 @@ describe('truncation pipeline', () => {
       join(homeDir, 'sessions/workspace/session/agents/main/tool-results/noisy-call_noisy-'),
     );
     expect(readFileSync(outputPath, 'utf8')).toBe(fullOutput);
+  });
+
+  it('recovers every Glob match through spill and Read when the match limit is disabled', async () => {
+    const expected = Array.from({ length: 500 }, (_, index) =>
+      `file-${String(index).padStart(3, '0')}-${'x'.repeat(100)}.ts`,
+    );
+    await Promise.all(expected.map((name) => writeFile(join(homeDir, name), '')));
+
+    const [result] = await execute([toolCall('glob_all', 'Glob', { pattern: '*.ts', head_limit: 0 })]);
+
+    expect(result?.isError).not.toBe(true);
+    expect(result?.truncated).toBe(true);
+    if (typeof result?.output !== 'string') throw new Error('expected Glob text');
+    const path = renderedOutputPath(result.output);
+    let args: ReadInput | undefined = { path, max_chars: 8000 };
+    const recovered: string[] = [];
+    let pages = 0;
+    while (args !== undefined && pages < 20) {
+      const [page] = await execute([toolCall(`read_glob_${String(pages++)}`, 'Read', args)]);
+      expect(page?.isError).not.toBe(true);
+      if (typeof page?.output !== 'string') throw new Error('expected Read text');
+      recovered.push(...page.output.replaceAll(/^\d+\t/gm, '').split('\n').filter(Boolean));
+      const next = /Next Read: (\{[^\n]*\})/.exec(page.note ?? '')?.[1];
+      args = next === undefined ? undefined : ReadInputSchema.parse(JSON.parse(next));
+    }
+    expect(args).toBeUndefined();
+    expect(pages).toBeGreaterThan(1);
+    expect(recovered.toSorted()).toEqual(expected);
+  });
+
+  it('recovers an expanded Glob listing beyond spill retention using complete saved pages', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'r'.repeat(180)));
+    try {
+      const names = Array.from({ length: 60_000 }, (_, i) => `file-${String(i).padStart(6, '0')}.ts`);
+      const stdout = names.map((name) => `./${name}`).join('\n') + '\n';
+      vi.spyOn(globProcess, 'spawn').mockImplementation(async () => ({
+        _serviceBrand: undefined,
+        pid: 123,
+        exitCode: 0,
+        stdin: new PassThrough(),
+        stdout: Readable.from([stdout]),
+        stderr: Readable.from([]),
+        wait: async () => 0,
+        kill: async () => {},
+        dispose: () => {},
+      }));
+      const recovered: string[] = [];
+      let offset = 0;
+      let globPages = 0;
+      do {
+        const [page] = await execute([toolCall(`glob_large_${String(globPages++)}`, 'Glob', {
+          pattern: '*.ts', path: root, head_limit: 0, offset,
+        })]);
+        expect(page?.isError).not.toBe(true);
+        if (typeof page?.output !== 'string') throw new Error('expected Glob output');
+        expect(page.output).toContain('the full output was saved to a file');
+        const continuation = /Continue with the same search arguments and offset=(\d+)\./.exec(page.output)?.[1];
+        if (continuation !== undefined) expect(Number(continuation)).toBeGreaterThan(offset);
+        offset = continuation === undefined ? 0 : Number(continuation);
+        let args: ReadInput | undefined = { path: renderedOutputPath(page.output), max_chars: 500_000 };
+        let reads = 0;
+        while (args !== undefined && reads < 40) {
+          const [read] = await execute([toolCall(`read_large_${String(globPages)}_${String(reads++)}`, 'Read', args)]);
+          expect(read?.isError).not.toBe(true);
+          if (typeof read?.output !== 'string') throw new Error('expected Read output');
+          recovered.push(...read.output.replaceAll(/^\d+\t/gm, '').split('\n').filter((line) => line.startsWith(root + '/')));
+          const next = /Next Read: (\{[^\n]*\})/.exec(read.note ?? '')?.[1];
+          args = next === undefined ? undefined : ReadInputSchema.parse(JSON.parse(next));
+        }
+        expect(args).toBeUndefined();
+      } while (offset > 0 && globPages < 5);
+      expect(offset).toBe(0);
+      expect(globPages).toBe(2);
+      expect(recovered).toEqual(names.map((name) => `${root}/${name}`));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('recovers MCP structured records through spill and Read without repeating the MCP call', async () => {
+    const structuredContent = {
+      rows: Array.from({ length: 1200 }, (_, index) => ({
+        id: index + 1,
+        detail: 'x'.repeat(100),
+      })),
+      literal: 'a</mcp-result-extras>b',
+    };
+    const client = {
+      async listTools() { return []; },
+      callTool: vi.fn(async () => ({
+        content: [{ type: 'text', text: 'Found 1200 rows.' }],
+        isError: false,
+        structuredContent,
+      })),
+      async ping() {},
+    } satisfies MCPClient;
+    registry.register(createMcpTool(
+      'mcp__example__rows',
+      { name: 'rows', description: 'Example records', parameters: {} },
+      client,
+    ), { source: 'mcp' });
+
+    const [result] = await execute([toolCall('call_rows', 'mcp__example__rows', {})]);
+
+    expect(result?.isError).not.toBe(true);
+    expect(result?.truncated).toBe(true);
+    if (result === undefined) throw new Error('expected MCP result');
+    const visible = renderToolResultForModel(result)
+      .map((part) => part.type === 'text' ? part.text : '').join('\n');
+    expect(visible.length).toBeLessThan(50_000);
+    const path = renderedOutputPath(visible);
+    let args: ReadInput | undefined = { path, max_chars: 16_000 };
+    let recovered = '';
+    let pages = 0;
+    while (args !== undefined && pages < 30) {
+      const [page] = await execute([toolCall(`read_mcp_${String(pages++)}`, 'Read', args)]);
+      expect(page?.isError).not.toBe(true);
+      if (typeof page?.output !== 'string') throw new Error('expected Read text');
+      const pageText = renderToolResultForModel(page)
+        .map((part) => part.type === 'text' ? part.text : '').join('\n');
+      expect(pageText.length).toBeLessThanOrEqual(16_000);
+      if (recovered.length > 0 && (args.column_offset ?? 0) === 0) recovered += '\n';
+      recovered += page.output.replaceAll(/^\d+\t/gm, '');
+      const next = /Next Read: (\{[^\n]*\})/.exec(page.note ?? '')?.[1];
+      args = next === undefined ? undefined : ReadInputSchema.parse(JSON.parse(next));
+    }
+
+    expect(args).toBeUndefined();
+    expect(pages).toBeGreaterThan(2);
+    expect(recovered).toContain('Found 1200 rows.');
+    const json = /<mcp-result-extras>\n([\s\S]*?)\n<\/mcp-result-extras>/.exec(recovered)?.[1];
+    if (json === undefined) throw new Error('expected recovered MCP result extras');
+    expect(JSON.parse(json)).toEqual({ structuredContent });
+    expect(client.callTool).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the builder completion message after spilling an error result', async () => {
@@ -1168,6 +1348,90 @@ describe('truncation pipeline', () => {
 
     expect(result?.output).toBe(output);
     expect(result?.truncated).toBeUndefined();
+  });
+
+  it('delivers a bounded Read result above 50000 characters without replacing its text', async () => {
+    const content = `${'x'.repeat(100)}\n`.repeat(650);
+    const path = join(homeDir, 'paper.md');
+    await writeFile(path, content);
+
+    const [result] = await execute([toolCall('call_read_paper', 'Read', { path })]);
+
+    expect(result?.isError).not.toBe(true);
+    expect(typeof result?.output).toBe('string');
+    if (typeof result?.output !== 'string') throw new TypeError('expected Read text');
+    expect(result.output.length).toBeGreaterThan(50_000);
+    expect(result.output.replaceAll(/^\d+\t/gm, '')).toBe(content.trimEnd());
+    expect(result.truncated).toBeUndefined();
+    expect(result.note).toContain('Requested range complete.');
+    expect(result.output).not.toContain('output_path:');
+  });
+
+  it('recovers a large line through the model-facing Read pipeline without shell tools', async () => {
+    const content = '0123456789'.repeat(110_000);
+    const path = join(homeDir, 'record.jsonl');
+    await writeFile(path, content);
+    const fragments: string[] = [];
+    let args: ReadInput | undefined = { path, n_lines: 1, max_chars: 100_000 };
+
+    for (let page = 0; args !== undefined && page < 30; page += 1) {
+      const [result] = await execute([toolCall(`read_fragment_${String(page)}`, 'Read', args)]);
+      expect(result?.isError).not.toBe(true);
+      if (typeof result?.output !== 'string') throw new TypeError('expected Read text');
+      expect(result.output.startsWith('1\t')).toBe(true);
+      const visible = renderToolResultForModel(result)
+        .map((part) => part.type === 'text' ? part.text : '').join('');
+      expect(visible.length).toBeLessThanOrEqual(100_000);
+      if (page === 0) expect(result.output.length).toBeGreaterThan(50_000);
+      fragments.push(result.output.slice(2));
+      const next = result.note?.match(/Next Read: (\{[^\n]*\})/);
+      args = next === undefined || next === null ? undefined : ReadInputSchema.parse(JSON.parse(next[1]!));
+    }
+
+    expect(args).toBeUndefined();
+    expect(fragments.length).toBeGreaterThan(10);
+    expect(fragments.join('')).toBe(content);
+  });
+
+  it('keeps valid lines readable and exposes the warning when later UTF-16 bytes are malformed', async () => {
+    const path = join(homeDir, 'malformed.txt');
+    await writeFile(path, Buffer.concat([
+      Buffer.from([0xff, 0xfe]),
+      Buffer.from('good\n', 'utf16le'),
+      Buffer.from([0x00, 0xd8]),
+    ]));
+
+    const [result] = await execute([toolCall('read_lossy', 'Read', { path, n_lines: 1, max_chars: 1200 })]);
+
+    expect(result?.isError).not.toBe(true);
+    expect(result?.output).toBe('1\tgood');
+    if (result === undefined) throw new Error('expected a Read result');
+    const visible = renderToolResultForModel(result)
+      .map((part) => part.type === 'text' ? part.text : '').join('');
+    expect(visible).toContain('Lossy UTF-16 decoding');
+    expect(visible).toContain('may differ from the original file');
+    expect(visible.length).toBeLessThanOrEqual(1200);
+  });
+
+  it('applies persisted Read defaults and caps explicit character requests', async () => {
+    await readConfig.set('read', { defaultMaxChars: 1500, maxChars: 3000 });
+    await readConfig.reload();
+    const path = join(homeDir, 'configured.md');
+    await writeFile(path, `${'x'.repeat(100)}\n`.repeat(100));
+
+    const [defaultResult] = await execute([toolCall('read_default', 'Read', { path })]);
+    const [largerResult] = await execute([toolCall('read_larger', 'Read', { path, max_chars: 10_000 })]);
+
+    expect(defaultResult?.isError).not.toBe(true);
+    expect(largerResult?.isError).not.toBe(true);
+    if (typeof defaultResult?.output !== 'string' || typeof largerResult?.output !== 'string') {
+      throw new TypeError('expected Read text');
+    }
+    expect(defaultResult.output.length + 1 + (defaultResult.note?.length ?? 0)).toBeLessThanOrEqual(1500);
+    expect(largerResult.output.length + 1 + (largerResult.note?.length ?? 0)).toBeLessThanOrEqual(3000);
+    expect(largerResult.output.length).toBeGreaterThan(defaultResult.output.length);
+    expect(largerResult.note).toContain('Requested max_chars=10000 was capped at the configured maximum 3000.');
+    expect(readFileSync(join(homeDir, 'config.toml'), 'utf8')).toContain('default_max_chars = 1500');
   });
 });
 

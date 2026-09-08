@@ -18,7 +18,7 @@ export interface ProtocolEndpoint {
 export interface ProtocolTrait {
   readonly strictThinkingValidation?: boolean;
 
-  endpoint?(): ProtocolEndpoint | undefined;
+  endpoint?(ctx?: TraitContext): ProtocolEndpoint | undefined;
 
   defaultHeaders?(ctx: TraitContext): Record<string, string> | undefined;
 
@@ -71,6 +71,8 @@ export interface ProtocolTrait {
   reasoningKey?(ctx: TraitContext): string | undefined;
 
   capability?(modelName: string): ModelCapability | undefined;
+
+  acceptedImageMimes?(ctx: TraitContext): ReadonlySet<string> | undefined;
 }
 
 export interface ThinkingApplication {
@@ -82,7 +84,7 @@ export function resolveModelConnection(
   model: LlmModel,
   trait: ProtocolTrait | undefined,
 ): LlmModel {
-  const declaration = trait?.endpoint?.();
+  const declaration = trait?.endpoint?.({ model });
   if (declaration === undefined) {
     return model;
   }

@@ -17,6 +17,7 @@ export interface RegisterMediaToolsDeps {
   readonly videoUploader?: VideoUploader;
   readonly telemetry?: ITelemetryService;
   readonly inlineVideoSupported?: boolean;
+  readonly providerType?: string;
 }
 
 export function registerMediaTools(
@@ -37,6 +38,7 @@ export function registerMediaTools(
       deps.videoUploader,
       deps.telemetry,
       deps.inlineVideoSupported,
+      deps.providerType,
     ),
   );
 }

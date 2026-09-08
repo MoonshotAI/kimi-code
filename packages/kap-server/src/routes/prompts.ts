@@ -264,6 +264,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           core.accessor.get(IBootstrapService).cacheDir,
           {
             telemetry,
+            providerType: resolved.profile.getModelProviderType(req.body.model),
             resolveOriginalsDir: async () => {
               const session = await resumeSessionById(core.accessor, session_id);
               if (session === undefined) return undefined;

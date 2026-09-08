@@ -6,6 +6,7 @@ import {
 } from '#/app/agentProfileCatalog/profile-shared';
 
 const PLAN_TOOLS = [
+  'NotifyUser',
   'Read',
   'ReadMediaFile',
   'Glob',
