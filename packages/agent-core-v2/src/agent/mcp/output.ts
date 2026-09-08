@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util';
+
 import type { ContentPart } from '#human/llm/message';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ExecutableToolResult } from '#/tool/toolContract';
@@ -119,11 +121,16 @@ export async function mcpResultToExecutableOutput(
   }
 
   const wrapped = wrapMediaOnly(converted, qualifiedToolName);
-  const hasUsableContent = converted.some((part) =>
-    part.type === 'text' ? part.text.trim().length > 0 : true,
-  );
+  const hasStructuredCopy = result.structuredContent !== undefined && converted.some((part) => {
+    if (part.type !== 'text') return false;
+    try {
+      return isDeepStrictEqual(parseComparableJson(part.text), result.structuredContent);
+    } catch {
+      return false;
+    }
+  });
   const structuredExtras: Record<string, unknown> = {};
-  if (result.structuredContent !== undefined && !hasUsableContent) {
+  if (result.structuredContent !== undefined && !hasStructuredCopy) {
     structuredExtras['structuredContent'] = result.structuredContent;
   }
   if (result._meta !== undefined) {
@@ -167,9 +174,18 @@ export async function mcpResultToExecutableOutput(
   return result.isError ? { ...base, isError: true } : base;
 }
 
+function parseComparableJson(text: string): unknown {
+  return JSON.parse(text, (_key: string, value: unknown, context?: { source?: string }) => {
+    if (typeof value === 'number' && context?.source !== JSON.stringify(value)) {
+      throw new Error('JSON number cannot be compared without normalization');
+    }
+    return value;
+  });
+}
+
 function serializeStructuredExtras(extras: Record<string, unknown>): string | undefined {
   try {
-    return JSON.stringify(extras).replaceAll('</mcp-result-extras>', '');
+    return JSON.stringify(extras).replaceAll('<', '\\u003c');
   } catch {
     return undefined;
   }

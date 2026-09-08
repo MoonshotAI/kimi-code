@@ -2,6 +2,8 @@
 
 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) is an open protocol that lets models safely call tools exposed by external processes or services: reading GitHub issues, querying databases, or operating the local file system. Kimi Code CLI acts as an MCP client to connect these external tools and exposes them to the Agent alongside built-in tools (`Read`, `Bash`, `Grep`, etc.) with no behavioral difference.
 
+MCP tool results can include text (`content`) and structured data (`structuredContent`). Kimi Code CLI makes both available to the agent and omits the structured copy only when it can confirm that a text block already contains the same complete JSON value. Text summaries and media do not replace structured records.
+
 ## Connection Methods
 
 Kimi Code CLI supports three MCP server connection methods:

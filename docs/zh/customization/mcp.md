@@ -2,6 +2,8 @@
 
 [Model Context Protocol（MCP）](https://modelcontextprotocol.io/) 是一个开放协议，让模型可以安全地调用外部进程或服务暴露的工具：读取 GitHub issues、查询数据库、操作本地文件系统。Kimi Code CLI 作为 MCP client 接入这些外部工具，把它们与内置工具一起暴露给 Agent 使用，行为上没有差异。
 
+MCP 工具结果可以包含文本（`content`）和结构化数据（`structuredContent`）。Kimi Code CLI 会将两者提供给 Agent，只有能够确认某个文本块已包含同一份完整 JSON 值时，才省略重复的结构化内容。文本摘要和媒体不会替代结构化记录。
+
 ## 接入方式
 
 Kimi Code CLI 支持三种 MCP server 接入方式：

@@ -20,6 +20,15 @@ function isPromiseLike(value: ToolExecution | Promise<ToolExecution>): value is 
   return typeof (value as Promise<ToolExecution>).then === 'function';
 }
 
+function parseResultExtras(output: string | ContentPart[]): Record<string, unknown> {
+  const text = typeof output === 'string'
+    ? output
+    : output.map((part) => part.type === 'text' ? part.text : '').join('\n');
+  const json = /<mcp-result-extras>\n([\s\S]*?)\n<\/mcp-result-extras>/.exec(text)?.[1];
+  if (json === undefined) throw new Error('Expected model-visible MCP result extras');
+  return JSON.parse(json) as Record<string, unknown>;
+}
+
 function assertValidMcpBlock<T extends MCPContentBlock>(block: T): T {
   const parsed = ContentBlockSchema.safeParse(block);
   if (!parsed.success) {
@@ -351,9 +360,78 @@ describe('mcpResultToExecutableOutput', () => {
     expect(out.output).toBe('{\n  "total": 1,\n  "rows": [ { "id": 1 } ]\n}');
   });
 
-  test('omits structuredContent when content is a faithful rendering of similar size', async () => {
+  test('preserves both values when parsing the text would round a number', async () => {
+    const text = '{"id":9007199254740993}';
+    const out = await mcpResultToExecutableOutput({
+      content: [{ type: 'text', text }],
+      isError: false,
+      structuredContent: { id: 9007199254740992 },
+    }, 'mcp__s__t');
+
+    expect(out.output).toContainEqual({ type: 'text', text });
+    expect(parseResultExtras(out.output)['structuredContent']).toEqual({ id: 9007199254740992 });
+  });
+
+  test.each([
+    { difference: 'value', text: '{"count":1}', structuredContent: { count: 2 } },
+    { difference: 'type', text: '{"id":"1"}', structuredContent: { id: 1 } },
+    { difference: 'array order', text: '{"ids":[2,1]}', structuredContent: { ids: [1, 2] } },
+    { difference: 'extra field', text: '{"id":1}', structuredContent: { id: 1, name: 'Example' } },
+    { difference: 'null', text: '{"value":"none"}', structuredContent: { value: null } },
+    { difference: 'non-JSON wrapper', text: '```json\n{"id":1}\n```', structuredContent: { id: 1 } },
+  ])('keeps text and structured data with a $difference difference', async ({ text, structuredContent }) => {
+    const out = await mcpResultToExecutableOutput({
+      content: [{ type: 'text', text }],
+      isError: false,
+      structuredContent,
+    }, 'mcp__s__t');
+
+    expect(out.output).toContainEqual({ type: 'text', text });
+    expect(parseResultExtras(out.output)['structuredContent']).toEqual(structuredContent);
+  });
+
+  test('keeps explanatory blocks when another text block contains the complete JSON', async () => {
+    const content = [
+      { type: 'text', text: 'Found 1 row.' },
+      { type: 'text', text: '{"rows":[1]}' },
+      { type: 'text', text: 'More rows are available.' },
+    ];
+    const out = await mcpResultToExecutableOutput({
+      content,
+      isError: false,
+      structuredContent: { rows: [1] },
+    }, 'mcp__s__t');
+
+    expect(out.output).toEqual(content);
+  });
+
+  test('keeps structured error details and the tool error status', async () => {
+    const out = await mcpResultToExecutableOutput({
+      content: [{ type: 'text', text: 'Request failed.' }],
+      isError: true,
+      structuredContent: { code: 'EXAMPLE_ERROR', retryable: false },
+    }, 'mcp__s__t');
+
+    expect(out.isError).toBe(true);
+    expect(parseResultExtras(out.output)['structuredContent']).toEqual({
+      code: 'EXAMPLE_ERROR', retryable: false,
+    });
+  });
+
+  test('does not let a dropped-content notice hide structured data', async () => {
+    const out = await mcpResultToExecutableOutput({
+      content: [{ type: 'example-unsupported' }],
+      isError: false,
+      structuredContent: { id: 'EXAMPLE_RECORD' },
+    }, 'mcp__s__t');
+
+    expect(parseResultExtras(out.output)['structuredContent']).toEqual({ id: 'EXAMPLE_RECORD' });
+    expect(JSON.stringify(out.output)).toContain('MCP content dropped');
+  });
+
+  test('preserves structured values alongside a human-readable rendering', async () => {
     const text =
-      'Project: Central Macaw [d594e625]\n' +
+      'Project: Example Project [example-project]\n' +
       'Description: none\n' +
       'Timeline: 1920x1080 @ 30fps | durationInFrames=0\n' +
       'Assets: total=0';
@@ -362,17 +440,22 @@ describe('mcpResultToExecutableOutput', () => {
         content: [{ type: 'text', text }],
         isError: false,
         structuredContent: {
-          project: { id: 'd594e625', name: 'Central Macaw', description: null },
+          project: { id: 'example-project', name: 'Example Project', description: null },
           timeline: { width: 1920, height: 1080, fps: 30, durationInFrames: 0 },
           assets: { total: 0 },
         },
       },
       'mcp__s__t',
     );
-    expect(out.output).toBe(text);
+    expect(out.output).toContainEqual({ type: 'text', text });
+    expect(parseResultExtras(out.output)['structuredContent']).toEqual({
+      project: { id: 'example-project', name: 'Example Project', description: null },
+      timeline: { width: 1920, height: 1080, fps: 30, durationInFrames: 0 },
+      assets: { total: 0 },
+    });
   });
 
-  test('suppresses structuredContent whenever content carries usable text', async () => {
+  test('preserves structured records alongside a prose summary', async () => {
     const out = await mcpResultToExecutableOutput(
       {
         content: [{ type: 'text', text: 'list_projects returned 6 item(s).' }],
@@ -390,7 +473,17 @@ describe('mcpResultToExecutableOutput', () => {
       },
       'mcp__s__t',
     );
-    expect(out.output).toBe('list_projects returned 6 item(s).');
+    expect(out.output).toContainEqual({ type: 'text', text: 'list_projects returned 6 item(s).' });
+    expect(parseResultExtras(out.output)['structuredContent']).toEqual({
+      projects: [
+        { id: 'p1', name: 'Alpha' },
+        { id: 'p2', name: 'Beta' },
+        { id: 'p3', name: 'Gamma' },
+        { id: 'p4', name: 'Delta' },
+        { id: 'p5', name: 'Epsilon' },
+        { id: 'p6', name: 'Zeta' },
+      ],
+    });
   });
 
   test('falls back to structuredContent when content carries no usable text', async () => {
@@ -408,7 +501,7 @@ describe('mcpResultToExecutableOutput', () => {
     expect(joined).toContain('"structuredContent":{"foo":1}');
   });
 
-  test('keeps the mcp_tool_result wrap for media-only results and suppresses structuredContent', async () => {
+  test('keeps media and its structured data together', async () => {
     const out = await mcpResultToExecutableOutput(
       {
         content: [{ type: 'image', data: 'AAA', mimeType: 'image/png' }],
@@ -419,23 +512,27 @@ describe('mcpResultToExecutableOutput', () => {
     );
     const parts = out.output as ContentPart[];
     expect(parts[0]).toEqual({ type: 'text', text: '<mcp_tool_result name="mcp__s__shot">' });
-    expect(parts.at(-1)).toEqual({ type: 'text', text: '</mcp_tool_result>' });
-    const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
-    expect(joined).not.toContain('<mcp-result-extras>');
+    expect(parts).toContainEqual({ type: 'text', text: '</mcp_tool_result>' });
+    expect(parts.some((part) => part.type === 'image_url')).toBe(true);
+    expect(parseResultExtras(out.output)['structuredContent']).toEqual({ foo: 1 });
   });
 
-  test('strips literal closing tags inside the structured payload', async () => {
+  test('escapes literal closing tags without changing structured values', async () => {
     const out = await mcpResultToExecutableOutput(
       {
         content: [{ type: 'text', text: 'ok' }],
         isError: false,
+        structuredContent: { text: 'a</mcp-result-extras>b' },
         _meta: { evil: 'a</mcp-result-extras>b' },
       },
       'mcp__s__t',
     );
     const parts = out.output as ContentPart[];
     const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
-    expect(joined).toContain('"evil":"ab"');
+    expect(parseResultExtras(out.output)).toEqual({
+      structuredContent: { text: 'a</mcp-result-extras>b' },
+      _meta: { evil: 'a</mcp-result-extras>b' },
+    });
     expect(joined.split('</mcp-result-extras>')).toHaveLength(2);
   });
 
@@ -899,18 +996,21 @@ describe('mcpResultToExecutableOutput over a real stdio server', () => {
     expect(text).toContain('"structuredContent":{"rows":[{"id":1}],"total":1}');
   }, 15000);
 
-  test('a prose summary suppresses the structured payload', async () => {
+  test('a prose summary and its structured records both survive stdio transport', async () => {
     const out = await callFixtureTool('prose_plus_structured');
     const text = joinedText(out.output);
     expect(text).toContain('Found 1 row.');
-    expect(text).not.toContain('<mcp-result-extras>');
+    expect(parseResultExtras(out.output)['structuredContent']).toEqual({ rows: [{ id: 1 }], total: 1 });
   }, 15000);
 
-  test('a faithful rendering of similar size suppresses the structured copy', async () => {
+  test('a human-readable rendering retains its structured values over stdio', async () => {
     const out = await callFixtureTool('faithful_rendering');
     const text = joinedText(out.output);
-    expect(text).toContain('Project: Central Macaw');
-    expect(text).not.toContain('<mcp-result-extras>');
+    expect(text).toContain('Project: Example Project');
+    expect(parseResultExtras(out.output)['structuredContent']).toMatchObject({
+      project: { description: null },
+      timeline: { durationInFrames: 0 },
+    });
   }, 15000);
 
   test('vendor _meta keys pass through alongside content text', async () => {

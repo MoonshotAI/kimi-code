@@ -20,6 +20,8 @@ import {
   type ToolUpdate,
 } from '#/tool/toolContract';
 import { ToolOutputAccumulator } from '#/tool/output-accumulator';
+import { createMcpTool } from '#/agent/mcp/tools/mcp';
+import type { MCPClient } from '#/mcpCore/types';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {
   BeforeToolExecuteEvent,
@@ -1125,6 +1127,63 @@ describe('truncation pipeline', () => {
       join(homeDir, 'sessions/workspace/session/agents/main/tool-results/noisy-call_noisy-'),
     );
     expect(readFileSync(outputPath, 'utf8')).toBe(fullOutput);
+  });
+
+  it('recovers MCP structured records through spill and Read without repeating the MCP call', async () => {
+    const structuredContent = {
+      rows: Array.from({ length: 1200 }, (_, index) => ({
+        id: index + 1,
+        detail: 'x'.repeat(100),
+      })),
+      literal: 'a</mcp-result-extras>b',
+    };
+    const client = {
+      async listTools() { return []; },
+      callTool: vi.fn(async () => ({
+        content: [{ type: 'text', text: 'Found 1200 rows.' }],
+        isError: false,
+        structuredContent,
+      })),
+      async ping() {},
+    } satisfies MCPClient;
+    registry.register(createMcpTool(
+      'mcp__example__rows',
+      { name: 'rows', description: 'Example records', parameters: {} },
+      client,
+    ), { source: 'mcp' });
+
+    const [result] = await execute([toolCall('call_rows', 'mcp__example__rows', {})]);
+
+    expect(result?.isError).not.toBe(true);
+    expect(result?.truncated).toBe(true);
+    if (result === undefined) throw new Error('expected MCP result');
+    const visible = renderToolResultForModel(result)
+      .map((part) => part.type === 'text' ? part.text : '').join('\n');
+    expect(visible.length).toBeLessThan(50_000);
+    const path = renderedOutputPath(visible);
+    let args: ReadInput | undefined = { path, max_chars: 16_000 };
+    let recovered = '';
+    let pages = 0;
+    while (args !== undefined && pages < 30) {
+      const [page] = await execute([toolCall(`read_mcp_${String(pages++)}`, 'Read', args)]);
+      expect(page?.isError).not.toBe(true);
+      if (typeof page?.output !== 'string') throw new Error('expected Read text');
+      const pageText = renderToolResultForModel(page)
+        .map((part) => part.type === 'text' ? part.text : '').join('\n');
+      expect(pageText.length).toBeLessThanOrEqual(16_000);
+      if (recovered.length > 0 && (args.column_offset ?? 0) === 0) recovered += '\n';
+      recovered += page.output.replaceAll(/^\d+\t/gm, '');
+      const next = /Next Read: (\{[^\n]*\})/.exec(page.note ?? '')?.[1];
+      args = next === undefined ? undefined : ReadInputSchema.parse(JSON.parse(next));
+    }
+
+    expect(args).toBeUndefined();
+    expect(pages).toBeGreaterThan(2);
+    expect(recovered).toContain('Found 1200 rows.');
+    const json = /<mcp-result-extras>\n([\s\S]*?)\n<\/mcp-result-extras>/.exec(recovered)?.[1];
+    if (json === undefined) throw new Error('expected recovered MCP result extras');
+    expect(JSON.parse(json)).toEqual({ structuredContent });
+    expect(client.callTool).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the builder completion message after spilling an error result', async () => {
