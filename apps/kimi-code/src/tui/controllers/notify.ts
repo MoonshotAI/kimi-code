@@ -15,6 +15,23 @@ interface PendingUpdate {
   readonly text: string;
 }
 
+/**
+ * A harness-generated entry marking that work was delegated — shown
+ * immediately (not result-gated like `NotifyUser` calls), because its whole
+ * point is to explain the silence while the subagent runs.
+ */
+function delegationText(name: string, args: Record<string, unknown>): string | undefined {
+  if (name === 'Agent') {
+    const description = args['description'];
+    if (typeof description !== 'string' || description.trim().length === 0) return undefined;
+    const kind = typeof args['subagent_type'] === 'string' ? args['subagent_type'] : 'subagent';
+    return `▸ Delegated to ${kind}: **${description.trim()}**`;
+  }
+  const items = args['items'];
+  if (!Array.isArray(items) || items.length === 0) return undefined;
+  return `▸ Delegated to a swarm of ${String(items.length)} subagents`;
+}
+
 export class NotifyController {
   private enabled = false;
   private mounted = false;
@@ -24,6 +41,7 @@ export class NotifyController {
   private readonly pending = new Map<string, PendingUpdate>();
   private readonly settled = new Map<string, string>();
   private readonly endedTurns = new Map<string, number>();
+  private readonly agentNames = new Map<string, string>();
 
   constructor(
     private readonly state: Pick<TUIState, 'notifyPanel' | 'notifyPanelContainer' | 'ui'>,
@@ -42,6 +60,7 @@ export class NotifyController {
     this.clear();
     this.settled.clear();
     this.endedTurns.clear();
+    this.agentNames.clear();
   }
 
   clear(): void {
@@ -56,8 +75,23 @@ export class NotifyController {
     this.state.ui.requestRender();
   }
 
-  changePage(direction: -1 | 1): boolean {
-    if (!this.enabled || !this.state.notifyPanel.changePage(direction)) return false;
+  toggleFocus(): boolean {
+    if (!this.enabled) return false;
+    const panel = this.state.notifyPanel;
+    const changed = panel.isFocused() ? panel.blur() : panel.focus();
+    if (!changed) return false;
+    this.state.ui.requestRender();
+    return true;
+  }
+
+  handlePanelKey(key: 'left' | 'right' | 'up' | 'down' | 'escape'): boolean {
+    if (!this.enabled || !this.state.notifyPanel.isFocused()) return false;
+    const panel = this.state.notifyPanel;
+    if (key === 'escape') panel.blur();
+    else if (key === 'left') panel.prevChannel();
+    else if (key === 'right') panel.nextChannel();
+    else if (key === 'up') panel.prevPage();
+    else panel.nextPage();
     this.state.ui.requestRender();
     return true;
   }
@@ -68,6 +102,9 @@ export class NotifyController {
     // oxlint-disable-next-line typescript-eslint/switch-exhaustiveness-check -- Only progress and agent lifecycle events affect this projection.
     switch (event.type) {
       case 'subagent.spawned':
+        this.agentNames.set(event.subagentId, event.subagentName);
+        this.running.set(event.subagentId, undefined);
+        break;
       case 'subagent.started':
         this.running.set(event.subagentId, undefined);
         break;
@@ -121,6 +158,7 @@ export class NotifyController {
         this.dropPending(agentId, event.turnId);
         this.endedTurns.set(agentId, event.turnId);
         this.forgetSettled(agentId);
+        if (agentId === MAIN_AGENT_ID) this.state.notifyPanel.setEnded(true);
         break;
       case 'turn.step.started':
         this.steps.set(agentId, event.step);
@@ -140,6 +178,18 @@ export class NotifyController {
           (this.running.get(agentId) ?? -1) > event.turnId
         )
           return;
+        if (agentId === MAIN_AGENT_ID && (event.name === 'Agent' || event.name === 'AgentSwarm')) {
+          const text = delegationText(event.name, argsRecord(event.args));
+          if (text !== undefined) {
+            this.state.notifyPanel.upsert({
+              id: `delegation:${event.toolCallId}`,
+              agentId,
+              time: Date.now(),
+              text,
+            });
+          }
+          break;
+        }
         const key = JSON.stringify([agentId, event.turnId, event.toolCallId]);
         if (this.settled.has(key)) return;
         if (event.name !== 'NotifyUser') return;
@@ -165,7 +215,13 @@ export class NotifyController {
           event.synthetic !== true &&
           notifyResultState(event.output) === 'displayed'
         ) {
-          const entry: NotifyEntry = { id: key, agentId, time: update.time, text: update.text };
+          const entry: NotifyEntry = {
+            id: key,
+            agentId,
+            agentName: this.agentNames.get(agentId),
+            time: update.time,
+            text: update.text,
+          };
           this.state.notifyPanel.upsert(entry);
         }
         break;

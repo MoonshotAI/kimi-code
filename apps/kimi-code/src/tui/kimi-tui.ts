@@ -3507,8 +3507,12 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
-  pageNotifyPanel(direction: -1 | 1): boolean {
-    return this.sessionEventHandler.notifications.changePage(direction);
+  toggleNotifyPanelFocus(): boolean {
+    return this.sessionEventHandler.notifications.toggleFocus();
+  }
+
+  handleNotifyPanelKey(key: 'left' | 'right' | 'up' | 'down' | 'escape'): boolean {
+    return this.sessionEventHandler.notifications.handlePanelKey(key);
   }
 
   private async detachRunningShellCommand(): Promise<void> {

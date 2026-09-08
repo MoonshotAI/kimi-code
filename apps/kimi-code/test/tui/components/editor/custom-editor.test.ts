@@ -549,7 +549,7 @@ describe('CustomEditor paste marker expansion', () => {
     expect(editor.getText()).toContain(longText);
 
     // Undo (Ctrl+-) restores both the marker text and its paste-registry entry.
-    editor.handleInput('\x1b[45;5u');
+    editor.handleInput('\x1B[45;5u');
     expect(editor.getText()).toContain('[paste #1');
 
     simulateLargePaste(editor, 'anything');
@@ -666,18 +666,35 @@ describe('CustomEditor shortcut telemetry hooks', () => {
     expect(onToggleTodoExpand).toHaveBeenCalledOnce();
   });
 
+  it.each(['\u000E', '\u001B[110;5u'] as const)(
+    'toggles Updates focus on %j without changing the draft',
+    (key) => {
+      const editor = makeEditor();
+      const onPageNotify = vi.fn().mockReturnValue(true);
+      editor.onPageNotify = onPageNotify;
+      editor.setText('draft\nsecond line');
+      const cursor = editor.getCursor();
+      editor.handleInput(key);
+      expect(onPageNotify).toHaveBeenCalledWith();
+      expect(editor.getText()).toBe('draft\nsecond line');
+      expect(editor.getCursor()).toEqual(cursor);
+    },
+  );
+
   it.each([
-    ['\u0010', -1], ['\u000E', 1], ['\u001B[112;5u', -1], ['\u001B[110;5u', 1],
-  ] as const)('pages Updates on %j without changing the draft', (key, direction) => {
+    ['\u001B[D', 'left'],
+    ['\u001B[C', 'right'],
+    ['\u001B[A', 'up'],
+    ['\u001B[B', 'down'],
+    ['\u001B', 'escape'],
+  ] as const)('routes %j to the focused Updates panel as %s', (key, panelKey) => {
     const editor = makeEditor();
-    const onPageNotify = vi.fn().mockReturnValue(true);
-    editor.onPageNotify = onPageNotify;
-    editor.setText('draft\nsecond line');
-    const cursor = editor.getCursor();
+    const onNotifyPanelKey = vi.fn().mockReturnValue(true);
+    editor.onNotifyPanelKey = onNotifyPanelKey;
+    editor.setText('draft');
     editor.handleInput(key);
-    expect(onPageNotify).toHaveBeenCalledWith(direction);
-    expect(editor.getText()).toBe('draft\nsecond line');
-    expect(editor.getCursor()).toEqual(cursor);
+    expect(onNotifyPanelKey).toHaveBeenCalledWith(panelKey);
+    expect(editor.getText()).toBe('draft');
   });
 
   it('keeps the original editor bindings when Updates paging is unavailable', () => {
