@@ -17,11 +17,12 @@ import type {
   ToolDescription,
 } from '#/llm/message';
 import type { ThinkingEffort } from '#/llm/thinking';
-import { applyThinking } from '#/llm/protocol/trait';
+import { applyThinking, type DialectContext } from '#/llm/protocol/dialect';
 import { mergeConsecutiveUsers } from '#/llm/protocol/patterns';
 import { applyPatterns } from '#/llm/protocol/rewrite';
 import type { TokenUsage } from '#/llm/usage';
 
+import type { GoogleGenAIDialect } from './dialect';
 import { buildToolNameById, lowerMessage, type GoogleContent } from './lower';
 import { sortToolRunByCallOrder } from './patterns';
 
@@ -180,10 +181,12 @@ function encodeThinking(model: string, effort: ThinkingEffort): Record<string, u
   }
 }
 
-function resolveRequestKwargs(input: FormatRequestInput): Record<string, unknown> {
+function resolveRequestKwargs(
+  input: FormatRequestInput,
+  dialect: GoogleGenAIDialect | undefined,
+): Record<string, unknown> {
+  const ctx: DialectContext = { model: input.model };
   const {
-    trait,
-    ctx,
     thinking,
     responseFormat,
     maxCompletionTokens,
@@ -193,7 +196,7 @@ function resolveRequestKwargs(input: FormatRequestInput): Record<string, unknown
   } = input;
   let kwargs: Record<string, unknown> = {};
   if (thinking !== undefined) {
-    kwargs = applyThinking(kwargs, thinking, trait, ctx, (t, c) => ({
+    kwargs = applyThinking(kwargs, thinking, dialect?.thinking, ctx, (t, c) => ({
       thinkingConfig: encodeThinking(c.model.model, t.effort),
     })).kwargs;
   }
@@ -207,7 +210,7 @@ function resolveRequestKwargs(input: FormatRequestInput): Record<string, unknown
       cap = Math.min(cap, maxContextTokens - usedContextTokens);
     }
     cap = Math.max(1, cap);
-    const hooked = trait?.withMaxCompletionTokens?.(cap, ctx);
+    const hooked = dialect?.maxCompletionTokens?.(cap, ctx);
     if (hooked !== undefined) {
       kwargs = { ...kwargs, ...hooked };
     } else {
@@ -232,52 +235,57 @@ export interface GoogleGenAIRequestParams {
   readonly headers?: Record<string, string>;
 }
 
-export const googleGenAIFormat: ProtocolFormat<GoogleGenAIRequestParams> = {
-  formatRequest(input) {
-    const { messages, systemPrompt, tools, trait, ctx } = input;
-    const kwargs = resolveRequestKwargs(input);
-    const contents = messagesToGoogleGenAIContents(messages);
-    const finalContents = trait?.mergeHistory?.(contents, ctx) as GoogleContent[] | undefined;
-    const params: Record<string, unknown> = {
-      model: ctx.model.model,
-      contents: finalContents ?? contents,
-      config: {
-        systemInstruction: systemPrompt ? systemPrompt : undefined,
-        tools:
-          tools.length === 0
-            ? undefined
-            : tools.map((tool) => trait?.convertTool?.(tool, ctx) ?? toolToGoogleGenAI(tool)),
-        ...kwargs,
-      },
-    };
-    const finalParams = trait?.buildParams?.(params, ctx) ?? params;
-    return { params: finalParams as unknown as GenerateContentParameters };
-  },
+export function createGoogleGenAIFormat(
+  dialect?: GoogleGenAIDialect,
+): ProtocolFormat<GoogleGenAIRequestParams> {
+  return {
+    formatRequest(input) {
+      const { messages, systemPrompt, tools } = input;
+      const ctx: DialectContext = { model: input.model };
+      const kwargs = resolveRequestKwargs(input, dialect);
+      const contents = messagesToGoogleGenAIContents(messages);
+      const finalContents = dialect?.mergeHistory?.(contents, ctx);
+      const params: Record<string, unknown> = {
+        model: ctx.model.model,
+        contents: finalContents ?? contents,
+        config: {
+          systemInstruction: systemPrompt ? systemPrompt : undefined,
+          tools:
+            tools.length === 0
+              ? undefined
+              : tools.map((tool) => dialect?.convertTool?.(tool, ctx) ?? toolToGoogleGenAI(tool)),
+          ...kwargs,
+        },
+      };
+      const finalParams = dialect?.buildParams?.(params, ctx) ?? params;
+      return { params: finalParams as unknown as GenerateContentParameters };
+    },
 
-  createStreamParser() {
-    return (chunk, sink) => {
-      const response = chunk as Record<string, unknown>;
-      if (response === null || typeof response !== 'object') {
-        return;
-      }
-      const rawFinish = extractChunkFinishReason(response);
-      const responseId = response['responseId'];
-      if (typeof responseId === 'string' && responseId.length > 0) {
-        sink.onMessageId?.(responseId);
-      }
-      const usage = parseUsageMetadata(response);
-      if (usage !== undefined && rawFinish !== undefined && rawFinish !== null) {
-        sink.onUsage?.(usage);
-      }
-      if (rawFinish !== undefined && rawFinish !== null) {
-        sink.onFinish(normalizeFinishReason(rawFinish));
-      }
-      for (const part of extractChunkParts(response)) {
-        sink.onDelta(part);
-      }
-    };
-  },
-};
+    createStreamParser() {
+      return (chunk, sink) => {
+        const response = chunk as Record<string, unknown>;
+        if (response === null || typeof response !== 'object') {
+          return;
+        }
+        const rawFinish = extractChunkFinishReason(response);
+        const responseId = response['responseId'];
+        if (typeof responseId === 'string' && responseId.length > 0) {
+          sink.onMessageId?.(responseId);
+        }
+        const usage = parseUsageMetadata(response);
+        if (usage !== undefined && rawFinish !== undefined && rawFinish !== null) {
+          sink.onUsage?.(usage);
+        }
+        if (rawFinish !== undefined && rawFinish !== null) {
+          sink.onFinish(normalizeFinishReason(rawFinish));
+        }
+        for (const part of extractChunkParts(response)) {
+          sink.onDelta(part);
+        }
+      };
+    },
+  };
+}
 
 function parseUsageMetadata(response: Record<string, unknown>): TokenUsage | undefined {
   const usageMetadata = response['usageMetadata'] as Record<string, unknown> | undefined;

@@ -1,8 +1,10 @@
-import type { ProtocolEndpoint, ProtocolTrait } from '#/llm/protocol/trait';
+import type { ProtocolEndpoint, ProviderConnection } from '#/llm/protocol/connection';
 import type { ContentPart, ToolDescription } from '#/llm/message';
+import type { AnthropicDialect } from '#/llm/requester/bases/anthropic/dialect';
 import { CONTEXT_MANAGEMENT_BETA } from '#/llm/requester/bases/anthropic/format';
+import type { OpenAIDialect } from '#/llm/requester/bases/openai/dialect';
+import type { OpenAIWireToolCall } from '#/llm/requester/bases/openai/lower';
 
-import { classifyKimiQuotaError } from './errors';
 import { normalizeKimiToolSchema } from './schema';
 
 export const KIMI_API_KEY_ENV = 'KIMI_API_KEY';
@@ -15,15 +17,14 @@ const kimiEndpoint: ProtocolEndpoint = {
   defaultBaseUrl: KIMI_DEFAULT_BASE_URL,
 };
 
+export const kimiConnection: ProviderConnection = {
+  endpoint: () => kimiEndpoint,
+};
+
 export interface KimiThinkingConfig {
   type?: 'enabled' | 'disabled';
   effort?: string;
   keep?: unknown;
-  [key: string]: unknown;
-}
-
-export interface ExtraBody {
-  thinking?: KimiThinkingConfig;
   [key: string]: unknown;
 }
 
@@ -56,18 +57,14 @@ function convertKimiTool(tool: ToolDescription): Record<string, unknown> {
   };
 }
 
-export const kimiOpenAITrait: ProtocolTrait = {
+export const kimiOpenAIDialect: OpenAIDialect = {
   strictThinkingValidation: true,
 
-  endpoint: () => kimiEndpoint,
-
-  convertError: (error) => classifyKimiQuotaError(error),
-
-  toolMessageConversion: () => 'keep_parts',
+  toolMessageConversion: 'keep_parts',
 
   cacheKey: (key) => ({ prompt_cache_key: key }),
 
-  withThinking: (thinking) => {
+  thinking: (thinking) => {
     const config: KimiThinkingConfig =
       thinking.effort === 'off'
         ? { type: 'disabled' }
@@ -77,61 +74,48 @@ export const kimiOpenAITrait: ProtocolTrait = {
     if (thinking.keep !== undefined) {
       config.keep = thinking.keep;
     }
-    return { extra_body: { thinking: config } };
+    return {
+      kwargs: { thinking: config },
+      preserveThinking: thinking.keep === 'all' && thinking.effort !== 'off' ? true : undefined,
+    };
   },
 
-  preserveThinking: (thinking) => {
-    if (thinking.keep === 'all' && thinking.effort !== 'off') {
-      return true;
-    }
-    return undefined;
-  },
-
-  withMaxCompletionTokens: (maxCompletionTokens) => ({
+  maxCompletionTokens: (maxCompletionTokens) => ({
     max_completion_tokens: maxCompletionTokens,
   }),
 
   buildParams: (params) => {
-    const {
-      extra_body: extraBody,
-      max_tokens: maxTokens,
-      max_completion_tokens: maxCompletionTokens,
-      ...rest
-    } = params;
-    const out: Record<string, unknown> = { ...rest };
-    const resolvedMaxCompletionTokens = maxCompletionTokens ?? maxTokens;
-    if (resolvedMaxCompletionTokens !== undefined) {
-      out['max_completion_tokens'] = resolvedMaxCompletionTokens;
+    const { extra_body: extraBody, ...rest } = params;
+    if (extraBody === undefined || extraBody === null) {
+      return params;
     }
-    if (extraBody !== undefined && extraBody !== null) {
-      Object.assign(out, extraBody);
-    }
-    return out;
+    return { ...rest, ...(extraBody as Record<string, unknown>) };
   },
 
   convertTool: (tool) => convertKimiTool(tool),
 
   convertMessage: (message, converted) => {
+    const record = converted as Record<string, unknown>;
     if (message.role === 'assistant' && message.toolCalls.length > 0) {
       const nonThinkParts = message.content.filter((part) => part.type !== 'think');
       if (isEffectivelyEmptyContent(nonThinkParts)) {
-        delete converted['content'];
+        delete record['content'];
       }
     }
 
     if (message.role === 'system' && message.tools !== undefined && message.tools.length > 0) {
-      converted['tools'] = message.tools.map((tool) => convertKimiTool(tool));
+      record['tools'] = message.tools.map((tool) => convertKimiTool(tool));
     }
 
-    const convertedToolCalls = converted['tool_calls'];
+    const convertedToolCalls = record['tool_calls'];
     if (message.role === 'assistant' && Array.isArray(convertedToolCalls)) {
       message.toolCalls.forEach((toolCall, index) => {
         if (toolCall.extras === undefined) {
           return;
         }
-        const out = convertedToolCalls[index] as Record<string, unknown> | undefined;
+        const out = convertedToolCalls[index] as OpenAIWireToolCall | undefined;
         if (out !== undefined) {
-          out['extras'] = toolCall.extras;
+          (out as Record<string, unknown>)['extras'] = toolCall.extras;
         }
       });
     }
@@ -157,25 +141,17 @@ export const kimiOpenAITrait: ProtocolTrait = {
   },
 };
 
-export const kimiAnthropicTrait: ProtocolTrait = {
-  endpoint: () => kimiEndpoint,
-
-  convertError: (error) => classifyKimiQuotaError(error),
-
-  withThinking: (thinking) => {
+export const kimiAnthropicDialect: AnthropicDialect = {
+  thinking: (thinking) => {
     if (thinking.effort === 'off') {
-      return { thinking: { type: 'disabled' }, betaFeatures: [CONTEXT_MANAGEMENT_BETA] };
+      return { kwargs: { thinking: { type: 'disabled' }, betaFeatures: [CONTEXT_MANAGEMENT_BETA] } };
     }
     return {
-      thinking: { type: 'enabled' },
-      output_config: thinking.effort === 'on' ? undefined : { effort: thinking.effort },
-      betaFeatures: [CONTEXT_MANAGEMENT_BETA],
+      kwargs: {
+        thinking: { type: 'enabled' },
+        output_config: thinking.effort === 'on' ? undefined : { effort: thinking.effort },
+        betaFeatures: [CONTEXT_MANAGEMENT_BETA],
+      },
     };
   },
-};
-
-export const kimiResponsesTrait: ProtocolTrait = {
-  endpoint: () => kimiEndpoint,
-
-  convertError: (error) => classifyKimiQuotaError(error),
 };

@@ -3,14 +3,15 @@ import { assign, shake } from 'radashi';
 
 import type { LlmRemoteErrorMessage } from '#/llm/errors';
 import { NO_FINISH, type FinishInfo } from '#/llm/finish-reason';
-import type { FormatRequestInput, ProtocolFormat, StreamParserOptions } from '#/llm/protocol/format';
+import type { FormatRequestInput, ProtocolFormat } from '#/llm/protocol/format';
 import type { StreamedMessagePart, ToolDescription } from '#/llm/message';
-import { applyThinking } from '#/llm/protocol/trait';
+import { applyThinking, type DialectContext } from '#/llm/protocol/dialect';
 import type { ResponseFormat } from '#/llm/response-format';
 import { encodeReasoningEffortFallback } from '#/llm/thinking';
 import type { TokenUsage } from '#/llm/usage';
 
 import { isContextOverflowErrorCode, isOpenAIInsufficientQuotaCode } from '../openai/format';
+import type { OpenAIResponsesDialect } from './dialect';
 import { lowerMessage, type ResponsesInputItem } from './lower';
 
 type RawObject = Record<string, unknown>;
@@ -351,310 +352,312 @@ function extractEventUsage(event: RawObject): RawObject | undefined {
   return readObjectField(event, 'usage');
 }
 
-function resolveRequestKwargs(input: FormatRequestInput): Record<string, unknown> {
-  const {
-    trait,
-    ctx,
-    cacheKey,
-    thinking,
-    responseFormat,
-    maxCompletionTokens,
-    usedContextTokens,
-    maxContextTokens,
-    extraParams,
-  } = input;
-  let kwargs: Record<string, unknown> = {};
-  if (cacheKey !== undefined) {
-    kwargs = trait?.cacheKey?.(cacheKey, ctx) ?? { prompt_cache_key: cacheKey };
-  }
-  if (thinking !== undefined) {
-    kwargs = applyThinking(kwargs, thinking, trait, ctx, (t) =>
-      encodeReasoningEffortFallback(t, ctx.model, trait?.strictThinkingValidation === true),
-    ).kwargs;
-  }
-  if (maxCompletionTokens !== undefined) {
-    let cap = maxCompletionTokens;
-    if (
-      usedContextTokens !== undefined &&
-      maxContextTokens !== undefined &&
-      maxContextTokens > 0
-    ) {
-      cap = Math.min(cap, maxContextTokens - usedContextTokens);
-    }
-    cap = Math.max(1, cap);
-    const hooked = trait?.withMaxCompletionTokens?.(cap, ctx);
-    if (hooked !== undefined) {
-      kwargs = { ...kwargs, ...hooked };
-    } else {
-      kwargs = { ...kwargs, max_output_tokens: cap };
-    }
-  }
-  if (responseFormat !== undefined) {
-    kwargs['text'] = {
-      ...asRawObject(kwargs['text']),
-      format: responseFormatToResponsesText(responseFormat),
-    };
-  }
-  const reasoningEffort = kwargs['reasoning_effort'] as string | undefined;
-  delete kwargs['reasoning_effort'];
-  if (reasoningEffort !== undefined) {
-    kwargs['reasoning'] = { effort: reasoningEffort, summary: 'auto' };
-    kwargs['include'] = ['reasoning.encrypted_content'];
-  }
-  kwargs = assign(kwargs, extraParams?.responses ?? {});
-  kwargs = shake(kwargs);
-  return kwargs;
-}
-
 export interface OpenAIResponsesRequestParams {
   readonly params: OpenAI.Responses.ResponseCreateParamsStreaming;
   readonly headers?: Record<string, string>;
 }
 
-export const openAIResponsesFormat: ProtocolFormat<OpenAIResponsesRequestParams> = {
-  formatRequest(input) {
-    const { messages, systemPrompt, tools, trait, ctx } = input;
-    const kwargs = resolveRequestKwargs(input);
-    const inputItems = messages.flatMap((message) =>
-      lowerMessage(message, {
-        modelName: ctx.model.model,
-        extractText:
-          (input.toolMessageConversion ?? trait?.toolMessageConversion?.(ctx)) === 'extract_text',
-      }),
-    );
-    const finalInput =
-      (trait?.mergeHistory?.(inputItems, ctx) as ResponsesInputItem[] | undefined) ?? inputItems;
-    const createParams: Record<string, unknown> = {
-      model: ctx.model.model,
-      instructions: systemPrompt ? systemPrompt : undefined,
-      input: finalInput,
-      tools:
-        tools.length === 0
-          ? undefined
-          : tools.map((tool) => trait?.convertTool?.(tool, ctx) ?? defaultConvertTool(tool)),
-      store: false,
-      stream: true,
-      ...kwargs,
-    };
-    const finalParams = trait?.buildParams?.(createParams, ctx) ?? createParams;
-    return { params: finalParams as unknown as OpenAI.Responses.ResponseCreateParamsStreaming };
-  },
-
-  createStreamParser(options?: StreamParserOptions) {
-    const functionCallArgumentsByIndex = new Map<number | string, string>();
-    let unindexedFunctionCallArguments: string | undefined;
-
-    const hasFunctionCallArguments = (streamIndex: number | string | undefined): boolean =>
-      streamIndex === undefined
-        ? unindexedFunctionCallArguments !== undefined
-        : functionCallArgumentsByIndex.has(streamIndex);
-
-    const getFunctionCallArguments = (streamIndex: number | string | undefined): string =>
-      streamIndex === undefined
-        ? (unindexedFunctionCallArguments as string)
-        : functionCallArgumentsByIndex.get(streamIndex)!;
-
-    const setFunctionCallArguments = (
-      streamIndex: number | string | undefined,
-      argumentsValue: string,
-    ): void => {
-      if (streamIndex === undefined) {
-        unindexedFunctionCallArguments = argumentsValue;
+export function createOpenAIResponsesFormat(
+  dialect?: OpenAIResponsesDialect,
+): ProtocolFormat<OpenAIResponsesRequestParams> {
+  function resolveRequestKwargs(input: FormatRequestInput): Record<string, unknown> {
+    const ctx: DialectContext = { model: input.model };
+    const {
+      cacheKey,
+      thinking,
+      responseFormat,
+      maxCompletionTokens,
+      usedContextTokens,
+      maxContextTokens,
+      extraParams,
+    } = input;
+    let kwargs: Record<string, unknown> = {};
+    if (cacheKey !== undefined) {
+      kwargs = dialect?.cacheKey?.(cacheKey, ctx) ?? { prompt_cache_key: cacheKey };
+    }
+    if (thinking !== undefined) {
+      kwargs = applyThinking(kwargs, thinking, dialect?.thinking, ctx, (t) =>
+        encodeReasoningEffortFallback(t, ctx.model, dialect?.strictThinkingValidation === true),
+      ).kwargs;
+    }
+    if (maxCompletionTokens !== undefined) {
+      let cap = maxCompletionTokens;
+      if (
+        usedContextTokens !== undefined &&
+        maxContextTokens !== undefined &&
+        maxContextTokens > 0
+      ) {
+        cap = Math.min(cap, maxContextTokens - usedContextTokens);
+      }
+      cap = Math.max(1, cap);
+      const hooked = dialect?.maxCompletionTokens?.(cap, ctx);
+      if (hooked !== undefined) {
+        kwargs = { ...kwargs, ...hooked };
       } else {
-        functionCallArgumentsByIndex.set(streamIndex, argumentsValue);
+        kwargs = { ...kwargs, max_output_tokens: cap };
       }
-    };
+    }
+    if (responseFormat !== undefined) {
+      kwargs['text'] = {
+        ...asRawObject(kwargs['text']),
+        format: responseFormatToResponsesText(responseFormat),
+      };
+    }
+    const reasoningEffort = kwargs['reasoning_effort'] as string | undefined;
+    delete kwargs['reasoning_effort'];
+    if (reasoningEffort !== undefined) {
+      kwargs['reasoning'] = { effort: reasoningEffort, summary: 'auto' };
+      kwargs['include'] = ['reasoning.encrypted_content'];
+    }
+    kwargs = assign(kwargs, extraParams?.responses ?? {});
+    kwargs = shake(kwargs);
+    return kwargs;
+  }
 
-    const appendFunctionCallArguments = (
-      streamIndex: number | string | undefined,
-      argumentsPart: string,
-      context: string,
-    ): void => {
-      if (!hasFunctionCallArguments(streamIndex)) {
-        failResponsesDecode(
-          context,
-          `received function-call arguments for unknown stream index ${formatResponseStreamIndex(streamIndex)}.`,
-        );
-      }
-      setFunctionCallArguments(streamIndex, getFunctionCallArguments(streamIndex) + argumentsPart);
-    };
-
-    const finalArgumentsSuffix = (
-      streamIndex: number | string | undefined,
-      finalArguments: string,
-      context: string,
-    ): StreamedMessagePart[] => {
-      if (!hasFunctionCallArguments(streamIndex)) {
-        failResponsesDecode(
-          context,
-          `received final function-call arguments for unknown stream index ${formatResponseStreamIndex(streamIndex)}.`,
-        );
-      }
-
-      const accumulatedArguments = getFunctionCallArguments(streamIndex);
-      if (finalArguments === accumulatedArguments) {
-        return [];
-      }
-
-      if (!finalArguments.startsWith(accumulatedArguments)) {
-        throw new Error(
-          `OpenAI Responses final function-call arguments for stream index ${formatResponseStreamIndex(
-            streamIndex,
-          )} do not match the streamed argument deltas.`,
-        );
-      }
-
-      const suffix = finalArguments.slice(accumulatedArguments.length);
-      setFunctionCallArguments(streamIndex, finalArguments);
-      if (suffix.length === 0) {
-        return [];
-      }
-
-      return [{ type: 'tool_call_part', argumentsPart: suffix, index: streamIndex }];
-    };
-
-    return (chunk, sink) => {
-      const event = asRawObject(chunk);
-      if (event === null) {
-        return;
-      }
-      const hookedUsage =
-        options?.trait?.extractUsage !== undefined && options.ctx !== undefined
-          ? options.trait.extractUsage(event, options.ctx)
-          : undefined;
-      const usage = parseResponsesUsage(
-        hookedUsage !== undefined ? hookedUsage : extractEventUsage(event),
+  return {
+    formatRequest(input) {
+      const { messages, systemPrompt, tools } = input;
+      const ctx: DialectContext = { model: input.model };
+      const kwargs = resolveRequestKwargs(input);
+      const inputItems = messages.flatMap((message) =>
+        lowerMessage(message, {
+          modelName: ctx.model.model,
+          extractText:
+            (input.toolMessageConversion ?? dialect?.toolMessageConversion) === 'extract_text',
+        }),
       );
-      if (usage !== undefined) {
-        sink.onUsage?.(usage);
-      }
-      const type = readStringField(event, 'type');
-      if (type === undefined) {
-        if (!hasOwn(event, 'type')) {
-          const message = readStringField(event, 'message');
-          if (message !== undefined) {
-            sink.onError?.(malformedStreamErrorEvent(message));
-            return;
-          }
-        }
-        failResponsesDecode('stream event.type', 'must be a string.');
-      }
+      const finalInput = dialect?.mergeHistory?.(inputItems, ctx) ?? inputItems;
+      const createParams: Record<string, unknown> = {
+        model: ctx.model.model,
+        instructions: systemPrompt ? systemPrompt : undefined,
+        input: finalInput,
+        tools:
+          tools.length === 0
+            ? undefined
+            : tools.map((tool) => dialect?.convertTool?.(tool, ctx) ?? defaultConvertTool(tool)),
+        store: false,
+        stream: true,
+        ...kwargs,
+      };
+      const finalParams = dialect?.buildParams?.(createParams, ctx) ?? createParams;
+      return { params: finalParams as unknown as OpenAI.Responses.ResponseCreateParamsStreaming };
+    },
 
-      switch (type) {
-        case 'response.output_text.delta':
-          sink.onDelta({ type: 'text', text: requireStringField(event, 'delta', type) });
-          return;
-        case 'response.output_item.added': {
-          const item = readResponseOutputItem(event['item'], `${type}.item`);
-          const outputIndex = readNumberField(event, 'output_index');
-          if (item.type !== 'function_call') {
-            return;
-          }
-          const streamIndex = responseStreamIndex(item.itemId, outputIndex);
-          setFunctionCallArguments(streamIndex, item.arguments ?? '');
-          sink.onDelta({
-            type: 'function',
-            id: functionCallId(item.callId),
-            name: requireFunctionCallName(item),
-            arguments: item.arguments ?? null,
-            _streamIndex: streamIndex,
-          });
+    createStreamParser() {
+      const functionCallArgumentsByIndex = new Map<number | string, string>();
+      let unindexedFunctionCallArguments: string | undefined;
+
+      const hasFunctionCallArguments = (streamIndex: number | string | undefined): boolean =>
+        streamIndex === undefined
+          ? unindexedFunctionCallArguments !== undefined
+          : functionCallArgumentsByIndex.has(streamIndex);
+
+      const getFunctionCallArguments = (streamIndex: number | string | undefined): string =>
+        streamIndex === undefined
+          ? (unindexedFunctionCallArguments as string)
+          : functionCallArgumentsByIndex.get(streamIndex)!;
+
+      const setFunctionCallArguments = (
+        streamIndex: number | string | undefined,
+        argumentsValue: string,
+      ): void => {
+        if (streamIndex === undefined) {
+          unindexedFunctionCallArguments = argumentsValue;
+        } else {
+          functionCallArgumentsByIndex.set(streamIndex, argumentsValue);
+        }
+      };
+
+      const appendFunctionCallArguments = (
+        streamIndex: number | string | undefined,
+        argumentsPart: string,
+        context: string,
+      ): void => {
+        if (!hasFunctionCallArguments(streamIndex)) {
+          failResponsesDecode(
+            context,
+            `received function-call arguments for unknown stream index ${formatResponseStreamIndex(streamIndex)}.`,
+          );
+        }
+        setFunctionCallArguments(streamIndex, getFunctionCallArguments(streamIndex) + argumentsPart);
+      };
+
+      const finalArgumentsSuffix = (
+        streamIndex: number | string | undefined,
+        finalArguments: string,
+        context: string,
+      ): StreamedMessagePart[] => {
+        if (!hasFunctionCallArguments(streamIndex)) {
+          failResponsesDecode(
+            context,
+            `received final function-call arguments for unknown stream index ${formatResponseStreamIndex(streamIndex)}.`,
+          );
+        }
+
+        const accumulatedArguments = getFunctionCallArguments(streamIndex);
+        if (finalArguments === accumulatedArguments) {
+          return [];
+        }
+
+        if (!finalArguments.startsWith(accumulatedArguments)) {
+          throw new Error(
+            `OpenAI Responses final function-call arguments for stream index ${formatResponseStreamIndex(
+              streamIndex,
+            )} do not match the streamed argument deltas.`,
+          );
+        }
+
+        const suffix = finalArguments.slice(accumulatedArguments.length);
+        setFunctionCallArguments(streamIndex, finalArguments);
+        if (suffix.length === 0) {
+          return [];
+        }
+
+        return [{ type: 'tool_call_part', argumentsPart: suffix, index: streamIndex }];
+      };
+
+      return (chunk, sink) => {
+        const event = asRawObject(chunk);
+        if (event === null) {
           return;
         }
-        case 'response.output_item.done': {
-          const item = readResponseOutputItem(event['item'], `${type}.item`);
-          const outputIndex = readNumberField(event, 'output_index');
-          if (item.type === 'reasoning') {
-            sink.onDelta({ type: 'think', think: '', encrypted: item.encryptedContent });
-            return;
-          }
-          if (item.type === 'function_call' && typeof item.arguments === 'string') {
-            const streamIndex = responseStreamIndex(item.itemId, outputIndex);
-            for (const part of finalArgumentsSuffix(streamIndex, item.arguments, type)) {
-              sink.onDelta(part);
+        const hookedUsage = dialect?.extractUsage?.(event);
+        const usage = parseResponsesUsage(
+          hookedUsage !== undefined ? hookedUsage : extractEventUsage(event),
+        );
+        if (usage !== undefined) {
+          sink.onUsage?.(usage);
+        }
+        const type = readStringField(event, 'type');
+        if (type === undefined) {
+          if (!hasOwn(event, 'type')) {
+            const message = readStringField(event, 'message');
+            if (message !== undefined) {
+              sink.onError?.(malformedStreamErrorEvent(message));
+              return;
             }
           }
-          return;
+          failResponsesDecode('stream event.type', 'must be a string.');
         }
-        case 'response.function_call_arguments.delta': {
-          const streamIndex = responseStreamIndex(
-            readStringField(event, 'item_id'),
-            readNumberField(event, 'output_index'),
-          );
-          const argumentsPart = requireStringField(event, 'delta', type);
-          appendFunctionCallArguments(streamIndex, argumentsPart, type);
-          sink.onDelta({ type: 'tool_call_part', argumentsPart, index: streamIndex });
-          return;
-        }
-        case 'response.function_call_arguments.done': {
-          const functionArguments = requireStringField(event, 'arguments', type);
-          const streamIndex = responseStreamIndex(
-            readStringField(event, 'item_id'),
-            readNumberField(event, 'output_index'),
-          );
-          for (const part of finalArgumentsSuffix(streamIndex, functionArguments, type)) {
-            sink.onDelta(part);
+
+        switch (type) {
+          case 'response.output_text.delta':
+            sink.onDelta({ type: 'text', text: requireStringField(event, 'delta', type) });
+            return;
+          case 'response.output_item.added': {
+            const item = readResponseOutputItem(event['item'], `${type}.item`);
+            const outputIndex = readNumberField(event, 'output_index');
+            if (item.type !== 'function_call') {
+              return;
+            }
+            const streamIndex = responseStreamIndex(item.itemId, outputIndex);
+            setFunctionCallArguments(streamIndex, item.arguments ?? '');
+            sink.onDelta({
+              type: 'function',
+              id: functionCallId(item.callId),
+              name: requireFunctionCallName(item),
+              arguments: item.arguments ?? null,
+              _streamIndex: streamIndex,
+            });
+            return;
           }
-          return;
-        }
-        case 'response.reasoning_summary_part.added':
-          sink.onDelta({ type: 'think', think: '' });
-          return;
-        case 'response.reasoning_summary_text.delta':
-          sink.onDelta({ type: 'think', think: requireStringField(event, 'delta', type) });
-          return;
-        case 'response.completed':
-        case 'response.incomplete': {
-          const response = readObjectField(event, 'response');
-          const messageId = response === undefined ? undefined : readStringField(response, 'id');
-          if (messageId !== undefined) {
-            sink.onMessageId?.(messageId);
+          case 'response.output_item.done': {
+            const item = readResponseOutputItem(event['item'], `${type}.item`);
+            const outputIndex = readNumberField(event, 'output_index');
+            if (item.type === 'reasoning') {
+              sink.onDelta({ type: 'think', think: '', encrypted: item.encryptedContent });
+              return;
+            }
+            if (item.type === 'function_call' && typeof item.arguments === 'string') {
+              const streamIndex = responseStreamIndex(item.itemId, outputIndex);
+              for (const part of finalArgumentsSuffix(streamIndex, item.arguments, type)) {
+                sink.onDelta(part);
+              }
+            }
+            return;
           }
-          const status = response === undefined ? undefined : readStringField(response, 'status');
-          const incompleteDetails =
-            response === undefined ? undefined : readObjectField(response, 'incomplete_details');
-          const reason =
-            incompleteDetails === undefined
-              ? undefined
-              : readStringField(incompleteDetails, 'reason');
-          sink.onFinish(normalizeResponsesFinish(status ?? type.slice('response.'.length), reason));
-          return;
-        }
-        case 'error': {
-          const message = requireStringField(event, 'message', type);
-          sink.onError?.(
-            errorFromOpenAIResponsesEvent(
-              'OpenAI Responses stream error',
-              readNullableStringField(event, 'code') ?? null,
-              message,
-              readNullableStringField(event, 'param') ?? null,
-            ),
-          );
-          return;
-        }
-        case 'response.failed': {
-          const response = requireObjectField(event, 'response', type);
-          const error = readResponsesFailedResponseError(response);
-          if (error !== undefined) {
+          case 'response.function_call_arguments.delta': {
+            const streamIndex = responseStreamIndex(
+              readStringField(event, 'item_id'),
+              readNumberField(event, 'output_index'),
+            );
+            const argumentsPart = requireStringField(event, 'delta', type);
+            appendFunctionCallArguments(streamIndex, argumentsPart, type);
+            sink.onDelta({ type: 'tool_call_part', argumentsPart, index: streamIndex });
+            return;
+          }
+          case 'response.function_call_arguments.done': {
+            const functionArguments = requireStringField(event, 'arguments', type);
+            const streamIndex = responseStreamIndex(
+              readStringField(event, 'item_id'),
+              readNumberField(event, 'output_index'),
+            );
+            for (const part of finalArgumentsSuffix(streamIndex, functionArguments, type)) {
+              sink.onDelta(part);
+            }
+            return;
+          }
+          case 'response.reasoning_summary_part.added':
+            sink.onDelta({ type: 'think', think: '' });
+            return;
+          case 'response.reasoning_summary_text.delta':
+            sink.onDelta({ type: 'think', think: requireStringField(event, 'delta', type) });
+            return;
+          case 'response.completed':
+          case 'response.incomplete': {
+            const response = readObjectField(event, 'response');
+            const messageId = response === undefined ? undefined : readStringField(response, 'id');
+            if (messageId !== undefined) {
+              sink.onMessageId?.(messageId);
+            }
+            const status = response === undefined ? undefined : readStringField(response, 'status');
+            const incompleteDetails =
+              response === undefined ? undefined : readObjectField(response, 'incomplete_details');
+            const reason =
+              incompleteDetails === undefined
+                ? undefined
+                : readStringField(incompleteDetails, 'reason');
+            sink.onFinish(
+              normalizeResponsesFinish(status ?? type.slice('response.'.length), reason),
+            );
+            return;
+          }
+          case 'error': {
+            const message = requireStringField(event, 'message', type);
             sink.onError?.(
               errorFromOpenAIResponsesEvent(
-                'OpenAI Responses response.failed',
-                error.code,
-                error.message,
-                null,
+                'OpenAI Responses stream error',
+                readNullableStringField(event, 'code') ?? null,
+                message,
+                readNullableStringField(event, 'param') ?? null,
               ),
             );
             return;
           }
-          sink.onError?.({
-            kind: 'provider',
-            message: `OpenAI Responses response.failed: ${formatResponsesFailedResponse(response)}`,
-          });
-          return;
+          case 'response.failed': {
+            const response = requireObjectField(event, 'response', type);
+            const error = readResponsesFailedResponseError(response);
+            if (error !== undefined) {
+              sink.onError?.(
+                errorFromOpenAIResponsesEvent(
+                  'OpenAI Responses response.failed',
+                  error.code,
+                  error.message,
+                  null,
+                ),
+              );
+              return;
+            }
+            sink.onError?.({
+              kind: 'provider',
+              message: `OpenAI Responses response.failed: ${formatResponsesFailedResponse(response)}`,
+            });
+            return;
+          }
+          default:
+            return;
         }
-        default:
-          return;
-      }
-    };
-  },
-};
+      };
+    },
+  };
+}

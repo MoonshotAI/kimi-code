@@ -3,8 +3,9 @@ import Anthropic from '@anthropic-ai/sdk';
 import { headersToRecord } from '#/llm/errors';
 import type { LlmModel } from '#/llm/model';
 import { toLlmSyntaxErrorMessage } from '#/llm/syntax-errors';
-import type { ProtocolBase } from '#/llm/protocol/base';
-import { resolveModelConnection, type ProtocolTrait, type TraitContext } from '#/llm/protocol/trait';
+import type { ProtocolBase, ProtocolRequesterOptions } from '#/llm/protocol/base';
+import { resolveModelConnection } from '#/llm/protocol/connection';
+import type { DialectContext } from '#/llm/protocol/dialect';
 import {
   mergeRequestHeaders,
   type LlmClientContext,
@@ -22,6 +23,7 @@ import {
   sanitizeToolCallId,
 } from '../tool-call-id';
 import { getAnthropicModelCapability } from './capability';
+import type { AnthropicDialect } from './dialect';
 import {
   createAnthropicFormat,
   type AnthropicFormatOptions,
@@ -34,7 +36,10 @@ const ANTHROPIC_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
   maxLength: 64,
 };
 
-export type AnthropicBaseOptions = AnthropicFormatOptions & LlmRequesterOptions<Anthropic>;
+export interface AnthropicRequesterOptions
+  extends ProtocolRequesterOptions<AnthropicDialect>,
+    AnthropicFormatOptions,
+    LlmRequesterOptions<Anthropic> {}
 
 function anthropicCustomHeaderEnvNames(): string[] {
   const customHeaders = process.env['ANTHROPIC_CUSTOM_HEADERS'];
@@ -75,8 +80,8 @@ function createClient(model: LlmModel, headers: Record<string, string> | undefin
 }
 
 interface AnthropicTransport {
-  readonly trait: ProtocolTrait | undefined;
-  readonly ctx: TraitContext;
+  readonly connection: AnthropicRequesterOptions['connection'];
+  readonly ctx: DialectContext;
   readonly format: ReturnType<typeof createAnthropicFormat>;
   readonly resolveClient: (request: LlmClientContext) => Anthropic;
   readonly signal: AbortSignal;
@@ -87,10 +92,10 @@ async function internalGenerate(
   request: AnthropicRequestParams,
   transport: AnthropicTransport,
 ): Promise<void> {
-  const { trait, ctx, format, resolveClient, signal, onEvent } = transport;
+  const { connection, ctx, format, resolveClient, signal, onEvent } = transport;
   const client = resolveClient({
     model: ctx.model,
-    headers: mergeRequestHeaders(trait?.defaultHeaders?.(ctx), ctx.model.defaultHeaders),
+    headers: mergeRequestHeaders(connection?.defaultHeaders?.(ctx), ctx.model.defaultHeaders),
   });
   onEvent?.({ type: 'llm.sent' });
   const betaHeaders =
@@ -102,7 +107,7 @@ async function internalGenerate(
     ? await client.beta.messages.create(request.params, requestOptions).withResponse()
     : await client.messages.create(request.params, requestOptions).withResponse();
   onEvent?.({ type: 'llm.streaming.headers', headers: headersToRecord(response.headers) ?? {} });
-  const parse = format.createStreamParser({ trait, ctx });
+  const parse = format.createStreamParser();
   let messageId: string | undefined;
   for await (const event of stream) {
     let failed = false;
@@ -127,11 +132,11 @@ async function internalGenerate(
   onEvent?.({ type: 'llm.done' });
 }
 
-export function createAnthropicRequester(
-  trait?: ProtocolTrait,
-  options?: AnthropicBaseOptions,
-): LlmRequester {
-  const format = createAnthropicFormat(options);
+export function createAnthropicRequester(options?: AnthropicRequesterOptions): LlmRequester {
+  const connection = options?.connection;
+  const dialect = options?.dialect;
+  const convertError = options?.convertError;
+  const format = createAnthropicFormat(dialect, options);
   const resolveClient =
     options?.clientFactory ??
     ((request: LlmClientContext) => createClient(request.model, request.headers));
@@ -141,21 +146,19 @@ export function createAnthropicRequester(
       content: LlmRequestContent,
       control: LlmRequestControl,
     ): Promise<void> {
-      const model = resolveModelConnection(config.model, trait);
+      const model = resolveModelConnection(config.model, connection);
       const { systemPrompt, tools = [] } = config;
       const { messages } = content;
       const { signal, onEvent } = control;
-      const ctx: TraitContext = { model };
+      const ctx: DialectContext = { model };
       let request: AnthropicRequestParams;
       try {
-        const policy = trait?.toolCallIdPolicy?.(ctx) ?? ANTHROPIC_TOOL_CALL_ID_POLICY;
+        const policy = dialect?.toolCallIdPolicy ?? ANTHROPIC_TOOL_CALL_ID_POLICY;
         request = format.formatRequest({
           model,
           messages: normalizeToolCallIdsForProvider(messages, policy),
           systemPrompt,
           tools,
-          trait,
-          ctx,
           cacheKey: config.cacheKey,
           thinking: config.thinking,
           responseFormat: config.responseFormat,
@@ -163,30 +166,42 @@ export function createAnthropicRequester(
           usedContextTokens: content.usedContextTokens,
           maxContextTokens: config.maxContextTokens,
           extraParams: config.extraParams,
+          toolMessageConversion: config.toolMessageConversion,
         });
       } catch (error) {
         onEvent?.({ type: 'llm.failed.syntax', error: toLlmSyntaxErrorMessage(error) });
         return;
       }
       try {
-        await internalGenerate(request, { trait, ctx, format, resolveClient, signal, onEvent });
+        await internalGenerate(request, {
+          connection,
+          ctx,
+          format,
+          resolveClient,
+          signal,
+          onEvent,
+        });
       } catch (error) {
         onEvent?.({
           type: 'llm.failed.remote',
-          error: convertAnthropicError(error, (e) => trait?.convertError?.(e, ctx)),
+          error: convertAnthropicError(error, (e) => convertError?.(e)),
         });
       }
     },
   };
 }
 
-export function createAnthropicBase(options?: AnthropicBaseOptions): ProtocolBase {
+export function createAnthropicBase(
+  options?: AnthropicFormatOptions & LlmRequesterOptions<Anthropic>,
+): ProtocolBase<AnthropicDialect> {
   return {
     capability: getAnthropicModelCapability,
-    createRequester: (trait?: ProtocolTrait) => createAnthropicRequester(trait, options),
+    createRequester: (requesterOptions) => createAnthropicRequester({ ...options, ...requesterOptions }),
   };
 }
 
-export const anthropicBase: ProtocolBase = createAnthropicBase();
+export const anthropicBase: ProtocolBase<AnthropicDialect> = createAnthropicBase();
 
-export const anthropicBetaBase: ProtocolBase = createAnthropicBase({ betaApi: true });
+export const anthropicBetaBase: ProtocolBase<AnthropicDialect> = createAnthropicBase({
+  betaApi: true,
+});

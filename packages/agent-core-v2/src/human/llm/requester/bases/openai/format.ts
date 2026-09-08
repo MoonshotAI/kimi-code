@@ -21,19 +21,19 @@ import type {
   FormatRequestInput,
   FormatRequestOptions,
   ProtocolFormat,
-  StreamParserOptions,
 } from '#/llm/protocol/format';
 import {
   type StreamedMessagePart,
   type ToolDescription,
 } from '#/llm/message';
+import { applyThinking, type DialectContext } from '#/llm/protocol/dialect';
 import { toolResultToPlainText } from '#/llm/protocol/patterns';
 import { applyPatterns } from '#/llm/protocol/rewrite';
-import { applyThinking } from '#/llm/protocol/trait';
 import type { ResponseFormat } from '#/llm/response-format';
 import { encodeReasoningEffortFallback } from '#/llm/thinking';
 import type { TokenUsage } from '#/llm/usage';
 
+import type { OpenAIDialect } from './dialect';
 import { lowerMessage, type OpenAIWireMessage } from './lower';
 import { extractToolMedia } from './patterns';
 import { DEFAULT_REASONING_KEY, extractReasoning } from './reasoning-key';
@@ -161,219 +161,219 @@ interface ResolvedRequestKwargs {
   preserveThinking: boolean;
 }
 
-function resolveRequestKwargs(input: FormatRequestInput): ResolvedRequestKwargs {
-  const {
-    messages,
-    trait,
-    ctx,
-    cacheKey,
-    thinking,
-    responseFormat,
-    maxCompletionTokens,
-    usedContextTokens,
-    maxContextTokens,
-    extraParams,
-  } = input;
-  let kwargs: Record<string, unknown> = {};
-  if (cacheKey !== undefined) {
-    kwargs = trait?.cacheKey?.(cacheKey, ctx) ?? { prompt_cache_key: cacheKey };
-  }
-  let preserveThinking = false;
-  if (thinking !== undefined) {
-    const applied = applyThinking(kwargs, thinking, trait, ctx, (t) =>
-      encodeReasoningEffortFallback(t, ctx.model, trait?.strictThinkingValidation === true),
-    );
-    kwargs = applied.kwargs;
-    preserveThinking = applied.preserveThinking;
-  }
-  if (
-    trait?.withThinking === undefined &&
-    thinking?.effort !== 'off' &&
-    kwargs['reasoning_effort'] === undefined &&
-    messages.some((message) => message.content.some((part) => part.type === 'think'))
-  ) {
-    kwargs = { ...kwargs, reasoning_effort: 'medium' };
-  }
-  if (responseFormat !== undefined) {
-    kwargs = { ...kwargs, response_format: responseFormatToOpenAI(responseFormat) };
-  }
-  if (maxCompletionTokens !== undefined) {
-    let cap = maxCompletionTokens;
-    if (
-      usedContextTokens !== undefined &&
-      maxContextTokens !== undefined &&
-      maxContextTokens > 0
-    ) {
-      cap = Math.min(cap, maxContextTokens - usedContextTokens);
-    }
-    cap = Math.max(1, cap);
-    const hooked = trait?.withMaxCompletionTokens?.(cap, ctx);
-    if (hooked !== undefined) {
-      kwargs = { ...kwargs, ...hooked };
-    } else {
-      const capped = Math.min(cap, CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING);
-      kwargs = { ...kwargs, ...completionTokenKwargs(ctx.model.model, Math.max(1, capped)) };
-    }
-  }
-  kwargs = assign(kwargs, extraParams?.openai ?? {});
-  kwargs = shake(kwargs);
-  return { kwargs, preserveThinking };
-}
-
 export interface OpenAIRequestParams {
   readonly params: OpenAI.Chat.ChatCompletionCreateParamsStreaming;
   readonly headers?: Record<string, string>;
 }
 
-export const openAIFormat: ProtocolFormat<OpenAIRequestParams, RawResponse, RawChunk> = {
-  formatRequest(input, options?: FormatRequestOptions) {
-    const { messages, systemPrompt, tools, trait, ctx } = input;
-    const reasoningKey = options?.reasoningKey ?? DEFAULT_REASONING_KEY;
-    const { kwargs, preserveThinking } = resolveRequestKwargs(input);
-
-    const conversion = input.toolMessageConversion ?? trait?.toolMessageConversion?.(ctx);
-    const mediaPattern =
-      conversion === 'extract_text'
-        ? toolResultToPlainText
-        : conversion === 'keep_parts'
-          ? undefined
-          : extractToolMedia;
-    const normalized =
-      mediaPattern === undefined ? messages : applyPatterns(messages, [mediaPattern]);
-    const converted: OpenAIWireMessage[] = [];
-    if (systemPrompt) {
-      converted.push({ role: 'system', content: systemPrompt });
+export function createOpenAIFormat(
+  dialect?: OpenAIDialect,
+): ProtocolFormat<OpenAIRequestParams, RawResponse, RawChunk> {
+  function resolveRequestKwargs(input: FormatRequestInput): ResolvedRequestKwargs {
+    const ctx: DialectContext = { model: input.model };
+    const {
+      messages,
+      cacheKey,
+      thinking,
+      responseFormat,
+      maxCompletionTokens,
+      usedContextTokens,
+      maxContextTokens,
+      extraParams,
+    } = input;
+    let kwargs: Record<string, unknown> = {};
+    if (cacheKey !== undefined) {
+      kwargs = dialect?.cacheKey?.(cacheKey, ctx) ?? { prompt_cache_key: cacheKey };
     }
-    for (const message of normalized) {
-      converted.push(
-        ...lowerMessage(message, {
-          trait,
-          ctx,
-          reasoningKey,
-          preserveThinking,
-          toolMessageConversion: conversion,
-        }),
+    let preserveThinking = false;
+    if (thinking !== undefined) {
+      const applied = applyThinking(kwargs, thinking, dialect?.thinking, ctx, (t) =>
+        encodeReasoningEffortFallback(t, ctx.model, dialect?.strictThinkingValidation === true),
       );
+      kwargs = applied.kwargs;
+      preserveThinking = applied.preserveThinking;
     }
-    const finalMessages =
-      (trait?.mergeHistory?.(converted, ctx) as OpenAIWireMessage[] | undefined) ?? converted;
-    const createParams: Record<string, unknown> = {
-      model: ctx.model.model,
-      messages: finalMessages,
-      tools:
-        tools.length === 0
-          ? undefined
-          : tools.map((tool) => trait?.convertTool?.(tool, ctx) ?? defaultConvertTool(tool)),
-      stream: true,
-      stream_options: { include_usage: true },
-      ...kwargs,
-    };
-    const finalParams = trait?.buildParams?.(createParams, ctx) ?? createParams;
-    return { params: finalParams as unknown as OpenAI.Chat.ChatCompletionCreateParamsStreaming };
-  },
-
-  createStreamParser(options?: StreamParserOptions) {
-    const bufferedToolCalls = new Map<number | string, BufferedStreamToolCall>();
-
-    function convertStreamToolCall(toolCall: RawStreamToolCallDelta): StreamedMessagePart[] {
-      if (toolCall.function === undefined || toolCall.function === null) {
-        return [];
+    if (
+      dialect?.thinking === undefined &&
+      thinking?.effort !== 'off' &&
+      kwargs['reasoning_effort'] === undefined &&
+      messages.some((message) => message.content.some((part) => part.type === 'think'))
+    ) {
+      kwargs = { ...kwargs, reasoning_effort: 'medium' };
+    }
+    if (responseFormat !== undefined) {
+      kwargs = { ...kwargs, response_format: responseFormatToOpenAI(responseFormat) };
+    }
+    if (maxCompletionTokens !== undefined) {
+      let cap = maxCompletionTokens;
+      if (
+        usedContextTokens !== undefined &&
+        maxContextTokens !== undefined &&
+        maxContextTokens > 0
+      ) {
+        cap = Math.min(cap, maxContextTokens - usedContextTokens);
       }
-      const streamIndex = toolCall.index;
-      const functionName = toolCall.function.name;
-      const functionArguments = toolCall.function.arguments;
-      const hasConcreteName = typeof functionName === 'string' && functionName.length > 0;
-      const hasArguments = typeof functionArguments === 'string' && functionArguments.length > 0;
+      cap = Math.max(1, cap);
+      const hooked = dialect?.maxCompletionTokens?.(cap, ctx);
+      if (hooked !== undefined) {
+        kwargs = { ...kwargs, ...hooked };
+      } else {
+        const capped = Math.min(cap, CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING);
+        kwargs = { ...kwargs, ...completionTokenKwargs(ctx.model.model, Math.max(1, capped)) };
+      }
+    }
+    kwargs = assign(kwargs, extraParams?.openai ?? {});
+    kwargs = shake(kwargs);
+    return { kwargs, preserveThinking };
+  }
 
-      if (streamIndex === undefined) {
-        if (hasConcreteName) {
+  return {
+    formatRequest(input, options?: FormatRequestOptions) {
+      const { messages, systemPrompt, tools } = input;
+      const ctx: DialectContext = { model: input.model };
+      const reasoningKey = options?.reasoningKey ?? DEFAULT_REASONING_KEY;
+      const { kwargs, preserveThinking } = resolveRequestKwargs(input);
+
+      const conversion = input.toolMessageConversion ?? dialect?.toolMessageConversion;
+      const mediaPattern =
+        conversion === 'extract_text'
+          ? toolResultToPlainText
+          : conversion === 'keep_parts'
+            ? undefined
+            : extractToolMedia;
+      const normalized =
+        mediaPattern === undefined ? messages : applyPatterns(messages, [mediaPattern]);
+      const converted: OpenAIWireMessage[] = [];
+      if (systemPrompt) {
+        converted.push({ role: 'system', content: systemPrompt });
+      }
+      for (const message of normalized) {
+        converted.push(
+          ...lowerMessage(message, {
+            dialect,
+            ctx,
+            reasoningKey,
+            preserveThinking,
+            toolMessageConversion: conversion,
+          }),
+        );
+      }
+      const finalMessages = dialect?.mergeHistory?.(converted, ctx) ?? converted;
+      const createParams: Record<string, unknown> = {
+        model: ctx.model.model,
+        messages: finalMessages,
+        tools:
+          tools.length === 0
+            ? undefined
+            : tools.map((tool) => dialect?.convertTool?.(tool, ctx) ?? defaultConvertTool(tool)),
+        stream: true,
+        stream_options: { include_usage: true },
+        ...kwargs,
+      };
+      const finalParams = dialect?.buildParams?.(createParams, ctx) ?? createParams;
+      return { params: finalParams as unknown as OpenAI.Chat.ChatCompletionCreateParamsStreaming };
+    },
+
+    createStreamParser() {
+      const bufferedToolCalls = new Map<number | string, BufferedStreamToolCall>();
+
+      function convertStreamToolCall(toolCall: RawStreamToolCallDelta): StreamedMessagePart[] {
+        if (toolCall.function === undefined || toolCall.function === null) {
+          return [];
+        }
+        const streamIndex = toolCall.index;
+        const functionName = toolCall.function.name;
+        const functionArguments = toolCall.function.arguments;
+        const hasConcreteName = typeof functionName === 'string' && functionName.length > 0;
+        const hasArguments = typeof functionArguments === 'string' && functionArguments.length > 0;
+
+        if (streamIndex === undefined) {
+          if (hasConcreteName) {
+            return [
+              {
+                type: 'function',
+                id: toolCall.id ?? crypto.randomUUID(),
+                name: functionName,
+                arguments: functionArguments ?? null,
+              },
+            ];
+          }
+          if (hasArguments) {
+            return [{ type: 'tool_call_part', argumentsPart: functionArguments }];
+          }
+          return [];
+        }
+
+        const buffered = bufferedToolCalls.get(streamIndex) ?? { arguments: '', emitted: false };
+        if (toolCall.id !== undefined) {
+          buffered.id = toolCall.id;
+        }
+        if (!buffered.emitted) {
+          if (!hasConcreteName) {
+            if (hasArguments) {
+              buffered.arguments += functionArguments;
+            }
+            bufferedToolCalls.set(streamIndex, buffered);
+            return [];
+          }
+          buffered.emitted = true;
+          const initialArguments =
+            buffered.arguments.length > 0
+              ? buffered.arguments + (functionArguments ?? '')
+              : (functionArguments ?? null);
+          buffered.arguments = '';
+          bufferedToolCalls.set(streamIndex, buffered);
           return [
             {
               type: 'function',
-              id: toolCall.id ?? crypto.randomUUID(),
+              id: buffered.id ?? toolCall.id ?? crypto.randomUUID(),
               name: functionName,
-              arguments: functionArguments ?? null,
+              arguments: initialArguments,
+              _streamIndex: streamIndex,
             },
           ];
         }
-        if (hasArguments) {
-          return [{ type: 'tool_call_part', argumentsPart: functionArguments }];
-        }
-        return [];
-      }
-
-      const buffered = bufferedToolCalls.get(streamIndex) ?? { arguments: '', emitted: false };
-      if (toolCall.id !== undefined) {
-        buffered.id = toolCall.id;
-      }
-      if (!buffered.emitted) {
-        if (!hasConcreteName) {
-          if (hasArguments) {
-            buffered.arguments += functionArguments;
-          }
-          bufferedToolCalls.set(streamIndex, buffered);
+        if (!hasArguments) {
           return [];
         }
-        buffered.emitted = true;
-        const initialArguments =
-          buffered.arguments.length > 0
-            ? buffered.arguments + (functionArguments ?? '')
-            : (functionArguments ?? null);
-        buffered.arguments = '';
-        bufferedToolCalls.set(streamIndex, buffered);
-        return [
-          {
-            type: 'function',
-            id: buffered.id ?? toolCall.id ?? crypto.randomUUID(),
-            name: functionName,
-            arguments: initialArguments,
-            _streamIndex: streamIndex,
-          },
-        ];
+        return [{ type: 'tool_call_part', argumentsPart: functionArguments, index: streamIndex }];
       }
-      if (!hasArguments) {
-        return [];
-      }
-      return [{ type: 'tool_call_part', argumentsPart: functionArguments, index: streamIndex }];
-    }
 
-    return (chunk, sink) => {
-      if (typeof chunk.id === 'string' && chunk.id.length > 0) {
-        sink.onMessageId?.(chunk.id);
-      }
-      const hooked =
-        options?.trait?.extractUsage !== undefined && options.ctx !== undefined
-          ? options.trait.extractUsage(chunk as Record<string, unknown>, options.ctx)
-          : undefined;
-      const usage = parseRawUsage(
-        (hooked !== undefined ? hooked : chunk.usage) as RawUsage | null | undefined,
-      );
-      if (usage !== undefined) {
-        sink.onUsage?.(usage);
-      }
-      const choice = chunk.choices?.[0];
-      if (choice?.finish_reason !== undefined && choice.finish_reason !== null) {
-        sink.onFinish(normalizeFinishReason(choice.finish_reason));
-      }
-      const delta = choice?.delta;
-      if (!delta) {
-        return;
-      }
-      const reasoning = extractReasoning(delta);
-      if (reasoning !== undefined) {
-        sink.onDelta({ type: 'think', think: reasoning.value });
-      }
-      if (typeof delta.content === 'string' && delta.content.length > 0) {
-        sink.onDelta({ type: 'text', text: delta.content });
-      }
-      for (const toolCall of delta.tool_calls ?? []) {
-        for (const part of convertStreamToolCall(toolCall)) {
-          sink.onDelta(part);
+      return (chunk, sink) => {
+        if (typeof chunk.id === 'string' && chunk.id.length > 0) {
+          sink.onMessageId?.(chunk.id);
         }
-      }
-    };
-  },
-};
+        const hooked = dialect?.extractUsage?.(chunk as Record<string, unknown>);
+        const usage = parseRawUsage(
+          (hooked !== undefined ? hooked : chunk.usage) as RawUsage | null | undefined,
+        );
+        if (usage !== undefined) {
+          sink.onUsage?.(usage);
+        }
+        const choice = chunk.choices?.[0];
+        if (choice?.finish_reason !== undefined && choice.finish_reason !== null) {
+          sink.onFinish(normalizeFinishReason(choice.finish_reason));
+        }
+        const delta = choice?.delta;
+        if (!delta) {
+          return;
+        }
+        const reasoning = extractReasoning(delta);
+        if (reasoning !== undefined) {
+          sink.onDelta({ type: 'think', think: reasoning.value });
+        }
+        if (typeof delta.content === 'string' && delta.content.length > 0) {
+          sink.onDelta({ type: 'text', text: delta.content });
+        }
+        for (const toolCall of delta.tool_calls ?? []) {
+          for (const part of convertStreamToolCall(toolCall)) {
+            sink.onDelta(part);
+          }
+        }
+      };
+    },
+  };
+}
 
 function defaultConvertTool(tool: ToolDescription): Record<string, unknown> {
   return {

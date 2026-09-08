@@ -45,20 +45,16 @@ afterEach(() => {
 registerProviderDefinition({
   id: 'cap-vendor',
   baseProtocol: 'openai',
-  traits: [
-    {
-      capability: (modelName) =>
-        modelName === 'special-model'
-          ? {
-              image_in: true,
-              video_in: false,
-              audio_in: false,
-              thinking: false,
-              tool_use: true,
-            }
-          : undefined,
-    },
-  ],
+  capability: (modelName: string) =>
+    modelName === 'special-model'
+      ? {
+          image_in: true,
+          video_in: false,
+          audio_in: false,
+          thinking: false,
+          tool_use: true,
+        }
+      : undefined,
 });
 
 const registry = new ProtocolAdapterRegistry();
@@ -108,30 +104,30 @@ describe('supportedProtocols', () => {
 });
 
 describe('resolveAdapterIdentity', () => {
-  it('resolves the kimi pair registrations to their vendor traits', () => {
+  it('resolves the kimi pair registrations to their vendor dialects', () => {
     expect(registry.resolveAdapterIdentity('openai', 'kimi').baseId).toBe('openai');
-    expect(registry.resolveAdapterIdentity('openai', 'kimi').traits).toHaveLength(1);
+    expect(registry.resolveAdapterIdentity('openai', 'kimi').dialect).toBeDefined();
     expect(registry.resolveAdapterIdentity('anthropic', 'kimi').baseId).toBe('anthropic');
-    expect(registry.resolveAdapterIdentity('anthropic', 'kimi').traits).toHaveLength(1);
+    expect(registry.resolveAdapterIdentity('anthropic', 'kimi').dialect).toBeDefined();
     expect(registry.resolveAdapterIdentity('openai_responses', 'kimi').baseId).toBe(
       'openai_responses',
     );
-    expect(registry.resolveAdapterIdentity('openai_responses', 'kimi').traits).toHaveLength(1);
+    expect(registry.resolveAdapterIdentity('openai_responses', 'kimi').dialect).toBeUndefined();
   });
 
-  it('resolves unregistered pairs to the protocol itself with no vendor traits', () => {
+  it('resolves unregistered pairs to the protocol itself with no vendor dialect', () => {
     const google = registry.resolveAdapterIdentity('google-genai', 'kimi');
     expect(google.baseId).toBe('google-genai');
-    expect(google.traits).toHaveLength(0);
+    expect(google.dialect).toBeUndefined();
     const unknown = registry.resolveAdapterIdentity('openai', 'no-such-vendor');
     expect(unknown.baseId).toBe('openai');
-    expect(unknown.traits).toHaveLength(0);
+    expect(unknown.dialect).toBeUndefined();
   });
 
   it('resolves the no-providerType branch identically', () => {
     const identity = registry.resolveAdapterIdentity('openai');
     expect(identity.baseId).toBe('openai');
-    expect(identity.traits).toHaveLength(0);
+    expect(identity.dialect).toBeUndefined();
   });
 });
 
@@ -293,11 +289,11 @@ describe('kimi provider definitions', () => {
     const anthropic = getProviderDefinition('kimi', 'anthropic');
     const responses = getProviderDefinition('kimi', 'openai_responses');
     expect(native?.baseProtocol).toBe('openai');
-    expect(native?.traits).toHaveLength(1);
+    expect(native?.dialect).toBeDefined();
     expect(anthropic?.baseProtocol).toBe('anthropic');
-    expect(anthropic?.traits).toHaveLength(1);
+    expect(anthropic?.dialect).toBeDefined();
     expect(responses?.baseProtocol).toBe('openai_responses');
-    expect(responses?.traits).toHaveLength(1);
+    expect(responses?.dialect).toBeUndefined();
     for (const definition of [native, anthropic, responses]) {
       expect(definition?.endpoint).toEqual({
         apiKeyEnv: 'KIMI_API_KEY',
@@ -321,12 +317,10 @@ describe('kimi provider definitions', () => {
     registerProviderDefinition({
       id: 'pair-vendor',
       baseProtocol: 'openai',
-      traits: [],
     });
     registerProviderDefinition({
       id: 'pair-vendor',
       baseProtocol: 'anthropic',
-      traits: [],
     });
     expect(getProviderDefinition('pair-vendor', 'openai')).toBeDefined();
     expect(getProviderDefinition('pair-vendor', 'anthropic')).toBeDefined();
@@ -334,14 +328,12 @@ describe('kimi provider definitions', () => {
       registerProviderDefinition({
         id: 'pair-vendor',
         baseProtocol: 'openai',
-        traits: [],
       }),
     ).toThrow(/already registered/);
     expect(() =>
       registerProviderDefinition({
         id: 'kimi',
         baseProtocol: 'openai',
-        traits: [],
       }),
     ).toThrow(/already registered/);
   });

@@ -25,10 +25,12 @@ import {
   KIMI_API_KEY_ENV,
   KIMI_BASE_URL_ENV,
   KIMI_DEFAULT_BASE_URL,
-  kimiAnthropicTrait,
-  kimiOpenAITrait,
-} from '#/llm-kimi/trait';
-import { anthropicProvider, googleGenAITrait, openaiProvider } from '#/llm/provider/providers/standard';
+  kimiAnthropicDialect,
+  kimiConnection,
+  kimiOpenAIDialect,
+} from '#/llm-kimi/dialect';
+import { classifyKimiQuotaError } from '#/llm-kimi/errors';
+import { anthropicProvider, googleGenAIConnection, openaiProvider } from '#/llm/provider/providers/standard';
 import type { LlmClientContext, LlmRequester, LlmRequestEvent } from '#/llm/requester/requester';
 import type { TokenUsage } from '#/llm/usage';
 import {
@@ -50,6 +52,18 @@ const model: LlmModel = {
   capability: UNKNOWN_CAPABILITY,
 };
 const messages: readonly Message[] = [createUserMessage('hi')];
+
+const kimiOpenAI = {
+  connection: kimiConnection,
+  dialect: kimiOpenAIDialect,
+  convertError: classifyKimiQuotaError,
+} as const;
+
+const kimiAnthropic = {
+  connection: kimiConnection,
+  dialect: kimiAnthropicDialect,
+  convertError: classifyKimiQuotaError,
+} as const;
 
 async function generateAndCollectUsage(
   requester: LlmRequester,
@@ -213,12 +227,12 @@ function stubGoogleClient(chunks: readonly Record<string, unknown>[]): ClientStu
 }
 
 describe('defaultHeaders', () => {
-  it('sends trait-declared headers on openai requests', async () => {
+  it('sends connection-declared headers on openai requests', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester(
-      { defaultHeaders: () => ({ 'x-trait': 'a' }) },
-      { clientFactory: client.clientFactory },
-    );
+    const requester = createOpenAIRequester({
+      connection: { defaultHeaders: () => ({ 'x-trait': 'a' }) },
+      clientFactory: client.clientFactory,
+    });
     await requester.generate(
       { model },
       { messages },
@@ -229,7 +243,7 @@ describe('defaultHeaders', () => {
 
   it('sends model defaultHeaders on openai requests', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester(undefined, { clientFactory: client.clientFactory });
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     await requester.generate(
       { model: { ...model, defaultHeaders: { 'x-model': 'b' } } },
       { messages },
@@ -238,12 +252,12 @@ describe('defaultHeaders', () => {
     expect(client.headers()?.['x-model']).toBe('b');
   });
 
-  it('lets model headers override trait headers', async () => {
+  it('lets model headers override connection headers', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester(
-      { defaultHeaders: () => ({ 'x-k': 'trait' }) },
-      { clientFactory: client.clientFactory },
-    );
+    const requester = createOpenAIRequester({
+      connection: { defaultHeaders: () => ({ 'x-k': 'trait' }) },
+      clientFactory: client.clientFactory,
+    });
     await requester.generate(
       { model: { ...model, defaultHeaders: { 'x-k': 'model' } } },
       { messages },
@@ -254,10 +268,10 @@ describe('defaultHeaders', () => {
 
   it('sends merged headers on anthropic requests', async () => {
     const client = stubAnthropicClient(anthropicStreamEvents);
-    const requester = createAnthropicRequester(
-      { defaultHeaders: () => ({ 'x-trait': 'a' }) },
-      { clientFactory: client.clientFactory },
-    );
+    const requester = createAnthropicRequester({
+      connection: { defaultHeaders: () => ({ 'x-trait': 'a' }) },
+      clientFactory: client.clientFactory,
+    });
     let finish: FinishInfo | undefined;
     let messageId: string | undefined;
     await requester.generate(
@@ -279,7 +293,7 @@ describe('defaultHeaders', () => {
 });
 
 describe('capability', () => {
-  it('resolves capabilities from the base prefixes and the trait hook', () => {
+  it('resolves capabilities from the base prefixes and the variant hook', () => {
     const reasoning = openaiProvider.resolveModel('o1').capability;
     expect(reasoning.thinking).toBe(true);
     expect(reasoning.tool_use).toBe(true);
@@ -305,11 +319,11 @@ describe('capability', () => {
       isUnknownCapability(anthropicProvider.resolveModel('no-such-model').capability),
     ).toBe(true);
 
-    const traitCapProvider = createProvider({
-      id: 'test-trait-cap',
-      protocols: { openai: { base: openAIBase, trait: { capability: () => TRAIT_CAPABILITY } } },
+    const variantCapProvider = createProvider({
+      id: 'test-variant-cap',
+      protocols: { openai: { base: openAIBase, capability: () => TRAIT_CAPABILITY } },
     });
-    expect(traitCapProvider.resolveModel('o1').capability).toBe(TRAIT_CAPABILITY);
+    expect(variantCapProvider.resolveModel('o1').capability).toBe(TRAIT_CAPABILITY);
   });
 
   it('enriches listModels seeds and returns an empty list without a model source', async () => {
@@ -448,7 +462,7 @@ describe('endpoint', () => {
     vi.unstubAllEnvs();
   });
 
-  it('injects the endpoint from env and trait defaults at request time', async () => {
+  it('injects the endpoint from env and connection defaults at request time', async () => {
     vi.stubEnv(KIMI_BASE_URL_ENV, '');
     vi.stubEnv(KIMI_API_KEY_ENV, 'env-key');
     const seen: LlmModel[] = [];
@@ -465,7 +479,8 @@ describe('endpoint', () => {
         },
       };
     });
-    const requester = createOpenAIRequester(kimiOpenAITrait, {
+    const requester = createOpenAIRequester({
+      ...kimiOpenAI,
       clientFactory: client.clientFactory,
     });
     const signal = new AbortController().signal;
@@ -549,7 +564,7 @@ describe('protocol variant flags', () => {
 
   it('uses the anthropic beta api when the model opts in', async () => {
     const client = stubAnthropicClient(anthropicStreamEvents);
-    const requester = createAnthropicRequester(undefined, {
+    const requester = createAnthropicRequester({
       clientFactory: client.clientFactory,
     });
     await requester.generate(
@@ -587,7 +602,8 @@ describe('protocol variant flags', () => {
         },
       };
     });
-    const requester = createGoogleGenAIRequester(googleGenAITrait, {
+    const requester = createGoogleGenAIRequester({
+      connection: googleGenAIConnection,
       clientFactory: client.clientFactory,
     });
     const signal = new AbortController().signal;
@@ -617,7 +633,8 @@ describe('convertTool', () => {
 
   it('maps $-prefixed tools to builtin_function', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester(kimiOpenAITrait, {
+    const requester = createOpenAIRequester({
+      ...kimiOpenAI,
       clientFactory: client.clientFactory,
     });
     await requester.generate(
@@ -634,7 +651,8 @@ describe('convertTool', () => {
 
   it('normalizes tool schemas for kimi', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester(kimiOpenAITrait, {
+    const requester = createOpenAIRequester({
+      ...kimiOpenAI,
       clientFactory: client.clientFactory,
     });
     await requester.generate(
@@ -651,9 +669,9 @@ describe('convertTool', () => {
     expect(properties['unit']?.['type']).toBe('string');
   });
 
-  it('uses the default tool mapping without a trait', async () => {
+  it('uses the default tool mapping without a dialect', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester(undefined, { clientFactory: client.clientFactory });
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     await requester.generate(
       { model, tools: [tools[1]!] },
       { messages },
@@ -676,7 +694,8 @@ describe('message-level tools', () => {
 
   it('serializes system message tools for kimi', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester(kimiOpenAITrait, {
+    const requester = createOpenAIRequester({
+      ...kimiOpenAI,
       clientFactory: client.clientFactory,
     });
     await requester.generate(
@@ -693,9 +712,9 @@ describe('message-level tools', () => {
     ]);
   });
 
-  it('drops system message tools without a trait', async () => {
+  it('drops system message tools without a dialect', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester(undefined, { clientFactory: client.clientFactory });
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     await requester.generate(
       { model },
       { messages: [{ role: 'system', content: [], tools: [...declared] }, ...messages] },
@@ -707,9 +726,10 @@ describe('message-level tools', () => {
 });
 
 describe('withMaxCompletionTokens', () => {
-  it('encodes max completion tokens via the kimi trait', async () => {
+  it('encodes max completion tokens via the kimi dialect', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester(kimiOpenAITrait, {
+    const requester = createOpenAIRequester({
+      ...kimiOpenAI,
       clientFactory: client.clientFactory,
     });
     await requester.generate(
@@ -721,9 +741,9 @@ describe('withMaxCompletionTokens', () => {
     expect(client.body()['max_tokens']).toBeUndefined();
   });
 
-  it('uses max_completion_tokens for reasoning models without a trait', async () => {
+  it('uses max_completion_tokens for reasoning models without a dialect', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester(undefined, { clientFactory: client.clientFactory });
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     await requester.generate(
       { model: { ...model, model: 'gpt-5.1' }, maxCompletionTokens: 1000 },
       { messages },
@@ -733,9 +753,9 @@ describe('withMaxCompletionTokens', () => {
     expect(client.body()['max_tokens']).toBeUndefined();
   });
 
-  it('uses max_tokens for other models without a trait', async () => {
+  it('uses max_tokens for other models without a dialect', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester(undefined, { clientFactory: client.clientFactory });
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     await requester.generate(
       { model: { ...model, model: 'gpt-4o' }, maxCompletionTokens: 1000 },
       { messages },
@@ -747,7 +767,7 @@ describe('withMaxCompletionTokens', () => {
 
   it('caps by the remaining context budget', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester(undefined, { clientFactory: client.clientFactory });
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     await requester.generate(
       { model: { ...model, model: 'gpt-4o' }, maxCompletionTokens: 1000, maxContextTokens: 500 },
       { messages, usedContextTokens: 200 },
@@ -758,7 +778,7 @@ describe('withMaxCompletionTokens', () => {
 
   it('passes max_tokens on the anthropic request path', async () => {
     const client = stubAnthropicClient(anthropicStreamEvents);
-    const requester = createAnthropicRequester(undefined, { clientFactory: client.clientFactory });
+    const requester = createAnthropicRequester({ clientFactory: client.clientFactory });
     await requester.generate(
       { model, maxCompletionTokens: 1000, maxContextTokens: 500 },
       { messages, usedContextTokens: 200 },
@@ -795,14 +815,12 @@ describe('withMaxCompletionTokens', () => {
 });
 
 describe('buildParams', () => {
-  it('lets the trait reshape the final params', async () => {
+  it('lets the dialect reshape the final params', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester(
-      {
-        buildParams: (params) => ({ ...params, x_custom: 1 }),
-      },
-      { clientFactory: client.clientFactory },
-    );
+    const requester = createOpenAIRequester({
+      dialect: { buildParams: (params) => ({ ...params, x_custom: 1 }) },
+      clientFactory: client.clientFactory,
+    });
     await requester.generate(
       { model },
       { messages },
@@ -830,7 +848,8 @@ describe('extractUsage', () => {
         ],
       },
     ]);
-    const requester = createOpenAIRequester(kimiOpenAITrait, {
+    const requester = createOpenAIRequester({
+      ...kimiOpenAI,
       clientFactory: client.clientFactory,
     });
     const usage = await generateAndCollectUsage(requester);
@@ -843,7 +862,8 @@ describe('extractUsage', () => {
       { id: 'c1', object: 'chat.completion.chunk', created: 0, model: 'test-model', choices: [{ index: 0, delta: { content: 'hi' }, finish_reason: null }] },
       { id: 'c1', object: 'chat.completion.chunk', created: 0, model: 'test-model', choices: [{ index: 0, delta: {}, finish_reason: 'stop', usage: { prompt_tokens: 4, completion_tokens: 6 } }] },
     ]);
-    const requester = createOpenAIRequester(kimiOpenAITrait, {
+    const requester = createOpenAIRequester({
+      ...kimiOpenAI,
       clientFactory: client.clientFactory,
     });
     const usage = await generateAndCollectUsage(requester);
@@ -851,7 +871,7 @@ describe('extractUsage', () => {
     expect(usage?.inputOther).toBe(4);
   });
 
-  it('parses top-level usage without a trait', async () => {
+  it('parses top-level usage without a dialect', async () => {
     const client = stubOpenAIClient([
       {
         id: 'chatcmpl-1',
@@ -862,7 +882,7 @@ describe('extractUsage', () => {
         usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
       },
     ]);
-    const requester = createOpenAIRequester(undefined, { clientFactory: client.clientFactory });
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     let usage: TokenUsage | undefined;
     let finish: FinishInfo | undefined;
     let messageId: string | undefined;
@@ -967,7 +987,7 @@ describe('toolCallIdPolicy', () => {
 
   it('sanitizes tool call ids on the openai request path', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester(undefined, { clientFactory: client.clientFactory });
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     await requester.generate(
       { model },
       {
@@ -988,17 +1008,17 @@ describe('toolCallIdPolicy', () => {
     expect(bodyMessages[2]?.['tool_call_id']).toBe('call_abc');
   });
 
-  it('lets the trait override the policy', async () => {
+  it('lets the dialect override the policy', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester(
-      {
-        toolCallIdPolicy: () => ({
+    const requester = createOpenAIRequester({
+      dialect: {
+        toolCallIdPolicy: {
           normalize: (id) => sanitizeToolCallId(id, 4),
           maxLength: 4,
-        }),
+        },
       },
-      { clientFactory: client.clientFactory },
-    );
+      clientFactory: client.clientFactory,
+    });
     await requester.generate(
       { model },
       {
@@ -1019,7 +1039,7 @@ describe('toolCallIdPolicy', () => {
 
   it('sanitizes tool call ids on the anthropic request path', async () => {
     const client = stubAnthropicClient(anthropicStreamEvents);
-    const requester = createAnthropicRequester(undefined, { clientFactory: client.clientFactory });
+    const requester = createAnthropicRequester({ clientFactory: client.clientFactory });
     await requester.generate(
       { model },
       {
@@ -1047,14 +1067,12 @@ describe('toolCallIdPolicy', () => {
 
 
 describe('mergeHistory', () => {
-  it('lets the trait merge the converted history', async () => {
+  it('lets the dialect merge the converted history', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester(
-      {
-        mergeHistory: (history) => [...history, { role: 'user', content: 'extra' }],
-      },
-      { clientFactory: client.clientFactory },
-    );
+    const requester = createOpenAIRequester({
+      dialect: { mergeHistory: (history) => [...history, { role: 'user', content: 'extra' }] },
+      clientFactory: client.clientFactory,
+    });
     await requester.generate(
       { model },
       { messages },
@@ -1084,7 +1102,7 @@ describe('toolMessageConversion request config', () => {
 
   it('applies request-level extract_text on the openai path', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester(undefined, { clientFactory: client.clientFactory });
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     await requester.generate(
       { model, toolMessageConversion: 'extract_text' },
       { messages: toolHistory },
@@ -1100,7 +1118,7 @@ describe('toolMessageConversion request config', () => {
 
   it('applies request-level keep_parts on the openai path', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester(undefined, { clientFactory: client.clientFactory });
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     await requester.generate(
       { model, toolMessageConversion: 'keep_parts' },
       { messages: toolHistory },
@@ -1114,9 +1132,10 @@ describe('toolMessageConversion request config', () => {
     ]);
   });
 
-  it('lets the request config override the trait default', async () => {
+  it('lets the request config override the dialect default', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester(kimiOpenAITrait, {
+    const requester = createOpenAIRequester({
+      ...kimiOpenAI,
       clientFactory: client.clientFactory,
     });
     await requester.generate(
@@ -1133,7 +1152,7 @@ describe('toolMessageConversion request config', () => {
     const client = stubResponsesClient([
       { type: 'response.completed', response: { id: 'resp_1', status: 'completed' } },
     ]);
-    const requester = createOpenAIResponsesRequester(undefined, {
+    const requester = createOpenAIResponsesRequester({
       clientFactory: client.clientFactory,
     });
     await requester.generate(
@@ -1147,11 +1166,11 @@ describe('toolMessageConversion request config', () => {
   });
 });
 
-describe('anthropic trait dialect', () => {
-  it('lets the trait reshape messages, history, and tools', async () => {
+describe('anthropic dialect', () => {
+  it('lets the dialect reshape messages, history, and tools', async () => {
     const client = stubAnthropicClient(anthropicStreamEvents);
-    const requester = createAnthropicRequester(
-      {
+    const requester = createAnthropicRequester({
+      dialect: {
         convertMessage: (message, converted) => {
           if (extractText(message) === 'drop me') {
             return null;
@@ -1174,8 +1193,8 @@ describe('anthropic trait dialect', () => {
           input_schema: tool.parameters,
         }),
       },
-      { clientFactory: client.clientFactory },
-    );
+      clientFactory: client.clientFactory,
+    });
     await requester.generate(
       {
         model,
@@ -1208,7 +1227,7 @@ describe('anthropic user message merging', () => {
 
   async function generate(history: readonly Message[]): Promise<Record<string, unknown>[]> {
     const client = stubAnthropicClient(anthropicStreamEvents);
-    const requester = createAnthropicRequester(undefined, { clientFactory: client.clientFactory });
+    const requester = createAnthropicRequester({ clientFactory: client.clientFactory });
     await requester.generate(
       { model },
       { messages: history },
@@ -1263,7 +1282,7 @@ describe('anthropic cache control', () => {
     systemPrompt?: string,
   ): Promise<Record<string, unknown>> {
     const client = stubAnthropicClient(anthropicStreamEvents);
-    const requester = createAnthropicRequester(undefined, { clientFactory: client.clientFactory });
+    const requester = createAnthropicRequester({ clientFactory: client.clientFactory });
     await requester.generate(
       { model, systemPrompt, tools },
       { messages: history },
@@ -1326,7 +1345,7 @@ describe('anthropic cache control', () => {
 
 
 describe('anthropic thinking kwargs', () => {
-  it('applies the kimi thinking trait, the anthropic-beta protocol, and thinking echo rules', async () => {
+  it('applies the kimi thinking dialect, the anthropic-beta protocol, and thinking echo rules', async () => {
     const client = stubAnthropicClient([
       { type: 'message_start', message: { usage: { input_tokens: 10, output_tokens: 1 } } },
       {
@@ -1341,7 +1360,8 @@ describe('anthropic thinking kwargs', () => {
       { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 2 } },
       { type: 'message_stop' },
     ]);
-    const requester = createAnthropicRequester(kimiAnthropicTrait, {
+    const requester = createAnthropicRequester({
+      ...kimiAnthropic,
       betaApi: true,
       clientFactory: client.clientFactory,
     });
@@ -1391,13 +1411,16 @@ describe('anthropic thinking kwargs', () => {
     expect(body['betas']).toEqual(['context-management-2025-06-27']);
     expect(client.betaCalled()).toBe(true);
 
-    const betaFeatureTrait = {
-      withThinking: () => ({
-        thinking: { type: 'enabled' },
-        betaFeatures: ['interleaved-thinking-2025-05-14', 'custom-beta'],
+    const betaFeatureDialect = {
+      thinking: () => ({
+        kwargs: {
+          thinking: { type: 'enabled' },
+          betaFeatures: ['interleaved-thinking-2025-05-14', 'custom-beta'],
+        },
       }),
     };
-    const betaRequester = createAnthropicRequester(betaFeatureTrait, {
+    const betaRequester = createAnthropicRequester({
+      dialect: betaFeatureDialect,
       betaApi: true,
       clientFactory: client.clientFactory,
     });
@@ -1426,7 +1449,8 @@ describe('anthropic thinking kwargs', () => {
       'context-management-2025-06-27',
     ]);
 
-    const plainBetaRequester = createAnthropicRequester(betaFeatureTrait, {
+    const plainBetaRequester = createAnthropicRequester({
+      dialect: betaFeatureDialect,
       clientFactory: client.clientFactory,
     });
     await plainBetaRequester.generate(
@@ -1442,7 +1466,7 @@ describe('anthropic thinking kwargs', () => {
     );
     expect(client.betaCalled()).toBe(false);
 
-    const defaultRequester = createAnthropicRequester(undefined, {
+    const defaultRequester = createAnthropicRequester({
       clientFactory: client.clientFactory,
     });
     await defaultRequester.generate(
@@ -1633,7 +1657,7 @@ describe('openai responses base', () => {
         },
       },
     ]);
-    const requester = createOpenAIResponsesRequester(undefined, {
+    const requester = createOpenAIResponsesRequester({
       clientFactory: client.clientFactory,
     });
     const parts: StreamedMessagePart[] = [];
@@ -1766,7 +1790,7 @@ describe('google genai base', () => {
         usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5, cachedContentTokenCount: 4 },
       },
     ]);
-    const requester = createGoogleGenAIRequester(undefined, {
+    const requester = createGoogleGenAIRequester({
       clientFactory: client.clientFactory,
     });
     const parts: StreamedMessagePart[] = [];

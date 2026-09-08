@@ -1,7 +1,8 @@
 import { extractText, type ContentPart, type Message } from '#/llm/message';
-import type { ProtocolTrait, TraitContext } from '#/llm/protocol/trait';
+import type { DialectContext } from '#/llm/protocol/dialect';
 import type { ToolMessageConversion } from '#/llm/requester/requester';
 
+import type { OpenAIDialect } from './dialect';
 import { TOOL_RESULT_MEDIA_PLACEHOLDER } from './patterns';
 
 export type OpenAIContentPart = {
@@ -83,15 +84,15 @@ function convertToolMessageMediaText(message: Message): string {
 }
 
 export interface OpenAILowerContext {
-  readonly trait: ProtocolTrait | undefined;
-  readonly ctx: TraitContext;
+  readonly dialect: OpenAIDialect | undefined;
+  readonly ctx: DialectContext;
   readonly reasoningKey: string;
   readonly preserveThinking: boolean;
   readonly toolMessageConversion: ToolMessageConversion | undefined;
 }
 
 export function lowerMessage(message: Message, lower: OpenAILowerContext): OpenAIWireMessage[] {
-  const { trait, ctx, reasoningKey, preserveThinking } = lower;
+  const { dialect, ctx, reasoningKey, preserveThinking } = lower;
   let reasoningContent = '';
   let hasReasoningPart = false;
   const nonThinkParts: ContentPart[] = [];
@@ -146,8 +147,8 @@ export function lowerMessage(message: Message, lower: OpenAILowerContext): OpenA
     (converted as Record<string, unknown>)[reasoningKey] = reasoningContent;
   }
   const hooked =
-    trait?.convertMessage === undefined
+    dialect?.convertMessage === undefined
       ? converted
-      : (trait.convertMessage(message, converted, ctx) as OpenAIWireMessage | null);
+      : dialect.convertMessage(message, converted, ctx);
   return hooked === null ? [] : [hooked];
 }

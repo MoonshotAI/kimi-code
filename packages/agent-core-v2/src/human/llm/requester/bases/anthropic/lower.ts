@@ -1,6 +1,8 @@
 import type { Message, TextPart } from '#/llm/message';
-import type { ProtocolTrait, TraitContext } from '#/llm/protocol/trait';
+import type { DialectContext } from '#/llm/protocol/dialect';
 import { SyntaxRequestFormatError } from '#/llm/syntax-errors';
+
+import type { AnthropicDialect } from './dialect';
 
 export type AnthropicWireContentBlock =
   | { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }
@@ -123,15 +125,15 @@ export function messageContent(message: AnthropicWireMessage): AnthropicWireCont
 }
 
 export interface AnthropicLowerContext {
-  readonly trait: ProtocolTrait | undefined;
-  readonly ctx: TraitContext;
+  readonly dialect: AnthropicDialect | undefined;
+  readonly ctx: DialectContext;
 }
 
 export function lowerMessage(
   message: Message,
   lower: AnthropicLowerContext,
 ): AnthropicWireMessage[] {
-  const { trait, ctx } = lower;
+  const { dialect, ctx } = lower;
   const content: AnthropicWireContentBlock[] = [];
   if (message.role === 'system') {
     const text = message.content
@@ -189,9 +191,9 @@ export function lowerMessage(
     content,
   };
   const hooked =
-    trait?.convertMessage === undefined
+    dialect?.convertMessage === undefined
       ? converted
-      : (trait.convertMessage(message, converted, ctx) as AnthropicWireMessage | null);
+      : dialect.convertMessage(message, converted, ctx);
   if (hooked === null) {
     return [];
   }

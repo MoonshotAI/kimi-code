@@ -3,8 +3,9 @@ import OpenAI from 'openai';
 import { headersToRecord } from '#/llm/errors';
 import type { LlmModel } from '#/llm/model';
 import { toLlmSyntaxErrorMessage } from '#/llm/syntax-errors';
-import type { ProtocolBase } from '#/llm/protocol/base';
-import { resolveModelConnection, type ProtocolTrait, type TraitContext } from '#/llm/protocol/trait';
+import type { ProtocolBase, ProtocolRequesterOptions } from '#/llm/protocol/base';
+import { resolveModelConnection } from '#/llm/protocol/connection';
+import type { DialectContext } from '#/llm/protocol/dialect';
 import {
   mergeRequestHeaders,
   type LlmClientContext,
@@ -23,7 +24,11 @@ import {
 } from '../tool-call-id';
 import { convertOpenAIError } from '../openai/format';
 import { getOpenAIResponsesModelCapability } from './capability';
-import { openAIResponsesFormat, type OpenAIResponsesRequestParams } from './format';
+import type { OpenAIResponsesDialect } from './dialect';
+import {
+  createOpenAIResponsesFormat,
+  type OpenAIResponsesRequestParams,
+} from './format';
 
 const OPENAI_RESPONSES_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
   normalize: (id) => sanitizeOpenAIResponsesCallId(id, 64),
@@ -39,9 +44,14 @@ function createClient(model: LlmModel, headers: Record<string, string> | undefin
   });
 }
 
+export interface OpenAIResponsesRequesterOptions
+  extends ProtocolRequesterOptions<OpenAIResponsesDialect>,
+    LlmRequesterOptions<OpenAI> {}
+
 interface OpenAIResponsesTransport {
-  readonly trait: ProtocolTrait | undefined;
-  readonly ctx: TraitContext;
+  readonly connection: OpenAIResponsesRequesterOptions['connection'];
+  readonly ctx: DialectContext;
+  readonly format: ReturnType<typeof createOpenAIResponsesFormat>;
   readonly resolveClient: (request: LlmClientContext) => OpenAI;
   readonly signal: AbortSignal;
   readonly onEvent?: (event: LlmRequestEvent) => void;
@@ -51,11 +61,11 @@ async function internalGenerate(
   request: OpenAIResponsesRequestParams,
   transport: OpenAIResponsesTransport,
 ): Promise<void> {
-  const { trait, ctx, resolveClient, signal, onEvent } = transport;
+  const { connection, ctx, format, resolveClient, signal, onEvent } = transport;
   const client = resolveClient({
     model: ctx.model,
     headers: mergeRequestHeaders(
-      mergeRequestHeaders(trait?.defaultHeaders?.(ctx), ctx.model.defaultHeaders),
+      mergeRequestHeaders(connection?.defaultHeaders?.(ctx), ctx.model.defaultHeaders),
       request.headers,
     ),
   });
@@ -64,7 +74,7 @@ async function internalGenerate(
     .create(request.params, { signal })
     .withResponse();
   onEvent?.({ type: 'llm.streaming.headers', headers: headersToRecord(response.headers) ?? {} });
-  const parse = openAIResponsesFormat.createStreamParser({ trait, ctx });
+  const parse = format.createStreamParser();
   let messageId: string | undefined;
   for await (const chunk of stream) {
     let failed = false;
@@ -90,9 +100,12 @@ async function internalGenerate(
 }
 
 export function createOpenAIResponsesRequester(
-  trait?: ProtocolTrait,
-  options?: LlmRequesterOptions<OpenAI>,
+  options?: OpenAIResponsesRequesterOptions,
 ): LlmRequester {
+  const connection = options?.connection;
+  const dialect = options?.dialect;
+  const convertError = options?.convertError;
+  const format = createOpenAIResponsesFormat(dialect);
   const resolveClient =
     options?.clientFactory ??
     ((request: LlmClientContext) => createClient(request.model, request.headers));
@@ -102,21 +115,19 @@ export function createOpenAIResponsesRequester(
       content: LlmRequestContent,
       control: LlmRequestControl,
     ): Promise<void> {
-      const model = resolveModelConnection(config.model, trait);
+      const model = resolveModelConnection(config.model, connection);
       const { systemPrompt, tools = [] } = config;
       const { messages } = content;
       const { signal, onEvent } = control;
-      const ctx: TraitContext = { model };
+      const ctx: DialectContext = { model };
       let request: OpenAIResponsesRequestParams;
       try {
-        const policy = trait?.toolCallIdPolicy?.(ctx) ?? OPENAI_RESPONSES_TOOL_CALL_ID_POLICY;
-        request = openAIResponsesFormat.formatRequest({
+        const policy = dialect?.toolCallIdPolicy ?? OPENAI_RESPONSES_TOOL_CALL_ID_POLICY;
+        request = format.formatRequest({
           model,
           messages: normalizeToolCallIdsForProvider(messages, policy),
           systemPrompt,
           tools,
-          trait,
-          ctx,
           cacheKey: config.cacheKey,
           thinking: config.thinking,
           responseFormat: config.responseFormat,
@@ -131,18 +142,25 @@ export function createOpenAIResponsesRequester(
         return;
       }
       try {
-        await internalGenerate(request, { trait, ctx, resolveClient, signal, onEvent });
+        await internalGenerate(request, {
+          connection,
+          ctx,
+          format,
+          resolveClient,
+          signal,
+          onEvent,
+        });
       } catch (error) {
         onEvent?.({
           type: 'llm.failed.remote',
-          error: convertOpenAIError(error, (e) => trait?.convertError?.(e, ctx)),
+          error: convertOpenAIError(error, (e) => convertError?.(e)),
         });
       }
     },
   };
 }
 
-export const openAIResponsesBase: ProtocolBase = {
+export const openAIResponsesBase: ProtocolBase<OpenAIResponsesDialect> = {
   capability: getOpenAIResponsesModelCapability,
   createRequester: createOpenAIResponsesRequester,
 };

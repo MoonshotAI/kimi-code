@@ -2,7 +2,7 @@ import type { ProviderMediaContribution } from '#/llm/media/upload';
 import { modelKey, type LlmModel } from '#/llm/model';
 
 import { KimiFiles } from './files';
-import { KIMI_DEFAULT_BASE_URL } from './trait';
+import { KIMI_DEFAULT_BASE_URL } from './dialect';
 
 const filesByModel = new Map<string, KimiFiles>();
 
