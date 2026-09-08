@@ -5,6 +5,7 @@ import { inlineVideoPart, isVideoUploadAuthError } from '#/agent/media/videoUplo
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import { inspectAgentRuntime, type IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
@@ -34,6 +35,7 @@ import {
   buildImageConversionGuidance,
   isModelAcceptedImageMime,
 } from '#/agent/media/image-format-policy';
+import { canTranscodeHeic, isHeicMime, transcodeHeicToJpeg } from '#/agent/media/heic-transcode';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
 import { renderPrompt } from '#/_base/utils/render-prompt';
@@ -85,12 +87,18 @@ function buildMediaNote(input: {
   readonly byteSize: number;
   readonly dimensions: { readonly width: number; readonly height: number } | null;
   readonly delivery?: ImageDelivery;
+  readonly transcodedTo?: string;
 }): string {
   const parts: string[] = [
     `Read ${input.kind} file.`,
     `Mime type: ${input.mimeType}.`,
     `Size: ${String(input.byteSize)} bytes.`,
   ];
+  if (input.transcodedTo !== undefined) {
+    parts.push(
+      `The image was converted from ${input.mimeType} to ${input.transcodedTo} before delivery.`,
+    );
+  }
   if (input.kind === 'image' && input.dimensions) {
     parts.push(
       `Original dimensions: ${String(input.dimensions.width)}x${String(input.dimensions.height)} pixels.`,
@@ -243,7 +251,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
           if (lease.runtime.identity.generation !== inspected.identity.generation) {
             return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
           }
-          return await this.execution(args, path, lease.runtime.fs!, env);
+          return await this.execution(args, path, lease.runtime.fs!, env, lease.runtime.process);
         } finally {
           lease.dispose();
         }
@@ -256,6 +264,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     safePath: string,
     fs: IHostFileSystem,
     env: HostEnvironmentInfo,
+    process: IHostProcessService | undefined,
   ): Promise<ExecutableToolResult> {
     if (!args.path) {
       return { isError: true, output: 'File path cannot be empty.' };
@@ -288,7 +297,15 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
             'Tell the user to use a model with image input capability.',
         };
       }
-      if (fileType.kind === 'image' && !isModelAcceptedImageMime(fileType.mimeType)) {
+      const heicTranscodable =
+        fileType.kind === 'image' &&
+        isHeicMime(fileType.mimeType) &&
+        canTranscodeHeic({ osKind: env.osKind, process });
+      if (
+        fileType.kind === 'image' &&
+        !isModelAcceptedImageMime(fileType.mimeType) &&
+        !heicTranscodable
+      ) {
         return {
           isError: true,
           output: buildImageConversionGuidance(args.path, fileType.mimeType, env.osKind),
@@ -366,13 +383,28 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
         };
       }
 
-      const data = Buffer.from(await fs.readBytes(safePath));
+      const transcoded = heicTranscodable
+        ? await transcodeHeicToJpeg({ path: safePath }, fileType.mimeType, {
+            osKind: env.osKind,
+            process,
+            telemetry: this.telemetry,
+            telemetrySource: 'read_media',
+          })
+        : null;
+      if (heicTranscodable && transcoded === null) {
+        return {
+          isError: true,
+          output: buildImageConversionGuidance(args.path, fileType.mimeType, env.osKind),
+        };
+      }
+      const data = transcoded === null ? Buffer.from(await fs.readBytes(safePath)) : transcoded.data;
+      const imageMime = transcoded === null ? fileType.mimeType : transcoded.mimeType;
       let dimensions = fileType.kind === 'image' ? sniffImageDimensions(data) : null;
       let mediaPart: ContentPart;
       let delivery: ImageDelivery | undefined;
       if (fileType.kind === 'image') {
         if (args.region !== undefined) {
-          const outcome = await cropImageForModel(data, fileType.mimeType, args.region, {
+          const outcome = await cropImageForModel(data, imageMime, args.region, {
             skipResize: args.full_resolution === true,
             telemetry: this.telemetry,
             telemetrySource: 'read_media',
@@ -405,18 +437,18 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
           const base64 = data.toString('base64');
           mediaPart = {
             type: 'image_url',
-            imageUrl: { url: `data:${fileType.mimeType};base64,${base64}` },
+            imageUrl: { url: `data:${imageMime};base64,${base64}` },
           };
           delivery = {
             kind: 'full',
             width: dimensions?.width ?? 0,
             height: dimensions?.height ?? 0,
             byteLength: data.length,
-            mimeType: fileType.mimeType,
+            mimeType: imageMime,
           };
         } else {
           const { readByteBudget, maxEdge } = imageDeliveryLimits;
-          const compressed = await compressImageForModel(data, fileType.mimeType, {
+          const compressed = await compressImageForModel(data, imageMime, {
             byteBudget: readByteBudget,
             maxEdge,
             telemetry: this.telemetry,
@@ -465,6 +497,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
         byteSize: stat.size,
         dimensions,
         delivery,
+        transcodedTo: transcoded?.mimeType,
       });
 
       const output: ContentPart[] = [

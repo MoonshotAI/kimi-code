@@ -435,6 +435,16 @@ export interface ImageCompressEvent {
   duration_ms: number;
 }
 
+export interface ImageTranscodeEvent {
+  source: string;
+  outcome: 'converted' | 'command_failed' | 'empty_output' | 'error';
+  input_mime: string;
+  output_mime: string;
+  original_bytes?: number;
+  final_bytes?: number;
+  duration_ms: number;
+}
+
 export interface ImageCropEvent {
   source: string;
   ok: boolean;
@@ -1084,6 +1094,19 @@ export const telemetryEventDefinitions = {
       final_height: 'Output height in pixels',
       exif_transposed: 'Whether EXIF orientation was applied',
       duration_ms: 'Compression wall-clock time in milliseconds',
+    },
+  }),
+  image_transcode: defineTelemetryEvent<ImageTranscodeEvent>({
+    owner: 'kimi-code',
+    comment: 'An image in a format the provider rejects is converted with a host tool before being sent to the model.',
+    properties: {
+      source: 'Where the image came from',
+      outcome: 'Conversion outcome',
+      input_mime: 'Input MIME type',
+      output_mime: 'Output MIME type',
+      original_bytes: 'Input size in bytes when known',
+      final_bytes: 'Output size in bytes when converted',
+      duration_ms: 'Conversion wall-clock time in milliseconds',
     },
   }),
   image_crop: defineTelemetryEvent<ImageCropEvent>({

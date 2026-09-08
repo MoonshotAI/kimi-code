@@ -9,9 +9,13 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { Message } from '#/llm-adapter/contract/message';
 import type { ContentPart } from '#human/llm/message';
 import type { ModelRequester } from '#/llm-adapter/model/model-requester';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { IHostProcessService } from '#/os/interface/hostProcess';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 
 import { detectFileType, MEDIA_SNIFF_BYTES } from './file-type';
+import { transcodeHeicToJpeg } from './heic-transcode';
+import { compressImageForModel } from './image-compress';
 import { isModelAcceptedImageMime, normalizeImageMime } from './image-format-policy';
 import {
   buildMediaPathTag,
@@ -55,6 +59,8 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly states: IAgentStateService,
     @ISessionMediaStore private readonly mediaStore: ISessionMediaStore,
+    @IHostEnvironment private readonly hostEnv: IHostEnvironment,
+    @IHostProcessService private readonly hostProcess: IHostProcessService,
   ) {
     this.states.contributeState(mediaResolvedKey);
   }
@@ -147,7 +153,11 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       source.bytes.subarray(0, MEDIA_SNIFF_BYTES),
       'media',
     );
-    if (fileType.kind !== 'image' || !isModelAcceptedImageMime(fileType.mimeType)) {
+    const image =
+      fileType.kind === 'image'
+        ? await this.modelImage(source.bytes, fileType.mimeType, signal)
+        : undefined;
+    if (image === undefined) {
       this.telemetry.track2('media_resolve_fallback', {
         kind: 'image',
         reason: 'invalid',
@@ -159,13 +169,36 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     const part: ContentPart = {
       type: 'image_url',
       imageUrl: {
-        url: `data:${normalizeImageMime(fileType.mimeType)};base64,${source.bytes.toString('base64')}`,
+        url: `data:${image.mimeType};base64,${image.bytes.toString('base64')}`,
       },
     };
-    if (source.bytes.length <= IMAGE_MEMO_MAX_BYTES) {
-      this.memoizeImage(cacheKey, part, source.bytes.length);
+    if (image.bytes.length <= IMAGE_MEMO_MAX_BYTES) {
+      this.memoizeImage(cacheKey, part, image.bytes.length);
     }
     return part;
+  }
+
+  private async modelImage(
+    bytes: Buffer,
+    mimeType: string,
+    signal: AbortSignal | undefined,
+  ): Promise<{ readonly bytes: Buffer; readonly mimeType: string } | undefined> {
+    if (isModelAcceptedImageMime(mimeType)) {
+      return { bytes, mimeType: normalizeImageMime(mimeType) };
+    }
+    const transcoded = await transcodeHeicToJpeg({ bytes }, mimeType, {
+      osKind: this.hostEnv.osKind,
+      process: this.hostProcess,
+      telemetry: this.telemetry,
+      telemetrySource: 'media_resolve',
+    });
+    signal?.throwIfAborted();
+    if (transcoded === null) return undefined;
+    const compressed = await compressImageForModel(transcoded.data, transcoded.mimeType, {
+      telemetry: this.telemetry,
+      telemetrySource: 'media_resolve',
+    });
+    return { bytes: Buffer.from(compressed.data), mimeType: normalizeImageMime(compressed.mimeType) };
   }
 
   private memoedImage(cacheKey: string): ContentPart | undefined {

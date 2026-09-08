@@ -23,9 +23,11 @@ import {
   type ContentPart,
   type GetResult,
   type IFileService,
+  type ImageTranscoder,
   type ISessionMediaStore,
   type ITelemetryService,
   type PromptFileAttachment,
+  type TranscodedImage,
 } from '@moonshot-ai/agent-core-v2';
 import { sniffMediaFromMagic } from '@moonshot-ai/agent-core-v2/agent/media/file-type';
 import {
@@ -131,6 +133,7 @@ export interface ResolvePromptMediaOptions {
   readonly resolveOriginalsDir?: () => Promise<string | undefined>;
   readonly resolveAttachmentsDir?: () => Promise<string | undefined>;
   readonly telemetry?: ITelemetryService;
+  readonly transcodeImage?: ImageTranscoder;
 }
 
 export interface PromptMediaPreparation {
@@ -184,6 +187,32 @@ export async function resolvePromptMediaFiles(
         );
         if (!isModelAcceptedImageMime(effectiveMime)) {
           const bytes = Buffer.from(part.source.data, 'base64');
+          const transcoded = await options.transcodeImage?.(bytes, effectiveMime);
+          if (transcoded !== undefined && transcoded !== null) {
+            const image = await transcodedModelImage(
+              transcoded,
+              {
+                bytes,
+                mimeType: effectiveMime,
+                path: await persistOriginalImage(bytes, effectiveMime, {
+                  dir: await resolveOriginalsDir(),
+                }),
+              },
+              options.telemetry,
+            );
+            content.push({ type: 'text', text: image.caption });
+            content.push({
+              type: 'image',
+              source: {
+                kind: 'base64',
+                media_type: image.mimeType,
+                data: image.data.toString('base64'),
+              },
+              name: part.name,
+            });
+            changed = true;
+            continue;
+          }
           const name = part.name ?? `image.${imageExtensionForMime(effectiveMime)}`;
           const persisted = await persistAttachmentBytes(
             bytes,
@@ -308,6 +337,28 @@ export async function resolvePromptMediaFiles(
         }
         let mediaType = resolveEffectiveImageMime(declared, data);
         if (!isModelAcceptedImageMime(mediaType)) {
+          const transcoded = await options.transcodeImage?.(data, mediaType);
+          if (transcoded !== undefined && transcoded !== null) {
+            const image = await transcodedModelImage(
+              transcoded,
+              { bytes: data, mimeType: mediaType, path: sourcePath },
+              options.telemetry,
+            );
+            const saved = await store.save(
+              Readable.from(image.data),
+              compressedUploadName(name, image.mimeType),
+              { mimeType: image.mimeType },
+            );
+            ownedFileIds.add(saved.id);
+            content.push({ type: 'text', text: image.caption });
+            content.push({
+              type: 'image',
+              source: { kind: 'url', url: buildDaemonFileUrl(saved.id) },
+              name: part.name ?? name,
+            });
+            changed = true;
+            continue;
+          }
           content.push({
             type: 'text',
             text: buildAttachedFileNotice(name, mediaType, data.length, sourcePath),
@@ -391,6 +442,34 @@ export async function resolvePromptMediaFiles(
         let mediaType = file.meta.media_type;
         mediaType = resolveEffectiveImageMime(mediaType, data);
         if (!isModelAcceptedImageMime(mediaType)) {
+          const transcoded = await options.transcodeImage?.(data, mediaType);
+          if (transcoded !== undefined && transcoded !== null) {
+            const image = await transcodedModelImage(
+              transcoded,
+              {
+                bytes: data,
+                mimeType: mediaType,
+                path: await persistOriginalImage(data, mediaType, {
+                  dir: await resolveOriginalsDir(),
+                }),
+              },
+              options.telemetry,
+            );
+            const saved = await store.save(
+              Readable.from(image.data),
+              compressedUploadName(file.meta.name, image.mimeType),
+              { mimeType: image.mimeType },
+            );
+            ownedFileIds.add(saved.id);
+            content.push({ type: 'text', text: image.caption });
+            content.push({
+              type: 'image',
+              source: { kind: 'url', url: buildDaemonFileUrl(saved.id) },
+              name: part.name ?? file.meta.name,
+            });
+            changed = true;
+            continue;
+          }
           const name = part.name ?? file.meta.name;
           const persisted = await persistAttachmentBytes(
             data,
@@ -477,6 +556,36 @@ export async function resolvePromptMediaFiles(
 function compressedUploadName(originalName: string, mimeType: string): string {
   const base = originalName.replace(/\.[^./\\]*$/, '');
   return `${base.length > 0 ? base : 'image'}.${imageExtensionForMime(mimeType)}`;
+}
+
+interface ModelImage {
+  readonly data: Buffer;
+  readonly mimeType: string;
+  readonly caption: string;
+}
+
+async function transcodedModelImage(
+  transcoded: TranscodedImage,
+  original: { readonly bytes: Buffer; readonly mimeType: string; readonly path: string | null },
+  telemetry: ITelemetryService | undefined,
+): Promise<ModelImage> {
+  const compressed = await compressImageForModel(transcoded.data, transcoded.mimeType, {
+    telemetry,
+    telemetrySource: 'prompt_transcode',
+  });
+  const data = compressed.changed ? Buffer.from(compressed.data) : transcoded.data;
+  const mimeType = compressed.changed ? compressed.mimeType : transcoded.mimeType;
+  const caption = buildImageCompressionCaption({
+    original: {
+      width: compressed.originalWidth,
+      height: compressed.originalHeight,
+      byteLength: original.bytes.length,
+      mimeType: original.mimeType,
+    },
+    final: { width: compressed.width, height: compressed.height, byteLength: data.length, mimeType },
+    originalPath: original.path,
+  });
+  return { data, mimeType, caption };
 }
 
 const ATTACHMENT_NAME_MAX = 100;

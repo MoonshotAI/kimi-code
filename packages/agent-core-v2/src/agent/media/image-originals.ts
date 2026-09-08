@@ -13,6 +13,8 @@ const MIME_EXTENSION: Readonly<Record<string, string>> = {
   'image/webp': 'webp',
   'image/bmp': 'bmp',
   'image/tiff': 'tif',
+  'image/heic': 'heic',
+  'image/heif': 'heif',
 };
 
 export interface PersistOriginalImageOptions {

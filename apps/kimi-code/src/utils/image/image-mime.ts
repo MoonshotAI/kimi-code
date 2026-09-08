@@ -25,6 +25,25 @@ export function parseImageMeta(bytes: Uint8Array): ImageMeta | null {
   return null;
 }
 
+// ── HEIC / HEIF ─────────────────────────────────────────────────────
+
+const HEIC_FTYP_BRANDS = new Set(['heic', 'heix', 'hevc', 'hevx', 'heif', 'mif1', 'msf1']);
+
+/**
+ * Sniff an ISO-BMFF `ftyp` box whose major brand is one of the HEIF
+ * family. HEIC is not a format the model pipeline accepts, so this is
+ * only used to decide whether a pasted file should be converted first
+ * (macOS `sips`) rather than declined outright.
+ */
+export function isHeicImage(bytes: Uint8Array): boolean {
+  if (bytes.length < 12) return false;
+  if (bytes[4] !== 0x66 || bytes[5] !== 0x74 || bytes[6] !== 0x79 || bytes[7] !== 0x70) return false;
+  const brand = String.fromCodePoint(bytes[8]!, bytes[9]!, bytes[10]!, bytes[11]!)
+    .trim()
+    .toLowerCase();
+  return HEIC_FTYP_BRANDS.has(brand);
+}
+
 // ── PNG ─────────────────────────────────────────────────────────────
 
 function isPng(b: Uint8Array): boolean {

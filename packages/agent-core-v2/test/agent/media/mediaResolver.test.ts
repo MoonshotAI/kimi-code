@@ -26,9 +26,13 @@ import type { Message } from '#/llm-adapter/contract/message';
 import type { ContentPart, VideoURLPart } from '#human/llm/message';
 import type { ModelRequester } from '#/llm-adapter/model/model-requester';
 import type { Protocol } from '#/llm-adapter/protocol/protocol';
+import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { IHostEnvironment as IHostEnvironmentId } from '#/os/interface/hostEnvironment';
+import { IHostProcessService } from '#/os/interface/hostProcess';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 
 import { registerStateServices } from '../../state/stubs';
+import { fakeSips, heicBytes, tinyJpeg } from './fakeSips';
 
 const FILE_ID = 'file_abc';
 const VIDEO_BYTES = Buffer.from('tiny fake mp4 bytes');
@@ -127,6 +131,20 @@ function blobStore(): IBlobStore {
 
 const telemetry = { track2: () => {} } as unknown as ITelemetryService;
 
+function hostEnv(osKind = 'Linux'): IHostEnvironment {
+  return {
+    _serviceBrand: undefined,
+    osKind,
+    osArch: 'arm64',
+    osVersion: 'test',
+    shellName: 'sh',
+    shellPath: '/bin/sh',
+    pathClass: 'posix',
+    homeDir: '/home/test',
+    ready: Promise.resolve(),
+  };
+}
+
 function stubMediaStore(sessionDir = '/nonexistent-session'): ISessionMediaStore {
   return {
     _serviceBrand: undefined,
@@ -205,6 +223,10 @@ function resolver(
   files: Map<string, { name: string; bytes: Buffer }>,
   sessionDir?: string,
   mediaStore: ISessionMediaStore = stubMediaStore(sessionDir),
+  host: { readonly osKind: string; readonly process: IHostProcessService } = {
+    osKind: 'Linux',
+    process: fakeSips().service,
+  },
 ): IAgentMediaResolverService {
   const ix = createServices(disposables, {
     base: [registerStateServices],
@@ -213,6 +235,8 @@ function resolver(
       reg.defineInstance(IBlobStore, blobStore());
       reg.defineInstance(ITelemetryService, telemetry);
       reg.defineInstance(ISessionMediaStore, mediaStore);
+      reg.defineInstance(IHostEnvironmentId, hostEnv(host.osKind));
+      reg.defineInstance(IHostProcessService, host.process);
       reg.define(IAgentMediaResolverService, AgentMediaResolverService);
     },
   });
@@ -263,13 +287,13 @@ describe('AgentMediaResolverService video strategy', () => {
     const message = videoMessage(buildKimiFileUrl(FILE_ID));
 
     const upload1 = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
-    await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore()).resolve(
+    await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore(), hostEnv(), fakeSips().service).resolve(
       [message],
       requester({ uploadVideo: upload1 }),
     );
 
     const upload2 = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-2'));
-    const out = await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore()).resolve(
+    const out = await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore(), hostEnv(), fakeSips().service).resolve(
       [message],
       requester({ uploadVideo: upload2 }),
     );
@@ -478,6 +502,8 @@ describe('AgentMediaResolverService image strategy', () => {
       telemetry,
       new AgentStateService(),
       stubMediaStore(),
+      hostEnv(),
+      fakeSips().service,
     );
 
     await expect(
@@ -511,6 +537,12 @@ describe('AgentMediaResolverService image strategy', () => {
     {
       name: 'the bytes sniff as an unaccepted image mime',
       files: new Map([[FILE_ID, { name: 'pic.bmp', bytes: BMP_BYTES }]]),
+      fileId: FILE_ID,
+      imageIn: true,
+    },
+    {
+      name: 'the bytes sniff as HEIC on a host without a converter',
+      files: new Map([[FILE_ID, { name: 'pic.heic', bytes: heicBytes() }]]),
       fileId: FILE_ID,
       imageIn: true,
     },
@@ -560,6 +592,8 @@ describe('AgentMediaResolverService image strategy', () => {
       telemetry,
       new AgentStateService(),
       stubMediaStore(),
+      hostEnv(),
+      fakeSips().service,
     );
     const message = imageMessage(buildKimiFileUrl(FILE_ID));
     const expected = { type: 'image_url', imageUrl: { url: PNG_DATA_URL } };
@@ -586,6 +620,8 @@ describe('AgentMediaResolverService image strategy', () => {
       telemetry,
       new AgentStateService(),
       stubMediaStore(),
+      hostEnv(),
+      fakeSips().service,
     );
     const message = imageMessage(buildKimiFileUrl(FILE_ID));
 
@@ -608,6 +644,8 @@ describe('AgentMediaResolverService image strategy', () => {
       telemetry,
       new AgentStateService(),
       stubMediaStore(),
+      hostEnv(),
+      fakeSips().service,
     );
     const req = requester({});
 
@@ -650,6 +688,8 @@ describe('AgentMediaResolverService image strategy', () => {
         telemetry,
         new AgentStateService(),
         stubMediaStore(sessionDir),
+        hostEnv(),
+        fakeSips().service,
       );
       const message = imageMessage(buildKimiFileUrl(FILE_ID));
 
@@ -777,6 +817,8 @@ describe('AgentMediaResolverService scoped registration', () => {
       stubPair(IFileService, fileService(files)),
       stubPair(IBlobStore, blobStore()),
       stubPair(ITelemetryService, telemetry),
+      stubPair(IHostEnvironmentId, hostEnv()),
+      stubPair(IHostProcessService, fakeSips().service),
     ]);
     return host.child(LifecycleScope.Agent, 'main', [
       stubPair(IAgentStateService, new AgentStateService()),
@@ -794,5 +836,38 @@ describe('AgentMediaResolverService scoped registration', () => {
     );
 
     expect(firstPart(out)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
+  });
+});
+
+describe('AgentMediaResolverService HEIC conversion', () => {
+  const heicFiles = () => new Map([[FILE_ID, { name: 'pic.heic', bytes: heicBytes() }]]);
+
+  it('converts a HEIC upload through the host sips on macOS and inlines the JPEG once', async () => {
+    const sips = fakeSips({ output: tinyJpeg(6, 4) });
+    const res = resolver(heicFiles(), undefined, undefined, { osKind: 'macOS', process: sips.service });
+    const message = imageMessage(buildKimiFileUrl(FILE_ID));
+
+    const first = await res.resolve([message], requester({}));
+    const second = await res.resolve([message], requester({}));
+
+    const expected = {
+      type: 'image_url',
+      imageUrl: { url: `data:image/jpeg;base64,${tinyJpeg(6, 4).toString('base64')}` },
+    };
+    expect(firstPart(first)).toEqual(expected);
+    expect(firstPart(second)).toEqual(expected);
+    expect(sips.calls).toHaveLength(1);
+  });
+
+  it('degrades to the path tag when sips fails on macOS', async () => {
+    const canonical = await plantCanonical(FILE_ID, '.heic', heicBytes());
+    const res = resolver(heicFiles(), sessionDir, undefined, {
+      osKind: 'macOS',
+      process: fakeSips({ exitCode: 1 }).service,
+    });
+
+    const out = await res.resolve([imageMessage(buildKimiFileUrl(FILE_ID))], requester({}));
+
+    expect(firstPart(out)).toEqual({ type: 'text', text: `<image path="${canonical}"></image>` });
   });
 });
