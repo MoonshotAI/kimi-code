@@ -749,7 +749,7 @@ describe('AgentTaskService', () => {
       expect(info).toMatchObject({ status: 'killed' });
       expect(output.outputSizeBytes).toBeLessThanOrEqual(LIMIT_BYTES);
     } finally {
-      await rm(sessionDir, { recursive: true, force: true });
+      await rm(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   });
 
@@ -775,7 +775,7 @@ describe('AgentTaskService', () => {
       expect(info?.stopReason ?? '').toMatch(/output limit/i);
       expect(output.outputSizeBytes).toBeLessThanOrEqual(LIMIT_BYTES);
     } finally {
-      await rm(sessionDir, { recursive: true, force: true });
+      await rm(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   });
 
@@ -795,7 +795,7 @@ describe('AgentTaskService', () => {
       expect(info).toMatchObject({ status: 'completed' });
       expect(output.outputSizeBytes).toBe(Buffer.byteLength(result));
     } finally {
-      await rm(sessionDir, { recursive: true, force: true });
+      await rm(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   });
 
@@ -1146,7 +1146,7 @@ describe('AgentTaskService', () => {
         stopReason: 'user requested',
       });
     } finally {
-      await rm(sessionDir, { recursive: true, force: true });
+      await rm(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   });
 
@@ -1341,7 +1341,7 @@ describe('AgentTaskService', () => {
       expect(await persistence!.listTasks()).toEqual([]);
       await ctx.get(ISessionMetadata).ready;
     } finally {
-      await rm(sessionDir, { recursive: true, force: true });
+      await rm(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   });
 

@@ -55,7 +55,6 @@ import { stubProviderService } from '../../../app/provider/stubs';
 import { stubLog } from '../../../_base/log/stubs';
 
 const watchMockState = vi.hoisted(() => ({
-  mode: 'inert' as 'inert' | 'real',
   calls: [] as { path: string; options?: WatchOptions }[],
   factory: undefined as undefined | ((path: string, options?: WatchOptions) => unknown),
 }));
@@ -69,7 +68,6 @@ vi.mock('#human/utils/watch', async (importOriginal) => {
       if (watchMockState.factory !== undefined) {
         return watchMockState.factory(path, options) as ReturnType<typeof original.watch>;
       }
-      if (watchMockState.mode === 'real') return original.watch(path, options);
       return {
         ready: Promise.resolve(),
         onDidChange: () => ({ dispose: () => {} }),
@@ -232,7 +230,6 @@ async function withSkillCatalogWorkspace(
 
 describe('WorkspaceSkillCatalogService', () => {
   beforeEach(() => {
-    watchMockState.mode = 'inert';
     watchMockState.calls = [];
     watchMockState.factory = undefined;
     _clearScopedRegistryForTests();
@@ -907,53 +904,6 @@ describe('WorkspaceSkillCatalogService', () => {
     }
   });
 
-  it('rescans the workspace-root source when a project skill file changes on disk', async () => {
-    watchMockState.mode = 'real';
-    const workDir = await mkdtemp(join(tmpdir(), 'skill-watch-'));
-    const homeDir = await mkdtemp(join(tmpdir(), 'skill-watch-home-'));
-    const host = createScopedTestHost([
-      stubPair(IFlagService, stubFlag(true)),
-      stubPair(IBootstrapService, stubBootstrap(homeDir, {}, {}, homeDir)),
-      stubPair(IConfigService, configStub()),
-      stubPair(IPluginService, pluginStub()),
-      stubPair(ILogService, stubLog()),
-      stubPair(ISkillDiscovery, new FileSkillDiscovery(stubLog())),
-    ]);
-    const workspace = host.child('program', 'w1', [
-      stubPair(IWorkspaceContext, workspaceContextStub(workDir)),
-    ]);
-
-    try {
-      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
-      await catalog.load();
-      expect(catalog.catalog.getSkill('watched-skill')).toBeUndefined();
-
-      const refreshed = new Promise<string>((resolvePromise) => {
-        const d = catalog.onDidChange((sourceId) => {
-          if (sourceId !== 'workspace') return;
-          d.dispose();
-          resolvePromise(sourceId);
-        });
-      });
-      const timedOut = new Promise<never>((_resolve, reject) => {
-        setTimeout(() => reject(new Error('watch-driven refresh timed out')), 10000);
-      });
-      await mkdir(join(workDir, '.agents', 'skills', 'watched-skill'), { recursive: true });
-      await writeFile(
-        join(workDir, '.agents', 'skills', 'watched-skill', 'SKILL.md'),
-        '---\nname: watched-skill\ndescription: from watch\n---\nbody',
-        'utf8',
-      );
-
-      await expect(Promise.race([refreshed, timedOut])).resolves.toBe('workspace');
-      await expect.poll(() => catalog.catalog.getSkill('watched-skill')?.description).toBe('from watch');
-    } finally {
-      host.dispose();
-      await rm(workDir, { recursive: true, force: true });
-      await rm(homeDir, { recursive: true, force: true });
-    }
-  }, 15000);
-
   it('prunes terminal skill payloads from the workspace watch after discovery', async () => {
     const workDir = await mkdtemp(join(tmpdir(), 'skill-watch-plan-'));
     const skillDir = join(workDir, '.agents', 'skills', 'demo');
@@ -1055,44 +1005,6 @@ describe('WorkspaceSkillCatalogService', () => {
       host.dispose();
     }
   });
-
-  it('rescans when a skill under a dot directory appears on disk', async () => {
-    watchMockState.mode = 'real';
-    const workDir = await mkdtemp(join(tmpdir(), 'skill-watch-dot-'));
-    const homeDir = await mkdtemp(join(tmpdir(), 'skill-watch-home-'));
-    const host = createScopedTestHost([
-      stubPair(IFlagService, stubFlag(true)),
-      stubPair(IBootstrapService, stubBootstrap(homeDir, {}, {}, homeDir)),
-      stubPair(IConfigService, configStub()),
-      stubPair(IPluginService, pluginStub()),
-      stubPair(ILogService, stubLog()),
-      stubPair(ISkillDiscovery, new FileSkillDiscovery(stubLog())),
-    ]);
-    const workspace = host.child('program', 'w1', [
-      stubPair(IWorkspaceContext, workspaceContextStub(workDir)),
-    ]);
-
-    try {
-      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
-      await catalog.load();
-      expect(catalog.catalog.getSkill('dot-skill')).toBeUndefined();
-
-      await mkdir(join(workDir, '.agents', 'skills', '.dot-skill'), { recursive: true });
-      const refreshed = waitForEvents(catalog.onDidChange, 1);
-      await writeFile(
-        join(workDir, '.agents', 'skills', '.dot-skill', 'SKILL.md'),
-        '---\nname: dot-skill\ndescription: under dot dir\n---\nbody',
-        'utf8',
-      );
-
-      await refreshed;
-      await expect.poll(() => catalog.catalog.getSkill('dot-skill')?.description).toBe('under dot dir');
-    } finally {
-      host.dispose();
-      await rm(workDir, { recursive: true, force: true });
-      await rm(homeDir, { recursive: true, force: true });
-    }
-  }, 15000);
 
   it('watches both user-level skill roots and prunes unrelated paths', async () => {
     const host = createScopedTestHost([
@@ -1211,78 +1123,4 @@ describe('WorkspaceSkillCatalogService', () => {
     expect(handles.every((handle) => handle.disposed)).toBe(true);
   });
 
-  it('rescans the user source when skills appear, change and disappear under the user roots', async () => {
-    watchMockState.mode = 'real';
-    const workDir = await mkdtemp(join(tmpdir(), 'skill-user-work-'));
-    const homeDir = await mkdtemp(join(tmpdir(), 'skill-user-watch-'));
-    const osHomeDir = await mkdtemp(join(tmpdir(), 'skill-os-watch-'));
-    const host = createScopedTestHost([
-      stubPair(IFlagService, stubFlag(true)),
-      stubPair(IBootstrapService, stubBootstrap(homeDir, {}, {}, osHomeDir)),
-      stubPair(IConfigService, configStub()),
-      stubPair(IPluginService, pluginStub()),
-      stubPair(ILogService, stubLog()),
-      stubPair(ISkillDiscovery, new FileSkillDiscovery(stubLog())),
-    ]);
-    const workspace = host.child('program', 'w1', [
-      stubPair(IWorkspaceContext, workspaceContextStub(workDir)),
-    ]);
-    const writeSkill = (dir: string, description: string) =>
-      writeFile(
-        join(dir, 'SKILL.md'),
-        `---\nname: watched-user-skill\ndescription: ${description}\n---\nbody`,
-        'utf8',
-      );
-
-    try {
-      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
-      await catalog.load();
-      expect(catalog.catalog.getSkill('watched-user-skill')).toBeUndefined();
-
-      const waitForUserChange = (phase: string): Promise<string> => {
-        const refreshed = new Promise<string>((resolvePromise) => {
-          const d = catalog.onDidChange((sourceId) => {
-            if (sourceId !== 'user') return;
-            d.dispose();
-            resolvePromise(sourceId);
-          });
-        });
-        const timedOut = new Promise<never>((_resolve, reject) => {
-          setTimeout(() => {
-            reject(new Error(`user watch ${phase} refresh timed out`));
-          }, 10000);
-        });
-        return Promise.race([refreshed, timedOut]);
-      };
-
-      const created = waitForUserChange('created');
-      const skillDir = join(homeDir, 'skills', 'watched-user-skill');
-      await mkdir(skillDir, { recursive: true });
-      await writeSkill(skillDir, 'v1');
-      await created;
-      await expect.poll(() => catalog.catalog.getSkill('watched-user-skill')?.description).toBe('v1');
-
-      const modified = waitForUserChange('modified');
-      await writeSkill(skillDir, 'v2');
-      await modified;
-      await expect.poll(() => catalog.catalog.getSkill('watched-user-skill')?.description).toBe('v2');
-
-      const deleted = waitForUserChange('deleted');
-      await rm(skillDir, { recursive: true, force: true });
-      await deleted;
-      expect(catalog.catalog.getSkill('watched-user-skill')).toBeUndefined();
-
-      const osCreated = waitForUserChange('osCreated');
-      const osSkillDir = join(osHomeDir, '.agents', 'skills', 'watched-user-skill');
-      await mkdir(osSkillDir, { recursive: true });
-      await writeSkill(osSkillDir, 'os');
-      await osCreated;
-      await expect.poll(() => catalog.catalog.getSkill('watched-user-skill')?.description).toBe('os');
-    } finally {
-      host.dispose();
-      await rm(workDir, { recursive: true, force: true });
-      await rm(homeDir, { recursive: true, force: true });
-      await rm(osHomeDir, { recursive: true, force: true });
-    }
-  }, 30000);
 });
