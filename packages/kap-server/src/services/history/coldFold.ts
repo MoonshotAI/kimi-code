@@ -1322,6 +1322,68 @@ export function foldWireHistory(
     return total;
   };
 
+  const synthesizeSubagentTasks = (): void => {
+    for (const tool of tools.values()) {
+      if (tool.name !== 'Agent' || tool.taskId !== undefined) continue;
+      const outputText = typeof tool.output === 'string' ? tool.output : undefined;
+      const childAgentId =
+        outputText === undefined ? undefined : /^agent_id: (\S+)$/m.exec(outputText)?.[1];
+      let realTask: TaskDraft | undefined;
+      if (childAgentId !== undefined) {
+        for (const task of tasks.values()) {
+          if (task.childAgentId === childAgentId) {
+            realTask = task;
+            break;
+          }
+        }
+      }
+      if (childAgentId !== undefined && realTask !== undefined) {
+        tool.taskId = realTask.taskId;
+        if (!tool.agentRefs.some((ref) => ref.agent_id === childAgentId)) {
+          tool.agentRefs = [...tool.agentRefs, { agent_id: childAgentId, role: 'child' }];
+        }
+        continue;
+      }
+      const agentTaskId = `agent_${tool.toolCallId}`;
+      if (tasks.has(agentTaskId)) continue;
+      const args = (tool.input ?? {}) as Record<string, unknown>;
+      const summary =
+        outputText === undefined
+          ? undefined
+          : /\[summary\]\n([\s\S]*?)(?:\n\nresume_hint:|$)/.exec(outputText)?.[1]?.trim();
+      const state = tool.state === 'done' ? 'completed' : 'failed';
+      tasks.set(agentTaskId, {
+        taskId: agentTaskId,
+        kind: 'subagent',
+        state,
+        detached: args['run_in_background'] === true,
+        description: typeof args['description'] === 'string' ? args['description'] : undefined,
+        childAgentId,
+        outputTail: '',
+        startedAt: tool.at,
+        endedAt: tool.state === 'running' ? undefined : tool.at,
+        resultSummary:
+          tool.state === 'done' && summary !== undefined && summary.length > 0
+            ? summary
+            : undefined,
+        error: tool.state === 'error' ? (tool.error ?? outputText) : undefined,
+        stateReason: tool.state === 'running' ? 'interrupted' : undefined,
+        usage: undefined,
+        model: typeof args['model'] === 'string' ? args['model'] : undefined,
+        thinkingEffort: typeof args['thinking'] === 'string' ? args['thinking'] : undefined,
+        at: tool.at,
+      });
+      tool.taskId = agentTaskId;
+      if (childAgentId !== undefined && !tool.agentRefs.some((ref) => ref.agent_id === childAgentId)) {
+        tool.agentRefs = [...tool.agentRefs, { agent_id: childAgentId, role: 'child' }];
+      }
+      const toolIndex = order.indexOf(`tool:${tool.toolCallId}`);
+      if (toolIndex >= 0) order.splice(toolIndex + 1, 0, `task:${agentTaskId}`);
+      else order.push(`task:${agentTaskId}`);
+    }
+  };
+  synthesizeSubagentTasks();
+
   const messages: HistoryMessage[] = [];
   for (const key of order) {
     const [kind, id] = splitKey(key);
