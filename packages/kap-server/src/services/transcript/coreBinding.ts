@@ -6,11 +6,10 @@ import {
   IAgentScopeContext,
   IAgentTaskService,
   IEventBus,
+  INTERACTION_TAG_AGENT_ID,
+  ISessionInteractionService,
   ISessionMetadata,
   MAIN_AGENT_ID,
-  listSessionPendingInteractions,
-  onSessionInteractionDidChangePending,
-  onSessionInteractionDidResolve,
   type AgentMeta,
   type IDisposable,
   type IAgentScopeHandle,
@@ -40,6 +39,7 @@ export function bindSessionTranscript(
   onOps?: (event: TranscriptChangeEvent) => void,
 ): TranscriptBinding {
   const agents = session.accessor.get(IAgentLifecycleService);
+  const interactions = session.accessor.get(ISessionInteractionService);
   const disposables: IDisposable[] = [];
   const agentDisposables = new Map<string, IDisposable[]>();
   const subscribedAgents = new Set<string>();
@@ -143,8 +143,9 @@ export function bindSessionTranscript(
 
   const interactionAgentId = (interaction: Interaction): string => {
     const payloadAgent = (interaction.payload as { agentId?: unknown }).agentId;
+    const tag = interaction.tags[INTERACTION_TAG_AGENT_ID];
     return (
-      interaction.origin.agentId ??
+      (typeof tag === 'string' ? tag : undefined) ??
       (typeof payloadAgent === 'string' ? payloadAgent : undefined) ??
       MAIN_AGENT_ID
     );
@@ -158,7 +159,6 @@ export function bindSessionTranscript(
       id: interaction.id,
       kind: interaction.kind,
       payload: interaction.payload,
-      origin: interaction.origin,
       createdAt: interaction.createdAt,
     };
     applyOps(agentId, projectorFor(agentId).mapInteractionRequested(request));
@@ -198,7 +198,7 @@ export function bindSessionTranscript(
     }),
   );
 
-  for (const pending of listSessionPendingInteractions(agents)) {
+  for (const pending of interactions.findAll({ resolved: false })) {
     if (pending.kind !== 'approval' && pending.kind !== 'question') continue;
     if (knownInteractions.has(pending.id)) continue;
     knownInteractions.add(pending.id);
@@ -221,7 +221,7 @@ export function bindSessionTranscript(
         applyOps(early.agentId, projector.mapInteractionResolved(id, early.response));
       }
     }
-    for (const pending of listSessionPendingInteractions(agents)) {
+    for (const pending of interactions.findAll({ resolved: false })) {
       if (knownInteractions.has(pending.id)) continue;
       if (agentId !== undefined && interactionAgentId(pending) !== agentId) continue;
       knownInteractions.add(pending.id);
@@ -229,8 +229,8 @@ export function bindSessionTranscript(
     }
   };
   disposables.push(
-    onSessionInteractionDidChangePending(agents, () => {
-      for (const pending of listSessionPendingInteractions(agents)) {
+    interactions.onDidChangePending(() => {
+      for (const pending of interactions.findAll({ resolved: false })) {
         if (knownInteractions.has(pending.id)) continue;
         const agentId = interactionAgentId(pending);
         knownInteractions.add(pending.id);
@@ -242,7 +242,7 @@ export function bindSessionTranscript(
         announceInteraction(pending);
       }
     }),
-    onSessionInteractionDidResolve(agents, ({ id, response }) => {
+    interactions.onDidResolve(({ id, response }) => {
       knownInteractions.delete(id);
       const agentId = interactionAgents.get(id);
       if (agentId === undefined) return;

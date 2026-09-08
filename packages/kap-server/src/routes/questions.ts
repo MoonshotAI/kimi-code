@@ -1,9 +1,7 @@
 import {
   type Interaction,
-  IAgentLifecycleService,
+  ISessionInteractionService,
   ISessionQuestionService,
-  isSessionInteractionRecentlyResolved,
-  listSessionPendingInteractions,
   resumeSessionById,
   type QuestionAnswers,
   type QuestionResult,
@@ -86,7 +84,7 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
         );
         return;
       }
-      const pending = listSessionPendingInteractions(handle.accessor.get(IAgentLifecycleService), 'question');
+      const pending = handle.accessor.get(ISessionInteractionService).findAll({ kind: 'question', resolved: false });
       const items = pending.map((i) => toWireQuestion(i, session_id));
       reply.send(okEnvelope({ items }, req.id));
     },
@@ -130,14 +128,14 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
         return;
       }
 
-      const agents = handle.accessor.get(IAgentLifecycleService);
+      const interactions = handle.accessor.get(ISessionInteractionService);
 
       let questionId: string;
       let action: 'resolve' | 'dismiss';
       if (parsed.kind === 'invalid') {
         if (
-          listSessionPendingInteractions(agents, 'question').some((i) => i.id === tail) ||
-          isSessionInteractionRecentlyResolved(agents, tail)
+          interactions.findAll({ kind: 'question', resolved: false }).some((i) => i.id === tail) ||
+          interactions.isRecentlyResolved(tail)
         ) {
           questionId = tail;
           action = 'resolve';
@@ -150,11 +148,12 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
         action = parsed.kind === 'bare' ? 'resolve' : parsed.action;
       }
 
-      const pendingInteraction = listSessionPendingInteractions(agents, 'question')
+      const pendingInteraction = interactions
+        .findAll({ kind: 'question', resolved: false })
         .find((i) => i.id === questionId);
 
       if (pendingInteraction === undefined) {
-        if (isSessionInteractionRecentlyResolved(agents, questionId)) {
+        if (interactions.isRecentlyResolved(questionId)) {
           reply.send({
             code: ErrorCode.APPROVAL_ALREADY_RESOLVED,
             msg: `question ${questionId} already resolved`,

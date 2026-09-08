@@ -25,18 +25,16 @@
 import type { Event, ToolInputDisplay } from '@moonshot-ai/protocol';
 import {
   agentContextOf,
+  INTERACTION_TAG_AGENT_ID,
   IAgentLifecycleService,
   IAgentProfileService,
   IEventBus,
   ISessionApprovalService,
+  ISessionInteractionService,
   ISessionQuestionService,
   ISessionTokenCountingService,
   ISessionUsageService,
   MAIN_AGENT_ID,
-  listSessionPendingInteractions,
-  onSessionInteractionDidChangePending,
-  onSessionInteractionDidResolve,
-  respondSessionInteraction,
   type Event2,
   type IAgentScopeHandle,
   type IDisposable,
@@ -114,11 +112,12 @@ export class SessionEventWiring {
     private readonly sink: SessionEventSink,
   ) {
     const manager = session.accessor.get(IAgentLifecycleService);
+    const interactions = session.accessor.get(ISessionInteractionService);
     this.disposables.push(
-      onSessionInteractionDidChangePending(manager, () => {
+      interactions.onDidChangePending(() => {
         this.bridgeNewPendingInteractions();
       }),
-      onSessionInteractionDidResolve(manager, ({ id }) => {
+      interactions.onDidResolve(({ id }) => {
         this.bridgedInteractionIds.delete(id);
       }),
     );
@@ -173,7 +172,7 @@ export class SessionEventWiring {
 
   private bridgeNewPendingInteractions(): void {
     if (this.disposed) return;
-    const pending = listSessionPendingInteractions(this.session.accessor.get(IAgentLifecycleService));
+    const pending = this.session.accessor.get(ISessionInteractionService).findAll({ resolved: false });
     for (const interaction of pending) {
       if (this.bridgedInteractionIds.has(interaction.id)) continue;
       this.bridgedInteractionIds.add(interaction.id);
@@ -208,7 +207,7 @@ export class SessionEventWiring {
         action: payload.action,
         display: payload.display,
         sessionId: this.session.id,
-        agentId: payload.agentId ?? interaction.origin.agentId ?? MAIN_AGENT_ID,
+        agentId: payload.agentId ?? interactionAgentId(interaction) ?? MAIN_AGENT_ID,
       });
       this.session.accessor.get(ISessionApprovalService).decide(interaction.id, response);
     } catch {
@@ -231,7 +230,7 @@ export class SessionEventWiring {
         toolCallId: payload.toolCallId,
         questions: payload.questions,
         sessionId: this.session.id,
-        agentId: interaction.origin.agentId ?? MAIN_AGENT_ID,
+        agentId: interactionAgentId(interaction) ?? MAIN_AGENT_ID,
       });
       const questions = this.session.accessor.get(ISessionQuestionService);
       if (result === null) {
@@ -257,15 +256,16 @@ export class SessionEventWiring {
         toolCallId: payload.toolCallId,
         args: payload.args,
       });
-      respondSessionInteraction(
-        this.session.accessor.get(IAgentLifecycleService),
-        interaction.id,
-        result,
-      );
+      this.session.accessor.get(ISessionInteractionService).respond(interaction.id, result);
     } catch {
       // See bridgeApproval.
     }
   }
+}
+
+function interactionAgentId(interaction: Interaction): string | undefined {
+  const value = interaction.tags[INTERACTION_TAG_AGENT_ID];
+  return typeof value === 'string' ? value : undefined;
 }
 
 /**

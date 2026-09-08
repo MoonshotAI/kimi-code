@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 import {
-  IAgentInteractionService,
+  INTERACTION_TAG_AGENT_ID,
   IAgentLifecycleService,
   IAgentLoopService,
   IAgentPromptService,
@@ -14,6 +14,7 @@ import {
   IEventBus,
   IFlagService,
   ISessionIndex,
+  ISessionInteractionService,
   ISessionMetadata,
   ISessionLifecycleService,
   ISessionManager,
@@ -23,10 +24,11 @@ import {
   type AgentContext,
   type Event2,
   type Interaction,
-  type InteractionKind,
   type InteractionPendingChangedEvent,
+  type InteractionQuery,
   type InteractionRequest,
   type InteractionResolution,
+  type InteractionTags,
   TOWER_FLAG_ID,
   _setTowerFeatureAssembledForTests,
   type ISessionScopeHandle,
@@ -1640,7 +1642,6 @@ describe('AgentTranscriptProjector', () => {
         id: 'apr-1',
         kind: 'approval',
         payload: request,
-        origin: { agentId: 'main', turnId: 2 },
         createdAt: 1000,
       }),
     );
@@ -1848,7 +1849,6 @@ describe('AgentTranscriptProjector', () => {
         id: 'q1',
         kind: 'question',
         payload: { questions: [{ question: 'Pick', options: [] }] },
-        origin: { agentId: 'main', turnId: 3 },
         createdAt: 1000,
       }),
     );
@@ -1886,7 +1886,6 @@ describe('AgentTranscriptProjector', () => {
             },
           ],
         },
-        origin: { agentId: 'main', turnId: 3 },
         createdAt: 7000,
       }),
     );
@@ -1930,7 +1929,6 @@ describe('AgentTranscriptProjector', () => {
         id: 'q-raw',
         kind: 'question',
         payload: { toolCallId: 'call_x' },
-        origin: { agentId: 'main' },
         createdAt: 1000,
       }),
     );
@@ -3074,6 +3072,11 @@ describe('bindSessionTranscript', () => {
   }
 
 
+  function interactionRequestAgentId(req: { readonly tags?: InteractionTags }): string {
+    const tag = req.tags?.[INTERACTION_TAG_AGENT_ID];
+    return typeof tag === 'string' ? tag : 'main';
+  }
+
   class FakeInteractionKernel {
     private readonly pending = new Map<string, Interaction>();
     private readonly changeEmitter = new Emitter<InteractionPendingChangedEvent>();
@@ -3098,16 +3101,31 @@ describe('bindSessionTranscript', () => {
       return true;
     }
 
-    listPending(kind?: InteractionKind): readonly Interaction[] {
-      const all = [...this.pending.values()];
-      return kind === undefined ? all : all.filter((i) => i.kind === kind);
+    findAll(query?: InteractionQuery): readonly Interaction[] {
+      if (query?.resolved === true) return [];
+      let all = [...this.pending.values()];
+      if (query?.id !== undefined) all = all.filter((i) => i.id === query.id);
+      if (query?.kind !== undefined) all = all.filter((i) => i.kind === query.kind);
+      const tags = query?.tags;
+      if (tags !== undefined) {
+        all = all.filter((i) => Object.entries(tags).every(([key, value]) => i.tags[key] === value));
+      }
+      return all;
+    }
+
+    findOne(query: InteractionQuery): Interaction | undefined {
+      return this.findAll(query)[0];
+    }
+
+    wait<TResponse>(): Promise<TResponse> {
+      return new Promise<TResponse>(() => {});
     }
 
     isRecentlyResolved(): boolean {
       return false;
     }
 
-    cancelPendingForTurn(_turnId: number): void {}
+    cancelForTurn(): void {}
 
     private park<TPayload>(
       req: InteractionRequest<TPayload>,
@@ -3118,7 +3136,7 @@ describe('bindSessionTranscript', () => {
         id: req.id ?? `interaction-${this.pending.size}`,
         kind: req.kind,
         payload: req.payload,
-        origin: req.origin ?? {},
+        tags: req.tags ?? {},
         createdAt: Date.now(),
       };
       this.pending.set(interaction.id, interaction);
@@ -3135,6 +3153,10 @@ describe('bindSessionTranscript', () => {
     private readonly createEmitter = new Emitter<AgentContext>();
     readonly onDidCreate = this.createEmitter.event;
     readonly onDidClose = Event.None as Event<AgentContext>;
+    private readonly changeEmitter = new Emitter<InteractionPendingChangedEvent>();
+    private readonly resolveEmitter = new Emitter<InteractionResolution>();
+    readonly onDidChangePending = this.changeEmitter.event;
+    readonly onDidResolve = this.resolveEmitter.event;
 
     kernelFor(agentId: string): FakeInteractionKernel {
       let entry = this.entries.get(agentId);
@@ -3145,20 +3167,45 @@ describe('bindSessionTranscript', () => {
           generation: 1,
         }).agentContext;
         entry = { context, bus: new FakeBus(), kernel: new FakeInteractionKernel() };
+        entry.kernel.onDidChangePending((e) => this.changeEmitter.fire(e));
+        entry.kernel.onDidResolve((e) => this.resolveEmitter.fire(e));
         this.entries.set(agentId, entry);
       }
       return entry.kernel;
     }
 
-    enqueue(req: InteractionRequest<unknown>): Interaction {
-      return this.kernelFor(req.origin?.agentId ?? 'main').enqueue(req);
+    request<TPayload, TResponse>(req: InteractionRequest<TPayload>): Promise<TResponse> {
+      return this.kernelFor(interactionRequestAgentId(req)).request(req);
     }
 
-    respond(id: string, response: unknown): void {
-      for (const entry of this.entries.values()) {
-        if (entry.kernel.respond(id, response)) return;
-      }
+    enqueue<TPayload>(req: InteractionRequest<TPayload>): Interaction {
+      return this.kernelFor(interactionRequestAgentId(req)).enqueue(req);
     }
+
+    respond(id: string, response: unknown): boolean {
+      for (const entry of this.entries.values()) {
+        if (entry.kernel.respond(id, response)) return true;
+      }
+      return false;
+    }
+
+    findAll(query?: InteractionQuery): readonly Interaction[] {
+      return [...this.entries.values()].flatMap((entry) => entry.kernel.findAll(query));
+    }
+
+    findOne(query: InteractionQuery): Interaction | undefined {
+      return this.findAll(query)[0];
+    }
+
+    wait<TResponse>(): Promise<TResponse> {
+      return new Promise<TResponse>(() => {});
+    }
+
+    isRecentlyResolved(): boolean {
+      return false;
+    }
+
+    cancelForTurn(): void {}
 
     list(): AgentContext[] {
       return [...this.entries.values()].map((entry) => entry.context);
@@ -3179,7 +3226,6 @@ describe('bindSessionTranscript', () => {
         accessor: {
           get: (token: unknown) => {
             if (token === IEventBus) return entry.bus;
-            if (token === IAgentInteractionService) return entry.kernel;
             return undefined;
           },
         },
@@ -3203,6 +3249,61 @@ describe('bindSessionTranscript', () => {
     >();
     private readonly createHandlers = new Set<(context: AgentContext) => void>();
     private readonly closeHandlers = new Set<(context: AgentContext) => void>();
+    private readonly changeEmitter = new Emitter<InteractionPendingChangedEvent>();
+    private readonly resolveEmitter = new Emitter<InteractionResolution>();
+    readonly onDidChangePending = this.changeEmitter.event;
+    readonly onDidResolve = this.resolveEmitter.event;
+    private readonly watchedKernels = new Set<FakeInteractionKernel>();
+
+    private watchKernel(kernel: FakeInteractionKernel): void {
+      if (this.watchedKernels.has(kernel)) return;
+      this.watchedKernels.add(kernel);
+      kernel.onDidChangePending((e) => this.changeEmitter.fire(e));
+      kernel.onDidResolve((e) => this.resolveEmitter.fire(e));
+    }
+
+    private allKernels(): FakeInteractionKernel[] {
+      return [
+        ...new Set([
+          ...[...this.handles.values()].map((handle) => handle.kernel),
+          ...[...this.kernels.values()].map((entry) => entry.kernel),
+        ]),
+      ];
+    }
+
+    request<TPayload, TResponse>(req: InteractionRequest<TPayload>): Promise<TResponse> {
+      return this.kernelFor(interactionRequestAgentId(req)).request(req);
+    }
+
+    enqueue<TPayload>(req: InteractionRequest<TPayload>): Interaction {
+      return this.kernelFor(interactionRequestAgentId(req)).enqueue(req);
+    }
+
+    respond(id: string, response: unknown): boolean {
+      for (const kernel of this.allKernels()) {
+        if (kernel.respond(id, response)) return true;
+      }
+      return false;
+    }
+
+    findAll(query?: InteractionQuery): readonly Interaction[] {
+      return this.allKernels().flatMap((kernel) => kernel.findAll(query));
+    }
+
+    findOne(query: InteractionQuery): Interaction | undefined {
+      return this.findAll(query)[0];
+    }
+
+    wait<TResponse>(): Promise<TResponse> {
+      return new Promise<TResponse>(() => {});
+    }
+
+    isRecentlyResolved(): boolean {
+      return false;
+    }
+
+    cancelForTurn(): void {}
+
     list(): AgentContext[] {
       const handleIds = new Set(this.handles.keys());
       return [
@@ -3228,7 +3329,6 @@ describe('bindSessionTranscript', () => {
         accessor: {
           get: (token: unknown) => {
             if (token === IEventBus) return entry.bus;
-            if (token === IAgentInteractionService) return entry.kernel;
             return undefined;
           },
         },
@@ -3250,6 +3350,7 @@ describe('bindSessionTranscript', () => {
         entry = { context, bus: new FakeBus(), kernel: new FakeInteractionKernel() };
         this.kernels.set(id, entry);
       }
+      this.watchKernel(entry.kernel);
       return entry.kernel;
     }
     onDidCreate(cb: (context: AgentContext) => void): { dispose: () => void } {
@@ -3269,6 +3370,7 @@ describe('bindSessionTranscript', () => {
         generation: 1,
       });
       const kernel = existing?.kernel ?? new FakeInteractionKernel();
+      this.watchKernel(kernel);
       const handle: FakeAgentHandle = {
         id,
         context: scope.agentContext,
@@ -3278,7 +3380,6 @@ describe('bindSessionTranscript', () => {
           get: (token: unknown) => {
             if (token === IAgentScopeContext) return scope;
             if (token === IEventBus) return bus;
-            if (token === IAgentInteractionService) return kernel;
             if (token === IAgentLoopService) {
               return { status: () => opts?.loopStatus ?? { state: 'idle' } };
             }
@@ -3328,6 +3429,7 @@ describe('bindSessionTranscript', () => {
       accessor: {
         get: (token: unknown) => {
           if (token === IAgentLifecycleService) return manager;
+          if (token === ISessionInteractionService) return manager;
           if (token === ISessionMetadata) return { read: async () => ({ agents: {} }) };
           return undefined;
         },
@@ -3341,7 +3443,7 @@ describe('bindSessionTranscript', () => {
       id: 'apr-1',
       kind: 'approval',
       payload: { toolCallId: 'call_1' },
-      origin: { agentId: 'main', turnId: 0 },
+      tags: { agentId: 'main', turnId: 0 },
     });
 
     const store = new TranscriptStore('s1');
@@ -3697,8 +3799,8 @@ describe('bindSessionTranscript', () => {
 
   it('seeds pending interactions per agent, not before that agent is backfilled', () => {
     const interactions = new FakeInteractionHub();
-    interactions.enqueue({ id: 'q-main', kind: 'question', payload: { toolCallId: 'call_main' }, origin: { agentId: 'main', turnId: 0 } });
-    interactions.enqueue({ id: 'q-sub', kind: 'question', payload: { toolCallId: 'call_sub' }, origin: { agentId: 'sub-1', turnId: 0 } });
+    interactions.enqueue({ id: 'q-main', kind: 'question', payload: { toolCallId: 'call_main' }, tags: { agentId: 'main', turnId: 0 } });
+    interactions.enqueue({ id: 'q-sub', kind: 'question', payload: { toolCallId: 'call_sub' }, tags: { agentId: 'sub-1', turnId: 0 } });
 
     const store = new TranscriptStore('s1');
     const byAgent = new Map<string, TranscriptOperation[]>();
@@ -3727,7 +3829,7 @@ describe('bindSessionTranscript', () => {
           },
         ],
       },
-      origin: { agentId: 'main', turnId: 0 },
+      tags: { agentId: 'main', turnId: 0 },
     });
     const store = new TranscriptStore('s1');
     const binding = bindSessionTranscript(store, fakeSession(interactions));
@@ -3748,7 +3850,7 @@ describe('bindSessionTranscript', () => {
       byAgent.set(event.agentId, [...(byAgent.get(event.agentId) ?? []), ...event.ops]);
     });
 
-    interactions.enqueue({ id: 'q-sub', kind: 'question', payload: { toolCallId: 'call_sub' }, origin: { agentId: 'sub-1', turnId: 0 } });
+    interactions.enqueue({ id: 'q-sub', kind: 'question', payload: { toolCallId: 'call_sub' }, tags: { agentId: 'sub-1', turnId: 0 } });
     expect(byAgent.size).toBe(0);
 
     binding.seedPendingInteractions('main');
@@ -3768,7 +3870,7 @@ describe('bindSessionTranscript', () => {
     });
 
     agents.add('sub-1');
-    agents.kernelFor('sub-1').enqueue({ id: 'q1', kind: 'question', payload: { toolCallId: 'call_q1' }, origin: { agentId: 'sub-1', turnId: 0 } });
+    agents.kernelFor('sub-1').enqueue({ id: 'q1', kind: 'question', payload: { toolCallId: 'call_q1' }, tags: { agentId: 'sub-1', turnId: 0 } });
     expect([...byAgent.keys()]).toEqual(['sub-1']);
     binding.dispose();
   });
@@ -3822,7 +3924,7 @@ describe('bindSessionTranscript', () => {
 
   it('subscribes the bus for an agent whose projector was seeded before its handle existed', () => {
     const agents = new FakeAgents();
-    agents.kernelFor('sub-1').enqueue({ id: 'q-sub', kind: 'question', payload: { toolCallId: 'call_sub' }, origin: { agentId: 'sub-1', turnId: 0 } });
+    agents.kernelFor('sub-1').enqueue({ id: 'q-sub', kind: 'question', payload: { toolCallId: 'call_sub' }, tags: { agentId: 'sub-1', turnId: 0 } });
     const store = new TranscriptStore('s1');
     const byAgent = new Map<string, TranscriptOperation[]>();
     const binding = bindSessionTranscript(store, fakeSession(agents), undefined, (event) => {

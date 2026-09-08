@@ -17,14 +17,13 @@ import {
   IAgentLifecycleService,
   IEventBus,
   IEventService,
+  INTERACTION_TAG_AGENT_ID,
   ISessionActivityView,
   ISessionIndex,
+  ISessionInteractionService,
   ISessionManager,
   MAIN_AGENT_ID,
   getLiveSessionById,
-  listSessionPendingInteractions,
-  onSessionInteractionDidChangePending,
-  onSessionInteractionDidResolve,
 } from '@moonshot-ai/agent-core-v2';
 import type {
   ConfigWarningItem,
@@ -990,17 +989,17 @@ export class SessionEventBroadcaster {
     session: ISessionScopeHandle,
     state: SessionState,
   ): void {
-    const agents = session.accessor.get(IAgentLifecycleService);
-    for (const i of listSessionPendingInteractions(agents)) {
-      state.knownInteractions.set(i.id, { kind: i.kind, agentId: i.origin.agentId ?? 'main' });
+    const interactions = session.accessor.get(ISessionInteractionService);
+    for (const i of interactions.findAll({ resolved: false })) {
+      state.knownInteractions.set(i.id, { kind: i.kind, agentId: interactionAgentId(i) });
     }
     state.lifecycleDisposables.push(
-      onSessionInteractionDidChangePending(agents, () => {
-        for (const i of listSessionPendingInteractions(agents)) {
+      interactions.onDidChangePending(() => {
+        for (const i of interactions.findAll({ resolved: false })) {
           if (state.knownInteractions.has(i.id)) continue;
           state.knownInteractions.set(i.id, {
             kind: i.kind,
-            agentId: i.origin.agentId ?? 'main',
+            agentId: interactionAgentId(i),
           });
           const event = interactionRequestedEvent(i, sessionId);
           if (event !== undefined) {
@@ -1008,7 +1007,7 @@ export class SessionEventBroadcaster {
           }
         }
       }),
-      onSessionInteractionDidResolve(agents, ({ id, response }) => {
+      interactions.onDidResolve(({ id, response }) => {
         const known = state.knownInteractions.get(id);
         if (known === undefined) return;
         state.knownInteractions.delete(id);
@@ -1258,8 +1257,13 @@ function suppressedByTranscript(
   return TRANSCRIPT_PROJECTED_EVENT_TYPES.has(envelope.type);
 }
 
+function interactionAgentId(interaction: Interaction): string {
+  const tag = interaction.tags[INTERACTION_TAG_AGENT_ID];
+  return typeof tag === 'string' ? tag : MAIN_AGENT_ID;
+}
+
 function interactionRequestedEvent(interaction: Interaction, sessionId: string): Event | undefined {
-  const agentId = interaction.origin.agentId ?? 'main';
+  const agentId = interactionAgentId(interaction);
   switch (interaction.kind) {
     case 'question':
       return {

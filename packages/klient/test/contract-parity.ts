@@ -70,7 +70,7 @@ import type {
 import type {
   Interaction,
   InteractionResolution,
-} from '@moonshot-ai/agent-core-v2/features/interaction/interaction';
+} from '@moonshot-ai/agent-core-v2/human/interaction/interaction';
 import type {
   QuestionAnswers,
   QuestionItem,

@@ -1,7 +1,7 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
-import { AgentEvent2 } from '#/app/event/event2';
+import { AgentEvent2, registerEvent2Class } from '#/app/event/event2';
 import type { InteractionKind } from '#/human/interaction/interaction';
 
 const interactionRequestSchema = z.object({
@@ -45,3 +45,6 @@ export interface InteractionResolvedEvent {
   readonly id: string;
   readonly response: unknown;
 }
+
+registerEvent2Class(InteractionRequestEvent);
+registerEvent2Class(InteractionResolvedEvent);

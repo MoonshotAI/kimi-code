@@ -7,11 +7,10 @@ import {
   IAgentLifecycleService,
   IWireService,
   IEventBus,
+  ISessionInteractionService,
   ISessionQuestionService,
   closeSessionById,
-  enqueueSessionInteraction,
   getLiveSessionById,
-  respondSessionInteraction,
   resumeSessionById,
   IModelCatalog,
   type ContextMessage,
@@ -295,7 +294,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     );
 
     const session = getLiveSessionById(server!.core.accessor, id);
-    enqueueSessionInteraction(session!.accessor.get(IAgentLifecycleService), {
+    session!.accessor.get(ISessionInteractionService).enqueue({
       id: 'apr-1',
       kind: 'approval',
       payload: {
@@ -304,7 +303,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
         action: 'run',
         display: { kind: 'command', command: 'ls' },
       },
-      origin: { agentId: 'main', turnId: 1 },
+      tags: { agentId: 'main', turnId: 1 },
     });
 
     let { body } = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
@@ -318,7 +317,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       }),
     );
 
-    respondSessionInteraction(session!.accessor.get(IAgentLifecycleService), 'apr-1', { decision: 'approved' });
+    session!.accessor.get(ISessionInteractionService).respond('apr-1', { decision: 'approved' });
     ({ body } = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`));
     expect(body.data.pending_interactions).toEqual([]);
     expect(body.data.interactions).toContainEqual(
@@ -599,11 +598,11 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     ]);
 
     const session = getLiveSessionById(server!.core.accessor, id);
-    enqueueSessionInteraction(session!.accessor.get(IAgentLifecycleService), {
+    session!.accessor.get(ISessionInteractionService).enqueue({
       id: 'apr-1',
       kind: 'approval',
       payload: { toolCallId: 'call_9', toolName: 'Bash', action: 'run' },
-      origin: { agentId: 'main', turnId: 0 },
+      tags: { agentId: 'main', turnId: 0 },
     });
 
     const { body } = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
@@ -617,7 +616,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       }),
     );
 
-    respondSessionInteraction(session!.accessor.get(IAgentLifecycleService), 'apr-1', { decision: 'approved' });
+    session!.accessor.get(ISessionInteractionService).respond('apr-1', { decision: 'approved' });
     const after = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
     const turnAfter = after.body.data.items.find(
       (item): item is TurnContract => item.kind === 'turn' && item.turnId === 't0',
@@ -1179,7 +1178,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       options: [{ label: 'Approach A', description: 'fast' }],
     };
     const session = getLiveSessionById(server!.core.accessor, id);
-    enqueueSessionInteraction(session!.accessor.get(IAgentLifecycleService), {
+    session!.accessor.get(ISessionInteractionService).enqueue({
       id: 'apr-plan',
       kind: 'approval',
       payload: {
@@ -1188,9 +1187,9 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
         action: 'Presenting plan and exiting plan mode',
         display: planDisplay,
       },
-      origin: { agentId: 'main', turnId: 1 },
+      tags: { agentId: 'main', turnId: 1 },
     });
-    respondSessionInteraction(session!.accessor.get(IAgentLifecycleService), 'apr-plan', { decision: 'approved', selectedLabel: 'Approach A' });
+    session!.accessor.get(ISessionInteractionService).respond('apr-plan', { decision: 'approved', selectedLabel: 'Approach A' });
 
     const { body } = await getJson<PlanContract>(
       `/api/v1/sessions/${id}/transcript/plan?agent_id=main&tool_call_id=call_plan`,
@@ -1308,7 +1307,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     ]);
 
     const session = getLiveSessionById(server!.core.accessor, id);
-    enqueueSessionInteraction(session!.accessor.get(IAgentLifecycleService), {
+    session!.accessor.get(ISessionInteractionService).enqueue({
       id: 'apr-plan',
       kind: 'approval',
       payload: {
@@ -1317,9 +1316,9 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
         action: 'Presenting plan and exiting plan mode',
         display: { kind: 'plan_review', plan: '# Draft Plan', path: '/tmp/plans/foo.md' },
       },
-      origin: { agentId: 'main', turnId: 0 },
+      tags: { agentId: 'main', turnId: 0 },
     });
-    respondSessionInteraction(session!.accessor.get(IAgentLifecycleService), 'apr-plan', {
+    session!.accessor.get(ISessionInteractionService).respond('apr-plan', {
       decision: 'rejected',
       selectedLabel: 'Revise',
       feedback: 'split it up',
@@ -1414,7 +1413,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     );
 
     const session = getLiveSessionById(server!.core.accessor, id);
-    enqueueSessionInteraction(session!.accessor.get(IAgentLifecycleService), {
+    session!.accessor.get(ISessionInteractionService).enqueue({
       id: 'apr-final',
       kind: 'approval',
       payload: {
@@ -1423,9 +1422,9 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
         action: 'Presenting plan and exiting plan mode',
         display: { kind: 'plan_review', plan: '# Final', path: '/tmp/plans/foo.md' },
       },
-      origin: { agentId: 'main', turnId: 1 },
+      tags: { agentId: 'main', turnId: 1 },
     });
-    respondSessionInteraction(session!.accessor.get(IAgentLifecycleService), 'apr-final', { decision: 'approved' });
+    session!.accessor.get(ISessionInteractionService).respond('apr-final', { decision: 'approved' });
 
     const { body } = await getJson<PlanContract>(
       `/api/v1/sessions/${id}/transcript/plan?agent_id=main`,

@@ -22,26 +22,17 @@ import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManage
 import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/mainAgent';
 import { agentContextOf } from '@moonshot-ai/agent-core-v2/agent/scopeContext/scopeContext';
-import { IAgentInteractionService } from '@moonshot-ai/agent-core-v2/features/interaction/interactionService';
+import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/interaction/sessionInteractionService';
 import type {
   InteractionKind,
   InteractionRequest,
-} from '@moonshot-ai/agent-core-v2/features/interaction/interaction';
+} from '@moonshot-ai/agent-core-v2/human/interaction/interaction';
 import type { SkillActivationOrigin } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import type {
   PromptWithSkillsInput,
   SkillActivationInput,
 } from '@moonshot-ai/agent-core-v2/features/skill/skill';
 import { IAgentSkillService } from '@moonshot-ai/agent-core-v2/features/skill/skillService';
-import {
-  enqueueSessionInteraction,
-  isSessionInteractionRecentlyResolved,
-  listSessionPendingInteractions,
-  onSessionInteractionDidChangePending,
-  onSessionInteractionDidResolve,
-  requestSessionInteraction,
-  respondSessionInteraction,
-} from '@moonshot-ai/agent-core-v2/features/interaction/sessionInteractions';
 import { IEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
 import type {
   FileMeta,
@@ -72,32 +63,23 @@ export function wireClone<T>(value: T): T {
 
 /**
  * `sessionInteractionService` stays on the wire after the engine moved the
- * interaction kernel into per-agent services: the view aggregates the live
- * agents' `IAgentInteractionService` facades through the session's agent
- * lifecycle.
+ * interaction kernel into a session-global service: the view forwards to the
+ * session scope's `ISessionInteractionService`.
  */
 function interactionServiceView(session: ScopeLike): Record<string, unknown> {
-  const manager = session.accessor.get(IAgentLifecycleService);
+  const interactions = session.accessor.get(ISessionInteractionService);
   return {
-    request: (req: InteractionRequest<unknown>) => requestSessionInteraction(manager, req),
-    enqueue: (req: InteractionRequest<unknown>) => enqueueSessionInteraction(manager, req),
+    request: (req: InteractionRequest<unknown>) => interactions.request(req),
+    enqueue: (req: InteractionRequest<unknown>) => interactions.enqueue(req),
     respond: (id: string, response: unknown) => {
-      respondSessionInteraction(manager, id, response);
+      interactions.respond(id, response);
     },
-    listPending: (kind?: InteractionKind) => listSessionPendingInteractions(manager, kind),
-    isRecentlyResolved: (id: string) => isSessionInteractionRecentlyResolved(manager, id),
-    cancelPendingForTurn: (turnId: number) => {
-      for (const context of manager.list()) {
-        manager
-          .handleOf(context.agentId)
-          ?.accessor.get(IAgentInteractionService)
-          .cancelPendingForTurn(turnId);
-      }
-    },
+    listPending: (kind?: InteractionKind) =>
+      interactions.findAll(kind === undefined ? { resolved: false } : { kind, resolved: false }),
+    isRecentlyResolved: (id: string) => interactions.isRecentlyResolved(id),
     onDidChangePending: (listener: (event: unknown) => void) =>
-      onSessionInteractionDidChangePending(manager, listener),
-    onDidResolve: (listener: (event: unknown) => void) =>
-      onSessionInteractionDidResolve(manager, listener),
+      interactions.onDidChangePending(listener),
+    onDidResolve: (listener: (event: unknown) => void) => interactions.onDidResolve(listener),
   };
 }
 
@@ -262,13 +244,13 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
       });
     }
     if (resolved.kind === 'session' && name === 'interactions') {
-      const manager = resolved.like.accessor.get(IAgentLifecycleService);
-      return onSessionInteractionDidChangePending(manager, () => {
-        handler(wireClone(listSessionPendingInteractions(manager)));
+      const interactions = resolved.like.accessor.get(ISessionInteractionService);
+      return interactions.onDidChangePending(() => {
+        handler(wireClone(interactions.findAll({ resolved: false })));
       });
     }
     if (resolved.kind === 'session' && name === 'interactions:resolved') {
-      return onSessionInteractionDidResolve(resolved.like.accessor.get(IAgentLifecycleService), (resolution) => {
+      return resolved.like.accessor.get(ISessionInteractionService).onDidResolve((resolution) => {
         handler(wireClone(resolution));
       });
     }

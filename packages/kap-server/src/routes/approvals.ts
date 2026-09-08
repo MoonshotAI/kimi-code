@@ -1,8 +1,7 @@
 import {
-  IAgentLifecycleService,
+  INTERACTION_TAG_TURN_ID,
   ISessionApprovalService,
-  isSessionInteractionRecentlyResolved,
-  listSessionPendingInteractions,
+  ISessionInteractionService,
   resumeSessionById,
   type ApprovalRequest,
   type ApprovalResponse,
@@ -79,7 +78,7 @@ export function registerApprovalsRoutes(app: ApprovalRouteHost, core: Scope): vo
         );
         return;
       }
-      const pending = listSessionPendingInteractions(handle.accessor.get(IAgentLifecycleService), 'approval');
+      const pending = handle.accessor.get(ISessionInteractionService).findAll({ kind: 'approval', resolved: false });
       const items = pending.map((i) => toWireApproval(i, session_id));
       reply.send(okEnvelope({ items }, req.id));
     },
@@ -113,12 +112,13 @@ export function registerApprovalsRoutes(app: ApprovalRouteHost, core: Scope): vo
         );
         return;
       }
-      const agents = handle.accessor.get(IAgentLifecycleService);
-      const isPending = listSessionPendingInteractions(agents, 'approval')
+      const interactions = handle.accessor.get(ISessionInteractionService);
+      const isPending = interactions
+        .findAll({ kind: 'approval', resolved: false })
         .some((i) => i.id === approval_id);
 
       if (!isPending) {
-        if (isSessionInteractionRecentlyResolved(agents, approval_id)) {
+        if (interactions.isRecentlyResolved(approval_id)) {
           reply.send({
             code: ErrorCode.APPROVAL_ALREADY_RESOLVED,
             msg: `approval ${approval_id} already resolved`,
@@ -169,10 +169,11 @@ export function toWireApproval(interaction: Interaction, sessionId: string): {
   expires_at: string;
 } {
   const p = interaction.payload as ApprovalRequest;
+  const turnId = interaction.tags[INTERACTION_TAG_TURN_ID];
   return {
     approval_id: interaction.id,
     session_id: sessionId,
-    turn_id: interaction.origin.turnId,
+    turn_id: typeof turnId === 'number' ? turnId : undefined,
     tool_call_id: p.toolCallId ?? interaction.id,
     tool_name: p.toolName,
     action: p.action,

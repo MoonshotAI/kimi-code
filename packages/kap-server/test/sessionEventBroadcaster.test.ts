@@ -6,10 +6,11 @@ import type {
   AgentActivityState,
   AgentContext,
   Interaction,
-  InteractionKind,
   InteractionPendingChangedEvent,
+  InteractionQuery,
   InteractionRequest,
   InteractionResolution,
+  InteractionTags,
   IScopeHandle,
   Scope,
   SessionActivityCause,
@@ -18,7 +19,8 @@ import type {
 } from '@moonshot-ai/agent-core-v2';
 import {
   IAgentActivityView,
-  IAgentInteractionService,
+  INTERACTION_TAG_AGENT_ID,
+  ISessionInteractionService,
   LifecycleScope,
   IAgentLifecycleService,
   IAgentProfileService,
@@ -126,6 +128,11 @@ class FakeAgentHandle {
   dispose(): void {}
 }
 
+function interactionRequestAgentId(req: { readonly tags?: InteractionTags }): string {
+  const tag = req.tags?.[INTERACTION_TAG_AGENT_ID];
+  return typeof tag === 'string' ? tag : MAIN_AGENT_ID;
+}
+
 class FakeInteractionKernel {
   private readonly pending = new Map<string, Interaction>();
   private readonly changeEmitter = new Emitter<InteractionPendingChangedEvent>();
@@ -150,16 +157,31 @@ class FakeInteractionKernel {
     return true;
   }
 
-  listPending(kind?: InteractionKind): readonly Interaction[] {
-    const all = [...this.pending.values()];
-    return kind === undefined ? all : all.filter((i) => i.kind === kind);
+  findAll(query?: InteractionQuery): readonly Interaction[] {
+    if (query?.resolved === true) return [];
+    let all = [...this.pending.values()];
+    if (query?.id !== undefined) all = all.filter((i) => i.id === query.id);
+    if (query?.kind !== undefined) all = all.filter((i) => i.kind === query.kind);
+    const tags = query?.tags;
+    if (tags !== undefined) {
+      all = all.filter((i) => Object.entries(tags).every(([key, value]) => i.tags[key] === value));
+    }
+    return all;
+  }
+
+  findOne(query: InteractionQuery): Interaction | undefined {
+    return this.findAll(query)[0];
+  }
+
+  wait<TResponse>(): Promise<TResponse> {
+    return new Promise<TResponse>(() => {});
   }
 
   isRecentlyResolved(): boolean {
     return false;
   }
 
-  cancelPendingForTurn(_turnId: number): void {}
+  cancelForTurn(): void {}
 
   private park<TPayload>(
     req: InteractionRequest<TPayload>,
@@ -170,7 +192,7 @@ class FakeInteractionKernel {
       id: req.id ?? `interaction-${this.pending.size}`,
       kind: req.kind,
       payload: req.payload,
-      origin: req.origin ?? {},
+      tags: req.tags ?? {},
       createdAt: Date.now(),
     };
     this.pending.set(interaction.id, interaction);
@@ -199,11 +221,11 @@ class FakeInteractionHub {
   }
 
   request<TPayload, TResponse>(req: InteractionRequest<TPayload>): Promise<TResponse> {
-    return this.kernelFor(req.origin?.agentId ?? 'main').request(req);
+    return this.kernelFor(interactionRequestAgentId(req)).request(req);
   }
 
   enqueue<TPayload>(req: InteractionRequest<TPayload>): Interaction {
-    return this.kernelFor(req.origin?.agentId ?? 'main').enqueue(req);
+    return this.kernelFor(interactionRequestAgentId(req)).enqueue(req);
   }
 
   respond(id: string, response: unknown): boolean {
@@ -213,17 +235,23 @@ class FakeInteractionHub {
     return false;
   }
 
-  listPending(kind?: InteractionKind): readonly Interaction[] {
-    return [...this.allKernels()].flatMap((kernel) => kernel.listPending(kind));
+  findAll(query?: InteractionQuery): readonly Interaction[] {
+    return [...this.allKernels()].flatMap((kernel) => kernel.findAll(query));
+  }
+
+  findOne(query: InteractionQuery): Interaction | undefined {
+    return this.findAll(query)[0];
+  }
+
+  wait<TResponse>(): Promise<TResponse> {
+    return new Promise<TResponse>(() => {});
   }
 
   isRecentlyResolved(): boolean {
     return false;
   }
 
-  cancelPendingForTurn(turnId: number): void {
-    for (const kernel of this.allKernels()) kernel.cancelPendingForTurn(turnId);
-  }
+  cancelForTurn(): void {}
 }
 
 class FakeLifecycle {
@@ -278,7 +306,7 @@ class FakeLifecycle {
     handle.set(IAgentActivityView, {
       state: () => ({ lifecycle: 'ready', background: [] }),
     });
-    handle.set(IAgentInteractionService, this.kernelFor(id));
+    this.kernelFor(id);
     const onTurnStarted = handle.bus.subscribe('turn.started', (e) => {
       handle.bus.emit(
         agentEvent('agent.activity.updated', {
@@ -440,7 +468,7 @@ class FakeSessionActivityView {
         break;
       }
     }
-    const pending = this.interactions.listPending();
+    const pending = this.interactions.findAll({ resolved: false });
     return {
       busy,
       mainTurnActive: this.folds.get(MAIN_AGENT_ID)?.turnActive ?? false,
@@ -468,6 +496,7 @@ function makeCore(
     const sessionAccessor = {
       get: (t: unknown) => {
         if (t === IAgentLifecycleService) return lifecycle;
+        if (t === ISessionInteractionService) return lifecycle.interactions;
         if (t === ISessionActivityView) return lifecycle.workView;
         if (t === ISessionMetadata) return { read: async () => ({ agents: metaAgents }) };
         return undefined;
@@ -2089,7 +2118,7 @@ describe('SessionEventBroadcaster', () => {
         toolCallId: 'call_q',
         questions: [{ question: 'Pick', options: [{ label: 'A' }] }],
       },
-      origin: { agentId: 'sub-1' },
+      tags: { agentId: 'sub-1' },
     });
     await bc.getCursor('s1');
     expect(
@@ -2119,7 +2148,7 @@ describe('SessionEventBroadcaster', () => {
         action: 'run',
         display: { kind: 'command', command: 'ls' },
       },
-      origin: { turnId: 3 },
+      tags: { turnId: 3 },
     });
     await bc.getCursor('s1');
 
