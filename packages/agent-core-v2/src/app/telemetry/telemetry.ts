@@ -26,6 +26,10 @@ export interface ITelemetryAppender {
   shutdown?(): Promise<void> | void;
 }
 
+export interface TelemetryScopeBinding extends IDisposable {
+  readonly telemetry: ITelemetryService;
+}
+
 export interface ITelemetryService {
   readonly _serviceBrand: undefined;
 
@@ -36,11 +40,23 @@ export interface ITelemetryService {
   withContext(patch: TelemetryContextPatch): ITelemetryService;
   setContext(patch: TelemetryContextPatch): void;
   getContext(): Readonly<TelemetryContextPatch>;
+  createScopeBinding(seed: TelemetryContextPatch): TelemetryScopeBinding;
+}
+
+export interface ITelemetryAdminService {
   addAppender(appender: ITelemetryAppender): IDisposable;
   removeAppender(appender: ITelemetryAppender): void;
   setEnabled(enabled: boolean): void;
   flush(): Promise<void>;
   shutdown(): Promise<void>;
+}
+
+export function asTelemetryAdmin(service: ITelemetryService): ITelemetryAdminService | undefined {
+  const candidate = service as ITelemetryService & Partial<ITelemetryAdminService>;
+  if (typeof candidate.addAppender !== 'function') {
+    return undefined;
+  }
+  return candidate as ITelemetryAdminService;
 }
 
 export const nullTelemetryAppender: ITelemetryAppender = {
@@ -57,11 +73,12 @@ export const noopTelemetryService: ITelemetryService = {
   withContext: () => noopTelemetryService,
   setContext: () => {},
   getContext: () => EMPTY_CONTEXT,
-  addAppender: () => ({ dispose: () => {} }),
-  removeAppender: () => {},
-  setEnabled: () => {},
-  flush: async () => {},
-  shutdown: async () => {},
+  createScopeBinding: () => noopTelemetryScopeBinding,
+};
+
+const noopTelemetryScopeBinding: TelemetryScopeBinding = {
+  telemetry: noopTelemetryService,
+  dispose: () => {},
 };
 
 export const ITelemetryService = createDecorator<ITelemetryService>(

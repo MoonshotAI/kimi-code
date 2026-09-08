@@ -8,11 +8,13 @@ import {
 } from '#/_base/errors/unexpectedError';
 import type { TelemetryProperties } from '#/app/telemetry/context';
 import type { TurnStartedEvent as TurnStartedTelemetryEvent } from '#/app/telemetry/events';
-import { type ITelemetryAppender, ITelemetryService } from '#/app/telemetry/telemetry';
 import {
-  type ITelemetryScopeBindingHost,
-  TelemetryService,
-} from '#/app/telemetry/telemetryService';
+  asTelemetryAdmin,
+  type ITelemetryAppender,
+  ITelemetryService,
+  noopTelemetryService,
+} from '#/app/telemetry/telemetry';
+import { TelemetryService } from '#/app/telemetry/telemetryService';
 
 interface CapturedRecord {
   readonly event: string;
@@ -228,8 +230,7 @@ describe('TelemetryService (layered ambient)', () => {
     root.setContext({ session_id: 'app-level', model: 'm1' });
 
     const session = root.createScopeBinding({ session_id: 's1' });
-    const agent = (session.telemetry as ITelemetryService & ITelemetryScopeBindingHost)
-      .createScopeBinding({ agent_id: 'a1', mode: 'agent' });
+    const agent = session.telemetry.createScopeBinding({ agent_id: 'a1', mode: 'agent' });
 
     agent.telemetry.track2('session_ended', { reason: 'exit' });
     expect(appender.records[0]?.properties).toEqual({
@@ -263,8 +264,7 @@ describe('TelemetryService (layered ambient)', () => {
     const appender = new CapturingAppender();
     const root = serviceWithAppenders(appender);
     const session = root.createScopeBinding({ session_id: 's1' });
-    const agent = (session.telemetry as ITelemetryService & ITelemetryScopeBindingHost)
-      .createScopeBinding({ agent_id: 'a1', mode: 'agent' });
+    const agent = session.telemetry.createScopeBinding({ agent_id: 'a1', mode: 'agent' });
     agent.telemetry.setContext({ turn_id: 3 });
     agent.telemetry.track2('tool_call_dedup_detected', {
       step_no: 1,
@@ -435,8 +435,7 @@ describe('TelemetryService (layered ambient)', () => {
     const appender = new CapturingAppender();
     const root = serviceWithAppenders(appender);
     const session = root.createScopeBinding({ session_id: 's1' });
-    const agent = (session.telemetry as ITelemetryService & ITelemetryScopeBindingHost)
-      .createScopeBinding({ agent_id: 'a1' });
+    const agent = session.telemetry.createScopeBinding({ agent_id: 'a1' });
 
     agent.dispose();
     agent.telemetry.track2('session_ended', { reason: 'exit' });
@@ -519,6 +518,104 @@ describe('TelemetryService (layered ambient)', () => {
       mode: 'agent',
       provider_type: 'old-provider',
     });
+  });
+});
+
+describe('TelemetryService (scope binding snapshots)', () => {
+  it('a binding snapshots the parent context at creation and ignores later parent writes', () => {
+    const appender = new CapturingAppender();
+    const root = serviceWithAppenders(appender);
+    root.setContext({ model: 'm1' });
+    const session = root.createScopeBinding({ session_id: 's1' });
+
+    root.setContext({ model: 'm2', session_id: 'other-session' });
+    session.telemetry.track2('session_ended', { reason: 'exit' });
+
+    expect(appender.records[0]?.properties).toEqual({
+      sessionId: 's1',
+      model: 'm1',
+      reason: 'exit',
+    });
+  });
+
+  it('a binding created after a parent write captures the written context', () => {
+    const appender = new CapturingAppender();
+    const root = serviceWithAppenders(appender);
+    root.setContext({ model: 'm1' });
+    const session = root.createScopeBinding({ session_id: 's1' });
+
+    session.telemetry.track2('session_ended', { reason: 'exit' });
+
+    expect(appender.records[0]?.properties).toEqual({
+      sessionId: 's1',
+      model: 'm1',
+      reason: 'exit',
+    });
+  });
+
+  it('a nested binding does not observe fragment writes made to its parent after creation', () => {
+    const appender = new CapturingAppender();
+    const root = serviceWithAppenders(appender);
+    const session = root.createScopeBinding({ session_id: 's1' });
+    const agent = session.telemetry.createScopeBinding({ agent_id: 'a1', mode: 'agent' });
+
+    session.telemetry.setContext({ model: 'late-model' });
+    agent.telemetry.track2('session_ended', { reason: 'exit' });
+
+    expect(appender.records[0]?.properties).toEqual({
+      sessionId: 's1',
+      agent_id: 'a1',
+      mode: 'agent',
+      reason: 'exit',
+    });
+  });
+
+  it('a disposed binding degrades to the context captured at creation', () => {
+    const appender = new CapturingAppender();
+    const root = serviceWithAppenders(appender);
+    root.setContext({ model: 'm1' });
+    const session = root.createScopeBinding({ session_id: 's1' });
+    root.setContext({ model: 'm2' });
+
+    session.dispose();
+    session.telemetry.track2('session_ended', { reason: 'exit' });
+
+    expect(appender.records[0]?.properties).toEqual({ model: 'm1', reason: 'exit' });
+  });
+});
+
+describe('asTelemetryAdmin', () => {
+  it('exposes the admin surface of a concrete TelemetryService', () => {
+    const svc = new TelemetryService();
+    const admin = asTelemetryAdmin(svc);
+    const appender = new CapturingAppender();
+
+    admin?.addAppender(appender);
+    svc.track2('session_ended', { reason: 'exit' });
+
+    expect(admin).toBeDefined();
+    expect(appender.records).toHaveLength(1);
+  });
+
+  it('returns undefined for services without an admin surface', () => {
+    expect(asTelemetryAdmin(noopTelemetryService)).toBeUndefined();
+  });
+
+  it('is not exposed by scope bindings or snapshot views', () => {
+    const root = new TelemetryService();
+    const binding = root.createScopeBinding({ session_id: 's1' });
+
+    expect(asTelemetryAdmin(binding.telemetry)).toBeUndefined();
+    expect(asTelemetryAdmin(root.withContext({ session_id: 's1' }))).toBeUndefined();
+  });
+});
+
+describe('noopTelemetryService', () => {
+  it('creates an inert scope binding', () => {
+    const binding = noopTelemetryService.createScopeBinding({ session_id: 's1' });
+
+    expect(() => binding.telemetry.track2('session_ended', { reason: 'exit' })).not.toThrow();
+    expect(() => binding.dispose()).not.toThrow();
   });
 });
 

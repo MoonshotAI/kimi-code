@@ -317,11 +317,7 @@ function telemetryStub(events: Array<{ event: string; properties: Record<string,
     withContext: () => telemetryStub(events),
     setContext: () => {},
     getContext: () => ({}),
-    addAppender: () => ({ dispose: () => {} }),
-    removeAppender: () => {},
-    setEnabled: () => {},
-    flush: async () => {},
-    shutdown: async () => {},
+    createScopeBinding: () => ({ telemetry: telemetryStub(events), dispose: () => {} }),
   };
 }
 
@@ -1335,7 +1331,7 @@ describe('WorkspaceFsService.list', () => {
       sort: 'name_asc',
       include_git_status: false,
     });
-    const names = result.items.map((i) => i.name).sort();
+    const names = result.items.map((i) => i.name).toSorted();
     expect(names).toEqual(['README.md', 'src']);
     expect(result.items.find((i) => i.name === 'src')?.kind).toBe('directory');
   });
@@ -1351,7 +1347,7 @@ describe('WorkspaceFsService.list', () => {
       sort: 'name_asc',
       include_git_status: false,
     });
-    expect(result.children_by_path?.['src']?.map((i) => i.name).sort()).toEqual([
+    expect(result.children_by_path?.['src']?.map((i) => i.name).toSorted()).toEqual([
       'a.ts',
       'sub',
     ]);
@@ -1399,15 +1395,15 @@ describe('WorkspaceFsService.read', () => {
   });
 
   it('returns base64 for binary content in auto mode', async () => {
-    const fs = makeSession({ 'bin.dat': 'abc\x00def' }, emptyHandler);
+    const fs = makeSession({ 'bin.dat': 'abc\u0000def' }, emptyHandler);
     const result = await fs.read({ path: 'bin.dat', offset: 0, length: 1024, encoding: 'auto' });
     expect(result.encoding).toBe('base64');
     expect(result.is_binary).toBe(true);
-    expect(result.content).toBe(Buffer.from('abc\x00def').toString('base64'));
+    expect(result.content).toBe(Buffer.from('abc\u0000def').toString('base64'));
   });
 
   it('throws fs.is_binary for binary content in utf-8 mode', async () => {
-    const fs = makeSession({ 'bin.dat': 'abc\x00def' }, emptyHandler);
+    const fs = makeSession({ 'bin.dat': 'abc\u0000def' }, emptyHandler);
     await expect(
       fs.read({ path: 'bin.dat', offset: 0, length: 1024, encoding: 'utf-8' }),
     ).rejects.toMatchObject({ code: 'fs.is_binary' });

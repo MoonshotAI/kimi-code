@@ -197,6 +197,7 @@ import {
   IWorkspaceAliases,
   ISessionActivityView,
   IWorkspaceInstanceManager,
+  asTelemetryAdmin,
   closeSessionById,
   followSessionLifecycles,
   getLiveSessionById,
@@ -545,15 +546,16 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   private installEngineTelemetry(client: TelemetryClient | undefined): void {
     if (client === undefined) return;
-    const telemetry = this.app.accessor.get(ITelemetryService);
-    telemetry.addAppender({
+    const admin = asTelemetryAdmin(this.app.accessor.get(ITelemetryService));
+    if (admin === undefined) return;
+    admin.addAppender({
       track: (record) => {
         if (this.engineSessionStartedSuppressed && record.event === 'session_started') return;
         client.track(record.event, record.properties);
       },
     });
     void this.configReady.then(() => {
-      telemetry.setEnabled(this.engineAccessor.get(IConfigService).get('telemetry') !== false);
+      admin.setEnabled(this.engineAccessor.get(IConfigService).get('telemetry') !== false);
     });
   }
 
@@ -956,9 +958,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * cannot deadlock.
    */
   private runSessionAccessAll<T>(sessionIds: readonly string[], work: () => Promise<T>): Promise<T> {
-    const keys = [...new Set(sessionIds)].sort();
+    const keys = [...new Set(sessionIds)].toSorted();
     let chained: () => Promise<T> = work;
-    for (const key of [...keys].reverse()) {
+    for (const key of [...keys].toReversed()) {
       const inner = chained;
       chained = () => this.runSessionAccess(key, inner);
     }

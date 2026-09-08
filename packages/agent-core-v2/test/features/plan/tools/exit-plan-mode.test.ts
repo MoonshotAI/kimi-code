@@ -44,11 +44,7 @@ function recordingTelemetry(): ITelemetryService {
     withContext: () => recordingTelemetry(),
     setContext: () => {},
     getContext: () => ({}),
-    addAppender: () => ({ dispose: () => {} }),
-    removeAppender: () => {},
-    setEnabled: () => {},
-    flush: () => Promise.resolve(),
-    shutdown: () => Promise.resolve(),
+    createScopeBinding: () => ({ telemetry: recordingTelemetry(), dispose: () => {} }),
   };
 }
 

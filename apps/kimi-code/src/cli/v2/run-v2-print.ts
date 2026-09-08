@@ -39,6 +39,7 @@ import {
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
   applyPrintModeConfigDefaults,
+  asTelemetryAdmin,
   bootstrap,
   createCloudAppender,
   ensureMainAgent,
@@ -54,6 +55,7 @@ import {
   type Event2,
   type IAgentScopeHandle,
   type ISessionScopeHandle,
+  type ITelemetryAdminService,
   type LoopRunResult,
   type McpServerConfig,
   type PrintBackgroundMode,
@@ -211,6 +213,7 @@ export async function runV2Print(
   let removeTerminationCleanup: (() => void) | undefined;
   let cleanupPromise: Promise<void> | undefined;
   let telemetryService: ITelemetryService | undefined;
+  let telemetryAdmin: ITelemetryAdminService | undefined;
   const cleanup = async (): Promise<void> => {
     const pending = (cleanupPromise ??= (async () => {
       removeTerminationCleanup?.();
@@ -226,8 +229,8 @@ export async function runV2Print(
             // The turn's tail records reach the journal only via the wire's
             // async persist queue; process.exit must not cut off that queue.
             raceWithTimeout(flushWires(), CLI_SHUTDOWN_TIMEOUT_MS).catch(() => {}),
-            telemetryService !== undefined
-              ? raceWithTimeout(telemetryService.shutdown(), CLI_SHUTDOWN_TIMEOUT_MS)
+            telemetryAdmin !== undefined
+              ? raceWithTimeout(telemetryAdmin.shutdown(), CLI_SHUTDOWN_TIMEOUT_MS)
               : Promise.resolve(),
             shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS }).catch(() => {}),
           ]);
@@ -252,8 +255,9 @@ export async function runV2Print(
     // process-wide crash handlers report through its default client, so its
     // sink must be attached before the run can crash.
     telemetryService = app.accessor.get(ITelemetryService);
+    telemetryAdmin = asTelemetryAdmin(telemetryService);
     if (telemetryEnabled) {
-      telemetryService.addAppender(
+      telemetryAdmin?.addAppender(
         createCloudAppender(app.accessor, {
           deviceId,
           appName: CLI_USER_AGENT_PRODUCT,

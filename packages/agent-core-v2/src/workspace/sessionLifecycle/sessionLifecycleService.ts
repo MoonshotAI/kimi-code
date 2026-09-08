@@ -34,7 +34,6 @@ import { CHILD_SESSION_KIND,
 } from '#/app/sessionIndex/sessionIndex';
 import { buildSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { bindTelemetryScope } from '#/app/telemetry/telemetryService';
 import { ErrorCodes, Error2, isError2 } from '#/errors';
 import { IHostFileSystem, type HostDirEntry } from '#/os/interface/hostFileSystem';
 import {
@@ -257,7 +256,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       scope: (subKey?: string): string =>
         subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
     };
-    const telemetryBinding = bindTelemetryScope(this.telemetry, {
+    const telemetryBinding = this.telemetry.createScopeBinding({
       session_id: opts.sessionId,
     });
     let handle: ISessionScopeHandle;

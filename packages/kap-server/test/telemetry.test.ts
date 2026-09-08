@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  asTelemetryAdmin,
   bootstrap,
   type ITelemetryAppender,
   ITelemetryService,
@@ -96,7 +97,7 @@ describe('server telemetry', () => {
 
     await shutdownServerTelemetry(telemetry);
     service.track2('session_ended', { reason: 'archive' });
-    await service.flush();
+    await asTelemetryAdmin(service)?.flush();
 
     expect(cloudFetch).toHaveBeenCalledOnce();
     expect(hostEvents).toEqual(['session_ended', 'session_ended']);

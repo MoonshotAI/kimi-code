@@ -112,11 +112,7 @@ function recordingTelemetry(records: TelemetryRecord[]): ITelemetryService {
     withContext: () => telemetry,
     setContext: () => {},
     getContext: () => ({}),
-    addAppender: () => ({ dispose: () => {} }),
-    removeAppender: () => {},
-    setEnabled: () => {},
-    flush: async () => {},
-    shutdown: async () => {},
+    createScopeBinding: () => ({ telemetry, dispose: () => {} }),
   };
   return telemetry;
 }

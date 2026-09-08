@@ -1,6 +1,7 @@
 import {
   type CloudAppender,
   createCloudAppender,
+  asTelemetryAdmin,
   IBootstrapService,
   IConfigService,
   type IDisposable,
@@ -37,6 +38,9 @@ export async function initializeServerTelemetry(
   const enabled = config.get('telemetry') !== false;
   if (!enabled || isTelemetryDisabledByEnv(core)) return {};
 
+  const admin = asTelemetryAdmin(service);
+  if (admin === undefined) return {};
+
   const auth = core.accessor.get(IOAuthToolkit);
   const appender = createCloudAppender(core.accessor, {
     deviceId: createKimiDeviceId(homeDir),
@@ -45,7 +49,7 @@ export async function initializeServerTelemetry(
     model: config.get<string>('defaultModel') ?? undefined,
     getAccessToken: async () => (await auth.getCachedAccessToken()) ?? null,
   });
-  const registration = service.addAppender(appender);
+  const registration = admin.addAppender(appender);
   try {
     appender.startPeriodicFlush();
   } catch (error) {

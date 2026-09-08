@@ -52,7 +52,6 @@ import { IWireService } from '#/wire/wire';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { bindTelemetryScope } from '#/app/telemetry/telemetryService';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 
 import { ManagedAgent } from './managedAgent';
@@ -171,7 +170,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     let stage = 'scope';
     let containerRef: InstantiationService | undefined;
     let createdHandle: IAgentScopeHandle | undefined;
-    const telemetryBinding = bindTelemetryScope(this.telemetry, {
+    const telemetryBinding = this.telemetry.createScopeBinding({
       agent_id: agentId,
       mode: 'agent',
     });

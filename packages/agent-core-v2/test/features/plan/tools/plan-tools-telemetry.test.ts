@@ -48,11 +48,7 @@ function recordingTelemetry(): {
       withContext: () => recordingTelemetry().telemetry,
       setContext: () => {},
       getContext: () => ({}),
-      addAppender: () => ({ dispose: () => {} }),
-      removeAppender: () => {},
-      setEnabled: () => {},
-      flush: () => Promise.resolve(),
-      shutdown: () => Promise.resolve(),
+      createScopeBinding: () => ({ telemetry: recordingTelemetry().telemetry, dispose: () => {} }),
     },
     track2,
   };

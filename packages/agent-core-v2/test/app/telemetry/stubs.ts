@@ -13,11 +13,9 @@ export function recordingTelemetry(
   context: TelemetryProperties = {},
 ): ITelemetryService {
   let currentContext = context;
-  let enabled = true;
   const service: ITelemetryService = {
     _serviceBrand: undefined,
     track2: (event, properties) => {
-      if (!enabled) return;
       records.push({
         event,
         properties: composeTelemetryProperties(
@@ -33,13 +31,10 @@ export function recordingTelemetry(
       currentContext = { ...currentContext, ...patch };
     },
     getContext: () => currentContext,
-    addAppender: () => ({ dispose: () => {} }),
-    removeAppender: () => {},
-    setEnabled(next) {
-      enabled = next;
-    },
-    flush: () => Promise.resolve(),
-    shutdown: () => Promise.resolve(),
+    createScopeBinding: (seed: TelemetryContextPatch) => ({
+      telemetry: recordingTelemetry(records, { ...currentContext, ...seed }),
+      dispose: () => {},
+    }),
   };
   return service;
 }
