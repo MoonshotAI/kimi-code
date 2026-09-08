@@ -411,7 +411,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const texts = bundled?.content
       .filter((part) => part.type === 'text')
       .map((part) => part.text);
-    expect(texts.at(-1)).toBe('Review this change.');
+    expect(texts?.at(-1)).toBe('Review this change.');
 
     const projected = projectPromptSnapshot({
       id: 'msg_1',
