@@ -6,10 +6,16 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  KIMI_CODE_PLUGIN_MARKETPLACE_URL,
   KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
+  kimiCodePluginMarketplaceUrl,
 } from '#/constant/app';
-import { computeUpdateStatus, loadPluginMarketplace } from '#/utils/plugin-marketplace';
+import {
+  computeUpdateStatus,
+  loadPluginMarketplace,
+  withBuiltInEntries,
+  withMarketplaceLatestVersions,
+  type PluginMarketplaceEntry,
+} from '#/utils/plugin-marketplace';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 
@@ -94,34 +100,103 @@ describe('loadPluginMarketplace', () => {
       'utf8',
     );
 
-    const marketplace = await loadPluginMarketplace({ workDir: '/tmp/work', source: file });
-
-    expect(marketplace).toEqual({
+    const marketplace = await loadPluginMarketplace({
+      workDir: '/tmp/work',
       source: file,
-      version: '1',
-      plugins: [
-        {
-          id: 'kimi-datasource',
-          displayName: 'Kimi Datasource',
-          tier: 'official',
-          version: '1.0.0',
-          description: 'Datasource tools',
-          source: join(dir, 'kimi-datasource'),
-          keywords: ['data'],
-          homepage: undefined,
-        },
-        {
-          id: 'superpowers',
-          displayName: 'Superpowers',
-          tier: 'curated',
-          version: '5.1.0',
-          description: 'Workflow skills',
-          source: join(dir, 'curated', 'superpowers'),
-          keywords: ['skills', 'workflow'],
-          homepage: 'https://github.com/obra/superpowers',
-        },
-      ],
     });
+
+    expect(marketplace.source).toBe(file);
+    expect(marketplace.version).toBe('1');
+    expect(marketplace.plugins.slice(0, 2)).toEqual([
+      {
+        id: 'kimi-datasource',
+        displayName: 'Kimi Datasource',
+        tier: 'official',
+        version: '1.0.0',
+        description: 'Datasource tools',
+        source: join(dir, 'kimi-datasource'),
+        keywords: ['data'],
+        homepage: undefined,
+      },
+      {
+        id: 'superpowers',
+        displayName: 'Superpowers',
+        tier: 'curated',
+        version: '5.1.0',
+        description: 'Workflow skills',
+        source: join(dir, 'curated', 'superpowers'),
+        keywords: ['skills', 'workflow'],
+        homepage: 'https://github.com/obra/superpowers',
+      },
+    ]);
+  });
+
+  const builtInEntries = [
+    {
+      id: 'kimi-cu',
+      displayName: 'Kimi Computer Use',
+      description: 'fake cu',
+      tier: 'official' as const,
+      source: 'capability:kimi-cu',
+    },
+    {
+      id: 'kimi-webbridge',
+      displayName: 'Kimi WebBridge',
+      description: 'fake wb',
+      tier: 'official' as const,
+      source: 'capability:kimi-webbridge',
+    },
+  ];
+
+  it('appends the caller-supplied built-in entries the catalog does not carry', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-plugin-marketplace-'));
+    const file = join(dir, 'marketplace.json');
+    await writeFile(file, JSON.stringify({ version: '1', plugins: [] }), 'utf8');
+
+    const marketplace = await loadPluginMarketplace({
+      workDir: '/tmp/work',
+      source: file,
+      builtInEntries,
+    });
+
+    // The util owns no product knowledge: entries come from the caller (the
+    // engine's capability registry), and no version is invented.
+    expect(marketplace.plugins).toEqual(builtInEntries);
+    expect(marketplace.plugins.map((entry) => entry.version)).toEqual([undefined, undefined]);
+  });
+
+  it('masks same-id catalog rows with the built-in entries', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-plugin-marketplace-'));
+    const file = join(dir, 'marketplace.json');
+    await writeFile(
+      file,
+      JSON.stringify({
+        plugins: [
+          {
+            id: 'kimi-webbridge',
+            tier: 'official',
+            displayName: 'Kimi WebBridge',
+            version: '1.12.0',
+            source: './kimi-webbridge',
+          },
+        ],
+      }),
+      'utf8',
+    );
+
+    const marketplace = await loadPluginMarketplace({
+      workDir: '/tmp/work',
+      source: file,
+      builtInEntries,
+    });
+
+    // What the built-in ids mean stays decided by the client release: the
+    // catalog's row contributes the version, but not its source or copy.
+    const webbridge = marketplace.plugins.filter((entry) => entry.id === 'kimi-webbridge');
+    expect(webbridge).toHaveLength(1);
+    expect(webbridge[0]?.source).toBe('capability:kimi-webbridge');
+    expect(webbridge[0]?.version).toBe('1.12.0');
+    expect(marketplace.plugins.some((entry) => entry.id === 'kimi-cu')).toBe(true);
   });
 
   it('includes Superpowers in the repository marketplace fixture', async () => {
@@ -179,18 +254,18 @@ describe('loadPluginMarketplace', () => {
 
     const marketplace = await loadPluginMarketplace({
       workDir: '/tmp/work',
-      source: KIMI_CODE_PLUGIN_MARKETPLACE_URL,
+      source: kimiCodePluginMarketplaceUrl(),
       fetchImpl,
     });
 
-    expect(fetchImpl).toHaveBeenCalledWith(KIMI_CODE_PLUGIN_MARKETPLACE_URL);
+    expect(fetchImpl).toHaveBeenCalledWith(kimiCodePluginMarketplaceUrl());
     expect(marketplace.plugins[0]).toEqual(
       expect.objectContaining({
         id: 'kimi-datasource',
         displayName: 'Kimi Datasource',
         source: new URL(
           './official/kimi-datasource.zip',
-          KIMI_CODE_PLUGIN_MARKETPLACE_URL,
+          kimiCodePluginMarketplaceUrl(),
         ).toString(),
       }),
     );
@@ -206,7 +281,7 @@ describe('loadPluginMarketplace', () => {
     try {
       const marketplace = await loadPluginMarketplace({ workDir: '/tmp/work', fetchImpl });
 
-      expect(fetchImpl).toHaveBeenCalledWith(KIMI_CODE_PLUGIN_MARKETPLACE_URL);
+      expect(fetchImpl).toHaveBeenCalledWith(kimiCodePluginMarketplaceUrl());
       expect(marketplace.source).toBe(join(REPO_ROOT, 'plugins/marketplace.json'));
       expect(marketplace.plugins).toContainEqual(
         expect.objectContaining({
@@ -230,9 +305,26 @@ describe('loadPluginMarketplace', () => {
 
     await expect(loadPluginMarketplace({
       workDir: '/tmp/work',
-      source: KIMI_CODE_PLUGIN_MARKETPLACE_URL,
+      source: kimiCodePluginMarketplaceUrl(),
       fetchImpl,
     })).rejects.toThrow(/fetch failed/);
+  });
+
+  it('keeps the built-in entries when the catalog is unreachable', async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('fetch failed');
+    }) as unknown as typeof fetch;
+
+    // Explicit source (no checkout fallback) + unreachable: the built-ins do
+    // not come from the catalog, so they must survive the outage.
+    const marketplace = await loadPluginMarketplace({
+      workDir: '/tmp/work',
+      source: 'https://example.test/marketplace.json',
+      fetchImpl,
+      builtInEntries,
+    });
+
+    expect(marketplace.plugins.map((entry) => entry.id)).toEqual(['kimi-cu', 'kimi-webbridge']);
   });
 
   describe('version derivation from a GitHub source', () => {
@@ -500,6 +592,129 @@ describe('loadPluginMarketplace', () => {
     await expect(loadPluginMarketplace({ workDir: '/tmp/work', source: file })).rejects.toThrow(
       /Legacy aliases "managed" and "guide" are also accepted/,
     );
+  });
+
+  describe('two-phase version lookup', () => {
+    async function writeCatalog(dir: string) {
+      const file = join(dir, 'marketplace.json');
+      await writeFile(
+        file,
+        JSON.stringify({
+          plugins: [
+            { id: 'demo', displayName: 'Demo', source: 'https://github.com/owner/repo' },
+          ],
+        }),
+        'utf8',
+      );
+      return file;
+    }
+
+    it('skipLatestVersions returns the catalog without querying GitHub', async () => {
+      const fetchImpl = vi.fn(async () => {
+        throw new Error('should not be called');
+      }) as unknown as typeof fetch;
+      const dir = await mkdtemp(join(tmpdir(), 'kimi-plugin-marketplace-'));
+      const file = await writeCatalog(dir);
+
+      const marketplace = await loadPluginMarketplace({
+        workDir: dir,
+        source: file,
+        fetchImpl,
+        skipLatestVersions: true,
+      });
+
+      expect(marketplace.plugins[0]?.version).toBeUndefined();
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
+
+    it('withMarketplaceLatestVersions fills versions from the latest release redirect', async () => {
+      const fetchImpl = vi.fn(async (input: unknown) => ({
+        ok: false,
+        status: 302,
+        headers: new Headers({
+          location: 'https://github.com/owner/repo/releases/tag/v1.2.3',
+        }),
+        text: async () => '',
+      })) as unknown as typeof fetch;
+      const dir = await mkdtemp(join(tmpdir(), 'kimi-plugin-marketplace-'));
+      const file = await writeCatalog(dir);
+      const marketplace = await loadPluginMarketplace({
+        workDir: dir,
+        source: file,
+        skipLatestVersions: true,
+      });
+
+      const enriched = await withMarketplaceLatestVersions(marketplace, fetchImpl);
+
+      expect(fetchImpl).toHaveBeenCalledWith(
+        'https://github.com/owner/repo/releases/latest',
+        expect.objectContaining({ redirect: 'manual', signal: expect.any(AbortSignal) }),
+      );
+      expect(enriched.plugins[0]?.version).toBe('1.2.3');
+    });
+
+    it('withMarketplaceLatestVersions degrades to a missing version when the lookup aborts', async () => {
+      const fetchImpl = vi.fn(async (_input: unknown, init?: { signal?: AbortSignal }) => {
+        // Simulate the lookup hitting the timeout: undici rejects with the
+        // signal's reason once the AbortSignal fires.
+        throw init?.signal?.aborted === true
+          ? init.signal.reason
+          : new DOMException('This operation was aborted', 'AbortError');
+      }) as unknown as typeof fetch;
+      const dir = await mkdtemp(join(tmpdir(), 'kimi-plugin-marketplace-'));
+      const file = await writeCatalog(dir);
+      const marketplace = await loadPluginMarketplace({
+        workDir: dir,
+        source: file,
+        skipLatestVersions: true,
+      });
+
+      const enriched = await withMarketplaceLatestVersions(marketplace, fetchImpl);
+
+      expect(enriched.plugins[0]?.version).toBeUndefined();
+      expect(enriched.plugins[0]?.id).toBe('demo');
+    });
+
+    it('carries a resolved catalog version onto a built-in row injected after enrichment', async () => {
+      // Regression for the resolve-before-inject ordering: enriching the
+      // built-in-masked marketplace cannot see the catalog entry's GitHub
+      // source, so built-in rows would never get update badges.
+      const fetchImpl = vi.fn(async () => ({
+        ok: false,
+        status: 302,
+        headers: new Headers({
+          location: 'https://github.com/owner/repo/releases/tag/v2.0.0',
+        }),
+        text: async () => '',
+      })) as unknown as typeof fetch;
+      const dir = await mkdtemp(join(tmpdir(), 'kimi-plugin-marketplace-'));
+      const file = join(dir, 'marketplace.json');
+      await writeFile(
+        file,
+        JSON.stringify({
+          plugins: [{ id: 'demo', displayName: 'Demo', source: 'https://github.com/owner/repo' }],
+        }),
+        'utf8',
+      );
+      const catalog = await loadPluginMarketplace({
+        workDir: dir,
+        source: file,
+        skipLatestVersions: true,
+      });
+      const builtIns: readonly PluginMarketplaceEntry[] = [
+        { id: 'demo', displayName: 'Demo Capability', source: 'capability:demo', builtIn: true },
+      ];
+
+      const enriched = withBuiltInEntries(
+        await withMarketplaceLatestVersions(catalog, fetchImpl),
+        builtIns,
+      );
+
+      expect(enriched.plugins).toHaveLength(1);
+      expect(enriched.plugins[0]).toEqual(
+        expect.objectContaining({ id: 'demo', builtIn: true, version: '2.0.0' }),
+      );
+    });
   });
 
 });

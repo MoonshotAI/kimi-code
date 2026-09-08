@@ -1,19 +1,13 @@
-/**
- * `workspaceContext` domain (L1) — `ISessionWorkspaceContext` implementation.
- *
- * Holds the session work directory and additional dirs, resolves relative
- * paths, and checks whether a path falls within the workspace. The plain-data
- * state (`workDir`, `additionalDirs`) is registered into `sessionState`
- * (`ISessionStateService`) and read/written through it. Bound at Session
- * scope.
- */
-
 import { isAbsolute, relative, resolve } from 'node:path';
 
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/state/state';
+import { ErrorCodes, Error2 } from '#/errors';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
+import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 
 import { ISessionWorkspaceContext, type PathAccessOperation } from './workspaceContext';
 
@@ -23,32 +17,36 @@ export const workspaceContextAdditionalDirsKey = defineState<string[]>(
   () => [],
 );
 
-export class SessionWorkspaceContextService implements ISessionWorkspaceContext {
+export class SessionWorkspaceContextService extends Service implements ISessionWorkspaceContext {
   declare readonly _serviceBrand: undefined;
 
   constructor(
     @ISessionStateService private readonly states: ISessionStateService,
     @ISessionContext ctx: ISessionContext,
+    @ISessionWorkspaceInfo workspaceInfo: ISessionWorkspaceInfo,
   ) {
-    this.states.register(workspaceContextWorkDirKey);
-    this.states.register(workspaceContextAdditionalDirsKey);
-    this.setWorkDir(ctx.cwd);
+    super();
+    this.states.contributeState(workspaceContextWorkDirKey);
+    this.states.contributeState(workspaceContextAdditionalDirsKey);
+    this.states.set(workspaceContextWorkDirKey, resolve(ctx.cwd));
+    this.states.set(workspaceContextAdditionalDirsKey, [
+      ...new Set(workspaceInfo.additionalDirs.map((d) => resolve(d))),
+    ]);
+    this._register(
+      workspaceInfo.onDidChange(() => {
+        this.states.set(workspaceContextAdditionalDirsKey, [
+          ...new Set(workspaceInfo.additionalDirs.map((d) => resolve(d))),
+        ]);
+      }),
+    );
   }
 
   private get _workDir(): string {
     return this.states.get(workspaceContextWorkDirKey);
   }
 
-  private set _workDir(value: string) {
-    this.states.set(workspaceContextWorkDirKey, value);
-  }
-
   private get _additionalDirs(): string[] {
     return this.states.get(workspaceContextAdditionalDirsKey);
-  }
-
-  private set _additionalDirs(value: string[]) {
-    this.states.set(workspaceContextAdditionalDirsKey, value);
   }
 
   get workDir(): string {
@@ -57,14 +55,6 @@ export class SessionWorkspaceContextService implements ISessionWorkspaceContext 
 
   get additionalDirs(): readonly string[] {
     return this._additionalDirs;
-  }
-
-  setWorkDir(workDir: string): void {
-    this._workDir = resolve(workDir);
-  }
-
-  setAdditionalDirs(dirs: readonly string[]): void {
-    this._additionalDirs = [...new Set(dirs.map((d) => resolve(d)))];
   }
 
   resolve(rel: string): string {
@@ -85,19 +75,11 @@ export class SessionWorkspaceContextService implements ISessionWorkspaceContext 
   assertAllowed(absPath: string, op: PathAccessOperation): string {
     const target = this.resolve(absPath);
     if (!this.isWithin(target)) {
-      throw new Error(`Path outside workspace (${op}): ${target}`);
+      throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `Path outside workspace (${op}): ${target}`, {
+        details: { op, path: target },
+      });
     }
     return target;
-  }
-
-  addAdditionalDir(dir: string): void {
-    const d = resolve(dir);
-    if (!this._additionalDirs.includes(d)) this._additionalDirs.push(d);
-  }
-
-  removeAdditionalDir(dir: string): void {
-    const d = resolve(dir);
-    this._additionalDirs = this._additionalDirs.filter((x) => x !== d);
   }
 }
 

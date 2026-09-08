@@ -18,6 +18,7 @@
 import { Container } from '@moonshot-ai/pi-tui';
 import type { Component } from '@moonshot-ai/pi-tui';
 
+import { prefixPreservingOsc133Zone } from '#/tui/utils/osc133';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 interface TranscriptRenderCache {
@@ -68,7 +69,9 @@ export class GutterContainer extends Container {
         prefixed.push(cache.prefixed[i]!);
       } else {
         allReused = false;
-        prefixed.push(lines.map((line) => lead + line));
+        // OSC 133 zone markers must stay at byte 0 for the fullscreen
+        // renderer's prompt navigation, so the gutter goes after them.
+        prefixed.push(lines.map((line) => prefixPreservingOsc133Zone(line, lead)));
       }
       i++;
     }

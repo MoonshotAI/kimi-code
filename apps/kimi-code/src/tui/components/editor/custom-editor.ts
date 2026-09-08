@@ -16,9 +16,9 @@ import {
 import { currentTheme } from '#/tui/theme';
 import { createEditorTheme } from '#/tui/theme/pi-tui-theme';
 import { printableChar } from '#/tui/utils/printable-key';
-import { isInsideTmux } from '#/tui/utils/terminal-notification';
 
 import { extractAtPrefix } from './file-mention-provider';
+import { findInlineSkillTokens } from '../../utils/inline-skill-tokens';
 import { WrappingSelectList } from './wrapping-select-list';
 
 // oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match ANSI SGR escape sequences
@@ -125,6 +125,7 @@ export class CustomEditor extends Editor {
    * double-Esc so only two consecutive Escape presses trigger the shortcut.
    */
   public onNonEscapeInput?: () => void;
+  public onPreInput?: (data: string) => boolean;
   public onCtrlD?: () => void;
   public onCtrlC?: () => void;
   public onToggleToolExpand?: () => void;
@@ -134,6 +135,8 @@ export class CustomEditor extends Editor {
   public onCtrlB?: () => boolean;
   /** Return `true` to consume Ctrl+T (the todo list had overflow to toggle); return `false`/`undefined` to fall through to the editor default. */
   public onToggleTodoExpand?: () => boolean;
+  /** Return true to page Updates with Ctrl+P / Ctrl+N; otherwise use the editor bindings. */
+  public onPageNotify?: (direction: -1 | 1) => boolean;
   public onUndo?: () => void;
   public onTextPaste?: () => void;
   /**
@@ -155,18 +158,25 @@ export class CustomEditor extends Editor {
    * Alt-V on Windows — Ctrl-V is terminal-reserved there). Return
    * `true` to consume the key (image was read and handled); return
    * `false` to let the key fall through to the normal paste path.
-   * The callback may be async; pi-tui awaits it before dispatching
-   * the next keystroke.
+   * The callback may be async; CustomEditor queues subsequent keystrokes until
+   * it settles before dispatching them.
    */
   public onPasteImage?: () => Promise<boolean>;
 
   private consumingPaste = false;
   private consumeBuffer = '';
+  /** Serialize paste callbacks so Enter/typing cannot overtake an image paste. */
+  private pasteInFlight = false;
+  private readonly pasteInputQueue: string[] = [];
   private argumentHints: ReadonlyMap<string, string> = new Map();
-  private autocompleteWasShowing = false;
+  private skillCommandNames: ReadonlySet<string> = new Set();
 
   setArgumentHints(hints: ReadonlyMap<string, string>): void {
     this.argumentHints = hints;
+  }
+
+  setSkillCommandNames(names: ReadonlySet<string>): void {
+    this.skillCommandNames = names;
   }
 
   constructor(tui: TUI, options: CustomEditorOptions = {}) {
@@ -176,7 +186,11 @@ export class CustomEditor extends Editor {
     // content. The right side mirrors with 3 padding columns and the right
     // border at the last column.
     const theme = createEditorTheme();
-    super(tui, theme, { paddingX: 4, disablePasteBurst: options.disablePasteBurst });
+    super(tui, theme, {
+      paddingX: 4,
+      disablePasteBurst: options.disablePasteBurst,
+      inlineSlashTrigger: true,
+    });
 
     // pi-tui keeps `createAutocompleteList` private; shadow it with an
     // instance property so slash command menus render descriptions wrapped
@@ -237,13 +251,15 @@ export class CustomEditor extends Editor {
       const text = this.getText();
       const offset = lines.slice(0, line).reduce((sum, l) => sum + l.length + 1, 0) + start;
       const newText = text.slice(0, offset) + content + text.slice(offset + match[0].length);
-      this.setText(newText);
+      // Keep the paste registry intact: the text still holds other live markers
+      // whose entries a plain setText would drop (upstream resets the registry).
+      this.setText(newText, { preservePasteRegistry: true });
       return true;
     }
     return false;
   }
 
-  private hasAutocompleteActivity(): boolean {
+  public hasAutocompleteActivity(): boolean {
     const autocomplete = this as unknown as AutocompleteInternals;
     return (
       this.isShowingAutocomplete() ||
@@ -258,51 +274,46 @@ export class CustomEditor extends Editor {
     (this as unknown as AutocompleteInternals).cancelAutocomplete();
   }
 
-  // Force a full re-render when the autocomplete dropdown closes, so the editor
-  // snaps back to the bottom instead of sitting where the taller dropdown left it.
-  // Only worthwhile when the session content already overflows one screen; below
-  // that a full clear + home would pull the editor to the top and leave a blank
-  // tail. Always skipped inside tmux, whose own reflow handles the shrink.
-  private requestFullRenderOnAutocompleteClose(): void {
-    if (isInsideTmux()) return;
-    const { columns, rows } = this.tui.terminal;
-    // Redraw when content fills or overflows the viewport. An exact fill (==
-    // rows) is safe to clear (no blank tail) and still needs the redraw: the
-    // differential renderer keeps the old viewport offset after a shrink.
-    if (this.tui.render(columns).length < rows) return;
-    this.tui.requestRender(true);
-  }
-
-  // Detect an autocomplete open→close edge from a render frame and force a full
-  // re-render. Running from render() (not handleInput) also catches asynchronous
-  // closes — e.g. Backspace deleting the leading `/`, where pi-tui only cancels
-  // the menu once the provider re-query resolves. The render request is deferred
-  // to a microtask so the overflow probe inside the helper does not re-enter
-  // render() synchronously.
-  private trackAutocompleteCloseForFullRender(): void {
-    const showing = this.isShowingAutocomplete();
-    const closed = this.autocompleteWasShowing && !showing;
-    this.autocompleteWasShowing = showing;
-    if (closed) {
-      queueMicrotask(() => this.requestFullRenderOnAutocompleteClose());
-    }
-  }
-
   override render(width: number): string[] {
-    this.trackAutocompleteCloseForFullRender();
     const lines = super.render(width);
     if (lines.length < 3) return lines;
     const firstContentIdx = 1;
     const isBash = this.inputMode === 'bash';
     const text = this.getText().trimStart();
-    if (text.startsWith('/') && !isBash) {
-      // Paint only the FIRST editor content line; multi-line slash commands
-      // are not a thing in practice.
+    if (!isBash) {
+      // Paint the leading slash command on the first content line only, then
+      // inline skill tokens on every content line (multi-line prompts can
+      // reference skills anywhere).
       const original = lines[firstContentIdx];
       if (original !== undefined) {
-        const highlighted = highlightFirstSlashToken(original, 'primary');
-        if (highlighted !== undefined) {
+        let highlighted = original;
+        let leadingRange: { start: number; end: number } | null = null;
+        if (text.startsWith('/')) {
+          leadingRange = leadingSlashTokenRange(stripSgr(original));
+          const leading = highlightFirstSlashToken(original, 'primary');
+          if (leading !== undefined) {
+            highlighted = leading;
+          }
+        }
+        const inline = highlightInlineSkillTokens(
+          highlighted,
+          this.skillCommandNames,
+          leadingRange,
+          'primary',
+        );
+        if (inline !== undefined) {
+          highlighted = inline;
+        }
+        if (highlighted !== original) {
           lines[firstContentIdx] = highlighted;
+        }
+      }
+      for (let i = firstContentIdx + 1; i < lines.length - 1; i++) {
+        const original = lines[i];
+        if (original === undefined) continue;
+        const inline = highlightInlineSkillTokens(original, this.skillCommandNames, null, 'primary');
+        if (inline !== undefined) {
+          lines[i] = inline;
         }
       }
     }
@@ -358,10 +369,24 @@ export class CustomEditor extends Editor {
       return;
     }
 
+    // Clipboard reads are asynchronous. Queue every key received while a
+    // paste callback is in flight and replay it once the callback settles
+    // (clipboard read + placeholder insert — compression and the daemon
+    // upload continue in the background off this path), so Enter cannot
+    // submit a draft that is still missing the pasted image.
+    if (this.pasteInFlight) {
+      this.pasteInputQueue.push(normalized);
+      return;
+    }
+
     // Any input other than a lone Escape breaks a pending double-Esc sequence,
     // so the shortcut only fires for two consecutive Escape presses.
     if (!matchesKey(normalized, Key.escape)) {
       this.onNonEscapeInput?.();
+    }
+
+    if (this.onPreInput?.(normalized) === true) {
+      return;
     }
 
     // When a paste marker was just expanded, discard the trailing bracketed
@@ -401,17 +426,21 @@ export class CustomEditor extends Editor {
           this.onTextPaste?.();
           super.handleInput.call(this, normalized);
         };
-        void handler().then(
-          (handled) => {
+        this.pasteInFlight = true;
+        void handler()
+          .then((handled) => {
             if (!handled) pasteAsText();
-          },
-          () => {
+          })
+          .catch(() => {
             // A rejecting image-paste handler must not leak an unhandled
             // rejection (the CLI turns those into a silent exit) — treat it
             // the same as "no image available" and fall back to text paste.
             pasteAsText();
-          },
-        );
+          })
+          .finally(() => {
+            this.pasteInFlight = false;
+            this.flushPasteInputQueue();
+          });
         return;
       }
     }
@@ -454,6 +483,11 @@ export class CustomEditor extends Editor {
       // Only consume the key when the todo list actually has overflow to
       // expand/collapse; otherwise fall through to the editor default.
       if (this.onToggleTodoExpand?.() === true) return;
+    }
+
+    if (matchesKey(normalized, Key.ctrl('p')) || matchesKey(normalized, Key.ctrl('n'))) {
+      const direction = matchesKey(normalized, Key.ctrl('p')) ? -1 : 1;
+      if (this.onPageNotify?.(direction) === true) return;
     }
 
     if (matchesKey(normalized, 'shift+tab')) {
@@ -536,6 +570,14 @@ export class CustomEditor extends Editor {
     this.reopenAutocompleteAfterInput();
   }
 
+  private flushPasteInputQueue(): void {
+    if (this.pasteInFlight) return;
+    const next = this.pasteInputQueue.shift();
+    if (next === undefined) return;
+    this.handleInput(next);
+    if (!this.pasteInFlight) this.flushPasteInputQueue();
+  }
+
   private reopenAutocompleteAfterInput(): void {
     if (this.isShowingAutocomplete()) return;
     const { line, col } = this.getCursor();
@@ -602,12 +644,22 @@ export class CustomEditor extends Editor {
  */
 export function highlightFirstSlashToken(line: string, token: 'primary'): string | undefined {
   const visible = stripSgr(line);
+  const range = leadingSlashTokenRange(visible);
+  if (range === null) return undefined;
+  const ranges = [range];
+  if (visible.slice(range.start, range.end) === '/goal') {
+    ranges.push(...goalCommandPathRanges(visible, range.end));
+  }
+  return highlightVisibleRanges(line, ranges, token);
+}
+
+function leadingSlashTokenRange(visible: string): { start: number; end: number } | null {
   const slashIdx = visible.indexOf('/');
-  if (slashIdx < 0) return undefined;
+  if (slashIdx < 0) return null;
   // Guard: only paint when `/` is the first non-whitespace character
   // on the line (avoids colouring a mid-sentence slash).
   for (let i = 0; i < slashIdx; i++) {
-    if (visible[i] !== ' ' && visible[i] !== '\t') return undefined;
+    if (visible[i] !== ' ' && visible[i] !== '\t') return null;
   }
   // Token ends at the next whitespace (or the visible end).
   let endVisible = slashIdx + 1;
@@ -617,11 +669,32 @@ export function highlightFirstSlashToken(line: string, token: 'primary'): string
     endVisible++;
   }
   const visibleToken = visible.slice(slashIdx, endVisible);
-  if (visibleToken.slice(1).includes('/')) return undefined;
-  const ranges = [{ start: slashIdx, end: endVisible }];
-  if (visibleToken === '/goal') {
-    ranges.push(...goalCommandPathRanges(visible, endVisible));
-  }
+  if (visibleToken.slice(1).includes('/')) return null;
+  return { start: slashIdx, end: endVisible };
+}
+
+/**
+ * Highlight inline skill tokens in `line`. A token is painted only when it
+ * names a known skill; `exclude` (the already-painted leading slash command
+ * range) is skipped so the leading command is not painted twice.
+ */
+export function highlightInlineSkillTokens(
+  line: string,
+  skillCommandNames: ReadonlySet<string>,
+  exclude: { start: number; end: number } | null,
+  token: 'primary',
+): string | undefined {
+  if (skillCommandNames.size === 0) return undefined;
+  const visible = stripSgr(line);
+  const ranges = findInlineSkillTokens(visible, {
+    isKnownSkill: (commandName) =>
+      skillCommandNames.has(commandName) || skillCommandNames.has(`skill:${commandName}`),
+    includeLeading: true,
+  }).filter(
+    (inlineToken) =>
+      exclude === null || inlineToken.start >= exclude.end || inlineToken.end <= exclude.start,
+  );
+  if (ranges.length === 0) return undefined;
   return highlightVisibleRanges(line, ranges, token);
 }
 

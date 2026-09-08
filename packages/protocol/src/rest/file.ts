@@ -2,8 +2,7 @@
  *   POST   /v1/files
  *     Request: multipart/form-data with `file` (binary), `name`
  *              (optional override), `expires_in_sec` (optional).
- *     Response data: `FileMeta` (full envelope).
- *     Errors: 41301 (>50MB).
+ *     Response data: `FileMeta` (full envelope). No upload size cap.
  *
  *   GET    /v1/files/{file_id}
  *     Response: binary stream or envelope (40407 / 41003).

@@ -168,3 +168,77 @@ test('active expiration drains a simultaneous-expiry storm within seconds', asyn
   assert.equal(s.map.size, 0);
   s.close();
 });
+
+test('reapExpiredDue drains only due entries via the TTL heap', () => {
+  const s = new Store({ activeExpireIntervalMs: 0 });
+  s.set('expired', B('1'), Date.now() - 1000);
+  s.set('future', B('2'), Date.now() + 3_600_000);
+  s.set('plain', B('3'));
+  assert.equal(s.reapExpiredDue(), 1, 'only the due record is reaped');
+  assert.ok(!s.has('expired'));
+  assert.ok(s.has('future'));
+  assert.ok(s.has('plain'));
+  // nothing due -> a no-op (and no full-store sweep needed)
+  assert.equal(s.reapExpiredDue(), 0);
+  assert.equal(s.map.size, 2);
+  s.close();
+});
+
+test('reapExpiredDue skips stale heap entries from overwritten TTLs', () => {
+  const s = new Store({ activeExpireIntervalMs: 0 });
+  const t1 = Date.now() - 1000; // already past
+  s.set('k', B('1'), t1);
+  s.set('k', B('2'), Date.now() + 3_600_000); // overwrite: the t1 heap entry is now stale
+  assert.equal(s.reapExpiredDue(), 0, 'the stale entry must not reap the live record');
+  assert.equal(s.get('k')?.toString(), '2');
+  s.close();
+});
+
+test('reapExpiredDue falls back to a full scan when the heap diverged from the map', () => {
+  const s = new Store({ activeExpireIntervalMs: 0 });
+  s.set('a', B('1'), Date.now() - 1000);
+  s.set('b', B('2'), Date.now() - 1000);
+  // Force the broken invariant (live TTL records, empty heap) the fallback
+  // guards against; no code path may produce this.
+  (s as unknown as { heap: { clear(): void } }).heap.clear();
+  assert.equal(s.reapExpiredDue(), 2, 'divergence detected -> full resync reap');
+  assert.equal(s.map.size, 0);
+  s.close();
+});
+
+test('bulkLoadRefsAsync pauses active expiry: a TTL expiring mid-load cannot diverge the ordered index', async () => {
+  // A TTL that elapses DURING the sliced load: with the active-expire tick
+  // firing mid-load, the reaped key would vanish from the map but stay in
+  // the rebuilt ordered index — and a later re-set would insert a SECOND
+  // ordered entry, producing duplicate scan results. Pausing expiry for the
+  // load keeps the resulting state identical to the sync bulk load.
+  const short = 'a-short-ttl'; // sorts before every kNNNNN
+  const records = [
+    { kstr: short, ref: { kind: 'memory' as const, value: B('v0') }, expireAt: Date.now() + 1, dt: null },
+    ...Array.from({ length: 20000 }, (_, i) => ({
+      kstr: `k${String(i).padStart(5, '0')}`,
+      ref: { kind: 'memory' as const, value: B(`v${i}`) },
+      expireAt: 0,
+      dt: null,
+    })),
+  ];
+  const s = new Store({ activeExpireIntervalMs: 1 }); // a tick lands within the first yields
+  try {
+    await s.bulkLoadRefsAsync(records, { sliceEvery: 50 }); // 400 yields: the tick fires mid-load
+    // The divergence repro: re-set the key — a stale ordered entry left by a
+    // mid-load reap would now show it twice in ordered scans.
+    s.set(short, B('v1'));
+    const scanned = [...s.scan()].map((e) => e.key.toString());
+    assert.equal(scanned.length, new Set(scanned).size, 'ordered scan must not contain duplicates');
+    assert.equal(scanned.length, 20001);
+    // The ordered index and the map agree exactly (no stale, no missing).
+    assert.deepEqual([...s.rawKeys()], [...s.map.keys()].sort());
+    // And the next tick after the load reaps normally (expiry only deferred).
+    s.set(short, B('v2'), Date.now() - 1); // already expired
+    await sleep(20);
+    assert.equal(s.map.has(short), false);
+    assert.deepEqual([...s.rawKeys()], [...s.map.keys()].sort());
+  } finally {
+    s.close();
+  }
+});

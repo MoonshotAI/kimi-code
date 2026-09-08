@@ -1,15 +1,3 @@
-/**
- * `tools` domain (L7) — `IFetchURLTool` contract.
- *
- * Public contract of FetchURL, the model's URL content fetcher. Only
- * fully-formed public `http`/`https` URLs are supported. The host-injected
- * `UrlFetcher` contract lives in `#/app/web/tools/fetch-url-types`; the tool
- * receives the App-scope `IWebFetchService` via DI.
- *
- * Owns the `FetchURLInput` zod schema and the Agent-scope service identifier.
- * Bound at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';

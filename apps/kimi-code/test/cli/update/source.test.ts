@@ -1,10 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   classifyByPathHeuristic,
   classifyInstallSource,
   detectInstallSource,
 } from '#/cli/update/source';
+import { resolveCommandPath } from '#/utils/process/resolve-command';
+
+vi.mock('#/utils/process/resolve-command', () => ({
+  resolveCommandPath: vi.fn(),
+}));
 
 describe('classifyByPathHeuristic', () => {
   it('returns null for an npm-style global path (handled by classifyInstallSource)', () => {
@@ -175,5 +180,20 @@ describe('detectInstallSource', () => {
         platform: 'darwin',
       }),
     ).resolves.toBe('unsupported');
+  });
+
+  it('returns unsupported when npm cannot be resolved outside the cwd', async () => {
+    // The default prefix lookup spawns npm; when it can only be found inside
+    // the current directory (or not at all), detection must degrade to
+    // 'unsupported' rather than run a planted binary.
+    vi.mocked(resolveCommandPath).mockReturnValue(undefined);
+    await expect(
+      detectInstallSource({
+        getPackageRoot: () => '/Users/me/dev/@moonshot-ai/kimi-code',
+        detectNative: () => false,
+        platform: 'darwin',
+      }),
+    ).resolves.toBe('unsupported');
+    expect(resolveCommandPath).toHaveBeenCalledWith('npm');
   });
 });

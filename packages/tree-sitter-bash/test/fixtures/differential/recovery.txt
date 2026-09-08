@@ -1,0 +1,112 @@
+@known-diff recovery-partial-nodes: foo () ls
+foo () ls
+---
+hasError: true
+program [0,9] "foo () ls"
+  command [0,9] "foo () ls"
+    command_name [0,3] "foo"
+      word [0,3] "foo"
+    subshell [4,6] "()"
+      (() [4,5] "("
+      ()) [5,6] ")"
+    word [7,9] "ls"
+===
+@known-diff recovery-partial-nodes: if a; then b
+if a; then b
+---
+hasError: true
+program [0,12] "if a; then b"
+  if_statement [0,12] "if a; then b"
+    (if) [0,2] "if"
+    command [3,4] "a"
+      command_name [3,4] "a"
+        word [3,4] "a"
+    (;) [4,5] ";"
+    (then) [6,10] "then"
+    command [11,12] "b"
+      command_name [11,12] "b"
+        word [11,12] "b"
+===
+@known-diff recovery-partial-nodes: if a; then b;
+if a; then b;
+---
+hasError: true
+program [0,13] "if a; then b;"
+  if_statement [0,13] "if a; then b;"
+    (if) [0,2] "if"
+    command [3,4] "a"
+      command_name [3,4] "a"
+        word [3,4] "a"
+    (;) [4,5] ";"
+    (then) [6,10] "then"
+    command [11,12] "b"
+      command_name [11,12] "b"
+        word [11,12] "b"
+    (;) [12,13] ";"
+===
+@known-diff recovery-partial-nodes: if a
+if a
+---
+hasError: true
+program [0,4] "if a"
+  if_statement [0,4] "if a"
+    (if) [0,2] "if"
+    command [3,4] "a"
+      command_name [3,4] "a"
+        word [3,4] "a"
+===
+@known-diff recovery-partial-nodes: if a; then b fi
+if a; then b fi
+---
+hasError: true
+program [0,15] "if a; then b fi"
+  if_statement [0,15] "if a; then b fi"
+    (if) [0,2] "if"
+    command [3,4] "a"
+      command_name [3,4] "a"
+        word [3,4] "a"
+    (;) [4,5] ";"
+    (then) [6,10] "then"
+    command [11,15] "b fi"
+      command_name [11,12] "b"
+        word [11,12] "b"
+      word [13,15] "fi"
+===
+@known-diff recovery-partial-nodes: { ls }
+{ ls }
+---
+hasError: true
+program [0,6] "{ ls }"
+  compound_statement [0,6] "{ ls }"
+    ({) [0,1] "{"
+    command [2,6] "ls }"
+      command_name [2,4] "ls"
+        word [2,4] "ls"
+      word [5,6] "}"
+===
+@known-diff recovery-partial-nodes: while x do y done
+while x do y done
+---
+hasError: true
+program [0,17] "while x do y done"
+  while_statement [0,17] "while x do y done"
+    (while) [0,5] "while"
+    command [6,17] "x do y done"
+      command_name [6,7] "x"
+        word [6,7] "x"
+      word [8,10] "do"
+      word [11,12] "y"
+      word [13,17] "done"
+===
+@known-diff recovery-partial-nodes: echo "unterminated
+echo "unterminated
+---
+hasError: true
+program [0,18] "echo \"unterminated"
+  command [0,18] "echo \"unterminated"
+    command_name [0,4] "echo"
+      word [0,4] "echo"
+    string [5,18] "\"unterminated"
+      (") [5,6] "\""
+      string_content [6,18] "unterminated"
+===

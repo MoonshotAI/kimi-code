@@ -1,12 +1,3 @@
-/**
- * `toolExecutor` test stubs — a fireable executor event surface.
- *
- * Tests that drive `onBeforeExecuteTool` / `onWillExecuteTool` listeners
- * directly (rather than through `execute()`) register the SUT against this
- * stub executor and fire the real emitters it wraps, so the two-pass veto
- * semantics under test are the production ones.
- */
-
 import { AsyncEmitter, type IWaitUntilData } from '#/_base/event';
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { BeforeToolExecuteEmitter } from '#/agent/toolExecutor/beforeToolExecuteEvent';

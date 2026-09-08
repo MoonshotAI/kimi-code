@@ -1,10 +1,3 @@
-/**
- * Wire protocol 1.5 persists an epoch-ms anchor at every goal create/resume
- * boundary and wall-clock checkpoint. Version 1.4 records already carry an
- * epoch-ms `time`, so the migration can recover that boundary without
- * inventing a crash timestamp or adding periodic checkpoint writes. Existing
- * anchors are authoritative.
- */
 import type { WireMigration, WireMigrationRecord } from './migration';
 
 export const migrateV1_4ToV1_5: WireMigration = {

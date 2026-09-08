@@ -22,11 +22,16 @@
 // and gives ~5-10x compression for dense docID ranges.
 
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { crc32 } from './crc32.js';
+import { crc32 } from './crc32.ts';
+import { readAtAsync } from './value-reader.ts';
 
 const HEADER_LEN = 2 + 4 + 4; // termLen + df + payloadLen (term is variable)
 const CRC_LEN = 4;
+// Coalesce record writes into ~1 MiB writev batches; each batch await is also
+// the rebuild's event-loop yield point.
+const FLUSH_BYTES = 1 << 20;
 
 // ---- varint (unsigned LEB128, uint32) ------------------------------------
 
@@ -54,12 +59,16 @@ function decodeVarint(buf: Buffer, cur: { i: number }): number {
 
 // ---- posting list codec ---------------------------------------------------
 
-/** Encode a sorted (by docID asc) list of [docID, freq] pairs. */
-export function encodePostingList(entries: readonly (readonly [number, number])[]): Buffer {
+/** Encode a sorted (by docID asc) list of [docID, freq] pairs. Accepts any
+ *  sized iterable (an array or a Map's entries view) so a large build never
+ *  materializes a per-term copy — a hot term's list can have millions of
+ *  entries and spreading it was an OOM vector. */
+export function encodePostingList(entries: ReadonlyMap<number, number> | readonly (readonly [number, number])[]): Buffer {
+  const count = Array.isArray(entries) ? (entries as readonly unknown[]).length : (entries as ReadonlyMap<number, number>).size;
   const bytes: number[] = [];
-  encodeVarintInto(entries.length, bytes);
+  encodeVarintInto(count, bytes);
   let prev = 0;
-  for (const [docID, freq] of entries) {
+  for (const [docID, freq] of entries as Iterable<readonly [number, number]>) {
     encodeVarintInto(docID - prev, bytes);
     encodeVarintInto(freq, bytes);
     prev = docID;
@@ -67,13 +76,19 @@ export function encodePostingList(entries: readonly (readonly [number, number])[
   return Buffer.from(bytes);
 }
 
-/** Decode a payload back into [docID, freq] pairs (ascending docID). */
-export function decodePostingList(buf: Buffer): [number, number][] {
+/**
+ * Decode a payload back into [docID, freq] pairs (ascending docID). With
+ * `maxEntries`, only that many leading pairs are decoded (docIDs ascend, so
+ * this is the lowest-docID prefix): a query-time work budget can stop the
+ * decode of a hot term's list early instead of always paying its full length.
+ */
+export function decodePostingList(buf: Buffer, maxEntries?: number): [number, number][] {
   const cur = { i: 0 };
   const count = decodeVarint(buf, cur);
-  const out = Array.from<[number, number]>({ length: count });
+  const n = maxEntries === undefined ? count : Math.min(count, maxEntries);
+  const out = Array.from<[number, number]>({ length: n });
   let prev = 0;
-  for (let k = 0; k < count; k++) {
+  for (let k = 0; k < n; k++) {
     const d = decodeVarint(buf, cur);
     const freq = decodeVarint(buf, cur);
     prev += d;
@@ -147,17 +162,26 @@ export interface PostingEntry {
  * Append-only postings file with synchronous positioned reads. Synchronous I/O
  * is deliberate: `TextIndex.search()` is synchronous (so `db.search()` /
  * `db.query()` keep their sync API), and hot records are served from the OS
- * page cache or the in-memory LRU cache anyway.
+ * page cache or the in-memory LRU cache anyway. Rewrites ({@link rebuild}) are
+ * the async counterpart — they run in the background of a live database.
  */
 export class PostingsFile {
   private fd: number | null = null;
 
-  private constructor(readonly path: string) {}
+  /** The path this handle reads. Mutable for exactly one caller: stage 5's
+   *  generation builder repoints a freshly committed base from the build's
+   *  tmp directory to the published generation directory after the atomic
+   *  rename (same file, new name — POSIX keeps the fd valid throughout). */
+  path: string;
+
+  private constructor(filePath: string) {
+    this.path = filePath;
+  }
 
   /**
    * Open an existing postings file for positioned reads. Throws if the file is
    * missing — callers treat a missing file as an empty index. Read-only: the
-   * file is only ever rewritten wholesale by {@link rebuildSync}, so the fd
+   * file is only ever rewritten wholesale by {@link rebuild}, so the fd
    * stays valid until the next rebuild (which the caller must close + reopen).
    */
   static open(filePath: string): PostingsFile {
@@ -170,8 +194,10 @@ export class PostingsFile {
     return this.fd !== null;
   }
 
-  /** Read + decode one term's postings record by dictionary pointer. */
-  read(entry: PostingEntry): [number, number][] {
+  /** Read + decode one term's postings record by dictionary pointer. With
+   *  `maxEntries`, only the leading (lowest-docID) part of the list is
+   *  decoded — see decodePostingList. */
+  read(entry: PostingEntry, maxEntries?: number): [number, number][] {
     if (this.fd === null) throw new Error('postings file is closed');
     const buf = Buffer.alloc(entry.len);
     let got = 0;
@@ -181,7 +207,23 @@ export class PostingsFile {
       got += r;
     }
     const rec = decodeRecord(buf);
-    return decodePostingList(rec.payload);
+    return decodePostingList(rec.payload, maxEntries);
+  }
+
+  /** Async twin of read() (stage 6): the positioned read runs on the libuv
+   *  thread pool, so a cold postings lookup no longer blocks the event loop
+   *  on readSync. Purely additive — the synchronous read path is unchanged. */
+  async readAsync(entry: PostingEntry, maxEntries?: number): Promise<[number, number][]> {
+    if (this.fd === null) throw new Error('postings file is closed');
+    const buf = Buffer.alloc(entry.len);
+    let got = 0;
+    while (got < entry.len) {
+      const r = await readAtAsync(this.fd, buf, got, entry.len - got, entry.off + got);
+      if (r === 0) throw new Error('postings: short read past EOF');
+      got += r;
+    }
+    const rec = decodeRecord(buf);
+    return decodePostingList(rec.payload, maxEntries);
   }
 
   close(): void {
@@ -194,36 +236,61 @@ export class PostingsFile {
   /**
    * Build a fresh postings file from an iterator of `{ term, entries }`
    * (entries must be sorted by docID asc). Writes to `<path>.tmp`, fsyncs, and
-   * atomically renames over `<path>`. Returns the new term dictionary. The old
-   * file (if any) is replaced only after the new one is fully durable, so a
-   * crash mid-build leaves the previous file intact.
+   * atomically renames over `<path>`. Returns the new term dictionary plus the
+   * file's byte length and whole-file crc32 (stage 5's generation manifest
+   * records them; the crc streams along with the write batches, so it costs no
+   * extra read). The old file (if any) is replaced only after the new one is
+   * fully durable, so a crash mid-build leaves the previous file intact.
+   *
+   * Async so a large rebuild does not starve the event loop: record writes are
+   * coalesced into ~1 MiB writev batches (each batch await is a yield point).
+   * The commit section is SYNCHRONOUS — `hooks.beforeRename` (e.g. closing the
+   * previous read handle, required on Windows) and the rename itself run as
+   * one atomic step, so a reader swaps over without an interleavable gap.
    */
-  static rebuildSync(
+  static async rebuild(
     filePath: string,
-    iter: Iterable<{ term: string; entries: readonly (readonly [number, number])[] }>,
-  ): Map<string, PostingEntry> {
+    iter: Iterable<{ term: string; entries: ReadonlyMap<number, number> | readonly (readonly [number, number])[] }>,
+    hooks: { beforeRename?: () => void } = {},
+  ): Promise<{ dict: Map<string, PostingEntry>; bytes: number; crc32: number }> {
     const tmp = filePath + '.tmp';
-    const fd = fs.openSync(tmp, 'w');
     const dict = new Map<string, PostingEntry>();
     let off = 0;
+    let crc = 0;
+    let batch: Buffer[] = [];
+    let batchBytes = 0;
+    const fh = await fsp.open(tmp, 'w');
+    const flushBatch = async (): Promise<void> => {
+      if (batch.length === 0) return;
+      const buf = Buffer.concat(batch);
+      batch = [];
+      batchBytes = 0;
+      crc = crc32(buf, crc);
+      let written = 0;
+      while (written < buf.length) {
+        const { bytesWritten } = await fh.write(buf, written);
+        if (bytesWritten === 0) throw new Error('postings: rebuild write made no progress');
+        written += bytesWritten;
+      }
+    };
     try {
       for (const { term, entries } of iter) {
-        if (entries.length === 0) continue;
+        const count = Array.isArray(entries) ? (entries as readonly unknown[]).length : (entries as ReadonlyMap<number, number>).size;
+        if (count === 0) continue;
         const payload = encodePostingList(entries);
-        const rec = encodeRecord(term, entries.length, payload);
-        let written = 0;
-        while (written < rec.length) {
-          const w = fs.writeSync(fd, rec, written, rec.length - written, off + written);
-          if (w === 0) throw new Error('postings: rebuild write made no progress');
-          written += w;
-        }
-        dict.set(term, { off, len: rec.length, df: entries.length });
+        const rec = encodeRecord(term, count, payload);
+        dict.set(term, { off, len: rec.length, df: count });
+        batch.push(rec);
+        batchBytes += rec.length;
         off += rec.length;
+        if (batchBytes >= FLUSH_BYTES) await flushBatch();
       }
-      fs.fsyncSync(fd);
+      await flushBatch();
+      await fh.sync();
     } finally {
-      fs.closeSync(fd);
+      await fh.close();
     }
+    hooks.beforeRename?.();
     fs.renameSync(tmp, filePath);
     // Best-effort directory fsync so the rename survives a crash.
     try {
@@ -236,6 +303,6 @@ export class PostingsFile {
     } catch {
       /* some platforms disallow fsync on a directory */
     }
-    return dict;
+    return { dict, bytes: off, crc32: crc >>> 0 };
   }
 }

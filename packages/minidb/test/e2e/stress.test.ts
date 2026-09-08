@@ -22,6 +22,7 @@ import { MiniDb } from '../../src/index.js';
 import { startServer } from '../../src/server.js';
 import { tmpDir, rmrf } from './helpers/tmp.js';
 import { mulberry32 } from './helpers/prng.js';
+import { waitFor } from '../helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -372,30 +373,40 @@ test(
     const SET = '*3\r\n$3\r\nSET\r\n$4\r\nkey1\r\n$1000\r\n' + 'v'.repeat(1000) + '\r\n';
     const PING = 'PING\r\n';
 
+    // Completion is reply-count driven instead of the old fixed 300ms window
+    // (review #28): the round ends exactly when the 21st reply terminator
+    // arrives (SET's +OK plus 20 × +PONG), and the assertion is the whole
+    // byte-exact reply stream, so a dropped, torn or inverted reply fails
+    // deterministically on any machine speed.
+    const REPLIES = 21;
     const round = (): Promise<string> =>
       new Promise((resolve, reject) => {
         const sock = net.createConnection(port, '127.0.0.1');
         let buf = '';
-        sock.on('data', (d) => (buf += String(d)));
+        sock.on('data', (d) => {
+          buf += String(d);
+          // Each simple-string reply (+OK / +PONG) ends with exactly one CRLF.
+          if ((buf.match(/\r\n/g) ?? []).length >= REPLIES) {
+            sock.end();
+            resolve(buf);
+          }
+        });
         sock.on('error', reject);
+        sock.on('close', () => resolve(buf)); // server-side teardown: fail on the assertion below
         sock.write(SET);
+        // Best-effort packet split so the PINGs arrive in a later 'data'
+        // event than the SET (the original race shape); the assertion does
+        // not depend on the split happening.
         setTimeout(() => sock.write(PING.repeat(20)), 1);
-        setTimeout(() => {
-          sock.end();
-          resolve(buf);
-        }, 300);
       });
 
-    let inverted = 0;
+    const WANT = '+OK\r\n' + '+PONG\r\n'.repeat(20);
     const ROUNDS = 12;
     try {
       for (let r = 0; r < ROUNDS; r++) {
         const reply = await round();
-        const okIdx = reply.indexOf('+OK');
-        const pongIdx = reply.indexOf('+PONG');
-        if (pongIdx !== -1 && (okIdx === -1 || pongIdx < okIdx)) inverted++;
+        expect(reply, `round ${r}: replies out of order or incomplete`).toBe(WANT);
       }
-      expect(inverted, `${inverted}/${ROUNDS} connections saw PINGs answered before the earlier SET`).toBe(0);
     } finally {
       await close();
       await rmrf(dir);
@@ -560,7 +571,11 @@ test(
         await db.set(`ek${i}`, { i, pad: 'e'.repeat(1100) });
         if (i % 7 === 0) db.get(`ek${Math.max(0, i - 3)}`);
       }
-      expect(db.stats.compactions).toBeGreaterThan(0);
+      // Auto-compaction is fire-and-forget through the maintenance scheduler,
+      // so the write loop finishing does not imply a run has completed yet —
+      // wait for the churn this scenario requires instead of assuming the
+      // loop outlasted it (flakes on loaded CI runners).
+      await waitFor(() => db.stats.compactions > 0, 'auto compaction under churn');
       expect(db.store.bytes).toBeLessThanOrEqual(Math.ceil(budget * 1.05));
       expect(db.stats.evictions).toBeGreaterThan(0);
     } catch (err) {

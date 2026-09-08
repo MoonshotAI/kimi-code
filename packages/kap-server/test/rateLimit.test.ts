@@ -110,8 +110,6 @@ describe('createAuthHook bypass policy (URL encoding)', () => {
   });
 
   it('requires a token for percent-encoded /api/ paths', async () => {
-    // The router matches these against /api/v1/sessions; the auth hook must
-    // see the same decoded path instead of bypassing on the raw URL.
     for (const url of ['/%61pi/v1/sessions', '/%61%70%69/v1/sessions']) {
       const res = await app.inject({ method: 'GET', url });
       expect(res.statusCode).toBe(401);
@@ -133,8 +131,6 @@ describe('createAuthHook bypass policy (URL encoding)', () => {
   });
 
   it('still bypasses non-API paths without a token', async () => {
-    // No static route is registered, so a bypassed request falls through to
-    // the router's 404 instead of being rejected with 401.
     const res = await app.inject({ method: 'GET', url: '/index.html' });
     expect(res.statusCode).toBe(404);
   });

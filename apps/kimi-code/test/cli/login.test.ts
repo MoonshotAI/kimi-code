@@ -9,6 +9,8 @@
 import { Command } from 'commander';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { OAuthAccessDeniedError } from '@moonshot-ai/kimi-code-oauth';
+
 const mockLogin = vi.fn();
 
 vi.mock('@moonshot-ai/kimi-code-sdk', async () => {
@@ -172,6 +174,25 @@ describe('kimi login', () => {
 
     const writtenChunks = stderrSpy.mock.calls.map((call: unknown[]) => String(call[0]));
     expect(writtenChunks.some((chunk: string) => chunk.includes('boom'))).toBe(true);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it('prints "Login cancelled" with the original message when the user denies authorization', async () => {
+    mockLogin.mockRejectedValue(
+      new OAuthAccessDeniedError('Authorization denied: The resource owner denied the request'),
+    );
+
+    const program = new Command('kimi').exitOverride();
+    registerLoginCommand(program);
+
+    await expect(program.parseAsync(['node', 'kimi', 'login'])).rejects.toThrow(ExitCalled);
+
+    const writtenChunks = stderrSpy.mock.calls.map((call: unknown[]) => String(call[0]));
+    expect(
+      writtenChunks.some((chunk: string) =>
+        chunk.includes('Login cancelled: Authorization denied: The resource owner denied the request'),
+      ),
+    ).toBe(true);
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });

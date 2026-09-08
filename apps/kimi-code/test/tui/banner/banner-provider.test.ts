@@ -428,6 +428,105 @@ describe('selectBannerState', () => {
       ttlHours: 168,
     });
   });
+
+  it('shows the banner when banner_platform is missing, empty, all, or cli', () => {
+    for (const banner_platform of [undefined, null, '', '  ', 'all', 'cli', 'ALL', ' CLI ']) {
+      const result = selectBannerState(
+        {
+          banner_enabled: true,
+          banner_maintext: 'Active',
+          banner_platform,
+        },
+        '0.14.0',
+        now,
+        () => 0,
+      );
+      expect(result, `platform=${String(banner_platform)}`).not.toBeNull();
+    }
+  });
+
+  it('skips the active banner when banner_platform targets other platforms', () => {
+    for (const banner_platform of ['desktop', 'web']) {
+      const result = selectBannerState(
+        {
+          banner_enabled: true,
+          banner_maintext: 'Active',
+          banner_platform,
+          banner_fallback_enabled: true,
+          banner_fallback_list: [{ enabled: true, banner_maintext: 'Fallback' }],
+        },
+        '0.14.0',
+        now,
+        () => 0,
+      );
+      expectAlwaysBanner(result, { tag: null, mainText: 'Fallback', subText: null });
+    }
+  });
+
+  it('filters fallback entries by banner_platform', () => {
+    const result = selectBannerState(
+      {
+        banner_enabled: false,
+        banner_fallback_enabled: true,
+        banner_fallback_list: [
+          { enabled: true, banner_maintext: 'Desktop tip', banner_platform: 'desktop' },
+          { enabled: true, banner_maintext: 'Web tip', banner_platform: 'web' },
+          { enabled: true, banner_maintext: 'Cli tip', banner_platform: 'cli' },
+        ],
+      },
+      '0.14.0',
+      now,
+      () => 0.99,
+    );
+    expectAlwaysBanner(result, { tag: null, mainText: 'Cli tip', subText: null });
+  });
+
+  it('filters fallback entries by their time window', () => {
+    const result = selectBannerState(
+      {
+        banner_enabled: false,
+        banner_fallback_enabled: true,
+        banner_fallback_list: [
+          {
+            enabled: true,
+            banner_maintext: 'Expired tip',
+            banner_end_time: '2026-06-01T00:00:00+08:00',
+          },
+          {
+            enabled: true,
+            banner_maintext: 'Future tip',
+            banner_start_time: '2026-07-01T00:00:00+08:00',
+          },
+          {
+            enabled: true,
+            banner_maintext: 'Current tip',
+            banner_start_time: '2026-06-01T00:00:00+08:00',
+            banner_end_time: '2026-06-30T00:00:00+08:00',
+          },
+        ],
+      },
+      '0.14.0',
+      now,
+      () => 0.99,
+    );
+    expectAlwaysBanner(result, { tag: null, mainText: 'Current tip', subText: null });
+  });
+
+  it('treats fallback entries without time fields as always valid', () => {
+    const result = selectBannerState(
+      {
+        banner_enabled: false,
+        banner_fallback_enabled: true,
+        banner_fallback_list: [
+          { enabled: true, banner_maintext: 'No window', banner_start_time: '', banner_end_time: null },
+        ],
+      },
+      '0.14.0',
+      now,
+      () => 0,
+    );
+    expectAlwaysBanner(result, { tag: null, mainText: 'No window', subText: null });
+  });
 });
 
 describe('shouldDisplayBanner', () => {

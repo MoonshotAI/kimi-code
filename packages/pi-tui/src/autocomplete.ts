@@ -220,6 +220,8 @@ export interface AutocompleteItem {
 	value: string;
 	label: string;
 	description?: string;
+	/** Provider-specific metadata forwarded unchanged to applyCompletion. */
+	data?: Record<string, unknown>;
 }
 
 type Awaitable<T> = T | Promise<T>;

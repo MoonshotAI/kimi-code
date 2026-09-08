@@ -1,17 +1,14 @@
-/**
- * `workspace` domain (L2) — `FileWorkspacePersistence` implementation.
- *
- * File backend of `IWorkspacePersistence`. Persists the catalog as a single
- * v1-compatible `workspaces.json` document at the storage root
- * (`<homeDir>/workspaces.json`, via `scope = ''`) through the
- * `IAtomicDocumentStore` access-pattern Store. The `deleted_workspace_ids`
- * tombstone list round-trips with the catalog so soft deletions survive
- * regardless of which engine (v1 or v2) last wrote the file. Bound at App
- * scope.
- */
+import { dirname, join, normalize } from 'pathe';
 
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+
+import { Disposable } from '#/_base/di/lifecycle';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Emitter, type Event } from '#/_base/event';
+import { TimeoutTimer } from '#/_base/utils/timer';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { watch } from '#human/utils/watch';
 
 import type { Workspace } from './workspace';
 import {
@@ -24,11 +21,32 @@ import {
 const WORKSPACE_CATALOG_VERSION = 1;
 const WORKSPACE_CATALOG_SCOPE = '';
 const WORKSPACE_CATALOG_KEY = 'workspaces.json';
+const WATCH_DEBOUNCE_MS = 150;
 
-export class FileWorkspacePersistence implements IWorkspacePersistence {
+export class FileWorkspacePersistence extends Disposable implements IWorkspacePersistence {
   declare readonly _serviceBrand: undefined;
 
-  constructor(@IAtomicDocumentStore private readonly docs: IAtomicDocumentStore) {}
+  private readonly changeEmitter = this._register(new Emitter<void>());
+  readonly onDidChange: Event<void> = this.changeEmitter.event;
+  private readonly watchDebounce = this._register(new TimeoutTimer());
+
+  constructor(
+    @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
+  ) {
+    super();
+    const catalogFile = join(this.bootstrap.homeDir, WORKSPACE_CATALOG_KEY);
+    const handle = watch(dirname(catalogFile), { depth: 0 });
+    this._register(handle);
+    this._register(
+      handle.onDidChange((change) => {
+        if (normalize(change.path) !== normalize(catalogFile)) return;
+        this.watchDebounce.cancelAndSet(() => {
+          this.changeEmitter.fire();
+        }, WATCH_DEBOUNCE_MS);
+      }),
+    );
+  }
 
   async load(): Promise<WorkspaceCatalog | undefined> {
     const file = await this.docs.get<PersistedWorkspaceFile>(
@@ -80,6 +98,7 @@ export class FileWorkspacePersistence implements IWorkspacePersistence {
       deleted_workspace_ids: [...catalog.deletedIds],
     };
     await this.docs.set(WORKSPACE_CATALOG_SCOPE, WORKSPACE_CATALOG_KEY, file);
+    this.changeEmitter.fire();
   }
 }
 

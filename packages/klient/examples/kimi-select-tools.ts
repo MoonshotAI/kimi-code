@@ -52,23 +52,26 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+
+import { EXAMPLE_CLIENT_IDENTITY } from './identity.js';
+
 import type { AddressInfo } from 'node:net';
 
 import { bootstrap, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-core-v2';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { renderLoadableToolsAnnouncement } from '@moonshot-ai/agent-core-v2/agent/toolSelect/dynamicTools';
-import { UNKNOWN_CAPABILITY } from '@moonshot-ai/agent-core-v2/kosong/contract/capability';
-import type { Message } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
-import type { Tool } from '@moonshot-ai/agent-core-v2/kosong/contract/tool';
-import type { AuthProvider, Model } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
-import { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
+import { UNKNOWN_CAPABILITY } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/capability';
+import type { Message } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/message';
+import type { ToolDescription as Tool } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import type { AuthProvider, Model } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
+import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import type {
   ModelRequestInput,
   ModelRequester,
-} from '@moonshot-ai/agent-core-v2/kosong/model/modelRequester';
-import { ModelRequesterImpl } from '@moonshot-ai/agent-core-v2/kosong/model/modelRequesterImpl';
-import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/kosong/protocol/protocol';
-import { ProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/kosong/provider/protocolAdapterRegistry';
+} from '@moonshot-ai/agent-core-v2/llm-adapter/model/model-requester';
+import { ModelRequesterImpl } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model-requester-impl';
+import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocol';
+import { ProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocolAdapterRegistry';
 
 function assert(cond: boolean, message: string): asserts cond {
   if (!cond) throw new Error(`assertion failed: ${message}`);
@@ -515,7 +518,7 @@ async function step2UseLoadedTool(
 async function probeLiveKimiProviders(): Promise<void> {
   const homeDir = process.env['KIMI_CODE_HOME'] ?? join(homedir(), '.kimi-code');
   console.log(`\n=== part B: live select_tools flow on real kimi providers (${homeDir}) ===`);
-  const { app } = bootstrap({ homeDir }, [
+  const { app } = bootstrap({ homeDir, clientIdentity: EXAMPLE_CLIENT_IDENTITY }, [
     ...logSeed(resolveLoggingConfig({ homeDir, env: process.env })),
   ]);
   try {
@@ -623,7 +626,7 @@ function describeWireBody(raw: Buffer): string[] {
 async function probeTappedContext(): Promise<void> {
   const homeDir = process.env['KIMI_CODE_HOME'] ?? join(homedir(), '.kimi-code');
   console.log(`\n=== part C: tapped wire context (${homeDir}) ===`);
-  const { app } = bootstrap({ homeDir }, [
+  const { app } = bootstrap({ homeDir, clientIdentity: EXAMPLE_CLIENT_IDENTITY }, [
     ...logSeed(resolveLoggingConfig({ homeDir, env: process.env })),
   ]);
   try {

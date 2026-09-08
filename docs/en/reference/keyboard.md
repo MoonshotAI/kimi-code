@@ -15,6 +15,8 @@ The following keys are always available in the input box:
 | `Ctrl-C` | Interrupt the current streaming output, or clear the input box |
 | `Ctrl-D` | Exit Kimi Code CLI when the input box is empty |
 | `Ctrl-T` | Expand or collapse the todo list when it is truncated |
+| `Ctrl-P` | Previous page in the experimental `Updates` panel when it has multiple pages |
+| `Ctrl-N` | Next page in the experimental `Updates` panel when it has multiple pages |
 
 Pressing `Ctrl-C` **during streaming** cancels immediately — no second confirmation needed.
 
@@ -67,13 +69,13 @@ Pressing `Ctrl-S` causes the model to see your message at the next interruptible
 
 | Shortcut | Function |
 | --- | --- |
-| `Ctrl-O` | Expand or collapse tool output and compaction summaries |
+| `Ctrl-O` | Expand or collapse tool output, shell command output, and compaction summaries |
 
-When collapsed tool call results exist in the history, press `Ctrl-O` to toggle between collapsed and expanded views. After compaction, the same shortcut shows or hides the compaction summary in the compaction block.
+When collapsed tool call results or shell command outputs exist in the history, press `Ctrl-O` to toggle between collapsed and expanded views. After compaction, the same shortcut shows or hides the compaction summary in the compaction block.
 
 ## Approval Panel
 
-When the Agent initiates a tool call that requires confirmation, the TUI displays an approval panel. For the full approval workflow, see [Interaction & Input](../guides/interaction.md#审批流程). The available keys inside the panel are:
+When the Agent initiates a tool call that requires confirmation, the TUI displays an approval panel. For the full approval workflow, see [Interaction & Input](../guides/interaction.md#approval-flow). The available keys inside the panel are:
 
 | Shortcut | Function |
 | --- | --- |

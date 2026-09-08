@@ -61,6 +61,10 @@ export const promptSubmissionSchema = z.object({
   // bound profile's own deny always survives. Omit to keep the persisted
   // value, send `[]` to clear the client portion.
   disabled_tools: z.array(z.string()).optional(),
+  // Client-chosen prompt record id; the engine echoes it on the consuming
+  // turn's `turn.started` (`promptId`) so the submitter can bind its own
+  // bookkeeping to that turn exactly. Omit to let the engine assign one.
+  prompt_id: z.string().min(1).optional(),
 });
 export type PromptSubmission = z.infer<typeof promptSubmissionSchema>;
 

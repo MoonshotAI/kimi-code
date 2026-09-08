@@ -1,9 +1,3 @@
-/**
- * `flag` test stubs — minimal `IFlagService` for unit tests.
- *
- * Lives under `test/` (not `src/`). Import from a relative path.
- */
-
 import { IFlagService } from '#/app/flag/flag';
 import type {
   ExperimentalFeatureState,
@@ -26,6 +20,7 @@ export function stubFlag(enabled: boolean | ((id: string) => boolean) = false): 
     enabled: isEnabled,
     snapshot: (): ExperimentalFlagMap => ({}),
     enabledIds: () => [],
+    exposedIds: () => [],
     explain: (): ExperimentalFeatureState | undefined => undefined,
     explainAll: () => [],
     setConfigOverrides: (_overrides: ExperimentalFlagConfig | undefined) => {},

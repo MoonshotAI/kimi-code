@@ -5,6 +5,45 @@ import type { ExtensionConfig } from "shared/types";
 
 export type AppStatus = "loading" | "no-workspace" | "runtime-error" | "not-logged-in" | "no-models" | "ready";
 
+export type ConfigErrorStatus = "loading" | "no-workspace" | "runtime-error" | "no-models";
+
+export type AppViewResolution =
+  | { readonly view: "login" }
+  | {
+      readonly view: "status";
+      readonly status: ConfigErrorStatus;
+      /** True when the status screen must offer a path to the sign-in screen. */
+      readonly canGoToLogin: boolean;
+    }
+  | { readonly view: "main" };
+
+/**
+ * Pure view router for App. The `no-models` status (a managed OAuth token
+ * exists but config.toml has no models — e.g. a first login whose model
+ * provisioning failed after the device flow already persisted the token)
+ * must always keep a path back to the sign-in screen: Reload alone cannot
+ * change the on-disk state, so without it the user is stranded and the
+ * login UI becomes unreachable.
+ */
+export function resolveAppView(input: {
+  readonly status: AppStatus;
+  readonly modelsCount: number;
+  readonly skippedLogin: boolean;
+  readonly showLogin: boolean;
+}): AppViewResolution {
+  const { status, modelsCount, skippedLogin, showLogin } = input;
+  if (showLogin || (status === "not-logged-in" && !skippedLogin)) {
+    return { view: "login" };
+  }
+  if (skippedLogin && modelsCount === 0) {
+    return { view: "status", status: "no-models", canGoToLogin: true };
+  }
+  if (status !== "ready" && status !== "not-logged-in") {
+    return { view: "status", status, canGoToLogin: status === "no-models" };
+  }
+  return { view: "main" };
+}
+
 export interface AppInitState {
   status: AppStatus;
   errorMessage: string | null;
@@ -19,7 +58,7 @@ export function useAppInit(): AppInitState {
     modelsCount: 0,
   });
   const [initKey, setInitKey] = useState(0);
-  const { initModels, setExtensionConfig, setMCPServers, setWireSlashCommands, setIsLoggedIn, setWorkspaceRoot } = useSettingsStore();
+  const { initModels, setExtensionConfig, setWireSlashCommands, setIsLoggedIn, setWorkspaceRoot } = useSettingsStore();
 
   const refresh = useCallback(() => {
     setState({ status: "loading", errorMessage: null, modelsCount: 0 });
@@ -49,9 +88,8 @@ export function useAppInit(): AppInitState {
 
         setWorkspaceRoot(workspace.workspaceRoot ?? workspace.path ?? null);
 
-        const [extensionConfig, mcpServers, slashCommands] = await Promise.all([
+        const [extensionConfig, slashCommands] = await Promise.all([
           bridge.getExtensionConfig(),
-          bridge.getMCPServers(),
           bridge.getSlashCommands(),
         ]);
         if (cancelled) {
@@ -59,7 +97,6 @@ export function useAppInit(): AppInitState {
         }
 
         setExtensionConfig(extensionConfig);
-        setMCPServers(mcpServers);
         setWireSlashCommands(slashCommands);
 
         const [loginStatus, kimiConfig] = await Promise.all([bridge.checkLoginStatus(), bridge.getModels()]);
@@ -105,7 +142,7 @@ export function useAppInit(): AppInitState {
     return () => {
       cancelled = true;
     };
-  }, [initKey, initModels, setExtensionConfig, setMCPServers, setWireSlashCommands, setIsLoggedIn]);
+  }, [initKey, initModels, setExtensionConfig, setWireSlashCommands, setIsLoggedIn]);
 
   return { ...state, refresh };
 }

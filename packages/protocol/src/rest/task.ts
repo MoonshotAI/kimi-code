@@ -10,6 +10,14 @@
  *     Body: empty
  *     Response data: `{ cancelled: true }`
  *     Errors: 40406 (task.not_found), 40904 (task.already_finished)
+ *
+ *   POST /v1/sessions/{session_id}/tasks/{task_id}:detach
+ *     Body: empty
+ *     Response data: `{ detached: boolean, status: TaskStatus }`
+ *     (`detached: true` only when the call converted a running foreground
+ *     task; already-background or terminal tasks answer `detached: false`
+ *     with their current status)
+ *     Errors: 40406 (task.not_found)
  */
 
 import { z } from 'zod';
@@ -39,6 +47,12 @@ export const cancelTaskResultSchema = z.object({
   cancelled: z.literal(true),
 });
 export type CancelTaskResult = z.infer<typeof cancelTaskResultSchema>;
+
+export const detachTaskResultSchema = z.object({
+  detached: z.boolean(),
+  status: taskStatusSchema,
+});
+export type DetachTaskResult = z.infer<typeof detachTaskResultSchema>;
 
 export const taskAlreadyFinishedDataSchema = z.object({
   cancelled: z.literal(false),

@@ -15,7 +15,9 @@ import { tmpDir, rmrf } from './helpers/tmp.js';
 const FRAME = HEADER_SIZE + 2 + 2 + 0 + CRC_SIZE;
 
 async function writeTen(dir) {
-  const db = await MiniDb.open({ dir, valueCodec: 'string', fsyncPolicy: 'always', autoCompact: false });
+  // Legacy recovery semantics (indexGenerations: false): a published
+  // generation's checkpoint would absorb the very frames these tests corrupt.
+  const db = await MiniDb.open({ dir, valueCodec: 'string', fsyncPolicy: 'always', autoCompact: false, indexGenerations: false });
   for (let i = 0; i < 10; i++) await db.set('k' + i, 'v' + i);
   await db.close();
 }
@@ -36,7 +38,7 @@ for (const mode of ['resync', 'strict']) {
       try {
         await writeTen(dir);
         await corruptWalFrame(dir, idx);
-        const db = await MiniDb.open({ dir, valueCodec: 'string', recovery: mode });
+        const db = await MiniDb.open({ dir, valueCodec: 'string', recovery: mode, indexGenerations: false });
         const present = new Set(Array.from({ length: 10 }, (_, i) => 'k' + i).filter((k) => db.get(k) !== undefined));
 
         if (where === 'tail') {
@@ -68,7 +70,7 @@ test('recovery-matrix: clean WAL recovers everything (both modes)', async () => 
     const dir = await tmpDir();
     try {
       await writeTen(dir);
-      const db = await MiniDb.open({ dir, valueCodec: 'string', recovery: mode });
+      const db = await MiniDb.open({ dir, valueCodec: 'string', recovery: mode, indexGenerations: false });
       assert.equal(db.size, 10);
       assert.equal(db.recoveryInfo.lostBytes, 0);
       await db.close();

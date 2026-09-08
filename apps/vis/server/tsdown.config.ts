@@ -1,9 +1,14 @@
 import { defineConfig } from 'tsdown';
 
+import { rawTextPlugin } from '../../../build/raw-text-plugin.mjs';
+
 export default defineConfig({
   entry: { server: 'src/index.ts' },
   format: ['esm'],
   outDir: 'dist',
   clean: true,
-  external: ['@moonshot-ai/agent-core', '@moonshot-ai/kosong', '@moonshot-ai/kaos'],
+  plugins: [rawTextPlugin()],
+  deps: {
+    alwaysBundle: [/^@moonshot-ai\/agent-core-v2/],
+  },
 });

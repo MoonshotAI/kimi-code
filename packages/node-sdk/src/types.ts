@@ -1,14 +1,19 @@
+import type { HostUiCapability } from '@moonshot-ai/agent-core-v2';
 import type {
   ExportSessionManifest,
-  ResumeSessionResult,
   ShellEnvironment,
-  TelemetryClient,
-  TelemetryContextPatch,
-  TelemetryProperties,
-} from '@moonshot-ai/agent-core';
+} from '@moonshot-ai/agent-core-v2/app/sessionExport/sessionExport';
 import type { Kaos } from '@moonshot-ai/kaos';
 import type { KimiHostIdentity, OAuthRefreshOutcome } from '@moonshot-ai/kimi-code-oauth';
 import type { ContentPart } from '@moonshot-ai/kosong';
+
+import type { ResumeSessionResult } from '#/replay';
+import type { PermissionMode } from '#/permission';
+import type {
+  TelemetryClient,
+  TelemetryContextPatch,
+  TelemetryProperties,
+} from '#/telemetry';
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { readonly [key: string]: JsonValue };
@@ -16,35 +21,69 @@ export type JsonObject = { readonly [key: string]: JsonValue };
 
 export type Unsubscribe = () => void;
 
+export interface AgentRuntimeBinding {
+  readonly workspaceId: string;
+  readonly runtimeId: string;
+}
+
+export type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
+
 export type {
   AgentReplayRecord,
+  ResumedAgentState,
+} from '#/replay';
+export type {
   AgentBackgroundTaskInfo,
-  BackgroundConfig,
   BackgroundTaskInfo,
   BackgroundTaskStatus,
+  ProcessBackgroundTaskInfo,
+  QuestionBackgroundTaskInfo,
+} from '#/task';
+export type {
+  AppMcpServerAuthState,
+  AppMcpServerConfig,
+  AppMcpServerDescriptor,
+  AppMcpServerInspection,
+  GlobalMcpServerAuthState,
+  GlobalMcpServerAuthStatus,
+  McpManagedServerInfo,
+  McpServerInfo,
+  McpServerLocator,
+  McpServerSource,
+  McpStartupMetrics,
+  McpServerConfig,
+  McpTestResult,
+} from '#/mcp';
+export type {
+  BackgroundConfig,
   ConfigDiagnostics,
-  ContextMessage,
-  CronTaskSnapshot,
+  KimiConfig,
+  KimiConfigPatch,
+  LoopControl,
+  ModelAlias,
+  MoonshotServiceConfig,
+  OAuthRef,
+  ProviderConfig,
+  ProviderType,
+  ServicesConfig,
+  ThinkingConfig,
+} from '#/config/index';
+export type { ContextMessage, PromptOrigin } from '#/context';
+export type {
   ExperimentalFeatureState,
   ExperimentalFlagMap,
   ExperimentalFlagSource,
-  ExportSessionManifest,
+} from '@moonshot-ai/agent-core-v2/app/flag/flag';
+export type {
   GoalBudgetLimits,
   GoalBudgetReport,
   GoalChange,
   GoalChangeStats,
-  GetCronTasksResult,
   GoalSnapshot,
   GoalStatus,
   GoalToolResult,
-  KimiConfig,
-  KimiConfigPatch,
-  LoopControl,
-  McpServerInfo,
-  McpStartupMetrics,
-  ModelAlias,
-  MoonshotServiceConfig,
-  OAuthRef,
+} from '@moonshot-ai/agent-core-v2/features/goal/types';
+export type {
   PluginCommandDef,
   PluginGithubMetadata,
   PluginGithubRef,
@@ -52,27 +91,93 @@ export type {
   PluginMcpServerInfo,
   PluginSource,
   PluginSummary,
-  ProcessBackgroundTaskInfo,
-  PromptOrigin,
-  ProviderConfig,
-  ProviderType,
-  QuestionBackgroundTaskInfo,
   ReloadSummary,
-  ResumedAgentState,
-  ServicesConfig,
+} from '@moonshot-ai/agent-core-v2/app/plugin/types';
+export type { SkillSummary } from '@moonshot-ai/agent-core-v2/features/skill/catalog/types';
+export type { ToolInfo } from '#/tool';
+export type {
+  ExportSessionManifest,
   ShellEnvironment,
-  SkillSummary,
-  ThinkingConfig,
-  ToolInfo,
-  GlobalMcpServerConfig as McpServerConfig,
-  GlobalMcpServerTestResult as McpTestResult,
-} from '@moonshot-ai/agent-core';
+} from '@moonshot-ai/agent-core-v2/app/sessionExport/sessionExport';
+
+export interface CronTaskSnapshot {
+  readonly id: string;
+  readonly cron: string;
+  readonly recurring: boolean;
+  readonly createdAt: number;
+  readonly lastFiredAt: number | undefined;
+  readonly nextFireAt: number | null;
+}
+
+export interface GetCronTasksResult {
+  readonly tasks: readonly CronTaskSnapshot[];
+}
 
 export type { KimiHostIdentity, OAuthRefreshOutcome };
+// Host UI capabilities are an agent-core-v2 seam (`BootstrapInput.args.uiCapabilities`);
+// hosts name them through `KimiHarnessOptions.uiCapabilities`, so the type is public here.
+export type { HostUiCapability };
 export type { TelemetryClient, TelemetryContextPatch, TelemetryProperties };
 export type { ContentPart, Role, ThinkingEffort, ToolCall } from '@moonshot-ai/kosong';
+// Contributed commands are an agent-core-v2 seam; the type is re-exported
+// from the v2 engine (v1 sessions report an empty command set).
+export type { AgentCommandInfo } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
 
-export type PermissionMode = 'yolo' | 'manual' | 'auto';
+export type { PermissionMode };
+
+/**
+ * Trust state of a workspace directory. Only meaningful on the agent-core-v2
+ * engine; the v1 engine has no workspace-trust concept and reports
+ * `{ trusted: true, gatedMcpServers: [] }`.
+ */
+export interface WorkspaceTrustMcpServerInfo {
+  readonly name: string;
+  readonly transport: 'stdio' | 'http' | 'sse';
+  readonly command?: string;
+  readonly args?: readonly string[];
+  readonly cwd?: string;
+  readonly url?: string;
+}
+
+export interface WorkspaceTrustInfo {
+  readonly trusted: boolean;
+  /** Safe descriptions of project-level MCP servers that trusting would enable. */
+  readonly gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[];
+}
+
+/**
+ * File-suggestion query against a workspace root, no session required. Only
+ * meaningful on the agent-core-v2 engine; the v1 engine has no equivalent
+ * and reports `undefined`.
+ */
+export interface SuggestFilesInput {
+  readonly query: string;
+  readonly limit?: number;
+}
+
+export interface SuggestFilesItem {
+  readonly path: string;
+  readonly name: string;
+  readonly kind: 'file' | 'directory' | 'symlink';
+  /** Matched-character offsets into `path`, for mention-style highlighting. */
+  readonly matchPositions: readonly number[];
+}
+
+export interface SuggestFilesResult {
+  readonly items: readonly SuggestFilesItem[];
+  readonly truncated: boolean;
+}
+
+/** Metadata of one upload in the engine's daemon file store. */
+export type { FileMeta } from '@moonshot-ai/agent-core-v2/app/file/fileService';
+
+/** Input for `uploadFile`: the upload's display name and MIME type. */
+export interface UploadFileOptions {
+  readonly name: string;
+  readonly mimeType?: string;
+  /** Optional daemon-side TTL for staging uploads. */
+  readonly expiresInSec?: number;
+}
 
 export interface CreateGoalInput {
   readonly objective: string;
@@ -84,6 +189,11 @@ export type PromptPart = Extract<ContentPart, { type: 'text' | 'image_url' | 'vi
 
 export type PromptInput = readonly PromptPart[];
 
+export interface PromptSkillActivation {
+  readonly name: string;
+  readonly args?: string;
+}
+
 export interface KimiHarnessOptions {
   readonly identity?: KimiHostIdentity | undefined;
   readonly homeDir?: string | undefined;
@@ -91,6 +201,14 @@ export interface KimiHarnessOptions {
   readonly autoLoadConfig?: boolean | undefined;
   readonly uiMode?: string;
   readonly skillDirs?: readonly string[];
+  /**
+   * UI surfaces this host can render, declared once per process and passed
+   * into the engine through `BootstrapInput.args.uiCapabilities`. Engine
+   * features gate on them at tool-table build time; nothing is persisted, so
+   * a session opened later by a host without the capability simply does not
+   * offer the dependent tool.
+   */
+  readonly uiCapabilities?: readonly HostUiCapability[];
   readonly telemetry?: TelemetryClient | undefined;
   readonly onOAuthRefresh?: ((outcome: OAuthRefreshOutcome) => void) | undefined;
   readonly sessionStartedProperties?: TelemetryProperties;
@@ -107,6 +225,16 @@ export interface CreateSessionOptions {
   readonly kaos?: Kaos | undefined;
   readonly persistenceKaos?: Kaos | undefined;
   readonly additionalDirs?: readonly string[];
+  /**
+   * Main-agent profile name (`--agent`): a builtin profile or one defined by
+   * an agentfile discovered from the user/project agent directories.
+   */
+  readonly agentProfile?: string;
+  /**
+   * Explicit agentfiles (`--agent-file`) loaded for this session with the
+   * highest precedence; an invalid file fails session creation.
+   */
+  readonly agentFiles?: readonly string[];
   readonly sessionStartedProperties?: TelemetryProperties;
   /**
    * Print-mode (`kimi -p`) only: when the main agent ends a turn while
@@ -123,11 +251,21 @@ export interface RenameSessionInput {
   readonly title: string;
 }
 
+export interface GenerateSessionTitleInput {
+  readonly id: string;
+  /** Regenerate even when the session already has a generated/custom title. */
+  readonly force?: boolean;
+  /** Conversation excerpt to generate from (default `user_prompts`). */
+  readonly source?: 'user_prompts' | 'first_turn' | 'digest';
+}
+
 export interface ResumeSessionInput {
   readonly id: string;
   readonly kaos?: Kaos | undefined;
   readonly persistenceKaos?: Kaos | undefined;
   readonly additionalDirs?: readonly string[];
+  /** Re-select the session's already-bound main profile; a different name fails. */
+  readonly agentProfile?: string;
   /** Include persisted subagent states in the returned replay snapshot. */
   readonly includeSubagents?: boolean;
   /**
@@ -188,6 +326,24 @@ export interface ExportSessionResult {
 export interface ListSessionsOptions {
   readonly workDir?: string;
   readonly sessionId?: string;
+  /**
+   * Include archived sessions in the listing. Defaults to non-archived only.
+   */
+  readonly includeArchived?: boolean;
+  /**
+   * Maximum number of summaries in one page. Only consulted by
+   * `listSessionsPage`; plain `listSessions` always returns the whole
+   * filtered set.
+   */
+  readonly limit?: number;
+  /** Keyset cursor: return the page strictly older than this session id. */
+  readonly before?: string;
+}
+
+export interface SessionSummaryPage {
+  readonly items: readonly SessionSummary[];
+  /** Pass as `before` for the next older page; absent when the listing is exhausted. */
+  readonly nextCursor?: string;
 }
 
 export interface GetConfigOptions {
@@ -200,6 +356,7 @@ export interface AuthenticateMcpServerOptions {
   ) => void | boolean | PromiseLike<void | boolean>;
   readonly signal?: AbortSignal;
   readonly timeoutMs?: number;
+  readonly cwd?: string;
 }
 
 export interface TestMcpServerOptions {
@@ -222,6 +379,13 @@ export interface PlanInfo {
 
 export type SessionPlan = PlanInfo | null;
 
+export type SessionTodoStatus = 'pending' | 'in_progress' | 'done';
+
+export interface SessionTodoItem {
+  readonly title: string;
+  readonly status: SessionTodoStatus;
+}
+
 export interface TokenUsage {
   readonly inputOther: number;
   readonly output: number;
@@ -240,16 +404,28 @@ export interface SessionStatus {
   readonly thinkingEffort: string;
   readonly permission: PermissionMode;
   readonly planMode: boolean;
-  readonly swarmMode?: boolean | undefined;
+  readonly swarmMode?: boolean;
+  readonly towerMode?: boolean;
   readonly contextTokens: number;
   readonly maxContextTokens: number;
   readonly contextUsage: number;
   readonly usage?: SessionUsage;
 }
 
+/**
+ * The engine's canonical title state: `replaceable` (a prompt-derived easy
+ * title auto generation may overwrite), `generated` (an auto-generated title
+ * already landed), `custom` (a user-set title that is never overwritten).
+ * Only populated by the v2 engine on live / resumed sessions (read off the
+ * metadata document); v1 backends leave it undefined, and the v2 list path
+ * does not project it.
+ */
+export type SessionTitleKind = 'replaceable' | 'generated' | 'custom';
+
 export interface SessionSummary {
   readonly id: string;
   readonly title?: string | undefined;
+  readonly titleKind?: SessionTitleKind;
   readonly lastPrompt?: string;
   readonly workDir: string;
   readonly sessionDir: string;
@@ -258,6 +434,8 @@ export interface SessionSummary {
   readonly archived?: boolean | undefined;
   readonly metadata?: JsonObject | undefined;
   readonly additionalDirs?: readonly string[];
+  /** Terminal outcome of the session's latest main turn, when one ended. */
+  readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }
 
 export interface AddAdditionalDirResult {

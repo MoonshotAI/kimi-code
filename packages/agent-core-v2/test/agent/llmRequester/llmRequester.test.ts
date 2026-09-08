@@ -1,8 +1,7 @@
-import { APIConnectionError, APIStatusError } from '#/kosong/contract/errors';
+import { APIConnectionError, APIStatusError } from '#/llm-adapter/contract/errors';
 import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
-import { type StreamedMessagePart } from '#/kosong/contract/message';
-import type { Tool } from '#/kosong/contract/tool';
-import { emptyUsage } from '#/kosong/contract/usage';
+import type { StreamedMessagePart, ToolDescription as Tool } from '#human/llm/message';
+import { emptyUsage } from '#human/llm/usage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -16,6 +15,7 @@ import {
   createTestAgent,
   llmGenerateServices,
   logServices,
+  requesterFromGenerateFn,
   telemetryServices,
   type TestAgentContext,
 } from '../../harness';
@@ -141,8 +141,6 @@ describe('LLMRequester service migration coverage', () => {
       expect(requests).toHaveLength(2);
       expect(requests[0]?.args).toMatchObject({
         kind: 'loop',
-        // The durable record's `provider` field carries the wire protocol:
-        // Kimi is a vendor over the openai base, not a protocol.
         provider: 'openai',
         model: 'mock-model',
         modelAlias: 'mock-model',
@@ -218,7 +216,7 @@ describe('LLMRequester service migration coverage', () => {
       await ctx.dispose();
       let calls = 0;
       ctx = createTestAgent(
-        llmGenerateServices(async () => {
+        llmGenerateServices(requesterFromGenerateFn(async () => {
           calls += 1;
           if (calls === 1) {
             throw new APIStatusError(400, 'tool_use ids must be unique');
@@ -234,7 +232,7 @@ describe('LLMRequester service migration coverage', () => {
             finishReason: 'completed',
             rawFinishReason: 'stop',
           };
-        }),
+        })),
       );
       llmRequester = ctx.get(IAgentLLMRequesterService);
 
@@ -302,9 +300,9 @@ describe('LLMRequester service migration coverage', () => {
       });
 
       expect(protocolEvents(ctx, 'tool.call.delta').map((event) => event.args)).toEqual([
-        { turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: undefined },
-        { turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: '{"query"' },
-        { turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: ':"moon"}' },
+        { time: expect.any(Number), agentId: 'main', turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: undefined },
+        { time: expect.any(Number), agentId: 'main', turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: '{"query"' },
+        { time: expect.any(Number), agentId: 'main', turnId: 0, toolCallId: 'call_lookup', name: 'Lookup', argumentsPart: ':"moon"}' },
       ]);
       expect(protocolEvents(ctx, 'toolCall').at(-1)?.args).toEqual({
         turnId: 0,
@@ -340,9 +338,9 @@ describe('LLMRequester service migration coverage', () => {
         child: () => logger,
       };
       ctx = createTestAgent(
-        llmGenerateServices(async () => {
+        llmGenerateServices(requesterFromGenerateFn(async () => {
           throw new Error('temporary provider failure');
-        }),
+        })),
         logServices(logger),
       );
       const llmRequester = ctx.get(IAgentLLMRequesterService);
@@ -373,10 +371,10 @@ describe('LLMRequester service migration coverage', () => {
     it('fails a retryable provider error on the first attempt — retries are the loop\u2019s concern', async () => {
       let calls = 0;
       ctx = createTestAgent(
-        llmGenerateServices(async () => {
+        llmGenerateServices(requesterFromGenerateFn(async () => {
           calls += 1;
           throw new APIConnectionError('terminated');
-        }),
+        })),
       );
       const llmRequester = ctx.get(IAgentLLMRequesterService);
 
@@ -389,9 +387,9 @@ describe('LLMRequester service migration coverage', () => {
     it('tracks api_error with the v1 wire shape (model id, alias, protocol, status code)', async () => {
       const records: TelemetryRecord[] = [];
       ctx = createTestAgent(
-        llmGenerateServices(async () => {
+        llmGenerateServices(requesterFromGenerateFn(async () => {
           throw new APIStatusError(429, 'rate limited');
-        }),
+        })),
         telemetryServices(recordingTelemetry(records)),
       );
       const llmRequester = ctx.get(IAgentLLMRequesterService);
@@ -407,8 +405,6 @@ describe('LLMRequester service migration coverage', () => {
           agent_id: 'main',
           model: 'mock-model',
           alias: 'mock-model',
-          // vendor and wire protocol are separate fields now: the mock
-          // provider is the kimi vendor over the openai base.
           provider_type: 'kimi',
           protocol: 'openai',
           retryable: expect.any(Boolean),
@@ -421,9 +417,9 @@ describe('LLMRequester service migration coverage', () => {
     it('tags api_error with turn_id and request_kind from the request source', async () => {
       const records: TelemetryRecord[] = [];
       ctx = createTestAgent(
-        llmGenerateServices(async () => {
+        llmGenerateServices(requesterFromGenerateFn(async () => {
           throw new APIConnectionError('terminated');
-        }),
+        })),
         telemetryServices(recordingTelemetry(records)),
       );
       const llmRequester = ctx.get(IAgentLLMRequesterService);
@@ -468,13 +464,9 @@ describe('LLMRequester service migration coverage', () => {
       const { logger, entries } = captureLogs();
       logEntries = entries;
       ctx = createTestAgent(
-        llmGenerateServices(async (_provider, _systemPrompt, _tools, _messages, callbacks, options) => {
-          // The per-turn completion budget arrives as a GenerateOptions
-          // intent (the morph-era baked `modelParameters.max_tokens` is gone).
+        llmGenerateServices(requesterFromGenerateFn(async (_provider, _systemPrompt, _tools, _messages, callbacks, options) => {
           requestMaxTokens = options?.maxCompletionTokens;
-          options?.onRequestStart?.();
           await callbacks?.onMessagePart?.({ type: 'text', text: 'timed' });
-          options?.onStreamEnd?.();
           return {
             id: 'response-1',
             message: {
@@ -486,7 +478,7 @@ describe('LLMRequester service migration coverage', () => {
             finishReason: 'completed',
             rawFinishReason: 'stop',
           };
-        }),
+        })),
         configServices(() => ({
           defaultModel: 'deepseek/deepseek-v4-flash',
           providers: {
@@ -608,7 +600,7 @@ describe('LLMRequester service migration coverage', () => {
     beforeEach(() => {
       capturedCacheKey = undefined;
       ctx = createTestAgent(
-        llmGenerateServices(async (_provider, _systemPrompt, _tools, _messages, _callbacks, options) => {
+        llmGenerateServices(requesterFromGenerateFn(async (_provider, _systemPrompt, _tools, _messages, _callbacks, options) => {
           capturedCacheKey = options?.cacheKey;
           return {
             id: 'response-1',
@@ -621,7 +613,7 @@ describe('LLMRequester service migration coverage', () => {
             finishReason: 'completed',
             rawFinishReason: 'stop',
           };
-        }),
+        })),
       );
       llmRequester = ctx.get(IAgentLLMRequesterService);
     });
@@ -635,10 +627,6 @@ describe('LLMRequester service migration coverage', () => {
     });
 
     it('forwards the session id as the per-turn cache-key intent', async () => {
-      // The engine half of the cache-key probe: the same session's id reaches
-      // the composed provider as GenerateOptions.cacheKey. How each dialect
-      // encodes it (Kimi `prompt_cache_key`, Anthropic `metadata.user_id`) is
-      // asserted at the kosong/provider composition layer.
       await llmRequester.request();
 
       expect(capturedCacheKey).toBe('test-session');

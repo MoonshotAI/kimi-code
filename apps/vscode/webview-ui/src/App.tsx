@@ -1,5 +1,6 @@
 // node/vscode_extension/webview-ui/src/App.tsx
 import { useEffect, useState, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Header } from "./components/Header";
 import { ChatArea } from "./components/ChatArea";
 import { InputArea } from "./components/inputarea/InputArea";
@@ -10,14 +11,15 @@ import { LoginScreen } from "./components/LoginScreen";
 import { Toaster, toast } from "./components/ui/sonner";
 import { useChatStore, useSettingsStore } from "./stores";
 import { bridge, Events } from "./services";
-import { useAppInit } from "./hooks/useAppInit";
+import { useAppInit, resolveAppView } from "./hooks/useAppInit";
 import { isPreflightError } from "shared/errors";
 import type { UIStreamEvent, StreamError, ExtensionConfig } from "shared/types";
 import "./styles/index.css";
 
 function MainContent({ onAuthAction }: { onAuthAction: () => void }) {
   const { processEvent, startNewConversation, sessionId } = useChatStore();
-  const { setMCPServers, setExtensionConfig, extensionConfig } = useSettingsStore();
+  const { setExtensionConfig, extensionConfig } = useSettingsStore();
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     return bridge.on(Events.StreamEvent, (event: UIStreamEvent) => {
@@ -38,7 +40,7 @@ function MainContent({ onAuthAction }: { onAuthAction: () => void }) {
 
   useEffect(() => {
     const unsubs = [
-      bridge.on(Events.MCPServersChanged, setMCPServers),
+      bridge.on(Events.MCPServersChanged, () => void queryClient.invalidateQueries({ queryKey: ["mcpServers"] })),
       bridge.on(Events.ExtensionConfigChanged, ({ config }: { config: ExtensionConfig }) => setExtensionConfig(config)),
       bridge.on(Events.FocusInput, () => document.querySelector<HTMLTextAreaElement>("textarea")?.focus()),
       bridge.on(Events.NewConversation, () => {
@@ -48,7 +50,7 @@ function MainContent({ onAuthAction }: { onAuthAction: () => void }) {
       }),
     ];
     return () => unsubs.forEach((u) => u());
-  }, [setMCPServers, setExtensionConfig, startNewConversation]);
+  }, [queryClient, setExtensionConfig, startNewConversation]);
 
   useEffect(() => {
     if (!extensionConfig.enableNewConversationShortcut) return;
@@ -81,22 +83,34 @@ function MainContent({ onAuthAction }: { onAuthAction: () => void }) {
 export default function App() {
   const { status, errorMessage, modelsCount, refresh } = useAppInit();
   const [skippedLogin, setSkippedLogin] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
 
   const handleLoginSuccess = useCallback(() => {
-    refresh();
-  }, [refresh]);
-
-  const handleSkip = useCallback(() => {
-    setSkippedLogin(true);
-  }, []);
-
-  const handleAuthAction = useCallback(() => {
+    setShowLogin(false);
     setSkippedLogin(false);
     refresh();
   }, [refresh]);
 
-  // 未登录且未跳过
-  if (status === "not-logged-in" && !skippedLogin) {
+  const handleSkip = useCallback(() => {
+    setShowLogin(false);
+    setSkippedLogin(true);
+  }, []);
+
+  const handleShowLogin = useCallback(() => {
+    setSkippedLogin(false);
+    setShowLogin(true);
+  }, []);
+
+  const handleAuthAction = useCallback(() => {
+    setSkippedLogin(false);
+    setShowLogin(false);
+    refresh();
+  }, [refresh]);
+
+  const resolution = resolveAppView({ status, modelsCount, skippedLogin, showLogin });
+
+  // 登录界面：未登录且未跳过，或用户从其他界面主动选择登录
+  if (resolution.view === "login") {
     return (
       <div className="flex flex-col h-screen text-foreground overflow-hidden">
         <Header />
@@ -106,23 +120,17 @@ export default function App() {
     );
   }
 
-  // 跳过登录但没有模型
-  if (skippedLogin && modelsCount === 0) {
+  // 错误与设置状态界面；no-models 必须保留回到登录界面的入口
+  if (resolution.view === "status") {
     return (
       <div className="flex flex-col h-screen text-foreground overflow-hidden">
         <Header />
-        <ConfigErrorScreen type="no-models" errorMessage={errorMessage} onRefresh={refresh} onBackToLogin={() => setSkippedLogin(false)} />
-        <Toaster position="top-center" />
-      </div>
-    );
-  }
-
-  // 其他错误状态
-  if (status !== "ready" && status !== "not-logged-in") {
-    return (
-      <div className="flex flex-col h-screen text-foreground overflow-hidden">
-        <Header />
-        <ConfigErrorScreen type={status} errorMessage={errorMessage} onRefresh={refresh} />
+        <ConfigErrorScreen
+          type={resolution.status}
+          errorMessage={errorMessage}
+          onRefresh={refresh}
+          onBackToLogin={resolution.canGoToLogin ? handleShowLogin : undefined}
+        />
         <Toaster position="top-center" />
       </div>
     );

@@ -1,12 +1,3 @@
-/**
- * `_base/execEnv` (L0) — Python-compatible text decoding with `errors` handling.
- *
- * Vendored from `@moonshot-ai/kaos` `internal.ts`. Kept as a pure helper with
- * no DI dependencies. Used by session-scoped fs implementations to read text
- * files with the same `strict`/`replace`/`ignore` semantics Python's
- * `open(..., errors=)` provides.
- */
-
 export type TextDecodeErrors = 'strict' | 'replace' | 'ignore';
 
 function isUtf8Continuation(byte: number): boolean {
@@ -136,7 +127,6 @@ export function decodeTextWithErrors(
   ignoreBOM: boolean = false,
 ): string {
   let webLabel: string | undefined;
-  // eslint-disable-next-line typescript-eslint/switch-exhaustiveness-check
   switch (encoding) {
     case 'utf-8':
     case 'utf8':

@@ -6,6 +6,7 @@ interface FetchOptions {
   readonly method?: string;
   readonly headers?: HeaderMap;
   readonly body?: string;
+  readonly signal?: AbortSignal;
 }
 
 export function bearerToken(server: RunningServer): string {

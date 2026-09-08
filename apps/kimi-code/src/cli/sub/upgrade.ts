@@ -1,6 +1,8 @@
 import { log, type Logger } from '@moonshot-ai/kimi-code-sdk';
 import { track as trackTelemetry, type TelemetryProperties } from '@moonshot-ai/kimi-telemetry';
 
+import { INTERACTIVE_UPDATE_CHECK_TIMEOUT_MS } from '#/constant/app';
+
 import { refreshUpdateCache } from '#/cli/update/refresh';
 import { selectUpdateTarget } from '#/cli/update/select';
 import { detectInstallSource } from '#/cli/update/source';
@@ -174,7 +176,9 @@ export async function handleUpgrade(
 
 function createDefaultUpgradeDeps(overrides: Partial<UpgradeDeps>): UpgradeDeps {
   return {
-    refreshUpdateCache: overrides.refreshUpdateCache ?? (() => refreshUpdateCache()),
+    refreshUpdateCache:
+      overrides.refreshUpdateCache ??
+      (() => refreshUpdateCache({ timeoutMs: INTERACTIVE_UPDATE_CHECK_TIMEOUT_MS })),
     detectInstallSource: overrides.detectInstallSource ?? (() => detectInstallSource()),
     installUpdate: overrides.installUpdate ?? installUpdateForeground,
     promptForInstallChoice: overrides.promptForInstallChoice ?? promptForInstallChoice,

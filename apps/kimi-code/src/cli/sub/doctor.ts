@@ -2,11 +2,7 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 
-import {
-  createKimiConfigRpc,
-  type KimiConfigRpc,
-  type KimiConfigValidationIssue,
-} from '@moonshot-ai/kimi-code-sdk';
+import { resolveConfigPath, type KimiConfigValidationIssue } from '@moonshot-ai/kimi-code-sdk';
 import type { Command } from 'commander';
 import { z } from 'zod';
 
@@ -25,10 +21,9 @@ export interface DoctorDeps {
   readonly stdout: WritableLike;
   readonly stderr: WritableLike;
   readonly exit: (code: number) => never;
-  readonly configRpc?: KimiConfigRpc;
   readonly fileExists?: (path: string) => boolean;
   readonly readTextFile?: (path: string) => Promise<string>;
-  readonly validateConfigToml?: (text: string, path: string) => MaybePromise<void>;
+  readonly validateConfigToml?: (text: string, path: string) => MaybePromise<string | void>;
 }
 
 export interface DoctorOptions {
@@ -40,7 +35,8 @@ interface CheckSpec {
   readonly label: 'config.toml' | 'tui.toml';
   readonly path: string;
   readonly explicit: boolean;
-  readonly parse: (text: string, path: string) => MaybePromise<void>;
+  /** Throws on invalid content; may return a non-fatal warning message. */
+  readonly parse: (text: string, path: string) => MaybePromise<string | void>;
 }
 
 interface CheckResult {
@@ -59,7 +55,7 @@ interface ResolvedDoctorDeps {
   readonly exit: (code: number) => never;
   readonly fileExists: (path: string) => boolean;
   readonly readTextFile: (path: string) => Promise<string>;
-  readonly validateConfigToml: (text: string, path: string) => MaybePromise<void>;
+  readonly validateConfigToml: (text: string, path: string) => MaybePromise<string | void>;
 }
 
 export async function handleDoctor(deps: DoctorDeps, options: DoctorOptions): Promise<number> {
@@ -113,15 +109,9 @@ async function runDoctorCommand(
 }
 
 function resolveDeps(deps: Partial<DoctorDeps> | DoctorDeps | undefined): ResolvedDoctorDeps {
-  let configRpc = deps?.configRpc;
-  const getConfigRpc = (): KimiConfigRpc => {
-    configRpc ??= createKimiConfigRpc();
-    return configRpc;
-  };
-
   return {
     cwd: deps?.cwd ?? (() => process.cwd()),
-    defaultConfigPath: deps?.defaultConfigPath ?? (() => getConfigRpc().resolveConfigPath()),
+    defaultConfigPath: deps?.defaultConfigPath ?? (() => resolveConfigPath({})),
     defaultTuiConfigPath: deps?.defaultTuiConfigPath ?? getTuiConfigPath,
     stdout: deps?.stdout ?? process.stdout,
     stderr: deps?.stderr ?? process.stderr,
@@ -130,7 +120,10 @@ function resolveDeps(deps: Partial<DoctorDeps> | DoctorDeps | undefined): Resolv
     readTextFile: deps?.readTextFile ?? ((path) => readFile(path, 'utf-8')),
     validateConfigToml:
       deps?.validateConfigToml ??
-      ((text, filePath) => getConfigRpc().validateConfigToml({ text, filePath })),
+      (async (text, filePath) => {
+        const { validateConfigTomlV2 } = await import('../v2/validate-config');
+        return validateConfigTomlV2(text, filePath);
+      }),
   };
 }
 
@@ -204,8 +197,8 @@ async function checkTomlFile(deps: ResolvedDoctorDeps, spec: CheckSpec): Promise
 
   try {
     const text = await deps.readTextFile(spec.path);
-    await spec.parse(text, spec.path);
-    return { label: spec.label, path: spec.path, status: 'OK' };
+    const warning = await spec.parse(text, spec.path);
+    return { label: spec.label, path: spec.path, status: 'OK', message: warning ?? undefined };
   } catch (error) {
     return {
       label: spec.label,

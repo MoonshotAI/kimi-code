@@ -31,6 +31,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { EXAMPLE_CLIENT_IDENTITY } from './identity.js';
+
+
 import { bootstrap, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-core-v2';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { IKosongConfigService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/kosongConfig';
@@ -84,7 +87,7 @@ async function phase(label: string, ops: number, run: () => Promise<void>): Prom
 
 async function main(): Promise<void> {
   const homeDir = await mkdtemp(join(tmpdir(), 'klient-kosong-stress-'));
-  const { app } = bootstrap({ homeDir }, [
+  const { app } = bootstrap({ homeDir, clientIdentity: EXAMPLE_CLIENT_IDENTITY }, [
     ...logSeed(resolveLoggingConfig({ homeDir, env: process.env })),
   ]);
   // Filled in right before the restart phase.
@@ -221,7 +224,7 @@ async function main(): Promise<void> {
   // 7) Restart durability: a fresh engine on the SAME home must rehydrate the
   //    exact pre-restart state — the ultimate proof the writes hit the disk.
   await phase('restart durability', 1, async () => {
-    const { app: app2 } = bootstrap({ homeDir }, [
+    const { app: app2 } = bootstrap({ homeDir, clientIdentity: EXAMPLE_CLIENT_IDENTITY }, [
       ...logSeed(resolveLoggingConfig({ homeDir, env: process.env })),
     ]);
     try {

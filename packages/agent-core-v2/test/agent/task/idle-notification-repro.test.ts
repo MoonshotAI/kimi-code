@@ -1,36 +1,18 @@
-/**
- * Repro for bug: "after a group of background agents complete, the
- * main agent doesn't receive notifications".
- *
- * Unlike `background-manager.test.ts` (which mocks `agent.turn.steer`),
- * this file drives a real `Agent` instance so we can verify the
- * full chain:
- *
- *    task terminal → notifyAgentTask → loop.enqueue(TaskNotificationStepRequest)
- *      → (busy) the mergeable request folds into the active turn's next step
- *      → (idle / race) `activeOrNewTurn` admission launches a fresh turn for
- *        the notification — matching v1's `turn.steer`, the model consumes it
- *        without waiting for the user
- *
- * Delivery is queue-ordered and the message only materializes when the loop
- * pops the request. If a scenario fails to inject the notification into an
- * LLM call, the per-notification `waitFor` times out, making the failure
- * mode explicit.
- */
-
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-import { LifecycleScope, type IAgentScopeHandle } from '#/_base/di/scope';
-import type { generate as kosongGenerate } from '#/kosong/contract/generate';
+import { LifecycleScope } from '#/app/scopes';
+import { type IAgentScopeHandle } from '#/_base/di/scope';
+import type { LlmRequester } from '#human/llm/requester/requester';
 import { IAgentTaskService } from '#/agent/task/task';
 import { SubagentTask } from '#/agent/tools/agent/subagent-task';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { TurnStarted } from '#/agent/loop/turnEvents';
+import { IEventBus } from '#/app/event/eventBus';
 import {
   taskServices,
   createTestAgent,
@@ -242,7 +224,7 @@ describe('task notification → main agent (real Agent instance)', () => {
   });
 
   describe('kill ordering vs child loop unwind', () => {
-    type GenerateFn = typeof kosongGenerate;
+    type GenerateFn = LlmRequester;
 
     function agentScopeHandle(ctx: TestAgentContext, id: string): IAgentScopeHandle {
       return {
@@ -253,45 +235,28 @@ describe('task notification → main agent (real Agent instance)', () => {
       } as IAgentScopeHandle;
     }
 
-    // Regression for: "manual stop of a background subagent → main
-    // auto-resumes → resume fails with 'already running and cannot run
-    // concurrently'". The killed task used to settle (and notify) the
-    // moment the abort landed — while the child loop was still unwinding,
-    // so the resume guard (`ensureOwnedIdleSubagent`, which reads
-    // `loop.status().state`) rejected the auto-resume. Settlement must
-    // wait for the loop to go idle. A turn that ignores the cancel stays
-    // bounded by the task layer's SIGTERM grace instead.
     it('stop settles killed + notifies only after the child loop goes idle', async () => {
-      // Child agent whose in-flight LLM call unwinds slowly after cancel
-      // (models a tool mid-execution / a slow request abort): it rejects
-      // 200ms after the abort lands, not immediately.
       let generateStarted!: () => void;
       const inFlight = new Promise<void>((resolve) => {
         generateStarted = resolve;
       });
-      const slowToCancelGenerate: GenerateFn = async (
-        _chat,
-        _systemPrompt,
-        _tools,
-        _history,
-        _callbacks,
-        options,
-      ) => {
-        const signal = options?.signal;
-        signal?.throwIfAborted();
-        generateStarted();
-        await new Promise<never>((_resolve, reject) => {
-          signal?.addEventListener(
-            'abort',
-            () => {
-              setTimeout(() => {
-                reject(signal.reason);
-              }, 200);
-            },
-            { once: true },
-          );
-        });
-        throw new Error('slowToCancelGenerate returned without being aborted');
+      const slowToCancelGenerate: GenerateFn = {
+        generate: (_config, _content, control) => {
+          const signal = control.signal;
+          signal.throwIfAborted();
+          generateStarted();
+          return new Promise<never>((_resolve, reject) => {
+            signal.addEventListener(
+              'abort',
+              () => {
+                setTimeout(() => {
+                  reject(signal.reason);
+                }, 200);
+              },
+              { once: true },
+            );
+          });
+        },
       };
 
       const main = createTestAgent(taskServices());
@@ -300,20 +265,15 @@ describe('task notification → main agent (real Agent instance)', () => {
         const childHandle = agentScopeHandle(child, 'agent-child');
         const childLoop = child.get(IAgentLoopService);
 
-        // Launch the subagent run (what AgentTool.launch does).
         const controller = new AbortController();
         const run = await runAgentTurn(
           childHandle,
           { kind: 'prompt', prompt: 'do background work' },
           { signal: controller.signal },
         );
-        // Mirror AgentTool.launch: the task handle maps summary → result.
         const completion = run.completion.then((r) => ({ result: r.summary, usage: r.usage }));
         void completion.catch(() => {});
 
-        // Wait until the in-flight step is genuinely parked inside the LLM
-        // call — the loop reports 'running' before the request starts, and
-        // stopping that early takes a different (already-fast) path.
         await inFlight;
         expect(childLoop.status().state).toBe('running');
 
@@ -327,20 +287,13 @@ describe('task notification → main agent (real Agent instance)', () => {
           { detached: true, timeoutMs: 0 },
         );
 
-        // The main agent is idle; the killed notification auto-launches a turn.
         main.mockNextResponse({ type: 'text', text: 'ack from main agent' });
         const notificationTurnEnd = main.untilTurnEnd();
 
-        // Manual stop (TUI / REST path — no notification suppression).
         const info = await background.stop(taskId, 'User initiated stop');
         expect(info?.status).toBe('killed');
-        // Settlement waited for the child loop to unwind — this is the
-        // assertion the old race-based implementation fails.
         expect(childLoop.status().state).toBe('idle');
 
-        // The task.killed notification reaches the main agent (this is what
-        // makes main call Agent(resume="agent-child")), and by then the
-        // resume guard's precondition already holds.
         await vi.waitFor(
           () => {
             expect(main.llmCalls.length).toBeGreaterThanOrEqual(1);
@@ -407,9 +360,12 @@ describe('task notification → main agent (real Agent instance)', () => {
       }
     });
 
-    it('RESUME: terminal bg tasks discovered on reconcile are SILENTLY injected (no auto-turn)', async () => {
+    it('RESUME: previous-session lost tasks surface as one unified reminder (no auto-turn)', async () => {
 
-      const launchSpy = vi.spyOn(loop as unknown as { startTurn: () => unknown }, 'startTurn');
+      const launches: number[] = [];
+      const launchSubscription = ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
+        launches.push(event.turnId);
+      });
 
       await background.loadFromDisk();
       await background.reconcile();
@@ -418,19 +374,22 @@ describe('task notification → main agent (real Agent instance)', () => {
 
       await vi.waitFor(() => {
         const flatContext = JSON.stringify(ctx.contextData());
-        expect(flatContext).toContain('bash-prev0000');
+        expect(flatContext).toContain('task_resume_termination');
+        expect(flatContext).toContain('<system-reminder>');
         expect(flatContext).toContain('agent-prev0000');
+        expect(flatContext).toContain('bash-prev0000');
       });
 
-      expect(launchSpy).not.toHaveBeenCalled();
+      expect(launches).toEqual([]);
       expect(ctx.llmCalls.length).toBe(0);
       expect(loop.status().activeTurnId).toBeUndefined();
+      launchSubscription.dispose();
 
       const flatContext = JSON.stringify(ctx.contextData());
       expect(flatContext).toContain('<output-file');
       expect(flatContext).not.toContain('previous bash output');
       expect(flatContext).toMatch(/task\.completed/);
-      expect(flatContext).toMatch(/task\.lost/);
+      expect(flatContext).not.toMatch(/task\.lost/);
     });
   });
 });

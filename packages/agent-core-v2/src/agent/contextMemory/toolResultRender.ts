@@ -1,13 +1,4 @@
-/**
- * `contextMemory` domain helper — projects stored tool result facts into
- * model-visible content.
- *
- * Tool messages keep the raw tool output plus structured status fields in
- * context. The LLM projection is the only boundary that turns those facts into
- * system status text or appends model-only notes.
- */
-
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 
 const TOOL_ERROR_STATUS = '<system>ERROR: Tool execution failed.</system>';
 const TOOL_EMPTY_STATUS = '<system>Tool output is empty.</system>';

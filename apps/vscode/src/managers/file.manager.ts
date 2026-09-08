@@ -7,7 +7,6 @@ import { buildCaseInsensitiveGlobLiteral } from "../utils/string";
 import {
   isWorkspacePathContained,
   relativeWorkspacePath,
-  resolveWorkspacePath,
 } from "../utils/workspace-path";
 
 export type BroadcastFn = (event: string, data: unknown, webviewId?: string) => void;
@@ -42,16 +41,6 @@ const IGNORE_DIRS = new Set([
   "jspm_packages",
   ".turbo",
 ]);
-
-const IGNORE_EXT = new Set([".lock", ".log", ".map", ".min.js", ".min.css", ".chunk.js", ".chunk.css"]);
-
-function shouldIgnore(name: string): boolean {
-  if (IGNORE_DIRS.has(name)) {
-    return true;
-  }
-  const ext = path.extname(name).toLowerCase();
-  return IGNORE_EXT.has(ext);
-}
 
 const SEARCH_EXCLUDE = `{${[...IGNORE_DIRS].map((d) => `**/${d}`).join(",")}}`;
 
@@ -168,34 +157,6 @@ export class FileManager {
       }),
     );
     return results.filter((result): result is ProjectFile => result !== undefined);
-  }
-
-  async listDirectory(workDirUri: vscode.Uri, directory: string): Promise<ProjectFile[]> {
-    const requested = resolveWorkspacePath(workDirUri, directory, { allowRoot: true });
-    if (requested === undefined || !(await isWorkspacePathContained(workDirUri, requested.uri))) return [];
-    try {
-      const entries = await vscode.workspace.fs.readDirectory(requested.uri);
-      const resolvedEntries = await Promise.all(
-        entries.map(async ([name, type]): Promise<ProjectFile | undefined> => {
-          if (shouldIgnore(name)) return undefined;
-          const relativePath = requested.relativePath ? `${requested.relativePath}/${name}` : name;
-          const entry = resolveWorkspacePath(workDirUri, relativePath);
-          if (entry === undefined || !(await isWorkspacePathContained(workDirUri, entry.uri))) return undefined;
-          return {
-            path: entry.relativePath,
-            name,
-            isDirectory: (type & vscode.FileType.Directory) !== 0,
-          };
-        }),
-      );
-      return resolvedEntries
-        .filter((entry): entry is ProjectFile => entry !== undefined)
-        .toSorted((a, b) =>
-          a.isDirectory === b.isDirectory ? a.name.localeCompare(b.name) : a.isDirectory ? -1 : 1,
-        );
-    } catch {
-      return [];
-    }
   }
 
   dispose(): void {

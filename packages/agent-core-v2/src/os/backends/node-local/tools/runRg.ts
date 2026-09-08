@@ -1,19 +1,6 @@
-/**
- * `fileTools` domain — shared ripgrep subprocess plumbing.
- *
- * Single place that knows how Glob spawns `rg` through the host
- * `IHostProcessService`: timeout / abort handling, capped stdout / stderr
- * draining, two-phase kill with process disposal, and the EAGAIN retry
- * predicate. Mode-specific argument building and output parsing stay in the
- * tools themselves.
- *
- * Ported from `session/sessionFs/runRg` onto the os tools: the subprocess now
- * goes through `IHostProcessService.spawn` instead of the session
- * `ISessionProcessRunner.exec`.
- */
-
 import type { Readable } from 'node:stream';
 
+import { BugIndicatingError } from '#/errors';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 
 export const DEFAULT_TIMEOUT_MS = 20_000;
@@ -34,7 +21,7 @@ export type RunRgOutcome = RunRgResult | { readonly kind: 'aborted' };
 
 function disposeProcess(proc: IHostProcess): void {
   try {
-    proc.dispose();
+    void proc.dispose();
   } catch {
   }
 }
@@ -51,7 +38,7 @@ export async function runRgOnce(
 
   const [command, ...args] = rgArgs;
   if (command === undefined) {
-    throw new Error('runRgOnce: rgArgs must not be empty');
+    throw new BugIndicatingError('runRgOnce: rgArgs must not be empty');
   }
   const proc: IHostProcess = await processService.spawn(command, args, { cwd: options?.cwd });
 

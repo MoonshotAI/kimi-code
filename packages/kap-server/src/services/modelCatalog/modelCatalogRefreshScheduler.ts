@@ -1,21 +1,3 @@
-/**
- * Periodic background refresh of provider model metadata for server-v2.
- *
- * Keeps a long-lived daemon's catalog fresh by refreshing once on start and
- * then on a configurable interval, delegating the work to
- * `IProviderDiscoveryService.refreshProviderModels({ scope: 'all' })` (which
- * refreshes every refreshable provider — managed OAuth + open platforms +
- * custom registries — and publishes `event.model_catalog.changed` on change).
- *
- * The cadence is config-driven: the `[model_catalog]` config section
- * (`refresh_interval_ms`, `refresh_on_start`) is read first, with the
- * `KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS` /
- * `KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START` env vars as overrides (matching
- * v1). When the config section is absent, the env vars / built-in defaults
- * apply. Failures are logged and swallowed so one bad tick does not break the
- * schedule.
- */
-
 import {
   type IConfigService,
   type IProviderDiscoveryService,
@@ -88,7 +70,6 @@ export class ModelCatalogRefreshScheduler {
   }
 }
 
-/** Env wins when set and valid; otherwise the config value; otherwise the default. */
 function resolveIntervalMs(env: NodeJS.ProcessEnv, configValue: number | undefined): number {
   const raw = env[INTERVAL_ENV];
   if (raw !== undefined && raw.trim().length > 0) {
@@ -98,7 +79,6 @@ function resolveIntervalMs(env: NodeJS.ProcessEnv, configValue: number | undefin
   return configValue ?? DEFAULT_REFRESH_INTERVAL_MS;
 }
 
-/** Env wins when set; otherwise the config value; otherwise refresh-on-start defaults to on. */
 function resolveRefreshOnStart(env: NodeJS.ProcessEnv, configValue: boolean | undefined): boolean {
   const raw = env[REFRESH_ON_START_ENV];
   if (raw !== undefined && raw.trim().length > 0) {

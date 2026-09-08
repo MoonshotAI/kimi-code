@@ -111,7 +111,7 @@ export class ThinkingComponent implements Component {
       );
       rendered = [
         '',
-        spinner + currentTheme.fg('textDim', 'thinking...'),
+        spinner + currentTheme.fg('textDim', 'thinking…'),
         ...visibleLines.map((line) => MESSAGE_INDENT + line),
       ];
     } else {
@@ -127,7 +127,7 @@ export class ThinkingComponent implements Component {
         // Leading blank + first PREVIEW_LINES content lines + hint line.
         const truncated = lines.slice(0, 1 + THINKING_PREVIEW_LINES);
         const remaining = contentLines.length - THINKING_PREVIEW_LINES;
-        const hint = `... (${String(remaining)} more lines, ctrl+o to expand)`;
+        const hint = `… (${String(remaining)} more lines, ctrl+o to expand)`;
         const indentWidth = Math.min(MESSAGE_INDENT.length, Math.max(0, width));
         const hintWidth = Math.max(0, width - indentWidth);
         truncated.push(

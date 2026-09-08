@@ -40,29 +40,34 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+
+import { EXAMPLE_CLIENT_IDENTITY } from './identity.js';
+
 import type { AddressInfo } from 'node:net';
 
 import { bootstrap, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-core-v2';
 import { isError2 } from '@moonshot-ai/agent-core-v2/_base/errors/errors';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
-import { UNKNOWN_CAPABILITY } from '@moonshot-ai/agent-core-v2/kosong/contract/capability';
+import { UNKNOWN_CAPABILITY } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/capability';
 import {
   APIContextOverflowError,
   APIStatusError,
   ChatProviderError,
   isAbortError,
   isToolExchangeAdjacencyError,
-} from '@moonshot-ai/agent-core-v2/kosong/contract/errors';
-import type { ToolCall } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
-import type { Tool } from '@moonshot-ai/agent-core-v2/kosong/contract/tool';
-import type { AuthProvider, Model } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
-import { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
+} from '@moonshot-ai/agent-core-v2/llm-adapter/contract/errors';
+import type {
+  ToolCall,
+  ToolDescription as Tool,
+} from '@moonshot-ai/agent-core-v2/human/llm/message';
+import type { AuthProvider, Model } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
+import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import type {
   ModelRequestInput,
   ModelRequester,
-} from '@moonshot-ai/agent-core-v2/kosong/model/modelRequester';
-import { ModelRequesterImpl } from '@moonshot-ai/agent-core-v2/kosong/model/modelRequesterImpl';
-import { ProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/kosong/provider/protocolAdapterRegistry';
+} from '@moonshot-ai/agent-core-v2/llm-adapter/model/model-requester';
+import { ModelRequesterImpl } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model-requester-impl';
+import { ProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocolAdapterRegistry';
 
 function assert(cond: boolean, message: string): asserts cond {
   if (!cond) throw new Error(`assertion failed: ${message}`);
@@ -80,7 +85,7 @@ const tick = (ms: number): Promise<void> =>
 async function probeRealConfig(): Promise<void> {
   const homeDir = process.env['KIMI_CODE_HOME'] ?? join(homedir(), '.kimi-code');
   console.log(`\n=== part 1: real config (${homeDir}/config.toml) ===`);
-  const { app } = bootstrap({ homeDir }, [
+  const { app } = bootstrap({ homeDir, clientIdentity: EXAMPLE_CLIENT_IDENTITY }, [
     ...logSeed(resolveLoggingConfig({ homeDir, env: process.env })),
   ]);
   try {

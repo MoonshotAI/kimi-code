@@ -7,6 +7,7 @@ export type PermissionMode = 'manual' | 'yolo' | 'auto';
 
 
 export interface ApprovalRequest {
+  id?: string;
   toolCallId: string;
   toolName: string;
   action: string;

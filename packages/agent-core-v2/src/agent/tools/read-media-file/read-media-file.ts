@@ -1,20 +1,7 @@
-/**
- * `tools` domain (L7) — `ReadMediaFileTool` contract.
- *
- * Public contract of the `ReadMediaFile` tool: the input zod schema the
- * model-facing parameters are derived from, the tool-owned size constants,
- * and the `VideoUploader` channel type (consumed by
- * `#/agent/media/registerMediaTools`, which binds the provider's upload
- * hook). This tool has no DI decorator — it is a deliberate exception to
- * the `registerAgentToolService` contribution table, `new`ed by
- * `AgentMediaToolsRegistrar` at Agent scope whenever the bound model
- * changes (see `readMediaFileTool.ts`).
- */
-
 import { z } from 'zod';
 
-import type { VideoURLPart } from '#/kosong/contract/message';
-import type { VideoUploadInput as ProviderVideoUploadInput } from '#/kosong/contract/provider';
+import type { VideoURLPart } from '#human/llm/message';
+import type { VideoUploadInput as ProviderVideoUploadInput } from '#human/llm/media/upload';
 
 export const MAX_MEDIA_MEGABYTES = 100;
 export const MAX_MEDIA_BYTES = MAX_MEDIA_MEGABYTES * 1024 * 1024;
@@ -25,7 +12,6 @@ export type VideoUploader = (
   input: VideoUploadInput,
   options?: { readonly signal?: AbortSignal },
 ) => Promise<VideoURLPart>;
-
 
 export const ReadMediaFileInputSchema = z.object({
   path: z

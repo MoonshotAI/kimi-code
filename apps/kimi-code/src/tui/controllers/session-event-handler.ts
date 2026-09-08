@@ -27,7 +27,9 @@ import type {
   TurnStartedEvent,
   TurnStepCompletedEvent,
   TurnStepInterruptedEvent,
+  TurnStepRetryingEvent,
   TurnStepStartedEvent,
+  TokenUsage,
   WarningEvent,
 } from '@moonshot-ai/kimi-code-sdk';
 
@@ -75,15 +77,18 @@ import { nextTranscriptId } from '../utils/transcript-id';
 import type { BtwPanelController } from './btw-panel';
 import { isPluginMcpToolName, PluginUpdateNotifier } from './plugin-update-notifier';
 import type { StreamingUIController } from './streaming-ui';
+import type { SurveyController } from './survey-controller';
 import type { TasksBrowserController } from './tasks-browser';
 import { SubAgentEventHandler } from './subagent-event-handler';
-import type {
-  AppState,
-  LivePaneState,
-  QueuedMessage,
-  ToolCallBlockData,
-  ToolResultBlockData,
-  TranscriptEntry,
+import { NotifyController } from './notify';
+import {
+  sumTokenUsage,
+  type AppState,
+  type LivePaneState,
+  type QueuedMessage,
+  type ToolCallBlockData,
+  type ToolResultBlockData,
+  type TranscriptEntry,
 } from '../types';
 import type { TUIState } from '../tui-state';
 import { createGoal as startGoalCommand } from '../commands/goal';
@@ -104,6 +109,9 @@ export interface SessionEventHost {
   showNotice(title: string, detail?: string): void;
   updateActivityPane(): void;
   track(event: string, props?: Record<string, unknown>): void;
+  recordSessionActivity(): void;
+  noteStepUsage(usage: TokenUsage | undefined): void;
+  noteCompactionFinished(): void;
   mountEditorReplacement(panel: Component & Focusable): void;
   restoreEditor(): void;
   restoreInputText(text: string): void;
@@ -114,11 +122,15 @@ export interface SessionEventHost {
   updateTerminalTitle(): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
   shiftQueuedMessage(): QueuedMessage | undefined;
+  handleTurnStarted?(event: TurnStartedEvent): void;
+  handleTurnEnded?(event: TurnEndedEvent): void;
   readonly btwPanelController: BtwPanelController;
   readonly tasksBrowserController: TasksBrowserController;
+  readonly surveyController: SurveyController;
 }
 
 export class SessionEventHandler {
+  readonly notifications: NotifyController;
   readonly subAgentEventHandler: SubAgentEventHandler;
   private readonly pluginUpdateNotifier: PluginUpdateNotifier;
 
@@ -126,6 +138,7 @@ export class SessionEventHandler {
     private readonly host: SessionEventHost,
     pluginUpdateNotifier?: PluginUpdateNotifier,
   ) {
+    this.notifications = new NotifyController(host.state);
     this.subAgentEventHandler = new SubAgentEventHandler(host, {
       backgroundTasks: this.backgroundTasks,
       backgroundTaskTranscriptedTerminal: this.backgroundTaskTranscriptedTerminal,
@@ -162,11 +175,13 @@ export class SessionEventHandler {
   private queuedGoalPromotionPending = false;
   private queuedGoalPromotionInFlight = false;
   private queuedGoalPromotionTimer: ReturnType<typeof setTimeout> | undefined;
+  private stepRetryAttemptTimer: ReturnType<typeof setTimeout> | undefined;
 
   resetRuntimeState(): void {
     this.backgroundTasks.clear();
     this.backgroundTaskTranscriptedTerminal.clear();
     this.subAgentEventHandler.resetRuntimeState();
+    this.notifications.reset();
     this.renderedSkillActivationIds.clear();
     this.renderedPluginCommandActivationIds.clear();
     this.renderedMcpServerStatusKeys.clear();
@@ -180,6 +195,7 @@ export class SessionEventHandler {
     this.queuedGoalPromotionPending = false;
     this.queuedGoalPromotionInFlight = false;
     this.clearQueuedGoalPromotionTimer();
+    this.clearStepRetryAttemptTimer();
     this.stopAllMcpServerStatusSpinners();
   }
 
@@ -251,6 +267,7 @@ export class SessionEventHandler {
   }
 
   handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void {
+    this.notifications.handleEvent(event);
     if (this.subAgentEventHandler.routeChildAgentEvent(event)) return;
 
     if ('turnId' in event && event.turnId !== undefined) {
@@ -263,7 +280,7 @@ export class SessionEventHandler {
       case 'turn.step.started': this.handleStepBegin(event); break;
       case 'turn.step.interrupted': this.handleStepInterrupted(event); break;
       case 'turn.step.completed': this.handleStepCompleted(event); break;
-      case 'turn.step.retrying': break;
+      case 'turn.step.retrying': this.handleStepRetrying(event); break;
       case 'tool.progress': this.handleToolProgress(event); break;
       case 'shell.output': this.host.handleShellOutput(event); break;
       case 'shell.started': this.host.handleShellStarted(event); break;
@@ -312,6 +329,7 @@ export class SessionEventHandler {
   // ---------------------------------------------------------------------------
 
   private handleTurnBegin(event: TurnStartedEvent): void {
+    this.host.handleTurnStarted?.(event);
     this.currentTurnHasAssistantText = false;
     if (event.origin?.kind === 'plugin_command') {
       this.pluginCommandTurns.set(String(event.turnId), event.origin.pluginId);
@@ -349,10 +367,16 @@ export class SessionEventHandler {
   }
 
   private handleTurnEnd(event: TurnEndedEvent, sendQueued: (item: QueuedMessage) => void): void {
+    this.host.handleTurnEnded?.(event);
     this.host.streamingUI.flushNow();
+    this.clearStepRetry();
     if (event.reason === 'cancelled') {
       this.markActiveAgentSwarmsCancelled();
     }
+    // Aborted foreground subagents emit no completed/failed lifecycle event
+    // (v2 suppresses it for aborts), so their activity records would linger
+    // until the session reset — prune them when the owning turn ends.
+    this.subAgentEventHandler.dropForegroundOnlyActivityRecords();
     if (event.reason === 'failed' && event.error?.code === 'provider.filtered') {
       this.host.showStatus('Turn stopped: provider safety policy blocked the response.', 'error');
     }
@@ -365,6 +389,7 @@ export class SessionEventHandler {
     }
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.finalizeTurn(sendQueued);
+    this.host.recordSessionActivity();
     this.renderPendingModelBlockedFallback();
     this.currentTurnHasAssistantText = false;
     this.goalCompletionTurnEnded = true;
@@ -405,6 +430,8 @@ export class SessionEventHandler {
 
   private handleStepCompleted(event: TurnStepCompletedEvent): void {
     this.host.streamingUI.flushNow();
+    this.clearStepRetry();
+    this.host.noteStepUsage(event.usage);
     this.maybeShowDebugTiming(event);
 
     if (event.providerFinishReason === 'filtered') {
@@ -430,6 +457,48 @@ export class SessionEventHandler {
       ? 'If this limit is wrong for your model, set `max_output_size` on the model alias in your kimi-code config.'
       : undefined;
     this.host.showNotice(title, detail);
+  }
+
+  private handleStepRetrying(event: TurnStepRetryingEvent): void {
+    // The failure may arrive mid-stream, after thinking/assistant deltas have
+    // parked the pane in `thinking`/`composing` — drive it back to waiting so
+    // the retry label and detail actually render during the backoff.
+    this.host.patchLivePane({ mode: 'waiting' });
+    this.host.setAppState({
+      streamingPhase: 'waiting',
+      stepRetry: {
+        nextAttempt: event.nextAttempt,
+        maxAttempts: event.maxAttempts,
+        delayMs: event.delayMs,
+        errorName: event.errorName,
+        errorMessage: event.errorMessage,
+        statusCode: event.statusCode,
+        phase: 'backoff',
+      },
+    });
+    // Both engines sleep for `delayMs` before the next attempt runs, but only
+    // v2 re-emits `turn.step.started` for it — flip the phase on a timer so the
+    // stale countdown drops on the legacy engine too.
+    this.clearStepRetryAttemptTimer();
+    this.stepRetryAttemptTimer = setTimeout(() => {
+      this.stepRetryAttemptTimer = undefined;
+      const retry = this.host.state.appState.stepRetry;
+      if (retry === null) return;
+      this.host.setAppState({ stepRetry: { ...retry, phase: 'attempt' } });
+    }, event.delayMs);
+  }
+
+  private clearStepRetry(): void {
+    this.clearStepRetryAttemptTimer();
+    if (this.host.state.appState.stepRetry === null) return;
+    this.host.setAppState({ stepRetry: null });
+  }
+
+  clearStepRetryAttemptTimer(): void {
+    if (this.stepRetryAttemptTimer !== undefined) {
+      clearTimeout(this.stepRetryAttemptTimer);
+      this.stepRetryAttemptTimer = undefined;
+    }
   }
 
   private maybeShowDebugTiming(event: TurnStepCompletedEvent): void {
@@ -459,6 +528,7 @@ export class SessionEventHandler {
 
   private handleStepInterrupted(event: TurnStepInterruptedEvent): void {
     this.host.streamingUI.flushNow();
+    this.clearStepRetry();
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.finalizeLiveTextBuffers('idle');
     const reason = event.reason;
@@ -537,6 +607,7 @@ export class SessionEventHandler {
       turnId: String(event.turnId),
       renderMode: 'markdown',
       content: formatHookResultMarkdown(event),
+      hookResult: true,
     });
     this.host.patchLivePane({
       mode: 'idle',
@@ -547,6 +618,7 @@ export class SessionEventHandler {
 
   private handleToolCall(event: ToolCallStartedEvent): void {
     const { streamingUI } = this.host;
+    this.host.surveyController.notifyToolCallStarted();
     streamingUI.flushNow();
     const { turnId, step } = streamingUI.getTurnContext();
     const toolCall: ToolCallBlockData = {
@@ -600,7 +672,7 @@ export class SessionEventHandler {
     const tc = this.host.streamingUI.getToolComponent(event.toolCallId);
     if (tc === undefined) return;
     if (event.update.kind === 'status') {
-      tc.appendProgress(text);
+      tc.appendProgress(text, { replace: event.update.replace === true });
       return;
     }
     if (event.update.kind === 'stdout' || event.update.kind === 'stderr') {
@@ -611,6 +683,7 @@ export class SessionEventHandler {
   private handleToolResult(event: ToolResultEvent): void {
     const { streamingUI } = this.host;
     streamingUI.flushNow();
+    this.clearStepRetry();
     const resultData: ToolResultBlockData = {
       tool_call_id: event.toolCallId,
       output: serializeToolResultOutput(event.output),
@@ -648,16 +721,31 @@ export class SessionEventHandler {
       this.host.state.appState.swarmMode &&
       this.host.state.swarmModeEntry === 'task';
     const patch: Partial<AppState> = {};
-    if (event.contextUsage !== undefined) patch.contextUsage = event.contextUsage;
     if (event.contextTokens !== undefined) patch.contextTokens = event.contextTokens;
     if (event.maxContextTokens !== undefined) patch.maxContextTokens = event.maxContextTokens;
+    if (event.contextUsage !== undefined) {
+      patch.contextUsage = event.contextUsage;
+    } else if (event.contextTokens !== undefined || event.maxContextTokens !== undefined) {
+      // v2 status events carry contextTokens/maxContextTokens but never
+      // contextUsage. Recompute the ratio from the post-patch token counts so
+      // it cannot go stale and drift from them — the footer and the /usage
+      // panel bar render this ratio while their texts recompute from the
+      // counts, so a stale ratio shows as a bar/percentage mismatch.
+      const tokens = patch.contextTokens ?? this.host.state.appState.contextTokens;
+      const max = patch.maxContextTokens ?? this.host.state.appState.maxContextTokens;
+      patch.contextUsage = max > 0 ? tokens / max : 0;
+    }
     if (event.planMode !== undefined) patch.planMode = event.planMode;
     if (event.swarmMode !== undefined) patch.swarmMode = event.swarmMode;
+    if (event.towerMode !== undefined) patch.towerMode = event.towerMode;
     if (event.permission !== undefined) {
       patch.permissionMode = event.permission;
     }
     if (event.model !== undefined) patch.model = event.model;
     if (event.thinkingEffort !== undefined) patch.thinkingEffort = event.thinkingEffort;
+    if (event.usage?.total !== undefined) {
+      patch.cumulativeTokens = sumTokenUsage(event.usage.total);
+    }
     if (Object.keys(patch).length > 0) this.host.setAppState(patch);
     if (event.swarmMode === false) {
       this.host.state.swarmModeEntry = undefined;
@@ -944,6 +1032,13 @@ export class SessionEventHandler {
           'textMuted',
         );
         return;
+      case 'removed':
+        this.finalizeMcpServerStatusRow(
+          server.name,
+          `MCP server "${server.name}" removed`,
+          'textMuted',
+        );
+        return;
       case 'pending':
         this.showMcpServerStatusSpinner(server.name);
         return;
@@ -1041,6 +1136,13 @@ export class SessionEventHandler {
       event.result.tokensAfter,
       event.result.summary,
     );
+    // A completed compaction just refreshed and shrank the cached context —
+    // count it as activity so the next submit isn't judged against the
+    // pre-compaction timestamp, and reset the cache-break baseline (the drop
+    // is expected). Cancellations do neither: the context was not cut.
+    this.host.recordSessionActivity();
+    this.host.noteCompactionFinished();
+    this.host.surveyController.notifyCompactionFinished();
     this.finishCompaction(sendQueued);
   }
 
@@ -1125,6 +1227,21 @@ export class SessionEventHandler {
           description: info.description,
           status: info.status,
         });
+        // Stopped / timed-out agents terminate without a `subagent.failed`
+        // event — mark the activity record here so the detail view does not
+        // stay "running" forever. `subagent.completed` carries the result
+        // summary and may land after this, so only fill still-running records.
+        const agentId = info.agentId;
+        if (agentId !== undefined) {
+          const record = this.subAgentEventHandler.activityStore.get(agentId);
+          if (record !== undefined && record.status === 'running') {
+            if (info.status === 'completed') {
+              this.subAgentEventHandler.activityStore.markCompleted(agentId);
+            } else {
+              this.subAgentEventHandler.activityStore.markFailed(agentId);
+            }
+          }
+        }
       }
       if (!this.backgroundTaskTranscriptedTerminal.has(info.taskId)) {
         if (info.kind === 'process' || info.kind === 'question') {

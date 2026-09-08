@@ -236,21 +236,21 @@ describe('approval adapter', () => {
     // /goal menu's description.
     expect(adapted.choices).toEqual([
       {
-        label: 'Switch to Auto and start',
+        label: 'Switch to Never Ask and start',
         response: 'approved',
         selected_label: 'auto',
         description:
           'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically, and questions are skipped.',
       },
       {
-        label: 'Switch to YOLO and start',
+        label: 'Switch to Ask When Needed and start',
         response: 'approved',
         selected_label: 'yolo',
         description:
           'Tools and plan changes are approved automatically. Kimi Code may still ask you questions.',
       },
       {
-        label: 'Start in Manual',
+        label: 'Start in Always Ask',
         response: 'approved',
         selected_label: 'manual',
         description:
@@ -280,14 +280,14 @@ describe('approval adapter', () => {
     expect(adapted.display).toEqual([{ type: 'brief', text: 'Start goal: Ship the feature' }]);
     expect(adapted.choices).toEqual([
       {
-        label: 'Switch to Auto and start',
+        label: 'Switch to Never Ask and start',
         response: 'approved',
         selected_label: 'auto',
         description:
           'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically, and questions are skipped.',
       },
       {
-        label: 'Keep YOLO and start',
+        label: 'Keep Ask When Needed and start',
         response: 'approved',
         selected_label: 'yolo',
         description:

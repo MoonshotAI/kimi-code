@@ -182,10 +182,11 @@ describe('events — volatile classification', () => {
       'shell.started',
       'shell.completed',
       'agent.status.updated',
+      'event.capability.changed',
     ]) {
       expect(isVolatileEventType(type)).toBe(true);
     }
-    expect(VOLATILE_EVENT_TYPES).toHaveLength(8);
+    expect(VOLATILE_EVENT_TYPES).toHaveLength(9);
   });
 
   it('keeps timeline-bearing events durable', () => {

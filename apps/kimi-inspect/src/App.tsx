@@ -4,27 +4,39 @@
  * event streams was removed server-side, so Service panels and the pending
  * interactions card fetch on demand and the sidebar polls.
  * Layout: header / icon rail / view. The `chat` view is a strip of the
- * left sidebar (workspaces + sessions), the session pane (session Services
- * / State tabs), the chat column, and the right dock (`RightPanel`) merging
- * the transcript audit and the agent inspector under Audit / Agent tabs;
+ * left sidebar (a workspace → session tree), the chat column, and the
+ * right dock (`RightPanel`) merging the transcript audit, the agent
+ * inspector, and the session pane under Audit / Agent / State / Session
+ * tabs;
  * the `models` view is the full-width model catalog; the `services` view is
- * the full-width app-scope Service reflection (`AppServicesView`).
+ * the full-width app-scope Service reflection (`AppServicesView`); the
+ * `workspace` view is the workspace-scope counterpart
+ * (`WorkspaceServicesView`, with a workspace picker on top); the
+ * `bash` view is the full-width `IBashParserService` playground
+ * (`BashParserView`); the `di` view is the engine's Service × Effect × DI
+ * debug surface (`DiInspectionView`); the `search` view is the full-width
+ * global message search (`SearchView`) whose hits navigate back into the
+ * chat timeline.
  */
 
+import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
 import { useEffect, useState } from 'react';
-
-import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/app/sessionLifecycle/sessionLifecycle';
 
 import type { AuditTrail } from './audit/trail';
 import { AppServicesView } from './components/AppServicesView';
-import { ChatView } from './components/ChatView';
+import { BashParserView } from './components/BashParserView';
+import { ChatView, type ChatJump } from './components/ChatView';
+import { DiInspectionView } from './components/DiInspectionView';
+import { FsSuggestView } from './components/FsSuggestView';
 import { ModelCatalogView } from './components/ModelCatalogView';
 import { NavRail, type AppView } from './components/NavRail';
 import { RightPanel } from './components/RightPanel';
+import { SearchView } from './components/SearchView';
 import { ServerSwitcher } from './components/ServerSwitcher';
-import { SessionPane } from './components/SessionPane';
 import { Sidebar } from './components/Sidebar';
+import { WorkspaceServicesView } from './components/WorkspaceServicesView';
 import { useConnection } from './connection';
+import type { SearchHit } from './search/api';
 import { errorMessage } from './ui';
 
 export function App() {
@@ -36,17 +48,24 @@ export function App() {
   const [resumeError, setResumeError] = useState<unknown>(null);
   /** Audit trail of the chat view's transcript channel, rendered in the right dock. */
   const [trail, setTrail] = useState<AuditTrail | null>(null);
+  /** Pending chat navigation requested from another view (search result click). */
+  const [jump, setJump] = useState<ChatJump | null>(null);
 
   // Resume (materialize) the session on the server when it is selected, so
-  // session / agent scoped Services become reachable.
+  // session / agent scoped Services become reachable. Session lifecycle lives
+  // on the workspace handler (Workspace scope): the index yields the
+  // session's workspaceId, then the handler resumes it.
   useEffect(() => {
     if (sessionId === null) return;
     let cancelled = false;
     setReady(false);
     setResumeError(null);
     klient
-      .core(ISessionLifecycleService)
+      .core(ISessionManager)
       .resume(sessionId)
+      .then((session) => {
+        if (session === undefined) throw new Error(`session ${sessionId} does not exist`);
+      })
       .then(() => {
         if (!cancelled) setReady(true);
       })
@@ -63,7 +82,22 @@ export function App() {
   useEffect(() => {
     setSessionId(null);
     setAgentId('main');
+    setJump(null);
   }, [baseUrl]);
+
+  // A search hit opens the chat view at its session / agent / turn / step.
+  // Title hits belong to the session (agent '') and carry no turn: switch
+  // over without a scroll target.
+  const openSearchHit = (hit: SearchHit): void => {
+    setSessionId(hit.sessionId);
+    setAgentId(hit.agentId === '' ? 'main' : hit.agentId);
+    setView('chat');
+    setJump({
+      turnId: hit.turn === undefined ? undefined : `t${hit.turn}`,
+      stepId: hit.stepId,
+      nonce: Date.now(),
+    });
+  };
 
   return (
     <div className="flex h-screen flex-col">
@@ -82,6 +116,14 @@ export function App() {
         <NavRail view={view} onChange={setView} />
         {view === 'services' ? (
           <AppServicesView />
+        ) : view === 'workspace' ? (
+          <WorkspaceServicesView />
+        ) : view === 'suggest' ? (
+          <FsSuggestView />
+        ) : view === 'bash' ? (
+          <BashParserView />
+        ) : view === 'di' ? (
+          <DiInspectionView />
         ) : view === 'models' ? (
           <ModelCatalogView
             onOpenSession={(id) => {
@@ -89,10 +131,11 @@ export function App() {
               setView('chat');
             }}
           />
+        ) : view === 'search' ? (
+          <SearchView onOpenResult={openSearchHit} />
         ) : (
           <>
             <Sidebar activeSessionId={sessionId} onSelectSession={setSessionId} />
-            <SessionPane sessionId={sessionId} ready={ready} />
             {resumeError !== null ? (
               <div className="flex flex-1 items-center justify-center p-6 text-center text-[12px] text-red-400">
                 Failed to open session: {errorMessage(resumeError)}
@@ -103,6 +146,9 @@ export function App() {
                 agentId={agentId}
                 ready={ready}
                 onTrailChange={setTrail}
+                jump={jump}
+                onJumpHandled={() => setJump(null)}
+                onOpenSearchHit={openSearchHit}
               />
             )}
             <RightPanel

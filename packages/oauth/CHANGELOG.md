@@ -1,5 +1,21 @@
 # @moonshot-ai/kimi-code-oauth
 
+## 0.4.0
+
+### Minor Changes
+
+- [#2885](https://github.com/MoonshotAI/kimi-code/pull/2885) [`4a93f70`](https://github.com/MoonshotAI/kimi-code/commit/4a93f70aa2cf5f70a88b4f8eeb2e409aab2c8f59) Thanks [@liruifengv](https://github.com/liruifengv)! - Add a browser-safe `./device` subpath export exposing the device-code flow's pure-fetch HTTP wrappers and flow config, so browser bundles can run OAuth sign-in without pulling in Node-only modules. Import from `@moonshot-ai/kimi-code-oauth/device`.
+
+### Patch Changes
+
+- [#2351](https://github.com/MoonshotAI/kimi-code/pull/2351) [`6be2697`](https://github.com/MoonshotAI/kimi-code/commit/6be26978b123bacf1c5ebce52bbeb6f7b7ff0629) Thanks [@7Sageer](https://github.com/7Sageer)! - Add `fetchChatTitle` for the managed platform `/tools` `chat_title` method: protocol headers, an 8s timeout, response validation, and structured failures.
+
+## 0.3.0
+
+### Minor Changes
+
+- [#2382](https://github.com/MoonshotAI/kimi-code/pull/2382) [`40172c7`](https://github.com/MoonshotAI/kimi-code/commit/40172c7ca96ca981b043b793588dd32e898979fa) Thanks [@liruifengv](https://github.com/liruifengv)! - Rework the host identity type: rename `userAgentProduct` to `productName` and add a required `platform` field, so every host explicitly declares the `X-Msh-Platform` value it reports instead of silently inheriting the CLI's. OAuth requests now also send the product User-Agent (with the optional runtime suffix), so the OAuth host can tell client families and surfaces apart.
+
 ## 0.2.2
 
 ### Patch Changes

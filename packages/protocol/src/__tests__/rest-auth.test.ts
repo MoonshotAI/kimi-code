@@ -8,16 +8,14 @@ import {
 
 describe('authSummarySchema', () => {
   const emptyState: AuthSummary = {
-    ready: false,
+    models_ready: false,
     providers_count: 0,
-    default_model: null,
     managed_provider: null,
   };
 
   const readyState: AuthSummary = {
-    ready: true,
+    models_ready: true,
     providers_count: 1,
-    default_model: 'kimi-k2',
     managed_provider: {
       name: 'kimi-code-oauth',
       status: 'authenticated',
@@ -26,17 +24,15 @@ describe('authSummarySchema', () => {
 
   it('round-trips an empty (unprovisioned) state', () => {
     const parsed = authSummarySchema.parse(emptyState);
-    expect(parsed.ready).toBe(false);
+    expect(parsed.models_ready).toBe(false);
     expect(parsed.providers_count).toBe(0);
-    expect(parsed.default_model).toBeNull();
     expect(parsed.managed_provider).toBeNull();
   });
 
   it('round-trips a ready state with managed provider', () => {
     const parsed = authSummarySchema.parse(readyState);
-    expect(parsed.ready).toBe(true);
+    expect(parsed.models_ready).toBe(true);
     expect(parsed.providers_count).toBe(1);
-    expect(parsed.default_model).toBe('kimi-k2');
     expect(parsed.managed_provider).toEqual({
       name: 'kimi-code-oauth',
       status: 'authenticated',
@@ -59,18 +55,13 @@ describe('authSummarySchema', () => {
     expect(authSummarySchema.safeParse(bad).success).toBe(false);
   });
 
-  it('rejects missing ready', () => {
-    const { ready: _omit, ...rest } = emptyState;
+  it('rejects missing models_ready', () => {
+    const { models_ready: _omit, ...rest } = emptyState;
     expect(authSummarySchema.safeParse(rest).success).toBe(false);
   });
 
   it('rejects missing providers_count', () => {
     const { providers_count: _omit, ...rest } = emptyState;
-    expect(authSummarySchema.safeParse(rest).success).toBe(false);
-  });
-
-  it('rejects missing default_model', () => {
-    const { default_model: _omit, ...rest } = emptyState;
     expect(authSummarySchema.safeParse(rest).success).toBe(false);
   });
 

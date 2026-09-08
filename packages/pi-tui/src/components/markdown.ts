@@ -1,4 +1,5 @@
-import { Marked, type Token, Tokenizer, type Tokens } from "marked";
+import { Marked, type Token, Tokenizer, type TokenizerExtension, type Tokens } from "marked";
+import { renderLatex } from "../latex.ts";
 import { getCapabilities, hyperlink, isImageLine } from "../terminal-image.ts";
 import type { Component } from "../tui.ts";
 import { applyBackgroundToLine, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
@@ -21,6 +22,218 @@ class StrictStrikethroughTokenizer extends Tokenizer {
 		};
 	}
 }
+
+// Local divergence (not upstream; keep StrictStrikethroughTokenizer untouched
+// for re-vendoring): marked's GFM autolink accepts any non-space characters
+// after the domain and its backpedal only strips ASCII trailing punctuation,
+// so CJK/full-width punctuation right after a bare URL is absorbed into the
+// link text and href (`.../pull/232（本地` becomes one anchor). Cut the match
+// at the first CJK punctuation character BEFORE the ASCII backpedal so trailing
+// ASCII punctuation left by the cut is still normalized away. Full-width
+// parentheses are handled like GFM handles ASCII ones: balanced pairs stay
+// part of the URL (`.../wiki/中华人民共和国（1949年）`, punctuation inside
+// them included), and only an unbalanced `（` / `）` terminates the match.
+// Guarded by the "CJK punctuation after bare URLs" tests in
+// test/markdown.test.ts.
+const FULLWIDTH_LEFT_PAREN = 0xff08; // （
+const FULLWIDTH_RIGHT_PAREN = 0xff09; // ）
+const CJK_URL_TERMINATOR_REGEX =
+	/[\u3000-\u303f\uff01-\uff07\uff0a-\uff0f\uff1a-\uff20\uff3b-\uff40\uff5b-\uff65\u2013\u2014\u2018\u2019\u201c\u201d\u2026]/;
+
+/**
+ * Index at which to cut an autolink match, or -1 to keep it whole. Non-paren
+ * CJK punctuation terminates the URL outside of full-width parens; full-width
+ * parens only terminate it when unbalanced. Punctuation inside a balanced
+ * parenthetical (e.g. the ，in （北京，1949年）) stays part of the URL —
+ * prose parentheticals contain spaces and never survive marked's match this
+ * far, so a balanced group is almost always deliberate URL content.
+ */
+function findCjkUrlBoundary(match: string): number {
+	let parenDepth = 0;
+	let unmatchedOpen = -1;
+	for (let i = 0; i < match.length; i++) {
+		const code = match.charCodeAt(i);
+		if (code === FULLWIDTH_LEFT_PAREN) {
+			parenDepth++;
+			if (unmatchedOpen === -1) {
+				unmatchedOpen = i;
+			}
+		} else if (code === FULLWIDTH_RIGHT_PAREN) {
+			if (parenDepth === 0) {
+				return i;
+			}
+			parenDepth--;
+			if (parenDepth === 0) {
+				unmatchedOpen = -1;
+			}
+		} else if (parenDepth === 0 && CJK_URL_TERMINATOR_REGEX.test(match[i]!)) {
+			return i;
+		}
+	}
+	return parenDepth > 0 ? unmatchedOpen : -1;
+}
+
+class CjkBoundaryUrlTokenizer extends StrictStrikethroughTokenizer {
+	override url(src: string): Tokens.Link | undefined {
+		const cap = this.rules.inline.url.exec(src);
+		if (!cap) {
+			return undefined;
+		}
+		// Autolinked emails (cap[2] === "@") skip the backpedal upstream; keep
+		// that behavior exactly.
+		if (cap[2] === "@") {
+			const text = cap[0];
+			return {
+				type: "link",
+				raw: text,
+				text,
+				href: `mailto:${text}`,
+				tokens: [{ type: "text", raw: text, text }],
+			};
+		}
+		const boundary = findCjkUrlBoundary(cap[0]);
+		if (boundary !== -1) {
+			cap[0] = cap[0].slice(0, boundary);
+		}
+		if (!cap[0]) {
+			return undefined;
+		}
+		let previous: string;
+		do {
+			previous = cap[0];
+			cap[0] = this.rules.inline._backpedal.exec(cap[0])?.[0] ?? "";
+		} while (previous !== cap[0]);
+		const text = cap[0];
+		const href = cap[1] === "www." ? `http://${text}` : text;
+		return {
+			type: "link",
+			raw: text,
+			text,
+			href,
+			tokens: [{ type: "text", raw: text, text }],
+		};
+	}
+}
+
+interface LatexToken extends Tokens.Generic {
+	type: "latex" | "latexBlock";
+	text: string;
+	pending?: boolean;
+}
+
+function isEscaped(source: string, index: number): boolean {
+	let backslashes = 0;
+	for (let position = index - 1; position >= 0 && source[position] === "\\"; position--) {
+		backslashes++;
+	}
+	return backslashes % 2 === 1;
+}
+
+function findClosingDelimiter(source: string, closing: string, start: number): number {
+	let index = source.indexOf(closing, start);
+	while (index >= 0 && isEscaped(source, index)) {
+		index = source.indexOf(closing, index + closing.length);
+	}
+	return index;
+}
+
+function looksLikePendingDollarMath(source: string): boolean {
+	return /\\[A-Za-z]+|[_^=+*/<>()[\]|±≤≥≠≈∈→⇒∞∫∑√-]/.test(source);
+}
+
+function tokenizeInlineLatex(source: string): LatexToken | undefined {
+	let opening = "";
+	let closing = "";
+	if (source.startsWith("$$")) {
+		opening = "$$";
+		closing = "$$";
+	} else if (source.startsWith("\\(")) {
+		opening = "\\(";
+		closing = "\\)";
+	} else if (source.startsWith("\\[")) {
+		opening = "\\[";
+		closing = "\\]";
+	} else if (source.startsWith("$") && !/^\$\s/.test(source)) {
+		opening = "$";
+		closing = "$";
+	} else {
+		return undefined;
+	}
+
+	const closingIndex = findClosingDelimiter(source, closing, opening.length);
+	if (
+		closingIndex >= 0 &&
+		opening === "$" &&
+		(/\s$/.test(source.slice(opening.length, closingIndex)) ||
+			/^\d/.test(source.slice(closingIndex + 1)) ||
+			(/^[A-Z_][A-Z0-9_]*(?:[^A-Za-z0-9_\s])?$/.test(source.slice(opening.length, closingIndex)) &&
+				/^[A-Za-z_][A-Za-z0-9_]*/.test(source.slice(closingIndex + 1))) ||
+			source.slice(opening.length, closingIndex).includes("`"))
+	) {
+		return undefined;
+	}
+
+	if (closingIndex < 0) {
+		const pendingSource = source.slice(opening.length);
+		if (opening.startsWith("\\") || looksLikePendingDollarMath(pendingSource)) {
+			return { type: "latex", raw: source, text: pendingSource, pending: true };
+		}
+		return undefined;
+	}
+
+	const text = source.slice(opening.length, closingIndex);
+	if (!text || text.includes("\n")) {
+		return undefined;
+	}
+
+	const raw = source.slice(0, closingIndex + closing.length);
+	return { type: "latex", raw, text };
+}
+
+function tokenizeBlockLatex(source: string): LatexToken | undefined {
+	const dollarMatch = /^ {0,3}\$\$[ \t]*(?:\n)?([\s\S]*?)\$\$[ \t]*(?:\n|$)/.exec(source);
+	if (dollarMatch?.[1]) {
+		return { type: "latexBlock", raw: dollarMatch[0], text: dollarMatch[1].trim() };
+	}
+
+	const bracketMatch = /^ {0,3}\\\[[ \t]*(?:\n)?([\s\S]*?)\\\][ \t]*(?:\n|$)/.exec(source);
+	if (bracketMatch?.[1]) {
+		return { type: "latexBlock", raw: bracketMatch[0], text: bracketMatch[1].trim() };
+	}
+
+	const pendingBracket = /^ {0,3}\\\[[ \t]*(?:\n)?([\s\S]*)$/.exec(source);
+	if (pendingBracket) {
+		return { type: "latexBlock", raw: pendingBracket[0], text: pendingBracket[1]!, pending: true };
+	}
+	const pendingDollar = /^ {0,3}\$\$[ \t]*(?:\n)?([\s\S]*)$/.exec(source);
+	if (pendingDollar?.[1] && looksLikePendingDollarMath(pendingDollar[1])) {
+		return { type: "latexBlock", raw: pendingDollar[0], text: pendingDollar[1], pending: true };
+	}
+	return undefined;
+}
+
+const LATEX_MARKDOWN_EXTENSIONS: readonly TokenizerExtension[] = [
+	{
+		name: "latexBlock",
+		level: "block",
+		start(source) {
+			const match = /(?:^|\n) {0,3}(?:\$\$|\\\[)/.exec(source);
+			return match ? match.index + (match[0].startsWith("\n") ? 1 : 0) : undefined;
+		},
+		tokenizer: tokenizeBlockLatex,
+	},
+	{
+		name: "latex",
+		level: "inline",
+		start(source) {
+			const indices = [source.indexOf("$"), source.indexOf("\\("), source.indexOf("\\[")].filter(
+				(index) => index >= 0,
+			);
+			return indices.length > 0 ? Math.min(...indices) : undefined;
+		},
+		tokenizer: tokenizeInlineLatex,
+	},
+];
 
 function trimPartialClosingFences(tokens: readonly Token[]): void {
 	const token = tokens[tokens.length - 1];
@@ -49,8 +262,9 @@ function trimPartialClosingFences(tokens: readonly Token[]): void {
 
 const markdownParser = new Marked();
 markdownParser.setOptions({
-	tokenizer: new StrictStrikethroughTokenizer(),
+	tokenizer: new CjkBoundaryUrlTokenizer(),
 });
+markdownParser.use({ extensions: [...LATEX_MARKDOWN_EXTENSIONS] });
 
 /**
  * Default text styling for markdown content.
@@ -100,6 +314,10 @@ export interface MarkdownOptions {
 	preserveOrderedListMarkers?: boolean;
 	/** Preserve source backslash escapes instead of normalizing escaped punctuation. */
 	preserveBackslashEscapes?: boolean;
+	/** Transform source Markdown before parsing, with the exact width available for content. */
+	transform?: (markdown: string, availableWidth: number) => string;
+	/** Render supported LaTeX math expressions as Unicode text (default: true). */
+	renderLatex?: boolean;
 }
 
 interface InlineStyleContext {
@@ -156,9 +374,10 @@ export class Markdown implements Component {
 
 		// Calculate available width for content (subtract horizontal padding)
 		const contentWidth = Math.max(1, width - this.paddingX * 2);
+		const text = this.options.transform?.(this.text, contentWidth) ?? this.text;
 
 		// Don't render anything if there's no actual text
-		if (!this.text || this.text.trim() === "") {
+		if (!text || text.trim() === "") {
 			const result: string[] = [];
 			// Update cache
 			this.cachedText = this.text;
@@ -168,7 +387,7 @@ export class Markdown implements Component {
 		}
 
 		// Replace tabs with 3 spaces for consistent rendering
-		const normalizedText = this.text.replace(/\t/g, "   ");
+		const normalizedText = text.replace(/\t/g, "   ");
 
 		// Parse markdown to HTML-like tokens
 		const tokens = markdownParser.lexer(normalizedText);
@@ -375,6 +594,21 @@ export class Markdown implements Component {
 				lines.push(this.renderInlineTokens([token], styleContext));
 				break;
 
+			case "latexBlock": {
+				const latexToken = token as LatexToken;
+				const rendered =
+					!latexToken.pending && this.options.renderLatex !== false
+						? (renderLatex(latexToken.text, { display: true }) ?? latexToken.raw.trim())
+						: latexToken.raw.trim();
+				for (const line of rendered.split("\n")) {
+					lines.push(this.applyDefaultStyle(line));
+				}
+				if (nextTokenType && nextTokenType !== "space") {
+					lines.push("");
+				}
+				break;
+			}
+
 			case "code": {
 				const indent = this.theme.codeBlockIndent ?? "  ";
 				lines.push(this.theme.codeBlockBorder(`\`\`\`${token.lang || ""}`));
@@ -500,6 +734,16 @@ export class Markdown implements Component {
 
 		for (const token of tokens) {
 			switch (token.type) {
+				case "latex": {
+					const latexToken = token as LatexToken;
+					const rendered =
+						!latexToken.pending && this.options.renderLatex !== false
+							? (renderLatex(latexToken.text) ?? latexToken.raw)
+							: latexToken.raw;
+					result += applyTextWithNewlines(rendered);
+					break;
+				}
+
 				case "escape":
 					result += applyTextWithNewlines(this.options.preserveBackslashEscapes ? token.raw : token.text);
 					break;

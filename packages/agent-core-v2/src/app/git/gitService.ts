@@ -1,24 +1,13 @@
-/**
- * `git` domain (L1) — `IGitService` implementation.
- *
- * Runs `git status` / `git diff` (and `gh pr view`) against a repository on
- * the local disk. Process spawning goes through the App-scope
- * `IHostProcessService` from `os/interface`, and the single path-existence
- * probe in `diff` goes through `IHostFileSystem`; no Node platform API is
- * imported directly. Bound at App scope — it owns no Session dependency, so
- * the caller supplies an absolute `cwd` and already-confined repo-relative
- * paths.
- */
-
 import type { FsDiffResponse, FsGitStatusResponse, FsPullRequest } from './git';
-
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IHostProcessService } from '#/os/interface/hostProcess';
+import { IRuntimeResolver, IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
 import { IGitService } from './git';
 import { parseNumstat, parsePorcelain, parsePullRequest } from './gitParsers';
+import { findGitWorkTree, type GitWorkTree } from './workTree';
 
 const DIFF_MAX_BYTES = 1_048_576;
 
@@ -34,7 +23,8 @@ export class GitService implements IGitService {
   >();
 
   constructor(
-    @IHostProcessService private readonly hostProcess: IHostProcessService,
+    @IRuntimeResolver private readonly resolver: IRuntimeResolver,
+    @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
     @IHostFileSystem private readonly fs: IHostFileSystem,
   ) {}
 
@@ -44,7 +34,7 @@ export class GitService implements IGitService {
       throw this.gitUnavailable(cwd, inside.stderr.trim() || `git rev-parse exit ${inside.exitCode}`);
     }
 
-    const porc = await this.runCommand('git', ['status', '--porcelain=v1', '--branch'], cwd);
+    const porc = await this.runCommand('git', ['status', '--porcelain=v1', '--branch', '-z'], cwd);
     if (porc.exitCode !== 0) {
       throw this.gitUnavailable(cwd, porc.stderr.trim() || `git status exit ${porc.exitCode}`);
     }
@@ -52,8 +42,8 @@ export class GitService implements IGitService {
     const result = parsePorcelain(porc.stdout, pathFilter);
 
     const dirty = porc.stdout
-      .split('\n')
-      .some((line) => line.length > 0 && !line.startsWith('## '));
+      .split('\0')
+      .some((record) => record.length > 0 && !record.startsWith('## '));
     if (dirty) {
       const head = await this.runCommand('git', ['rev-parse', '--verify', '--quiet', 'HEAD'], cwd);
       if (head.exitCode === 0) {
@@ -123,6 +113,10 @@ export class GitService implements IGitService {
     };
   }
 
+  findWorkTree(cwd: string): Promise<GitWorkTree | null> {
+    return findGitWorkTree(this.fs, cwd);
+  }
+
   private async readPullRequest(cwd: string): Promise<FsPullRequest | null> {
     const cached = this.pullRequestCache.get(cwd);
     const now = Date.now();
@@ -150,7 +144,9 @@ export class GitService implements IGitService {
     cwd: string,
     options: RunOptions = {},
   ): Promise<RunResult> {
-    const spawned = await this.hostProcess
+    const workspaceId = this.resolveWorkspaceId(cwd);
+    const lease = this.resolver.acquire({ workspaceId, runtimeId: 'local' }, ['process']);
+    const spawned = await lease.runtime.process!
       .spawn(cmd, args, { cwd, env: options.env })
       .then(
         (proc) => ({ ok: true as const, proc }),
@@ -195,8 +191,17 @@ export class GitService implements IGitService {
       return { exitCode: -1, stdout, stderr };
     } finally {
       if (timer !== undefined) clearTimeout(timer);
-      proc.dispose();
+      void proc.dispose();
+      lease.dispose();
     }
+  }
+
+  private resolveWorkspaceId(cwd: string): string {
+    const workspace = this.workspaces.findByRoot(cwd);
+    if (workspace === undefined) {
+      throw new Error(`workspace for root ${cwd} is not materialized`);
+    }
+    return workspace.id;
   }
 
   private gitUnavailable(cwd: string, detail: string): Error2 {

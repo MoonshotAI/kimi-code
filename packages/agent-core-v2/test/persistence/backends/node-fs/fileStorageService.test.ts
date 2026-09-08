@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 import { join } from 'pathe';
@@ -85,5 +85,77 @@ describe('FileStorageService — error translation', () => {
       code: 'storage.io_failed',
       details: { op: 'write', errno: expect.any(String) },
     });
+  });
+});
+
+describe('FileStorageService — writeStream', () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'fss-stream-'));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('writes a chunked source and replaces the whole value', async () => {
+    const svc = new FileStorageService(dir);
+    await svc.write('scope', 'k.bin', encoder.encode('old'));
+    await svc.writeStream('scope', 'k.bin', (async function* () {
+      yield encoder.encode('aa');
+      yield encoder.encode('bbb');
+    })());
+
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of svc.readStream('scope', 'k.bin')) chunks.push(chunk);
+    expect(Buffer.concat(chunks).toString()).toBe('aabbb');
+  });
+
+  it('leaves no target file behind when the source fails mid-stream', async () => {
+    const svc = new FileStorageService(dir);
+    await expect(
+      svc.writeStream('scope', 'k.bin', (async function* () {
+        yield encoder.encode('partial');
+        throw new Error('boom');
+      })()),
+    ).rejects.toThrow();
+
+    expect(await svc.read('scope', 'k.bin')).toBeUndefined();
+    expect(await svc.list('scope')).toEqual([]);
+  });
+});
+
+describe('FileStorageService — mtime', () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'fss-mtime-'));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('returns undefined for a missing file and the stat mtime for an existing one', async () => {
+    const svc = new FileStorageService(dir);
+    expect(await svc.mtime('scope', 'missing.json')).toBeUndefined();
+
+    await svc.write('scope', 'k.json', encoder.encode('{}'));
+    const expected = (await stat(join(dir, 'scope', 'k.json'))).mtimeMs;
+    expect(await svc.mtime('scope', 'k.json')).toBe(expected);
+  });
+
+  it('reflects rewrites and deletions', async () => {
+    const svc = new FileStorageService(dir);
+    await svc.write('scope', 'k.json', encoder.encode('{}'));
+    const before = await svc.mtime('scope', 'k.json');
+
+    const bumped = new Date(Date.now() + 10_000);
+    await utimes(join(dir, 'scope', 'k.json'), bumped, bumped);
+    expect(await svc.mtime('scope', 'k.json')).toBeGreaterThan(before ?? 0);
+
+    await svc.delete('scope', 'k.json');
+    expect(await svc.mtime('scope', 'k.json')).toBeUndefined();
   });
 });

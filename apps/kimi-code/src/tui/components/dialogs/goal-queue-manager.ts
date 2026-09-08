@@ -295,7 +295,7 @@ export class GoalQueueEditDialogComponent extends Container implements Focusable
       return;
     }
     if (objective.length > MAX_GOAL_OBJECTIVE_LENGTH) {
-      this.error = `Goal objective cannot exceed ${MAX_GOAL_OBJECTIVE_LENGTH} characters.`;
+      this.error = `Goal objective cannot exceed ${MAX_GOAL_OBJECTIVE_LENGTH} characters; put long content in a file and reference the file path.`;
       return;
     }
     this.opts.onDone({ kind: 'save', goalId: this.opts.goal.id, objective });

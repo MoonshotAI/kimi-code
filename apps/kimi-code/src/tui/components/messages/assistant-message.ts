@@ -11,6 +11,8 @@ import { MESSAGE_INDENT } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
+import { createMarkdownOptions } from '#/tui/utils/markdown-options';
+import { markOsc133Zone } from '#/tui/utils/osc133';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 type AssistantMarkdownOptions = {
@@ -61,7 +63,14 @@ export class AssistantMessageComponent implements Component {
 
     if (this.markdown === undefined || this.markdownTransient !== transient) {
       this.contentContainer.clear();
-      this.markdown = new Markdown(displayText, 0, 0, createMarkdownTheme({ transient }));
+      this.markdown = new Markdown(
+        displayText,
+        0,
+        0,
+        createMarkdownTheme({ transient }),
+        undefined,
+        createMarkdownOptions(),
+      );
       this.markdownTransient = transient;
       this.contentContainer.addChild(this.markdown);
       return;
@@ -84,6 +93,8 @@ export class AssistantMessageComponent implements Component {
         0,
         0,
         createMarkdownTheme({ transient: this.lastTransient }),
+        undefined,
+        createMarkdownOptions(),
       );
       this.markdownTransient = this.lastTransient;
       this.contentContainer.addChild(this.markdown);
@@ -114,7 +125,7 @@ export class AssistantMessageComponent implements Component {
         i === 0 && this.showBullet ? currentTheme.fg('text', STATUS_BULLET) : MESSAGE_INDENT;
       lines.push(p + contentLines[i]);
     }
-    const rendered = lines.map((line) => truncateToWidth(line, safeWidth, '…'));
+    const rendered = markOsc133Zone(lines.map((line) => truncateToWidth(line, safeWidth, '…')));
     if (isRenderCacheEnabled()) {
       this.renderCache = { width: safeWidth, lines: rendered };
     }

@@ -120,15 +120,22 @@ export function registerExportCommand(parent: Command, deps?: Partial<ExportDeps
         sessionId: string | undefined,
         options: { output?: string; yes?: boolean; includeGlobalLog?: boolean },
       ) => {
-        await handleExport(createDefaultExportDeps(deps), sessionId, options.output, {
-          yes: options.yes === true,
-          includeGlobalLog: options.includeGlobalLog !== false,
-        });
+        const resolved = createDefaultExportDeps(deps);
+        try {
+          await handleExport(resolved, sessionId, options.output, {
+            yes: options.yes === true,
+            includeGlobalLog: options.includeGlobalLog !== false,
+          });
+        } finally {
+          await resolved.close();
+        }
       },
     );
 }
 
-function createDefaultExportDeps(overrides: Partial<ExportDeps> = {}): ExportDeps {
+function createDefaultExportDeps(overrides: Partial<ExportDeps> = {}): ExportDeps & {
+  readonly close: () => Promise<void>;
+} {
   let harness: KimiHarness | undefined;
   let telemetryBootstrap: ReturnType<typeof createCliTelemetryBootstrap> | undefined;
   let telemetryInitialized = false;
@@ -197,6 +204,12 @@ function createDefaultExportDeps(overrides: Partial<ExportDeps> = {}): ExportDep
     stdout: overrides.stdout ?? process.stdout,
     stderr: overrides.stderr ?? process.stderr,
     exit: overrides.exit ?? ((code: number) => process.exit(code)),
+    // The v2 harness boots an engine whose watchers hold the event loop open;
+    // close it so a one-shot command can exit. No-op when the run never needed
+    // the harness.
+    close: async () => {
+      await harness?.close();
+    },
   };
 }
 

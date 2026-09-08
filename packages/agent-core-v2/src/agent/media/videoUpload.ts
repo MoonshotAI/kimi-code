@@ -1,18 +1,7 @@
-/**
- * `media` domain (L4) — shared video-upload fallback helpers.
- *
- * The provider video-upload attempt and its graceful fallbacks run in two
- * places — the `ReadMediaFile` tool (a model tool call) and the request-time
- * video resolver (a prompt's `kimi-file://` part) — and must agree on which
- * failures are auth failures (surfaced, never masked into a fallback) and
- * which protocols carry inline `video_url` on the wire. Pure helpers; no
- * scoped service.
- */
-
-import { VideoUploadUnsupportedError } from '#/kosong/contract/errors';
-import type { VideoURLPart } from '#/kosong/contract/message';
-import type { Protocol } from '#/kosong/protocol/protocol';
-import { ProtocolErrors } from '#/kosong/protocol/errors';
+import { VideoUploadUnsupportedError } from '#/llm-adapter/contract/errors';
+import type { VideoURLPart } from '#human/llm/message';
+import type { Protocol } from '#/llm-adapter/protocol/protocol';
+import { ProtocolErrors } from '#/llm-adapter/protocol/errors';
 
 export function isVideoUploadAuthError(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;

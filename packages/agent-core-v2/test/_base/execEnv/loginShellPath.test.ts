@@ -1,28 +1,3 @@
-/**
- * Login-shell PATH enrichment.
- *
- * Reproduces the "Bash tool can't find local `gh`" report: when kimi-code is
- * launched from a context that skipped the user's shell profile (GUI launcher,
- * non-login parent shell), `process.env.PATH` misses entries like
- * `/opt/homebrew/bin`, so every command spawned by the Bash tool inherits the
- * impoverished PATH.
- *
- * `HostEnvironmentService` must probe the user's login shell (`$SHELL -l -c
- * /usr/bin/env`, falling back to the OS account's login shell when $SHELL is
- * unset or blank) once and append the missing PATH entries to `process.env.PATH`
- * — without reordering or overriding what is already there. Probe failures (no
- * resolvable shell, hung or broken profile) must leave PATH untouched.
- *
- * The probe/merge unit tests are pure (injected deps) and run on every
- * platform. The end-to-end suite spawns a stub shell and is skipped on Windows:
- * the problem is specific to POSIX login-shell profiles, and the probe must not
- * run there.
- *
- * Ported from `packages/kaos/test/login-shell-path.test.ts`; the e2e block
- * exercises `applyLoginShellPathFromNode()` (the v2 entry wired into
- * `HostEnvironmentService`) instead of v1's `LocalKaos.create()`.
- */
-
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

@@ -22,6 +22,7 @@ import type { BackgroundTaskInfo, BackgroundTaskStatus } from '@moonshot-ai/kimi
 
 import { currentTheme } from '#/tui/theme';
 import { printableChar } from '@/tui/utils/printable-key';
+import { sanitizeShellOutput } from '#/tui/utils/shell-output';
 
 const ELLIPSIS = '…';
 
@@ -32,7 +33,7 @@ export interface TaskOutputViewerProps {
   readonly onClose: () => void;
 }
 
-const STATUS_LABEL: Record<BackgroundTaskStatus, string> = {
+export const STATUS_LABEL: Record<BackgroundTaskStatus, string> = {
   running: 'running',
   completed: 'completed',
   failed: 'failed',
@@ -41,7 +42,7 @@ const STATUS_LABEL: Record<BackgroundTaskStatus, string> = {
   lost: 'lost',
 };
 
-function statusColor(status: BackgroundTaskStatus): 'success' | 'textMuted' | 'error' {
+export function statusColor(status: BackgroundTaskStatus): 'success' | 'textMuted' | 'error' {
   switch (status) {
     case 'running':
       return 'success';
@@ -104,7 +105,7 @@ export class TaskOutputViewer extends Container implements Focusable {
   }
 
   private splitOutput(output: string): string[] {
-    return (output.length > 0 ? output : '[no output captured]').split('\n');
+    return (output.length > 0 ? sanitizeShellOutput(output) : '[no output captured]').split('\n');
   }
 
   // ── input ──────────────────────────────────────────────────────────

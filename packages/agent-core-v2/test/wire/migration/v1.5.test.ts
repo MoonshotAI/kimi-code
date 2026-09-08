@@ -1,9 +1,3 @@
-/**
- * Scenario: migrate persisted goal lifecycle records from wire protocol 1.4 to 1.5.
- * Responsibilities: recover missing active wall-clock anchors without replacing persisted ones.
- * Wiring: pure migration exercised through the shared migration test surface.
- * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/wire/migration/v1.5.test.ts`.
- */
 import { describe, expect, it } from 'vitest';
 
 import { migrateV1_4ToV1_5 } from '#/wire/migration/migration';

@@ -1,5 +1,9 @@
 import * as vscode from "vscode";
-import type { McpServerConfig as SdkMcpServerConfig, McpTestResult } from "@moonshot-ai/kimi-code-sdk";
+import type {
+  McpManagedServerInfo,
+  McpServerConfig as SdkMcpServerConfig,
+  McpTestResult,
+} from "@moonshot-ai/kimi-code-sdk";
 
 import { Events, Methods } from "../../shared/bridge";
 import {
@@ -25,12 +29,13 @@ interface NameParams { name: string }
 
 export const mcpHandlers: Record<string, Handler<any, any>> = {
   [Methods.GetMCPServers]: async (_, ctx): Promise<MCPServerConfig[]> => {
-    return toWebviewServers(await ctx.harness.listMcpServers());
+    return listWorkspaceServers(ctx);
   },
 
   [Methods.AddMCPServer]: async (params: MCPServerConfig, ctx): Promise<MCPServerConfig[]> => {
     const server = restoreMaskedSecrets(undefined, params);
-    const servers = toWebviewServers(await ctx.harness.addMcpServer(toSdkServer(server)));
+    await ctx.harness.addMcpServer(toSdkServer(server));
+    const servers = await listWorkspaceServers(ctx);
     ctx.broadcast(Events.MCPServersChanged, servers);
     return servers;
   },
@@ -40,20 +45,20 @@ export const mcpHandlers: Record<string, Handler<any, any>> = {
     ctx,
   ): Promise<MCPServerConfig[]> => {
     const request = normalizeUpdateRequest(params);
-    const current = (await ctx.harness.listMcpServers()).find(
-      (server) => server.name === request.originalName,
-    );
+    const current = (
+      await ctx.harness.listMcpServers({ cwd: ctx.workDir ?? undefined })
+    ).find((server) => server.name === request.originalName);
     const edited = restoreMaskedSecrets(current, request.server);
     const next = mergeEditableServer(current, edited, request.replaceEditableFields);
-    const servers = toWebviewServers(
-      await updateOrRenameServer(ctx.harness, request.originalName, current, next),
-    );
+    await updateOrRenameServer(ctx.harness, request.originalName, current, next);
+    const servers = await listWorkspaceServers(ctx);
     ctx.broadcast(Events.MCPServersChanged, servers);
     return servers;
   },
 
   [Methods.RemoveMCPServer]: async ({ name }: NameParams, ctx): Promise<MCPServerConfig[]> => {
-    const servers = toWebviewServers(await ctx.harness.removeMcpServer(name));
+    await ctx.harness.removeMcpServer(name);
+    const servers = await listWorkspaceServers(ctx);
     ctx.broadcast(Events.MCPServersChanged, servers);
     return servers;
   },
@@ -114,14 +119,29 @@ export const mcpHandlers: Record<string, Handler<any, any>> = {
   },
 };
 
-function toWebviewServers(servers: readonly SdkMcpServerConfig[]): MCPServerConfig[] {
+/**
+ * The workspace-aware server list shown in the modal. The mutation RPCs
+ * (add/update/remove) return a list resolved without a cwd, so the webview
+ * refresh after every mutation must re-list with the workspace cwd —
+ * otherwise project-layer entries drop out of the modal until the next full
+ * load.
+ */
+async function listWorkspaceServers(ctx: Parameters<Handler>[1]): Promise<MCPServerConfig[]> {
+  return toWebviewServers(await ctx.harness.listMcpServers({ cwd: ctx.workDir ?? undefined }));
+}
+
+function toWebviewServers(servers: readonly McpManagedServerInfo[]): MCPServerConfig[] {
   return servers
     .filter((server) => server.transport === "stdio" || server.transport === "http")
     .map((server) => {
-      if (server.transport === "stdio") {
-        return { ...server, env: maskSecretValues(server.env) } as MCPServerConfig;
+      // The management view's source/origin/mutable tags stay in the webview
+      // payload so the panel can hide mutating controls on read-only entries;
+      // only the nested plugin origin detail is dropped.
+      const { plugin: _plugin, ...config } = server;
+      if (config.transport === "stdio") {
+        return { ...config, env: maskSecretValues(config.env) } as MCPServerConfig;
       }
-      return { ...server, headers: maskSecretValues(server.headers) } as MCPServerConfig;
+      return { ...config, headers: maskSecretValues(config.headers) } as MCPServerConfig;
     });
 }
 
@@ -270,9 +290,10 @@ async function updateOrRenameServer(
   originalName: string,
   current: SdkMcpServerConfig | undefined,
   next: SdkMcpServerConfig,
-): Promise<readonly SdkMcpServerConfig[]> {
+): Promise<void> {
   if (next.name === originalName) {
-    return harness.updateMcpServer(next);
+    await harness.updateMcpServer(next);
+    return;
   }
   if (current === undefined) {
     throw new Error(`MCP server "${originalName}" was not found`);
@@ -280,7 +301,7 @@ async function updateOrRenameServer(
 
   await harness.addMcpServer(next);
   try {
-    return await harness.removeMcpServer(originalName);
+    await harness.removeMcpServer(originalName);
   } catch (error) {
     await harness.removeMcpServer(next.name).catch(() => undefined);
     throw error;

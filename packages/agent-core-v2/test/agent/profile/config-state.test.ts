@@ -1,15 +1,20 @@
-import { emptyUsage } from '#/kosong/contract/usage';
+import { emptyUsage } from '#human/llm/usage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import type { ModelRecord } from '#/kosong/model/model';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { ModelRecord } from '#/llm-adapter/model/model';
 import {
   configServices,
   createTestAgent,
+  InMemoryWireRecordPersistence,
   llmGenerateServices,
   modelProviderOptionServices,
+  requesterFromGenerateFn,
   telemetryServices,
+  wireRecordPersistenceServices,
+  type LegacyGenerateFn,
   type TestAgentContext,
 } from '../../harness';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
@@ -19,8 +24,10 @@ type TestProtocolModelConfig = NonNullable<TestKimiConfig['models']>[string] &
   Pick<ModelRecord, 'protocol'>;
 type GenerateFn = Parameters<typeof llmGenerateServices>[0];
 
-function defaultGenerate(): ReturnType<GenerateFn> {
-  throw new Error('generate should not be called');
+function defaultGenerate(): GenerateFn {
+  return {
+    generate: () => Promise.reject(new Error('generate should not be called')),
+  };
 }
 
 describe('ConfigState model capabilities', () => {
@@ -35,11 +42,13 @@ describe('ConfigState model capabilities', () => {
     kimiConfig = {
       providers: {},
     };
-    generate = defaultGenerate;
+    generate = defaultGenerate();
     records = [];
     ctx = createTestAgent(
       configServices(() => kimiConfig),
-      llmGenerateServices((...args) => generate(...args)),
+      llmGenerateServices({
+        generate: (config, content, control) => generate.generate(config, content, control),
+      }),
       telemetryServices(recordingTelemetry(records)),
     );
     profile = ctx.get(IAgentProfileService);
@@ -88,6 +97,47 @@ describe('ConfigState model capabilities', () => {
     });
   });
 
+  it('republishes the model status slice on demand', () => {
+    kimiConfig = {
+      providers: {
+        kimi: {
+          type: 'kimi',
+          apiKey: 'test-key',
+          baseUrl: 'https://api.example.test/v1',
+        },
+      },
+      models: {
+        'kimi-code/kimi-for-coding': {
+          provider: 'kimi',
+          model: 'kimi-for-coding',
+          maxContextSize: 1_000_000,
+          supportEfforts: ['low', 'high'],
+        },
+      },
+    };
+    profile.update({ modelAlias: 'kimi-code/kimi-for-coding' });
+    const before = ctx.allEvents.filter((entry) => entry.event === 'agent.status.updated').length;
+
+    profile.republishStatus();
+
+    const statuses = ctx.allEvents.filter((entry) => entry.event === 'agent.status.updated');
+    expect(statuses).toHaveLength(before + 1);
+    expect(statuses.at(-1)?.args).toMatchObject({
+      model: 'kimi-code/kimi-for-coding',
+      maxContextTokens: 1_000_000,
+    });
+  });
+
+  it('omits maxContextTokens when the bound model no longer resolves', () => {
+    profile.update({ modelAlias: 'ghost/model' });
+
+    const statuses = ctx.allEvents.filter((entry) => entry.event === 'agent.status.updated');
+    expect(statuses.length).toBeGreaterThan(0);
+    const last = statuses.at(-1)?.args as { model?: string; maxContextTokens?: number };
+    expect(last.model).toBe('ghost/model');
+    expect(last.maxContextTokens).toBeUndefined();
+  });
+
   it('tracks thinking_toggle with the effort payload when effort changes', () => {
     kimiConfig = {
       providers: {
@@ -115,8 +165,96 @@ describe('ConfigState model capabilities', () => {
 
     expect(records).toContainEqual({
       event: 'thinking_toggle',
-      properties: { agent_id: 'main', enabled: true, effort: 'low', from: 'off' },
+      properties: {
+        agent_id: 'main',
+        enabled: true,
+        effort: 'low',
+        from: 'off',
+        mode: 'agent',
+        model: 'kimi-code/kimi-for-coding',
+        protocol: 'openai',
+        provider_type: 'kimi',
+      },
     });
+  });
+
+  it('writes the bound model into the ambient telemetry context', () => {
+    kimiConfig = {
+      providers: {
+        kimi: {
+          type: 'kimi',
+          apiKey: 'test-key',
+          baseUrl: 'https://api.example.test/v1',
+        },
+      },
+      models: {
+        'kimi-code/kimi-for-coding': {
+          provider: 'kimi',
+          model: 'kimi-for-coding',
+          maxContextSize: 1_000_000,
+        },
+      },
+    };
+
+    profile.update({ modelAlias: 'kimi-code/kimi-for-coding' });
+
+    expect(ctx.get(ITelemetryService).getContext()).toMatchObject({
+      model: 'kimi-code/kimi-for-coding',
+      provider_type: 'kimi',
+      protocol: 'openai',
+    });
+  });
+
+  it('keeps the alias as ambient model when the bound model does not resolve', () => {
+    profile.update({ modelAlias: 'ghost/model' });
+
+    expect(ctx.get(ITelemetryService).getContext()).toMatchObject({
+      model: 'ghost/model',
+    });
+  });
+
+  it('restores the ambient model after a cold resume', async () => {
+    kimiConfig = {
+      providers: {
+        kimi: {
+          type: 'kimi',
+          apiKey: 'test-key',
+          baseUrl: 'https://api.example.test/v1',
+        },
+      },
+      models: {
+        'kimi-code/kimi-for-coding': {
+          provider: 'kimi',
+          model: 'kimi-for-coding',
+          maxContextSize: 1_000_000,
+        },
+      },
+    };
+    const resumedRecords: TelemetryRecord[] = [];
+    const resumed = createTestAgent(
+      { autoConfigure: false },
+      configServices(() => kimiConfig),
+      llmGenerateServices({
+        generate: (config, content, control) => generate.generate(config, content, control),
+      }),
+      telemetryServices(recordingTelemetry(resumedRecords)),
+      wireRecordPersistenceServices(
+        new InMemoryWireRecordPersistence([
+          { type: 'config.update', agentId: 'main', modelAlias: 'kimi-code/kimi-for-coding' },
+        ]),
+      ),
+    );
+    try {
+      await resumed.restorePersisted();
+
+      expect(resumed.get(ITelemetryService).getContext()).toMatchObject({
+        model: 'kimi-code/kimi-for-coding',
+        provider_type: 'kimi',
+        protocol: 'openai',
+      });
+    } finally {
+      await resumed.dispose();
+    }
   });
 
   it('does not infer Kimi capabilities from the provider catalogue', () => {
@@ -166,9 +304,7 @@ describe('ConfigState model capabilities', () => {
         },
       },
     };
-    generate = async (_provider, _systemPrompt, _tools, _history, _callbacks, options) => {
-      // The per-turn completion budget arrives as a GenerateOptions intent
-      // (the morph-era baked `modelParameters.max_tokens` is gone).
+    generate = requesterFromGenerateFn(async (_provider, _systemPrompt, _tools, _history, _callbacks, options) => {
       requestMaxTokens = options?.maxCompletionTokens;
       return {
         id: 'response-1',
@@ -177,7 +313,7 @@ describe('ConfigState model capabilities', () => {
         finishReason: 'completed',
         rawFinishReason: 'stop',
       };
-    };
+    });
 
     profile.update({
       modelAlias: 'deepseek/deepseek-v4-flash',
@@ -230,8 +366,6 @@ describe('ConfigState prompt cache hint', () => {
   it('uses session id as a provider prompt cache hint without storing it on Agent', () => {
     profile.update({ modelAlias: 'kimi-code' });
 
-    // Kimi is no longer a protocol: the vendor resolves to its `openai` base
-    // while keeping `kimi` as the provider type.
     const model = ctx.modelResolver.get('kimi-code');
     expect(model.protocol).toBe('openai');
     expect(model.providerType).toBe('kimi');
@@ -293,9 +427,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
     capturedThinking = undefined;
     ctx = createTestAgent(
       configServices(() => kimiConfig),
-      llmGenerateServices(async (_provider, _systemPrompt, _tools, _history, _callbacks, options) => {
-        // The per-turn thinking intent (effort + keep) — the replacement for
-        // the morph-era baked `_generationKwargs.extra_body.thinking`.
+      llmGenerateServices(requesterFromGenerateFn(async (_provider, _systemPrompt, _tools, _history, _callbacks, options) => {
         capturedThinking = options?.thinking;
         return {
           id: 'response-1',
@@ -304,7 +436,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
           finishReason: 'completed',
           rawFinishReason: 'stop',
         };
-      }),
+      })),
     );
     profile = ctx.get(IAgentProfileService);
     requester = ctx.get(IAgentLLMRequesterService);
@@ -329,9 +461,6 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
 
     await requester.request({}, undefined, new AbortController().signal);
 
-    // The always-thinking clamp turns 'off' into the model default ('high');
-    // encoding it as `extra_body.thinking: {type:'enabled'}` is the Kimi
-    // dialect trait's job (`kimiOpenAITrait.withThinking`).
     expect(capturedThinking).toMatchObject({ effort: 'high' });
   });
 
@@ -410,19 +539,15 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
     expect(ctx.allEvents).toContainEqual({
       type: '[rpc]',
       event: 'warning',
-      args: {
+      args: expect.objectContaining({
         code: 'anthropic-thinking-effort-not-listed',
         message:
           'Thinking effort "high" is not listed for model "compatible-model" (known: max). The configured value will be sent unchanged to the Anthropic-compatible backend.',
-      },
+      }),
     });
   });
 
   it('clamps off to the model default for always-on models, on any transport', () => {
-    // A model declared always-on never resolves to off: the clamp turns the
-    // request into the model default ('max') instead of sending a dishonest
-    // off upstream. (The always-on warning path remains as a defensive layer
-    // for off values that bypass resolution.)
     profile.update({ modelAlias: 'kimi-code/compatible', thinkingLevel: 'max' });
 
     expect(() => {
@@ -438,7 +563,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   let requester: IAgentLLMRequesterService;
   let kimiConfig: TestKimiConfig;
   let capturedProvider: unknown;
-  let capturedOptions: Parameters<GenerateFn>[5];
+  let capturedOptions: Parameters<LegacyGenerateFn>[5];
 
   beforeEach(() => {
     kimiConfig = {
@@ -476,7 +601,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   function createAgentWithEnv(): void {
     ctx = createTestAgent(
       configServices(() => kimiConfig),
-      llmGenerateServices(async (provider, _systemPrompt, _tools, _history, _callbacks, options) => {
+      llmGenerateServices(requesterFromGenerateFn(async (provider, _systemPrompt, _tools, _history, _callbacks, options) => {
         capturedProvider = provider;
         capturedOptions = options;
         return {
@@ -486,7 +611,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
           finishReason: 'completed',
           rawFinishReason: 'stop',
         };
-      }),
+      })),
     );
     profile = ctx.get(IAgentProfileService);
     requester = ctx.get(IAgentLLMRequesterService);
@@ -499,10 +624,6 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     profile.update({ modelAlias: 'kimi-code' });
     await requester.request({}, undefined, new AbortController().signal);
 
-    // The env override lands in `modelOverrides.temperature`, which the
-    // profile folds into the dialect-free sampling intent (the morph-era
-    // baked `_generationKwargs.temperature` is gone); the Kimi dialect encodes
-    // it as the wire `temperature` field.
     expect(capturedOptions?.sampling).toMatchObject({
       temperature: 0.3,
     });
@@ -515,8 +636,6 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     profile.update({ modelAlias: 'kimi-code', thinkingLevel: 'high' });
     await requester.request({}, undefined, new AbortController().signal);
 
-    // The model is boolean-thinking (no supportEfforts), so 'high' resolves
-    // to 'on'; the env keep override rides the same thinking intent.
     expect(capturedOptions?.thinking).toMatchObject({ effort: 'on', keep: 'all' });
   });
 
@@ -550,10 +669,6 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
 
     await requester.request({}, undefined, new AbortController().signal);
 
-    // The harness composes the real provider for a registered vendor: a Kimi
-    // model on the Anthropic transport resolves to the anthropic base, and
-    // the forced effort arrives as the per-turn thinking intent (the
-    // morph-era baked `thinkingEffort` on the provider is gone).
     expect(capturedProvider).toMatchObject({ name: 'anthropic' });
     expect(capturedOptions?.thinking?.effort).toBe('max');
   });

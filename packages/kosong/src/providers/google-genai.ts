@@ -498,7 +498,17 @@ export function messagesToGoogleGenAIContents(messages: Message[]): GoogleConten
     isToolResultOnly: (content) =>
       content.parts.length > 0 &&
       content.parts.every((part) => part.functionResponse !== undefined),
-    merge: (last, next) => ({ ...last, parts: [...last.parts, ...next.parts] }),
+    merge: (last, next) => {
+      const lastStartsWithFunctionResponse =
+        last.parts[0]?.functionResponse !== undefined;
+      const nextHasFunctionResponse = next.parts.some(
+        (part) => part.functionResponse !== undefined,
+      );
+      if (lastStartsWithFunctionResponse && !nextHasFunctionResponse) {
+        return { ...next, parts: [...next.parts, ...last.parts] };
+      }
+      return { ...last, parts: [...last.parts, ...next.parts] };
+    },
   });
 }
 export class GoogleGenAIStreamedMessage implements StreamedMessage {

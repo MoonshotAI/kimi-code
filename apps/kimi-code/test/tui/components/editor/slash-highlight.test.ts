@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 import { describe, it, expect, beforeAll } from 'vitest';
 
-import { highlightFirstSlashToken } from '#/tui/components/editor/custom-editor';
+import { highlightFirstSlashToken, highlightInlineSkillTokens } from '#/tui/components/editor/custom-editor';
 
 beforeAll(() => {
   // Vitest runs without a TTY so chalk auto-detects colour support as
@@ -84,5 +84,49 @@ describe('highlightFirstSlashToken', () => {
     expect(opens).toBeGreaterThanOrEqual(2); // chalk bold+fg open and reset(s)
     // /b should remain plain — the substring " /b" exists verbatim.
     expect(out!).toContain(' /b');
+  });
+});
+
+describe('highlightInlineSkillTokens', () => {
+  const SKILLS = new Set(['skill:review', 'skill:security', 'commit']);
+
+  it('colours known skill tokens anywhere in the line', () => {
+    const out = highlightInlineSkillTokens('please /skill:review this', SKILLS, null, 'primary');
+    expect(out).toBeDefined();
+    expect(strip(out!)).toBe('please /skill:review this');
+    expectHighlighted(out!, '/skill:review');
+  });
+
+  it('colours multiple skill tokens in one line', () => {
+    const out = highlightInlineSkillTokens(
+      '/skill:review then /skill:security',
+      SKILLS,
+      null,
+      'primary',
+    );
+    expect(out).toBeDefined();
+    expectHighlighted(out!, '/skill:review');
+    expectHighlighted(out!, '/skill:security');
+  });
+
+  it('skips the excluded leading command range', () => {
+    const visible = '/skill:review args';
+    const out = highlightInlineSkillTokens(
+      visible,
+      SKILLS,
+      { start: 0, end: 13 },
+      'primary',
+    );
+    expect(out).toBeUndefined();
+  });
+
+  it('ignores unknown tokens and plain slashes', () => {
+    expect(highlightInlineSkillTokens('and /not-a-skill or /tmp', SKILLS, null, 'primary')).toBeUndefined();
+  });
+
+  it('supports the skill: prefix fallback for bare names', () => {
+    const out = highlightInlineSkillTokens('please /review this', SKILLS, null, 'primary');
+    expect(out).toBeDefined();
+    expectHighlighted(out!, '/review');
   });
 });

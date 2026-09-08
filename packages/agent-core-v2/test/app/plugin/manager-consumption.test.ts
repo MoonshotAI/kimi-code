@@ -1,15 +1,6 @@
-/**
- * Scenario: plugin installation and consumption metadata through `PluginManager`.
- *
- * Verifies persisted plugin capabilities and skill counts against the real
- * filesystem discovery path. Network download boundaries are stubbed locally.
- * Run with `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/app/plugin/manager-consumption.test.ts`.
- */
-
 import { execFileSync } from 'node:child_process';
-import { createServer } from 'node:http';
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -17,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { PluginManager } from '#/app/plugin/manager';
 
-import { stubSkill } from '../skillCatalog/stubs';
+import { stubSkill } from '../../features/skill/catalog/stubs';
 
 async function isolatedTmpdir(): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), 'kimi-isolated-tmp-'));
@@ -44,8 +35,10 @@ async function makePlugin(
   options: {
     skills?: boolean;
     skillNames?: readonly string[];
+    agents?: boolean;
     version?: string;
     sessionStartSkill?: string;
+    systemPrompt?: string;
     mcpServers?: Record<string, unknown>;
     hooks?: readonly unknown[];
     commands?: Record<string, string>;
@@ -69,8 +62,20 @@ async function makePlugin(
       );
     }
   }
+  if (options.agents === true) {
+    manifest['agents'] = './agents/';
+    await mkdir(path.join(root, 'agents'), { recursive: true });
+    await writeFile(
+      path.join(root, 'agents', 'demo-agent.md'),
+      '---\nname: demo-agent\ndescription: A demo agent\n---\nbody',
+      'utf8',
+    );
+  }
   if (options.sessionStartSkill !== undefined) {
     manifest['sessionStart'] = { skill: options.sessionStartSkill };
+  }
+  if (options.systemPrompt !== undefined) {
+    manifest['systemPrompt'] = options.systemPrompt;
   }
   if (options.mcpServers !== undefined) {
     manifest['mcpServers'] = options.mcpServers;
@@ -92,7 +97,10 @@ async function makePlugin(
 }
 
 async function zipDir(sourceRoot: string): Promise<Buffer> {
-  const zipPath = path.join(tmpdir(), `plugin-${Date.now()}-${Math.random().toString(36).slice(2)}.zip`);
+  const zipPath = path.join(
+    tmpdir(),
+    `plugin-${Date.now()}-${Math.random().toString(36).slice(2)}.zip`,
+  );
   execFileSync('zip', ['-qr', zipPath, '.'], { cwd: sourceRoot });
   const buffer = await readFile(zipPath);
   await rm(zipPath, { force: true });
@@ -122,8 +130,7 @@ function mockGithubFetch(options: MockGithubFetchOptions): void {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
-      const url =
-        typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (/^https:\/\/github\.com\/[^/]+\/[^/]+\/releases\/latest$/.test(url)) {
         options.onReleaseLookup?.();
         if (options.releaseTag === undefined) {
@@ -175,6 +182,27 @@ describe('PluginManager consumption plane', () => {
     });
   });
 
+  it('pluginAgentRoots() returns only enabled plugins agents paths', async () => {
+    const home = await makeKimiHome();
+    const a = await makePlugin('a', { agents: true });
+    const b = await makePlugin('b', { agents: true });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(a);
+    await manager.install(b);
+    await manager.setEnabled('b', false);
+    const managedA = await managedPluginRoot(manager, 'a');
+    const managedB = await managedPluginRoot(manager, 'b');
+    expect(manager.pluginAgentRoots()).toContainEqual({
+      path: path.join(managedA, 'agents'),
+      source: 'plugin',
+    });
+    expect(manager.pluginAgentRoots()).not.toContainEqual({
+      path: path.join(managedB, 'agents'),
+      source: 'plugin',
+    });
+  });
+
   it('pluginSkillRoots() excludes plugins in error state', async () => {
     const home = await makeKimiHome();
     const root = await makePlugin('demo');
@@ -216,6 +244,7 @@ describe('PluginManager consumption plane', () => {
         skills: [stubSkill('provided')],
         skipped: [],
         scannedRoots: [],
+        scannedDirectories: [],
       }),
     });
     await manager.load();
@@ -231,6 +260,7 @@ describe('PluginManager consumption plane', () => {
       '---\nname: root-skill\ndescription: at root\n---\nbody',
       'utf8',
     );
+    await writeFile(path.join(root, 'CHANGELOG.md'), '# Changelog\n', 'utf8');
     const manager = new PluginManager({ kimiHomeDir: home });
     await manager.load();
     await manager.install(root);
@@ -408,6 +438,21 @@ describe('PluginManager consumption plane', () => {
     expect(manager.enabledSessionStarts()).toEqual([]);
   });
 
+  it('enabledSystemPrompts() returns only enabled plugin systemPrompt declarations', async () => {
+    const home = await makeKimiHome();
+    const withPrompt = await makePlugin('prompted', { systemPrompt: 'Always cite sources.' });
+    const withoutPrompt = await makePlugin('plain', { skills: true });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(withPrompt);
+    await manager.install(withoutPrompt);
+    expect(manager.enabledSystemPrompts()).toEqual([
+      { pluginId: 'prompted', content: 'Always cite sources.' },
+    ]);
+    await manager.setEnabled('prompted', false);
+    expect(manager.enabledSystemPrompts()).toEqual([]);
+  });
+
   it('setMcpServerEnabled() persists explicit MCP server state with cwd + env + runtime name', async () => {
     const home = await makeKimiHome();
     const root = await makePlugin('demo', {
@@ -534,6 +579,92 @@ describe('PluginManager consumption plane', () => {
     await manager.setMcpServerEnabled('demo', 'finance', true);
     await manager.setEnabled('demo', false);
     expect(manager.enabledMcpServers()).toEqual({});
+  });
+
+  it('mcpServerEntries() lists disabled plugins and disabled servers with provenance', async () => {
+    const home = await makeKimiHome();
+    const demo = await makePlugin('demo', {
+      mcpServers: {
+        finance: { command: 'finance-mcp' },
+        docs: { url: 'https://example.com/mcp' },
+      },
+    });
+    const other = await makePlugin('other', {
+      mcpServers: { data: { command: 'data-mcp' } },
+    });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(demo);
+    await manager.install(other);
+    await manager.setMcpServerEnabled('demo', 'finance', false);
+    await manager.setEnabled('other', false);
+
+    const entries = manager.mcpServerEntries();
+    expect(entries).toHaveLength(3);
+    const finance = entries.find((entry) => entry.name === 'plugin-demo:finance');
+    expect(finance).toEqual(expect.objectContaining({ pluginId: 'demo', serverName: 'finance' }));
+    expect(finance?.config.enabled).toBe(false);
+    const docs = entries.find((entry) => entry.name === 'plugin-demo:docs');
+    expect(docs).toEqual(expect.objectContaining({ pluginId: 'demo', serverName: 'docs' }));
+    expect(docs?.config.enabled).toBe(true);
+    const data = entries.find((entry) => entry.name === 'plugin-other:data');
+    expect(data).toEqual(expect.objectContaining({ pluginId: 'other', serverName: 'data' }));
+    expect(data?.config.enabled).toBe(false);
+  });
+
+  it('mcpServerEntries() applies the stdio runtime transforms to every entry', async () => {
+    const home = await makeKimiHome();
+    const root = await makePlugin('demo', {
+      mcpServers: {
+        finance: { command: 'finance-mcp', env: { CUSTOM: '1' } },
+        docs: { url: 'https://example.com/mcp' },
+      },
+    });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(root);
+    const managedRoot = await managedPluginRoot(manager, 'demo');
+
+    const entries = manager.mcpServerEntries();
+    const finance = entries.find((entry) => entry.name === 'plugin-demo:finance');
+    expect(finance?.config).toEqual(
+      expect.objectContaining({
+        command: 'finance-mcp',
+        cwd: managedRoot,
+        env: expect.objectContaining({
+          CUSTOM: '1',
+          KIMI_CODE_HOME: home,
+          KIMI_PLUGIN_ROOT: managedRoot,
+        }),
+      }),
+    );
+    const docs = entries.find((entry) => entry.name === 'plugin-demo:docs');
+    expect(docs?.config).toEqual(
+      expect.objectContaining({
+        transport: 'http',
+        url: 'https://example.com/mcp',
+        enabled: true,
+      }),
+    );
+    expect(JSON.stringify(docs?.config)).not.toContain('KIMI_PLUGIN_ROOT');
+  });
+
+  it('mcpServerEntries() skips plugins in error state', async () => {
+    const home = await makeKimiHome();
+    const root = await makePlugin('demo', {
+      mcpServers: { finance: { command: 'finance-mcp' } },
+    });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(root);
+    await writeFile(
+      path.join(await managedPluginRoot(manager, 'demo'), 'kimi.plugin.json'),
+      '{ not json',
+      'utf8',
+    );
+    await manager.reload();
+    expect(manager.get('demo')?.state).toBe('error');
+    expect(manager.mcpServerEntries()).toEqual([]);
   });
 
   it('setMcpServerEnabled() rejects unknown MCP servers', async () => {
@@ -710,10 +841,9 @@ describe('PluginManager consumption plane', () => {
     const root = await makePlugin('rando', { version: '1.0.0' });
     const manager = new PluginManager({ kimiHomeDir: home });
     await manager.load();
-    const record = await (manager.install as (source: string, options?: unknown) => Promise<unknown>)(
-      root,
-      { marketplace: { id: 'rando', tier: 'official' } },
-    );
+    const record = await (
+      manager.install as (source: string, options?: unknown) => Promise<unknown>
+    )(root, { marketplace: { id: 'rando', tier: 'official' } });
     expect((record as { marketplace?: unknown }).marketplace).toBeUndefined();
   });
 
@@ -781,8 +911,6 @@ describe('PluginManager consumption plane', () => {
           }),
         }),
       );
-      // An Electron host must not be routed through the CLI's `__plugin_run_node`
-      // subcommand (which only the CLI binary implements).
       expect(JSON.stringify(server)).not.toContain('__plugin_run_node');
     } finally {
       if (originalElectron === undefined) delete process.versions['electron'];
@@ -799,8 +927,6 @@ describe('PluginManager consumption plane', () => {
     await manager.load();
     await manager.install(root);
 
-    // Plain node host (tests run under node): not Electron, not the CLI native
-    // binary, so the config passes through unchanged (command stays `node`).
     const server = manager.enabledMcpServers()['plugin-demo:data'];
     expect(server).toEqual(
       expect.objectContaining({

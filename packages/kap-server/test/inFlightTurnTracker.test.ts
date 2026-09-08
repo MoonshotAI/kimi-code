@@ -1,7 +1,3 @@
-/**
- * `InFlightTurnTracker` — volatile accumulation + delta offsets.
- */
-
 import type { Event } from '../src/transport/ws/v1/events';
 import { describe, expect, it } from 'vitest';
 

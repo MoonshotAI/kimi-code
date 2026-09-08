@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  fsChangeActionSchema,
-  fsChangeEntrySchema,
-  fsChangeEventSchema,
-  fsChangeKindSchema,
   fsEntrySchema,
   fsGitStatusEntrySchema,
   fsGitStatusSchema,
@@ -12,13 +8,13 @@ import {
   fsGrepMatchSchema,
   fsKindSchema,
   fsSearchHitSchema,
-  type FsChangeEntry,
-  type FsChangeEvent,
+  fsSuggestItemSchema,
   type FsEntry,
   type FsGitStatusEntry,
   type FsGrepFileHit,
   type FsGrepMatch,
   type FsSearchHit,
+  type FsSuggestItem,
 } from '../fs';
 
 describe('fsKindSchema', () => {
@@ -148,6 +144,31 @@ describe('fsSearchHitSchema (W11.1 / Chain 11)', () => {
   });
 });
 
+describe('fsSuggestItemSchema', () => {
+  const item: FsSuggestItem = {
+    path: 'apps/desktop',
+    name: 'desktop',
+    kind: 'directory',
+    score: 0.87,
+    match_positions: [5, 6],
+  };
+
+  it('round-trips a populated item', () => {
+    expect(fsSuggestItemSchema.parse(item)).toEqual(item);
+  });
+
+  it('rejects score outside 0..1', () => {
+    expect(fsSuggestItemSchema.safeParse({ ...item, score: 1.5 }).success).toBe(false);
+    expect(fsSuggestItemSchema.safeParse({ ...item, score: -0.1 }).success).toBe(false);
+  });
+
+  it('rejects negative match positions', () => {
+    expect(
+      fsSuggestItemSchema.safeParse({ ...item, match_positions: [-1] }).success,
+    ).toBe(false);
+  });
+});
+
 describe('fsGrepMatchSchema (W11.1 / Chain 11)', () => {
   const match: FsGrepMatch = {
     line: 42,
@@ -223,110 +244,6 @@ describe('fsGitStatusEntrySchema (W11.2 / Chain 12)', () => {
   it('rejects an unknown status', () => {
     expect(
       fsGitStatusEntrySchema.safeParse({ ...entry, status: 'staged' }).success,
-    ).toBe(false);
-  });
-});
-
-describe('fsChangeKindSchema (W12 / Chain 14)', () => {
-  it.each(['file', 'directory', 'symlink'] as const)('accepts %s', (k) => {
-    expect(fsChangeKindSchema.parse(k)).toBe(k);
-  });
-
-  it('rejects unknown kinds (chokidar leakage like "addDir")', () => {
-    expect(fsChangeKindSchema.safeParse('addDir').success).toBe(false);
-    expect(fsChangeKindSchema.safeParse('dir').success).toBe(false);
-  });
-});
-
-describe('fsChangeActionSchema (W12 / Chain 14)', () => {
-  it.each(['created', 'modified', 'deleted'] as const)(
-    'accepts %s',
-    (a) => {
-      expect(fsChangeActionSchema.parse(a)).toBe(a);
-    },
-  );
-
-  it('rejects chokidar raw event names (must collapse before wire)', () => {
-    for (const raw of ['add', 'change', 'unlink', 'addDir', 'unlinkDir']) {
-      expect(fsChangeActionSchema.safeParse(raw).success).toBe(false);
-    }
-  });
-});
-
-describe('fsChangeEntrySchema (W12 / Chain 14)', () => {
-  it('round-trips a minimal created-file entry', () => {
-    const entry: FsChangeEntry = {
-      path: 'src/index.ts',
-      change: 'created',
-      kind: 'file',
-    };
-    expect(fsChangeEntrySchema.parse(entry)).toEqual(entry);
-  });
-
-  it('accepts size_delta + etag on a modified file', () => {
-    const entry: FsChangeEntry = {
-      path: 'src/foo.ts',
-      change: 'modified',
-      kind: 'file',
-      size_delta: 17,
-      etag: 'abc123',
-    };
-    const parsed = fsChangeEntrySchema.parse(entry);
-    expect(parsed.size_delta).toBe(17);
-    expect(parsed.etag).toBe('abc123');
-  });
-
-  it('accepts a negative size_delta (file shrank)', () => {
-    expect(
-      fsChangeEntrySchema.parse({
-        path: 'src/big.log',
-        change: 'modified',
-        kind: 'file',
-        size_delta: -1024,
-      }).size_delta,
-    ).toBe(-1024);
-  });
-
-  it('round-trips a deleted-directory entry', () => {
-    const entry: FsChangeEntry = {
-      path: 'old/',
-      change: 'deleted',
-      kind: 'directory',
-    };
-    expect(fsChangeEntrySchema.parse(entry)).toEqual(entry);
-  });
-});
-
-describe('fsChangeEventSchema (W12 / Chain 14)', () => {
-  it('round-trips a non-truncated event with two changes', () => {
-    const ev: FsChangeEvent = {
-      changes: [
-        { path: 'a.txt', change: 'created', kind: 'file' },
-        { path: 'b.txt', change: 'modified', kind: 'file', size_delta: 5 },
-      ],
-      coalesced_window_ms: 200,
-    };
-    const parsed = fsChangeEventSchema.parse(ev);
-    expect(parsed.changes.length).toBe(2);
-    expect(parsed.truncated).toBeUndefined();
-  });
-
-  it('round-trips a truncated burst notification', () => {
-    const ev: FsChangeEvent = {
-      changes: [],
-      coalesced_window_ms: 200,
-      truncated: true,
-      count: 1742,
-    };
-    const parsed = fsChangeEventSchema.parse(ev);
-    expect(parsed.truncated).toBe(true);
-    expect(parsed.count).toBe(1742);
-    expect(parsed.changes).toEqual([]);
-  });
-
-  it('rejects a missing coalesced_window_ms (always echoed)', () => {
-    expect(
-      fsChangeEventSchema.safeParse({ changes: [] }).success,
     ).toBe(false);
   });
 });

@@ -1,7 +1,7 @@
 {
   "name": "kimi-datasource",
-  "version": "3.3.0",
-  "description": "Finance, macro, enterprise, academic, and legal data tools for Kimi Code.",
+  "version": "3.4.0",
+  "description": "Stocks and financials from Wind, S&P Capital IQ, SEC EDGAR, etc.; news from Caixin, Xinhua Finance; macro from World Bank, IMF, FRED, NBS; corporate, academic, legal data, and more",
   "keywords": ["finance", "data-source", "mcp", "legal"],
   "mcpServers": {
     "data": {
@@ -12,7 +12,7 @@
   },
   "interface": {
     "displayName": "Kimi Datasource",
-    "shortDescription": "Finance, macro, enterprise, academic, and legal data tools",
+    "shortDescription": "Stocks and financials from Wind, S&P Capital IQ, SEC EDGAR, etc.; news from Caixin, Xinhua Finance; macro from World Bank, IMF, FRED, NBS; corporate, academic, legal data, and more",
     "developerName": "Moonshot AI"
   }
 }

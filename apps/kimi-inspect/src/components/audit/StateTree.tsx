@@ -72,7 +72,9 @@ function Leaf({ value, tone }: { value: unknown; tone: DiffStatus }) {
   if (value === undefined) return <span className={className}>undefined</span>;
   if (typeof value === 'string') {
     if (value.includes('\n')) return <MultilineString value={value} tone={tone} />;
-    return <span className={`${className} whitespace-pre-wrap break-all`}>"{tailTrunc(value)}"</span>;
+    return (
+      <span className={`${className} whitespace-pre-wrap break-all`}>"{tailTrunc(value)}"</span>
+    );
   }
   if (typeof value === 'number' || typeof value === 'boolean') {
     return <span className={className}>{String(value)}</span>;

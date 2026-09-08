@@ -1,18 +1,3 @@
-/**
- * `terminal` domain (L6) — interactive terminal (PTY) contract.
- *
- * Defines the App-scoped `IHostTerminalService` that owns the actual OS terminal
- * processes and the low-level process/stream primitives (`TerminalProcess`,
- * `TerminalSpawnOptions`, `TerminalAttachSink`, `TerminalFrame`) used to wire
- * terminal I/O to a transport. The session-scoped facade
- * (`ISessionTerminalService`) lives in `src/session/terminal` and is the
- * surface most business code and the edge consume.
- *
- * Wire types (`Terminal`, `CreateTerminalRequest`, frame messages) are defined
- * here — the terminal REST schemas as zod, the attach-frame messages as plain
- * types.
- */
-
 import { z } from 'zod';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -42,6 +27,7 @@ export const terminalSchema = z.object({
 export type Terminal = z.infer<typeof terminalSchema>;
 
 export const createTerminalRequestSchema = z.object({
+  runtime_id: z.string().min(1),
   cwd: relativeCwdSchema.optional(),
   shell: z.string().min(1).optional(),
   cols: z.number().int().positive().optional(),

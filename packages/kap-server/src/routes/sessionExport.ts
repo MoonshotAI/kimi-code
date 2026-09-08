@@ -1,10 +1,3 @@
-/**
- * `POST /sessions/{session_id}/export` — stream a session diagnostic archive.
- *
- * The server owns archive options and temporary paths. A bounded Web JSONL log
- * may be supplied by the client and is added to the archive by sessionExport.
- */
-
 import { createReadStream, type ReadStream } from 'node:fs';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import type { ServerResponse } from 'node:http';
@@ -18,6 +11,7 @@ import {
   isError2,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import type { KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
 
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
@@ -27,8 +21,6 @@ import {
   exportSessionParamsSchema,
   exportSessionRequestSchema,
 } from '../protocol/rest-session';
-
-const MAX_WEB_SESSION_EXPORT_BYTES = 64 * 1024 * 1024;
 
 interface SessionExportRouteHost {
   post(
@@ -48,7 +40,7 @@ interface SessionExportReply {
 export function registerSessionExportRoute(
   app: SessionExportRouteHost,
   core: Scope,
-  options: { readonly serverVersion: string },
+  options: { readonly hostIdentity: KimiHostIdentity },
 ): void {
   const log = core.accessor.get(ILogService);
   const route = defineRoute(
@@ -63,7 +55,6 @@ export function registerSessionExportRoute(
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
         [ErrorCode.SESSION_NOT_FOUND]: {},
-        [ErrorCode.FILE_TOO_LARGE]: {},
         [ErrorCode.INTERNAL_ERROR]: {},
       },
       description: 'Export a session and diagnostic logs as a zip archive',
@@ -119,15 +110,14 @@ export function registerSessionExportRoute(
             sessionId: req.params.session_id,
             outputPath,
             includeGlobalLog: true,
-            // Desktop hosts ask for their own app log via `desktop: true`;
-            // the file is read server-side (missing files are skipped).
             includeDesktopLog: req.body.desktop === true,
-            version: options.serverVersion,
+            version: options.hostIdentity.version,
+            desktopVersion:
+              req.body.desktop === true ? options.hostIdentity.version : undefined,
           },
           {
             webLog: req.body.web_log,
             signal: exportAbort.signal,
-            maxArchiveBytes: MAX_WEB_SESSION_EXPORT_BYTES,
           },
         );
         if (aborted) {
@@ -193,16 +183,6 @@ function sendMappedError(reply: SessionExportReply, req: { id: string }, error: 
   if (isError2(error)) {
     if (error.code === ErrorCodes.SESSION_NOT_FOUND) {
       reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, error.message, requestId));
-      return;
-    }
-    if (error.code === ErrorCodes.SESSION_EXPORT_TOO_LARGE) {
-      reply.send(
-        errEnvelope(
-          ErrorCode.FILE_TOO_LARGE,
-          'session export exceeds the 64 MiB web limit',
-          requestId,
-        ),
-      );
       return;
     }
   }

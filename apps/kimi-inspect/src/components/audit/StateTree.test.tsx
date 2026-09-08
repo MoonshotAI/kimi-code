@@ -7,10 +7,9 @@
  *  2. Whole-subtree adds expand into fully fielded, indented tree rows.
  */
 
+import { EMPTY_AGENT_STATE, type AgentState, type TranscriptTurn } from '@moonshot-ai/transcript';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-
-import { EMPTY_AGENT_STATE, type AgentState, type TranscriptTurn } from '@moonshot-ai/transcript';
 
 import { diffValue } from '../../audit/diff';
 import { serializeState } from '../../audit/serialize';
@@ -51,7 +50,10 @@ describe('StateTree', () => {
   });
 
   it('expands whole-subtree adds into full field rows (all keys, no JSON dump)', () => {
-    const root = diffValue(serializeState(EMPTY_AGENT_STATE), serializeState(stateWith([turn(0, 'HELLO')])));
+    const root = diffValue(
+      serializeState(EMPTY_AGENT_STATE),
+      serializeState(stateWith([turn(0, 'HELLO')])),
+    );
     const html = renderToStaticMarkup(<StateTree root={root} />);
     expect(html).not.toContain('{"kind"');
     for (const field of ['turnId', 'ordinal', 'state', 'origin', 'prompt', 'steps']) {

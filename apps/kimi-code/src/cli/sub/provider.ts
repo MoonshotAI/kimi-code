@@ -25,7 +25,6 @@ import {
   CatalogFetchError,
   createKimiHarness,
   DEFAULT_CATALOG_URL,
-  fetchCatalog,
   resolveCatalogImport,
   type Catalog,
   type CatalogProviderEntry,
@@ -35,6 +34,7 @@ import {
 import type { Command } from 'commander';
 
 import { createKimiCodeHostIdentity, createKimiCodeUserAgent } from '#/cli/version';
+import { fetchCatalogOrBuiltIn } from '#/utils/catalog-fetch';
 
 interface WritableLike {
   write(chunk: string): boolean;
@@ -406,7 +406,7 @@ export async function handleCatalogAdd(
 
   // Always restore `[thinking]` from what was there before — including
   // `undefined`. Persisting `enabled: false` when the user never set it would
-  // make `resolveThinkingEffort` (agent-core/src/agent/config/thinking.ts) treat
+  // make `resolveThinkingEffort` (agent-core-v2/src/kosong/model/thinking.ts) treat
   // it as an explicit "off" request and silently disable thinking, even for
   // thinking-capable models.
   config.thinking = previousThinking;
@@ -434,7 +434,13 @@ export async function handleCatalogAdd(
 
 async function loadCatalogOrExit(deps: ProviderDeps, url: string): Promise<Catalog> {
   try {
-    return await fetchCatalog(url, { userAgent: createKimiCodeUserAgent() });
+    const loaded = await fetchCatalogOrBuiltIn(url, { userAgent: createKimiCodeUserAgent() });
+    if (loaded.fromBuiltIn) {
+      deps.stderr.write(
+        `Warning: failed to reach ${url}; using the built-in models.dev catalog snapshot.\n`,
+      );
+    }
+    return loaded.catalog;
   } catch (error) {
     const suffix = error instanceof CatalogFetchError ? ` (HTTP ${String(error.status)})` : '';
     deps.stderr.write(`Failed to fetch catalog from ${url}${suffix}: ${errorMessage(error)}\n`);
@@ -451,12 +457,17 @@ export function registerProviderCommand(parent: Command, deps?: Partial<Provider
   // anything that escapes (e.g. a config write rejected because config.toml
   // is invalid) must end as a one-line error + exit 1, not an unhandled
   // rejection dumping a stack trace.
-  const runAction = async (resolved: ProviderDeps, run: () => Promise<void>): Promise<void> => {
+  const runAction = async (
+    resolved: ResolvedProviderDeps,
+    run: () => Promise<void>,
+  ): Promise<void> => {
     try {
       await run();
     } catch (error) {
       resolved.stderr.write(`${errorMessage(error)}\n`);
       resolved.exit(1);
+    } finally {
+      await resolved.close();
     }
   };
 
@@ -540,7 +551,9 @@ export function registerProviderCommand(parent: Command, deps?: Partial<Provider
     );
 }
 
-function resolveDeps(overrides: Partial<ProviderDeps> = {}): ProviderDeps {
+type ResolvedProviderDeps = ProviderDeps & { readonly close: () => Promise<void> };
+
+function resolveDeps(overrides: Partial<ProviderDeps> = {}): ResolvedProviderDeps {
   let harness: KimiHarness | undefined;
   const identity = createKimiCodeHostIdentity();
   return {
@@ -554,6 +567,11 @@ function resolveDeps(overrides: Partial<ProviderDeps> = {}): ProviderDeps {
     stderr: overrides.stderr ?? process.stderr,
     env: overrides.env ?? process.env,
     exit: overrides.exit ?? ((code: number) => process.exit(code)),
+    // The v2 harness boots an engine whose watchers hold the event loop open;
+    // close it so a one-shot command can exit. No-op for injected harnesses.
+    close: async () => {
+      await harness?.close();
+    },
   };
 }
 

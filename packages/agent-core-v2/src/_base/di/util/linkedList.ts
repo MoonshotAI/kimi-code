@@ -1,7 +1,3 @@
-/**
- * `di` domain (L0) — `LinkedList` with O(1) push/removal for parked event listeners.
- */
-
 class Node<E> {
   static readonly Undefined = new Node<unknown>(undefined);
 

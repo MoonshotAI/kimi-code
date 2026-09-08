@@ -1,0 +1,599 @@
+@match: for f in a b c; do echo "$f"; done
+for f in a b c; do echo "$f"; done
+===
+@match: for f; do echo "$f"; done
+for f; do echo "$f"; done
+===
+@match: select opt in a b; do echo $opt; done
+select opt in a b; do echo $opt; done
+===
+@match: a[i+1]=$y
+a[i+1]=$y
+===
+@match: echo ${arr[1]} ${arr[@]}
+echo ${arr[1]} ${arr[@]}
+===
+@match: echo $'a\nb\t'
+echo $'a\nb\t'
+===
+@match: echo $"hello $USER"
+echo $"hello $USER"
+===
+@match: echo ${x##*/} ${x%%.*}
+echo ${x##*/} ${x%%.*}
+===
+@match: echo ${x/y/z} ${x//a/b}
+echo ${x/y/z} ${x//a/b}
+===
+@match: echo ${x^} ${x^^} ${x,} ${x,,}
+echo ${x^} ${x^^} ${x,} ${x,,}
+===
+@match: echo ${x@Q}
+echo ${x@Q}
+===
+@match: echo ${v:1:2} ${v:-default}
+echo ${v:1:2} ${v:-default}
+===
+@match: f() { arr=(1 2); echo ${arr[0]}; }
+f() { arr=(1 2); echo ${arr[0]}; }
+===
+@match: for i in $(seq 3); do echo $i; done
+for i in $(seq 3); do echo $i; done
+===
+@match: echo ${a[$i]} ${a[i+1]}
+echo ${a[$i]} ${a[i+1]}
+===
+@match: echo ${!prefix*} ${!name@}
+echo ${!prefix*} ${!name@}
+===
+@match: echo ${x##a b}
+echo ${x##a b}
+===
+@match: echo ${x#"pat"}
+echo ${x#"pat"}
+===
+@match: echo ${x/a b/c}
+echo ${x/a b/c}
+===
+@match: echo ${x/a/$v}
+echo ${x/a/$v}
+===
+@match: echo ${x/pat/rep/extra}
+echo ${x/pat/rep/extra}
+===
+@match: echo ${x:?msg} ${x:+alt} ${x:-d e f}
+echo ${x:?msg} ${x:+alt} ${x:-d e f}
+===
+@match: echo ${v:-1} ${v:=2x} ${v:-"d e"}
+echo ${v:-1} ${v:=2x} ${v:-"d e"}
+===
+@match: echo ${arr[@]:1:2}
+echo ${arr[@]:1:2}
+===
+@known-diff recovery-partial-nodes: echo ${s//"/x}
+echo ${s//"/x}
+---
+hasError: true
+program [0,14] "echo ${s//\"/x}"
+  command [0,14] "echo ${s//\"/x}"
+    command_name [0,4] "echo"
+      word [0,4] "echo"
+    expansion [5,14] "${s//\"/x}"
+      (${) [5,7] "${"
+      variable_name [7,8] "s"
+      (//) [8,10] "//"
+      string [10,14] "\"/x}"
+        (") [10,11] "\""
+        string_content [11,14] "/x}"
+===
+@match: x=$"v"
+x=$"v"
+===
+@match: for f in $"a"; do x; done
+for f in $"a"; do x; done
+===
+@match: echo a$"b"
+echo a$"b"
+===
+@match: echo $"a""b"
+echo $"a""b"
+===
+@match: echo x=$"v"
+echo x=$"v"
+===
+@match: echo $0 ${0} $1 ${10}
+echo $0 ${0} $1 ${10}
+===
+@match: echo ${x: -5}
+echo ${x: -5}
+===
+@match: echo ${x: -5:2}
+echo ${x: -5:2}
+===
+@known-diff recovery-partial-nodes: ${x@}
+${x@}
+---
+hasError: true
+program [0,5] "${x@}"
+  command [0,5] "${x@}"
+    command_name [0,5] "${x@}"
+      expansion [0,5] "${x@}"
+        (${) [0,2] "${"
+        variable_name [2,3] "x"
+        word [3,4] "@"
+        (}) [4,5] "}"
+===
+@match: echo ${x[1]}
+echo ${x[1]}
+===
+@match: echo "hello $NAME" 'raw'
+echo "hello $NAME" 'raw'
+===
+@match: echo `hostname` $(date)
+echo `hostname` $(date)
+===
+@match: echo ${v:-d} ${x} $1 $@
+echo ${v:-d} ${x} $1 $@
+===
+@match: echo $HOME
+echo $HOME
+===
+@match: echo a"b"c'd'$e${f}g
+echo a"b"c'd'$e${f}g
+===
+@match: echo $v
+echo $v
+===
+@match: echo "${a} middle ${b}"
+echo "${a} middle ${b}"
+===
+@match: echo "$@"
+echo "$@"
+===
+@match: echo $(a $(b c))
+echo $(a $(b c))
+===
+@match: echo ${#v}
+echo ${#v}
+===
+@match: echo ${v:=word}
+echo ${v:=word}
+===
+@known-diff empty-command-substitution: echo $( )
+echo $( )
+---
+hasError: false
+program [0,9] "echo $( )"
+  command [0,9] "echo $( )"
+    command_name [0,4] "echo"
+      word [0,4] "echo"
+    command_substitution [5,9] "$( )"
+      ($() [5,7] "$("
+      ()) [8,9] ")"
+===
+@known-diff empty-backtick: echo ``
+echo ``
+---
+hasError: false
+program [0,7] "echo ``"
+  command [0,7] "echo ``"
+    command_name [0,4] "echo"
+      word [0,4] "echo"
+    command_substitution [5,7] "``"
+      (`) [5,6] "`"
+      (`) [6,7] "`"
+===
+@match: echo $
+echo $
+===
+@match: echo "a\$b"
+echo "a\$b"
+===
+@known-diff string-content-newlines: echo "line1
+echo "line1
+line2"
+---
+hasError: false
+program [0,18] "echo \"line1\nline2\""
+  command [0,18] "echo \"line1\nline2\""
+    command_name [0,4] "echo"
+      word [0,4] "echo"
+    string [5,18] "\"line1\nline2\""
+      (") [5,6] "\""
+      string_content [6,17] "line1\nline2"
+      (") [17,18] "\""
+===
+@match: echo ${v:-$(cmd)}
+echo ${v:-$(cmd)}
+===
+@match: echo ${a[0]}
+echo ${a[0]}
+===
+@match: echo ${}
+echo ${}
+===
+@match: echo ${#}
+echo ${#}
+===
+@match: echo ${var1#*#}
+echo ${var1#*#}
+===
+@match: echo ${!abc}
+echo ${!abc}
+===
+@match: echo ${abc:- }
+echo ${abc:- }
+===
+@match: echo ${abc:
+echo ${abc:
+}
+===
+@match: echo ${abc,?}
+echo ${abc,?}
+===
+@match: echo ${abc^^b}
+echo ${abc^^b}
+===
+@match: echo ${abc@U}
+echo ${abc@U}
+===
+@match: echo ${abc:- -quiet}
+echo ${abc:- -quiet}
+===
+@match: A="${B[0]# }"
+A="${B[0]# }"
+===
+@match: C="${D/#* -E /}"
+C="${D/#* -E /}"
+===
+@match: F="${G%% *}"
+F="${G%% *}"
+===
+@match: H="${I#*;}"
+H="${I#*;}"
+===
+@match: R="${S%()}"
+R="${S%()}"
+===
+@match: F="${#!}"
+F="${#!}"
+===
+@match: G=${H,,[I]}
+G=${H,,[I]}
+===
+@match: L="${M/'N'*/O}"
+L="${M/'N'*/O}"
+===
+@match: A=${B//:;;/$'\n'}
+A=${B//:;;/$'\n'}
+===
+@match: C=${D/;\ *;|}
+C=${D/;\ *;|}
+===
+@match: MOFILES=${LINGUAS// /.po }.po
+MOFILES=${LINGUAS// /.po }.po
+===
+@match: MY_P="${PN/aspell/aspell"${ASPELL_VERSION}"}"
+MY_P="${PN/aspell/aspell"${ASPELL_VERSION}"}"
+===
+@match: pyc=${pyc//*\/}
+pyc=${pyc//*\/}
+===
+@match: ${pv/\.}
+${pv/\.}
+===
+@match: ${new_test_cp//"${old_ver_cp}"/}
+${new_test_cp//"${old_ver_cp}"/}
+===
+@known-diff expansion-replacement-escaped-backslash: ${allarchives// /\\|}
+${allarchives// /\\|}
+---
+hasError: false
+program [0,21] "${allarchives// /\\\\|}"
+  command [0,21] "${allarchives// /\\\\|}"
+    command_name [0,21] "${allarchives// /\\\\|}"
+      expansion [0,21] "${allarchives// /\\\\|}"
+        (${) [0,2] "${"
+        variable_name [2,13] "allarchives"
+        (//) [13,15] "//"
+        regex [15,16] " "
+        (/) [16,17] "/"
+        word [17,20] "\\\\|"
+        (}) [20,21] "}"
+===
+@match: ${!#}
+${!#}
+===
+@known-diff expansion-bang-hash-special: ${!# }
+${!# }
+---
+hasError: true
+program [0,6] "${!# }"
+  command [0,6] "${!# }"
+    command_name [0,6] "${!# }"
+      expansion [0,6] "${!# }"
+        (${) [0,2] "${"
+        (!) [2,3] "!"
+        special_variable_name [3,4] "#"
+        word [4,5] " "
+        (}) [5,6] "}"
+===
+@match: ${!##}
+${!##}
+===
+@known-diff expansion-bang-hash-special: ${!## }
+${!## }
+---
+hasError: true
+program [0,7] "${!## }"
+  command [0,7] "${!## }"
+    command_name [0,7] "${!## }"
+      expansion [0,7] "${!## }"
+        (${) [0,2] "${"
+        (!) [2,3] "!"
+        (#) [3,4] "#"
+        special_variable_name [4,5] "#"
+        word [5,6] " "
+        (}) [6,7] "}"
+===
+@known-diff expansion-bang-hash-special: ${!##/}
+${!##/}
+---
+hasError: false
+program [0,7] "${!##/}"
+  command [0,7] "${!##/}"
+    command_name [0,7] "${!##/}"
+      expansion [0,7] "${!##/}"
+        (${) [0,2] "${"
+        (!) [2,3] "!"
+        (#) [3,4] "#"
+        special_variable_name [4,5] "#"
+        (/) [5,6] "/"
+        (}) [6,7] "}"
+===
+@match: echo "${kw}? ( ${cond:+${cond}? (} ${baseuri}-${ver}-${kw...
+echo "${kw}? ( ${cond:+${cond}? (} ${baseuri}-${ver}-${kw}.${suff} ${cond:+) })"
+===
+@match: ${completions[*]}
+${completions[*]}
+===
+@known-diff expansion-equals-operator: ${=1}
+${=1}
+---
+hasError: false
+program [0,5] "${=1}"
+  command [0,5] "${=1}"
+    command_name [0,5] "${=1}"
+      expansion [0,5] "${=1}"
+        (${) [0,2] "${"
+        (=) [2,3] "="
+        word [3,4] "1"
+        (}) [4,5] "}"
+===
+@match: ${2?}
+${2?}
+===
+@match: ${p_key#*=}
+${p_key#*=}
+===
+@match: ${B[0]# }
+${B[0]# }
+===
+@match: ${to_enables[0]##*/}
+${to_enables[0]##*/}
+===
+@match: exec "${0#-}" --rcfile "${BASH_IT_BASHRC:-${HOME?}/.bashrc}"
+exec "${0#-}" --rcfile "${BASH_IT_BASHRC:-${HOME?}/.bashrc}"
+===
+@match: recho "TDEFAULTS = ${selvecs:+-DSELECT_VECS=\"$selvecs\"}"
+recho "TDEFAULTS = ${selvecs:+-DSELECT_VECS=\"$selvecs\"}"
+===
+@match: local msg="${2:-command '$1' does not exist}"
+local msg="${2:-command '$1' does not exist}"
+===
+@match: ${cdir:+#}
+${cdir:+#}
+===
+@match: ${dict_langs:+;}
+${dict_langs:+;}
+===
+@match: ${UTIL_LINUX_LIBC[@]/%/? ( sys-apps/util-linux )}
+${UTIL_LINUX_LIBC[@]/%/? ( sys-apps/util-linux )}
+===
+@match: ${id}${2+ ${2}}
+${id}${2+ ${2}}
+===
+@match: ${BRANDING_GCC_PKGVERSION/(/(Gentoo ${PVR}${extvers}, }
+${BRANDING_GCC_PKGVERSION/(/(Gentoo ${PVR}${extvers}, }
+===
+@match: BASH_IT_GIT_URL="${BASH_IT_GIT_URL/git@/https://}"
+BASH_IT_GIT_URL="${BASH_IT_GIT_URL/git@/https://}"
+===
+@known-diff number-base-with-expansion: 10#${command_start##*.}
+10#${command_start##*.}
+---
+hasError: false
+program [0,23] "10#${command_start##*.}"
+  command [0,23] "10#${command_start##*.}"
+    command_name [0,23] "10#${command_start##*.}"
+      concatenation [0,23] "10#${command_start##*.}"
+        word [0,3] "10#"
+        expansion [3,23] "${command_start##*.}"
+          (${) [3,5] "${"
+          variable_name [5,18] "command_start"
+          (##) [18,20] "##"
+          regex [20,22] "*."
+          (}) [22,23] "}"
+===
+@match: echo ${LIB_DEPEND//\[static-libs(+)]}
+echo ${LIB_DEPEND//\[static-libs(+)]}
+===
+@match: ${ALL_LLVM_TARGETS[@]/%/(-)?}
+${ALL_LLVM_TARGETS[@]/%/(-)?}
+===
+@match: filterdiff -p1 ${paths[@]/#/-i }
+filterdiff -p1 ${paths[@]/#/-i }
+===
+@match: ${cflags//-O? /$(get-flag O) }
+${cflags//-O? /$(get-flag O) }
+===
+@match: curf="${f%'-roff2html'*}.html"
+curf="${f%'-roff2html'*}.html"
+===
+@match: reff="${f/'-roff2html'*/'-ref'}.html"
+reff="${f/'-roff2html'*/'-ref'}.html"
+===
+@match: echo "s/$/'/"
+echo "s/$/'/"
+===
+@match: echo "s$"
+echo "s$"
+===
+@match: echo $'Here\'s Johnny!\r\n'
+echo $'Here\'s Johnny!\r\n'
+===
+@known-diff expansion-default-array: printf "  %-9s" "${seq0:-(default)}"
+printf "  %-9s" "${seq0:-(default)}"
+---
+hasError: false
+program [0,36] "printf \"  %-9s\" \"${seq0:-(default)}\""
+  command [0,36] "printf \"  %-9s\" \"${seq0:-(default)}\""
+    command_name [0,6] "printf"
+      word [0,6] "printf"
+    string [7,15] "\"  %-9s\""
+      (") [7,8] "\""
+      string_content [8,14] "  %-9s"
+      (") [14,15] "\""
+    string [16,36] "\"${seq0:-(default)}\""
+      (") [16,17] "\""
+      expansion [17,35] "${seq0:-(default)}"
+        (${) [17,19] "${"
+        variable_name [19,23] "seq0"
+        (:-) [23,25] ":-"
+        word [25,34] "(default)"
+        (}) [34,35] "}"
+      (") [35,36] "\""
+===
+@known-diff empty-backtick: main() {
+main() {
+    local foo="asd"`
+        `"fgh"
+}
+---
+hasError: false
+program [0,46] "main() {\n    local foo=\"asd\"`\n       ..."
+  function_definition [0,46] "main() {\n    local foo=\"asd\"`\n       ..."
+    word [0,4] "main"
+    (() [4,5] "("
+    ()) [5,6] ")"
+    compound_statement [7,46] "{\n    local foo=\"asd\"`\n        `\"fgh\"\n}"
+      ({) [7,8] "{"
+      declaration_command [13,44] "local foo=\"asd\"`\n        `\"fgh\""
+        (local) [13,18] "local"
+        variable_assignment [19,44] "foo=\"asd\"`\n        `\"fgh\""
+          variable_name [19,22] "foo"
+          (=) [22,23] "="
+          concatenation [23,44] "\"asd\"`\n        `\"fgh\""
+            string [23,28] "\"asd\""
+              (") [23,24] "\""
+              string_content [24,27] "asd"
+              (") [27,28] "\""
+            command_substitution [28,39] "`\n        `"
+              (`) [28,29] "`"
+              (`) [38,39] "`"
+            string [39,44] "\"fgh\""
+              (") [39,40] "\""
+              string_content [40,43] "fgh"
+              (") [43,44] "\""
+      (}) [45,46] "}"
+===
+@known-diff dollar-backtick-substitution: $(eval echo $`echo ${foo}`)
+$(eval echo $`echo ${foo}`)
+---
+hasError: false
+program [0,27] "$(eval echo $`echo ${foo}`)"
+  command [0,27] "$(eval echo $`echo ${foo}`)"
+    command_name [0,27] "$(eval echo $`echo ${foo}`)"
+      command_substitution [0,27] "$(eval echo $`echo ${foo}`)"
+        ($() [0,2] "$("
+        command [2,26] "eval echo $`echo ${foo}`"
+          command_name [2,6] "eval"
+            word [2,6] "eval"
+          word [7,11] "echo"
+          concatenation [12,26] "$`echo ${foo}`"
+            ($) [12,13] "$"
+            command_substitution [13,26] "`echo ${foo}`"
+              (`) [13,14] "`"
+              command [14,25] "echo ${foo}"
+                command_name [14,18] "echo"
+                  word [14,18] "echo"
+                expansion [19,25] "${foo}"
+                  (${) [19,21] "${"
+                  variable_name [21,24] "foo"
+                  (}) [24,25] "}"
+              (`) [25,26] "`"
+        ()) [26,27] ")"
+===
+@match: echo `echo otherword`word
+echo `echo otherword`word
+===
+@match: echo word`echo otherword`
+echo word`echo otherword`
+===
+@match: assert()
+assert()
+  if ! $1; then
+    return 1
+  fi
+===
+@match: echo " ${x}"
+echo " ${x}"
+===
+@match: echo "a ${x} b"
+echo "a ${x} b"
+===
+@match: echo "$x "
+echo "$x "
+===
+@match: echo "${x} "
+echo "${x} "
+===
+@match: echo ${#@}
+echo ${#@}
+===
+@match: echo ${#*}
+echo ${#*}
+===
+@match: echo ${#-}
+echo ${#-}
+===
+@match: echo ${#x[@]}
+echo ${#x[@]}
+===
+@match: echo ${x/'abc'/y}
+echo ${x/'abc'/y}
+===
+@match: echo ${x/"abc"/y}
+echo ${x/"abc"/y}
+===
+@match: echo ${x/'a'*'b'/y}
+echo ${x/'a'*'b'/y}
+===
+@match: echo ${x##'a'}
+echo ${x##'a'}
+===
+@match: echo ${x%%a b}
+echo ${x%%a b}
+===
+@match: echo "${x} $(y)"
+echo "${x} $(y)"
+===
+@match: echo " $(y)"
+echo " $(y)"
+===
+@match: echo " $x"
+echo " $x"
+===
+@match: echo "${x} $y"
+echo "${x} $y"
+===

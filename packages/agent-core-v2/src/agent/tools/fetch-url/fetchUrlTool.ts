@@ -1,14 +1,3 @@
-/**
- * `tools` domain (L7) — `FetchURLTool` implementation.
- *
- * Receives the App-scope `IWebFetchService` via DI and fetches through its
- * host-injected `UrlFetcher` (contract in
- * `#/app/web/tools/fetch-url-types`). The default service falls back to the
- * built-in `LocalFetchURLProvider`, so `FetchURL` is always available without
- * OAuth. Bound at Agent scope; self-registers via `registerAgentToolService(...)` at
- * module load.
- */
-
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import {
@@ -17,11 +6,11 @@ import {
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
-import { ToolResultBuilder } from '#/tool/result-builder';
+import { ToolOutputAccumulator } from '#/tool/output-accumulator';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
 import { IWebFetchService } from '#/app/web/web';
-import { HttpFetchError, type UrlFetcher } from '#/app/web/tools/fetch-url-types';
+import { HttpFetchError } from '#/app/web/tools/fetch-url-types';
 import { FetchURLInputSchema, IFetchURLTool, type FetchURLInput } from './fetch-url';
 import DESCRIPTION from './fetch-url.md?raw';
 
@@ -31,11 +20,7 @@ export class FetchURLTool implements IFetchURLTool {
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(FetchURLInputSchema);
 
-  private readonly fetcher: UrlFetcher;
-
-  constructor(@IWebFetchService webFetch: IWebFetchService) {
-    this.fetcher = webFetch.getUrlFetcher();
-  }
+  constructor(@IWebFetchService private readonly webFetch: IWebFetchService) {}
 
   resolveExecution(args: FetchURLInput): ToolExecution {
     const preview = args.url.length > 50 ? `${args.url.slice(0, 50)}…` : args.url;
@@ -54,7 +39,9 @@ export class FetchURLTool implements IFetchURLTool {
     { toolCallId, signal }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
     try {
-      const { content, kind } = await this.fetcher.fetch(args.url, { toolCallId, signal });
+      const { content, kind } = await this.webFetch
+        .getUrlFetcher()
+        .fetch(args.url, { toolCallId, signal });
 
       if (!content) {
         return {
@@ -63,7 +50,7 @@ export class FetchURLTool implements IFetchURLTool {
         };
       }
 
-      const builder = new ToolResultBuilder({ maxLineLength: null });
+      const builder = new ToolOutputAccumulator();
       const note =
         kind === 'passthrough'
           ? 'The returned content is the full response body, returned verbatim.'

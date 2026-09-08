@@ -1,11 +1,3 @@
-/**
- * Scenario: core `PluginManager` installation and management behavior.
- *
- * Exercises the real filesystem store and managed copies; local HTTP and
- * stubbed `fetch` boundaries cover zip and GitHub sources.
- * Run: pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/app/plugin/manager.test.ts
- */
-
 import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';

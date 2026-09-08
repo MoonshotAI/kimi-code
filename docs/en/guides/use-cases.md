@@ -81,7 +81,7 @@ src/parser/markdown.ts currently has almost no tests. Please add a unit test sui
 Extract the repeated "read body → validate → log → respond" pattern in src/handlers into a middleware. Run the tests afterwards to make sure existing behavior is unchanged.
 ```
 
-For multi-file refactors, use Plan mode first to confirm the approach. You can also use `/fork` to create an experimental branch — if you don't like the result, just switch back to the original session.
+For multi-file refactors, use Plan mode first to confirm the approach. You can also `/fork` the session into an experimental branch and switch to it from `/sessions` — forking itself never disrupts the original session, so you can simply switch back if you don't like the result.
 
 ## One-off scripts and automation
 

@@ -31,7 +31,8 @@ export interface KlientIpcHost {
 }
 
 function scopeRefFromFrame(frame: IpcFrame): ScopeRef {
-  const scope: { sessionId?: string; agentId?: string } = {};
+  const scope: { workspaceId?: string; sessionId?: string; agentId?: string } = {};
+  if (typeof frame.workspaceId === 'string') scope.workspaceId = frame.workspaceId;
   if (typeof frame.sessionId === 'string') scope.sessionId = frame.sessionId;
   if (typeof frame.agentId === 'string') scope.agentId = frame.agentId;
   return scope;

@@ -1,12 +1,6 @@
-/**
- * `blobStore` domain (L2) — `IBlobStore` implementation.
- *
- * Delegates to the `IFileSystemStorageService` backend with atomic writes. Bound at App
- * scope; child scopes (Session, Agent) inherit the same instance and use
- * scope strings to namespace their data.
- */
+import { LifecycleScope } from '#/app/scopes';
 
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IBlobStore, type BlobReadRange } from '#/persistence/interface/blobStore';
 
@@ -19,6 +13,10 @@ export class BlobStoreService implements IBlobStore {
     await this.storage.write(scope, key, data, { atomic: true });
   }
 
+  async putStream(scope: string, key: string, source: AsyncIterable<Uint8Array>): Promise<void> {
+    await this.storage.writeStream(scope, key, source, { atomic: true });
+  }
+
   async get(scope: string, key: string): Promise<Uint8Array | undefined> {
     return this.storage.read(scope, key);
   }
@@ -28,8 +26,7 @@ export class BlobStoreService implements IBlobStore {
   }
 
   async has(scope: string, key: string): Promise<boolean> {
-    const keys = await this.storage.list(scope, key);
-    return keys.includes(key);
+    return (await this.storage.size(scope, key)) !== undefined;
   }
 
   async delete(scope: string, key: string): Promise<void> {

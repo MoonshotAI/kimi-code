@@ -1,21 +1,3 @@
-/**
- * `IQueryStore` — the indexed, queryable read-model facade.
- *
- * A peer of `IAppendLogStore` and `IAtomicDocumentStore`. Where
- * `IAppendLogStore` is the authoritative append-only write model and
- * `IAtomicDocumentStore` holds atomic documents, `IQueryStore` serves fast,
- * indexed, paginated reads over a *derived* dataset — typically materialized
- * from an append log by a projector.
- *
- * This file intentionally ships the interface only. A concrete implementation
- * (e.g. backed by `minidb`) and the projector that feeds it are a follow-up;
- * the contract is fixed here so domains can depend on it without coupling to
- * any specific engine.
- *
- * `collection` is a logical table (an engine may encode it as a key prefix).
- * Values are plain JSON-shaped objects; indexes are declared over their fields.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 export type SortDir = 'asc' | 'desc';
@@ -43,6 +25,7 @@ export type QueryFilter = {
 
 export interface IQuery<T> {
   where(filter: QueryFilter): IQuery<T>;
+  whereColumn(column: string, bounds: ColumnBounds): IQuery<T>;
   orderBy(field: string, dir?: SortDir): IQuery<T>;
   limit(n: number): IQuery<T>;
   cursor(cursor: string | undefined): IQuery<T>;
@@ -72,22 +55,53 @@ export interface TextIndexDef {
 export type IndexDef = ValueIndexDef | CompoundIndexDef | TextIndexDef;
 
 export type WriteOp =
-  | { readonly kind: 'put'; readonly collection: string; readonly key: string; readonly value: unknown }
+  | {
+      readonly kind: 'put';
+      readonly collection: string;
+      readonly key: string;
+      readonly value: unknown;
+      readonly columns?: Record<string, number>;
+    }
   | { readonly kind: 'delete'; readonly collection: string; readonly key: string };
 
 export interface Checkpoint {
   readonly seq: number;
+  readonly sourceMaxMtimeMs?: number;
+}
+
+export interface ColumnBounds {
+  readonly gt?: number;
+  readonly gte?: number;
+  readonly lt?: number;
+  readonly lte?: number;
+}
+
+export interface ColumnPageQuery {
+  readonly column: string;
+  readonly dir?: SortDir;
+  readonly filter?: QueryFilter;
+  readonly bounds?: ColumnBounds;
+  readonly limit: number;
 }
 
 export interface IQueryStore {
   readonly _serviceBrand: undefined;
 
-  put<T>(collection: string, key: string, value: T): Promise<void>;
+  put<T>(
+    collection: string,
+    key: string,
+    value: T,
+    options?: { columns?: Record<string, number> },
+  ): Promise<void>;
   batch(ops: readonly WriteOp[]): Promise<void>;
   delete(collection: string, key: string): Promise<void>;
   get<T>(collection: string, key: string): Promise<T | undefined>;
+  getMany<T>(collection: string, keys: readonly string[]): Promise<Map<string, T>>;
   query<T>(collection: string): IQuery<T>;
+  pageByColumn<T>(collection: string, query: ColumnPageQuery): Promise<Page<T>>;
   ensureIndex(collection: string, def: IndexDef): Promise<void>;
+  listKeys(collection: string): Promise<readonly string[]>;
+  dropCollection(collection: string): Promise<void>;
   getCheckpoint(source: string): Promise<Checkpoint | undefined>;
   setCheckpoint(source: string, checkpoint: Checkpoint): Promise<void>;
   close(): Promise<void>;

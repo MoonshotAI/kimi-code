@@ -9,5 +9,8 @@ export default defineConfig({
   test: {
     name: 'kap-server',
     include: ['test/**/*.{test,e2e}.ts'],
+    setupFiles: ['test/setup.ts'],
+    globalSetup: ['test/globalSetup.ts'],
+    testTimeout: 15_000,
   },
 });

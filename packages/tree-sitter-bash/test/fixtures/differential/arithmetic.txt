@@ -1,0 +1,236 @@
+@match: for ((i=0;i<3;i++)); do echo $i; done
+for ((i=0;i<3;i++)); do echo $i; done
+===
+@match: for (( i = 0; i < 10; i += 2 )); do x; done
+for (( i = 0; i < 10; i += 2 )); do x; done
+===
+@match: echo $((1 + 2 * 3))
+echo $((1 + 2 * 3))
+===
+@match: echo $((a > b ? a : b))
+echo $((a > b ? a : b))
+===
+@match: echo $(( (1+2) ** 3 ))
+echo $(( (1+2) ** 3 ))
+===
+@match: echo $((i++ + --j))
+echo $((i++ + --j))
+===
+@match: echo $((-x + ~y))
+echo $((-x + ~y))
+===
+@match: echo $((arr[0] + 1))
+echo $((arr[0] + 1))
+===
+@match: echo $((x += 5))
+echo $((x += 5))
+===
+@match: echo $((1, 2, 3))
+echo $((1, 2, 3))
+===
+@match: ((x = y + 1))
+((x = y + 1))
+===
+@match: echo $((n % 2 == 0))
+echo $((n % 2 == 0))
+===
+@match: echo $((2 ** 3 ** 2))
+echo $((2 ** 3 ** 2))
+===
+@match: echo $((x = y = 1))
+echo $((x = y = 1))
+===
+@match: echo $((
+echo $((
+1 +
+2
+))
+===
+@match: (( ls ))
+(( ls ))
+===
+@match: ((x=1)); echo $x
+((x=1)); echo $x
+===
+@match: for ((;;)); do x; done
+for ((;;)); do x; done
+===
+@match: for ((i=0,j=1; i<3; i++,j--)); do x; done
+for ((i=0,j=1; i<3; i++,j--)); do x; done
+===
+@match: for ((i=0;i<3;i++)) { echo $i; }
+for ((i=0;i<3;i++)) { echo $i; }
+===
+@match: echo $[1+2]
+echo $[1+2]
+===
+@match: echo $((x[1]+y[z]))
+echo $((x[1]+y[z]))
+===
+@match: ((a++))
+((a++))
+===
+@match: ((a--))
+((a--))
+===
+@match: ((a++ + b))
+((a++ + b))
+===
+@match: ((b + a++))
+((b + a++))
+===
+@known-diff arithmetic-hex: echo $((0x1F))
+echo $((0x1F))
+---
+hasError: false
+program [0,14] "echo $((0x1F))"
+  command [0,14] "echo $((0x1F))"
+    command_name [0,4] "echo"
+      word [0,4] "echo"
+    arithmetic_expansion [5,14] "$((0x1F))"
+      ($(() [5,8] "$(("
+      number [8,12] "0x1F"
+      ())) [12,14] "))"
+===
+@match: echo ((a++))
+echo ((a++))
+===
+@match: ((a[i]++))
+((a[i]++))
+===
+@match: ! ((a++))
+! ((a++))
+===
+@match: ((ab-cd++))
+((ab-cd++))
+===
+@match: echo $((1+2)) more
+echo $((1+2)) more
+===
+@match: $(((${1:-${SECONDS}} % 12) + 144))
+$(((${1:-${SECONDS}} % 12) + 144))
+===
+@match: echo $((-1, 1))
+echo $((-1, 1))
+===
+@match: echo $((! -a || ~ +b || ++c || --d))
+echo $((! -a || ~ +b || ++c || --d))
+===
+@match: (("${MULTIBUILD_VARIANTS}" > 1))
+(("${MULTIBUILD_VARIANTS}" > 1))
+===
+@match: $(("$(stat --printf '%05a' "${save_file}")" & 07177))
+$(("$(stat --printf '%05a' "${save_file}")" & 07177))
+===
+@match: soft_errors_count=$[soft_errors_count + 1]
+soft_errors_count=$[soft_errors_count + 1]
+===
+@known-diff cfor-compound-assign-negative: for (( i = j = k = 1; i % 9 || (j *= -1, $( ((i%9)) || pr...
+for (( i = j = k = 1; i % 9 || (j *= -1, $( ((i%9)) || printf " " >&2; echo 0), k++ <= 10); i += j ))
+do
+printf "$i"
+done
+---
+hasError: false
+program [0,121] "for (( i = j = k = 1; i % 9 || (j *= ..."
+  c_style_for_statement [0,121] "for (( i = j = k = 1; i % 9 || (j *= ..."
+    (for) [0,3] "for"
+    ((() [4,6] "(("
+    variable_assignment [7,20] "i = j = k = 1"
+      variable_name [7,8] "i"
+      (=) [9,10] "="
+      variable_assignment [11,20] "j = k = 1"
+        variable_name [11,12] "j"
+        (=) [13,14] "="
+        variable_assignment [15,20] "k = 1"
+          variable_name [15,16] "k"
+          (=) [17,18] "="
+          number [19,20] "1"
+    (;) [20,21] ";"
+    binary_expression [22,90] "i % 9 || (j *= -1, $( ((i%9)) || prin..."
+      binary_expression [22,27] "i % 9"
+        word [22,23] "i"
+        (%) [24,25] "%"
+        number [26,27] "9"
+      (||) [28,30] "||"
+      parenthesized_expression [31,90] "(j *= -1, $( ((i%9)) || printf \" \" >&..."
+        (() [31,32] "("
+        binary_expression [32,39] "j *= -1"
+          word [32,33] "j"
+          (*=) [34,36] "*="
+          unary_expression [37,39] "-1"
+            (-) [37,38] "-"
+            number [38,39] "1"
+        (,) [39,40] ","
+        command_substitution [41,78] "$( ((i%9)) || printf \" \" >&2; echo 0)"
+          ($() [41,43] "$("
+          list [44,69] "((i%9)) || printf \" \" >&2"
+            command [44,51] "((i%9))"
+              command_name [44,51] "((i%9))"
+                arithmetic_expansion [44,51] "((i%9))"
+                  ((() [44,46] "(("
+                  binary_expression [46,49] "i%9"
+                    variable_name [46,47] "i"
+                    (%) [47,48] "%"
+                    number [48,49] "9"
+                  ())) [49,51] "))"
+            (||) [52,54] "||"
+            redirected_statement [55,69] "printf \" \" >&2"
+              command [55,65] "printf \" \""
+                command_name [55,61] "printf"
+                  word [55,61] "printf"
+                string [62,65] "\" \""
+                  (") [62,63] "\""
+                  string_content [63,64] " "
+                  (") [64,65] "\""
+              file_redirect [66,69] ">&2"
+                (>&) [66,68] ">&"
+                number [68,69] "2"
+          (;) [69,70] ";"
+          command [71,77] "echo 0"
+            command_name [71,75] "echo"
+              word [71,75] "echo"
+            number [76,77] "0"
+          ()) [77,78] ")"
+        (,) [78,79] ","
+        binary_expression [80,89] "k++ <= 10"
+          postfix_expression [80,83] "k++"
+            word [80,81] "k"
+            (++) [81,83] "++"
+          (<=) [84,86] "<="
+          number [87,89] "10"
+        ()) [89,90] ")"
+    (;) [90,91] ";"
+    binary_expression [92,98] "i += j"
+      word [92,93] "i"
+      (+=) [94,96] "+="
+      word [97,98] "j"
+    ())) [99,101] "))"
+    do_group [102,121] "do\nprintf \"$i\"\ndone"
+      (do) [102,104] "do"
+      command [105,116] "printf \"$i\""
+        command_name [105,111] "printf"
+          word [105,111] "printf"
+        string [112,116] "\"$i\""
+          (") [112,113] "\""
+          simple_expansion [113,115] "$i"
+            ($) [113,114] "$"
+            variable_name [114,115] "i"
+          (") [115,116] "\""
+      (done) [117,121] "done"
+===
+@match: ((x = -1))
+((x = -1))
+===
+@match: ((x += -1))
+((x += -1))
+===
+@match: echo $((-1))
+echo $((-1))
+===
+@match: echo $((x * -1))
+echo $((x * -1))
+===
+@match: echo $((x=-1))
+echo $((x=-1))
+===

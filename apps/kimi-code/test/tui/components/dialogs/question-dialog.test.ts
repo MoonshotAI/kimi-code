@@ -394,6 +394,42 @@ describe('QuestionDialogComponent', () => {
     expect(out).toContain('Mushroom');
   });
 
+  it('multi-select Other can be toggled off after it is committed', () => {
+    const pending = makePending([
+      {
+        question: 'Pick toppings?',
+        multi_select: true,
+        options: [{ label: 'Cheese' }, { label: 'Pepperoni' }],
+      },
+    ]);
+    const { dialog, collected } = makeDialog(pending);
+
+    // Select Other and commit a custom value.
+    dialog.handleInput('3');
+    dialog.handleInput('M');
+    dialog.handleInput('u');
+    dialog.handleInput('s');
+    dialog.handleInput('h');
+    dialog.handleInput('r');
+    dialog.handleInput('o');
+    dialog.handleInput('o');
+    dialog.handleInput('m');
+    dialog.handleInput('\r');
+
+    // Toggle it off using the same key.
+    dialog.handleInput('3');
+    // Select a preset option to confirm the answer still builds correctly.
+    dialog.handleInput('1');
+    dialog.handleInput('\t');
+
+    const review = strip(dialog.render(80).join('\n'));
+    expect(review).toContain('Cheese');
+    expect(review).not.toContain('Mushroom');
+
+    dialog.handleInput('1');
+    expect(collected).toEqual([['Cheese']]);
+  });
+
   it('escape dismisses with empty answers array', () => {
     const pending = makePending([
       {

@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { MiniDb } from '../../src/index.js';
 import { ClusterDb, shardDirName } from '../../src/cluster/index.js';
+import { ShardLockPool } from '../../src/cluster/lock-pool.js';
 import { shardFor } from '../../src/cluster/utils.js';
 import { tmpDir } from '../e2e/helpers/tmp.js';
 import { keyOnShard, runWorker, runWorkerOk, rmrf, sleep } from './helpers.js';
@@ -272,6 +273,70 @@ test(
       assert.equal(stats2.catchupFramesApplied - stats1.catchupFramesApplied, report2.frames, 'second storm applied frame-exactly');
       await assertSameAsFreshOpen(db, dir, hot);
       await db.close();
+    } finally {
+      await rmrf(dir);
+    }
+  },
+);
+
+test(
+  'fingerprint: a compound-index-only definition change refreshes the cached reader (multi-process)',
+  { timeout: 180_000 },
+  async () => {
+    const dir = await tmpDir('minidb-cluster-mp-');
+    try {
+      const shards = 4;
+      const hot = 1;
+      // Seed the hot shard and release all locks.
+      const setup = await ClusterDb.open<Doc>({ dir, shardCount: shards, valueCodec: 'json', fsyncPolicy: 'no', lockHoldMs: 0 });
+      const pre: string[] = [];
+      for (let seq = 0; pre.length < 200; seq++) {
+        const key = `pre:${seq}`;
+        if (shardFor(key, shards) === hot) pre.push(key);
+      }
+      for (let j = 0; j < pre.length; j++) {
+        await setup.set(pre[j]!, { n: j, c: `c${j % 7}` });
+      }
+      await setup.close();
+
+      // The cached read-only shard reader under test. The pool IS the
+      // fingerprint machinery (a ClusterDb would not expose shard-level
+      // compound definitions to assert on), so drive it directly.
+      const pool = new ShardLockPool({
+        writerOpts: { valueCodec: 'json' },
+        readerOpts: { valueCodec: 'json' },
+        lockRenewMs: 0,
+        lockAcquireTimeoutMs: 5_000,
+        lockHoldMs: 0,
+        maxWriters: 4,
+        maxReaders: 4,
+        readOnly: true,
+        applyDefs: async () => {},
+      });
+      const shardDir = path.join(dir, shardDirName(hot, shards));
+      const compoundNames = () => pool.withReader(hot, shardDir, (db) => db.listCompoundIndexes().map((i) => i.name));
+      assert.deepEqual(await compoundNames(), []); // warms and caches the reader
+      const stats0 = { ...pool.stats };
+
+      // A writer PROCESS creates only a compound index: no data writes, just
+      // the sidecar rewrite. The next read must detect it from the
+      // fingerprint and FULLY reopen — an incremental WAL catch-up cannot
+      // carry a definition change. (Before the fingerprint tracked
+      // db.compound-indexes.json this change was invisible forever.)
+      await runWorkerOk(['compound-defs', dir, String(shards), 'create'], { timeoutMs: 120_000 });
+      assert.deepEqual(await compoundNames(), ['cg'], 'the refreshed reader sees the new compound index');
+      assert.equal(pool.stats.readerReopens - stats0.readerReopens, 1, 'the sidecar change forced a full reopen');
+      assert.equal(pool.stats.incrementalCatchups - stats0.incrementalCatchups, 0, 'no incremental catch-up on a def-only change');
+      // The refreshed instance still serves data correctly.
+      const v = await pool.withReader(hot, shardDir, (db) => db.get(pre[0]!));
+      assert.equal((v as Doc | undefined)?.n, 0);
+
+      // Dropping it again is detected the same way.
+      await runWorkerOk(['compound-defs', dir, String(shards), 'drop'], { timeoutMs: 120_000 });
+      assert.deepEqual(await compoundNames(), [], 'the refreshed reader sees the drop');
+      assert.equal(pool.stats.readerReopens - stats0.readerReopens, 2);
+      assert.equal(pool.stats.incrementalCatchups - stats0.incrementalCatchups, 0);
+      await pool.closeAll();
     } finally {
       await rmrf(dir);
     }

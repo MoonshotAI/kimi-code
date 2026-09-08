@@ -1,9 +1,13 @@
+import { APIError as AnthropicAPIError } from '@anthropic-ai/sdk';
+import { APIProviderQuotaExhaustedError, isRetryableGenerateError } from '#/errors';
 import { generate } from '#/generate';
 import type { ContentPart, Message, ToolCall } from '#/message';
 import { extractUsageFromChunk, KimiChatProvider } from '#/providers/kimi';
+import { classifyKimiQuotaError } from '#/providers/kimi-errors';
 import { extractUsage } from '#/providers/openai-common';
 import type { GenerateOptions } from '#/provider';
 import type { Tool } from '#/tool';
+import { APIError as OpenAIAPIError } from 'openai';
 import { describe, it, expect, vi } from 'vitest';
 
 function makeChatCompletionResponse(model: string = 'test-model') {
@@ -2166,5 +2170,65 @@ describe('extractUsage', () => {
     const undef: unknown = undefined;
     expect(extractUsage(null)).toBeNull();
     expect(extractUsage(undef)).toBeNull();
+  });
+});
+
+describe('classifyKimiQuotaError', () => {
+  const QUOTA_MESSAGE =
+    'Your account org-0123456789abcdef <ak-test> is suspended due to insufficient balance, please recharge your account or check your plan and billing details';
+  const TOKEN_QUOTA_MESSAGE =
+    'You exceeded your current token quota: <org-0123456789abcdef> 31275, please check your account balance';
+
+  function quota429(message: string, type?: string): OpenAIAPIError {
+    return new OpenAIAPIError(
+      429,
+      type === undefined ? undefined : { message, type },
+      `429 ${message}`,
+      new Headers(),
+    );
+  }
+
+  it('classifies a structured exceeded_current_quota_error body as quota-exhausted', () => {
+    const error = classifyKimiQuotaError(
+      quota429('Too many requests', 'exceeded_current_quota_error'),
+    );
+    expect(error).toBeInstanceOf(APIProviderQuotaExhaustedError);
+    expect(isRetryableGenerateError(error)).toBe(false);
+  });
+
+  it.each([QUOTA_MESSAGE, TOKEN_QUOTA_MESSAGE])(
+    'falls back to billing wording "%s" without a structured body',
+    (message) => {
+      expect(classifyKimiQuotaError(quota429(message))).toBeInstanceOf(
+        APIProviderQuotaExhaustedError,
+      );
+    },
+  );
+
+  it.each(['Too many requests', 'your token quota per minute was exceeded'])(
+    'answers undefined for transient 429 "%s"',
+    (message) => {
+      expect(classifyKimiQuotaError(quota429(message))).toBeUndefined();
+    },
+  );
+
+  it('answers undefined for non-429 and non-SDK shapes', () => {
+    expect(
+      classifyKimiQuotaError(new OpenAIAPIError(403, undefined, QUOTA_MESSAGE, new Headers())),
+    ).toBeUndefined();
+    expect(classifyKimiQuotaError(new Error(QUOTA_MESSAGE))).toBeUndefined();
+    expect(classifyKimiQuotaError(undefined)).toBeUndefined();
+  });
+
+  it('classifies the Anthropic SDK error shape (body nested under .error)', () => {
+    const source = AnthropicAPIError.generate(
+      429,
+      { type: 'error', error: { type: 'exceeded_current_quota_error', message: 'quota gone' } },
+      'Too many requests',
+      new Headers(),
+    );
+    const error = classifyKimiQuotaError(source);
+    expect(error).toBeInstanceOf(APIProviderQuotaExhaustedError);
+    expect(isRetryableGenerateError(error)).toBe(false);
   });
 });

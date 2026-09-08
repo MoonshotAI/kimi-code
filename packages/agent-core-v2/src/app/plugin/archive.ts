@@ -5,6 +5,8 @@ import { pipeline } from 'node:stream/promises';
 
 import { type Entry, fromBuffer as yauzlFromBuffer } from 'yauzl';
 
+import { Error2, ErrorCodes } from '#/errors';
+
 export async function downloadZip(url: string, signal?: AbortSignal): Promise<Buffer> {
   const controller = new AbortController();
   const timeoutHandle = setTimeout(() => {
@@ -13,7 +15,11 @@ export async function downloadZip(url: string, signal?: AbortSignal): Promise<Bu
   try {
     const resp = await fetch(url, { signal: signal ?? controller.signal });
     if (!resp.ok) {
-      throw new Error(`Failed to download zip: HTTP ${resp.status} ${resp.statusText}`);
+      throw new Error2(
+        ErrorCodes.PLUGIN_LOAD_FAILED,
+        `Failed to download zip: HTTP ${resp.status} ${resp.statusText}`,
+        { details: { url, status: resp.status } },
+      );
     }
     return Buffer.from(await resp.arrayBuffer());
   } finally {
@@ -29,7 +35,13 @@ export async function extractZip(buffer: Buffer, destDir: string): Promise<strin
   await new Promise<void>((resolve, reject) => {
     yauzlFromBuffer(buffer, { lazyEntries: true }, (openErr, zipfile) => {
       if (openErr !== null || zipfile === undefined) {
-        reject(new Error(`Failed to open zip: ${openErr?.message ?? 'unknown error'}`));
+        reject(
+          new Error2(
+            ErrorCodes.PLUGIN_LOAD_FAILED,
+            `Failed to open zip: ${openErr?.message ?? 'unknown error'}`,
+            { cause: openErr ?? undefined },
+          ),
+        );
         return;
       }
 
@@ -40,7 +52,13 @@ export async function extractZip(buffer: Buffer, destDir: string): Promise<strin
         if (destPath !== destDirResolved && !destPath.startsWith(destDirResolved + path.sep)) {
           if (!settled) {
             settled = true;
-            reject(new Error(`Path traversal detected in zip entry: ${fileName}`));
+            reject(
+              new Error2(
+                ErrorCodes.PLUGIN_LOAD_FAILED,
+                `Path traversal detected in zip entry: ${fileName}`,
+                { details: { entry: fileName } },
+              ),
+            );
           }
           zipfile.close();
           return;
@@ -66,8 +84,10 @@ export async function extractZip(buffer: Buffer, destDir: string): Promise<strin
             if (!settled) {
               settled = true;
               reject(
-                new Error(
+                new Error2(
+                  ErrorCodes.PLUGIN_LOAD_FAILED,
                   `Failed to read ${fileName} from archive: ${streamErr?.message ?? 'unknown error'}`,
+                  { cause: streamErr ?? undefined, details: { entry: fileName } },
                 ),
               );
             }

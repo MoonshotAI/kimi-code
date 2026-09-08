@@ -1,23 +1,3 @@
-/**
- * `task` domain (L5) — task config-section schema and env bindings.
- *
- * Owns the `[task]` configuration section (task limits and lifecycle tuning).
- * The legacy `[background]` section is registered with the same schema so old
- * configs continue to load while callers migrate; effective values use legacy
- * fields as the base and let `[task]` override matching fields.
- * `keepAliveOnExit` and `maxRunningTasks` also
- * accept the v1 env overrides `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` /
- * `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS`
- * (applied live by the config env overlay; while a field's env var is set,
- * `stripEnvBoundFields` restores its env-free raw value before persistence, so
- * env values never leak into `config.toml`). Also owns the
- * `kimi -p` print-mode background policy (`printBackgroundMode` /
- * `printWaitCeilingS` / `printMaxTurns`), resolved with v1 semantics by
- * `resolvePrintBackgroundMode`. Self-registered
- * at module load via `registerConfigSection`, so the `config` domain never
- * imports this domain's types.
- */
-
 import { z } from 'zod';
 
 import { parseBooleanEnv } from '#/_base/utils/env';
@@ -65,17 +45,37 @@ export function resolvePrintBackgroundMode(config: IConfigService): PrintBackgro
 
 export const KEEP_ALIVE_ON_EXIT_ENV = 'KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT';
 export const MAX_RUNNING_TASKS_ENV = 'KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS';
+export const BASH_TASK_TIMEOUT_S_ENV = 'KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S';
+export const PRINT_WAIT_CEILING_S_ENV = 'KIMI_CODE_BACKGROUND_PRINT_WAIT_CEILING_S';
+export const PRINT_BACKGROUND_MODE_ENV = 'KIMI_CODE_BACKGROUND_PRINT_BACKGROUND_MODE';
+export const PRINT_MAX_TURNS_ENV = 'KIMI_CODE_BACKGROUND_PRINT_MAX_TURNS';
 
 function parsePositiveInt(raw: string): number | undefined {
   const value = raw.trim();
   if (value.length === 0 || !/^\d+$/.test(value)) return undefined;
   const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function parseNonNegativeInt(raw: string): number | undefined {
+  const value = raw.trim();
+  if (value.length === 0 || !/^\d+$/.test(value)) return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function parsePrintBackgroundMode(raw: string): PrintBackgroundMode | undefined {
+  const parsed = PrintBackgroundModeSchema.safeParse(raw.trim());
+  return parsed.success ? parsed.data : undefined;
 }
 
 export const taskEnvBindings: EnvBindings<AgentTaskConfig> = envBindings(AgentTaskConfigSchema, {
   keepAliveOnExit: { env: KEEP_ALIVE_ON_EXIT_ENV, parse: parseBooleanEnv },
   maxRunningTasks: { env: MAX_RUNNING_TASKS_ENV, parse: parsePositiveInt },
+  bashTaskTimeoutS: { env: BASH_TASK_TIMEOUT_S_ENV, parse: parseNonNegativeInt },
+  printWaitCeilingS: { env: PRINT_WAIT_CEILING_S_ENV, parse: parsePositiveInt },
+  printBackgroundMode: { env: PRINT_BACKGROUND_MODE_ENV, parse: parsePrintBackgroundMode },
+  printMaxTurns: { env: PRINT_MAX_TURNS_ENV, parse: parsePositiveInt },
 });
 
 export const stripTaskEnv = stripEnvBoundFields(taskEnvBindings);

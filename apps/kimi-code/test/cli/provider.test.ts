@@ -18,6 +18,25 @@ import {
   type ProviderDeps,
 } from '#/cli/sub/provider';
 
+// Spy on the SDK harness factory so the default-deps construction can be
+// asserted without booting a real engine. The real implementations stay in
+// place for everything else the handlers use.
+const harnessRouting = vi.hoisted(() => ({
+  kimiHarnessConstructor: vi.fn(),
+  harness: undefined as unknown,
+}));
+
+vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@moonshot-ai/kimi-code-sdk')>();
+  return {
+    ...actual,
+    createKimiHarness: (...args: unknown[]) => {
+      harnessRouting.kimiHarnessConstructor(...args);
+      return harnessRouting.harness;
+    },
+  };
+});
+
 class ExitCalled extends Error {
   constructor(public readonly code: number) {
     super(`exit(${code})`);
@@ -29,6 +48,7 @@ interface FakeHarness {
   getConfig: () => Promise<KimiConfig>;
   setConfig: (patch: Partial<KimiConfig>) => Promise<KimiConfig>;
   removeProvider: (providerId: string) => Promise<KimiConfig>;
+  close: () => Promise<void>;
 }
 
 function makeHarness(initial: KimiConfig): {
@@ -38,8 +58,7 @@ function makeHarness(initial: KimiConfig): {
   removeCalls: string[];
 } {
   // `persisted` simulates the on-disk config; the real RPC's `removeProvider`
-  // reads from / writes to disk on every call (see
-  // `packages/agent-core/src/rpc/core-impl.ts removeKimiProvider`). Tests must
+  // reads from / writes to disk on every call. Tests must
   // model this: anything the handler builds up in its in-memory `config`
   // object disappears unless it is flushed via `setConfig` BEFORE the next
   // `removeProvider`.
@@ -52,7 +71,7 @@ function makeHarness(initial: KimiConfig): {
     setConfig: async (patch) => {
       setConfigCalls.push(structuredClone(patch));
       // Mirror the real `setKimiConfig`: deep-merge with undefined keys
-      // skipped (see `agent-core/src/config/merge.ts deepMerge`). This is
+      // skipped. This is
       // load-bearing for tests that assert `setConfig({defaultModel:
       // undefined})` does NOT wipe a key from disk — only `removeProvider`
       // can.
@@ -80,6 +99,7 @@ function makeHarness(initial: KimiConfig): {
       if (removedDefault) persisted = { ...persisted, defaultModel: undefined };
       return structuredClone(persisted);
     },
+    close: async () => {},
   };
   return {
     harness,
@@ -1091,5 +1111,36 @@ describe('kimi provider catalog add', () => {
       type: 'openai',
       baseUrl: 'https://res.example.test/openai/v1',
     });
+  });
+});
+
+describe('kimi provider engine routing', () => {
+  beforeEach(() => {
+    harnessRouting.kimiHarnessConstructor.mockClear();
+    harnessRouting.harness = makeHarness({ providers: {} } as KimiConfig).harness;
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  function registerWithDefaultHarness(program: Command): void {
+    registerProviderCommand(program, {
+      stdout: { write: () => true },
+      stderr: { write: () => true },
+      env: {},
+      exit: ((code: number) => {
+        throw new ExitCalled(code);
+      }) as ProviderDeps['exit'],
+    });
+  }
+
+  it('builds the harness through the SDK factory', async () => {
+    const program = new Command('kimi');
+    registerWithDefaultHarness(program);
+
+    await program.parseAsync(['node', 'kimi', 'provider', 'list'], { from: 'node' });
+
+    expect(harnessRouting.kimiHarnessConstructor).toHaveBeenCalledTimes(1);
   });
 });
