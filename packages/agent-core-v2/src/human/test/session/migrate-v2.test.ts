@@ -236,7 +236,7 @@ describe('migrateV2Session', () => {
     if (second?.message.role === 'assistant') {
       expect(second.meta.finish).toEqual({ finishReason: 'completed', rawFinishReason: null });
     }
-    expect(agent.turnId).toBe(0);
+    expect(agent.turnId).toBe(1);
     expect(loaded.meta).toMatchObject({
       id: 'session_basic',
       version: 2,

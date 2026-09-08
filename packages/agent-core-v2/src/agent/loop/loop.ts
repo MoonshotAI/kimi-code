@@ -83,7 +83,7 @@ export type LoopRunResult =
 export type TurnResult = LoopRunResult;
 
 export interface Turn {
-  readonly id: number;
+  readonly id?: number;
   readonly state?: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
   readonly signal: AbortSignal;
   readonly ready: Promise<void>;
@@ -94,7 +94,7 @@ export interface Turn {
 export interface AgentLoopStatus {
   readonly state: 'idle' | 'running';
   readonly activeTurnId?: number;
-  readonly pendingTurnIds: readonly number[];
+  readonly pendingPromptIds: readonly string[];
   readonly hasPendingRequests: boolean;
   readonly activeTraceId?: string;
 }
@@ -129,6 +129,8 @@ export interface IAgentLoopService {
   notify(note?: LoopNotify): LoopNotifyHandle;
 
   cancel(turnId?: number, reason?: unknown): boolean;
+
+  cancelQueued(queueId: string, reason?: unknown): boolean;
 
   cancelFromUser(turnId?: number): void;
 

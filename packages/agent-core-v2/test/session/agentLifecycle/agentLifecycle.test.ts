@@ -203,8 +203,9 @@ describe('AgentLifecycleService', () => {
   let permissionModeSetMode: ReturnType<typeof vi.fn>;
   let stopAllOnExit: ReturnType<typeof vi.fn>;
   let loopActiveTurnId: number | undefined;
-  let loopPendingTurnIds: number[];
+  let loopPendingPromptIds: string[];
   let loopCancel: ReturnType<typeof vi.fn<IAgentLoopService['cancel']>>;
+  let loopCancelQueued: ReturnType<typeof vi.fn<IAgentLoopService['cancelQueued']>>;
   let loopSettled: ReturnType<typeof vi.fn<IAgentLoopService['settled']>>;
   let promptDrain: ReturnType<typeof vi.fn<IAgentPromptService['drain']>>;
   let beforeExecuteListeners: number;
@@ -330,17 +331,19 @@ describe('AgentLifecycleService', () => {
       },
     } as unknown as IAgentToolExecutorService);
     loopActiveTurnId = undefined;
-    loopPendingTurnIds = [];
+    loopPendingPromptIds = [];
     loopCancel = vi.fn<IAgentLoopService['cancel']>((turnId) => {
       if (turnId === undefined) {
         loopActiveTurnId = undefined;
-      } else {
-        loopPendingTurnIds = loopPendingTurnIds.filter((id) => id !== turnId);
       }
       return true;
     });
+    loopCancelQueued = vi.fn<IAgentLoopService['cancelQueued']>((queueId) => {
+      loopPendingPromptIds = loopPendingPromptIds.filter((id) => id !== queueId);
+      return true;
+    });
     loopSettled = vi.fn<IAgentLoopService['settled']>(async () => {
-      if (loopActiveTurnId !== undefined || loopPendingTurnIds.length > 0) {
+      if (loopActiveTurnId !== undefined || loopPendingPromptIds.length > 0) {
         throw new Error('Agent loop did not settle');
       }
     });
@@ -354,10 +357,11 @@ describe('AgentLifecycleService', () => {
       status: () => ({
         state: loopActiveTurnId === undefined ? 'idle' : 'running',
         activeTurnId: loopActiveTurnId,
-        pendingTurnIds: loopPendingTurnIds,
-        hasPendingRequests: loopActiveTurnId !== undefined || loopPendingTurnIds.length > 0,
+        pendingPromptIds: loopPendingPromptIds,
+        hasPendingRequests: loopActiveTurnId !== undefined || loopPendingPromptIds.length > 0,
       }),
       cancel: loopCancel,
+      cancelQueued: loopCancelQueued,
       settled: loopSettled,
       tryAcquireQuiescence: vi.fn(() => ({ dispose: vi.fn() })),
     } as unknown as IAgentLoopService);
@@ -744,13 +748,14 @@ describe('AgentLifecycleService', () => {
 
   it('remove cancels queued turns before waiting for the active turn to settle', async () => {
     loopActiveTurnId = 1;
-    loopPendingTurnIds = [2, 3];
+    loopPendingPromptIds = ['q2', 'q3'];
     const svc = ix.get(IAgentLifecycleService);
     const main = await svc.create({ agentId: 'main' });
 
     await svc.remove(main);
 
-    expect(loopCancel.mock.calls.map(([turnId]) => turnId)).toEqual([2, 3, undefined]);
+    expect(loopCancelQueued.mock.calls.map(([queueId]) => queueId)).toEqual(['q2', 'q3']);
+    expect(loopCancel.mock.calls.map(([turnId]) => turnId)).toEqual([undefined]);
     expect(loopSettled).toHaveBeenCalledOnce();
   });
 

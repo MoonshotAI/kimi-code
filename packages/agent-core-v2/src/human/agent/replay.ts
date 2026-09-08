@@ -30,7 +30,7 @@ export async function loadAgentState(tree: Tree, branch: string): Promise<Loaded
       messages.push(data as HistoryMessage);
     } else if (entry.type === 'turn') {
       const turn = data as TurnEntryData;
-      if (turn.phase === 'start') turnId = Math.max(turnId, turn.turnId);
+      if (turn.phase === 'start') turnId = Math.max(turnId, turn.turnId + 1);
     } else if (entry.type === 'state') {
       const state = data as StateEntryData;
       states[state.name] = state.value;

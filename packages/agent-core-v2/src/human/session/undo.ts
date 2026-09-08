@@ -109,7 +109,7 @@ export async function undoAgentTurns(
   session.send({
     type: 'agent.switch',
     agentId,
-    input: { branchId, history: loaded.messages, turnId: loaded.turnId, reason: 'undo' },
+    input: { branchId, history: loaded.messages, reason: 'undo' },
   });
   if (entry.ref.getSnapshot().context.branchId !== branchId) {
     throw new UndoError('busy', `agent is busy: '${agentId}'`);

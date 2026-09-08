@@ -194,6 +194,7 @@ export type TurnLlmEvent =
   | { type: 'llm.done'; entry: AssistantEntry };
 
 export type TurnSignal =
+  | { type: 'step.started'; step: number }
   | { type: 'turn.spawn_tools'; toolCalls: ToolCall[] }
   | { type: 'turn.drain' }
   | { type: 'turn.reminders_consumed'; reminders: HistoryMessage[] };
@@ -212,6 +213,7 @@ export interface TurnMachineContext {
   pendingToolCalls: ToolCall[];
   outcomes: Record<string, ToolOutput>;
   steps: number;
+  step: number;
   attempt: number;
   delayMs: number;
   appliedRecoveries: LlmRecoveryRecord[];
@@ -414,6 +416,7 @@ export function createTurnMachine(
         pendingToolCalls: [],
         outcomes: {},
         steps: 1,
+        step: 0,
         attempt: 1,
         delayMs: 0,
         appliedRecoveries: [],
@@ -421,14 +424,21 @@ export function createTurnMachine(
     },
     states: {
       thinking: {
-        entry: assign({
-          accumulator: ({ context }) =>
-            createHistoryAccumulator(modelMeta(context.input.request.model), context.toolCallIds),
-          llmScope: ({ context }) =>
-            context.input.parentSignal !== undefined
-              ? withAbort(context.input.parentSignal)
-              : createAbortScope(),
-        }),
+        entry: [
+          assign({
+            accumulator: ({ context }) =>
+              createHistoryAccumulator(modelMeta(context.input.request.model), context.toolCallIds),
+            llmScope: ({ context }) =>
+              context.input.parentSignal !== undefined
+                ? withAbort(context.input.parentSignal)
+                : createAbortScope(),
+            step: ({ context }) => context.step + 1,
+          }),
+          {
+            type: 'signalParent',
+            params: ({ context }) => ({ type: 'step.started' as const, step: context.step }),
+          },
+        ],
         invoke: {
           src: 'llmActor',
           input: ({ context }) => {

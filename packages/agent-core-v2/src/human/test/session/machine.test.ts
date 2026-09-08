@@ -272,14 +272,14 @@ describe('session machine agent switch', () => {
     session.send({
       type: 'agent.switch',
       agentId: 'main',
-      input: { branchId: 'main~2', history: [], turnId: 0, reason: 'undo' },
+      input: { branchId: 'main~2', history: [], reason: 'undo' },
     });
 
     expect(switched).toEqual([{ agentId: 'main', branchId: 'main~2', reason: 'undo' }]);
     const snapshot = agentRef(session, 'main').getSnapshot();
     expect(snapshot.context.branchId).toBe('main~2');
     expect(snapshot.context.messages).toEqual([]);
-    expect(snapshot.context.turnId).toBe(0);
+    expect(snapshot.context.turnId).toBe(1);
   });
 
   it('emits agent.failed when switching an unknown or busy agent', async () => {
@@ -302,7 +302,7 @@ describe('session machine agent switch', () => {
     session.send({
       type: 'agent.switch',
       agentId: 'nope',
-      input: { branchId: 'x', history: [], turnId: 0 },
+      input: { branchId: 'x', history: [] },
     });
 
     submit(session, 'main', 'hi');
@@ -310,7 +310,7 @@ describe('session machine agent switch', () => {
     session.send({
       type: 'agent.switch',
       agentId: 'main',
-      input: { branchId: 'main~2', history: [], turnId: 0 },
+      input: { branchId: 'main~2', history: [] },
     });
 
     expect(errors).toEqual([`unknown agent: 'nope'`, `agent is busy: 'main'`]);

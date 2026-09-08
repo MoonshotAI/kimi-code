@@ -24,7 +24,7 @@ export type SessionEvent =
   | {
       type: 'agent.switch';
       agentId: string;
-      input: { branchId: string; history: readonly HistoryMessage[]; turnId: number; reason?: string };
+      input: { branchId: string; history: readonly HistoryMessage[]; reason?: string };
     }
   | { type: 'agent.send'; agentId: string; event: AgentEvent }
   | { type: 'agent.stop'; agentId: string };
@@ -211,7 +211,6 @@ export function createSessionMachine({ agent }: CreateSessionMachineOptions) {
                   ({ event }) => ({
                     type: 'context.reset' as const,
                     history: event.input.history,
-                    turnId: event.input.turnId,
                     branchId: event.input.branchId,
                   }),
                 ),

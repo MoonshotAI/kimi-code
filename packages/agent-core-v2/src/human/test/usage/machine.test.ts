@@ -132,7 +132,7 @@ describe('usage plugin', () => {
 
     const { records, summary } = plugin.actor.getSnapshot().context;
     expect(records).toHaveLength(2);
-    expect(records.map((r) => r.turnId)).toEqual([1, 2]);
+    expect(records.map((r) => r.turnId)).toEqual([0, 1]);
     expect(records.map((r) => r.model)).toEqual([model, model]);
     expect(summary.total).toEqual({
       inputOther: 20,
@@ -141,13 +141,13 @@ describe('usage plugin', () => {
       inputCacheCreation: 0,
     });
     expect(summary.byModel['test-model']).toEqual(summary.total);
-    expect(summary.byTurn[1]).toEqual({
+    expect(summary.byTurn[0]).toEqual({
       inputOther: 10,
       output: 2,
       inputCacheRead: 0,
       inputCacheCreation: 0,
     });
-    expect(summary.byTurn[2]).toEqual(summary.byTurn[1]);
+    expect(summary.byTurn[1]).toEqual(summary.byTurn[0]);
 
     expect(timingPlugin.timing()).toEqual({
       requestBuildMs: 100,

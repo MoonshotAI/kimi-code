@@ -76,7 +76,7 @@ describe('Agent loop', () => {
       [wire] prompt.accepted             { "agentId": "main", "promptId": "<msg-1>", "content": [ { "type": "text", "text": "Hello" } ], "time": "<time>" }
       [emit] prompt.accepted             { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "content": [ { "type": "text", "text": "Hello" } ] }
       [emit] prompt.submitted            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Hello" } ], "createdAt": "<time>" }
-      [wire] turn.prompt                 { "agentId": "main", "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "time": "<time>" }
+      [wire] turn.prompt                 { "agentId": "main", "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "time": "<time>" }
       [emit] turn.started                { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "prompt": "Hello" }
       [emit] agent.activity.updated      { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
       [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" } ] }
@@ -140,7 +140,7 @@ describe('Agent loop', () => {
       [wire] prompt.accepted             { "agentId": "main", "promptId": "<msg-1>", "content": [ { "type": "text", "text": "Hello" } ], "time": "<time>" }
       [emit] prompt.accepted             { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "content": [ { "type": "text", "text": "Hello" } ] }
       [emit] prompt.submitted            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Hello" } ], "createdAt": "<time>" }
-      [wire] turn.prompt                 { "agentId": "main", "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "time": "<time>" }
+      [wire] turn.prompt                 { "agentId": "main", "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "time": "<time>" }
       [emit] turn.started                { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "prompt": "Hello" }
       [emit] agent.activity.updated      { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
       [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" } ] }
@@ -447,7 +447,7 @@ describe('Agent loop', () => {
       [wire] prompt.accepted                 { "agentId": "main", "promptId": "<msg-1>", "content": [ { "type": "text", "text": "Look up moon" } ], "time": "<time>" }
       [emit] prompt.accepted                 { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "content": [ { "type": "text", "text": "Look up moon" } ] }
       [emit] prompt.submitted                { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Look up moon" } ], "createdAt": "<time>" }
-      [wire] turn.prompt                     { "agentId": "main", "input": [ { "type": "text", "text": "Look up moon" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "time": "<time>" }
+      [wire] turn.prompt                     { "agentId": "main", "input": [ { "type": "text", "text": "Look up moon" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "time": "<time>" }
       [emit] turn.started                    { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "prompt": "Look up moon" }
       [emit] agent.activity.updated          { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
       [emit] context.spliced                 { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" } ] }
@@ -833,10 +833,10 @@ describe('Agent loop', () => {
     expect(events).toEqual([
       'turn.started:0',
       'turn.ended:0',
-      'turn.started:1',
-      'turn.ended:1',
       'turn.started:2',
       'turn.ended:2',
+      'turn.started:3',
+      'turn.ended:3',
     ]);
     expect(ctx.llmCalls).toHaveLength(4);
   });
@@ -990,7 +990,7 @@ describe('Agent loop', () => {
     await Promise.all([first.result, third.result]);
     subscription.dispose();
 
-    expect(started).toEqual([0, 2]);
+    expect(started).toEqual([0, 1]);
     expect(ctx.contextData().history).not.toContainEqual(
       expect.objectContaining({ content: [{ type: 'text', text: 'cancelled' }] }),
     );
@@ -1620,7 +1620,7 @@ describe('interruption reminder', () => {
 
     const active = submitTurn(loop, 'active').turn;
     const queued = submitTurn(loop, 'queued').turn;
-    expect(loop.cancel(queued.id)).toBe(true);
+    expect(queued.cancel()).toBe(true);
     await expect(queued.result).resolves.toMatchObject({ type: 'cancelled', steps: 0 });
     await entered;
     release();
@@ -1628,13 +1628,6 @@ describe('interruption reminder', () => {
     await expect(active.result).resolves.toMatchObject({ type: 'cancelled' });
 
     expect(interruptionReminders()).toHaveLength(1);
-    const queuedCancel = ctx.allEvents.find(
-      (entry) =>
-        entry.type === '[wire]' &&
-        entry.event === 'turn.cancel' &&
-        (entry.args as { target?: string }).target === 'queued',
-    );
-    expect(queuedCancel?.args).toMatchObject({ target: 'queued', reason: 'user_cancelled' });
 
     ctx.mockNextResponse({ type: 'text', text: 'second answer' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Next' }] });

@@ -2086,11 +2086,12 @@ describe('foldWireRecordFacts (cold facts)', () => {
     ]);
     const folded = foldWireRecordFacts(
       [
-        { type: 'turn.prompt', input: [{ type: 'text', text: 'run' }], origin: { kind: 'user' }, promptId: 'prompt-live', time: 1 },
-        { type: 'turn.ended', turnId: 0, reason: 'failed', error: { message: 'later failure' }, time: 2 },
+        { type: 'turn.prompt', turnId: 2, input: [{ type: 'text', text: 'run' }], origin: { kind: 'user' }, promptId: 'prompt-live', time: 1 },
+        { type: 'turn.ended', turnId: 2, reason: 'failed', error: { message: 'later failure' }, time: 2 },
       ],
       base,
     );
+    expect(folded.items).toHaveLength(2);
     const blocked = folded.items[0];
     const live = folded.items[1];
     if (blocked?.kind !== 'turn' || live?.kind !== 'turn') throw new Error('expected turns');

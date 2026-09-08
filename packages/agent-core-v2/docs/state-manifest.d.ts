@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 81 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 80 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -76,7 +76,6 @@
 //     llmRequester.turnConfigs                        src/agent/llmRequester/llmRequesterService.ts
 //     loop.disposing                                  src/agent/loop/loopService.ts
 //     loop.lastRequestTraceId                         src/agent/loop/loopService.ts
-//     loop.nextReservedTurnId                         src/agent/loop/loopService.ts
 //     mcp.discovery                                   src/agent/mcp/mcpDiscoveryOps.ts
 //     mcp.discoveryWritesReady                        src/agent/mcp/mcpService.ts
 //     mcp.mcpToolsByServer                            src/agent/mcp/mcpService.ts
@@ -1313,7 +1312,6 @@ export interface AgentStateSnapshot {
   // src/agent/loop/loopService.ts
   'loop.disposing': boolean;
   'loop.lastRequestTraceId': string | undefined;
-  'loop.nextReservedTurnId': number | undefined;
   // src/agent/loop/turnOps.ts
   // replayable · durable — folds: ContextAppendLoopEvent, TurnPrompt, TurnSteer, ContextUndo, ContextApplyCompaction, ContextClear, TurnCancel, TurnEnded
   'turn': /* TurnModelState — packages/agent-core-v2/src/agent/loop/turnOps.ts */ {

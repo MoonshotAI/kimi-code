@@ -123,10 +123,10 @@ describe('persistAgent', () => {
       message: { role: 'user' },
       meta: { source: 'input' },
     });
-    expect(turnData(entries[1] as EntryLine)).toEqual({ phase: 'start', turnId: 1 });
+    expect(turnData(entries[1] as EntryLine)).toEqual({ phase: 'start', turnId: 0 });
     expect(turnData(entries[5] as EntryLine)).toEqual({
       phase: 'end',
-      turnId: 1,
+      turnId: 0,
       outcome: 'done',
     });
     handle.dispose();
@@ -177,8 +177,8 @@ describe('persistAgent', () => {
       .map((entry) => turnData(entry))
       .filter((data) => data.phase === 'start');
     expect(starts).toEqual([
+      { phase: 'start', turnId: 0 },
       { phase: 'start', turnId: 1 },
-      { phase: 'start', turnId: 2 },
     ]);
   });
 

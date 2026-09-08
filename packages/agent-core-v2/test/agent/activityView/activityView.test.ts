@@ -79,7 +79,7 @@ function harness(
 ) {
   const bus = new FakeBus();
   const loop = {
-    status: () => ({ state: 'idle', pendingTurnIds: [], hasPendingRequests: false }),
+    status: () => ({ state: 'idle', pendingPromptIds: [], hasPendingRequests: false }),
   } as unknown as IAgentLoopService;
   const tasks = { list: () => seedTasks } as unknown as IAgentTaskService;
   const restoreHooks: Array<() => Promise<void>> = [];
