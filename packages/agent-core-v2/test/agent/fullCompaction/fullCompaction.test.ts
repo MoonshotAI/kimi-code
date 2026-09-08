@@ -3638,25 +3638,25 @@ function realKosongGenerate(
       const emit = control.onEvent;
       emit?.({ type: 'llm.sent' });
       emit?.({
-        type: 'llm.headers',
+        type: 'llm.streaming.headers',
         headers: streamed.traceId === null ? {} : { 'x-trace-id': streamed.traceId },
       });
       for await (const part of streamed) {
-        emit?.({ type: 'llm.delta', part });
+        emit?.({ type: 'llm.streaming.part', part });
         control.signal.throwIfAborted();
       }
       if (streamed.usage !== null) {
-        emit?.({ type: 'llm.usage', usage: streamed.usage });
+        emit?.({ type: 'llm.streaming.usage', usage: streamed.usage });
       }
       emit?.({
-        type: 'llm.finish',
+        type: 'llm.streaming.finish',
         finish: {
           finishReason: streamed.finishReason,
           rawFinishReason: streamed.rawFinishReason,
         },
       });
       if (streamed.id !== null) {
-        emit?.({ type: 'llm.message-id', messageId: streamed.id });
+        emit?.({ type: 'llm.streaming.message_id', messageId: streamed.id });
       }
       emit?.({ type: 'llm.done' });
     },

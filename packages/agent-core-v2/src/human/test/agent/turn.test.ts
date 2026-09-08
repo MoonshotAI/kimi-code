@@ -43,7 +43,7 @@ function createStubRequester(
       const step = plan[Math.min(calls, plan.length - 1)];
       calls += 1;
       if (step === 'ok') {
-        onEvent?.({ type: 'llm.delta', part: { type: 'text', text: 'done' } });
+        onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'done' } });
         onEvent?.({ type: 'llm.done' });
         return Promise.resolve();
       }
@@ -52,13 +52,13 @@ function createStubRequester(
         return Promise.resolve();
       }
       if (step === 'think_only') {
-        onEvent?.({ type: 'llm.delta', part: { type: 'think', think: 'reasoning' } });
+        onEvent?.({ type: 'llm.streaming.part', part: { type: 'think', think: 'reasoning' } });
         onEvent?.({ type: 'llm.done' });
         return Promise.resolve();
       }
       if (step === 'filtered_empty') {
         onEvent?.({
-          type: 'llm.finish',
+          type: 'llm.streaming.finish',
           finish: { finishReason: 'filtered', rawFinishReason: 'content_filter' },
         });
         onEvent?.({ type: 'llm.done' });
@@ -422,7 +422,7 @@ function createCapturingRequester(plan: readonly (LlmErrorMessage | 'ok')[]) {
       calls += 1;
       control.onEvent?.({ type: 'llm.sent' });
       if (step === 'ok') {
-        control.onEvent?.({ type: 'llm.delta', part: { type: 'text', text: 'done' } });
+        control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'done' } });
         control.onEvent?.({ type: 'llm.done' });
         return Promise.resolve();
       }

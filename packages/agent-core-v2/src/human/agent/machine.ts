@@ -35,20 +35,20 @@ export type AgentEvent =
   | ToolEvent
   | { type: 'input.submit'; id?: string; message: UserMessage }
   | { type: 'input.notify'; message: UserMessage }
-  | { type: 'input.reminder'; key: string; message: UserMessage | SystemMessage }
+  | { type: 'input.remind'; key: string; message: UserMessage | SystemMessage }
   | { type: 'input.steer'; id: string }
   | { type: 'input.abort' }
-  | { type: 'turn.spawnTools'; toolCalls: ToolCall[] }
+  | { type: 'turn.spawn_tools'; toolCalls: ToolCall[] }
   | { type: 'turn.drain' }
-  | { type: 'turn.remindersConsumed'; reminders: HistoryMessage[] }
+  | { type: 'turn.reminders_consumed'; reminders: HistoryMessage[] }
   | { type: 'context.reset'; history: readonly HistoryMessage[]; turnId: number; branchId?: string };
 
 export type AgentEmitted =
   | TurnLlmEvent
   | ToolEvent
-  | { type: 'turn.start'; turnId: number; branchId: string }
+  | { type: 'turn.started'; turnId: number; branchId: string }
   | { type: 'turn.aborting' }
-  | { type: 'turn.remindersConsumed'; reminders: HistoryMessage[] }
+  | { type: 'turn.reminders_consumed'; reminders: HistoryMessage[] }
   | { type: 'turn.done'; messages: HistoryMessage[]; branchId: string }
   | {
       type: 'turn.failed';
@@ -253,7 +253,7 @@ export function createAgentMachine({
         self._parent?.send(event);
       },
       spawnTurnTools: assign(({ context, spawn, self, event }) => {
-        if (event.type !== 'turn.spawnTools') {
+        if (event.type !== 'turn.spawn_tools') {
           return {};
         }
         const waitForTasks = createWaitForTasks(self);
@@ -272,7 +272,7 @@ export function createAgentMachine({
         return { turnTools };
       }),
       abortSpawnedTools: enqueueActions(({ context, event, enqueue }) => {
-        if (event.type !== 'turn.spawnTools') {
+        if (event.type !== 'turn.spawn_tools') {
           return;
         }
         for (const toolCall of event.toolCalls) {
@@ -336,7 +336,7 @@ export function createAgentMachine({
           ],
         }),
       },
-      'input.reminder': {
+      'input.remind': {
         actions: assign({
           reminders: ({ context, event }) => [
             ...context.reminders.filter((entry) => entry.meta.key !== event.key),
@@ -430,7 +430,7 @@ export function createAgentMachine({
         },
         entry: [
           assign({ turnId: ({ context }) => context.turnId + 1 }),
-          emit(({ context }) => ({ type: 'turn.start' as const, turnId: context.turnId, branchId: context.branchId })),
+          emit(({ context }) => ({ type: 'turn.started' as const, turnId: context.turnId, branchId: context.branchId })),
         ],
         exit: assign({ turnTools: {} }),
         initial: 'active',
@@ -438,13 +438,13 @@ export function createAgentMachine({
           'turn.drain': {
             actions: [
               sendTo('turn', ({ context }) => ({
-                type: 'turn.notifications' as const,
+                type: 'turn.notify' as const,
                 messages: [...context.notifications, ...context.reminders],
               })),
               assign({ notifications: [], reminders: [] }),
             ],
           },
-          'tool.async': {
+          'tool.detached': {
             guard: ({ context, event }) => context.turnTools[event.toolCallId] !== undefined,
             actions: [
               assign(({ context, event }) => {
@@ -494,10 +494,7 @@ export function createAgentMachine({
           'llm.sent': {
             actions: [emit(({ event }) => event), 'forwardToParent'],
           },
-          'llm.delta': {
-            actions: [emit(({ event }) => event), 'forwardToParent'],
-          },
-          'llm.headers': {
+          'llm.streaming.*': {
             actions: [emit(({ event }) => event), 'forwardToParent'],
           },
           'llm.done': {
@@ -515,23 +512,14 @@ export function createAgentMachine({
           'llm.recovering': {
             actions: [emit(({ event }) => event), 'forwardToParent'],
           },
-          'llm.usage': {
-            actions: [emit(({ event }) => event), 'forwardToParent'],
-          },
-          'llm.finish': {
-            actions: [emit(({ event }) => event), 'forwardToParent'],
-          },
-          'llm.message-id': {
-            actions: [emit(({ event }) => event), 'forwardToParent'],
-          },
-          'turn.remindersConsumed': {
+          'turn.reminders_consumed': {
             actions: [emit(({ event }) => event), 'forwardToParent'],
           },
         },
         states: {
           active: {
             on: {
-              'turn.spawnTools': {
+              'turn.spawn_tools': {
                 actions: 'spawnTurnTools',
               },
               'input.abort': {
@@ -549,7 +537,7 @@ export function createAgentMachine({
               abortTimeout: { actions: ['abortTurn', 'stopTurnTools'] },
             },
             on: {
-              'turn.spawnTools': {
+              'turn.spawn_tools': {
                 actions: ['spawnTurnTools', 'abortSpawnedTools'],
               },
               'input.abort': {

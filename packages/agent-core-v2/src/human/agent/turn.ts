@@ -178,7 +178,7 @@ export interface TurnInput {
 }
 
 export type TurnToolEvent =
-  | { type: 'tool.async'; toolCallId: string; text: string }
+  | { type: 'tool.detached'; toolCallId: string; text: string }
   | { type: 'tool.done'; toolCallId: string; result: ToolResult }
   | { type: 'tool.failed'; toolCallId: string; error: unknown }
   | { type: 'tool.aborted'; toolCallId: string };
@@ -186,7 +186,7 @@ export type TurnToolEvent =
 export type TurnEvent =
   | LlmEvent
   | TurnToolEvent
-  | { type: 'turn.notifications'; messages: HistoryMessage[] }
+  | { type: 'turn.notify'; messages: HistoryMessage[] }
   | { type: 'turn.abort' };
 
 export type TurnLlmEvent =
@@ -194,9 +194,9 @@ export type TurnLlmEvent =
   | { type: 'llm.done'; entry: AssistantEntry };
 
 export type TurnSignal =
-  | { type: 'turn.spawnTools'; toolCalls: ToolCall[] }
+  | { type: 'turn.spawn_tools'; toolCalls: ToolCall[] }
   | { type: 'turn.drain' }
-  | { type: 'turn.remindersConsumed'; reminders: HistoryMessage[] };
+  | { type: 'turn.reminders_consumed'; reminders: HistoryMessage[] };
 
 export type TurnOutput =
   | { type: 'done'; produced: HistoryMessage[] }
@@ -372,10 +372,10 @@ export function createTurnMachine(
         self._parent?.send(params);
       },
       signalRemindersConsumed: ({ self, event }) => {
-        if (event.type !== 'turn.notifications') return;
+        if (event.type !== 'turn.notify') return;
         const reminders = event.messages.filter((entry) => entry.meta.source === 'reminder');
         if (reminders.length === 0) return;
-        self._parent?.send({ type: 'turn.remindersConsumed', reminders });
+        self._parent?.send({ type: 'turn.reminders_consumed', reminders });
       },
       sendToParent: ({ self }, params: TurnLlmEvent) => {
         self._parent?.send(params);
@@ -472,7 +472,7 @@ export function createTurnMachine(
               },
             ],
           },
-          'llm.headers': {
+          'llm.streaming.headers': {
             actions: [
               'forwardToParent',
               ({ context, event }) => {
@@ -480,7 +480,7 @@ export function createTurnMachine(
               },
             ],
           },
-          'llm.delta': {
+          'llm.streaming.part': {
             actions: [
               ({ context, event, self }) => {
                 const part = context.accumulator.push(event.part);
@@ -488,7 +488,7 @@ export function createTurnMachine(
               },
             ],
           },
-          'llm.usage': {
+          'llm.streaming.usage': {
             actions: [
               'forwardToParent',
               ({ context, event }) => {
@@ -496,7 +496,7 @@ export function createTurnMachine(
               },
             ],
           },
-          'llm.finish': {
+          'llm.streaming.finish': {
             actions: [
               'forwardToParent',
               ({ context, event }) => {
@@ -504,7 +504,7 @@ export function createTurnMachine(
               },
             ],
           },
-          'llm.message-id': {
+          'llm.streaming.message_id': {
             actions: [
               'forwardToParent',
               ({ context, event }) => {
@@ -669,7 +669,7 @@ export function createTurnMachine(
         entry: {
           type: 'signalParent',
           params: ({ context }) => ({
-            type: 'turn.spawnTools' as const,
+            type: 'turn.spawn_tools' as const,
             toolCalls: context.pendingToolCalls,
           }),
         },
@@ -694,7 +694,7 @@ export function createTurnMachine(
           },
         ],
         on: {
-          'tool.async': {
+          'tool.detached': {
             guard: ({ context, event }) => context.outcomes[event.toolCallId] === undefined,
             actions: assign(({ context, event }) => {
               const toolCall = context.pendingToolCalls.find(
@@ -767,7 +767,7 @@ export function createTurnMachine(
           params: { type: 'turn.drain' },
         },
         on: {
-          'turn.notifications': [
+          'turn.notify': [
             {
               guard: ({ context, event }) =>
                 event.messages.length === 0 && maxStepsExceeded(context),

@@ -61,7 +61,7 @@ async function generateAndCollectUsage(
     {
       signal: new AbortController().signal,
       onEvent: (event) => {
-        if (event.type === 'llm.usage') {
+        if (event.type === 'llm.streaming.usage') {
           usage = event.usage;
         }
       },
@@ -266,8 +266,8 @@ describe('defaultHeaders', () => {
       {
         signal: new AbortController().signal,
         onEvent: (event) => {
-          if (event.type === 'llm.finish') finish = event.finish;
-          if (event.type === 'llm.message-id') messageId = event.messageId;
+          if (event.type === 'llm.streaming.finish') finish = event.finish;
+          if (event.type === 'llm.streaming.message_id') messageId = event.messageId;
         },
       },
     );
@@ -872,9 +872,9 @@ describe('extractUsage', () => {
       {
         signal: new AbortController().signal,
         onEvent: (event) => {
-          if (event.type === 'llm.usage') usage = event.usage;
-          if (event.type === 'llm.finish') finish = event.finish;
-          if (event.type === 'llm.message-id') messageId = event.messageId;
+          if (event.type === 'llm.streaming.usage') usage = event.usage;
+          if (event.type === 'llm.streaming.finish') finish = event.finish;
+          if (event.type === 'llm.streaming.message_id') messageId = event.messageId;
         },
       },
     );
@@ -1279,7 +1279,7 @@ describe('anthropic thinking kwargs', () => {
       {
         signal: new AbortController().signal,
         onEvent: (event) => {
-          if (event.type === 'llm.delta') parts.push(event.part);
+          if (event.type === 'llm.streaming.part') parts.push(event.part);
         },
       },
     );
@@ -1582,10 +1582,10 @@ describe('openai responses base', () => {
       {
         signal: new AbortController().signal,
         onEvent: (event) => {
-          if (event.type === 'llm.delta') parts.push(event.part);
-          if (event.type === 'llm.usage') usage = event.usage;
-          if (event.type === 'llm.finish') finish = event.finish;
-          if (event.type === 'llm.message-id') messageId = event.messageId;
+          if (event.type === 'llm.streaming.part') parts.push(event.part);
+          if (event.type === 'llm.streaming.usage') usage = event.usage;
+          if (event.type === 'llm.streaming.finish') finish = event.finish;
+          if (event.type === 'llm.streaming.message_id') messageId = event.messageId;
         },
       },
     );
@@ -1723,10 +1723,10 @@ describe('google genai base', () => {
       {
         signal: new AbortController().signal,
         onEvent: (event) => {
-          if (event.type === 'llm.delta') parts.push(event.part);
-          if (event.type === 'llm.usage') usage = event.usage;
-          if (event.type === 'llm.finish') finish = event.finish;
-          if (event.type === 'llm.message-id') messageId = event.messageId;
+          if (event.type === 'llm.streaming.part') parts.push(event.part);
+          if (event.type === 'llm.streaming.usage') usage = event.usage;
+          if (event.type === 'llm.streaming.finish') finish = event.finish;
+          if (event.type === 'llm.streaming.message_id') messageId = event.messageId;
         },
       },
     );

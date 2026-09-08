@@ -48,11 +48,11 @@ function streamMessage(
   onEvent: ((event: LlmRequestEvent) => void) | undefined,
 ): void {
   for (const part of [...message.content, ...message.toolCalls]) {
-    onEvent?.({ type: 'llm.delta', part });
+    onEvent?.({ type: 'llm.streaming.part', part });
   }
-  onEvent?.({ type: 'llm.message-id', messageId: 'msg-stub' });
+  onEvent?.({ type: 'llm.streaming.message_id', messageId: 'msg-stub' });
   onEvent?.({
-    type: 'llm.finish',
+    type: 'llm.streaming.finish',
     finish: { finishReason: 'completed', rawFinishReason: 'stop' },
   });
   onEvent?.({ type: 'llm.done' });
@@ -134,7 +134,7 @@ describe('agent machine tool failure', () => {
         seenUsedContextTokens.push(content.usedContextTokens);
         call += 1;
         if (call === 1) {
-          onEvent?.({ type: 'llm.usage', usage });
+          onEvent?.({ type: 'llm.streaming.usage', usage });
           streamMessage(createAssistantMessage([], [toolCall('call-1', 'fail_tool')]), onEvent);
         } else {
           streamMessage(createAssistantMessage([{ type: 'text', text: 'recovered' }]), onEvent);
@@ -302,7 +302,7 @@ describe('agent machine tool failure', () => {
         attempt += 1;
         onEvent?.({ type: 'llm.sent' });
         if (attempt === 1) {
-          onEvent?.({ type: 'llm.delta', part: toolCall('call-1', 'retry_tool') });
+          onEvent?.({ type: 'llm.streaming.part', part: toolCall('call-1', 'retry_tool') });
           onEvent?.({
             type: 'llm.failed.remote',
             error: {
@@ -812,7 +812,7 @@ describe('agent machine input.notify', () => {
   });
 });
 
-describe('agent machine input.reminder', () => {
+describe('agent machine input.remind', () => {
   it('stays pending while idle and is delivered at the next turn drain', async () => {
     const requester = createStubRequester([
       createAssistantMessage([], [toolCall('call-1', 'slow_tool')]),
@@ -830,20 +830,20 @@ describe('agent machine input.reminder', () => {
       input: { request: { model } },
     });
     const consumedKeys: (string | undefined)[][] = [];
-    actor.on('turn.remindersConsumed', (event) => {
-      if (event.type === 'turn.remindersConsumed') {
+    actor.on('turn.reminders_consumed', (event) => {
+      if (event.type === 'turn.reminders_consumed') {
         consumedKeys.push(event.reminders.map((entry) => entry.meta.key));
       }
     });
     actor.start();
 
     actor.send({
-      type: 'input.reminder',
+      type: 'input.remind',
       key: 'todo',
       message: createUserMessage('<system-reminder>\nold\n</system-reminder>'),
     });
     actor.send({
-      type: 'input.reminder',
+      type: 'input.remind',
       key: 'todo',
       message: createUserMessage('<system-reminder>\nstale\n</system-reminder>'),
     });
@@ -1018,7 +1018,7 @@ describe('agent machine input.abort', () => {
         ];
         return new Promise((resolve) => {
           for (const part of parts) {
-            onEvent?.({ type: 'llm.delta', part });
+            onEvent?.({ type: 'llm.streaming.part', part });
           }
           signal.addEventListener('abort', () => {
             onEvent?.({ type: 'llm.failed.remote', error: { kind: 'abort', message: 'aborted' } });
@@ -1388,8 +1388,8 @@ describe('agent machine context reset', () => {
       if (event.type === 'context.reset') resets.push(event.branchId);
     });
     const turnStarts: Array<{ turnId: number; branchId: string }> = [];
-    actor.on('turn.start', (event) => {
-      if (event.type === 'turn.start') {
+    actor.on('turn.started', (event) => {
+      if (event.type === 'turn.started') {
         turnStarts.push({ turnId: event.turnId, branchId: event.branchId });
       }
     });
@@ -1432,7 +1432,7 @@ describe('agent machine context reset', () => {
         calls += 1;
         return new Promise<void>((resolve) => {
           releases.push(() => {
-            onEvent?.({ type: 'llm.delta', part: { type: 'text', text: 'late' } });
+            onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'late' } });
             onEvent?.({ type: 'llm.done' });
             resolve();
           });

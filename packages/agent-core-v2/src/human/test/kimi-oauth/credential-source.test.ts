@@ -44,7 +44,7 @@ function createInner(plan: readonly (LlmErrorMessage | 'ok')[]) {
       const step = plan[Math.min(calls.length - 1, plan.length - 1)];
       if (step === 'ok') {
         onEvent?.({
-          type: 'llm.delta',
+          type: 'llm.streaming.part',
           part: { type: 'text', text: `call-${calls.length}` },
         });
         onEvent?.({ type: 'llm.done' });
@@ -87,7 +87,7 @@ describe('withAuth', () => {
     await wrapped.generate(
       ...generateArgs({
         onEvent: (event) => {
-          if (event.type === 'llm.delta') {
+          if (event.type === 'llm.streaming.part') {
             parts.push(event.part);
           }
         },
@@ -115,7 +115,7 @@ describe('withAuth', () => {
     await wrapped.generate(
       ...generateArgs({
         onEvent: (event) => {
-          if (event.type === 'llm.delta') {
+          if (event.type === 'llm.streaming.part') {
             parts.push(event.part);
           }
         },

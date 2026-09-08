@@ -188,12 +188,12 @@ export class ModelRequesterImpl implements ModelRequester {
             requestSentAt = now;
             return;
           }
-          case 'llm.headers': {
+          case 'llm.streaming.headers': {
             traceId = traceIdFromHeadersRecord(event.headers);
             params?.onTraceId?.(traceId);
             return;
           }
-          case 'llm.delta': {
+          case 'llm.streaming.part': {
             const arrivedAt = Date.now();
             if (firstChunkAt === undefined) {
               firstChunkAt = arrivedAt;
@@ -207,15 +207,15 @@ export class ModelRequesterImpl implements ModelRequester {
             clientConsumeMs += lastResumeAt - arrivedAt;
             return;
           }
-          case 'llm.usage': {
+          case 'llm.streaming.usage': {
             usage = mergeUsagePatch(usage, event.usage);
             return;
           }
-          case 'llm.finish': {
+          case 'llm.streaming.finish': {
             finish = event.finish;
             return;
           }
-          case 'llm.message-id': {
+          case 'llm.streaming.message_id': {
             messageId = event.messageId;
             return;
           }

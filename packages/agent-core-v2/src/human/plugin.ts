@@ -26,7 +26,7 @@ export interface AgentPluginSource {
   send(
     event:
       | { type: 'input.notify'; message: UserMessage }
-      | { type: 'input.reminder'; key: string; message: UserMessage | SystemMessage },
+      | { type: 'input.remind'; key: string; message: UserMessage | SystemMessage },
   ): void;
 }
 
@@ -40,7 +40,7 @@ export function connectPlugins(actor: AgentPluginSource, plugins: readonly Plugi
       actor.send({ type: 'input.notify', message });
     },
     remind: (key, message) => {
-      actor.send({ type: 'input.reminder', key, message });
+      actor.send({ type: 'input.remind', key, message });
     },
   };
   for (const plugin of plugins) {

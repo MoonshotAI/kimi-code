@@ -12,7 +12,7 @@ export interface ToolInput {
 
 export type ToolEvent =
   | { type: 'tool.update'; toolCallId: string; update: ToolUpdate }
-  | { type: 'tool.async'; toolCallId: string; text: string }
+  | { type: 'tool.detached'; toolCallId: string; text: string }
   | { type: 'tool.done'; toolCallId: string; result: ToolResult }
   | { type: 'tool.failed'; toolCallId: string; error: unknown }
   | { type: 'tool.aborted'; toolCallId: string }
@@ -57,7 +57,7 @@ function createExecuteActor(executor: ToolExecutor) {
           detach: (ack) => {
             if (detached) return;
             detached = true;
-            sendBack({ type: 'tool.async', toolCallId, text: ack.text });
+            sendBack({ type: 'tool.detached', toolCallId, text: ack.text });
           },
           waitForTasks: input.waitForTasks,
         });
@@ -84,11 +84,11 @@ export function createToolMachine(executor: ToolExecutor) {
       output: {} as ToolOutput,
     },
     actors: {
-      beforeActor: fromPromise<ToolBeforeDecision, ToolBeforeInput>(
+      preparingActor: fromPromise<ToolBeforeDecision, ToolBeforeInput>(
         async ({ input }) => ({ type: 'proceed', toolCall: input.toolCall }),
       ),
       executeActor,
-      afterActor: fromPromise<ToolResult, ToolAfterInput>(async ({ input }) => input.result),
+      finishingActor: fromPromise<ToolResult, ToolAfterInput>(async ({ input }) => input.result),
     },
     actions: {
       forwardToParent: ({ self, event }) => {
@@ -97,17 +97,17 @@ export function createToolMachine(executor: ToolExecutor) {
     },
   }).createMachine({
     id: 'tool',
-    initial: 'before',
+    initial: 'preparing',
     context: ({ input }) => ({ input, toolCall: input.toolCall }),
     states: {
-      before: {
+      preparing: {
         invoke: {
-          src: 'beforeActor',
+          src: 'preparingActor',
           input: ({ context }) => ({ toolCall: context.toolCall }),
           onDone: [
             {
               guard: ({ event }) => event.output.type === 'denied',
-              target: 'after',
+              target: 'finishing',
               actions: assign({
                 result: ({ event }) => (event.output as { result: ToolResult }).result,
               }),
@@ -172,11 +172,11 @@ export function createToolMachine(executor: ToolExecutor) {
           'tool.update': {
             actions: [emit(({ event }) => event), 'forwardToParent'],
           },
-          'tool.async': {
+          'tool.detached': {
             actions: [emit(({ event }) => event), 'forwardToParent'],
           },
           'tool.done': {
-            target: 'after',
+            target: 'finishing',
             actions: assign({ result: ({ event }) => event.result }),
           },
           'tool.failed': {
@@ -197,9 +197,9 @@ export function createToolMachine(executor: ToolExecutor) {
           },
         },
       },
-      after: {
+      finishing: {
         invoke: {
-          src: 'afterActor',
+          src: 'finishingActor',
           input: ({ context }) => ({
             toolCall: context.toolCall,
             result: context.result as ToolResult,

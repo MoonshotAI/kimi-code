@@ -22,11 +22,11 @@ export interface ToolCallIdPolicy {
 
 export type LlmRequestEvent =
   | { type: 'llm.sent' }
-  | { type: 'llm.headers'; headers: Record<string, string> }
-  | { type: 'llm.delta'; part: StreamedMessagePart }
-  | { type: 'llm.usage'; usage: Partial<TokenUsage> }
-  | { type: 'llm.finish'; finish: FinishInfo }
-  | { type: 'llm.message-id'; messageId: string }
+  | { type: 'llm.streaming.headers'; headers: Record<string, string> }
+  | { type: 'llm.streaming.part'; part: StreamedMessagePart }
+  | { type: 'llm.streaming.usage'; usage: Partial<TokenUsage> }
+  | { type: 'llm.streaming.finish'; finish: FinishInfo }
+  | { type: 'llm.streaming.message_id'; messageId: string }
   | { type: 'llm.failed.syntax'; error: LlmErrorMessage<'syntax'> }
   | { type: 'llm.failed.remote'; error: LlmRemoteErrorMessage }
   | { type: 'llm.done' };

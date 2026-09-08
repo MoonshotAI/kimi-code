@@ -127,33 +127,33 @@ export function createLlmMachine(options: CreateLlmMachineOptions) {
               { type: 'sendToParent', params: { type: 'llm.sent' as const } },
             ],
           },
-          'llm.headers': {
+          'llm.streaming.headers': {
             actions: [
-              emit(({ event }) => ({ type: 'llm.headers' as const, headers: event.headers })),
+              emit(({ event }) => ({ type: 'llm.streaming.headers' as const, headers: event.headers })),
               'forwardToParent',
             ],
           },
-          'llm.delta': {
+          'llm.streaming.part': {
             actions: [
-              emit(({ event }) => ({ type: 'llm.delta' as const, part: event.part })),
+              emit(({ event }) => ({ type: 'llm.streaming.part' as const, part: event.part })),
               'forwardToParent',
             ],
           },
-          'llm.usage': {
+          'llm.streaming.usage': {
             actions: [
-              emit(({ event }) => ({ type: 'llm.usage' as const, usage: event.usage })),
+              emit(({ event }) => ({ type: 'llm.streaming.usage' as const, usage: event.usage })),
               'forwardToParent',
             ],
           },
-          'llm.finish': {
+          'llm.streaming.finish': {
             actions: [
-              emit(({ event }) => ({ type: 'llm.finish' as const, finish: event.finish })),
+              emit(({ event }) => ({ type: 'llm.streaming.finish' as const, finish: event.finish })),
               'forwardToParent',
             ],
           },
-          'llm.message-id': {
+          'llm.streaming.message_id': {
             actions: [
-              emit(({ event }) => ({ type: 'llm.message-id' as const, messageId: event.messageId })),
+              emit(({ event }) => ({ type: 'llm.streaming.message_id' as const, messageId: event.messageId })),
               'forwardToParent',
             ],
           },

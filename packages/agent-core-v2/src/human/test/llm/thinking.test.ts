@@ -439,7 +439,7 @@ describe('openai requester thinking', () => {
         {
           signal: new AbortController().signal,
           onEvent: (event) => {
-            if (event.type === 'llm.delta') {
+            if (event.type === 'llm.streaming.part') {
               accumulator.push(event.part);
             }
           },

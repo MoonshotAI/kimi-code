@@ -38,7 +38,7 @@ function createStubRequester(responses: readonly AssistantMessage[]): LlmRequest
       const message = responses[Math.min(call, responses.length - 1)] as AssistantMessage;
       call += 1;
       for (const part of [...message.content, ...message.toolCalls]) {
-        onEvent?.({ type: 'llm.delta', part });
+        onEvent?.({ type: 'llm.streaming.part', part });
       }
       onEvent?.({ type: 'llm.done' });
       return Promise.resolve();

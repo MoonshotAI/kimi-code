@@ -77,8 +77,8 @@ function emitAll(emit: (event: LlmRequestEvent) => void, events: readonly LlmReq
 function textStream(emit: (event: LlmRequestEvent) => void, text = 'hello'): void {
   emitAll(emit, [
     { type: 'llm.sent' },
-    { type: 'llm.delta', part: { type: 'text', text } },
-    { type: 'llm.finish', finish: { finishReason: 'completed', rawFinishReason: 'stop' } },
+    { type: 'llm.streaming.part', part: { type: 'text', text } },
+    { type: 'llm.streaming.finish', finish: { finishReason: 'completed', rawFinishReason: 'stop' } },
     { type: 'llm.done' },
   ]);
 }
@@ -210,18 +210,18 @@ describe('ModelRequesterImpl request execution', () => {
     requester.handler = (_i, emit) =>
       emitAll(emit, [
         { type: 'llm.sent' },
-        { type: 'llm.headers', headers: { 'x-trace-id': 'trace-1' } },
-        { type: 'llm.delta', part: { type: 'text', text: 'he' } },
-        { type: 'llm.delta', part: { type: 'text', text: 'llo' } },
+        { type: 'llm.streaming.headers', headers: { 'x-trace-id': 'trace-1' } },
+        { type: 'llm.streaming.part', part: { type: 'text', text: 'he' } },
+        { type: 'llm.streaming.part', part: { type: 'text', text: 'llo' } },
         {
-          type: 'llm.delta',
+          type: 'llm.streaming.part',
           part: { type: 'function', id: 'call-1', name: 'do', arguments: '{"a"', _streamIndex: 0 },
         },
-        { type: 'llm.delta', part: { type: 'tool_call_part', argumentsPart: ':1}', index: 0 } },
-        { type: 'llm.usage', usage: { inputOther: 10 } },
-        { type: 'llm.usage', usage: { output: 7 } },
-        { type: 'llm.finish', finish: { finishReason: 'tool_calls', rawFinishReason: 'tool_calls' } },
-        { type: 'llm.message-id', messageId: 'msg-42' },
+        { type: 'llm.streaming.part', part: { type: 'tool_call_part', argumentsPart: ':1}', index: 0 } },
+        { type: 'llm.streaming.usage', usage: { inputOther: 10 } },
+        { type: 'llm.streaming.usage', usage: { output: 7 } },
+        { type: 'llm.streaming.finish', finish: { finishReason: 'tool_calls', rawFinishReason: 'tool_calls' } },
+        { type: 'llm.streaming.message_id', messageId: 'msg-42' },
         { type: 'llm.done' },
       ]);
     const traceIds: Array<string | null> = [];
@@ -422,11 +422,11 @@ describe('ModelRequesterImpl request execution', () => {
     const requester = new FakeLlmRequester();
     requester.handler = (_i, emit) => {
       emit({ type: 'llm.sent' });
-      emit({ type: 'llm.delta', part: { type: 'text', text: 'a' } });
+      emit({ type: 'llm.streaming.part', part: { type: 'text', text: 'a' } });
       const spinUntil = Date.now() + 150;
       while (Date.now() < spinUntil) {}
-      emit({ type: 'llm.delta', part: { type: 'text', text: 'b' } });
-      emit({ type: 'llm.finish', finish: { finishReason: 'completed', rawFinishReason: 'stop' } });
+      emit({ type: 'llm.streaming.part', part: { type: 'text', text: 'b' } });
+      emit({ type: 'llm.streaming.finish', finish: { finishReason: 'completed', rawFinishReason: 'stop' } });
       emit({ type: 'llm.done' });
     };
     const impl = new ModelRequesterImpl(modelWith(staticAuth()), gatewayReturning(requester));

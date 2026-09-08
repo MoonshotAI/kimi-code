@@ -98,14 +98,14 @@ async function internalGenerate(
     }
     let failed = false;
     parse(chunk, {
-      onDelta: (part) => onEvent?.({ type: 'llm.delta', part }),
-      onFinish: (finish) => onEvent?.({ type: 'llm.finish', finish }),
+      onDelta: (part) => onEvent?.({ type: 'llm.streaming.part', part }),
+      onFinish: (finish) => onEvent?.({ type: 'llm.streaming.finish', finish }),
       onMessageId: (id) => {
         if (id === messageId) return;
         messageId = id;
-        onEvent?.({ type: 'llm.message-id', messageId: id });
+        onEvent?.({ type: 'llm.streaming.message_id', messageId: id });
       },
-      onUsage: (usage) => onEvent?.({ type: 'llm.usage', usage }),
+      onUsage: (usage) => onEvent?.({ type: 'llm.streaming.usage', usage }),
       onError: (message) => {
         failed = true;
         onEvent?.({ type: 'llm.failed.remote', error: message });

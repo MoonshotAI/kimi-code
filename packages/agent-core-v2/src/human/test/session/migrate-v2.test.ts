@@ -30,7 +30,7 @@ function createEchoRequester(): LlmRequester {
     generate: (_config, { messages }, { onEvent }) => {
       const last = messages.at(-1);
       const text = last !== undefined && last.role === 'user' ? extractText(last) : '';
-      onEvent?.({ type: 'llm.delta', part: { type: 'text', text: `echo:${text}` } });
+      onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: `echo:${text}` } });
       onEvent?.({ type: 'llm.done' });
       return Promise.resolve();
     },
