@@ -28,8 +28,15 @@ function delegationText(name: string, args: Record<string, unknown>): string | u
     return `▸ Delegated to ${kind}: **${description.trim()}**`;
   }
   const items = args['items'];
-  if (!Array.isArray(items) || items.length === 0) return undefined;
-  return `▸ Delegated to a swarm of ${String(items.length)} subagents`;
+  const newCount = Array.isArray(items) ? items.length : 0;
+  const resumeIds = args['resume_agent_ids'];
+  const resumedCount =
+    resumeIds !== null && typeof resumeIds === 'object' && !Array.isArray(resumeIds)
+      ? Object.keys(resumeIds).length
+      : 0;
+  const total = newCount + resumedCount;
+  if (total === 0) return undefined;
+  return `▸ Delegated to a swarm of ${String(total)} subagents`;
 }
 
 export class NotifyController {
@@ -207,7 +214,15 @@ export class NotifyController {
       case 'tool.result': {
         const key = JSON.stringify([agentId, event.turnId, event.toolCallId]);
         const update = this.pending.get(key);
-        if (update === undefined) return;
+        if (update === undefined) {
+          if (
+            (event.isError === true || event.synthetic === true) &&
+            this.state.notifyPanel.remove(`delegation:${event.toolCallId}`)
+          ) {
+            this.render();
+          }
+          return;
+        }
         this.pending.delete(key);
         this.settled.set(key, agentId);
         if (

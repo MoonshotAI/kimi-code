@@ -624,6 +624,59 @@ describe('NotifyController', () => {
     ]);
   });
 
+  it('counts resumed subagents in AgentSwarm delegation entries', () => {
+    const h = makeHarness();
+    h.emit('tool.call.started', {
+      toolCallId: 'a1',
+      name: 'AgentSwarm',
+      args: { resume_agent_ids: { 'agent-1': 'continue the review', 'agent-2': 'keep going' } },
+    });
+    expect(h.texts()).toEqual(['▸ Delegated to a swarm of 2 subagents']);
+
+    h.emit('tool.call.started', {
+      toolCallId: 'a2',
+      name: 'AgentSwarm',
+      args: { items: ['x', 'y'], resume_agent_ids: { 'agent-3': 'resume' } },
+    });
+    expect(h.texts()).toEqual([
+      '▸ Delegated to a swarm of 2 subagents',
+      '▸ Delegated to a swarm of 3 subagents',
+    ]);
+  });
+
+  it('retracts delegation entries when the launch fails or is interrupted', () => {
+    const h = makeHarness();
+    h.emit('tool.call.started', {
+      toolCallId: 'a1',
+      name: 'Agent',
+      args: { description: 'keep me', subagent_type: 'explore', prompt: '…' },
+    });
+    h.emit('tool.call.started', {
+      toolCallId: 'a2',
+      name: 'AgentSwarm',
+      args: { items: ['x', 'y'] },
+    });
+    h.emit('tool.call.started', {
+      toolCallId: 'a3',
+      name: 'Agent',
+      args: { description: 'interrupted', prompt: '…' },
+    });
+    expect(h.texts()).toHaveLength(3);
+
+    h.emit('tool.result', { toolCallId: 'a2', isError: true, output: 'swarm validation failed' });
+    expect(h.texts()).toEqual([
+      '▸ Delegated to explore: **keep me**',
+      '▸ Delegated to subagent: **interrupted**',
+    ]);
+
+    h.emit('tool.result', { toolCallId: 'a3', synthetic: true, output: '' });
+    expect(h.texts()).toEqual(['▸ Delegated to explore: **keep me**']);
+
+    h.emit('tool.result', { toolCallId: 'a1', output: 'subagent finished' });
+    expect(h.texts()).toEqual(['▸ Delegated to explore: **keep me**']);
+    expect(h.notifyPanelContainer.children).toEqual([h.notifyPanel]);
+  });
+
   it('folds the panel to a one-line preview stub when the main turn ends', () => {
     const h = makeHarness();
     h.send('n1', 'phase report intro\n\n- detail A');
