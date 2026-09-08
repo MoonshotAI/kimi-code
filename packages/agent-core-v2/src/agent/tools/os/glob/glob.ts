@@ -15,7 +15,7 @@ export const GlobInputSchema = z.object({
     .boolean()
     .optional()
     .describe(
-      'Also match files excluded by ignore files such as `.gitignore`, `.ignore`, and `.rgignore` (for example `node_modules` or build outputs). Sensitive files (such as `.env`) remain filtered out for safety. VCS metadata directories (`.git` and similar) are always skipped, even when this is true. Defaults to false.',
+      'Also match files excluded by ignore files such as `.gitignore`, `.ignore`, and `.rgignore` (for example `node_modules` or build outputs). Sensitive files (such as `.env`) remain filtered out for safety. VCS metadata directories (`.git` and similar) are always skipped, even when this is true. Defaults to false unless tools.search.follow_gitignore is set to false in config.toml.',
     ),
   include_dirs: z
     .boolean()
