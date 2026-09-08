@@ -35,6 +35,8 @@ import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { ToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncationService';
 import { ReadTool } from '#/agent/tools/os/read/readTool';
+import { ReadInputSchema, type ReadInput } from '#/agent/tools/os/read/read';
+import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
 import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
@@ -1221,6 +1223,32 @@ describe('truncation pipeline', () => {
     expect(result.truncated).toBeUndefined();
     expect(result.note).toContain('Requested range complete.');
     expect(result.output).not.toContain('output_path:');
+  });
+
+  it('recovers a large line through the model-facing Read pipeline without shell tools', async () => {
+    const content = '0123456789'.repeat(110_000);
+    const path = join(homeDir, 'record.jsonl');
+    await writeFile(path, content);
+    const fragments: string[] = [];
+    let args: ReadInput | undefined = { path, n_lines: 1, max_chars: 100_000 };
+
+    for (let page = 0; args !== undefined && page < 30; page += 1) {
+      const [result] = await execute([toolCall(`read_fragment_${String(page)}`, 'Read', args)]);
+      expect(result?.isError).not.toBe(true);
+      if (typeof result?.output !== 'string') throw new TypeError('expected Read text');
+      expect(result.output.startsWith('1\t')).toBe(true);
+      const visible = renderToolResultForModel(result)
+        .map((part) => part.type === 'text' ? part.text : '').join('');
+      expect(visible.length).toBeLessThanOrEqual(100_000);
+      if (page === 0) expect(result.output.length).toBeGreaterThan(50_000);
+      fragments.push(result.output.slice(2));
+      const next = result.note?.match(/Next Read: (\{[^\n]*\})/);
+      args = next === undefined || next === null ? undefined : ReadInputSchema.parse(JSON.parse(next[1]!));
+    }
+
+    expect(args).toBeUndefined();
+    expect(fragments.length).toBeGreaterThan(10);
+    expect(fragments.join('')).toBe(content);
   });
 
   it('applies persisted Read defaults and caps explicit character requests', async () => {

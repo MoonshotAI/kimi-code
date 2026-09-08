@@ -20,7 +20,7 @@ import { MEDIA_SNIFF_BYTES, detectFileType } from '#/agent/media/file-type';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
 import { makeCarriageReturnsVisible, splitLinesKeepingTerminator, type LineEndingStyle } from '#/_base/text/line-endings';
-import { decodeUtfText, detectTextEncoding, type UtfTextEncoding } from '#/_base/text/encoding';
+import { detectTextEncoding, type UtfTextEncoding } from '#/_base/text/encoding';
 import { renderPrompt } from '#/_base/utils/render-prompt';
 import {
   DEFAULT_MAX_CHARS,
@@ -64,15 +64,14 @@ interface ReadPage {
   readonly lineEndingStyle: LineEndingStyle;
 }
 
-function readBudgetError(line: number, maxChars: number, maxCharsLimit: number): ExecutableToolResult {
-  return {
-    isError: true,
-    output: `Line ${String(line)} cannot fit within max_chars=${String(maxChars)} including line numbers and status. Increase max_chars up to ${String(maxCharsLimit)}, or use Bash to extract a smaller character range from this line. No partial line was returned.`,
-  };
-}
-
 function stripTrailingLf(line: string): string {
   return line.endsWith('\n') ? line.slice(0, -1) : line;
+}
+
+function splitsSurrogatePair(text: string, offset: number): boolean {
+  const previous = text.charCodeAt(offset - 1);
+  const next = text.charCodeAt(offset);
+  return previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff;
 }
 
 function updateLineEndingFlags(flags: LineEndingFlags, text: string): void {
@@ -187,6 +186,9 @@ export class ReadTool implements IReadTool {
   }
 
   resolveExecution(args: ReadInput): ToolExecution {
+    if (args.column_offset !== undefined && (args.line_offset ?? 1) < 0) {
+      return { isError: true, output: 'column_offset is only supported for forward reads. Use a positive line_offset or the forward Next Read arguments.' };
+    }
     const inspected = inspectAgentRuntime(this.runtime);
     const view = new RuntimeWorkspaceView(inspected, {
       workDir: this.workspaceCtx.workDir,
@@ -268,7 +270,7 @@ export class ReadTool implements IReadTool {
               'Convert it to UTF-8 first (e.g. with `iconv`).',
           };
         }
-        const decoded = decodeUtfText(await fs.readBytes(safePath), detection.encoding);
+        const decoded = new TextDecoder(detection.encoding, { fatal: true }).decode(await fs.readBytes(safePath));
         detectedEncoding = detection.encoding;
         const decodedContent = splitLinesKeepingTerminator(decoded);
         readLines = () => decodedLines(decodedContent);
@@ -307,8 +309,9 @@ export class ReadTool implements IReadTool {
     lines: AsyncIterable<string>,
     request: ReadRequest,
   ): Promise<ExecutableToolResult> {
-    const { args, maxChars, maxCharsLimit } = request;
+    const { args, maxChars } = request;
     const lineOffset = args.line_offset ?? 1;
+    const columnOffset = args.column_offset ?? 0;
     const requestedLines = args.n_lines ?? Infinity;
     const selectedEntries: ReadLineEntry[] = [];
     const flags: LineEndingFlags = { hasCrLf: false, hasLf: false, hasLoneCr: false };
@@ -329,12 +332,12 @@ export class ReadTool implements IReadTool {
         continue;
       }
       const rawContent = stripTrailingLf(rawLine);
-      const lineChars = String(currentLineNo).length + 1 + rawContent.length -
-        (rawContent.endsWith('\r') ? 1 : 0) + (selectedEntries.length === 0 ? 0 : 1);
-      if (minimumChars + lineChars > maxChars) {
-        if (selectedEntries.length === 0) {
-          return readBudgetError(currentLineNo, maxChars, maxCharsLimit);
-        }
+      const lineChars = String(currentLineNo).length + 1 + Math.max(
+        0,
+        rawContent.length - (rawContent.endsWith('\r') ? 1 : 0) -
+          (currentLineNo === lineOffset ? columnOffset : 0),
+      ) + (selectedEntries.length === 0 ? 0 : 1);
+      if (minimumChars + lineChars > maxChars && selectedEntries.length > 0) {
         collectionClosed = true;
         continue;
       }
@@ -343,15 +346,28 @@ export class ReadTool implements IReadTool {
         rawContent,
       });
       minimumChars += lineChars;
-      if (selectedEntries.length >= requestedLines) {
+      if (selectedEntries.length >= requestedLines || minimumChars >= maxChars) {
         collectionClosed = true;
       }
     }
 
     const lineEndingStyle = lineEndingStyleFromFlags(flags);
+    const renderedLines = selectedEntries.map((entry) => renderLine(entry, lineEndingStyle));
+    const firstLine = renderedLines[0];
+    if (columnOffset > 0) {
+      const prefix = `${String(lineOffset)}\t`;
+      const text = firstLine?.slice(prefix.length);
+      if (text === undefined || columnOffset > text.length) {
+        return { isError: true, output: `column_offset=${String(columnOffset)} is past the end of the starting line ${String(lineOffset)}. Read the line from column 0 to inspect its current contents.` };
+      }
+      if (splitsSurrogatePair(text, columnOffset)) {
+        return { isError: true, output: `column_offset=${String(columnOffset)} splits a Unicode character in line ${String(lineOffset)}. Use a character boundary or the Next Read arguments.` };
+      }
+      renderedLines[0] = prefix + text.slice(columnOffset);
+    }
     return this.finishPage({
       request,
-      renderedLines: selectedEntries.map((entry) => renderLine(entry, lineEndingStyle)),
+      renderedLines,
       startLine: lineOffset,
       rangeStart: lineOffset,
       rangeEnd: Math.min(currentLineNo, lineOffset + requestedLines - 1),
@@ -366,13 +382,18 @@ export class ReadTool implements IReadTool {
     let first = 0;
     let end = page.renderedLines.length;
     let contentChars = page.renderedLines.reduce((sum, line) => sum + line.length + 1, -1);
+    const firstColumn = page.fromTail ? 0 : args.column_offset ?? 0;
+    const firstPrefix = `${String(page.startLine)}\t`;
+    const firstText = page.renderedLines[0]?.slice(firstPrefix.length) ?? '';
+    let fragmentEnd: number | undefined;
 
     while (true) {
       const count = end - first;
       const startLine = page.startLine + first;
       const endLine = page.startLine + end - 1;
+      const lineIncomplete = fragmentEnd !== undefined;
       const complete = page.rangeStart > page.rangeEnd ||
-        (count > 0 && startLine === page.rangeStart && endLine === page.rangeEnd);
+        (count > 0 && startLine === page.rangeStart && endLine === page.rangeEnd && !lineIncomplete);
       const parts = [
         count > 0
           ? `${String(count)} ${count === 1 ? 'line' : 'lines'} read from file starting from line ${String(startLine)}.`
@@ -381,18 +402,22 @@ export class ReadTool implements IReadTool {
         complete ? 'Requested range complete.' : 'Character limit reached.',
         `Effective max_chars: ${String(maxChars)}.`,
       ];
-      if (endLine === page.totalLines || page.rangeStart > page.totalLines) {
+      if (!lineIncomplete && ((count > 0 && endLine === page.totalLines) || page.rangeStart > page.totalLines)) {
         parts.push('End of file reached.');
+      }
+      if (count > 0 && !page.fromTail && (firstColumn > 0 || fragmentEnd !== undefined)) {
+        parts.push(`Line ${String(startLine)} fragment: columns [${String(firstColumn)}, ${String(firstColumn + (fragmentEnd ?? firstText.length))}) of ${String(firstColumn + firstText.length)}. ${lineIncomplete ? 'Line continues.' : 'Line complete.'}`);
       }
       if (args.max_chars !== undefined && args.max_chars > maxCharsLimit) {
         parts.push(`Requested max_chars=${String(args.max_chars)} was capped at the configured maximum ${String(maxCharsLimit)}.`);
       }
-      if (!complete && count > 0) {
-        const nextStart = page.fromTail ? page.rangeStart : endLine + 1;
-        const nextEnd = page.fromTail ? startLine - 1 : page.rangeEnd;
+      if (!complete && (count > 0 || page.fromTail)) {
+        const nextStart = page.fromTail ? page.rangeStart : lineIncomplete ? startLine : endLine + 1;
+        const nextEnd = page.fromTail && count > 0 ? startLine - 1 : page.rangeEnd;
         const next = {
           path: args.path,
           line_offset: nextStart,
+          column_offset: fragmentEnd !== undefined ? firstColumn + fragmentEnd : undefined,
           n_lines: page.fromTail || args.n_lines !== undefined ? nextEnd - nextStart + 1 : undefined,
           max_chars: maxChars,
         };
@@ -416,15 +441,32 @@ export class ReadTool implements IReadTool {
         : contentChars + 1 + note.length;
       if (renderedChars <= maxChars && (complete || count > 0)) {
         return {
-          output: page.renderedLines.slice(first, end).join('\n'),
+          output: fragmentEnd !== undefined
+            ? firstPrefix + firstText.slice(0, fragmentEnd)
+            : page.renderedLines.slice(first, end).join('\n'),
           note,
           truncated: complete ? undefined : true,
         };
       }
+      if (count === 1 && !page.fromTail) {
+        const previousEnd = fragmentEnd ?? firstText.length;
+        fragmentEnd = Math.min(previousEnd - 1, previousEnd - (renderedChars - maxChars));
+        if (splitsSurrogatePair(firstText, fragmentEnd)) fragmentEnd -= 1;
+        if (fragmentEnd <= 0) {
+          return { isError: true, output: `max_chars=${String(maxChars)} is too small for file text and the Read status. Increase max_chars.` };
+        }
+        contentChars = firstPrefix.length + fragmentEnd;
+        continue;
+      }
       if (count === 0) {
         return complete
           ? { isError: true, output: `max_chars=${String(maxChars)} is too small for the Read status. Increase max_chars.` }
-          : readBudgetError(page.fromTail ? page.rangeEnd : page.rangeStart, maxChars, maxCharsLimit);
+          : {
+            isError: true,
+            output: 'No complete line fits the tail budget. Continue with the forward Next Read arguments to read the entire requested range.',
+            note,
+            truncated: true,
+          };
       }
       const dropped = page.fromTail ? first++ : --end;
       contentChars -= page.renderedLines[dropped]!.length + 1;

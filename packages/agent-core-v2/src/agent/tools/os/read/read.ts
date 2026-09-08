@@ -23,6 +23,9 @@ export const ReadInputSchema = z.object({
     .describe(
       'The line number to start reading from. Omit to start at line 1. Negative values read from the end of the file (for example, -100 reads the last 100 lines).',
     ),
+  column_offset: z.number().int().nonnegative().optional().describe(
+    'Zero-based character offset within the first line of a forward read, excluding its line-number prefix. Uses JavaScript string length in the displayed text. Copy continuation arguments from the previous result to resume a long line.',
+  ),
   n_lines: z
     .number()
     .int()
