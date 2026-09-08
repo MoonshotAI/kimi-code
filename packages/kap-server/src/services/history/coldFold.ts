@@ -454,6 +454,15 @@ export function foldWireHistory(
     if (typeof promptId === 'string') {
       turnPromptIds.set(rawId, promptId);
       queuedPrompts.delete(promptId);
+    } else {
+      const rawInput = record['input'];
+      const inputKey = JSON.stringify(Array.isArray(rawInput) ? rawInput : []);
+      for (const [queuedId, queued] of queuedPrompts) {
+        if (JSON.stringify(queued.content) === inputKey) {
+          queuedPrompts.delete(queuedId);
+          break;
+        }
+      }
     }
     if (isUndoAnchorOrigin(origin)) pendingAnchorTurnIds.push(rawId);
     currentTurn = rawId;
