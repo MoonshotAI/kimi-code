@@ -28,6 +28,7 @@ import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 import type { TokenUsage } from '@moonshot-ai/kimi-code-sdk';
 import { appendStreamingArgsPreview } from '#/tui/utils/event-payload';
 import { createMarkdownOptions } from '#/tui/utils/markdown-options';
+import { notifyResultState } from '#/tui/utils/notify-result';
 import { isExperimentalFlagEnabled } from '#/tui/commands/experimental-flags';
 import { decodeMcpToolName } from '#/tui/utils/mcp-tool-name';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
@@ -1715,10 +1716,15 @@ export class ToolCallComponent extends Container {
         // panel entry was dropped, so the card must not read as in flight.
         return `${bullet}${currentTheme.boldFg('error', 'Update cut off')}${currentTheme.dim(' (arguments truncated by max_tokens)')}`;
       }
+      const delivery = notifyResultState(result?.output);
       const label = isFinished
         ? isError
           ? 'Could not send you an update'
-          : 'Sent you an update'
+          : delivery === 'displayed'
+            ? 'Sent you an update'
+            : delivery === 'suppressed'
+              ? 'Update not displayed'
+              : 'Update completed'
         : 'Sending you an update';
       const tone = isError ? 'error' : 'primary';
       const preview = extractKeyArgumentDetail(toolCall.name, toolCall.args, this.workspaceDir);
@@ -2505,7 +2511,12 @@ export class ToolCallComponent extends Container {
 
     // NotifyUser: the message is the call's argument (rendered by
     // buildCallPreview when expanded); the acknowledgement output is noise.
-    if (this.toolCall.name === 'NotifyUser' && isExperimentalFlagEnabled('notify_user') && !result.is_error) {
+    if (
+      this.toolCall.name === 'NotifyUser' &&
+      isExperimentalFlagEnabled('notify_user') &&
+      !result.is_error &&
+      notifyResultState(result.output) === 'displayed'
+    ) {
       return;
     }
 

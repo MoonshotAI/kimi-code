@@ -370,6 +370,32 @@ describe('ToolCallComponent', () => {
       expect(component.hasHiddenContent()).toBe(false);
     });
 
+    it.each([true, false])('preserves a suppressed result when rendering history, enabled: %s', (enabled) => {
+      setExperimentalFeatures([{ id: 'notify_user', enabled }]);
+      const output = 'Notifications are disabled; the update was not displayed.';
+      const component = new ToolCallComponent(
+        { id: 'suppressed', name: 'NotifyUser', args: { message } },
+        { tool_call_id: 'suppressed', output, is_error: false },
+      );
+      for (const expanded of [false, true]) {
+        component.setExpanded(expanded);
+        const rendered = strip(component.render(150).join('\n'));
+        expect(rendered).not.toContain('Sent you an update');
+        expect(rendered).toContain(output);
+        if (enabled) expect(rendered).toContain('Update not displayed');
+      }
+    });
+
+    it('does not claim an unknown successful result was displayed', () => {
+      const component = new ToolCallComponent(
+        { id: 'unknown-result', name: 'NotifyUser', args: { message } },
+        { tool_call_id: 'unknown-result', output: 'An unrecognized result.', is_error: false },
+      );
+      const rendered = strip(component.render(150).join('\n'));
+      expect(rendered).not.toContain('Sent you an update');
+      expect(rendered).toContain('An unrecognized result.');
+    });
+
     it('marks a call whose arguments were cut off by max_tokens', () => {
       const component = new ToolCallComponent(
         {

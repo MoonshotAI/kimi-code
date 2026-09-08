@@ -121,20 +121,96 @@ describe('NotifyController', () => {
     expect(h.requestRender).not.toHaveBeenCalled();
   });
 
-  it('streams the message in place, then settles on authoritative arguments', () => {
+  it('waits for the successful result before displaying authoritative arguments', () => {
     const h = makeHarness();
     h.emit('tool.call.delta', {
       toolCallId: 'n1',
       name: 'NotifyUser',
       argumentsPart: '{"message":"Reading the',
     });
-    expect(h.texts()).toEqual(['Reading the']);
+    expect(h.texts()).toEqual([]);
     h.emit('tool.call.delta', { toolCallId: 'n1', argumentsPart: ' parser."}' });
-    expect(h.texts()).toEqual(['Reading the parser.']);
-    h.send('n1', 'Parser reviewed.');
+    expect(h.texts()).toEqual([]);
+    h.emit('tool.call.started', {
+      toolCallId: 'n1',
+      name: 'NotifyUser',
+      args: { message: 'Parser reviewed.' },
+    });
+    expect(h.texts()).toEqual([]);
+    expect(h.notifyPanelContainer.children).toEqual([]);
+    h.emit('tool.result', { toolCallId: 'n1', output: 'Update shown to the user.' });
     expect(h.texts()).toEqual(['Parser reviewed.']);
     expect(h.notifyPanelContainer.children).toEqual([h.notifyPanel]);
   });
+
+  it.each([
+    { output: 'Permission denied', isError: true },
+    { output: 'Update shown to the user.', synthetic: true },
+    { output: 'Notifications are disabled; the update was not displayed.' },
+    { output: 'Unrecognized success' },
+  ])('never displays rejected, suppressed or unconfirmed updates: %j', (result) => {
+    const h = makeHarness();
+    h.emit('tool.call.delta', {
+      toolCallId: 'blocked',
+      name: 'NotifyUser',
+      argumentsPart: '{"message":"Private finding',
+    });
+    expect(h.notifyPanelContainer.children).toEqual([]);
+    h.emit('tool.call.started', {
+      toolCallId: 'blocked',
+      name: 'NotifyUser',
+      args: { message: 'Private finding' },
+    });
+    expect(h.notifyPanelContainer.children).toEqual([]);
+    h.emit('tool.result', { toolCallId: 'blocked', ...result });
+    expect(h.texts()).toEqual([]);
+    expect(h.notifyPanelContainer.children).toEqual([]);
+  });
+
+  it.each([false, true])(
+    'keeps a foreground descendant alive under a background parent, detached later: %s',
+    (detachLater) => {
+      const h = makeHarness();
+      h.emit('subagent.spawned', {
+        subagentId: 'agent-7',
+        parentAgentId: 'main',
+        subagentName: 'coder',
+        runInBackground: !detachLater,
+      });
+      h.emit('turn.started', {}, 'agent-7');
+      h.emit(
+        'subagent.spawned',
+        {
+          subagentId: 'agent-29',
+          parentAgentId: 'agent-7',
+          subagentName: 'coder',
+          runInBackground: false,
+        },
+        'agent-7',
+      );
+      h.emit('turn.started', {}, 'agent-29');
+      h.emit(
+        'tool.call.started',
+        { toolCallId: 'pending-child', name: 'NotifyUser', args: { message: 'Child finding' } },
+        'agent-29',
+      );
+      if (detachLater)
+        h.emit('background.task.started', {
+          info: { kind: 'agent', agentId: 'agent-7', status: 'running' },
+        });
+      h.emit('turn.ended', { reason: 'completed' });
+      h.emit(
+        'tool.result',
+        { toolCallId: 'pending-child', output: 'Update shown to the user.' },
+        'agent-29',
+      );
+      h.send('later-child', 'More child findings', 'agent-29');
+      expect(h.texts()).toEqual(['Child finding', 'More child findings']);
+      h.emit('turn.ended', { reason: 'completed' }, 'agent-29');
+      h.send('late-event', 'Stale finding', 'agent-29');
+      expect(h.texts()).toEqual(['Child finding', 'More child findings']);
+    },
+  );
 
   it('clears updates at each new main turn but not at child turn boundaries', () => {
     const h = makeHarness();
@@ -193,17 +269,17 @@ describe('NotifyController', () => {
     expect(h.rendered()).toContain('background finding');
   });
 
-  it('retracts unfinished foreground updates at main turn end and retains detached updates', () => {
+  it('keeps child turns active until their own end events, including detached tasks', () => {
     const h = makeHarness();
     for (const subagentId of ['agent-7', 'agent-29']) {
       h.emit('subagent.spawned', { subagentId, subagentName: 'coder', runInBackground: false });
       h.emit('turn.started', {}, subagentId);
       h.emit(
-        'tool.call.delta',
+        'tool.call.started',
         {
           toolCallId: 'pending',
           name: 'NotifyUser',
-          argumentsPart: '{"message":"Working',
+          args: { message: 'Working' },
         },
         subagentId,
       );
@@ -212,10 +288,21 @@ describe('NotifyController', () => {
       info: { kind: 'agent', agentId: 'agent-29', status: 'running' },
     });
     h.emit('turn.ended', { reason: 'completed' });
-    expect(h.notifyPanel.getEntries().map((entry) => entry.agentId)).toEqual(['agent-29']);
+    expect(h.texts()).toEqual([]);
+    h.emit('turn.ended', { reason: 'cancelled' }, 'agent-7');
+    h.emit(
+      'tool.result',
+      { toolCallId: 'pending', output: 'Update shown to the user.' },
+      'agent-7',
+    );
+    expect(h.texts()).toEqual([]);
+    h.emit(
+      'tool.result',
+      { toolCallId: 'pending', output: 'Update shown to the user.' },
+      'agent-29',
+    );
+    expect(h.texts()).toEqual(['Working']);
     expect(h.rendered()).toContain('[agent-29]');
-    h.send('pending', 'Finished', 'agent-29');
-    expect(h.texts()).toEqual(['Finished']);
   });
 
   it('uses real agent ids regardless of creation order, updates or turn boundaries', () => {
@@ -277,8 +364,8 @@ describe('NotifyController', () => {
     h.send('kept', 'delivered', 'agent-1');
     h.emit('turn.step.started', { step: 2 }, 'agent-1');
     h.emit(
-      'tool.call.delta',
-      { toolCallId: 'failed', name: 'NotifyUser', argumentsPart: '{"message":"unfinished' },
+      'tool.call.started',
+      { toolCallId: 'failed', name: 'NotifyUser', args: { message: 'unfinished' } },
       'agent-1',
     );
     h.emit(
@@ -293,6 +380,7 @@ describe('NotifyController', () => {
       },
       'agent-1',
     );
+    h.emit('tool.result', { toolCallId: 'failed', output: 'Update shown to the user.' }, 'agent-1');
     expect(h.texts()).toEqual(['delivered']);
   });
 
@@ -442,7 +530,7 @@ describe('NotifyController', () => {
         name: 'NotifyUser',
         args: { message: `update ${i}` },
       });
-    expect(h.texts()).toHaveLength(150);
+    expect(h.texts()).toHaveLength(0);
     for (let i = 0; i < 150; i++)
       h.emit('tool.result', { toolCallId: String(i), output: 'Update shown to the user.' });
     const long = 'complete body '.repeat(2000);

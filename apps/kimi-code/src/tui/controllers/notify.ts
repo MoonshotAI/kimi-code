@@ -1,10 +1,10 @@
 import type { Event, ResumedSessionState } from '@moonshot-ai/kimi-code-sdk';
 
 import type { NotifyEntry } from '#/tui/components/chrome/notify-panel';
-import { extractPartialStringField } from '#/tui/components/messages/tool-call';
 import { MAIN_AGENT_ID } from '#/tui/constant/kimi-tui';
 import type { TUIState } from '#/tui/tui-state';
-import { appendStreamingArgsPreview, argsRecord } from '#/tui/utils/event-payload';
+import { argsRecord } from '#/tui/utils/event-payload';
+import { notifyResultState } from '#/tui/utils/notify-result';
 import { isTerminalBackgroundTask } from '#/tui/utils/message-replay';
 
 interface PendingUpdate {
@@ -12,15 +12,13 @@ interface PendingUpdate {
   readonly turnId: number;
   readonly step: number;
   readonly time: number;
-  name?: string;
-  argumentsText: string;
+  readonly text: string;
 }
 
 export class NotifyController {
   private enabled = false;
   private mounted = false;
   private mainTurnId: number | undefined;
-  private readonly foregroundAgents = new Set<string>();
   private readonly running = new Map<string, number | undefined>();
   private readonly steps = new Map<string, number>();
   private readonly pending = new Map<string, PendingUpdate>();
@@ -38,7 +36,6 @@ export class NotifyController {
   }
 
   reset(): void {
-    this.foregroundAgents.clear();
     this.running.clear();
     this.steps.clear();
     this.mainTurnId = undefined;
@@ -71,10 +68,6 @@ export class NotifyController {
     // oxlint-disable-next-line typescript-eslint/switch-exhaustiveness-check -- Only progress and agent lifecycle events affect this projection.
     switch (event.type) {
       case 'subagent.spawned':
-        if (event.runInBackground) this.foregroundAgents.delete(event.subagentId);
-        else this.foregroundAgents.add(event.subagentId);
-        this.running.set(event.subagentId, undefined);
-        break;
       case 'subagent.started':
         this.running.set(event.subagentId, undefined);
         break;
@@ -87,7 +80,6 @@ export class NotifyController {
       case 'background.task.terminated': {
         const { info } = event;
         if (info.kind !== 'agent' || info.agentId === undefined) return;
-        this.foregroundAgents.delete(info.agentId);
         if (isTerminalBackgroundTask(info)) {
           this.running.delete(info.agentId);
           this.dropPending(info.agentId);
@@ -129,18 +121,6 @@ export class NotifyController {
         this.dropPending(agentId, event.turnId);
         this.endedTurns.set(agentId, event.turnId);
         this.forgetSettled(agentId);
-        if (agentId === MAIN_AGENT_ID) {
-          for (const id of this.running.keys()) {
-            if (id === MAIN_AGENT_ID || !this.foregroundAgents.has(id)) continue;
-            const turnId = this.running.get(id);
-            this.running.delete(id);
-            this.dropPending(id);
-            if (turnId !== undefined) {
-              this.endedTurns.set(id, turnId);
-              this.forgetSettled(id);
-            }
-          }
-        }
         break;
       case 'turn.step.started':
         this.steps.set(agentId, event.step);
@@ -154,7 +134,6 @@ export class NotifyController {
           this.dropPending(agentId, event.turnId, event.step);
         }
         break;
-      case 'tool.call.delta':
       case 'tool.call.started': {
         if (
           (this.endedTurns.get(agentId) ?? -1) >= event.turnId ||
@@ -163,54 +142,32 @@ export class NotifyController {
           return;
         const key = JSON.stringify([agentId, event.turnId, event.toolCallId]);
         if (this.settled.has(key)) return;
-        const existing = this.pending.get(key);
-        if (event.name !== undefined && event.name !== 'NotifyUser') {
-          this.pending.delete(key);
-          return;
-        }
-        const update: PendingUpdate = existing ?? {
+        if (event.name !== 'NotifyUser') return;
+        const message = argsRecord(event.args)['message'];
+        if (typeof message !== 'string' || message.trim().length === 0) return;
+        this.pending.set(key, {
           agentId,
           turnId: event.turnId,
           step: this.steps.get(agentId) ?? 0,
           time: Date.now(),
-          argumentsText: '',
-        };
-        update.name = event.name ?? update.name;
-        const args =
-          event.type === 'tool.call.started'
-            ? argsRecord(event.args)
-            : {
-                message: extractPartialStringField(
-                  (update.argumentsText = appendStreamingArgsPreview(
-                    update.argumentsText,
-                    event.argumentsPart,
-                  )),
-                  'message',
-                ),
-              };
-        const message = args['message'];
-        this.pending.set(key, update);
-        if (
-          update.name === 'NotifyUser' &&
-          typeof message === 'string' &&
-          message.trim().length > 0
-        ) {
-          const entry: NotifyEntry = {
-            id: key,
-            agentId,
-            time: update.time,
-            text: message,
-          };
-          this.state.notifyPanel.upsert(entry);
-        }
+          text: message,
+        });
         break;
       }
       case 'tool.result': {
         const key = JSON.stringify([agentId, event.turnId, event.toolCallId]);
-        if (!this.pending.has(key)) return;
+        const update = this.pending.get(key);
+        if (update === undefined) return;
         this.pending.delete(key);
         this.settled.set(key, agentId);
-        if (event.isError === true || event.synthetic === true) this.state.notifyPanel.remove(key);
+        if (
+          event.isError !== true &&
+          event.synthetic !== true &&
+          notifyResultState(event.output) === 'displayed'
+        ) {
+          const entry: NotifyEntry = { id: key, agentId, time: update.time, text: update.text };
+          this.state.notifyPanel.upsert(entry);
+        }
         break;
       }
       default:
@@ -241,7 +198,6 @@ export class NotifyController {
         continue;
       this.pending.delete(key);
       this.settled.set(key, update.agentId);
-      this.state.notifyPanel.remove(key);
     }
   }
 

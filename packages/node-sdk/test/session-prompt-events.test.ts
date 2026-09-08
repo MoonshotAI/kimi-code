@@ -107,7 +107,8 @@ describe('Session.prompt events', () => {
         const url =
           typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
         if (url !== MODEL_URL) throw new Error(`Unexpected fetch: ${url}`);
-        requests.push(JSON.parse(String(init?.body)));
+        if (typeof init?.body !== 'string') throw new Error('Expected a JSON request body');
+        requests.push(JSON.parse(init.body));
         const body =
           requests.length % 2 === 1
             ? [

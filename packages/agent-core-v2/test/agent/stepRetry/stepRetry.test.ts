@@ -45,6 +45,7 @@ describe('stepRetry plugin', () => {
   }
 
   async function runTurn(_turnId: number, signal?: AbortSignal): Promise<TurnResult> {
+    await ctx.restorePersisted();
     const loop = ctx.get(IAgentLoopService);
     const { turn } = loop.submit({
       message: {
@@ -70,7 +71,7 @@ describe('stepRetry plugin', () => {
     );
     for (let i = 0; i < 100; i += 1) {
       if (settled) break;
-      await vi.runAllTimersAsync();
+      await vi.runOnlyPendingTimersAsync();
       if (!settled) {
         await new Promise((resolve) => realSetTimeout(resolve, 1));
       }

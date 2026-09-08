@@ -10,6 +10,9 @@ import type { IInstantiationService } from '#/_base/di/instantiation';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IFeatureManager } from '#/app/feature/featureManager';
+import { IFlagService } from '#/app/flag/flag';
+import { ISessionNotify } from '#/features/notify/sessionNotify';
+import { notifyUserAvailable } from '#/features/notify/notifyUserAvailability';
 import { getConfigSectionContributions } from '#/app/config/configSectionContributions';
 import { applySectionEnv } from '#/app/config/configService';
 import { Emitter, Event, type IWaitUntil } from '#/_base/event';
@@ -951,7 +954,7 @@ class PersistenceAppendLogStore implements IAppendLogStore {
   declare readonly _serviceBrand: undefined;
   readonly onDidWrite: IAppendLogStore['onDidWrite'] = Event.None as IAppendLogStore['onDidWrite'];
   private readonly history: WireRecord[] = [];
-  private readSeeded = false;
+  private historySeeded = false;
 
   constructor(
     private readonly persistence: WireRecordPersistence,
@@ -959,7 +962,14 @@ class PersistenceAppendLogStore implements IAppendLogStore {
     private readonly onRead: (event: WireRecord) => void,
   ) { }
 
+  private seedHistory(): void {
+    if (this.historySeeded) return;
+    this.history.push(...this.persistence.records.map(cloneRecord));
+    this.historySeeded = true;
+  }
+
   append<R>(_scope: string, _key: string, record: R): void {
+    this.seedHistory();
     const event = record as WireRecord;
     this.onAppend(event);
     this.persistence.append(event);
@@ -967,13 +977,11 @@ class PersistenceAppendLogStore implements IAppendLogStore {
   }
 
   async *read<R>(_scope: string, _key: string): AsyncIterable<R> {
-    const seeding = !this.readSeeded;
+    this.seedHistory();
     for await (const event of this.persistence.read()) {
       this.onRead(event);
-      if (seeding) this.history.push(cloneRecord(event));
       yield event as R;
     }
-    this.readSeeded = true;
   }
 
   rewrite<R>(_scope: string, _key: string, records: readonly R[]): Promise<void> {
@@ -1002,7 +1010,13 @@ class PersistenceAppendLogStore implements IAppendLogStore {
   }
 
   historySnapshot(): WireRecord[] {
+    this.seedHistory();
     return this.history.map(cloneRecord);
+  }
+
+  recordRestore(records: readonly WireRecord[]): void {
+    this.seedHistory();
+    this.history.push(...records.map(cloneRecord));
   }
 }
 
@@ -1235,6 +1249,11 @@ export class AgentTestContext {
               onWillCloseSession: Event.None as Event<SessionWillCloseEvent & IWaitUntil>,
             });
             reg.defineInstance(ISessionApprovalService, this.createApprovalService());
+            reg.defineInstance(ISessionNotify, {
+              _serviceBrand: undefined,
+              ready: Promise.resolve(),
+              enabled: notifyUserAvailable(this.root.accessor.get(IFlagService), bootstrap),
+            });
             reg.defineInstance(ISessionQuestionService, this.createQuestionService());
             reg.defineInstance(ISessionSkillCatalogData, {
               _serviceBrand: undefined,
@@ -1485,6 +1504,7 @@ export class AgentTestContext {
   private async restoreRecordsOnly(records: readonly WireRecord[]): Promise<void> {
     const scopeContext = this.get(IAgentScopeContext);
     const log = this.get(IAppendLogStore);
+    if (log instanceof PersistenceAppendLogStore) log.recordRestore(records);
     await log.rewrite(scopeContext.scope(), AGENT_WIRE_RECORD_KEY, records);
     this.persistedRestored = this.dispatcher.restore();
     await this.persistedRestored;
