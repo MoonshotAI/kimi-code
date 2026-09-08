@@ -4,7 +4,7 @@ import {
   type AgentTaskInfo,
   type TokenUsage,
 } from '@moonshot-ai/agent-core-v2';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/message';
 
 import type {
   AssistantMessage,

@@ -36,7 +36,7 @@ import type {
   ShellStarted,
 } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommandService';
 import type { SkillActivated } from '@moonshot-ai/agent-core-v2/features/skill/skillOps';
-import type { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/agent/stepRetry/stepRetryService';
+import type { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type {
   TaskNotified,
   TaskStarted,
