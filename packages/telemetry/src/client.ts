@@ -62,7 +62,7 @@ export class TelemetryClient {
     }
     this.sink = sink;
     for (const event of this.queue) {
-      const record = toTelemetryEvent(event);
+      const record = toTelemetryEvent(event, this.unexpectedErrorHandler);
       if (record.device_id === null && event.contextOverrides?.deviceId !== true) {
         record.device_id = this.deviceId;
       }
@@ -106,14 +106,14 @@ export class TelemetryClient {
       session_id: context.sessionId === undefined ? this.sessionId : context.sessionId,
       event,
       timestamp: Date.now() / 1000,
-      properties: sanitizeProperties(properties, this.unexpectedErrorHandler),
+      properties,
       contextOverrides: {
         deviceId: context.deviceId !== undefined,
         sessionId: context.sessionId !== undefined,
       },
     };
     if (this.sink !== null) {
-      this.sink.accept(toTelemetryEvent(record));
+      this.sink.accept(toTelemetryEvent(record, this.unexpectedErrorHandler));
       return;
     }
     this.queue.push(record);
@@ -289,14 +289,17 @@ function mergeContext(base: TelemetryContextIds, patch: TelemetryContextIds): Te
   };
 }
 
-function toTelemetryEvent(event: PendingTelemetryEvent): TelemetryEvent {
+function toTelemetryEvent(
+  event: PendingTelemetryEvent,
+  onUnexpectedError?: ((error: Error) => void) | null,
+): TelemetryEvent {
   return {
     event_id: event.event_id,
     device_id: event.device_id,
     session_id: event.session_id,
     event: event.event,
     timestamp: event.timestamp,
-    properties: event.properties,
+    properties: sanitizeProperties(event.properties, onUnexpectedError),
   };
 }
 
@@ -309,9 +312,13 @@ function sanitizeProperties(
     if (isTelemetryPrimitive(value)) {
       out[key] = value;
     } else {
-      onUnexpectedError?.(
-        new Error(`telemetry property "${key}" is not a primitive and was dropped`),
-      );
+      try {
+        onUnexpectedError?.(
+          new Error(`telemetry property "${key}" is not a primitive and was dropped`),
+        );
+      } catch (handlerError) {
+        console.error('[unexpected] telemetry error handler threw', handlerError);
+      }
     }
   }
   return out;

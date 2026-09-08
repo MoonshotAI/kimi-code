@@ -206,6 +206,39 @@ describe('TelemetryClient', () => {
     expect(transport.sent[0]?.[1]?.properties).toEqual({ keep: 1 });
   });
 
+  it('reports drops for events queued before the handler is attached', async () => {
+    const client = new TelemetryClient();
+    const properties = { nested: { a: 1 }, keep: 1 } as unknown as TelemetryProperties;
+    client.track('early_bad', properties);
+
+    const onUnexpectedError = vi.fn();
+    client.setUnexpectedErrorHandler(onUnexpectedError);
+    const transport = new RecordingTransport();
+    client.attachSink(makeSink(transport));
+    await client.flush();
+
+    expect(onUnexpectedError).toHaveBeenCalledTimes(1);
+    expect(transport.sent[0]?.[0]?.properties).toEqual({ keep: 1 });
+  });
+
+  it('contains exceptions thrown by the unexpected error handler', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const client = new TelemetryClient();
+    const transport = new RecordingTransport();
+    client.attachSink(makeSink(transport));
+    client.setUnexpectedErrorHandler(() => {
+      throw new Error('handler blew up');
+    });
+
+    const properties = { nested: { a: 1 }, keep: 1 } as unknown as TelemetryProperties;
+    expect(() => client.track('bad_props', properties)).not.toThrow();
+    await client.flush();
+
+    expect(transport.sent[0]?.[0]?.properties).toEqual({ keep: 1 });
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
   it('stops the previous system metrics collector when replacing it', () => {
     const client = new TelemetryClient();
     const first = { stop: vi.fn() };
