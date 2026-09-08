@@ -445,9 +445,11 @@ export function createAgentMachine({
             branchId: context.branchId,
             queueItemId: context.drainedId,
           })),
+        ],
+        exit: [
+          assign({ turnTools: {} }),
           assign({ turnId: ({ context }) => context.turnId + 1 }),
         ],
-        exit: assign({ turnTools: {} }),
         initial: 'active',
         on: {
           'turn.drain': {

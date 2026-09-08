@@ -6,6 +6,22 @@ import type { FinishReason } from '#human/llm/finish-reason';
 import type { TokenUsage } from '#human/llm/usage';
 import type { Hooks } from '#/hooks';
 import { LoopErrors } from './errors';
+import type { MachineEngineRetrySnapshot, MachineEngineToolCallSnapshot } from './machine/engine';
+
+export interface AgentActivityTurnSnapshot {
+  readonly turnId: number;
+  readonly phase: 'running' | 'tool_call' | 'retrying';
+  readonly step: number;
+  readonly ending: boolean;
+  readonly endingReason?: 'aborted';
+  readonly retry?: MachineEngineRetrySnapshot;
+  readonly activeToolCalls: readonly MachineEngineToolCallSnapshot[];
+  readonly since?: number;
+}
+
+export interface AgentActivitySnapshot {
+  readonly turn?: AgentActivityTurnSnapshot;
+}
 
 export type LoopErrorCode = (typeof LoopErrors.codes)[keyof typeof LoopErrors.codes];
 
@@ -135,6 +151,8 @@ export interface IAgentLoopService {
   cancelFromUser(turnId?: number): void;
 
   status(): AgentLoopStatus;
+
+  activitySnapshot(): AgentActivitySnapshot;
 
   tryAcquireQuiescence(): IDisposable | undefined;
 

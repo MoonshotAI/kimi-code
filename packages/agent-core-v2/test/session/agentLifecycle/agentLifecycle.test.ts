@@ -75,7 +75,7 @@ import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import '#/app/event/eventBusService';
-import { AgentActivityUpdated } from '#/agent/activityView/activityView';
+import { TurnStarted } from '#/agent/loop/turnEvents';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
 import { ILogService } from '#/_base/log/log';
@@ -540,7 +540,7 @@ describe('AgentLifecycleService', () => {
     const bus = ix.get(ISessionEventBus);
     const main = await svc.create({ agentId: 'main' });
     const seen: string[] = [];
-    disposables.add(bus.subscribe(AgentActivityUpdated, (event) => seen.push(event.lifecycle)));
+    disposables.add(bus.subscribe(TurnStarted, () => seen.push('delivered')));
     const agentScope = ix.children.find((child) => child.debugLabel === 'main');
     expect(agentScope).toBeDefined();
     let releaseDrain!: () => void;
@@ -562,19 +562,13 @@ describe('AgentLifecycleService', () => {
     try {
       const removal = svc.remove(main);
       await entered;
-      bus.publish(
-        new AgentActivityUpdated({ lifecycle: 'disposed', background: [], agentId: 'main' }),
-        main,
-      );
-      expect(seen).toEqual(['disposed']);
+      bus.publish(new TurnStarted({ agentId: 'main', turnId: 1, origin: { kind: 'user' } }), main);
+      expect(seen).toEqual(['delivered']);
       releaseDrain();
       await removal;
       expect(() =>
-        bus.publish(
-          new AgentActivityUpdated({ lifecycle: 'disposed', background: [], agentId: 'main' }),
-          main,
-        ),
-      ).toThrow("Agent event 'agent.activity.updated' has no active lifecycle context");
+        bus.publish(new TurnStarted({ agentId: 'main', turnId: 2, origin: { kind: 'user' } }), main),
+      ).toThrow("Agent event 'turn.started' has no active lifecycle context");
       expect(unhandled).toEqual([]);
     } finally {
       process.off('unhandledRejection', onUnhandled);
@@ -605,11 +599,7 @@ describe('AgentLifecycleService', () => {
 
   function publishDisposed(eventBus: ISessionEventBus, scope: IAgentScopeContext): void {
     eventBus.publish(
-      new AgentActivityUpdated({
-        lifecycle: 'disposed',
-        background: [],
-        agentId: scope.agentId,
-      }),
+      new TurnStarted({ agentId: scope.agentId, turnId: 1, origin: { kind: 'user' } }),
       scope.agentContext,
     );
   }
@@ -618,7 +608,7 @@ describe('AgentLifecycleService', () => {
     const svc = ix.get(IAgentLifecycleService);
     const bus = ix.get(ISessionEventBus);
     const seen: string[] = [];
-    disposables.add(bus.subscribe(AgentActivityUpdated, (event) => seen.push(event.lifecycle)));
+    disposables.add(bus.subscribe(TurnStarted, () => seen.push('delivered')));
 
     contributeDisposeBeacon(publishDisposed);
 
@@ -630,7 +620,7 @@ describe('AgentLifecycleService', () => {
     try {
       const main = await svc.create({ agentId: 'main' });
       await svc.remove(main);
-      expect(seen).toEqual(['disposed']);
+      expect(seen).toEqual(['delivered']);
       expect(unhandled).toEqual([]);
     } finally {
       process.off('unhandledRejection', onUnhandled);
@@ -642,7 +632,7 @@ describe('AgentLifecycleService', () => {
     const svc = ix.get(IAgentLifecycleService);
     const bus = ix.get(ISessionEventBus);
     const seen: string[] = [];
-    disposables.add(bus.subscribe(AgentActivityUpdated, (event) => seen.push(event.lifecycle)));
+    disposables.add(bus.subscribe(TurnStarted, () => seen.push('delivered')));
 
     class GatedBeacon {
       constructor(
@@ -675,7 +665,7 @@ describe('AgentLifecycleService', () => {
     process.on('unhandledRejection', onUnhandled);
     try {
       await expect(svc.create({ agentId: 'main' })).rejects.toThrow('boom');
-      expect(seen).toEqual(['disposed']);
+      expect(seen).toEqual(['delivered']);
       expect(unhandled).toEqual([]);
     } finally {
       process.off('unhandledRejection', onUnhandled);
@@ -686,7 +676,7 @@ describe('AgentLifecycleService', () => {
     const svc = ix.get(IAgentLifecycleService);
     const bus = ix.get(ISessionEventBus);
     const seen: string[] = [];
-    disposables.add(bus.subscribe(AgentActivityUpdated, (event) => seen.push(event.lifecycle)));
+    disposables.add(bus.subscribe(TurnStarted, () => seen.push('delivered')));
 
     contributeDisposeBeacon(async (eventBus, scope) => {
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -701,7 +691,7 @@ describe('AgentLifecycleService', () => {
     try {
       const main = await svc.create({ agentId: 'main' });
       await svc.remove(main);
-      expect(seen).toEqual(['disposed']);
+      expect(seen).toEqual(['delivered']);
       expect(unhandled).toEqual([]);
     } finally {
       process.off('unhandledRejection', onUnhandled);

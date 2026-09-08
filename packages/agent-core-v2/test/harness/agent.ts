@@ -130,7 +130,6 @@ import {
   FileStorageService,
   InMemoryStorageService,
   AgentFullCompactionService,
-  IAgentActivityView,
   IAppendLogStore,
   IFileSystemStorageService,
   ISessionMetadata,
@@ -1413,7 +1412,6 @@ export class AgentTestContext {
     reassertServiceOverrides(this.serviceOverrides, 'agent', this.agent.instantiation);
 
     this.initializeRestorableServices();
-    this.get(IAgentActivityView);
 
     const eventBus = this.get(IEventBus);
     this.disposables.push(

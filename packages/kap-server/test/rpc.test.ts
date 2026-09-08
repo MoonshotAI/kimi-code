@@ -4,9 +4,9 @@ import { join } from 'node:path';
 
 import {
   ErrorCodes,
-  IAgentActivityView,
   IAgentGoalService,
   IAgentLifecycleService,
+  IAgentLoopService,
   IAgentPluginCommandService,
   IAgentPromptService,
   IAgentRuntimeBindingService,
@@ -353,12 +353,12 @@ describe('server-v2 /api/v1/debug RPC', () => {
   it('reads agent activity state', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
-    const { body } = await call<{ lifecycle: string }>(
+    const { body } = await call<{ turn?: unknown }>(
       'POST',
-      rpc('agent', IAgentActivityView, 'state', { sid: id, aid: 'main' }),
+      rpc('agent', IAgentLoopService, 'activitySnapshot', { sid: id, aid: 'main' }),
     );
     expect(body.code).toBe(0);
-    expect(body.data.lifecycle).toBe('ready');
+    expect(body.data.turn).toBeUndefined();
   });
 
   it('exposes runtime binding through REST and debug dispatcher contracts', async () => {

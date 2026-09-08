@@ -24,7 +24,9 @@ import { SessionLegacyService } from '#/app/sessionLegacy/sessionLegacyService';
 import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
-import { IAgentActivityView } from '#/agent/activityView/activityView';
+import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 
@@ -139,10 +141,9 @@ describe('Session legacy status (best-effort runtime state)', () => {
         [IAgentPlanService, { status: () => Promise.resolve(null) }],
         [IAgentSwarmService, { isActive: false }],
         [IAgentTowerService, { isActive: false }],
-        [
-          IAgentActivityView,
-          { state: () => ({ lifecycle: 'ready', background: [] }) },
-        ],
+        [IAgentLoopService, { status: () => ({ state: 'idle' }) }],
+        [IAgentTaskService, { list: () => [] }],
+        [IAgentFullCompactionService, { compacting: null }],
       ]),
       dispose: () => {},
     };
@@ -202,10 +203,9 @@ describe('Session legacy status (best-effort runtime state)', () => {
         [IAgentSwarmService, { isActive: false }],
         [IAgentTowerService, { isActive: false }],
         [IModelService, { getDefaultModel: () => undefined }],
-        [
-          IAgentActivityView,
-          { state: () => ({ lifecycle: 'ready', background: [] }) },
-        ],
+        [IAgentLoopService, { status: () => ({ state: 'idle' }) }],
+        [IAgentTaskService, { list: () => [] }],
+        [IAgentFullCompactionService, { compacting: null }],
       ]),
       dispose: () => {},
     };
@@ -274,10 +274,9 @@ describe('Session legacy status (best-effort runtime state)', () => {
             },
           },
         ],
-        [
-          IAgentActivityView,
-          { state: () => ({ lifecycle: 'ready', background: [] }) },
-        ],
+        [IAgentLoopService, { status: () => ({ state: 'idle' }) }],
+        [IAgentTaskService, { list: () => [] }],
+        [IAgentFullCompactionService, { compacting: null }],
       ]),
       dispose: () => {},
     };
@@ -352,10 +351,9 @@ describe('Session legacy status (best-effort runtime state)', () => {
         [IAgentPlanService, { status: () => Promise.resolve(null) }],
         [IAgentSwarmService, { isActive: false }],
         [IAgentTowerService, { isActive: false }],
-        [
-          IAgentActivityView,
-          { state: () => ({ lifecycle: 'ready', background: [] }) },
-        ],
+        [IAgentLoopService, { status: () => ({ state: 'idle' }) }],
+        [IAgentTaskService, { list: () => [] }],
+        [IAgentFullCompactionService, { compacting: null }],
       ]),
       dispose: () => {},
     };

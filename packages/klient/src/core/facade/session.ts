@@ -7,7 +7,6 @@
  * wire).
  */
 
-import type { AgentActivityState } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
 import type {
   ApprovalRequest,
   ApprovalResponse,
@@ -75,10 +74,9 @@ export interface SessionSkillsFacade {
 }
 
 /**
- * Derived session lifecycle phase. The engine retired its `sessionActivity`
- * service (#1751) — busy is now derived from agent activity views — so the
- * facade composes the phase from the pending interaction lists and each
- * agent's `agentActivityView`, keeping the retired service's precedence.
+ * Derived session lifecycle phase. The facade reads the engine's session
+ * activity view (busy + pending interaction) and maps it onto the v1
+ * precedence: pending approvals and questions first, then busy, then idle.
  */
 export type SessionStatus = 'running' | 'idle' | 'awaiting_approval' | 'awaiting_question';
 
@@ -141,29 +139,13 @@ export function createSessionFacade(call: ScopedCaller, sessionId: string): Sess
     setArchived: (archived) =>
       call(scope, 'sessionMetadata', 'setArchived', [archived]) as Promise<void>,
     status: async () => {
-      const pending = (kind: 'approval' | 'question') =>
-        call(scope, 'sessionInteractionService', 'listPending', [kind]) as Promise<
-          readonly unknown[]
-        >;
-      if ((await pending('approval')).length > 0) return 'awaiting_approval';
-      if ((await pending('question')).length > 0) return 'awaiting_question';
-      const meta = await read();
-      for (const agentId of Object.keys(meta.agents ?? {})) {
-        try {
-          const state = (await call(
-            { sessionId, agentId },
-            'agentActivityView',
-            'state',
-            [],
-          )) as AgentActivityState;
-          if (state.turn !== undefined || state.background.length > 0) return 'running';
-        } catch {
-          // Agents stay registered after their live handle is gone; the scope
-          // probe fails for a dead agent, so treat it as not active — the same
-          // view the retired service had from iterating live handles only.
-        }
-      }
-      return 'idle';
+      const activity = (await call(scope, 'sessionActivityView', 'state', [])) as {
+        readonly busy: boolean;
+        readonly pendingInteraction: 'none' | 'approval' | 'question';
+      };
+      if (activity.pendingInteraction === 'approval') return 'awaiting_approval';
+      if (activity.pendingInteraction === 'question') return 'awaiting_question';
+      return activity.busy ? 'running' : 'idle';
     },
     close: () => call({}, 'sessionManager', 'close', [sessionId]) as Promise<void>,
     archive: () => call({}, 'sessionManager', 'archive', [sessionId]) as Promise<void>,

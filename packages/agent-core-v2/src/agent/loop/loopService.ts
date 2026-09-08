@@ -45,6 +45,7 @@ import {
   IAgentLoopService,
   isMaxStepsExceededError,
   type AfterStepContext,
+  type AgentActivitySnapshot,
   type AgentLoopStatus,
   type LoopError,
   type LoopErrorContext,
@@ -302,6 +303,26 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         .map((reservation) => reservation.machineQueueId),
       hasPendingRequests: this.hasPendingRequests(),
       activeTraceId: this.activeRequestTrace?.traceId,
+    };
+  }
+
+  activitySnapshot(): AgentActivitySnapshot {
+    const engine = this.engine;
+    if (engine === undefined) return {};
+    const snapshot = engine.snapshot();
+    const turn = snapshot.turn;
+    if (turn === undefined) return {};
+    return {
+      turn: {
+        turnId: turn.turnId,
+        phase: turn.phase,
+        step: turn.step,
+        ending: snapshot.aborting,
+        endingReason: snapshot.aborting ? 'aborted' : undefined,
+        retry: turn.retry,
+        activeToolCalls: turn.activeToolCalls,
+        since: this.active?.startedAt,
+      },
     };
   }
 

@@ -85,6 +85,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
       };
     },
     status() { return { state: active !== undefined ? 'running' : 'idle', activeTurnId: active?.id, pendingPromptIds: [], hasPendingRequests: hasPending() }; },
+    activitySnapshot() { return {}; },
     cancel(turnId, reason) { cancels.push({ turnId, reason }); if (active === undefined || (turnId !== undefined && active.id !== turnId)) return false; active.cancel(reason); return true; },
     cancelQueued() { return false; },
     cancelFromUser(turnId) { stub.cancel(turnId); },

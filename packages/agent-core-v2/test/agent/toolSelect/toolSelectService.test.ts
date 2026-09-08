@@ -225,6 +225,10 @@ class FakeLoopService implements IAgentLoopService {
     return { state: 'idle' as const, pendingPromptIds: [], hasPendingRequests: false };
   }
 
+  activitySnapshot() {
+    return {};
+  }
+
   cancel(_turnId?: number, _reason?: unknown): boolean {
     throw new Error('unused in this suite');
   }
