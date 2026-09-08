@@ -42,6 +42,7 @@ import '#/agent/permissionMode/configSection';
 import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
 import '#/agent/media/configSection';
 import { IMAGE_SECTION, type ImageConfig } from '#/agent/media/configSection';
+import { READ_SECTION } from '#/agent/tools/os/read/configSection';
 import '#/agent/tokenCounting/configSection';
 import {
   TOKEN_COUNTING_SECTION,
@@ -789,6 +790,20 @@ describe('defaultPermissionMode config section', () => {
     expect(() => registry.validate(DEFAULT_PERMISSION_MODE_SECTION, 'bogus')).toThrow();
 
     expect(registry.getSection('yolo')).toBeUndefined();
+  });
+});
+
+describe('Read config section', () => {
+  it('accepts positive character budgets and rejects invalid limits', () => {
+    const registry = new ConfigRegistry();
+
+    expect(registry.validate(READ_SECTION, { defaultMaxChars: 200_000, maxChars: 750_000 }))
+      .toEqual({ defaultMaxChars: 200_000, maxChars: 750_000 });
+    expect(registry.validate(READ_SECTION, { maxChars: 1_000 })).toEqual({ maxChars: 1_000 });
+    expect(() => registry.validate(READ_SECTION, { defaultMaxChars: 0 })).toThrow();
+    expect(() => registry.validate(READ_SECTION, { maxChars: -1 })).toThrow();
+    expect(() => registry.validate(READ_SECTION, { maxChars: 1.5 })).toThrow();
+    expect(() => registry.validate(READ_SECTION, { maxChars: Infinity })).toThrow();
   });
 });
 

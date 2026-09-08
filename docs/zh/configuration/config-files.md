@@ -430,6 +430,23 @@ disabled = ["EnterPlanMode", "ExitPlanMode", "mcp__github__*"]
 与 Agent 文件中的 `tools` / `disallowedTools` 一样，本节不仅决定模型能"看到"哪些工具，还会在执行前再次强制检查。[权限规则](#permission)仍是独立的控制层，用于决定哪些操作需要审批。
 :::
 
+## `read`
+
+`read` 控制 [`Read` 工具](../reference/tools.md) 的字符额度，包含文件正文、行号和状态信息，不额外叠加行数或 UTF-8 字节数上限。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `default_max_chars` | `integer` | `100000` | 工具调用未指定 `max_chars` 时的字符额度 |
+| `max_chars` | `integer` | `500000` | 单次工具调用可申请的最大字符额度 |
+
+```toml
+[read]
+default_max_chars = 100000
+max_chars = 500000
+```
+
+两个值都必须是正整数。调用中的 `max_chars` 覆盖默认值，但不会超过配置的最大值；结果会说明实际生效的额度。如果配置的默认值超过最大值，默认读取也会按最大值执行。如果希望较大的文档默认就能一次返回，无需 Agent 主动申请更大额度，可以提高 `default_max_chars`。
+
 ## `image`
 
 `image` 控制图片发送给模型前的压缩行为，对所有图片入口生效（粘贴图片、`ReadMediaFile` 读图、MCP 工具结果里的图片等）。

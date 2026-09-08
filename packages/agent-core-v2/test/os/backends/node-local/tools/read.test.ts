@@ -6,16 +6,13 @@ import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import {
-  EVENT_LOG_MAX_LINE_LENGTH,
-  MAX_BYTES,
-  MAX_LINE_LENGTH,
-  MAX_LINES,
   type ReadInput,
   ReadInputSchema,
   TRANSCODE_MAX_BYTES,
 } from '#/agent/tools/os/read/read';
 import { ReadTool } from '#/agent/tools/os/read/readTool';
 import { stubToolResultTruncationService } from '../../../../agent/toolResultTruncation/stubs';
+import { stubConfigService } from '../../../../app/config/stubs';
 import type { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
@@ -90,7 +87,7 @@ function createReadTool(
     inspect: () => runtime,
     acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
   };
-  return new ReadTool(resolver, workspace, skillCatalog, truncation);
+  return new ReadTool(resolver, workspace, skillCatalog, truncation, stubConfigService());
 }
 
 function createSpiedFs(content: string) {
@@ -179,6 +176,78 @@ async function execute(tool: ReadTool, args: ReadInput): Promise<ExecutableToolR
 }
 
 describe('ReadTool', () => {
+  it('reads a 4621-line document in full when the requested character budget fits', async () => {
+    const content = Array.from({ length: 4621 }, (_, index) =>
+      `section ${String(index + 1)} ${'x'.repeat(55)}`,
+    ).join('\n');
+    const tool = toolWithContent(content);
+
+    const result = await execute(tool, ReadInputSchema.parse({
+      path: '/tmp/paper.md',
+      max_chars: 500_000,
+    }));
+    const output = toolContentString(result);
+
+    expect(result.isError).not.toBe(true);
+    expect(output.split('\n')).toHaveLength(4621);
+    expect(output.replaceAll(/^\d+\t/gm, '')).toBe(content);
+    expect(output.length + 1 + (result.note?.length ?? 0)).toBeLessThanOrEqual(500_000);
+  });
+
+  it('pages through the requested range without losing text or exceeding the character budget', async () => {
+    const lines = Array.from({ length: 20 }, (_, index) =>
+      `section ${String(index + 1)} ${'文'.repeat(70)}`,
+    );
+    const tool = toolWithContent(lines.join('\n'));
+    const contents: string[] = [];
+    let args: ReadInput | undefined = { path: '/tmp/range.md', line_offset: 3, n_lines: 12, max_chars: 650 };
+    let last: ExecutableToolResult | undefined;
+
+    for (let page = 0; args !== undefined && page < 20; page += 1) {
+      const result = await execute(tool, args);
+      const output = toolContentString(result);
+      expect(result.isError).not.toBe(true);
+      expect(output.length).toBeGreaterThan(0);
+      expect(output.length + 1 + (result.note?.length ?? 0)).toBeLessThanOrEqual(650);
+      contents.push(output.replaceAll(/^\d+\t/gm, ''));
+      const next = result.note?.match(/Next Read: (\{[^\n]*\})/);
+      args = next === undefined || next === null ? undefined : ReadInputSchema.parse(JSON.parse(next[1]!));
+      last = result;
+    }
+
+    expect(args).toBeUndefined();
+    expect(contents.length).toBeGreaterThan(1);
+    expect(contents.join('\n')).toBe(lines.slice(2, 14).join('\n'));
+    expect(last?.note).toContain('Requested range complete.');
+    expect(last?.note).not.toContain('End of file reached.');
+  });
+
+  it('returns the newest part of a tail range and lets the caller recover the omitted earlier lines', async () => {
+    const lines = Array.from({ length: 20 }, (_, index) =>
+      `section ${String(index + 1)} ${'x'.repeat(70)}`,
+    );
+    const tool = toolWithContent(lines.join('\n'));
+    const returned: string[] = [];
+    let args: ReadInput | undefined = { path: '/tmp/tail.md', line_offset: -15, n_lines: 10, max_chars: 650 };
+
+    for (let page = 0; args !== undefined && page < 20; page += 1) {
+      const result = await execute(tool, args);
+      const output = toolContentString(result);
+      expect(result.isError).not.toBe(true);
+      expect(output.length + 1 + (result.note?.length ?? 0)).toBeLessThanOrEqual(650);
+      expect(result.note).not.toContain('End of file reached.');
+      if (page === 0) expect(output.split('\n').at(-1)).toBe(`15\t${lines[14]}`);
+      returned.push(...output.split('\n'));
+      const next = result.note?.match(/Next Read: (\{[^\n]*\})/);
+      args = next === undefined || next === null ? undefined : ReadInputSchema.parse(JSON.parse(next[1]!));
+    }
+
+    expect(args).toBeUndefined();
+    expect(returned).toHaveLength(10);
+    expect(returned.toSorted((left, right) => Number(left.split('\t')[0]) - Number(right.split('\t')[0]))
+      .map((line) => line.replace(/^\d+\t/, '')).join('\n')).toBe(lines.slice(5, 15).join('\n'));
+  });
+
   it('exposes current metadata and schema', () => {
     const tool = toolWithContent('');
 
@@ -197,7 +266,7 @@ describe('ReadTool', () => {
       false,
     );
     expect(
-      ReadInputSchema.safeParse({ path: '/tmp/test.txt', line_offset: -(MAX_LINES + 1) }).success,
+      ReadInputSchema.safeParse({ path: '/tmp/test.txt', max_chars: 0 }).success,
     ).toBe(false);
   });
 
@@ -215,10 +284,10 @@ describe('ReadTool', () => {
 
     const result = await execute(tool, { path: '/tmp/a.txt' });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       output: '1\talpha\n2\tbeta',
       note: readNote(
-        '2 lines read from file starting from line 1. Total lines in file: 2. End of file reached.',
+        '2 lines read from file starting from line 1. Total lines in file: 2. Requested range complete. Effective max_chars: 100000. End of file reached.',
       ),
     });
   });
@@ -241,7 +310,7 @@ describe('ReadTool', () => {
     expect(result.output).toBe(['1\talpha', '2\tbeta'].join('\n'));
     expect(result.note).toBe(
       readNote(
-        '2 lines read from file starting from line 1. Total lines in file: 2. End of file reached.',
+        '2 lines read from file starting from line 1. Total lines in file: 2. Requested range complete. Effective max_chars: 100000. End of file reached.',
       ),
     );
   });
@@ -254,7 +323,7 @@ describe('ReadTool', () => {
     expect(result.output).toBe(['1\talpha\\r', '2\tbeta', '3\tgamma\\rdone'].join('\n'));
     expect(result.note).toBe(
       readNote(
-        '3 lines read from file starting from line 1. Total lines in file: 3. End of file reached. Mixed or lone carriage-return line endings are shown as \\r. Use exact \\r\\n or \\r escapes in Edit.old_string for those lines.',
+        '3 lines read from file starting from line 1. Total lines in file: 3. Requested range complete. Effective max_chars: 100000. End of file reached. Mixed or lone carriage-return line endings are shown as \\r. Use exact \\r\\n or \\r escapes in Edit.old_string for those lines.',
       ),
     );
   });
@@ -264,9 +333,9 @@ describe('ReadTool', () => {
 
     const result = await execute(tool, { path: '/tmp/a.txt', line_offset: 2, n_lines: 2 });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       output: '2\tb\n3\tc',
-      note: readNote('2 lines read from file starting from line 2. Total lines in file: 5.'),
+      note: readNote('2 lines read from file starting from line 2. Total lines in file: 5. Requested range complete. Effective max_chars: 100000.'),
     });
   });
 
@@ -275,9 +344,9 @@ describe('ReadTool', () => {
 
     const result = await execute(tool, { path: '/tmp/a.txt', line_offset: 20 });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       output: '',
-      note: readNote('No lines read from file. Total lines in file: 2. End of file reached.'),
+      note: readNote('No lines read from file. Total lines in file: 2. Requested range complete. Effective max_chars: 100000. End of file reached.'),
     });
   });
 
@@ -286,10 +355,10 @@ describe('ReadTool', () => {
 
     const result = await execute(tool, { path: '/tmp/a.txt', line_offset: -3 });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       output: '3\tc\n4\td\n5\te',
       note: readNote(
-        '3 lines read from file starting from line 3. Total lines in file: 5. End of file reached.',
+        '3 lines read from file starting from line 3. Total lines in file: 5. Requested range complete. Effective max_chars: 100000. End of file reached.',
       ),
     });
   });
@@ -301,7 +370,7 @@ describe('ReadTool', () => {
 
     expect(result.output).toBe('1\ta\n2\tb');
     expect(result.note).toBe(
-      readNote('2 lines read from file starting from line 1. Total lines in file: 5.'),
+      readNote('2 lines read from file starting from line 1. Total lines in file: 5. Requested range complete. Effective max_chars: 100000.'),
     );
   });
 
@@ -344,7 +413,7 @@ describe('ReadTool', () => {
     expect(result.output).toBe('1\texternal');
     expect(result.note).toBe(
       readNote(
-        '1 line read from file starting from line 1. Total lines in file: 1. End of file reached.',
+        '1 line read from file starting from line 1. Total lines in file: 1. Requested range complete. Effective max_chars: 100000. End of file reached.',
       ),
     );
     expect(readBytes).toHaveBeenCalledWith('/tmp/external.txt', MEDIA_SNIFF_BYTES);
@@ -357,7 +426,7 @@ describe('ReadTool', () => {
 
     const result = await execute(tool, { path: '/workspace/missing.txt' });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       isError: true,
       output: '"/workspace/missing.txt" does not exist.',
     });
@@ -373,7 +442,7 @@ describe('ReadTool', () => {
 
     const result = await execute(tool, { path: '/workspace/src' });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       isError: true,
       output: '"/workspace/src" is not a file.',
     });
@@ -390,7 +459,7 @@ describe('ReadTool', () => {
     expect(result.output).toBe('1\thome note');
     expect(result.note).toBe(
       readNote(
-        '1 line read from file starting from line 1. Total lines in file: 1. End of file reached.',
+        '1 line read from file starting from line 1. Total lines in file: 1. Requested range complete. Effective max_chars: 100000. End of file reached.',
       ),
     );
     expect(readBytes).toHaveBeenCalledWith('/home/test/notes/today.txt', MEDIA_SNIFF_BYTES);
@@ -637,18 +706,34 @@ describe('ReadTool', () => {
     expect(output).toContain('too large to transcode');
   });
 
-  it('truncates long lines and surfaces the affected line numbers', async () => {
-    const long = 'x'.repeat(MAX_LINE_LENGTH + 10);
+  it('returns long lines whole without losing Unicode characters', async () => {
+    const long = '文'.repeat(5_000) + '🙂END';
     const tool = toolWithContent([long, 'short', long].join('\n'));
-
     const result = await execute(tool, { path: '/tmp/long.txt' });
 
-    expect(result.note).toContain('Lines [1, 3] were truncated to 2000 characters; use Bash (e.g. cut or sed) to read the elided content of those lines.');
-    expect(result.output).toContain('...');
+    expect(result.isError).not.toBe(true);
+    expect(result.output).toBe(`1\t${long}\n2\tshort\n3\t${long}`);
+    expect(result.note).toContain('Requested range complete.');
+    expect(result.truncated).toBeUndefined();
+  });
+
+  it.each([1, -1])('returns a recoverable error for an oversized whole line at offset %i', async (lineOffset) => {
+    const content = '文'.repeat(700) + '🙂END';
+    const tool = toolWithContent(content);
+    const tooSmall = await execute(tool, { path: '/tmp/line.txt', line_offset: lineOffset, max_chars: 650 });
+
+    expect(tooSmall.isError).toBe(true);
+    expect(tooSmall.output).toContain('Line 1 cannot fit');
+    expect(tooSmall.output).toContain('No partial line was returned.');
+
+    const retried = await execute(tool, { path: '/tmp/line.txt', line_offset: lineOffset, max_chars: 1500 });
+    expect(retried.isError).not.toBe(true);
+    expect(retried.output).toBe(`1\t${content}`);
+    expect(retried.note).toContain('Requested range complete.');
   });
 
   it('returns agent event log lines untruncated and marks the read spill-exempt', async () => {
-    const long = 'x'.repeat(MAX_LINE_LENGTH + 10);
+    const long = 'x'.repeat(2_000 + 10);
     const truncation: IAgentToolResultTruncationService = {
       ...stubToolResultTruncationService(),
       isWireJournalPath: (path) => path.endsWith('/wire.jsonl'),
@@ -673,84 +758,67 @@ describe('ReadTool', () => {
     expect(result.spillExempt).toBe(true);
   });
 
-  it('caps a single event log record and reports the cap in the note', async () => {
-    const huge = 'y'.repeat(EVENT_LOG_MAX_LINE_LENGTH + 100);
+  it('reads a whole long event log record with an explicit character budget', async () => {
+    const huge = 'y'.repeat(150_100);
     const truncation: IAgentToolResultTruncationService = {
       ...stubToolResultTruncationService(),
       isWireJournalPath: (path) => path.endsWith('/wire.jsonl'),
     };
-    const tool = createReadTool(
-      createSpiedFs(`${huge}\nshort`).fs,
-      createTestEnv(),
-      PERMISSIVE_WORKSPACE,
-      undefined,
-      truncation,
-    );
-
+    const tool = createReadTool(createSpiedFs(`${huge}\nshort`).fs, createTestEnv(), PERMISSIVE_WORKSPACE, undefined, truncation);
     const result = await execute(tool, {
       path: '/home/user/.kimi-code/sessions/ws/session/agents/main/wire.jsonl',
       line_offset: 1,
       n_lines: 1,
+      max_chars: 500_000,
     });
-    const output = toolContentString(result);
 
-    expect(output.length).toBeLessThanOrEqual(EVENT_LOG_MAX_LINE_LENGTH + 20);
-    expect(output).toContain('...');
-    expect(result.note).toContain(`truncated to ${String(EVENT_LOG_MAX_LINE_LENGTH)} characters`);
+    expect(result.isError).not.toBe(true);
+    expect(result.output).toBe(`1\t${huge}`);
+    expect(result.note).toContain('Requested range complete.');
     expect(result.spillExempt).toBe(true);
   });
 
-  it('returns the last oversized event log record when reading from the tail', async () => {
-    const huge = 'z'.repeat(MAX_BYTES + 5_000);
-    const truncation: IAgentToolResultTruncationService = {
-      ...stubToolResultTruncationService(),
-      isWireJournalPath: (path) => path.endsWith('/wire.jsonl'),
-    };
-    const tool = createReadTool(
-      createSpiedFs(`first\n${huge}`).fs,
-      createTestEnv(),
-      PERMISSIVE_WORKSPACE,
-      undefined,
-      truncation,
-    );
-
+  it('returns a whole large final event log record within the requested character budget', async () => {
+    const huge = 'z'.repeat(105_000);
+    const tool = toolWithContent(`first\n${huge}`);
     const result = await execute(tool, {
-      path: '/home/user/.kimi-code/sessions/ws/session/agents/main/wire.jsonl',
+      path: '/tmp/wire.jsonl',
       line_offset: -1,
+      max_chars: 500_000,
     });
-    const output = toolContentString(result);
 
-    expect(output).toContain('z'.repeat(1_000));
-    expect(result.note).not.toContain('No lines read');
+    expect(result.isError).not.toBe(true);
+    expect(result.output).toBe(`2\t${huge}`);
+    expect(result.note).toContain('End of file reached.');
   });
 
-  it('keeps truncating long lines when the truncation service does not recognize the path', async () => {
-    const long = 'x'.repeat(MAX_LINE_LENGTH + 10);
+  it('uses the same whole-line and spill policy for ordinary paths', async () => {
+    const long = 'x'.repeat(2_010);
     const tool = toolWithContent([long, 'short'].join('\n'));
+    const result = await execute(tool, { path: '/tmp/ordinary.txt' });
 
-    const result = await execute(tool, {
-      path: '/home/user/.kimi-code/sessions/ws/session/agents/main/wire.jsonl',
-    });
-
-    expect(result.note).toContain('Lines [1] were truncated to 2000 characters');
-    expect(result.spillExempt).toBeUndefined();
+    expect(result.output).toBe(`1\t${long}\n2\tshort`);
+    expect(result.truncated).toBeUndefined();
+    expect(result.spillExempt).toBe(true);
   });
 
-  it('checks the byte cap before adding the next rendered line', async () => {
-    const line = 'x'.repeat(MAX_LINE_LENGTH);
-    const content = Array.from({ length: 80 }, () => line).join('\n');
-    const tool = toolWithContent(content);
-
-    const result = await execute(tool, { path: '/tmp/bytes.txt' });
+  it('fits complete lines and status within the default character budget', async () => {
+    const line = '文'.repeat(2_000);
+    const tool = toolWithContent(Array.from({ length: 80 }, () => line).join('\n'));
+    const result = await execute(tool, { path: '/tmp/characters.txt' });
     const output = toolContentString(result);
 
-    expect(Buffer.byteLength(output, 'utf8')).toBeLessThanOrEqual(MAX_BYTES);
-    expect(result.note).toContain(`Max ${String(MAX_BYTES)} bytes reached.`);
+    expect(result.isError).not.toBe(true);
+    expect(output.length + 1 + (result.note?.length ?? 0)).toBeLessThanOrEqual(100_000);
+    expect(Buffer.byteLength(output, 'utf8')).toBeGreaterThan(100_000);
+    expect(output.split('\n').every((entry) => entry.replace(/^\d+\t/, '') === line)).toBe(true);
+    expect(result.truncated).toBe(true);
+    expect(result.note).toContain('Next Read:');
   });
 
   it('reads through bounded byte preflight and streams line iteration without full readText', async () => {
     const bytes = Buffer.from(
-      Array.from({ length: MAX_LINES + 5 }, (_, i) => `line ${String(i + 1)}`).join('\n'),
+      Array.from({ length: 1_000 + 5 }, (_, i) => `line ${String(i + 1)}`).join('\n'),
       'utf8',
     );
     const readText = vi.fn(async () => {
@@ -758,7 +826,7 @@ describe('ReadTool', () => {
     });
     let consumed = 0;
     const readLines = vi.fn().mockImplementation(async function* (): AsyncGenerator<string> {
-      for (let i = 1; i <= MAX_LINES + 5; i += 1) {
+      for (let i = 1; i <= 1_000 + 5; i += 1) {
         consumed = i;
         yield `line ${String(i)}\n`;
       }
@@ -775,29 +843,26 @@ describe('ReadTool', () => {
 
     expect(result.isError).toBeFalsy();
     expect(output).toContain('1\tline 1');
-    expect(output).toContain(`${String(MAX_LINES)}\tline ${String(MAX_LINES)}`);
-    expect(result.note).toContain(`Total lines in file: ${String(MAX_LINES + 5)}.`);
-    expect(result.note).toContain(`Max ${String(MAX_LINES)} lines reached.`);
-    expect(consumed).toBe(MAX_LINES + 5);
+    expect(output).toContain(`${String(1_000)}\tline ${String(1_000)}`);
+    expect(result.note).toContain(`Total lines in file: ${String(1_000 + 5)}.`);
+    expect(result.note).toContain('Requested range complete.');
+    expect(consumed).toBe(1_000 + 5);
     expect(readBytes).toHaveBeenCalledWith('/tmp/large.txt', MEDIA_SNIFF_BYTES);
     expect(readText).not.toHaveBeenCalled();
   });
 
-  it('caps default reads at MAX_LINES', async () => {
-    const content = Array.from({ length: MAX_LINES + 1 }, (_, i) => `line ${String(i + 1)}`).join(
-      '\n',
-    );
-    const tool = toolWithContent(content);
+  it('reads beyond 1000 lines by default when the character budget fits', async () => {
+    const content = Array.from({ length: 1001 }, (_, i) => `line ${String(i + 1)}`).join('\n');
+    const result = await execute(toolWithContent(content), { path: '/tmp/big.txt' });
 
-    const result = await execute(tool, { path: '/tmp/big.txt' });
-
-    expect(result.note).toContain(`Max ${String(MAX_LINES)} lines reached.`);
-    expect(result.output).toContain(`${String(MAX_LINES)}\tline ${String(MAX_LINES)}`);
-    expect(result.output).not.toContain(`${String(MAX_LINES + 1)}\tline ${String(MAX_LINES + 1)}`);
+    expect(result.isError).not.toBe(true);
+    expect(result.output).toContain('1001\tline 1001');
+    expect(result.note).toContain('Requested range complete.');
+    expect(result.truncated).toBeUndefined();
   });
 
-  it('tail byte truncation keeps the newest lines closest to EOF', async () => {
-    const numLines = Math.floor(MAX_BYTES / 1001) + 20;
+  it('tail character pagination keeps the newest lines closest to EOF', async () => {
+    const numLines = Math.floor(100_000 / 1001) + 20;
     const content = Array.from({ length: numLines }, (_, i) => {
       return `${String(i + 1).padStart(4, '0')}${'B'.repeat(996)}`;
     }).join('\n');
@@ -807,12 +872,12 @@ describe('ReadTool', () => {
     const output = toolContentString(result);
     const outputLines = output.split('\n').filter((line) => line.includes('\t'));
 
-    expect(result.note).toContain(`Max ${String(MAX_BYTES)} bytes reached.`);
+    expect(result.note).toContain('Character limit reached.');
     expect(outputLines.at(-1)).toContain(String(numLines).padStart(4, '0'));
     expect(outputLines[0]).not.toContain('0001');
   });
 
-  it('tail n_lines is applied before byte truncation', async () => {
+  it('tail n_lines is applied before character pagination', async () => {
     const numLines = 500;
     const content = Array.from({ length: numLines }, (_, i) => {
       return `${String(i + 1).padStart(4, '0')}${'X'.repeat(1996)}`;
@@ -832,8 +897,8 @@ describe('ReadTool', () => {
 
   it('interpolates the cap constants into the description and references the Grep tool', () => {
     const tool = toolWithContent('');
-    expect(tool.description).toContain(String(MAX_LINES));
-    expect(tool.description).toContain(String(MAX_LINE_LENGTH));
+    expect(tool.description).toContain('100000');
+    expect(tool.description).toContain('500000');
     expect(tool.description).toContain('Grep');
   });
 
@@ -866,8 +931,16 @@ describe('ReadTool', () => {
     expect(result.isError).toBeFalsy();
     expect(result.output).toBe('');
     expect(result.note).toBe(
-      readNote('No lines read from file. Total lines in file: 0. End of file reached.'),
+      readNote('No lines read from file. Total lines in file: 0. Requested range complete. Effective max_chars: 100000. End of file reached.'),
     );
+  });
+
+  it('rejects an empty read when its model-visible status cannot fit the character budget', async () => {
+    const result = await execute(toolWithContent(''), { path: '/tmp/empty.txt', max_chars: 150 });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('too small');
+    expect(result.output).toContain('Increase max_chars');
   });
 
   it('reads unicode (CJK + emoji + accented Latin) without loss', async () => {
@@ -896,14 +969,14 @@ describe('ReadTool', () => {
     }
   });
 
-  it('schema validation accepts -1 and -MAX_LINES but rejects -(MAX_LINES + 1)', () => {
+  it('accepts large positive and negative line ranges without a fixed line cap', () => {
     expect(ReadInputSchema.safeParse({ path: '/tmp/a.txt', line_offset: -1 }).success).toBe(true);
-    expect(ReadInputSchema.safeParse({ path: '/tmp/a.txt', line_offset: -MAX_LINES }).success).toBe(
+    expect(ReadInputSchema.safeParse({ path: '/tmp/a.txt', line_offset: -10_000, n_lines: 10_000 }).success).toBe(
       true,
     );
-    expect(
-      ReadInputSchema.safeParse({ path: '/tmp/a.txt', line_offset: -(MAX_LINES + 1) }).success,
-    ).toBe(false);
+    expect(ReadInputSchema.safeParse({ path: '/tmp/a.txt', line_offset: 10_000 }).success).toBe(true);
+    expect(ReadInputSchema.safeParse({ path: '/tmp/a.txt', line_offset: 0 }).success).toBe(false);
+    expect(ReadInputSchema.safeParse({ path: '/tmp/a.txt', line_offset: -1.5 }).success).toBe(false);
   });
 
   it('reads non-sensitive dotfiles like .gitignore successfully', async () => {
@@ -923,7 +996,7 @@ describe('ReadTool', () => {
     expect(result.isError).toBeFalsy();
     expect(result.output).toContain('1\ta');
     expect(result.output).toContain('5\te');
-    expect(result.note).toContain('Total lines in file: 5.');
+    expect(result.note).toContain('Total lines in file: 5. Requested range complete. Effective max_chars: 100000.');
   });
 
   it('tail mode on an empty file returns empty output without erroring', async () => {
@@ -932,7 +1005,7 @@ describe('ReadTool', () => {
     const result = await execute(tool, { path: '/tmp/empty-tail.txt', line_offset: -10 });
 
     expect(result.isError).toBeFalsy();
-    expect(result.note).toContain('Total lines in file: 0.');
+    expect(result.note).toContain('Total lines in file: 0. Requested range complete. Effective max_chars: 100000.');
   });
 
   it('line_offset=-1 returns only the last line with its absolute line number', async () => {
@@ -945,17 +1018,16 @@ describe('ReadTool', () => {
     expect(result.note).toContain('1 line read from file starting from line 5.');
   });
 
-  it('tail mode reports absolute line numbers when long lines are truncated', async () => {
-    const shortLine = 'short';
-    const longLine = 'X'.repeat(MAX_LINE_LENGTH + 500);
-    const content = [shortLine, longLine, shortLine, longLine, shortLine].join('\n');
-    const tool = toolWithContent(content);
+  it('keeps absolute line numbers and whole long lines in tail mode', async () => {
+    const longLine = 'X'.repeat(2_500);
+    const result = await execute(toolWithContent(['short', longLine, 'short', longLine, 'short'].join('\n')), {
+      path: '/tmp/tail-long.txt',
+      line_offset: -3,
+    });
 
-    const result = await execute(tool, { path: '/tmp/tail-trunc.txt', line_offset: -3 });
-
-    expect(result.isError).toBeFalsy();
-    expect(result.note).toContain('Total lines in file: 5.');
-    expect(result.note).toContain('Lines [4] were truncated to 2000 characters; use Bash (e.g. cut or sed) to read the elided content of those lines.');
+    expect(result.isError).not.toBe(true);
+    expect(result.output).toBe(`3\tshort\n4\t${longLine}\n5\tshort`);
+    expect(result.truncated).toBeUndefined();
   });
 
   it('rechecks runtime availability when execution starts after the tool was shown', async () => {
@@ -989,6 +1061,7 @@ describe('ReadTool', () => {
       stubWorkspaceContext('/workspace'),
       { catalog: { getSkillRoots: () => [] } } as unknown as ISessionSkillCatalog,
       stubToolResultTruncationService(),
+      stubConfigService(),
     );
     const execution = tool.resolveExecution({ path: '/workspace/a.txt' });
     expect('execute' in execution).toBe(true);
