@@ -1,6 +1,7 @@
 import type { ContentPart } from '#human/llm/message';
 import type { ImageCompressEvent, ImageCropEvent } from '#/app/telemetry/events';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
+import { DEFAULT_INLINE_IMAGE_BYTE_BUDGET } from '#human/llm/media/image-formats';
 
 import { sniffImageDimensions } from './file-type';
 import {
@@ -28,7 +29,7 @@ export function resolveMaxImageEdgePx(): number {
   return configuredMaxImageEdgePx ?? MAX_IMAGE_EDGE_PX;
 }
 
-export const IMAGE_BYTE_BUDGET = 3.75 * 1024 * 1024;
+export const IMAGE_BYTE_BUDGET = DEFAULT_INLINE_IMAGE_BYTE_BUDGET;
 
 export const READ_IMAGE_BYTE_BUDGET = 256 * 1024;
 
@@ -57,6 +58,12 @@ const MAX_DECODE_PIXELS = 100_000_000;
 export const MAX_IMAGE_DECODE_BYTES = 64 * 1024 * 1024;
 
 const RECODABLE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
+
+export function isRecodableImage(bytes: Uint8Array, mimeType: string): boolean {
+  const normalizedMime = normalizeImageMime(mimeType);
+  if (!RECODABLE_MIME.has(normalizedMime)) return false;
+  return normalizedMime !== 'image/webp' || !isAnimatedWebp(bytes);
+}
 
 export interface CompressImageOptions {
   readonly maxEdge?: number;
@@ -120,9 +127,7 @@ export async function compressImageForModel(
     return result;
   };
 
-  if (bytes.length === 0) return finish('passthrough_unsupported', passthrough());
-  if (!RECODABLE_MIME.has(normalizedMime)) return finish('passthrough_unsupported', passthrough());
-  if (normalizedMime === 'image/webp' && isAnimatedWebp(bytes)) {
+  if (bytes.length === 0 || !isRecodableImage(bytes, normalizedMime)) {
     return finish('passthrough_unsupported', passthrough());
   }
 
@@ -271,7 +276,10 @@ export interface CompressedContentParts {
   readonly captions: readonly string[];
 }
 
-export function gateImageFormatParts(parts: readonly ContentPart[]): ContentPart[] {
+export function gateImageFormatParts(
+  parts: readonly ContentPart[],
+  providerType?: string,
+): ContentPart[] {
   const out: ContentPart[] = [];
   for (const part of parts) {
     if (part.type === 'image_url') {
@@ -281,11 +289,11 @@ export function gateImageFormatParts(parts: readonly ContentPart[]): ContentPart
           out.push({ type: 'text', text: buildMalformedImageNotice(part.imageUrl.url) });
           continue;
         }
-        const extMime = unsupportedImageMimeFromUrl(part.imageUrl.url);
+        const extMime = unsupportedImageMimeFromUrl(part.imageUrl.url, providerType);
         if (extMime !== null) {
           out.push({
             type: 'text',
-            text: buildUnsupportedImageNotice(extMime, part.imageUrl.url),
+            text: buildUnsupportedImageNotice(extMime, part.imageUrl.url, providerType),
           });
           continue;
         }
@@ -296,8 +304,11 @@ export function gateImageFormatParts(parts: readonly ContentPart[]): ContentPart
         parsed.mimeType,
         decodeBase64Prefix(parsed.base64),
       );
-      if (!isModelAcceptedImageMime(effectiveMime)) {
-        out.push({ type: 'text', text: buildUnsupportedImageNotice(effectiveMime) });
+      if (!isModelAcceptedImageMime(effectiveMime, providerType)) {
+        out.push({
+          type: 'text',
+          text: buildUnsupportedImageNotice(effectiveMime, undefined, providerType),
+        });
         continue;
       }
       const canonicalUrl = `data:${normalizeImageMime(effectiveMime)};base64,${parsed.base64}`;
@@ -313,12 +324,15 @@ export function gateImageFormatParts(parts: readonly ContentPart[]): ContentPart
 
 export async function compressImageContentParts(
   parts: readonly ContentPart[],
-  options: CompressImageOptions & { readonly annotate?: CompressAnnotateOptions } = {},
+  options: CompressImageOptions & {
+    readonly annotate?: CompressAnnotateOptions;
+    readonly providerType?: string;
+  } = {},
 ): Promise<CompressedContentParts> {
-  const { annotate, ...compressOptions } = options;
+  const { annotate, providerType, ...compressOptions } = options;
   const out: ContentPart[] = [];
   const captions: string[] = [];
-  for (const part of gateImageFormatParts(parts)) {
+  for (const part of gateImageFormatParts(parts, providerType)) {
     if (part.type === 'image_url') {
       const parsed = parseImageDataUrl(part.imageUrl.url);
       if (parsed !== null) {

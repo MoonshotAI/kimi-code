@@ -487,6 +487,10 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     return this.tryResolveRawModel()?.capabilities ?? UNKNOWN_CAPABILITY;
   }
 
+  getModelProviderType(): string | undefined {
+    return this.tryResolveRawModel()?.providerType;
+  }
+
   getMaxOutputSize(): number | undefined {
     return this.tryResolveRawModel()?.maxOutputSize;
   }

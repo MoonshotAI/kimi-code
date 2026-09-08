@@ -600,8 +600,8 @@ export {
   resolveMaxImageEdgePx,
   resolveReadImageByteBudget,
 } from '#/agent/media/image-compress';
+export { providerImagePolicy, type ProviderImagePolicy } from '#human/llm/media/image-formats';
 export {
-  MODEL_ACCEPTED_IMAGE_MIMES,
   buildImageConversionGuidance,
   buildUnsupportedImageNotice,
   decodeBase64Prefix,

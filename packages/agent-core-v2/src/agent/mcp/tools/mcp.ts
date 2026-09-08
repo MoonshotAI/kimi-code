@@ -16,6 +16,7 @@ import {
 interface McpToolOptions {
   readonly originalsDir?: string;
   readonly telemetry?: ITelemetryService;
+  readonly providerType?: () => string | undefined;
   readonly reconnect?: (signal?: AbortSignal) => Promise<MCPClient | undefined>;
   readonly isRemoved?: () => boolean;
 }
@@ -52,6 +53,7 @@ export function createMcpTool(
         return mcpResultToExecutableOutput(result, qualifiedName, {
           originalsDir: options.originalsDir,
           telemetry: options.telemetry,
+          providerType: options.providerType?.(),
         });
       },
     }),

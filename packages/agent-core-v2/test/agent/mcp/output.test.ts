@@ -204,6 +204,20 @@ describe('convertMCPContentBlock', () => {
     expect(text).toContain('https://example.com/img.avif');
   });
 
+  test('keeps a resource_link image the bound provider accepts', () => {
+    const block = assertValidMcpBlock({
+      type: 'resource_link',
+      name: 'photo.heic',
+      uri: 'https://example.com/photo.heic',
+      mimeType: 'image/heic',
+    });
+    expect(convertMCPContentBlock(block, 'kimi')).toEqual({
+      type: 'image_url',
+      imageUrl: { url: 'https://example.com/photo.heic' },
+    });
+    expect(convertMCPContentBlock(block).type).toBe('text');
+  });
+
   test('converts resource_link with audio/* mimeType to AudioURLPart with URL', () => {
     const block = assertValidMcpBlock({
       type: 'resource_link',
@@ -284,6 +298,19 @@ describe('mcpResultToExecutableOutput', () => {
       'mcp__s__t',
     );
     expect(out).toEqual({ output: 'hello' });
+  });
+
+  test('delivers an inline image the bound provider accepts instead of a notice', async () => {
+    const heic = Buffer.from([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63]);
+    const block = { type: 'image', data: heic.toString('base64'), mimeType: 'image/heic' };
+    const accepted = await mcpResultToExecutableOutput(result([block]), 'mcp__s__t', {
+      providerType: 'kimi',
+    });
+    const parts = accepted.output as ContentPart[];
+    expect(parts.some((part) => part.type === 'image_url')).toBe(true);
+
+    const refused = await mcpResultToExecutableOutput(result([block]), 'mcp__s__t');
+    expect(JSON.stringify(refused.output)).toContain('unsupported image format image/heic');
   });
 
   test('propagates isError=true on the success-shape return', async () => {
@@ -771,6 +798,44 @@ describe('createMcpTool', () => {
 
     expect(result).toEqual({ output: 'ok' });
     expect(result.truncated).toBeUndefined();
+  });
+
+  test('asks the provider type at call time so a later model switch is honored', async () => {
+    const heic = Buffer.from([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63]);
+    const client = {
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return {
+          content: [{ type: 'image', data: heic.toString('base64'), mimeType: 'image/heic' }],
+          isError: false,
+        };
+      },
+      async ping() {},
+    } satisfies MCPClient;
+    let providerType: string | undefined;
+    const tool = createMcpTool(
+      'mcp__server__tool',
+      { name: 'tool', description: 'Tool', parameters: {} },
+      client,
+      { providerType: () => providerType },
+    );
+    const run = async () => {
+      const resolved = tool.resolveExecution({});
+      const execution = isPromiseLike(resolved) ? await resolved : resolved;
+      if (execution.isError === true) throw new Error('expected executable tool call');
+      return execution.execute({
+        turnId: 1,
+        toolCallId: 'call_mcp',
+        signal: new AbortController().signal,
+      });
+    };
+
+    expect(JSON.stringify((await run()).output)).toContain('unsupported image format image/heic');
+    providerType = 'kimi';
+    const accepted = (await run()).output as ContentPart[];
+    expect(accepted.some((part) => part.type === 'image_url')).toBe(true);
   });
 });
 

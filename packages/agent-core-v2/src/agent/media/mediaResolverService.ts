@@ -147,7 +147,10 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       source.bytes.subarray(0, MEDIA_SNIFF_BYTES),
       'media',
     );
-    if (fileType.kind !== 'image' || !isModelAcceptedImageMime(fileType.mimeType)) {
+    if (
+      fileType.kind !== 'image' ||
+      !isModelAcceptedImageMime(fileType.mimeType, requester.model.providerType)
+    ) {
       this.telemetry.track2('media_resolve_fallback', {
         kind: 'image',
         reason: 'invalid',

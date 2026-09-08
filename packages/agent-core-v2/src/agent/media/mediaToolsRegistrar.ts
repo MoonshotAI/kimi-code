@@ -129,6 +129,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
         },
       }),
       inlineVideoSupported: model?.protocol !== 'openai' && model?.protocol !== 'openai_responses',
+      providerType: model?.providerType,
       telemetry: this.telemetry,
     });
   }

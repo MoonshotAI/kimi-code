@@ -87,6 +87,20 @@ const PROMPT_TOML_OTHER_DEFAULT = [
   '',
 ].join('\n');
 
+const PROMPT_TOML_KIMI_VISION = [
+  PROMPT_TOML,
+  '[providers.vision]',
+  'type = "kimi"',
+  'base_url = "http://127.0.0.1:9999"',
+  'api_key = "sk-test"',
+  '',
+  '[models.kimi-vision]',
+  'provider = "vision"',
+  'model = "kimi-vision"',
+  'max_context_size = 1000',
+  '',
+].join('\n');
+
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const CRC32_TABLE = makeCrc32Table();
 
@@ -983,6 +997,41 @@ describe('server-v2 /api/v1 prompts', () => {
     const notice = content[0];
     if (notice?.type !== 'text') throw new Error('expected a text notice');
     expect(notice.text).toContain('image/avif');
+  });
+
+  function heicBytes(): Buffer {
+    const buf = Buffer.alloc(24);
+    buf.writeUInt32BE(24, 0);
+    buf.write('ftyp', 4, 'latin1');
+    buf.write('heic', 8, 'latin1');
+    buf.write('heic', 16, 'latin1');
+    return buf;
+  }
+
+  it('keeps an inline image whose format the session model provider accepts', async () => {
+    await writeConfigToml(home as string, PROMPT_TOML_KIMI_VISION);
+    await (server as RunningServer).core.accessor.get(IConfigService).reload();
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    await setSessionModel(id, 'kimi-vision');
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [
+        {
+          type: 'image',
+          source: {
+            kind: 'base64',
+            media_type: 'image/heic',
+            data: heicBytes().toString('base64'),
+          },
+        },
+      ],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const content = submitted.body.data.content as PromptContentPart[];
+    expect(content).toHaveLength(1);
+    expect(content[0]?.type).toBe('image');
   });
 
   it('replaces an uploaded image file in an unsupported format with a text notice', async () => {

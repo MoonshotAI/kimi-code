@@ -13,6 +13,7 @@ import { USER_PROMPT_ORIGIN, type ContextMessage } from '#/agent/contextMemory/t
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService, type Turn, type TurnResult } from '#/agent/loop/loop';
 import { TurnSteer } from '#/agent/loop/turnOps';
+import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import type { ExecutableToolResult } from '#/tool/toolContract';
@@ -235,6 +236,7 @@ export class AgentPromptService implements IAgentPromptService {
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
+    @IAgentProfileService private readonly profile: IAgentProfileService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentStateService private readonly states: IAgentStateService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -412,7 +414,11 @@ export class AgentPromptService implements IAgentPromptService {
       this.pending.splice(index, 1);
     }
     const ownerPromptId = rerouted.id ?? newMessageId();
-    const message = { ...rerouted, id: ownerPromptId, content: gateImageFormatParts(rerouted.content) };
+    const message = {
+      ...rerouted,
+      id: ownerPromptId,
+      content: gateImageFormatParts(rerouted.content, this.profile.getModelProviderType()),
+    };
     let turn: Turn | undefined;
     try {
       turn = this.loop.steer({
@@ -467,7 +473,11 @@ export class AgentPromptService implements IAgentPromptService {
     const { message: rerouted, captions } = this.extractCompressionCaptions(message);
     await this.materializeDaemonRefs(rerouted);
     const ownerPromptId = rerouted.id ?? newMessageId();
-    const gated = { ...rerouted, id: ownerPromptId, content: gateImageFormatParts(rerouted.content) };
+    const gated = {
+      ...rerouted,
+      id: ownerPromptId,
+      content: gateImageFormatParts(rerouted.content, this.profile.getModelProviderType()),
+    };
     const request = {
       message: gated,
       promptId: ownerPromptId,
@@ -511,7 +521,10 @@ export class AgentPromptService implements IAgentPromptService {
         this.publishCompleted(item.id, 'blocked'); return;
       }
       const turn = this.loop.submit({
-        message: { ...message, content: gateImageFormatParts(message.content) },
+        message: {
+          ...message,
+          content: gateImageFormatParts(message.content, this.profile.getModelProviderType()),
+        },
         promptId: item.id,
         onMaterialize: () => {
           this.notifyCaptions(captions, item.id);

@@ -13,6 +13,7 @@ import type { MCPContentBlock, MCPToolResult } from '#/mcpCore/types';
 export interface McpOutputOptions {
   readonly originalsDir?: string;
   readonly telemetry?: ITelemetryService;
+  readonly providerType?: string;
 }
 
 export const MCP_MAX_BINARY_PART_BYTES = 10 * 1024 * 1024;
@@ -28,7 +29,7 @@ function droppedBlockNotice(reason: string): ContentPart {
   return { type: 'text', text: `[MCP content dropped: ${reason}]` };
 }
 
-export function convertMCPContentBlock(block: MCPContentBlock): ContentPart {
+export function convertMCPContentBlock(block: MCPContentBlock, providerType?: string): ContentPart {
   if (block.type === 'text' && typeof block.text === 'string') {
     return { type: 'text', text: block.text };
   }
@@ -85,8 +86,11 @@ export function convertMCPContentBlock(block: MCPContentBlock): ContentPart {
   if (block.type === 'resource_link' && typeof block.uri === 'string') {
     const mimeType = block.mimeType ?? 'application/octet-stream';
     if (mimeType.startsWith('image/')) {
-      if (!isModelAcceptedImageMime(mimeType)) {
-        return { type: 'text', text: buildUnsupportedImageNotice(mimeType, block.uri) };
+      if (!isModelAcceptedImageMime(mimeType, providerType)) {
+        return {
+          type: 'text',
+          text: buildUnsupportedImageNotice(mimeType, block.uri, providerType),
+        };
       }
       return { type: 'image_url', imageUrl: { url: block.uri } };
     }
@@ -111,7 +115,7 @@ export async function mcpResultToExecutableOutput(
 ): Promise<ExecutableToolResult> {
   const converted: ContentPart[] = [];
   for (const block of result.content) {
-    converted.push(convertMCPContentBlock(block));
+    converted.push(convertMCPContentBlock(block, options.providerType));
   }
 
   const wrapped = wrapMediaOnly(converted, qualifiedToolName);
@@ -141,6 +145,7 @@ export async function mcpResultToExecutableOutput(
   const compressed = await compressImageContentParts(wrapped, {
     telemetry: options.telemetry,
     telemetrySource: 'mcp_tool_result',
+    providerType: options.providerType,
     annotate: {
       persistOriginal: (bytes, mimeType) =>
         persistOriginalImage(

@@ -22,6 +22,8 @@ import {
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import { sniffImageDimensions } from '#/agent/media/file-type';
 import {
+  buildUnsupportedImageNotice,
+  isModelAcceptedImageMime,
   normalizeImageMime,
   unsupportedImageMimeFromUrl,
 } from '#/agent/media/image-format-policy';
@@ -787,6 +789,56 @@ describe('unsupportedImageMimeFromUrl', () => {
     expect(unsupportedImageMimeFromUrl('https://example.com/avatar')).toBeNull();
     expect(unsupportedImageMimeFromUrl('https://cdn.example.com/v2/image?id=123')).toBeNull();
     expect(unsupportedImageMimeFromUrl('https://example.com/readme.json')).toBeNull();
+  });
+
+  it('treats HEIC, HEIF, and BMP extensions as accepted for the kimi provider only', () => {
+    expect(unsupportedImageMimeFromUrl('https://example.com/photo.heic', 'kimi')).toBeNull();
+    expect(unsupportedImageMimeFromUrl('https://example.com/photo.heif', 'kimi')).toBeNull();
+    expect(unsupportedImageMimeFromUrl('https://example.com/scan.bmp', 'kimi')).toBeNull();
+    expect(unsupportedImageMimeFromUrl('https://example.com/pic.avif', 'kimi')).toBe('image/avif');
+    expect(unsupportedImageMimeFromUrl('https://example.com/photo.heic', 'anthropic')).toBe(
+      'image/heic',
+    );
+  });
+});
+
+describe('provider-aware image format policy', () => {
+  it('accepts HEIC, HEIF, and BMP only when the provider is kimi', () => {
+    for (const mime of ['image/heic', 'image/heif', 'image/bmp']) {
+      expect(isModelAcceptedImageMime(mime, 'kimi')).toBe(true);
+      expect(isModelAcceptedImageMime(mime)).toBe(false);
+      expect(isModelAcceptedImageMime(mime, 'anthropic')).toBe(false);
+      expect(isModelAcceptedImageMime(mime, 'openai')).toBe(false);
+    }
+    for (const mime of ['image/avif', 'image/tiff', 'image/x-icon', 'image/svg+xml']) {
+      expect(isModelAcceptedImageMime(mime, 'kimi')).toBe(false);
+    }
+  });
+
+  it('keeps the baseline formats accepted for every provider', () => {
+    for (const mime of ['image/png', 'image/jpeg', 'image/gif', 'image/webp']) {
+      expect(isModelAcceptedImageMime(mime)).toBe(true);
+      expect(isModelAcceptedImageMime(mime, 'kimi')).toBe(true);
+      expect(isModelAcceptedImageMime(mime, 'anthropic')).toBe(true);
+    }
+  });
+
+  it('lets the format gate pass a HEIC data URL through for the kimi provider', () => {
+    const base64 = Buffer.from([
+      0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63,
+    ]).toString('base64');
+    const url = `data:image/heic;base64,${base64}`;
+    const part = { type: 'image_url' as const, imageUrl: { url } };
+    expect(gateImageFormatParts([part], 'kimi')).toEqual([part]);
+    const rejected = gateImageFormatParts([part]);
+    expect(rejected.some((p) => p.type === 'image_url')).toBe(false);
+    expect((rejected[0] as { text: string }).text).toContain('image/heic');
+  });
+
+  it('names the accepted formats of the current provider in the refusal notice', () => {
+    expect(buildUnsupportedImageNotice('image/avif', undefined, 'kimi')).toContain('HEIC');
+    expect(buildUnsupportedImageNotice('image/heic')).not.toContain('HEIC,');
+    expect(buildUnsupportedImageNotice('image/heic')).toContain('PNG, JPEG, GIF, and WebP');
   });
 });
 
