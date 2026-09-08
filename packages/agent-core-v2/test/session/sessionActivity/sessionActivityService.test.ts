@@ -22,14 +22,8 @@ import {
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import {
-  type Interaction,
-  type InteractionPendingChangedEvent,
-  type InteractionQuery,
-  type InteractionRequest,
-  type InteractionResolution,
-} from '#/human/interaction/interaction';
-import { ISessionInteractionService } from '#/session/interaction/sessionInteractionService';
+import { interactions } from '#/human/interaction/facade';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import {
   ISessionActivityView,
   type SessionActivityChangedEvent,
@@ -40,6 +34,8 @@ import { SessionStateService } from '#/session/state/sessionStateService';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
+
+const SESSION_ID = 'session-a';
 
 class FakeBus implements IEventBus {
   declare readonly _serviceBrand: undefined;
@@ -61,69 +57,6 @@ class FakeBus implements IEventBus {
     this.handlers.add(entry);
     return { dispose: () => this.handlers.delete(entry) };
   }
-}
-
-class FakeSessionInteractions implements ISessionInteractionService {
-  declare readonly _serviceBrand: undefined;
-  private readonly pending = new Map<string, Interaction>();
-  private readonly changeEmitter = new Emitter<InteractionPendingChangedEvent>();
-  private readonly resolveEmitter = new Emitter<InteractionResolution>();
-  readonly onDidChangePending = this.changeEmitter.event;
-  readonly onDidResolve = this.resolveEmitter.event;
-
-  request<TPayload, TResponse>(req: InteractionRequest<TPayload>): Promise<TResponse> {
-    const interaction = this.enqueue(req);
-    return this.wait<TResponse>(interaction.id);
-  }
-
-  enqueue<TPayload>(req: InteractionRequest<TPayload>): Interaction {
-    const interaction: Interaction = {
-      id: req.id ?? `interaction-${this.pending.size}`,
-      kind: req.kind,
-      payload: req.payload,
-      tags: req.tags ?? {},
-      createdAt: Date.now(),
-    };
-    this.pending.set(interaction.id, interaction);
-    this.changeEmitter.fire({ pending: [...this.pending.keys()] });
-    return interaction;
-  }
-
-  respond(id: string, response: unknown): boolean {
-    if (!this.pending.delete(id)) return false;
-    this.changeEmitter.fire({ pending: [...this.pending.keys()] });
-    this.resolveEmitter.fire({ id, response });
-    return true;
-  }
-
-  findAll(query: InteractionQuery = {}): readonly Interaction[] {
-    return [...this.pending.values()].filter(
-      (i) =>
-        (query.id === undefined || i.id === query.id) &&
-        (query.kind === undefined || i.kind === query.kind) &&
-        (query.resolved !== true),
-    );
-  }
-
-  findOne(query: InteractionQuery): Interaction | undefined {
-    return this.findAll(query)[0];
-  }
-
-  wait<TResponse>(id: string): Promise<TResponse> {
-    return new Promise<TResponse>((resolve) => {
-      const subscription = this.onDidResolve((event) => {
-        if (event.id !== id) return;
-        subscription.dispose();
-        resolve(event.response as TResponse);
-      });
-    });
-  }
-
-  isRecentlyResolved(): boolean {
-    return false;
-  }
-
-  cancelForTurn(): void {}
 }
 
 class FakeAgentHandle {
@@ -245,7 +178,6 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
   let host: ScopedTestHost;
   let session: Scope;
   let lifecycle: FakeAgentLifecycle;
-  let interactions: FakeSessionInteractions;
 
   beforeEach(() => {
     _clearScopedRegistryForTests();
@@ -254,11 +186,10 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
     registerScopedService(LifecycleScope.Session, ISessionActivityView, SessionActivityView, ScopeActivation.OnScopeCreated, 'sessionActivity');
 
     disposables = new DisposableStore();
-    interactions = new FakeSessionInteractions();
     host = createScopedTestHost();
-    session = host.child(LifecycleScope.Session, 'session-a', [
+    session = host.child(LifecycleScope.Session, SESSION_ID, [
       stubPair(IWorkspaceStateService, new WorkspaceStateService()),
-      stubPair(ISessionInteractionService, interactions),
+      stubPair(ISessionContext, { sessionId: SESSION_ID } as ISessionContext),
     ]);
     lifecycle = session.accessor.get(IAgentLifecycleService) as unknown as FakeAgentLifecycle;
   });
@@ -266,6 +197,7 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
   afterEach(() => {
     disposables.dispose();
     host.dispose();
+    interactions.purgeSession(SESSION_ID);
   });
 
   function viewWithChanges(): {
@@ -296,7 +228,7 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
     const seededSession = host.child(LifecycleScope.Session, 'session-seeded', [
       stubPair(IAgentLifecycleService, seededLifecycle),
       stubPair(IWorkspaceStateService, new WorkspaceStateService()),
-      stubPair(ISessionInteractionService, interactions),
+      stubPair(ISessionContext, { sessionId: 'session-seeded' } as ISessionContext),
     ]);
     const view = seededSession.accessor.get(ISessionActivityView);
     expect(view.state().busy).toBe(true);
@@ -398,13 +330,13 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
     lifecycle.addAgent(MAIN_AGENT_ID);
     const { changes } = viewWithChanges();
 
-    interactions.enqueue({ id: 'a1', kind: 'approval', payload: {}, tags: { agentId: MAIN_AGENT_ID } });
+    interactions.enqueue({ id: 'a1', kind: 'approval', payload: {}, tags: { agentId: MAIN_AGENT_ID, sessionId: SESSION_ID } });
     expect(changes.at(-1)).toEqual({
       state: { busy: false, mainTurnActive: false, pendingInteraction: 'approval', lastTurnReason: undefined },
       cause: 'interaction',
     });
 
-    interactions.enqueue({ id: 'q1', kind: 'question', payload: {}, tags: { agentId: MAIN_AGENT_ID } });
+    interactions.enqueue({ id: 'q1', kind: 'question', payload: {}, tags: { agentId: MAIN_AGENT_ID, sessionId: SESSION_ID } });
     expect(changes).toHaveLength(1);
 
     interactions.respond('a1', { approved: true });
@@ -415,7 +347,7 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
     lifecycle.addAgent(MAIN_AGENT_ID);
     const { changes } = viewWithChanges();
 
-    interactions.enqueue({ id: 'u1', kind: 'user_tool', payload: {}, tags: { agentId: MAIN_AGENT_ID } });
+    interactions.enqueue({ id: 'u1', kind: 'user_tool', payload: {}, tags: { agentId: MAIN_AGENT_ID, sessionId: SESSION_ID } });
     expect(changes).toHaveLength(0);
   });
 

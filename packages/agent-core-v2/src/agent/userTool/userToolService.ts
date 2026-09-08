@@ -15,12 +15,14 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentStateService } from '#/agent/state/agentState';
 import {
   INTERACTION_TAG_AGENT_ID,
+  INTERACTION_TAG_SESSION_ID,
   INTERACTION_TAG_TOOL_CALL_ID,
   INTERACTION_TAG_TURN_ID,
   type InteractionTags,
 } from '#/human/interaction/interaction';
-import { ISessionInteractionService } from '#/session/interaction/sessionInteractionService';
+import { interactions } from '#/human/interaction/facade';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { IAgentUserToolService, type UserToolRegistration } from './userTool';
@@ -46,7 +48,7 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
-    @ISessionInteractionService private readonly interaction: ISessionInteractionService,
+    @ISessionContext private readonly session: ISessionContext,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentStateService private readonly agentState: IAgentStateService,
   ) {
@@ -137,10 +139,13 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
     args: unknown,
   ): Promise<ExecutableToolResult> {
     const id = `user_tool_${randomUUID()}`;
-    const tags: InteractionTags = { [INTERACTION_TAG_AGENT_ID]: this.scopeContext.agentId };
+    const tags: InteractionTags = {
+      [INTERACTION_TAG_AGENT_ID]: this.scopeContext.agentId,
+      [INTERACTION_TAG_SESSION_ID]: this.session.sessionId,
+      [INTERACTION_TAG_TOOL_CALL_ID]: context.toolCallId,
+    };
     if (context.turnId !== undefined) tags[INTERACTION_TAG_TURN_ID] = context.turnId;
-    tags[INTERACTION_TAG_TOOL_CALL_ID] = context.toolCallId;
-    const request = this.interaction.request<UserToolExecutionRequest, ExecutableToolResult>({
+    const request = interactions.request<UserToolExecutionRequest, ExecutableToolResult>({
       id,
       kind: 'user_tool',
       payload: {
@@ -155,7 +160,7 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
       return await abortable(request, context.signal);
     } catch (error) {
       if (context.signal.aborted) {
-        this.interaction.respond(id, {
+        interactions.respond(id, {
           output: `User tool "${name}" was aborted.`,
           isError: true,
         });

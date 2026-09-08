@@ -13,28 +13,29 @@
  *   dispatch to listeners inside the emitter's call stack).
  * 2. The approval / question / user-tool bridge: v1's engine calls the
  *   client's `requestApproval` / `requestQuestion` / `toolCall` callbacks
- *   (push), where v2 parks a pending interaction in the session's interaction
- *   kernel and waits for a response (pull). The bridge watches
- *   `onDidChangePending`, feeds each new pending interaction to the client
+ *   (push), where v2 parks a pending interaction in the process-global
+ *   interaction kernel and waits for a response (pull). The bridge watches
+ *   `onDidChangePending`, feeds each new pending interaction of this session
+ *   (matched by its `sessionId` tag) to the client
  *   callback — the base class's own public method, so the v1 semantics (the
  *   no-handler cancellation, the handler-failure error event) are inherited
- *   verbatim — and writes the outcome back through the typed session
- *   services. The kernel's `respond` no-ops on an id that is no longer
+ *   verbatim — and writes the outcome back through the kernel's `respond`.
+ *   The kernel's `respond` no-ops on an id that is no longer
  *   pending, so a late answer after a turn cancellation is safe.
  */
 import type { Event, ToolInputDisplay } from '@moonshot-ai/protocol';
 import {
   agentContextOf,
   INTERACTION_TAG_AGENT_ID,
+  INTERACTION_TAG_SESSION_ID,
   IAgentLifecycleService,
   IAgentProfileService,
   IEventBus,
-  ISessionApprovalService,
-  ISessionInteractionService,
-  ISessionQuestionService,
+  interactions,
   ISessionTokenCountingService,
   ISessionUsageService,
   MAIN_AGENT_ID,
+  toDisposable,
   type Event2,
   type IAgentScopeHandle,
   type IDisposable,
@@ -68,7 +69,7 @@ export interface SessionEventSink {
 }
 
 /**
- * The v2 approval payload (`agent-core-v2/src/session/approval/approval.ts` —
+ * The v2 approval payload (`agent-core-v2/src/agent/interaction/approval.ts` —
  * the package index exports only the service identifier, not the model). A
  * superset of v1's `ApprovalRequest`: the extra id/sessionId/agentId fields
  * are stripped when the handler is fed.
@@ -84,7 +85,7 @@ interface ApprovalInteractionPayload {
   readonly display: ToolInputDisplay;
 }
 
-/** The v2 question payload (`agent-core-v2/src/session/question/question.ts`). */
+/** The v2 question payload (`agent-core-v2/src/agent/interaction/question.ts`). */
 interface QuestionInteractionPayload {
   readonly id?: string;
   readonly turnId?: number;
@@ -112,14 +113,17 @@ export class SessionEventWiring {
     private readonly sink: SessionEventSink,
   ) {
     const manager = session.accessor.get(IAgentLifecycleService);
-    const interactions = session.accessor.get(ISessionInteractionService);
     this.disposables.push(
-      interactions.onDidChangePending(() => {
-        this.bridgeNewPendingInteractions();
-      }),
-      interactions.onDidResolve(({ id }) => {
-        this.bridgedInteractionIds.delete(id);
-      }),
+      toDisposable(
+        interactions.onDidChangePending(() => {
+          this.bridgeNewPendingInteractions();
+        }),
+      ),
+      toDisposable(
+        interactions.onDidResolve(({ id }) => {
+          this.bridgedInteractionIds.delete(id);
+        }),
+      ),
     );
     this.disposables.push(
       manager.onDidCreate((context) => {
@@ -172,7 +176,10 @@ export class SessionEventWiring {
 
   private bridgeNewPendingInteractions(): void {
     if (this.disposed) return;
-    const pending = this.session.accessor.get(ISessionInteractionService).findAll({ resolved: false });
+    const pending = interactions.findAll({
+      resolved: false,
+      tags: { [INTERACTION_TAG_SESSION_ID]: this.session.id },
+    });
     for (const interaction of pending) {
       if (this.bridgedInteractionIds.has(interaction.id)) continue;
       this.bridgedInteractionIds.add(interaction.id);
@@ -209,7 +216,7 @@ export class SessionEventWiring {
         sessionId: this.session.id,
         agentId: payload.agentId ?? interactionAgentId(interaction) ?? MAIN_AGENT_ID,
       });
-      this.session.accessor.get(ISessionApprovalService).decide(interaction.id, response);
+      interactions.respond(interaction.id, response);
     } catch {
       // The session scope died mid-bridge (close/reload): the parked engine
       // request died with it, and `respond` no-ops on an unknown id anyway.
@@ -232,12 +239,7 @@ export class SessionEventWiring {
         sessionId: this.session.id,
         agentId: interactionAgentId(interaction) ?? MAIN_AGENT_ID,
       });
-      const questions = this.session.accessor.get(ISessionQuestionService);
-      if (result === null) {
-        questions.dismiss(interaction.id);
-      } else {
-        questions.answer(interaction.id, result);
-      }
+      interactions.respond(interaction.id, result);
     } catch {
       // See bridgeApproval.
     }
@@ -256,7 +258,7 @@ export class SessionEventWiring {
         toolCallId: payload.toolCallId,
         args: payload.args,
       });
-      this.session.accessor.get(ISessionInteractionService).respond(interaction.id, result);
+      interactions.respond(interaction.id, result);
     } catch {
       // See bridgeApproval.
     }

@@ -511,21 +511,16 @@ export * from '#/app/sessionExport/zip';
 export * from '#/app/sessionLegacy/sessionLegacy';
 export * from '#/app/sessionLegacy/sessionLegacyService';
 export * from '#/human/interaction/interaction';
-import '#/session/interaction/sessionInteractionService';
-export { ISessionInteractionService } from '#/session/interaction/sessionInteractionService';
-export * from '#/session/interaction/interactionOps';
+export * from '#/human/interaction/facade';
+export * from '#/agent/interaction/interactionOps';
 export * from '#/session/sessionContext/sessionContext';
 
-import '#/session/approval/approval';
-import '#/session/approval/approvalService';
+export * from '#/agent/interaction/question';
 export {
-  ISessionApprovalService,
   type ApprovalDecision,
   type ApprovalRequest as SessionApprovalRequest,
   type ApprovalResponse as SessionApprovalResponse,
-} from '#/session/approval/approval';
-export * from '#/session/question/question';
-export * from '#/session/question/questionService';
+} from '#/agent/interaction/approval';
 export * from '#/agent/tools/ask-user-question/ask-user-question';
 import '#/agent/tools/ask-user-question/askUserQuestionTool';
 export * from '#/app/gateway/gateway';

@@ -1,5 +1,3 @@
-import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-
 export interface QuestionOption {
   readonly label: string;
   readonly description?: string;
@@ -32,19 +30,3 @@ export interface QuestionRequest {
   readonly toolCallId?: string;
   readonly questions: readonly QuestionItem[];
 }
-
-export interface ISessionQuestionService {
-  readonly _serviceBrand: undefined;
-
-  request(
-    req: QuestionRequest,
-    options?: { signal?: AbortSignal; agentId?: string; detached?: boolean },
-  ): Promise<QuestionResult>;
-  enqueue(req: QuestionRequest): QuestionRequest & { readonly id: string };
-  answer(id: string, result: QuestionResult): void;
-  dismiss(id: string): void;
-  listPending(): readonly QuestionRequest[];
-}
-
-export const ISessionQuestionService: ServiceIdentifier<ISessionQuestionService> =
-  createDecorator<ISessionQuestionService>('sessionQuestionService');

@@ -1,8 +1,8 @@
 import {
-  type Interaction,
-  ISessionInteractionService,
-  ISessionQuestionService,
+  INTERACTION_TAG_SESSION_ID,
+  interactions,
   resumeSessionById,
+  type Interaction,
   type QuestionAnswers,
   type QuestionResult,
   type Scope,
@@ -84,7 +84,11 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
         );
         return;
       }
-      const pending = handle.accessor.get(ISessionInteractionService).findAll({ kind: 'question', resolved: false });
+      const pending = interactions.findAll({
+        kind: 'question',
+        resolved: false,
+        tags: { [INTERACTION_TAG_SESSION_ID]: session_id },
+      });
       const items = pending.map((i) => toWireQuestion(i, session_id));
       reply.send(okEnvelope({ items }, req.id));
     },
@@ -128,14 +132,22 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
         return;
       }
 
-      const interactions = handle.accessor.get(ISessionInteractionService);
-
       let questionId: string;
       let action: 'resolve' | 'dismiss';
       if (parsed.kind === 'invalid') {
         if (
-          interactions.findAll({ kind: 'question', resolved: false }).some((i) => i.id === tail) ||
-          interactions.isRecentlyResolved(tail)
+          interactions.findOne({
+            id: tail,
+            kind: 'question',
+            resolved: false,
+            tags: { [INTERACTION_TAG_SESSION_ID]: session_id },
+          }) !== undefined ||
+          interactions.findOne({
+            id: tail,
+            kind: 'question',
+            resolved: true,
+            tags: { [INTERACTION_TAG_SESSION_ID]: session_id },
+          }) !== undefined
         ) {
           questionId = tail;
           action = 'resolve';
@@ -148,12 +160,22 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
         action = parsed.kind === 'bare' ? 'resolve' : parsed.action;
       }
 
-      const pendingInteraction = interactions
-        .findAll({ kind: 'question', resolved: false })
-        .find((i) => i.id === questionId);
+      const pendingInteraction = interactions.findOne({
+        id: questionId,
+        kind: 'question',
+        resolved: false,
+        tags: { [INTERACTION_TAG_SESSION_ID]: session_id },
+      });
 
       if (pendingInteraction === undefined) {
-        if (interactions.isRecentlyResolved(questionId)) {
+        if (
+          interactions.findOne({
+            id: questionId,
+            kind: 'question',
+            resolved: true,
+            tags: { [INTERACTION_TAG_SESSION_ID]: session_id },
+          }) !== undefined
+        ) {
           reply.send({
             code: ErrorCode.APPROVAL_ALREADY_RESOLVED,
             msg: `question ${questionId} already resolved`,
@@ -168,13 +190,11 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
         return;
       }
 
-      const questions = handle.accessor.get(ISessionQuestionService);
-
       await runAction({
         action,
         id: questionId,
         actions: questionActions,
-        extra: { questions, pendingInteraction, session_id, req, reply },
+        extra: { pendingInteraction, session_id, req, reply },
       });
     },
   );
@@ -186,7 +206,6 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
 }
 
 type QuestionActionExtra = {
-  readonly questions: ISessionQuestionService;
   readonly pendingInteraction: Interaction;
   readonly session_id: string;
   readonly req: { readonly id: string; readonly body: unknown };
@@ -201,7 +220,7 @@ const questionActions: ActionTable<'resolve' | 'dismiss', QuestionActionExtra> =
 };
 
 async function resolveQuestionAction(ctx: QuestionActionCtx): Promise<void> {
-  const { questions, pendingInteraction, session_id, req, reply, id } = ctx;
+  const { pendingInteraction, session_id, req, reply, id } = ctx;
   const bodyParse = questionResolveRequestSchema.safeParse(req.body);
   if (!bodyParse.success) {
     const details = bodyParse.error.issues.map((issue) => ({
@@ -226,14 +245,14 @@ async function resolveQuestionAction(ctx: QuestionActionCtx): Promise<void> {
   }
 
   const result = toInProcessResponse(bodyParse.data, toWireQuestion(pendingInteraction, session_id));
-  questions.answer(id, result);
+  interactions.respond(id, result);
   requestLog(req)?.info({ session_id, question_id: id, action: 'answer' }, 'question answered');
   reply.send(okEnvelope({ resolved: true as const, resolved_at: new Date().toISOString() }, req.id));
 }
 
 async function dismissQuestionAction(ctx: QuestionActionCtx): Promise<void> {
-  const { questions, session_id, req, reply, id } = ctx;
-  questions.dismiss(id);
+  const { session_id, req, reply, id } = ctx;
+  interactions.respond(id, null);
   requestLog(req)?.info({ session_id, question_id: id, action: 'dismiss' }, 'question dismissed');
   reply.send({
     code: ErrorCode.QUESTION_DISMISSED,

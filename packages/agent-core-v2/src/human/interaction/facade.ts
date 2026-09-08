@@ -1,4 +1,4 @@
-import type { ActorRefFrom } from '#/xstate2';
+import { createActor, type ActorRefFrom } from '#/xstate2';
 
 import type {
   Interaction,
@@ -9,10 +9,13 @@ import type {
   InteractionResolution,
   InteractionTags,
 } from './interaction';
-import { INTERACTION_TAG_AGENT_ID } from './interaction';
-import type { createInteractionMachine, InteractionRecord } from './machine';
+import { INTERACTION_TAG_AGENT_ID, INTERACTION_TAG_SESSION_ID } from './interaction';
+import type { InteractionEmitted, InteractionRecord } from './machine';
+import { createInteractionMachine } from './machine';
 
 export type InteractionActor = ActorRefFrom<ReturnType<typeof createInteractionMachine>>;
+
+export type InteractionAgentDispatch = (event: InteractionEmitted) => void;
 
 const RECENTLY_RESOLVED_TTL_MS = 60_000;
 const RECENTLY_RESOLVED_MAX = 256;
@@ -24,14 +27,17 @@ interface Waiter {
 }
 
 export interface InteractionFacade {
+  request<TPayload, TResponse>(req: InteractionRequest<TPayload>): Promise<TResponse>;
   enqueue<TPayload>(req: InteractionRequest<TPayload>): Interaction;
   respond(id: string, response: unknown): boolean;
   findAll(query?: InteractionQuery): readonly Interaction[];
   findOne(query: InteractionQuery): Interaction | undefined;
   wait<TResponse>(id: string, opts?: { timeoutMs?: number }): Promise<TResponse>;
-  isRecentlyResolved(id: string): boolean;
   onDidChangePending(listener: (event: InteractionPendingChangedEvent) => void): () => void;
   onDidResolve(listener: (event: InteractionResolution) => void): () => void;
+  attachAgent(agentId: string, sessionId: string, dispatch: InteractionAgentDispatch): void;
+  detachAgent(agentId: string, sessionId: string): void;
+  purgeSession(sessionId: string): void;
   stop(): void;
 }
 
@@ -56,6 +62,7 @@ export function createInteractionFacade(
   const recentlyResolved = new Map<string, number>();
   const changeListeners = new Set<(event: InteractionPendingChangedEvent) => void>();
   const resolveListeners = new Set<(event: InteractionResolution) => void>();
+  const agentDispatchers = new Map<string, InteractionAgentDispatch>();
   let nextId = 0;
 
   const records = (): Map<string, InteractionRecord> => actor.getSnapshot().context.records;
@@ -78,27 +85,49 @@ export function createInteractionFacade(
     }
   };
 
+  const evictResolved = (id: string): void => {
+    recentlyResolved.delete(id);
+    actor.send({ type: 'interaction.evict', id });
+  };
+
   const rememberResolved = (id: string): void => {
     const at = now();
     for (const [key, resolvedAt] of recentlyResolved) {
-      if (at - resolvedAt > RECENTLY_RESOLVED_TTL_MS) recentlyResolved.delete(key);
+      if (at - resolvedAt > RECENTLY_RESOLVED_TTL_MS) evictResolved(key);
     }
     while (recentlyResolved.size >= RECENTLY_RESOLVED_MAX) {
       const oldest = recentlyResolved.keys().next().value;
       if (oldest === undefined) break;
-      recentlyResolved.delete(oldest);
+      evictResolved(oldest);
     }
     recentlyResolved.set(id, at);
   };
 
+  const dispatchToAgent = (tags: InteractionTags, event: InteractionEmitted): void => {
+    const agentId = tags[INTERACTION_TAG_AGENT_ID];
+    const sessionId = tags[INTERACTION_TAG_SESSION_ID];
+    if (typeof agentId !== 'string' || typeof sessionId !== 'string') return;
+    agentDispatchers.get(`${sessionId}:${agentId}`)?.(event);
+  };
+
+  const requestedSubscription = actor.on('interaction.requested', (event) => {
+    dispatchToAgent(event.record.tags, event);
+  });
+
   const subscription = actor.on('interaction.resolved', (event) => {
     settleWaiters(event.id, event.response);
     rememberResolved(event.id);
+    dispatchToAgent(event.record.tags, event);
     const resolution: InteractionResolution = { id: event.id, response: event.response };
     for (const listener of resolveListeners) listener(resolution);
   });
 
-  return {
+  const facade: InteractionFacade = {
+    request<TPayload, TResponse>(req: InteractionRequest<TPayload>): Promise<TResponse> {
+      const interaction = facade.enqueue(req);
+      return facade.wait<TResponse>(interaction.id);
+    },
+
     enqueue<TPayload>(req: InteractionRequest<TPayload>): Interaction {
       const agentId = req.tags?.[INTERACTION_TAG_AGENT_ID];
       const id = req.id ?? (agentId === undefined ? `interaction-${nextId++}` : `${String(agentId)}:interaction-${nextId++}`);
@@ -163,16 +192,6 @@ export function createInteractionFacade(
       });
     },
 
-    isRecentlyResolved(id: string): boolean {
-      const resolvedAt = recentlyResolved.get(id);
-      if (resolvedAt === undefined) return false;
-      if (now() - resolvedAt > RECENTLY_RESOLVED_TTL_MS) {
-        recentlyResolved.delete(id);
-        return false;
-      }
-      return true;
-    },
-
     onDidChangePending(listener: (event: InteractionPendingChangedEvent) => void): () => void {
       changeListeners.add(listener);
       return () => {
@@ -187,15 +206,50 @@ export function createInteractionFacade(
       };
     },
 
+    attachAgent(agentId: string, sessionId: string, dispatch: InteractionAgentDispatch): void {
+      agentDispatchers.set(`${sessionId}:${agentId}`, dispatch);
+    },
+
+    detachAgent(agentId: string, sessionId: string): void {
+      agentDispatchers.delete(`${sessionId}:${agentId}`);
+    },
+
+    purgeSession(sessionId: string): void {
+      const purged = [...records().values()].filter(
+        (record) => record.tags[INTERACTION_TAG_SESSION_ID] === sessionId,
+      );
+      for (const record of purged) {
+        if (record.resolved) continue;
+        const response: InteractionCancellation = { cancelled: true, reason: 'agent_closed' };
+        facade.respond(record.id, response);
+      }
+      actor.send({ type: 'interaction.purge', sessionId });
+      for (const record of purged) recentlyResolved.delete(record.id);
+      for (const key of agentDispatchers.keys()) {
+        if (key.startsWith(`${sessionId}:`)) agentDispatchers.delete(key);
+      }
+    },
+
     stop(): void {
-      for (const record of [...records().values()]) {
+      for (const record of records().values()) {
         if (record.resolved) continue;
         const response: InteractionCancellation = { cancelled: true, reason: 'agent_closed' };
         actor.send({ type: 'interaction.resolve', id: record.id, response });
       }
+      requestedSubscription.unsubscribe();
       subscription.unsubscribe();
       changeListeners.clear();
       resolveListeners.clear();
+      agentDispatchers.clear();
     },
   };
+  return facade;
+}
+
+export const interactions: InteractionFacade = createDefaultInteractionFacade();
+
+function createDefaultInteractionFacade(): InteractionFacade {
+  const actor = createActor(createInteractionMachine());
+  actor.start();
+  return createInteractionFacade(actor);
 }

@@ -5,6 +5,7 @@ export type InteractionTagValue = string | number;
 export type InteractionTags = Record<string, InteractionTagValue>;
 
 export const INTERACTION_TAG_AGENT_ID = 'agentId';
+export const INTERACTION_TAG_SESSION_ID = 'sessionId';
 export const INTERACTION_TAG_TURN_ID = 'turnId';
 export const INTERACTION_TAG_TOOL_CALL_ID = 'toolCallId';
 

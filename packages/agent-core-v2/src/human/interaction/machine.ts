@@ -1,6 +1,6 @@
 import { assign, emit, setup } from '#/xstate2';
 
-import type { Interaction } from './interaction';
+import { INTERACTION_TAG_SESSION_ID, type Interaction } from './interaction';
 
 export interface InteractionRecord extends Interaction {
   readonly resolved: boolean;
@@ -9,7 +9,9 @@ export interface InteractionRecord extends Interaction {
 
 export type InteractionEvent =
   | { type: 'interaction.request'; record: InteractionRecord }
-  | { type: 'interaction.resolve'; id: string; response: unknown };
+  | { type: 'interaction.resolve'; id: string; response: unknown }
+  | { type: 'interaction.evict'; id: string }
+  | { type: 'interaction.purge'; sessionId: string };
 
 export type InteractionEmitted =
   | { type: 'interaction.requested'; record: InteractionRecord }
@@ -56,6 +58,29 @@ export function createInteractionMachine() {
             response: event.response,
             record: context.records.get(event.id) as InteractionRecord,
           })),
+        ],
+      },
+      'interaction.purge': {
+        actions: [
+          assign(({ context, event }) => {
+            const records = new Map<string, InteractionRecord>();
+            for (const [id, record] of context.records) {
+              if (record.tags[INTERACTION_TAG_SESSION_ID] !== event.sessionId) {
+                records.set(id, record);
+              }
+            }
+            return { records };
+          }),
+        ],
+      },
+      'interaction.evict': {
+        guard: ({ context, event }) => context.records.get(event.id)?.resolved === true,
+        actions: [
+          assign(({ context, event }) => {
+            const records = new Map(context.records);
+            records.delete(event.id);
+            return { records };
+          }),
         ],
       },
     },

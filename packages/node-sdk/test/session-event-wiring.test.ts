@@ -14,7 +14,6 @@ import {
   IAgentProfileService,
   IAgentScopeContext,
   IEventBus,
-  ISessionInteractionService,
   ISessionTokenCountingService,
   ISessionUsageService,
   makeAgentScopeContext,
@@ -67,18 +66,6 @@ class FakeAgentHandle {
 }
 
 function makeSession(agents: FakeAgentHandle[]): ISessionScopeHandle {
-  const interactions = {
-    request: () => Promise.resolve(undefined),
-    enqueue: () => ({ id: 'i1', kind: 'approval', payload: undefined, tags: {}, createdAt: 0 }),
-    respond: () => true,
-    findAll: () => [],
-    findOne: () => undefined,
-    wait: () => Promise.resolve(undefined),
-    isRecentlyResolved: () => false,
-    cancelForTurn: () => {},
-    onDidChangePending: () => ({ dispose: () => {} }),
-    onDidResolve: () => ({ dispose: () => {} }),
-  } as unknown as ISessionInteractionService;
   const lifecycle = {
     list: () => agents.map((agent) => agent.context),
     get: (agentId: string) => agents.find((agent) => agent.id === agentId)?.context,
@@ -89,7 +76,6 @@ function makeSession(agents: FakeAgentHandle[]): ISessionScopeHandle {
   const accessor = {
     get: (token: unknown): unknown => {
       if (token === IAgentLifecycleService) return lifecycle;
-      if (token === ISessionInteractionService) return interactions;
       return undefined;
     },
   };

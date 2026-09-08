@@ -96,15 +96,85 @@ describe('interaction facade', () => {
     expect(facade.findAll({ resolved: false })).toHaveLength(0);
   });
 
-  it('tracks recently resolved ids within the ttl', () => {
+  it('keeps resolved records queryable within the ttl window and evicts them after', async () => {
     let at = 1_000;
     const facade = createTestFacade(() => at);
     const pending = facade.enqueue({ kind: 'approval', payload: {} });
-    expect(facade.isRecentlyResolved(pending.id)).toBe(false);
     facade.respond(pending.id, 'ok');
-    expect(facade.isRecentlyResolved(pending.id)).toBe(true);
+    expect(facade.findOne({ id: pending.id, resolved: true })).toBeDefined();
+    await expect(facade.wait<string>(pending.id)).resolves.toBe('ok');
     at += 61_000;
-    expect(facade.isRecentlyResolved(pending.id)).toBe(false);
-    expect(facade.isRecentlyResolved('missing')).toBe(false);
+
+    const next = facade.enqueue({ kind: 'approval', payload: {} });
+    facade.respond(next.id, 'later');
+    expect(facade.findOne({ id: pending.id })).toBeUndefined();
+    await expect(facade.wait(pending.id)).rejects.toThrow(
+      `Interaction "${pending.id}" does not exist`,
+    );
+    expect(facade.findOne({ id: next.id, resolved: true })).toBeDefined();
+    await expect(facade.wait<string>(next.id)).resolves.toBe('later');
+  });
+
+  it('routes emitted events to the session and agent that attached them', () => {
+    const facade = createTestFacade();
+    const eventsA: InteractionEmitted[] = [];
+    const eventsB: InteractionEmitted[] = [];
+    facade.attachAgent('a1', 's1', (event) => eventsA.push(event));
+    facade.attachAgent('a1', 's2', (event) => eventsB.push(event));
+    const first = facade.enqueue({
+      kind: 'approval',
+      payload: {},
+      tags: { agentId: 'a1', sessionId: 's1' },
+    });
+    const second = facade.enqueue({
+      kind: 'approval',
+      payload: {},
+      tags: { agentId: 'a1', sessionId: 's2' },
+    });
+    facade.respond(first.id, 'ok');
+    facade.detachAgent('a1', 's1');
+    facade.respond(second.id, 'ok');
+    expect(eventsA.map((event) => event.type)).toEqual([
+      'interaction.requested',
+      'interaction.resolved',
+    ]);
+    expect(eventsA.every((event) => event.record.tags['sessionId'] === 's1')).toBe(true);
+    expect(eventsB.map((event) => event.type)).toEqual([
+      'interaction.requested',
+      'interaction.resolved',
+    ]);
+    expect(eventsB.every((event) => event.record.tags['sessionId'] === 's2')).toBe(true);
+  });
+
+  it('purgeSession cancels pending, drops records and detaches the session dispatchers', async () => {
+    const facade = createTestFacade();
+    const events: InteractionEmitted[] = [];
+    facade.attachAgent('a1', 's1', (event) => events.push(event));
+    const pending = facade.enqueue({
+      kind: 'approval',
+      payload: {},
+      tags: { sessionId: 's1', agentId: 'a1' },
+    });
+    const waited = facade.wait(pending.id);
+    const other = facade.enqueue({
+      kind: 'approval',
+      payload: {},
+      tags: { sessionId: 's2', agentId: 'a2' },
+    });
+
+    facade.purgeSession('s1');
+
+    await expect(waited).resolves.toEqual({ cancelled: true, reason: 'agent_closed' });
+    expect(facade.findAll({}).map((i) => i.id)).toEqual([other.id]);
+    const after = facade.enqueue({
+      kind: 'approval',
+      payload: {},
+      tags: { sessionId: 's1', agentId: 'a1' },
+    });
+    facade.respond(after.id, 'ok');
+    expect(events.map((event) => event.type)).toEqual([
+      'interaction.requested',
+      'interaction.resolved',
+    ]);
   });
 });
