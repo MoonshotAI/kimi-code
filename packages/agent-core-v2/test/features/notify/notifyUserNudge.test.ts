@@ -63,6 +63,24 @@ function modelSkillPrompt(): ContextMessage {
   };
 }
 
+function taskPrompt(): ContextMessage {
+  return {
+    role: 'user',
+    content: [{ type: 'text', text: 'task finished' }],
+    toolCalls: [],
+    origin: { kind: 'task', taskId: 't1', status: 'completed', notificationId: 'n1' },
+  };
+}
+
+function retryPrompt(): ContextMessage {
+  return {
+    role: 'user',
+    content: [],
+    toolCalls: [],
+    origin: { kind: 'retry' },
+  };
+}
+
 function assistantWithTools(...names: string[]): ContextMessage {
   return {
     role: 'assistant',
@@ -146,6 +164,24 @@ describe('toolCallsSinceLastNotify', () => {
     ];
 
     expect(toolCallsSinceLastNotify(history)).toBe(3);
+  });
+
+  it('stops at task-notification and retry boundaries', () => {
+    const taskTurn = [
+      userPrompt(),
+      assistantWithTools('Bash', 'Bash', 'Bash'),
+      taskPrompt(),
+      assistantWithTools('Read'),
+    ];
+    expect(toolCallsSinceLastNotify(taskTurn)).toBe(1);
+
+    const retryTurn = [
+      userPrompt(),
+      assistantWithTools('Bash', 'Bash', 'Bash'),
+      retryPrompt(),
+      assistantWithTools('Read'),
+    ];
+    expect(toolCallsSinceLastNotify(retryTurn)).toBe(1);
   });
 });
 
@@ -237,6 +273,20 @@ describe('lastMidResponsePosition', () => {
       assistantWithTools('Bash'),
     ];
     expect(lastMidResponsePosition(acrossSlashSkill)).toBe(-1);
+
+    const acrossTask = [
+      assistantWithText('上一轮的正文', 'Bash'),
+      taskPrompt(),
+      assistantWithTools('Bash'),
+    ];
+    expect(lastMidResponsePosition(acrossTask)).toBe(-1);
+
+    const acrossRetry = [
+      assistantWithText('上一轮的正文', 'Bash'),
+      retryPrompt(),
+      assistantWithTools('Bash'),
+    ];
+    expect(lastMidResponsePosition(acrossRetry)).toBe(-1);
   });
 });
 

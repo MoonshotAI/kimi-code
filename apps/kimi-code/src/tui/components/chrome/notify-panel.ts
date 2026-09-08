@@ -95,6 +95,7 @@ export class NotifyPanelComponent implements Component {
       if (ch.key === this.activeKey) this.activeKey = this.channels.at(-1)?.key ?? MAIN_AGENT_ID;
     } else {
       ch.page = Math.min(ch.page, ch.entries.length - 1);
+      if (this.focused && ch.key !== this.activeKey && ch.unread > 0) ch.unread -= 1;
     }
     if (this.channels.length === 0) this.focused = false;
     return true;
