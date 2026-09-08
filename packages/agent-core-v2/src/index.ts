@@ -615,6 +615,16 @@ export {
   persistOriginalImage,
   sessionMediaOriginalsDir,
 } from '#/agent/media/image-originals';
+export {
+  canTranscodeHeic,
+  createImageTranscoder,
+  isHeicMime,
+  transcodeHeicToJpeg,
+  type HeicTranscodeDeps,
+  type HeicTranscodeInput,
+  type ImageTranscoder,
+  type TranscodedImage,
+} from '#/agent/media/heic-transcode';
 export * from '#/app/edit/fileEdit';
 export * from '#/app/edit/fileEditService';
 export * from '#/app/edit/editService';

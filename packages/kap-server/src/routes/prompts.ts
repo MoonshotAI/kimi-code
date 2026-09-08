@@ -13,6 +13,9 @@ import {
   IEventBus,
   IEventService,
   IFileService,
+  IHostEnvironment,
+  IHostProcessService,
+  createImageTranscoder,
   ISessionMediaStore,
   ISessionMetadata,
   ISessionSkillCatalog,
@@ -264,6 +267,12 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           core.accessor.get(IBootstrapService).cacheDir,
           {
             telemetry,
+            transcodeImage: createImageTranscoder({
+              osKind: core.accessor.get(IHostEnvironment).osKind,
+              process: core.accessor.get(IHostProcessService),
+              telemetry,
+              telemetrySource: 'prompt',
+            }),
             resolveOriginalsDir: async () => {
               const session = await resumeSessionById(core.accessor, session_id);
               if (session === undefined) return undefined;

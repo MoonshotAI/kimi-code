@@ -4,6 +4,9 @@
  * kimi-core's LLM pipeline only accepts PNG/JPEG/GIF/WebP, and the
  * clipboard sources we query already emit those formats on supported
  * platforms — so we deliberately do not include a BMP→PNG converter.
+ * The one exception is a copied HEIC/HEIF *file* on macOS (iPhone photos
+ * and screenshots): it is converted to JPEG through the system `sips`
+ * before being pasted. Elsewhere such a file is still declined.
  *
  * Lookup order:
  *   macOS file clipboard       -> osascript/AppKit file URLs
@@ -22,7 +25,7 @@ import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { parseImageMeta } from '#/utils/image/image-mime';
+import { isHeicImage, parseImageMeta } from '#/utils/image/image-mime';
 
 import {
   DEFAULT_LIST_TIMEOUT_MS,
@@ -82,6 +85,13 @@ const VIDEO_MIME_BY_SUFFIX: Readonly<Record<string, string>> = Object.freeze({
 
 const DEFAULT_READ_TIMEOUT_MS = 3000;
 const DEFAULT_POWERSHELL_TIMEOUT_MS = 5000;
+const SIPS_TIMEOUT_MS = 15_000;
+
+/** Platform facts a clipboard file path needs to be turned into pasteable media. */
+interface PathReadContext {
+  readonly run: RunCommand;
+  readonly platform: NodeJS.Platform;
+}
 
 const MACOS_FILE_PATH_SCRIPT = String.raw`
 ObjC.import('AppKit');
@@ -170,7 +180,7 @@ function splitClipboardPathLines(text: string): string[] {
   return lines;
 }
 
-function readImagePath(path: string): ClipboardImage | null {
+function readImagePath(path: string, ctx: PathReadContext): ClipboardImage | null {
   let stat: ReturnType<typeof statSync>;
   try {
     stat = statSync(path);
@@ -187,9 +197,42 @@ function readImagePath(path: string): ClipboardImage | null {
   }
   if (bytes.length === 0) return null;
 
-  const meta = parseImageMeta(bytes);
+  let meta = parseImageMeta(bytes);
+  if (meta === null && ctx.platform === 'darwin' && isHeicImage(bytes)) {
+    const converted = convertHeicViaSips(path, ctx.run);
+    if (converted === null) return null;
+    bytes = converted;
+    meta = parseImageMeta(bytes);
+  }
   if (meta === null) return null;
   return { kind: 'image', bytes: new Uint8Array(bytes), mimeType: meta.mime };
+}
+
+/**
+ * macOS ships `sips`, which decodes HEIC with the system codecs. The JPEG
+ * lands in a temp file (sips has no stdout mode) that is removed on every
+ * exit path; any failure declines the paste instead of surfacing an error.
+ */
+function convertHeicViaSips(path: string, run: RunCommand): Buffer | null {
+  const target = join(tmpdir(), `kimi-heic-${randomUUID()}.jpg`);
+  try {
+    const result = run(
+      'sips',
+      ['-s', 'format', 'jpeg', '-s', 'formatOptions', '90', path, '--out', target],
+      { timeoutMs: SIPS_TIMEOUT_MS },
+    );
+    if (!result.ok) return null;
+    const bytes = readFileSync(target);
+    return bytes.length === 0 ? null : bytes;
+  } catch {
+    return null;
+  } finally {
+    try {
+      unlinkSync(target);
+    } catch {
+      // ignore cleanup errors
+    }
+  }
 }
 
 function readVideoPath(path: string): ClipboardVideo | null {
@@ -215,23 +258,23 @@ function readVideoPath(path: string): ClipboardVideo | null {
   };
 }
 
-function readMediaPath(path: string): ClipboardMedia | null {
+function readMediaPath(path: string, ctx: PathReadContext): ClipboardMedia | null {
   // Video files are never opened as images.
   const video = readVideoPath(path);
   if (video !== null) return video;
-  return readImagePath(path);
+  return readImagePath(path, ctx);
 }
 
-function readMediaFromPaths(paths: readonly string[]): ClipboardMedia | null {
+function readMediaFromPaths(paths: readonly string[], ctx: PathReadContext): ClipboardMedia | null {
   for (const path of paths) {
-    const media = readMediaPath(path);
+    const media = readMediaPath(path, ctx);
     if (media !== null) return media;
   }
   return null;
 }
 
-function readMediaFromText(text: string): ClipboardMedia | null {
-  return readMediaFromPaths(parseClipboardPaths(text));
+function readMediaFromText(text: string, ctx: PathReadContext): ClipboardMedia | null {
+  return readMediaFromPaths(parseClipboardPaths(text), ctx);
 }
 
 function runCommand(command: string, args: string[], options?: RunCommandOptions): { stdout: Buffer; ok: boolean } {
@@ -241,7 +284,7 @@ function runCommand(command: string, args: string[], options?: RunCommandOptions
   });
 }
 
-function readClipboardFileMediaViaWlPaste(): ClipboardMedia | null {
+function readClipboardFileMediaViaWlPaste(ctx: PathReadContext): ClipboardMedia | null {
   const list = runCommand('wl-paste', ['--list-types'], {
     timeoutMs: DEFAULT_LIST_TIMEOUT_MS,
   });
@@ -252,7 +295,7 @@ function readClipboardFileMediaViaWlPaste(): ClipboardMedia | null {
   if (uriType === undefined) return null;
 
   const uris = runCommand('wl-paste', ['--type', uriType, '--no-newline']);
-  return uris.ok ? readMediaFromText(uris.stdout.toString('utf-8')) : null;
+  return uris.ok ? readMediaFromText(uris.stdout.toString('utf-8'), ctx) : null;
 }
 
 function readClipboardImageViaWlPaste(): ClipboardImage | null {
@@ -269,7 +312,7 @@ function readClipboardImageViaWlPaste(): ClipboardImage | null {
   return { kind: 'image', bytes: data.stdout, mimeType: baseMimeType(selected) };
 }
 
-function readClipboardFileMediaViaXclip(): ClipboardMedia | null {
+function readClipboardFileMediaViaXclip(ctx: PathReadContext): ClipboardMedia | null {
   const targets = runCommand('xclip', ['-selection', 'clipboard', '-t', 'TARGETS', '-o'], {
     timeoutMs: DEFAULT_LIST_TIMEOUT_MS,
   });
@@ -280,7 +323,7 @@ function readClipboardFileMediaViaXclip(): ClipboardMedia | null {
   if (uriType === undefined) return null;
 
   const uris = runCommand('xclip', ['-selection', 'clipboard', '-t', uriType, '-o']);
-  return uris.ok ? readMediaFromText(uris.stdout.toString('utf-8')) : null;
+  return uris.ok ? readMediaFromText(uris.stdout.toString('utf-8'), ctx) : null;
 }
 
 function readClipboardImageViaXclip(): ClipboardImage | null {
@@ -359,6 +402,7 @@ function readClipboardFilePathsViaMacOs(run: RunCommand): string[] {
 
 async function readClipboardFileMediaViaNativeText(
   clip: ClipboardModule | null,
+  ctx: PathReadContext,
 ): Promise<{ media: ClipboardMedia | null; lookedFileLike: boolean }> {
   if (clip === null) return { media: null, lookedFileLike: false };
 
@@ -369,7 +413,7 @@ async function readClipboardFileMediaViaNativeText(
   }
 
   try {
-    return { media: readMediaFromText(await clip.getText()), lookedFileLike };
+    return { media: readMediaFromText(await clip.getText(), ctx), lookedFileLike };
   } catch (error) {
     if (error instanceof ClipboardMediaError) throw error;
     return { media: null, lookedFileLike };
@@ -408,6 +452,7 @@ export async function readClipboardMedia(options?: {
   const platform = options?.platform ?? process.platform;
   const clip = options?.clipboard ?? clipboard;
   const run = options?.runCommand ?? runCommand;
+  const ctx: PathReadContext = { run, platform };
 
   // Termux on Android has no desktop clipboard; skip early rather than
   // churn through every fallback.
@@ -419,7 +464,7 @@ export async function readClipboardMedia(options?: {
     const wsl = isWSL(env);
 
     if (wayland || wsl) {
-      const fileMedia = readClipboardFileMediaViaWlPaste() ?? readClipboardFileMediaViaXclip();
+      const fileMedia = readClipboardFileMediaViaWlPaste(ctx) ?? readClipboardFileMediaViaXclip(ctx);
       if (fileMedia !== null) return fileMedia;
       image = readClipboardImageViaWlPaste() ?? readClipboardImageViaXclip();
     }
@@ -427,18 +472,18 @@ export async function readClipboardMedia(options?: {
       image = readClipboardImageViaPowerShell();
     }
     if (image === null && !wayland) {
-      const nativeFileMedia = await readClipboardFileMediaViaNativeText(clip);
+      const nativeFileMedia = await readClipboardFileMediaViaNativeText(clip, ctx);
       if (nativeFileMedia.media !== null) return nativeFileMedia.media;
       if (nativeFileMedia.lookedFileLike) return null;
       image = await readClipboardImageViaNative(clip);
     }
   } else {
     if (platform === 'darwin') {
-      const fileMedia = readMediaFromPaths(readClipboardFilePathsViaMacOs(run));
+      const fileMedia = readMediaFromPaths(readClipboardFilePathsViaMacOs(run), ctx);
       if (fileMedia !== null) return fileMedia;
     }
 
-    const nativeFileMedia = await readClipboardFileMediaViaNativeText(clip);
+    const nativeFileMedia = await readClipboardFileMediaViaNativeText(clip, ctx);
     if (nativeFileMedia.media !== null) return nativeFileMedia.media;
 
     // Finder exposes file icons/thumbnails as image data. If the clipboard

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { parseImageMeta } from '#/utils/image/image-mime';
+import { isHeicImage, parseImageMeta } from '#/utils/image/image-mime';
 
 function png(width: number, height: number): Uint8Array {
   // 8-byte PNG signature + IHDR length (4) + 'IHDR' + width (4 BE) + height (4 BE) + ...
@@ -94,5 +94,33 @@ describe('parseImageMeta', () => {
   it('returns null for truncated PNG', () => {
     const full = png(10, 10);
     expect(parseImageMeta(full.slice(0, 20))).toBeNull();
+  });
+});
+
+function ftyp(brand: string): Uint8Array {
+  const bytes = new Uint8Array(24);
+  bytes.set([0x00, 0x00, 0x00, 0x18], 0);
+  bytes.set([0x66, 0x74, 0x79, 0x70], 4);
+  bytes.set(Array.from(brand.padEnd(4, ' '), (char) => char.codePointAt(0)!), 8);
+  return bytes;
+}
+
+describe('isHeicImage', () => {
+  it.each(['heic', 'heix', 'hevc', 'hevx', 'heif', 'mif1', 'msf1'])(
+    'recognizes the %s ftyp brand',
+    (brand) => {
+      expect(isHeicImage(ftyp(brand))).toBe(true);
+    },
+  );
+
+  it('rejects other ftyp brands and non-ISO-BMFF images', () => {
+    expect(isHeicImage(ftyp('avif'))).toBe(false);
+    expect(isHeicImage(ftyp('isom'))).toBe(false);
+    expect(isHeicImage(png(1, 1))).toBe(false);
+    expect(isHeicImage(new Uint8Array([0x00, 0x00, 0x00, 0x18, 0x66, 0x74]))).toBe(false);
+  });
+
+  it('is not a format parseImageMeta accepts', () => {
+    expect(parseImageMeta(ftyp('heic'))).toBeNull();
   });
 });

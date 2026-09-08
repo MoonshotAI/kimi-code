@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -34,6 +34,42 @@ function fakeClipboard(overrides: Partial<ClipboardModule>): ClipboardModule {
 
 function noMacOsPaths(): { stdout: Buffer; ok: boolean } {
   return { stdout: Buffer.alloc(0), ok: false };
+}
+
+function heic(): Uint8Array {
+  const bytes = new Uint8Array(24);
+  bytes.set([0x00, 0x00, 0x00, 0x18], 0);
+  bytes.set([0x66, 0x74, 0x79, 0x70], 4);
+  bytes.set([0x68, 0x65, 0x69, 0x63], 8);
+  bytes.set([0x68, 0x65, 0x69, 0x63], 16);
+  return bytes;
+}
+
+function jpeg(width: number, height: number): Uint8Array {
+  return new Uint8Array([
+    0xff, 0xd8,
+    0xff, 0xc0, 0x00, 0x11, 0x08,
+    (height >> 8) & 0xff, height & 0xff,
+    (width >> 8) & 0xff, width & 0xff,
+    0x03, 0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01,
+    0xff, 0xd9,
+  ]);
+}
+
+type CommandResult = { stdout: Buffer; ok: boolean };
+
+function macCommands(options: {
+  readonly paths: string;
+  readonly sips?: (args: string[]) => CommandResult;
+}): { run: (command: string, args: string[]) => CommandResult; calls: string[][] } {
+  const calls: string[][] = [];
+  const run = (command: string, args: string[]): CommandResult => {
+    calls.push([command, ...args]);
+    if (command === 'osascript') return { stdout: Buffer.from(options.paths), ok: true };
+    if (command === 'sips' && options.sips !== undefined) return options.sips(args);
+    return { stdout: Buffer.alloc(0), ok: false };
+  };
+  return { run, calls };
 }
 
 describe('readClipboardMedia', () => {
@@ -133,6 +169,85 @@ describe('readClipboardMedia', () => {
 
     expect(media).toBeNull();
     expect(getImageBinary).not.toHaveBeenCalled();
+  });
+
+  it('converts a copied HEIC file through sips on macOS and pastes the JPEG', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-code-clip-'));
+    try {
+      const heicPath = join(dir, 'IMG_0001.HEIC');
+      writeFileSync(heicPath, heic());
+      const converted = jpeg(6, 4);
+      const commands = macCommands({
+        paths: `${heicPath}\n`,
+        sips: (args) => {
+          writeFileSync(args[args.indexOf('--out') + 1]!, converted);
+          return { stdout: Buffer.alloc(0), ok: true };
+        },
+      });
+      const clip = fakeClipboard({ availableFormats: vi.fn(() => ['public.file-url']) });
+
+      const media = await readClipboardMedia({
+        platform: 'darwin',
+        clipboard: clip,
+        runCommand: commands.run,
+      });
+
+      expect(media).toEqual({ kind: 'image', bytes: converted, mimeType: 'image/jpeg' });
+      const sips = commands.calls.find((call) => call[0] === 'sips');
+      expect(sips).toBeDefined();
+      expect(sips!.slice(1, 7)).toEqual(['-s', 'format', 'jpeg', '-s', 'formatOptions', '90']);
+      expect(sips![7]).toBe(heicPath);
+      expect(sips![8]).toBe('--out');
+      expect(sips![9]!.endsWith('.jpg')).toBe(true);
+      expect(existsSync(sips![9]!)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('declines the paste when sips cannot convert the copied HEIC', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-code-clip-'));
+    try {
+      const heicPath = join(dir, 'broken.heic');
+      writeFileSync(heicPath, heic());
+      const commands = macCommands({
+        paths: `${heicPath}\n`,
+        sips: () => ({ stdout: Buffer.alloc(0), ok: false }),
+      });
+      const clip = fakeClipboard({ availableFormats: vi.fn(() => ['public.file-url']) });
+
+      const media = await readClipboardMedia({
+        platform: 'darwin',
+        clipboard: clip,
+        runCommand: commands.run,
+      });
+
+      expect(media).toBeNull();
+      expect(commands.calls.some((call) => call[0] === 'sips')).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not try to convert a copied HEIC file off macOS', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-code-clip-'));
+    try {
+      const heicPath = join(dir, 'IMG_0002.heic');
+      writeFileSync(heicPath, heic());
+      const runCommand = vi.fn(() => ({ stdout: Buffer.alloc(0), ok: false }));
+      const clip = fakeClipboard({
+        availableFormats: vi.fn(() => ['text/uri-list']),
+        hasText: vi.fn(() => true),
+        getText: vi.fn(async () => pathToFileURL(heicPath).toString()),
+      });
+
+      const media = await readClipboardMedia({ platform: 'win32', clipboard: clip, runCommand });
+
+      expect(media).toBeNull();
+      expect(runCommand).not.toHaveBeenCalled();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('rejects pasted videos larger than 100 MB', async () => {

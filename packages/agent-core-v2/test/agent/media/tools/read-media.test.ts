@@ -13,6 +13,7 @@ import {
 } from '#/_base/errors/unexpectedError';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import type { IHostProcessService } from '#/os/interface/hostProcess';
 import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { Runtime } from '#/runtime/runtime';
 import type { ITelemetryService, TelemetryProperties } from '#/app/telemetry/telemetry';
@@ -45,6 +46,7 @@ import type { ISessionWorkspaceContext } from '#/session/workspaceContext/worksp
 import type { WorkspaceConfig } from '#/tool/path-access';
 import { sniffImageDimensions } from '#/agent/media/file-type';
 import { stubAgentContext } from '../../agentContext/stubs';
+import { fakeSips, tinyJpeg } from '../fakeSips';
 
 const WORKSPACE: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: [] };
 
@@ -156,10 +158,10 @@ function createTestFs(files: Record<string, FakeFile>): IHostFileSystem {
   } as unknown as IHostFileSystem;
 }
 
-function createTestEnv(): IHostEnvironment {
+function createTestEnv(osKind = 'Linux'): IHostEnvironment {
   return {
     _serviceBrand: undefined,
-    osKind: 'Linux',
+    osKind,
     osArch: 'x86_64',
     osVersion: 'test',
     shellName: 'bash',
@@ -170,14 +172,19 @@ function createTestEnv(): IHostEnvironment {
   };
 }
 
-function runtimeFor(fs: IHostFileSystem, env: IHostEnvironment = createTestEnv()): IAgentRuntimeService {
+function runtimeFor(
+  fs: IHostFileSystem,
+  env: IHostEnvironment = createTestEnv(),
+  process?: IHostProcessService,
+): IAgentRuntimeService {
   const runtime = {
     identity: { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
-    capabilities: new Set(['fs'] as const),
+    capabilities: new Set(process === undefined ? (['fs'] as const) : (['fs', 'process'] as const)),
     environment: env,
     path: posixPath,
     workspace: { mapRoots: (roots: { workDir: string; additionalDirs?: readonly string[] }) => roots },
     fs,
+    process,
     status: 'ready',
     onDidChangeStatus: () => ({ dispose: () => {} }),
     dispose: () => {},
@@ -1121,5 +1128,71 @@ describe('createVideoUploader', () => {
     expect(result.output).toContain('/workspace/photo.jpg');
     expect(result.output).toMatch(/sips -s format jpeg|magick/);
     expect(result.output).not.toContain('heif-convert');
+  });
+
+  function macTool(
+    files: Record<string, FakeFile>,
+    process: IHostProcessService | undefined,
+    osKind = 'macOS',
+  ): ReadMediaFileTool {
+    return new ReadMediaFileTool(
+      runtimeFor(createTestFs(files), createTestEnv(osKind), process),
+      WORKSPACE,
+      capabilities(),
+    );
+  }
+
+  it('converts HEIC through the host sips on macOS and delivers the JPEG', async () => {
+    const sips = fakeSips({ output: tinyJpeg(6, 4) });
+
+    const result = await execute(macTool({ '/workspace/photo.heic': { data: heicBytes() } }, sips.service), {
+      path: '/workspace/photo.heic',
+    });
+
+    const parts = outputParts(result);
+    expect(parts[1]).toEqual({
+      type: 'image_url',
+      imageUrl: { url: `data:image/jpeg;base64,${tinyJpeg(6, 4).toString('base64')}` },
+    });
+    const note = noteText(result);
+    expect(note).toContain('Mime type: image/heic.');
+    expect(note).toContain(`Size: ${String(heicBytes().length)} bytes.`);
+    expect(note).toContain('Original dimensions: 6x4 pixels.');
+    expect(note).toContain('converted from image/heic to image/jpeg');
+    const call = sips.calls[0]!;
+    expect(call.command).toBe('sips');
+    expect(call.args[call.args.indexOf('--out') - 1]).toBe('/workspace/photo.heic');
+  });
+
+  it('crops a region of a HEIC from the converted JPEG', async () => {
+    const jpeg = await new Jimp({ width: 40, height: 24, color: 0x3366ccff }).getBuffer('image/jpeg');
+    const sips = fakeSips({ output: jpeg });
+
+    const result = await execute(macTool({ '/workspace/photo.heic': { data: heicBytes() } }, sips.service), {
+      path: '/workspace/photo.heic',
+      region: { x: 0, y: 0, width: 10, height: 8 },
+    });
+
+    const parts = outputParts(result);
+    const image = parts[1] as { type: 'image_url'; imageUrl: { url: string } };
+    expect(image.imageUrl.url.startsWith('data:image/jpeg;base64,')).toBe(true);
+    const note = noteText(result);
+    expect(note).toContain('Showing region (x=0, y=0, width=10, height=8)');
+    expect(note).toContain('Original dimensions: 40x24 pixels.');
+  });
+
+  it.each([
+    { name: 'sips fails', process: () => fakeSips({ exitCode: 1 }).service, osKind: 'macOS' },
+    { name: 'the runtime has no process capability', process: () => undefined, osKind: 'macOS' },
+    { name: 'the host is not macOS', process: () => fakeSips().service, osKind: 'Windows' },
+  ])('falls back to the conversion guidance when $name', async ({ process, osKind }) => {
+    const result = await execute(
+      macTool({ '/workspace/photo.heic': { data: heicBytes() } }, process(), osKind),
+      { path: '/workspace/photo.heic' },
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('image/heic');
+    expect(result.output).toContain('Convert it to JPEG first');
   });
 });

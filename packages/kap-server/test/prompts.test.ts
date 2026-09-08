@@ -1,6 +1,8 @@
+import { execFileSync } from 'node:child_process';
 import { chmod, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { Readable } from 'node:stream';
 import { deflateSync } from 'node:zlib';
 
 import {
@@ -21,11 +23,13 @@ import {
   MAX_IMAGE_DECODE_BYTES,
   closeSessionById,
   getLiveSessionById,
+  type FileMeta,
 } from '@moonshot-ai/agent-core-v2';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { projectPromptSnapshot, watchPromptSettlements } from '../src/routes/prompts';
+import { resolvePromptMediaFiles } from '../src/lib/promptMedia';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
@@ -1046,6 +1050,50 @@ describe('server-v2 /api/v1 prompts', () => {
     return uploaded.data;
   }
 
+  it.skipIf(process.platform !== 'darwin')(
+    'converts an uploaded HEIC through the macOS sips before sending it to the model',
+    async () => {
+      const id = await createSession(home as string);
+      await createMainAgent(id);
+      const scratch = await mkdtemp(join(tmpdir(), 'kap-heic-'));
+      try {
+        const pngPath = join(scratch, 'photo.png');
+        const heicPath = join(scratch, 'photo.heic');
+        await writeFile(pngPath, solidPng(40, 24));
+        execFileSync('sips', ['-s', 'format', 'heic', pngPath, '--out', heicPath], { stdio: 'ignore' });
+        const heic = await readFile(heicPath);
+        const uploaded = await uploadFile(heic, 'image/heic', 'photo.heic');
+
+        const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+          content: [{ type: 'image', source: { kind: 'file', file_id: uploaded.id } }],
+        });
+        expect(submitted.body.code).toBe(0);
+
+        const content = submitted.body.data.content as Array<Record<string, unknown>>;
+        expect(content).toHaveLength(2);
+        const caption = content[0] as { type: string; text: string };
+        expect(caption.type).toBe('text');
+        expect(caption.text).toContain('image/heic');
+        expect(caption.text).toContain('image/jpeg');
+        expect(caption.text).toContain('40x24');
+        const image = content[1] as { type: string; source: { kind: string; file_id: string } };
+        expect(image.type).toBe('image');
+        expect(image.source.kind).toBe('session_media');
+        const mediaDir = sessionMediaDir(server!, id);
+        const mediaFile = await vi.waitFor(async () => {
+          const names = await readdir(mediaDir);
+          const name = names.find((entry) => entry.startsWith(image.source.file_id));
+          expect(name).toBeDefined();
+          return join(mediaDir, name!);
+        });
+        expect(/\.jpe?g$/.test(mediaFile)).toBe(true);
+        expect([...(await readFile(mediaFile)).subarray(0, 3)]).toEqual([0xff, 0xd8, 0xff]);
+      } finally {
+        await rm(scratch, { recursive: true, force: true });
+      }
+    },
+  );
+
   function attachedPathFrom(notice: string): string {
     const match = /bytes\): (.+) — open it with the Read tool$/.exec(notice);
     expect(match).not.toBeNull();
@@ -1724,5 +1772,198 @@ describe('server-v2 /api/v1 prompts', () => {
       .get(IAgentToolPolicyService);
     expect(toolPolicy?.isToolActive('Bash')).toBe(false);
     expect(toolPolicy?.isToolActive('Read')).toBe(true);
+  });
+});
+
+describe('resolvePromptMediaFiles HEIC conversion', () => {
+  function heicBytes(): Buffer {
+    const buf = Buffer.alloc(24);
+    buf.writeUInt32BE(24, 0);
+    buf.write('ftyp', 4, 'latin1');
+    buf.write('heic', 8, 'latin1');
+    buf.write('heic', 16, 'latin1');
+    return buf;
+  }
+
+  function tinyJpeg(width: number, height: number): Buffer {
+    return Buffer.from([
+      0xff, 0xd8,
+      0xff, 0xc0, 0x00, 0x11, 0x08,
+      (height >> 8) & 0xff, height & 0xff,
+      (width >> 8) & 0xff, width & 0xff,
+      0x03, 0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01,
+      0xff, 0xd9,
+    ]);
+  }
+
+  interface SavedFile {
+    readonly id: string;
+    readonly name: string;
+    readonly mimeType: string | undefined;
+    readonly bytes: Buffer;
+  }
+
+  function memoryStore(): { readonly store: IFileService; readonly saved: SavedFile[] } {
+    const files = new Map<string, { meta: FileMeta; bytes: Buffer }>();
+    const saved: SavedFile[] = [];
+    let seq = 0;
+    const store: IFileService = {
+      _serviceBrand: undefined,
+      async save(source, filename, options) {
+        const chunks: Buffer[] = [];
+        for await (const chunk of source) chunks.push(Buffer.from(chunk as Uint8Array));
+        const bytes = Buffer.concat(chunks);
+        seq += 1;
+        const meta: FileMeta = {
+          id: `f_${seq}`,
+          name: filename,
+          media_type: options?.mimeType ?? 'application/octet-stream',
+          size: bytes.length,
+          created_at: new Date(0).toISOString(),
+        };
+        files.set(meta.id, { meta, bytes });
+        saved.push({ id: meta.id, name: filename, mimeType: options?.mimeType, bytes });
+        return meta;
+      },
+      async get(fileId) {
+        const file = files.get(fileId);
+        if (file === undefined) throw new Error(`missing ${fileId}`);
+        return { meta: file.meta, stream: () => Readable.from([file.bytes]) };
+      },
+      async delete(fileId) {
+        files.delete(fileId);
+      },
+    };
+    return { store, saved };
+  }
+
+  const HEIC = heicBytes();
+  const JPEG = tinyJpeg(6, 4);
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'kap-heic-unit-'));
+  });
+
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  function textOf(part: unknown): string {
+    expect(part).toMatchObject({ type: 'text' });
+    return (part as { text: string }).text;
+  }
+
+  it('converts an inline base64 HEIC and sends the JPEG with a caption pointing at the saved original', async () => {
+    const transcode = vi.fn(async () => ({ data: JPEG, mimeType: 'image/jpeg' }));
+    const { store } = memoryStore();
+
+    const prepared = await resolvePromptMediaFiles(
+      [
+        {
+          type: 'image',
+          name: 'IMG_0001.heic',
+          source: { kind: 'base64', media_type: 'image/heic', data: HEIC.toString('base64') },
+        },
+      ],
+      store,
+      join(dir, 'cache'),
+      { transcodeImage: transcode, resolveOriginalsDir: async () => join(dir, 'originals') },
+    );
+
+    expect(transcode).toHaveBeenCalledWith(HEIC, 'image/heic');
+    expect(prepared.attachments).toEqual([]);
+    expect(prepared.content).toHaveLength(2);
+    const caption = textOf(prepared.content[0]);
+    expect(caption).toContain('image/heic');
+    expect(caption).toContain('image/jpeg');
+    const saved = /saved at "([^"]+)"/.exec(caption)?.[1];
+    expect(saved?.endsWith('.heic')).toBe(true);
+    expect(await readFile(saved!)).toEqual(HEIC);
+    expect(prepared.content[1]).toEqual({
+      type: 'image',
+      name: 'IMG_0001.heic',
+      source: { kind: 'base64', media_type: 'image/jpeg', data: JPEG.toString('base64') },
+    });
+  });
+
+  it('converts a path-referenced HEIC and stores the JPEG as a daemon file', async () => {
+    const sourcePath = join(dir, 'IMG_0002.heic');
+    await writeFile(sourcePath, HEIC);
+    const transcode = vi.fn(async () => ({ data: JPEG, mimeType: 'image/jpeg' }));
+    const memory = memoryStore();
+
+    const prepared = await resolvePromptMediaFiles(
+      [{ type: 'image', source: { kind: 'path', path: sourcePath } }],
+      memory.store,
+      join(dir, 'cache'),
+      { transcodeImage: transcode },
+    );
+
+    expect(transcode).toHaveBeenCalledWith(HEIC, 'image/heic');
+    expect(memory.saved).toEqual([
+      { id: 'f_1', name: 'IMG_0002.jpeg', mimeType: 'image/jpeg', bytes: JPEG },
+    ]);
+    expect(prepared.attachments).toEqual([]);
+    expect(textOf(prepared.content[0])).toContain(`saved at "${sourcePath}"`);
+    expect(prepared.content[1]).toEqual({
+      type: 'image',
+      source: { kind: 'url', url: 'kimi-file://f_1' },
+      name: 'IMG_0002.heic',
+    });
+  });
+
+  it('converts an uploaded HEIC file and stores the JPEG as a new daemon file', async () => {
+    const memory = memoryStore();
+    const uploaded = await memory.store.save(Readable.from([HEIC]), 'IMG_0003.heic', {
+      mimeType: 'image/heic',
+    });
+    const transcode = vi.fn(async () => ({ data: JPEG, mimeType: 'image/jpeg' }));
+
+    const prepared = await resolvePromptMediaFiles(
+      [{ type: 'image', source: { kind: 'file', file_id: uploaded.id } }],
+      memory.store,
+      join(dir, 'cache'),
+      { transcodeImage: transcode, resolveOriginalsDir: async () => join(dir, 'originals') },
+    );
+
+    expect(transcode).toHaveBeenCalledWith(HEIC, 'image/heic');
+    expect(memory.saved.at(-1)).toEqual({
+      id: 'f_2',
+      name: 'IMG_0003.jpeg',
+      mimeType: 'image/jpeg',
+      bytes: JPEG,
+    });
+    expect(prepared.attachments).toEqual([]);
+    const caption = textOf(prepared.content[0]);
+    expect(caption).toContain('image/heic');
+    expect(/saved at "([^"]+\.heic)"/.test(caption)).toBe(true);
+    expect(prepared.content[1]).toEqual({
+      type: 'image',
+      source: { kind: 'url', url: 'kimi-file://f_2' },
+      name: 'IMG_0003.heic',
+    });
+  });
+
+  it('keeps the attachment notice when no converter handles the HEIC', async () => {
+    const memory = memoryStore();
+
+    const prepared = await resolvePromptMediaFiles(
+      [
+        {
+          type: 'image',
+          name: 'IMG_0004.heic',
+          source: { kind: 'base64', media_type: 'image/heic', data: HEIC.toString('base64') },
+        },
+      ],
+      memory.store,
+      join(dir, 'cache'),
+      { transcodeImage: async () => null, resolveAttachmentsDir: async () => join(dir, 'attachments') },
+    );
+
+    expect(prepared.content).toHaveLength(1);
+    expect(textOf(prepared.content[0])).toContain('Attached file "IMG_0004.heic"');
+    expect(prepared.attachments).toHaveLength(1);
+    expect(memory.saved).toEqual([]);
   });
 });

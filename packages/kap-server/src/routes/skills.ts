@@ -9,6 +9,9 @@ import {
   IBootstrapService,
   IConfigService,
   IFileService,
+  IHostEnvironment,
+  IHostProcessService,
+  createImageTranscoder,
   IFlagService,
   IPluginService,
   ISessionContext,
@@ -261,6 +264,12 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
             {
               telemetry,
               resolveOriginalsDir: async () => sessionMediaOriginalsDir(sessionDir),
+              transcodeImage: createImageTranscoder({
+                osKind: core.accessor.get(IHostEnvironment).osKind,
+                process: core.accessor.get(IHostProcessService),
+                telemetry,
+                telemetrySource: 'prompt',
+              }),
               resolveAttachmentsDir: async () => join(sessionDir, 'attachments'),
             },
           );
