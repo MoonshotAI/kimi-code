@@ -27,6 +27,9 @@ const HUMAN_VOCABULARY = new Set([
   'llm/requester/requester',
   'llm/toolCallIdNormalizer',
   'llm-kimi/trait',
+  'interaction/interaction',
+  'interaction/machine',
+  'interaction/facade',
   'utils/watch',
 ]);
 

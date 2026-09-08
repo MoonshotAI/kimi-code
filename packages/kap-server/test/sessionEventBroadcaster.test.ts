@@ -5,11 +5,6 @@ import { join } from 'node:path';
 import type {
   AgentActivityState,
   AgentContext,
-  Interaction,
-  InteractionKind,
-  InteractionPendingChangedEvent,
-  InteractionRequest,
-  InteractionResolution,
   IScopeHandle,
   Scope,
   SessionActivityCause,
@@ -18,7 +13,7 @@ import type {
 } from '@moonshot-ai/agent-core-v2';
 import {
   IAgentActivityView,
-  IAgentInteractionService,
+  INTERACTION_TAG_SESSION_ID,
   LifecycleScope,
   IAgentLifecycleService,
   IAgentProfileService,
@@ -36,9 +31,9 @@ import {
   IWorkspaceInstanceManager,
   IWorkspaceSessions,
   MAIN_AGENT_ID,
+  interactions,
   makeAgentScopeContext,
 } from '@moonshot-ai/agent-core-v2';
-import { Emitter } from '@moonshot-ai/agent-core-v2/_base/event';
 import { TurnStarted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { AgentEvent } from '../src/transport/ws/v1/events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -126,128 +121,12 @@ class FakeAgentHandle {
   dispose(): void {}
 }
 
-class FakeInteractionKernel {
-  private readonly pending = new Map<string, Interaction>();
-  private readonly changeEmitter = new Emitter<InteractionPendingChangedEvent>();
-  private readonly resolveEmitter = new Emitter<InteractionResolution>();
-  readonly onDidChangePending = this.changeEmitter.event;
-  readonly onDidResolve = this.resolveEmitter.event;
-
-  request<TPayload, TResponse>(req: InteractionRequest<TPayload>): Promise<TResponse> {
-    return new Promise<TResponse>((resolve) => {
-      this.park(req, (response) => resolve(response as TResponse));
-    });
-  }
-
-  enqueue<TPayload>(req: InteractionRequest<TPayload>): Interaction {
-    return this.park(req, () => {});
-  }
-
-  respond(id: string, response: unknown): boolean {
-    if (!this.pending.delete(id)) return false;
-    this.changeEmitter.fire({ pending: [...this.pending.keys()] });
-    this.resolveEmitter.fire({ id, response });
-    return true;
-  }
-
-  listPending(kind?: InteractionKind): readonly Interaction[] {
-    const all = [...this.pending.values()];
-    return kind === undefined ? all : all.filter((i) => i.kind === kind);
-  }
-
-  isRecentlyResolved(): boolean {
-    return false;
-  }
-
-  cancelPendingForTurn(_turnId: number): void {}
-
-  private park<TPayload>(
-    req: InteractionRequest<TPayload>,
-    resolve: (response: unknown) => void,
-  ): Interaction {
-    void resolve;
-    const interaction: Interaction = {
-      id: req.id ?? `interaction-${this.pending.size}`,
-      kind: req.kind,
-      payload: req.payload,
-      origin: req.origin ?? {},
-      createdAt: Date.now(),
-    };
-    this.pending.set(interaction.id, interaction);
-    this.changeEmitter.fire({ pending: [...this.pending.keys()] });
-    return interaction;
-  }
-}
-
-class FakeInteractionHub {
-  private readonly changeEmitter = new Emitter<InteractionPendingChangedEvent>();
-  private readonly resolveEmitter = new Emitter<InteractionResolution>();
-  readonly onDidChangePending = this.changeEmitter.event;
-  readonly onDidResolve = this.resolveEmitter.event;
-  private readonly watched = new Set<FakeInteractionKernel>();
-
-  constructor(
-    private readonly kernelFor: (agentId: string) => FakeInteractionKernel,
-    private readonly allKernels: () => Iterable<FakeInteractionKernel>,
-  ) {}
-
-  watch(kernel: FakeInteractionKernel): void {
-    if (this.watched.has(kernel)) return;
-    this.watched.add(kernel);
-    kernel.onDidChangePending((e: InteractionPendingChangedEvent) => this.changeEmitter.fire(e));
-    kernel.onDidResolve((e: InteractionResolution) => this.resolveEmitter.fire(e));
-  }
-
-  request<TPayload, TResponse>(req: InteractionRequest<TPayload>): Promise<TResponse> {
-    return this.kernelFor(req.origin?.agentId ?? 'main').request(req);
-  }
-
-  enqueue<TPayload>(req: InteractionRequest<TPayload>): Interaction {
-    return this.kernelFor(req.origin?.agentId ?? 'main').enqueue(req);
-  }
-
-  respond(id: string, response: unknown): boolean {
-    for (const kernel of this.allKernels()) {
-      if (kernel.respond(id, response)) return true;
-    }
-    return false;
-  }
-
-  listPending(kind?: InteractionKind): readonly Interaction[] {
-    return [...this.allKernels()].flatMap((kernel) => kernel.listPending(kind));
-  }
-
-  isRecentlyResolved(): boolean {
-    return false;
-  }
-
-  cancelPendingForTurn(turnId: number): void {
-    for (const kernel of this.allKernels()) kernel.cancelPendingForTurn(turnId);
-  }
-}
-
 class FakeLifecycle {
   readonly handles: FakeAgentHandle[] = [];
-  private readonly kernels = new Map<string, FakeInteractionKernel>();
-  readonly interactions: FakeInteractionHub;
   readonly workView: FakeSessionActivityView;
 
-  constructor() {
-    this.interactions = new FakeInteractionHub(
-      (agentId) => this.kernelFor(agentId),
-      () => this.kernels.values(),
-    );
+  constructor(readonly sessionId = 's1') {
     this.workView = new FakeSessionActivityView(this);
-  }
-
-  kernelFor(agentId: string): FakeInteractionKernel {
-    let kernel = this.kernels.get(agentId);
-    if (kernel === undefined) {
-      kernel = new FakeInteractionKernel();
-      this.kernels.set(agentId, kernel);
-      this.interactions.watch(kernel);
-    }
-    return kernel;
   }
 
   private readonly turnCounters = new Map<string, { dispose(): void }>();
@@ -278,7 +157,6 @@ class FakeLifecycle {
     handle.set(IAgentActivityView, {
       state: () => ({ lifecycle: 'ready', background: [] }),
     });
-    handle.set(IAgentInteractionService, this.kernelFor(id));
     const onTurnStarted = handle.bus.subscribe('turn.started', (e) => {
       handle.bus.emit(
         agentEvent('agent.activity.updated', {
@@ -334,11 +212,11 @@ class FakeSessionActivityView {
     { turnActive: boolean; background: number; lastTurnReason?: 'completed' | 'cancelled' | 'failed' }
   >();
   private readonly busSubscriptions = new Map<string, { dispose(): void }>();
-  private readonly interactions: FakeInteractionHub;
+  private readonly lifecycle: FakeLifecycle;
   private current: SessionActivityState;
 
   constructor(lifecycle: FakeLifecycle) {
-    this.interactions = lifecycle.interactions;
+    this.lifecycle = lifecycle;
     for (const handle of lifecycle.list()) this.attach(handle as unknown as FakeAgentHandle);
     lifecycle.onDidCreate((context) => {
       const handle = lifecycle.get(context);
@@ -351,7 +229,7 @@ class FakeSessionActivityView {
       this.busSubscriptions.delete(agentId);
       if (this.folds.delete(agentId)) this.recompute('agent_lifecycle');
     });
-    this.interactions.onDidChangePending(() => this.recompute('interaction'));
+    interactions.onDidChangePending(() => this.recompute('interaction'));
     this.current = this.aggregate();
   }
 
@@ -440,7 +318,10 @@ class FakeSessionActivityView {
         break;
       }
     }
-    const pending = this.interactions.listPending();
+    const pending = interactions.findAll({
+      resolved: false,
+      tags: { [INTERACTION_TAG_SESSION_ID]: this.lifecycle.sessionId },
+    });
     return {
       busy,
       mainTurnActive: this.folds.get(MAIN_AGENT_ID)?.turnActive ?? false,
@@ -556,6 +437,7 @@ describe('SessionEventBroadcaster', () => {
 
   afterEach(async () => {
     await bc.close();
+    for (const sessionId of sessions.keys()) interactions.purgeSession(sessionId);
     await rm(dir, { recursive: true, force: true });
   });
 
@@ -1994,13 +1876,14 @@ describe('SessionEventBroadcaster', () => {
     const { target, envelopes } = collectingTarget();
     await bc.subscribe('s1', target);
 
-    lc.interactions.enqueue({
+    interactions.enqueue({
       id: 'q1',
       kind: 'question',
       payload: {
         toolCallId: 'call_1',
         questions: [{ question: 'Pick one', options: [{ label: 'A' }, { label: 'B' }] }],
       },
+      tags: { sessionId: 's1' },
     });
     await bc.getCursor('s1');
 
@@ -2026,25 +1909,25 @@ describe('SessionEventBroadcaster', () => {
     });
     expect(envelopes[1]!.volatile).toBeUndefined();
 
-    lc.interactions.respond('q1', { answers: { q_0: 'opt_0_0' }, method: 'enter' });
+    interactions.respond('q1', { answers: { q_0: 'opt_0_0' }, method: 'enter' });
     await bc.getCursor('s1');
 
     expect(envelopes).toHaveLength(4);
     expect(envelopes[2]).toMatchObject({
-      type: 'event.session.work_changed',
-      seq: 3,
-      payload: { pending_interaction: 'none' },
-    });
-    expect(envelopes[3]).toMatchObject({
       type: 'event.question.answered',
-      seq: 4,
+      seq: 3,
       session_id: 's1',
       payload: {
         question_id: 'q1',
         answers: { q_0: 'opt_0_0' },
       },
     });
-    expect((envelopes[3]!.payload as { resolved_at?: string }).resolved_at).toBeTypeOf('string');
+    expect((envelopes[2]!.payload as { resolved_at?: string }).resolved_at).toBeTypeOf('string');
+    expect(envelopes[3]).toMatchObject({
+      type: 'event.session.work_changed',
+      seq: 4,
+      payload: { pending_interaction: 'none' },
+    });
   });
 
   it('broadcasts question dismissed when resolved with null', async () => {
@@ -2054,24 +1937,25 @@ describe('SessionEventBroadcaster', () => {
     const { target, envelopes } = collectingTarget();
     await bc.subscribe('s1', target);
 
-    lc.interactions.enqueue({
+    interactions.enqueue({
       id: 'q1',
       kind: 'question',
       payload: { questions: [{ question: 'Pick', options: [{ label: 'A' }] }] },
+      tags: { sessionId: 's1' },
     });
-    lc.interactions.respond('q1', null);
+    interactions.respond('q1', null);
     await bc.getCursor('s1');
 
     expect(envelopes.map((e) => e.type)).toEqual([
       'event.session.work_changed',
       'event.question.requested',
-      'event.session.work_changed',
       'event.question.dismissed',
+      'event.session.work_changed',
     ]);
     expect(envelopes[0]!.payload).toMatchObject({ pending_interaction: 'question' });
-    expect(envelopes[2]!.payload).toMatchObject({ pending_interaction: 'none' });
-    expect(envelopes[3]!.payload).toMatchObject({ question_id: 'q1' });
-    expect((envelopes[3]!.payload as { dismissed_at?: string }).dismissed_at).toBeTypeOf('string');
+    expect(envelopes[2]!.payload).toMatchObject({ question_id: 'q1' });
+    expect((envelopes[2]!.payload as { dismissed_at?: string }).dismissed_at).toBeTypeOf('string');
+    expect(envelopes[3]!.payload).toMatchObject({ pending_interaction: 'none' });
   });
 
   it('carries the requesting agent onto resolved interaction events', async () => {
@@ -2082,21 +1966,21 @@ describe('SessionEventBroadcaster', () => {
     const { target, envelopes } = collectingTarget();
     await bc.subscribe('s1', target);
 
-    lc.interactions.enqueue({
+    interactions.enqueue({
       id: 'q-sub',
       kind: 'question',
       payload: {
         toolCallId: 'call_q',
         questions: [{ question: 'Pick', options: [{ label: 'A' }] }],
       },
-      origin: { agentId: 'sub-1' },
+      tags: { agentId: 'sub-1', sessionId: 's1' },
     });
     await bc.getCursor('s1');
     expect(
       envelopes.find((e) => e.type === 'event.question.requested')?.payload,
     ).toMatchObject({ agentId: 'sub-1', question_id: 'q-sub' });
 
-    lc.interactions.respond('q-sub', { answers: { q_0: 'opt_0_0' } });
+    interactions.respond('q-sub', { answers: { q_0: 'opt_0_0' } });
     await bc.getCursor('s1');
     expect(
       envelopes.find((e) => e.type === 'event.question.answered')?.payload,
@@ -2110,7 +1994,7 @@ describe('SessionEventBroadcaster', () => {
     const { target, envelopes } = collectingTarget();
     await bc.subscribe('s1', target);
 
-    lc.interactions.enqueue({
+    interactions.enqueue({
       id: 'a1',
       kind: 'approval',
       payload: {
@@ -2119,7 +2003,7 @@ describe('SessionEventBroadcaster', () => {
         action: 'run',
         display: { kind: 'command', command: 'ls' },
       },
-      origin: { turnId: 3 },
+      tags: { sessionId: 's1', turnId: 3 },
     });
     await bc.getCursor('s1');
 
@@ -2145,18 +2029,13 @@ describe('SessionEventBroadcaster', () => {
     });
     expect(envelopes[1]!.volatile).toBeUndefined();
 
-    lc.interactions.respond('a1', { decision: 'approved', scope: 'session' });
+    interactions.respond('a1', { decision: 'approved', scope: 'session' });
     await bc.getCursor('s1');
 
     expect(envelopes).toHaveLength(4);
     expect(envelopes[2]).toMatchObject({
-      type: 'event.session.work_changed',
-      seq: 3,
-      payload: { pending_interaction: 'none' },
-    });
-    expect(envelopes[3]).toMatchObject({
       type: 'event.approval.resolved',
-      seq: 4,
+      seq: 3,
       session_id: 's1',
       payload: {
         approval_id: 'a1',
@@ -2164,7 +2043,12 @@ describe('SessionEventBroadcaster', () => {
         scope: 'session',
       },
     });
-    expect((envelopes[3]!.payload as { resolved_at?: string }).resolved_at).toBeTypeOf('string');
+    expect((envelopes[2]!.payload as { resolved_at?: string }).resolved_at).toBeTypeOf('string');
+    expect(envelopes[3]).toMatchObject({
+      type: 'event.session.work_changed',
+      seq: 4,
+      payload: { pending_interaction: 'none' },
+    });
   });
 
   it('fans event.session.work_changed out to every connection, bypassing agent filters', async () => {
@@ -2201,10 +2085,11 @@ describe('SessionEventBroadcaster', () => {
     const lc = new FakeLifecycle();
     lc.addAgent('main');
     sessions.set('s1', lc);
-    lc.interactions.enqueue({
+    interactions.enqueue({
       id: 'q0',
       kind: 'question',
       payload: { questions: [{ question: 'Early', options: [{ label: 'A' }] }] },
+      tags: { sessionId: 's1' },
     });
 
     const { target, envelopes } = collectingTarget();
@@ -2212,14 +2097,14 @@ describe('SessionEventBroadcaster', () => {
     await bc.getCursor('s1');
     expect(envelopes).toHaveLength(0);
 
-    lc.interactions.respond('q0', { answers: { q_0: 'opt_0_0' } });
+    interactions.respond('q0', { answers: { q_0: 'opt_0_0' } });
     await bc.getCursor('s1');
     expect(envelopes.map((e) => e.type)).toEqual([
-      'event.session.work_changed',
       'event.question.answered',
+      'event.session.work_changed',
     ]);
-    expect(envelopes[0]!.payload).toMatchObject({ pending_interaction: 'none' });
-    expect(envelopes[1]!.payload).toMatchObject({ question_id: 'q0' });
+    expect(envelopes[0]!.payload).toMatchObject({ question_id: 'q0' });
+    expect(envelopes[1]!.payload).toMatchObject({ pending_interaction: 'none' });
   });
 
   it('fans out the legacy background.task.* alias alongside native task.* for v1 clients', async () => {

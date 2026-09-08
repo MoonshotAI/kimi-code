@@ -85,8 +85,8 @@ export type ScopedStreamCaller = (
 ) => AsyncIterable<unknown>;
 
 // ---------------------------------------------------------------------------
-// Wire-type aliases for shapes the engine sources from `@moonshot-ai/protocol`
-// (not a direct klient dependency) — derived through the service interfaces.
+// Wire-type aliases for engine-sourced shapes (not direct klient
+// dependencies) — derived through the service interfaces.
 // ---------------------------------------------------------------------------
 
 export type RefreshProviderModelsResponse = Awaited<

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 import {
-  IAgentInteractionService,
+  INTERACTION_TAG_SESSION_ID,
   IAgentLifecycleService,
   IAgentLoopService,
   IAgentPromptService,
@@ -19,20 +19,16 @@ import {
   ISessionManager,
   IWorkspaceInstanceManager,
   LifecycleScope,
+  interactions,
   makeAgentScopeContext,
   type AgentContext,
   type Event2,
-  type Interaction,
-  type InteractionKind,
-  type InteractionPendingChangedEvent,
-  type InteractionRequest,
-  type InteractionResolution,
   TOWER_FLAG_ID,
   _setTowerFeatureAssembledForTests,
   type ISessionScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import { Emitter, Event } from '@moonshot-ai/agent-core-v2/_base/event';
+
 import { TowerStore } from '@moonshot-ai/agent-core-v2/features/tower/protocol/index';
 import {
   AgentTranscript,
@@ -46,7 +42,7 @@ import {
   type TranscriptTask,
   type TranscriptTurn,
 } from '@moonshot-ai/transcript';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { bindSessionTranscript } from '../../src/services/transcript/coreBinding';
 import { toWireQuestion } from '../../src/protocol/question-wire';
@@ -1640,7 +1636,6 @@ describe('AgentTranscriptProjector', () => {
         id: 'apr-1',
         kind: 'approval',
         payload: request,
-        origin: { agentId: 'main', turnId: 2 },
         createdAt: 1000,
       }),
     );
@@ -1848,7 +1843,6 @@ describe('AgentTranscriptProjector', () => {
         id: 'q1',
         kind: 'question',
         payload: { questions: [{ question: 'Pick', options: [] }] },
-        origin: { agentId: 'main', turnId: 3 },
         createdAt: 1000,
       }),
     );
@@ -1886,7 +1880,6 @@ describe('AgentTranscriptProjector', () => {
             },
           ],
         },
-        origin: { agentId: 'main', turnId: 3 },
         createdAt: 7000,
       }),
     );
@@ -1930,7 +1923,6 @@ describe('AgentTranscriptProjector', () => {
         id: 'q-raw',
         kind: 'question',
         payload: { toolCallId: 'call_x' },
-        origin: { agentId: 'main' },
         createdAt: 1000,
       }),
     );
@@ -3074,183 +3066,29 @@ describe('bindSessionTranscript', () => {
   }
 
 
-  class FakeInteractionKernel {
-    private readonly pending = new Map<string, Interaction>();
-    private readonly changeEmitter = new Emitter<InteractionPendingChangedEvent>();
-    private readonly resolveEmitter = new Emitter<InteractionResolution>();
-    readonly onDidChangePending = this.changeEmitter.event;
-    readonly onDidResolve = this.resolveEmitter.event;
-
-    request<TPayload, TResponse>(req: InteractionRequest<TPayload>): Promise<TResponse> {
-      return new Promise<TResponse>((resolve) => {
-        this.park(req, (response) => resolve(response as TResponse));
-      });
-    }
-
-    enqueue<TPayload>(req: InteractionRequest<TPayload>): Interaction {
-      return this.park(req, () => {});
-    }
-
-    respond(id: string, response: unknown): boolean {
-      if (!this.pending.delete(id)) return false;
-      this.changeEmitter.fire({ pending: [...this.pending.keys()] });
-      this.resolveEmitter.fire({ id, response });
-      return true;
-    }
-
-    listPending(kind?: InteractionKind): readonly Interaction[] {
-      const all = [...this.pending.values()];
-      return kind === undefined ? all : all.filter((i) => i.kind === kind);
-    }
-
-    isRecentlyResolved(): boolean {
-      return false;
-    }
-
-    cancelPendingForTurn(_turnId: number): void {}
-
-    private park<TPayload>(
-      req: InteractionRequest<TPayload>,
-      resolve: (response: unknown) => void,
-    ): Interaction {
-      void resolve;
-      const interaction: Interaction = {
-        id: req.id ?? `interaction-${this.pending.size}`,
-        kind: req.kind,
-        payload: req.payload,
-        origin: req.origin ?? {},
-        createdAt: Date.now(),
-      };
-      this.pending.set(interaction.id, interaction);
-      this.changeEmitter.fire({ pending: [...this.pending.keys()] });
-      return interaction;
-    }
-  }
-
-  class FakeInteractionHub {
-    private readonly entries = new Map<
-      string,
-      { context: AgentContext; bus: FakeBus; kernel: FakeInteractionKernel }
-    >();
-    private readonly createEmitter = new Emitter<AgentContext>();
-    readonly onDidCreate = this.createEmitter.event;
-    readonly onDidClose = Event.None as Event<AgentContext>;
-
-    kernelFor(agentId: string): FakeInteractionKernel {
-      let entry = this.entries.get(agentId);
-      if (entry === undefined) {
-        const context = makeAgentScopeContext({
-          agentId,
-          agentScope: `agents/${agentId}`,
-          generation: 1,
-        }).agentContext;
-        entry = { context, bus: new FakeBus(), kernel: new FakeInteractionKernel() };
-        this.entries.set(agentId, entry);
-      }
-      return entry.kernel;
-    }
-
-    enqueue(req: InteractionRequest<unknown>): Interaction {
-      return this.kernelFor(req.origin?.agentId ?? 'main').enqueue(req);
-    }
-
-    respond(id: string, response: unknown): void {
-      for (const entry of this.entries.values()) {
-        if (entry.kernel.respond(id, response)) return;
-      }
-    }
-
-    list(): AgentContext[] {
-      return [...this.entries.values()].map((entry) => entry.context);
-    }
-
-    get(agentId: string): AgentContext | undefined {
-      return this.entries.get(agentId)?.context;
-    }
-
-    handleOf(agentId: string): FakeAgentHandle | undefined {
-      const entry = this.entries.get(agentId);
-      if (entry === undefined) return undefined;
-      return {
-        id: agentId,
-        context: entry.context,
-        bus: entry.bus,
-        kernel: entry.kernel,
-        accessor: {
-          get: (token: unknown) => {
-            if (token === IEventBus) return entry.bus;
-            if (token === IAgentInteractionService) return entry.kernel;
-            return undefined;
-          },
-        },
-      };
-    }
-  }
-
   interface FakeAgentHandle {
     readonly id: string;
     readonly context: AgentContext;
     readonly bus: FakeBus;
-    readonly kernel: FakeInteractionKernel;
     readonly accessor: { get: (token: unknown) => unknown };
   }
 
   class FakeAgents {
     private readonly handles = new Map<string, FakeAgentHandle>();
-    private readonly kernels = new Map<
-      string,
-      { context: AgentContext; bus: FakeBus; kernel: FakeInteractionKernel }
-    >();
     private readonly createHandlers = new Set<(context: AgentContext) => void>();
     private readonly closeHandlers = new Set<(context: AgentContext) => void>();
+
     list(): AgentContext[] {
-      const handleIds = new Set(this.handles.keys());
-      return [
-        ...[...this.handles.values()].map((handle) => handle.context),
-        ...[...this.kernels.entries()]
-          .filter(([id]) => !handleIds.has(id))
-          .map(([, entry]) => entry.context),
-      ];
+      return [...this.handles.values()].map((handle) => handle.context);
     }
     get(agentId: string): AgentContext | undefined {
-      return this.handles.get(agentId)?.context ?? this.kernels.get(agentId)?.context;
+      return this.handles.get(agentId)?.context;
     }
     handleOf(agentId: string): FakeAgentHandle | undefined {
-      const handle = this.handles.get(agentId);
-      if (handle !== undefined) return handle;
-      const entry = this.kernels.get(agentId);
-      if (entry === undefined) return undefined;
-      return {
-        id: agentId,
-        context: entry.context,
-        bus: entry.bus,
-        kernel: entry.kernel,
-        accessor: {
-          get: (token: unknown) => {
-            if (token === IEventBus) return entry.bus;
-            if (token === IAgentInteractionService) return entry.kernel;
-            return undefined;
-          },
-        },
-      };
+      return this.handles.get(agentId);
     }
     byId(id: string): FakeAgentHandle | undefined {
       return this.handles.get(id);
-    }
-    kernelFor(id: string): FakeInteractionKernel {
-      const handle = this.handles.get(id);
-      if (handle !== undefined) return handle.kernel;
-      let entry = this.kernels.get(id);
-      if (entry === undefined) {
-        const context = makeAgentScopeContext({
-          agentId: id,
-          agentScope: `agents/${id}`,
-          generation: 1,
-        }).agentContext;
-        entry = { context, bus: new FakeBus(), kernel: new FakeInteractionKernel() };
-        this.kernels.set(id, entry);
-      }
-      return entry.kernel;
     }
     onDidCreate(cb: (context: AgentContext) => void): { dispose: () => void } {
       this.createHandlers.add(cb);
@@ -3261,24 +3099,20 @@ describe('bindSessionTranscript', () => {
       return { dispose: () => this.closeHandlers.delete(cb) };
     }
     add(id: string, opts?: { loopStatus?: unknown; tasks?: readonly unknown[]; activePromptId?: string }): FakeAgentHandle {
-      const existing = this.kernels.get(id);
-      const bus = existing?.bus ?? new FakeBus();
+      const bus = this.handles.get(id)?.bus ?? new FakeBus();
       const scope = makeAgentScopeContext({
         agentId: id,
         agentScope: `agents/${id}`,
         generation: 1,
       });
-      const kernel = existing?.kernel ?? new FakeInteractionKernel();
       const handle: FakeAgentHandle = {
         id,
         context: scope.agentContext,
         bus,
-        kernel,
         accessor: {
           get: (token: unknown) => {
             if (token === IAgentScopeContext) return scope;
             if (token === IEventBus) return bus;
-            if (token === IAgentInteractionService) return kernel;
             if (token === IAgentLoopService) {
               return { status: () => opts?.loopStatus ?? { state: 'idle' } };
             }
@@ -3323,8 +3157,9 @@ describe('bindSessionTranscript', () => {
     }
   }
 
-  function fakeSession(manager: FakeAgents | FakeInteractionHub): ISessionScopeHandle {
+  function fakeSession(manager: FakeAgents): ISessionScopeHandle {
     return {
+      id: 's1',
       accessor: {
         get: (token: unknown) => {
           if (token === IAgentLifecycleService) return manager;
@@ -3335,18 +3170,22 @@ describe('bindSessionTranscript', () => {
     } as unknown as ISessionScopeHandle;
   }
 
+  afterEach(() => {
+    interactions.purgeSession('s1');
+  });
+
   it('registers pre-bind pendings without frames and replays an early resolve at seed time', () => {
-    const interactions = new FakeInteractionHub();
+    const agents = new FakeAgents();
     interactions.enqueue({
       id: 'apr-1',
       kind: 'approval',
       payload: { toolCallId: 'call_1' },
-      origin: { agentId: 'main', turnId: 0 },
+      tags: { agentId: 'main', sessionId: 's1', turnId: 0 },
     });
 
     const store = new TranscriptStore('s1');
     const ops: TranscriptOperation[] = [];
-    const binding = bindSessionTranscript(store, fakeSession(interactions), undefined, (event) =>
+    const binding = bindSessionTranscript(store, fakeSession(agents), undefined, (event) =>
       ops.push(...event.ops),
     );
 
@@ -3696,13 +3535,13 @@ describe('bindSessionTranscript', () => {
   });
 
   it('seeds pending interactions per agent, not before that agent is backfilled', () => {
-    const interactions = new FakeInteractionHub();
-    interactions.enqueue({ id: 'q-main', kind: 'question', payload: { toolCallId: 'call_main' }, origin: { agentId: 'main', turnId: 0 } });
-    interactions.enqueue({ id: 'q-sub', kind: 'question', payload: { toolCallId: 'call_sub' }, origin: { agentId: 'sub-1', turnId: 0 } });
+    const agents = new FakeAgents();
+    interactions.enqueue({ id: 'q-main', kind: 'question', payload: { toolCallId: 'call_main' }, tags: { agentId: 'main', sessionId: 's1', turnId: 0 } });
+    interactions.enqueue({ id: 'q-sub', kind: 'question', payload: { toolCallId: 'call_sub' }, tags: { agentId: 'sub-1', sessionId: 's1', turnId: 0 } });
 
     const store = new TranscriptStore('s1');
     const byAgent = new Map<string, TranscriptOperation[]>();
-    const binding = bindSessionTranscript(store, fakeSession(interactions), undefined, (event) => {
+    const binding = bindSessionTranscript(store, fakeSession(agents), undefined, (event) => {
       byAgent.set(event.agentId, [...(byAgent.get(event.agentId) ?? []), ...event.ops]);
     });
 
@@ -3715,7 +3554,7 @@ describe('bindSessionTranscript', () => {
   });
 
   it('projects live question entities with the same wire shape as the legacy question event', () => {
-    const interactions = new FakeInteractionHub();
+    const agents = new FakeAgents();
     const asked = interactions.enqueue({
       id: 'q-parity',
       kind: 'question',
@@ -3727,10 +3566,10 @@ describe('bindSessionTranscript', () => {
           },
         ],
       },
-      origin: { agentId: 'main', turnId: 0 },
+      tags: { agentId: 'main', sessionId: 's1', turnId: 0 },
     });
     const store = new TranscriptStore('s1');
-    const binding = bindSessionTranscript(store, fakeSession(interactions));
+    const binding = bindSessionTranscript(store, fakeSession(agents));
 
     binding.seedPendingInteractions('main');
 
@@ -3741,14 +3580,14 @@ describe('bindSessionTranscript', () => {
   });
 
   it('defers pendings created before their owning agent is seeded', () => {
-    const interactions = new FakeInteractionHub();
+    const agents = new FakeAgents();
     const store = new TranscriptStore('s1');
     const byAgent = new Map<string, TranscriptOperation[]>();
-    const binding = bindSessionTranscript(store, fakeSession(interactions), undefined, (event) => {
+    const binding = bindSessionTranscript(store, fakeSession(agents), undefined, (event) => {
       byAgent.set(event.agentId, [...(byAgent.get(event.agentId) ?? []), ...event.ops]);
     });
 
-    interactions.enqueue({ id: 'q-sub', kind: 'question', payload: { toolCallId: 'call_sub' }, origin: { agentId: 'sub-1', turnId: 0 } });
+    interactions.enqueue({ id: 'q-sub', kind: 'question', payload: { toolCallId: 'call_sub' }, tags: { agentId: 'sub-1', sessionId: 's1', turnId: 0 } });
     expect(byAgent.size).toBe(0);
 
     binding.seedPendingInteractions('main');
@@ -3768,7 +3607,7 @@ describe('bindSessionTranscript', () => {
     });
 
     agents.add('sub-1');
-    agents.kernelFor('sub-1').enqueue({ id: 'q1', kind: 'question', payload: { toolCallId: 'call_q1' }, origin: { agentId: 'sub-1', turnId: 0 } });
+    interactions.enqueue({ id: 'q1', kind: 'question', payload: { toolCallId: 'call_q1' }, tags: { agentId: 'sub-1', sessionId: 's1', turnId: 0 } });
     expect([...byAgent.keys()]).toEqual(['sub-1']);
     binding.dispose();
   });
@@ -3822,7 +3661,7 @@ describe('bindSessionTranscript', () => {
 
   it('subscribes the bus for an agent whose projector was seeded before its handle existed', () => {
     const agents = new FakeAgents();
-    agents.kernelFor('sub-1').enqueue({ id: 'q-sub', kind: 'question', payload: { toolCallId: 'call_sub' }, origin: { agentId: 'sub-1', turnId: 0 } });
+    interactions.enqueue({ id: 'q-sub', kind: 'question', payload: { toolCallId: 'call_sub' }, tags: { agentId: 'sub-1', sessionId: 's1', turnId: 0 } });
     const store = new TranscriptStore('s1');
     const byAgent = new Map<string, TranscriptOperation[]>();
     const binding = bindSessionTranscript(store, fakeSession(agents), undefined, (event) => {

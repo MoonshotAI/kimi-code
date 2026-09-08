@@ -1,10 +1,10 @@
 import {
-  IAgentLifecycleService,
   IAgentPromptService,
+  INTERACTION_TAG_SESSION_ID,
   ISessionContext,
   ISessionMetadata,
   IWorkspaceService,
-  listSessionPendingInteractions,
+  interactions,
   resumeSessionById,
   type IAgentScopeHandle,
   type Scope,
@@ -130,10 +130,19 @@ async function assembleSnapshot(
   const currentPromptId = snapState.inFlightTurn === null ? undefined : readCurrentPromptId(main);
   const inFlightTurn = attachCurrentPromptIdToInFlight(snapState.inFlightTurn, currentPromptId);
 
-  const agents = handle.accessor.get(IAgentLifecycleService);
-  const pendingApprovals = listSessionPendingInteractions(agents, 'approval')
+  const pendingApprovals = interactions
+    .findAll({
+      kind: 'approval',
+      resolved: false,
+      tags: { [INTERACTION_TAG_SESSION_ID]: sessionId },
+    })
     .map((i) => toWireApproval(i, sessionId));
-  const pendingQuestions = listSessionPendingInteractions(agents, 'question')
+  const pendingQuestions = interactions
+    .findAll({
+      kind: 'question',
+      resolved: false,
+      tags: { [INTERACTION_TAG_SESSION_ID]: sessionId },
+    })
     .map((i) => toWireQuestion(i, sessionId));
 
   return {

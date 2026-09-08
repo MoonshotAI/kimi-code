@@ -112,8 +112,7 @@
  *   driven by the same session wiring: v1's push callbacks
  *   (`requestApproval` / `requestQuestion` / `toolCall`) are fed from the v2
  *   interaction kernel's pending set (`onDidChangePending`), and the outcome
- *   is written back through `ISessionApprovalService.decide` /
- *   `ISessionQuestionService.answer|dismiss` / the kernel's `respond`.
+ *   is written back through the kernel's `respond`.
  * - `exportSession` → `ISessionExportService` (app scope, the v2 port of v1's
  *   export) through {@link engineAccessor}; `listSkills` → the session
  *   scope's `ISessionSkillCatalog`; `startBtw` → the session scope's

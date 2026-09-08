@@ -17,14 +17,15 @@ import {
   IAgentLifecycleService,
   IEventBus,
   IEventService,
+  INTERACTION_TAG_AGENT_ID,
+  INTERACTION_TAG_SESSION_ID,
   ISessionActivityView,
   ISessionIndex,
   ISessionManager,
   MAIN_AGENT_ID,
   getLiveSessionById,
-  listSessionPendingInteractions,
-  onSessionInteractionDidChangePending,
-  onSessionInteractionDidResolve,
+  interactions,
+  toDisposable,
 } from '@moonshot-ai/agent-core-v2';
 import type {
   ConfigWarningItem,
@@ -590,7 +591,7 @@ export class SessionEventBroadcaster {
     try {
       this.attachWorkView(session, state);
       this.attachAgents(sessionId, session, state);
-      this.attachInteractions(sessionId, session, state);
+      this.attachInteractions(sessionId, state);
     } catch (error) {
       this.sessions.delete(sessionId);
       await disposeSessionState(state);
@@ -987,36 +988,43 @@ export class SessionEventBroadcaster {
 
   private attachInteractions(
     sessionId: string,
-    session: ISessionScopeHandle,
     state: SessionState,
   ): void {
-    const agents = session.accessor.get(IAgentLifecycleService);
-    for (const i of listSessionPendingInteractions(agents)) {
-      state.knownInteractions.set(i.id, { kind: i.kind, agentId: i.origin.agentId ?? 'main' });
+    const pendingOfSession = (): readonly Interaction[] =>
+      interactions.findAll({
+        resolved: false,
+        tags: { [INTERACTION_TAG_SESSION_ID]: sessionId },
+      });
+    for (const i of pendingOfSession()) {
+      state.knownInteractions.set(i.id, { kind: i.kind, agentId: interactionAgentId(i) });
     }
     state.lifecycleDisposables.push(
-      onSessionInteractionDidChangePending(agents, () => {
-        for (const i of listSessionPendingInteractions(agents)) {
-          if (state.knownInteractions.has(i.id)) continue;
-          state.knownInteractions.set(i.id, {
-            kind: i.kind,
-            agentId: i.origin.agentId ?? 'main',
-          });
-          const event = interactionRequestedEvent(i, sessionId);
+      toDisposable(
+        interactions.onDidChangePending(() => {
+          for (const i of pendingOfSession()) {
+            if (state.knownInteractions.has(i.id)) continue;
+            state.knownInteractions.set(i.id, {
+              kind: i.kind,
+              agentId: interactionAgentId(i),
+            });
+            const event = interactionRequestedEvent(i, sessionId);
+            if (event !== undefined) {
+              this.enqueueDurable(state, event);
+            }
+          }
+        }),
+      ),
+      toDisposable(
+        interactions.onDidResolve(({ id, response }) => {
+          const known = state.knownInteractions.get(id);
+          if (known === undefined) return;
+          state.knownInteractions.delete(id);
+          const event = interactionResolvedEvent(known.kind, id, response, sessionId, known.agentId);
           if (event !== undefined) {
             this.enqueueDurable(state, event);
           }
-        }
-      }),
-      onSessionInteractionDidResolve(agents, ({ id, response }) => {
-        const known = state.knownInteractions.get(id);
-        if (known === undefined) return;
-        state.knownInteractions.delete(id);
-        const event = interactionResolvedEvent(known.kind, id, response, sessionId, known.agentId);
-        if (event !== undefined) {
-          this.enqueueDurable(state, event);
-        }
-      }),
+        }),
+      ),
     );
   }
 
@@ -1258,8 +1266,13 @@ function suppressedByTranscript(
   return TRANSCRIPT_PROJECTED_EVENT_TYPES.has(envelope.type);
 }
 
+function interactionAgentId(interaction: Interaction): string {
+  const tag = interaction.tags[INTERACTION_TAG_AGENT_ID];
+  return typeof tag === 'string' ? tag : MAIN_AGENT_ID;
+}
+
 function interactionRequestedEvent(interaction: Interaction, sessionId: string): Event | undefined {
-  const agentId = interaction.origin.agentId ?? 'main';
+  const agentId = interactionAgentId(interaction);
   switch (interaction.kind) {
     case 'question':
       return {

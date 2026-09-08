@@ -43,8 +43,8 @@
 //   goal.clear                         (none)                                                src/features/goal/goalOps.ts
 //   goal.create                        (none)                                                src/features/goal/goalOps.ts
 //   goal.update                        (none)                                                src/features/goal/goalOps.ts
-//   interaction.request                (none)                                                src/features/interaction/interactionOps.ts
-//   interaction.resolved               (none)                                                src/features/interaction/interactionOps.ts
+//   interaction.request                (none)                                                src/agent/interaction/interactionOps.ts
+//   interaction.resolved               (none)                                                src/agent/interaction/interactionOps.ts
 //   interruptionReminder.recorded      interruptionReminder                                  src/agent/interruptionReminder/interruptionReminderOps.ts
 //   llm.request                        llm.requestTrace                                      src/agent/llmRequester/llmRequestOps.ts
 //   llm.tools_snapshot                 llm.requestTrace                                      src/agent/llmRequester/llmRequestOps.ts
@@ -328,7 +328,7 @@ interface GoalUpdatePayload {
 
 /**
  * states: (none)
- * owner: src/features/interaction/interactionOps.ts
+ * owner: src/agent/interaction/interactionOps.ts
  */
 interface InteractionRequestPayload {
   _name: 'interaction.request';
@@ -341,7 +341,7 @@ interface InteractionRequestPayload {
 
 /**
  * states: (none)
- * owner: src/features/interaction/interactionOps.ts
+ * owner: src/agent/interaction/interactionOps.ts
  */
 interface InteractionResolvedPayload {
   _name: 'interaction.resolved';

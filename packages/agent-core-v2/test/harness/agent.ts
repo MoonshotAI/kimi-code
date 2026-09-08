@@ -133,7 +133,6 @@ import {
   IAgentActivityView,
   IAppendLogStore,
   IFileSystemStorageService,
-  ISessionApprovalService,
   ISessionMetadata,
   IAgentTaskService,
   IBlobStore,
@@ -213,12 +212,16 @@ import {
   type ProviderConfig,
   type ProvidersSection,
 } from '#/llm-adapter/provider/provider';
-import type { ApprovalResponse } from '#/session/approval/approval';
-import type { InteractionRequest } from '#/features/interaction/interaction';
-import { IAgentInteractionService } from '#/features/interaction/interactionService';
+import type { ApprovalRequest, ApprovalResponse } from '#/agent/interaction/approval';
+import type { QuestionRequest, QuestionResult } from '#/agent/interaction/question';
+import {
+  INTERACTION_TAG_SESSION_ID,
+  type Interaction,
+  type InteractionKind,
+} from '#/human/interaction/interaction';
+import { interactions } from '#/human/interaction/facade';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import type { EnvironmentDisclosureSnapshot } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { ISessionQuestionService, type QuestionResult } from '#/session/question/question';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionSwarmService } from '#/features/swarm/session/sessionSwarm';
 import type { PathAccessOperation } from '#/session/workspaceContext/workspaceContext';
@@ -400,6 +403,17 @@ interface UserToolInteractionPayload {
   readonly turnId?: number;
   readonly toolCallId: string;
   readonly args: unknown;
+}
+
+function interactionRpcMethod(kind: InteractionKind): 'requestApproval' | 'requestQuestion' | 'toolCall' {
+  switch (kind) {
+    case 'approval':
+      return 'requestApproval';
+    case 'question':
+      return 'requestQuestion';
+    case 'user_tool':
+      return 'toolCall';
+  }
 }
 
 interface ResumeStateSnapshot {
@@ -667,10 +681,6 @@ export function llmGenerateServices(requester: LlmRequester): TestAgentServiceOv
 
 export function telemetryServices(telemetry: ITelemetryService): TestAgentServiceOverride {
   return appService(ITelemetryService, telemetry);
-}
-
-export function questionServices(service: ISessionQuestionService): TestAgentServiceOverride {
-  return sessionService(ISessionQuestionService, service);
 }
 
 export function externalHookServices(
@@ -1248,13 +1258,11 @@ export class AgentTestContext {
               onDidCreateSession: Event.None as Event<SessionCreatedEvent & IWaitUntil>,
               onWillCloseSession: Event.None as Event<SessionWillCloseEvent & IWaitUntil>,
             });
-            reg.defineInstance(ISessionApprovalService, this.createApprovalService());
             reg.defineInstance(ISessionNotify, {
               _serviceBrand: undefined,
               ready: Promise.resolve(),
               enabled: notifyUserAvailable(this.root.accessor.get(IFlagService), bootstrap),
             });
-            reg.defineInstance(ISessionQuestionService, this.createQuestionService());
             reg.defineInstance(ISessionSkillCatalogData, {
               _serviceBrand: undefined,
               ready: Promise.resolve(),
@@ -1399,7 +1407,7 @@ export class AgentTestContext {
       .get(ISessionEventBus)
       .activateAgent(harnessAgentContext);
     adoptAgent!();
-    this.installInteractionBridge(harnessAgentContext);
+    this.installInteractionBridge();
     reassertServiceOverrides(this.serviceOverrides, 'agent', this.agent.instantiation);
 
     this.initializeRestorableServices();
@@ -1533,30 +1541,76 @@ export class AgentTestContext {
     await this.wire.flush();
   }
 
-  private installInteractionBridge(agent: AgentContext): void {
-    const interaction = this.session.accessor.get(IAgentLifecycleService).handleOf(agent.agentId)!.accessor.get(IAgentInteractionService);
-    const request = interaction.request.bind(interaction);
-    interaction.request = (<TPayload, TResponse>(req: InteractionRequest<TPayload>) => {
-      if (req.kind !== 'user_tool') return request<TPayload, TResponse>(req);
-      const pending = request<TPayload, TResponse>(req);
-      const parked = interaction.listPending('user_tool').at(-1)!;
-      const payload = req.payload as UserToolInteractionPayload;
-      const response = this.createRpcPromise<ExecutableToolResult>();
-      void response.then(
-        (result) => { interaction.respond(parked.id, result); },
-        () => { interaction.respond(parked.id, { cancelled: true }); },
-      );
-      this.recordRpc(
-        'toolCall',
-        {
-          turnId: payload.turnId,
-          toolCallId: payload.toolCallId,
-          args: payload.args,
-        },
-        response,
-      );
-      return pending;
-    }) as IAgentInteractionService['request'];
+  private installInteractionBridge(): void {
+    const sessionId = this.session.id;
+    const bridged = new Map<string, 'requestApproval' | 'requestQuestion' | 'toolCall'>();
+    this.disposables.push(
+      toDisposable(
+        interactions.onDidChangePending(() => {
+          for (const pending of interactions.findAll({
+            resolved: false,
+            tags: { [INTERACTION_TAG_SESSION_ID]: sessionId },
+          })) {
+            if (bridged.has(pending.id)) continue;
+            bridged.set(pending.id, interactionRpcMethod(pending.kind));
+            this.bridgeInteraction(pending);
+          }
+        }),
+      ),
+      toDisposable(
+        interactions.onDidResolve(({ id, response }) => {
+          const method = bridged.get(id);
+          if (method === undefined) return;
+          bridged.delete(id);
+          this.resolvePendingRpc(method, id, response);
+        }),
+      ),
+    );
+  }
+
+  private bridgeInteraction(interaction: Interaction): void {
+    switch (interaction.kind) {
+      case 'approval': {
+        const { sessionId: _sessionId, agentId: _agentId, ...payload } =
+          interaction.payload as ApprovalRequest;
+        const response = this.createRpcPromise<ApprovalResponse>();
+        void response.then((result) => {
+          interactions.respond(interaction.id, result);
+        });
+        this.recordRpc('requestApproval', payload, response);
+        return;
+      }
+      case 'question': {
+        const response = this.createRpcPromise<QuestionResult>();
+        void response.then((result) => {
+          interactions.respond(interaction.id, result);
+        });
+        this.recordRpc('requestQuestion', interaction.payload as QuestionRequest, response);
+        return;
+      }
+      case 'user_tool': {
+        const payload = interaction.payload as UserToolInteractionPayload;
+        const response = this.createRpcPromise<ExecutableToolResult>();
+        void response.then(
+          (result) => {
+            interactions.respond(interaction.id, result);
+          },
+          () => {
+            interactions.respond(interaction.id, { cancelled: true });
+          },
+        );
+        this.recordRpc(
+          'toolCall',
+          {
+            turnId: payload.turnId,
+            toolCallId: payload.toolCallId,
+            args: payload.args,
+          },
+          response,
+        );
+        return;
+      }
+    }
   }
 
   private initializeRestorableServices(): void {
@@ -2091,52 +2145,6 @@ export class AgentTestContext {
         return current.paths;
       },
       onDidChange: Event.None as ISessionInstructionsProvider['onDidChange'],
-    };
-  }
-
-  private createApprovalService(): ISessionApprovalService {
-    return {
-      _serviceBrand: undefined,
-      request: (request) => {
-        const { sessionId: _sessionId, agentId: _agentId, ...payload } = request;
-        const promise = this.createRpcPromise<ApprovalResponse>();
-        this.recordRpc('requestApproval', payload, promise);
-        return promise;
-      },
-      enqueue: (request) => {
-        const id = request.id ?? request.toolCallId ?? `${request.toolName}:test`;
-        const { sessionId: _sessionId, agentId: _agentId, ...payload } = { ...request, id };
-        this.recordRpc('requestApproval', payload);
-        return { ...request, id };
-      },
-      decide: (id, response) => {
-        this.resolvePendingRpc('requestApproval', id, response);
-      },
-      listPending: () => [],
-    };
-  }
-
-  private createQuestionService(): ISessionQuestionService {
-    return {
-      _serviceBrand: undefined,
-      request: (request) => {
-        const promise = this.createRpcPromise<QuestionResult>();
-        this.recordRpc('requestQuestion', request, promise);
-        return promise;
-      },
-      enqueue: (request) => {
-        const id = request.id ?? request.toolCallId ?? 'question:test';
-        const payload = { ...request, id };
-        this.recordRpc('requestQuestion', payload);
-        return payload;
-      },
-      answer: (id, response) => {
-        this.resolvePendingRpc('requestQuestion', id, response);
-      },
-      dismiss: (id) => {
-        this.resolvePendingRpc('requestQuestion', id, null);
-      },
-      listPending: () => [],
     };
   }
 

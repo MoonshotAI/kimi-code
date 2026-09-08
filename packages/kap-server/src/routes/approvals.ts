@@ -1,8 +1,7 @@
 import {
-  IAgentLifecycleService,
-  ISessionApprovalService,
-  isSessionInteractionRecentlyResolved,
-  listSessionPendingInteractions,
+  INTERACTION_TAG_SESSION_ID,
+  INTERACTION_TAG_TURN_ID,
+  interactions,
   resumeSessionById,
   type ApprovalRequest,
   type ApprovalResponse,
@@ -79,7 +78,11 @@ export function registerApprovalsRoutes(app: ApprovalRouteHost, core: Scope): vo
         );
         return;
       }
-      const pending = listSessionPendingInteractions(handle.accessor.get(IAgentLifecycleService), 'approval');
+      const pending = interactions.findAll({
+        kind: 'approval',
+        resolved: false,
+        tags: { [INTERACTION_TAG_SESSION_ID]: session_id },
+      });
       const items = pending.map((i) => toWireApproval(i, session_id));
       reply.send(okEnvelope({ items }, req.id));
     },
@@ -113,12 +116,23 @@ export function registerApprovalsRoutes(app: ApprovalRouteHost, core: Scope): vo
         );
         return;
       }
-      const agents = handle.accessor.get(IAgentLifecycleService);
-      const isPending = listSessionPendingInteractions(agents, 'approval')
-        .some((i) => i.id === approval_id);
+      const isPending =
+        interactions.findOne({
+          id: approval_id,
+          kind: 'approval',
+          resolved: false,
+          tags: { [INTERACTION_TAG_SESSION_ID]: session_id },
+        }) !== undefined;
 
       if (!isPending) {
-        if (isSessionInteractionRecentlyResolved(agents, approval_id)) {
+        if (
+          interactions.findOne({
+            id: approval_id,
+            kind: 'approval',
+            resolved: true,
+            tags: { [INTERACTION_TAG_SESSION_ID]: session_id },
+          }) !== undefined
+        ) {
           reply.send({
             code: ErrorCode.APPROVAL_ALREADY_RESOLVED,
             msg: `approval ${approval_id} already resolved`,
@@ -140,7 +154,7 @@ export function registerApprovalsRoutes(app: ApprovalRouteHost, core: Scope): vo
         feedback: body.feedback,
         selectedLabel: body.selected_label,
       };
-      handle.accessor.get(ISessionApprovalService).decide(approval_id, response);
+      interactions.respond(approval_id, response);
       requestLog(req)?.info(
         { session_id, approval_id, decision: response.decision, scope: response.scope },
         'approval decided',
@@ -169,10 +183,11 @@ export function toWireApproval(interaction: Interaction, sessionId: string): {
   expires_at: string;
 } {
   const p = interaction.payload as ApprovalRequest;
+  const turnId = interaction.tags[INTERACTION_TAG_TURN_ID];
   return {
     approval_id: interaction.id,
     session_id: sessionId,
-    turn_id: interaction.origin.turnId,
+    turn_id: typeof turnId === 'number' ? turnId : undefined,
     tool_call_id: p.toolCallId ?? interaction.id,
     tool_name: p.toolName,
     action: p.action,

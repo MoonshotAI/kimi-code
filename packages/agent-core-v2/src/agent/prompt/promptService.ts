@@ -14,6 +14,7 @@ import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompacti
 import { IAgentLoopService, type Turn, type TurnResult } from '#/agent/loop/loop';
 import { TurnSteer } from '#/agent/loop/turnOps';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import type { MessageContent } from '#/agent/prompt/messageContent';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import type { ExecutableToolResult } from '#/tool/toolContract';
@@ -77,6 +78,13 @@ export class PromptCompleted extends AgentEvent2<z.infer<typeof promptCompletedS
 }
 export interface PromptCompleted extends PromptCompletedPayload {}
 
+export interface PromptCompletedEvent {
+  readonly type: 'prompt.completed';
+  readonly promptId: string;
+  readonly finishedAt: string;
+  readonly reason?: 'completed' | 'failed' | 'blocked';
+}
+
 export interface PromptAbortedPayload {
   readonly agentId: string;
   readonly promptId: string;
@@ -96,6 +104,27 @@ export class PromptAborted extends AgentEvent2<z.infer<typeof promptAbortedSchem
   static override readonly schema = promptAbortedSchema;
 }
 export interface PromptAborted extends PromptAbortedPayload {}
+
+export interface PromptAbortedEvent extends Omit<PromptAbortedPayload, 'agentId'> {
+  readonly type: 'prompt.aborted';
+}
+
+export interface PromptSubmittedEvent {
+  readonly type: 'prompt.submitted';
+  readonly promptId: string;
+  readonly userMessageId: string;
+  readonly status: 'running' | 'queued' | 'blocked';
+  readonly content: readonly MessageContent[];
+  readonly createdAt: string;
+}
+
+export interface PromptSteeredEvent {
+  readonly type: 'prompt.steered';
+  readonly activePromptId: string;
+  readonly promptIds: readonly string[];
+  readonly content: readonly MessageContent[];
+  readonly steeredAt: string;
+}
 
 export interface PromptSteeredPayload {
   readonly agentId: string;
