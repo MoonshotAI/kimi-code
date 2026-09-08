@@ -481,6 +481,33 @@ describe('NotifyController', () => {
     expect(h.texts()).toEqual(['New background progress', 'Still working']);
     expect(h.notifyPanelContainer.children).toEqual([h.notifyPanel]);
   });
+  it('labels channels of subagents restored from a snapshot by subagent type', () => {
+    const state = snapshot();
+    Object.assign(state.agents['main']!, {
+      background: [
+        {
+          kind: 'agent',
+          agentId: 'agent-1',
+          subagentType: 'explore',
+          description: 'Search the codebase',
+          status: 'running',
+        },
+        {
+          kind: 'agent',
+          agentId: 'agent-2',
+          subagentType: 'coder',
+          description: 'Finished task',
+          status: 'completed',
+        },
+      ],
+    });
+    const h = makeHarness();
+    h.controller.restore(state);
+    h.send('fresh', 'Progress from a resumed subagent', 'agent-1');
+    expect(h.notifyPanel.getChannels().map((ch) => ch.label)).toEqual(['explore']);
+    h.send('late', 'Settled before resume', 'agent-2');
+    expect(h.notifyPanel.getChannels().map((ch) => ch.label)).toEqual(['explore', 'agent-2']);
+  });
   it.each([false, true])(
     'focuses and pages with the keyboard in regular/fullscreen mode without touching the editor: %s',
     (fullscreen) => {

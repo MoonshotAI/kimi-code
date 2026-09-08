@@ -238,7 +238,9 @@ export class NotifyController {
     for (const agent of Object.values(snapshot.agents)) {
       for (const task of agent.background) {
         if (task.kind !== 'agent' || task.agentId === undefined) continue;
-        if (!isTerminalBackgroundTask(task)) this.running.set(task.agentId, undefined);
+        if (isTerminalBackgroundTask(task)) continue;
+        this.running.set(task.agentId, undefined);
+        if (task.subagentType !== undefined) this.agentNames.set(task.agentId, task.subagentType);
       }
     }
     this.render();
