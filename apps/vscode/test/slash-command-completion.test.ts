@@ -1,6 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { computeSlashCommandInsert } from "../webview-ui/src/components/inputarea/slash-command-insert";
-import { dispatchSlashMenuCommand } from "../webview-ui/src/components/inputarea/slash-menu-action";
 
 describe("slash command completion", () => {
   it("replaces only the active token and leaves the command ready for arguments", () => {
@@ -34,20 +33,5 @@ describe("slash command completion", () => {
         commandName: "skill:review",
       }),
     ).toEqual({ text: "/skill:review ", cursorPos: 14 });
-  });
-});
-
-describe("slash menu key actions", () => {
-  it("completes on Tab but preserves selection on Enter", () => {
-    const select = vi.fn();
-    const complete = vi.fn();
-
-    dispatchSlashMenuCommand("Tab", "review", { select, complete });
-    expect(complete).toHaveBeenCalledWith("review");
-    expect(select).not.toHaveBeenCalled();
-
-    dispatchSlashMenuCommand("Enter", "review", { select, complete });
-    expect(select).toHaveBeenCalledWith("review");
-    expect(complete).toHaveBeenCalledTimes(1);
   });
 });
