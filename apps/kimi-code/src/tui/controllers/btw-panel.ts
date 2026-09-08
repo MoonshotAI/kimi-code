@@ -9,8 +9,11 @@ import type {
 
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import { BtwPanelComponent } from '../components/panes/btw-panel';
+import { CustomEditor } from '../components/editor/custom-editor';
+import { DEFAULT_TUI_CONFIG } from '../config';
 import { formatErrorMessage } from '../utils/event-payload';
 import { formatHookResultPlain } from '../utils/hook-result-format';
+import { extractInlineSkillActivations } from '../utils/inline-skill-tokens';
 import { createMarkdownTheme } from '../theme/pi-tui-theme';
 import type { InlineSkillActivation } from '../types';
 import type { TUIState } from '../tui-state';
@@ -31,6 +34,7 @@ export interface BtwPanelHost {
   state: TUIState;
   session: Session | undefined;
   readonly harness: KimiHarness;
+  readonly skillCommandMap: ReadonlyMap<string, string>;
 
   showError(msg: string): void;
   /**
@@ -49,6 +53,11 @@ export interface BtwPanelHost {
     request: Promise<unknown>,
     onError: (error: unknown) => void,
   ): void;
+  /**
+   * Paste the clipboard's image/video into the panel's dedicated editor as an
+   * imageStore placeholder (the same ingestion path the main editor uses).
+   */
+  pasteImageIntoEditor(editor: CustomEditor): Promise<boolean>;
 }
 
 export class BtwPanelController {
@@ -56,6 +65,7 @@ export class BtwPanelController {
     | {
         readonly agentId: string;
         readonly panel: BtwPanelComponent;
+        readonly editor: CustomEditor;
       }
     | undefined;
   private readonly panelsByAgentId = new Map<string, BtwPanelComponent>();
@@ -67,18 +77,28 @@ export class BtwPanelController {
     initialPrompt: string,
     inlineSkillActivations?: readonly InlineSkillActivation[],
   ): void {
-    let panel: BtwPanelComponent;
-    panel = new BtwPanelComponent({
+    // The panel owns a dedicated editor instance — the same CustomEditor
+    // component class as the main input, but trimmed to plain prompts plus
+    // file/image paste: no queue, no steer, no bash mode, no slash-command
+    // autocomplete, no history. Esc/↑↓/Ctrl+C keep the panel semantics.
+    const editor = new CustomEditor(this.host.state.ui, {
+      disablePasteBurst:
+        this.host.state.appState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
+      disableBashMode: true,
+    });
+    const panel = new BtwPanelComponent({
       markdownTheme: createMarkdownTheme(),
-      canUseScrollKeys: () => this.host.state.editor.getText().length === 0,
+      canUseScrollKeys: () =>
+        this.host.state.editor.getText().length === 0 && editor.getText().length === 0,
       terminalRows: () => this.host.state.terminal.rows,
       onPrompt: (prompt, inlineSkillActivations) => {
         this.promptAgent(agentId, prompt, panel, inlineSkillActivations);
       },
     });
-    this.active = { agentId, panel };
+    this.wireEditor(panel, editor);
+    this.active = { agentId, panel, editor };
     this.panelsByAgentId.set(agentId, panel);
-    this.mount(panel);
+    this.mount(panel, editor);
     panel.submit(initialPrompt, inlineSkillActivations);
   }
 
@@ -94,7 +114,11 @@ export class BtwPanelController {
     this.active = undefined;
     this.panelsByAgentId.clear();
     this.host.state.btwPanelContainer.clear();
-    this.host.state.editor.connectedAbove = false;
+    // The panel's editor is gone with the container; never leave focus on a
+    // detached component.
+    if (active !== undefined && active.editor.focused) {
+      this.host.state.ui.setFocus(this.host.state.editor);
+    }
   }
 
   closeOrCancel(): boolean {
@@ -112,19 +136,6 @@ export class BtwPanelController {
     const active = this.active;
     if (active === undefined || !active.panel.isRunning()) return false;
     void this.cancelAgent(active.agentId);
-    return true;
-  }
-
-  sendUserInput(text: string, inlineSkillActivations?: readonly InlineSkillActivation[]): boolean {
-    const active = this.active;
-    if (active === undefined) return false;
-    if (active.panel.isRunning()) {
-      this.showBusyNotice(active, text);
-      return true;
-    }
-    active.panel.submit(text, inlineSkillActivations);
-    this.host.state.ui.setFocus(this.host.state.editor);
-    this.host.state.ui.requestRender();
     return true;
   }
 
@@ -165,12 +176,50 @@ export class BtwPanelController {
     }
   }
 
-  private mount(panel: BtwPanelComponent): void {
+  /**
+   * Wire the panel's dedicated editor. Only the panel-relevant bindings are
+   * set: submit routes straight to the side agent (never through the main
+   * send path's queue/steer interception), Esc closes, ↑↓ scroll the panel,
+   * Ctrl+C cancels/closes, and image paste lands as imageStore placeholders.
+   */
+  private wireEditor(panel: BtwPanelComponent, editor: CustomEditor): void {
+    editor.onSubmit = (text) => {
+      if (text.trim().length === 0) return;
+      if (panel.isRunning()) {
+        // One side question at a time: restore the submitted draft and point
+        // at the in-flight turn instead of dropping the input.
+        editor.setText(text);
+        panel.addTransientNotice(BTW_BUSY_NOTICE);
+        this.host.state.ui.requestRender();
+        return;
+      }
+      const activations = extractInlineSkillActivations(text, this.host.skillCommandMap);
+      panel.submit(text, activations.length > 0 ? activations : undefined);
+      this.host.state.ui.requestRender();
+    };
+    editor.onEscape = () => {
+      this.closeOrCancel();
+    };
+    editor.onCtrlC = () => {
+      if (!this.cancelRunning()) {
+        this.closeOrCancel();
+      }
+    };
+    editor.onUpArrowEmpty = () => this.scroll('up');
+    editor.onDownArrowEmpty = () => this.scroll('down');
+    editor.onPasteImage = () => this.host.pasteImageIntoEditor(editor);
+  }
+
+  private mount(panel: BtwPanelComponent, editor: CustomEditor): void {
     this.host.state.btwPanelContainer.clear();
     this.host.state.btwPanelContainer.addChild(new Spacer(1));
     this.host.state.btwPanelContainer.addChild(panel);
-    this.host.state.editor.connectedAbove = true;
-    this.host.state.ui.setFocus(this.host.state.editor);
+    // The panel renders an open bottom edge; the editor's connected top
+    // border stitches the two into one box, exactly like the main editor
+    // used to when it doubled as the panel's input.
+    editor.connectedAbove = true;
+    this.host.state.btwPanelContainer.addChild(editor);
+    this.host.state.ui.setFocus(editor);
     this.host.state.ui.requestRender();
   }
 
@@ -178,7 +227,6 @@ export class BtwPanelController {
     if (!this.host.state.btwPanelContainer.children.includes(panel)) return;
     this.unregister(panel);
     this.host.state.btwPanelContainer.clear();
-    this.host.state.editor.connectedAbove = false;
     this.host.state.ui.setFocus(this.host.state.editor);
     this.host.state.ui.requestRender(true);
   }
@@ -190,15 +238,6 @@ export class BtwPanelController {
       }
     }
     if (this.active?.panel === panel) this.active = undefined;
-  }
-
-  private showBusyNotice(
-    active: { readonly panel: BtwPanelComponent },
-    input: string,
-  ): void {
-    this.host.state.editor.setText(input);
-    active.panel.addTransientNotice(BTW_BUSY_NOTICE);
-    this.host.state.ui.requestRender();
   }
 
   private promptAgent(

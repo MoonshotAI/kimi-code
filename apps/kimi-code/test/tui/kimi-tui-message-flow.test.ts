@@ -36,6 +36,7 @@ import {
   TRANSCRIPT_KEEP_RECENT_STEPS,
 } from '#/tui/utils/transcript-window';
 import { BtwPanelComponent } from '#/tui/components/panes/btw-panel';
+import { CustomEditor } from '#/tui/components/editor/custom-editor';
 import { ThinkingComponent } from '#/tui/components/messages/thinking';
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
@@ -424,6 +425,14 @@ function getMountedBtwPanel(driver: MessageDriver): BtwPanelComponent {
   return panel;
 }
 
+function getBtwEditor(driver: MessageDriver): CustomEditor {
+  const editor = driver.state.btwPanelContainer.children.find(
+    (child) => child instanceof CustomEditor,
+  );
+  if (editor === undefined) throw new Error('Expected a mounted /btw editor.');
+  return editor;
+}
+
 async function openBtwPanel(
   driver: MessageDriver,
   session: ReturnType<typeof makeSession>,
@@ -432,7 +441,7 @@ async function openBtwPanel(
   driver.handleUserInput(`/btw ${prompt}`);
   await vi.waitFor(() => {
     expect(session.startBtw).toHaveBeenCalled();
-    expect(driver.state.btwPanelContainer.children).toHaveLength(2);
+    expect(driver.state.btwPanelContainer.children).toHaveLength(3);
   });
 }
 
@@ -4699,7 +4708,7 @@ command = "vim"
     expect(session.prompt).not.toHaveBeenCalled();
     expect(stripSgr(renderBtwPanel(driver))).toContain('Ready for a side question…');
 
-    driver.handleUserInput('What are you working on right now?');
+    getBtwEditor(driver).onSubmit?.('What are you working on right now?');
 
     await vi.waitFor(() => {
       expect(session.prompt).toHaveBeenCalledWith('What are you working on right now?');
@@ -4740,12 +4749,12 @@ command = "vim"
     driver.handleUserInput('/btw');
     await vi.waitFor(() => {
       expect(session.startBtw).toHaveBeenCalled();
-      expect(driver.state.btwPanelContainer.children).toHaveLength(2);
+      expect(driver.state.btwPanelContainer.children).toHaveLength(3);
     });
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
     const attachment = stagedImage(imageStore, 'file-btw-2');
 
-    driver.handleUserInput(`look at ${attachment.placeholder}`);
+    getBtwEditor(driver).onSubmit?.(`look at ${attachment.placeholder}`);
 
     await vi.waitFor(() => {
       expect(session.prompt).toHaveBeenCalledWith(
@@ -4789,7 +4798,7 @@ command = "vim"
     });
     expect(stripSgr(renderBtwPanel(driver))).toContain('Ready for a side question…');
 
-    driver.handleUserInput('check /skill:review');
+    getBtwEditor(driver).onSubmit?.('check /skill:review');
 
     await vi.waitFor(() => {
       expect(session.promptWithSkills).toHaveBeenCalledWith('check /skill:review', [
@@ -4951,18 +4960,24 @@ command = "vim"
       () => {},
     );
 
-    expect(driver.state.btwPanelContainer.children).toHaveLength(2);
+    expect(driver.state.btwPanelContainer.children).toHaveLength(3);
     expect(driver.state.btwPanelContainer.render(120)[0]?.trim()).toBe('');
     expect(getMountedBtwPanel(driver).isRunning()).toBe(false);
-    expect(driver.state.editor.focused).toBe(true);
+    expect(getBtwEditor(driver).focused).toBe(true);
+    expect(driver.state.editor.focused).toBe(false);
 
     const transcript = stripSgr(renderTranscript(driver));
     const panel = stripSgr(renderBtwPanel(driver));
+    const btwEditorTopBorder = stripSgr(getBtwEditor(driver).render(80)[0] ?? '');
     const editorTopBorder = stripSgr(driver.state.editor.render(80)[0] ?? '');
     expect(panel).toContain('BTW ─ Esc close');
     expect(panel).not.toContain('ctrl+o expand');
-    expect(editorTopBorder.startsWith('├')).toBe(true);
-    expect(editorTopBorder.endsWith('┤')).toBe(true);
+    // The panel stitches onto its own dedicated editor; the main editor keeps
+    // its plain rounded top border.
+    expect(btwEditorTopBorder.startsWith('├')).toBe(true);
+    expect(btwEditorTopBorder.endsWith('┤')).toBe(true);
+    expect(editorTopBorder.startsWith('╭')).toBe(true);
+    expect(editorTopBorder.endsWith('╮')).toBe(true);
 
     driver.state.editor.handleInput('/');
     const highlightedEditorTopBorder = stripSgr(driver.state.editor.render(80)[0] ?? '');
@@ -5200,12 +5215,14 @@ command = "vim"
     await openBtwPanel(driver, session);
 
     const panel = getMountedBtwPanel(driver);
+    const btwEditor = getBtwEditor(driver);
     expect(panel.isRunning()).toBe(true);
-    expect(driver.state.editor.focused).toBe(true);
+    expect(btwEditor.focused).toBe(true);
+    expect(driver.state.editor.focused).toBe(false);
 
     const requestRender = vi.mocked(driver.state.ui.requestRender);
     requestRender.mockClear();
-    driver.state.editor.onEscape?.();
+    btwEditor.onEscape?.();
 
     expect(session.cancel).toHaveBeenCalledOnce();
     expect(driver.state.btwPanelContainer.children).toHaveLength(0);
@@ -5230,13 +5247,13 @@ command = "vim"
     const panel = getMountedBtwPanel(driver);
     expect(panel.isRunning()).toBe(true);
 
-    driver.state.editor.onCtrlC?.();
+    getBtwEditor(driver).onCtrlC?.();
 
     expect(session.cancel).toHaveBeenCalledOnce();
     expect(cancelledAgentIds).toEqual(['agent-btw']);
     expect(getMountedBtwPanel(driver)).toBe(panel);
-    expect(driver.state.btwPanelContainer.children).toHaveLength(2);
-    expect(driver.state.editor.focused).toBe(true);
+    expect(driver.state.btwPanelContainer.children).toHaveLength(3);
+    expect(getBtwEditor(driver).focused).toBe(true);
     expect(driver.state.editor.getText()).toBe('draft main input');
     expect(driver.state.appState.streamingPhase).toBe('waiting');
   });
@@ -5342,7 +5359,7 @@ command = "vim"
 
     const panel = getMountedBtwPanel(driver);
     expect(panel.isRunning()).toBe(false);
-    expect(driver.state.editor.focused).toBe(true);
+    expect(getBtwEditor(driver).focused).toBe(true);
 
     driver.state.editor.onEscape?.();
 
@@ -5369,17 +5386,17 @@ command = "vim"
 
     const panel = getMountedBtwPanel(driver);
     expect(panel.isRunning()).toBe(false);
-    driver.handleUserInput('follow up');
+    getBtwEditor(driver).onSubmit?.('follow up');
 
     await vi.waitFor(() => {
       expect(session.prompt).toHaveBeenCalledWith('follow up');
     });
     expect(session.prompt).toHaveBeenCalledTimes(2);
-    expect(driver.state.btwPanelContainer.children).toHaveLength(2);
-    expect(driver.state.editor.focused).toBe(true);
+    expect(driver.state.btwPanelContainer.children).toHaveLength(3);
+    expect(getBtwEditor(driver).focused).toBe(true);
   });
 
-  it('keeps main input pointed at /btw while the panel is open', async () => {
+  it('keeps /btw panel input pointed at the side agent while the panel is open', async () => {
     let resolveBtwPrompt: (() => void) | undefined;
     const session = makeSession({
       prompt: vi.fn(
@@ -5394,12 +5411,14 @@ command = "vim"
     await openBtwPanel(driver, session, 'slow side question');
 
     expect(harness.interactiveAgentId).toBe('main');
-    driver.handleUserInput('follow-up while btw prompt is pending');
-    driver.handleUserInput('another follow-up while btw prompt is pending');
+    const btwEditor = getBtwEditor(driver);
+    btwEditor.onSubmit?.('follow-up while btw prompt is pending');
+    btwEditor.onSubmit?.('another follow-up while btw prompt is pending');
 
     expect(session.prompt).toHaveBeenCalledTimes(1);
+    expect(session.steer).not.toHaveBeenCalled();
     expect(driver.state.queuedMessages).toEqual([]);
-    expect(driver.state.editor.getText()).toBe('another follow-up while btw prompt is pending');
+    expect(btwEditor.getText()).toBe('another follow-up while btw prompt is pending');
     expect(stripSgr(renderTranscript(driver))).not.toContain(
       'Wait for /btw to finish before sending another question.',
     );
@@ -5478,6 +5497,93 @@ command = "vim"
     const renderedPanel = stripSgr(renderBtwPanel(driver));
     expect(renderedPanel).not.toContain('answer from old side agent');
     expect(renderedPanel).toContain('answer from new side agent');
+  });
+
+  it('trims the /btw editor to plain prompts: no bash mode, no steer, no queue', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    await openBtwPanel(driver, session);
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'agent-btw',
+        sessionId: 'ses-1',
+        turnId: 0,
+        reason: 'completed',
+      } as Event,
+      () => {},
+    );
+
+    const btwEditor = getBtwEditor(driver);
+    expect(btwEditor).not.toBe(driver.state.editor);
+
+    // No bash mode: a leading `!` stays literal text.
+    btwEditor.handleInput('!');
+    expect(btwEditor.inputMode).toBe('prompt');
+    expect(btwEditor.getText()).toBe('!');
+
+    // No steer: Ctrl+S is swallowed without touching the session or the queue.
+    btwEditor.handleInput('\x13');
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([]);
+    expect(btwEditor.getText()).toBe('!');
+
+    // Enter submits straight to the side agent; the main editor and its send
+    // path (queue included) stay out of it.
+    btwEditor.handleInput('\r');
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('!');
+    });
+    expect(driver.state.queuedMessages).toEqual([]);
+    expect(driver.state.editor.getText()).toBe('');
+  });
+
+  it('closes the /btw panel on a real Escape keypress and refocuses the main editor', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    await openBtwPanel(driver, session);
+
+    const btwEditor = getBtwEditor(driver);
+    expect(btwEditor.focused).toBe(true);
+    expect(driver.state.editor.focused).toBe(false);
+
+    btwEditor.handleInput('\u001B');
+
+    expect(session.cancel).toHaveBeenCalledOnce();
+    expect(driver.state.btwPanelContainer.children).toHaveLength(0);
+    expect(driver.state.editor.focused).toBe(true);
+  });
+
+  it('scrolls the /btw panel with arrow keys from its own editor', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    setTerminalRows(driver, 15);
+    await openBtwPanel(driver, session, 'question 1');
+
+    const panel = getMountedBtwPanel(driver);
+    panel.appendAnswer('answer 1');
+    panel.markDone();
+    for (let i = 2; i <= 8; i++) {
+      panel.submit(`question ${String(i)}`);
+      panel.appendAnswer(`answer ${String(i)}`);
+      panel.markDone();
+    }
+    expect(panel.render(80).map(stripSgr).join('\n')).not.toContain('question 1');
+
+    const btwEditor = getBtwEditor(driver);
+    for (let i = 0; i < 20; i++) {
+      btwEditor.handleInput('\u001B[A');
+    }
+    const scrolledUp = panel.render(80).map(stripSgr);
+    expect(scrolledUp.join('\n')).toContain('question 1');
+    expect(scrolledUp.join('\n')).not.toContain('answer 8');
+
+    for (let i = 0; i < 20; i++) {
+      btwEditor.handleInput('\u001B[B');
+    }
+    const scrolledDown = panel.render(80).map(stripSgr);
+    expect(scrolledDown.join('\n')).toContain('question 8');
+    expect(scrolledDown.join('\n')).toContain('answer 8');
   });
 
   it('does not run /btw without a selected model', async () => {

@@ -116,6 +116,11 @@ function stripSgr(s: string): string {
 
 interface CustomEditorOptions {
   disablePasteBurst?: boolean;
+  /**
+   * Opt out of the `!` shell-command mode (e.g. the /btw side-panel editor,
+   * where `!` is ordinary text and there is no shell dispatch behind it).
+   */
+  disableBashMode?: boolean;
 }
 
 export class CustomEditor extends Editor {
@@ -163,6 +168,7 @@ export class CustomEditor extends Editor {
 
   private consumingPaste = false;
   private consumeBuffer = '';
+  private readonly bashModeEnabled: boolean;
   /** Serialize paste callbacks so Enter/typing cannot overtake an image paste. */
   private pasteInFlight = false;
   private readonly pasteInputQueue: string[] = [];
@@ -189,6 +195,7 @@ export class CustomEditor extends Editor {
       disablePasteBurst: options.disablePasteBurst,
       inlineSlashTrigger: true,
     });
+    this.bashModeEnabled = options.disableBashMode !== true;
 
     // pi-tui keeps `createAutocompleteList` private; shadow it with an
     // instance property so slash command menus render descriptions wrapped
@@ -538,6 +545,7 @@ export class CustomEditor extends Editor {
     // not inserted into the buffer — it becomes the mode + prompt symbol, so the
     // cursor never has to skip over it and submit never has to strip it.
     if (
+      this.bashModeEnabled &&
       this.inputMode === 'prompt' &&
       printableChar(normalized) === '!' &&
       this.getText().length === 0
@@ -554,7 +562,12 @@ export class CustomEditor extends Editor {
     // above handles the single `!` keystroke; this catches bracketed / Ctrl-V
     // pastes whose content starts with `!`. Strip the leading `!` so the buffer
     // holds only the command, exactly like the typed path.
-    if (emptyPromptBeforeInput && this.inputMode === 'prompt' && this.getText().startsWith('!')) {
+    if (
+      this.bashModeEnabled &&
+      emptyPromptBeforeInput &&
+      this.inputMode === 'prompt' &&
+      this.getText().startsWith('!')
+    ) {
       this.inputMode = 'bash';
       this.onInputModeChange?.('bash');
       this.setText(this.getText().slice(1));

@@ -83,6 +83,7 @@ import {
   FileMentionProvider,
   type SlashAutocompleteCommand,
 } from './components/editor/file-mention-provider';
+import type { CustomEditor } from './components/editor/custom-editor';
 import { AssistantMessageComponent } from './components/messages/assistant-message';
 import { BackgroundAgentStatusComponent } from './components/messages/background-agent-status';
 import { CronMessageComponent } from './components/messages/cron-message';
@@ -1328,7 +1329,6 @@ export class KimiTUI {
   }
 
   async sendNormalUserInput(text: string, preExtracted?: ExtractionResult): Promise<void> {
-    if (this.btwPanelController.sendUserInput(text)) return;
     if (this.state.appState.model.trim().length === 0) {
       this.showError(LLM_NOT_SET_MESSAGE);
       return;
@@ -1426,7 +1426,6 @@ export class KimiTUI {
     activations: readonly InlineSkillActivation[],
     preExtracted?: ExtractionResult,
   ): Promise<void> {
-    if (this.btwPanelController.sendUserInput(text, activations)) return;
     if (this.state.appState.model.trim().length === 0) {
       this.showError(LLM_NOT_SET_MESSAGE);
       return;
@@ -1579,6 +1578,15 @@ export class KimiTUI {
     onError: (error: unknown) => void,
   ): void {
     this.staging.trackDispatch(lease, request, onError);
+  }
+
+  /**
+   * Clipboard image/video paste for the /btw panel's dedicated editor —
+   * delegates to the shared paste path so placeholders, ingestion, and the
+   * imageStore are identical to the main editor's.
+   */
+  pasteImageIntoEditor(editor: CustomEditor): Promise<boolean> {
+    return this.editorKeyboard.pasteClipboardImage(editor);
   }
 
   validateMediaCapabilities(extraction: {

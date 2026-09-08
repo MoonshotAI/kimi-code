@@ -20,6 +20,7 @@ import {
 } from '../constant/kimi-tui';
 import { Key, matchesKey } from '@moonshot-ai/pi-tui';
 import { MEDIA_STAGING_TTL_SECONDS } from '../constant/media';
+import type { CustomEditor } from '../components/editor/custom-editor';
 import { formatErrorMessage } from '../utils/event-payload';
 import type {
   ImageAttachment,
@@ -472,7 +473,7 @@ export class EditorKeyboardController {
 
     editor.onDownArrowEmpty = () => host.btwPanelController.scroll('down');
 
-    editor.onPasteImage = async () => this.handleClipboardImagePaste();
+    editor.onPasteImage = async () => this.pasteClipboardImage(editor);
   }
 
   clearPendingExit(): void {
@@ -541,7 +542,13 @@ export class EditorKeyboardController {
     });
   }
 
-  private async handleClipboardImagePaste(): Promise<boolean> {
+  /**
+   * Paste the clipboard's image/video into `target` as an imageStore
+   * placeholder; background ingestion (compression, daemon upload) continues
+   * off the keystroke path. Shared by the main editor and the /btw panel's
+   * dedicated editor.
+   */
+  async pasteClipboardImage(target: CustomEditor): Promise<boolean> {
     let media;
     try {
       media = await readClipboardMedia();
@@ -563,7 +570,7 @@ export class EditorKeyboardController {
       // whose upload has not landed (or failed) refuses the submission at
       // extraction time.
       const attachment = this.imageStore.addVideo(media.mimeType, media.sourcePath, media.filename);
-      this.host.state.editor.insertTextAtCursor?.(`${attachment.placeholder} `);
+      target.insertTextAtCursor?.(`${attachment.placeholder} `);
       this.host.state.ui.requestRender();
       this.host.track('shortcut_paste', { kind: 'video' });
       attachment.pending = this.finishClipboardVideoPaste(attachment, media).catch(
@@ -590,7 +597,7 @@ export class EditorKeyboardController {
       meta.width,
       meta.height,
     );
-    this.host.state.editor.insertTextAtCursor?.(`${attachment.placeholder} `);
+    target.insertTextAtCursor?.(`${attachment.placeholder} `);
     this.host.state.ui.requestRender();
     this.host.track('shortcut_paste', { kind: 'image' });
 
