@@ -102,7 +102,9 @@ Plan 模式是一种受约束的工作状态：进入后 `Write` 与 `Edit` 只�
 
 轮次结束后，消息和当前页继续保留显示；下一次 main agent 轮次开始时才清空，subagent 自己的轮次不会清空面板。新会话、`/clear` 和重新打开会话时，面板从空白开始。失败或中断的通知会被移除，对话中的工具调用记录仍保留。重要发现仍须写入最终回复或 subagent 的最终汇报。
 
-整个功能都是默认关闭的实验特性。通过 `KIMI_CODE_EXPERIMENTAL_NOTIFY_USER=1`、`config.toml` 中的 `[experimental] notify_user = true` 或 `/experiments` 启用。只有 TUI 会提供这个工具。关闭后，面板及其翻页快捷键都不生效。
+整个功能都是默认关闭的实验特性。请在创建 TUI 会话前，通过 `KIMI_CODE_EXPERIMENTAL_NOTIFY_USER=1`、`config.toml` 中的 `[experimental] notify_user = true` 或 `/experiments` 启用。关闭状态下创建的会话不会提供该工具，也不会包含相关提示词指导。
+
+已有会话的通知工具可用性和提示词保持不变，重新打开会话后也一样。关闭功能会隐藏面板并停用翻页快捷键；已有的 `NotifyUser` 调用仍正常结束，并返回更新未展示的说明。重新开启后，已具有该工具的会话恢复展示；如果会话是在关闭状态下创建的，需要新建会话才能使用 Updates。在 `/experiments` 中仅修改这个开关不会重载会话。
 
 **`Skill`** 允许 Agent 主动调用已注册的 inline 类型 Skill。接受 `skill`（Skill 名称）和可选的 `args`（附加参数文本）。只有 `type = "inline"` 的 Skill 能通过此工具调用；`disableModelInvocation: true` 的 Skill 会被拒绝。嵌套调用深度上限 3 层。Skill 体系细节见 [Agent Skills](../customization/skills.md)。
 

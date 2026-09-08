@@ -16,7 +16,7 @@ import {
 import {
   NOTIFY_USER_DELIVERED_OUTPUT,
   NOTIFY_USER_EMPTY_MESSAGE,
-  NOTIFY_USER_UNAVAILABLE,
+  NOTIFY_USER_SUPPRESSED_OUTPUT,
 } from '#/features/notify/tools/notify-user/notifyUserTool';
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 
@@ -44,7 +44,9 @@ describe('NotifyUserTool', () => {
     expect(NOTIFY_USER_TOOL_NAME).toBe('NotifyUser');
     expect(tool.name).toBe(NOTIFY_USER_TOOL_NAME);
     expect(tool.description).toContain('When to use');
-    expect(NotifyUserInputSchema.safeParse({ message: 'Reading the parser first.' }).success).toBe(true);
+    expect(NotifyUserInputSchema.safeParse({ message: 'Reading the parser first.' }).success).toBe(
+      true,
+    );
     expect(NotifyUserInputSchema.safeParse({ message: '' }).success).toBe(false);
     expect(NotifyUserInputSchema.safeParse({}).success).toBe(false);
     expect(tool.parameters).toMatchObject({
@@ -77,7 +79,9 @@ describe('NotifyUserTool', () => {
 
   it('acknowledges the update without touching any resource', async () => {
     const tool = ctx.get(INotifyUserTool);
-    const execution = tool.resolveExecution({ message: 'Login module is clean; the bug is in session expiry.' });
+    const execution = tool.resolveExecution({
+      message: 'Login module is clean; the bug is in session expiry.',
+    });
 
     expect(execution).toMatchObject({
       description: 'Notifying the user',
@@ -108,21 +112,30 @@ describe('NotifyUserTool', () => {
     expect(result).toEqual({ isError: true, output: NOTIFY_USER_EMPTY_MESSAGE });
   });
 
-  it('rejects execution after the feature is disabled', async () => {
+  it('acknowledges without displaying after the feature is disabled', async () => {
     const tool = ctx.get(INotifyUserTool);
     const execution = tool.resolveExecution({ message: 'Starting the checks.' });
     ctx.get(IFlagService).setConfigOverrides({ notify_user: false });
-    expect(tool.resolveExecution({ message: 'Should not appear.' })).toEqual({
-      isError: true, output: NOTIFY_USER_UNAVAILABLE,
+    const disabled = tool.resolveExecution({ message: 'Should not appear.' });
+    if (!('execute' in disabled)) throw new Error('Expected executable tool');
+    expect(await disabled.execute({ signal } as never)).toEqual({
+      isError: false,
+      output: NOTIFY_USER_SUPPRESSED_OUTPUT,
     });
     if (!('execute' in execution)) throw new Error('Expected executable tool');
-    expect(await execution.execute({ signal } as never)).toEqual({ isError: true, output: NOTIFY_USER_UNAVAILABLE });
+    expect(await execution.execute({ signal } as never)).toEqual({
+      isError: false,
+      output: NOTIFY_USER_SUPPRESSED_OUTPUT,
+    });
   });
 
-  it('rejects execution in a host without the panel even when the flag is on', () => {
+  it('acknowledges without displaying in a host without the panel', async () => {
     Object.assign(ctx.get(IBootstrapService).args, { uiCapabilities: [] });
-    expect(ctx.get(INotifyUserTool).resolveExecution({ message: 'Should not appear.' })).toEqual({
-      isError: true, output: NOTIFY_USER_UNAVAILABLE,
+    const execution = ctx.get(INotifyUserTool).resolveExecution({ message: 'Should not appear.' });
+    if (!('execute' in execution)) throw new Error('Expected executable tool');
+    expect(await execution.execute({ signal } as never)).toEqual({
+      isError: false,
+      output: NOTIFY_USER_SUPPRESSED_OUTPUT,
     });
   });
 });

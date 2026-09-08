@@ -68,6 +68,7 @@ import {
   toEpochMs,
 } from '#/session/sessionMetadata/sessionMetadataService';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
+import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
   AGENT_WIRE_RECORD_KEY,
@@ -303,6 +304,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     }
     try {
       await handle.accessor.get(ISessionMetadata).ready;
+      await handle.accessor.get(ISessionNotify).ready;
       await handle.accessor.get(ISessionToolPolicy).ready;
       await Promise.all([
         this.workspaceAgentProfileLoader.ready,

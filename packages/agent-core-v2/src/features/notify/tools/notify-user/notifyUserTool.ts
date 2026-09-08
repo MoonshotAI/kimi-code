@@ -14,7 +14,7 @@ import DESCRIPTION from './notify-user.md?raw';
 
 export const NOTIFY_USER_DELIVERED_OUTPUT = 'Update shown to the user.';
 export const NOTIFY_USER_EMPTY_MESSAGE = 'message must not be empty.';
-export const NOTIFY_USER_UNAVAILABLE = 'NotifyUser is unavailable: enable notify_user in a host that supports the update panel.';
+export const NOTIFY_USER_SUPPRESSED_OUTPUT = 'Notifications are disabled; the update was not displayed.';
 
 export class NotifyUserTool implements INotifyUserTool {
   declare readonly _serviceBrand: undefined;
@@ -28,9 +28,6 @@ export class NotifyUserTool implements INotifyUserTool {
   ) {}
 
   resolveExecution(args: NotifyUserInput): ToolExecution {
-    if (!notifyUserAvailable(this.flags, this.bootstrap)) {
-      return { isError: true, output: NOTIFY_USER_UNAVAILABLE };
-    }
     if (args.message.trim().length === 0) {
       return { isError: true, output: NOTIFY_USER_EMPTY_MESSAGE };
     }
@@ -41,7 +38,7 @@ export class NotifyUserTool implements INotifyUserTool {
       execute: async () =>
         notifyUserAvailable(this.flags, this.bootstrap)
           ? { isError: false, output: NOTIFY_USER_DELIVERED_OUTPUT }
-          : { isError: true, output: NOTIFY_USER_UNAVAILABLE },
+          : { isError: false, output: NOTIFY_USER_SUPPRESSED_OUTPUT },
     };
   }
 }

@@ -102,7 +102,9 @@ The panel defaults to the latest page and groups rendered message rows from the 
 
 Finishing a turn leaves the messages and selected page visible. The next main-agent turn clears them; child turns do not clear the panel. New sessions, `/clear`, and reopening a session start with an empty panel. Failed or interrupted notifications are removed, and the transcript keeps the tool-call records. Important findings still belong in the final reply or the subagent's handoff.
 
-The entire feature is experimental and off by default. Enable it with `KIMI_CODE_EXPERIMENTAL_NOTIFY_USER=1`, `[experimental] notify_user = true` in `config.toml`, or `/experiments`. Only the TUI offers the tool. When disabled, the panel and its paging shortcuts are inactive.
+The entire feature is experimental and off by default. Enable it with `KIMI_CODE_EXPERIMENTAL_NOTIFY_USER=1`, `[experimental] notify_user = true` in `config.toml`, or `/experiments` before creating a TUI session. Sessions created while it is disabled have neither the tool nor its prompt guidance.
+
+Existing sessions keep their notification tool availability and prompt unchanged, including after reopening. Turning the feature off hides the panel and disables its paging shortcuts; any existing `NotifyUser` calls finish normally and report that the update was not displayed. Turning it back on restores display for sessions that already have the tool. If a session was created with the feature disabled, start a new session to use Updates. Changing only this flag in `/experiments` does not reload the session.
 
 **`Skill`** allows the Agent to actively invoke a registered inline-type Skill. Accepts `skill` (the Skill name) and optional `args` (additional argument text). Only `type = "inline"` Skills can be called via this tool; Skills with `disableModelInvocation: true` are rejected. Maximum nesting depth is 3 levels. See [Agent Skills](../customization/skills.md) for details.
 
