@@ -1,7 +1,7 @@
 import type { ToolDescription } from '#/llm/message';
 import type { DialectContext, ThinkingStrategy } from '#/llm/protocol/dialect';
 
-import type { GoogleContent } from './lower';
+import type { GoogleContent } from './contract';
 
 export interface GoogleGenAIDialect {
   readonly thinking?: ThinkingStrategy;

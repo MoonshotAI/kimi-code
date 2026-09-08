@@ -2,7 +2,7 @@ import type { ToolDescription } from '#/llm/message';
 import type { DialectContext, ThinkingStrategy } from '#/llm/protocol/dialect';
 import type { ToolCallIdPolicy, ToolMessageConversion } from '#/llm/requester/requester';
 
-import type { ResponsesInputItem } from './lower';
+import type { OpenAIResponsesRawChunk, ResponsesInputItem } from './contract';
 
 export interface OpenAIResponsesDialect {
   readonly toolCallIdPolicy?: ToolCallIdPolicy;
@@ -30,5 +30,5 @@ export interface OpenAIResponsesDialect {
     ctx: DialectContext,
   ): Record<string, unknown> | undefined;
 
-  extractUsage?(chunk: Record<string, unknown>): Record<string, unknown> | null | undefined;
+  extractUsage?(chunk: OpenAIResponsesRawChunk): Record<string, unknown> | null | undefined;
 }

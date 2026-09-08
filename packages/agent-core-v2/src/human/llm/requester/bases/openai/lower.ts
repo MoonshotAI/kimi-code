@@ -1,32 +1,10 @@
 import { extractText, type ContentPart, type Message } from '#/llm/message';
-import type { DialectContext } from '#/llm/protocol/dialect';
 import type { ToolMessageConversion } from '#/llm/requester/requester';
 
-import type { OpenAIDialect } from './dialect';
+import type { OpenAIContentPart, OpenAIWireMessage } from './contract';
 import { TOOL_RESULT_MEDIA_PLACEHOLDER } from './patterns';
 
-export type OpenAIContentPart = {
-  type: 'text' | 'image_url' | 'audio_url' | 'video_url';
-  text?: string | undefined;
-  image_url?: { url: string; id?: string | null } | undefined;
-  audio_url?: { url: string; id?: string | null } | undefined;
-  video_url?: { url: string; id?: string | null } | undefined;
-};
-
-export type OpenAIWireToolCall = {
-  id: string;
-  type: 'function';
-  function: { name: string; arguments: string };
-};
-
-export type OpenAIWireMessage =
-  | { role: 'system' | 'user'; content: string | OpenAIContentPart[] }
-  | {
-      role: 'assistant';
-      content: string | OpenAIContentPart[] | null;
-      tool_calls?: OpenAIWireToolCall[];
-    }
-  | { role: 'tool'; tool_call_id: string; content: string | OpenAIContentPart[] };
+export type { OpenAIContentPart, OpenAIWireMessage, OpenAIWireToolCall } from './contract';
 
 const OMITTED_AUDIO_PLACEHOLDER = '(audio omitted: not supported by this provider)';
 const OMITTED_VIDEO_PLACEHOLDER = '(video omitted: not supported by this provider)';
@@ -84,15 +62,13 @@ function convertToolMessageMediaText(message: Message): string {
 }
 
 export interface OpenAILowerContext {
-  readonly dialect: OpenAIDialect | undefined;
-  readonly ctx: DialectContext;
   readonly reasoningKey: string;
   readonly preserveThinking: boolean;
   readonly toolMessageConversion: ToolMessageConversion | undefined;
 }
 
 export function lowerMessage(message: Message, lower: OpenAILowerContext): OpenAIWireMessage[] {
-  const { dialect, ctx, reasoningKey, preserveThinking } = lower;
+  const { reasoningKey, preserveThinking } = lower;
   let reasoningContent = '';
   let hasReasoningPart = false;
   const nonThinkParts: ContentPart[] = [];
@@ -146,9 +122,5 @@ export function lowerMessage(message: Message, lower: OpenAILowerContext): OpenA
   if (hasReasoningPart || (preserveThinking && message.role === 'assistant')) {
     (converted as Record<string, unknown>)[reasoningKey] = reasoningContent;
   }
-  const hooked =
-    dialect?.convertMessage === undefined
-      ? converted
-      : dialect.convertMessage(message, converted, ctx);
-  return hooked === null ? [] : [hooked];
+  return [converted];
 }

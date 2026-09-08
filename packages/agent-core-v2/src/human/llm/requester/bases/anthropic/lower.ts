@@ -1,45 +1,9 @@
 import type { Message, TextPart } from '#/llm/message';
-import type { DialectContext } from '#/llm/protocol/dialect';
 import { SyntaxRequestFormatError } from '#/llm/syntax-errors';
 
-import type { AnthropicDialect } from './dialect';
+import type { AnthropicWireContentBlock, AnthropicWireMessage } from './contract';
 
-export type AnthropicWireContentBlock =
-  | { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }
-  | {
-      type: 'image';
-      source: { type: 'base64'; data: string; media_type: string } | { type: 'url'; url: string };
-      cache_control?: { type: 'ephemeral' };
-    }
-  | {
-      type: 'video';
-      source: { type: 'base64'; media_type: string; data: string } | { type: 'url'; url: string };
-      cache_control?: { type: 'ephemeral' };
-    }
-  | {
-      type: 'thinking';
-      thinking: string;
-      signature?: string;
-      cache_control?: { type: 'ephemeral' };
-    }
-  | {
-      type: 'tool_use';
-      id: string;
-      name: string;
-      input: unknown;
-      cache_control?: { type: 'ephemeral' };
-    }
-  | {
-      type: 'tool_result';
-      tool_use_id: string;
-      content: AnthropicWireContentBlock[];
-      cache_control?: { type: 'ephemeral' };
-    };
-
-export type AnthropicWireMessage = {
-  role: 'user' | 'assistant';
-  content: AnthropicWireContentBlock[];
-};
+export type { AnthropicWireContentBlock, AnthropicWireMessage } from './contract';
 
 type AnthropicWireImageBlock = Extract<AnthropicWireContentBlock, { type: 'image' }>;
 
@@ -124,16 +88,11 @@ export function messageContent(message: AnthropicWireMessage): AnthropicWireCont
   return Array.isArray(message.content) ? message.content : [];
 }
 
-export interface AnthropicLowerContext {
-  readonly dialect: AnthropicDialect | undefined;
-  readonly ctx: DialectContext;
+export function isAnthropicWireMessageEmpty(message: AnthropicWireMessage): boolean {
+  return messageContent(message).length === 0;
 }
 
-export function lowerMessage(
-  message: Message,
-  lower: AnthropicLowerContext,
-): AnthropicWireMessage[] {
-  const { dialect, ctx } = lower;
+export function lowerMessage(message: Message): AnthropicWireMessage[] {
   const content: AnthropicWireContentBlock[] = [];
   if (message.role === 'system') {
     const text = message.content
@@ -190,15 +149,5 @@ export function lowerMessage(
     role: message.role === 'assistant' ? 'assistant' : 'user',
     content,
   };
-  const hooked =
-    dialect?.convertMessage === undefined
-      ? converted
-      : dialect.convertMessage(message, converted, ctx);
-  if (hooked === null) {
-    return [];
-  }
-  if (messageContent(hooked).length === 0) {
-    return [];
-  }
-  return [hooked];
+  return [converted];
 }

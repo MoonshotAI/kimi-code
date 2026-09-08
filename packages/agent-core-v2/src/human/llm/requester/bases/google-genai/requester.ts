@@ -1,10 +1,12 @@
 import { GoogleGenAI as GenAIClient, type GenerateContentParameters } from '@google/genai';
+import { assign, shake } from 'radashi';
 
 import type { LlmModel } from '#/llm/model';
 import { toLlmSyntaxErrorMessage } from '#/llm/syntax-errors';
 import type { ProtocolBase, ProtocolRequesterOptions } from '#/llm/protocol/base';
 import { resolveModelConnection } from '#/llm/protocol/connection';
-import type { DialectContext } from '#/llm/protocol/dialect';
+import { applyThinking, type DialectContext } from '#/llm/protocol/dialect';
+import { resolveMaxCompletionCap, type FormatRequestInput } from '#/llm/protocol/format';
 import {
   mergeRequestHeaders,
   type LlmClientContext,
@@ -19,8 +21,15 @@ import {
 import { getGoogleGenAIModelCapability } from './capability';
 import type { GoogleGenAIDialect } from './dialect';
 import {
+  applyGoogleGenAIResponseFormat,
+  assembleGoogleGenAIRequest,
   convertGoogleGenAIError,
   createGoogleGenAIFormat,
+  encodeGoogleGenAIMaxOutputTokens,
+  encodeGoogleGenAIRequest,
+  encodeGoogleGenAIThinking,
+  messagesToGoogleGenAIContents,
+  toolToGoogleGenAI,
   type GoogleGenAIRequestParams,
 } from './format';
 
@@ -28,6 +37,44 @@ export interface GoogleGenAIRequesterOptions
   extends ProtocolRequesterOptions<GoogleGenAIDialect>,
     LlmRequesterOptions<GenAIClient> {
   readonly vertexai?: boolean;
+}
+
+export interface GoogleGenAIRequestPlanOptions {
+  readonly dialect?: GoogleGenAIDialect;
+}
+
+export function planGoogleGenAIRequest(
+  input: FormatRequestInput,
+  options?: GoogleGenAIRequestPlanOptions,
+): GoogleGenAIRequestParams {
+  const dialect = options?.dialect;
+  const ctx: DialectContext = { model: input.model };
+  let kwargs: Record<string, unknown> = {};
+  if (input.thinking !== undefined) {
+    kwargs = applyThinking(kwargs, input.thinking, dialect?.thinking, ctx, (t, c) => ({
+      thinkingConfig: encodeGoogleGenAIThinking(c.model.model, t.effort),
+    })).kwargs;
+  }
+  const cap = resolveMaxCompletionCap(input);
+  if (cap !== undefined) {
+    kwargs = {
+      ...kwargs,
+      ...(dialect?.maxCompletionTokens?.(cap, ctx) ?? encodeGoogleGenAIMaxOutputTokens(cap)),
+    };
+  }
+  if (input.responseFormat !== undefined) {
+    kwargs = applyGoogleGenAIResponseFormat(kwargs, input.responseFormat);
+  }
+  kwargs = shake(assign(kwargs, input.extraParams?.googleGenai ?? {}));
+
+  const contents = messagesToGoogleGenAIContents(input.messages);
+  const merged = dialect?.mergeHistory?.(contents, ctx) ?? contents;
+  const tools = input.tools.map(
+    (tool) => dialect?.convertTool?.(tool, ctx) ?? toolToGoogleGenAI(tool),
+  );
+  const params = assembleGoogleGenAIRequest(input, { contents: merged, tools, kwargs });
+  const finalParams = dialect?.buildParams?.(params, ctx) ?? params;
+  return encodeGoogleGenAIRequest(finalParams);
 }
 
 function createClient(
@@ -131,7 +178,7 @@ export function createGoogleGenAIRequester(options?: GoogleGenAIRequesterOptions
   const connection = options?.connection;
   const dialect = options?.dialect;
   const convertError = options?.convertError;
-  const format = createGoogleGenAIFormat(dialect);
+  const format = createGoogleGenAIFormat();
   const vertexai = options?.vertexai === true;
   const resolveClient =
     options?.clientFactory ??
@@ -150,20 +197,23 @@ export function createGoogleGenAIRequester(options?: GoogleGenAIRequesterOptions
       const ctx: DialectContext = { model };
       let request: GoogleGenAIRequestParams;
       try {
-        request = format.formatRequest({
-          model,
-          messages,
-          systemPrompt,
-          tools,
-          cacheKey: config.cacheKey,
-          thinking: config.thinking,
-          responseFormat: config.responseFormat,
-          maxCompletionTokens: config.maxCompletionTokens,
-          usedContextTokens: content.usedContextTokens,
-          maxContextTokens: config.maxContextTokens,
-          extraParams: config.extraParams,
-          toolMessageConversion: config.toolMessageConversion,
-        });
+        request = planGoogleGenAIRequest(
+          {
+            model,
+            messages,
+            systemPrompt,
+            tools,
+            cacheKey: config.cacheKey,
+            thinking: config.thinking,
+            responseFormat: config.responseFormat,
+            maxCompletionTokens: config.maxCompletionTokens,
+            usedContextTokens: content.usedContextTokens,
+            maxContextTokens: config.maxContextTokens,
+            extraParams: config.extraParams,
+            toolMessageConversion: config.toolMessageConversion,
+          },
+          { dialect },
+        );
       } catch (error) {
         onEvent?.({ type: 'llm.failed.syntax', error: toLlmSyntaxErrorMessage(error) });
         return;

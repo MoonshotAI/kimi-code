@@ -1,11 +1,13 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { assign, shake } from 'radashi';
 
 import { headersToRecord } from '#/llm/errors';
 import type { LlmModel } from '#/llm/model';
 import { toLlmSyntaxErrorMessage } from '#/llm/syntax-errors';
 import type { ProtocolBase, ProtocolRequesterOptions } from '#/llm/protocol/base';
 import { resolveModelConnection } from '#/llm/protocol/connection';
-import type { DialectContext } from '#/llm/protocol/dialect';
+import { applyThinking, type DialectContext } from '#/llm/protocol/dialect';
+import { resolveMaxCompletionCap, type FormatRequestInput } from '#/llm/protocol/format';
 import {
   mergeRequestHeaders,
   type LlmClientContext,
@@ -25,11 +27,22 @@ import {
 import { getAnthropicModelCapability } from './capability';
 import type { AnthropicDialect } from './dialect';
 import {
+  applyAnthropicResponseFormat,
+  applyAnthropicThinkingKeep,
+  assembleAnthropicRequest,
   createAnthropicFormat,
+  defaultAnthropicMergeHistory,
+  defaultAnthropicTool,
+  encodeAnthropicMaxTokens,
+  encodeAnthropicRequest,
+  INTERLEAVED_THINKING_BETA,
+  lowerAnthropicRequest,
   type AnthropicFormatOptions,
   type AnthropicRequestParams,
   convertAnthropicError,
 } from './format';
+import { isAnthropicWireMessageEmpty } from './lower';
+import { encodeThinking, resolveDefaultMaxTokens } from './profile';
 
 const ANTHROPIC_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
   normalize: (id) => sanitizeToolCallId(id, 64),
@@ -77,6 +90,64 @@ function createClient(model: LlmModel, headers: Record<string, string> | undefin
     defaultHeaders: buildDefaultHeaders(headers),
     maxRetries: 0,
   });
+}
+
+export interface AnthropicRequestPlanOptions {
+  readonly dialect?: AnthropicDialect;
+  readonly betaApi?: boolean;
+}
+
+export function planAnthropicRequest(
+  input: FormatRequestInput,
+  options?: AnthropicRequestPlanOptions,
+): AnthropicRequestParams {
+  const dialect = options?.dialect;
+  const ctx: DialectContext = { model: input.model };
+  let kwargs: Record<string, unknown> = { betaFeatures: [INTERLEAVED_THINKING_BETA] };
+  if (input.thinking !== undefined) {
+    kwargs = applyThinking(kwargs, input.thinking, dialect?.thinking, ctx, (t, c) =>
+      encodeThinking(t, c.model),
+    ).kwargs;
+  }
+  if (input.responseFormat !== undefined) {
+    kwargs = applyAnthropicResponseFormat(kwargs, input.responseFormat);
+  }
+  const cap = resolveMaxCompletionCap(input);
+  if (cap !== undefined) {
+    const capped = resolveDefaultMaxTokens(ctx.model.model, cap);
+    kwargs = {
+      ...kwargs,
+      ...(dialect?.maxCompletionTokens?.(capped, ctx) ?? encodeAnthropicMaxTokens(capped)),
+    };
+  }
+  kwargs = assign(kwargs, input.extraParams?.anthropic ?? {});
+  if (input.thinking?.keep !== undefined) {
+    kwargs = applyAnthropicThinkingKeep(kwargs, input.thinking.keep);
+  }
+  kwargs = shake(kwargs);
+
+  const lowered = lowerAnthropicRequest(input);
+  const converted = lowered
+    .flatMap(({ source, message }) => {
+      if (dialect?.convertMessage === undefined) {
+        return [message];
+      }
+      const hooked = dialect.convertMessage(source, message, ctx);
+      return hooked === null ? [] : [hooked];
+    })
+    .filter((message) => !isAnthropicWireMessageEmpty(message));
+  const merged = dialect?.mergeHistory?.(converted, ctx) ?? defaultAnthropicMergeHistory(converted);
+  const tools = input.tools.map(
+    (tool) => dialect?.convertTool?.(tool, ctx) ?? defaultAnthropicTool(tool),
+  );
+  const assembly = assembleAnthropicRequest(input, {
+    messages: merged,
+    tools,
+    kwargs,
+    betaApi: options?.betaApi === true,
+  });
+  const finalParams = dialect?.buildParams?.(assembly.params, ctx) ?? assembly.params;
+  return encodeAnthropicRequest({ ...assembly, params: finalParams });
 }
 
 interface AnthropicTransport {
@@ -136,7 +207,7 @@ export function createAnthropicRequester(options?: AnthropicRequesterOptions): L
   const connection = options?.connection;
   const dialect = options?.dialect;
   const convertError = options?.convertError;
-  const format = createAnthropicFormat(dialect, options);
+  const format = createAnthropicFormat();
   const resolveClient =
     options?.clientFactory ??
     ((request: LlmClientContext) => createClient(request.model, request.headers));
@@ -154,20 +225,23 @@ export function createAnthropicRequester(options?: AnthropicRequesterOptions): L
       let request: AnthropicRequestParams;
       try {
         const policy = dialect?.toolCallIdPolicy ?? ANTHROPIC_TOOL_CALL_ID_POLICY;
-        request = format.formatRequest({
-          model,
-          messages: normalizeToolCallIdsForProvider(messages, policy),
-          systemPrompt,
-          tools,
-          cacheKey: config.cacheKey,
-          thinking: config.thinking,
-          responseFormat: config.responseFormat,
-          maxCompletionTokens: config.maxCompletionTokens,
-          usedContextTokens: content.usedContextTokens,
-          maxContextTokens: config.maxContextTokens,
-          extraParams: config.extraParams,
-          toolMessageConversion: config.toolMessageConversion,
-        });
+        request = planAnthropicRequest(
+          {
+            model,
+            messages: normalizeToolCallIdsForProvider(messages, policy),
+            systemPrompt,
+            tools,
+            cacheKey: config.cacheKey,
+            thinking: config.thinking,
+            responseFormat: config.responseFormat,
+            maxCompletionTokens: config.maxCompletionTokens,
+            usedContextTokens: content.usedContextTokens,
+            maxContextTokens: config.maxContextTokens,
+            extraParams: config.extraParams,
+            toolMessageConversion: config.toolMessageConversion,
+          },
+          { dialect, betaApi: options?.betaApi },
+        );
       } catch (error) {
         onEvent?.({ type: 'llm.failed.syntax', error: toLlmSyntaxErrorMessage(error) });
         return;

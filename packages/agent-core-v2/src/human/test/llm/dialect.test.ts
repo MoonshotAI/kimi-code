@@ -1083,6 +1083,71 @@ describe('mergeHistory', () => {
   });
 });
 
+describe('request pipeline', () => {
+  it('composes format stages and dialect hooks in a fixed order', async () => {
+    const order: string[] = [];
+    const client = stubOpenAIClient(chatCompletionChunks);
+    const requester = createOpenAIRequester({
+      dialect: {
+        cacheKey: (key) => {
+          order.push('cacheKey');
+          return { prompt_cache_key: key };
+        },
+        thinking: () => {
+          order.push('thinking');
+          return { kwargs: { reasoning_effort: 'high' } };
+        },
+        convertMessage: (message, converted) => {
+          order.push(`convertMessage:${message.role}`);
+          return converted;
+        },
+        mergeHistory: (history) => {
+          order.push('mergeHistory');
+          return history;
+        },
+        convertTool: (tool) => {
+          order.push('convertTool');
+          return {
+            type: 'function',
+            function: {
+              name: tool.name,
+              description: tool.description,
+              parameters: tool.parameters,
+            },
+          };
+        },
+        buildParams: (params) => {
+          order.push('buildParams');
+          return params;
+        },
+      },
+      clientFactory: client.clientFactory,
+    });
+    await requester.generate(
+      {
+        model,
+        systemPrompt: 'sys',
+        cacheKey: 'cache-1',
+        thinking: { effort: 'high' },
+        tools: [{ name: 'get_weather', description: 'get weather', parameters: { type: 'object' } }],
+      },
+      { messages },
+      { signal: new AbortController().signal },
+    );
+    expect(order).toEqual([
+      'cacheKey',
+      'thinking',
+      'convertMessage:user',
+      'mergeHistory',
+      'convertTool',
+      'buildParams',
+    ]);
+    const body = client.body();
+    expect(body['prompt_cache_key']).toBe('cache-1');
+    expect(body['reasoning_effort']).toBe('high');
+  });
+});
+
 describe('toolMessageConversion request config', () => {
   const toolHistory: readonly Message[] = [
     createUserMessage('hi'),

@@ -2,7 +2,7 @@ import type { Message, ToolDescription } from '#/llm/message';
 import type { DialectContext, ThinkingStrategy } from '#/llm/protocol/dialect';
 import type { ToolCallIdPolicy } from '#/llm/requester/requester';
 
-import type { AnthropicWireMessage } from './lower';
+import type { AnthropicWireMessage } from './contract';
 
 export interface AnthropicDialect {
   readonly toolCallIdPolicy?: ToolCallIdPolicy;

@@ -2,7 +2,7 @@ import type { Message, ToolDescription } from '#/llm/message';
 import type { DialectContext, ThinkingStrategy } from '#/llm/protocol/dialect';
 import type { ToolCallIdPolicy, ToolMessageConversion } from '#/llm/requester/requester';
 
-import type { OpenAIWireMessage } from './lower';
+import type { OpenAIRawChunk, OpenAIWireMessage } from './contract';
 
 export interface OpenAIDialect {
   readonly reasoningKey?: string;
@@ -37,5 +37,5 @@ export interface OpenAIDialect {
     ctx: DialectContext,
   ): Record<string, unknown> | undefined;
 
-  extractUsage?(chunk: Record<string, unknown>): Record<string, unknown> | null | undefined;
+  extractUsage?(chunk: OpenAIRawChunk): Record<string, unknown> | null | undefined;
 }

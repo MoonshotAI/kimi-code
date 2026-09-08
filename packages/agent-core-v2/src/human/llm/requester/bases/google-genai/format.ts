@@ -1,5 +1,4 @@
 import { ApiError as RawGoogleGenAISDKApiError, type GenerateContentParameters } from '@google/genai';
-import { assign, shake } from 'radashi';
 
 import {
   isAbortError,
@@ -17,18 +16,17 @@ import type {
   ToolDescription,
 } from '#/llm/message';
 import type { ThinkingEffort } from '#/llm/thinking';
-import { applyThinking, type DialectContext } from '#/llm/protocol/dialect';
 import { mergeConsecutiveUsers } from '#/llm/protocol/patterns';
 import { applyPatterns } from '#/llm/protocol/rewrite';
+import type { ResponseFormat } from '#/llm/response-format';
 import type { TokenUsage } from '#/llm/usage';
 
-import type { GoogleGenAIDialect } from './dialect';
 import { buildToolNameById, lowerMessage, type GoogleContent } from './lower';
 import { sortToolRunByCallOrder } from './patterns';
 
 export type { GoogleContent, GooglePart } from './lower';
 
-function toolToGoogleGenAI(tool: ToolDescription): Record<string, unknown> {
+export function toolToGoogleGenAI(tool: ToolDescription): Record<string, unknown> {
   return {
     functionDeclarations: [
       {
@@ -148,7 +146,10 @@ function extractChunkParts(response: Record<string, unknown>): StreamedMessagePa
   return parts;
 }
 
-function encodeThinking(model: string, effort: ThinkingEffort): Record<string, unknown> {
+export function encodeGoogleGenAIThinking(
+  model: string,
+  effort: ThinkingEffort,
+): Record<string, unknown> {
   if (model.includes('gemini-3')) {
     switch (effort) {
       case 'off':
@@ -181,53 +182,20 @@ function encodeThinking(model: string, effort: ThinkingEffort): Record<string, u
   }
 }
 
-function resolveRequestKwargs(
-  input: FormatRequestInput,
-  dialect: GoogleGenAIDialect | undefined,
+export function encodeGoogleGenAIMaxOutputTokens(cap: number): Record<string, unknown> {
+  return { maxOutputTokens: cap };
+}
+
+export function applyGoogleGenAIResponseFormat(
+  kwargs: Record<string, unknown>,
+  format: ResponseFormat,
 ): Record<string, unknown> {
-  const ctx: DialectContext = { model: input.model };
-  const {
-    thinking,
-    responseFormat,
-    maxCompletionTokens,
-    usedContextTokens,
-    maxContextTokens,
-    extraParams,
-  } = input;
-  let kwargs: Record<string, unknown> = {};
-  if (thinking !== undefined) {
-    kwargs = applyThinking(kwargs, thinking, dialect?.thinking, ctx, (t, c) => ({
-      thinkingConfig: encodeThinking(c.model.model, t.effort),
-    })).kwargs;
-  }
-  if (maxCompletionTokens !== undefined) {
-    let cap = maxCompletionTokens;
-    if (
-      usedContextTokens !== undefined &&
-      maxContextTokens !== undefined &&
-      maxContextTokens > 0
-    ) {
-      cap = Math.min(cap, maxContextTokens - usedContextTokens);
-    }
-    cap = Math.max(1, cap);
-    const hooked = dialect?.maxCompletionTokens?.(cap, ctx);
-    if (hooked !== undefined) {
-      kwargs = { ...kwargs, ...hooked };
-    } else {
-      kwargs = { ...kwargs, maxOutputTokens: cap };
-    }
-  }
-  if (responseFormat !== undefined) {
-    kwargs['responseMimeType'] = 'application/json';
-    delete kwargs['responseSchema'];
-    delete kwargs['responseJsonSchema'];
-    if (responseFormat.type === 'json_schema') {
-      kwargs['responseJsonSchema'] = responseFormat.jsonSchema.schema;
-    }
-  }
-  kwargs = assign(kwargs, extraParams?.googleGenai ?? {});
-  kwargs = shake(kwargs);
-  return kwargs;
+  const { responseSchema: _dropSchema, responseJsonSchema: _dropJsonSchema, ...rest } = kwargs;
+  return {
+    ...rest,
+    responseMimeType: 'application/json',
+    responseJsonSchema: format.type === 'json_schema' ? format.jsonSchema.schema : undefined,
+  };
 }
 
 export interface GoogleGenAIRequestParams {
@@ -235,32 +203,35 @@ export interface GoogleGenAIRequestParams {
   readonly headers?: Record<string, string>;
 }
 
-export function createGoogleGenAIFormat(
-  dialect?: GoogleGenAIDialect,
-): ProtocolFormat<GoogleGenAIRequestParams> {
-  return {
-    formatRequest(input) {
-      const { messages, systemPrompt, tools } = input;
-      const ctx: DialectContext = { model: input.model };
-      const kwargs = resolveRequestKwargs(input, dialect);
-      const contents = messagesToGoogleGenAIContents(messages);
-      const finalContents = dialect?.mergeHistory?.(contents, ctx);
-      const params: Record<string, unknown> = {
-        model: ctx.model.model,
-        contents: finalContents ?? contents,
-        config: {
-          systemInstruction: systemPrompt ? systemPrompt : undefined,
-          tools:
-            tools.length === 0
-              ? undefined
-              : tools.map((tool) => dialect?.convertTool?.(tool, ctx) ?? toolToGoogleGenAI(tool)),
-          ...kwargs,
-        },
-      };
-      const finalParams = dialect?.buildParams?.(params, ctx) ?? params;
-      return { params: finalParams as unknown as GenerateContentParameters };
-    },
+export interface GoogleGenAIRequestParts {
+  readonly contents: readonly GoogleContent[];
+  readonly tools: readonly Record<string, unknown>[];
+  readonly kwargs: Readonly<Record<string, unknown>>;
+}
 
+export function assembleGoogleGenAIRequest(
+  input: FormatRequestInput,
+  parts: GoogleGenAIRequestParts,
+): Record<string, unknown> {
+  return {
+    model: input.model.model,
+    contents: parts.contents,
+    config: {
+      systemInstruction: input.systemPrompt ? input.systemPrompt : undefined,
+      tools: parts.tools.length === 0 ? undefined : parts.tools,
+      ...parts.kwargs,
+    },
+  };
+}
+
+export function encodeGoogleGenAIRequest(
+  params: Record<string, unknown>,
+): GoogleGenAIRequestParams {
+  return { params: params as unknown as GenerateContentParameters };
+}
+
+export function createGoogleGenAIFormat(): ProtocolFormat<GoogleGenAIRequestParams> {
+  return {
     createStreamParser() {
       return (chunk, sink) => {
         const response = chunk as Record<string, unknown>;

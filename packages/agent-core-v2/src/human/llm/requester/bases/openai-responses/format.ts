@@ -1,22 +1,23 @@
 import type OpenAI from 'openai';
-import { assign, shake } from 'radashi';
 
 import type { LlmRemoteErrorMessage } from '#/llm/errors';
 import { NO_FINISH, type FinishInfo } from '#/llm/finish-reason';
-import type { FormatRequestInput, ProtocolFormat } from '#/llm/protocol/format';
+import type {
+  FormatRequestInput,
+  ProtocolFormat,
+  StreamParserOptions,
+} from '#/llm/protocol/format';
 import type { StreamedMessagePart, ToolDescription } from '#/llm/message';
-import { applyThinking, type DialectContext } from '#/llm/protocol/dialect';
 import type { ResponseFormat } from '#/llm/response-format';
-import { encodeReasoningEffortFallback } from '#/llm/thinking';
 import type { TokenUsage } from '#/llm/usage';
 
 import { isContextOverflowErrorCode, isOpenAIInsufficientQuotaCode } from '../openai/format';
-import type { OpenAIResponsesDialect } from './dialect';
-import { lowerMessage, type ResponsesInputItem } from './lower';
+import type { ResponsesInputItem } from './contract';
+import { lowerMessage } from './lower';
 
 type RawObject = Record<string, unknown>;
 
-function responseFormatToResponsesText(format: ResponseFormat): RawObject {
+export function responseFormatToResponsesText(format: ResponseFormat): RawObject {
   if (format.type === 'json_object') {
     return { type: 'json_object' };
   }
@@ -316,7 +317,7 @@ function normalizeResponsesFinish(
   return NO_FINISH;
 }
 
-function defaultConvertTool(tool: ToolDescription): Record<string, unknown> {
+export function defaultOpenAIResponsesTool(tool: ToolDescription): Record<string, unknown> {
   return {
     type: 'function',
     name: tool.name,
@@ -326,7 +327,40 @@ function defaultConvertTool(tool: ToolDescription): Record<string, unknown> {
   };
 }
 
-function parseResponsesUsage(usage: RawObject | null | undefined): TokenUsage | undefined {
+export function encodeOpenAIResponsesCacheKey(cacheKey: string): Record<string, unknown> {
+  return { prompt_cache_key: cacheKey };
+}
+
+export function encodeOpenAIResponsesMaxCompletionTokens(cap: number): Record<string, unknown> {
+  return { max_output_tokens: cap };
+}
+
+export function applyOpenAIResponsesResponseFormat(
+  kwargs: Record<string, unknown>,
+  format: ResponseFormat,
+): Record<string, unknown> {
+  return {
+    ...kwargs,
+    text: { ...asRawObject(kwargs['text']), format: responseFormatToResponsesText(format) },
+  };
+}
+
+export function normalizeOpenAIResponsesReasoning(
+  kwargs: Record<string, unknown>,
+): Record<string, unknown> {
+  const reasoningEffort = kwargs['reasoning_effort'] as string | undefined;
+  if (reasoningEffort === undefined) {
+    return kwargs;
+  }
+  const { reasoning_effort: _dropped, ...rest } = kwargs;
+  return {
+    ...rest,
+    reasoning: { effort: reasoningEffort, summary: 'auto' },
+    include: ['reasoning.encrypted_content'],
+  };
+}
+
+export function parseOpenAIResponsesUsage(usage: RawObject | null | undefined): TokenUsage | undefined {
   if (usage === null || usage === undefined) {
     return undefined;
   }
@@ -357,93 +391,49 @@ export interface OpenAIResponsesRequestParams {
   readonly headers?: Record<string, string>;
 }
 
-export function createOpenAIResponsesFormat(
-  dialect?: OpenAIResponsesDialect,
-): ProtocolFormat<OpenAIResponsesRequestParams> {
-  function resolveRequestKwargs(input: FormatRequestInput): Record<string, unknown> {
-    const ctx: DialectContext = { model: input.model };
-    const {
-      cacheKey,
-      thinking,
-      responseFormat,
-      maxCompletionTokens,
-      usedContextTokens,
-      maxContextTokens,
-      extraParams,
-    } = input;
-    let kwargs: Record<string, unknown> = {};
-    if (cacheKey !== undefined) {
-      kwargs = dialect?.cacheKey?.(cacheKey, ctx) ?? { prompt_cache_key: cacheKey };
-    }
-    if (thinking !== undefined) {
-      kwargs = applyThinking(kwargs, thinking, dialect?.thinking, ctx, (t) =>
-        encodeReasoningEffortFallback(t, ctx.model, dialect?.strictThinkingValidation === true),
-      ).kwargs;
-    }
-    if (maxCompletionTokens !== undefined) {
-      let cap = maxCompletionTokens;
-      if (
-        usedContextTokens !== undefined &&
-        maxContextTokens !== undefined &&
-        maxContextTokens > 0
-      ) {
-        cap = Math.min(cap, maxContextTokens - usedContextTokens);
-      }
-      cap = Math.max(1, cap);
-      const hooked = dialect?.maxCompletionTokens?.(cap, ctx);
-      if (hooked !== undefined) {
-        kwargs = { ...kwargs, ...hooked };
-      } else {
-        kwargs = { ...kwargs, max_output_tokens: cap };
-      }
-    }
-    if (responseFormat !== undefined) {
-      kwargs['text'] = {
-        ...asRawObject(kwargs['text']),
-        format: responseFormatToResponsesText(responseFormat),
-      };
-    }
-    const reasoningEffort = kwargs['reasoning_effort'] as string | undefined;
-    delete kwargs['reasoning_effort'];
-    if (reasoningEffort !== undefined) {
-      kwargs['reasoning'] = { effort: reasoningEffort, summary: 'auto' };
-      kwargs['include'] = ['reasoning.encrypted_content'];
-    }
-    kwargs = assign(kwargs, extraParams?.responses ?? {});
-    kwargs = shake(kwargs);
-    return kwargs;
-  }
+export interface OpenAIResponsesLowerOptions {
+  readonly extractText: boolean;
+}
 
+export function lowerOpenAIResponsesRequest(
+  input: FormatRequestInput,
+  options: OpenAIResponsesLowerOptions,
+): ResponsesInputItem[] {
+  return input.messages.flatMap((message) =>
+    lowerMessage(message, { modelName: input.model.model, extractText: options.extractText }),
+  );
+}
+
+export interface OpenAIResponsesRequestParts {
+  readonly input: readonly ResponsesInputItem[];
+  readonly tools: readonly Record<string, unknown>[];
+  readonly kwargs: Readonly<Record<string, unknown>>;
+}
+
+export function assembleOpenAIResponsesRequest(
+  input: FormatRequestInput,
+  parts: OpenAIResponsesRequestParts,
+): Record<string, unknown> {
   return {
-    formatRequest(input) {
-      const { messages, systemPrompt, tools } = input;
-      const ctx: DialectContext = { model: input.model };
-      const kwargs = resolveRequestKwargs(input);
-      const inputItems = messages.flatMap((message) =>
-        lowerMessage(message, {
-          modelName: ctx.model.model,
-          extractText:
-            (input.toolMessageConversion ?? dialect?.toolMessageConversion) === 'extract_text',
-        }),
-      );
-      const finalInput = dialect?.mergeHistory?.(inputItems, ctx) ?? inputItems;
-      const createParams: Record<string, unknown> = {
-        model: ctx.model.model,
-        instructions: systemPrompt ? systemPrompt : undefined,
-        input: finalInput,
-        tools:
-          tools.length === 0
-            ? undefined
-            : tools.map((tool) => dialect?.convertTool?.(tool, ctx) ?? defaultConvertTool(tool)),
-        store: false,
-        stream: true,
-        ...kwargs,
-      };
-      const finalParams = dialect?.buildParams?.(createParams, ctx) ?? createParams;
-      return { params: finalParams as unknown as OpenAI.Responses.ResponseCreateParamsStreaming };
-    },
+    model: input.model.model,
+    instructions: input.systemPrompt ? input.systemPrompt : undefined,
+    input: parts.input,
+    tools: parts.tools.length === 0 ? undefined : parts.tools,
+    store: false,
+    stream: true,
+    ...parts.kwargs,
+  };
+}
 
-    createStreamParser() {
+export function encodeOpenAIResponsesRequest(
+  params: Record<string, unknown>,
+): OpenAIResponsesRequestParams {
+  return { params: params as unknown as OpenAI.Responses.ResponseCreateParamsStreaming };
+}
+
+export function createOpenAIResponsesFormat(): ProtocolFormat<OpenAIResponsesRequestParams> {
+  return {
+    createStreamParser(options?: StreamParserOptions<unknown>) {
       const functionCallArgumentsByIndex = new Map<number | string, string>();
       let unindexedFunctionCallArguments: string | undefined;
 
@@ -521,10 +511,11 @@ export function createOpenAIResponsesFormat(
         if (event === null) {
           return;
         }
-        const hookedUsage = dialect?.extractUsage?.(event);
-        const usage = parseResponsesUsage(
-          hookedUsage !== undefined ? hookedUsage : extractEventUsage(event),
-        );
+        const defaultUsage = parseOpenAIResponsesUsage(extractEventUsage(event));
+        const usage =
+          options?.resolveUsage === undefined
+            ? defaultUsage
+            : options.resolveUsage(event, defaultUsage);
         if (usage !== undefined) {
           sink.onUsage?.(usage);
         }
