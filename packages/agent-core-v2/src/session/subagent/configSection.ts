@@ -279,11 +279,16 @@ export function buildSubagentModelDescriptions(
   const defaultEffort = config.get<SecondaryModelConfig | undefined>(
     SECONDARY_MODEL_SECTION,
   )?.defaultEffort;
-  lines.push(
-    defaultEffort === undefined
-      ? "Pool entries run at each model's default thinking level, not yours."
-      : `Pool entries run at thinking effort "${defaultEffort}", not your current level.`,
-  );
+  const thinkingDisabled = config.get<ThinkingConfig>(THINKING_SECTION)?.enabled === false;
+  let thinkingNote: string;
+  if (defaultEffort !== undefined) {
+    thinkingNote = `Pool entries run at thinking effort "${defaultEffort}", not your current level.`;
+  } else if (thinkingDisabled) {
+    thinkingNote = 'Thinking is disabled, so pool entries run with thinking off.';
+  } else {
+    thinkingNote = "Pool entries run at each model's default thinking level, not yours.";
+  }
+  lines.push(thinkingNote);
   return lines.join('\n');
 }
 

@@ -1025,6 +1025,25 @@ describe('Agent tool description', () => {
     );
   });
 
+  it('notes that pool entries run with thinking off when thinking is disabled', () => {
+    ctx = createTestAgent({
+      initialConfig: {
+        thinking: { enabled: false },
+        secondaryModel: {
+          defaultModel: 'provider/fast',
+          models: {
+            'provider/fast': 'fast and cheap',
+          },
+        },
+        models: POOL_MODEL_ENTRIES,
+      },
+    });
+
+    expect(agentDescription()).toContain(
+      'Thinking is disabled, so pool entries run with thinking off.',
+    );
+  });
+
   it('renders the caller-in-pool alias as a plain entry and renders empty descriptions bare', () => {
     ctx = createTestAgent({
       initialConfig: {
