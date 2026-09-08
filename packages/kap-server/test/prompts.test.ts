@@ -411,7 +411,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const texts = bundled?.content
       .filter((part) => part.type === 'text')
       .map((part) => part.text);
-    expect(texts?.[texts.length - 1]).toBe('Review this change.');
+    expect(texts.at(-1)).toBe('Review this change.');
 
     const projected = projectPromptSnapshot({
       id: 'msg_1',
@@ -1016,6 +1016,33 @@ describe('server-v2 /api/v1 prompts', () => {
     await setSessionModel(id, 'kimi-vision');
 
     const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [
+        {
+          type: 'image',
+          source: {
+            kind: 'base64',
+            media_type: 'image/heic',
+            data: heicBytes().toString('base64'),
+          },
+        },
+      ],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const content = submitted.body.data.content as PromptContentPart[];
+    expect(content).toHaveLength(1);
+    expect(content[0]?.type).toBe('image');
+  });
+
+  it('gates media against the model selected by the same prompt request', async () => {
+    await writeConfigToml(home as string, PROMPT_TOML_KIMI_VISION);
+    await (server as RunningServer).core.accessor.get(IConfigService).reload();
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    await setSessionModel(id, 'stub');
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      model: 'kimi-vision',
       content: [
         {
           type: 'image',

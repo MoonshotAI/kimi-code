@@ -134,7 +134,7 @@ export function lowerMessage(
   lower: AnthropicLowerContext,
 ): AnthropicWireMessage[] {
   const { trait, ctx } = lower;
-  const acceptedMimes = providerImagePolicy(ctx.model.provider).acceptedMimes;
+  const acceptedMimes = trait?.acceptedImageMimes?.(ctx) ?? providerImagePolicy().acceptedMimes;
   const content: AnthropicWireContentBlock[] = [];
   if (message.role === 'system') {
     const text = message.content

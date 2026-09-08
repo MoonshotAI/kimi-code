@@ -547,6 +547,20 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     expect(host.svc.getModelProviderType()).toBeUndefined();
   });
 
+  it('resolves the provider type of another catalog model without rebinding', () => {
+    modelCatalog = createModelCatalogStub({
+      'kimi-code': createTestModel({ providerType: 'kimi' }),
+      'claude-code': createTestModel({ id: 'claude-code', protocol: 'anthropic' }),
+    });
+    const host = buildHost('profile-provider-type-of-alias');
+    host.svc.configure({ emitStatusUpdated: () => undefined });
+    host.svc.update({ modelAlias: 'claude-code' });
+
+    expect(host.svc.getModelProviderType('kimi-code')).toBe('kimi');
+    expect(host.svc.getModelProviderType('missing-model')).toBeUndefined();
+    expect(host.svc.getModel()).toBe('claude-code');
+  });
+
   it('uses the resolved Kimi effort instead of the configured default', () => {
     modelCatalog = createModelCatalogStub({
       'kimi-code': createTestModel({ providerType: 'kimi' }),

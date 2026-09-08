@@ -20,6 +20,6 @@ const KIMI_IMAGE_POLICY: ProviderImagePolicy = {
   inlineByteBudget: 5 * 1024 * 1024,
 };
 
-export function providerImagePolicy(provider: string | undefined): ProviderImagePolicy {
+export function providerImagePolicy(provider?: string): ProviderImagePolicy {
   return provider === 'kimi' ? KIMI_IMAGE_POLICY : BASELINE_IMAGE_POLICY;
 }

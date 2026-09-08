@@ -71,6 +71,8 @@ export interface ProtocolTrait {
   reasoningKey?(ctx: TraitContext): string | undefined;
 
   capability?(modelName: string): ModelCapability | undefined;
+
+  acceptedImageMimes?(ctx: TraitContext): ReadonlySet<string> | undefined;
 }
 
 export interface ThinkingApplication {

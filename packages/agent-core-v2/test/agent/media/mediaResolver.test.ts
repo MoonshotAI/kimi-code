@@ -549,6 +549,25 @@ describe('AgentMediaResolverService image strategy', () => {
     expect(firstPart(other)).toEqual({ type: 'text', text: `<image path="${canonical}"></image>` });
   });
 
+  it('never serves a memoized image to a provider that rejects its format', async () => {
+    const files = new Map([[FILE_ID, { name: 'pic.bmp', bytes: BMP_BYTES }]]);
+    const canonical = await plantCanonical(FILE_ID, '.bmp', BMP_BYTES);
+    const res = resolver(files, sessionDir);
+    const message = imageMessage(buildKimiFileUrl(FILE_ID));
+    const inline = {
+      type: 'image_url',
+      imageUrl: { url: `data:image/bmp;base64,${BMP_BYTES.toString('base64')}` },
+    };
+
+    expect(firstPart(await res.resolve([message], requester({})))).toEqual(inline);
+    const other = requester({ providerType: 'anthropic', protocol: 'anthropic' });
+    expect(firstPart(await res.resolve([message], other))).toEqual({
+      type: 'text',
+      text: `<image path="${canonical}"></image>`,
+    });
+    expect(firstPart(await res.resolve([message], requester({})))).toEqual(inline);
+  });
+
   it.each([
     {
       name: 'the model cannot ingest images and there is no canonical copy',

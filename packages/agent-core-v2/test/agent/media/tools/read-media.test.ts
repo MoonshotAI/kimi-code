@@ -876,21 +876,21 @@ describe('AgentMediaToolsRegistrar', () => {
       getModel: () => state.alias,
     } as unknown as IAgentProfileService;
     const brokenAliases = new Set<string>();
+    const catalogModel = (id: string) => {
+      if (brokenAliases.has(id)) {
+        throw new Error(`Model "${id}" is not configured in config.toml.`);
+      }
+      return {
+        id,
+        name: id,
+        providerName: 'test',
+        protocol: 'openai',
+        providerType: providerTypes[id],
+      };
+    };
     const modelCatalog = {
-      getRequester: (id: string) => {
-        if (brokenAliases.has(id)) {
-          throw new Error(`Model "${id}" is not configured in config.toml.`);
-        }
-        return {
-          model: {
-            id,
-            name: id,
-            providerName: 'test',
-            protocol: 'openai',
-            providerType: providerTypes[id],
-          },
-        };
-      },
+      get: catalogModel,
+      getRequester: (id: string) => ({ model: catalogModel(id) }),
     } as unknown as IModelCatalog;
     const workspaceCtx = {
       workDir: '/workspace',
@@ -968,6 +968,27 @@ describe('AgentMediaToolsRegistrar', () => {
 
     expect((await readWith('kimi-vision')).isError).toBeFalsy();
     expect((await readWith('other-vision')).isError).toBe(true);
+  });
+
+  it('rebuilds ReadMediaFile when a reload changes the provider type behind the same alias', async () => {
+    const heic = Buffer.from([
+      0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63, 0x00, 0x00, 0x00, 0x00,
+      0x68, 0x65, 0x69, 0x63, 0x00, 0x00, 0x00, 0x00,
+    ]);
+    const providerTypes: Record<string, string> = {};
+    const { registry, bindModel } = createRegistrarHarness(
+      { '/workspace/photo.heic': { data: heic } },
+      providerTypes,
+    );
+    const read = async () => {
+      bindModel('vision', capabilities({ image_in: true, video_in: false }));
+      const tool = registry.resolve('ReadMediaFile') as ReadMediaFileTool;
+      return execute(tool, { path: '/workspace/photo.heic' });
+    };
+
+    expect((await read()).isError).toBe(true);
+    providerTypes['vision'] = 'kimi';
+    expect((await read()).isError).toBeFalsy();
   });
 
   it('drops the tool when the model loses media input', () => {
