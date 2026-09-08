@@ -45,6 +45,10 @@ interface ReadLineEntry {
   readonly rawContent: string;
 }
 
+interface ReadTailEntry extends ReadLineEntry {
+  readonly minChars: number;
+}
+
 interface ReadRequest {
   readonly args: ReadInput;
   readonly maxChars: number;
@@ -302,9 +306,18 @@ export class ReadTool implements IReadTool {
         lossyDecoding,
         eventLog,
       };
-      return (args.line_offset ?? 1) < 0
-        ? await this.readTail(readLines, request)
-        : await this.readForward(readLines(), request);
+      const lineOffset = args.line_offset ?? 1;
+      if (lineOffset >= 0) return await this.readForward(readLines(), request);
+      const rereadsFile = detectedEncoding === undefined && (args.n_lines ?? Infinity) < -lineOffset;
+      const result = await this.readTail(readLines, request);
+      if (!result.isError && rereadsFile) {
+        const currentStat = await fs.stat(safePath);
+        if (!currentStat.isFile || currentStat.size !== stat.size ||
+          currentStat.mtimeMs !== stat.mtimeMs || currentStat.ino !== stat.ino) {
+          return { isError: true, output: 'File changed while reading its tail. Retry Read with the updated file.' };
+        }
+      }
+      return result;
     } catch (error) {
       if (isTextDecodeError(error)) {
         return { isError: true, output: notUtf8DecodableFileOutput(args.path) };
@@ -500,6 +513,25 @@ export class ReadTool implements IReadTool {
     const { args, maxChars } = request;
     const lineOffset = args.line_offset ?? 1;
     const requestedLines = args.n_lines ?? Infinity;
+    const tailCount = -lineOffset;
+    const singlePass = requestedLines >= tailCount;
+    let entries: (ReadTailEntry | undefined)[] = [];
+    let first = 0;
+    let chars = 0;
+    const retainLine = (rawLine: string, lineNo: number): void => {
+      const rawContent = stripTrailingLf(rawLine);
+      const minChars = String(lineNo).length + 2 + rawContent.length - (rawContent.endsWith('\r') ? 1 : 0);
+      entries.push({ lineNo, rawContent, minChars });
+      chars += minChars;
+      while (first < entries.length && (chars - 1 > maxChars || entries.length - first > tailCount)) {
+        chars -= entries[first]!.minChars;
+        entries[first++] = undefined;
+      }
+      if (first > 1024 && first >= entries.length / 2) {
+        entries = entries.slice(first);
+        first = 0;
+      }
+    };
     const flags: LineEndingFlags = { hasCrLf: false, hasLf: false, hasLoneCr: false };
     let totalLines = 0;
     for await (const rawLine of readLines()) {
@@ -508,43 +540,28 @@ export class ReadTool implements IReadTool {
       }
       totalLines += 1;
       updateLineEndingFlags(flags, rawLine);
+      if (singlePass) retainLine(rawLine, totalLines);
     }
 
     const rangeStart = Math.max(1, totalLines + lineOffset + 1);
     const rangeEnd = Math.min(totalLines, rangeStart + requestedLines - 1);
     const lineEndingStyle = lineEndingStyleFromFlags(flags);
-    let renderedLines: string[] = [];
-    let first = 0;
-    let chars = 0;
-    let currentLine = 0;
-    for await (const rawLine of readLines()) {
-      currentLine += 1;
-      if (currentLine > rangeEnd) break;
-      if (currentLine < rangeStart) continue;
-      if (containsNulByte(rawLine)) {
-        return { isError: true, output: notReadableFileOutput(args.path) };
+    if (!singlePass) {
+      let currentLine = 0;
+      for await (const rawLine of readLines()) {
+        currentLine += 1;
+        if (currentLine > rangeEnd) break;
+        if (currentLine < rangeStart) continue;
+        if (containsNulByte(rawLine)) {
+          return { isError: true, output: notReadableFileOutput(args.path) };
+        }
+        retainLine(rawLine, currentLine);
       }
-      const line = renderLine({ lineNo: currentLine, rawContent: stripTrailingLf(rawLine) }, lineEndingStyle);
-      if (line.length > maxChars) {
-        renderedLines = [];
-        first = 0;
-        chars = 0;
-        continue;
-      }
-      renderedLines.push(line);
-      chars += line.length + 1;
-      while (chars - 1 > maxChars) {
-        chars -= renderedLines[first++]!.length + 1;
-      }
-      if (first > 1024 && first >= renderedLines.length / 2) {
-        renderedLines = renderedLines.slice(first);
-        first = 0;
+      if (currentLine < rangeEnd || currentLine > totalLines) {
+        return { isError: true, output: 'File changed while reading its tail. Retry Read with the updated file.' };
       }
     }
-    if (currentLine < rangeEnd) {
-      return { isError: true, output: 'File changed while reading its tail. Retry Read with the updated file.' };
-    }
-    const selected = renderedLines.slice(first);
+    const selected = entries.slice(first).map((entry) => renderLine(entry!, lineEndingStyle));
     return this.finishPage({
       request,
       renderedLines: selected,

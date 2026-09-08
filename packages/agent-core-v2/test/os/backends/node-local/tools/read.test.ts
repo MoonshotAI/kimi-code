@@ -468,6 +468,17 @@ describe('ReadTool', () => {
     });
   });
 
+  it.each([undefined, 3, 5])('reads the last three lines in one file scan with n_lines=%s', async (nLines) => {
+    const { fs, readLines } = createSpiedFs('a\nb\nc\nd\ne');
+    const tool = createReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, { path: '/tmp/tail.log', line_offset: -3, n_lines: nLines });
+
+    expect(result.output).toBe('3\tc\n4\td\n5\te');
+    expect(result.note).toContain('Requested range complete.');
+    expect(readLines).toHaveBeenCalledTimes(1);
+  });
+
   it('applies n_lines from the start of the negative line_offset tail window', async () => {
     const tool = toolWithContent('a\nb\nc\nd\ne');
 
@@ -477,6 +488,96 @@ describe('ReadTool', () => {
     expect(result.note).toBe(
       readNote('2 lines read from file starting from line 1. Total lines in file: 5. Requested range complete. Effective max_chars: 100000.'),
     );
+  });
+
+  it('rejects a partial tail range when the file grows during reading', async () => {
+    let content = 'a\nb\nc\n';
+    const { fs, readLines, stat } = createSpiedFs(content);
+    stat.mockImplementation(async () => ({
+      isFile: true,
+      isDirectory: false,
+      size: Buffer.byteLength(content),
+    }));
+    readLines.mockImplementation(async function* () {
+      yield* generateLines(content);
+      content += 'd\n';
+    });
+    const tool = createReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, { path: '/tmp/growing.log', line_offset: -3, n_lines: 1 });
+
+    expect(result).toMatchObject({
+      isError: true,
+      output: 'File changed while reading its tail. Retry Read with the updated file.',
+    });
+    expect(result.note).toBeUndefined();
+  });
+
+  it('returns newly appended lines observed during a single tail scan', async () => {
+    let content = 'a\nb\nc\n';
+    const { fs, readLines, stat } = createSpiedFs(content);
+    stat.mockImplementation(async () => ({
+      isFile: true,
+      isDirectory: false,
+      size: Buffer.byteLength(content),
+    }));
+    readLines.mockImplementation(async function* () {
+      yield 'a\n';
+      content += 'd\n';
+      yield* generateLines(content.slice(2));
+    });
+    const tool = createReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, { path: '/tmp/growing.log', line_offset: -1 });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.output).toBe('4\td');
+    expect(result.note).toContain('Total lines in file: 4.');
+    expect(result.note).toContain('End of file reached.');
+    expect(readLines).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a tail reread that observes a line beyond the counted EOF', async () => {
+    const { fs, readLines } = createSpiedFs('a\nb\nc\n');
+    readLines.mockReturnValueOnce(generateLines('a\nb\nc\n'))
+      .mockReturnValueOnce(generateLines('a\nb\nc\nd\n'));
+    const tool = createReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, { path: '/tmp/growing.log', line_offset: -10, n_lines: 3 });
+
+    expect(result).toMatchObject({
+      isError: true,
+      output: 'File changed while reading its tail. Retry Read with the updated file.',
+    });
+    expect(result.note).toBeUndefined();
+  });
+
+  it.each([
+    { change: 'same-size edit', mtimeMs: 2, ino: 1 },
+    { change: 'file replacement', mtimeMs: 1, ino: 2 },
+  ])('rejects a partial tail range after a $change', async ({ mtimeMs, ino }) => {
+    let changed = false;
+    const { fs, readLines, stat } = createSpiedFs('a\nb\n');
+    stat.mockImplementation(async () => ({
+      isFile: true,
+      isDirectory: false,
+      size: 4,
+      mtimeMs: changed ? mtimeMs : 1,
+      ino: changed ? ino : 1,
+    }));
+    readLines.mockImplementation(async function* () {
+      yield* generateLines(changed ? 'x\ny\n' : 'a\nb\n');
+      changed = true;
+    });
+    const tool = createReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, { path: '/tmp/changing.log', line_offset: -2, n_lines: 1 });
+
+    expect(result).toMatchObject({
+      isError: true,
+      output: 'File changed while reading its tail. Retry Read with the updated file.',
+    });
+    expect(result.note).toBeUndefined();
   });
 
   it('rejects relative traversal before reading', async () => {
