@@ -11,7 +11,7 @@ function reportUnhandled(event: InspectionEvent): void {
     return;
   }
   console.warn(
-    `[agent-core-v3] unhandled event "${event.event.type}" in actor "${event.actorRef.sessionId}"`,
+    `[agent-core] unhandled event "${event.event.type}" in actor "${event.actorRef.sessionId}"`,
   );
 }
 

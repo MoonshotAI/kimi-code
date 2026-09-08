@@ -39,7 +39,7 @@ const CAPABILITY: ModelCapability = {
 const tmpDirs: string[] = [];
 
 function tmpWorkspace(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-core-v3-media-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'media-tool-'));
   tmpDirs.push(dir);
   return dir;
 }

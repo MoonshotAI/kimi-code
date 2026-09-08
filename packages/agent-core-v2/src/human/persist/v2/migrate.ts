@@ -143,7 +143,7 @@ export async function migrateV2Session(dir: string): Promise<V2MigrationResult> 
   const agentIds = await listV2AgentIds(dir);
   const tmp = join(
     dir,
-    `.v3-migrate-${process.pid.toString(36)}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    `.migrate-${process.pid.toString(36)}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
   );
   const branches: Branch[] = [];
   try {
