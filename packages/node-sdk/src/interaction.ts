@@ -1,4 +1,4 @@
-import type { ToolInputDisplay } from '@moonshot-ai/protocol';
+import type { ToolInputDisplay } from '@moonshot-ai/agent-core-v2/tool/toolInputDisplay';
 import type { ContentPart } from '@moonshot-ai/kosong';
 
 export type {

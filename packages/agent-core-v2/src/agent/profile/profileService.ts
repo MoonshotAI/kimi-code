@@ -82,11 +82,7 @@ import {
 
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 
-export interface WarningEvent {
-  readonly type: 'warning';
-  readonly message: string;
-  readonly code?: string;
-}
+export type { WarningEvent } from '#/errors';
 
 function describeInactiveToolPattern(
   context: string,

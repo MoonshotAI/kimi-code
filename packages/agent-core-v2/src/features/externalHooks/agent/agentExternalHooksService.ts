@@ -59,6 +59,10 @@ export class HookResult extends AgentEvent2<HookResultPayload> {
 }
 export interface HookResult extends HookResultPayload {}
 
+export interface HookResultEvent extends Omit<HookResultPayload, 'agentId'> {
+  readonly type: 'hook.result';
+}
+
 export const externalHooksStopHookContinuationUsedKey = defineState<boolean>(
   'externalHooks.stopHookContinuationUsed',
   () => false,

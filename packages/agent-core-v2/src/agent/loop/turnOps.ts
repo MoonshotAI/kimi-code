@@ -14,7 +14,7 @@ import { AgentEvent2, type SerializedEvent2 } from '#/app/event/event2';
 import type { ContentPart } from '#human/llm/message';
 import { defineState } from '#/state/state';
 
-import type { TurnInterruptReason } from './turnEvents';
+import type { TurnEndReason, TurnInterruptReason } from './turnEvents';
 
 export interface TurnModelState {
   readonly nextTurnId: number;
@@ -172,6 +172,16 @@ export const turnKey = defineState(
     ...s,
     lastEnded: { turnId: e.turnId, reason: e.reason, durationMs: e.durationMs },
   }));
+
+export interface TurnEndedEvent {
+  readonly type: 'turn.ended';
+  readonly time?: number;
+  readonly turnId: number;
+  readonly reason: TurnEndReason;
+  readonly error?: KimiErrorPayload;
+  readonly durationMs?: number;
+  readonly interruptReason?: TurnInterruptReason;
+}
 
 function advanceTurnClock(
   state: TurnModelState,

@@ -1,6 +1,6 @@
 import type { ContentPart, ToolCall, ToolDescription as Tool } from '#human/llm/message';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
-import type { ToolInputDisplay } from '@moonshot-ai/protocol';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 export type ExecutableToolOutput = string | ContentPart[];
 
@@ -62,6 +62,8 @@ export interface ToolUpdate {
   customData?: unknown;
   replace?: boolean;
 }
+
+export const MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE = 'mcp.oauth.authorization_url';
 
 export interface ExecutableToolContext {
   readonly turnId: number;
