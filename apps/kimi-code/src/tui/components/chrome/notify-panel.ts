@@ -93,7 +93,10 @@ export class NotifyPanelComponent implements Component {
     if (ch.entries.length === 0) {
       this.channels.splice(this.channels.indexOf(ch), 1);
       if (ch.key === this.activeKey) this.activeKey = this.channels.at(-1)?.key ?? MAIN_AGENT_ID;
+    } else {
+      ch.page = Math.min(ch.page, ch.entries.length - 1);
     }
+    if (this.channels.length === 0) this.focused = false;
     return true;
   }
 
@@ -177,6 +180,7 @@ export class NotifyPanelComponent implements Component {
 
   /** Older update in the current channel (`↑`); false on the first page. */
   prevPage(): boolean {
+    if (this.channels.length === 0) return false;
     const ch = this.activeChannel();
     if (ch.page <= 0) return false;
     ch.page -= 1;
@@ -185,6 +189,7 @@ export class NotifyPanelComponent implements Component {
 
   /** Newer update in the current channel (`↓`); false on the latest page. */
   nextPage(): boolean {
+    if (this.channels.length === 0) return false;
     const ch = this.activeChannel();
     if (ch.page >= ch.entries.length - 1) return false;
     ch.page += 1;

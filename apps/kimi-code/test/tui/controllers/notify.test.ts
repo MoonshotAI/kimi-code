@@ -608,9 +608,9 @@ describe('NotifyController', () => {
     h.emit('tool.call.started', {
       toolCallId: 'a1',
       name: 'Agent',
-      args: { description: '调研 openwf 项目', subagent_type: 'explore', prompt: '…' },
+      args: { description: '调研 example 项目', subagent_type: 'explore', prompt: '…' },
     });
-    expect(h.texts()).toEqual(['▸ Delegated to explore: **调研 openwf 项目**']);
+    expect(h.texts()).toEqual(['▸ Delegated to explore: **调研 example 项目**']);
     expect(h.notifyPanelContainer.children).toEqual([h.notifyPanel]);
 
     h.emit('tool.call.started', {
@@ -619,7 +619,7 @@ describe('NotifyController', () => {
       args: { items: [{ prompt: 'x' }, { prompt: 'y' }, { prompt: 'z' }] },
     });
     expect(h.texts()).toEqual([
-      '▸ Delegated to explore: **调研 openwf 项目**',
+      '▸ Delegated to explore: **调研 example 项目**',
       '▸ Delegated to a swarm of 3 subagents',
     ]);
   });
@@ -675,6 +675,23 @@ describe('NotifyController', () => {
     h.emit('tool.result', { toolCallId: 'a1', output: 'subagent finished' });
     expect(h.texts()).toEqual(['▸ Delegated to explore: **keep me**']);
     expect(h.notifyPanelContainer.children).toEqual([h.notifyPanel]);
+  });
+
+  it('releases panel focus when a retraction empties the panel', () => {
+    const h = makeHarness();
+    h.emit('tool.call.started', {
+      toolCallId: 'a1',
+      name: 'Agent',
+      args: { description: 'doomed launch', prompt: '…' },
+    });
+    expect(h.controller.toggleFocus()).toBe(true);
+
+    h.emit('tool.result', { toolCallId: 'a1', isError: true, output: 'unknown profile' });
+    expect(h.notifyPanel.isEmpty()).toBe(true);
+    expect(h.notifyPanel.isFocused()).toBe(false);
+    expect(h.notifyPanelContainer.children).toEqual([]);
+    expect(h.controller.handlePanelKey('up')).toBe(false);
+    expect(h.controller.handlePanelKey('down')).toBe(false);
   });
 
   it('folds the panel to a one-line preview stub when the main turn ends', () => {

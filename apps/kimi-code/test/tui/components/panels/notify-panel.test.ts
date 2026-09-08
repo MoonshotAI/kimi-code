@@ -212,6 +212,29 @@ describe('NotifyPanelComponent', () => {
     expect(panel.remove('missing')).toBe(false);
   });
 
+  it('clamps the page when the newest entry is removed', () => {
+    const panel = new NotifyPanelComponent();
+    panel.upsert(entry('tc-1', 'first'));
+    panel.upsert(entry('tc-2', 'second'));
+    expect(titleOf(panel)).toContain('Updates 2/2');
+
+    expect(panel.remove('tc-2')).toBe(true);
+    expect(titleOf(panel)).toContain('Updates 1/1');
+    expect(panel.nextPage()).toBe(false);
+  });
+
+  it('releases focus when removal empties the panel', () => {
+    const panel = new NotifyPanelComponent();
+    panel.upsert(entry('tc-1', 'only'));
+    expect(panel.focus()).toBe(true);
+
+    expect(panel.remove('tc-1')).toBe(true);
+    expect(panel.isEmpty()).toBe(true);
+    expect(panel.isFocused()).toBe(false);
+    expect(panel.prevPage()).toBe(false);
+    expect(panel.nextPage()).toBe(false);
+  });
+
   it('dims to a stub and notes the ended turn, and clears wholesale', () => {
     const panel = new NotifyPanelComponent();
     panel.upsert(entry('tc-1', 'done with phase one'));
