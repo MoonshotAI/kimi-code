@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-minidb 读模型和全局搜索 worker 目前从实验特性转换为正式特性引入。
+The minidb session-index read model and global search worker are now always on; the experimental flags have been replaced by the `[database]` config section and the `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` / `KIMI_CODE_SEARCH_WORKER` env vars.

@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Remote Control 目前从实验特性转换为正式特性引入。
+Remote Control is now always on; the experimental `KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL` flag has been removed.
