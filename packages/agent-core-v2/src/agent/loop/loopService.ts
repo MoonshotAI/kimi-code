@@ -431,12 +431,26 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     pending: { readonly id: number; readonly queueItemId?: string },
     outcome: { readonly outcome: MachineTurnOutcome; readonly error?: unknown },
   ): void {
-    if (pending.queueItemId === undefined) return;
     const active = this.active;
     if (active !== undefined) {
       active.afterChain = active.afterChain.then(() => {
         this.settleUnboundReservation(pending, outcome);
       });
+      return;
+    }
+    if (pending.queueItemId === undefined) {
+      const seeded = this.nudges.slice(this.nudgeCursor).find(
+        (nudge) => !nudge.dropped && nudge.contextMessage !== undefined && nudge.contextMessage.content.length > 0,
+      );
+      if (seeded === undefined) return;
+      this.beginActiveTurn(
+        this.createSeededReservation(seeded.contextMessage as ContextMessage),
+        pending.id,
+      );
+      const seededTurn = this.active;
+      if (seededTurn === undefined) return;
+      this.mirrorConsumedNudges(seededTurn);
+      this.endPreGateTurn(seededTurn, outcome);
       return;
     }
     const index = this.reservations.findIndex(
@@ -450,11 +464,18 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.materializeMessage(reservation.message);
     const turn = this.active;
     if (turn === undefined) return;
+    this.endPreGateTurn(turn, outcome);
+  }
+
+  private endPreGateTurn(
+    turn: ActiveTurn,
+    outcome: { readonly outcome: MachineTurnOutcome; readonly error?: unknown },
+  ): void {
     if (outcome.outcome === 'aborted') {
-      const reason = reservation.controller.signal.aborted
-        ? reservation.controller.signal.reason
+      const reason = turn.controller.signal.aborted
+        ? turn.controller.signal.reason
         : abortError('Turn aborted');
-      reservation.controller.abort(reason);
+      turn.controller.abort(reason);
       turn.afterChain = turn.afterChain.then(() =>
         this.endTurn(turn, { type: 'cancelled', steps: 0, reason }),
       );
@@ -654,7 +675,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       this.machineTurnSuppressed = true;
       return false;
     }
-    const message = seeded.contextMessage as ContextMessage;
+    this.beginActiveTurn(
+      this.createSeededReservation(seeded.contextMessage as ContextMessage),
+      pending.id,
+    );
+    return true;
+  }
+
+  private createSeededReservation(message: ContextMessage): TurnReservation {
     const controller = new AbortController();
     const ready = createControlledPromise<void>();
     const result = createControlledPromise<TurnResult>();
@@ -680,8 +708,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       result,
       turn,
     };
-    this.beginActiveTurn(reservation, pending.id);
-    return true;
+    return reservation;
   }
 
   private beginActiveTurn(reservation: TurnReservation, id: number): void {
@@ -977,6 +1004,16 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         };
         turn.current = undefined;
         this.machineEngine().abort();
+        return;
+      }
+      case 'recovering': {
+        const turn = this.active;
+        const step = turn?.current;
+        if (turn === undefined) return;
+        if (step !== undefined) {
+          this.closeFailedMachineStep(turn, step, 'error');
+        }
+        turn.current = undefined;
         return;
       }
       case 'retrying': {

@@ -28,7 +28,7 @@ export type LlmRequestEvent =
   | { type: 'llm.streaming.finish'; finish: FinishInfo }
   | { type: 'llm.streaming.message_id'; messageId: string }
   | { type: 'llm.failed.syntax'; error: LlmErrorMessage<'syntax'> }
-  | { type: 'llm.failed.remote'; error: LlmRemoteErrorMessage }
+  | { type: 'llm.failed.remote'; error: LlmRemoteErrorMessage; rawError?: unknown }
   | { type: 'llm.done' };
 
 export interface ExtraParams {

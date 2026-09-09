@@ -95,7 +95,7 @@ function createRequestActor(
           },
         );
       } catch (error) {
-        sendBack({ type: 'llm.failed.remote', error: toLlmErrorMessage(error) });
+        sendBack({ type: 'llm.failed.remote', error: toLlmErrorMessage(error), rawError: error });
       }
     })();
   });

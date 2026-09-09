@@ -678,7 +678,7 @@ export function createTurnMachine(
                 'forwardToParent',
                 assign({
                   outcome: 'failed' as const,
-                  error: ({ event }) => event.error,
+                  error: ({ event }) => event.rawError ?? event.error,
                 }),
               ],
             },
