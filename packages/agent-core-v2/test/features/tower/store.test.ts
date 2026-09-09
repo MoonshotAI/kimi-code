@@ -1100,7 +1100,7 @@ describe('merge gate', () => {
     await cleanReview('rev', first!.branch);
 
     expect((await store.latestReview(first!.branch))?.mission).toBe('M2');
-    await expect(store.merge(first!.branch)).rejects.toThrow(/written for M2/);
+    await expect(store.merge(first!.branch)).rejects.toThrow(/no review/);
     expect((await store.load()).missions.find((m) => m.id === first!.id)?.status).not.toBe(
       'merged',
     );
@@ -1176,7 +1176,7 @@ describe('merge gate', () => {
     expect((await store.load()).missions.find((m) => m.id === live.id)?.status).toBe('completed');
   });
 
-  it('refuses to merge when the latest clean review was stamped for a different mission', async () => {
+  it('refuses to merge when the only review was stamped for a different mission', async () => {
     const [stale] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
     const state = await store.load();
     await store.addWorktree(stale!.worktree, stale!.branch, state.base);
@@ -1199,9 +1199,74 @@ describe('merge gate', () => {
     };
     await spliceMissionIntoState(live);
 
-    await expect(store.merge(stale!.branch)).rejects.toThrow(/written for M1/);
+    await expect(store.merge(stale!.branch)).rejects.toThrow(/no review/);
     const after = await store.load();
     expect(after.missions.find((m) => m.id === live.id)?.status).toBe('completed');
+  });
+
+  it('selects the review stamped for the mission being merged over higher-round reviews stamped for a closed sibling', async () => {
+    const [stale] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    const state = await store.load();
+    await store.addWorktree(stale!.worktree, stale!.branch, state.base);
+    await commitFile(worktreeOf(stale!), 'src/x/x.ts', 'x\n', 'work on M1');
+    await store.registerAgent(
+      rosterEntry({ name: 'rev-old', kind: 'reviewer', reviewTarget: stale!.branch, reviewMissionId: 'M1' }),
+    );
+    for (let round = 0; round < 5; round++) await cleanReview('rev-old', stale!.branch);
+
+    await store.updateMission('tower', stale!.id, { status: 'abandoned' });
+    const live: TowerMission = {
+      ...stale!,
+      id: 'M2',
+      worktree: 'wt-2',
+      status: 'completed',
+      tasks: [],
+      notes: [],
+      blockers: [],
+    };
+    await spliceMissionIntoState(live);
+    await store.registerAgent(
+      rosterEntry({ name: 'rev-new', kind: 'reviewer', reviewTarget: stale!.branch, reviewMissionId: 'M2' }),
+    );
+    await cleanReview('rev-new', stale!.branch);
+
+    await store.merge(stale!.branch);
+
+    const after = await store.load();
+    expect(after.missions.find((m) => m.id === live.id)?.status).toBe('merged');
+    expect(after.missions.find((m) => m.id === stale!.id)?.status).toBe('abandoned');
+  });
+
+  it('prefers a mission-stamped clean review over a higher-round unstamped legacy review', async () => {
+    const [stale] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    const state = await store.load();
+    await store.addWorktree(stale!.worktree, stale!.branch, state.base);
+    await commitFile(worktreeOf(stale!), 'src/x/x.ts', 'x\n', 'work on M1');
+    await store.registerAgent(
+      rosterEntry({ name: 'rev-old', kind: 'reviewer', reviewTarget: stale!.branch }),
+    );
+    for (let round = 0; round < 3; round++) await cleanReview('rev-old', stale!.branch);
+    expect((await store.latestReview(stale!.branch))?.mission).toBeUndefined();
+
+    await store.updateMission('tower', stale!.id, { status: 'abandoned' });
+    const live: TowerMission = {
+      ...stale!,
+      id: 'M2',
+      worktree: 'wt-2',
+      status: 'completed',
+      tasks: [],
+      notes: [],
+      blockers: [],
+    };
+    await spliceMissionIntoState(live);
+    await store.registerAgent(
+      rosterEntry({ name: 'rev-new', kind: 'reviewer', reviewTarget: stale!.branch, reviewMissionId: 'M2' }),
+    );
+    await cleanReview('rev-new', stale!.branch);
+
+    await store.merge(stale!.branch);
+
+    expect((await store.load()).missions.find((m) => m.id === live.id)?.status).toBe('merged');
   });
 
   it('refuses to merge a branch owned only by closed missions and leaves their records untouched', async () => {

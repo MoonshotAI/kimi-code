@@ -965,7 +965,11 @@ export class TowerStore {
       return { mergeCommit: tip, conflictsWith: [], noop: true };
     }
 
-    const review = await this.latestReview(branch);
+    const reviews = await this.reviewsFor(branch);
+    const stamped = reviews.filter((r) => r.mission === mission.id);
+    const candidates =
+      stamped.length > 0 ? stamped : reviews.filter((r) => r.mission === undefined);
+    const review = candidates.at(-1);
     if (review === undefined) {
       throw await block(
         'no-review',
@@ -986,12 +990,6 @@ export class TowerStore {
       );
     }
     const siblingMissions = state.missions.filter((m) => m.branch === branch && m.id !== mission.id);
-    if (review.mission !== undefined && review.mission !== mission.id) {
-      throw await block(
-        'review-mission-mismatch',
-        `merge blocked: latest clean review (round ${review.round} by ${review.reviewer}) was written for ${review.mission}, but "${branch}" resolves to ${mission.id} — re-review the mission being merged`,
-      );
-    }
     if (review.mission === undefined && siblingMissions.length > 0) {
       throw await block(
         'review-mission-mismatch',
