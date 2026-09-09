@@ -194,6 +194,30 @@ describe('server-v2 /api/v1 skills', () => {
         },
       ]);
     });
+
+    it('normalizes a non-string skill type so the response still parses', async () => {
+      const workspaceDir = await makeWorkspaceDir();
+      await seedInvalidProjectSkill(
+        workspaceDir,
+        'numeric-type',
+        '---\nname: numeric-type\ndescription: bad type\ntype: 123\n---\nbody',
+      );
+      const id = await createSession(workspaceDir);
+
+      const { body } = await getJson<{ skills: SkillWire[] }>(
+        `/api/v1/sessions/${id}/skills`,
+      );
+      expect(body.code).toBe(0);
+      const parsed = listSkillsResponseSchema.parse(body.data);
+      const invalid = parsed.invalid_skills.filter((s) => s.path.startsWith(workspaceDir));
+      expect(invalid).toEqual([
+        {
+          path: join(workspaceDir, '.kimi-code', 'skills', 'numeric-type', 'SKILL.md'),
+          type: '123',
+          reason: 'unsupported skill type "123"',
+        },
+      ]);
+    });
   });
 
   describe('POST /api/v1/sessions/{sid}/skills/{name}:activate', () => {

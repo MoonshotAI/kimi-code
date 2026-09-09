@@ -296,4 +296,26 @@ describe('FileSkillDiscovery', () => {
     ]);
     expect(warnings).toEqual([]);
   });
+
+  it('normalizes a non-string skill type to a string in the skipped entry', async () => {
+    await writeSkill('skills/numeric/SKILL.md', 'name: numeric\ndescription: num\ntype: 123');
+    await writeSkill('skills/object/SKILL.md', 'name: object\ndescription: obj\ntype: {}');
+
+    const result = await discover([skillRoot('skills')]);
+
+    expect(result.skills).toEqual([]);
+    expect(result.skipped).toEqual([
+      {
+        path: join(root, 'skills/numeric/SKILL.md'),
+        type: '123',
+        reason: 'unsupported skill type "123"',
+      },
+      {
+        path: join(root, 'skills/object/SKILL.md'),
+        type: '{}',
+        reason: 'unsupported skill type "{}"',
+      },
+    ]);
+    expect(warnings).toEqual([]);
+  });
 });
