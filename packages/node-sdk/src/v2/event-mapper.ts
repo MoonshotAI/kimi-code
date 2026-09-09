@@ -19,17 +19,15 @@ import type { Event2 } from '@moonshot-ai/agent-core-v2';
 
 /**
  * DomainEvent types the v1 SDK event stream never carries:
- * - v2-internal facts with no v1 protocol counterpart: `agent.activity.updated`
- *   (kap-server folds it into the `agent.status.updated` phase slice at the WS
- *   edge), `context.spliced`, `task.notified`, `plan.revision`, and the
- *   `permission.approval.*` pair (v1 surfaces approvals through the
- *   `requestApproval` callback, never as events).
+ * - v2-internal facts with no v1 protocol counterpart: `context.spliced`,
+ *   `task.notified`, `plan.revision`, and the `permission.approval.*` pair
+ *   (v1 surfaces approvals through the `requestApproval` callback, never as
+ *   events).
  * - `prompt.*`: the v2 prompt service publishes them on the agent bus, but in
  *   v1 they are synthesized by the daemon services layer onto the global
  *   `IEventService` — the in-process SDK client never sees them.
  */
 const DROPPED_DOMAIN_EVENT_TYPES: ReadonlySet<string> = new Set([
-  'agent.activity.updated',
   'context.spliced',
   'task.notified',
   'plan.revision',

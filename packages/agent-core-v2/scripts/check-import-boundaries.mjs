@@ -31,6 +31,7 @@ const HUMAN_VOCABULARY = new Set([
   'interaction/machine',
   'interaction/facade',
   'utils/watch',
+  'xstate2',
 ]);
 
 const V2_ONLY_FIRST_SEGMENTS = new Set([

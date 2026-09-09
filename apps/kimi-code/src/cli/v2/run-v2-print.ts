@@ -592,6 +592,10 @@ async function runNativeTurn(
     // final message.
     writer.flushAssistant();
     if (result.type === 'completed') {
+      const skipTurnId = turn.id;
+      if (skipTurnId === undefined) {
+        throw new Error('Prompt turn ended before it started');
+      }
       const configService = app.accessor.get(IConfigService);
       const taskConfig = resolveAgentTaskConfig(configService);
       const goalService = agent.accessor.get(IAgentGoalService);
@@ -604,7 +608,7 @@ async function runNativeTurn(
           countPending: () => countPendingBackgroundTasks(session),
           drain: () => drainBackgroundTasks(session, taskConfig?.printWaitCeilingS),
           turnEndings,
-          skipTurnId: turn.id,
+          skipTurnId,
           warn: (message) => stderr.write(`Warning: ${message}\n`),
           now: () => Date.now(),
           goalActive: () => goalService.getGoal().goal?.status === 'active',
@@ -1014,7 +1018,7 @@ async function quiesceSessionAgents(
   for (;;) {
     await Promise.allSettled(promptServices.map((service) => service.drain()));
     for (const loop of loops) {
-      for (const turnId of loop.status().pendingTurnIds) loop.cancel(turnId);
+      for (const queueId of loop.status().pendingPromptIds) loop.cancelQueued(queueId);
       loop.cancel();
     }
     await Promise.allSettled(loops.map((loop) => loop.settled()));

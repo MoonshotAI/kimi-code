@@ -4,12 +4,8 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
-import {
-  LATEST_OPUS_PROFILE,
-  matchKnownAnthropicModelProfile,
-  matchUnknownClaudeProfile,
-} from '#human/llm/requester/bases/anthropic/profile';
 
+import type { CatalogModel, CatalogProviderInfo } from '#human/llm/provider-catalog';
 import type { ModelCapability } from '../contract/capability';
 import { CONFIG_INVALID_ERROR_CODE } from '../contract/errors';
 import type { TokenUsage } from '#human/llm/usage';
@@ -18,10 +14,7 @@ import {
   type Protocol,
   type ProtocolProviderOptions,
 } from '../protocol/protocol';
-import {
-  IProviderService,
-  type ProviderConfig,
-} from '../provider/provider';
+import { IProviderService } from '../provider/provider';
 import {
   getProviderDefinition,
   resolveProviderEndpoint,
@@ -42,30 +35,22 @@ import {
   toProtocolModelFallback,
   toProtocolProvider,
 } from './catalog';
+import { IProviderCatalogRuntime, rawRecordOf } from './catalog-runtime';
 import { ModelCatalogErrors } from './errors';
 import { IHostRequestHeaders } from './host-request-headers';
-import {
-  assembleModelInspection,
-  attributeEffectiveFields,
-  attributeProviderOptions,
-  type ModelInspection,
-  ResolutionTraceCollector,
-  TRACE,
-} from './inspection';
 import { IModelService, type ModelRecord } from './model';
 import {
   deriveProviderId,
-  effectiveModelConfig,
   nonEmpty,
   resolveEndpointBaseUrl,
   resolveModelAuthMaterial,
   resolveModelProtocol,
+  withAnthropicProfile,
 } from './model-auth';
 import { IModelOAuthTokens } from './model-oauth';
 import type { ResolvedModelAuthMaterial } from './model.types';
 import type { ModelRequester } from './model-requester';
 import { ModelRequesterImpl } from './model-requester-impl';
-import { drivesThinkingThroughTraits } from './thinking';
 
 type MutableProtocolProviderOptions = {
   -readonly [K in keyof ProtocolProviderOptions]: ProtocolProviderOptions[K];
@@ -74,7 +59,6 @@ type MutableProtocolProviderOptions = {
 interface CatalogEntry {
   readonly model: Model;
   readonly requester: ModelRequester;
-  readonly trace: ResolutionTraceCollector;
 }
 
 export class ModelCatalog extends Disposable implements IModelCatalog {
@@ -83,6 +67,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
   private readonly cache = new Map<string, CatalogEntry>();
 
   constructor(
+    @IProviderCatalogRuntime private readonly runtime: IProviderCatalogRuntime,
     @IProviderService private readonly providers: IProviderService,
     @IModelService private readonly models: IModelService,
     @IModelOAuthTokens private readonly oauth: IModelOAuthTokens,
@@ -91,12 +76,25 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     @IHostRequestHeaders private readonly hostRequestHeaders: IHostRequestHeaders,
   ) {
     super();
-    this._register(this.models.onDidChangeModels(() => this.notifyConfigChanged()));
-    this._register(this.providers.onDidChangeProviders(() => this.notifyConfigChanged()));
+    this._register(
+      this.runtime.onChanged((event) => {
+        this.invalidate(event.providers);
+      }),
+    );
   }
 
   notifyConfigChanged(): void {
-    this.cache.clear();
+    this.runtime.resync();
+  }
+
+  private invalidate(providerIds: readonly string[]): void {
+    if (providerIds.length === 0) return;
+    const changed = new Set(providerIds);
+    for (const [alias, entry] of this.cache) {
+      if (changed.has(entry.model.providerName)) {
+        this.cache.delete(alias);
+      }
+    }
   }
 
   get(id: string): Model {
@@ -109,30 +107,28 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
 
   findByName(name: string): readonly string[] {
     const out: string[] = [];
-    for (const [id, m] of Object.entries(this.models.list())) {
-      const alias = m.name === name || m.model === name || (m.aliases ?? []).includes(name);
-      if (alias) out.push(id);
+    for (const alias of this.runtime.aliases()) {
+      const definition = this.runtime.lookup(alias);
+      if (definition === undefined) continue;
+      const record = rawRecordOf(definition);
+      if (record.name === name || record.model === name || (record.aliases ?? []).includes(name)) {
+        out.push(alias);
+      }
     }
     return out;
   }
 
   private entry(id: string): CatalogEntry {
+    this.runtime.sync();
     const cached = this.cache.get(id);
     if (cached !== undefined) return cached;
-    const trace = new ResolutionTraceCollector();
-    const model = this.buildModel(id, trace);
+    const model = this.buildModel(id);
     const entry: CatalogEntry = {
       model,
       requester: new ModelRequesterImpl(model, this.protocolRegistry),
-      trace,
     };
     this.cache.set(id, entry);
     return entry;
-  }
-
-  inspect(id: string): ModelInspection {
-    const { model, trace } = this.entry(id);
-    return assembleModelInspection({ id, model, trace });
   }
 
   async ping(id: string): Promise<ModelPingResult> {
@@ -170,49 +166,58 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
   }
 
   async listModels(): Promise<readonly ModelCatalogItem[]> {
-    const models = this.models.list();
-    return Object.entries(models).map(([modelId, record]) => {
+    const out: ModelCatalogItem[] = [];
+    for (const modelId of this.runtime.aliases()) {
+      const definition = this.runtime.lookup(modelId);
+      if (definition === undefined) continue;
+      const record = rawRecordOf(definition);
       const providerType = this.providerTypeOf(record);
       try {
-        return toProtocolModel(this.get(modelId), record, providerType);
+        out.push(toProtocolModel(this.get(modelId), record, providerType));
       } catch {
-        return toProtocolModelFallback(modelId, record, providerType);
+        out.push(toProtocolModelFallback(modelId, record, providerType));
       }
-    });
+    }
+    return out;
   }
 
   async listProviders(): Promise<readonly ProviderCatalogItem[]> {
-    const providers = this.providers.list();
-    const models = this.models.list();
+    const records = this.allRecords();
     const globalDefaultModel = this.models.getDefaultModel();
     const out: ProviderCatalogItem[] = [];
-    for (const [providerId, provider] of Object.entries(providers)) {
-      out.push(await this.toCatalogProvider(providerId, provider, models, globalDefaultModel));
+    for (const providerId of this.runtime.providerIds()) {
+      const provider = this.runtime.providerInfo(providerId);
+      if (provider === undefined) continue;
+      out.push(await this.toCatalogProvider(providerId, provider, records, globalDefaultModel));
     }
     return out;
   }
 
   async getProvider(providerId: string): Promise<ProviderCatalogItem> {
-    const provider = this.providers.get(providerId);
+    const provider = this.runtime.providerInfo(providerId);
     if (provider === undefined) {
       throw new Error2(
         ModelCatalogErrors.codes.PROVIDER_NOT_FOUND,
         `provider ${providerId} does not exist`,
       );
     }
-    const models = this.models.list();
-    const globalDefaultModel = this.models.getDefaultModel();
-    return this.toCatalogProvider(providerId, provider, models, globalDefaultModel);
+    return this.toCatalogProvider(
+      providerId,
+      provider,
+      this.allRecords(),
+      this.models.getDefaultModel(),
+    );
   }
 
   async setDefaultModel(modelId: string): Promise<SetDefaultModelResponse> {
-    const record = this.models.get(modelId);
-    if (record === undefined) {
+    const definition = this.runtime.lookup(modelId);
+    if (definition === undefined) {
       throw new Error2(
         ModelCatalogErrors.codes.MODEL_NOT_FOUND,
         `model ${modelId} does not exist`,
       );
     }
+    const record = rawRecordOf(definition);
     const model = this.get(modelId);
     await this.models.setDefaultModel(modelId);
     return {
@@ -221,9 +226,18 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     };
   }
 
+  private allRecords(): Readonly<Record<string, ModelRecord>> {
+    const out: Record<string, ModelRecord> = {};
+    for (const alias of this.runtime.aliases()) {
+      const definition = this.runtime.lookup(alias);
+      if (definition !== undefined) out[alias] = rawRecordOf(definition);
+    }
+    return out;
+  }
+
   private async toCatalogProvider(
     providerId: string,
-    provider: ProviderConfig,
+    provider: CatalogProviderInfo,
     models: Readonly<Record<string, ModelRecord>>,
     globalDefaultModel: string | undefined,
   ): Promise<ProviderCatalogItem> {
@@ -233,7 +247,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
 
   private async resolveCredential(
     providerId: string,
-    provider: ProviderConfig,
+    provider: CatalogProviderInfo,
   ): Promise<ProviderCredentialState> {
     return {
       hasApiKey: hasConfiguredApiKey(provider),
@@ -241,7 +255,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     };
   }
 
-  private async hasCachedToken(providerId: string, provider: ProviderConfig): Promise<boolean> {
+  private async hasCachedToken(providerId: string, provider: CatalogProviderInfo): Promise<boolean> {
     if (provider.oauth === undefined) return false;
     return this.oauth.hasCachedAccessToken(providerId, provider.oauth);
   }
@@ -249,54 +263,36 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
   private providerTypeOf(record: ModelRecord): string | undefined {
     const providerId =
       record.providerId ?? record.provider ?? this.providers.getDefaultProvider();
-    return this.providers.get(providerId ?? '')?.type ?? record.protocol;
+    return this.runtime.providerInfo(providerId ?? '')?.type ?? record.protocol;
   }
 
-  private buildModel(id: string, trace: ResolutionTraceCollector): Model {
-    const configuredModel = this.models.get(id);
-    if (configuredModel === undefined) {
+  private buildModel(id: string): Model {
+    const definition = this.runtime.lookup(id);
+    if (definition === undefined) {
       throw new Error2(
         CONFIG_INVALID_ERROR_CODE,
         `Model "${id}" is not configured in config.toml.`,
         { details: { model: id } },
       );
     }
-    trace.capture(TRACE.configuredModel, configuredModel);
-    trace.record('model.record', { kind: 'config', detail: '[models.*] section' });
+    const configuredModel = rawRecordOf(definition);
 
-    const routingModel = effectiveModelConfig(configuredModel);
     const { providerConfig, providerName, resolvedBaseUrl: rawBaseUrl } =
-      this.resolveProviderContext(id, routingModel, trace);
-    trace.capture(TRACE.providerConfig, providerConfig);
-    trace.capture(TRACE.providerName, providerName);
-    trace.capture(TRACE.rawBaseUrl, rawBaseUrl);
+      this.resolveProviderContext(id, configuredModel);
 
-    const protocol = this.resolveProtocol(id, routingModel, providerConfig, trace);
-    const model = effectiveModelConfig(
-      configuredModel,
+    const protocol = this.resolveProtocol(id, configuredModel, providerConfig);
+    const model = withAnthropicProfile(
+      effectiveRecordOf(definition),
       providerConfig?.type ?? configuredModel.protocol,
     );
-    trace.capture(TRACE.effectiveModel, model);
     const wireName = model.name ?? model.model;
-    const profileAttribution = profileForAttribution(configuredModel, providerConfig, wireName);
-    attributeEffectiveFields(
-      trace,
-      configuredModel,
-      model,
-      profileAttribution.profile,
-      profileAttribution.inferred,
-    );
 
-    const auth = resolveModelAuthMaterial(
-      {
-        modelId: id,
-        model,
-        provider: providerConfig,
-        providerName,
-      },
-      trace,
-    );
-    trace.capture(TRACE.authMaterial, auth);
+    const auth = resolveModelAuthMaterial({
+      modelId: id,
+      model,
+      provider: providerConfig,
+      providerName,
+    });
     const authProvider = this.buildAuthProvider(providerName, auth);
 
     const providerType = providerConfig?.type ?? protocol;
@@ -317,16 +313,14 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       );
     }
 
-    const explainedCapability = this.protocolRegistry.explainCapability(
+    const detectedCapability = this.protocolRegistry.resolveCapability(
       protocol,
       wireName,
       providerType,
     );
-    trace.capture(TRACE.detectedCapability, explainedCapability.capability);
-    trace.capture(TRACE.capabilitySource, explainedCapability.source);
     const capabilities = resolveModelCapabilities(
       model.capabilities,
-      explainedCapability.capability,
+      detectedCapability,
       model.maxContextSize,
       model.maxInputSize,
     );
@@ -336,14 +330,8 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       providerConfig,
       resolvedBaseUrl,
     );
-    if (providerOptions !== undefined) {
-      attributeProviderOptions(trace, providerOptions, providerConfig?.env);
-    }
     const declared = new Set((model.capabilities ?? []).map((c) => c.trim().toLowerCase()));
 
-    trace.capture(TRACE.hostHeaders, this.hostRequestHeaders.headers);
-    trace.capture(TRACE.thirdPartyHeaders, this.hostRequestHeaders.thirdPartyHeaders);
-    trace.capture(TRACE.identitySlug, this.hostRequestHeaders.identitySlug);
     return {
       id,
       name: wireName,
@@ -374,37 +362,26 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
   private resolveProviderContext(
     id: string,
     model: ModelRecord,
-    trace: ResolutionTraceCollector,
   ): {
-    readonly providerConfig: ProviderConfig | undefined;
+    readonly providerConfig: CatalogProviderInfo | undefined;
     readonly providerName: string;
     readonly resolvedBaseUrl: string | undefined;
   } {
     const providerId =
       model.providerId ?? model.provider ?? this.providers.getDefaultProvider();
     if (providerId !== undefined) {
-      trace.record('provider', {
-        kind: 'config',
-        detail:
-          model.providerId !== undefined
-            ? `model.providerId '${providerId}'`
-            : model.provider !== undefined
-              ? `model.provider '${providerId}'`
-              : `[defaultProvider] '${providerId}'`,
-      });
-      trace.capture(TRACE.providerSynthesized, false);
-      const providerConfig = this.providers.get(providerId);
+      const providerConfig = this.runtime.providerInfo(providerId);
       if (providerConfig === undefined) {
         throw new Error2(
           CONFIG_INVALID_ERROR_CODE,
           `Provider "${providerId}" referenced by model "${id}" is not configured.`,
         );
       }
-      const endpoint = resolveEndpointBaseUrl(model, providerConfig, providerId);
-      if (endpoint.source !== undefined) {
-        trace.record('resolved.baseUrl', endpoint.source);
-      }
-      return { providerConfig, providerName: providerId, resolvedBaseUrl: endpoint.baseUrl };
+      return {
+        providerConfig,
+        providerName: providerId,
+        resolvedBaseUrl: resolveEndpointBaseUrl(model, providerConfig),
+      };
     }
 
     const modelBaseUrl = nonEmpty(model.baseUrl);
@@ -414,16 +391,9 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
         `Model "${id}" must set either providerId or baseUrl in config.toml.`,
       );
     }
-    trace.record('provider', {
-      kind: 'synthesized',
-      detail: 'flat model — provider synthesized from the baseUrl host',
-    });
-    trace.capture(TRACE.providerSynthesized, true);
-    trace.record('resolved.baseUrl', { kind: 'config', detail: 'model.baseUrl (flat)' });
-    const originName = deriveProviderId(modelBaseUrl);
     return {
       providerConfig: undefined,
-      providerName: originName,
+      providerName: deriveProviderId(modelBaseUrl),
       resolvedBaseUrl: modelBaseUrl,
     };
   }
@@ -431,18 +401,16 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
   private resolveProtocol(
     id: string,
     model: ModelRecord,
-    provider: ProviderConfig | undefined,
-    trace: ResolutionTraceCollector,
+    provider: CatalogProviderInfo | undefined,
   ): Protocol {
-    const resolution = resolveModelProtocol(model, provider);
-    if (resolution === undefined) {
+    const protocol = resolveModelProtocol(model, provider);
+    if (protocol === undefined) {
       throw new Error2(
         CONFIG_INVALID_ERROR_CODE,
         `Model "${id}" must declare a wire protocol (config: models.<id>.protocol).`,
       );
     }
-    trace.record('resolved.protocol', resolution.source);
-    return resolution.protocol;
+    return protocol;
   }
 
   private buildAuthProvider(providerName: string, auth: ResolvedModelAuthMaterial): AuthProvider {
@@ -504,10 +472,29 @@ function stripTrailingV1(baseUrl: string): string {
   return baseUrl.replace(/\/v1\/?$/, '');
 }
 
+function effectiveRecordOf(definition: CatalogModel): ModelRecord {
+  const raw = rawRecordOf(definition);
+  const { overrides, ...base } = raw;
+  return {
+    ...base,
+    capabilities: overrides?.capabilities ?? raw.capabilities,
+    maxContextSize: definition.maxContextSize,
+    maxInputSize: definition.maxInputSize,
+    maxOutputSize: definition.maxOutputSize,
+    displayName: definition.displayName,
+    reasoningKey: definition.reasoningKey,
+    adaptiveThinking: definition.adaptiveThinking,
+    supportEfforts:
+      definition.supportEfforts === undefined ? undefined : [...definition.supportEfforts],
+    defaultEffort: definition.defaultEffort,
+    offEffort: definition.offEffort,
+  };
+}
+
 function buildProtocolProviderOptions(
   model: ModelRecord,
   protocol: Protocol,
-  provider: ProviderConfig | undefined,
+  provider: CatalogProviderInfo | undefined,
   baseUrl: string | undefined,
 ): ProtocolProviderOptions | undefined {
   const options: MutableProtocolProviderOptions = {};
@@ -549,38 +536,18 @@ function buildProtocolProviderOptions(
     : undefined;
 }
 
-function profileForAttribution(
-  configuredModel: ModelRecord,
-  providerConfig: ProviderConfig | undefined,
-  wireName: string | undefined,
-): { readonly profile: typeof LATEST_OPUS_PROFILE | undefined; readonly inferred: boolean } {
-  if (wireName === undefined) return { profile: undefined, inferred: false };
-  const profileArg = providerConfig?.type ?? configuredModel.protocol;
-  const gateProtocol = configuredModel.protocol ?? profileArg;
-  const known = matchKnownAnthropicModelProfile(wireName);
-  const infer =
-    profileArg !== undefined &&
-    !drivesThinkingThroughTraits(profileArg) &&
-    gateProtocol === 'anthropic';
-  if (infer) {
-    const fallback = known ?? matchUnknownClaudeProfile(wireName);
-    return { profile: fallback, inferred: known === undefined && fallback !== undefined };
-  }
-  return { profile: known, inferred: false };
-}
-
-function vertexAIProject(provider: ProviderConfig | undefined): string | undefined {
+function vertexAIProject(provider: CatalogProviderInfo | undefined): string | undefined {
   return envValue(provider?.env, 'GOOGLE_CLOUD_PROJECT');
 }
 
 function vertexAILocation(
-  provider: ProviderConfig | undefined,
+  provider: CatalogProviderInfo | undefined,
   baseUrl: string | undefined,
 ): string | undefined {
   return envValue(provider?.env, 'GOOGLE_CLOUD_LOCATION') ?? locationFromVertexAIBaseUrl(baseUrl);
 }
 
-function envValue(env: Record<string, string> | undefined, key: string): string | undefined {
+function envValue(env: Readonly<Record<string, string>> | undefined, key: string): string | undefined {
   return nonEmpty(env?.[key]);
 }
 
@@ -596,7 +563,7 @@ function locationFromVertexAIBaseUrl(baseUrl: string | undefined): string | unde
   }
 }
 
-function hasConfiguredApiKey(provider: ProviderConfig): boolean {
+function hasConfiguredApiKey(provider: CatalogProviderInfo): boolean {
   if (nonEmpty(provider.apiKey) !== undefined) return true;
   if (provider.type === undefined) return false;
   return resolveProviderEndpoint(provider.type, provider.env ?? {}).apiKey !== undefined;

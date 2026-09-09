@@ -6,6 +6,22 @@ import type { FinishReason } from '#human/llm/finish-reason';
 import type { TokenUsage } from '#human/llm/usage';
 import type { Hooks } from '#/hooks';
 import { LoopErrors } from './errors';
+import type { MachineEngineRetrySnapshot, MachineEngineToolCallSnapshot } from './machine/engine';
+
+export interface AgentActivityTurnSnapshot {
+  readonly turnId: number;
+  readonly phase: 'running' | 'tool_call' | 'retrying';
+  readonly step: number;
+  readonly ending: boolean;
+  readonly endingReason?: 'aborted';
+  readonly retry?: MachineEngineRetrySnapshot;
+  readonly activeToolCalls: readonly MachineEngineToolCallSnapshot[];
+  readonly since?: number;
+}
+
+export interface AgentActivitySnapshot {
+  readonly turn?: AgentActivityTurnSnapshot;
+}
 
 export type LoopErrorCode = (typeof LoopErrors.codes)[keyof typeof LoopErrors.codes];
 
@@ -83,7 +99,7 @@ export type LoopRunResult =
 export type TurnResult = LoopRunResult;
 
 export interface Turn {
-  readonly id: number;
+  readonly id?: number;
   readonly state?: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
   readonly signal: AbortSignal;
   readonly ready: Promise<void>;
@@ -94,7 +110,7 @@ export interface Turn {
 export interface AgentLoopStatus {
   readonly state: 'idle' | 'running';
   readonly activeTurnId?: number;
-  readonly pendingTurnIds: readonly number[];
+  readonly pendingPromptIds: readonly string[];
   readonly hasPendingRequests: boolean;
   readonly activeTraceId?: string;
 }
@@ -130,9 +146,13 @@ export interface IAgentLoopService {
 
   cancel(turnId?: number, reason?: unknown): boolean;
 
+  cancelQueued(queueId: string, reason?: unknown): boolean;
+
   cancelFromUser(turnId?: number): void;
 
   status(): AgentLoopStatus;
+
+  activitySnapshot(): AgentActivitySnapshot;
 
   tryAcquireQuiescence(): IDisposable | undefined;
 

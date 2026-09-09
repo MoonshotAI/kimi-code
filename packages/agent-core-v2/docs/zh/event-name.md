@@ -7,7 +7,7 @@ agent-core-v2 各 XState 状态机中状态、事件、action、guard、被 invo
 按**接收方拿事件做什么**分类，而不是按是否携带 payload。
 
 1. **命令 —— 动词原形**。要求接收方做事。例：`input.submit`、`input.steer`、`input.abort`、`input.remind`、`tool.abort`、`turn.abort`、`turn.drain`、`turn.notify`、`turn.spawn_tools`、`context.reset`。
-2. **事实 —— 过去分词**。报告某事已发生，通常驱动转移或父级记账。例：`llm.sent`、`llm.done`、`llm.failed.syntax`、`llm.failed.remote`、`llm.retrying`、`llm.recovering`、`tool.done`、`tool.failed`、`tool.aborted`、`tool.detached`、`turn.reminders_consumed`、`todo.used`。emitted 事件天然是事实：`turn.started`、`turn.done`、`turn.failed`、`turn.aborted`、`turn.aborting`、`agent.created`、`agent.forked`、`agent.switched`、`agent.stopped`、`agent.failed`、`usage.updated`。
+2. **事实 —— 过去分词**。报告某事已发生，通常驱动转移或父级记账。例：`llm.sent`、`llm.done`、`llm.failed.syntax`、`llm.failed.remote`、`llm.retrying`、`llm.recovering`、`tool.done`、`tool.failed`、`tool.aborted`、`tool.detached`、`turn.reminders_consumed`、`todo.used`。emitted 事件天然是事实：`turn.started`、`step.started`、`turn.done`、`turn.failed`、`turn.aborted`、`turn.aborting`、`agent.created`、`agent.forked`、`agent.switched`、`agent.stopped`、`agent.failed`、`usage.updated`。
 3. **数据流 —— 名词（即数据名）**。把一份流式数据送达，接收方累积或转发。归入 `streaming` 子命名空间：`llm.streaming.part`、`llm.streaming.headers`、`llm.streaming.usage`、`llm.streaming.finish`、`llm.streaming.message_id`；另有 `tool.update`、`usage.record`。
 
 判别示例：`llm.streaming.finish` 携带完成元数据喂给累加器（数据流，名词），而 `llm.done` 是无 payload 的流终止哨兵、驱动转移（事实，过去分词）。

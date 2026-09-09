@@ -7,7 +7,6 @@ import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { Error2, ErrorCodes, toKimiErrorPayload, type KimiErrorPayload } from '#/errors';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import {
-  IAgentLoopService,
   isMaxStepsExceededError,
   type Turn,
   type TurnResult,
@@ -65,9 +64,8 @@ async function awaitRun(
 ): Promise<AgentRunCompletion> {
   const controller = new AbortController();
   const unlink = linkAbortSignal(options.signal, controller);
-  const loop = target.accessor.get(IAgentLoopService);
   const cancelTurn = (reason: unknown): void => {
-    loop.cancel(turn.id, reason);
+    turn.cancel(reason);
   };
   try {
     const result = classifyTurnResult(await awaitTurn(turn, controller, cancelTurn));

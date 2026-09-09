@@ -60,6 +60,7 @@ import { extractWsBearerToken } from './transport/ws/bearerProtocol';
 import { SessionEventBroadcaster } from './transport/ws/v1/sessionEventBroadcaster';
 import type { ConfigWarningItem } from './transport/ws/v1/events';
 import { registerWsV1, WS_PATH as WS_PATH_V1 } from './transport/ws/v1/registerWsV1';
+import { registerWsDebug, WS_DEBUG_PATH } from './transport/ws/debug/registerWsDebug';
 import { getServerVersion } from './version';
 import { classify } from './security/bindClassify';
 import {
@@ -303,6 +304,9 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   }
 
   const close = async (): Promise<void> => {
+    if (wssDebug !== undefined) {
+      for (const client of wssDebug.clients) client.terminate();
+    }
     configChangedPublisher.close();
     await remoteControlManager.close();
     await app.close();
@@ -473,6 +477,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     broadcaster,
     logger,
   });
+  const wssDebug = debugEndpoints ? registerWsDebug() : undefined;
 
   const handleUpgrade = async (
     req: IncomingMessage,
@@ -481,7 +486,9 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   ): Promise<void> => {
     const url = req.url ?? '';
     const isV1 = url === WS_PATH_V1 || url.startsWith(`${WS_PATH_V1}?`);
-    if (!isV1) {
+    const isDebug = url === WS_DEBUG_PATH || url.startsWith(`${WS_DEBUG_PATH}?`);
+    const wss = isV1 ? wssV1 : isDebug ? wssDebug : undefined;
+    if (wss === undefined) {
       socket.destroy();
       return;
     }
@@ -543,7 +550,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     }
 
     (socket as Socket).setNoDelay(true);
-    wssV1.handleUpgrade(req, socket, head, (ws) => wssV1.emit('connection', ws, req));
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   };
   app.server.on('upgrade', (req, socket, head) => {
     void handleUpgrade(req, socket, head).catch((error: unknown) =>
@@ -554,6 +561,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   app.addHook('onClose', async () => {
     connectionRegistry.closeAll('server shutting down');
     wssV1.close();
+    wssDebug?.close();
     await broadcaster.close();
   });
 

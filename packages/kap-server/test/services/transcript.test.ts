@@ -46,6 +46,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { bindSessionTranscript } from '../../src/services/transcript/coreBinding';
 import { toWireQuestion } from '../../src/protocol/question-wire';
+import type { AgentActivitySnapshot } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
+import type { LegacyActivityApproval } from '../../src/services/legacyStatus/legacyStatus';
 import {
   AgentTranscriptProjector,
   type ProjectorBusEvent,
@@ -1309,23 +1311,29 @@ describe('AgentTranscriptProjector', () => {
     expect(tx.getMeta().agent).toMatchObject({ model: 'k3', thinkingEffort: 'high' });
   });
 
-  it('maps agent.activity.updated into meta.agent.phase', () => {
-    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+  it('maps domain events into meta.agent.phase', () => {
+    let snapshot: AgentActivitySnapshot = {};
+    let approvals: readonly LegacyActivityApproval[] = [];
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID, {
+      activitySnapshot: () => snapshot,
+      pendingApprovals: () => approvals,
+    });
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
-    const turn = (overrides: Record<string, unknown>): Record<string, unknown> => ({
-      turnId: 1,
-      origin: { kind: 'user' },
-      phase: 'running',
-      step: 1,
-      ending: false,
-      pendingApprovals: [],
-      activeToolCalls: [],
-      since: 1000,
-      ...overrides,
+    const runningTurn = (overrides: Record<string, unknown>): AgentActivitySnapshot => ({
+      turn: {
+        turnId: 1,
+        phase: 'running',
+        step: 1,
+        ending: false,
+        activeToolCalls: [],
+        since: 1000,
+        ...overrides,
+      },
     });
 
-    feed(ev({ type: 'agent.activity.updated', lifecycle: 'ready', turn: turn({}), background: [] }));
+    snapshot = runningTurn({});
+    feed(ev({ type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } }));
     expect(tx.getMeta().agent?.phase).toEqual({
       kind: 'running',
       turnId: 1,
@@ -1334,22 +1342,39 @@ describe('AgentTranscriptProjector', () => {
       since: 1000,
     });
 
+    snapshot = runningTurn({
+      phase: 'retrying',
+      retry: { failedAttempt: 1, nextAttempt: 2, maxAttempts: 10, delayMs: 500 },
+    });
     feed(
       ev({
-        type: 'agent.activity.updated',
-        lifecycle: 'ready',
-        turn: turn({ phase: 'streaming', stream: 'assistant' }),
-        background: [],
+        type: 'turn.step.retrying',
+        agentId: 'main',
+        turnId: 1,
+        step: 1,
+        failedAttempt: 1,
+        nextAttempt: 2,
+        maxAttempts: 10,
+        delayMs: 500,
+        errorName: 'status',
+        errorMessage: 'boom',
       }),
     );
-    expect(tx.getMeta().agent?.phase).toMatchObject({ kind: 'streaming', stream: 'assistant' });
+    expect(tx.getMeta().agent?.phase).toMatchObject({
+      kind: 'retrying',
+      failedAttempt: 1,
+      nextAttempt: 2,
+      maxAttempts: 10,
+    });
 
+    approvals = [{ approvalId: 'ap1', toolCallId: 'c1', since: 1500 }];
     feed(
       ev({
-        type: 'agent.activity.updated',
-        lifecycle: 'ready',
-        turn: turn({ pendingApprovals: [{ approvalId: 'ap1', toolCallId: 'c1', since: 1500 }] }),
-        background: [],
+        type: 'permission.approval.requested',
+        agentId: 'main',
+        turnId: 1,
+        toolCallId: 'c1',
+        id: 'ap1',
       }),
     );
     expect(tx.getMeta().agent?.phase).toEqual({
@@ -1360,27 +1385,17 @@ describe('AgentTranscriptProjector', () => {
       since: 1500,
     });
 
-    feed(
-      ev({
-        type: 'agent.activity.updated',
-        lifecycle: 'ready',
-        lastTurn: { turnId: 1, reason: 'completed', durationMs: 100, at: 2000 },
-        background: [],
-      }),
-    );
-    expect(tx.getMeta().agent?.phase).toEqual({
+    feed(ev({ type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed', durationMs: 100 }));
+    expect(tx.getMeta().agent?.phase).toMatchObject({
       kind: 'ended',
       turnId: 1,
       reason: 'completed',
       durationMs: 100,
-      at: 2000,
     });
-    feed(ev({ type: 'agent.activity.updated', lifecycle: 'ready', background: [] }));
-    expect(tx.getMeta().agent?.phase).toEqual({ kind: 'idle' });
 
-    expect(
-      projector.map(ev({ type: 'agent.activity.updated', lifecycle: 'disposed', background: [] })),
-    ).toEqual([]);
+    snapshot = {};
+    feed(ev({ type: 'permission.approval.resolved', agentId: 'main', turnId: 1, toolCallId: 'c1', id: 'ap1', decision: 'approved' }));
+    expect(tx.getMeta().agent?.phase).toMatchObject({ kind: 'ended', turnId: 1 });
   });
 
   it('projects plan.revision as a marker and refines the active plan badge', () => {
@@ -3105,6 +3120,23 @@ describe('bindSessionTranscript', () => {
         agentScope: `agents/${id}`,
         generation: 1,
       });
+      let activity: AgentActivitySnapshot = {};
+      bus.subscribe((event) => {
+        if (event.type === 'turn.started') {
+          activity = {
+            turn: {
+              turnId: (event as { turnId?: number }).turnId ?? 0,
+              phase: 'running',
+              step: 1,
+              ending: false,
+              activeToolCalls: [],
+              since: 0,
+            },
+          };
+        } else if (event.type === 'turn.ended') {
+          activity = {};
+        }
+      });
       const handle: FakeAgentHandle = {
         id,
         context: scope.agentContext,
@@ -3114,7 +3146,11 @@ describe('bindSessionTranscript', () => {
             if (token === IAgentScopeContext) return scope;
             if (token === IEventBus) return bus;
             if (token === IAgentLoopService) {
-              return { status: () => opts?.loopStatus ?? { state: 'idle' } };
+              return {
+                status: () =>
+                  opts?.loopStatus ?? { state: activity.turn === undefined ? 'idle' : 'running' },
+                activitySnapshot: () => activity,
+              };
             }
             if (token === IAgentPromptService) {
               return {
