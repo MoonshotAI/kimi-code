@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -1323,6 +1323,61 @@ describe('merge gate', () => {
     await store.merge(mission.branch);
 
     expect((await store.load()).missions.find((m) => m.id === mission.id)?.status).toBe('merged');
+  });
+
+  it('orders reviews by their recorded sequence, not filesystem mtime', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/x.ts',
+      content: 'x\n',
+    });
+    await store.registerAgent(
+      rosterEntry({ name: 'rev-z', kind: 'reviewer', reviewTarget: mission.branch, reviewMissionId: mission.id }),
+    );
+    await store.registerAgent(
+      rosterEntry({ name: 'rev-a', kind: 'reviewer', reviewTarget: mission.branch, reviewMissionId: mission.id }),
+    );
+    await cleanReview('rev-z', mission.branch);
+    await store.submitReview('rev-a', {
+      target: mission.branch,
+      status: 'p1-1items',
+      merge: 'hold',
+      findings: 'a real problem',
+      decision: 'do not merge',
+    });
+
+    const files = await store.reviewsFor(mission.branch);
+    const earlier = files.find((r) => r.reviewer === 'rev-z')!;
+    const later = files.find((r) => r.reviewer === 'rev-a')!;
+    const now = new Date();
+    await utimes(store.abs(earlier.file), now, now);
+    await utimes(store.abs(later.file), new Date(now.getTime() - 60_000), new Date(now.getTime() - 60_000));
+
+    await expect(store.merge(mission.branch)).rejects.toThrow(/clean round is required/);
+  });
+
+  it('stamps a monotonically increasing submission sequence on reviews', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/x.ts',
+      content: 'x\n',
+    });
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: mission.branch }),
+    );
+    await cleanReview('rev', mission.branch);
+    await store.submitReview('rev', {
+      target: mission.branch,
+      status: 'p2-1items',
+      merge: 'fix-then-merge',
+      findings: 'one nit',
+      decision: 'fix first',
+    });
+
+    const reviews = await store.reviewsFor(mission.branch);
+    expect(reviews.map((r) => r.seq)).toEqual([1, 2]);
   });
 
   it('refuses to merge a branch owned only by closed missions and leaves their records untouched', async () => {

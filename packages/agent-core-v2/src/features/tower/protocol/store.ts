@@ -834,6 +834,7 @@ export class TowerStore {
     const existing = await this.reviewsFor(input.target);
     const myRounds = existing.filter((r) => r.reviewer === callerName).length;
     const round = myRounds + 1;
+    const seq = await this.nextReviewSeq();
     const reviewedCommit = await branchTip(this.repoRoot, input.target);
     const reviewMissionId =
       callerEntry === undefined
@@ -845,6 +846,7 @@ export class TowerStore {
       reviewer: callerName,
       target: input.target,
       round: String(round),
+      seq: String(seq),
       status: input.status,
       merge: input.merge,
       reviewed_commit: reviewedCommit,
@@ -899,6 +901,7 @@ export class TowerStore {
       const { fields } = parseFrontmatter(text);
       const round = Number.parseInt(fields['round'] ?? '', 10);
       if (Number.isNaN(round)) continue;
+      const seq = Number.parseInt(fields['seq'] ?? '', 10);
       const { mtimeMs } = await stat(this.abs(rel));
       reviews.push({
         reviewer: fields['reviewer'] ?? 'unknown',
@@ -910,16 +913,44 @@ export class TowerStore {
         date: fields['date'] ?? '',
         file: rel,
         mtimeMs,
+        seq: Number.isNaN(seq) ? undefined : seq,
         mission: fields['mission'],
       });
     }
-    reviews.sort((a, b) => a.mtimeMs - b.mtimeMs || a.round - b.round || a.file.localeCompare(b.file));
+    reviews.sort(
+      (a, b) =>
+        (a.seq ?? -1) - (b.seq ?? -1) ||
+        a.mtimeMs - b.mtimeMs ||
+        a.round - b.round ||
+        a.file.localeCompare(b.file),
+    );
     return reviews;
   }
 
   async latestReview(target: string): Promise<TowerReviewInfo | undefined> {
     const reviews = await this.reviewsFor(target);
     return reviews.at(-1);
+  }
+
+  private async nextReviewSeq(): Promise<number> {
+    let files: string[];
+    try {
+      files = await readdir(this.abs(REVIEWS_DIR));
+    } catch {
+      return 1;
+    }
+    let max = 0;
+    for (const file of files.filter((f) => f.startsWith('review-') && f.endsWith('.md'))) {
+      let text: string;
+      try {
+        text = await readFile(this.abs(join(REVIEWS_DIR, file)), 'utf8');
+      } catch {
+        continue;
+      }
+      const seq = Number.parseInt(parseFrontmatter(text).fields['seq'] ?? '', 10);
+      if (!Number.isNaN(seq) && seq > max) max = seq;
+    }
+    return max + 1;
   }
 
   async merge(branch: string): Promise<{

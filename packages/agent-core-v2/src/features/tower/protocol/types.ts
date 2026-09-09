@@ -80,6 +80,7 @@ export interface TowerReviewInfo {
   readonly date: string;
   readonly file: string;
   readonly mtimeMs: number;
+  readonly seq?: number;
   readonly mission?: string;
 }
 
