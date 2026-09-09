@@ -1373,6 +1373,83 @@ describe('config deprecations', () => {
   });
 });
 
+describe('malformed models config entries', () => {
+  async function createConfig(toml: string) {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    await storage.write('', 'config.toml', new TextEncoder().encode(toml));
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', {}));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    return { config, disposables, storage };
+  }
+
+  it('warns at load time when a dotted alias parses as a nested table', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.kimi-k2.7-code]\nmodel = "kimi-k2.7-code"\nmax_context_size = 262144\n',
+    );
+
+    expect(config.diagnostics()).toContainEqual({
+      domain: 'models',
+      severity: 'warning',
+      message:
+        "[models] entry 'kimi-k2' is missing the 'model' field and cannot be used as a model; " +
+        'if the alias contains dots, quote the table name (e.g. [models."kimi-k2.7-code"]).',
+    });
+
+    disposables.dispose();
+  });
+
+  it('stays silent for quoted dotted aliases and entries with a wire-facing name', async () => {
+    const { config, disposables } = await createConfig(
+      '[models."kimi-k2.7-code"]\nmodel = "kimi-k2.7-code"\n\n[models.renamed]\nname = "wire-name"\n',
+    );
+
+    expect(config.diagnostics()).toEqual([]);
+
+    disposables.dispose();
+  });
+
+  it('warns without the dotted-alias hint when the entry has no nested table', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.partial]\nmax_context_size = 262144\n',
+    );
+
+    expect(config.diagnostics()).toContainEqual({
+      domain: 'models',
+      severity: 'warning',
+      message:
+        "[models] entry 'partial' is missing the 'model' field and cannot be used as a model.",
+    });
+
+    disposables.dispose();
+  });
+
+  it('clears the warning on reload once the entry is fixed', async () => {
+    const { config, disposables, storage } = await createConfig(
+      '[models.kimi-k2.7-code]\nmodel = "kimi-k2.7-code"\n',
+    );
+    expect(config.diagnostics()).toHaveLength(1);
+
+    await storage.write(
+      '',
+      'config.toml',
+      new TextEncoder().encode('[models."kimi-k2.7-code"]\nmodel = "kimi-k2.7-code"\n'),
+    );
+    await config.reload();
+
+    expect(config.diagnostics()).toEqual([]);
+
+    disposables.dispose();
+  });
+});
+
 describe('task config section', () => {
   it('re-applies the keepAliveOnExit env binding on every get()', async () => {
     const env: Record<string, string> = {};
@@ -2445,7 +2522,7 @@ describe('config section collection fold (D12)', () => {
     parse(value: unknown): RuntimeFoldDemo {
       const demo = value as RuntimeFoldDemo;
       if (typeof demo?.enabled !== 'boolean') {
-        throw new Error('runtimeFoldDemo.enabled must be a boolean');
+        throw new TypeError('runtimeFoldDemo.enabled must be a boolean');
       }
       return demo;
     },
@@ -2731,8 +2808,8 @@ describe('ConfigService replaceSections', () => {
       defaultModel: undefined,
       thinking: {},
     });
-    expect([...domains].sort()).toEqual(
-      [PROVIDERS_SECTION, MODELS_SECTION, DEFAULT_MODEL_SECTION, THINKING_SECTION].sort(),
+    expect([...domains].toSorted()).toEqual(
+      [PROVIDERS_SECTION, MODELS_SECTION, DEFAULT_MODEL_SECTION, THINKING_SECTION].toSorted(),
     );
 
     disposables.dispose();
@@ -2810,7 +2887,7 @@ describe('ConfigService persistence guards', () => {
   async function expectPersistBlocked(promise: Promise<unknown>): Promise<void> {
     const error = await promise.then(
       () => undefined,
-      (e: unknown) => e,
+      (error: unknown) => error,
     );
     expect(isError2(error)).toBe(true);
     expect((error as Error2).code).toBe(ErrorCodes.CONFIG_PERSIST_BLOCKED);

@@ -43,6 +43,7 @@ import {
 } from './configSectionContributions';
 import { getConfigOverlayContributions } from './configOverlayContributions';
 import { collectKeyDeprecations } from './deprecations';
+import { collectMalformedModelEntries } from './modelsDiagnostics';
 import {
   applySectionToToml,
   camelToSnake,
@@ -574,6 +575,9 @@ export class ConfigService extends Disposable implements IConfigService {
     this.tainted = failed;
     const nextRawSnake = cloneRecord(fileData);
     for (const diagnostic of collectKeyDeprecations(nextRawSnake, this.registry.listSections())) {
+      this.pushDiagnostic(diagnostic);
+    }
+    for (const diagnostic of collectMalformedModelEntries(nextRawSnake)) {
       this.pushDiagnostic(diagnostic);
     }
     if (source !== 'load' && JSON.stringify(nextRawSnake) === JSON.stringify(this.rawSnake)) {
