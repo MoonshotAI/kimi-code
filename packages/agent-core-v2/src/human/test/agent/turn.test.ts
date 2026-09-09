@@ -664,6 +664,40 @@ describe('turn machine credential recovery', () => {
     expect(failed).toHaveLength(0);
   });
 
+  it('passes through already-normalized resolver errors unchanged', async () => {
+    const quotaError = {
+      kind: 'quota_exhausted',
+      statusCode: 429,
+      message: 'quota exceeded',
+      requestId: null,
+      retryAfterMs: null,
+      headers: null,
+    } as const;
+    const { requester, source, calls } = createCredentialHarness(['ok']);
+    const resolver: LlmRequestResolver = {
+      id: 'media-ref',
+      resolve: () => Promise.reject(quotaError),
+    };
+    const { actor, recovering, retrying, failed } = startTurnActor(
+      requester,
+      { recovery: credentialRecovery(source), retry: { maxAttemptsPerStep: 5 } },
+      undefined,
+      [credentialResolver(source), resolver],
+    );
+
+    await drain();
+
+    expect(calls()).toBe(0);
+    expect(recovering).toHaveLength(0);
+    expect(retrying).toHaveLength(0);
+    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'failed' });
+    expect(failed[0]).toMatchObject({
+      kind: 'quota_exhausted',
+      statusCode: 429,
+      message: 'quota exceeded',
+    });
+  });
+
   it('fails a 401 immediately without the credential contribution', async () => {
     const { requester, calls } = createCredentialHarness([statusError(401, 'unauthorized'), 'ok']);
     const { actor, recovering, retrying, failed } = startTurnActor(requester, {

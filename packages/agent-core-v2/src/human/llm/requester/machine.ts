@@ -82,6 +82,13 @@ function toResolverErrorMessage(error: unknown): LlmRemoteErrorMessage {
   const message = error instanceof Error ? error.message : String(error);
   if (typeof error === 'object' && error !== null) {
     const record = error as Record<string, unknown>;
+    if (
+      typeof record['kind'] === 'string' &&
+      record['kind'] !== 'syntax' &&
+      typeof record['message'] === 'string'
+    ) {
+      return error as LlmRemoteErrorMessage;
+    }
     const status = record['status'] ?? record['statusCode'];
     if (typeof status === 'number') {
       return toLlmStatusErrorMessage({
