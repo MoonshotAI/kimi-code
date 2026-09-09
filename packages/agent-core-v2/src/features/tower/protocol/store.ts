@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { appendFile, mkdir, open, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, open, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import picomatch from 'picomatch';
@@ -1073,36 +1073,50 @@ export class TowerStore {
   async addWorktree(worktree: string, branch: string, base: string): Promise<TowerAddWorktreeResult> {
     const rel = join(WORKTREES_DIR, worktree);
     let spawnBase: string | undefined;
-    if (!(await branchExists(this.repoRoot, branch))) {
-      const dirty = await listBaseDirtyEntries(this.repoRoot);
-      if (dirty.some((entry) => entry.unmerged)) {
+    if (await branchExists(this.repoRoot, branch)) {
+      const state = await this.load();
+      const mission = state.missions.find((m) => m.worktree === worktree && m.branch === branch);
+      const dirExists = await stat(this.abs(rel)).then(
+        () => true,
+        () => false,
+      );
+      if (mission?.owner === undefined && !dirExists) {
         throw new TowerProtocolError(
-          'the base checkout has unmerged paths (an in-progress merge, rebase, or cherry-pick) — finish or abort it before spawning workers',
+          `branch "${branch}" exists in git but is not owned by any tower mission (it appeared after planning) — refusing to build the worker on unrelated history; delete or rename that branch if it is stale, or re-plan the mission under a new title`,
         );
       }
-      if (dirty.length > 0) {
-        let checkout: string;
-        try {
-          checkout = await currentBranch(this.repoRoot);
-        } catch {
-          throw new TowerProtocolError(
-            `the main checkout is in a detached HEAD state with uncommitted changes, and the recorded base is "${base}" — a WIP snapshot would carry detached-HEAD content into the mission branch; check out "${base}" (\`git checkout ${base}\`) or commit/stash the changes before spawning workers`,
-          );
-        }
-        if (checkout !== base) {
-          throw new TowerProtocolError(
-            `the main checkout is on "${checkout}" with uncommitted changes, not the recorded base "${base}" — a WIP snapshot would carry "${checkout}" content into the mission branch; switch back to "${base}" (\`git checkout ${base}\`) or commit/stash the changes before spawning workers`,
-          );
-        }
-      }
-      spawnBase =
-        (await snapshotBaseWip(
-          this.repoRoot,
-          base,
-          dirty.map((entry) => entry.path),
-          `tower: snapshot of uncommitted base checkout changes (worktree ${worktree})`,
-        )) ?? undefined;
+      await worktreeAdd(this.repoRoot, this.abs(rel), branch, spawnBase ?? base);
+      await this.appendLog(TOWER_NAME, 'worktree.add', { worktree, branch, base, spawn_base: spawnBase });
+      return { rel, spawnBase };
     }
+    const dirty = await listBaseDirtyEntries(this.repoRoot);
+    if (dirty.some((entry) => entry.unmerged)) {
+      throw new TowerProtocolError(
+        'the base checkout has unmerged paths (an in-progress merge, rebase, or cherry-pick) — finish or abort it before spawning workers',
+      );
+    }
+    if (dirty.length > 0) {
+      let checkout: string;
+      try {
+        checkout = await currentBranch(this.repoRoot);
+      } catch {
+        throw new TowerProtocolError(
+          `the main checkout is in a detached HEAD state with uncommitted changes, and the recorded base is "${base}" — a WIP snapshot would carry detached-HEAD content into the mission branch; check out "${base}" (\`git checkout ${base}\`) or commit/stash the changes before spawning workers`,
+        );
+      }
+      if (checkout !== base) {
+        throw new TowerProtocolError(
+          `the main checkout is on "${checkout}" with uncommitted changes, not the recorded base "${base}" — a WIP snapshot would carry "${checkout}" content into the mission branch; switch back to "${base}" (\`git checkout ${base}\`) or commit/stash the changes before spawning workers`,
+        );
+      }
+    }
+    spawnBase =
+      (await snapshotBaseWip(
+        this.repoRoot,
+        base,
+        dirty.map((entry) => entry.path),
+        `tower: snapshot of uncommitted base checkout changes (worktree ${worktree})`,
+      )) ?? undefined;
     await worktreeAdd(this.repoRoot, this.abs(rel), branch, spawnBase ?? base);
     await this.appendLog(TOWER_NAME, 'worktree.add', { worktree, branch, base, spawn_base: spawnBase });
     return { rel, spawnBase };

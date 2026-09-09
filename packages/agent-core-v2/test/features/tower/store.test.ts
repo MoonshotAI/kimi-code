@@ -1716,3 +1716,37 @@ describe('teardown', () => {
     }
   });
 });
+
+describe('addWorktree branch ownership', () => {
+  beforeEach(async () => {
+    await store.init();
+  });
+
+  it('refuses to build on a branch that appeared in git after planning without tower ownership', async () => {
+    const [mission] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    await git(repo, 'branch', mission!.branch);
+
+    const state = await store.load();
+    await expect(store.addWorktree(mission!.worktree, mission!.branch, state.base)).rejects.toThrow(
+      /not owned by any tower mission/,
+    );
+  });
+
+  it('allows re-adding the worktree of a mission that already has an owner', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/x.ts',
+      content: 'x\n',
+    });
+    await store.updateMission('tower', mission.id, { owner: 'w1' });
+    const wt = worktreeOf(mission);
+    await git(repo, 'worktree', 'remove', '--force', wt);
+
+    const state = await store.load();
+    const added = await store.addWorktree(mission.worktree, mission.branch, state.base);
+
+    expect(added.spawnBase).toBeUndefined();
+    expect(await readFile(join(wt, 'src/x/x.ts'), 'utf8')).toBe('x\n');
+  });
+});
