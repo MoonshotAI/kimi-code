@@ -11,6 +11,15 @@
       "source": "./official/kimi-datasource"
     },
     {
+      "id": "kimi-effort",
+      "tier": "official",
+      "displayName": "Reasoning Effort Manager",
+      "version": "1.0.0",
+      "description": "Auto-detect reasoning effort for third-party providers and models, with /effort controls.",
+      "keywords": ["effort", "reasoning", "thinking", "models"],
+      "source": "./official/kimi-effort"
+    },
+    {
       "id": "superpowers",
       "tier": "curated",
       "displayName": "Superpowers",

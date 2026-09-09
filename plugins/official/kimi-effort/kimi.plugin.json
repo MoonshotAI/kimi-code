@@ -1,0 +1,20 @@
+{
+  "name": "kimi-effort",
+  "version": "1.0.0",
+  "description": "Auto-detect reasoning effort for third-party providers and models, with /effort controls",
+  "keywords": ["effort", "reasoning", "thinking", "models"],
+  "skills": "./skills/",
+  "commands": "./commands/",
+  "interface": {
+    "displayName": "Reasoning Effort Manager",
+    "shortDescription": "Auto-detect & adjust model reasoning effort",
+    "developerName": "Moonshot AI"
+  },
+  "hooks": [
+    {
+      "event": "SessionStart",
+      "command": "node ./hooks/session-start.mjs",
+      "timeout": 5
+    }
+  ]
+}
