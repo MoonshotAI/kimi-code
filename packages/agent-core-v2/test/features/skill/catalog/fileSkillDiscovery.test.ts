@@ -241,10 +241,42 @@ describe('FileSkillDiscovery', () => {
     const result = await discover([skillRoot('skills')]);
 
     expect(result.skills).toEqual([]);
+    expect(result.skipped).toEqual([
+      {
+        path: skillMdPath,
+        type: 'invalid',
+        reason: `Missing frontmatter in ${skillMdPath}`,
+      },
+    ]);
     expect(warnings).toEqual([
       {
         message: `Skipping invalid skill at ${skillMdPath}: Missing frontmatter in ${skillMdPath}`,
         payload: expect.any(Error),
+      },
+    ]);
+  });
+
+  it('records unparsable YAML and missing required fields as skipped with their reasons', async () => {
+    const badYamlPath = join(root, 'skills/bad-yaml/SKILL.md');
+    await mkdir(dirname(badYamlPath), { recursive: true });
+    await writeFile(badYamlPath, '---\nname: [unclosed\n---\nbody');
+    const noDescriptionPath = join(root, 'skills/no-description/SKILL.md');
+    await mkdir(dirname(noDescriptionPath), { recursive: true });
+    await writeFile(noDescriptionPath, '---\nname: no-description\n---\nbody');
+
+    const result = await discover([skillRoot('skills')]);
+
+    expect(result.skills).toEqual([]);
+    expect(result.skipped).toEqual([
+      {
+        path: badYamlPath,
+        type: 'invalid',
+        reason: expect.stringContaining(`Invalid frontmatter in ${badYamlPath}`),
+      },
+      {
+        path: noDescriptionPath,
+        type: 'invalid',
+        reason: `Missing required frontmatter field "description" in ${noDescriptionPath}`,
       },
     ]);
   });

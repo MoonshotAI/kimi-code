@@ -57,6 +57,7 @@ import {
   activateSkillRequestSchema,
   activateSkillResultSchema,
   listSkillsResponseSchema,
+  type InvalidSkill,
 } from '../protocol/rest-skill';
 import { workspaceIdParamSchema } from '../protocol/rest-workspace';
 import type { SkillDescriptor } from '../protocol/skill';
@@ -120,7 +121,8 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
       errors: {
         [ErrorCode.SESSION_NOT_FOUND]: {},
       },
-      description: 'List the skills available to a session',
+      description:
+        'List the skills available to a session, plus the skill files discovery skipped as invalid (invalid_skills: path, type, reason)',
       tags: ['skills'],
       operationId: 'listSkills',
     },
@@ -134,7 +136,8 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
       const catalog = resolved.handle.accessor.get(ISessionSkillCatalog);
       await catalog.ready;
       const skills = catalog.catalog.listSkills().map(toProtocolSkill);
-      reply.send(okEnvelope({ skills }, req.id));
+      const invalid = catalog.catalog.getSkippedByPolicy();
+      reply.send(okEnvelope({ skills, invalid_skills: invalid }, req.id));
     },
   );
   app.get(
@@ -152,7 +155,8 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
       errors: {
         [ErrorCode.WORKSPACE_NOT_FOUND]: {},
       },
-      description: 'List the skills available to a workspace (no session required)',
+      description:
+        'List the skills available to a workspace (no session required), plus the skill files discovery skipped as invalid (invalid_skills: path, type, reason)',
       tags: ['skills'],
       operationId: 'listWorkspaceSkills',
     },
@@ -169,8 +173,10 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         );
         return;
       }
-      const skills = (await listWorkspaceSkillsForRoot(core, ws.root)).map(toProtocolSkill);
-      reply.send(okEnvelope({ skills }, req.id));
+      const { skills, invalid } = await listWorkspaceSkillsForRoot(core, ws.root);
+      reply.send(
+        okEnvelope({ skills: skills.map(toProtocolSkill), invalid_skills: invalid }, req.id),
+      );
     },
   );
   app.get(
@@ -285,9 +291,9 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         preparedMedia = undefined;
         requestLog(req)?.info({ session_id, skill_name: parsed.id }, 'skill activated');
         reply.send(okEnvelope({ activated: true, skill_name: parsed.id }, req.id));
-      } catch (err) {
+      } catch (error) {
         await preparedMedia?.discard();
-        sendMappedError(reply, req.id, err);
+        sendMappedError(reply, req.id, error);
       }
     },
   );
@@ -301,7 +307,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
 async function listWorkspaceSkillsForRoot(
   core: Scope,
   workDir: string,
-): Promise<readonly SkillDefinition[]> {
+): Promise<{ readonly skills: readonly SkillDefinition[]; readonly invalid: readonly InvalidSkill[] }> {
   const discovery = core.accessor.get(ISkillDiscovery);
   const bootstrap = core.accessor.get(IBootstrapService);
   const plugins = core.accessor.get(IPluginService);
@@ -347,7 +353,8 @@ async function listWorkspaceSkillsForRoot(
   for (const { skills } of ordered) {
     for (const skill of skills) catalog.register(skill, { replace: true });
   }
-  return catalog.listSkills();
+  const invalid = [user, project, explicit, extra, plugin].flatMap((result) => [...result.skipped]);
+  return { skills: catalog.listSkills(), invalid };
 }
 
 type SkillElement = ReturnType<ISessionSkillCatalog['catalog']['listSkills']>[number];

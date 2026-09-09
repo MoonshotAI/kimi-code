@@ -112,6 +112,12 @@ describe('server-v2 /api/v1 skills', () => {
     );
   }
 
+  async function seedInvalidProjectSkill(root: string, name: string, content: string): Promise<void> {
+    const dir = join(root, '.kimi-code', 'skills', name);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'SKILL.md'), content);
+  }
+
   async function seedExplicitSkill(root: string, name: string): Promise<void> {
     const dir = join(root, name);
     await mkdir(dir, { recursive: true });
@@ -166,6 +172,27 @@ describe('server-v2 /api/v1 skills', () => {
       expect(docsSkill).toBeDefined();
       expect(docsSkill).toMatchObject({ source: 'builtin' });
       expect(docsSkill?.description.length).toBeGreaterThan(0);
+    });
+
+    it('surfaces invalid project skill files with their skip reasons', async () => {
+      const workspaceDir = await makeWorkspaceDir();
+      await seedInvalidProjectSkill(workspaceDir, 'broken', 'no frontmatter here');
+      const id = await createSession(workspaceDir);
+
+      const { body } = await getJson<{ skills: SkillWire[] }>(
+        `/api/v1/sessions/${id}/skills`,
+      );
+      expect(body.code).toBe(0);
+      const parsed = listSkillsResponseSchema.parse(body.data);
+      expect(parsed.skills.some((s) => s.name === 'broken')).toBe(false);
+      const invalid = parsed.invalid_skills.filter((s) => s.path.startsWith(workspaceDir));
+      expect(invalid).toEqual([
+        {
+          path: join(workspaceDir, '.kimi-code', 'skills', 'broken', 'SKILL.md'),
+          type: 'invalid',
+          reason: expect.stringContaining('Missing frontmatter'),
+        },
+      ]);
     });
   });
 
@@ -474,6 +501,51 @@ describe('server-v2 /api/v1 skills', () => {
         '/api/v1/workspaces/wd_does-not-exist_000000000000/skills',
       );
       expect(body.code).toBe(40410);
+    });
+
+    it('surfaces invalid skill files with path and reason for each failure kind', async () => {
+      await server!.close();
+      server = undefined;
+      server = await startServer({
+        hostIdentity: TEST_HOST_IDENTITY,
+        host: '127.0.0.1',
+        port: 0,
+        homeDir: home,
+        logLevel: 'silent',
+      });
+      base = `http://127.0.0.1:${server.port}`;
+
+      const workspaceDir = await makeWorkspaceDir();
+      await seedInvalidProjectSkill(workspaceDir, 'no-frontmatter', 'no frontmatter here');
+      await seedInvalidProjectSkill(workspaceDir, 'bad-yaml', '---\nname: [unclosed\n---\nbody');
+      await seedInvalidProjectSkill(
+        workspaceDir,
+        'no-description',
+        '---\nname: no-description\n---\nbody',
+      );
+      const wid = await registerWorkspace(workspaceDir);
+
+      const { body } = await getJson<{ skills: SkillWire[] }>(
+        `/api/v1/workspaces/${wid}/skills`,
+      );
+      expect(body.code).toBe(0);
+      const parsed = listSkillsResponseSchema.parse(body.data);
+      const invalid = parsed.invalid_skills.filter((s) => s.path.startsWith(workspaceDir));
+      const byName = new Map(
+        invalid.map((s) => [s.path.split('/').at(-2) ?? '', s.reason] as const),
+      );
+      expect([...byName.keys()].toSorted()).toEqual([
+        'bad-yaml',
+        'no-description',
+        'no-frontmatter',
+      ]);
+      expect(byName.get('no-frontmatter')).toContain('Missing frontmatter');
+      expect(byName.get('bad-yaml')).toContain('Invalid frontmatter');
+      expect(byName.get('no-description')).toContain('Missing required frontmatter field');
+      expect(invalid.every((s) => s.type === 'invalid')).toBe(true);
+      expect(
+        parsed.skills.some((s) => ['no-frontmatter', 'bad-yaml', 'no-description'].includes(s.name)),
+      ).toBe(false);
     });
   });
 });
