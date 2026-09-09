@@ -84,6 +84,10 @@ export function detectCapabilities(tmuxForwardsHyperlink: () => boolean = probeT
 		return { images: null, trueColor: hasTrueColorHint, hyperlinks: false };
 	}
 
+	if (termProgram === "orca" && process.env['ORCA_IMAGE_PROTOCOL'] === "kitty") {
+		return { images: "kitty", trueColor: true, hyperlinks: true };
+	}
+
 	if (process.env['KITTY_WINDOW_ID'] || termProgram === "kitty") {
 		return { images: "kitty", trueColor: true, hyperlinks: true };
 	}
