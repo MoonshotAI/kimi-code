@@ -159,6 +159,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
             );
           }
         } catch (error) {
+          if (error instanceof TowerProtocolError) throw error;
           notes.push(
             `worktree setup warning (continuing): ${error instanceof Error ? error.message : String(error)}`,
           );

@@ -577,6 +577,21 @@ describe('TowerSpawnTool', () => {
     expect((await store.load()).roster.agents).toEqual([]);
   });
 
+  it('aborts the spawn when the mission branch appeared in git after planning', async () => {
+    await execFileAsync('git', ['branch', 'feat/build-gemm'], { cwd: repo });
+
+    const result = await execute(WORKER_ARGS);
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('not owned by any tower mission');
+    expect(result.output).not.toContain('worktree setup warning');
+    expect(createAgent).not.toHaveBeenCalled();
+    expect(registerTask).not.toHaveBeenCalled();
+    const state = await store.load();
+    expect(state.roster.agents).toEqual([]);
+    expect(state.missions.find((m) => m.id === 'M1')?.owner).toBeUndefined();
+  });
+
   it('snapshots base WIP into the worker branch and records the spawn base', async () => {
     await writeFile(join(repo, 'wip.ts'), 'export const wip = 1;\n');
 
