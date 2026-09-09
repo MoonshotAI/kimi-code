@@ -634,4 +634,21 @@ describe('turn machine credential recovery', () => {
     expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'failed' });
     expect(failed).toHaveLength(1);
   });
+
+  it('fails the turn instead of hanging when credential resolution rejects', async () => {
+    const { requester, calls } = createStubRequester(['ok']);
+    const provider: LlmCredentialProvider = {
+      resolve: () => Promise.reject(new Error('login required')),
+    };
+    const { actor, failed } = startTurnActor(requester, undefined, {
+      request: { model, credentials: provider },
+    });
+
+    await drain();
+
+    expect(calls()).toBe(0);
+    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'failed' });
+    expect(failed).toHaveLength(1);
+    expect((failed[0] as { message?: string }).message).toContain('login required');
+  });
 });
