@@ -696,9 +696,9 @@ export class TowerStore {
       to,
       subject: input.subject,
       sent_at: new Date().toISOString(),
-      ...(input.scope !== undefined ? { scope: input.scope } : {}),
-      ...(input.action !== undefined ? { action: input.action } : {}),
-      ...(input.consentRef !== undefined ? { consent_ref: input.consentRef } : {}),
+      scope: input.scope,
+      action: input.action,
+      consent_ref: input.consentRef,
     });
     const content = `${frontmatter}\n\n${input.body.trim()}\n`;
     const baseName = inboxFileName({ from: callerName, to, subject: input.subject });
@@ -836,7 +836,7 @@ export class TowerStore {
       status: input.status,
       merge: input.merge,
       reviewed_commit: reviewedCommit,
-      ...(reviewMissionId !== undefined ? { mission: reviewMissionId } : {}),
+      mission: reviewMissionId,
     });
     const checks = (input.checks ?? []).map((c) => `- [x] ${c}`).join('\n');
     const content = [
