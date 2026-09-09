@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { ackMessageSchema } from './ack';
+import { agentStateMessageSchema } from './agent-state';
 import { assistantMessageSchema } from './assistant';
 import { assistantDeltaMessageSchema, type AssistantDelta } from './assistant-delta';
 import { capabilityMessageSchema } from './capability';
@@ -43,6 +44,7 @@ export const serverMessageSchema = z.discriminatedUnion('type', [
   interactionMessageSchema,
   taskMessageSchema,
   todoMessageSchema,
+  agentStateMessageSchema,
   sessionStateMessageSchema,
   sessionMessageSchema,
   workspaceMessageSchema,

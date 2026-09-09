@@ -10,7 +10,6 @@ export const DURABLE_SYSTEM_SUBTYPES = [
   'plan.revision',
   'swarm.enter',
   'swarm.exit',
-  'skill',
   'interruption',
 ] as const;
 
@@ -30,10 +29,6 @@ export function stepIdOf(turnId: string, ordinal: number): string {
 
 export function textMessageIdOf(stepId: string, ordinal: number): string {
   return `${stepId}.a${ordinal}`;
-}
-
-export function stepUserMessageIdOf(stepId: string, ordinal: number): string {
-  return `${stepId}.u${ordinal}`;
 }
 
 export function turnUserMessageIdOf(turnId: string): string {

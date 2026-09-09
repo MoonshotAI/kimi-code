@@ -165,9 +165,9 @@ export class AuditTrail {
 function summarizeMessage(message: ServerMessage): string {
   switch (message.type) {
     case 'turn':
-      return `turn ${message.turn_id} (${message.state})`;
+      return `turn ${message.turn_id} (${message.status})`;
     case 'step':
-      return `step ${message.step_id} (${message.state})`;
+      return `step ${message.step_id} (${message.status})`;
     case 'user':
       return `user ${message.message_id}`;
     case 'assistant':
@@ -177,7 +177,7 @@ function summarizeMessage(message: ServerMessage): string {
     case 'thinking.delta':
       return `${message.type} ${message.message_id} +${message.text.length}ch`;
     case 'tool_call':
-      return `tool_call ${message.name} ${message.tool_call_id} (${message.state})`;
+      return `tool_call ${message.name} ${message.tool_call_id} (${message.status})`;
     case 'tool_call.delta':
       return `tool_call.delta ${message.tool_call_id} +${message.input_text.length}ch`;
     case 'tool.progress':
@@ -185,13 +185,13 @@ function summarizeMessage(message: ServerMessage): string {
     case 'system':
       return `system(${message.subtype}) ${message.system_id}`;
     case 'interaction':
-      return `interaction ${message.interaction_id} (${message.kind}/${message.state})`;
+      return `interaction ${message.interaction_id} (${message.kind}/${message.status})`;
     case 'task':
-      return `task ${message.task_id} (${message.kind}/${message.state})`;
+      return `task ${message.task_id} (${message.kind}/${message.status})`;
     case 'todo':
       return `todo ${message.todo_id} (${message.items.length} items)`;
     case 'session.state':
-      return `session.state (${message.activity}${message.busy ? ', busy' : ''})`;
+      return `session.state (${message.status})`;
     default:
       return message.type;
   }

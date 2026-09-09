@@ -28,6 +28,7 @@ import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import { IAgentPromptService } from '@moonshot-ai/agent-core-v2/agent/prompt/prompt';
 import type {
   AssistantMessage,
+  ContentPart,
   InteractionMessage,
   InteractionQuestionItem,
   SessionStateMessage,
@@ -335,9 +336,11 @@ export function ChatView({
     };
   }, [hasMoreOlder, loaded, olderError, loadingOlder]);
 
-  const running = state.sessionState?.busy === true || isAnyTurnRunning(entries);
+  const running =
+    (state.sessionState !== undefined && state.sessionState.status !== 'idle') ||
+    isAnyTurnRunning(entries);
   const pendingCount = [...state.interactions.values()].filter(
-    (interaction) => interaction.state === 'pending',
+    (interaction) => interaction.status === 'pending',
   ).length;
 
   // Interactions render inline at their anchor tool call; entities without
@@ -506,6 +509,9 @@ type RenderItem =
     }
   | { readonly kind: 'system'; readonly key: string; readonly message: SystemMessage };
 
+/** Pseudo-turn grouping queued (unread) user messages, which carry no turn_id yet. */
+const QUEUED_TURN_ID = '$queued';
+
 function groupTimeline(entries: readonly TimelineEntry[]): RenderItem[] {
   interface GroupDraft {
     turn?: TurnMessage;
@@ -522,11 +528,12 @@ function groupTimeline(entries: readonly TimelineEntry[]): RenderItem[] {
       order.push({ kind: 'system', key: entry.key, message });
       continue;
     }
-    let draft = drafts.get(message.turn_id);
+    const turnId = message.turn_id ?? QUEUED_TURN_ID;
+    let draft = drafts.get(turnId);
     if (draft === undefined) {
       draft = { items: [] };
-      drafts.set(message.turn_id, draft);
-      order.push({ kind: 'group', turnId: message.turn_id });
+      drafts.set(turnId, draft);
+      order.push({ kind: 'group', turnId });
     }
     if (message.type === 'turn') draft.turn = message;
     draft.items.push(entry);
@@ -589,7 +596,7 @@ function Timeline({
 
 function isAnyTurnRunning(entries: readonly TimelineEntry[]): boolean {
   return entries.some(
-    (entry) => entry.message.type === 'turn' && entry.message.state === 'running',
+    (entry) => entry.message.type === 'turn' && entry.message.status === 'running',
   );
 }
 
@@ -637,6 +644,7 @@ function TurnGroupView({
   flash?: { turnId: string; stepId?: string | undefined } | null | undefined;
 }) {
   const turnFlashed = flash?.turnId === turnId && flash.stepId === undefined;
+  const queued = turnId === QUEUED_TURN_ID;
   return (
     <div
       data-turn-id={turnId}
@@ -645,11 +653,15 @@ function TurnGroupView({
       }`}
     >
       <div className="flex items-center gap-2 border-b border-neutral-800/60 px-3 py-1.5">
-        <span className="font-mono text-[10px] text-neutral-500">{turnId}</span>
+        {queued ? (
+          <Badge tone="amber">queued</Badge>
+        ) : (
+          <span className="font-mono text-[10px] text-neutral-500">{turnId}</span>
+        )}
         {turn !== undefined ? (
           <>
             <Badge tone={turn.origin.kind === 'user' ? 'sky' : 'neutral'}>{turn.origin.kind}</Badge>
-            <Badge tone={turn.state === 'running' ? 'amber' : 'green'}>{turn.state}</Badge>
+            <Badge tone={turn.status === 'running' ? 'amber' : 'green'}>{turn.status}</Badge>
             {turn.started_at !== undefined ? (
               <span className="text-[10px] text-neutral-600">
                 {relTime(Date.parse(turn.started_at))}
@@ -661,6 +673,8 @@ function TurnGroupView({
               </span>
             ) : null}
           </>
+        ) : queued ? (
+          <span className="text-[10px] text-neutral-600 italic">not consumed into a turn yet</span>
         ) : (
           <span className="text-[10px] text-neutral-700 italic">turn header outside the window</span>
         )}
@@ -733,16 +747,16 @@ function StepRow({ step, flashed }: { step: StepMessage; flashed: boolean }) {
       <span className="font-mono">{step.step_id}</span>
       <Badge
         tone={
-          step.state === 'failed'
+          step.status === 'failed'
             ? 'red'
-            : step.state === 'running'
+            : step.status === 'running'
               ? 'amber'
-              : step.state === 'interrupted'
+              : step.status === 'interrupted'
                 ? 'neutral'
                 : 'green'
         }
       >
-        {step.state}
+        {step.status}
       </Badge>
       {step.retry !== undefined ? (
         <Badge tone="red">
@@ -766,28 +780,25 @@ function StepRow({ step, flashed }: { step: StepMessage; flashed: boolean }) {
 // ---------------------------------------------------------------- messages
 
 function UserMessageView({ message }: { message: UserMessage }) {
-  const isUserInput = message.origin === undefined;
+  const isUserInput = message.origin === undefined || message.origin.kind === 'user';
   return (
     <div className="mb-2">
       <div className="mb-0.5 flex items-center gap-2 text-[10px] text-neutral-600">
         <span className="font-mono">{message.message_id}</span>
-        {message.origin !== undefined ? (
-          <Badge tone="neutral">
-            {message.origin.kind === 'cron' ? `cron ${message.origin.cron_id}` : 'channel'}
-          </Badge>
+        {message.origin !== undefined && message.origin.kind !== 'user' ? (
+          <Badge tone="neutral">{userOriginLabel(message.origin)}</Badge>
         ) : null}
-        {message.steered_at !== undefined ? <Badge tone="amber">steered</Badge> : null}
-        {message.status === 'running' ? <span className="italic">queued</span> : null}
+        {message.status === 'unread' ? <span className="italic">queued</span> : null}
       </div>
       {isUserInput ? (
         <div className="flex justify-end">
           <div className="max-w-[80%] whitespace-pre-wrap rounded-lg bg-sky-900/40 px-3 py-2 text-[13px] text-neutral-100">
-            {message.text}
+            <UserContentParts parts={message.text} />
           </div>
         </div>
       ) : (
         <div className="whitespace-pre-wrap rounded-lg border border-neutral-800 px-3 py-2 text-[12px] text-neutral-400">
-          {message.text}
+          <UserContentParts parts={message.text} />
         </div>
       )}
       {message.attachment_ids !== undefined && message.attachment_ids.length > 0 ? (
@@ -804,6 +815,55 @@ function UserMessageView({ message }: { message: UserMessage }) {
       ) : null}
     </div>
   );
+}
+
+function userOriginLabel(origin: Exclude<UserMessage['origin'], undefined>): string {
+  switch (origin.kind) {
+    case 'user':
+      return 'user';
+    case 'cron':
+      return `cron ${origin.cron_id ?? ''}`.trim();
+    case 'task':
+      return `task: ${origin.title}`;
+    case 'skill':
+      return `skill: ${origin.skill_name}`;
+  }
+}
+
+function UserContentParts({ parts }: { parts: readonly ContentPart[] }) {
+  const text = parts
+    .filter((part) => part.type === 'text' || part.type === 'think')
+    .map((part) => part.text)
+    .join('\n');
+  const media = parts.filter(
+    (part) => part.type === 'image' || part.type === 'audio' || part.type === 'video',
+  );
+  return (
+    <>
+      {text}
+      {media.length > 0 ? (
+        <span className="mt-1 flex flex-wrap gap-1">
+          {media.map((part, index) => (
+            <span
+              key={index}
+              title={part.text}
+              className="rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-[10px] text-neutral-400"
+            >
+              {part.type}: {mediaPartLabel(part)}
+            </span>
+          ))}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
+function mediaPartLabel(part: ContentPart): string {
+  const name = part.meta['name'];
+  if (typeof name === 'string' && name !== '') return name;
+  const id = part.meta['id'];
+  if (typeof id === 'string' && id !== '') return id;
+  return part.text;
 }
 
 function AssistantMessageView({ message }: { message: AssistantMessage }) {
@@ -862,7 +922,7 @@ function ToolCallView({
     <div className="mb-2 max-w-[85%] rounded-lg border border-neutral-800 bg-neutral-900/50 px-3 py-2 font-mono text-[11px]">
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <Badge
-          tone={call.state === 'error' ? 'red' : call.state === 'running' ? 'amber' : 'neutral'}
+          tone={call.status === 'error' ? 'red' : call.status === 'running' ? 'amber' : 'neutral'}
         >
           tool
         </Badge>
@@ -876,7 +936,7 @@ function ToolCallView({
             agent: {ref.agent_id}
           </Badge>
         ))}
-        {task !== undefined ? <span className="text-neutral-600">task: {task.state}</span> : null}
+        {task !== undefined ? <span className="text-neutral-600">task: {task.status}</span> : null}
         {call.todo_id !== undefined ? (
           <span className="text-neutral-600">todo: {call.todo_id}</span>
         ) : null}
@@ -898,7 +958,7 @@ function ToolCallView({
         typeof call.output === 'string' ? (
           <pre
             className={`max-h-40 overflow-auto whitespace-pre-wrap ${
-              call.state === 'error' ? 'text-red-400' : 'text-neutral-400'
+              call.status === 'error' ? 'text-red-400' : 'text-neutral-400'
             }`}
           >
             {call.output}
@@ -945,7 +1005,7 @@ function InteractionEntityView({
   /** Question free-text ("Other") input: question id → draft. */
   const [others, setOthers] = useState<Readonly<Record<string, string>>>({});
 
-  const pending = interaction.state === 'pending';
+  const pending = interaction.status === 'pending';
   const questionRequest = interaction.kind === 'question' ? interaction.request : undefined;
   const api = { baseUrl, token: config.token, sessionId };
 
@@ -1023,7 +1083,7 @@ function InteractionEntityView({
     >
       <div className="mb-1 flex items-center gap-2">
         <Badge tone={pending ? 'amber' : 'neutral'}>{interaction.kind}</Badge>
-        <span className="text-neutral-400">{interaction.state}</span>
+        <span className="text-neutral-400">{interaction.status}</span>
         <span className="text-neutral-600">tool: {interaction.tool_call_id}</span>
       </div>
       {interaction.request !== undefined && questionRequest === undefined ? (
@@ -1115,16 +1175,16 @@ function SystemMarkerView({ message }: { message: SystemMessage }) {
 
 function TaskCard({ task }: { task: TaskMessage }) {
   const failed =
-    task.state === 'failed' || task.state === 'timed_out' || task.state === 'lost';
+    task.status === 'failed' || task.status === 'timed_out' || task.status === 'lost';
   return (
     <div className="mb-3 rounded-lg border border-neutral-800 bg-neutral-900/40 px-3 py-2 text-[11px]">
       <div className="flex items-center gap-2">
-        <Badge tone={task.state === 'running' ? 'amber' : failed ? 'red' : 'neutral'}>
+        <Badge tone={task.status === 'running' ? 'amber' : failed ? 'red' : 'neutral'}>
           task: {task.kind}
         </Badge>
         <span className="text-neutral-300">{task.description ?? task.task_id}</span>
         <span className="text-neutral-600">
-          {task.state}
+          {task.status}
           {task.detached ? ' (detached)' : ''}
         </span>
         {task.child_agent_id !== undefined ? (

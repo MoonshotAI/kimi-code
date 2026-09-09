@@ -8,7 +8,7 @@ export const taskMessageSchema = z.object({
   ...timelineMessageBase,
   task_id: z.string().min(1),
   kind: z.enum(['shell', 'subagent', 'tool', 'other']),
-  state: z.enum(['running', 'completed', 'failed', 'timed_out', 'killed', 'lost']),
+  status: z.enum(['running', 'completed', 'failed', 'timed_out', 'killed', 'lost']),
   detached: z.boolean(),
   description: z.string().optional(),
   child_agent_id: z.string().min(1).optional(),

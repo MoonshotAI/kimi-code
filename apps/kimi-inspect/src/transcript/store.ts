@@ -23,7 +23,11 @@
  * by this store.
  *
  * An upsert whose `timestamp` is strictly older than the held entity's is
- * skipped: a REST page folded before a live update must not rewind it.
+ * skipped: a REST page folded before a live update must not rewind it. An
+ * upsert without a timestamp (an unread `user` message) is stale once the
+ * held entity carries one — unread precedes read, never the reverse — yet
+ * always outranks the page when a replace window carries live-only entries
+ * over.
  *
  * Notifications are trailing-edge throttled (`notifyIntervalMs`) so a
  * per-token delta stream does not become a per-token React render; state
@@ -130,7 +134,7 @@ export function hasTurnId(entries: readonly TimelineEntry[], turnId: string): bo
 export function newestTerminalStepId(entries: readonly TimelineEntry[]): string | undefined {
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const message = entries[i]!.message;
-    if (message.type === 'step' && message.state !== 'running') return message.step_id;
+    if (message.type === 'step' && message.status !== 'running') return message.step_id;
   }
   return undefined;
 }
@@ -310,7 +314,7 @@ export class ChatStore {
       this.state = { ...this.state, entries: [...this.state.entries, { key, message }] };
     } else {
       const held = this.state.entries[index]!.message;
-      if (held === message || held.timestamp > message.timestamp) return;
+      if (held === message || isStaleUpsert(held.timestamp, message.timestamp)) return;
       const entries = [...this.state.entries];
       entries[index] = { key, message };
       this.state = { ...this.state, entries };
@@ -411,7 +415,7 @@ export class ChatStore {
         if (current.type === 'tool_call') removedToolCalls.add(current.tool_call_id);
         return false;
       }
-      if (current.type !== 'system' && removed.has(current.turn_id)) {
+      if (current.type !== 'system' && current.turn_id !== undefined && removed.has(current.turn_id)) {
         if (current.type === 'tool_call') removedToolCalls.add(current.tool_call_id);
         return false;
       }
@@ -432,12 +436,14 @@ export class ChatStore {
 
   private preferHeld(key: string, message: TimelineMessage): TimelineEntry {
     const held = this.state.entries.find((entry) => entry.key === key);
-    if (held !== undefined && held.message.timestamp > message.timestamp) return held;
+    if (held !== undefined && isStaleUpsert(held.message.timestamp, message.timestamp)) return held;
     return { key, message };
   }
 
-  private newerThan(entries: readonly TimelineEntry[], timestamp: string): TimelineEntry[] {
-    return entries.filter((entry) => entry.message.timestamp > timestamp);
+  private newerThan(entries: readonly TimelineEntry[], timestamp: number): TimelineEntry[] {
+    return entries.filter(
+      (entry) => entry.message.timestamp === undefined || entry.message.timestamp > timestamp,
+    );
   }
 
   private scheduleNotify(): void {
@@ -472,10 +478,22 @@ function isTimelineMessage(
   }
 }
 
-function maxTimestamp(messages: readonly HistoryMessage[]): string | undefined {
-  let max: string | undefined;
+function maxTimestamp(messages: readonly HistoryMessage[]): number | undefined {
+  let max: number | undefined;
   for (const message of messages) {
+    if (message.timestamp === undefined) continue;
     if (max === undefined || message.timestamp > max) max = message.timestamp;
   }
   return max;
+}
+
+/**
+ * Same-entity version ordering for the idempotent upsert path. Only `user`
+ * messages can lack a timestamp (unread = not persisted yet), and the
+ * unread → read transition is one-way, so an untimestamped upsert is stale
+ * whenever the held entity already carries one.
+ */
+function isStaleUpsert(held: number | undefined, incoming: number | undefined): boolean {
+  if (incoming === undefined) return held !== undefined;
+  return held !== undefined && held > incoming;
 }

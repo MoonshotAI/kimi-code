@@ -8,6 +8,7 @@ import {
 
 import type {
   AssistantMessage,
+  ContentPart as WireContentPart,
   InteractionMessage,
   ServerMessage,
   StepMessage,
@@ -36,7 +37,6 @@ import {
   isCompactionSystemId,
   isUndoAnchorOrigin,
   stepIdOf,
-  stepUserMessageIdOf,
   textMessageIdOf,
   turnIdOf,
   turnOrdinalOf,
@@ -66,7 +66,7 @@ export interface ProjectorHooks {
 interface TurnRecord {
   turnId: string;
   ordinal: number;
-  state: 'running' | 'completed';
+  status: 'running' | 'completed';
   origin: TurnOrigin;
   anchor: boolean;
   promptId?: string;
@@ -84,7 +84,7 @@ interface StepRecord {
   stepId: string;
   turnId: string;
   ordinal: number;
-  state: 'running' | 'completed' | 'interrupted' | 'failed';
+  status: 'running' | 'completed' | 'interrupted' | 'failed';
   startedAt?: string;
   endedAt?: string;
   usage?: StepUsage;
@@ -109,7 +109,7 @@ interface ToolRecord {
   turnId: string;
   stepId: string;
   name: string;
-  state: 'running' | 'done' | 'error';
+  status: 'running' | 'done' | 'error';
   input?: unknown;
   inputText?: string;
   output?: unknown;
@@ -126,7 +126,7 @@ interface ToolRecord {
 interface TaskRecord {
   taskId: string;
   kind: TaskMessage['kind'];
-  state: TaskMessage['state'];
+  status: TaskMessage['status'];
   detached: boolean;
   description?: string;
   childAgentId?: string;
@@ -144,7 +144,7 @@ interface TaskRecord {
 interface InteractionRecord {
   interactionId: string;
   kind: 'approval' | 'question';
-  state: 'pending' | 'approved' | 'rejected' | 'cancelled' | 'answered' | 'dismissed';
+  status: InteractionMessage['status'];
   toolCallId?: string;
   request?: unknown;
   response?: unknown;
@@ -152,37 +152,21 @@ interface InteractionRecord {
 
 interface UserRecord {
   messageId: string;
-  turnId: string;
-  stepId?: string;
-  promptId?: string;
-  text: string;
-  status: 'running' | 'completed';
-  createdAt: string;
-  finishedAt?: string;
-  steeredAt?: string;
+  turnId?: string;
+  text: WireContentPart[];
+  status: 'unread' | 'read';
+  timestamp?: number;
   origin?: UserMessageOrigin;
-  notification?: TaskNotificationPayload;
   attachmentIds?: string[];
   skillActivations?: { skill_name: string; skill_args?: string }[];
 }
 
 interface PromptRecord {
   promptId: string;
-  text: string;
-  status: 'running' | 'queued' | 'completed' | 'aborted';
+  userMessageId: string;
+  content: readonly ContentPart[];
+  status: 'running' | 'queued' | 'steered' | 'completed' | 'aborted';
   createdAt: string;
-  turnId?: string;
-  messageId?: string;
-  predicted?: boolean;
-}
-
-interface PendingSteer {
-  readonly input: readonly ContentPart[];
-  readonly origin: UserMessageOrigin | undefined;
-  readonly skillActivations: { skill_name: string; skill_args?: string }[] | undefined;
-  readonly skipBlocks: number;
-  readonly at: string;
-  readonly notification?: { readonly payload: TaskNotificationPayload; readonly text: string };
 }
 
 export class AgentMessageProjector {
@@ -190,7 +174,7 @@ export class AgentMessageProjector {
   private currentStep: StepRecord | undefined;
   private openText: TextRecord | undefined;
   private openThinking: TextRecord | undefined;
-  private userSeq = 0;
+  private serverUserSeq = 0;
   private attachmentSeq = 0;
   private phantomUserSeq = 0;
   private readonly turns = new Map<string, TurnRecord>();
@@ -206,7 +190,7 @@ export class AgentMessageProjector {
   private readonly prompts = new Map<string, PromptRecord>();
   private readonly stepOrdinals = new Map<string, number>();
   private readonly stepUsageByTurn = new Map<string, StepUsage[]>();
-  private pendingSteers: PendingSteer[] = [];
+  private mergedSteers: { text: string; promptIds: string[] }[] = [];
   private pendingFullCut = false;
   private pendingClearTimer: NodeJS.Timeout | undefined;
   private todoItems: { title: string; status: 'pending' | 'in_progress' | 'done' }[] | undefined;
@@ -219,7 +203,6 @@ export class AgentMessageProjector {
   private readonly anchorTurnOrdinals = new Set<number>();
   private timelineRewriteCount = 0;
   private nextTurnIdHint = 0;
-  private queuedTurnIdCursor: number | undefined;
 
   constructor(
     readonly agentId: string,
@@ -276,8 +259,6 @@ export class AgentMessageProjector {
         return this.onGoalUpdated(event);
       case 'agent.status.updated':
         return this.onAgentStatusUpdated(event);
-      case 'agent.activity.updated':
-        return [];
       case 'prompt.submitted':
         return this.onPromptSubmitted(event);
       case 'prompt.queued':
@@ -295,15 +276,8 @@ export class AgentMessageProjector {
       case 'hook.result':
         return [this.systemOp('hook', hookPayload(event), event.time)];
       case 'skill.activated':
-        return [this.systemOp('skill', skillPayload(event), event.time)];
       case 'plugin_command.activated':
-        return [
-          this.systemOp(
-            'skill',
-            { ...skillPayload(event), variant: 'plugin_command' },
-            event.time,
-          ),
-        ];
+        return [];
       case 'compaction.started':
       case 'compaction.blocked':
       case 'compaction.cancelled':
@@ -360,6 +334,7 @@ export class AgentMessageProjector {
   seedActiveTurn(info: {
     turnId: number;
     promptId?: string;
+    userMessageId?: string;
     origin?: TurnOrigin;
     anchor?: boolean;
   }): void {
@@ -369,11 +344,14 @@ export class AgentMessageProjector {
     this.currentTurn = {
       turnId,
       ordinal: info.turnId,
-      state: 'running',
+      status: 'running',
       origin: info.origin ?? { kind: 'other' },
       anchor: info.anchor === true,
       promptId: info.promptId,
-      userMessageId: info.promptId === undefined ? undefined : turnUserMessageIdOf(turnId),
+      userMessageId:
+        info.promptId === undefined
+          ? undefined
+          : (info.userMessageId ?? turnUserMessageIdOf(turnId)),
       openingSteerDeduped: false,
     };
     this.turns.set(turnId, this.currentTurn);
@@ -387,7 +365,7 @@ export class AgentMessageProjector {
     const task = this.upsertTask(info.taskId, (prev) => ({
       taskId: info.taskId,
       kind,
-      state: 'running',
+      status: 'running',
       detached: info.detached ?? prev?.detached ?? kind !== 'shell',
       description: info.description,
       childAgentId: agentInfo?.agentId ?? prev?.childAgentId,
@@ -439,7 +417,7 @@ export class AgentMessageProjector {
     const record: InteractionRecord = {
       interactionId: interaction.id,
       kind: interaction.kind,
-      state: 'pending',
+      status: 'pending',
       toolCallId,
       request: this.wireInteractionRequest(interaction),
     };
@@ -458,7 +436,7 @@ export class AgentMessageProjector {
   interactionResolved(id: string, response: unknown): ServerMessage[] {
     const record = this.interactions.get(id);
     if (record === undefined) return [];
-    record.state = mapInteractionEndState(record.kind, response);
+    record.status = mapInteractionEndStatus(record.kind, response);
     record.response = this.wireInteractionResponse(record, response);
     return [this.interactionOp(record)];
   }
@@ -466,7 +444,7 @@ export class AgentMessageProjector {
   recoveryMessages(): ServerMessage[] {
     const ops: ServerMessage[] = [];
     const turn = this.currentTurn;
-    if (turn !== undefined && turn.state === 'running') {
+    if (turn !== undefined && turn.status === 'running') {
       ops.push(this.turnOp(turn));
       const step = this.currentStep;
       const replayStepId =
@@ -479,14 +457,17 @@ export class AgentMessageProjector {
       }
       for (const tool of this.tools.values()) {
         if (tool.turnId !== turn.turnId) continue;
-        if (tool.state === 'running' || tool.stepId === replayStepId) ops.push(this.toolOp(tool));
+        if (tool.status === 'running' || tool.stepId === replayStepId) ops.push(this.toolOp(tool));
       }
     }
     for (const record of this.interactions.values()) {
-      if (record.state === 'pending') ops.push(this.interactionOp(record));
+      if (record.status === 'pending') ops.push(this.interactionOp(record));
     }
     for (const task of this.tasks.values()) {
-      if (task.state === 'running') ops.push(this.taskOp(task));
+      if (task.status === 'running') ops.push(this.taskOp(task));
+    }
+    for (const user of this.users.values()) {
+      if (user.status === 'unread') ops.push(this.userOp(user));
     }
     if (this.todoItems !== undefined) ops.push(this.todoOp());
     return ops;
@@ -527,7 +508,7 @@ export class AgentMessageProjector {
   healTurn(ordinal: number, fold: WireTurnFold): ServerMessage[] {
     const turnId = turnIdOf(ordinal);
     const held = this.turns.get(turnId);
-    if (held?.state !== 'completed') return [];
+    if (held?.status !== 'completed') return [];
     const ops: ServerMessage[] = [];
     const stepOrdinals = new Set<number>([...fold.steps.keys(), ...fold.texts.keys()]);
     for (const wireTool of fold.tools.values()) stepOrdinals.add(wireTool.step);
@@ -540,7 +521,7 @@ export class AgentMessageProjector {
           stepId,
           turnId,
           ordinal: stepOrdinal,
-          state: wireStep?.state ?? 'interrupted',
+          status: wireStep?.status ?? 'interrupted',
           endedAt: wireStep?.endedAt,
           usage: wireStep?.usage,
           finishReason: wireStep?.finishReason,
@@ -551,8 +532,8 @@ export class AgentMessageProjector {
         this.steps.set(stepId, step);
         this.stepOrdinals.set(turnId, Math.max(this.stepOrdinals.get(turnId) ?? 0, stepOrdinal));
         ops.push(this.stepOp(step));
-      } else if (live.state === 'running' && wireStep !== undefined) {
-        live.state = wireStep.state;
+      } else if (live.status === 'running' && wireStep !== undefined) {
+        live.status = wireStep.status;
         live.endedAt = wireStep.endedAt;
         live.usage = live.usage ?? wireStep.usage;
         live.finishReason = live.finishReason ?? wireStep.finishReason;
@@ -575,7 +556,7 @@ export class AgentMessageProjector {
           turnId,
           stepId,
           name: wireTool.name,
-          state: wireTool.isError === true ? 'error' : 'done',
+          status: wireTool.isError === true ? 'error' : 'done',
           input: parseToolArgs(wireTool.args),
           inputText: typeof wireTool.args === 'string' ? wireTool.args : undefined,
           output: wireTool.output,
@@ -590,10 +571,10 @@ export class AgentMessageProjector {
         continue;
       }
       const liveHasOutcome =
-        live.output !== undefined || live.error !== undefined || live.state !== 'running';
+        live.output !== undefined || live.error !== undefined || live.status !== 'running';
       const wireHasOutcome = wireTool.output !== undefined || wireTool.isError === true;
       if (liveHasOutcome || !wireHasOutcome) continue;
-      live.state = wireTool.isError === true ? 'error' : 'done';
+      live.status = wireTool.isError === true ? 'error' : 'done';
       live.output = wireTool.output;
       live.error =
         wireTool.isError === true && typeof wireTool.output === 'string'
@@ -609,7 +590,7 @@ export class AgentMessageProjector {
     const turn = this.currentTurn;
     const step = this.currentStep;
     if (turn === undefined || step === undefined) return undefined;
-    if (turn.state !== 'running' || step.turnId !== turn.turnId) return undefined;
+    if (turn.status !== 'running' || step.turnId !== turn.turnId) return undefined;
     return { turn_id: turn.turnId, step_id: step.stepId };
   }
 
@@ -651,43 +632,34 @@ export class AgentMessageProjector {
     promptAttachments?: readonly unknown[];
   }): ServerMessage[] {
     const ops = this.settlePendingClear();
-    if (this.currentTurn !== undefined && this.currentTurn.state === 'running') {
+    if (this.currentTurn !== undefined && this.currentTurn.status === 'running') {
       ops.push(...this.finalizeTurn(this.currentTurn, event.time));
     }
     const turnId = turnIdOf(event.turnId);
     this.noteTurnId(event.turnId);
+    this.serverUserSeq = this.phantomUserSeq;
     this.phantomUserSeq = 0;
     const origin = this.mapTurnOrigin(event.origin);
     const attachments = event.promptAttachments ?? [];
     const attachmentIds = attachments.map((_, index) => attachmentIdOf(turnId, index + 1));
+    this.attachmentSeq = attachmentIds.length;
     const promptRecord = event.promptId === undefined ? undefined : this.prompts.get(event.promptId);
-    const promptText = event.prompt ?? promptRecord?.text;
-    if (
-      promptRecord?.messageId !== undefined &&
-      promptRecord.turnId !== undefined &&
-      promptRecord.turnId !== turnId
-    ) {
-      const stale = this.users.get(promptRecord.messageId);
-      if (stale !== undefined && stale.status === 'running') {
-        stale.status = 'completed';
-        stale.finishedAt = epochMsToIso(event.time);
-        ops.push(this.userOp(stale));
-      }
-      promptRecord.turnId = undefined;
-      promptRecord.messageId = undefined;
-    }
+    const promptText =
+      event.prompt ??
+      (promptRecord === undefined ? undefined : promptTextOf(promptRecord.content));
     const wantsUser = wantsUserMessage(event.origin, promptText);
-    if (promptRecord !== undefined) promptRecord.predicted = false;
     const anchor = isUndoAnchorOrigin(event.origin);
     if (anchor) this.anchorTurnOrdinals.add(event.turnId);
     const turn: TurnRecord = {
       turnId,
       ordinal: event.turnId,
-      state: 'running',
+      status: 'running',
       origin,
       anchor,
       promptId: event.promptId,
-      userMessageId: wantsUser ? turnUserMessageIdOf(turnId) : undefined,
+      userMessageId: wantsUser
+        ? (promptRecord?.userMessageId ?? turnUserMessageIdOf(turnId))
+        : undefined,
       attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
       openingKey: { text: promptText ?? '', attachments: attachmentIds.length },
       openingSteerDeduped: false,
@@ -699,25 +671,22 @@ export class AgentMessageProjector {
     this.currentStep = undefined;
     this.openText = undefined;
     this.openThinking = undefined;
-    this.pendingSteers = [];
     ops.push(this.turnOp(turn));
     if (wantsUser && turn.userMessageId !== undefined) {
       const user: UserRecord = {
         messageId: turn.userMessageId,
         turnId,
-        promptId: event.promptId,
-        text: promptText ?? '',
-        status: 'running',
-        createdAt: promptRecord?.createdAt ?? epochMsToIso(event.time),
+        text:
+          promptRecord === undefined
+            ? textPartsOf(promptText ?? '')
+            : wireContentParts(promptRecord.content),
+        status: 'read',
+        timestamp: event.time,
         origin: userOriginOf(event.origin),
         attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
         skillActivations: skillActivationsOf(event.origin),
       };
       this.users.set(user.messageId, user);
-      if (promptRecord !== undefined) {
-        promptRecord.turnId = turnId;
-        promptRecord.messageId = user.messageId;
-      }
       ops.push(this.userOp(user));
     }
     return ops;
@@ -760,42 +729,16 @@ export class AgentMessageProjector {
     const turnId = turn.turnId;
     if (this.currentStep !== undefined && this.currentStep.turnId === turnId) {
       const step = this.currentStep;
-      if (step.state === 'running') {
-        step.state = reason === 'failed' || reason === 'blocked' ? 'failed' : 'interrupted';
+      if (step.status === 'running') {
+        step.status = reason === 'failed' || reason === 'blocked' ? 'failed' : 'interrupted';
         step.endedAt = epochMsToIso(time);
         ops.push(this.stepOp(step));
       }
-    } else if (this.pendingSteers.length > 0) {
-      const ordinal = (this.stepOrdinals.get(turnId) ?? this.lookups?.stepOrdinal?.(turnId) ?? 0) + 1;
-      const step: StepRecord = {
-        stepId: stepIdOf(turnId, ordinal),
-        turnId,
-        ordinal,
-        state: 'interrupted',
-        endedAt: epochMsToIso(time),
-      };
-      this.stepOrdinals.set(turnId, ordinal);
-      this.steps.set(step.stepId, step);
-      this.currentStep = step;
-      ops.push(this.stepOp(step));
     }
-    const step = this.currentStep;
-    if (step !== undefined && step.turnId === turnId && this.pendingSteers.length > 0) {
-      for (const pending of this.pendingSteers) {
-        ops.push(this.steerUserMessage(step, pending));
-      }
-    }
-    this.pendingSteers = [];
-    turn.state = 'completed';
+    turn.status = 'completed';
     turn.endedAt = epochMsToIso(time);
     turn.durationMs = durationMs;
     turn.usage = this.takeTurnUsage(turnId);
-    for (const user of this.users.values()) {
-      if (user.turnId !== turnId || user.status !== 'running') continue;
-      user.status = 'completed';
-      user.finishedAt = epochMsToIso(time);
-      ops.push(this.userOp(user));
-    }
     ops.push(this.turnOp(turn));
     return ops;
   }
@@ -825,9 +768,9 @@ export class AgentMessageProjector {
   private onStepStarted(event: { time: number; turnId: number; step: number }): ServerMessage[] {
     const ops = this.settlePendingClear();
     const turnId = turnIdOf(event.turnId);
-    if (this.currentStep !== undefined && this.currentStep.state === 'running') {
+    if (this.currentStep !== undefined && this.currentStep.status === 'running') {
       ops.push(...this.flushOpenTexts());
-      this.currentStep.state = 'completed';
+      this.currentStep.status = 'completed';
       this.currentStep.endedAt = epochMsToIso(event.time);
       ops.push(this.stepOp(this.currentStep));
     }
@@ -837,20 +780,14 @@ export class AgentMessageProjector {
       stepId,
       turnId,
       ordinal: event.step,
-      state: 'running',
+      status: 'running',
       startedAt: epochMsToIso(event.time),
     };
     this.currentStep = step;
     this.steps.set(stepId, step);
-    this.userSeq = 0;
-    this.attachmentSeq = 0;
     this.openText = undefined;
     this.openThinking = undefined;
     ops.push(this.stepOp(step));
-    for (const pending of this.pendingSteers) {
-      ops.push(this.steerUserMessage(step, pending));
-    }
-    this.pendingSteers = [];
     return ops;
   }
 
@@ -880,7 +817,7 @@ export class AgentMessageProjector {
       stepId,
       turnId,
       ordinal: event.step,
-      state: 'completed',
+      status: 'completed',
       startedAt: prev?.startedAt,
       endedAt: epochMsToIso(event.time),
       usage,
@@ -909,7 +846,7 @@ export class AgentMessageProjector {
       stepId,
       turnId,
       ordinal: event.step,
-      state: 'interrupted',
+      status: 'interrupted',
       startedAt: prev?.startedAt,
       endedAt: epochMsToIso(event.time),
       endReason: event.reason,
@@ -939,7 +876,7 @@ export class AgentMessageProjector {
       stepId,
       turnId,
       ordinal: event.step,
-      state: 'running',
+      status: 'running',
       startedAt: prev?.startedAt,
       retry: {
         failed_attempt: event.failedAttempt,
@@ -998,7 +935,7 @@ export class AgentMessageProjector {
     const turn: TurnRecord = {
       turnId,
       ordinal,
-      state: 'running',
+      status: 'running',
       origin: { kind: 'other' },
       anchor: false,
       openingSteerDeduped: false,
@@ -1020,7 +957,7 @@ export class AgentMessageProjector {
       stepId: stepIdOf(turnId, ordinal),
       turnId,
       ordinal,
-      state: 'running',
+      status: 'running',
       startedAt: epochMsToIso(time),
     };
     this.stepOrdinals.set(turnId, ordinal);
@@ -1052,7 +989,7 @@ export class AgentMessageProjector {
       turnId,
       stepId: step.stepId,
       name: event.name ?? '',
-      state: 'running',
+      status: 'running',
       inputText: event.argumentsPart ?? '',
       agentRefs: [],
       startedAt: epochMsToIso(event.time),
@@ -1114,7 +1051,7 @@ export class AgentMessageProjector {
       turnId,
       stepId: step.stepId,
       name: event.name,
-      state: 'running',
+      status: 'running',
       input,
       inputText: prev?.inputText ?? (typeof event.args === 'string' ? event.args : undefined),
       display: event.display,
@@ -1146,13 +1083,13 @@ export class AgentMessageProjector {
         turnId,
         stepId: step.stepId,
         name: '',
-        state: 'running',
+        status: 'running',
         agentRefs: [],
       };
       this.tools.set(event.toolCallId, tool);
     }
     const isError = event.isError === true;
-    tool.state = isError ? 'error' : 'done';
+    tool.status = isError ? 'error' : 'done';
     tool.output = event.output;
     tool.error = isError && typeof event.output === 'string' ? event.output : undefined;
     ops.push(this.toolOp(tool));
@@ -1174,7 +1111,7 @@ export class AgentMessageProjector {
     const task = this.upsertTask(info.taskId, (prev) => ({
       taskId: info.taskId,
       kind: mapTaskKind(info.kind),
-      state: info.status,
+      status: info.status,
       detached: info.detached ?? prev?.detached ?? true,
       description: info.description,
       childAgentId: agentInfo?.agentId ?? prev?.childAgentId,
@@ -1212,7 +1149,7 @@ export class AgentMessageProjector {
     const task = this.upsertTask(event.taskId, (prev) => ({
       taskId: event.taskId,
       kind: 'shell',
-      state: 'running',
+      status: 'running',
       detached: prev?.detached ?? false,
       description: prev?.description,
       outputTail: prev?.outputTail ?? '',
@@ -1242,7 +1179,7 @@ export class AgentMessageProjector {
     const task = this.upsertTask(taskId, (prev) => ({
       taskId,
       kind: prev?.kind ?? 'shell',
-      state: 'running',
+      status: 'running',
       detached: prev?.detached ?? false,
       description: prev?.description,
       outputTail: tailWindow((prev?.outputTail ?? '') + text),
@@ -1263,7 +1200,7 @@ export class AgentMessageProjector {
     const task = this.upsertTask(taskId, (prev) => ({
       taskId,
       kind: prev?.kind ?? 'shell',
-      state: event.isError ? 'failed' : 'completed',
+      status: event.isError ? 'failed' : 'completed',
       detached: prev?.detached ?? false,
       description: prev?.description,
       outputTail: prev?.outputTail ?? '',
@@ -1314,7 +1251,7 @@ export class AgentMessageProjector {
     const task = this.upsertTask(taskId, (prev) => ({
       taskId,
       kind: 'subagent',
-      state: 'running',
+      status: 'running',
       detached: event.runInBackground,
       description: event.description ?? prev?.description,
       childAgentId: event.subagentId,
@@ -1341,7 +1278,7 @@ export class AgentMessageProjector {
     const existing = this.tasks.get(taskKey);
     if (existing === undefined) return ops;
     const terminal = event.type !== 'subagent.suspended';
-    existing.state =
+    existing.status =
       event.type === 'subagent.completed'
         ? 'completed'
         : event.type === 'subagent.failed'
@@ -1409,7 +1346,7 @@ export class AgentMessageProjector {
       if (tool.name === 'ExitPlanMode') latest = tool;
     }
     if (latest?.approvalId === undefined) return false;
-    return this.interactions.get(latest.approvalId)?.state === 'approved';
+    return this.interactions.get(latest.approvalId)?.status === 'approved';
   }
 
   private onPlanRevision(event: {
@@ -1440,11 +1377,10 @@ export class AgentMessageProjector {
     const prev = this.prompts.get(event.promptId);
     this.prompts.set(event.promptId, {
       promptId: event.promptId,
-      text: promptTextOf(event.content),
+      userMessageId: event.userMessageId,
+      content: event.content,
       status: event.status,
       createdAt: prev?.createdAt ?? event.createdAt,
-      turnId: prev?.turnId,
-      messageId: prev?.messageId,
     });
     return [];
   }
@@ -1457,76 +1393,42 @@ export class AgentMessageProjector {
     if (prev === undefined) {
       prev = {
         promptId: event.promptId,
-        text: promptTextOf(event.content),
+        userMessageId: event.promptId,
+        content: event.content,
         status: 'queued',
         createdAt: nowIso(),
       };
       this.prompts.set(event.promptId, prev);
     }
-    if (prev.messageId !== undefined) return [];
-    return [this.predictReservedUser(prev)];
+    if (this.users.has(prev.userMessageId)) return [];
+    const user: UserRecord = {
+      messageId: prev.userMessageId,
+      text: wireContentParts(prev.content),
+      status: 'unread',
+    };
+    this.users.set(user.messageId, user);
+    return [this.userOp(user)];
   }
 
   private onPromptStarted(event: { promptId: string }): ServerMessage[] {
     const prev = this.prompts.get(event.promptId);
     if (prev === undefined) return [];
     prev.status = 'running';
-    if (prev.turnId !== undefined) return [];
-    return [this.predictReservedUser(prev)];
+    return [];
   }
 
-  private predictReservedUser(prompt: PromptRecord): ServerMessage {
-    const ordinal = Math.max(this.nextTurnIdHint, this.queuedTurnIdCursor ?? 0);
-    this.queuedTurnIdCursor = ordinal + 1;
-    const turnId = turnIdOf(ordinal);
-    const messageId = turnUserMessageIdOf(turnId);
-    prompt.turnId = turnId;
-    prompt.messageId = messageId;
-    prompt.predicted = true;
-    const user: UserRecord = {
-      messageId,
-      turnId,
-      promptId: prompt.promptId,
-      text: prompt.text,
-      status: 'running',
-      createdAt: prompt.createdAt,
-    };
-    this.users.set(messageId, user);
-    return this.userOp(user);
-  }
-
-  private releasePredictedTurnId(prompt: PromptRecord): void {
-    if (prompt.predicted !== true || prompt.turnId === undefined) return;
-    prompt.predicted = false;
-    const ordinal = turnOrdinalOf(prompt.turnId);
-    if (ordinal !== undefined && this.queuedTurnIdCursor === ordinal + 1) {
-      this.queuedTurnIdCursor = ordinal;
-    }
-  }
-
-  private onPromptCompleted(event: { promptId: string; finishedAt: string }): ServerMessage[] {
+  private onPromptCompleted(event: { promptId: string }): ServerMessage[] {
     const prev = this.prompts.get(event.promptId);
     if (prev === undefined) return [];
     prev.status = 'completed';
-    this.releasePredictedTurnId(prev);
-    return this.completeUserByPrompt(prev, event.finishedAt);
+    return [];
   }
 
-  private onPromptAborted(event: { promptId: string; abortedAt: string }): ServerMessage[] {
+  private onPromptAborted(event: { promptId: string }): ServerMessage[] {
     const prev = this.prompts.get(event.promptId);
     if (prev === undefined) return [];
     prev.status = 'aborted';
-    this.releasePredictedTurnId(prev);
-    return this.completeUserByPrompt(prev, event.abortedAt);
-  }
-
-  private completeUserByPrompt(prompt: PromptRecord, at: string): ServerMessage[] {
-    if (prompt.messageId === undefined) return [];
-    const user = this.users.get(prompt.messageId);
-    if (user === undefined || user.status !== 'running') return [];
-    user.status = 'completed';
-    user.finishedAt = at;
-    return [this.userOp(user)];
+    return [];
   }
 
   private onPromptSteered(event: {
@@ -1535,17 +1437,13 @@ export class AgentMessageProjector {
     content: readonly ContentPart[];
     steeredAt: string;
   }): ServerMessage[] {
-    const active = this.prompts.get(event.activePromptId);
-    if (active !== undefined) active.text = promptTextOf(event.content);
-    const ops: ServerMessage[] = [];
     for (const promptId of event.promptIds) {
       const prev = this.prompts.get(promptId);
       if (prev === undefined) continue;
-      prev.status = 'completed';
-      this.releasePredictedTurnId(prev);
-      ops.push(...this.completeUserByPrompt(prev, event.steeredAt));
+      prev.status = 'steered';
     }
-    return ops;
+    this.mergedSteers.push({ text: promptTextOf(event.content), promptIds: event.promptIds });
+    return [];
   }
 
   private onTurnSteered(event: {
@@ -1565,70 +1463,139 @@ export class AgentMessageProjector {
     if (kind === 'skill_activation' && origin.trigger !== 'user-slash') return [];
     const ops = this.settlePendingClear();
     const turn = this.currentTurn;
-    if (turn === undefined || turn.state !== 'running') return ops;
-    const steer: PendingSteer = {
-      input: event.input,
-      origin: userOriginOf(event.origin),
-      skillActivations: skillActivationsOf(event.origin),
-      skipBlocks: kind === 'user' ? (origin.skillActivations?.length ?? 0) : 0,
-      at: epochMsToIso(event.time),
-    };
+    if (turn === undefined || turn.status !== 'running') return ops;
+    const skipBlocks = kind === 'user' ? (origin.skillActivations?.length ?? 0) : 0;
     const step = this.currentStep;
     const stepStarted = step !== undefined && step.turnId === turn.turnId;
     if (!stepStarted && !turn.openingSteerDeduped && turn.openingKey !== undefined) {
-      const key = this.steerKey(steer);
+      const key = steerKeyOf(event.input, skipBlocks);
       if (key.text === turn.openingKey.text && key.attachments === turn.openingKey.attachments) {
         turn.openingSteerDeduped = true;
         return ops;
       }
     }
-    if (step !== undefined && step.state === 'running' && step.turnId === turn.turnId) {
-      ops.push(this.steerUserMessage(step, steer));
+    const matched =
+      kind === 'user' ? this.matchQueuedPrompt(event.input, skipBlocks) : undefined;
+    if (matched !== undefined) {
+      const text = promptTextOf(event.input.slice(skipBlocks));
+      this.mergedSteers = this.mergedSteers.filter((entry) => entry.text !== text);
+      const existing = this.users.get(matched);
+      if (existing !== undefined) {
+        if (existing.status === 'unread') {
+          existing.status = 'read';
+          existing.turnId = turn.turnId;
+          existing.timestamp = event.time;
+          ops.push(this.userOp(existing));
+        }
+        return ops;
+      }
+      ops.push(
+        this.steerUserMessage(turn, event.input, {
+          origin: userOriginOf(event.origin),
+          skillActivations: skillActivationsOf(event.origin),
+          skipBlocks,
+          at: event.time,
+          messageId: matched,
+        }),
+      );
       return ops;
     }
-    this.pendingSteers.push(steer);
+    if (kind === 'user') {
+      const merged = this.matchMergedSteer(event.input, skipBlocks);
+      if (merged !== undefined) {
+        ops.push(...this.readSteeredUsers(merged, turn, event.time));
+        return ops;
+      }
+    }
+    ops.push(
+      this.steerUserMessage(turn, event.input, {
+        origin: userOriginOf(event.origin),
+        skillActivations: skillActivationsOf(event.origin),
+        skipBlocks,
+        at: event.time,
+      }),
+    );
     return ops;
   }
 
-  private steerKey(steer: PendingSteer): { text: string; attachments: number } {
-    let text = '';
-    let attachments = 0;
-    for (const part of steer.input.slice(steer.skipBlocks)) {
-      if (part.type === 'text') {
-        text += part.text;
-        continue;
-      }
-      if (daemonFileRefFromPart(part) !== undefined) attachments += 1;
+  private matchQueuedPrompt(
+    input: readonly ContentPart[],
+    skipBlocks: number,
+  ): string | undefined {
+    const text = promptTextOf(input.slice(skipBlocks));
+    let matched: string | undefined;
+    for (const prompt of this.prompts.values()) {
+      if (prompt.status !== 'queued' && prompt.status !== 'steered') continue;
+      if (promptTextOf(prompt.content) !== text) continue;
+      if (matched !== undefined) return undefined;
+      matched = prompt.userMessageId;
     }
-    return { text, attachments };
+    return matched;
   }
 
-  private steerUserMessage(step: StepRecord, steer: PendingSteer): ServerMessage {
-    this.userSeq += 1;
-    const messageId = stepUserMessageIdOf(step.stepId, this.userSeq);
-    const texts: string[] = [];
+  private matchMergedSteer(
+    input: readonly ContentPart[],
+    skipBlocks: number,
+  ): { promptIds: string[] } | undefined {
+    const text = promptTextOf(input.slice(skipBlocks));
+    const index = this.mergedSteers.findIndex((entry) => entry.text === text);
+    if (index < 0) return undefined;
+    const [entry] = this.mergedSteers.splice(index, 1);
+    return entry;
+  }
+
+  private readSteeredUsers(
+    merged: { promptIds: string[] },
+    turn: TurnRecord,
+    timestamp: number,
+  ): ServerMessage[] {
+    const ops: ServerMessage[] = [];
+    for (const promptId of merged.promptIds) {
+      const prompt = this.prompts.get(promptId);
+      if (prompt === undefined) continue;
+      prompt.status = 'completed';
+      const user = this.users.get(prompt.userMessageId);
+      if (user === undefined || user.status !== 'unread') continue;
+      user.status = 'read';
+      user.turnId = turn.turnId;
+      user.timestamp = timestamp;
+      ops.push(this.userOp(user));
+    }
+    return ops;
+  }
+
+  private steerUserMessage(
+    turn: TurnRecord,
+    input: readonly ContentPart[],
+    opts: {
+      origin: UserMessageOrigin | undefined;
+      skillActivations: { skill_name: string; skill_args?: string }[] | undefined;
+      skipBlocks: number;
+      at: number;
+      text?: string;
+      messageId?: string;
+    },
+  ): ServerMessage {
+    const messageId = opts.messageId ?? `${turn.turnId}.u${(this.serverUserSeq += 1)}`;
     const attachmentIds: string[] = [];
-    for (const part of steer.input.slice(steer.skipBlocks)) {
-      if (part.type === 'text') {
-        texts.push(part.text);
-        continue;
-      }
+    for (const part of input.slice(opts.skipBlocks)) {
+      if (part.type === 'text') continue;
       if (daemonFileRefFromPart(part) === undefined) continue;
       this.attachmentSeq += 1;
-      attachmentIds.push(attachmentIdOf(step.stepId, this.attachmentSeq));
+      attachmentIds.push(attachmentIdOf(turn.turnId, this.attachmentSeq));
     }
     const user: UserRecord = {
       messageId,
-      turnId: step.turnId,
-      stepId: step.stepId,
-      text: steer.notification?.text ?? texts.join(''),
-      status: 'running',
-      createdAt: steer.at,
-      steeredAt: steer.at,
-      origin: steer.origin,
-      notification: steer.notification?.payload,
+      turnId: turn.turnId,
+      text:
+        opts.text !== undefined
+          ? textPartsOf(opts.text)
+          : wireContentParts(input.slice(opts.skipBlocks)),
+      status: 'read',
+      timestamp: opts.at,
+      origin: opts.origin,
       attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
-      skillActivations: steer.skillActivations,
+      skillActivations: opts.skillActivations,
     };
     this.users.set(messageId, user);
     return this.userOp(user);
@@ -1644,8 +1611,6 @@ export class AgentMessageProjector {
     sourceId: string;
   }): ServerMessage[] {
     const ops = this.settlePendingClear();
-    const origin = taskUserOriginOf(event.sourceId);
-    if (origin === undefined) return ops;
     const notification: TaskNotificationPayload = {
       title: event.title,
       body: event.body,
@@ -1654,12 +1619,13 @@ export class AgentMessageProjector {
       source_kind: event.sourceKind,
       source_id: event.sourceId,
     };
+    const origin = taskUserOriginOf(event.sourceId, notification);
+    if (origin === undefined) return ops;
     const text = notificationTextOf(notification);
-    const at = epochMsToIso(event.time);
     const turn = this.currentTurn;
     if (
       turn !== undefined &&
-      turn.state === 'running' &&
+      turn.status === 'running' &&
       turn.origin.kind === 'task' &&
       turn.origin.task_id === origin.task_id
     ) {
@@ -1670,10 +1636,9 @@ export class AgentMessageProjector {
       }
       const existing = this.users.get(messageId);
       if (existing !== undefined) {
-        if (existing.notification === undefined) {
-          existing.text = text;
+        if (existing.origin?.kind !== 'task' || existing.origin.title === '') {
+          existing.text = textPartsOf(text);
           existing.origin = origin;
-          existing.notification = notification;
           ops.push(this.userOp(existing));
         }
         return ops;
@@ -1681,31 +1646,25 @@ export class AgentMessageProjector {
       const user: UserRecord = {
         messageId,
         turnId: turn.turnId,
-        text,
-        status: 'running',
-        createdAt: at,
+        text: textPartsOf(text),
+        status: 'read',
+        timestamp: event.time,
         origin,
-        notification,
       };
       this.users.set(messageId, user);
       ops.push(this.userOp(user));
       return ops;
     }
-    if (turn !== undefined && turn.state === 'running') {
-      const steer: PendingSteer = {
-        input: [],
-        origin,
-        skillActivations: undefined,
-        skipBlocks: 0,
-        at,
-        notification: { payload: notification, text },
-      };
-      const step = this.currentStep;
-      if (step !== undefined && step.state === 'running' && step.turnId === turn.turnId) {
-        ops.push(this.steerUserMessage(step, steer));
-        return ops;
-      }
-      this.pendingSteers.push(steer);
+    if (turn !== undefined && turn.status === 'running') {
+      ops.push(
+        this.steerUserMessage(turn, [], {
+          origin,
+          skillActivations: undefined,
+          skipBlocks: 0,
+          at: event.time,
+          text,
+        }),
+      );
       return ops;
     }
     this.phantomUserSeq += 1;
@@ -1713,11 +1672,10 @@ export class AgentMessageProjector {
     const user: UserRecord = {
       messageId: `${turnId}.u${this.phantomUserSeq}`,
       turnId,
-      text,
-      status: 'completed',
-      createdAt: at,
+      text: textPartsOf(text),
+      status: 'read',
+      timestamp: event.time,
       origin,
-      notification,
     };
     this.users.set(user.messageId, user);
     ops.push(this.userOp(user));
@@ -1778,7 +1736,6 @@ export class AgentMessageProjector {
     this.currentStep = undefined;
     this.openText = undefined;
     this.openThinking = undefined;
-    this.pendingSteers = [];
     return [op];
   }
 
@@ -1885,8 +1842,8 @@ export class AgentMessageProjector {
     return record;
   }
 
-  private base(): { session_id: string; agent_id: string; timestamp: string } {
-    return { session_id: this.sessionId, agent_id: this.agentId, timestamp: nowIso() };
+  private base(): { session_id: string; agent_id: string; timestamp: number } {
+    return { session_id: this.sessionId, agent_id: this.agentId, timestamp: Date.now() };
   }
 
   private turnOp(turn: TurnRecord): TurnMessage {
@@ -1895,7 +1852,7 @@ export class AgentMessageProjector {
       ...this.base(),
       turn_id: turn.turnId,
       ordinal: turn.ordinal,
-      state: turn.state,
+      status: turn.status,
       origin: turn.origin,
       user_message_id: turn.userMessageId,
       attachment_ids: turn.attachmentIds,
@@ -1913,7 +1870,7 @@ export class AgentMessageProjector {
       step_id: step.stepId,
       turn_id: step.turnId,
       ordinal: step.ordinal,
-      state: step.state,
+      status: step.status,
       started_at: step.startedAt,
       ended_at: step.endedAt,
       usage: step.usage,
@@ -1963,7 +1920,7 @@ export class AgentMessageProjector {
       turn_id: tool.turnId,
       step_id: tool.stepId,
       name: tool.name,
-      state: tool.state,
+      status: tool.status,
       input: tool.input,
       input_text: tool.inputText,
       output: tool.output,
@@ -1989,19 +1946,16 @@ export class AgentMessageProjector {
   private userOp(user: UserRecord): UserMessage {
     return {
       type: 'user',
-      ...this.base(),
+      session_id: this.sessionId,
+      agent_id: this.agentId,
       message_id: user.messageId,
       turn_id: user.turnId,
-      step_id: user.stepId,
+      status: user.status,
+      timestamp: user.timestamp,
       text: user.text,
       attachment_ids: user.attachmentIds,
       skill_activations: user.skillActivations,
-      status: user.status,
-      created_at: user.createdAt,
-      finished_at: user.finishedAt,
-      steered_at: user.steeredAt,
       origin: user.origin,
-      notification: user.notification,
     };
   }
 
@@ -2011,7 +1965,7 @@ export class AgentMessageProjector {
       ...this.base(),
       task_id: task.taskId,
       kind: task.kind,
-      state: task.state,
+      status: task.status,
       detached: task.detached,
       description: task.description,
       child_agent_id: task.childAgentId,
@@ -2033,7 +1987,7 @@ export class AgentMessageProjector {
       ...this.base(),
       interaction_id: record.interactionId,
       kind: record.kind,
-      state: record.state,
+      status: record.status,
       tool_call_id: record.toolCallId,
       request: record.request,
       response: record.response,
@@ -2206,10 +2160,10 @@ export function todoWriteItems(input: unknown): readonly { title: string; status
   return items.length === 0 && todos.length > 0 ? undefined : items;
 }
 
-export function mapInteractionEndState(
+export function mapInteractionEndStatus(
   kind: 'approval' | 'question',
   response: unknown,
-): InteractionMessage['state'] {
+): InteractionMessage['status'] {
   if (isCancellation(response)) return 'cancelled';
   if (kind === 'question') return response === null ? 'dismissed' : 'answered';
   const decision = (response as { decision?: unknown } | null | undefined)?.decision;
@@ -2246,7 +2200,17 @@ export function wantsUserMessage(origin: unknown, promptText: string | undefined
 
 export function userOriginOf(origin: unknown): UserMessageOrigin | undefined {
   const candidate = origin as
-    | { kind?: unknown; jobId?: unknown; cron?: unknown; skillName?: unknown; skillArgs?: unknown; trigger?: unknown }
+    | {
+        kind?: unknown;
+        jobId?: unknown;
+        cron?: unknown;
+        skillName?: unknown;
+        skillArgs?: unknown;
+        trigger?: unknown;
+        pluginId?: unknown;
+        commandName?: unknown;
+        commandArgs?: unknown;
+      }
     | null
     | undefined;
   if (candidate?.kind === 'cron_job') return cronUserOrigin(candidate);
@@ -2259,12 +2223,31 @@ export function userOriginOf(origin: unknown): UserMessageOrigin | undefined {
       trigger: typeof candidate.trigger === 'string' ? candidate.trigger : undefined,
     };
   }
+  if (candidate?.kind === 'plugin_command') {
+    const name =
+      typeof candidate.commandName === 'string'
+        ? candidate.commandName
+        : typeof candidate.pluginId === 'string'
+          ? candidate.pluginId
+          : undefined;
+    if (name === undefined) return undefined;
+    return {
+      kind: 'skill',
+      skill_name: name,
+      args: typeof candidate.commandArgs === 'string' ? candidate.commandArgs : undefined,
+      trigger: typeof candidate.trigger === 'string' ? candidate.trigger : undefined,
+    };
+  }
   return undefined;
 }
 
-export function taskUserOriginOf(taskId: unknown): Extract<UserMessageOrigin, { kind: 'task' }> | undefined {
+export function taskUserOriginOf(
+  taskId: unknown,
+  notification?: TaskNotificationPayload,
+): Extract<UserMessageOrigin, { kind: 'task' }> | undefined {
   if (typeof taskId !== 'string' || taskId.length === 0) return undefined;
-  return { kind: 'task', task_id: taskId };
+  if (notification === undefined) return { kind: 'task', task_id: taskId, title: '', body: '' };
+  return { kind: 'task', task_id: taskId, ...notification };
 }
 
 export function taskNotificationOriginOf(
@@ -2322,6 +2305,60 @@ export function promptTextOf(content: readonly ContentPart[]): string {
     .join('');
 }
 
+export function steerKeyOf(
+  input: readonly ContentPart[],
+  skipBlocks: number,
+): { text: string; attachments: number } {
+  let text = '';
+  let attachments = 0;
+  for (const part of input.slice(skipBlocks)) {
+    if (part.type === 'text') {
+      text += part.text;
+      continue;
+    }
+    if (daemonFileRefFromPart(part) !== undefined) attachments += 1;
+  }
+  return { text, attachments };
+}
+
+export function wireContentParts(content: readonly ContentPart[]): WireContentPart[] {
+  const out: WireContentPart[] = [];
+  for (const part of content) {
+    switch (part.type) {
+      case 'text':
+        out.push({ type: 'text', text: part.text, meta: {} });
+        break;
+      case 'think':
+        out.push({ type: 'think', text: part.think, meta: {} });
+        break;
+      case 'image_url':
+        out.push({
+          type: 'image',
+          text: part.imageUrl.url,
+          meta: { id: part.imageUrl.id, name: part.imageUrl.name },
+        });
+        break;
+      case 'audio_url':
+        out.push({ type: 'audio', text: part.audioUrl.url, meta: { id: part.audioUrl.id } });
+        break;
+      case 'video_url':
+        out.push({
+          type: 'video',
+          text: part.videoUrl.url,
+          meta: { id: part.videoUrl.id, name: part.videoUrl.name },
+        });
+        break;
+      default:
+        break;
+    }
+  }
+  return out;
+}
+
+export function textPartsOf(text: string): WireContentPart[] {
+  return [{ type: 'text', text, meta: {} }];
+}
+
 function hookPayload(event: {
   turnId?: number;
   hookEvent: string;
@@ -2333,30 +2370,6 @@ function hookPayload(event: {
     hook_event: event.hookEvent,
     content: event.content,
     blocked: event.blocked,
-  };
-}
-
-function skillPayload(event: {
-  readonly activationId?: string;
-  readonly skillName?: string;
-  readonly skillArgs?: string;
-  readonly skillPath?: string;
-  readonly skillSource?: string;
-  readonly trigger?: string;
-  readonly pluginId?: string;
-  readonly commandName?: string;
-  readonly commandArgs?: string;
-}): Record<string, unknown> {
-  return {
-    trigger: event.trigger,
-    plugin_id: event.pluginId,
-    command_name: event.commandName,
-    command_args: event.commandArgs,
-    activation_id: event.activationId,
-    skill_name: event.skillName,
-    skill_args: event.skillArgs,
-    skill_path: event.skillPath,
-    skill_source: event.skillSource,
   };
 }
 

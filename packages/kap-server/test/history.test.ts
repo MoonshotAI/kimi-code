@@ -122,9 +122,6 @@ describe('server /api/v1/sessions/{sid}/history', () => {
       getRequester: () => {
         throw new Error('modelCatalog.getRequester not exercised in this test');
       },
-      inspect: () => {
-        throw new Error('modelCatalog.inspect not exercised in this test');
-      },
       ping: () => {
         throw new Error('modelCatalog.ping not exercised in this test');
       },
@@ -261,13 +258,13 @@ describe('server /api/v1/sessions/{sid}/history', () => {
     const ids = all.body.data.messages.map(entityId);
     expect(ids).toEqual([
       't0',
-      't0.u0',
+      'p0',
       't0.1',
       't0.1.a1',
       'call_1',
       'task-2',
       't1',
-      't1.u0',
+      'p1',
       't1.1',
       't1.1.a1',
     ]);
@@ -275,26 +272,26 @@ describe('server /api/v1/sessions/{sid}/history', () => {
     expect(turn0).toMatchObject({
       type: 'turn',
       turn_id: 't0',
-      state: 'completed',
+      status: 'completed',
       origin: { kind: 'user' },
-      user_message_id: 't0.u0',
+      user_message_id: 'p0',
       duration_ms: 700,
     });
     const assistant = all.body.data.messages.find((m) => m['message_id'] === 't0.1.a1')!;
     expect(assistant).toMatchObject({ type: 'assistant', status: 'completed', text: 'Hi there' });
     const tool = all.body.data.messages.find((m) => m['tool_call_id'] === 'call_1')!;
-    expect(tool).toMatchObject({ type: 'tool_call', state: 'done', output: 'file.txt', task_id: 'task-2' });
+    expect(tool).toMatchObject({ type: 'tool_call', status: 'done', output: 'file.txt', task_id: 'task-2' });
     const task = all.body.data.messages.find((m) => m['type'] === 'task')!;
     expect(task).toMatchObject({ type: 'task', kind: 'subagent', child_agent_id: 'sub-1' });
 
     const page = await getJson<HistoryWire>(`/api/v1/sessions/${id}/history?page_size=1`);
-    expect(page.body.data.messages.map(entityId)).toEqual(['t1', 't1.u0', 't1.1', 't1.1.a1']);
+    expect(page.body.data.messages.map(entityId)).toEqual(['t1', 'p1', 't1.1', 't1.1.a1']);
     expect(page.body.data.has_more).toBe(true);
 
     const older = await getJson<HistoryWire>(`/api/v1/sessions/${id}/history?before_turn=t1`);
     expect(older.body.data.messages.map(entityId)).toEqual([
       't0',
-      't0.u0',
+      'p0',
       't0.1',
       't0.1.a1',
       'call_1',
@@ -303,7 +300,7 @@ describe('server /api/v1/sessions/{sid}/history', () => {
     expect(older.body.data.has_more).toBe(false);
 
     const newer = await getJson<HistoryWire>(`/api/v1/sessions/${id}/history?after_step=t0.1`);
-    expect(newer.body.data.messages.map(entityId)).toEqual(['task-2', 't1', 't1.u0', 't1.1', 't1.1.a1']);
+    expect(newer.body.data.messages.map(entityId)).toEqual(['task-2', 't1', 'p1', 't1.1', 't1.1.a1']);
     expect(newer.body.data.has_more).toBe(false);
 
     const missing = await getJson<HistoryWire>(`/api/v1/sessions/${id}/history?before_turn=t99`);
@@ -330,7 +327,11 @@ describe('server /api/v1/sessions/{sid}/history', () => {
       origin: { kind: 'task', task_id: 'task-2' },
     });
     const user = sub.body.data.messages.find((m) => m['type'] === 'user')!;
-    expect(user).toMatchObject({ message_id: 't0.u0', text: 'do sub work', agent_id: 'sub-1' });
+    expect(user).toMatchObject({
+      message_id: 't0.u0',
+      text: [{ type: 'text', text: 'do sub work', meta: {} }],
+      agent_id: 'sub-1',
+    });
     expect(main.body.data.messages.map(entityId)).toContain('t1');
   });
 

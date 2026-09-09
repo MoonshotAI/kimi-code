@@ -1,5 +1,5 @@
 export * from './ack';
-export * from './agent-phase';
+export * from './agent-state';
 export * from './assistant';
 export * from './assistant-delta';
 export * from './base';

@@ -19,9 +19,9 @@ import { plainNode, StateTree } from './StateTree';
 const T0 = Date.parse('2026-01-01T00:00:00.000Z');
 let tick = 0;
 
-function ts(): string {
+function ts(): number {
   tick += 1;
-  return new Date(T0 + tick * 1000).toISOString();
+  return T0 + tick * 1000;
 }
 
 function turnMsg(n: number, text?: string): TurnMessage {
@@ -32,7 +32,7 @@ function turnMsg(n: number, text?: string): TurnMessage {
     timestamp: ts(),
     turn_id: `t${n}`,
     ordinal: n,
-    state: 'completed',
+    status: 'completed',
     origin: { kind: 'user' },
     user_message_id: text,
   };
@@ -47,7 +47,7 @@ function stepMsg(stepId: string): StepMessage {
     step_id: stepId,
     turn_id: stepId.split('.')[0] ?? 't0',
     ordinal: Number(stepId.split('.')[1] ?? '1'),
-    state: 'running',
+    status: 'running',
   };
 }
 
@@ -107,7 +107,7 @@ describe('StateTree', () => {
     );
     const html = renderToStaticMarkup(<StateTree root={root} />);
     expect(html).not.toContain('{"type"');
-    for (const field of ['turn_id', 'ordinal', 'state', 'origin', 'timestamp', 'agent_id']) {
+    for (const field of ['turn_id', 'ordinal', 'status', 'origin', 'timestamp', 'agent_id']) {
       expect(html).toContain(field);
     }
     expect(html).toContain('HELLO');

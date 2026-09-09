@@ -1,7 +1,6 @@
 import { join } from 'node:path';
 
 import {
-  IAgentActivityView,
   IAgentGoalService,
   IAgentLifecycleService,
   IAgentLoopService,
@@ -33,6 +32,7 @@ import { swarmKey } from '@moonshot-ai/agent-core-v2/features/swarm/swarmOps';
 
 import { serverMessageSchema, type ServerMessage } from '../../protocol/messages';
 import { readLegacyStatus } from '../legacyStatus/legacyStatus';
+import { AgentStateTracker } from './agentState';
 import { AgentMessageProjector, toTurnOrigin, type ProjectorInteraction } from './agentProjector';
 import type { ProjectionBusEvent } from './events';
 import { foldTimelineSeed, foldWireTurn, readWireRecords, type ContextRecord } from './heal';
@@ -58,6 +58,7 @@ export class SessionProjection {
   private readonly disposables: IDisposable[] = [];
   private readonly listeners = new Set<(message: ServerMessage) => void>();
   private readonly aggregator = new SessionStateAggregator();
+  private readonly agentStates = new Map<string, AgentStateTracker>();
   private readonly subagentTaskIds = new Map<string, string>();
   private readonly interactionAgents = new Map<string, string>();
   private readonly knownInteractions = new Set<string>();
@@ -133,6 +134,10 @@ export class SessionProjection {
 
   recoveryMessages(): ServerMessage[] {
     const messages: ServerMessage[] = [this.aggregator.snapshot(this.sessionId)];
+    for (const tracker of this.agentStates.values()) {
+      const state = tracker.snapshot(this.sessionId);
+      if (state !== undefined) messages.push(state);
+    }
     for (const projector of this.projectors.values()) {
       messages.push(...projector.recoveryMessages());
     }
@@ -161,6 +166,7 @@ export class SessionProjection {
     for (const d of this.disposables) d.dispose();
     for (const projector of this.projectors.values()) projector.dispose();
     this.projectors.clear();
+    this.agentStates.clear();
     this.listeners.clear();
     this.interactionAgents.clear();
     this.knownInteractions.clear();
@@ -169,14 +175,15 @@ export class SessionProjection {
   private subscribeAgent(handle: IAgentScopeHandle): void {
     const agentId = handle.id;
     if (this.projectors.has(agentId)) return;
+    const loop = handle.accessor.get(IAgentLoopService) as IAgentLoopService | undefined;
+    this.trackAgentState(handle, loop);
     const projector = new AgentMessageProjector(
       agentId,
       this.sessionId,
       this.subagentTaskIds,
       {
         stepOrdinal: (turnId) => {
-          const view = handle.accessor.get(IAgentActivityView) as IAgentActivityView | undefined;
-          const turn = view?.state().turn;
+          const turn = loop?.activitySnapshot().turn;
           return turn === undefined || `t${turn.turnId}` !== turnId ? undefined : turn.step;
         },
         resolvePlanRevisionKey: (key) =>
@@ -227,17 +234,17 @@ export class SessionProjection {
     }
     const tasks = handle.accessor.get(IAgentTaskService) as IAgentTaskService | undefined;
     for (const info of tasks?.list() ?? []) projector.seedTask(info);
-    const loop = handle.accessor.get(IAgentLoopService) as IAgentLoopService | undefined;
     const status = loop?.status();
     if (status?.state === 'running' && status.activeTurnId !== undefined) {
       const prompts = handle.accessor.get(IAgentPromptService) as IAgentPromptService | undefined;
-      const activity = handle.accessor.get(IAgentActivityView) as IAgentActivityView | undefined;
-      const rawOrigin = activity?.state().turn?.origin;
+      const active = prompts?.list().active;
+      const rawOrigin = active?.message.origin;
       projector.seedActiveTurn({
         turnId: status.activeTurnId,
-        promptId: prompts?.list().active?.id,
+        promptId: active?.id,
+        userMessageId: active?.userMessageId,
         origin:
-          activity === undefined
+          rawOrigin === undefined
             ? undefined
             : toTurnOrigin(rawOrigin, agentId, this.subagentTaskIds),
         anchor: isUndoAnchorOrigin(rawOrigin),
@@ -287,10 +294,48 @@ export class SessionProjection {
     if (goal !== undefined) {
       this.aggregator.feedGoal(goal.getGoal().goal);
     }
-    const activity = handle.accessor.get(IAgentActivityView) as IAgentActivityView | undefined;
-    if (activity !== undefined) {
-      this.aggregator.feedMainActivity(activity.state());
+  }
+
+  private trackAgentState(handle: IAgentScopeHandle, loop: IAgentLoopService | undefined): void {
+    const agentId = handle.id;
+    if (this.agentStates.has(agentId)) return;
+    const tracker = new AgentStateTracker(agentId, new Date().toISOString());
+    this.agentStates.set(agentId, tracker);
+    const running = loop?.status().state === 'running';
+    const createdAt = new Date().toISOString();
+    if (agentId === MAIN_AGENT_ID) {
+      const profile = handle.accessor.get(IAgentProfileService) as IAgentProfileService | undefined;
+      tracker.seedMain(profile?.data().profileName ?? '', createdAt, running);
+    } else {
+      const scopeContext = handle.accessor.get(IAgentScopeContext) as
+        | { forkedFrom?: string }
+        | undefined;
+      if (scopeContext?.forkedFrom !== undefined && scopeContext.forkedFrom.length > 0) {
+        const profile = handle.accessor.get(IAgentProfileService) as
+          | IAgentProfileService
+          | undefined;
+        tracker.seedBtw(profile?.data().profileName ?? '', createdAt, running);
+      } else {
+        const mainHandle = this.agentHandle(MAIN_AGENT_ID);
+        const tasks = mainHandle?.accessor.get(IAgentTaskService) as IAgentTaskService | undefined;
+        const link = tasks
+          ?.list(false)
+          .find(
+            (info) =>
+              info.kind === 'agent' && (info as { agentId?: string }).agentId === agentId,
+          );
+        const profile = handle.accessor.get(IAgentProfileService) as
+          | IAgentProfileService
+          | undefined;
+        tracker.seedToolFromTask(profile?.data().profileName ?? '', createdAt, link);
+      }
     }
+    this.emitAgentState(agentId);
+  }
+
+  private emitAgentState(agentId: string): void {
+    const message = this.agentStates.get(agentId)?.snapshot(this.sessionId);
+    if (message !== undefined) this.emit(message);
   }
 
   private dropAgent(agentId: string): void {
@@ -303,6 +348,11 @@ export class SessionProjection {
       clearTimeout(timer.timer);
       this.healTimers.delete(agentId);
     }
+    const tracker = this.agentStates.get(agentId);
+    if (tracker !== undefined) {
+      if (tracker.close(new Date().toISOString())) this.emitAgentState(agentId);
+      this.agentStates.delete(agentId);
+    }
   }
 
   private onBusEvent(agentId: string, event: ProjectionBusEvent): void {
@@ -310,6 +360,7 @@ export class SessionProjection {
     const projector = this.projectors.get(agentId);
     if (projector === undefined) return;
     this.emitAll(projector.map(event));
+    this.onAgentStateEvent(agentId, event);
     if (event.type === 'task.terminated') {
       const info = (event as { info?: AgentTaskInfo }).info;
       if (info !== undefined) void this.patchTaskOutputTail(agentId, info.taskId);
@@ -320,8 +371,6 @@ export class SessionProjection {
     if (agentId === MAIN_AGENT_ID) {
       if (event.type === 'agent.status.updated') {
         this.aggregator.feedMainStatus(event);
-      } else if (event.type === 'agent.activity.updated') {
-        this.aggregator.feedMainActivity(event);
       } else if (event.type === 'goal.updated') {
         this.aggregator.feedGoal(event.snapshot);
       } else if (event.type === 'plan.revision') {
@@ -331,6 +380,90 @@ export class SessionProjection {
       }
     }
     this.emitState();
+  }
+
+  private onAgentStateEvent(agentId: string, event: ProjectionBusEvent): void {
+    switch (event.type) {
+      case 'subagent.spawned': {
+        const spawned = event as {
+          subagentId: string;
+          subagentName: string;
+          parentToolCallId: string;
+          parentAgentId?: string;
+          swarmIndex?: number;
+        };
+        const tracker = this.agentStates.get(spawned.subagentId);
+        if (tracker?.seedToolSpawned(spawned) === true) this.emitAgentState(spawned.subagentId);
+        return;
+      }
+      case 'subagent.started': {
+        const tracker = this.agentStates.get((event as { subagentId: string }).subagentId);
+        if (tracker?.runStarted() === true) this.emitAgentState(tracker.agentId);
+        return;
+      }
+      case 'subagent.completed': {
+        const tracker = this.agentStates.get((event as { subagentId: string }).subagentId);
+        if (
+          tracker?.runFinished(
+            'completed',
+            new Date((event as { time?: number }).time ?? Date.now()).toISOString(),
+          ) === true
+        ) {
+          this.emitAgentState(tracker.agentId);
+        }
+        return;
+      }
+      case 'subagent.failed': {
+        const tracker = this.agentStates.get((event as { subagentId: string }).subagentId);
+        if (
+          tracker?.runFinished(
+            'failed',
+            new Date((event as { time?: number }).time ?? Date.now()).toISOString(),
+          ) === true
+        ) {
+          this.emitAgentState(tracker.agentId);
+        }
+        return;
+      }
+      case 'turn.started': {
+        const tracker = this.agentStates.get(agentId);
+        if (tracker === undefined) return;
+        if (tracker.turnStarted()) this.emitAgentState(agentId);
+        this.recomputeAgentTurn(agentId);
+        return;
+      }
+      case 'turn.ended': {
+        const tracker = this.agentStates.get(agentId);
+        if (tracker === undefined) return;
+        if (tracker.turnEnded()) this.emitAgentState(agentId);
+        this.recomputeAgentTurn(agentId);
+        return;
+      }
+      case 'turn.step.started':
+      case 'tool.call.started':
+      case 'tool.result':
+      case 'turn.step.interrupted':
+        this.recomputeAgentTurn(agentId);
+        return;
+      case 'turn.step.retrying':
+        queueMicrotask(() => {
+          if (!this.disposed) this.recomputeAgentTurn(agentId);
+        });
+        return;
+      default:
+        return;
+    }
+  }
+
+  private recomputeAgentTurn(agentId: string): void {
+    const tracker = this.agentStates.get(agentId);
+    if (tracker === undefined) return;
+    const loop = this.agentHandle(agentId)?.accessor.get(IAgentLoopService) as
+      | IAgentLoopService
+      | undefined;
+    if (loop === undefined) return;
+    const snapshot = loop.activitySnapshot();
+    if (tracker.recompute(snapshot)) this.emitAgentState(agentId);
   }
 
   private agentHandle(agentId: string): IAgentScopeHandle | undefined {

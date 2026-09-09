@@ -10,6 +10,7 @@ export function entityId(msg: ServerMessage): string {
     system_id?: string;
     step_id?: string;
     turn_id?: string;
+    agent_id?: string;
   };
   return (
     m.message_id ??
@@ -20,6 +21,7 @@ export function entityId(msg: ServerMessage): string {
     m.system_id ??
     m.step_id ??
     m.turn_id ??
+    m.agent_id ??
     ''
   );
 }

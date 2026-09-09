@@ -20,6 +20,7 @@ import { fixedTokenAuth } from './helpers/fixedAuth';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 
 const TS = '2026-01-01T00:00:00.000Z';
+const TS_MS = 1_767_225_600_000;
 const WS_ID = 'wd_test_0123456789ab';
 
 class FakeSocket {
@@ -209,10 +210,8 @@ function sessionStateMessage(sessionId: string): ServerMessage {
   return {
     type: 'session.state',
     session_id: sessionId,
-    timestamp: TS,
-    busy: false,
-    main_turn_active: false,
-    activity: 'idle',
+    timestamp: TS_MS,
+    status: 'idle',
   };
 }
 
@@ -221,7 +220,7 @@ function assistantMessage(sessionId: string, agentId: string, text = 'hello'): S
     type: 'assistant',
     session_id: sessionId,
     agent_id: agentId,
-    timestamp: TS,
+    timestamp: TS_MS,
     message_id: `t1.1.a0.${agentId}.${text}`,
     turn_id: 't1',
     step_id: 't1.1',
@@ -235,7 +234,7 @@ function assistantDeltaMessage(sessionId: string, agentId: string): ServerMessag
     type: 'assistant.delta',
     session_id: sessionId,
     agent_id: agentId,
-    timestamp: TS,
+    timestamp: TS_MS,
     message_id: `t1.1.a0.${agentId}.delta`,
     text: 'chunk',
   };
@@ -600,22 +599,22 @@ describe('WsV3 global message fanout', () => {
     const frames = socket.frames();
     expect(frames[1]).toEqual({
       type: 'config.warning',
-      timestamp: expect.any(String),
+      timestamp: expect.any(Number),
       warnings: ['model: bad field', 'plain'],
     });
     expect(frames[2]).toEqual({
       type: 'config',
-      timestamp: expect.any(String),
+      timestamp: expect.any(Number),
       config: { default_model: 'm2' },
       changed_fields: ['default_model'],
     });
     expect(frames[3]).toEqual({
       type: 'capability',
-      timestamp: expect.any(String),
+      timestamp: expect.any(Number),
       capability_id: 'cap-1',
     });
-    expect(frames[4]).toEqual({ type: 'plugin', timestamp: expect.any(String) });
-    expect(frames[5]).toEqual({ type: 'model_catalog', timestamp: expect.any(String) });
+    expect(frames[4]).toEqual({ type: 'plugin', timestamp: expect.any(Number) });
+    expect(frames[5]).toEqual({ type: 'model_catalog', timestamp: expect.any(Number) });
   });
 
   it('translates workspace lifecycle events, using the cached entity for deletions', async () => {
@@ -847,7 +846,7 @@ describe('WsV3 endpoint over a real server', () => {
         expect(frames[ackIndex]).toMatchObject({ code: ErrorCode.SUCCESS });
         const stateIndex = frames.findIndex((frame) => frame['type'] === 'session.state');
         expect(stateIndex).toBeGreaterThan(ackIndex);
-        expect(frames[stateIndex]).toMatchObject({ session_id: sessionId, activity: 'idle' });
+        expect(frames[stateIndex]).toMatchObject({ session_id: sessionId, status: 'idle' });
       },
       { timeout: 5000 },
     );

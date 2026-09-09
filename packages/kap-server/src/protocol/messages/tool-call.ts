@@ -18,7 +18,7 @@ export const toolCallMessageSchema = z.object({
   step_id: z.string().min(1),
   name: z.string().min(1),
   view: z.string().optional(),
-  state: z.enum(['running', 'done', 'error']),
+  status: z.enum(['running', 'done', 'error']),
   input: z.unknown().optional(),
   input_text: z.string().optional(),
   output: z.unknown().optional(),

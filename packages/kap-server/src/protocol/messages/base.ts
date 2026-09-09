@@ -20,17 +20,19 @@ export const isoDateTimeSchema = z
     return new Date(ms).toISOString();
   });
 
+export const epochMsSchema = z.number();
+
 export const timelineMessageBase = {
   session_id: z.string().min(1),
   agent_id: z.string().min(1),
-  timestamp: isoDateTimeSchema,
+  timestamp: epochMsSchema,
 };
 
 export const sessionMessageBase = {
   session_id: z.string().min(1),
-  timestamp: isoDateTimeSchema,
+  timestamp: epochMsSchema,
 };
 
 export const globalMessageBase = {
-  timestamp: isoDateTimeSchema,
+  timestamp: epochMsSchema,
 };

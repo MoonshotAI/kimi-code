@@ -70,23 +70,16 @@ export function foldTimelineSeed(records: readonly ContextRecord[]): TimelineSee
     timelineIds.push(sysIds.next(subtype));
   };
 
-  const skillMarkerCount = (origin: unknown): number => {
-    const kind = (origin as { kind?: unknown } | null | undefined)?.kind;
-    if (kind === 'user') {
-      const activations = (origin as { skillActivations?: unknown } | null | undefined)
-        ?.skillActivations;
-      return Array.isArray(activations) ? activations.length : 0;
-    }
-    if (kind === 'skill_activation' || kind === 'plugin_command') return 1;
-    return 0;
-  };
-
   for (const record of records) {
     switch (record.type) {
       case 'turn.prompt': {
         skipCancelledTurnIds();
-        const rawId = nextTurnId;
-        nextTurnId += 1;
+        const recordTurnId = record['turnId'];
+        const rawId =
+          typeof recordTurnId === 'number' && Number.isInteger(recordTurnId) && recordTurnId >= 0
+            ? recordTurnId
+            : nextTurnId;
+        nextTurnId = Math.max(nextTurnId, rawId + 1);
         const origin = record['origin'];
         const promptId = record['promptId'];
         if (typeof promptId === 'string') turnPromptIds.set(rawId, promptId);
@@ -101,7 +94,6 @@ export function foldTimelineSeed(records: readonly ContextRecord[]): TimelineSee
         }
         visibleTurnOrdinals.add(rawId);
         timelineIds.push(turnIdOf(rawId));
-        for (let i = 0; i < skillMarkerCount(origin); i++) pushSystem('skill');
         break;
       }
       case 'context.append_message': {
@@ -256,7 +248,7 @@ export function foldTimelineSeed(records: readonly ContextRecord[]): TimelineSee
 }
 
 export interface WireStepFold {
-  readonly state: 'completed' | 'interrupted';
+  readonly status: 'completed' | 'interrupted';
   readonly endedAt?: string;
   readonly usage?: StepUsage;
   readonly finishReason?: string;
@@ -320,7 +312,7 @@ export function foldWireTurn(records: readonly ContextRecord[], turnOrdinal: num
           const ref = stepOf(e.uuid);
           if (ref === undefined || ref.turn !== turnOrdinal) continue;
           steps.set(ref.step, {
-            state: 'completed',
+            status: 'completed',
             endedAt: record.time === undefined ? undefined : new Date(record.time).toISOString(),
             usage: e.usage === undefined ? undefined : toSnakeUsage(e.usage),
             finishReason: e.finishReason ?? e.rawFinishReason ?? e.providerFinishReason,
@@ -407,7 +399,7 @@ export function foldWireTurn(records: readonly ContextRecord[], turnOrdinal: num
       const step = record['step'];
       if (typeof step !== 'number') continue;
       steps.set(step, {
-        state: 'interrupted',
+        status: 'interrupted',
         endedAt: record.time === undefined ? undefined : new Date(record.time).toISOString(),
         endReason: typeof record['reason'] === 'string' ? record['reason'] : undefined,
         endMessage: typeof record['message'] === 'string' ? record['message'] : undefined,

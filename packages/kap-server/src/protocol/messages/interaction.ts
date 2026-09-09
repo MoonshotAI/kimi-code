@@ -70,7 +70,7 @@ export const interactionQuestionResponseSchema = z.object({
 
 export type InteractionQuestionResponse = z.infer<typeof interactionQuestionResponseSchema>;
 
-export const interactionStateSchema = z.enum([
+export const interactionStatusSchema = z.enum([
   'pending',
   'approved',
   'rejected',
@@ -79,13 +79,13 @@ export const interactionStateSchema = z.enum([
   'dismissed',
 ]);
 
-export type InteractionState = z.infer<typeof interactionStateSchema>;
+export type InteractionStatus = z.infer<typeof interactionStatusSchema>;
 
 const interactionMessageBase = {
   type: z.literal('interaction'),
   ...timelineMessageBase,
   interaction_id: z.string().min(1),
-  state: interactionStateSchema,
+  status: interactionStatusSchema,
   tool_call_id: z.string().min(1).optional(),
 };
 

@@ -1,5 +1,4 @@
 import {
-  IAgentActivityView,
   IAgentGoalService,
   IAgentLifecycleService,
   IAgentLoopService,
@@ -123,15 +122,21 @@ describe('AgentMessageProjector', () => {
     expect(turn).toMatchObject({
       turn_id: 't1',
       ordinal: 1,
-      state: 'running',
+      status: 'running',
       origin: { kind: 'user' },
       user_message_id: 't1.u0',
     });
     const user = ofType(messages, 'user')[0]!;
-    expect(user).toMatchObject({ message_id: 't1.u0', turn_id: 't1', text: 'fix the bug', status: 'running' });
+    expect(user).toMatchObject({
+      message_id: 't1.u0',
+      turn_id: 't1',
+      text: [{ type: 'text', text: 'fix the bug', meta: {} }],
+      status: 'read',
+      timestamp: T0,
+    });
 
     const step = ofType(messages, 'step')[0]!;
-    expect(step).toMatchObject({ step_id: 't1.1', turn_id: 't1', ordinal: 1, state: 'running' });
+    expect(step).toMatchObject({ step_id: 't1.1', turn_id: 't1', ordinal: 1, status: 'running' });
 
     const assistantOpen = ofType(messages, 'assistant')[0]!;
     expect(assistantOpen).toMatchObject({ message_id: 't1.1.a1', status: 'streaming', text: '' });
@@ -152,14 +157,14 @@ describe('AgentMessageProjector', () => {
       tool_call_id: 'call_1',
       step_id: 't1.1',
       name: 'Bash',
-      state: 'running',
+      status: 'running',
       input_text: '{"command":"ls"}',
     });
     const toolDeltas = ofType(messages, 'tool_call.delta');
     expect(toolDeltas.map((d) => d.input_text)).toEqual(['{"command":"ls"}']);
     const toolDone = ofType(messages, 'tool_call').at(-1)!;
     expect(toolDone).toMatchObject({
-      state: 'done',
+      status: 'done',
       input: { command: 'ls' },
       output: 'file.txt',
       display: { kind: 'command', command: 'ls' },
@@ -167,7 +172,7 @@ describe('AgentMessageProjector', () => {
 
     const stepDone = ofType(messages, 'step').at(-1)!;
     expect(stepDone).toMatchObject({
-      state: 'completed',
+      status: 'completed',
       usage: { input_other: 10, output: 5, input_cache_read: 2, input_cache_creation: 1 },
       finish_reason: 'stop',
       timing: { llm_first_token_ms: 100, llm_stream_duration_ms: 900 },
@@ -175,13 +180,13 @@ describe('AgentMessageProjector', () => {
 
     const turnDone = ofType(messages, 'turn').at(-1)!;
     expect(turnDone).toMatchObject({
-      state: 'completed',
+      status: 'completed',
       duration_ms: 1500,
       usage: { input_tokens: 11, output_tokens: 5, cached_tokens: 2 },
     });
     const userDone = ofType(messages, 'user').at(-1)!;
-    expect(userDone.status).toBe('completed');
-    expect(typeof userDone.finished_at).toBe('string');
+    expect(userDone.status).toBe('read');
+    expect(userDone.timestamp).toBe(T0);
     expect(projector.takeEndedTurnOrdinals()).toEqual([1]);
   });
 
@@ -206,7 +211,7 @@ describe('AgentMessageProjector', () => {
     const step = ofType(messages, 'step').at(-1)!;
     expect(step).toMatchObject({
       step_id: 't1.1',
-      state: 'running',
+      status: 'running',
       retry: {
         failed_attempt: 1,
         next_attempt: 2,
@@ -228,9 +233,9 @@ describe('AgentMessageProjector', () => {
       ev({ type: 'turn.ended', turnId: 1, reason: 'cancelled', interruptReason: 'user_cancelled' }),
     ]);
     const step = ofType(messages, 'step').at(-1)!;
-    expect(step.state).toBe('interrupted');
+    expect(step.status).toBe('interrupted');
     const turn = ofType(messages, 'turn').at(-1)!;
-    expect(turn.state).toBe('completed');
+    expect(turn.status).toBe('completed');
     const interruption = ofType(messages, 'system').find((m) => m.subtype === 'interruption');
     expect(interruption).toMatchObject({
       subtype: 'interruption',
@@ -262,7 +267,7 @@ describe('AgentMessageProjector', () => {
     expect(pending).toMatchObject({
       interaction_id: 'apr-1',
       kind: 'approval',
-      state: 'pending',
+      status: 'pending',
       tool_call_id: 'call_1',
       request: { tool_name: 'Bash', action: 'Run ls', tool_input_display: { kind: 'command' } },
     });
@@ -272,12 +277,12 @@ describe('AgentMessageProjector', () => {
     sink.push(...projector.interactionResolved('apr-1', { decision: 'approved', scope: 'session' }));
     const resolved = ofType(sink, 'interaction').at(-1)!;
     expect(resolved).toMatchObject({
-      state: 'approved',
+      status: 'approved',
       response: { decision: 'approved', scope: 'session' },
     });
   });
 
-  it('attaches steer user messages to the running step and buffers them between steps', () => {
+  it('emits steer user messages read at their steer event with per-turn ids', () => {
     const projector = makeProjector();
     const messages = feedAll(projector, [
       ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'do A' }),
@@ -288,16 +293,20 @@ describe('AgentMessageProjector', () => {
       ev({ type: 'turn.step.started', turnId: 1, step: 2 }),
     ]);
     const users = ofType(messages, 'user');
-    const steerInStep = users.find((u) => u.message_id === 't1.1.u1');
+    const steerInStep = users.find((u) => u.message_id === 't1.u1');
     expect(steerInStep).toMatchObject({
       turn_id: 't1',
-      step_id: 't1.1',
-      text: 'also B',
-      status: 'running',
+      text: [{ type: 'text', text: 'also B', meta: {} }],
+      status: 'read',
+      timestamp: T0,
     });
-    expect(typeof steerInStep?.steered_at).toBe('string');
-    const buffered = users.find((u) => u.message_id === 't1.2.u1');
-    expect(buffered).toMatchObject({ step_id: 't1.2', text: 'and C' });
+    const betweenSteps = users.find((u) => u.message_id === 't1.u2');
+    expect(betweenSteps).toMatchObject({
+      turn_id: 't1',
+      text: [{ type: 'text', text: 'and C', meta: {} }],
+      status: 'read',
+      timestamp: T0,
+    });
   });
 
   it('maps cron turns and busy cron steers to the cron user origin', () => {
@@ -314,7 +323,8 @@ describe('AgentMessageProjector', () => {
     expect(turn.origin).toEqual({ kind: 'cron' });
     const user = ofType(messages, 'user')[0]!;
     expect(user).toMatchObject({
-      text: 'check the queue',
+      text: [{ type: 'text', text: 'check the queue', meta: {} }],
+      status: 'read',
       origin: { kind: 'cron', cron_id: 'job-1', schedule: '*/5 * * * *' },
     });
 
@@ -331,10 +341,11 @@ describe('AgentMessageProjector', () => {
     );
     const steered = ofType(messages, 'user').at(-1)!;
     expect(steered).toMatchObject({
-      message_id: 't1.1.u1',
+      message_id: 't1.u1',
+      status: 'read',
+      timestamp: T0,
       origin: { kind: 'cron', cron_id: 'job-2', schedule: '0 * * * *' },
     });
-    expect(typeof steered.steered_at).toBe('string');
 
     feed(
       projector,
@@ -349,7 +360,10 @@ describe('AgentMessageProjector', () => {
     const missedTurn = ofType(messages, 'turn').at(-1)!;
     expect(missedTurn.origin).toEqual({ kind: 'cron' });
     const missedUser = ofType(messages, 'user').at(-1)!;
-    expect(missedUser).toMatchObject({ text: 'missed cron runs', origin: { kind: 'cron' } });
+    expect(missedUser).toMatchObject({
+      text: [{ type: 'text', text: 'missed cron runs', meta: {} }],
+      origin: { kind: 'cron' },
+    });
     expect(missedUser.origin).not.toHaveProperty('cron_id');
   });
 
@@ -387,10 +401,12 @@ describe('AgentMessageProjector', () => {
     expect(opening).toMatchObject({
       message_id: 't1.u0',
       turn_id: 't1',
-      text: 'Task completed\nbuild finished',
-      status: 'running',
-      origin: { kind: 'task', task_id: 'task-1' },
-      notification: {
+      text: [{ type: 'text', text: 'Task completed\nbuild finished', meta: {} }],
+      status: 'read',
+      timestamp: T0,
+      origin: {
+        kind: 'task',
+        task_id: 'task-1',
         title: 'Task completed',
         body: 'build finished',
         severity: 'info',
@@ -415,17 +431,25 @@ describe('AgentMessageProjector', () => {
       sink,
     );
     feed(projector, ev({ type: 'turn.step.started', turnId: 1, step: 2 }), sink);
-    const injected = ofType(sink, 'user').find((u) => u.message_id === 't1.2.u1')!;
+    const injected = ofType(sink, 'user').find((u) => u.message_id === 't1.u1')!;
     expect(injected).toMatchObject({
       turn_id: 't1',
-      step_id: 't1.2',
-      text: 'Task failed\ntests broke',
-      status: 'running',
-      origin: { kind: 'task', task_id: 'task-2' },
+      text: [{ type: 'text', text: 'Task failed\ntests broke', meta: {} }],
+      status: 'read',
+      timestamp: T0,
+      origin: {
+        kind: 'task',
+        task_id: 'task-2',
+        title: 'Task failed',
+        body: 'tests broke',
+        severity: 'warning',
+        type: 'task.failed',
+        source_kind: 'background_task',
+        source_id: 'task-2',
+      },
     });
-    expect(typeof injected.steered_at).toBe('string');
     feed(projector, ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }), sink);
-    expect(ofType(sink, 'user').filter((u) => u.status === 'completed')).toHaveLength(2);
+    expect(ofType(sink, 'user')).toHaveLength(2);
 
     const turnless = makeProjector();
     const phantom = feedAll(turnless, [
@@ -442,8 +466,9 @@ describe('AgentMessageProjector', () => {
     expect(ofType(phantom, 'user')[0]).toMatchObject({
       message_id: 't0.u1',
       turn_id: 't0',
-      status: 'completed',
-      origin: { kind: 'task', task_id: 'task-9' },
+      status: 'read',
+      timestamp: T0,
+      origin: { kind: 'task', task_id: 'task-9', title: 'Restored' },
     });
   });
 
@@ -470,6 +495,7 @@ describe('AgentMessageProjector', () => {
     const user = ofType(sink, 'user')[0]!;
     expect(user).toMatchObject({
       message_id: 't1.u0',
+      status: 'read',
       origin: { kind: 'skill', skill_name: 'review', args: 'src/', trigger: 'user-slash' },
       skill_activations: [{ skill_name: 'review', skill_args: 'src/' }],
     });
@@ -486,7 +512,8 @@ describe('AgentMessageProjector', () => {
     );
     const steered = ofType(sink, 'user').at(-1)!;
     expect(steered).toMatchObject({
-      message_id: 't1.1.u1',
+      message_id: 't1.u1',
+      status: 'read',
       origin: { kind: 'skill', skill_name: 'deploy', trigger: 'user-slash' },
     });
     feed(
@@ -548,7 +575,7 @@ describe('AgentMessageProjector', () => {
     expect(taskB).toMatchObject({
       task_id: 'task-b',
       kind: 'subagent',
-      state: 'running',
+      status: 'running',
       detached: true,
       child_agent_id: 'sub-b',
       description: 'watch logs',
@@ -561,7 +588,7 @@ describe('AgentMessageProjector', () => {
       sink,
     );
     const taskBDone = ofType(sink, 'task').at(-1)!;
-    expect(taskBDone).toMatchObject({ state: 'completed', result_summary: 'tail' });
+    expect(taskBDone).toMatchObject({ status: 'completed', result_summary: 'tail' });
 
     feed(
       projector,
@@ -637,7 +664,10 @@ describe('AgentMessageProjector', () => {
       ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }),
       ev({ type: 'turn.started', turnId: 2, origin: { kind: 'user' }, prompt: 'two' }),
       ev({ type: 'turn.ended', turnId: 2, reason: 'completed' }),
-      ev({ type: 'skill.activated', activationId: 'sk-1', skillName: 'review', trigger: 'user-slash' }),
+      ev({
+        type: 'goal.updated',
+        snapshot: { objective: 'g', status: 'active', tokensUsed: 0, budget: { tokenBudget: null } },
+      }),
       ev({ type: 'context.undone', turns: 1, fromTurnId: 2 }),
     ]);
     const undo = ofType(messages, 'system').find((m) => m.subtype === 'undo');
@@ -648,7 +678,7 @@ describe('AgentMessageProjector', () => {
     expect(payload.removed_ids).not.toContain('t1');
 
     const fold = {
-      steps: new Map([[1, { state: 'completed' as const }]]),
+      steps: new Map([[1, { status: 'completed' as const }]]),
       texts: new Map([[1, { assistant: 'answer', thinking: '', first: 'assistant' as const }]]),
       tools: new Map(),
     };
@@ -736,27 +766,27 @@ describe('AgentMessageProjector', () => {
 
     const recovery = projector.recoveryMessages().map((m) => serverMessageSchema.parse(m));
     const turn = ofType(recovery, 'turn')[0]!;
-    expect(turn).toMatchObject({ turn_id: 't1', state: 'running', user_message_id: 't1.u0' });
+    expect(turn).toMatchObject({ turn_id: 't1', status: 'running', user_message_id: 't1.u0' });
     const step = ofType(recovery, 'step')[0]!;
-    expect(step).toMatchObject({ step_id: 't1.1', state: 'running' });
+    expect(step).toMatchObject({ step_id: 't1.1', status: 'running' });
     const assistant = ofType(recovery, 'assistant')[0]!;
     expect(assistant).toMatchObject({ message_id: 't1.1.a1', status: 'streaming', text: 'Hello' });
     const tools = ofType(recovery, 'tool_call');
     expect(tools).toHaveLength(2);
-    expect(tools[0]).toMatchObject({ tool_call_id: 'call_1', state: 'done', output: 'file.txt' });
-    expect(tools[1]).toMatchObject({ tool_call_id: 'call_2', state: 'running' });
+    expect(tools[0]).toMatchObject({ tool_call_id: 'call_1', status: 'done', output: 'file.txt' });
+    expect(tools[1]).toMatchObject({ tool_call_id: 'call_2', status: 'running' });
     const interaction = ofType(recovery, 'interaction')[0]!;
-    expect(interaction).toMatchObject({ interaction_id: 'apr-1', state: 'pending' });
+    expect(interaction).toMatchObject({ interaction_id: 'apr-1', status: 'pending' });
     const tasks = ofType(recovery, 'task');
     expect(tasks).toHaveLength(2);
-    expect(tasks[0]).toMatchObject({ task_id: 'task-1', kind: 'shell', state: 'running', detached: true });
-    expect(tasks[1]).toMatchObject({ task_id: 'task-2', kind: 'shell', state: 'running', detached: false });
+    expect(tasks[0]).toMatchObject({ task_id: 'task-1', kind: 'shell', status: 'running', detached: true });
+    expect(tasks[1]).toMatchObject({ task_id: 'task-2', kind: 'shell', status: 'running', detached: false });
     const todo = ofType(recovery, 'todo')[0]!;
     expect(todo.items).toEqual([{ title: 'write tests', status: 'pending' }]);
     expect(ofType(recovery, 'user')).toHaveLength(0);
   });
 
-  it('emits a reserved user message for queued prompts and converges on dequeue or abort', () => {
+  it('emits an unread user message for queued prompts and converges on dequeue or abort', () => {
     const projector = makeProjector();
     const sink: ServerMessage[] = [];
     feed(projector, ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' }, prompt: 'first' }), sink);
@@ -778,8 +808,13 @@ describe('AgentMessageProjector', () => {
       sink,
     );
     const queued = ofType(sink, 'user').at(-1)!;
-    expect(queued).toMatchObject({ message_id: 't1.u0', turn_id: 't1', text: 'second', status: 'running' });
-    expect(queued.step_id).toBeUndefined();
+    expect(queued).toMatchObject({
+      message_id: 'q1',
+      text: [{ type: 'text', text: 'second', meta: {} }],
+      status: 'unread',
+    });
+    expect(queued.turn_id).toBeUndefined();
+    expect(queued.timestamp).toBeUndefined();
     expect([...new Set(ofType(sink, 'turn').map((t) => t.turn_id))]).toEqual(['t0']);
 
     feed(
@@ -787,10 +822,10 @@ describe('AgentMessageProjector', () => {
       ev({ type: 'prompt.queued', promptId: 'q2', content: [{ type: 'text', text: 'third' }], queueLength: 2 }),
       sink,
     );
-    expect(ofType(sink, 'user').at(-1)).toMatchObject({ message_id: 't2.u0', status: 'running' });
+    expect(ofType(sink, 'user').at(-1)).toMatchObject({ message_id: 'q2', status: 'unread' });
 
     feed(projector, ev({ type: 'prompt.aborted', promptId: 'q2', abortedAt: new Date(T0 + 1).toISOString() }), sink);
-    expect(ofType(sink, 'user').at(-1)).toMatchObject({ message_id: 't2.u0', status: 'completed' });
+    expect(ofType(sink, 'user').at(-1)).toMatchObject({ message_id: 'q2', status: 'unread' });
 
     feed(projector, ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }), sink);
     feed(
@@ -799,7 +834,13 @@ describe('AgentMessageProjector', () => {
       sink,
     );
     const dequeued = ofType(sink, 'user').at(-1)!;
-    expect(dequeued).toMatchObject({ message_id: 't1.u0', turn_id: 't1', text: 'second', status: 'running' });
+    expect(dequeued).toMatchObject({
+      message_id: 'q1',
+      turn_id: 't1',
+      text: [{ type: 'text', text: 'second', meta: {} }],
+      status: 'read',
+      timestamp: T0,
+    });
     expect([...new Set(ofType(sink, 'turn').map((t) => t.turn_id))]).toEqual(['t0', 't1']);
   });
 
@@ -827,7 +868,7 @@ describe('AgentMessageProjector', () => {
     ]);
     const users = ofType(messages, 'user');
     expect(users).toHaveLength(1);
-    expect(users[0]).toMatchObject({ message_id: 't1.u0', text: 'hello' });
+    expect(users[0]).toMatchObject({ message_id: 't1.u0', text: [{ type: 'text', text: 'hello', meta: {} }] });
   });
 
   it('settles a full-cut splice as system(clear) after a bounded wait when no undo follows', () => {
@@ -911,7 +952,7 @@ describe('foldWireTurn + healTurn', () => {
 
   it('folds loop-event records into per-turn step, text and tool facts', () => {
     const fold = foldWireTurn(records, 3);
-    expect(fold.steps.get(1)).toMatchObject({ state: 'completed', finishReason: 'tool_calls' });
+    expect(fold.steps.get(1)).toMatchObject({ status: 'completed', finishReason: 'tool_calls' });
     expect(fold.texts.get(1)).toEqual({ assistant: 'Hello world', thinking: 'hmm', first: 'thinking' });
     expect(fold.tools.get('call_1')).toMatchObject({
       step: 1,
@@ -939,7 +980,7 @@ describe('foldWireTurn + healTurn', () => {
     const tool = ofType(healed, 'tool_call').at(-1)!;
     expect(tool).toMatchObject({
       tool_call_id: 'call_1',
-      state: 'error',
+      status: 'error',
       output: 'interrupted before result',
       error: 'interrupted before result',
       input: { command: 'ls' },
@@ -956,11 +997,11 @@ describe('foldWireTurn + healTurn', () => {
     feed(projector, ev({ type: 'turn.ended', turnId: 3, reason: 'completed' }), sink);
     const healed = projector.healTurn(3, foldWireTurn(records, 3)).map((m) => serverMessageSchema.parse(m));
     const step = ofType(healed, 'step')[0]!;
-    expect(step).toMatchObject({ step_id: 't3.1', state: 'completed', finish_reason: 'tool_calls' });
+    expect(step).toMatchObject({ step_id: 't3.1', status: 'completed', finish_reason: 'tool_calls' });
     const assistant = ofType(healed, 'assistant')[0]!;
     expect(assistant).toMatchObject({ step_id: 't3.1', status: 'completed', text: 'Hello world' });
     const tool = ofType(healed, 'tool_call')[0]!;
-    expect(tool).toMatchObject({ tool_call_id: 'call_1', step_id: 't3.1', state: 'error' });
+    expect(tool).toMatchObject({ tool_call_id: 'call_1', step_id: 't3.1', status: 'error' });
   });
 });
 
@@ -970,54 +1011,29 @@ describe('SessionStateAggregator', () => {
     agg.feedSessionActivity({ busy: true, mainTurnActive: true, pendingInteraction: 'approval' });
     agg.feedSeed({ model: 'kimi-k2', contextTokens: 500, maxContextTokens: 1000, permission: 'yolo' });
     agg.feedMainStatus({ thinkingEffort: 'on', usage: { currentTurn: { inputOther: 1, output: 2, inputCacheRead: 0, inputCacheCreation: 0 } } });
-    agg.feedMainActivity({
-      lifecycle: 'ready',
-      turn: {
-        turnId: 2,
-        origin: { kind: 'user' },
-        phase: 'running',
-        step: 1,
-        ending: false,
-        pendingApprovals: [],
-        activeToolCalls: [],
-        since: T0,
-      },
-      background: [],
-    });
     const first = agg.changed(SESSION)!;
     expect(first).toMatchObject({
       type: 'session.state',
-      busy: true,
-      main_turn_active: true,
+      status: 'running',
       pending_interaction: 'approval',
-      activity: 'turn',
       model: 'kimi-k2',
       thinking_effort: 'on',
       permission: 'yolo',
       context_tokens: 500,
       max_context_tokens: 1000,
-      context_usage: 0.5,
-      phase: { kind: 'running', turn_id: 2, step: 1, step_id: 't2.1', since: T0 },
     });
     serverMessageSchema.parse(first);
     expect(agg.changed(SESSION)).toBeUndefined();
     agg.feedMainStatus({ model: 'kimi-k2-turbo' });
     const second = agg.changed(SESSION)!;
     expect(second.model).toBe('kimi-k2-turbo');
-    expect(agg.snapshot(SESSION).busy).toBe(true);
+    expect(agg.snapshot(SESSION).status).toBe('running');
 
-    agg.feedSessionActivity({ busy: false, mainTurnActive: false, pendingInteraction: 'none', lastTurnReason: 'failed' });
-    expect(agg.changed(SESSION)!.last_turn_reason).toBe('failed');
-    agg.feedMainActivity({
-      lifecycle: 'ready',
-      lastTurn: { turnId: 3, reason: 'blocked', at: T0 },
-      background: [],
-    });
-    const blocked = agg.changed(SESSION)!;
-    expect(blocked.last_turn_reason).toBe('blocked');
-    expect(serverMessageSchema.parse(blocked).type).toBe('session.state');
-    agg.feedMainActivity({ lifecycle: 'ready', background: [] });
-    expect(agg.changed(SESSION)!.last_turn_reason).toBe('failed');
+    agg.feedSessionActivity({ busy: false, mainTurnActive: false, pendingInteraction: 'none' });
+    const idle = agg.changed(SESSION)!;
+    expect(idle.status).toBe('idle');
+    expect(idle.pending_interaction).toBe('none');
+    expect(serverMessageSchema.parse(idle).type).toBe('session.state');
   });
 });
 
@@ -1043,6 +1059,7 @@ describe('SessionProjection', () => {
     readonly todoEmitter: Emitter<readonly { title: string; status: 'pending' | 'in_progress' | 'done' }[]>;
     planActive: boolean;
     swarmTrigger: string | null;
+    activity: { turn?: { turnId: number; step: number; phase: 'running' | 'tool_call' | 'retrying'; ending: boolean; activeToolCalls: readonly unknown[] } };
     readonly accessor: { get: (token: unknown) => unknown };
   }
 
@@ -1056,6 +1073,7 @@ describe('SessionProjection', () => {
       todoEmitter,
       planActive: false,
       swarmTrigger: null,
+      activity: {},
       accessor: {
         get: (token: unknown) => {
           if (token === IEventBus) return bus;
@@ -1068,7 +1086,9 @@ describe('SessionProjection', () => {
               },
             };
           }
-          if (token === IAgentLoopService) return { status: () => ({ state: 'idle' }) };
+          if (token === IAgentLoopService) {
+            return { status: () => ({ state: 'idle' }), activitySnapshot: () => agent.activity };
+          }
           if (token === IAgentPromptService) return { list: () => ({ active: undefined, pending: [] }) };
           if (token === IAgentTaskService) {
             return { list: () => [], readOutput: async () => 'task tail window' };
@@ -1083,12 +1103,12 @@ describe('SessionProjection', () => {
                 key.name === 'plan' ? { active: agent.planActive } : agent.swarmTrigger,
             };
           }
-          if (token === IAgentActivityView) return { state: () => ({ lifecycle: 'ready', background: [] }) };
           if (token === IAgentPermissionModeService) {
             return { mode: 'manual', onDidChangeMode: Event.None };
           }
           if (token === IAgentProfileService) {
             return {
+              data: () => ({ profileName: 'coder' }),
               getModel: () => 'kimi-k2',
               getEffectiveThinkingLevel: () => 'on',
               getModelCapabilities: () => ({ max_input_tokens: 100_000 }),
@@ -1104,25 +1124,23 @@ describe('SessionProjection', () => {
     return agent;
   }
 
-  function makeSession(agent: FakeAgent): {
+  function makeSession(...agents: FakeAgent[]): {
     session: ISessionScopeHandle;
     core: Scope;
     activityEmitter: Emitter<{ state: { busy: boolean; mainTurnActive: boolean; pendingInteraction: 'none' | 'approval' | 'question' }; cause: string }>;
   } {
     const manager = {
-      list: () => [agent.accessor.get(IAgentScopeContext) as { agentContext: AgentContext }],
+      list: () => agents.map((agent) => (agent.accessor.get(IAgentScopeContext) as { agentContext: AgentContext }).agentContext),
       get: (agentId: string) =>
-        agentId === agent.id
-          ? (agent.accessor.get(IAgentScopeContext) as { agentContext: AgentContext }).agentContext
-          : undefined,
-      handleOf: (agentId: string) =>
-        agentId === agent.id ? { id: agent.id, accessor: agent.accessor } : undefined,
+        agents
+          .find((agent) => agent.id === agentId)
+          ?.accessor.get(IAgentScopeContext) as { agentContext: AgentContext } | undefined,
+      handleOf: (agentId: string) => {
+        const found = agents.find((agent) => agent.id === agentId);
+        return found === undefined ? undefined : { id: found.id, accessor: found.accessor };
+      },
       onDidCreate: Event.None,
       onDidClose: Event.None,
-    };
-    const agents = {
-      ...manager,
-      list: () => [(agent.accessor.get(IAgentScopeContext) as { agentContext: AgentContext }).agentContext],
     };
     const activityEmitter = new Emitter<{
       state: { busy: boolean; mainTurnActive: boolean; pendingInteraction: 'none' | 'approval' | 'question' };
@@ -1131,7 +1149,7 @@ describe('SessionProjection', () => {
     const session = {
       accessor: {
         get: (token: unknown) => {
-          if (token === IAgentLifecycleService) return agents;
+          if (token === IAgentLifecycleService) return manager;
           if (token === ISessionActivityView) {
             return {
               state: () => ({ busy: false, mainTurnActive: false, pendingInteraction: 'none' }),
@@ -1155,13 +1173,13 @@ describe('SessionProjection', () => {
     return { session, core, activityEmitter };
   }
 
-  function makeProjection(agent: FakeAgent): {
+  function makeProjection(...agents: FakeAgent[]): {
     projection: SessionProjection;
     received: ServerMessage[];
     logger: { warn: ReturnType<typeof vi.fn> };
     activityEmitter: Emitter<{ state: { busy: boolean; mainTurnActive: boolean; pendingInteraction: 'none' | 'approval' | 'question' }; cause: string }>;
   } {
-    const { session, core, activityEmitter } = makeSession(agent);
+    const { session, core, activityEmitter } = makeSession(...agents);
     const received: ServerMessage[] = [];
     const logger = { warn: vi.fn() };
     const projection = new SessionProjection(SESSION, session, {
@@ -1175,7 +1193,20 @@ describe('SessionProjection', () => {
 
   it('streams validated timeline messages and session.state through one sequence', async () => {
     const agent = makeAgent('main');
-    const { projection, received, logger } = makeProjection(agent);
+    const child = makeAgent('agent-1');
+    const swarmChild = makeAgent('agent-2');
+    const { projection, received, logger } = makeProjection(agent, child, swarmChild);
+    const bindMainState = ofType(projection.recoveryMessages(), 'agent.state').find(
+      (m) => m.agent_id === 'main',
+    )!;
+    expect(bindMainState).toMatchObject({
+      type: 'agent.state',
+      origin: { kind: 'main' },
+      status: 'idle',
+    });
+    expect(ofType(received, 'agent.state').some((m) => m.agent_id !== 'main')).toBe(false);
+
+    agent.activity = { turn: { turnId: 1, step: 1, phase: 'running', ending: false, activeToolCalls: [] } };
     agent.bus.emit(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'go' }) as Event2<any>);
     agent.bus.emit(ev({ type: 'turn.step.started', turnId: 1, step: 1 }) as Event2<any>);
     agent.bus.emit(ev({ type: 'assistant.delta', turnId: 1, delta: 'Hi' }) as Event2<any>);
@@ -1187,6 +1218,17 @@ describe('SessionProjection', () => {
     agent.bus.emit(
       ev({ type: 'plan.revision', agentId: 'main', id: 'r1', version: 2, key: 'plan/x.md', sha256: 'abc', bytes: 10 }) as Event2<any>,
     );
+    agent.activity = {
+      turn: {
+        turnId: 1,
+        step: 1,
+        phase: 'tool_call',
+        ending: false,
+        activeToolCalls: [{ toolCallId: 'call_1', name: 'Bash' }],
+      },
+    };
+    agent.bus.emit(ev({ type: 'tool.call.started', turnId: 1, toolCallId: 'call_1', name: 'Bash', args: '{}' }) as Event2<any>);
+    agent.activity = {};
     agent.bus.emit(ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }) as Event2<any>);
     agent.bus.emit(
       ev({
@@ -1200,8 +1242,69 @@ describe('SessionProjection', () => {
         info: { taskId: 'task-1', kind: 'process', status: 'completed', startedAt: T0, endedAt: T0 + 1 },
       }) as Event2<any>,
     );
+    agent.bus.emit(
+      ev({
+        type: 'subagent.spawned',
+        subagentId: 'agent-1',
+        subagentName: 'coder',
+        parentToolCallId: 'call_a',
+        parentAgentId: 'main',
+        runInBackground: true,
+      }) as Event2<any>,
+    );
+    agent.bus.emit(
+      ev({
+        type: 'subagent.spawned',
+        subagentId: 'agent-2',
+        subagentName: 'coder',
+        parentToolCallId: 'call_b',
+        parentAgentId: 'main',
+        swarmIndex: 1,
+        runInBackground: true,
+      }) as Event2<any>,
+    );
+    agent.bus.emit(
+      ev({ type: 'subagent.completed', subagentId: 'agent-1', resultSummary: 'done', time: T0 }) as Event2<any>,
+    );
 
-    expect(ofType(received, 'turn')[0]).toMatchObject({ turn_id: 't1', state: 'running' });
+    const mainRunning = ofType(received, 'agent.state')
+      .filter((m) => m.agent_id === 'main' && m.status === 'running')
+      .at(-1)!;
+    expect(mainRunning).toBeDefined();
+    const thinkingState = ofType(received, 'agent.state')
+      .filter((m) => m.agent_id === 'main' && m.turn?.status === 'thinking')
+      .at(-1)!;
+    expect(thinkingState).toBeDefined();
+    await vi.waitFor(() => {
+      expect(
+        ofType(received, 'agent.state').some(
+          (m) => m.agent_id === 'main' && m.turn?.status === 'acting',
+        ),
+      ).toBe(true);
+    });
+    const mainIdle = ofType(received, 'agent.state')
+      .filter((m) => m.agent_id === 'main')
+      .at(-1)!;
+    expect(mainIdle).toMatchObject({ status: 'idle' });
+
+    const childState = ofType(received, 'agent.state')
+      .filter((m) => m.agent_id === 'agent-1')
+      .at(-1)!;
+    expect(childState).toMatchObject({
+      profile: { kind: 'coder' },
+      origin: { kind: 'tool-agent', tool_call_id: 'call_a', parent_agent_id: 'main' },
+      status: 'completed',
+    });
+    expect(typeof childState.ended_at).toBe('string');
+    const swarmState = ofType(received, 'agent.state')
+      .filter((m) => m.agent_id === 'agent-2')
+      .at(-1)!;
+    expect(swarmState).toMatchObject({
+      origin: { kind: 'tool-swarm', tool_call_id: 'call_b', swarm_index: 1, parent_agent_id: 'main' },
+      status: 'idle',
+    });
+
+    expect(ofType(received, 'turn')[0]).toMatchObject({ turn_id: 't1', status: 'running' });
     expect(ofType(received, 'system').some((m) => m.subtype === 'plan.enter')).toBe(true);
     expect(logger.warn).toHaveBeenCalledTimes(1);
     const revision = ofType(received, 'system').find((m) => m.subtype === 'plan.revision');
@@ -1219,12 +1322,14 @@ describe('SessionProjection', () => {
     await vi.waitFor(() => {
       expect(ofType(received, 'task').at(-1)).toMatchObject({
         task_id: 'task-1',
-        state: 'completed',
+        status: 'completed',
         output_tail: 'task tail window',
       });
     });
     const recovery = projection.recoveryMessages();
     expect(recovery[0]!.type).toBe('session.state');
+    const recoveredStates = ofType(recovery, 'agent.state');
+    expect(recoveredStates.map((m) => m.agent_id).toSorted()).toEqual(['agent-1', 'agent-2', 'main']);
     projection.dispose();
   });
 
@@ -1255,12 +1360,12 @@ describe('SessionProjection', () => {
       tags: { agentId: 'main', sessionId: SESSION, turnId: 1 },
     });
     const pending = ofType(received, 'interaction').at(-1)!;
-    expect(pending).toMatchObject({ interaction_id: 'apr-1', state: 'pending', kind: 'approval' });
+    expect(pending).toMatchObject({ interaction_id: 'apr-1', status: 'pending', kind: 'approval' });
 
     interactions.respond('apr-1', { decision: 'rejected', feedback: 'no' });
     const resolved = ofType(received, 'interaction').at(-1)!;
     expect(resolved).toMatchObject({
-      state: 'rejected',
+      status: 'rejected',
       response: { decision: 'rejected', feedback: 'no' },
     });
     projection.dispose();

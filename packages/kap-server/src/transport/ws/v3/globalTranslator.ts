@@ -43,7 +43,7 @@ export class GlobalMessageTranslator {
   }
 
   private async translate(event: WsV3CoreEvent): Promise<unknown[]> {
-    const timestamp = new Date().toISOString();
+    const timestamp = Date.now();
     switch (event.type) {
       case 'event.workspace.created':
       case 'event.workspace.updated': {
@@ -69,8 +69,8 @@ export class GlobalMessageTranslator {
           id: payload.workspaceId,
           root: payload.root,
           name: basename(payload.root).slice(0, 100) || payload.root,
-          created_at: timestamp,
-          last_opened_at: timestamp,
+          created_at: new Date(timestamp).toISOString(),
+          last_opened_at: new Date(timestamp).toISOString(),
           session_count: 0,
         };
         return [

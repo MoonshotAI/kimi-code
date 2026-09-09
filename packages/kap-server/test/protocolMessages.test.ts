@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ContractViolation,
   ackMessageSchema,
+  agentStateMessageSchema,
   assistantDeltaMessageSchema,
   assistantMessageSchema,
   capabilityMessageSchema,
@@ -44,21 +45,23 @@ import {
 } from '../src/protocol/messages';
 
 const TS = '2026-09-04T08:00:00.000Z';
+const TS_MS = 1_756_963_200_000;
 
 const timeline = {
   session_id: 'sess_1',
   agent_id: 'agent_1',
-  timestamp: TS,
+  timestamp: TS_MS,
 };
 
 const sessionScope = {
   session_id: 'sess_1',
-  timestamp: TS,
+  timestamp: TS_MS,
 };
 
 const globalScope = {
-  timestamp: TS,
+  timestamp: TS_MS,
 };
+
 
 const sessionInfo = {
   id: 'sess_1',
@@ -86,7 +89,7 @@ const turn = {
   ...timeline,
   turn_id: 't1',
   ordinal: 0,
-  state: 'running',
+  status: 'running',
   origin: { kind: 'user' },
 };
 
@@ -96,17 +99,18 @@ const step = {
   step_id: 't1.0',
   turn_id: 't1',
   ordinal: 0,
-  state: 'running',
+  status: 'running',
 };
 
 const user = {
   type: 'user',
-  ...timeline,
+  session_id: 'sess_1',
+  agent_id: 'agent_1',
   message_id: 't1.u0',
   turn_id: 't1',
-  text: 'hello',
-  status: 'running',
-  created_at: TS,
+  status: 'read',
+  timestamp: TS_MS,
+  text: [{ type: 'text', text: 'hello', meta: {} }],
 };
 
 const assistant = {
@@ -150,7 +154,7 @@ const toolCall = {
   turn_id: 't1',
   step_id: 't1.0',
   name: 'Bash',
-  state: 'running',
+  status: 'running',
 };
 
 const toolCallDelta = {
@@ -188,7 +192,7 @@ const interactionApproval = {
   ...timeline,
   interaction_id: 'ia1',
   kind: 'approval',
-  state: 'pending',
+  status: 'pending',
   tool_call_id: 'tc1',
   request: { tool_name: 'Bash', action: 'run command', tool_input_display: { command: 'ls' } },
 };
@@ -198,7 +202,7 @@ const interactionQuestion = {
   ...timeline,
   interaction_id: 'ia2',
   kind: 'question',
-  state: 'pending',
+  status: 'pending',
   request: {
     questions: [
       {
@@ -221,7 +225,7 @@ const task = {
   ...timeline,
   task_id: 'task1',
   kind: 'shell',
-  state: 'running',
+  status: 'running',
   detached: true,
   output_tail: 'tail',
 };
@@ -233,13 +237,23 @@ const todo = {
   items: [{ title: 'write tests', status: 'in_progress' }],
 };
 
+const agentState = {
+  type: 'agent.state',
+  session_id: 'sess_1',
+  agent_id: 'agent-1',
+  profile: { kind: 'coder' },
+  timestamp: TS_MS,
+  origin: { kind: 'tool-agent', tool_call_id: 'call_1', parent_agent_id: 'main' },
+  created_at: TS,
+  status: 'running',
+  turn: { status: 'acting' },
+};
+
 const sessionState = {
   type: 'session.state',
   ...sessionScope,
-  busy: true,
-  main_turn_active: true,
-  activity: 'turn',
-  phase: { kind: 'running', turn_id: 1, step: 0, step_id: 't1.0', since: 1756963200000 },
+  status: 'running',
+  pending_interaction: 'approval',
 };
 
 const session = {
@@ -339,6 +353,7 @@ const serverCases = [
   ['interaction(question)', interactionMessageSchema, interactionQuestion],
   ['task', taskMessageSchema, task],
   ['todo', todoMessageSchema, todo],
+  ['agent.state', agentStateMessageSchema, agentState],
   ['session.state', sessionStateMessageSchema, sessionState],
   ['session', sessionMessageSchema, session],
   ['workspace', workspaceMessageSchema, workspace],
@@ -354,8 +369,8 @@ const serverCases = [
 
 const serverNegativeCases = [
   ['turn missing origin', turnMessageSchema, { ...turn, origin: undefined }],
-  ['step bad state', stepMessageSchema, { ...step, state: 'cancelled' }],
-  ['user missing created_at', userMessageSchema, { ...user, created_at: undefined }],
+  ['step bad status', stepMessageSchema, { ...step, status: 'cancelled' }],
+  ['user bad status', userMessageSchema, { ...user, status: 'running' }],
   ['assistant missing text', assistantMessageSchema, { ...assistant, text: undefined }],
   ['assistant.delta missing text', assistantDeltaMessageSchema, { ...assistantDelta, text: undefined }],
   ['thinking bad status', thinkingMessageSchema, { ...thinking, status: 'done' }],
@@ -367,7 +382,8 @@ const serverNegativeCases = [
   ['interaction wrong kind', interactionMessageSchema, { ...interactionApproval, kind: 'command' }],
   ['task missing output_tail', taskMessageSchema, { ...task, output_tail: undefined }],
   ['todo bad item status', todoMessageSchema, { ...todo, items: [{ title: 'x', status: 'doing' }] }],
-  ['session.state missing activity', sessionStateMessageSchema, { ...sessionState, activity: undefined }],
+  ['agent.state bad status', agentStateMessageSchema, { ...agentState, status: 'paused' }],
+  ['session.state bad status', sessionStateMessageSchema, { ...sessionState, status: 'busy' }],
   ['session bad subtype', sessionMessageSchema, { ...session, subtype: 'renamed' }],
   ['workspace bad id', workspaceMessageSchema, { ...workspace, workspace: { ...workspace.workspace, id: 'ws_1' } }],
   ['config missing config', configMessageSchema, { ...config, config: undefined }],
@@ -471,14 +487,14 @@ describe('interactionMessageSchema kind discrimination', () => {
     expect(
       interactionMessageSchema.safeParse({
         ...interactionQuestion,
-        state: 'answered',
+        status: 'answered',
         response: { answers: { q_0: { kind: 'single', option_id: 'opt_0_0' } } },
       }).success,
     ).toBe(true);
     expect(
       interactionMessageSchema.safeParse({
         ...interactionApproval,
-        state: 'approved',
+        status: 'approved',
         response: { answers: {} },
       }).success,
     ).toBe(false);
@@ -512,16 +528,19 @@ describe('historyResponseSchema', () => {
 });
 
 describe('timestamp contract', () => {
-  it('rejects non-ISO-8601 timestamps', () => {
-    expect(turnMessageSchema.safeParse({ ...turn, timestamp: 'not-a-date' }).success).toBe(false);
-    expect(turnMessageSchema.safeParse({ ...turn, timestamp: 1756963200000 }).success).toBe(false);
+  it('requires epoch-millisecond timestamps on every message base', () => {
+    expect(turnMessageSchema.safeParse({ ...turn, timestamp: TS }).success).toBe(false);
+    expect(turnMessageSchema.safeParse({ ...turn, timestamp: TS_MS }).success).toBe(true);
+    expect(assistantDeltaMessageSchema.safeParse({ ...assistantDelta, timestamp: TS }).success).toBe(false);
+    expect(configMessageSchema.safeParse({ ...config, timestamp: TS }).success).toBe(false);
+    expect(configMessageSchema.safeParse({ ...config, timestamp: TS_MS }).success).toBe(true);
   });
 
-  it('normalizes offset timestamps to UTC', () => {
-    const parsed = turnMessageSchema.safeParse({ ...turn, timestamp: '2026-09-04T16:00:00+08:00' });
+  it('normalizes offset datetimes to UTC on field-level time fields', () => {
+    const parsed = turnMessageSchema.safeParse({ ...turn, started_at: '2026-09-04T16:00:00+08:00' });
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(parsed.data.timestamp).toBe(TS);
+      expect(parsed.data.started_at).toBe(TS);
     }
   });
 });

@@ -36,29 +36,29 @@ import { ChatWs } from './ws';
 const T0 = Date.parse('2026-01-01T00:00:00.000Z');
 let tick = 0;
 
-function ts(offsetMs?: number): string {
+function ts(offsetMs?: number): number {
   tick += 1;
-  return new Date(T0 + tick * 1000 + (offsetMs ?? 0)).toISOString();
+  return T0 + tick * 1000 + (offsetMs ?? 0);
 }
 
 const base = { session_id: 's1', agent_id: 'main' } as const;
 
-function turnMsg(n: number, state: 'running' | 'completed' = 'completed', at?: string): TurnMessage {
+function turnMsg(n: number, status: 'running' | 'completed' = 'completed', at?: number): TurnMessage {
   return {
     type: 'turn',
     ...base,
     timestamp: at ?? ts(),
     turn_id: `t${n}`,
     ordinal: n,
-    state,
+    status,
     origin: { kind: 'user' },
   };
 }
 
 function stepMsg(
   stepId: string,
-  state: StepMessage['state'] = 'completed',
-  at?: string,
+  status: StepMessage['status'] = 'completed',
+  at?: number,
 ): StepMessage {
   const turnId = stepId.split('.')[0] ?? 't1';
   const ordinal = Number(stepId.split('.')[1] ?? '1');
@@ -69,11 +69,11 @@ function stepMsg(
     step_id: stepId,
     turn_id: turnId,
     ordinal,
-    state,
+    status,
   };
 }
 
-function userMsg(stepId: string, text: string, at?: string): UserMessage {
+function userMsg(stepId: string, text: string, at?: number): UserMessage {
   const turnId = stepId.split('.')[0] ?? 't1';
   return {
     type: 'user',
@@ -81,10 +81,8 @@ function userMsg(stepId: string, text: string, at?: string): UserMessage {
     timestamp: at ?? ts(),
     message_id: `${stepId}.u0`,
     turn_id: turnId,
-    step_id: stepId,
-    text,
-    status: 'completed',
-    created_at: at ?? ts(),
+    text: [{ type: 'text', text, meta: {} }],
+    status: 'read',
   };
 }
 
@@ -92,7 +90,7 @@ function assistantMsg(
   stepId: string,
   text: string,
   status: 'streaming' | 'completed' = 'completed',
-  at?: string,
+  at?: number,
 ): AssistantMessage {
   const turnId = stepId.split('.')[0] ?? 't1';
   return {
@@ -121,7 +119,7 @@ function toolCallMsg(
     turn_id: turnId,
     step_id: stepId,
     name: 'Bash',
-    state: 'running',
+    status: 'running',
     ...overrides,
   };
 }
@@ -148,19 +146,19 @@ function interactionMsg(id: string, toolCallId?: string): InteractionMessage {
     timestamp: ts(),
     interaction_id: id,
     kind: 'approval',
-    state: 'pending',
+    status: 'pending',
     tool_call_id: toolCallId,
   };
 }
 
-function taskMsg(id: string, state: TaskMessage['state'] = 'running'): TaskMessage {
+function taskMsg(id: string, status: TaskMessage['status'] = 'running'): TaskMessage {
   return {
     type: 'task',
     ...base,
     timestamp: ts(),
     task_id: id,
     kind: 'shell',
-    state,
+    status,
     detached: false,
     output_tail: '',
   };
@@ -408,9 +406,7 @@ describe('ChatWs', () => {
       type: 'session.state',
       session_id: 's1',
       timestamp: ts(),
-      busy: false,
-      main_turn_active: false,
-      activity: 'idle',
+      status: 'idle',
     });
     expect(seen.messages.map((m) => m.type)).toEqual(['turn', 'session.state']);
   });
@@ -479,13 +475,13 @@ describe('ChatStore', () => {
     const state = store.getState();
     expect(entryKeys(state.entries)).toEqual(['turn:t1', 'step:t1.1']);
     const turn = state.entries[0]!.message as TurnMessage;
-    expect(turn.state).toBe('completed');
+    expect(turn.status).toBe('completed');
   });
 
   it('skips an upsert whose timestamp is older than the held entity', () => {
     const store = makeStore();
-    store.applyLive(assistantMsg('t1.1', 'hello world', 'streaming', '2026-01-01T00:00:10.000Z'));
-    store.applyLive(assistantMsg('t1.1', 'hel', 'streaming', '2026-01-01T00:00:05.000Z'));
+    store.applyLive(assistantMsg('t1.1', 'hello world', 'streaming', Date.parse('2026-01-01T00:00:10.000Z')));
+    store.applyLive(assistantMsg('t1.1', 'hel', 'streaming', Date.parse('2026-01-01T00:00:05.000Z')));
     const held = store.getState().entries[0]!.message as AssistantMessage;
     expect(held.text).toBe('hello world');
   });
@@ -616,9 +612,7 @@ describe('ChatStore', () => {
       type: 'session.state',
       session_id: 's1',
       timestamp: ts(),
-      busy: true,
-      main_turn_active: true,
-      activity: 'turn',
+      status: 'running',
     });
     store.applyLive({
       type: 'workspace',
@@ -628,25 +622,25 @@ describe('ChatStore', () => {
         id: 'wd_test_0123456789ab',
         root: '/tmp',
         name: 'tmp',
-        created_at: ts(),
-        last_opened_at: ts(),
+        created_at: new Date(ts()).toISOString(),
+        last_opened_at: new Date(ts()).toISOString(),
         session_count: 1,
       },
     });
     const state = store.getState();
-    expect(state.interactions.get('ix-1')?.state).toBe('pending');
+    expect(state.interactions.get('ix-1')?.status).toBe('pending');
     expect(state.tasks.get('task-1')?.kind).toBe('shell');
     expect(state.todos.get('todo')?.items).toHaveLength(1);
-    expect(state.sessionState?.busy).toBe(true);
+    expect(state.sessionState?.status).toBe('running');
     expect(state.entries).toHaveLength(0);
   });
 
   it('replace installs the page as the window and keeps entries newer than the page', () => {
     const store = makeStore();
-    store.applyLive(turnMsg(9, 'running', '2026-01-01T00:00:09.000Z'));
-    store.applyLive(turnMsg(1, 'completed', '2026-01-01T00:00:01.000Z'));
+    store.applyLive(turnMsg(9, 'running', Date.parse('2026-01-01T00:00:09.000Z')));
+    store.applyLive(turnMsg(1, 'completed', Date.parse('2026-01-01T00:00:01.000Z')));
     store.applyHistoryPage(
-      [turnMsg(1, 'completed', '2026-01-01T00:00:01.500Z'), stepMsg('t1.1', 'completed', '2026-01-01T00:00:02.000Z')],
+      [turnMsg(1, 'completed', Date.parse('2026-01-01T00:00:01.500Z')), stepMsg('t1.1', 'completed', Date.parse('2026-01-01T00:00:02.000Z'))],
       'replace',
     );
     expect(entryKeys(store.getState().entries)).toEqual(['turn:t1', 'step:t1.1', 'turn:t9']);
@@ -840,7 +834,7 @@ describe('ChatChannel', () => {
 
 describe('projectPlans', () => {
   const planCall = (id: string, overrides: Partial<ToolCallMessage> = {}): ToolCallMessage =>
-    toolCallMsg('t1.1', id, { name: 'ExitPlanMode', state: 'done', ...overrides });
+    toolCallMsg('t1.1', id, { name: 'ExitPlanMode', status: 'done', ...overrides });
 
   it('derives plan content and review from the linked approval interaction', () => {
     const messages: HistoryMessage[] = [
@@ -852,7 +846,7 @@ describe('projectPlans', () => {
         timestamp: ts(),
         interaction_id: 'ix-1',
         kind: 'approval',
-        state: 'approved',
+        status: 'approved',
         tool_call_id: 'call_plan',
         request: {
           tool_name: 'ExitPlanMode',
@@ -899,7 +893,7 @@ describe('projectPlans', () => {
   it('filters by tool_call_id and ignores non-ExitPlanMode calls', () => {
     const messages: HistoryMessage[] = [
       planCall('call_a', { display: { kind: 'plan_review', plan: '# A' } }),
-      toolCallMsg('t1.1', 'call_bash', { name: 'Bash', state: 'done' }),
+      toolCallMsg('t1.1', 'call_bash', { name: 'Bash', status: 'done' }),
       planCall('call_b', { display: { kind: 'plan_review', plan: '# B' } }),
     ];
     expect(projectPlans(messages, 'call_b').map((p) => p.toolCallId)).toEqual(['call_b']);

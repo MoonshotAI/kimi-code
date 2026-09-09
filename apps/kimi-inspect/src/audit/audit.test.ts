@@ -15,12 +15,12 @@ import { tailTrunc } from './truncate';
 const T0 = Date.parse('2026-01-01T00:00:00.000Z');
 let tick = 0;
 
-function ts(): string {
+function ts(): number {
   tick += 1;
-  return new Date(T0 + tick * 1000).toISOString();
+  return T0 + tick * 1000;
 }
 
-function turnMsg(n: number, state: 'running' | 'completed' = 'completed'): TurnMessage {
+function turnMsg(n: number, status: 'running' | 'completed' = 'completed'): TurnMessage {
   return {
     type: 'turn',
     session_id: 's1',
@@ -28,12 +28,12 @@ function turnMsg(n: number, state: 'running' | 'completed' = 'completed'): TurnM
     timestamp: ts(),
     turn_id: `t${n}`,
     ordinal: n,
-    state,
+    status,
     origin: { kind: 'user' },
   };
 }
 
-function stepMsg(stepId: string, state: 'running' | 'completed'): StepMessage {
+function stepMsg(stepId: string, status: 'running' | 'completed'): StepMessage {
   return {
     type: 'step',
     session_id: 's1',
@@ -42,7 +42,7 @@ function stepMsg(stepId: string, state: 'running' | 'completed'): StepMessage {
     step_id: stepId,
     turn_id: stepId.split('.')[0] ?? 't1',
     ordinal: Number(stepId.split('.')[1] ?? '1'),
-    state,
+    status,
   };
 }
 
@@ -86,11 +86,11 @@ describe('diffValue', () => {
     const t1 = turnMsg(1);
     const t2 = turnMsg(2);
     const prev = [t1, t2];
-    const next = [t1, { ...t2, state: 'running' as const }, turnMsg(3)];
+    const next = [t1, { ...t2, status: 'running' as const }, turnMsg(3)];
     const node = diffValue(prev, next);
     expect(node.children?.get('t1')?.status).toBe('unchanged');
     expect(node.children?.get('t2')?.status).toBe('modified');
-    expect(node.children?.get('t2')?.children?.get('state')).toMatchObject({
+    expect(node.children?.get('t2')?.children?.get('status')).toMatchObject({
       status: 'modified',
       prev: 'completed',
       value: 'running',
@@ -140,9 +140,7 @@ describe('diffValue', () => {
         type: 'session.state',
         session_id: 's1',
         timestamp: ts(),
-        busy: true,
-        main_turn_active: true,
-        activity: 'turn',
+        status: 'running',
         goal: { objective: 'ship it', status: 'active' },
         modes: { plan: { review_path: '/tmp/plan.md' } },
       },
@@ -172,7 +170,7 @@ describe('serializeState', () => {
             timestamp: ts(),
             task_id: 'b-task',
             kind: 'shell',
-            state: 'running',
+            status: 'running',
             detached: false,
             output_tail: '',
           },
@@ -186,7 +184,7 @@ describe('serializeState', () => {
             timestamp: ts(),
             task_id: 'a-task',
             kind: 'tool',
-            state: 'completed',
+            status: 'completed',
             detached: false,
             output_tail: '',
           },

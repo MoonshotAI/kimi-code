@@ -94,7 +94,9 @@ export async function fetchFullHistory(opts: {
     }
     messages.unshift(...fresh);
     if (page.messages.length < pageSize) break;
-    const oldest = page.messages.find((message) => 'turn_id' in message)?.turn_id;
+    const oldest = page.messages
+      .map((message) => ('turn_id' in message ? message.turn_id : undefined))
+      .find((turnId) => turnId !== undefined);
     if (oldest === undefined || oldest === beforeTurn) break;
     beforeTurn = oldest;
   }

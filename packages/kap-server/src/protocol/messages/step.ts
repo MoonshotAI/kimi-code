@@ -28,7 +28,7 @@ export const stepMessageSchema = z.object({
   step_id: z.string().min(1),
   turn_id: z.string().min(1),
   ordinal: z.number().int().nonnegative(),
-  state: z.enum(['running', 'completed', 'interrupted', 'failed']),
+  status: z.enum(['running', 'completed', 'interrupted', 'failed']),
   started_at: isoDateTimeSchema.optional(),
   ended_at: isoDateTimeSchema.optional(),
   usage: stepUsageSchema.optional(),

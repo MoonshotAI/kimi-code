@@ -63,11 +63,6 @@ export const systemMessageSchema = z.discriminatedUnion('subtype', [
   }),
   z.object({
     ...systemMessageBase,
-    subtype: z.literal('skill'),
-    payload: z.unknown().optional(),
-  }),
-  z.object({
-    ...systemMessageBase,
     subtype: z.literal('notice'),
     payload: z.unknown().optional(),
   }),

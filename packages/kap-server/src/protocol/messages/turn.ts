@@ -17,7 +17,7 @@ export const turnMessageSchema = z.object({
   ...timelineMessageBase,
   turn_id: z.string().min(1),
   ordinal: z.number().int().nonnegative(),
-  state: z.enum(['running', 'completed']),
+  status: z.enum(['running', 'completed']),
   origin: turnOriginSchema,
   user_message_id: z.string().min(1).optional(),
   attachment_ids: z.array(z.string().min(1)).optional(),

@@ -6,6 +6,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 
 import type {
+  ContentPart as WireContentPart,
   HistoryMessage,
   InteractionMessage,
   StepTiming,
@@ -17,16 +18,19 @@ import type {
   UserMessageOrigin,
 } from '../../protocol/messages';
 import {
-  mapInteractionEndState,
+  mapInteractionEndStatus,
   notificationTextOf,
   parseToolArgs,
   promptTextOf,
   skillActivationsOf,
   taskNotificationOriginOf,
+  taskUserOriginOf,
+  textPartsOf,
   todoWriteItems,
   toTurnOrigin,
   userOriginOf,
   wantsUserMessage,
+  wireContentParts,
   wireInteractionRequest,
   wireInteractionResponse,
 } from '../projection/agentProjector';
@@ -38,7 +42,6 @@ import {
   isUndoAnchorOrigin,
   isVisibleTurnOrigin,
   stepIdOf,
-  stepUserMessageIdOf,
   textMessageIdOf,
   turnIdOf,
   turnOrdinalOf,
@@ -50,7 +53,7 @@ export interface ColdFoldOptions {
   readonly sessionId: string;
   readonly agentId: string;
   readonly live: boolean;
-  readonly fallbackTimestamp: string;
+  readonly fallbackTimestamp: number;
   readonly subagentTaskIds?: ReadonlyMap<string, string>;
   readonly resolvePlanRevisionKey?: (key: string) => string;
 }
@@ -59,20 +62,20 @@ interface TurnDraft {
   readonly turnId: string;
   readonly rawId: number;
   readonly origin: TurnOrigin;
-  state: 'running' | 'completed';
+  status: 'running' | 'completed';
   userMessageId?: string;
   attachmentIds?: string[];
   startedAt?: string;
   endedAt?: string;
   durationMs?: number;
-  at: string;
+  at: number;
 }
 
 interface StepDraft {
   readonly stepId: string;
   readonly turnId: string;
   readonly ordinal: number;
-  state: 'running' | 'completed' | 'interrupted' | 'failed';
+  status: 'running' | 'completed' | 'interrupted' | 'failed';
   startedAt?: string;
   endedAt?: string;
   usage?: StepUsage;
@@ -89,7 +92,7 @@ interface StepDraft {
   };
   endReason?: string;
   endMessage?: string;
-  at: string;
+  at: number;
 }
 
 interface TextDraft {
@@ -98,7 +101,7 @@ interface TextDraft {
   readonly turnId: string;
   readonly stepId: string;
   text: string;
-  at: string;
+  at: number;
 }
 
 interface ToolDraft {
@@ -106,7 +109,7 @@ interface ToolDraft {
   readonly turnId: string;
   readonly stepId: string;
   name: string;
-  state: 'running' | 'done' | 'error';
+  status: 'running' | 'done' | 'error';
   input?: unknown;
   inputText?: string;
   output?: unknown;
@@ -115,23 +118,17 @@ interface ToolDraft {
   approvalId?: string;
   todoId?: string;
   agentRefs: { agent_id: string; role?: 'child' | 'member' }[];
-  at: string;
+  at: number;
 }
 
 interface UserDraft {
   readonly messageId: string;
-  readonly turnId: string;
-  readonly stepId?: string;
-  readonly text: string;
-  status: 'running' | 'completed';
-  createdAt: string;
-  finishedAt?: string;
-  steeredAt?: string;
+  readonly turnId?: string;
+  readonly text: WireContentPart[];
+  readonly timestamp?: number;
   origin?: UserMessageOrigin;
-  notification?: TaskNotificationPayload;
   attachmentIds?: string[];
   skillActivations?: { skill_name: string; skill_args?: string }[];
-  at: string;
 }
 
 interface SystemDraft {
@@ -139,22 +136,23 @@ interface SystemDraft {
   readonly subtype: SystemMessage['subtype'];
   readonly payload: unknown;
   readonly at?: string;
+  readonly atMs: number;
 }
 
 interface InteractionDraft {
   readonly interactionId: string;
   readonly kind: 'approval' | 'question';
-  state: InteractionMessage['state'];
+  status: InteractionMessage['status'];
   toolCallId?: string;
   request?: unknown;
   response?: unknown;
-  at: string;
+  at: number;
 }
 
 interface TaskDraft {
   readonly taskId: string;
   readonly kind: TaskMessage['kind'];
-  state: TaskMessage['state'];
+  status: TaskMessage['status'];
   detached: boolean;
   description?: string;
   childAgentId?: string;
@@ -167,23 +165,23 @@ interface TaskDraft {
   usage?: StepUsage;
   model?: string;
   thinkingEffort?: string;
-  at: string;
+  at: number;
 }
 
-interface PendingSteer {
+interface SteerInput {
   readonly input: readonly ContentPart[];
   readonly origin: UserMessageOrigin | undefined;
   readonly skillActivations: { skill_name: string; skill_args?: string }[] | undefined;
   readonly skipBlocks: number;
-  readonly at: string;
-  readonly notification?: { readonly payload: TaskNotificationPayload; readonly text: string };
+  readonly at: number;
+  readonly messageId?: string;
+  readonly text?: string;
 }
 
 interface TurnScratch {
   currentStep?: number;
-  userSeq: number;
+  serverUserSeq: number;
   attachmentSeq: number;
-  pendingSteers: PendingSteer[];
   openingInputKey?: string;
   openingSteerDeduped: boolean;
 }
@@ -196,7 +194,7 @@ interface GoalState {
   budgetLimit?: number;
 }
 
-const TASK_STATES = new Set<TaskMessage['state']>([
+const TASK_STATUSES = new Set<TaskMessage['status']>([
   'running',
   'completed',
   'failed',
@@ -239,7 +237,8 @@ export function foldWireHistory(
   let undoAnchorFloor = 0;
   const activeCancelTurnIds = new Set<number>();
 
-  const queuedPrompts = new Map<string, { content: readonly ContentPart[]; at: string }>();
+  const queuedPrompts = new Map<string, { content: readonly ContentPart[]; at: number; steered?: boolean }>();
+  const mergedSteers: { text: string; promptIds: string[] }[] = [];
 
   const subagentTaskIds = new Map(options.subagentTaskIds ?? []);
   const agentTaskLinks: { taskId: string; agentId: string; parentToolCallId?: string }[] = [];
@@ -257,20 +256,22 @@ export function foldWireHistory(
   }
 
   let goal: GoalState | undefined;
-  let lastAt = options.fallbackTimestamp;
+  let lastAtMs = options.fallbackTimestamp;
 
-  const at = (record: ContextRecord): string => {
+  const atMs = (record: ContextRecord): number => {
     const time = record.time;
     if (typeof time === 'number' && Number.isFinite(time)) {
-      lastAt = new Date(time).toISOString();
+      lastAtMs = time;
     }
-    return lastAt;
+    return lastAtMs;
   };
+
+  const atIso = (record: ContextRecord): string => new Date(atMs(record)).toISOString();
 
   const scratch = (rawId: number): TurnScratch => {
     let entry = scratchByTurn.get(rawId);
     if (entry === undefined) {
-      entry = { userSeq: 0, attachmentSeq: 0, pendingSteers: [], openingSteerDeduped: false };
+      entry = { serverUserSeq: 0, attachmentSeq: 0, openingSteerDeduped: false };
       scratchByTurn.set(rawId, entry);
     }
     return entry;
@@ -279,10 +280,10 @@ export function foldWireHistory(
   const pushSystem = (
     subtype: DurableSystemSubtype,
     payload: unknown,
-    recordAt: string,
+    record: ContextRecord,
   ): void => {
     const systemId = sysIds.next(subtype);
-    systems.set(systemId, { systemId, subtype, payload, at: recordAt });
+    systems.set(systemId, { systemId, subtype, payload, at: atIso(record), atMs: atMs(record) });
     order.push(`sys:${systemId}`);
     timelineIds.push(systemId);
   };
@@ -298,7 +299,7 @@ export function foldWireHistory(
     stepId: string,
     turnId: string,
     kind: 'assistant' | 'thinking',
-    recordAt: string,
+    recordAtMs: number,
   ): TextDraft => {
     const seq = (stepTextSeqs.get(stepId) ?? 0) + 1;
     stepTextSeqs.set(stepId, seq);
@@ -308,7 +309,7 @@ export function foldWireHistory(
       turnId,
       stepId,
       text: '',
-      at: recordAt,
+      at: recordAtMs,
     };
     texts.set(draft.messageId, draft);
     const entry = stepTextIds.get(stepId) ?? {};
@@ -321,7 +322,7 @@ export function foldWireHistory(
   const ensureStepDraft = (
     rawId: number,
     stepOrdinal: number,
-    recordAt: string,
+    recordAtMs: number,
   ): StepDraft | undefined => {
     if (hiddenTurnIds.has(rawId)) return undefined;
     const turnId = turnIdOf(rawId);
@@ -333,53 +334,44 @@ export function foldWireHistory(
       stepId,
       turnId,
       ordinal: stepOrdinal,
-      state: 'running',
-      startedAt: recordAt,
-      at: recordAt,
+      status: 'running',
+      startedAt: new Date(recordAtMs).toISOString(),
+      at: recordAtMs,
     };
     steps.set(stepId, draft);
     order.push(`step:${stepId}`);
     return draft;
   };
 
-  const emitSteer = (rawId: number, step: StepDraft, steer: PendingSteer): void => {
+  const emitSteer = (rawId: number, steer: SteerInput): void => {
     const turnId = turnIdOf(rawId);
     const entry = scratch(rawId);
-    entry.userSeq += 1;
-    const messageId = stepUserMessageIdOf(step.stepId, entry.userSeq);
-    const textsOut: string[] = [];
+    let messageId = steer.messageId;
+    if (messageId === undefined) {
+      entry.serverUserSeq += 1;
+      messageId = `${turnId}.u${entry.serverUserSeq}`;
+    }
     const attachmentIds: string[] = [];
     for (const part of steer.input.slice(steer.skipBlocks)) {
-      if (part.type === 'text') {
-        textsOut.push(part.text);
-        continue;
-      }
+      if (part.type === 'text') continue;
       if (daemonFileRefFromPart(part) === undefined) continue;
       entry.attachmentSeq += 1;
-      attachmentIds.push(attachmentIdOf(step.stepId, entry.attachmentSeq));
+      attachmentIds.push(attachmentIdOf(turnId, entry.attachmentSeq));
     }
     const draft: UserDraft = {
       messageId,
       turnId,
-      stepId: step.stepId,
-      text: steer.notification?.text ?? textsOut.join(''),
-      status: 'running',
-      createdAt: steer.at,
-      steeredAt: steer.at,
+      text:
+        steer.text !== undefined
+          ? textPartsOf(steer.text)
+          : wireContentParts(steer.input.slice(steer.skipBlocks)),
+      timestamp: steer.at,
       origin: steer.origin,
-      notification: steer.notification?.payload,
       attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
       skillActivations: steer.skillActivations,
-      at: steer.at,
     };
     users.set(messageId, draft);
     order.push(`user:${messageId}`);
-  };
-
-  const flushSteers = (rawId: number, step: StepDraft): void => {
-    const entry = scratch(rawId);
-    for (const steer of entry.pendingSteers) emitSteer(rawId, step, steer);
-    entry.pendingSteers = [];
   };
 
   const dropTurnDetails = (turnId: string): void => {
@@ -446,8 +438,13 @@ export function foldWireHistory(
 
   const onTurnPrompt = (record: ContextRecord): void => {
     skipCancelledTurnIds();
-    const rawId = nextTurnId;
-    nextTurnId += 1;
+    const recordTurnId = record['turnId'];
+    const rawId =
+      typeof recordTurnId === 'number' && Number.isInteger(recordTurnId) && recordTurnId >= 0
+        ? recordTurnId
+        : nextTurnId;
+    nextTurnId = Math.max(nextTurnId, rawId + 1);
+    const carriedUserSeq = phantomUserSeq;
     phantomUserSeq = 0;
     const origin = record['origin'];
     const promptId = record['promptId'];
@@ -470,7 +467,8 @@ export function foldWireHistory(
       hiddenTurnIds.add(rawId);
       return;
     }
-    const recordAt = at(record);
+    const recordAtMs = atMs(record);
+    const recordAtIso = new Date(recordAtMs).toISOString();
     const turnId = turnIdOf(rawId);
     const input = Array.isArray(record['input']) ? (record['input'] as ContentPart[]) : [];
     const skipBlocks = bundledSkillCount(origin);
@@ -482,45 +480,50 @@ export function foldWireHistory(
         : undefined;
     const wantsUser = wantsUserMessage(origin, promptText);
     const taskOrigin = taskNotificationOriginOf(origin);
+    const openingMessageId =
+      wantsUser || taskOrigin !== undefined
+        ? ((typeof promptId === 'string' ? promptId : undefined) ?? turnUserMessageIdOf(turnId))
+        : undefined;
     const draft: TurnDraft = {
       turnId,
       rawId,
       origin: toTurnOrigin(origin, options.agentId, subagentTaskIds),
-      state: 'running',
-      userMessageId: wantsUser || taskOrigin !== undefined ? turnUserMessageIdOf(turnId) : undefined,
+      status: 'running',
+      userMessageId: openingMessageId,
       attachmentIds,
-      startedAt: recordAt,
-      at: recordAt,
+      startedAt: recordAtIso,
+      at: recordAtMs,
     };
     turns.set(turnId, draft);
     order.push(`turn:${turnId}`);
     timelineIds.push(turnId);
     scratchByTurn.set(rawId, {
-      userSeq: 0,
-      attachmentSeq: 0,
-      pendingSteers: [],
+      serverUserSeq: carriedUserSeq,
+      attachmentSeq: attachments,
       openingInputKey: JSON.stringify(input),
       openingSteerDeduped: false,
     });
-    if (draft.userMessageId !== undefined) {
+    if (openingMessageId !== undefined) {
       const notification =
         taskOrigin === undefined ? undefined : parseNotificationXmlText(promptText ?? '');
       const user: UserDraft = {
-        messageId: draft.userMessageId,
+        messageId: openingMessageId,
         turnId,
-        text: notification === undefined ? (promptText ?? '') : notificationTextOf(notification),
-        status: 'running',
-        createdAt: recordAt,
-        origin: taskOrigin ?? userOriginOf(origin),
-        notification,
+        text:
+          notification !== undefined
+            ? textPartsOf(notificationTextOf(notification))
+            : wireContentParts(input.slice(skipBlocks)),
+        timestamp: recordAtMs,
+        origin:
+          notification !== undefined
+            ? taskUserOriginOf(taskOrigin?.task_id, notification)
+            : (taskOrigin ?? userOriginOf(origin)),
         attachmentIds,
         skillActivations: skillActivationsOf(origin),
-        at: recordAt,
       };
       users.set(user.messageId, user);
       order.push(`user:${user.messageId}`);
     }
-    emitSkillSystems(origin, input, recordAt, pushSystem);
   };
 
   const onTurnSteer = (record: ContextRecord): void => {
@@ -533,13 +536,7 @@ export function foldWireHistory(
     const rawId = currentTurn;
     if (rawId === undefined || hiddenTurnIds.has(rawId)) return;
     const input = Array.isArray(record['input']) ? (record['input'] as ContentPart[]) : [];
-    const steer: PendingSteer = {
-      input,
-      origin: userOriginOf(origin),
-      skillActivations: skillActivationsOf(origin),
-      skipBlocks: kind === 'user' ? (origin?.skillActivations?.length ?? 0) : 0,
-      at: at(record),
-    };
+    const skipBlocks = kind === 'user' ? (origin?.skillActivations?.length ?? 0) : 0;
     const entry = scratch(rawId);
     if (
       entry.currentStep === undefined &&
@@ -550,15 +547,79 @@ export function foldWireHistory(
       entry.openingSteerDeduped = true;
       return;
     }
-    const stepOrdinal = entry.currentStep;
-    if (stepOrdinal !== undefined) {
-      const step = steps.get(stepIdOf(turnIdOf(rawId), stepOrdinal));
-      if (step !== undefined && step.state === 'running') {
-        emitSteer(rawId, step, steer);
+    if (kind === 'user') {
+      const recordAtMs = atMs(record);
+      const matchedId = matchQueuedPrompt(input, skipBlocks);
+      if (matchedId !== undefined) {
+        purgeMergedSteer(promptTextOf(input.slice(skipBlocks)));
+        emitSteer(rawId, {
+          input,
+          origin: userOriginOf(origin),
+          skillActivations: skillActivationsOf(origin),
+          skipBlocks,
+          at: recordAtMs,
+          messageId: matchedId,
+        });
+        return;
+      }
+      const mergedUsers = matchMergedSteer(input, skipBlocks);
+      if (mergedUsers !== undefined) {
+        for (const { messageId, content } of mergedUsers) {
+          const draft: UserDraft = {
+            messageId,
+            turnId: turnIdOf(rawId),
+            text: wireContentParts(content),
+            timestamp: recordAtMs,
+          };
+          users.set(messageId, draft);
+          order.push(`user:${messageId}`);
+        }
         return;
       }
     }
-    entry.pendingSteers.push(steer);
+    emitSteer(rawId, {
+      input,
+      origin: userOriginOf(origin),
+      skillActivations: skillActivationsOf(origin),
+      skipBlocks,
+      at: atMs(record),
+    });
+  };
+
+  const matchQueuedPrompt = (input: readonly ContentPart[], skipBlocks: number): string | undefined => {
+    const text = promptTextOf(input.slice(skipBlocks));
+    let matched: string | undefined;
+    for (const [queuedId, queued] of queuedPrompts) {
+      if (promptTextOf(queued.content) !== text) continue;
+      if (matched !== undefined) return undefined;
+      matched = queuedId;
+    }
+    if (matched !== undefined) queuedPrompts.delete(matched);
+    return matched;
+  };
+
+  const matchMergedSteer = (
+    input: readonly ContentPart[],
+    skipBlocks: number,
+  ): { messageId: string; content: readonly ContentPart[] }[] | undefined => {
+    const text = promptTextOf(input.slice(skipBlocks));
+    const index = mergedSteers.findIndex((entry) => entry.text === text);
+    if (index < 0) return undefined;
+    const [entry] = mergedSteers.splice(index, 1);
+    if (entry === undefined) return undefined;
+    const matched: { messageId: string; content: readonly ContentPart[] }[] = [];
+    for (const promptId of entry.promptIds) {
+      const queued = queuedPrompts.get(promptId);
+      if (queued !== undefined) matched.push({ messageId: promptId, content: queued.content });
+      queuedPrompts.delete(promptId);
+    }
+    return matched;
+  };
+
+  const purgeMergedSteer = (text: string): void => {
+    for (let i = mergedSteers.length - 1; i >= 0; i--) {
+      if (mergedSteers[i]!.text === text) mergedSteers.splice(i, 1);
+    }
   };
 
   const onLoopEvent = (record: ContextRecord): void => {
@@ -571,15 +632,12 @@ export function foldWireHistory(
         const turn = Number(e.turnId);
         if (!Number.isInteger(turn)) return;
         stepRefs.set(e.uuid, { turn, step: e.step });
-        const draft = ensureStepDraft(turn, e.step, at(record));
+        const draft = ensureStepDraft(turn, e.step, atMs(record));
         if (draft === undefined) return;
-        draft.startedAt = draft.startedAt ?? at(record);
+        draft.startedAt = draft.startedAt ?? atIso(record);
         const entry = scratch(turn);
         entry.currentStep = e.step;
-        entry.userSeq = 0;
-        entry.attachmentSeq = 0;
         currentTurn = turn;
-        flushSteers(turn, draft);
         return;
       }
       case 'step.end': {
@@ -596,8 +654,8 @@ export function foldWireHistory(
         if (ref === undefined) return;
         const draft = steps.get(stepIdOf(turnIdOf(ref.turn), ref.step));
         if (draft === undefined) return;
-        draft.state = 'completed';
-        draft.endedAt = at(record);
+        draft.status = 'completed';
+        draft.endedAt = atIso(record);
         draft.usage = e.usage === undefined ? undefined : toSnakeUsage(e.usage);
         draft.finishReason = e.finishReason ?? e.rawFinishReason ?? e.providerFinishReason;
         draft.timing =
@@ -608,7 +666,7 @@ export function foldWireHistory(
                 llm_stream_duration_ms: e.llmStreamDurationMs,
               };
         draft.retry = undefined;
-        draft.at = at(record);
+        draft.at = atMs(record);
         return;
       }
       case 'content.part': {
@@ -620,7 +678,7 @@ export function foldWireHistory(
         };
         const ref = resolveStepRef(stepRefs, e.stepUuid, e.turnId, e.step);
         if (ref === undefined) return;
-        const draft = ensureStepDraft(ref.turn, ref.step, at(record));
+        const draft = ensureStepDraft(ref.turn, ref.step, atMs(record));
         if (draft === undefined) return;
         const kind = e.part.type === 'text' ? 'assistant' : e.part.type === 'think' ? 'thinking' : undefined;
         const partText = e.part.type === 'think' ? e.part.think : e.part.text;
@@ -629,9 +687,9 @@ export function foldWireHistory(
         const stepId = draft.stepId;
         const existingId = stepTextIds.get(stepId)?.[kind];
         const text = existingId === undefined ? undefined : texts.get(existingId);
-        const target = text ?? createTextDraft(stepId, draft.turnId, kind, at(record));
+        const target = text ?? createTextDraft(stepId, draft.turnId, kind, atMs(record));
         target.text += partText;
-        target.at = at(record);
+        target.at = atMs(record);
         return;
       }
       case 'tool.call': {
@@ -645,7 +703,7 @@ export function foldWireHistory(
         };
         const ref = resolveStepRef(stepRefs, e.stepUuid, e.turnId, e.step);
         if (ref === undefined) return;
-        const draft = ensureStepDraft(ref.turn, ref.step, at(record));
+        const draft = ensureStepDraft(ref.turn, ref.step, atMs(record));
         if (draft === undefined) return;
         const existing = tools.get(e.toolCallId);
         const input = parseToolArgs(e.args);
@@ -654,7 +712,7 @@ export function foldWireHistory(
           turnId: draft.turnId,
           stepId: draft.stepId,
           name: e.name,
-          state: existing?.state ?? 'running',
+          status: existing?.status ?? 'running',
           input,
           inputText: typeof e.args === 'string' ? e.args : undefined,
           output: existing?.output,
@@ -667,7 +725,7 @@ export function foldWireHistory(
               ? TODO_ENTITY_ID
               : undefined),
           agentRefs: existing?.agentRefs ?? agentRefsOf(e.toolCallId),
-          at: at(record),
+          at: atMs(record),
         };
         tools.set(e.toolCallId, tool);
         if (existing === undefined) order.push(`tool:${e.toolCallId}`);
@@ -681,10 +739,10 @@ export function foldWireHistory(
         const existing = tools.get(e.toolCallId);
         if (existing === undefined) return;
         const isError = e.result.isError === true;
-        existing.state = isError ? 'error' : 'done';
+        existing.status = isError ? 'error' : 'done';
         existing.output = e.result.output;
         existing.error = isError && typeof e.result.output === 'string' ? e.result.output : undefined;
-        existing.at = at(record);
+        existing.at = atMs(record);
         return;
       }
       default:
@@ -712,10 +770,13 @@ export function foldWireHistory(
     taskOrigin: Extract<UserMessageOrigin, { kind: 'task' }>,
     record: ContextRecord,
   ): void => {
-    const recordAt = at(record);
+    const recordAtMs = atMs(record);
     const input = Array.isArray(message.content) ? message.content : [];
     const rawText = promptTextOf(input);
     const notification = parseNotificationXmlText(rawText);
+    const origin =
+      notification === undefined ? taskOrigin : taskUserOriginOf(taskOrigin.task_id, notification);
+    if (origin === undefined) return;
     const rawId = currentTurn;
     if (rawId !== undefined && !hiddenTurnIds.has(rawId)) {
       const turnId = turnIdOf(rawId);
@@ -729,27 +790,15 @@ export function foldWireHistory(
       ) {
         return;
       }
-      if (turn !== undefined && turn.state === 'running') {
-        const steer: PendingSteer = {
+      if (turn !== undefined && turn.status === 'running') {
+        emitSteer(rawId, {
           input,
-          origin: taskOrigin,
+          origin,
           skillActivations: undefined,
           skipBlocks: 0,
-          at: recordAt,
-          notification:
-            notification === undefined
-              ? undefined
-              : { payload: notification, text: notificationTextOf(notification) },
-        };
-        const stepOrdinal = entry?.currentStep;
-        if (stepOrdinal !== undefined) {
-          const step = steps.get(stepIdOf(turnId, stepOrdinal));
-          if (step !== undefined && step.state === 'running') {
-            emitSteer(rawId, step, steer);
-            return;
-          }
-        }
-        scratch(rawId).pendingSteers.push(steer);
+          at: recordAtMs,
+          text: notification === undefined ? rawText : notificationTextOf(notification),
+        });
         return;
       }
     }
@@ -758,12 +807,9 @@ export function foldWireHistory(
     const draft: UserDraft = {
       messageId: `${turnId}.u${phantomUserSeq}`,
       turnId,
-      text: notification === undefined ? rawText : notificationTextOf(notification),
-      status: 'completed',
-      createdAt: recordAt,
-      origin: taskOrigin,
-      notification,
-      at: recordAt,
+      text: textPartsOf(notification === undefined ? rawText : notificationTextOf(notification)),
+      timestamp: recordAtMs,
+      origin,
     };
     users.set(draft.messageId, draft);
     order.push(`user:${draft.messageId}`);
@@ -813,7 +859,8 @@ export function foldWireHistory(
       return;
     }
     if (message.role === 'assistant') {
-      const recordAt = at(record);
+      const recordAtMs = atMs(record);
+      const recordAtIso = new Date(recordAtMs).toISOString();
       let rawId = currentTurn;
       if (rawId === undefined || hiddenTurnIds.has(rawId) || !turns.has(turnIdOf(rawId))) {
         rawId = nextTurnId;
@@ -823,46 +870,45 @@ export function foldWireHistory(
           turnId,
           rawId,
           origin: { kind: 'other' },
-          state: 'running',
-          startedAt: recordAt,
-          at: recordAt,
+          status: 'running',
+          startedAt: recordAtIso,
+          at: recordAtMs,
         };
         turns.set(turnId, draft);
         order.push(`turn:${turnId}`);
         timelineIds.push(turnId);
         currentTurn = rawId;
         scratchByTurn.set(rawId, {
-          userSeq: 0,
+          serverUserSeq: 0,
           attachmentSeq: 0,
-          pendingSteers: [],
           openingSteerDeduped: false,
         });
       }
       const entry = scratch(rawId);
       const ordinal = (entry.currentStep ?? 0) + 1;
-      const step = ensureStepDraft(rawId, ordinal, recordAt);
+      const step = ensureStepDraft(rawId, ordinal, recordAtMs);
       if (step === undefined) return;
       entry.currentStep = ordinal;
-      step.state = 'completed';
-      step.endedAt = recordAt;
-      step.at = recordAt;
+      step.status = 'completed';
+      step.endedAt = recordAtIso;
+      step.at = recordAtMs;
       for (const part of message.content ?? []) {
         if (part.type === 'text' && typeof part.text === 'string' && part.text.length > 0) {
           const existingId = stepTextIds.get(step.stepId)?.assistant;
           const target =
             (existingId === undefined ? undefined : texts.get(existingId)) ??
-            createTextDraft(step.stepId, step.turnId, 'assistant', recordAt);
+            createTextDraft(step.stepId, step.turnId, 'assistant', recordAtMs);
           target.text += part.text;
-          target.at = recordAt;
+          target.at = recordAtMs;
         } else if (part.type === 'think') {
           const think = (part as { think?: unknown }).think;
           if (typeof think !== 'string' || think.length === 0) continue;
           const existingId = stepTextIds.get(step.stepId)?.thinking;
           const target =
             (existingId === undefined ? undefined : texts.get(existingId)) ??
-            createTextDraft(step.stepId, step.turnId, 'thinking', recordAt);
+            createTextDraft(step.stepId, step.turnId, 'thinking', recordAtMs);
           target.text += think;
-          target.at = recordAt;
+          target.at = recordAtMs;
         }
       }
       for (const call of message.toolCalls ?? []) {
@@ -873,7 +919,7 @@ export function foldWireHistory(
           turnId: step.turnId,
           stepId: step.stepId,
           name: call.name,
-          state: 'running',
+          status: 'running',
           input,
           inputText: typeof call.arguments === 'string' ? call.arguments : undefined,
           taskId: taskIdByToolCall(call.id),
@@ -882,7 +928,7 @@ export function foldWireHistory(
               ? TODO_ENTITY_ID
               : undefined,
           agentRefs: agentRefsOf(call.id),
-          at: recordAt,
+          at: recordAtMs,
         };
         tools.set(call.id, tool);
         order.push(`tool:${call.id}`);
@@ -896,10 +942,10 @@ export function foldWireHistory(
       if (existing === undefined) return;
       const output = promptTextOf(message.content ?? []);
       const isError = message.isError === true;
-      existing.state = isError ? 'error' : 'done';
+      existing.status = isError ? 'error' : 'done';
       existing.output = output;
       existing.error = isError ? output : undefined;
-      existing.at = at(record);
+      existing.at = atMs(record);
       return;
     }
   };
@@ -911,35 +957,23 @@ export function foldWireHistory(
     if (pendingIndex >= 0) pendingAnchorTurnIds.splice(pendingIndex, 1);
     const draft = turns.get(turnIdOf(rawId));
     if (draft === undefined) return;
-    const recordAt = at(record);
+    const recordAtMs = atMs(record);
+    const recordAtIso = new Date(recordAtMs).toISOString();
     const reason = record['reason'];
     const entry = scratch(rawId);
-    let step =
+    const step =
       entry.currentStep === undefined
         ? undefined
         : steps.get(stepIdOf(turnIdOf(rawId), entry.currentStep));
-    if (step === undefined && entry.pendingSteers.length > 0) {
-      const ordinal = (entry.currentStep ?? 0) + 1;
-      step = ensureStepDraft(rawId, ordinal, recordAt);
-      entry.currentStep = ordinal;
+    if (step !== undefined && step.status === 'running') {
+      step.status = reason === 'failed' || reason === 'blocked' ? 'failed' : 'interrupted';
+      step.endedAt = recordAtIso;
+      step.at = recordAtMs;
     }
-    if (step !== undefined && step.state === 'running') {
-      step.state = reason === 'failed' || reason === 'blocked' ? 'failed' : 'interrupted';
-      step.endedAt = recordAt;
-      step.at = recordAt;
-    }
-    if (step !== undefined) flushSteers(rawId, step);
-    entry.pendingSteers = [];
-    draft.state = 'completed';
-    draft.endedAt = recordAt;
+    draft.status = 'completed';
+    draft.endedAt = recordAtIso;
     draft.durationMs = typeof record['durationMs'] === 'number' ? record['durationMs'] : undefined;
-    draft.at = recordAt;
-    for (const user of users.values()) {
-      if (user.turnId !== draft.turnId || user.status !== 'running') continue;
-      user.status = 'completed';
-      user.finishedAt = recordAt;
-      user.at = recordAt;
-    }
+    draft.at = recordAtMs;
   };
 
   const onUndo = (record: ContextRecord): void => {
@@ -962,7 +996,7 @@ export function foldWireHistory(
     pruneOrder();
     for (let turnId = firstUndone; turnId < nextTurnId; turnId++) hiddenTurnIds.add(turnId);
     if (currentTurn !== undefined && currentTurn >= firstUndone) currentTurn = undefined;
-    pushSystem('undo', { removed_ids: removed }, at(record));
+    pushSystem('undo', { removed_ids: removed }, record);
   };
 
   const onClear = (record: ContextRecord): void => {
@@ -977,7 +1011,7 @@ export function foldWireHistory(
     undoAnchorFloor = undoAnchors.length;
     currentTurn = undefined;
     scratchByTurn.clear();
-    pushSystem('clear', { removed_ids: removed }, at(record));
+    pushSystem('clear', { removed_ids: removed }, record);
   };
 
   const onInteractionRequest = (record: ContextRecord): void => {
@@ -993,14 +1027,14 @@ export function foldWireHistory(
         : typeof innerToolCallId === 'string'
           ? innerToolCallId
           : undefined;
-    const recordAt = at(record);
+    const recordAtMs = atMs(record);
     const draft: InteractionDraft = {
       interactionId: id,
       kind,
-      state: 'pending',
+      status: 'pending',
       toolCallId,
       request: wireInteractionRequest(kind, payload),
-      at: recordAt,
+      at: recordAtMs,
     };
     interactions.set(id, draft);
     order.push(`ix:${id}`);
@@ -1008,7 +1042,7 @@ export function foldWireHistory(
       const tool = tools.get(toolCallId);
       if (tool !== undefined && tool.approvalId !== id) {
         tool.approvalId = id;
-        tool.at = recordAt;
+        tool.at = recordAtMs;
       }
     }
   };
@@ -1019,9 +1053,9 @@ export function foldWireHistory(
     const draft = interactions.get(id);
     if (draft === undefined) return;
     const response = record['response'];
-    draft.state = mapInteractionEndState(draft.kind, response);
+    draft.status = mapInteractionEndStatus(draft.kind, response);
     draft.response = wireInteractionResponse(draft.kind, draft.request, response);
-    draft.at = at(record);
+    draft.at = atMs(record);
   };
 
   const onTaskRecord = (record: ContextRecord): void => {
@@ -1041,17 +1075,17 @@ export function foldWireHistory(
         }
       | undefined;
     if (info === undefined || typeof info.taskId !== 'string') return;
-    const recordAt = at(record);
+    const recordAtMs = atMs(record);
     const taskId = info.taskId;
     const prev = tasks.get(taskId);
     const status = info.status;
     const draft: TaskDraft = {
       taskId,
       kind: mapTaskKind(info.kind),
-      state:
-        typeof status === 'string' && TASK_STATES.has(status as TaskMessage['state'])
-          ? (status as TaskMessage['state'])
-          : (prev?.state ?? 'running'),
+      status:
+        typeof status === 'string' && TASK_STATUSES.has(status as TaskMessage['status'])
+          ? (status as TaskMessage['status'])
+          : (prev?.status ?? 'running'),
       detached: typeof info.detached === 'boolean' ? info.detached : (prev?.detached ?? true),
       description: typeof info.description === 'string' ? info.description : prev?.description,
       childAgentId: typeof info.agentId === 'string' ? info.agentId : prev?.childAgentId,
@@ -1066,7 +1100,7 @@ export function foldWireHistory(
       model: typeof info.model === 'string' ? info.model : prev?.model,
       thinkingEffort:
         typeof info.thinkingEffort === 'string' ? info.thinkingEffort : prev?.thinkingEffort,
-      at: recordAt,
+      at: recordAtMs,
     };
     tasks.set(taskId, draft);
     if (prev === undefined) order.push(`task:${taskId}`);
@@ -1083,7 +1117,7 @@ export function foldWireHistory(
             : undefined,
         budgetUsed: 0,
       };
-      pushSystem('goal', goalPayloadOf(goal), at(record));
+      pushSystem('goal', goalPayloadOf(goal), record);
       return;
     }
     if (record.type === 'goal.update') {
@@ -1109,11 +1143,11 @@ export function foldWireHistory(
       ) {
         return;
       }
-      pushSystem('goal', goal === undefined ? undefined : goalPayloadOf(goal), at(record));
+      pushSystem('goal', goal === undefined ? undefined : goalPayloadOf(goal), record);
       return;
     }
     goal = undefined;
-    pushSystem('goal', undefined, at(record));
+    pushSystem('goal', undefined, record);
   };
 
   for (const record of records) {
@@ -1138,13 +1172,13 @@ export function foldWireHistory(
         const step = record['step'];
         if (typeof rawId !== 'number' || typeof step !== 'number') break;
         if (typeof record['reason'] !== 'string') break;
-        const draft = ensureStepDraft(rawId, step, at(record));
+        const draft = ensureStepDraft(rawId, step, atMs(record));
         if (draft === undefined) break;
-        draft.state = 'interrupted';
-        draft.endedAt = at(record);
+        draft.status = 'interrupted';
+        draft.endedAt = atIso(record);
         draft.endReason = record['reason'];
         draft.endMessage = typeof record['message'] === 'string' ? record['message'] : undefined;
-        draft.at = at(record);
+        draft.at = atMs(record);
         break;
       }
       case 'turn.step.retrying': {
@@ -1161,7 +1195,7 @@ export function foldWireHistory(
         ) {
           break;
         }
-        const draft = ensureStepDraft(rawId, step, at(record));
+        const draft = ensureStepDraft(rawId, step, atMs(record));
         if (draft === undefined) break;
         draft.retry = {
           failed_attempt: record['failedAttempt'] as number,
@@ -1172,7 +1206,7 @@ export function foldWireHistory(
           error_message: record['errorMessage'] as string,
           status_code: typeof record['statusCode'] === 'number' ? record['statusCode'] : undefined,
         };
-        draft.at = at(record);
+        draft.at = atMs(record);
         break;
       }
       case 'turn.cancel': {
@@ -1197,7 +1231,7 @@ export function foldWireHistory(
         pushSystem(
           'interruption',
           { turn_id: turnIdOf(turnId), reason: 'user_cancelled' },
-          at(record),
+          record,
         );
         break;
       }
@@ -1213,7 +1247,7 @@ export function foldWireHistory(
         pushSystem(
           'compaction',
           { phase: 'completed', text: text.length > 0 ? text : undefined },
-          at(record),
+          record,
         );
         break;
       }
@@ -1233,10 +1267,10 @@ export function foldWireHistory(
         onGoalRecord(record);
         break;
       case 'plan_mode.enter':
-        pushSystem('plan.enter', undefined, at(record));
+        pushSystem('plan.enter', undefined, record);
         break;
       case 'plan_mode.exit':
-        pushSystem('plan.exit', undefined, at(record));
+        pushSystem('plan.exit', undefined, record);
         break;
       case 'plan_mode.cancel':
         break;
@@ -1257,21 +1291,21 @@ export function foldWireHistory(
             sha256: record['sha256'],
             bytes: record['bytes'],
           },
-          at(record),
+          record,
         );
         break;
       }
       case 'swarm_mode.enter':
-        pushSystem('swarm.enter', undefined, at(record));
+        pushSystem('swarm.enter', undefined, record);
         break;
       case 'swarm_mode.exit':
-        pushSystem('swarm.exit', undefined, at(record));
+        pushSystem('swarm.exit', undefined, record);
         break;
       case 'prompt.accepted': {
         const promptId = record['promptId'];
         const content = record['content'];
         if (typeof promptId !== 'string' || !Array.isArray(content)) break;
-        queuedPrompts.set(promptId, { content: content as ContentPart[], at: at(record) });
+        queuedPrompts.set(promptId, { content: content as ContentPart[], at: atMs(record) });
         break;
       }
       case 'prompt.aborted':
@@ -1283,8 +1317,19 @@ export function foldWireHistory(
       case 'prompt.steered': {
         const ids = record['promptIds'];
         if (!Array.isArray(ids)) break;
+        const content = record['content'];
+        const promptIds: string[] = [];
         for (const id of ids) {
-          if (typeof id === 'string') queuedPrompts.delete(id);
+          if (typeof id !== 'string') continue;
+          promptIds.push(id);
+          const queued = queuedPrompts.get(id);
+          if (queued !== undefined) queued.steered = true;
+        }
+        if (Array.isArray(content)) {
+          mergedSteers.push({
+            text: promptTextOf(content as ContentPart[]),
+            promptIds,
+          });
         }
         break;
       }
@@ -1293,29 +1338,20 @@ export function foldWireHistory(
     }
   }
 
-  let queuedRawId = nextTurnId;
-  for (const { content, at: acceptedAt } of queuedPrompts.values()) {
-    while (cancelledTurnIds.delete(queuedRawId)) queuedRawId += 1;
-    const turnId = turnIdOf(queuedRawId);
-    queuedRawId += 1;
-    const messageId = turnUserMessageIdOf(turnId);
+  for (const [promptId, { content }] of queuedPrompts) {
     const draft: UserDraft = {
-      messageId,
-      turnId,
-      text: promptTextOf(content),
-      status: 'running',
-      createdAt: acceptedAt,
-      at: acceptedAt,
+      messageId: promptId,
+      text: wireContentParts(content),
     };
-    users.set(messageId, draft);
-    order.push(`user:${messageId}`);
+    users.set(draft.messageId, draft);
+    order.push(`user:${draft.messageId}`);
   }
 
-  const finalTurnState = (draft: TurnDraft): 'running' | 'completed' =>
-    draft.state === 'running' && options.live ? 'running' : 'completed';
+  const finalTurnStatus = (draft: TurnDraft): 'running' | 'completed' =>
+    draft.status === 'running' && options.live ? 'running' : 'completed';
 
-  const finalStepState = (draft: StepDraft): StepDraft['state'] =>
-    draft.state === 'running' && !options.live ? 'interrupted' : draft.state;
+  const finalStepStatus = (draft: StepDraft): StepDraft['status'] =>
+    draft.status === 'running' && !options.live ? 'interrupted' : draft.status;
 
   const turnUsageOf = (turnId: string): StepUsage | undefined => {
     let total: StepUsage | undefined;
@@ -1361,23 +1397,23 @@ export function foldWireHistory(
         outputText === undefined
           ? undefined
           : /\[summary\]\n([\s\S]*?)(?:\n\nresume_hint:|$)/.exec(outputText)?.[1]?.trim();
-      const state = tool.state === 'done' ? 'completed' : 'failed';
+      const status = tool.status === 'done' ? 'completed' : 'failed';
       tasks.set(agentTaskId, {
         taskId: agentTaskId,
         kind: 'subagent',
-        state,
+        status,
         detached: args['run_in_background'] === true,
         description: typeof args['description'] === 'string' ? args['description'] : undefined,
         childAgentId,
         outputTail: '',
-        startedAt: tool.at,
-        endedAt: tool.state === 'running' ? undefined : tool.at,
+        startedAt: new Date(tool.at).toISOString(),
+        endedAt: tool.status === 'running' ? undefined : new Date(tool.at).toISOString(),
         resultSummary:
-          tool.state === 'done' && summary !== undefined && summary.length > 0
+          tool.status === 'done' && summary !== undefined && summary.length > 0
             ? summary
             : undefined,
-        error: tool.state === 'error' ? (tool.error ?? outputText) : undefined,
-        stateReason: tool.state === 'running' ? 'interrupted' : undefined,
+        error: tool.status === 'error' ? (tool.error ?? outputText) : undefined,
+        stateReason: tool.status === 'running' ? 'interrupted' : undefined,
         usage: undefined,
         model: typeof args['model'] === 'string' ? args['model'] : undefined,
         thinkingEffort: typeof args['thinking'] === 'string' ? args['thinking'] : undefined,
@@ -1407,7 +1443,7 @@ export function foldWireHistory(
           ...baseFields(options, draft.at),
           turn_id: draft.turnId,
           ordinal: draft.rawId,
-          state: finalTurnState(draft),
+          status: finalTurnStatus(draft),
           origin: draft.origin,
           user_message_id: draft.userMessageId,
           attachment_ids: draft.attachmentIds,
@@ -1427,7 +1463,7 @@ export function foldWireHistory(
           step_id: draft.stepId,
           turn_id: draft.turnId,
           ordinal: draft.ordinal,
-          state: finalStepState(draft),
+          status: finalStepStatus(draft),
           started_at: draft.startedAt,
           ended_at: draft.endedAt,
           usage: draft.usage,
@@ -1444,19 +1480,16 @@ export function foldWireHistory(
         if (draft === undefined) break;
         messages.push({
           type: 'user',
-          ...baseFields(options, draft.at),
+          session_id: options.sessionId,
+          agent_id: options.agentId,
           message_id: draft.messageId,
           turn_id: draft.turnId,
-          step_id: draft.stepId,
+          status: draft.timestamp === undefined ? 'unread' : 'read',
+          timestamp: draft.timestamp,
           text: draft.text,
           attachment_ids: draft.attachmentIds,
           skill_activations: draft.skillActivations,
-          status: draft.status === 'running' && !options.live ? 'completed' : draft.status,
-          created_at: draft.createdAt,
-          finished_at: draft.finishedAt,
-          steered_at: draft.steeredAt,
           origin: draft.origin,
-          notification: draft.notification,
         });
         break;
       }
@@ -1465,7 +1498,7 @@ export function foldWireHistory(
         if (draft === undefined) break;
         const step = steps.get(draft.stepId);
         const streaming =
-          options.live && step !== undefined && finalStepState(step) === 'running';
+          options.live && step !== undefined && finalStepStatus(step) === 'running';
         const body = {
           ...baseFields(options, draft.at),
           message_id: draft.messageId,
@@ -1488,7 +1521,7 @@ export function foldWireHistory(
           turn_id: draft.turnId,
           step_id: draft.stepId,
           name: draft.name,
-          state: draft.state === 'running' && !options.live ? 'done' : draft.state,
+          status: draft.status === 'running' && !options.live ? 'done' : draft.status,
           input: draft.input,
           input_text: draft.inputText,
           output: draft.output,
@@ -1505,7 +1538,7 @@ export function foldWireHistory(
         if (draft === undefined) break;
         messages.push({
           type: 'system',
-          ...baseFields(options, draft.at ?? lastAt),
+          ...baseFields(options, draft.atMs),
           system_id: draft.systemId,
           subtype: draft.subtype,
           payload: draft.payload,
@@ -1516,14 +1549,14 @@ export function foldWireHistory(
       case 'ix': {
         const draft = interactions.get(id);
         if (draft === undefined) break;
-        const state =
-          draft.state === 'pending' && !options.live ? ('cancelled' as const) : draft.state;
+        const status =
+          draft.status === 'pending' && !options.live ? ('cancelled' as const) : draft.status;
         messages.push({
           type: 'interaction',
           ...baseFields(options, draft.at),
           interaction_id: draft.interactionId,
           kind: draft.kind,
-          state,
+          status,
           tool_call_id: draft.toolCallId,
           request: draft.request,
           response: draft.response,
@@ -1538,7 +1571,7 @@ export function foldWireHistory(
           ...baseFields(options, draft.at),
           task_id: draft.taskId,
           kind: draft.kind,
-          state: draft.state,
+          status: draft.status,
           detached: draft.detached,
           description: draft.description,
           child_agent_id: draft.childAgentId,
@@ -1560,17 +1593,17 @@ export function foldWireHistory(
   }
   let lastTodoTool: ToolDraft | undefined;
   for (const tool of tools.values()) {
-    if (tool.todoId !== undefined && tool.state === 'done') lastTodoTool = tool;
+    if (tool.todoId !== undefined && tool.status === 'done') lastTodoTool = tool;
   }
   if (lastTodoTool !== undefined) {
     const items = todoWriteItems(lastTodoTool.input);
     if (items !== undefined) {
       messages.push({
         type: 'todo',
-        ...baseFields(options, lastAt),
+        ...baseFields(options, lastAtMs),
         todo_id: TODO_ENTITY_ID,
         items: items.map((item) => ({ title: item.title, status: item.status })),
-        updated_at: lastTodoTool.at,
+        updated_at: new Date(lastTodoTool.at).toISOString(),
       });
     }
   }
@@ -1584,8 +1617,8 @@ function splitKey(key: string): [string, string] {
 
 function baseFields(
   options: ColdFoldOptions,
-  timestamp: string,
-): { session_id: string; agent_id: string; timestamp: string } {
+  timestamp: number,
+): { session_id: string; agent_id: string; timestamp: number } {
   return { session_id: options.sessionId, agent_id: options.agentId, timestamp };
 }
 
@@ -1659,85 +1692,6 @@ function mediaFileId(url: string, id: string | undefined): string | undefined {
   const fileId = parseDaemonFileUrl(url)?.fileId;
   if (id === undefined) return fileId;
   return fileId === id ? id : undefined;
-}
-
-function emitSkillSystems(
-  origin: unknown,
-  input: readonly ContentPart[],
-  recordAt: string,
-  pushSystem: (subtype: DurableSystemSubtype, payload: unknown, at: string) => void,
-): void {
-  const candidate = origin as
-    | {
-        kind?: unknown;
-        skillActivations?: readonly {
-          activationId?: unknown;
-          skillName?: unknown;
-          skillArgs?: unknown;
-          skillPath?: unknown;
-          skillSource?: unknown;
-        }[];
-        activationId?: unknown;
-        skillName?: unknown;
-        skillArgs?: unknown;
-        skillPath?: unknown;
-        skillSource?: unknown;
-        pluginId?: unknown;
-        commandName?: unknown;
-        commandArgs?: unknown;
-        trigger?: unknown;
-      }
-    | null
-    | undefined;
-  if (candidate?.kind === 'user') {
-    const activations = candidate.skillActivations ?? [];
-    activations.forEach((activation, index) => {
-      const block = input[index];
-      pushSystem(
-        'skill',
-        {
-          trigger: 'user-slash',
-          activation_id: activation.activationId,
-          skill_name: activation.skillName,
-          skill_args: activation.skillArgs,
-          skill_path: activation.skillPath,
-          skill_source: activation.skillSource,
-          text: block !== undefined && block.type === 'text' ? block.text : '',
-        },
-        recordAt,
-      );
-    });
-    return;
-  }
-  if (candidate?.kind === 'skill_activation') {
-    pushSystem(
-      'skill',
-      {
-        trigger: candidate.trigger,
-        activation_id: candidate.activationId,
-        skill_name: candidate.skillName,
-        skill_args: candidate.skillArgs,
-        skill_path: candidate.skillPath,
-        skill_source: candidate.skillSource,
-      },
-      recordAt,
-    );
-    return;
-  }
-  if (candidate?.kind === 'plugin_command') {
-    pushSystem(
-      'skill',
-      {
-        variant: 'plugin_command',
-        trigger: candidate.trigger,
-        activation_id: candidate.activationId,
-        plugin_id: candidate.pluginId,
-        command_name: candidate.commandName,
-        command_args: candidate.commandArgs,
-      },
-      recordAt,
-    );
-  }
 }
 
 function resolveStepRef(

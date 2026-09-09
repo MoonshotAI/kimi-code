@@ -64,7 +64,7 @@ export async function readSessionHistory(
     sessionId,
     agentId,
     live,
-    fallbackTimestamp: new Date(summary.createdAt).toISOString(),
+    fallbackTimestamp: new Date(summary.createdAt).getTime(),
     subagentTaskIds,
     resolvePlanRevisionKey: (key) =>
       join('sessions', summary.workspaceId, sessionId, 'agents', agentId, key),

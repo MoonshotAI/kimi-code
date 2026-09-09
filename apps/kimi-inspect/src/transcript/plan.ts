@@ -113,7 +113,7 @@ function projectPlanCall(
 
 function readPlanReview(interaction: InteractionMessage | undefined): PlanReview | undefined {
   if (interaction === undefined || interaction.kind !== 'approval') return undefined;
-  const state = interaction.state;
+  const state = interaction.status;
   if (state !== 'pending' && state !== 'approved' && state !== 'rejected' && state !== 'cancelled') {
     return undefined;
   }

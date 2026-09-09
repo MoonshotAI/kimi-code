@@ -35,7 +35,7 @@ function fold(
     sessionId: SESSION,
     agentId: 'main',
     live: false,
-    fallbackTimestamp: iso(T0),
+    fallbackTimestamp: T0,
     ...opts,
   });
   for (const message of out) historyMessageSchema.parse(message);
@@ -115,9 +115,9 @@ describe('foldWireHistory turn lifecycle', () => {
     expect(turn).toMatchObject({
       turn_id: 't0',
       ordinal: 0,
-      state: 'completed',
+      status: 'completed',
       origin: { kind: 'user' },
-      user_message_id: 't0.u0',
+      user_message_id: 'p1',
       started_at: iso(T0),
       ended_at: iso(T0 + 12),
       duration_ms: 1500,
@@ -125,18 +125,17 @@ describe('foldWireHistory turn lifecycle', () => {
     });
     const user = ofType(messages, 'user')[0]!;
     expect(user).toMatchObject({
-      message_id: 't0.u0',
+      message_id: 'p1',
       turn_id: 't0',
-      text: 'fix the bug',
-      status: 'completed',
-      created_at: iso(T0),
-      finished_at: iso(T0 + 12),
+      text: [{ type: 'text', text: 'fix the bug', meta: {} }],
+      status: 'read',
+      timestamp: T0,
     });
     const step = ofType(messages, 'step')[0]!;
     expect(step).toMatchObject({
       step_id: 't0.1',
       ordinal: 1,
-      state: 'completed',
+      status: 'completed',
       started_at: iso(T0 + 2),
       ended_at: iso(T0 + 7),
       usage: { input_other: 10, output: 5, input_cache_read: 2, input_cache_creation: 1 },
@@ -153,7 +152,7 @@ describe('foldWireHistory turn lifecycle', () => {
       tool_call_id: 'call_1',
       step_id: 't0.1',
       name: 'Bash',
-      state: 'done',
+      status: 'done',
       input: { command: 'ls' },
       output: 'file.txt',
     });
@@ -183,20 +182,20 @@ describe('foldWireHistory turn lifecycle', () => {
       }),
     ];
     const live = fold(inFlight, { live: true });
-    expect(ofType(live, 'turn')[0]).toMatchObject({ state: 'running' });
-    expect(ofType(live, 'step')[0]).toMatchObject({ state: 'running' });
+    expect(ofType(live, 'turn')[0]).toMatchObject({ status: 'running' });
+    expect(ofType(live, 'step')[0]).toMatchObject({ status: 'running' });
     expect(ofType(live, 'assistant')[0]).toMatchObject({ status: 'streaming', text: 'partial' });
-    expect(ofType(live, 'tool_call')[0]).toMatchObject({ state: 'running' });
-    expect(ofType(live, 'user')[0]).toMatchObject({ status: 'running' });
-    expect(ofType(live, 'interaction')[0]).toMatchObject({ state: 'pending' });
+    expect(ofType(live, 'tool_call')[0]).toMatchObject({ status: 'running' });
+    expect(ofType(live, 'user')[0]).toMatchObject({ status: 'read' });
+    expect(ofType(live, 'interaction')[0]).toMatchObject({ status: 'pending' });
 
     const dead = fold(inFlight);
-    expect(ofType(dead, 'turn')[0]).toMatchObject({ state: 'completed' });
-    expect(ofType(dead, 'step')[0]).toMatchObject({ state: 'interrupted' });
+    expect(ofType(dead, 'turn')[0]).toMatchObject({ status: 'completed' });
+    expect(ofType(dead, 'step')[0]).toMatchObject({ status: 'interrupted' });
     expect(ofType(dead, 'assistant')[0]).toMatchObject({ status: 'completed' });
-    expect(ofType(dead, 'tool_call')[0]).toMatchObject({ state: 'done' });
-    expect(ofType(dead, 'user')[0]).toMatchObject({ status: 'completed' });
-    expect(ofType(dead, 'interaction')[0]).toMatchObject({ state: 'cancelled' });
+    expect(ofType(dead, 'tool_call')[0]).toMatchObject({ status: 'done' });
+    expect(ofType(dead, 'user')[0]).toMatchObject({ status: 'read' });
+    expect(ofType(dead, 'interaction')[0]).toMatchObject({ status: 'cancelled' });
   });
 });
 
@@ -246,12 +245,12 @@ describe('foldWireHistory origin classification', () => {
     const cronUser = ofType(messages, 'user').find((u) => u.turn_id === 't1')!;
     expect(cronUser.origin).toEqual({ kind: 'cron', cron_id: 'j1', schedule: '*/5 * * * *' });
     expect(ofType(messages, 'user').some((u) => u.turn_id === 't4')).toBe(false);
-    const skillSystems = ofType(messages, 'system').filter((m) => m.subtype === 'skill');
-    expect(skillSystems).toHaveLength(1);
-    expect(skillSystems[0]!.payload).toMatchObject({ skill_name: 'review' });
+    const skillUser = ofType(messages, 'user').find((u) => u.turn_id === 't9')!;
+    expect(skillUser.origin).toEqual({ kind: 'skill', skill_name: 'review', trigger: 'user-slash' });
+    expect(ofType(messages, 'system')).toHaveLength(0);
   });
 
-  it('bundles skill activations into the user message and one skill system per activation', () => {
+  it('bundles skill activations into the user message skill_activations without a system message', () => {
     const messages = fold([
       rec('turn.prompt', {
         input: [
@@ -268,17 +267,10 @@ describe('foldWireHistory origin classification', () => {
     ]);
     const user = ofType(messages, 'user')[0]!;
     expect(user).toMatchObject({
-      text: 'check this',
+      text: [{ type: 'text', text: 'check this', meta: {} }],
       skill_activations: [{ skill_name: 'review', skill_args: 'args' }],
     });
-    const skill = ofType(messages, 'system').find((m) => m.subtype === 'skill')!;
-    expect(skill.payload).toMatchObject({
-      trigger: 'user-slash',
-      activation_id: 'a1',
-      skill_name: 'review',
-      skill_args: 'args',
-      text: '/review args',
-    });
+    expect(ofType(messages, 'system')).toHaveLength(0);
   });
 });
 
@@ -294,16 +286,20 @@ describe('foldWireHistory steer', () => {
       rec('turn.ended', { turnId: 0, reason: 'completed' }, T0 + 6),
     ]);
     const users = ofType(messages, 'user');
-    const inStep = users.find((u) => u.message_id === 't0.1.u1')!;
+    const inStep = users.find((u) => u.message_id === 't0.u1')!;
     expect(inStep).toMatchObject({
       turn_id: 't0',
-      step_id: 't0.1',
-      text: 'also B',
-      status: 'completed',
-      steered_at: iso(T0 + 2),
+      text: [{ type: 'text', text: 'also B', meta: {} }],
+      status: 'read',
+      timestamp: T0 + 2,
     });
-    const buffered = users.find((u) => u.message_id === 't0.2.u1')!;
-    expect(buffered).toMatchObject({ step_id: 't0.2', text: 'and C' });
+    const betweenSteps = users.find((u) => u.message_id === 't0.u2')!;
+    expect(betweenSteps).toMatchObject({
+      turn_id: 't0',
+      text: [{ type: 'text', text: 'and C', meta: {} }],
+      status: 'read',
+      timestamp: T0 + 4,
+    });
 
     const deduped = fold([
       rec('turn.prompt', { input: [{ type: 'text', text: 'hello' }], origin: { kind: 'user' } }),
@@ -311,10 +307,13 @@ describe('foldWireHistory steer', () => {
     ]);
     const dedupedUsers = ofType(deduped, 'user');
     expect(dedupedUsers).toHaveLength(1);
-    expect(dedupedUsers[0]).toMatchObject({ message_id: 't0.u0', text: 'hello' });
+    expect(dedupedUsers[0]).toMatchObject({
+      message_id: 't0.u0',
+      text: [{ type: 'text', text: 'hello', meta: {} }],
+    });
   });
 
-  it('holds steers buffered at turn end on the last step, synthesizing one when none ran', () => {
+  it('emits steers read at their record without synthesizing a step', () => {
     const attached = fold([
       rec('turn.prompt', { input: [{ type: 'text', text: 'do A' }], origin: { kind: 'user' } }),
       loopEvent({ type: 'step.begin', uuid: 'u1', turnId: '0', step: 1 }, T0 + 1),
@@ -323,18 +322,27 @@ describe('foldWireHistory steer', () => {
       rec('turn.ended', { turnId: 0, reason: 'cancelled' }, T0 + 4),
     ]);
     expect(ofType(attached, 'step').map((s) => s.step_id)).toEqual(['t0.1']);
-    const steer = ofType(attached, 'user').find((u) => u.message_id === 't0.1.u1')!;
-    expect(steer).toMatchObject({ step_id: 't0.1', text: 'last', status: 'completed' });
+    const steer = ofType(attached, 'user').find((u) => u.message_id === 't0.u1')!;
+    expect(steer).toMatchObject({
+      turn_id: 't0',
+      text: [{ type: 'text', text: 'last', meta: {} }],
+      status: 'read',
+      timestamp: T0 + 3,
+    });
 
-    const synthesized = fold([
+    const stepFree = fold([
       rec('turn.prompt', { input: [{ type: 'text', text: 'do A' }], origin: { kind: 'user' } }),
       rec('turn.steer', { input: [{ type: 'text', text: 'early' }], origin: { kind: 'user' } }, T0 + 1),
       rec('turn.ended', { turnId: 0, reason: 'cancelled' }, T0 + 2),
     ]);
-    const step = ofType(synthesized, 'step').find((s) => s.step_id === 't0.1')!;
-    expect(step).toMatchObject({ state: 'interrupted' });
-    const early = ofType(synthesized, 'user').find((u) => u.message_id === 't0.1.u1')!;
-    expect(early).toMatchObject({ text: 'early', status: 'completed' });
+    expect(ofType(stepFree, 'step')).toHaveLength(0);
+    const early = ofType(stepFree, 'user').find((u) => u.message_id === 't0.u1')!;
+    expect(early).toMatchObject({
+      turn_id: 't0',
+      text: [{ type: 'text', text: 'early', meta: {} }],
+      status: 'read',
+      timestamp: T0 + 1,
+    });
   });
 });
 
@@ -380,10 +388,12 @@ describe('foldWireHistory task notifications', () => {
     const opening = ofType(messages, 'user').find((u) => u.message_id === 't0.u0')!;
     expect(opening).toMatchObject({
       turn_id: 't0',
-      text: 'Task completed\nbuild finished',
-      status: 'completed',
-      origin: { kind: 'task', task_id: 'task-1' },
-      notification: {
+      text: [{ type: 'text', text: 'Task completed\nbuild finished', meta: {} }],
+      status: 'read',
+      timestamp: T0,
+      origin: {
+        kind: 'task',
+        task_id: 'task-1',
         title: 'Task completed',
         body: 'build finished',
         severity: 'info',
@@ -393,24 +403,46 @@ describe('foldWireHistory task notifications', () => {
         raw: xml1,
       },
     });
-    expect(ofType(messages, 'user').filter((u) => u.text === 'Task completed\nbuild finished')).toHaveLength(1);
-    const injected = ofType(messages, 'user').find((u) => u.message_id === 't1.2.u1')!;
+    expect(
+      ofType(messages, 'user').filter(
+        (u) => u.origin?.kind === 'task' && u.origin.task_id === 'task-1',
+      ),
+    ).toHaveLength(1);
+    const injected = ofType(messages, 'user').find((u) => u.message_id === 't1.u1')!;
     expect(injected).toMatchObject({
       turn_id: 't1',
-      step_id: 't1.2',
-      text: 'Task failed\ntests broke',
-      status: 'completed',
-      origin: { kind: 'task', task_id: 'task-2' },
-      notification: { title: 'Task failed', type: 'task.failed', source_id: 'task-2' },
+      text: [{ type: 'text', text: 'Task failed\ntests broke', meta: {} }],
+      status: 'read',
+      timestamp: T0 + 8,
+      origin: {
+        kind: 'task',
+        task_id: 'task-2',
+        title: 'Task failed',
+        body: 'tests broke',
+        severity: 'warning',
+        type: 'task.failed',
+        source_kind: 'background_task',
+        source_id: 'task-2',
+        raw: xml2,
+      },
     });
-    expect(injected.steered_at).toBe(iso(T0 + 8));
     const phantom = ofType(messages, 'user').find((u) => u.message_id === 't2.u1')!;
     expect(phantom).toMatchObject({
       turn_id: 't2',
-      text: 'Restored\nfrom previous session',
-      status: 'completed',
-      origin: { kind: 'task', task_id: 'task-9' },
-      notification: { title: 'Restored', source_id: 'task-9' },
+      text: [{ type: 'text', text: 'Restored\nfrom previous session', meta: {} }],
+      status: 'read',
+      timestamp: T0 + 11,
+      origin: {
+        kind: 'task',
+        task_id: 'task-9',
+        title: 'Restored',
+        body: 'from previous session',
+        severity: 'info',
+        type: 'task.completed',
+        source_kind: 'background_task',
+        source_id: 'task-9',
+        raw: xml3,
+      },
     });
   });
 
@@ -448,11 +480,13 @@ describe('foldWireHistory task notifications', () => {
     expect(users).toHaveLength(2);
     expect(users[0]).toMatchObject({
       message_id: 't0.u0',
+      status: 'read',
       origin: { kind: 'skill', skill_name: 'review', args: 'src/', trigger: 'user-slash' },
       skill_activations: [{ skill_name: 'review', skill_args: 'src/' }],
     });
     expect(users[1]).toMatchObject({
-      message_id: 't0.1.u1',
+      message_id: 't0.u1',
+      status: 'read',
       origin: { kind: 'skill', skill_name: 'deploy', trigger: 'user-slash' },
     });
   });
@@ -492,7 +526,7 @@ describe('foldWireHistory undo and clear', () => {
     expect(ofType(messages, 'turn').map((t) => t.turn_id)).toEqual(['t0']);
     const undo = ofType(messages, 'system').find((m) => m.subtype === 'undo')!;
     expect(undo).toMatchObject({ subtype: 'undo', payload: { removed_ids: ['t1'] } });
-    expect(ofType(messages, 'user').map((u) => u.message_id)).toEqual(['t0.u0']);
+    expect(ofType(messages, 'user').map((u) => u.message_id)).toEqual(['p0']);
 
     const both = fold([
       ...anchorTurn(0, 'p0', T0),
@@ -566,7 +600,7 @@ describe('foldWireHistory interactions, facts and modes', () => {
     expect(interaction).toMatchObject({
       interaction_id: 'apr-1',
       kind: 'approval',
-      state: 'approved',
+      status: 'approved',
       tool_call_id: 'call_1',
       request: { tool_name: 'Bash', action: 'Run ls', tool_input_display: { kind: 'command' } },
       response: { decision: 'approved', scope: 'session' },
@@ -596,7 +630,7 @@ describe('foldWireHistory interactions, facts and modes', () => {
       rec('interaction.resolved', { id: 'q-1', response: { answers: { pick: 'a' }, method: 'click' } }),
     ]);
     const interaction = ofType(messages, 'interaction')[0]!;
-    expect(interaction).toMatchObject({ kind: 'question', state: 'answered' });
+    expect(interaction).toMatchObject({ kind: 'question', status: 'answered' });
     expect(interaction.request).toEqual({
       questions: [
         {
@@ -688,7 +722,7 @@ describe('foldWireHistory interactions, facts and modes', () => {
     expect(task).toMatchObject({
       task_id: 'task-1',
       kind: 'shell',
-      state: 'completed',
+      status: 'completed',
       detached: true,
       description: 'dev server',
       output_tail: 'logs',
@@ -738,7 +772,7 @@ describe('foldWireHistory interactions, facts and modes', () => {
 });
 
 describe('foldWireHistory queued prompts and legacy messages', () => {
-  it('emits queued prompts as turn-less user messages with the reserved turn id', () => {
+  it('emits queued prompts as turn-less unread user messages keyed by the prompt id', () => {
     const messages = fold(
       [
         rec('prompt.accepted', { promptId: 'q1', content: [{ type: 'text', text: 'first' }] }, T0),
@@ -753,10 +787,14 @@ describe('foldWireHistory queued prompts and legacy messages', () => {
       { live: true },
     );
     const users = ofType(messages, 'user');
-    expect(users.map((u) => u.message_id)).toEqual(['t0.u0', 't1.u0']);
+    expect(users.map((u) => u.message_id)).toEqual(['q1', 'q2']);
     const queued = users[1]!;
-    expect(queued).toMatchObject({ turn_id: 't1', text: 'second', status: 'running' });
-    expect(queued.step_id).toBeUndefined();
+    expect(queued).toMatchObject({
+      text: [{ type: 'text', text: 'second', meta: {} }],
+      status: 'unread',
+    });
+    expect(queued.turn_id).toBeUndefined();
+    expect(queued.timestamp).toBeUndefined();
     expect(ofType(messages, 'turn').map((t) => t.turn_id)).toEqual(['t0']);
 
     const aborted = fold([
@@ -786,7 +824,7 @@ describe('foldWireHistory queued prompts and legacy messages', () => {
     const assistant = ofType(messages, 'assistant')[0]!;
     expect(assistant).toMatchObject({ message_id: 't0.1.a1', text: 'hi', status: 'completed' });
     const tool = ofType(messages, 'tool_call')[0]!;
-    expect(tool).toMatchObject({ tool_call_id: 'call_1', state: 'done', output: 'file.txt' });
+    expect(tool).toMatchObject({ tool_call_id: 'call_1', status: 'done', output: 'file.txt' });
   });
 });
 
@@ -877,38 +915,37 @@ describe('paginateHistory', () => {
         type: 'turn',
         session_id: SESSION,
         agent_id: 'main',
-        timestamp: iso(T0),
+        timestamp: T0,
         turn_id: `t${turn}`,
         ordinal: turn,
-        state: 'completed',
+        status: 'completed',
         origin: { kind: 'user' },
       },
       {
         type: 'user',
         session_id: SESSION,
         agent_id: 'main',
-        timestamp: iso(T0),
         message_id: `t${turn}.u0`,
         turn_id: `t${turn}`,
-        text: `p${turn}`,
-        status: 'completed',
-        created_at: iso(T0),
+        status: 'read',
+        timestamp: T0,
+        text: [{ type: 'text', text: `p${turn}`, meta: {} }],
       },
       {
         type: 'step',
         session_id: SESSION,
         agent_id: 'main',
-        timestamp: iso(T0),
+        timestamp: T0,
         step_id: `t${turn}.1`,
         turn_id: `t${turn}`,
         ordinal: 1,
-        state: 'completed',
+        status: 'completed',
       },
       {
         type: 'assistant',
         session_id: SESSION,
         agent_id: 'main',
-        timestamp: iso(T0),
+        timestamp: T0,
         message_id: `t${turn}.1.a1`,
         turn_id: `t${turn}`,
         step_id: `t${turn}.1`,
@@ -1028,6 +1065,16 @@ describe('live and cold rebuild id consistency', () => {
       for (const message of projector.map(event)) live.push(serverMessageSchema.parse(message));
     };
 
+    feed(
+      ev({
+        type: 'prompt.submitted',
+        promptId: 'p1',
+        userMessageId: 'p1',
+        status: 'running',
+        content: [{ type: 'text', text: 'fix the bug' }],
+        createdAt: iso(T0),
+      }),
+    );
     feed(ev({ type: 'turn.started', turnId: 0, promptId: 'p1', origin: { kind: 'user' }, prompt: 'fix the bug' }));
     feed(ev({ type: 'turn.step.started', turnId: 0, step: 1 }));
     feed(ev({ type: 'thinking.delta', turnId: 0, delta: 'hmm' }));
@@ -1078,6 +1125,16 @@ describe('live and cold rebuild id consistency', () => {
       }),
     );
     feed(ev({ type: 'turn.ended', turnId: 0, reason: 'completed', durationMs: 1500 }));
+    feed(
+      ev({
+        type: 'prompt.submitted',
+        promptId: 'p2',
+        userMessageId: 'p2',
+        status: 'running',
+        content: [{ type: 'text', text: 'second' }],
+        createdAt: iso(T0),
+      }),
+    );
     feed(ev({ type: 'turn.started', turnId: 1, promptId: 'p2', origin: { kind: 'user' }, prompt: 'second' }));
     feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
     feed(ev({ type: 'assistant.delta', turnId: 1, delta: 'partial' }));
@@ -1184,6 +1241,16 @@ describe('live and cold rebuild id consistency', () => {
       for (const message of projector.map(event)) live.push(serverMessageSchema.parse(message));
     };
 
+    feed(
+      ev({
+        type: 'prompt.submitted',
+        promptId: 'p1',
+        userMessageId: 'p1',
+        status: 'running',
+        content: [{ type: 'text', text: 'fix' }],
+        createdAt: iso(T0),
+      }),
+    );
     feed(ev({ type: 'turn.started', turnId: 0, promptId: 'p1', origin: { kind: 'user' }, prompt: 'fix' }));
     feed(ev({ type: 'turn.step.started', turnId: 0, step: 1 }));
     feed(ev({ type: 'hook.result', turnId: 0, hookEvent: 'PreToolUse', content: 'hook says hi' }));
@@ -1194,6 +1261,16 @@ describe('live and cold rebuild id consistency', () => {
     feed(ev({ type: 'compaction.completed', result: { summary: 'sum2' } }));
     feed(ev({ type: 'turn.step.completed', turnId: 0, step: 1 }));
     feed(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
+    feed(
+      ev({
+        type: 'prompt.submitted',
+        promptId: 'p2',
+        userMessageId: 'p2',
+        status: 'running',
+        content: [{ type: 'text', text: 'run review' }],
+        createdAt: iso(T0),
+      }),
+    );
     feed(
       ev({
         type: 'turn.started',
@@ -1249,7 +1326,7 @@ describe('live and cold rebuild id consistency', () => {
     );
     expect(liveSystems.filter((m) => m.subtype === 'compaction')).toHaveLength(2);
     const coldSysIds = ofType(cold, 'system').map((m) => m.system_id).toSorted();
-    expect(coldSysIds).toEqual(['sys_compaction_1', 'sys_compaction_2', 'sys_skill_1']);
+    expect(coldSysIds).toEqual(['sys_compaction_1', 'sys_compaction_2']);
     const liveOnlySysIds = liveSystems
       .map((m) => m.system_id)
       .filter((id) => !coldSysIds.includes(id))

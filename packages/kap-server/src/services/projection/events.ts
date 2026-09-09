@@ -1,4 +1,3 @@
-import type { AgentActivityUpdated } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
 import type { ContextSpliced } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
 import type { HookResult } from '@moonshot-ai/agent-core-v2/features/externalHooks/agent/agentExternalHooksService';
 import type {
@@ -88,7 +87,6 @@ export type ProjectionBusEvent =
   | ({ readonly type: 'subagent.suspended' } & SubagentSuspended)
   | ({ readonly type: 'goal.updated' } & GoalUpdated)
   | ({ readonly type: 'agent.status.updated' } & AgentStatusUpdated)
-  | ({ readonly type: 'agent.activity.updated' } & AgentActivityUpdated)
   | ({ readonly type: 'prompt.accepted' } & PromptAccepted)
   | ({ readonly type: 'prompt.queued' } & PromptQueued)
   | ({ readonly type: 'prompt.submitted' } & PromptSubmitted)
