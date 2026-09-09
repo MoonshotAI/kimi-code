@@ -1,9 +1,13 @@
 import type { ProtocolEndpoint, ProviderConnection } from '#/llm/protocol/connection';
 import type { ContentPart, ToolDescription } from '#/llm/message';
+import { CONTEXT_MANAGEMENT_BETA } from '#/llm/requester/bases/anthropic/contract';
 import type { AnthropicTrait } from '#/llm/requester/bases/anthropic/trait';
-import { CONTEXT_MANAGEMENT_BETA } from '#/llm/requester/bases/anthropic/format';
+import type {
+  OpenAIRawUsage,
+  OpenAIWireMessage,
+  OpenAIWireToolCall,
+} from '#/llm/requester/bases/openai/contract';
 import type { OpenAITrait } from '#/llm/requester/bases/openai/trait';
-import type { OpenAIWireToolCall } from '#/llm/requester/bases/openai/lower';
 
 import { normalizeKimiToolSchema } from './schema';
 
@@ -95,7 +99,7 @@ export const kimiOpenAITrait: OpenAITrait = {
   convertTool: (tool) => convertKimiTool(tool),
 
   convertMessage: (message, converted) => {
-    const record = converted as Record<string, unknown>;
+    const record = converted as Partial<OpenAIWireMessage> & Record<string, unknown>;
     if (message.role === 'assistant' && message.toolCalls.length > 0) {
       const nonThinkParts = message.content.filter((part) => part.type !== 'think');
       if (isEffectivelyEmptyContent(nonThinkParts)) {
@@ -113,9 +117,10 @@ export const kimiOpenAITrait: OpenAITrait = {
         if (toolCall.extras === undefined) {
           return;
         }
-        const out = convertedToolCalls[index] as OpenAIWireToolCall | undefined;
+        const out: (OpenAIWireToolCall & { extras?: unknown }) | undefined =
+          convertedToolCalls[index];
         if (out !== undefined) {
-          (out as Record<string, unknown>)['extras'] = toolCall.extras;
+          out.extras = toolCall.extras;
         }
       });
     }
@@ -124,18 +129,14 @@ export const kimiOpenAITrait: OpenAITrait = {
   },
 
   extractUsage: (chunk) => {
-    const topLevel = chunk['usage'];
+    const topLevel = chunk.usage;
     if (topLevel !== null && topLevel !== undefined && typeof topLevel === 'object') {
-      return topLevel as Record<string, unknown>;
+      return topLevel;
     }
-    const choices = chunk['choices'];
-    if (!Array.isArray(choices) || choices.length === 0) {
-      return undefined;
-    }
-    const firstChoice = choices[0] as Record<string, unknown> | undefined;
-    const choiceUsage = firstChoice?.['usage'];
+    const firstChoice = chunk.choices?.[0] as { usage?: OpenAIRawUsage | null } | undefined;
+    const choiceUsage = firstChoice?.usage;
     if (choiceUsage !== null && choiceUsage !== undefined && typeof choiceUsage === 'object') {
-      return choiceUsage as Record<string, unknown>;
+      return choiceUsage;
     }
     return undefined;
   },

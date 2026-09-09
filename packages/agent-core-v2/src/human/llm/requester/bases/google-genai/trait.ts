@@ -1,5 +1,6 @@
 import type { ToolDescription } from '#/llm/message';
-import type { TraitContext, ThinkingStrategy } from '#/llm/protocol/trait';
+import type { TraitContext } from '#/llm/protocol/base';
+import type { ThinkingStrategy } from '#/llm/protocol/thinking';
 
 import type { GoogleContent } from './contract';
 

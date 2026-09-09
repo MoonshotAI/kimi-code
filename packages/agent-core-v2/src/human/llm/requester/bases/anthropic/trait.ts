@@ -1,5 +1,6 @@
 import type { Message, ToolDescription } from '#/llm/message';
-import type { TraitContext, ThinkingStrategy } from '#/llm/protocol/trait';
+import type { TraitContext } from '#/llm/protocol/base';
+import type { ThinkingStrategy } from '#/llm/protocol/thinking';
 import type { ToolCallIdPolicy } from '#/llm/requester/requester';
 
 import type { AnthropicWireMessage } from './contract';

@@ -25,10 +25,10 @@ llm/
 ├── toolCallIdNormalizer.ts  流式 tool call id 去重：重复的 raw id 按序重映射为新 id
 │
 ├── protocol/             协议通用层（跨基座共享）
-│   ├── base.ts           ProtocolName / ProtocolBase<TTrait> / ProtocolRequesterOptions
+│   ├── base.ts           ProtocolName / ProtocolBase<TTrait> / ProtocolRequesterOptions / TraitContext
 │   ├── format.ts         ProtocolFormat：createStreamParser(sink 回调 + resolveUsage 选项)
 │   ├── connection.ts     ProviderConnection：endpoint 环境变量声明 + 默认 headers
-│   ├── trait.ts        TraitContext / ThinkingApplication / applyThinking
+│   ├── thinking.ts       ThinkingApplication / ThinkingStrategy / applyThinking
 │   └── patterns.ts / rewrite.ts   MLIR 式 Pattern Rewriter（Message N:M 转换）
 │
 ├── requester/

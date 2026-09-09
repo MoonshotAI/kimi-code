@@ -16,3 +16,9 @@ export type ResponsesInputItem =
     };
 
 export type OpenAIResponsesRawChunk = Record<string, unknown>;
+
+export type OpenAIResponsesRawUsage = {
+  input_tokens?: number;
+  output_tokens?: number;
+  input_tokens_details?: { cached_tokens?: number } | null;
+};

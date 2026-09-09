@@ -22,6 +22,7 @@ import { mergeConsecutiveUsers } from '#/llm/protocol/patterns';
 import { applyPatterns } from '#/llm/protocol/rewrite';
 import type { TokenUsage } from '#/llm/usage';
 
+import { CONTEXT_MANAGEMENT_BETA } from './contract';
 import type {
   AnthropicLoweredMessage,
   AnthropicRawResponse,
@@ -38,7 +39,6 @@ import {
 } from './profile';
 
 export { INTERLEAVED_THINKING_BETA } from './profile';
-export const CONTEXT_MANAGEMENT_BETA = 'context-management-2025-06-27';
 
 const CLEAR_THINKING_EDIT = 'clear_thinking_20251015';
 

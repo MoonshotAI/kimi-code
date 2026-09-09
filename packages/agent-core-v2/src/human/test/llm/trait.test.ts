@@ -1481,7 +1481,7 @@ describe('anthropic thinking kwargs', () => {
     expect(body['betas']).toEqual(['context-management-2025-06-27']);
     expect(client.betaCalled()).toBe(true);
 
-    const betaFeatureDialect = {
+    const betaFeatureTrait = {
       thinking: () => ({
         kwargs: {
           thinking: { type: 'enabled' },
@@ -1490,7 +1490,7 @@ describe('anthropic thinking kwargs', () => {
       }),
     };
     const betaRequester = createAnthropicRequester({
-      trait: betaFeatureDialect,
+      trait: betaFeatureTrait,
       betaApi: true,
       clientFactory: client.clientFactory,
     });
@@ -1520,7 +1520,7 @@ describe('anthropic thinking kwargs', () => {
     ]);
 
     const plainBetaRequester = createAnthropicRequester({
-      trait: betaFeatureDialect,
+      trait: betaFeatureTrait,
       clientFactory: client.clientFactory,
     });
     await plainBetaRequester.generate(

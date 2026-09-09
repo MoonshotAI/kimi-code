@@ -4,9 +4,9 @@ import { assign, shake } from 'radashi';
 import { headersToRecord } from '#/llm/errors';
 import { modelKey, type LlmModel } from '#/llm/model';
 import { toLlmSyntaxErrorMessage } from '#/llm/syntax-errors';
-import type { ProtocolBase, ProtocolRequesterOptions } from '#/llm/protocol/base';
+import type { ProtocolBase, ProtocolRequesterOptions, TraitContext } from '#/llm/protocol/base';
 import { resolveModelConnection } from '#/llm/protocol/connection';
-import { applyThinking, type TraitContext } from '#/llm/protocol/trait';
+import { applyThinking } from '#/llm/protocol/thinking';
 import { resolveMaxCompletionCap, type FormatRequestInput } from '#/llm/protocol/format';
 import { encodeReasoningEffortFallback } from '#/llm/thinking';
 import {
@@ -26,7 +26,7 @@ import {
   sanitizeToolCallId,
 } from '../tool-call-id';
 import { getOpenAILegacyModelCapability } from './capability';
-import type { OpenAIRawUsage, OpenAIWireMessage } from './contract';
+import type { OpenAIWireMessage } from './contract';
 import type { OpenAITrait } from './trait';
 import {
   assembleOpenAIRequest,
@@ -164,9 +164,7 @@ async function internalGenerate(
         ? undefined
         : (chunk, defaultUsage) => {
             const hooked = trait.extractUsage?.(chunk);
-            return hooked !== undefined
-              ? parseOpenAIUsage(hooked as OpenAIRawUsage | null)
-              : defaultUsage;
+            return hooked !== undefined ? parseOpenAIUsage(hooked) : defaultUsage;
           },
   });
   let messageId: string | undefined;

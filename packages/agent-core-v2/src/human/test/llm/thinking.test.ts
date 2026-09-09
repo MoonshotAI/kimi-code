@@ -8,7 +8,7 @@ import {
   type Message,
 } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
-import type { TraitContext } from '#/llm/protocol/trait';
+import type { TraitContext } from '#/llm/protocol/base';
 import {
   defaultThinkingEffortForModel,
   modelSupportsThinking,

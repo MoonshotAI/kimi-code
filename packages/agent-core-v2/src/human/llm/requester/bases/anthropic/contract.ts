@@ -1,5 +1,7 @@
 import type { Message } from '#/llm/message';
 
+export const CONTEXT_MANAGEMENT_BETA = 'context-management-2025-06-27';
+
 export type AnthropicWireContentBlock =
   | { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }
   | {

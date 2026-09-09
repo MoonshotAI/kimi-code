@@ -25,10 +25,10 @@ llm/
 ├── toolCallIdNormalizer.ts  streamed tool call id dedup: repeated raw ids are remapped in order
 │
 ├── protocol/             shared protocol layer (common across bases)
-│   ├── base.ts           ProtocolName / ProtocolBase<TTrait> / ProtocolRequesterOptions
+│   ├── base.ts           ProtocolName / ProtocolBase<TTrait> / ProtocolRequesterOptions / TraitContext
 │   ├── format.ts         ProtocolFormat: createStreamParser(sink callbacks + resolveUsage option)
 │   ├── connection.ts     ProviderConnection: endpoint env declaration + default headers
-│   ├── trait.ts        TraitContext / ThinkingApplication / applyThinking
+│   ├── thinking.ts       ThinkingApplication / ThinkingStrategy / applyThinking
 │   └── patterns.ts / rewrite.ts   MLIR-style Pattern Rewriter (Message N:M conversion)
 │
 ├── requester/

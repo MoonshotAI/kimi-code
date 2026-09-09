@@ -1,9 +1,6 @@
-import type { LlmModel } from '#/llm/model';
 import type { ThinkingRequestOptions } from '#/llm/thinking';
 
-export interface TraitContext {
-  readonly model: LlmModel;
-}
+import type { TraitContext } from './base';
 
 export interface ThinkingApplication {
   readonly kwargs: Record<string, unknown>;

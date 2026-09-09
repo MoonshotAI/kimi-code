@@ -14,6 +14,21 @@ const LOOP_MACHINE_ADAPTER_ROOT = join(SRC_ROOT, 'agent/loop/machine');
 
 const SELF_PACKAGE_PREFIX = '@moonshot-ai/agent-core-v2/';
 const KOSONG_PATH_RE = /(?:^|\/)kosong(?:\/|$)/;
+const TRAIT_FILE_RE = /\/trait\.ts$/;
+const FORMAT_LOWER_FILE_RE = /\/bases\/[^/]+\/(?:format|lower)\.ts$/;
+const FORMAT_LOWER_MODULE_RE = /\/bases\/[^/]+\/(?:format|lower)$/;
+const TRAIT_MODULE_RE = /\/trait$/;
+
+function traitBoundaryViolation(absFile, targetAbs, specifier) {
+  const message = `format and trait never import each other ('${specifier}') — both sides speak only the neutral wire/chunk types in the protocol's contract.ts`;
+  if (TRAIT_FILE_RE.test(absFile) && FORMAT_LOWER_MODULE_RE.test(targetAbs)) {
+    return message;
+  }
+  if (FORMAT_LOWER_FILE_RE.test(absFile) && TRAIT_MODULE_RE.test(targetAbs)) {
+    return message;
+  }
+  return undefined;
+}
 
 const HUMAN_VOCABULARY = new Set([
   'llm/message',
@@ -128,6 +143,12 @@ export function checkSource(source, absFile) {
           line,
           message: `human must not import outside its kernel ('${specifier}') — human is the pure LLM/agent kernel: it never imports llm-adapter or v2 domains`,
         });
+      }
+      if (targetAbs !== undefined) {
+        const traitBoundary = traitBoundaryViolation(absFile, stripTs(targetAbs), specifier);
+        if (traitBoundary !== undefined) {
+          violations.push({ file: absFile, line, message: traitBoundary });
+        }
       }
       continue;
     }

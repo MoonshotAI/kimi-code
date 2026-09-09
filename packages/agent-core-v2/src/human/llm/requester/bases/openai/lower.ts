@@ -4,8 +4,6 @@ import type { ToolMessageConversion } from '#/llm/requester/requester';
 import type { OpenAIContentPart, OpenAIWireMessage } from './contract';
 import { TOOL_RESULT_MEDIA_PLACEHOLDER } from './patterns';
 
-export type { OpenAIContentPart, OpenAIWireMessage, OpenAIWireToolCall } from './contract';
-
 const OMITTED_AUDIO_PLACEHOLDER = '(audio omitted: not supported by this provider)';
 const OMITTED_VIDEO_PLACEHOLDER = '(video omitted: not supported by this provider)';
 
