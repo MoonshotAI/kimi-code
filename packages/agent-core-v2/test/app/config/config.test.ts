@@ -1431,6 +1431,21 @@ describe('malformed models config entries', () => {
     disposables.dispose();
   });
 
+  it('does not mistake schema object fields for a dotted alias', async () => {
+    const { config, disposables } = await createConfig(
+      '[models.partial]\noverrides = { max_output_size = 8192 }\n',
+    );
+
+    expect(config.diagnostics()).toContainEqual({
+      domain: 'models',
+      severity: 'warning',
+      message:
+        "[models] entry 'partial' is missing the 'model' field and cannot be used as a model.",
+    });
+
+    disposables.dispose();
+  });
+
   it('clears the warning on reload once the entry is fixed', async () => {
     const { config, disposables, storage } = await createConfig(
       '[models.kimi-k2.7-code]\nmodel = "kimi-k2.7-code"\n',
