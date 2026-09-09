@@ -1,8 +1,20 @@
-import { describe, expect, it, vi } from "vitest";
+import chalk from "chalk";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { TUIState } from "#/tui/kimi-tui";
-import { darkColors, lightColors } from "#/tui/theme/colors";
-import { getBuiltInPalette } from "#/tui/theme";
+import {
+  basicDarkColors,
+  basicLightColors,
+  darkColors,
+  lightColors,
+} from "#/tui/theme/colors";
+import {
+  getBuiltInPalette,
+  getBuiltInPaletteForTerminal,
+  getColorPaletteSync,
+  inferBuiltInResolvedTheme,
+  isBasicColorTerminal,
+} from "#/tui/theme";
 import {
   DISABLE_TERMINAL_THEME_REPORTING,
   ENABLE_TERMINAL_THEME_REPORTING,
@@ -171,5 +183,84 @@ describe('ColorPalette warning token', () => {
   it('resolves the correct palette by theme name', () => {
     expect(getBuiltInPalette('dark')).toBe(darkColors);
     expect(getBuiltInPalette('light')).toBe(lightColors);
+  });
+});
+
+describe('ANSI-16 basic palette fallback', () => {
+  const originalLevel = chalk.level;
+
+  afterEach(() => {
+    chalk.level = originalLevel;
+  });
+
+  const sgrCode = (hex: string): string => {
+    const match = /\u001B\[(\d+)m/.exec(chalk.hex(hex)("X"));
+    if (match === null) throw new Error(`chalk emitted no SGR code for ${hex}`);
+    return match[1]!;
+  };
+
+  it('detects basic-color terminals from chalk level 1 only', () => {
+    chalk.level = 1;
+    expect(isBasicColorTerminal()).toBe(true);
+    chalk.level = 0;
+    expect(isBasicColorTerminal()).toBe(false);
+    chalk.level = 2;
+    expect(isBasicColorTerminal()).toBe(false);
+    chalk.level = 3;
+    expect(isBasicColorTerminal()).toBe(false);
+  });
+
+  it('swaps built-in palettes for the basic variants at level 1', () => {
+    chalk.level = 1;
+    expect(getBuiltInPaletteForTerminal("dark")).toBe(basicDarkColors);
+    expect(getBuiltInPaletteForTerminal("light")).toBe(basicLightColors);
+    expect(getColorPaletteSync("dark")).toBe(basicDarkColors);
+    chalk.level = 3;
+    expect(getBuiltInPaletteForTerminal("dark")).toBe(darkColors);
+    expect(getBuiltInPaletteForTerminal("light")).toBe(lightColors);
+    expect(getColorPaletteSync("dark")).toBe(darkColors);
+  });
+
+  it('keeps every basic dark token off black (SGR 30) at level 1', () => {
+    chalk.level = 1;
+    for (const [token, hex] of Object.entries(basicDarkColors)) {
+      expect(sgrCode(hex), `basicDarkColors.${token}`).not.toBe("30");
+    }
+  });
+
+  it('keeps every basic light token off white (SGR 37/97) at level 1', () => {
+    chalk.level = 1;
+    for (const [token, hex] of Object.entries(basicLightColors)) {
+      expect(sgrCode(hex), `basicLightColors.${token}`).not.toBe("37");
+      expect(sgrCode(hex), `basicLightColors.${token}`).not.toBe("97");
+    }
+  });
+
+  it('infers the resolved theme from built-in and basic palette identities', () => {
+    expect(inferBuiltInResolvedTheme(darkColors)).toBe("dark");
+    expect(inferBuiltInResolvedTheme(basicDarkColors)).toBe("dark");
+    expect(inferBuiltInResolvedTheme(lightColors)).toBe("light");
+    expect(inferBuiltInResolvedTheme(basicLightColors)).toBe("light");
+    // Custom-theme palettes are new objects and must not be inferred.
+    expect(inferBuiltInResolvedTheme({ ...lightColors })).toBeNull();
+  });
+
+  it('keeps basic dark hues on their intended ANSI codes', () => {
+    chalk.level = 1;
+    expect(sgrCode(basicDarkColors.primary)).toBe("94");
+    expect(sgrCode(basicDarkColors.diffAddedStrong)).toBe("92");
+    expect(sgrCode(basicDarkColors.diffRemovedStrong)).toBe("91");
+    expect(sgrCode(basicDarkColors.shellMode)).toBe("95");
+    expect(sgrCode(basicDarkColors.warning)).toBe("93");
+  });
+
+  it('keeps basic light hues on their intended ANSI codes', () => {
+    chalk.level = 1;
+    expect(sgrCode(basicLightColors.success)).toBe("32");
+    expect(sgrCode(basicLightColors.diffAdded)).toBe("32");
+    expect(sgrCode(basicLightColors.warning)).toBe("33");
+    expect(sgrCode(basicLightColors.roleUser)).toBe("33");
+    expect(sgrCode(basicLightColors.shellMode)).toBe("35");
+    expect(sgrCode(basicLightColors.error)).toBe("31");
   });
 });

@@ -13,10 +13,24 @@
  * the OSC reply gets eaten by the input loop.
  */
 
+import chalk from 'chalk';
+
 import { OSC11_QUERY, TERMINAL_THEME_DETECT_TIMEOUT_MS } from "#/tui/constant/terminal";
 
 import type { ResolvedTheme } from "./colors";
 import { parseOsc11BackgroundTheme } from "./terminal-background";
+
+/**
+ * True when the terminal advertises only ANSI-16 color support (chalk level 1,
+ * e.g. `TERM=xterm`). Hex palette values quantize badly at that depth — mid
+ * grays collapse to black and off-hue colors to white — so built-in themes
+ * swap in the `basic*` palette variants. Level 0 needs no fallback (chalk
+ * strips all color), and `FORCE_COLOR=2/3` deliberately overrides the TERM
+ * detection, so only level 1 qualifies.
+ */
+export function isBasicColorTerminal(): boolean {
+  return chalk.level === 1;
+}
 
 export interface DetectOptions {
   readonly timeoutMs?: number;

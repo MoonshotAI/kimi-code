@@ -1,6 +1,6 @@
 import type { KimiConfig } from '@moonshot-ai/kimi-code-sdk';
 
-import { currentTheme, lightColors } from '#/tui/theme';
+import { currentTheme, inferBuiltInResolvedTheme } from '#/tui/theme';
 import { loadTuiConfig, type TuiConfig } from '../config';
 import { setMarkdownRenderLatex } from '../utils/markdown-options';
 import type { SlashCommandHost } from './dispatch';
@@ -61,7 +61,7 @@ export async function applyReloadedTuiConfig(
   // options at construction — so the new value must be live by then.
   setMarkdownRenderLatex(config.renderLatex ?? true);
   const resolved = config.theme === 'auto'
-    ? (currentTheme.palette === lightColors ? 'light' : 'dark')
+    ? (inferBuiltInResolvedTheme(currentTheme.palette) ?? 'dark')
     : undefined;
   await host.applyTheme(config.theme, resolved);
   host.refreshTerminalThemeTracking();
