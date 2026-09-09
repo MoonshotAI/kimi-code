@@ -21,8 +21,8 @@ outline: 2
 - 消息记录中已完成的工具调用现折叠为标题加一行结果摘要：短输出完整展示，隐藏内容以 `N more lines`、`+N more` 计数并按 `Ctrl-O` 展开，页脚会在可用时提示。
 - 符合条件的用户的默认思考强度升级为推荐级别。
 - 子 Agent 模型池（`[secondary_model]`）现已始终开启，实验开关与 `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL` 退出选项已移除。
-- `Read` 新增可配置的字符上限，长行文件可续读，输出不再被反复截断。详见 [`read`](../configuration/config-files.md#read)。
-- minidb 会话索引读模型与全局搜索 worker 现已始终开启，实验开关由 `[database]` 配置段与 `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` / `KIMI_CODE_SEARCH_WORKER` 环境变量取代。详见 [`database`](../configuration/config-files.md#database)。
+- `Read` 新增可配置的字符上限，长行文件可续读，输出不再被反复截断。详见 [`read`](https://moonshotai.github.io/kimi-code/zh/configuration/config-files.html#read)。
+- minidb 会话索引读模型与全局搜索 worker 现已始终开启，实验开关由 `[database]` 配置段与 `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` / `KIMI_CODE_SEARCH_WORKER` 环境变量取代。详见 [`database`](https://moonshotai.github.io/kimi-code/zh/configuration/config-files.html#database)。
 
 ### 修复
 
