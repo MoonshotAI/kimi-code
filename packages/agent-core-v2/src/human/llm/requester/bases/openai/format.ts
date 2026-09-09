@@ -179,12 +179,9 @@ export function assembleOpenAIRequest(
   input: FormatRequestInput,
   parts: OpenAIRequestParts,
 ): Record<string, unknown> {
-  const messages: OpenAIWireMessage[] = input.systemPrompt
-    ? [{ role: 'system', content: input.systemPrompt }, ...parts.messages]
-    : [...parts.messages];
   return {
     model: input.model.model,
-    messages,
+    messages: parts.messages,
     tools: parts.tools.length === 0 ? undefined : parts.tools,
     stream: true,
     stream_options: { include_usage: true },

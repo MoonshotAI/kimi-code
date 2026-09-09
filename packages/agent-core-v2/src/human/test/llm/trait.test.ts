@@ -1086,6 +1086,7 @@ describe('mergeHistory', () => {
 describe('request pipeline', () => {
   it('composes format stages and trait hooks in a fixed order', async () => {
     const order: string[] = [];
+    let historySeenByMerge: readonly unknown[] | undefined;
     const client = stubOpenAIClient(chatCompletionChunks);
     const requester = createOpenAIRequester({
       trait: {
@@ -1103,6 +1104,7 @@ describe('request pipeline', () => {
         },
         mergeHistory: (history) => {
           order.push('mergeHistory');
+          historySeenByMerge = history;
           return history;
         },
         convertTool: (tool) => {
@@ -1145,6 +1147,9 @@ describe('request pipeline', () => {
     const body = client.body();
     expect(body['prompt_cache_key']).toBe('cache-1');
     expect(body['reasoning_effort']).toBe('high');
+    expect(historySeenByMerge?.[0]).toEqual({ role: 'system', content: 'sys' });
+    const bodyMessages = body['messages'] as Record<string, unknown>[];
+    expect(bodyMessages[0]).toEqual({ role: 'system', content: 'sys' });
   });
 });
 

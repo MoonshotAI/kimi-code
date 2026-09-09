@@ -26,7 +26,7 @@ import {
   sanitizeToolCallId,
 } from '../tool-call-id';
 import { getOpenAILegacyModelCapability } from './capability';
-import type { OpenAIRawUsage } from './contract';
+import type { OpenAIRawUsage, OpenAIWireMessage } from './contract';
 import type { OpenAITrait } from './trait';
 import {
   assembleOpenAIRequest,
@@ -118,7 +118,10 @@ export function planOpenAIRequest(
     const hooked = trait.convertMessage(source, message, ctx);
     return hooked === null ? [] : [hooked];
   });
-  const merged = trait?.mergeHistory?.(converted, ctx) ?? converted;
+  const history: readonly OpenAIWireMessage[] = input.systemPrompt
+    ? [{ role: 'system', content: input.systemPrompt }, ...converted]
+    : converted;
+  const merged = trait?.mergeHistory?.(history, ctx) ?? history;
   const tools = input.tools.map(
     (tool) => trait?.convertTool?.(tool, ctx) ?? defaultOpenAITool(tool),
   );
