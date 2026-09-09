@@ -418,6 +418,80 @@ describe('ModelRequesterImpl request execution', () => {
     expect(seen).toEqual(['sk-1']);
   });
 
+  it('replays the upload once after a forced token refresh on 401', async () => {
+    const requester = new FakeLlmRequester();
+    const seen: Array<string | undefined> = [];
+    const media: ProviderMediaContribution = {
+      uploadVideo: (_video, options) => {
+        seen.push(options.model.apiKey);
+        if (seen.length === 1) {
+          return Promise.reject({
+            kind: 'status',
+            statusCode: 401,
+            message: 'unauthorized',
+            requestId: null,
+            retryAfterMs: null,
+            headers: null,
+          });
+        }
+        return Promise.resolve({
+          type: 'video_url',
+          videoUrl: { url: 'https://cdn.example.test/v.mp4' },
+        });
+      },
+    };
+    const authCalls: Array<{ force?: boolean }> = [];
+    const impl = new ModelRequesterImpl(
+      modelWith({
+        canRefresh: true,
+        getAuth: (options) => {
+          authCalls.push(options ?? {});
+          return Promise.resolve({ apiKey: authCalls.length === 1 ? 'tok-1' : 'tok-2' });
+        },
+      }),
+      gatewayReturning(requester, media),
+    );
+
+    const part = await impl.uploadVideo({ data: new Uint8Array([1]), mimeType: 'video/mp4' });
+
+    expect(part).toEqual({ type: 'video_url', videoUrl: { url: 'https://cdn.example.test/v.mp4' } });
+    expect(seen).toEqual(['tok-1', 'tok-2']);
+    expect(authCalls).toEqual([{ force: undefined }, { force: true }]);
+  });
+
+  it('does not replay the upload when the signal is aborted', async () => {
+    const requester = new FakeLlmRequester();
+    const rejection = {
+      kind: 'status',
+      statusCode: 401,
+      message: 'unauthorized',
+      requestId: null,
+      retryAfterMs: null,
+      headers: null,
+    } as const;
+    let attempts = 0;
+    const media: ProviderMediaContribution = {
+      uploadVideo: () => {
+        attempts += 1;
+        return Promise.reject(rejection);
+      },
+    };
+    const controller = new AbortController();
+    controller.abort();
+    const impl = new ModelRequesterImpl(
+      modelWith({ canRefresh: true, getAuth: () => Promise.resolve({ apiKey: 'tok' }) }),
+      gatewayReturning(requester, media),
+    );
+
+    await expect(
+      impl.uploadVideo(
+        { data: new Uint8Array([1]), mimeType: 'video/mp4' },
+        { signal: controller.signal },
+      ),
+    ).rejects.toBe(rejection);
+    expect(attempts).toBe(1);
+  });
+
   it('reports the event-loop-busy overlap of the decode window as clientBlockedMs', async () => {
     const requester = new FakeLlmRequester();
     requester.handler = (_i, emit) => {

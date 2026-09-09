@@ -1,6 +1,6 @@
 import { assign, emit, fromCallback, setup } from '#/xstate2';
 
-import type { LlmErrorMessage } from '#/llm/errors';
+import { toLlmErrorMessage, type LlmErrorMessage } from '#/llm/errors';
 import type { Message } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
 
@@ -67,21 +67,25 @@ function createRequestActor(
 ) {
   return fromCallback<LlmEvent, LlmInput>(({ input, sendBack }) => {
     void (async () => {
-      let messages = input.content.messages;
-      for (const resolver of messageResolvers) {
-        messages = await resolver.resolve(messages, {
-          model: input.config.model,
-          signal: input.signal,
-        });
+      try {
+        let messages = input.content.messages;
+        for (const resolver of messageResolvers) {
+          messages = await resolver.resolve(messages, {
+            model: input.config.model,
+            signal: input.signal,
+          });
+        }
+        await requester.generate(
+          input.config,
+          { ...input.content, messages },
+          {
+            signal: input.signal,
+            onEvent: sendBack,
+          },
+        );
+      } catch (error) {
+        sendBack({ type: 'llm.failed.remote', error: toLlmErrorMessage(error) });
       }
-      await requester.generate(
-        input.config,
-        { ...input.content, messages },
-        {
-          signal: input.signal,
-          onEvent: sendBack,
-        },
-      );
     })();
   });
 }

@@ -15,15 +15,12 @@ import {
   type ExtraParams,
   type LlmRequestConfig,
   type LlmRequestContent,
+  type LlmRequestControl,
   type LlmRequestEvent,
   type LlmRequester,
 } from '#human/llm/requester/requester';
 import type { TokenUsage } from '#human/llm/usage';
-import {
-  withAuth,
-  withAuthUpload,
-  type CredentialSource,
-} from '#human/kimi-oauth/credential-source';
+import type { CredentialSource } from '#human/kimi-oauth/credential-source';
 
 import {
   ChatProviderError,
@@ -67,7 +64,6 @@ interface StreamDecodeStats {
 
 export class ModelRequesterImpl implements ModelRequester {
   private cached: ResolvedLlmModel | undefined;
-  private cachedRequester: LlmRequester | undefined;
 
   constructor(
     readonly model: Model,
@@ -79,13 +75,6 @@ export class ModelRequesterImpl implements ModelRequester {
       this.cached = this.gateway.resolve(this.model);
     }
     return this.cached;
-  }
-
-  private requesterFor(resolved: ResolvedLlmModel): LlmRequester {
-    if (this.cachedRequester === undefined) {
-      this.cachedRequester = withAuth(throwToEvent(resolved.requester), this.credentialSource);
-    }
-    return this.cachedRequester;
   }
 
   private readonly credentialSource: CredentialSource = {
@@ -122,8 +111,44 @@ export class ModelRequesterImpl implements ModelRequester {
       );
     }
     const video = typeof input === 'string' ? readVideoFile(input) : input;
-    const wrapped = withAuthUpload(uploader, this.credentialSource);
-    return wrapped(video, { model: resolved.model, signal: options?.signal });
+    const source = this.credentialSource;
+    const credentialed = await source.resolve(resolved.model);
+    try {
+      return await uploader(video, { model: credentialed, signal: options?.signal });
+    } catch (error) {
+      if (options?.signal?.aborted === true || source.canRecover?.(credentialed, error) !== true) {
+        throw error;
+      }
+    }
+    const refreshed = await source.resolve(resolved.model, { force: true });
+    return uploader(video, { model: refreshed, signal: options?.signal });
+  }
+
+  private async generateAttempt(
+    requester: LlmRequester,
+    config: LlmRequestConfig,
+    content: LlmRequestContent,
+    control: LlmRequestControl,
+  ): Promise<LlmErrorMessage | undefined> {
+    let failed: LlmErrorMessage | undefined;
+    try {
+      await requester.generate(config, content, {
+        ...control,
+        onEvent: (event) => {
+          if (event.type === 'llm.failed.remote' || event.type === 'llm.failed.syntax') {
+            failed = event.error;
+            return;
+          }
+          control.onEvent?.(event);
+        },
+      });
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      const message = llmMessageFromError(error);
+      if (message === undefined) throw translateProviderError(error);
+      failed = message;
+    }
+    return failed;
   }
 
   private async runRequest(
@@ -134,7 +159,7 @@ export class ModelRequesterImpl implements ModelRequester {
   ): Promise<void> {
     signal?.throwIfAborted();
     const resolved = this.resolve();
-    const requester = this.requesterFor(resolved);
+    const requester = resolved.requester;
 
     let requestStartedAt = Date.now();
     let requestSentAt: number | undefined;
@@ -151,7 +176,6 @@ export class ModelRequesterImpl implements ModelRequester {
     let finish: FinishInfo | undefined;
     let messageId: string | undefined;
     let traceId: string | null | undefined;
-    let failed: LlmErrorMessage | undefined;
 
     const config: LlmRequestConfig = {
       model: resolved.model,
@@ -172,7 +196,7 @@ export class ModelRequesterImpl implements ModelRequester {
       usedContextTokens: params?.usedContextTokens,
     };
 
-    await requester.generate(config, content, {
+    const control: LlmRequestControl = {
       signal: signal ?? new AbortController().signal,
       onEvent: (event: LlmRequestEvent) => {
         switch (event.type) {
@@ -219,11 +243,6 @@ export class ModelRequesterImpl implements ModelRequester {
             messageId = event.messageId;
             return;
           }
-          case 'llm.failed.syntax':
-          case 'llm.failed.remote': {
-            failed = event.error;
-            return;
-          }
           case 'llm.done': {
             streamEndedAt = Date.now();
             if (firstChunkAt !== undefined) {
@@ -236,10 +255,31 @@ export class ModelRequesterImpl implements ModelRequester {
           }
         }
       },
-    });
+    };
 
-    if (failed !== undefined) {
-      throw errorFromLlmMessage(failed);
+    const source = this.credentialSource;
+    const credentialed = await source.resolve(config.model);
+    let failure = await this.generateAttempt(
+      requester,
+      { ...config, model: credentialed },
+      content,
+      control,
+    );
+    if (
+      failure !== undefined &&
+      !control.signal.aborted &&
+      source.canRecover?.(credentialed, failure) === true
+    ) {
+      const refreshed = await source.resolve(config.model, { force: true });
+      failure = await this.generateAttempt(
+        requester,
+        { ...config, model: refreshed },
+        content,
+        control,
+      );
+    }
+    if (failure !== undefined) {
+      throw errorFromLlmMessage(failure);
     }
 
     const emptyError = emptyResponseError(accumulator.finish(), config.model, finish ?? NO_FINISH);
@@ -299,21 +339,6 @@ function applyAuth(model: LlmModel, auth: ProviderRequestAuth | undefined): LlmM
     ...model,
     apiKey: auth.apiKey ?? model.apiKey,
     defaultHeaders: mergeRequestHeaders(model.defaultHeaders, auth.headers),
-  };
-}
-
-function throwToEvent(inner: LlmRequester): LlmRequester {
-  return {
-    async generate(config, content, control) {
-      try {
-        await inner.generate(config, content, control);
-      } catch (error) {
-        if (isAbortError(error)) throw error;
-        const message = llmMessageFromError(error);
-        if (message === undefined) throw translateProviderError(error);
-        control.onEvent?.({ type: 'llm.failed.remote', error: message });
-      }
-    },
   };
 }
 
