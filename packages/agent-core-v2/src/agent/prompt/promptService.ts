@@ -20,7 +20,6 @@ import { IAgentReminderService } from '#/features/reminder/reminderService';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IFileService } from '#/app/file/fileService';
 import type { ContentPart } from '#human/llm/message';
 import { IEventService } from '#/app/event/event';
@@ -264,7 +263,6 @@ export class AgentPromptService implements IAgentPromptService {
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
-    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentStateService private readonly states: IAgentStateService,
@@ -358,16 +356,6 @@ export class AgentPromptService implements IAgentPromptService {
   async submit(payload: PromptPayload): Promise<PromptLaunchResult | undefined> {
     const reservation = this[promptAdmission](payload.promptId);
     try {
-      if (payload.disabledTools !== undefined) {
-        try {
-          await this.toolPolicy.setSessionDisabledTools(payload.disabledTools);
-        } catch (error) {
-          throw new Error2(
-            ErrorCodes.REQUEST_INVALID,
-            error instanceof Error ? error.message : String(error),
-          );
-        }
-      }
       await this.updatePromptMetadata(promptMetadataTextFromContentParts(payload.input));
       const handle = await reservation.submit({
         role: 'user',
@@ -376,8 +364,7 @@ export class AgentPromptService implements IAgentPromptService {
         origin: { kind: 'user' },
       });
       if (handle.state === 'pending') return undefined;
-      const turn = await handle.launched;
-      return turn === undefined ? undefined : { turn_id: turn.id };
+      return await launchedTurnId(handle.launched);
     } finally {
       reservation.dispose();
     }
@@ -392,13 +379,11 @@ export class AgentPromptService implements IAgentPromptService {
       toolCalls: [],
     } });
     if (queued.state !== 'pending') {
-      const turn = await queued.launched;
-      return turn === undefined ? undefined : { turn_id: turn.id };
+      return launchedTurnId(queued.launched);
     }
     try {
       const [steered] = await this.steer([queued.id]);
-      const turn = await steered?.launched;
-      return turn === undefined ? undefined : { turn_id: turn.id };
+      return await launchedTurnId(steered?.launched ?? Promise.resolve(undefined));
     } catch (error) {
       if (isError2(error) && error.code === ErrorCodes.PROMPT_NOT_FOUND) return undefined;
       throw error;
@@ -483,7 +468,7 @@ export class AgentPromptService implements IAgentPromptService {
   }
 
   abort(promptId: string, reason: Error = userCancellationReason()): boolean {
-    if (this.active?.id === promptId) { this.loop.cancel(this.active.turn.id, reason); return true; }
+    if (this.active?.id === promptId) { this.active.turn.cancel(reason); return true; }
     const index = this.pending.findIndex((item) => item.id === promptId);
     if (index < 0) throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, `prompt ${promptId} not found`);
     const [item] = this.pending.splice(index, 1) as [Record];
@@ -652,6 +637,12 @@ export class AgentPromptService implements IAgentPromptService {
 }
 
 function snapshot(item: Record): PromptSnapshot { return { id: item.id, userMessageId: item.userMessageId, createdAt: item.createdAt, state: item.state, message: item.message }; }
+async function launchedTurnId(launched: Promise<Turn | undefined>): Promise<PromptLaunchResult | undefined> {
+  const turn = await launched;
+  if (turn === undefined) return undefined;
+  await turn.ready.catch(() => undefined);
+  return turn.id === undefined ? undefined : { turn_id: turn.id };
+}
 function deferred<T>(): Deferred<T> { let resolve!: (value: T) => void; let reject!: (reason: unknown) => void; const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; }); return { promise, resolve, reject }; }
 
 registerScopedService(

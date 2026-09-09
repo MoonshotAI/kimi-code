@@ -1,8 +1,9 @@
 import { assign, emit, sendTo, setup, stopChild, type ActorRefFrom } from '#/xstate2';
 
+import type { createAgentMachine, AgentEvent } from '#/agent/machine';
+import type { AgentEventStore } from '#/agent/slices';
 import type { LlmRequestConfig } from '#/llm/requester/requester';
-import type { createAgentMachine, AgentEvent, AgentInput } from '#/agent/machine';
-import type { HistoryMessage, TurnLlmEvent, TurnToolEvent } from '#/agent/turn';
+import type { TurnLlmEvent, TurnToolEvent } from '#/agent/turn';
 import type { ToolUpdate } from '#/tool/executor';
 
 export interface SessionInput {
@@ -19,20 +20,18 @@ export type SessionEvent =
   | TurnLlmEvent
   | TurnToolEvent
   | { type: 'tool.update'; toolCallId: string; update: ToolUpdate }
-  | { type: 'agent.create'; agentId?: string; input?: Pick<AgentInput, 'history' | 'turnId' | 'request' | 'branchId'> }
-  | { type: 'agent.fork'; sourceId: string; agentId?: string }
   | {
-      type: 'agent.switch';
-      agentId: string;
-      input: { branchId: string; history: readonly HistoryMessage[]; turnId: number; reason?: string };
+      type: 'agent.create';
+      agentId?: string;
+      input: { request?: LlmRequestConfig; store: AgentEventStore };
     }
+  | { type: 'agent.fork'; sourceId: string; agentId?: string; store: AgentEventStore }
   | { type: 'agent.send'; agentId: string; event: AgentEvent }
   | { type: 'agent.stop'; agentId: string };
 
 export type SessionEmitted =
   | { type: 'agent.created'; agentId: string; branchId: string; ref: AgentActorRef }
   | { type: 'agent.forked'; sourceId: string; agentId: string; branchId: string; ref: AgentActorRef }
-  | { type: 'agent.switched'; agentId: string; branchId: string; reason?: string }
   | { type: 'agent.stopped'; agentId: string }
   | { type: 'agent.failed'; agentId: string; error: string };
 
@@ -86,6 +85,8 @@ export function createSessionMachine({ agent }: CreateSessionMachineOptions) {
       'tool.failed': {},
       'tool.aborted': {},
       'context.reset': {},
+      'store.reset': {},
+      'store.error': {},
     },
     states: {
       active: {
@@ -111,10 +112,8 @@ export function createSessionMachine({ agent }: CreateSessionMachineOptions) {
                   const ref = spawn('agentActor', {
                     id: agentId,
                     input: {
-                      request: event.input?.request ?? context.input.request,
-                      history: event.input?.history,
-                      turnId: event.input?.turnId,
-                      branchId: event.input?.branchId ?? agentId,
+                      request: event.input.request ?? context.input.request,
+                      store: event.input.store,
                     },
                   });
                   return {
@@ -128,7 +127,7 @@ export function createSessionMachine({ agent }: CreateSessionMachineOptions) {
                   return {
                     type: 'agent.created' as const,
                     agentId,
-                    branchId: event.input?.branchId ?? agentId,
+                    branchId: event.input.store.ref.branch,
                     ref: entry.ref,
                   };
                 }),
@@ -162,9 +161,7 @@ export function createSessionMachine({ agent }: CreateSessionMachineOptions) {
                     id: agentId,
                     input: {
                       request: source.context.input.request,
-                      history: [...source.context.messages],
-                      turnId: source.context.turnId,
-                      branchId: agentId,
+                      store: event.store,
                     },
                   });
                   return {
@@ -179,48 +176,10 @@ export function createSessionMachine({ agent }: CreateSessionMachineOptions) {
                     type: 'agent.forked' as const,
                     sourceId: event.sourceId,
                     agentId,
-                    branchId: agentId,
+                    branchId: event.store.ref.branch,
                     ref: entry.ref,
                   };
                 }),
-              ],
-            },
-          ],
-          'agent.switch': [
-            {
-              guard: ({ context, event }) => context.agents[event.agentId] === undefined,
-              actions: emit(({ event }) => ({
-                type: 'agent.failed' as const,
-                agentId: event.agentId,
-                error: `unknown agent: '${event.agentId}'`,
-              })),
-            },
-            {
-              guard: ({ context, event }) =>
-                !(context.agents[event.agentId] as AgentEntry).ref.getSnapshot().matches('idle'),
-              actions: emit(({ event }) => ({
-                type: 'agent.failed' as const,
-                agentId: event.agentId,
-                error: `agent is busy: '${event.agentId}'`,
-              })),
-            },
-            {
-              actions: [
-                sendTo(
-                  ({ context, event }) => (context.agents[event.agentId] as AgentEntry).ref,
-                  ({ event }) => ({
-                    type: 'context.reset' as const,
-                    history: event.input.history,
-                    turnId: event.input.turnId,
-                    branchId: event.input.branchId,
-                  }),
-                ),
-                emit(({ event }) => ({
-                  type: 'agent.switched' as const,
-                  agentId: event.agentId,
-                  branchId: event.input.branchId,
-                  reason: event.input.reason,
-                })),
               ],
             },
           ],

@@ -3928,23 +3928,7 @@ export class KimiTUI {
   }): Promise<void> {
     this.sessionPickerOptions = options;
     await this.fetchSessions('cwd');
-    this.mountSessionPicker({
-      applyStartupModes: options.applyStartupModes,
-      onCancel: () => {
-        this.hideSessionPicker();
-        if (options.closeOnCancel) void this.stop();
-      },
-      onCtrlC: options.forwardEditorExit
-        ? () => {
-            this.state.editor.onCtrlC?.();
-          }
-        : undefined,
-      onCtrlD: options.forwardEditorExit
-        ? () => {
-            this.state.editor.onCtrlD?.();
-          }
-        : undefined,
-    });
+    this.remountSessionPicker();
   }
 
   private async toggleSessionPickerScope(selectedSessionId: string): Promise<void> {
@@ -3953,8 +3937,12 @@ export class KimiTUI {
     await this.fetchSessions(nextScope);
     if (requestToken !== this.sessionPickerScopeRequestToken) return;
     if (this.state.activeDialog !== 'session-picker') return;
+    this.remountSessionPicker(selectedSessionId);
+  }
+
+  private remountSessionPicker(initialSelectedSessionId?: string): void {
     this.mountSessionPicker({
-      initialSelectedSessionId: selectedSessionId,
+      initialSelectedSessionId,
       applyStartupModes: this.sessionPickerOptions.applyStartupModes,
       onCancel: () => {
         this.hideSessionPicker();
@@ -3979,6 +3967,68 @@ export class KimiTUI {
     this.editorKeyboard.clearPendingExit();
     this.state.activeDialog = null;
     this.restoreEditor();
+  }
+
+  private async deleteSessionFromPicker(session: SessionRow): Promise<void> {
+    // Invalidate any pending scope-toggle remount: it would replace the picker
+    // that is about to lock itself for the delete.
+    this.sessionPickerScopeRequestToken += 1;
+    try {
+      await this.waitForLazyCreation();
+      if (session.id === this.state.appState.sessionId && this.session !== undefined) {
+        await this.deleteCurrentSessionFromPicker(session);
+        return;
+      }
+      await this.harness.deleteSession(session.id);
+      // fetchSessions swallows refetch errors, so drop the row locally first —
+      // a failed refetch must not resurrect it in the remounted list.
+      this.state.sessions = this.state.sessions.filter((row) => row.id !== session.id);
+      const requestToken = ++this.sessionPickerScopeRequestToken;
+      await this.fetchSessions(this.state.sessionsScope);
+      if (requestToken !== this.sessionPickerScopeRequestToken) return;
+      if (this.state.activeDialog !== 'session-picker') return;
+      this.remountSessionPicker();
+      this.showStatus('Session deleted.');
+    } catch (error) {
+      this.showError(`Failed to delete session ${session.id}: ${formatErrorMessage(error)}`);
+    }
+  }
+
+  private async deleteCurrentSessionFromPicker(session: SessionRow): Promise<void> {
+    // The picker stays mounted (locking input) until the replacement session
+    // is ready — restoring the editor mid-flight would let a prompt race the swap.
+    try {
+      // Tear down before deleting so no events from the dying session reach the UI.
+      await this.closeSession('deleting session');
+      await this.harness.deleteSession(session.id);
+    } catch (error) {
+      // The engine aborts a failed delete and keeps the session: reattach,
+      // falling back to a fresh session if it is gone. showError runs after
+      // the switch because switchToSession clears the transcript.
+      const message = `Failed to delete session ${session.id}: ${formatErrorMessage(error)}`;
+      try {
+        const resumed = await this.harness.resumeSession({
+          id: session.id,
+          replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
+        });
+        await this.switchToSession(resumed, `Resumed session (${resumed.id}).`);
+      } catch {
+        // Reattach failed and the session is already unloaded: detach before
+        // the fallback create so a failed create leaves no ghost UI behind.
+        this.setAppState({ sessionId: '' });
+        this.clearTranscriptAndRedraw();
+        await this.createNewSession();
+      }
+      this.showError(message);
+      this.hideSessionPicker();
+      return;
+    }
+    // The session is gone whether or not replacement creation succeeds: detach
+    // first so a failed create leaves no ghost (stale id + transcript) behind.
+    this.setAppState({ sessionId: '' });
+    this.clearTranscriptAndRedraw();
+    await this.createNewSession();
+    this.hideSessionPicker();
   }
 
   openUndoSelector(): void {
@@ -4011,19 +4061,19 @@ export class KimiTUI {
       onSearchDrain: () => {
         void this.drainSessionsForSearch();
       },
-      onSelect: (session: SessionRow) => {
-        void this.handleSessionPickerSelect(session, options.applyStartupModes === true).catch(
+      onSelect: (session: SessionRow) =>
+        this.handleSessionPickerSelect(session, options.applyStartupModes === true).catch(
           (error) => {
             this.showError(`Failed to apply startup flags: ${formatErrorMessage(error)}`);
           },
-        );
-      },
+        ),
       onCancel: options.onCancel,
       onCtrlC: options.onCtrlC,
       onCtrlD: options.onCtrlD,
       onToggleScope: (selectedSessionId: string) => {
         void this.toggleSessionPickerScope(selectedSessionId);
       },
+      onDeleteRequest: (session: SessionRow) => this.deleteSessionFromPicker(session),
     });
     this.sessionPickerComponent = picker;
     this.mountEditorReplacement(picker);
@@ -4033,6 +4083,9 @@ export class KimiTUI {
     session: SessionRow,
     applyStartupModes: boolean,
   ): Promise<void> {
+    // Invalidate any pending scope-toggle remount: it would replace the picker
+    // and drop the selection lock.
+    this.sessionPickerScopeRequestToken += 1;
     if (resolve(session.work_dir) !== resolve(this.state.appState.workDir)) {
       await this.showResumeOtherWorkDirHint(session);
       if (applyStartupModes) await this.stop(0);

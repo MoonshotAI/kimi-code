@@ -488,17 +488,20 @@ export async function stageNativeUpdate(
   try {
     const manifest = await fetchNativeReleaseManifest(options.version, fetchImpl);
     const entry = selectPlatformEntry(manifest, platform, arch);
+    const compressed = entry.zstd === undefined
+      ? entry.compressed
+      : { filename: entry.zstd.file, checksum: entry.zstd.sha256 };
     // Prefer the zstd-compressed artifact when the manifest carries one and
     // the runtime can inflate it (~4x smaller than the bare binary). Any
     // failure in the compressed path falls back to the bare download below.
     let size: number | undefined;
-    if (entry.compressed !== undefined && typeof createZstdDecompress === 'function') {
+    if (compressed !== undefined && typeof createZstdDecompress === 'function') {
       const zstPartPath = join(stagingDir, `${exeFileName}.zst.part`);
       try {
         await downloadAndHash(
-          nativeBinaryUrl(options.version, entry.compressed.filename),
+          nativeBinaryUrl(options.version, compressed.filename),
           zstPartPath,
-          entry.compressed.checksum,
+          compressed.checksum,
           fetchImpl,
           options.onProgress,
           options.idleTimeoutMs,

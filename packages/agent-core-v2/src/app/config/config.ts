@@ -24,6 +24,8 @@ export interface ConfigKeyDeprecation {
   readonly message?: string;
 }
 
+export type ConfigCollectDiagnostics = (rawSection: unknown) => readonly ConfigDiagnostic[];
+
 export type EnvBindings<T> = EnvBinding | { [K in keyof T]?: EnvBinding | EnvBindings<T[K]> };
 
 export type AnyEnvBindings = EnvBinding | { readonly [key: string]: EnvBinding | AnyEnvBindings };
@@ -93,6 +95,7 @@ export interface ConfigSection<T = unknown> {
   readonly fromToml?: ConfigFromToml;
   readonly toToml?: ConfigToToml;
   readonly deprecations?: readonly ConfigKeyDeprecation[];
+  readonly collectDiagnostics?: ConfigCollectDiagnostics;
 }
 
 export interface RegisterSectionOptions<T> {
@@ -104,6 +107,7 @@ export interface RegisterSectionOptions<T> {
   readonly fromToml?: ConfigFromToml;
   readonly toToml?: ConfigToToml;
   readonly deprecations?: readonly ConfigKeyDeprecation[];
+  readonly collectDiagnostics?: ConfigCollectDiagnostics;
 }
 
 export interface ConfigEffectiveOverlay {

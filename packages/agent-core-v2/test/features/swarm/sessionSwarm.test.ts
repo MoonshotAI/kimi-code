@@ -1182,7 +1182,7 @@ describe('SessionSwarmService metadata compatibility', () => {
           IAgentLoopService,
           {
             _serviceBrand: undefined,
-            status: () => ({ state: 'running', activeTurnId: 1, pendingTurnIds: [], hasPendingRequests: true }),
+            status: () => ({ state: 'running', activeTurnId: 1, pendingPromptIds: [], hasPendingRequests: true }),
           },
         ],
       ])),
@@ -1359,7 +1359,7 @@ function agentHandle(
         if (serviceId === IAgentLoopService) {
           return {
             _serviceBrand: undefined,
-            status: () => ({ state: 'idle', pendingTurnIds: [], hasPendingRequests: false }),
+            status: () => ({ state: 'idle', pendingPromptIds: [], hasPendingRequests: false }),
           } as unknown as IAgentLoopService;
         }
         if (serviceId === IAgentUserToolService) return userToolServiceStub();

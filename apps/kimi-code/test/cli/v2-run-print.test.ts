@@ -211,7 +211,7 @@ function makeFakeHarness() {
     [
       IAgentLoopService,
       {
-        status: vi.fn(() => ({ state: 'idle', pendingTurnIds: [] })),
+        status: vi.fn(() => ({ state: 'idle', pendingPromptIds: [] })),
         cancel: vi.fn(() => false),
         settled: vi.fn(async () => {}),
         tryAcquireQuiescence: vi.fn(() => ({ dispose: vi.fn() })),
@@ -757,7 +757,7 @@ describe('runV2Print', () => {
       settled: ReturnType<typeof vi.fn>;
       tryAcquireQuiescence: ReturnType<typeof vi.fn>;
     };
-    loop.status.mockReturnValue({ state: 'running', pendingTurnIds: [] });
+    loop.status.mockReturnValue({ state: 'running', pendingPromptIds: [] });
     loop.cancel.mockImplementation(() => {
       if (!order.includes('cancel')) order.push('cancel');
       return true;
