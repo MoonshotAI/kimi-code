@@ -1,34 +1,34 @@
 import type { Message, ToolDescription } from '#/llm/message';
-import type { DialectContext, ThinkingStrategy } from '#/llm/protocol/dialect';
+import type { TraitContext, ThinkingStrategy } from '#/llm/protocol/trait';
 import type { ToolCallIdPolicy } from '#/llm/requester/requester';
 
 import type { AnthropicWireMessage } from './contract';
 
-export interface AnthropicDialect {
+export interface AnthropicTrait {
   readonly toolCallIdPolicy?: ToolCallIdPolicy;
 
   readonly thinking?: ThinkingStrategy;
 
   maxCompletionTokens?(
     maxCompletionTokens: number,
-    ctx: DialectContext,
+    ctx: TraitContext,
   ): Record<string, unknown> | undefined;
 
-  convertTool?(tool: ToolDescription, ctx: DialectContext): Record<string, unknown> | undefined;
+  convertTool?(tool: ToolDescription, ctx: TraitContext): Record<string, unknown> | undefined;
 
   convertMessage?(
     message: Message,
     converted: AnthropicWireMessage,
-    ctx: DialectContext,
+    ctx: TraitContext,
   ): AnthropicWireMessage | null;
 
   mergeHistory?(
     messages: readonly AnthropicWireMessage[],
-    ctx: DialectContext,
+    ctx: TraitContext,
   ): AnthropicWireMessage[] | undefined;
 
   buildParams?(
     params: Record<string, unknown>,
-    ctx: DialectContext,
+    ctx: TraitContext,
   ): Record<string, unknown> | undefined;
 }

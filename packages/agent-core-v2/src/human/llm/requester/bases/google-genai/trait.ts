@@ -1,25 +1,25 @@
 import type { ToolDescription } from '#/llm/message';
-import type { DialectContext, ThinkingStrategy } from '#/llm/protocol/dialect';
+import type { TraitContext, ThinkingStrategy } from '#/llm/protocol/trait';
 
 import type { GoogleContent } from './contract';
 
-export interface GoogleGenAIDialect {
+export interface GoogleGenAITrait {
   readonly thinking?: ThinkingStrategy;
 
   maxCompletionTokens?(
     maxCompletionTokens: number,
-    ctx: DialectContext,
+    ctx: TraitContext,
   ): Record<string, unknown> | undefined;
 
-  convertTool?(tool: ToolDescription, ctx: DialectContext): Record<string, unknown> | undefined;
+  convertTool?(tool: ToolDescription, ctx: TraitContext): Record<string, unknown> | undefined;
 
   mergeHistory?(
     contents: readonly GoogleContent[],
-    ctx: DialectContext,
+    ctx: TraitContext,
   ): GoogleContent[] | undefined;
 
   buildParams?(
     params: Record<string, unknown>,
-    ctx: DialectContext,
+    ctx: TraitContext,
   ): Record<string, unknown> | undefined;
 }

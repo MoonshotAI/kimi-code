@@ -7,18 +7,18 @@ import type { ProviderMediaContribution } from '#human/llm/media/upload';
 import type { LlmModel } from '#human/llm/model';
 import type { ProtocolBase } from '#human/llm/protocol/base';
 import type { ProviderConnection } from '#human/llm/protocol/connection';
-import type { AnyProtocolDialect } from '#human/llm/provider/definition';
+import type { AnyProtocolTrait } from '#human/llm/provider/definition';
 import type { LlmErrorClassifier } from '#human/llm/requester/requester';
 import { anthropicBase, anthropicBetaBase } from '#human/llm/requester/bases/anthropic/requester';
 import {
   createGoogleGenAIBase,
   googleGenAIBase,
 } from '#human/llm/requester/bases/google-genai/requester';
-import type { OpenAIDialect } from '#human/llm/requester/bases/openai/dialect';
+import type { OpenAITrait } from '#human/llm/requester/bases/openai/trait';
 import { openAIBase } from '#human/llm/requester/bases/openai/requester';
 import { openAIResponsesBase } from '#human/llm/requester/bases/openai-responses/requester';
 import { KimiFiles } from '#human/llm-kimi/files';
-import { KIMI_DEFAULT_BASE_URL } from '#human/llm-kimi/dialect';
+import { KIMI_DEFAULT_BASE_URL } from '#human/llm-kimi/trait';
 
 import type { Model } from '../model/catalog';
 import type { ResolvedLlmModel } from '../model/model-requester-impl';
@@ -45,15 +45,15 @@ const kimiMedia: ProviderMediaContribution = {
 };
 
 interface AdapterRoute {
-  readonly base: ProtocolBase<AnyProtocolDialect>;
-  readonly dialect?: AnyProtocolDialect;
+  readonly base: ProtocolBase<AnyProtocolTrait>;
+  readonly trait?: AnyProtocolTrait;
   readonly connection?: ProviderConnection;
   readonly convertError?: LlmErrorClassifier;
   readonly providerId: string;
   readonly media?: ProviderMediaContribution;
 }
 
-function openAIReasoningDialectFor(model: Model): OpenAIDialect | undefined {
+function openAIReasoningTraitFor(model: Model): OpenAITrait | undefined {
   const reasoningKey = model.providerOptions?.reasoningKey ?? model.reasoningKey;
   return reasoningKey === undefined ? undefined : { reasoningKey };
 }
@@ -66,7 +66,7 @@ function routeFor(model: Model): AdapterRoute {
   const routeMedia = definition?.modelSource === 'oauth-catalog' ? kimiMedia : undefined;
   const custom =
     definition !== undefined &&
-    (definition.dialect !== undefined ||
+    (definition.trait !== undefined ||
       definition.connection !== undefined ||
       definition.convertError !== undefined)
       ? definition
@@ -76,7 +76,7 @@ function routeFor(model: Model): AdapterRoute {
       return custom !== undefined
         ? {
             base: openAIBase,
-            dialect: custom.dialect,
+            trait: custom.trait,
             connection: custom.connection,
             convertError: custom.convertError,
             providerId: 'openai',
@@ -84,7 +84,7 @@ function routeFor(model: Model): AdapterRoute {
           }
         : {
             base: openAIBase,
-            dialect: openAIReasoningDialectFor(model),
+            trait: openAIReasoningTraitFor(model),
             connection: openAIConnection,
             providerId: 'openai',
           };
@@ -92,7 +92,7 @@ function routeFor(model: Model): AdapterRoute {
       return custom !== undefined
         ? {
             base: openAIResponsesBase,
-            dialect: custom.dialect,
+            trait: custom.trait,
             connection: custom.connection,
             convertError: custom.convertError,
             providerId: 'openai-responses',
@@ -108,7 +108,7 @@ function routeFor(model: Model): AdapterRoute {
       return custom !== undefined
         ? {
             base,
-            dialect: custom.dialect,
+            trait: custom.trait,
             connection: custom.connection,
             convertError: custom.convertError,
             providerId: 'anthropic',
@@ -142,7 +142,7 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
     const definition =
       providerType === undefined ? undefined : getProviderDefinition(providerType, protocol);
     const baseId: ProtocolBaseId = definition?.baseProtocol ?? protocol;
-    return { baseId, dialect: definition?.dialect };
+    return { baseId, trait: definition?.trait };
   }
 
   resolveProviderBaseId(protocol: Protocol, providerType?: string): ProtocolBaseId {
@@ -191,7 +191,7 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
     const route = routeFor(model);
     const requester = route.base.createRequester({
       connection: route.connection,
-      dialect: route.dialect,
+      trait: route.trait,
       convertError: route.convertError,
     });
     const llmModel: LlmModel & ModelThinkingMetadata = {

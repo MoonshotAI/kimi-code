@@ -6,7 +6,7 @@ import type { LlmModel } from '#/llm/model';
 import { toLlmSyntaxErrorMessage } from '#/llm/syntax-errors';
 import type { ProtocolBase, ProtocolRequesterOptions } from '#/llm/protocol/base';
 import { resolveModelConnection } from '#/llm/protocol/connection';
-import { applyThinking, type DialectContext } from '#/llm/protocol/dialect';
+import { applyThinking, type TraitContext } from '#/llm/protocol/trait';
 import { resolveMaxCompletionCap, type FormatRequestInput } from '#/llm/protocol/format';
 import { encodeReasoningEffortFallback } from '#/llm/thinking';
 import {
@@ -28,7 +28,7 @@ import {
 import { convertOpenAIError } from '../openai/format';
 import { getOpenAIResponsesModelCapability } from './capability';
 import type { OpenAIResponsesRawChunk } from './contract';
-import type { OpenAIResponsesDialect } from './dialect';
+import type { OpenAIResponsesTrait } from './trait';
 import {
   applyOpenAIResponsesResponseFormat,
   assembleOpenAIResponsesRequest,
@@ -58,34 +58,34 @@ function createClient(model: LlmModel, headers: Record<string, string> | undefin
 }
 
 export interface OpenAIResponsesRequesterOptions
-  extends ProtocolRequesterOptions<OpenAIResponsesDialect>,
+  extends ProtocolRequesterOptions<OpenAIResponsesTrait>,
     LlmRequesterOptions<OpenAI> {}
 
 export interface OpenAIResponsesRequestPlanOptions {
-  readonly dialect?: OpenAIResponsesDialect;
+  readonly trait?: OpenAIResponsesTrait;
 }
 
 export function planOpenAIResponsesRequest(
   input: FormatRequestInput,
   options?: OpenAIResponsesRequestPlanOptions,
 ): OpenAIResponsesRequestParams {
-  const dialect = options?.dialect;
-  const ctx: DialectContext = { model: input.model };
+  const trait = options?.trait;
+  const ctx: TraitContext = { model: input.model };
   let kwargs: Record<string, unknown> = {};
   if (input.cacheKey !== undefined) {
     kwargs =
-      dialect?.cacheKey?.(input.cacheKey, ctx) ?? encodeOpenAIResponsesCacheKey(input.cacheKey);
+      trait?.cacheKey?.(input.cacheKey, ctx) ?? encodeOpenAIResponsesCacheKey(input.cacheKey);
   }
   if (input.thinking !== undefined) {
-    kwargs = applyThinking(kwargs, input.thinking, dialect?.thinking, ctx, (t) =>
-      encodeReasoningEffortFallback(t, ctx.model, dialect?.strictThinkingValidation === true),
+    kwargs = applyThinking(kwargs, input.thinking, trait?.thinking, ctx, (t) =>
+      encodeReasoningEffortFallback(t, ctx.model, trait?.strictThinkingValidation === true),
     ).kwargs;
   }
   const cap = resolveMaxCompletionCap(input);
   if (cap !== undefined) {
     kwargs = {
       ...kwargs,
-      ...(dialect?.maxCompletionTokens?.(cap, ctx) ?? encodeOpenAIResponsesMaxCompletionTokens(cap)),
+      ...(trait?.maxCompletionTokens?.(cap, ctx) ?? encodeOpenAIResponsesMaxCompletionTokens(cap)),
     };
   }
   if (input.responseFormat !== undefined) {
@@ -96,21 +96,21 @@ export function planOpenAIResponsesRequest(
 
   const lowered = lowerOpenAIResponsesRequest(input, {
     extractText:
-      (input.toolMessageConversion ?? dialect?.toolMessageConversion) === 'extract_text',
+      (input.toolMessageConversion ?? trait?.toolMessageConversion) === 'extract_text',
   });
-  const merged = dialect?.mergeHistory?.(lowered, ctx) ?? lowered;
+  const merged = trait?.mergeHistory?.(lowered, ctx) ?? lowered;
   const tools = input.tools.map(
-    (tool) => dialect?.convertTool?.(tool, ctx) ?? defaultOpenAIResponsesTool(tool),
+    (tool) => trait?.convertTool?.(tool, ctx) ?? defaultOpenAIResponsesTool(tool),
   );
   const params = assembleOpenAIResponsesRequest(input, { input: merged, tools, kwargs });
-  const finalParams = dialect?.buildParams?.(params, ctx) ?? params;
+  const finalParams = trait?.buildParams?.(params, ctx) ?? params;
   return encodeOpenAIResponsesRequest(finalParams);
 }
 
 interface OpenAIResponsesTransport {
   readonly connection: OpenAIResponsesRequesterOptions['connection'];
-  readonly dialect: OpenAIResponsesDialect | undefined;
-  readonly ctx: DialectContext;
+  readonly trait: OpenAIResponsesTrait | undefined;
+  readonly ctx: TraitContext;
   readonly format: ReturnType<typeof createOpenAIResponsesFormat>;
   readonly resolveClient: (request: LlmClientContext) => OpenAI;
   readonly signal: AbortSignal;
@@ -121,7 +121,7 @@ async function internalGenerate(
   request: OpenAIResponsesRequestParams,
   transport: OpenAIResponsesTransport,
 ): Promise<void> {
-  const { connection, dialect, ctx, format, resolveClient, signal, onEvent } = transport;
+  const { connection, trait, ctx, format, resolveClient, signal, onEvent } = transport;
   const client = resolveClient({
     model: ctx.model,
     headers: mergeRequestHeaders(
@@ -136,10 +136,10 @@ async function internalGenerate(
   onEvent?.({ type: 'llm.streaming.headers', headers: headersToRecord(response.headers) ?? {} });
   const parse = format.createStreamParser({
     resolveUsage:
-      dialect?.extractUsage === undefined
+      trait?.extractUsage === undefined
         ? undefined
         : (chunk, defaultUsage) => {
-            const hooked = dialect.extractUsage?.(chunk as OpenAIResponsesRawChunk);
+            const hooked = trait.extractUsage?.(chunk as OpenAIResponsesRawChunk);
             return hooked !== undefined ? parseOpenAIResponsesUsage(hooked) : defaultUsage;
           },
   });
@@ -171,7 +171,7 @@ export function createOpenAIResponsesRequester(
   options?: OpenAIResponsesRequesterOptions,
 ): LlmRequester {
   const connection = options?.connection;
-  const dialect = options?.dialect;
+  const trait = options?.trait;
   const convertError = options?.convertError;
   const format = createOpenAIResponsesFormat();
   const resolveClient =
@@ -187,10 +187,10 @@ export function createOpenAIResponsesRequester(
       const { systemPrompt, tools = [] } = config;
       const { messages } = content;
       const { signal, onEvent } = control;
-      const ctx: DialectContext = { model };
+      const ctx: TraitContext = { model };
       let request: OpenAIResponsesRequestParams;
       try {
-        const policy = dialect?.toolCallIdPolicy ?? OPENAI_RESPONSES_TOOL_CALL_ID_POLICY;
+        const policy = trait?.toolCallIdPolicy ?? OPENAI_RESPONSES_TOOL_CALL_ID_POLICY;
         request = planOpenAIResponsesRequest(
           {
             model,
@@ -206,7 +206,7 @@ export function createOpenAIResponsesRequester(
             extraParams: config.extraParams,
             toolMessageConversion: config.toolMessageConversion,
           },
-          { dialect },
+          { trait },
         );
       } catch (error) {
         onEvent?.({ type: 'llm.failed.syntax', error: toLlmSyntaxErrorMessage(error) });
@@ -215,7 +215,7 @@ export function createOpenAIResponsesRequester(
       try {
         await internalGenerate(request, {
           connection,
-          dialect,
+          trait,
           ctx,
           format,
           resolveClient,
@@ -232,7 +232,7 @@ export function createOpenAIResponsesRequester(
   };
 }
 
-export const openAIResponsesBase: ProtocolBase<OpenAIResponsesDialect> = {
+export const openAIResponsesBase: ProtocolBase<OpenAIResponsesTrait> = {
   capability: getOpenAIResponsesModelCapability,
   createRequester: createOpenAIResponsesRequester,
 };

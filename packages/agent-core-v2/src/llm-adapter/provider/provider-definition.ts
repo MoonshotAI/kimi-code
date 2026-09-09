@@ -1,14 +1,14 @@
 import { BugIndicatingError } from '#/_base/errors/errors';
 import type { ModelCapability as HumanModelCapability } from '#human/llm/capability';
 import type { ProtocolEndpoint, ProviderConnection } from '#human/llm/protocol/connection';
-import type { ProtocolDialectMap } from '#human/llm/provider/definition';
+import type { ProtocolTraitMap } from '#human/llm/provider/definition';
 import type { LlmErrorClassifier } from '#human/llm/requester/requester';
 import {
-  kimiAnthropicDialect,
+  kimiAnthropicTrait,
   kimiConnection,
-  kimiOpenAIDialect,
+  kimiOpenAITrait,
   KIMI_DEFAULT_BASE_URL,
-} from '#human/llm-kimi/dialect';
+} from '#human/llm-kimi/trait';
 import { classifyKimiQuotaError } from '#human/llm-kimi/errors';
 
 import type { Protocol } from '../protocol/protocol';
@@ -49,7 +49,7 @@ export const kimiEndpoint: ProtocolEndpoint = {
 export interface ProviderDefinition<N extends Protocol = Protocol> {
   readonly id: string;
   readonly baseProtocol: N;
-  readonly dialect?: ProtocolDialectMap[N];
+  readonly trait?: ProtocolTraitMap[N];
   readonly connection?: ProviderConnection;
   readonly convertError?: LlmErrorClassifier;
   readonly capability?: (modelName: string) => HumanModelCapability | undefined;
@@ -224,7 +224,7 @@ registerProviderDefinition({
 registerProviderDefinition({
   id: 'kimi',
   baseProtocol: 'openai',
-  dialect: kimiOpenAIDialect,
+  trait: kimiOpenAITrait,
   connection: kimiConnection,
   convertError: classifyKimiQuotaError,
   endpoint: kimiEndpoint,
@@ -235,7 +235,7 @@ registerProviderDefinition({
 registerProviderDefinition({
   id: 'kimi',
   baseProtocol: 'anthropic',
-  dialect: kimiAnthropicDialect,
+  trait: kimiAnthropicTrait,
   connection: kimiConnection,
   convertError: classifyKimiQuotaError,
   endpoint: kimiEndpoint,

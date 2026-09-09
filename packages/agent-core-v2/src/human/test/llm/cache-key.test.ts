@@ -121,10 +121,10 @@ describe('openai requester cacheKey', () => {
     expect(client.body()['extra_body']).toEqual({ trace_id: 't1' });
   });
 
-  it('lets a dialect override the cache key params', async () => {
+  it('lets a trait override the cache key params', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
     const requester = createOpenAIRequester({
-      dialect: { cacheKey: (key) => ({ custom_cache: key }) },
+      trait: { cacheKey: (key) => ({ custom_cache: key }) },
       clientFactory: client.clientFactory,
     });
     await requester.generate(

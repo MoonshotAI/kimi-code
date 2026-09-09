@@ -5,13 +5,13 @@ import type { ProviderConnection } from './connection';
 
 export type ProtocolName = 'openai' | 'openai_responses' | 'anthropic' | 'google-genai';
 
-export interface ProtocolRequesterOptions<TDialect> {
+export interface ProtocolRequesterOptions<TTrait> {
   readonly connection?: ProviderConnection;
-  readonly dialect?: TDialect;
+  readonly trait?: TTrait;
   readonly convertError?: LlmErrorClassifier;
 }
 
-export interface ProtocolBase<TDialect = unknown> {
+export interface ProtocolBase<TTrait = unknown> {
   capability?(modelName: string): ModelCapability | undefined;
-  createRequester(options?: ProtocolRequesterOptions<TDialect>): LlmRequester;
+  createRequester(options?: ProtocolRequesterOptions<TTrait>): LlmRequester;
 }

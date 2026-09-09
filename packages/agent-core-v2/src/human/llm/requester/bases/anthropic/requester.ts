@@ -6,7 +6,7 @@ import type { LlmModel } from '#/llm/model';
 import { toLlmSyntaxErrorMessage } from '#/llm/syntax-errors';
 import type { ProtocolBase, ProtocolRequesterOptions } from '#/llm/protocol/base';
 import { resolveModelConnection } from '#/llm/protocol/connection';
-import { applyThinking, type DialectContext } from '#/llm/protocol/dialect';
+import { applyThinking, type TraitContext } from '#/llm/protocol/trait';
 import { resolveMaxCompletionCap, type FormatRequestInput } from '#/llm/protocol/format';
 import {
   mergeRequestHeaders,
@@ -25,7 +25,7 @@ import {
   sanitizeToolCallId,
 } from '../tool-call-id';
 import { getAnthropicModelCapability } from './capability';
-import type { AnthropicDialect } from './dialect';
+import type { AnthropicTrait } from './trait';
 import {
   applyAnthropicResponseFormat,
   applyAnthropicThinkingKeep,
@@ -50,7 +50,7 @@ const ANTHROPIC_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
 };
 
 export interface AnthropicRequesterOptions
-  extends ProtocolRequesterOptions<AnthropicDialect>,
+  extends ProtocolRequesterOptions<AnthropicTrait>,
     AnthropicFormatOptions,
     LlmRequesterOptions<Anthropic> {}
 
@@ -93,7 +93,7 @@ function createClient(model: LlmModel, headers: Record<string, string> | undefin
 }
 
 export interface AnthropicRequestPlanOptions {
-  readonly dialect?: AnthropicDialect;
+  readonly trait?: AnthropicTrait;
   readonly betaApi?: boolean;
 }
 
@@ -101,11 +101,11 @@ export function planAnthropicRequest(
   input: FormatRequestInput,
   options?: AnthropicRequestPlanOptions,
 ): AnthropicRequestParams {
-  const dialect = options?.dialect;
-  const ctx: DialectContext = { model: input.model };
+  const trait = options?.trait;
+  const ctx: TraitContext = { model: input.model };
   let kwargs: Record<string, unknown> = { betaFeatures: [INTERLEAVED_THINKING_BETA] };
   if (input.thinking !== undefined) {
-    kwargs = applyThinking(kwargs, input.thinking, dialect?.thinking, ctx, (t, c) =>
+    kwargs = applyThinking(kwargs, input.thinking, trait?.thinking, ctx, (t, c) =>
       encodeThinking(t, c.model),
     ).kwargs;
   }
@@ -117,7 +117,7 @@ export function planAnthropicRequest(
     const capped = resolveDefaultMaxTokens(ctx.model.model, cap);
     kwargs = {
       ...kwargs,
-      ...(dialect?.maxCompletionTokens?.(capped, ctx) ?? encodeAnthropicMaxTokens(capped)),
+      ...(trait?.maxCompletionTokens?.(capped, ctx) ?? encodeAnthropicMaxTokens(capped)),
     };
   }
   kwargs = assign(kwargs, input.extraParams?.anthropic ?? {});
@@ -129,16 +129,16 @@ export function planAnthropicRequest(
   const lowered = lowerAnthropicRequest(input);
   const converted = lowered
     .flatMap(({ source, message }) => {
-      if (dialect?.convertMessage === undefined) {
+      if (trait?.convertMessage === undefined) {
         return [message];
       }
-      const hooked = dialect.convertMessage(source, message, ctx);
+      const hooked = trait.convertMessage(source, message, ctx);
       return hooked === null ? [] : [hooked];
     })
     .filter((message) => !isAnthropicWireMessageEmpty(message));
-  const merged = dialect?.mergeHistory?.(converted, ctx) ?? defaultAnthropicMergeHistory(converted);
+  const merged = trait?.mergeHistory?.(converted, ctx) ?? defaultAnthropicMergeHistory(converted);
   const tools = input.tools.map(
-    (tool) => dialect?.convertTool?.(tool, ctx) ?? defaultAnthropicTool(tool),
+    (tool) => trait?.convertTool?.(tool, ctx) ?? defaultAnthropicTool(tool),
   );
   const assembly = assembleAnthropicRequest(input, {
     messages: merged,
@@ -146,13 +146,13 @@ export function planAnthropicRequest(
     kwargs,
     betaApi: options?.betaApi === true,
   });
-  const finalParams = dialect?.buildParams?.(assembly.params, ctx) ?? assembly.params;
+  const finalParams = trait?.buildParams?.(assembly.params, ctx) ?? assembly.params;
   return encodeAnthropicRequest({ ...assembly, params: finalParams });
 }
 
 interface AnthropicTransport {
   readonly connection: AnthropicRequesterOptions['connection'];
-  readonly ctx: DialectContext;
+  readonly ctx: TraitContext;
   readonly format: ReturnType<typeof createAnthropicFormat>;
   readonly resolveClient: (request: LlmClientContext) => Anthropic;
   readonly signal: AbortSignal;
@@ -205,7 +205,7 @@ async function internalGenerate(
 
 export function createAnthropicRequester(options?: AnthropicRequesterOptions): LlmRequester {
   const connection = options?.connection;
-  const dialect = options?.dialect;
+  const trait = options?.trait;
   const convertError = options?.convertError;
   const format = createAnthropicFormat();
   const resolveClient =
@@ -221,10 +221,10 @@ export function createAnthropicRequester(options?: AnthropicRequesterOptions): L
       const { systemPrompt, tools = [] } = config;
       const { messages } = content;
       const { signal, onEvent } = control;
-      const ctx: DialectContext = { model };
+      const ctx: TraitContext = { model };
       let request: AnthropicRequestParams;
       try {
-        const policy = dialect?.toolCallIdPolicy ?? ANTHROPIC_TOOL_CALL_ID_POLICY;
+        const policy = trait?.toolCallIdPolicy ?? ANTHROPIC_TOOL_CALL_ID_POLICY;
         request = planAnthropicRequest(
           {
             model,
@@ -240,7 +240,7 @@ export function createAnthropicRequester(options?: AnthropicRequesterOptions): L
             extraParams: config.extraParams,
             toolMessageConversion: config.toolMessageConversion,
           },
-          { dialect, betaApi: options?.betaApi },
+          { trait, betaApi: options?.betaApi },
         );
       } catch (error) {
         onEvent?.({ type: 'llm.failed.syntax', error: toLlmSyntaxErrorMessage(error) });
@@ -267,15 +267,15 @@ export function createAnthropicRequester(options?: AnthropicRequesterOptions): L
 
 export function createAnthropicBase(
   options?: AnthropicFormatOptions & LlmRequesterOptions<Anthropic>,
-): ProtocolBase<AnthropicDialect> {
+): ProtocolBase<AnthropicTrait> {
   return {
     capability: getAnthropicModelCapability,
     createRequester: (requesterOptions) => createAnthropicRequester({ ...options, ...requesterOptions }),
   };
 }
 
-export const anthropicBase: ProtocolBase<AnthropicDialect> = createAnthropicBase();
+export const anthropicBase: ProtocolBase<AnthropicTrait> = createAnthropicBase();
 
-export const anthropicBetaBase: ProtocolBase<AnthropicDialect> = createAnthropicBase({
+export const anthropicBetaBase: ProtocolBase<AnthropicTrait> = createAnthropicBase({
   betaApi: true,
 });

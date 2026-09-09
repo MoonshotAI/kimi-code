@@ -1,10 +1,10 @@
 import type { Message, ToolDescription } from '#/llm/message';
-import type { DialectContext, ThinkingStrategy } from '#/llm/protocol/dialect';
+import type { TraitContext, ThinkingStrategy } from '#/llm/protocol/trait';
 import type { ToolCallIdPolicy, ToolMessageConversion } from '#/llm/requester/requester';
 
 import type { OpenAIRawChunk, OpenAIWireMessage } from './contract';
 
-export interface OpenAIDialect {
+export interface OpenAITrait {
   readonly reasoningKey?: string;
   readonly toolCallIdPolicy?: ToolCallIdPolicy;
   readonly toolMessageConversion?: ToolMessageConversion;
@@ -12,29 +12,29 @@ export interface OpenAIDialect {
 
   readonly thinking?: ThinkingStrategy;
 
-  cacheKey?(key: string, ctx: DialectContext): Record<string, unknown> | undefined;
+  cacheKey?(key: string, ctx: TraitContext): Record<string, unknown> | undefined;
 
   maxCompletionTokens?(
     maxCompletionTokens: number,
-    ctx: DialectContext,
+    ctx: TraitContext,
   ): Record<string, unknown> | undefined;
 
-  convertTool?(tool: ToolDescription, ctx: DialectContext): Record<string, unknown> | undefined;
+  convertTool?(tool: ToolDescription, ctx: TraitContext): Record<string, unknown> | undefined;
 
   convertMessage?(
     message: Message,
     converted: OpenAIWireMessage,
-    ctx: DialectContext,
+    ctx: TraitContext,
   ): OpenAIWireMessage | null;
 
   mergeHistory?(
     messages: readonly OpenAIWireMessage[],
-    ctx: DialectContext,
+    ctx: TraitContext,
   ): OpenAIWireMessage[] | undefined;
 
   buildParams?(
     params: Record<string, unknown>,
-    ctx: DialectContext,
+    ctx: TraitContext,
   ): Record<string, unknown> | undefined;
 
   extractUsage?(chunk: OpenAIRawChunk): Record<string, unknown> | null | undefined;

@@ -3,7 +3,7 @@ import { anthropicBetaBase } from '#/llm/requester/bases/anthropic/requester';
 import { openAIBase } from '#/llm/requester/bases/openai/requester';
 import { openAIResponsesBase } from '#/llm/requester/bases/openai-responses/requester';
 
-import { kimiAnthropicDialect, kimiConnection, kimiOpenAIDialect } from './dialect';
+import { kimiAnthropicTrait, kimiConnection, kimiOpenAITrait } from './trait';
 import { classifyKimiQuotaError } from './errors';
 import { kimiMediaContribution } from './media';
 
@@ -12,13 +12,13 @@ export const kimiProvider = createProvider({
   protocols: {
     openai: {
       base: openAIBase,
-      dialect: kimiOpenAIDialect,
+      trait: kimiOpenAITrait,
       connection: kimiConnection,
       convertError: classifyKimiQuotaError,
     },
     anthropic: {
       base: anthropicBetaBase,
-      dialect: kimiAnthropicDialect,
+      trait: kimiAnthropicTrait,
       connection: kimiConnection,
       convertError: classifyKimiQuotaError,
     },

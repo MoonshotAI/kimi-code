@@ -3,24 +3,24 @@ import type { ProviderMediaContribution } from '#/llm/media/upload';
 import type { LlmConnection, LlmModel } from '#/llm/model';
 import type { ProtocolBase, ProtocolName } from '#/llm/protocol/base';
 import type { ProviderConnection } from '#/llm/protocol/connection';
-import type { AnthropicDialect } from '#/llm/requester/bases/anthropic/dialect';
-import type { GoogleGenAIDialect } from '#/llm/requester/bases/google-genai/dialect';
-import type { OpenAIResponsesDialect } from '#/llm/requester/bases/openai-responses/dialect';
-import type { OpenAIDialect } from '#/llm/requester/bases/openai/dialect';
+import type { AnthropicTrait } from '#/llm/requester/bases/anthropic/trait';
+import type { GoogleGenAITrait } from '#/llm/requester/bases/google-genai/trait';
+import type { OpenAIResponsesTrait } from '#/llm/requester/bases/openai-responses/trait';
+import type { OpenAITrait } from '#/llm/requester/bases/openai/trait';
 import type { LlmErrorClassifier, LlmRequester } from '#/llm/requester/requester';
 
-export interface ProtocolDialectMap {
-  readonly openai: OpenAIDialect;
-  readonly openai_responses: OpenAIResponsesDialect;
-  readonly anthropic: AnthropicDialect;
-  readonly 'google-genai': GoogleGenAIDialect;
+export interface ProtocolTraitMap {
+  readonly openai: OpenAITrait;
+  readonly openai_responses: OpenAIResponsesTrait;
+  readonly anthropic: AnthropicTrait;
+  readonly 'google-genai': GoogleGenAITrait;
 }
 
-export type AnyProtocolDialect = ProtocolDialectMap[ProtocolName];
+export type AnyProtocolTrait = ProtocolTraitMap[ProtocolName];
 
 export interface ProtocolVariant<N extends ProtocolName = ProtocolName> {
-  readonly base: ProtocolBase<ProtocolDialectMap[N]>;
-  readonly dialect?: ProtocolDialectMap[N];
+  readonly base: ProtocolBase<ProtocolTraitMap[N]>;
+  readonly trait?: ProtocolTraitMap[N];
   readonly connection?: ProviderConnection;
   readonly convertError?: LlmErrorClassifier;
   readonly capability?: (modelName: string) => ModelCapability | undefined;
@@ -121,7 +121,7 @@ export function createProvider(definition: ProviderDefinition): Provider {
       const variant = variantFor(protocol);
       return variant.base.createRequester({
         connection: variant.connection,
-        dialect: variant.dialect,
+        trait: variant.trait,
         convertError: variant.convertError,
       });
     },

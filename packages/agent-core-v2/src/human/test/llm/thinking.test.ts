@@ -8,7 +8,7 @@ import {
   type Message,
 } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
-import type { DialectContext } from '#/llm/protocol/dialect';
+import type { TraitContext } from '#/llm/protocol/trait';
 import {
   defaultThinkingEffortForModel,
   modelSupportsThinking,
@@ -16,7 +16,7 @@ import {
   resolveThinkingKeep,
   type ModelThinkingMetadata,
 } from '#/llm/thinking';
-import { kimiConnection, kimiOpenAIDialect } from '#/llm-kimi/dialect';
+import { kimiConnection, kimiOpenAITrait } from '#/llm-kimi/trait';
 import { classifyKimiQuotaError } from '#/llm-kimi/errors';
 import { createOpenAIRequester } from '#/llm/requester/bases/openai/requester';
 import type { LlmClientContext, LlmRequestEvent } from '#/llm/requester/requester';
@@ -27,12 +27,12 @@ const model: LlmModel = {
   capability: UNKNOWN_CAPABILITY,
   baseUrl: 'https://example.test/v1',
 };
-const ctx: DialectContext = { model };
+const ctx: TraitContext = { model };
 const messages: readonly Message[] = [createUserMessage('hi')];
 
 const kimiOpenAI = {
   connection: kimiConnection,
-  dialect: kimiOpenAIDialect,
+  trait: kimiOpenAITrait,
   convertError: classifyKimiQuotaError,
 } as const;
 
@@ -102,16 +102,16 @@ function bodyMessages(body: Record<string, unknown>): Record<string, unknown>[] 
   return body['messages'] as Record<string, unknown>[];
 }
 
-describe('kimiOpenAIDialect thinking', () => {
+describe('kimiOpenAITrait thinking', () => {
   it('encodes thinking configs and resolves thinking defaults and keep', () => {
-    expect(kimiOpenAIDialect.strictThinkingValidation).toBe(true);
-    expect(kimiOpenAIDialect.thinking?.({ effort: 'off' }, ctx)).toEqual({
+    expect(kimiOpenAITrait.strictThinkingValidation).toBe(true);
+    expect(kimiOpenAITrait.thinking?.({ effort: 'off' }, ctx)).toEqual({
       kwargs: { thinking: { type: 'disabled' } },
     });
-    expect(kimiOpenAIDialect.thinking?.({ effort: 'on' }, ctx)).toEqual({
+    expect(kimiOpenAITrait.thinking?.({ effort: 'on' }, ctx)).toEqual({
       kwargs: { thinking: { type: 'enabled' } },
     });
-    expect(kimiOpenAIDialect.thinking?.({ effort: 'high', keep: 'all' }, ctx)).toEqual({
+    expect(kimiOpenAITrait.thinking?.({ effort: 'high', keep: 'all' }, ctx)).toEqual({
       kwargs: { thinking: { type: 'enabled', effort: 'high', keep: 'all' } },
       preserveThinking: true,
     });
@@ -170,17 +170,17 @@ describe('kimiOpenAIDialect thinking', () => {
   });
 
   it('preserves thinking only when keep is all and thinking is not disabled', () => {
-    expect(kimiOpenAIDialect.thinking?.({ effort: 'on', keep: 'all' }, ctx)?.preserveThinking).toBe(
+    expect(kimiOpenAITrait.thinking?.({ effort: 'on', keep: 'all' }, ctx)?.preserveThinking).toBe(
       true,
     );
     expect(
-      kimiOpenAIDialect.thinking?.({ effort: 'off', keep: 'all' }, ctx)?.preserveThinking,
+      kimiOpenAITrait.thinking?.({ effort: 'off', keep: 'all' }, ctx)?.preserveThinking,
     ).toBeUndefined();
     expect(
-      kimiOpenAIDialect.thinking?.({ effort: 'on' }, ctx)?.preserveThinking,
+      kimiOpenAITrait.thinking?.({ effort: 'on' }, ctx)?.preserveThinking,
     ).toBeUndefined();
     expect(
-      kimiOpenAIDialect.thinking?.({ effort: 'on', keep: '1' }, ctx)?.preserveThinking,
+      kimiOpenAITrait.thinking?.({ effort: 'on', keep: '1' }, ctx)?.preserveThinking,
     ).toBeUndefined();
   });
 });
@@ -297,7 +297,7 @@ describe('openai requester thinking', () => {
   it('rejects an effort outside the supported list under strict validation', async () => {
     const client = stubOpenAIClient(chatCompletionChunks());
     const requester = createOpenAIRequester({
-      dialect: { strictThinkingValidation: true },
+      trait: { strictThinkingValidation: true },
       clientFactory: client.clientFactory,
     });
     const events: LlmRequestEvent[] = [];
@@ -400,7 +400,7 @@ describe('openai requester thinking', () => {
   it('selects the outbound reasoning key from the trait declaration or inbound detection', async () => {
     const declared = stubOpenAIClient(chatCompletionChunks());
     const declaredRequester = createOpenAIRequester({
-      dialect: { reasoningKey: 'reasoning' },
+      trait: { reasoningKey: 'reasoning' },
       clientFactory: declared.clientFactory,
     });
     await declaredRequester.generate(

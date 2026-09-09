@@ -1,8 +1,8 @@
 import type { ProtocolEndpoint, ProviderConnection } from '#/llm/protocol/connection';
 import type { ContentPart, ToolDescription } from '#/llm/message';
-import type { AnthropicDialect } from '#/llm/requester/bases/anthropic/dialect';
+import type { AnthropicTrait } from '#/llm/requester/bases/anthropic/trait';
 import { CONTEXT_MANAGEMENT_BETA } from '#/llm/requester/bases/anthropic/format';
-import type { OpenAIDialect } from '#/llm/requester/bases/openai/dialect';
+import type { OpenAITrait } from '#/llm/requester/bases/openai/trait';
 import type { OpenAIWireToolCall } from '#/llm/requester/bases/openai/lower';
 
 import { normalizeKimiToolSchema } from './schema';
@@ -57,7 +57,7 @@ function convertKimiTool(tool: ToolDescription): Record<string, unknown> {
   };
 }
 
-export const kimiOpenAIDialect: OpenAIDialect = {
+export const kimiOpenAITrait: OpenAITrait = {
   strictThinkingValidation: true,
 
   toolMessageConversion: 'keep_parts',
@@ -141,7 +141,7 @@ export const kimiOpenAIDialect: OpenAIDialect = {
   },
 };
 
-export const kimiAnthropicDialect: AnthropicDialect = {
+export const kimiAnthropicTrait: AnthropicTrait = {
   thinking: (thinking) => {
     if (thinking.effort === 'off') {
       return { kwargs: { thinking: { type: 'disabled' }, betaFeatures: [CONTEXT_MANAGEMENT_BETA] } };

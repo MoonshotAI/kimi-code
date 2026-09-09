@@ -25,10 +25,10 @@ import {
   KIMI_API_KEY_ENV,
   KIMI_BASE_URL_ENV,
   KIMI_DEFAULT_BASE_URL,
-  kimiAnthropicDialect,
+  kimiAnthropicTrait,
   kimiConnection,
-  kimiOpenAIDialect,
-} from '#/llm-kimi/dialect';
+  kimiOpenAITrait,
+} from '#/llm-kimi/trait';
 import { classifyKimiQuotaError } from '#/llm-kimi/errors';
 import { anthropicProvider, googleGenAIConnection, openaiProvider } from '#/llm/provider/providers/standard';
 import type { LlmClientContext, LlmRequester, LlmRequestEvent } from '#/llm/requester/requester';
@@ -55,13 +55,13 @@ const messages: readonly Message[] = [createUserMessage('hi')];
 
 const kimiOpenAI = {
   connection: kimiConnection,
-  dialect: kimiOpenAIDialect,
+  trait: kimiOpenAITrait,
   convertError: classifyKimiQuotaError,
 } as const;
 
 const kimiAnthropic = {
   connection: kimiConnection,
-  dialect: kimiAnthropicDialect,
+  trait: kimiAnthropicTrait,
   convertError: classifyKimiQuotaError,
 } as const;
 
@@ -669,7 +669,7 @@ describe('convertTool', () => {
     expect(properties['unit']?.['type']).toBe('string');
   });
 
-  it('uses the default tool mapping without a dialect', async () => {
+  it('uses the default tool mapping without a trait', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
     const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     await requester.generate(
@@ -712,7 +712,7 @@ describe('message-level tools', () => {
     ]);
   });
 
-  it('drops system message tools without a dialect', async () => {
+  it('drops system message tools without a trait', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
     const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     await requester.generate(
@@ -726,7 +726,7 @@ describe('message-level tools', () => {
 });
 
 describe('withMaxCompletionTokens', () => {
-  it('encodes max completion tokens via the kimi dialect', async () => {
+  it('encodes max completion tokens via the kimi trait', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
     const requester = createOpenAIRequester({
       ...kimiOpenAI,
@@ -741,7 +741,7 @@ describe('withMaxCompletionTokens', () => {
     expect(client.body()['max_tokens']).toBeUndefined();
   });
 
-  it('uses max_completion_tokens for reasoning models without a dialect', async () => {
+  it('uses max_completion_tokens for reasoning models without a trait', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
     const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     await requester.generate(
@@ -753,7 +753,7 @@ describe('withMaxCompletionTokens', () => {
     expect(client.body()['max_tokens']).toBeUndefined();
   });
 
-  it('uses max_tokens for other models without a dialect', async () => {
+  it('uses max_tokens for other models without a trait', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
     const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     await requester.generate(
@@ -815,10 +815,10 @@ describe('withMaxCompletionTokens', () => {
 });
 
 describe('buildParams', () => {
-  it('lets the dialect reshape the final params', async () => {
+  it('lets the trait reshape the final params', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
     const requester = createOpenAIRequester({
-      dialect: { buildParams: (params) => ({ ...params, x_custom: 1 }) },
+      trait: { buildParams: (params) => ({ ...params, x_custom: 1 }) },
       clientFactory: client.clientFactory,
     });
     await requester.generate(
@@ -871,7 +871,7 @@ describe('extractUsage', () => {
     expect(usage?.inputOther).toBe(4);
   });
 
-  it('parses top-level usage without a dialect', async () => {
+  it('parses top-level usage without a trait', async () => {
     const client = stubOpenAIClient([
       {
         id: 'chatcmpl-1',
@@ -1008,10 +1008,10 @@ describe('toolCallIdPolicy', () => {
     expect(bodyMessages[2]?.['tool_call_id']).toBe('call_abc');
   });
 
-  it('lets the dialect override the policy', async () => {
+  it('lets the trait override the policy', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
     const requester = createOpenAIRequester({
-      dialect: {
+      trait: {
         toolCallIdPolicy: {
           normalize: (id) => sanitizeToolCallId(id, 4),
           maxLength: 4,
@@ -1067,10 +1067,10 @@ describe('toolCallIdPolicy', () => {
 
 
 describe('mergeHistory', () => {
-  it('lets the dialect merge the converted history', async () => {
+  it('lets the trait merge the converted history', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
     const requester = createOpenAIRequester({
-      dialect: { mergeHistory: (history) => [...history, { role: 'user', content: 'extra' }] },
+      trait: { mergeHistory: (history) => [...history, { role: 'user', content: 'extra' }] },
       clientFactory: client.clientFactory,
     });
     await requester.generate(
@@ -1084,11 +1084,11 @@ describe('mergeHistory', () => {
 });
 
 describe('request pipeline', () => {
-  it('composes format stages and dialect hooks in a fixed order', async () => {
+  it('composes format stages and trait hooks in a fixed order', async () => {
     const order: string[] = [];
     const client = stubOpenAIClient(chatCompletionChunks);
     const requester = createOpenAIRequester({
-      dialect: {
+      trait: {
         cacheKey: (key) => {
           order.push('cacheKey');
           return { prompt_cache_key: key };
@@ -1197,7 +1197,7 @@ describe('toolMessageConversion request config', () => {
     ]);
   });
 
-  it('lets the request config override the dialect default', async () => {
+  it('lets the request config override the trait default', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
     const requester = createOpenAIRequester({
       ...kimiOpenAI,
@@ -1231,11 +1231,11 @@ describe('toolMessageConversion request config', () => {
   });
 });
 
-describe('anthropic dialect', () => {
-  it('lets the dialect reshape messages, history, and tools', async () => {
+describe('anthropic trait', () => {
+  it('lets the trait reshape messages, history, and tools', async () => {
     const client = stubAnthropicClient(anthropicStreamEvents);
     const requester = createAnthropicRequester({
-      dialect: {
+      trait: {
         convertMessage: (message, converted) => {
           if (extractText(message) === 'drop me') {
             return null;
@@ -1410,7 +1410,7 @@ describe('anthropic cache control', () => {
 
 
 describe('anthropic thinking kwargs', () => {
-  it('applies the kimi thinking dialect, the anthropic-beta protocol, and thinking echo rules', async () => {
+  it('applies the kimi thinking trait, the anthropic-beta protocol, and thinking echo rules', async () => {
     const client = stubAnthropicClient([
       { type: 'message_start', message: { usage: { input_tokens: 10, output_tokens: 1 } } },
       {
@@ -1485,7 +1485,7 @@ describe('anthropic thinking kwargs', () => {
       }),
     };
     const betaRequester = createAnthropicRequester({
-      dialect: betaFeatureDialect,
+      trait: betaFeatureDialect,
       betaApi: true,
       clientFactory: client.clientFactory,
     });
@@ -1515,7 +1515,7 @@ describe('anthropic thinking kwargs', () => {
     ]);
 
     const plainBetaRequester = createAnthropicRequester({
-      dialect: betaFeatureDialect,
+      trait: betaFeatureDialect,
       clientFactory: client.clientFactory,
     });
     await plainBetaRequester.generate(

@@ -1,33 +1,33 @@
 import type { ToolDescription } from '#/llm/message';
-import type { DialectContext, ThinkingStrategy } from '#/llm/protocol/dialect';
+import type { TraitContext, ThinkingStrategy } from '#/llm/protocol/trait';
 import type { ToolCallIdPolicy, ToolMessageConversion } from '#/llm/requester/requester';
 
 import type { OpenAIResponsesRawChunk, ResponsesInputItem } from './contract';
 
-export interface OpenAIResponsesDialect {
+export interface OpenAIResponsesTrait {
   readonly toolCallIdPolicy?: ToolCallIdPolicy;
   readonly toolMessageConversion?: ToolMessageConversion;
   readonly strictThinkingValidation?: boolean;
 
   readonly thinking?: ThinkingStrategy;
 
-  cacheKey?(key: string, ctx: DialectContext): Record<string, unknown> | undefined;
+  cacheKey?(key: string, ctx: TraitContext): Record<string, unknown> | undefined;
 
   maxCompletionTokens?(
     maxCompletionTokens: number,
-    ctx: DialectContext,
+    ctx: TraitContext,
   ): Record<string, unknown> | undefined;
 
-  convertTool?(tool: ToolDescription, ctx: DialectContext): Record<string, unknown> | undefined;
+  convertTool?(tool: ToolDescription, ctx: TraitContext): Record<string, unknown> | undefined;
 
   mergeHistory?(
     messages: readonly ResponsesInputItem[],
-    ctx: DialectContext,
+    ctx: TraitContext,
   ): ResponsesInputItem[] | undefined;
 
   buildParams?(
     params: Record<string, unknown>,
-    ctx: DialectContext,
+    ctx: TraitContext,
   ): Record<string, unknown> | undefined;
 
   extractUsage?(chunk: OpenAIResponsesRawChunk): Record<string, unknown> | null | undefined;

@@ -1,7 +1,7 @@
 import type { LlmModel } from '#/llm/model';
 import type { ThinkingRequestOptions } from '#/llm/thinking';
 
-export interface DialectContext {
+export interface TraitContext {
   readonly model: LlmModel;
 }
 
@@ -12,12 +12,12 @@ export interface ThinkingApplication {
 
 export type ThinkingStrategy = (
   thinking: ThinkingRequestOptions,
-  ctx: DialectContext,
+  ctx: TraitContext,
 ) => ThinkingApplication | undefined;
 
 export type ThinkingFallback = (
   thinking: ThinkingRequestOptions,
-  ctx: DialectContext,
+  ctx: TraitContext,
 ) => Record<string, unknown> | undefined;
 
 export interface ResolvedThinking {
@@ -29,7 +29,7 @@ export function applyThinking(
   kwargs: Record<string, unknown>,
   thinking: ThinkingRequestOptions,
   strategy: ThinkingStrategy | undefined,
-  ctx: DialectContext,
+  ctx: TraitContext,
   fallback?: ThinkingFallback,
 ): ResolvedThinking {
   const applied = strategy?.(thinking, ctx);
