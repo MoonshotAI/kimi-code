@@ -979,7 +979,7 @@ function collectSessionAgentHandles(
  * Stop producers, drain prompts, and cancel turns so closing records exist
  * before the wire flush; returns a release holding a guard per loop.
  */
-async function quiesceSessionAgents(
+export async function quiesceSessionAgents(
   session: ISessionScopeHandle,
   mainAgent: IAgentScopeHandle,
 ): Promise<(() => void) | undefined> {
@@ -1013,11 +1013,17 @@ async function quiesceSessionAgents(
   );
   // Repeat until every queue is empty and every loop freezable: a prompt can
   // still surface from the launch window or a cancelled turn's settle chain.
+  // Shutdown cancellation is programmatic, not a user interruption: pass an
+  // explicit reason so straggler turns end as 'aborted' and do not record the
+  // interruption reminder. Constructed locally (AbortError shape) rather than
+  // imported from the engine, keeping this file's dependency surface unchanged.
+  const shutdownReason = new Error('Session closed');
+  shutdownReason.name = 'AbortError';
   for (;;) {
-    await Promise.allSettled(promptServices.map((service) => service.drain()));
+    await Promise.allSettled(promptServices.map((service) => service.drain(shutdownReason)));
     for (const loop of loops) {
-      for (const queueId of loop.status().pendingPromptIds) loop.cancelQueued(queueId);
-      loop.cancel();
+      for (const queueId of loop.status().pendingPromptIds) loop.cancelQueued(queueId, shutdownReason);
+      loop.cancel(undefined, shutdownReason);
     }
     await Promise.allSettled(loops.map((loop) => loop.settled()));
     const guards: { dispose(): void }[] = [];

@@ -32,6 +32,7 @@ import {
   Error2,
   ErrorCodes,
   sessionMediaOriginalsDir,
+  userCancellationReason,
   type ISessionScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
@@ -457,7 +458,7 @@ const promptActions: ActionTable<'abort' | 'steer', PromptActionExtra> = {
 
 async function abortPromptAction(ctx: PromptActionCtx): Promise<void> {
   const { resolved, session_id, req, reply, id } = ctx;
-  resolved.prompt.abort(id);
+  resolved.prompt.abort(id, userCancellationReason());
   requestLog(req)?.info({ session_id, prompt_id: id }, 'prompt aborted');
   reply.send(okEnvelope({ aborted: true }, req.id));
 }

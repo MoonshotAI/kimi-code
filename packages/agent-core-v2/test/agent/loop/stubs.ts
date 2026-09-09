@@ -1,5 +1,6 @@
 import { toDisposable } from '#/_base/di/lifecycle';
 import { Event } from '#/_base/event';
+import { userCancellationReason } from '#/_base/utils/abort';
 import type { IAgentLoopService, LoopErrorHandler, LoopErrorHandlerRegistrationOptions, LoopNotify, LoopNotifyHandle, LoopPromptSubmit, Turn, TurnResult } from '#/agent/loop/loop';
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { BeforeToolExecuteEvent, ToolDidExecuteContext, WillExecuteToolEvent } from '#/agent/toolExecutor/toolHooks';
@@ -88,7 +89,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
     activitySnapshot() { return {}; },
     cancel(turnId, reason) { cancels.push({ turnId, reason }); if (active === undefined || (turnId !== undefined && active.id !== turnId)) return false; active.cancel(reason); return true; },
     cancelQueued() { return false; },
-    cancelFromUser(turnId) { stub.cancel(turnId); },
+    cancelFromUser(turnId) { stub.cancel(turnId, userCancellationReason()); },
     tryAcquireQuiescence: () => toDisposable(() => {}),
     hasPendingRequests: hasPending,
     registerLoopErrorHandler: errorHandlers.register,

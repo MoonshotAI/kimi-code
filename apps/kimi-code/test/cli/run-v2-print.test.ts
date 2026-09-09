@@ -1,4 +1,12 @@
-import { PRINT_WAIT_CEILING_S_DEFAULT } from '@moonshot-ai/agent-core-v2';
+import {
+  IAgentLifecycleService,
+  IAgentLoopService,
+  IAgentPromptService,
+  IAgentTaskService,
+  PRINT_WAIT_CEILING_S_DEFAULT,
+  type IAgentScopeHandle,
+  type ISessionScopeHandle,
+} from '@moonshot-ai/agent-core-v2';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -6,6 +14,7 @@ import {
   createPrintTurnEndings,
   formatTrustGatedMcpWarning,
   PrintSteeredTurnFailedError,
+  quiesceSessionAgents,
   type PrintTurnEnding,
   type PrintTurnEndings,
 } from '#/cli/v2/run-v2-print';
@@ -518,5 +527,66 @@ describe('formatTrustGatedMcpWarning', () => {
     ]);
     expect(text).toContain('skipped 2 project-level MCP servers:');
     expect(text).toContain('api (http: https://example.com/mcp), fs (stdio: node server.js)');
+  });
+});
+
+describe('quiesceSessionAgents', () => {
+  it('cancels stragglers with a programmatic shutdown reason, not a user cancellation', async () => {
+    const drain = vi.fn(async (_reason?: unknown) => {});
+    const cancelQueued = vi.fn((_queueId?: unknown, _reason?: unknown) => true);
+    const cancel = vi.fn((_turnId?: unknown, _reason?: unknown) => true);
+    const disposeGuard = vi.fn();
+    const stopAllOnExit = vi.fn(async () => {});
+    const services = new Map<unknown, unknown>([
+      [IAgentTaskService, { stopAllOnExit }],
+      [
+        IAgentPromptService,
+        { drain, list: () => ({ launching: false, active: undefined, pending: [] }) },
+      ],
+      [
+        IAgentLoopService,
+        {
+          status: () => ({ pendingPromptIds: ['q1'] }),
+          cancelQueued,
+          cancel,
+          settled: () => Promise.resolve(),
+          tryAcquireQuiescence: () => ({ dispose: disposeGuard }),
+        },
+      ],
+    ]);
+    const mainAgent = {
+      accessor: {
+        get: (token: unknown) => {
+          const service = services.get(token);
+          if (service === undefined) throw new Error('unknown service');
+          return service;
+        },
+      },
+    } as unknown as IAgentScopeHandle;
+    const session = {
+      accessor: {
+        get: (token: unknown) => {
+          if (token === IAgentLifecycleService) {
+            return { list: () => [], handleOf: () => undefined };
+          }
+          throw new Error('unknown service');
+        },
+      },
+    } as unknown as ISessionScopeHandle;
+
+    const release = await quiesceSessionAgents(session, mainAgent);
+
+    expect(stopAllOnExit).toHaveBeenCalledWith('Session closed');
+    expect(drain).toHaveBeenCalledTimes(1);
+    const reason = drain.mock.calls[0]![0] as Error & { userCancelled?: boolean };
+    expect(reason).toBeInstanceOf(Error);
+    expect(reason.name).toBe('AbortError');
+    expect(reason.message).toBe('Session closed');
+    expect(reason.userCancelled).not.toBe(true);
+    expect(cancelQueued).toHaveBeenCalledWith('q1', reason);
+    expect(cancel).toHaveBeenCalledWith(undefined, reason);
+
+    release?.();
+    expect(disposeGuard).toHaveBeenCalled();
   });
 });

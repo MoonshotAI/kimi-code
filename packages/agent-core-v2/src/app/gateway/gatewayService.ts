@@ -11,6 +11,7 @@ import { ILogService } from '#/_base/log/log';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { userCancellationReason } from '#/_base/utils/abort';
 
 import { IRestGateway, IWSGateway } from './gateway';
 
@@ -80,7 +81,9 @@ export class RestGateway implements IRestGateway {
     return turn.id === undefined ? undefined : { turn_id: turn.id };
   }
   cancel(sessionId: string, agentId: string, reason?: string): Promise<void> {
-    this.agent(sessionId, agentId).accessor.get(IAgentLoopService).cancel(undefined, reason);
+    this.agent(sessionId, agentId)
+      .accessor.get(IAgentLoopService)
+      .cancel(undefined, reason ?? userCancellationReason());
     return Promise.resolve();
   }
   getStatus(sessionId: string): Promise<unknown> {

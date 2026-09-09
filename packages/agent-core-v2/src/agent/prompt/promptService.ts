@@ -6,7 +6,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import { extractImageCompressionCaptions, gateImageFormatParts } from '#/agent/media/image-compress';
-import { userCancellationReason } from '#/_base/utils/abort';
+import { abortError } from '#/_base/utils/abort';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { newMessageId } from '#/agent/contextMemory/messageId';
 import { USER_PROMPT_ORIGIN, type ContextMessage } from '#/agent/contextMemory/types';
@@ -467,7 +467,7 @@ export class AgentPromptService implements IAgentPromptService {
     return selected.map((item) => item.handle);
   }
 
-  abort(promptId: string, reason: Error = userCancellationReason()): boolean {
+  abort(promptId: string, reason: Error = abortError('Prompt cancelled')): boolean {
     if (this.active?.id === promptId) { this.active.turn.cancel(reason); return true; }
     const index = this.pending.findIndex((item) => item.id === promptId);
     if (index < 0) throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, `prompt ${promptId} not found`);
@@ -478,7 +478,7 @@ export class AgentPromptService implements IAgentPromptService {
     return true;
   }
 
-  async drain(reason: Error = userCancellationReason()): Promise<void> {
+  async drain(reason: Error = abortError('Prompt cancelled')): Promise<void> {
     for (const item of this.pending.slice()) this.abort(item.id, reason);
     if (this.active !== undefined) this.abort(this.active.id, reason);
   }

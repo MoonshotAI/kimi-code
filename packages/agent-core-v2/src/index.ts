@@ -663,6 +663,12 @@ export * from '#/agent/fullCompaction/compactionInstruction';
 export * from '#/agent/llmRequester/llmRequester';
 export * from '#/agent/llmRequester/llmRequesterService';
 export * from '#/agent/llmRequester/llmRequestOps';
+export {
+  abortError,
+  isUserCancellation,
+  UserCancellationError,
+  userCancellationReason,
+} from '#/_base/utils/abort';
 export * from '#/_base/utils/promise';
 export * from '#/_base/utils/retry';
 export * from '#/_base/utils/timer';

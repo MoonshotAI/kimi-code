@@ -327,7 +327,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   cancel(turnId?: number, reason?: unknown): boolean {
-    const cancellation = reason ?? userCancellationReason();
+    const cancellation = reason ?? abortError('Turn cancelled');
     return this.cancelActiveTurn(turnId, cancellation);
   }
 
@@ -340,7 +340,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   private cancelReservation(reservation: TurnReservation, reason?: unknown): boolean {
-    const cancellation = reason ?? userCancellationReason();
+    const cancellation = reason ?? abortError('Turn cancelled');
     if (this.active?.reservation === reservation) {
       return this.cancelActiveTurn(undefined, cancellation);
     }
@@ -363,7 +363,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         trace_id: status.activeTraceId,
       });
     }
-    this.cancel(turnId);
+    this.cancel(turnId, userCancellationReason());
   }
 
   tryAcquireQuiescence(): IDisposable | undefined {

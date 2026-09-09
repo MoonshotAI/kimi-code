@@ -1431,7 +1431,7 @@ describe('interruption reminder', () => {
 
   function cancelOnFirstDelta(): IDisposable {
     return ctx.get(IEventBus).subscribe(AssistantDelta, () => {
-      loop.cancel();
+      loop.cancelFromUser();
     });
   }
 
@@ -1511,7 +1511,10 @@ describe('interruption reminder', () => {
     const subscription = ctx.get(IEventBus).subscribe(AssistantDelta, () => {
       if (cancelled) return;
       cancelled = true;
-      results.push(loop.cancel(), loop.cancel());
+      results.push(
+        loop.cancel(undefined, userCancellationReason()),
+        loop.cancel(undefined, userCancellationReason()),
+      );
     });
     const turn = submitTurn(loop, 'Hello').turn;
     await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
@@ -1545,6 +1548,26 @@ describe('interruption reminder', () => {
     });
     expect(interruptionReminders()).toHaveLength(0);
 
+    const cancelRecord = ctx.allEvents.find(
+      (entry) => entry.type === '[wire]' && entry.event === 'turn.cancel',
+    );
+    expect(cancelRecord?.args).toMatchObject({ target: 'active', reason: 'aborted' });
+    const turnEnded = ctx.allEvents.find(
+      (entry) => entry.type === '[rpc]' && entry.event === 'turn.ended',
+    );
+    expect(turnEnded?.args).toMatchObject({ reason: 'cancelled', interruptReason: 'aborted' });
+  });
+
+  it('treats a reason-less cancel as a programmatic abort', async () => {
+    ctx.mockNextResponse({ type: 'text', text: 'partial answer' });
+    const subscription = ctx.get(IEventBus).subscribe(AssistantDelta, () => {
+      loop.cancel();
+    });
+    const turn = submitTurn(loop, 'Hello').turn;
+    await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
+    subscription.dispose();
+
+    expect(interruptionReminders()).toHaveLength(0);
     const cancelRecord = ctx.allEvents.find(
       (entry) => entry.type === '[wire]' && entry.event === 'turn.cancel',
     );
@@ -1598,11 +1621,11 @@ describe('interruption reminder', () => {
 
     const active = submitTurn(loop, 'active').turn;
     const queued = submitTurn(loop, 'queued').turn;
-    expect(queued.cancel()).toBe(true);
+    expect(queued.cancel(userCancellationReason())).toBe(true);
     await expect(queued.result).resolves.toMatchObject({ type: 'cancelled', steps: 0 });
     await entered;
     release();
-    loop.cancel(active.id);
+    loop.cancelFromUser(active.id);
     await expect(active.result).resolves.toMatchObject({ type: 'cancelled' });
 
     expect(interruptionReminders()).toHaveLength(1);
@@ -1655,7 +1678,7 @@ describe('interruption reminder', () => {
   it('drops unsigned thinking but keeps signed thinking on user cancel', async () => {
     ctx.mockNextResponse({ type: 'think', think: 'pondering' }, { type: 'text', text: 'answer' });
     const subscription = ctx.get(IEventBus).subscribe(ThinkingDelta, () => {
-      loop.cancel();
+      loop.cancelFromUser();
     });
     const turn = submitTurn(loop, 'Hello').turn;
     await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
@@ -1673,7 +1696,7 @@ describe('interruption reminder', () => {
       { type: 'text', text: 'partial answer' },
     );
     const second = ctx.get(IEventBus).subscribe(AssistantDelta, () => {
-      loop.cancel();
+      loop.cancelFromUser();
     });
     const secondTurn = submitTurn(loop, 'Again').turn;
     await expect(secondTurn.result).resolves.toMatchObject({ type: 'cancelled' });
@@ -1715,7 +1738,7 @@ describe('interruption reminder', () => {
 
     ctx.mockNextResponse({ type: 'text', text: 'retried answer' });
     const onStepStarted = ctx.get(IEventBus).subscribe(TurnStepStarted, () => {
-      loop.cancel();
+      loop.cancelFromUser();
     });
     const retryTurn = loop.submit({
       message: { role: 'user', content: [], toolCalls: [], origin: { kind: 'retry' } },
@@ -1770,8 +1793,8 @@ describe('interruption reminder', () => {
       );
       const turn = submitTurn(localLoop, 'do work').turn;
       await slowToolStarted.promise;
-      localLoop.cancel(turn.id);
-      localLoop.cancel(turn.id);
+      localLoop.cancelFromUser(turn.id);
+      localLoop.cancelFromUser(turn.id);
       await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
 
       expect(contentPartRecordsIn(local)).toBe(2);
