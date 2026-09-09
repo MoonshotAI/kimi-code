@@ -59,6 +59,8 @@ export const TOWER_MODE_TOOLS: readonly string[] = ['TowerInit', ...TOWER_TOOL_N
 
 export const TOWER_INBOX_WAKE_VARIANT = 'tower_inbox';
 
+const WAKE_SUBJECT_PREVIEW_MAX = 120;
+
 export class AgentTowerService extends Disposable implements IAgentTowerService {
   declare readonly _serviceBrand: undefined;
 
@@ -468,13 +470,17 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     this.inboxWakeSignals = 0;
     this.inboxWakePending = true;
     const countText = count === 1 ? '1 new tower inbox message' : `${String(count)} new tower inbox messages`;
+    const subject =
+      latest.subject.length > WAKE_SUBJECT_PREVIEW_MAX
+        ? `${latest.subject.slice(0, WAKE_SUBJECT_PREVIEW_MAX)}…`
+        : latest.subject;
     this.inboxWakeHandle = this.loop.notify({
       message: {
         role: 'user',
         content: [
           {
             type: 'text',
-            text: `${countText} — latest from ${latest.from}: "${latest.subject}". Read and route with TowerInbox.`,
+            text: `${countText} — latest from ${latest.from}: "${subject}". Read and route with TowerInbox.`,
           },
         ],
         toolCalls: [],

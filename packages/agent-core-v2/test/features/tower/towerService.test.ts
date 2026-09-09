@@ -2347,6 +2347,20 @@ describe('AgentTowerService', () => {
       }
     });
 
+    it('truncates a very long subject in the wake preview', async () => {
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      publishInbox({ from: 'w1', to: 'tower', subject: 'x'.repeat(500) });
+      await flushWake();
+      const messages = drainWakeMessages();
+
+      expect(messages).toHaveLength(1);
+      const text = wakeText(messages[0]!);
+      expect(text).not.toContain('x'.repeat(500));
+      expect(text).toContain(`${'x'.repeat(120)}…`);
+    });
+
     it('does not respond on a non-main agent', async () => {
       ix.stub(
         IAgentScopeContext,
