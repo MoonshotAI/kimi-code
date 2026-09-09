@@ -259,6 +259,13 @@ describe('SessionMediaStoreService', () => {
     ['text/html', '<p>hello</p>', '.html'],
     ['application/json', '{"a":1}', '.json'],
     ['application/example+json', '{"a":1}', '.json'],
+    ['application/xml', '<item>one</item>', '.xml'],
+    ['application/example+xml', '<item>one</item>', '.xml'],
+    ['application/yaml', 'item: one', '.yaml'],
+    ['application/example+yaml', 'item: one', '.yaml'],
+    ['application/javascript', 'const item = 1;', '.js'],
+    ['application/toml', 'item = 1', '.toml'],
+    ['application/x-www-form-urlencoded', 'item=one', '.txt'],
     ['text/x-example', 'example text', '.txt'],
   ])('preserves %s blobs with a readable text extension', async (mimeType, body, extension) => {
     const bytes = Buffer.from(body);

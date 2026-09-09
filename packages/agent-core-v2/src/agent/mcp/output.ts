@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from 'node:util';
 import type { ContentPart } from '#human/llm/message';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ExecutableToolResult } from '#/tool/toolContract';
+import { textExtensionForMime } from '#/_base/utils/fileMeta';
 
 import { compressImageContentParts, gateImageFormatParts } from '#/agent/media/image-compress';
 import {
@@ -298,13 +299,9 @@ async function saveAttachment(
   signal?.throwIfAborted();
   const mime = mimeType.split(';')[0]!.trim().toLowerCase();
   const hash = createHash('sha256').update(mime).update('\0').update(bytes).digest('hex');
-  const ext = mime === 'text/csv' ? '.csv'
-    : mime === 'text/html' ? '.html'
-    : mime === 'application/json' || mime.endsWith('+json') ? '.json'
-    : mime.startsWith('text/') ? '.txt'
-    : mime === 'application/pdf' ? '.pdf'
+  const ext = mime === 'application/pdf' ? '.pdf'
     : mime === 'image/svg+xml' ? (bytes[0] === 0x1f && bytes[1] === 0x8b ? '.svgz' : '.svg')
-      : mediaExtensionForMime(mime) ?? '.bin';
+      : textExtensionForMime(mime) ?? mediaExtensionForMime(mime) ?? '.bin';
   const fileId = `f_mcp_${hash}`;
   const path = await store.materialize({
     fileId,
