@@ -18,8 +18,6 @@ export interface Slice<Name extends string = string, S = any> {
   readonly name: Name;
   readonly initialState: () => S;
   readonly reducers: Record<string, (draft: S, event: any, ctx: FoldContext) => void | S>;
-  readonly serialize?: (state: S) => unknown;
-  readonly deserialize?: (raw: unknown) => S;
 }
 
 export function createSlice<Name extends string, S>(def: Slice<Name, S>): Slice<Name, S> {

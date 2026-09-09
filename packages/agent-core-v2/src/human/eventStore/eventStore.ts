@@ -5,7 +5,7 @@ import { StoreError } from '#/store/types';
 
 import type { ExternalEvent, InternalEvent } from './events';
 import { eventSchemaFor, parseEvent, validateEvent } from './events';
-import type { JournalRecord, StoreJournal } from './journal';
+import type { JournalRecord, StoreJournal, SyncStoreJournal } from './journal';
 import type { FoldContext, Slice } from './slice';
 
 export type SliceMap = Record<string, Slice<string, any>>;
@@ -23,7 +23,6 @@ export type Cause<SM extends SliceMap = SliceMap> =
 export interface EventStoreOptions<SM extends SliceMap> {
   journal: StoreJournal;
   slices: SM;
-  snapshot?: { everyEvents?: number } | false;
   drainLimit?: number;
   onError?: (error: unknown) => void;
 }
@@ -44,10 +43,7 @@ export interface EventStore<SM extends SliceMap> {
   close(): Promise<void>;
 }
 
-const SNAPSHOT_ENTRY_TYPE = 'snapshot';
-const SNAPSHOT_ENTRY_KIND = 'snapshot';
 const EVENT_ENTRY_KIND = 'event';
-const DEFAULT_SNAPSHOT_EVERY_EVENTS = 500;
 const DEFAULT_DRAIN_LIMIT = 100;
 
 type Listener<SM extends SliceMap> = (state: CombinedState<SM>, cause: Cause<SM>) => void;
@@ -60,14 +56,20 @@ export async function createEventStore<SM extends SliceMap>(
   return store;
 }
 
+export function createEventStoreSync<SM extends SliceMap>(
+  opts: EventStoreOptions<SM> & { journal: SyncStoreJournal },
+): EventStore<SM> {
+  const store = new EventStoreImpl(opts);
+  store.refoldSync(opts.journal);
+  return store;
+}
+
 class EventStoreImpl<SM extends SliceMap> implements EventStore<SM> {
   private journal: StoreJournal;
   private slices: SliceMap;
   private state: Record<string, unknown>;
   private phaseValue: 'open' | 'closed' = 'open';
   private tail: Promise<unknown> = Promise.resolve();
-  private eventsSinceSnapshot = 0;
-  private readonly snapshotEvery: number | false;
   private readonly drainLimit: number;
   private readonly report: (error: unknown) => void;
   private readonly listeners = new Set<Listener<SM>>();
@@ -76,8 +78,6 @@ class EventStoreImpl<SM extends SliceMap> implements EventStore<SM> {
     this.journal = opts.journal;
     this.slices = { ...opts.slices };
     this.state = {};
-    this.snapshotEvery =
-      opts.snapshot === false ? false : (opts.snapshot?.everyEvents ?? DEFAULT_SNAPSHOT_EVERY_EVENTS);
     this.drainLimit = opts.drainLimit ?? DEFAULT_DRAIN_LIMIT;
     this.report = opts.onError ?? ((error) => console.error(error));
   }
@@ -179,36 +179,23 @@ class EventStoreImpl<SM extends SliceMap> implements EventStore<SM> {
     for await (const record of journal.read()) {
       records.push(record);
     }
-    let snapshotIndex = -1;
-    for (let i = records.length - 1; i >= 0; i--) {
-      if (records[i]?.kind === SNAPSHOT_ENTRY_KIND) {
-        snapshotIndex = i;
-        break;
-      }
-    }
-    const saved =
-      snapshotIndex >= 0
-        ? (((records[snapshotIndex] as JournalRecord).data as { slices?: Record<string, unknown> })
-            .slices ?? {})
-        : {};
+    this.foldRecords(records);
+  }
+
+  refoldSync(journal: SyncStoreJournal): void {
+    this.foldRecords(journal.readSync());
+  }
+
+  private foldRecords(records: JournalRecord[]): void {
     const seeded: Record<string, unknown> = {};
     for (const [name, slice] of Object.entries(this.slices)) {
-      seeded[name] =
-        name in saved
-          ? slice.deserialize !== undefined
-            ? slice.deserialize(saved[name])
-            : saved[name]
-          : slice.initialState();
+      seeded[name] = slice.initialState();
     }
     this.state = seeded;
-    let sinceSnapshot = 0;
-    for (let i = snapshotIndex + 1; i < records.length; i++) {
-      const record = records[i] as JournalRecord;
+    for (const record of records) {
       if (record.kind !== EVENT_ENTRY_KIND) continue;
-      sinceSnapshot += 1;
       this.replayRecord(record);
     }
-    this.eventsSinceSnapshot = sinceSnapshot;
   }
 
   private replayRecord(record: JournalRecord): void {
@@ -243,7 +230,6 @@ class EventStoreImpl<SM extends SliceMap> implements EventStore<SM> {
       const entry = await this.journal.append({ type: event.type, kind: EVENT_ENTRY_KIND, data: event });
       entries.push(entry);
       causes.push({ kind: 'event', event, entry }, ...internalCauses);
-      this.maybeSnapshot();
     }
     this.notify(causes);
     return entries[entries.length - 1] as EntryLine;
@@ -313,20 +299,6 @@ class EventStoreImpl<SM extends SliceMap> implements EventStore<SM> {
       }
     }
     return causes;
-  }
-
-  private maybeSnapshot(): void {
-    if (this.snapshotEvery === false) return;
-    this.eventsSinceSnapshot += 1;
-    if (this.eventsSinceSnapshot < this.snapshotEvery) return;
-    this.eventsSinceSnapshot = 0;
-    const slices: Record<string, unknown> = {};
-    for (const [name, slice] of Object.entries(this.slices)) {
-      slices[name] = slice.serialize !== undefined ? slice.serialize(this.state[name]) : this.state[name];
-    }
-    void this.journal
-      .append({ type: SNAPSHOT_ENTRY_TYPE, kind: SNAPSHOT_ENTRY_KIND, data: { slices } })
-      .catch((error) => this.report(error));
   }
 
   private notify(causes: Cause<SM>[]): void {

@@ -48,9 +48,9 @@ async function openJournal(tree: Tree, branch = 'main') {
   return journalFromBranch(tree.openBranch(branch), tree);
 }
 
-async function openStore(tree: Tree, opts?: { snapshot?: { everyEvents?: number } | false; drainLimit?: number; extraSlices?: Record<string, never> }) {
+async function openStore(tree: Tree, opts?: { drainLimit?: number; extraSlices?: Record<string, never> }) {
   const journal = await openJournal(tree);
-  return createEventStore({ journal, slices, snapshot: opts?.snapshot, drainLimit: opts?.drainLimit });
+  return createEventStore({ journal, slices, drainLimit: opts?.drainLimit });
 }
 
 describe('createEventStore', () => {
@@ -67,19 +67,7 @@ describe('createEventStore', () => {
     expect(reopened.getState()).toEqual({ counter: 3, notes: ['a'] });
   });
 
-  it('folds from the latest snapshot plus its tail', async () => {
-    const tree = await openTree();
-    const store = await openStore(tree, { snapshot: { everyEvents: 2 } });
-    await store.dispatch(counterAdded({ amount: 1 }));
-    await store.dispatch(counterAdded({ amount: 2 }));
-    await store.dispatch(counterAdded({ amount: 3 }));
-    await store.flush();
-
-    const reopened = await openStore(tree);
-    expect(reopened.getState()).toEqual({ counter: 6, notes: [] });
-  });
-
-  it('seeds slices missing from a snapshot from their initial state', async () => {
+  it('ignores legacy snapshot entries when folding', async () => {
     const tree = await openTree();
     const journal = await openJournal(tree);
     await journal.append({ type: 'snapshot', kind: 'snapshot', data: { slices: { counter: 41 } } });
@@ -89,7 +77,7 @@ describe('createEventStore', () => {
       data: { type: 'test.counter_added', time: 1, amount: 1 },
     });
     const store = await createEventStore({ journal, slices });
-    expect(store.getState()).toEqual({ counter: 42, notes: [] });
+    expect(store.getState()).toEqual({ counter: 1, notes: [] });
   });
 
   it('skips unknown event types when folding', async () => {
