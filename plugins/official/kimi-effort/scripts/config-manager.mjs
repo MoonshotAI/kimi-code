@@ -333,19 +333,114 @@ export function setThinkingEffort(effortLevel, modelAlias = null, customPath = n
 }
 
 /**
- * Determines the current active model from default_model or environment,
- * along with its provider, config details, and current thinking/effort status.
+ * Attempts to detect the currently active model from the most recent Kimi Code session.
  */
-export function getCurrentModelInfo(customPath = null) {
+function detectCurrentSessionModel(config) {
+  try {
+    const baseDir = process.env.KIMI_CODE_HOME || path.join(os.homedir(), '.kimi-code');
+    const sessionsDir = path.join(baseDir, 'sessions');
+    if (!fs.existsSync(sessionsDir)) return null;
+
+    const wdEntries = fs.readdirSync(sessionsDir, { withFileTypes: true })
+      .filter(d => d.isDirectory() && d.name.startsWith('wd_'))
+      .map(d => {
+        const full = path.join(sessionsDir, d.name);
+        return { path: full, mtime: fs.statSync(full).mtimeMs };
+      })
+      .sort((a, b) => b.mtime - a.mtime);
+
+    if (wdEntries.length === 0) return null;
+
+    for (const wd of wdEntries.slice(0, 3)) {
+      const sessionEntries = fs.readdirSync(wd.path, { withFileTypes: true })
+        .filter(d => d.isDirectory() && d.name.startsWith('session_'))
+        .map(d => {
+          const full = path.join(wd.path, d.name);
+          return { path: full, mtime: fs.statSync(full).mtimeMs };
+        })
+        .sort((a, b) => b.mtime - a.mtime);
+
+      if (sessionEntries.length === 0) continue;
+
+      const latestSession = sessionEntries[0].path;
+      const wirePath = path.join(latestSession, 'agents', 'main', 'wire.jsonl');
+      if (!fs.existsSync(wirePath)) continue;
+
+      const stat = fs.statSync(wirePath);
+      const readSize = Math.min(stat.size, 65536); // read up to last 64KB
+      const buffer = Buffer.alloc(readSize);
+      const fd = fs.openSync(wirePath, 'r');
+      fs.readSync(fd, buffer, 0, readSize, stat.size - readSize);
+      fs.closeSync(fd);
+
+      const text = buffer.toString('utf8');
+      const matches = [...text.matchAll(/"model"\s*:\s*"([^"]+)"/g)];
+      if (matches.length > 0) {
+        for (let i = matches.length - 1; i >= 0; i--) {
+          const candidate = matches[i][1];
+          if (config && config.models && config.models[candidate]) {
+            return candidate;
+          }
+          // Check if candidate matches model field inside any config.models entry
+          if (config && config.models) {
+            for (const [alias, m] of Object.entries(config.models)) {
+              if (m.model === candidate || alias.endsWith('/' + candidate)) {
+                return alias;
+              }
+            }
+          }
+        }
+      }
+    }
+  } catch {
+    // Fail silently if session inspection fails
+  }
+  return null;
+}
+
+/**
+ * Determines the current active model from explicit argument, active session,
+ * environment, or default_model, along with provider details and effort capabilities.
+ */
+export function getCurrentModelInfo(customPath = null, explicitModel = null) {
   const { config, path: filePath } = loadConfig(customPath);
 
-  // Active model alias resolution:
-  // 1. Environment variable KIMI_MODEL if set
-  // 2. config.default_model in config.toml
-  // 3. First model defined in [models.*]
-  let activeAlias = process.env.KIMI_MODEL || config.default_model;
-  const modelKeys = Object.keys(config.models || {});
+  let activeAlias = null;
 
+  // 1. Explicit model alias passed in
+  if (explicitModel) {
+    if (config.models && config.models[explicitModel]) {
+      activeAlias = explicitModel;
+    } else if (config.models) {
+      // Fuzzy lookup by prefix/suffix
+      const lower = explicitModel.toLowerCase();
+      for (const alias of Object.keys(config.models)) {
+        if (alias.toLowerCase() === lower || alias.toLowerCase().endsWith('/' + lower) || alias.toLowerCase().includes(lower)) {
+          activeAlias = alias;
+          break;
+        }
+      }
+    }
+    if (!activeAlias) activeAlias = explicitModel;
+  }
+
+  // 2. Environment variable
+  if (!activeAlias) {
+    activeAlias = process.env.KIMI_SESSION_MODEL || process.env.KIMI_MODEL;
+  }
+
+  // 3. Inspect recent active session wire.jsonl
+  if (!activeAlias) {
+    activeAlias = detectCurrentSessionModel(config);
+  }
+
+  // 4. Fallback to default_model in config.toml
+  if (!activeAlias) {
+    activeAlias = config.default_model;
+  }
+
+  // 5. First model defined in [models.*]
+  const modelKeys = Object.keys(config.models || {});
   if (!activeAlias && modelKeys.length > 0) {
     activeAlias = modelKeys[0];
   }

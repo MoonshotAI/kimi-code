@@ -100,6 +100,7 @@ const c = {
   green: (t) => `${colors.green}${t}${colors.reset}`,
   yellow: (t) => `${colors.yellow}${t}${colors.reset}`,
   blue: (t) => `${colors.blue}${t}${colors.reset}`,
+  magenta: (t) => `${colors.magenta}${t}${colors.reset}`,
   cyan: (t) => `${colors.cyan}${t}${colors.reset}`,
   gray: (t) => `${colors.gray}${t}${colors.reset}`,
   tag: (t, color = colors.cyan) => `${color}[${t}]${colors.reset}`
@@ -139,9 +140,13 @@ async function handleStatus(targetModelAlias) {
   const { config, path: configPath } = configManager.loadConfig();
 
   let modelAlias = targetModelAlias;
+  let isSessionActive = false;
   if (!modelAlias) {
-    const current = configManager.getCurrentModelInfo();
+    const current = configManager.getCurrentModelInfo(null);
     modelAlias = current.activeModelAlias;
+    if (modelAlias && modelAlias !== config.default_model) {
+      isSessionActive = true;
+    }
   }
 
   if (!modelAlias) {
@@ -171,7 +176,16 @@ async function handleStatus(targetModelAlias) {
 
   console.log(`\n${c.bold('=== Kimi Code Reasoning Effort Status ===')}\n`);
   console.log(`  ${c.bold('Config File:')}     ${configPath}`);
-  console.log(`  ${c.bold('Model Alias:')}     ${c.cyan(modelAlias)}${(!targetModelAlias && modelAlias === config.default_model) ? c.dim(' (default_model)') : ''}`);
+  
+  let aliasTag = '';
+  if (!targetModelAlias) {
+    if (isSessionActive) {
+      aliasTag = c.green(' (active in current session)');
+    } else if (modelAlias === config.default_model) {
+      aliasTag = c.dim(' (default_model in config.toml)');
+    }
+  }
+  console.log(`  ${c.bold('Model Alias:')}     ${c.cyan(modelAlias)}${aliasTag}`);
   console.log(`  ${c.bold('Actual Model:')}    ${actualModelName}`);
   console.log(`  ${c.bold('Provider:')}        ${providerKey ? c.blue(providerKey) : c.dim('(unknown)')} ${providerConfig ? c.dim(`[${providerConfig.type || 'openai'}]`) : ''}`);
   
@@ -182,11 +196,15 @@ async function handleStatus(targetModelAlias) {
   console.log(`  ${c.bold('Current Effort:')}  ${c.bold(c.cyan(currentEffort))}${modelDefaultEffort ? c.dim(' (model default)') : (globalEffort ? c.dim(' (global thinking.effort)') : c.dim(' (fallback)'))}`);
   
   if (supportedEfforts.length > 0) {
-    console.log(`  ${c.bold('Supported Levels:')} [ ${supportedEfforts.map(e => (e === currentEffort ? c.bold(c.green(e)) : e)).join(', ')} ]`);
+    console.log(`  ${c.bold('Supported Levels:')} [ ${supportedEfforts.map(e => (e === 'max' ? c.bold(c.magenta('max')) : (e === currentEffort ? c.bold(c.green(e)) : e))).join(', ')} ]`);
   } else {
     console.log(`  ${c.bold('Supported Levels:')} ${c.yellow('Not detected yet')} ${c.dim('(Run "effort-cli.mjs detect" to detect)')}`);
   }
-  console.log('');
+
+  // Helpful guidance for model switching in TUI
+  console.log(`\n  ${c.bold(c.yellow('💡 Notice on /effort in TUI:'))}`);
+  console.log(`  When switching models in an active session, run ${c.bold(c.cyan('/reload'))} in Kimi Code`);
+  console.log(`  to ensure the in-memory TUI picker reflects this model's latest effort levels (e.g. max).\n`);
 }
 
 /**

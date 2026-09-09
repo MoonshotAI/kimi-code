@@ -184,6 +184,18 @@ node scripts/effort-cli.mjs list
 
 ---
 
+## Frequently Asked Questions (FAQ)
+
+### Q: Why doesn't `/effort` in the TUI show the new model's effort levels (e.g. `max`) after switching models?
+
+**A:** This is due to how Kimi Code CLI caches configuration in memory:
+1. When you launch Kimi Code, it reads `config.toml` into memory (`availableModels`).
+2. When you switch models (via `/model`) or when the plugin detects/updates `support_efforts` in `config.toml`, the active TUI session retains the previously loaded in-memory model specifications until refreshed.
+3. **Solution:** Simply type **`/reload`** in Kimi Code. This tells Kimi Code to re-read `config.toml` from disk, instantly updating the in-memory `/effort` picker with the newly active model's full set of effort options (such as `max`).
+4. **Model Alias Verification:** Also check if you have multiple aliases configured for the same model. For example, if you configured both `claude-opus-4-8` under an OpenAI proxy (which only supports `[low, medium, high]`) and `cpa-claude/claude-opus-4-8` under native Anthropic (which supports `[low, medium, high, max]`), ensure you selected the Anthropic-backed alias (`cpa-claude/claude-opus-4-8`).
+
+---
+
 ## License
 
 MIT
