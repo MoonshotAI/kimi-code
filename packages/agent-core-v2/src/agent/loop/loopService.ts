@@ -432,28 +432,38 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     outcome: { readonly outcome: MachineTurnOutcome; readonly error?: unknown },
   ): void {
     if (pending.queueItemId === undefined) return;
+    const active = this.active;
+    if (active !== undefined) {
+      active.afterChain = active.afterChain.then(() => {
+        this.settleUnboundReservation(pending, outcome);
+      });
+      return;
+    }
     const index = this.reservations.findIndex(
       (entry) => entry.machineQueueId === pending.queueItemId,
     );
     if (index < 0) return;
     const [reservation] = this.reservations.splice(index, 1);
     if (reservation === undefined || reservation.cancelled) return;
-    reservation.cancelled = true;
+    this.beginActiveTurn(reservation, pending.id);
+    reservation.onMaterialize?.();
+    this.materializeMessage(reservation.message);
+    const turn = this.active;
+    if (turn === undefined) return;
     if (outcome.outcome === 'aborted') {
       const reason = reservation.controller.signal.aborted
         ? reservation.controller.signal.reason
         : abortError('Turn aborted');
       reservation.controller.abort(reason);
-      reservation.turn.state = 'cancelled';
-      reservation.ready.reject(reason instanceof Error ? reason : abortError('Turn aborted'));
-      reservation.result.resolve({ type: 'cancelled', steps: 0, reason });
+      turn.afterChain = turn.afterChain.then(() =>
+        this.endTurn(turn, { type: 'cancelled', steps: 0, reason }),
+      );
       return;
     }
     const error = outcome.error ?? new Error2(ErrorCodes.INTERNAL, 'Turn ended before first step');
-    reservation.controller.abort(error);
-    reservation.turn.state = 'failed';
-    reservation.ready.reject(error);
-    reservation.result.resolve({ type: 'failed', steps: 0, error });
+    turn.afterChain = turn.afterChain.then(() =>
+      this.endTurn(turn, { type: 'failed', steps: 0, error }),
+    );
   }
 
   hasPendingRequests(): boolean {

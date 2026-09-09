@@ -1940,8 +1940,14 @@ describe('aborted step tool execution', () => {
       const loopService = ctx.get(IAgentLoopService);
       const { turn } = submitTurn(loopService, 'Hello');
       await expect(turn.result).resolves.toMatchObject({ type: 'failed', steps: 0 });
-      await expect(turn.ready).rejects.toBeDefined();
+      await expect(turn.ready).resolves.toBeUndefined();
       await loopService.settled();
+      expect(ctx.newEvents()).toContainEqual(
+        expect.objectContaining({
+          event: 'turn.ended',
+          args: expect.objectContaining({ reason: 'failed' }),
+        }),
+      );
     } finally {
       await ctx.dispose();
     }
