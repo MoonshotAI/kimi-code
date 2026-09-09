@@ -16,6 +16,7 @@ import {
   type MergeAllAvailableSkillsConfig,
 } from './configSection';
 import { ISkillDiscovery } from './skillDiscovery';
+import { skillRootWatchEnabled } from './skillRootWatch';
 import { userRoots } from './skillRoots';
 import { SKILL_SOURCE_PRIORITY, type ISkillSource, type SkillContribution } from './skillSource';
 
@@ -50,7 +51,7 @@ export class UserFileSkillSource extends Disposable implements IUserFileSkillSou
         if (event.domain === MERGE_ALL_AVAILABLE_SKILLS_SECTION) this.onDidChangeEmitter.fire();
       }),
     );
-    if ((this.bootstrap.args.skillDirs?.length ?? 0) === 0) {
+    if ((this.bootstrap.args.skillDirs?.length ?? 0) === 0 && skillRootWatchEnabled()) {
       this.watchUserSkillRoots();
     }
   }
