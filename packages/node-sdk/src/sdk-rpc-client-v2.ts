@@ -131,6 +131,7 @@ import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
+import { startupTrace } from '@moonshot-ai/agent-core-v2/_base/utils/startupTrace';
 import { McpConnectionManager } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
 import {
   loadMcpServers,
@@ -688,10 +689,14 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * empty list rather than failing the caller.
    */
   override async getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo> {
+    startupTrace('workspaceTrust:getOrCreate:begin');
     const handler = await this.engineAccessor
       .get(IWorkspaceInstanceManager)
       .getOrCreate({ root: workDir });
+    startupTrace('workspaceTrust:getOrCreate:end');
+    startupTrace('workspaceTrust:read:begin');
     const trusted = await handler.program.trust.get();
+    startupTrace('workspaceTrust:read:end');
     if (trusted) return { trusted: true, gatedMcpServers: [] };
     try {
       const fs = this.engineAccessor.get(IHostFileSystem);
@@ -955,9 +960,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * cannot deadlock.
    */
   private runSessionAccessAll<T>(sessionIds: readonly string[], work: () => Promise<T>): Promise<T> {
-    const keys = [...new Set(sessionIds)].sort();
+    const keys = [...new Set(sessionIds)].toSorted();
     let chained: () => Promise<T> = work;
-    for (const key of [...keys].reverse()) {
+    for (const key of [...keys].toReversed()) {
       const inner = chained;
       chained = () => this.runSessionAccess(key, inner);
     }
