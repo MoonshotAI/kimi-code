@@ -177,7 +177,7 @@ function requester(opts: {
       alwaysThinking: false,
       providerName: 'p',
       providerType: opts.providerType ?? 'kimi',
-      authProvider: {} as never,
+      credentials: {} as never,
     },
     request: () => {
       throw new Error('unused');

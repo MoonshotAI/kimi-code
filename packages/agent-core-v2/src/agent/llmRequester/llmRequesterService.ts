@@ -27,6 +27,7 @@ import {
 } from '#/llm-adapter/contract/errors';
 import type { Message } from '#/llm-adapter/contract/message';
 import { type ThinkingEffort } from '#human/llm/thinking';
+import type { LlmCredentialProvider } from '#human/llm/requester/requester';
 import { isToolCall, type StreamedMessagePart, type ToolDescription as Tool } from '#human/llm/message';
 import { emptyUsage, inputTotal, type TokenUsage } from '#human/llm/usage';
 import { ILogService, type LogContext } from '#/_base/log/log';
@@ -208,6 +209,11 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     if (!this.profile.hasProvider()) return undefined;
     const config = this.getOrCreateTurnConfig(turnId);
     return { thinkingEffort: config.resolved.thinkingLevel };
+  }
+
+  currentCredentials(): LlmCredentialProvider | undefined {
+    if (!this.profile.hasProvider()) return undefined;
+    return this.modelCatalog.get(this.profile.resolveModelContext().modelAlias).credentials;
   }
 
   async request(

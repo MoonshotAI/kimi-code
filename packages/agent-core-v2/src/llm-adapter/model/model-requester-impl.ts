@@ -3,17 +3,16 @@ import * as nodePath from 'node:path';
 import { performance, type EventLoopUtilization } from 'node:perf_hooks';
 
 import { AsyncEventQueue } from '#/_base/asyncEventQueue';
-import { errorStatusCode, type LlmErrorMessage } from '#human/llm/errors';
+import type { LlmErrorMessage } from '#human/llm/errors';
 import { emptyResponseError } from '#human/llm/empty-response';
 import { NO_FINISH, type FinishInfo } from '#human/llm/finish-reason';
 import type { ProviderMediaContribution, VideoUploadInput } from '#human/llm/media/upload';
 import { createMessageAccumulator, type VideoURLPart } from '#human/llm/message';
 import type { LlmModel } from '#human/llm/model';
 import type { ProtocolName } from '#human/llm/protocol/base';
-import { applyCredential, resolveModelCredentials } from '#human/llm/protocol/trait';
+import { applyCredential, resolveModelCredentials } from '#human/credentials/credentials';
 import {
   type ExtraParams,
-  type LlmCredentialProvider,
   type LlmRequestConfig,
   type LlmRequestContent,
   type LlmRequestEvent,
@@ -32,7 +31,7 @@ import {
 import { fromLlmAssistantMessage, toLlmMessage, type Tool } from '../contract/message';
 import { mergeUsagePatch } from '#human/llm/usage';
 
-import type { AuthProvider, Model } from './catalog';
+import type { Model } from './catalog';
 import type {
   ModelRequestEvent,
   ModelRequestInput,
@@ -83,10 +82,6 @@ export class ModelRequesterImpl implements ModelRequester {
     return this.cachedRequester;
   }
 
-  private readonly credentials: LlmCredentialProvider = createAuthCredentials(
-    () => this.model.authProvider,
-  );
-
   request(
     input: ModelRequestInput,
     signal?: AbortSignal,
@@ -112,19 +107,8 @@ export class ModelRequesterImpl implements ModelRequester {
       );
     }
     const video = typeof input === 'string' ? readVideoFile(input) : input;
-    const upload = () =>
-      resolveModelCredentials(resolved.model, this.credentials).then((model) =>
-        uploader(video, { model, signal: options?.signal }),
-      );
-    try {
-      return await upload();
-    } catch (error) {
-      if (options?.signal?.aborted === true || !this.credentials.canRecover?.(error)) {
-        throw error;
-      }
-      this.credentials.invalidate?.();
-      return upload();
-    }
+    const model = await resolveModelCredentials(resolved.model, this.model.credentials);
+    return uploader(video, { model, signal: options?.signal });
   }
 
   private async runRequest(
@@ -173,81 +157,76 @@ export class ModelRequesterImpl implements ModelRequester {
       usedContextTokens: params?.usedContextTokens,
     };
 
-    const attemptGenerate = async () => {
-      const credential = await this.credentials.resolve();
-      return requester.generate({ ...config, model: applyCredential(resolved.model, credential) }, content, {
+    const credential = await this.model.credentials.resolve();
+    await requester.generate(
+      { ...config, model: applyCredential(resolved.model, credential) },
+      content,
+      {
         signal: signal ?? new AbortController().signal,
-      onEvent: (event: LlmRequestEvent) => {
-        switch (event.type) {
-          case 'llm.sent': {
-            const now = Date.now();
-            if (requestSentAt !== undefined) {
-              requestStartedAt = now;
-              accumulator = createMessageAccumulator();
-              usage = undefined;
-              finish = undefined;
-              messageId = undefined;
-            }
-            requestSentAt = now;
-            return;
-          }
-          case 'llm.streaming.headers': {
-            traceId = traceIdFromHeadersRecord(event.headers);
-            params?.onTraceId?.(traceId);
-            return;
-          }
-          case 'llm.streaming.part': {
-            const arrivedAt = Date.now();
-            if (firstChunkAt === undefined) {
-              firstChunkAt = arrivedAt;
-              decodeEluStart = performance.eventLoopUtilization();
-            } else {
-              serverDecodeMs += arrivedAt - lastResumeAt;
-            }
-            accumulator.push(event.part);
-            queue.push({ type: 'part', part: event.part });
-            lastResumeAt = Date.now();
-            clientConsumeMs += lastResumeAt - arrivedAt;
-            return;
-          }
-          case 'llm.streaming.usage': {
-            usage = mergeUsagePatch(usage, event.usage);
-            return;
-          }
-          case 'llm.streaming.finish': {
-            finish = event.finish;
-            return;
-          }
-          case 'llm.streaming.message_id': {
-            messageId = event.messageId;
-            return;
-          }
-          case 'llm.failed.syntax':
-          case 'llm.failed.remote': {
-            failed = event.error;
-            return;
-          }
-          case 'llm.done': {
-            streamEndedAt = Date.now();
-            if (firstChunkAt !== undefined) {
-              serverDecodeMs += streamEndedAt - lastResumeAt;
-              if (decodeEluStart !== undefined) {
-                decodeEluEnd = performance.eventLoopUtilization(decodeEluStart);
+        onEvent: (event: LlmRequestEvent) => {
+          switch (event.type) {
+            case 'llm.sent': {
+              const now = Date.now();
+              if (requestSentAt !== undefined) {
+                requestStartedAt = now;
+                accumulator = createMessageAccumulator();
+                usage = undefined;
+                finish = undefined;
+                messageId = undefined;
               }
+              requestSentAt = now;
+              return;
             }
-            return;
+            case 'llm.streaming.headers': {
+              traceId = traceIdFromHeadersRecord(event.headers);
+              params?.onTraceId?.(traceId);
+              return;
+            }
+            case 'llm.streaming.part': {
+              const arrivedAt = Date.now();
+              if (firstChunkAt === undefined) {
+                firstChunkAt = arrivedAt;
+                decodeEluStart = performance.eventLoopUtilization();
+              } else {
+                serverDecodeMs += arrivedAt - lastResumeAt;
+              }
+              accumulator.push(event.part);
+              queue.push({ type: 'part', part: event.part });
+              lastResumeAt = Date.now();
+              clientConsumeMs += lastResumeAt - arrivedAt;
+              return;
+            }
+            case 'llm.streaming.usage': {
+              usage = mergeUsagePatch(usage, event.usage);
+              return;
+            }
+            case 'llm.streaming.finish': {
+              finish = event.finish;
+              return;
+            }
+            case 'llm.streaming.message_id': {
+              messageId = event.messageId;
+              return;
+            }
+            case 'llm.failed.syntax':
+            case 'llm.failed.remote': {
+              failed = event.error;
+              return;
+            }
+            case 'llm.done': {
+              streamEndedAt = Date.now();
+              if (firstChunkAt !== undefined) {
+                serverDecodeMs += streamEndedAt - lastResumeAt;
+                if (decodeEluStart !== undefined) {
+                  decodeEluEnd = performance.eventLoopUtilization(decodeEluStart);
+                }
+              }
+              return;
+            }
           }
-        }
+        },
       },
-      });
-    };
-
-    await attemptGenerate();
-    if (failed !== undefined && signal?.aborted !== true && this.credentials.canRecover?.(failed)) {
-      this.credentials.invalidate?.();
-      failed = undefined;
-      await attemptGenerate();
-    }
+    );
 
     if (failed !== undefined) {
       throw errorFromLlmMessage(failed);
@@ -301,23 +280,6 @@ function finalizeDecodeStats(
     serverDecodeMs: raw.serverDecodeMs,
     clientConsumeMs: raw.clientConsumeMs,
     clientBlockedMs: Math.max(0, Math.round(elu.active) - raw.clientConsumeMs),
-  };
-}
-
-function createAuthCredentials(authProvider: () => AuthProvider): LlmCredentialProvider {
-  let forceNext = false;
-  return {
-    resolve: async () => {
-      const force = forceNext ? true : undefined;
-      forceNext = false;
-      const auth = await authProvider().getAuth({ force });
-      if (auth === undefined) return undefined;
-      return { apiKey: auth.apiKey, headers: auth.headers };
-    },
-    canRecover: (error) => authProvider().canRefresh === true && errorStatusCode(error) === 401,
-    invalidate: () => {
-      forceNext = true;
-    },
   };
 }
 

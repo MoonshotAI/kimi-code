@@ -49,6 +49,7 @@ export * from './llm-kimi/media';
 export * from './llm-kimi/schema';
 export * from './llm-kimi/trait';
 export * from './llm/provider/providers/standard';
+export * from './credentials';
 export * from './kimi-oauth';
 export * from './tool/executor';
 export * from './tool/machine';

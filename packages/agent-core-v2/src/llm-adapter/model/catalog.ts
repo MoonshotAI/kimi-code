@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 import type { ModelCapability } from '../contract/capability';
+import type { LlmCredentialProvider } from '#human/llm/requester/requester';
 import type { TokenUsage } from '#human/llm/usage';
 import type { Protocol, ProtocolProviderOptions } from '../protocol/protocol';
 import type { ProviderConfig } from '../provider/provider';
@@ -10,26 +11,6 @@ import type { ProviderConfig } from '../provider/provider';
 import type { ModelRecord } from './model';
 import { effectiveModelConfig } from './model-auth';
 import type { ModelRequester } from './model-requester';
-export interface ProviderRequestAuth {
-  apiKey?: string;
-  headers?: Record<string, string>;
-}
-
-export interface AuthProvider {
-  readonly canRefresh?: boolean;
-
-  getAuth(options?: { readonly force?: boolean }): Promise<ProviderRequestAuth | undefined>;
-}
-
-export class StaticAuthProvider implements AuthProvider {
-  readonly canRefresh = false;
-
-  constructor(private readonly apiKey: string | undefined) {}
-  async getAuth(): Promise<ProviderRequestAuth | undefined> {
-    if (this.apiKey === undefined || this.apiKey.trim().length === 0) return undefined;
-    return { apiKey: this.apiKey };
-  }
-}
 
 export interface Model {
   readonly id: string;
@@ -51,7 +32,7 @@ export interface Model {
   readonly providerType?: string;
   readonly providerName: string;
 
-  readonly authProvider: AuthProvider;
+  readonly credentials: LlmCredentialProvider;
   readonly providerOptions?: ProtocolProviderOptions;
 }
 

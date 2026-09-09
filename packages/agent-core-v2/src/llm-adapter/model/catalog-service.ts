@@ -6,6 +6,8 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
 
 import type { CatalogModel, CatalogProviderInfo } from '#human/llm/provider-catalog';
+import { oauthCredentials, staticCredentials } from '#human/credentials/credentials';
+import type { LlmCredentialProvider } from '#human/llm/requester/requester';
 import type { ModelCapability } from '../contract/capability';
 import { CONFIG_INVALID_ERROR_CODE } from '../contract/errors';
 import type { TokenUsage } from '#human/llm/usage';
@@ -21,16 +23,13 @@ import {
 } from '../provider/provider-definition';
 
 import {
-  type AuthProvider,
   IModelCatalog,
   type Model,
   type ModelCatalogItem,
   type ModelPingResult,
   type ProviderCatalogItem,
   type ProviderCredentialState,
-  type ProviderRequestAuth,
   type SetDefaultModelResponse,
-  StaticAuthProvider,
   toProtocolModel,
   toProtocolModelFallback,
   toProtocolProvider,
@@ -293,7 +292,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       provider: providerConfig,
       providerName,
     });
-    const authProvider = this.buildAuthProvider(providerName, auth);
+    const credentials = this.buildCredentials(providerName, auth);
 
     const providerType = providerConfig?.type ?? protocol;
     const resolvedBaseUrl =
@@ -354,7 +353,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       alwaysThinking: declared.has('always_thinking'),
       providerType,
       providerName,
-      authProvider,
+      credentials,
       providerOptions,
     };
   }
@@ -413,25 +412,22 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     return protocol;
   }
 
-  private buildAuthProvider(providerName: string, auth: ResolvedModelAuthMaterial): AuthProvider {
+  private buildCredentials(
+    providerName: string,
+    auth: ResolvedModelAuthMaterial,
+  ): LlmCredentialProvider {
     if (auth.apiKey !== undefined) {
-      return new StaticAuthProvider(auth.apiKey);
+      return staticCredentials(auth.apiKey);
     }
     if (auth.oauth !== undefined) {
       const oauthRef = auth.oauth;
       const providerKey = auth.oauthProviderKey ?? providerName;
       const tokens = this.oauth;
-      return {
-        canRefresh: true,
-        async getAuth(options): Promise<ProviderRequestAuth | undefined> {
-          const apiKey = await tokens.getAccessToken(providerKey, oauthRef, {
-            force: options?.force === true,
-          });
-          return { apiKey };
-        },
-      };
+      return oauthCredentials((options) =>
+        tokens.getAccessToken(providerKey, oauthRef, { force: options?.force === true }),
+      );
     }
-    return new StaticAuthProvider(undefined);
+    return staticCredentials(undefined);
   }
 }
 

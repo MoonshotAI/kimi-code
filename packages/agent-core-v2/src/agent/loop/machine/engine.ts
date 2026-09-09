@@ -12,6 +12,7 @@ import type { StreamedMessagePart, UserMessage } from '#human/llm/message';
 import type { LlmModel } from '#human/llm/model';
 import { createLlmMachine } from '#human/llm/requester/machine';
 import type { LlmRecovery, LlmRecoveryRecord } from '#human/llm/requester/recovery';
+import type { LlmCredentialProvider } from '#human/llm/requester/requester';
 import { resolveMaxAttempts } from '#human/llm/requester/retry';
 import type { ToolResult as MachineToolResult, ToolUpdate } from '#human/tool/executor';
 import type { TokenUsage } from '#human/llm/usage';
@@ -264,6 +265,11 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
       publish({ type: 'toolBatchFailed', error });
     },
   });
+  const credentials: LlmCredentialProvider = {
+    resolve: () => options.llmRequester.currentCredentials()?.resolve(),
+    canRecover: (error) => options.llmRequester.currentCredentials()?.canRecover?.(error) === true,
+    invalidate: () => options.llmRequester.currentCredentials()?.invalidate?.(),
+  };
   const actor = createActor(
     createAgentMachine({
       tools: tools.tools,
@@ -278,7 +284,12 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
       ),
       abortTimeoutMs: options.abortTimeoutMs,
     }),
-    { input: { request: { model: options.model, systemPrompt: options.systemPrompt }, turnId: options.initialTurnId } },
+    {
+      input: {
+        request: { model: options.model, systemPrompt: options.systemPrompt, credentials },
+        turnId: options.initialTurnId,
+      },
+    },
   );
   const subscriptions: Subscription[] = [
     actor.on('turn.started', (event) => {

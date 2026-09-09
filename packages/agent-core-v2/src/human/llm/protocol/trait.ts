@@ -2,13 +2,7 @@ import type { ModelCapability } from '#/llm/capability';
 import type { LlmRemoteErrorMessage } from '#/llm/errors';
 import type { Message, ToolDescription } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
-import {
-  mergeRequestHeaders,
-  type LlmCredential,
-  type LlmCredentialProvider,
-  type ToolCallIdPolicy,
-  type ToolMessageConversion,
-} from '#/llm/requester/requester';
+import type { ToolCallIdPolicy, ToolMessageConversion } from '#/llm/requester/requester';
 import type { ThinkingRequestOptions } from '#/llm/thinking';
 
 export interface TraitContext {
@@ -84,27 +78,6 @@ export interface ProtocolTrait {
 export interface ThinkingApplication {
   readonly kwargs: Record<string, unknown>;
   readonly preserveThinking: boolean;
-}
-
-export function applyCredential(
-  model: LlmModel,
-  credential: LlmCredential | undefined,
-): LlmModel {
-  if (credential === undefined) {
-    return model;
-  }
-  return {
-    ...model,
-    apiKey: credential.apiKey ?? model.apiKey,
-    defaultHeaders: mergeRequestHeaders(model.defaultHeaders, credential.headers),
-  };
-}
-
-export async function resolveModelCredentials(
-  model: LlmModel,
-  credentials: LlmCredentialProvider | undefined,
-): Promise<LlmModel> {
-  return applyCredential(model, await credentials?.resolve());
 }
 
 export function resolveModelConnection(

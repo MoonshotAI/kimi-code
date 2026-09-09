@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it } from 'vitest';
 
 import { isUnknownCapability } from '#/llm-adapter/contract/capability';
+import { staticCredentials } from '#human/credentials/credentials';
 import { thinkingMetadataOf } from '#human/llm/thinking';
 import type { Model } from '#/llm-adapter/model/catalog';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
@@ -90,7 +91,7 @@ function modelWith(spec: {
     providerName: spec.providerType ?? spec.protocol,
     reasoningKey: spec.reasoningKey,
     supportEfforts: spec.supportEfforts,
-    authProvider: { canRefresh: false, getAuth: () => Promise.resolve(undefined) },
+    credentials: staticCredentials(undefined),
     providerOptions: spec.providerOptions,
   };
 }

@@ -36,6 +36,7 @@ import {
   isRetryableGenerateError,
 } from '#/llm-adapter/contract/errors';
 import { createUserMessage, type Message } from '#/llm-adapter/contract/message';
+import { attemptWithCredentialRecovery } from '#human/credentials/credentials';
 import type { ToolDescription as Tool } from '#human/llm/message';
 import { inputTotal, type TokenUsage } from '#human/llm/usage';
 import { IEventBus } from '#/app/event/eventBus';
@@ -652,22 +653,30 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         const estimatedCompactionRequestTokens = this.requestTokens(messages);
 
         try {
-          const request = this.llmRequester.start(
-            {
-              messages,
-              maxOutputSize: compactionMaxOutputSize,
-              source: {
-                type: 'operation',
-                turnId: active.originTurnId,
-                requestKind: 'full_compaction',
-                logFields: { droppedCount },
+          const credentials = this.llmRequester.currentCredentials();
+          const runRequest = async () => {
+            const request = this.llmRequester.start(
+              {
+                messages,
+                maxOutputSize: compactionMaxOutputSize,
+                source: {
+                  type: 'operation',
+                  turnId: active.originTurnId,
+                  requestKind: 'full_compaction',
+                  logFields: { droppedCount },
+                },
               },
-            },
-            undefined,
-            signal,
+              undefined,
+              signal,
+            );
+            active.trace = request.trace;
+            return request.result;
+          };
+          attempt = collectSummary(
+            credentials === undefined
+              ? await runRequest()
+              : await attemptWithCredentialRecovery(credentials, runRequest),
           );
-          active.trace = request.trace;
-          attempt = collectSummary(await request.result);
           break;
         } catch (error) {
           const isContextOverflow = this.shouldRecoverFromContextOverflow(

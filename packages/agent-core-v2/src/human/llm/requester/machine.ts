@@ -3,7 +3,7 @@ import { assign, emit, fromCallback, setup } from '#/xstate2';
 import { toLlmErrorMessage, type LlmErrorMessage } from '#/llm/errors';
 import type { Message } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
-import { resolveModelCredentials } from '#/llm/protocol/trait';
+import { applyCredential } from '#/credentials/credentials';
 
 import type {
   LlmRequestConfig,
@@ -69,13 +69,16 @@ function createRequestActor(
   return fromCallback<LlmEvent, LlmInput>(({ input, sendBack }) => {
     void (async () => {
       try {
+        const credential = input.config.credentials?.resolve();
         const config =
-          input.config.credentials === undefined
+          credential === undefined
             ? input.config
-            : {
-                ...input.config,
-                model: await resolveModelCredentials(input.config.model, input.config.credentials),
-              };
+            : credential instanceof Promise
+              ? {
+                  ...input.config,
+                  model: applyCredential(input.config.model, await credential),
+                }
+              : { ...input.config, model: applyCredential(input.config.model, credential) };
         let messages = input.content.messages;
         for (const resolver of messageResolvers) {
           messages = await resolver.resolve(messages, {
