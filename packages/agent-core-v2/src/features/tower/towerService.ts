@@ -6,7 +6,7 @@ import { ILogService } from '#/_base/log/log';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentLoopService, type LoopNotifyHandle } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -353,6 +353,9 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
   exit(): void {
     if (!this.agentState.get(towerKey)) return;
     this.lastPublished = false;
+    this.inboxWakeHandle?.drop();
+    this.inboxWakeHandle = undefined;
+    this.inboxWakeSignals = 0;
     void this.dispatcher.dispatch(new TowerModeExit({ agentId: this.agentCtx.agentId }));
     void this.releaseTowerOwnership();
   }
@@ -428,6 +431,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
   private inboxWakeLatest: { readonly from: string; readonly subject: string } | undefined;
   private inboxWakeScheduled = false;
   private inboxWakePending = false;
+  private inboxWakeHandle: LoopNotifyHandle | undefined;
   private wakeDisposed = false;
 
   private onTowerInboxSent(event: TowerInboxSent): void {
@@ -460,7 +464,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     this.inboxWakeSignals = 0;
     this.inboxWakePending = true;
     const countText = count === 1 ? '1 new tower inbox message' : `${String(count)} new tower inbox messages`;
-    this.loop.notify({
+    this.inboxWakeHandle = this.loop.notify({
       message: {
         role: 'user',
         content: [
@@ -474,10 +478,12 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       },
       turnScoped: false,
       onConsume: () => {
+        this.inboxWakeHandle = undefined;
         this.inboxWakePending = false;
         if (this.inboxWakeSignals > 0) this.scheduleInboxWake();
       },
       onDrop: () => {
+        this.inboxWakeHandle = undefined;
         this.inboxWakePending = false;
       },
     });

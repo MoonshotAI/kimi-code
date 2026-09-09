@@ -2314,6 +2314,20 @@ describe('AgentTowerService', () => {
       expect(loop.hasPendingRequests()).toBe(false);
     });
 
+    it('drops a queued wake when tower mode exits before it is consumed', async () => {
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      publishInbox({ from: 'w1', to: 'tower', subject: 'need wider scope' });
+      await flushWake();
+      expect(loop.hasPendingRequests()).toBe(true);
+
+      tower.exit();
+
+      expect(loop.hasPendingRequests()).toBe(false);
+      expect(drainWakeMessages()).toEqual([]);
+    });
+
     it('does not respond on a non-main agent', async () => {
       ix.stub(
         IAgentScopeContext,
