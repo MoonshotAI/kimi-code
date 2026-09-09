@@ -134,4 +134,27 @@ describe('attemptWithCredentialRecovery', () => {
     expect((failure as Error).message).toBe('unauthorized');
     expect(attempts).toBe(2);
   });
+
+  it('does not invalidate or retry when the signal is already aborted', async () => {
+    let invalidated = 0;
+    const provider = {
+      resolve: () => undefined,
+      canRecover: () => true,
+      invalidate: () => {
+        invalidated += 1;
+      },
+    };
+    let attempts = 0;
+    const failure = await attemptWithCredentialRecovery(
+      provider,
+      () => {
+        attempts += 1;
+        return Promise.reject(Object.assign(new Error('unauthorized'), { status: 401 }));
+      },
+      AbortSignal.abort(),
+    ).catch((error: unknown) => error);
+    expect((failure as Error).message).toBe('unauthorized');
+    expect(attempts).toBe(1);
+    expect(invalidated).toBe(0);
+  });
 });

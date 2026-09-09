@@ -675,7 +675,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
           attempt = collectSummary(
             credentials === undefined
               ? await runRequest()
-              : await attemptWithCredentialRecovery(credentials, runRequest),
+              : await attemptWithCredentialRecovery(credentials, runRequest, signal),
           );
           break;
         } catch (error) {

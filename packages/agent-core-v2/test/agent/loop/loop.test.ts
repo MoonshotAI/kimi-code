@@ -1946,6 +1946,7 @@ function createTimingRequester(): IAgentLLMRequesterService {
     _serviceBrand: undefined,
     prepareTurnConfig: () => ({ thinkingEffort: 'off' }),
     currentCredentials: () => undefined,
+    credentialsForTurn: () => undefined,
     async request(_overrides, onPart = () => {}) {
       await onPart({ type: 'text', text: 'answer' });
       return {

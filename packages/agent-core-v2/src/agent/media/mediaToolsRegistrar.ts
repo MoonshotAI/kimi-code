@@ -142,8 +142,10 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
         uploader === undefined || requester === undefined
           ? undefined
           : (input, options) =>
-              attemptWithCredentialRecovery(requester.model.credentials, () =>
-                uploader(input, options),
+              attemptWithCredentialRecovery(
+                requester.model.credentials,
+                () => uploader(input, options),
+                options?.signal,
               ),
       inlineVideoSupported: model?.protocol !== 'openai' && model?.protocol !== 'openai_responses',
       providerType: model?.providerType,

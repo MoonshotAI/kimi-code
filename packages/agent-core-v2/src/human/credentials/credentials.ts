@@ -57,11 +57,12 @@ export async function resolveModelCredentials(
 export async function attemptWithCredentialRecovery<T>(
   credentials: LlmCredentialProvider,
   attempt: () => Promise<T>,
+  signal?: AbortSignal,
 ): Promise<T> {
   try {
     return await attempt();
   } catch (error) {
-    if (credentials.canRecover?.(error) !== true) {
+    if (signal?.aborted === true || credentials.canRecover?.(error) !== true) {
       throw error;
     }
     credentials.invalidate?.();

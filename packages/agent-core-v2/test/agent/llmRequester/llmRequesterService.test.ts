@@ -36,7 +36,7 @@ import {
   APIRequestTooLargeError,
   APIStatusError,
 } from '#/llm-adapter/contract/errors';
-import { staticCredentials } from '#human/credentials/credentials';
+import { oauthCredentials, staticCredentials } from '#human/credentials/credentials';
 import { emptyUsage, type TokenUsage } from '#human/llm/usage';
 import { type Message } from '#/llm-adapter/contract/message';
 import { isToolCall, type StreamedMessagePart, type ToolCall } from '#human/llm/message';
@@ -163,14 +163,17 @@ function createService(
     readonly mediaResolver?: Partial<IAgentMediaResolverService>;
     readonly contextMessages?: Message[];
     readonly env?: Record<string, string>;
+    readonly alias?: { current: string };
+    readonly models?: Record<string, Model>;
   } = {},
 ) {
   const ix = disposables.add(new TestInstantiationService());
   ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-code-llm-requester-test', options.env ?? {}));
   const thinkingLevel = options.thinkingLevel ?? 'off';
   const profile: Partial<IAgentProfileService> = {
+    hasProvider: () => true,
     resolveModelContext: () => ({
-      modelAlias: 'm',
+      modelAlias: options.alias?.current ?? 'm',
       modelCapabilities: capabilities,
       maxOutputSize: undefined,
       alwaysThinking: undefined,
@@ -182,7 +185,7 @@ function createService(
     getSystemPrompt: () => 'system',
     data: () => ({
       cwd: '',
-      modelAlias: 'm',
+      modelAlias: options.alias?.current ?? 'm',
       modelCapabilities: capabilities,
       thinkingLevel,
       systemPrompt: 'system',
@@ -247,7 +250,7 @@ function createService(
   ix.stub(ITelemetryService, telemetry);
   ix.stub(IModelCatalog, {
     _serviceBrand: undefined,
-    get: () => requester.model,
+    get: (id: string) => options.models?.[id] ?? requester.model,
     getRequester: () => requester,
     findByName: () => [],
   });
@@ -972,6 +975,28 @@ describe('AgentLLMRequesterService media resolver wiring', () => {
 
     expect(resolve).toHaveBeenCalledTimes(1);
     expect(resolve.mock.calls[0]?.[1]).toBe(requester);
+  });
+});
+
+describe('AgentLLMRequesterService credentials resolution', () => {
+  it('resolves turn credentials from the snapshotted model while currentCredentials follows the profile', () => {
+    const requester = createRequester({ value: 0 }, null);
+    const m1Credentials = oauthCredentials(() => Promise.resolve('tok-m1'));
+    const m2Credentials = oauthCredentials(() => Promise.resolve('tok-m2'));
+    const alias = { current: 'm1' };
+    const { service } = createService(requester, undefined, {
+      alias,
+      models: {
+        m1: { ...requester.model, id: 'm1', credentials: m1Credentials },
+        m2: { ...requester.model, id: 'm2', credentials: m2Credentials },
+      },
+    });
+
+    service.prepareTurnConfig(1);
+    alias.current = 'm2';
+
+    expect(service.credentialsForTurn(1)).toBe(m1Credentials);
+    expect(service.currentCredentials()).toBe(m2Credentials);
   });
 });
 

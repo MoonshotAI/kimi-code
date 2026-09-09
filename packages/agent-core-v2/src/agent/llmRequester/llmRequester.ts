@@ -62,6 +62,8 @@ export interface IAgentLLMRequesterService {
 
   currentCredentials(): LlmCredentialProvider | undefined;
 
+  credentialsForTurn(turnId: number): LlmCredentialProvider | undefined;
+
   request(
     overrides?: AgentLLMRequestOverrides,
     onPart?: AgentLLMRequestPartHandler,

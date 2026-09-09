@@ -265,10 +265,16 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
       publish({ type: 'toolBatchFailed', error });
     },
   });
+  const current = (): LlmCredentialProvider | undefined => {
+    const source = options.source?.();
+    return source?.type === 'turn'
+      ? options.llmRequester.credentialsForTurn(source.turnId)
+      : options.llmRequester.currentCredentials();
+  };
   const credentials: LlmCredentialProvider = {
-    resolve: () => options.llmRequester.currentCredentials()?.resolve(),
-    canRecover: (error) => options.llmRequester.currentCredentials()?.canRecover?.(error) === true,
-    invalidate: () => options.llmRequester.currentCredentials()?.invalidate?.(),
+    resolve: () => current()?.resolve(),
+    canRecover: (error) => current()?.canRecover?.(error) === true,
+    invalidate: () => current()?.invalidate?.(),
   };
   const actor = createActor(
     createAgentMachine({
