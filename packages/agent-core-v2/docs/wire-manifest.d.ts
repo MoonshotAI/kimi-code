@@ -140,6 +140,7 @@ interface ContextAppendMessagePayload {
     isError?: boolean;
     toolCallDisplays?: Record<string, ToolInputDisplay>;
     note?: string;
+    inherited?: boolean;
   };
 }
 

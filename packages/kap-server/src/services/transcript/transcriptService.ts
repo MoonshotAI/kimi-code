@@ -467,7 +467,9 @@ export class TranscriptService {
       }
       throw error;
     }
-    const messages = [...reduceContextTranscript(records).entries];
+    const messages = [...reduceContextTranscript(records).entries].filter(
+      (message) => message.inherited !== true,
+    );
     const taskOriginTurnTaskIds = new Set<string>();
     const steeredContents = new Map<string, Map<string, number>>();
     const anchorStack: { taskIdsSnapshot: Set<string> }[] = [];

@@ -1241,6 +1241,7 @@ export interface AgentStateSnapshot {
       detail?: unknown;
     }>;
     readonly note?: string;
+    readonly inherited?: boolean;
   })[];
   // src/agent/contextProjector/contextProjectorService.ts
   'contextProjector.lastRepairSignature': string | null;
