@@ -632,6 +632,38 @@ describe('turn machine credential recovery', () => {
     expect(failed[0]).toMatchObject({ kind: 'status', statusCode: 401 });
   });
 
+  it('recovers when a resolver rethrows an upload 401', async () => {
+    const { requester, source, calls, seenApiKeys } = createCredentialHarness(['ok']);
+    let uploads = 0;
+    const uploadResolver: LlmRequestResolver = {
+      id: 'media-ref',
+      resolve: () => {
+        uploads += 1;
+        if (uploads === 1) {
+          return Promise.reject(Object.assign(new Error('unauthorized'), { status: 401 }));
+        }
+        return Promise.resolve(undefined);
+      },
+    };
+    const { actor, recovering, failed } = startTurnActor(
+      requester,
+      { recovery: credentialRecovery(source) },
+      undefined,
+      [credentialResolver(source), uploadResolver],
+    );
+
+    await drain();
+
+    expect(uploads).toBe(2);
+    expect(calls()).toBe(1);
+    expect(seenApiKeys).toEqual(['token-2']);
+    expect(recovering.map((event) => `${event.strategy}:${event.action}`)).toEqual([
+      'credential:refresh-credentials',
+    ]);
+    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'done' });
+    expect(failed).toHaveLength(0);
+  });
+
   it('fails a 401 immediately without the credential contribution', async () => {
     const { requester, calls } = createCredentialHarness([statusError(401, 'unauthorized'), 'ok']);
     const { actor, recovering, retrying, failed } = startTurnActor(requester, {

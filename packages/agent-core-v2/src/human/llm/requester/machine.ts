@@ -1,6 +1,14 @@
 import { assign, emit, fromCallback, setup } from '#/xstate2';
 
-import { toLlmErrorMessage, type LlmErrorMessage, type LlmRemoteErrorMessage } from '#/llm/errors';
+import {
+  headersToRecord,
+  isAbortError,
+  parseRetryAfterMs,
+  toLlmErrorMessage,
+  toLlmStatusErrorMessage,
+  type LlmErrorMessage,
+  type LlmRemoteErrorMessage,
+} from '#/llm/errors';
 import type { Message } from '#/llm/message';
 
 import type {
@@ -69,6 +77,24 @@ export interface LlmMachineContext {
   error?: LlmErrorMessage;
 }
 
+function toResolverErrorMessage(error: unknown): LlmRemoteErrorMessage {
+  if (isAbortError(error)) return toLlmErrorMessage(error);
+  const message = error instanceof Error ? error.message : String(error);
+  if (typeof error === 'object' && error !== null) {
+    const record = error as Record<string, unknown>;
+    const status = record['status'] ?? record['statusCode'];
+    if (typeof status === 'number') {
+      return toLlmStatusErrorMessage({
+        statusCode: status,
+        message,
+        retryAfterMs: parseRetryAfterMs(record['headers']),
+        headers: headersToRecord(record['headers']),
+      });
+    }
+  }
+  return toLlmErrorMessage(error);
+}
+
 function createRequestActor(
   requester: LlmRequester,
   resolvers: readonly LlmRequestResolver[],
@@ -87,7 +113,7 @@ function createRequestActor(
           messages = resolved?.messages ?? messages;
         }
       } catch (error) {
-        sendBack({ type: 'llm.failed.remote', error: toLlmErrorMessage(error) });
+        sendBack({ type: 'llm.failed.remote', error: toResolverErrorMessage(error) });
         return;
       }
       await requester.generate(
