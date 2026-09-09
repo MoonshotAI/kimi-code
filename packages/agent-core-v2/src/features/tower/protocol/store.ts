@@ -1086,11 +1086,11 @@ export class TowerStore {
     if (await branchExists(this.repoRoot, branch)) {
       const state = await this.load();
       const mission = state.missions.find((m) => m.worktree === worktree && m.branch === branch);
-      const dirExists = await stat(this.abs(rel)).then(
-        () => true,
-        () => false,
-      );
-      if (mission?.owner === undefined && !dirExists) {
+      const registered = await isRegisteredWorktree(this.repoRoot, this.abs(rel));
+      const checkedOut = registered
+        ? await tryGit(this.abs(rel), ['rev-parse', '--abbrev-ref', 'HEAD'])
+        : null;
+      if (mission?.owner === undefined && checkedOut?.trim() !== branch) {
         throw new TowerProtocolError(unownedBranchMessage(branch));
       }
       await worktreeAdd(this.repoRoot, this.abs(rel), branch);

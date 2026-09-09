@@ -1865,6 +1865,33 @@ describe('addWorktree branch ownership', () => {
     expect(listed).not.toContain('wt-taken');
   });
 
+  it('refuses to attach when an unowned branch exists and the worktree path is only a plain directory', async () => {
+    const [mission] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    await git(repo, 'branch', mission!.branch);
+    await mkdir(worktreeOf(mission!), { recursive: true });
+
+    const state = await store.load();
+    await expect(store.addWorktree(mission!.worktree, mission!.branch, state.base)).rejects.toThrow(
+      /not owned by any tower mission/,
+    );
+  });
+
+  it('does not apply the ownership refusal to a registered worktree left by an earlier spawn attempt', async () => {
+    const [mission] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    const state = await store.load();
+    await store.addWorktree(mission!.worktree, mission!.branch, state.base);
+
+    const retry = await store
+      .addWorktree(mission!.worktree, mission!.branch, state.base)
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+
+    expect(retry).toBeInstanceOf(Error);
+    expect((retry as Error).message).not.toMatch(/not owned by any tower mission/);
+  });
+
   it('allows re-adding the worktree of a mission that already has an owner', async () => {
     const mission = await setupMission({
       title: 'feature x',
