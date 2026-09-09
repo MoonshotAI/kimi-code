@@ -52,7 +52,6 @@ export interface PromptQueueSnapshot {
 
 export interface PromptPayload {
   readonly input: readonly ContentPart[];
-  readonly disabledTools?: readonly string[];
   readonly promptId?: string;
 }
 

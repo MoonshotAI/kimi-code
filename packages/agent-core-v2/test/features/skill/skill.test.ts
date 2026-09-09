@@ -311,7 +311,7 @@ describe('AgentSkillService busy delivery (harness)', () => {
     await ctx.untilTurnEnd();
 
     const idleResult = await ctx.get(IAgentSkillService).activate({ name: 'tower', args: 'mission-2' });
-    expect(idleResult.turn_id).toBe(1);
+    expect(idleResult.turn_id).toBe(2);
     await ctx.untilTurnEnd();
     expect(generateCalls).toBe(3);
 

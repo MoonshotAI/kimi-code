@@ -12,10 +12,12 @@ import type { LlmModel } from '#/llm/model';
 import { createLlmMachine } from '#/llm/requester/machine';
 import type { LlmRequester } from '#/llm/requester/requester';
 import { createAgentMachine } from '#/agent/machine';
-import { createTurnMachine } from '#/agent/turn';
+import type { StateUpdated } from '#/agent/events';
+import type { AgentEventStore, TurnIndexState } from '#/agent/slices';
+import { createTurnMachine, type HistoryMessage } from '#/agent/turn';
 import { createSessionMachine, type AgentActorRef } from '#/session/machine';
-import { undoAgentTurns } from '#/session/undo';
-import { loadSessionState, persistSession } from '#/persist/session';
+import type { SessionStores } from '#/session/stores';
+import { createSlice } from '#/eventStore/slice';
 import { openSessionStore } from '#/persist/open';
 import { migrateV2Session } from '#/persist/v2/migrate';
 
@@ -153,10 +155,55 @@ function assistantStep(uuid: string, text: string, agentId = MAIN): Record<strin
   return [stepBegin(uuid, agentId), contentPart(uuid, text, agentId), stepEnd(uuid, { finishReason: 'end_turn' }, agentId)];
 }
 
-async function loadMigrated(dir: string): Promise<Awaited<ReturnType<typeof loadSessionState>>> {
+const statesSlice = createSlice({
+  name: 'states',
+  initialState: () => ({}) as Record<string, unknown>,
+  reducers: {
+    'state.updated': (draft, event: StateUpdated) => {
+      draft[event.name] = event.value;
+    },
+  },
+});
+
+interface LoadedAgent {
+  agentId: string;
+  messages: HistoryMessage[];
+  turnIndex: TurnIndexState;
+  states: Record<string, unknown>;
+}
+
+function readStates(store: AgentEventStore): Record<string, unknown> {
+  return (store.getState() as unknown as Record<string, Record<string, unknown>>)['states'] ?? {};
+}
+
+async function loadAgent(stores: SessionStores, agentId: string): Promise<LoadedAgent> {
+  const store = await stores.open(agentId);
+  if ((store.getState() as unknown as Record<string, unknown>)['states'] === undefined) {
+    await store.registerSlice(statesSlice);
+  }
+  return {
+    agentId,
+    messages: store.getState().history,
+    turnIndex: store.getState().turnIndex,
+    states: readStates(store),
+  };
+}
+
+async function loadAgents(stores: SessionStores): Promise<LoadedAgent[]> {
+  const roster = (await stores.session()).getState().roster.agents;
+  const agents: LoadedAgent[] = [];
+  for (const agentId of Object.keys(roster).sort()) {
+    agents.push(await loadAgent(stores, agentId));
+  }
+  return agents;
+}
+
+async function loadMigrated(dir: string) {
   await migrateV2Session(dir);
   const opened = await openSessionStore(dir);
-  return loadSessionState(opened.tree);
+  const agents = await loadAgents(opened.stores);
+  const meta = (await opened.stores.session()).getState().sessionMeta.value;
+  return { agents, meta };
 }
 
 describe('migrateV2Session', () => {
@@ -236,7 +283,7 @@ describe('migrateV2Session', () => {
     if (second?.message.role === 'assistant') {
       expect(second.meta.finish).toEqual({ finishReason: 'completed', rawFinishReason: null });
     }
-    expect(agent.turnId).toBe(0);
+    expect(agent.turnIndex.nextTurnId).toBe(1);
     expect(loaded.meta).toMatchObject({
       id: 'session_basic',
       version: 2,
@@ -523,37 +570,41 @@ describe('migrateV2Session', () => {
     const first = await openSessionStore(dir);
     expect(first.migrated).toBe(true);
 
-    const loaded = await loadSessionState(first.tree);
-    const session = createTestSession();
-    const persistence = persistSession(session, first.tree, {
-      branches: new Map(loaded.agents.map((agent) => [agent.agentId, agent.branch])),
-    });
-    for (const agent of loaded.agents) {
-      session.send({
-        type: 'agent.create',
-        agentId: agent.agentId,
-        input: { history: agent.messages, turnId: agent.turnId, branchId: agent.branch },
-      });
-    }
-    submit(session, MAIN, 'again');
-    await waitFor(agentRef(session, MAIN), (s) => s.matches('idle') && s.context.messages.length === 4, {
-      timeout: 5000,
-    });
-
-    const undone = await undoAgentTurns(session, first.tree, MAIN, 1);
-    expect(undone.messages.map((entry) => extractText(entry.message))).toEqual(['first', 'first-reply']);
-    await persistence.flush();
-    persistence.dispose();
-    session.stop();
-
-    const second = await openSessionStore(dir);
-    expect(second.migrated).toBe(false);
-    const reloaded = await loadSessionState(second.tree);
-    expect(reloaded.agents.map((agent) => agent.agentId)).toEqual([MAIN]);
-    expect(reloaded.agents[0]!.messages.map((entry) => extractText(entry.message))).toEqual([
+    const agentStore = await first.stores.open(MAIN);
+    expect(agentStore.getState().history.map((entry) => extractText(entry.message))).toEqual([
       'first',
       'first-reply',
     ]);
+    expect(agentStore.getState().turnIndex.nextTurnId).toBe(1);
+
+    const session = createTestSession();
+    session.send({ type: 'agent.create', agentId: MAIN, input: { store: agentStore } });
+    submit(session, MAIN, 'again');
+    await waitFor(
+      agentRef(session, MAIN),
+      (s) => s.matches('idle') && agentStore.getState().history.length === 4,
+      { timeout: 5000 },
+    );
+    await first.stores.flush();
+
+    const undone = await first.stores.undo(MAIN, 1);
+    expect(undone.branchId).toBe('main~2');
+    expect(agentStore.ref.branch).toBe('main~2');
+    expect(agentStore.getState().history.map((entry) => extractText(entry.message))).toEqual([
+      'first',
+      'first-reply',
+      'again',
+    ]);
+    expect((await first.stores.session()).getState().roster.agents[MAIN]).toBe('main~2');
+    await first.stores.flush();
+    session.stop();
+    await first.stores.dispose();
+
+    const second = await openSessionStore(dir);
+    expect(second.migrated).toBe(false);
+    const roster = (await second.stores.session()).getState().roster.agents;
+    expect(Object.keys(roster)).toEqual([MAIN]);
+    expect(roster[MAIN]).toBe('main~2');
     const names = await readdir(dir);
     expect(names.filter((name) => name.startsWith('.migrate'))).toEqual([]);
     expect(names).toContain('state.json');

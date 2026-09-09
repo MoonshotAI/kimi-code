@@ -9,18 +9,19 @@ import { createHooks } from '#/hooks';
 import type { IWireService } from '#/wire/wire';
 
 export interface StubLoopOptions { readonly hasActiveTurn?: boolean; readonly currentId?: string | number; readonly pendingTurnResult?: boolean; readonly manualTurnResult?: boolean }
+export type StubTurn = Turn & { readonly id: number };
 export type StubLoop = IAgentLoopService & {
   readonly launches: readonly number[];
   readonly cancels: readonly { readonly turnId?: number; readonly reason?: unknown }[];
   readonly queue: { hasPendingRequests(): boolean };
-  startTurn(): Turn;
+  startTurn(): StubTurn;
   settleActive(result?: TurnResult): void;
   drainNextBatch(context: { append(...messages: ContextMessage[]): void }): { readonly driver: { readonly kind: string } } | undefined;
 };
 const turnControllers = new WeakMap<Turn, AbortController>();
-export function makeTurn(id: number): Turn {
+export function makeTurn(id: number): StubTurn {
   const controller = new AbortController();
-  const turn: Turn = { id, signal: controller.signal, ready: Promise.resolve(), result: Promise.resolve({ type: 'completed', steps: 0, truncated: false }), cancel: (reason) => { controller.abort(reason); return true; } };
+  const turn: StubTurn = { id, signal: controller.signal, ready: Promise.resolve(), result: Promise.resolve({ type: 'completed', steps: 0, truncated: false }), cancel: (reason) => { controller.abort(reason); return true; } };
   turnControllers.set(turn, controller);
   return turn;
 }
@@ -83,8 +84,10 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
         },
       };
     },
-    status() { return { state: active !== undefined ? 'running' : 'idle', activeTurnId: active?.id, pendingTurnIds: [], hasPendingRequests: hasPending() }; },
+    status() { return { state: active !== undefined ? 'running' : 'idle', activeTurnId: active?.id, pendingPromptIds: [], hasPendingRequests: hasPending() }; },
+    activitySnapshot() { return {}; },
     cancel(turnId, reason) { cancels.push({ turnId, reason }); if (active === undefined || (turnId !== undefined && active.id !== turnId)) return false; active.cancel(reason); return true; },
+    cancelQueued() { return false; },
     cancelFromUser(turnId) { stub.cancel(turnId); },
     tryAcquireQuiescence: () => toDisposable(() => {}),
     hasPendingRequests: hasPending,

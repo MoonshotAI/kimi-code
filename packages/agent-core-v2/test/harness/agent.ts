@@ -130,7 +130,6 @@ import {
   FileStorageService,
   InMemoryStorageService,
   AgentFullCompactionService,
-  IAgentActivityView,
   IAppendLogStore,
   IFileSystemStorageService,
   ISessionMetadata,
@@ -204,6 +203,7 @@ import {
 } from '#/app/kosongConfig/configSection';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { ModelCatalog } from '#/llm-adapter/model/catalog-service';
+import { IProviderCatalogRuntime } from '#/llm-adapter/model/catalog-runtime';
 import { IModelOAuthTokens } from '#/llm-adapter/model/model-oauth';
 import type { ModelRequestParams, ModelRequester } from '#/llm-adapter/model/model-requester';
 import { IHostRequestHeaders } from '#/llm-adapter/model/host-request-headers';
@@ -1034,13 +1034,14 @@ class ConfigBackedModelCatalog extends ModelCatalog {
   constructor(
     private readonly options: TestModelProviderOptions = {},
     @IConfigService private readonly config: IConfigService,
+    @IProviderCatalogRuntime runtime: IProviderCatalogRuntime,
     @IProviderService private readonly providerRegistry: IProviderService,
     @IModelService private readonly modelRegistry: IModelService,
     @IModelOAuthTokens oauthTokens: IModelOAuthTokens,
     @IProtocolAdapterRegistry protocolRegistry: IProtocolAdapterRegistry,
     @IHostRequestHeaders hostRequestHeaders: IHostRequestHeaders,
   ) {
-    super(providerRegistry, modelRegistry, oauthTokens, protocolRegistry, hostRequestHeaders);
+    super(runtime, providerRegistry, modelRegistry, oauthTokens, protocolRegistry, hostRequestHeaders);
   }
 
   private syncRegistriesFromConfig(): void {
@@ -1411,7 +1412,6 @@ export class AgentTestContext {
     reassertServiceOverrides(this.serviceOverrides, 'agent', this.agent.instantiation);
 
     this.initializeRestorableServices();
-    this.get(IAgentActivityView);
 
     const eventBus = this.get(IEventBus);
     this.disposables.push(
@@ -2789,8 +2789,6 @@ function createGenerateBackedGateway(requester: LlmRequester): IProtocolAdapterR
       real.resolveProviderBaseId(protocol, providerType),
     resolveCapability: (protocol, modelName, providerType) =>
       real.resolveCapability(protocol, modelName, providerType),
-    explainCapability: (protocol, modelName, providerType) =>
-      real.explainCapability(protocol, modelName, providerType),
     resolve: (model) => ({ ...real.resolve(model), requester }),
   };
 }

@@ -12,6 +12,8 @@ import { createLlmMachine } from '#/llm/requester/machine';
 import type { LlmRequester } from '#/llm/requester/requester';
 import { emptyUsage } from '#/llm/usage';
 import { createAgentMachine } from '#/agent/machine';
+import { messageAppended, turnEnded } from '#/agent/events';
+import { agentSlices, type AgentEventStore } from '#/agent/slices';
 import {
   createAssistantEntry,
   createTurnMachine,
@@ -23,6 +25,12 @@ import {
   createSessionMachine,
   type AgentActorRef,
 } from '#/session/machine';
+import { createEventStore } from '#/eventStore/eventStore';
+import { journalFromBranch } from '#/eventStore/journal';
+import { MemoryBackend } from '#/store/backend/memory';
+import { TreeStore } from '#/store/store';
+import type { BranchRef } from '#/store/types';
+import type { Tree } from '#/store/tree';
 
 const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
 
@@ -54,6 +62,32 @@ function createTestSession(requester: LlmRequester): SessionActor {
   return session;
 }
 
+interface TestEnv {
+  tree: Tree;
+  open(branch: string, from?: BranchRef): Promise<AgentEventStore>;
+}
+
+async function testEnv(): Promise<TestEnv> {
+  const backend = new MemoryBackend();
+  const store = await TreeStore.open(backend, {});
+  const tree = await store.tree('test');
+  return {
+    tree,
+    open: (branch, from) => {
+      if (!tree.has(branch)) {
+        tree.createBranch(branch, from !== undefined ? { from } : undefined);
+      }
+      return createEventStore({ journal: journalFromBranch(tree.openBranch(branch), tree), slices: agentSlices });
+    },
+  };
+}
+
+function forkStore(env: TestEnv, source: AgentEventStore, branch: string): Promise<AgentEventStore> {
+  const sourceBranch = env.tree.openBranch(source.ref.branch);
+  const head = sourceBranch.head;
+  return env.open(branch, head === null ? undefined : { branch: sourceBranch.name, seq: head });
+}
+
 function agentRef(session: SessionActor, agentId: string): AgentActorRef {
   const entry = session.getSnapshot().context.agents[agentId];
   expect(entry).toBeDefined();
@@ -68,10 +102,10 @@ function submit(session: SessionActor, agentId: string, text: string): void {
   });
 }
 
-async function waitIdle(ref: AgentActorRef, messageCount: number) {
+async function waitIdle(ref: AgentActorRef, store: AgentEventStore, messageCount: number) {
   return waitFor(
     ref,
-    (snapshot) => snapshot.matches('idle') && snapshot.context.messages.length === messageCount,
+    (snapshot) => snapshot.matches('idle') && store.getState().history.length === messageCount,
     { timeout: 5000 },
   );
 }
@@ -85,9 +119,10 @@ describe('session machine agent lifecycle', () => {
     const session = createTestSession(createEchoRequester());
     const created: string[] = [];
     session.on('agent.created', (event) => created.push(event.agentId));
+    const env = await testEnv();
 
-    session.send({ type: 'agent.create' });
-    session.send({ type: 'agent.create' });
+    session.send({ type: 'agent.create', input: { store: await env.open('agent-1') } });
+    session.send({ type: 'agent.create', input: { store: await env.open('agent-2') } });
 
     expect(created).toEqual(['agent-1', 'agent-2']);
     expect(Object.keys(session.getSnapshot().context.agents).toSorted()).toEqual(['agent-1', 'agent-2']);
@@ -95,22 +130,29 @@ describe('session machine agent lifecycle', () => {
 
   it('creates a agent with restored messages and turnId', async () => {
     const session = createTestSession(createEchoRequester());
-    const history: HistoryMessage[] = [
-      createUserEntry(createUserMessage('old'), { source: 'input' }),
-      createAssistantEntry(createAssistantMessage([{ type: 'text', text: 'echo:old' }]), {
-        source: 'llm',
-        usage: emptyUsage(),
+    const env = await testEnv();
+    const store = await env.open('restored');
+    await store.dispatch(
+      messageAppended({ message: createUserEntry(createUserMessage('old'), { source: 'input' }) }),
+    );
+    await store.dispatch(
+      messageAppended({
+        message: createAssistantEntry(createAssistantMessage([{ type: 'text', text: 'echo:old' }]), {
+          source: 'llm',
+          usage: emptyUsage(),
+        }),
       }),
-    ];
-    session.send({ type: 'agent.create', agentId: 'restored', input: { history, turnId: 7 } });
+    );
+    await store.dispatch(turnEnded({ turnId: 6, outcome: 'done' }));
+    session.send({ type: 'agent.create', agentId: 'restored', input: { store } });
 
     const ref = agentRef(session, 'restored');
-    expect(ref.getSnapshot().context.turnId).toBe(7);
+    expect(store.getState().turnIndex.nextTurnId).toBe(7);
     submit(session, 'restored', 'new');
-    const snapshot = await waitIdle(ref, 4);
+    await waitIdle(ref, store, 4);
 
-    expect(snapshot.context.turnId).toBe(8);
-    expect(rolesAndTexts(snapshot.context.messages)).toEqual([
+    expect(store.getState().turnIndex.nextTurnId).toBe(8);
+    expect(rolesAndTexts(store.getState().history)).toEqual([
       'user:old',
       'assistant:echo:old',
       'user:new',
@@ -122,10 +164,11 @@ describe('session machine agent lifecycle', () => {
     const session = createTestSession(createEchoRequester());
     const errors: string[] = [];
     session.on('agent.failed', (event) => errors.push(event.error));
+    const env = await testEnv();
 
-    session.send({ type: 'agent.create', agentId: 'a' });
+    session.send({ type: 'agent.create', agentId: 'a', input: { store: await env.open('a') } });
     const first = agentRef(session, 'a');
-    session.send({ type: 'agent.create', agentId: 'a' });
+    session.send({ type: 'agent.create', agentId: 'a', input: { store: await env.open('a-dup') } });
 
     expect(errors).toEqual([`duplicate agent id: 'a'`]);
     expect(agentRef(session, 'a')).toBe(first);
@@ -133,7 +176,8 @@ describe('session machine agent lifecycle', () => {
 
   it('stops a agent and removes it from the registry', async () => {
     const session = createTestSession(createEchoRequester());
-    session.send({ type: 'agent.create', agentId: 'a' });
+    const env = await testEnv();
+    session.send({ type: 'agent.create', agentId: 'a', input: { store: await env.open('a') } });
     const ref = agentRef(session, 'a');
     const stopped: string[] = [];
     session.on('agent.stopped', (event) => stopped.push(event.agentId));
@@ -176,8 +220,11 @@ describe('session machine concurrent agents', () => {
       },
     };
     const session = createTestSession(requester);
-    session.send({ type: 'agent.create', agentId: 'a' });
-    session.send({ type: 'agent.create', agentId: 'b' });
+    const env = await testEnv();
+    const storeA = await env.open('a');
+    const storeB = await env.open('b');
+    session.send({ type: 'agent.create', agentId: 'a', input: { store: storeA } });
+    session.send({ type: 'agent.create', agentId: 'b', input: { store: storeB } });
 
     submit(session, 'a', 'hello-a');
     submit(session, 'b', 'hello-b');
@@ -190,16 +237,16 @@ describe('session machine concurrent agents', () => {
 
     resolvers.get('hello-a')?.();
     resolvers.get('hello-b')?.();
-    const [snapshotA, snapshotB] = await Promise.all([
-      waitIdle(agentRef(session, 'a'), 2),
-      waitIdle(agentRef(session, 'b'), 2),
+    await Promise.all([
+      waitIdle(agentRef(session, 'a'), storeA, 2),
+      waitIdle(agentRef(session, 'b'), storeB, 2),
     ]);
 
-    expect(rolesAndTexts(snapshotA.context.messages)).toEqual([
+    expect(rolesAndTexts(storeA.getState().history)).toEqual([
       'user:hello-a',
       'assistant:echo:hello-a',
     ]);
-    expect(rolesAndTexts(snapshotB.context.messages)).toEqual([
+    expect(rolesAndTexts(storeB.getState().history)).toEqual([
       'user:hello-b',
       'assistant:echo:hello-b',
     ]);
@@ -209,112 +256,51 @@ describe('session machine concurrent agents', () => {
 describe('session machine agent fork', () => {
   it('forks a agent with the source context and diverges afterwards', async () => {
     const session = createTestSession(createEchoRequester());
-    session.send({ type: 'agent.create', agentId: 'a' });
+    const env = await testEnv();
+    const storeA = await env.open('a');
+    session.send({ type: 'agent.create', agentId: 'a', input: { store: storeA } });
     submit(session, 'a', 'hi');
-    const snapshotA = await waitIdle(agentRef(session, 'a'), 2);
-    expect(snapshotA.context.turnId).toBe(1);
+    await waitIdle(agentRef(session, 'a'), storeA, 2);
+    expect(storeA.getState().turnIndex.nextTurnId).toBe(1);
+    await storeA.flush();
 
     const forked: string[] = [];
     session.on('agent.forked', (event) => forked.push(event.agentId));
-    session.send({ type: 'agent.fork', sourceId: 'a', agentId: 'b' });
+    const storeB = await forkStore(env, storeA, 'b');
+    session.send({ type: 'agent.fork', sourceId: 'a', agentId: 'b', store: storeB });
     expect(forked).toEqual(['b']);
 
     const refB = agentRef(session, 'b');
-    const forkSnapshot = refB.getSnapshot();
-    expect(forkSnapshot.value).toEqual({ idle: 'ready' });
-    expect(forkSnapshot.context.turnId).toBe(1);
-    expect(rolesAndTexts(forkSnapshot.context.messages)).toEqual([
+    expect(refB.getSnapshot().value).toEqual({ idle: 'ready' });
+    expect(storeB.getState().turnIndex.nextTurnId).toBe(1);
+    expect(rolesAndTexts(storeB.getState().history)).toEqual([
       'user:hi',
       'assistant:echo:hi',
     ]);
 
     submit(session, 'b', 'fork-hi');
-    const snapshotB = await waitIdle(refB, 4);
+    await waitIdle(refB, storeB, 4);
 
-    expect(snapshotB.context.turnId).toBe(2);
-    expect(rolesAndTexts(snapshotB.context.messages)).toEqual([
+    expect(storeB.getState().turnIndex.nextTurnId).toBe(2);
+    expect(rolesAndTexts(storeB.getState().history)).toEqual([
       'user:hi',
       'assistant:echo:hi',
       'user:fork-hi',
       'assistant:echo:fork-hi',
     ]);
-    expect(agentRef(session, 'a').getSnapshot().context.messages).toHaveLength(2);
-    expect(agentRef(session, 'a').getSnapshot().context.turnId).toBe(1);
+    expect(storeA.getState().history).toHaveLength(2);
+    expect(storeA.getState().turnIndex.nextTurnId).toBe(1);
   });
 
   it('emits agent.failed when forking an unknown source', async () => {
     const session = createTestSession(createEchoRequester());
     const errors: string[] = [];
     session.on('agent.failed', (event) => errors.push(event.error));
+    const env = await testEnv();
 
-    session.send({ type: 'agent.fork', sourceId: 'nope', agentId: 'b' });
+    session.send({ type: 'agent.fork', sourceId: 'nope', agentId: 'b', store: await env.open('b') });
 
     expect(errors).toEqual([`unknown agent: 'nope'`]);
     expect(session.getSnapshot().context.agents['b']).toBeUndefined();
-  });
-});
-
-
-describe('session machine agent switch', () => {
-  it('switches an idle agent to a new branch context and emits agent.switched', async () => {
-    const session = createTestSession(createEchoRequester());
-    session.send({ type: 'agent.create', agentId: 'main' });
-    submit(session, 'main', 'hi');
-    await waitIdle(agentRef(session, 'main'), 2);
-
-    const switched: Array<{ agentId: string; branchId: string; reason?: string }> = [];
-    session.on('agent.switched', (event) => {
-      if (event.type === 'agent.switched') {
-        switched.push({ agentId: event.agentId, branchId: event.branchId, reason: event.reason });
-      }
-    });
-
-    session.send({
-      type: 'agent.switch',
-      agentId: 'main',
-      input: { branchId: 'main~2', history: [], turnId: 0, reason: 'undo' },
-    });
-
-    expect(switched).toEqual([{ agentId: 'main', branchId: 'main~2', reason: 'undo' }]);
-    const snapshot = agentRef(session, 'main').getSnapshot();
-    expect(snapshot.context.branchId).toBe('main~2');
-    expect(snapshot.context.messages).toEqual([]);
-    expect(snapshot.context.turnId).toBe(0);
-  });
-
-  it('emits agent.failed when switching an unknown or busy agent', async () => {
-    let release: (() => void) | undefined;
-    const requester: LlmRequester = {
-      generate: (_config, _content, { onEvent }) =>
-        new Promise<void>((resolve) => {
-          release = () => {
-            onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'late' } });
-            onEvent?.({ type: 'llm.done' });
-            resolve();
-          };
-        }),
-    };
-    const session = createTestSession(requester);
-    const errors: string[] = [];
-    session.on('agent.failed', (event) => errors.push(event.error));
-    session.send({ type: 'agent.create', agentId: 'main' });
-
-    session.send({
-      type: 'agent.switch',
-      agentId: 'nope',
-      input: { branchId: 'x', history: [], turnId: 0 },
-    });
-
-    submit(session, 'main', 'hi');
-    await vi.waitFor(() => expect(release).toBeDefined());
-    session.send({
-      type: 'agent.switch',
-      agentId: 'main',
-      input: { branchId: 'main~2', history: [], turnId: 0 },
-    });
-
-    expect(errors).toEqual([`unknown agent: 'nope'`, `agent is busy: 'main'`]);
-    expect(agentRef(session, 'main').getSnapshot().context.branchId).toBe('main');
-    release?.();
   });
 });

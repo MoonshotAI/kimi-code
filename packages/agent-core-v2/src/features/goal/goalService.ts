@@ -497,6 +497,11 @@ function handleTurnLaunched(context: GoalOperationContext, turnId: number, origi
   context.effects.liveTurnId = turnId;
   context.effects.goalTurnTargets.delete(turnId);
   context.effects.exhaustedTurnBudgetGoals.delete(turnId);
+  const pending = context.effects.pendingContinuation;
+  if (pending !== undefined && pending.turnId === undefined && isGoalContinuationOrigin(origin)) {
+    pending.turnId = turnId;
+    context.effects.pendingContinuationGoals.set(turnId, pending.goalId);
+  }
   if (!context.effects.goalDrivenTurns.has(turnId)) {
     const state = context.runtime.getState().goal;
     const continuationGoalId = isGoalContinuationOrigin(origin)
@@ -725,10 +730,7 @@ function launchContinuationTurn(context: GoalOperationContext, goalId: string, s
   const { turn } = context.runtime.get(IAgentLoopService).submit({ message });
   const pending: PendingContinuation = { turn, goalId };
   context.effects.pendingContinuation = pending;
-  pending.turnId = turn.id;
-  if (!context.effects.goalDrivenTurns.has(turn.id)) {
-    context.effects.pendingContinuationGoals.set(turn.id, pending.goalId);
-  }
+  void turn.ready.then(() => { pending.turnId = turn.id; }).catch(() => undefined);
   void turn.result.finally(() => {
     if (pending.turnId !== undefined) context.effects.pendingContinuationGoals.delete(pending.turnId);
     if (context.effects.pendingContinuation === pending) context.effects.pendingContinuation = undefined;
