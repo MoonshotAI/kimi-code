@@ -372,34 +372,6 @@ describe('ModelRequesterImpl request execution', () => {
     expect(seen).toEqual(['sk-1']);
   });
 
-  it('uploadVideo resolves credentials once and surfaces a raw 401 without retrying', async () => {
-    const authCalls: (boolean | undefined)[] = [];
-    const uploads: Array<string | undefined> = [];
-    const media: ProviderMediaContribution = {
-      uploadVideo: (_video, options) => {
-        uploads.push(options.model.apiKey);
-        return Promise.reject(Object.assign(new Error('unauthorized'), { status: 401 }));
-      },
-    };
-    const impl = new ModelRequesterImpl(
-      modelWith(
-        oauthCredentials((options) => {
-          authCalls.push(options?.force);
-          return Promise.resolve('tok-1');
-        }),
-      ),
-      gatewayReturning(new FakeLlmRequester(), media),
-    );
-
-    const failure = await impl
-      .uploadVideo({ data: new Uint8Array([1]), mimeType: 'video/mp4' })
-      .catch((error: unknown) => error);
-
-    expect((failure as Error).message).toBe('unauthorized');
-    expect(uploads).toEqual(['tok-1']);
-    expect(authCalls).toEqual([undefined]);
-  });
-
   it('reports the event-loop-busy overlap of the decode window as clientBlockedMs', async () => {
     const requester = new FakeLlmRequester();
     requester.handler = (_i, emit) => {

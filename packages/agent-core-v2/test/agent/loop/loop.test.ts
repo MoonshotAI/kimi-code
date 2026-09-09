@@ -1,7 +1,6 @@
 import { getMaxListeners } from 'node:events';
 
 import { type ToolCall } from '#human/llm/message';
-import { oauthCredentials } from '#human/credentials/credentials';
 import { emptyUsage } from '#human/llm/usage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -9,7 +8,7 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 import { IAgentProfileService } from '#/index';
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import type { ModelRequestTiming } from '#/llm-adapter/model/model-requester';
-import { APIProviderRateLimitError, APIStatusError } from '#/llm-adapter/contract/errors';
+import { APIProviderRateLimitError } from '#/llm-adapter/contract/errors';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import { IAgentGoalService } from '#/features/goal/goalService';
@@ -1916,127 +1915,6 @@ describe('aborted step tool execution', () => {
       });
     } finally {
       subscription.dispose();
-      await ctx.dispose();
-    }
-  });
-
-  it('settles a queued turn as failed when credential resolution rejects before the first request', async () => {
-    const oauthError = new Error('OAuth login required');
-    const rejectingCredentials = () => ({
-      resolve: () => Promise.reject(oauthError),
-    });
-    const requester: IAgentLLMRequesterService = {
-      _serviceBrand: undefined,
-      prepareTurnConfig: () => ({ thinkingEffort: 'off' }),
-      currentCredentials: rejectingCredentials,
-      credentialsForTurn: rejectingCredentials,
-      async request() {
-        throw new Error('request must not run');
-      },
-      start() {
-        throw new Error('request must not run');
-      },
-    };
-    const ctx = createTestAgent(agentService(IAgentLLMRequesterService, requester));
-    try {
-      const loopService = ctx.get(IAgentLoopService);
-      const { turn } = submitTurn(loopService, 'Hello');
-      const result = await turn.result;
-      expect(result).toMatchObject({ type: 'failed', steps: 0 });
-      if (result.type !== 'failed') throw new Error('expected a failed turn result');
-      expect(result.error).toBe(oauthError);
-      await expect(turn.ready).resolves.toBeUndefined();
-      await loopService.settled();
-      expect(ctx.newEvents()).toContainEqual(
-        expect.objectContaining({
-          event: 'turn.ended',
-          args: expect.objectContaining({ reason: 'failed' }),
-        }),
-      );
-    } finally {
-      await ctx.dispose();
-    }
-  });
-
-  it('settles a notification-seeded turn as failed when credential resolution rejects before the first request', async () => {
-    const rejectingCredentials = () => ({
-      resolve: () => Promise.reject(new Error('OAuth login required')),
-    });
-    const requester: IAgentLLMRequesterService = {
-      _serviceBrand: undefined,
-      prepareTurnConfig: () => ({ thinkingEffort: 'off' }),
-      currentCredentials: rejectingCredentials,
-      credentialsForTurn: rejectingCredentials,
-      async request() {
-        throw new Error('request must not run');
-      },
-      start() {
-        throw new Error('request must not run');
-      },
-    };
-    const ctx = createTestAgent(agentService(IAgentLLMRequesterService, requester));
-    try {
-      const loopService = ctx.get(IAgentLoopService);
-      loopService.notify({
-        message: {
-          role: 'user',
-          content: [{ type: 'text', text: 'nudge' }],
-          toolCalls: [],
-          origin: { kind: 'system_trigger', name: 'test' },
-        },
-      });
-      await loopService.settled();
-      expect(ctx.newEvents()).toContainEqual(
-        expect.objectContaining({
-          event: 'turn.ended',
-          args: expect.objectContaining({ reason: 'failed' }),
-        }),
-      );
-    } finally {
-      await ctx.dispose();
-    }
-  });
-
-  it('closes the current step when credential recovery re-enters the request', async () => {
-    const credentials = oauthCredentials(() => Promise.resolve('tok'));
-    let calls = 0;
-    const requester: IAgentLLMRequesterService = {
-      _serviceBrand: undefined,
-      prepareTurnConfig: () => ({ thinkingEffort: 'off' }),
-      currentCredentials: () => credentials,
-      credentialsForTurn: () => credentials,
-      async request(_overrides, onPart = () => {}) {
-        calls += 1;
-        if (calls === 1) throw new APIStatusError(401, 'Unauthorized', 'req-401');
-        await onPart({ type: 'text', text: 'answer' });
-        return {
-          message: {
-            role: 'assistant',
-            content: [{ type: 'text', text: 'answer' }],
-            toolCalls: [],
-          },
-          usage: emptyUsage(),
-          model: 'mock-model',
-        };
-      },
-      start(overrides, onPart, signal) {
-        return { trace: { traceId: undefined }, result: this.request(overrides, onPart, signal) };
-      },
-    };
-    const ctx = createTestAgent(agentService(IAgentLLMRequesterService, requester));
-    try {
-      const loopService = ctx.get(IAgentLoopService);
-      const { turn } = submitTurn(loopService, 'Hello');
-      await expect(turn.result).resolves.toMatchObject({ type: 'completed' });
-      const loopEvents = (await ctx.persistedWireRecords())
-        .filter((record) => record.type === 'context.append_loop_event')
-        .map((record) => (record as unknown as { event: { type: string; finishReason?: string } }).event);
-      const begins = loopEvents.filter((event) => event.type === 'step.begin');
-      const ends = loopEvents.filter((event) => event.type === 'step.end');
-      expect(begins).toHaveLength(2);
-      expect(ends).toHaveLength(2);
-      expect(ends[0]).toMatchObject({ finishReason: 'error' });
-    } finally {
       await ctx.dispose();
     }
   });

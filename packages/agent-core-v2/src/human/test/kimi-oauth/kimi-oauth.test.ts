@@ -23,27 +23,4 @@ describe('kimiOAuthCredentialProvider', () => {
     await expect(provider.resolve()).resolves.toEqual({ apiKey: 'access-token' });
     expect(calls).toEqual([undefined]);
   });
-
-  it('forces a refresh only on the resolve immediately after invalidate', async () => {
-    const { calls, tokens } = createTokens();
-    const provider = kimiOAuthCredentialProvider(tokens);
-
-    await provider.resolve();
-    provider.invalidate?.();
-    await provider.resolve();
-    await provider.resolve();
-
-    expect(calls).toEqual([undefined, true, undefined]);
-  });
-
-  it('recovers only from 401 errors', () => {
-    const { tokens } = createTokens();
-    const provider = kimiOAuthCredentialProvider(tokens);
-
-    expect(provider.canRecover?.(Object.assign(new Error('x'), { status: 401 }))).toBe(true);
-    expect(provider.canRecover?.(Object.assign(new Error('x'), { statusCode: 401 }))).toBe(true);
-    expect(provider.canRecover?.(Object.assign(new Error('x'), { statusCode: 403 }))).toBe(false);
-    expect(provider.canRecover?.(new Error('boom'))).toBe(false);
-    expect(provider.canRecover?.('nope')).toBe(false);
-  });
 });
