@@ -44,7 +44,7 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
   - `pnpm-workspace.yaml` uses globs (`packages/*`, `apps/*`), so most packages land there automatically; `flake.nix` is fully manual and is where omissions happen.
   - Missing a path in `flake.nix`'s `workspacePaths` will silently drop files from the Nix build's `src` fileset.
   - Missing a name in `flake.nix`'s `workspaceNames` will break `pnpmConfigHook` because dependencies for that workspace will not be fetched.
-- The automated "Check flake.nix workspace sync" (`scripts/check-nix-workspace.mjs`) only validates the transitive dependency **closure of `@moonshot-ai/kimi-code`**. A leaf package outside that closure (e.g. an e2e package nobody imports) slips through even when it is missing from `flake.nix`. A green check is therefore NOT proof that `flake.nix` is fully in sync — keep it updated by hand on every add/remove, do not rely on the check to catch omissions.
+- The automated "Check flake.nix workspace sync" (`scripts/check-nix-workspace.mjs`) validates that every named workspace discovered from `pnpm-workspace.yaml` appears in both `workspaceNames` and `workspacePaths`. It catches missing Nix entries but does not reject stale extra entries, so keep both lists updated when packages are removed.
 
 ## General Coding Rules
 
