@@ -826,7 +826,9 @@ export class TowerStore {
     const round = myRounds + 1;
     const reviewedCommit = await branchTip(this.repoRoot, input.target);
     const reviewMissionId =
-      callerEntry?.reviewMissionId ?? resolveMissionByBranch(state, input.target)?.id;
+      callerEntry === undefined
+        ? resolveMissionByBranch(state, input.target)?.id
+        : callerEntry.reviewMissionId;
 
     const frontmatter = renderFrontmatter({
       date: dateDash(),

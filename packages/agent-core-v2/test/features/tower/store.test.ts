@@ -1038,7 +1038,7 @@ describe('merge gate', () => {
     await store.addWorktree(live.worktree, live.branch, state.base);
     await commitFile(worktreeOf(live), 'src/x/x.ts', 'x\n', 'work on M2');
     await store.registerAgent(
-      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: live.branch }),
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: live.branch, reviewMissionId: 'M2' }),
     );
     await cleanReview('rev', live.branch);
 
@@ -1049,16 +1049,13 @@ describe('merge gate', () => {
     expect(after.missions.find((m) => m.id === stale!.id)?.status).toBe('abandoned');
   });
 
-  it('stamps the resolved mission on new reviews', async () => {
+  it('stamps the resolved mission on tower-submitted reviews', async () => {
     const [mission] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
     const state = await store.load();
     await store.addWorktree(mission!.worktree, mission!.branch, state.base);
     await commitFile(worktreeOf(mission!), 'src/x/x.ts', 'x\n', 'work on M1');
-    await store.registerAgent(
-      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: mission!.branch }),
-    );
 
-    await cleanReview('rev', mission!.branch);
+    await cleanReview('tower', mission!.branch);
 
     expect((await store.latestReview(mission!.branch))?.mission).toBe(mission!.id);
   });
@@ -1125,13 +1122,55 @@ describe('merge gate', () => {
     expect(after.missions.find((m) => m.id === live.id)?.status).toBe('completed');
   });
 
-  it('refuses to merge when the latest clean review was stamped for a different mission', async () => {
+  it('leaves reviews by unpinned legacy reviewers unstamped and still merges an unshared branch', async () => {
+    const [mission] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    const state = await store.load();
+    await store.addWorktree(mission!.worktree, mission!.branch, state.base);
+    await commitFile(worktreeOf(mission!), 'src/x/x.ts', 'x\n', 'work on M1');
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: mission!.branch }),
+    );
+
+    await cleanReview('rev', mission!.branch);
+
+    expect((await store.latestReview(mission!.branch))?.mission).toBeUndefined();
+    await store.merge(mission!.branch);
+    expect((await store.load()).missions.find((m) => m.id === mission!.id)?.status).toBe('merged');
+  });
+
+  it('refuses to merge on an unpinned legacy reviewer review when another mission shares the branch', async () => {
     const [stale] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
     const state = await store.load();
     await store.addWorktree(stale!.worktree, stale!.branch, state.base);
     await commitFile(worktreeOf(stale!), 'src/x/x.ts', 'x\n', 'work on M1');
     await store.registerAgent(
       rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: stale!.branch }),
+    );
+    const live: TowerMission = {
+      ...stale!,
+      id: 'M2',
+      worktree: 'wt-2',
+      status: 'completed',
+      tasks: [],
+      notes: [],
+      blockers: [],
+    };
+    await spliceMissionIntoState(live);
+
+    await cleanReview('rev', stale!.branch);
+
+    expect((await store.latestReview(stale!.branch))?.mission).toBeUndefined();
+    await expect(store.merge(stale!.branch)).rejects.toThrow(/predates mission-stamped reviews/);
+    expect((await store.load()).missions.find((m) => m.id === live.id)?.status).toBe('completed');
+  });
+
+  it('refuses to merge when the latest clean review was stamped for a different mission', async () => {
+    const [stale] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    const state = await store.load();
+    await store.addWorktree(stale!.worktree, stale!.branch, state.base);
+    await commitFile(worktreeOf(stale!), 'src/x/x.ts', 'x\n', 'work on M1');
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: stale!.branch, reviewMissionId: 'M1' }),
     );
     await cleanReview('rev', stale!.branch);
     expect((await store.latestReview(stale!.branch))?.mission).toBe('M1');
