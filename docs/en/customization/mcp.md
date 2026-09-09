@@ -4,7 +4,9 @@
 
 MCP tool results can include text (`content`) and structured data (`structuredContent`). Kimi Code CLI makes both available to the agent and omits the structured copy only when it can confirm that a text block already contains the same complete JSON value. Text summaries and media do not replace structured records.
 
-When an embedded MCP attachment cannot be delivered directly because its format is unsupported or it exceeds the attachment size limit, Kimi Code CLI saves the original bytes in the session's media storage and provides the file path. The path remains visible when accompanying text is shortened, and the file is retained with the session instead of being evicted from the image cache. A session-relative path is also provided to locate the copy in a forked session. The agent can use an appropriate local reader or converter; `Read` only accepts text files. If decoding or saving fails, the result explicitly reports incomplete attachment delivery while preserving other usable output. Resource links are not automatically downloaded.
+Kimi Code CLI preserves embedded MCP attachments that cannot be delivered directly because of format or size limits. Embedded audio and video are also saved, including small files, because provider conversion may omit them later. Originals are retained in the session's media storage instead of an evictable image cache. Saved originals, including images preserved during compression, have absolute and session-relative paths so the agent can locate the copy in a forked session. Plain SVG is saved as `.svg` and can be read as text; other binary formats need an appropriate local reader or converter.
+
+Attachment paths and compression details share the tool-output budget. Large lists are saved to a text file, with a short pointer that remains visible when accompanying text is shortened; the agent can page through the complete list with `Read`. If decoding or saving fails, the result explicitly reports that the original could not be preserved while retaining other usable output. Resource links are not automatically downloaded.
 
 ## Connection Methods
 

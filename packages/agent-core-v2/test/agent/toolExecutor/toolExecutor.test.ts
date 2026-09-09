@@ -1252,6 +1252,48 @@ describe('truncation pipeline', () => {
     expect(client.callTool).toHaveBeenCalledTimes(1);
   });
 
+  it.each([0, 100_000])('bounds batch attachment notices and recovers every reference with %s text characters', async (textSize) => {
+    const originals = Array.from({ length: 150 }, (_, i) => Buffer.from(`%PDF-1.4\nreport ${String(i)}\n%%EOF`));
+    const client: MCPClient = {
+      async listTools() { return []; },
+      async callTool() { return {
+        isError: false,
+        content: [
+          { type: 'text', text: `${'x'.repeat(100)}\n`.repeat(Math.ceil(textSize / 101)) },
+          ...originals.map((bytes, i) => ({ type: 'resource', resource: {
+            uri: `example://report/${String(i)}`, mimeType: 'application/pdf', blob: bytes.toString('base64'),
+          } })),
+        ],
+      }; },
+      async ping() {},
+    };
+    registry.register(createMcpTool('mcp__example__batch', {
+      name: 'batch', description: 'Example reports', parameters: {},
+    }, client, { attachmentStore }), { source: 'mcp' });
+    const [result] = await execute([toolCall('batch', 'mcp__example__batch', {})]);
+    if (result === undefined) throw new Error('expected batch output');
+    const visible = renderToolResultForModel(result).map((part) => part.type === 'text' ? part.text : '').join('\n');
+    expect(visible.length).toBeLessThan(50_000);
+    const encodedPath = /MCP attachment details saved at: ("[^\n]+")/.exec(visible)?.[1];
+    expect(encodedPath).toBeDefined();
+    let args: ReadInput | undefined = { path: JSON.parse(encodedPath!) as string, max_chars: 8000 };
+    let recovered = '';
+    let pages = 0;
+    while (args !== undefined && pages < 30) {
+      const [read] = await execute([toolCall(`read_batch_${String(pages++)}`, 'Read', args)]);
+      expect(read?.isError).not.toBe(true);
+      if (typeof read?.output !== 'string') throw new Error('expected Read output');
+      recovered += read.output.replaceAll(/^\d+\t/gm, '') + '\n';
+      const next = /Next Read: (\{[^\n]*\})/.exec(read.note ?? '')?.[1];
+      args = next === undefined ? undefined : ReadInputSchema.parse(JSON.parse(next));
+    }
+    expect(args).toBeUndefined();
+    expect(pages).toBeGreaterThan(1);
+    const paths = [...recovered.matchAll(/Original attachment saved at: ("[^\n]+")/g)].map((match) => JSON.parse(match[1]!) as string);
+    expect(paths).toHaveLength(150);
+    for (const [i, path] of paths.entries()) expect(readFileSync(path).equals(originals[i]!)).toBe(true);
+  });
+
   it('recovers MCP structured records through spill and Read without repeating the MCP call', async () => {
     const structuredContent = {
       rows: Array.from({ length: 1200 }, (_, index) => ({

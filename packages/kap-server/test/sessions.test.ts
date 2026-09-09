@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { inflateRawSync } from 'node:zlib';
 import { ISessionMediaStore } from '@moonshot-ai/agent-core-v2/agent/media/sessionMediaStore';
 import { mcpResultToExecutableOutput } from '@moonshot-ai/agent-core-v2/agent/mcp/output';
+import { renderToolResultForModel } from '@moonshot-ai/agent-core-v2/agent/contextMemory/toolResultRender';
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -1238,8 +1239,9 @@ describe('server-v2 /api/v1/sessions', () => {
         uri: 'example://report', mimeType: 'application/pdf', blob: bytes.toString('base64'),
       } }],
     }, 'mcp__example__report', { attachmentStore: session.accessor.get(ISessionMediaStore) });
-    const sourcePath = JSON.parse(/Original attachment saved at: ("[^\n]+")/.exec(output.note!)![1]!) as string;
-    const relativePath = JSON.parse(/Session-relative attachment: ("[^\n]+")/.exec(output.note!)![1]!) as string;
+    const text = renderToolResultForModel(output).map((part) => part.type === 'text' ? part.text : '').join('\n');
+    const sourcePath = JSON.parse(/Original attachment saved at: ("[^\n]+")/.exec(text)![1]!) as string;
+    const relativePath = JSON.parse(/Session-relative attachment: ("[^\n]+")/.exec(text)![1]!) as string;
     const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {});
     expect(forked.body.code).toBe(0);
     await rm(sourcePath);

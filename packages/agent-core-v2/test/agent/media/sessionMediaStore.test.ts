@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
+import { Jimp } from 'jimp';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -10,6 +11,12 @@ import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
 import { mcpResultToExecutableOutput } from '#/agent/mcp/output';
+import { detectFileType } from '#/agent/media/file-type';
+import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
+import { lowerMessage as lowerOpenAI } from '#human/llm/requester/bases/openai/lower';
+import { lowerMessage as lowerAnthropic } from '#human/llm/requester/bases/anthropic/lower';
+import { UNKNOWN_CAPABILITY } from '#human/llm/capability';
+import type { ToolMessage } from '#human/llm/message';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
@@ -18,6 +25,10 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 
 const BYTES = Buffer.from('media bytes');
+
+function modelText(result: Awaited<ReturnType<typeof mcpResultToExecutableOutput>>): string {
+  return renderToolResultForModel(result).map((part) => part.type === 'text' ? part.text : '').join('\n');
+}
 
 function streamOf(bytes: Buffer): () => NodeJS.ReadableStream {
   return () => Readable.from([bytes]);
@@ -90,7 +101,7 @@ describe('SessionMediaStoreService', () => {
         uri: 'example://report', mimeType: 'application/pdf', blob: bytes.toString('base64'),
       } }],
     }, 'mcp__example__report', { attachmentStore: store });
-    const path = /Original attachment saved at: ("[^\n]+")/.exec(output.note ?? '')?.[1];
+    const path = /Original attachment saved at: ("[^\n]+")/.exec(modelText(output))?.[1];
     expect(path).toBeDefined();
     const savedPath = JSON.parse(path!) as string;
     expect(savedPath.startsWith(join(sessionDir, 'media') + '/')).toBe(true);
@@ -108,10 +119,10 @@ describe('SessionMediaStoreService', () => {
         uri: 'example://attachment', mimeType, blob: bytes.toString('base64'),
       } }],
     }, 'mcp__example__attachment', { attachmentStore: store, providerType: 'anthropic' });
-    const encodedPath = /Original attachment saved at: ("[^\n]+")/.exec(output.note ?? '')?.[1];
+    const encodedPath = /Original attachment saved at: ("[^\n]+")/.exec(modelText(output))?.[1];
     expect(encodedPath).toBeDefined();
     expect((await readFile(JSON.parse(encodedPath!) as string)).equals(bytes)).toBe(true);
-    expect(output.note).not.toContain('could not be saved');
+    expect(modelText(output)).not.toContain('could not be saved');
   });
 
   it('keeps other MCP output and reports attachment save failures without inventing a path', async () => {
@@ -127,9 +138,9 @@ describe('SessionMediaStoreService', () => {
     }, 'mcp__example__report', { attachmentStore: store });
     expect(JSON.stringify(output.output)).toContain('The report was generated.');
     expect(output.isError).not.toBe(true);
-    expect(output.note).toContain('attachment delivery is incomplete');
-    expect(output.note).not.toContain('Original attachment saved at:');
-    expect(output.note).toContain('Do not repeat the MCP call automatically');
+    expect(modelText(output)).toContain('original attachment preservation is incomplete');
+    expect(modelText(output)).not.toContain('Original attachment saved at:');
+    expect(modelText(output)).toContain('Do not repeat the MCP call automatically');
   });
 
   it('reports malformed base64 instead of saving silently repaired bytes', async () => {
@@ -139,8 +150,8 @@ describe('SessionMediaStoreService', () => {
         uri: 'example://report', blob: '%%%invalid base64===',
       } }],
     }, 'mcp__example__report', { attachmentStore: store });
-    expect(output.note).toContain('Invalid base64 attachment');
-    expect(output.note).not.toContain('Original attachment saved at:');
+    expect(modelText(output)).toContain('Invalid base64 attachment');
+    expect(modelText(output)).not.toContain('Original attachment saved at:');
   });
 
   it('keeps unknown binary bytes and metadata accessible after reopening the session store', async () => {
@@ -149,7 +160,7 @@ describe('SessionMediaStoreService', () => {
       isError: false,
       content: [{ type: 'resource', resource: { uri: 'example://unknown', blob: bytes.toString('base64') } }],
     }, 'mcp__example__unknown', { attachmentStore: store });
-    const encodedPath = /Original attachment saved at: ("[^\n]+")/.exec(output.note ?? '')?.[1];
+    const encodedPath = /Original attachment saved at: ("[^\n]+")/.exec(modelText(output))?.[1];
     expect(encodedPath).toBeDefined();
     const path = JSON.parse(encodedPath!) as string;
     expect(path.endsWith('.bin')).toBe(true);
@@ -159,6 +170,61 @@ describe('SessionMediaStoreService', () => {
     expect(file?.mediaType).toBe('application/octet-stream');
     expect(file?.path).toBe(path);
     expect(Buffer.from((await reopened.read(fileId))!.data).equals(bytes)).toBe(true);
+  });
+
+  it.each([
+    { provider: 'openai', kind: 'audio', mimeType: 'audio/wav' },
+    { provider: 'anthropic', kind: 'audio', mimeType: 'audio/wav' },
+    { provider: 'openai', kind: 'video', mimeType: 'video/mp4' },
+  ])('keeps a small $kind original accessible after $provider lowering', async ({ provider, kind, mimeType }) => {
+    const bytes = Buffer.alloc(1024, 0x63);
+    const result = await mcpResultToExecutableOutput({
+      isError: false,
+      content: [kind === 'audio'
+        ? { type: 'audio', mimeType, data: bytes.toString('base64') }
+        : { type: 'resource', resource: { uri: 'example://video', mimeType, blob: bytes.toString('base64') } }],
+    }, 'mcp__example__audio', { attachmentStore: store, providerType: provider });
+    const content = renderToolResultForModel(result);
+    const text = content.map((part) => part.type === 'text' ? part.text : '').join('\n');
+    const encodedPath = /Original attachment saved at: ("[^\n]+")/.exec(text)?.[1];
+    expect(encodedPath).toBeDefined();
+    const path = JSON.parse(encodedPath!) as string;
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+    const message: ToolMessage = { role: 'tool', toolCallId: 'audio', content };
+    const ctx = { model: { provider, model: 'example', capability: UNKNOWN_CAPABILITY } };
+    const wire = provider === 'openai'
+      ? lowerOpenAI(message, { trait: undefined, ctx, reasoningKey: 'reasoning_content', preserveThinking: false })
+      : lowerAnthropic(message, { trait: undefined, ctx });
+    expect(JSON.stringify(wire)).toContain(JSON.stringify(encodedPath!).slice(1, -1));
+    expect(JSON.stringify(wire)).not.toContain(bytes.toString('base64'));
+  });
+
+  it('provides a session-relative path for an original preserved during image compression', async () => {
+    const bytes = Buffer.from(await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'));
+    const result = await mcpResultToExecutableOutput({
+      isError: false,
+      content: [{ type: 'image', mimeType: 'image/png', data: bytes.toString('base64') }],
+    }, 'mcp__example__image', { attachmentStore: store });
+    const text = renderToolResultForModel(result).map((part) => part.type === 'text' ? part.text : '').join('\n');
+    expect(text).toContain('Image compressed');
+    const relative = /Session-relative attachment: ("[^\n]+")/.exec(text)?.[1];
+    expect(relative).toBeDefined();
+    expect((await readFile(join(sessionDir, JSON.parse(relative!) as string))).equals(bytes)).toBe(true);
+  });
+
+  it('saves uncompressed SVG as readable SVG text', async () => {
+    const bytes = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><circle r="4"/></svg>');
+    const output = await mcpResultToExecutableOutput({
+      isError: false,
+      content: [{ type: 'resource', resource: {
+        uri: 'example://drawing', mimeType: 'image/svg+xml', blob: bytes.toString('base64'),
+      } }],
+    }, 'mcp__example__drawing', { attachmentStore: store });
+    const path = JSON.parse(/Original attachment saved at: ("[^\n]+")/.exec(modelText(output))![1]!) as string;
+    expect(path.endsWith('.svg')).toBe(true);
+    const saved = await readFile(path);
+    expect(saved.equals(bytes)).toBe(true);
+    expect(detectFileType(path, saved).kind).toBe('text');
   });
 
   it('keeps a same-size copy without re-reading the stream', async () => {

@@ -16,6 +16,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { McpConnectionManager, McpServerEntry } from '#/mcpCore/connection-manager';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
+import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { AgentMcpService } from '#/agent/mcp/mcpService';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
@@ -354,7 +355,8 @@ describe('AgentMcpService', () => {
       const output = await executeTool(tool!, {
         turnId: 1, toolCallId: 'report', args: {}, signal: new AbortController().signal,
       });
-      const path = /Original attachment saved at: ("[^\n]+")/.exec(output.note ?? '')?.[1];
+      const text = renderToolResultForModel(output).map((part) => part.type === 'text' ? part.text : '').join('\n');
+      const path = /Original attachment saved at: ("[^\n]+")/.exec(text)?.[1];
       expect(path).toBeDefined();
       expect((await readFile(JSON.parse(path!) as string)).equals(bytes)).toBe(true);
     } finally {
