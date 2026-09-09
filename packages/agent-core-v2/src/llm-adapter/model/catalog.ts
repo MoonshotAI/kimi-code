@@ -10,7 +10,12 @@ import type { ProviderConfig } from '../provider/provider';
 
 import type { ModelRecord } from './model';
 import { effectiveModelConfig } from './model-auth';
-import type { ModelRequester } from './model-requester';
+import type {
+  ModelRequestEvent,
+  ModelRequestInput,
+  ModelRequestParams,
+  ModelRequester,
+} from './model-requester';
 
 export interface Model {
   readonly id: string;
@@ -163,6 +168,12 @@ export interface IModelCatalog {
 
   get(id: string): Model;
   getRequester(id: string): ModelRequester;
+  generate(
+    id: string,
+    input: ModelRequestInput,
+    signal?: AbortSignal,
+    params?: ModelRequestParams,
+  ): AsyncIterable<ModelRequestEvent>;
   ping(id: string): Promise<ModelPingResult>;
   findByName(name: string): readonly string[];
 

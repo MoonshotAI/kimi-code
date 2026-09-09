@@ -6,6 +6,7 @@ import {
   oauthCredentials,
   resolveModelCredentials,
   staticCredentials,
+  streamWithCredentialRecovery,
 } from '#/credentials/credentials';
 import type { LlmModel } from '#/llm/model';
 
@@ -156,5 +157,88 @@ describe('attemptWithCredentialRecovery', () => {
     expect((failure as Error).message).toBe('unauthorized');
     expect(attempts).toBe(1);
     expect(invalidated).toBe(0);
+  });
+});
+
+describe('streamWithCredentialRecovery', () => {
+  async function collect<T>(stream: AsyncIterable<T>): Promise<T[]> {
+    const out: T[] = [];
+    for await (const item of stream) out.push(item);
+    return out;
+  }
+
+  function failingStream(error: unknown, attempts: number[]): AsyncIterable<string> {
+    return {
+      [Symbol.asyncIterator]() {
+        let index = 0;
+        attempts.push(attempts.length);
+        return {
+          next() {
+            index += 1;
+            if (index === 1) return Promise.resolve({ done: false as const, value: 'chunk' });
+            return Promise.reject(error);
+          },
+        };
+      },
+    };
+  }
+
+  it('invalidates and resubscribes once on a recoverable error', async () => {
+    const provider = oauthCredentials(() => Promise.resolve('tok'));
+    const attempts: number[] = [];
+    let call = 0;
+    const events = await collect(
+      streamWithCredentialRecovery(provider, () => {
+        call += 1;
+        return call === 1
+          ? failingStream(Object.assign(new Error('unauthorized'), { status: 401 }), attempts)
+          : (async function* () {
+              yield 'retried';
+            })();
+      }),
+    );
+    expect(events).toEqual(['chunk', 'retried']);
+    expect(attempts).toHaveLength(1);
+  });
+
+  it('rethrows non-recoverable errors without resubscribing', async () => {
+    const provider = oauthCredentials(() => Promise.resolve('tok'));
+    const attempts: number[] = [];
+    const failure = await collect(
+      streamWithCredentialRecovery(provider, () =>
+        failingStream(Object.assign(new Error('forbidden'), { status: 403 }), attempts),
+      ),
+    ).catch((error: unknown) => error);
+    expect((failure as Error).message).toBe('forbidden');
+    expect(attempts).toHaveLength(1);
+  });
+
+  it('does not resubscribe when the signal is already aborted', async () => {
+    const provider = oauthCredentials(() => Promise.resolve('tok'));
+    const attempts: number[] = [];
+    const failure = await collect(
+      streamWithCredentialRecovery(
+        provider,
+        () => failingStream(Object.assign(new Error('unauthorized'), { status: 401 }), attempts),
+        AbortSignal.abort(),
+      ),
+    ).catch((error: unknown) => error);
+    expect((failure as Error).message).toBe('unauthorized');
+    expect(attempts).toHaveLength(1);
+  });
+
+  it('propagates a failure from the retried stream', async () => {
+    const provider = oauthCredentials(() => Promise.resolve('tok'));
+    const attempts: number[] = [];
+    let calls = 0;
+    const failure = await collect(
+      streamWithCredentialRecovery(provider, () => {
+        calls += 1;
+        return failingStream(Object.assign(new Error('unauthorized'), { status: 401 }), attempts);
+      }),
+    ).catch((error: unknown) => error);
+    expect((failure as Error).message).toBe('unauthorized');
+    expect(calls).toBe(2);
+    expect(attempts).toHaveLength(2);
   });
 });

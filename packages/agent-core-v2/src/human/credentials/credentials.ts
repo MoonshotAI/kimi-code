@@ -69,3 +69,25 @@ export async function attemptWithCredentialRecovery<T>(
     return attempt();
   }
 }
+
+export async function* streamWithCredentialRecovery<T>(
+  credentials: LlmCredentialProvider,
+  makeStream: () => AsyncIterable<T>,
+  signal?: AbortSignal,
+): AsyncIterable<T> {
+  let recovered = false;
+  let stream = makeStream();
+  while (true) {
+    try {
+      yield* stream;
+      return;
+    } catch (error) {
+      if (recovered || signal?.aborted === true || credentials.canRecover?.(error) !== true) {
+        throw error;
+      }
+      recovered = true;
+      credentials.invalidate?.();
+      stream = makeStream();
+    }
+  }
+}

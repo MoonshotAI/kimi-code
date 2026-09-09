@@ -6,7 +6,12 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
 
 import type { CatalogModel, CatalogProviderInfo } from '#human/llm/provider-catalog';
-import { attemptWithCredentialRecovery, oauthCredentials, staticCredentials } from '#human/credentials/credentials';
+import {
+  attemptWithCredentialRecovery,
+  oauthCredentials,
+  staticCredentials,
+  streamWithCredentialRecovery,
+} from '#human/credentials/credentials';
 import type { LlmCredentialProvider } from '#human/llm/requester/requester';
 import type { ModelCapability } from '../contract/capability';
 import { CONFIG_INVALID_ERROR_CODE } from '../contract/errors';
@@ -48,7 +53,12 @@ import {
 } from './model-auth';
 import { IModelOAuthTokens } from './model-oauth';
 import type { ResolvedModelAuthMaterial } from './model.types';
-import type { ModelRequester } from './model-requester';
+import type {
+  ModelRequestEvent,
+  ModelRequestInput,
+  ModelRequestParams,
+  ModelRequester,
+} from './model-requester';
 import { ModelRequesterImpl } from './model-requester-impl';
 
 type MutableProtocolProviderOptions = {
@@ -128,6 +138,20 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     };
     this.cache.set(id, entry);
     return entry;
+  }
+
+  async *generate(
+    id: string,
+    input: ModelRequestInput,
+    signal?: AbortSignal,
+    params?: ModelRequestParams,
+  ): AsyncIterable<ModelRequestEvent> {
+    const { requester } = this.entry(id);
+    yield* streamWithCredentialRecovery(
+      requester.model.credentials,
+      () => requester.request(input, signal, params),
+      signal,
+    );
   }
 
   async ping(id: string): Promise<ModelPingResult> {

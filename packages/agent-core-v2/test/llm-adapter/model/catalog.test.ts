@@ -759,6 +759,96 @@ describe('ModelCatalog ping', () => {
   });
 });
 
+describe('ModelCatalog generate', () => {
+  it('refreshes OAuth credentials once on a 401 during generate', async () => {
+    const tokenProvider = stubTokenProvider(['tok-1', 'tok-2']);
+    const sections = {
+      providers: {
+        kimi: { type: 'kimi', oauth: { storage: 'file', key: 'kimi' }, baseUrl: 'https://api.moonshot.ai/v1' },
+      },
+      models: { k1: { provider: 'kimi', model: 'kimi-k2', maxContextSize: 1000 } },
+    };
+    const { host, models, providers } = createHost(sections, stubModelOAuthTokens(tokenProvider));
+    try {
+      let calls = 0;
+      const fakeRequester: LlmRequester = {
+        generate: (_config, _content, control) => {
+          calls += 1;
+          if (calls === 1) {
+            control.onEvent?.({
+              type: 'llm.failed.remote',
+              error: {
+                kind: 'status',
+                statusCode: 401,
+                message: 'unauthorized',
+                requestId: null,
+                retryAfterMs: null,
+                headers: null,
+              },
+            });
+            return Promise.resolve();
+          }
+          control.onEvent?.({ type: 'llm.sent' });
+          control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'pong' } });
+          control.onEvent?.({
+            type: 'llm.streaming.finish',
+            finish: { finishReason: 'completed', rawFinishReason: 'stop' },
+          });
+          control.onEvent?.({ type: 'llm.done' });
+          return Promise.resolve();
+        },
+      };
+      const registry = {
+        _serviceBrand: undefined,
+        supportedProtocols: () => [],
+        resolveAdapterIdentity: () => {
+          throw new Error('not exercised');
+        },
+        resolveProviderBaseId: () => {
+          throw new Error('not exercised');
+        },
+        resolveCapability: () => UNKNOWN_CAPABILITY,
+        resolve: (model: Model) => ({
+          requester: fakeRequester,
+          protocol: 'openai',
+          model: {
+            provider: 'fake',
+            model: model.name,
+            capability: {
+              image_in: false,
+              video_in: false,
+              audio_in: false,
+              thinking: false,
+              tool_use: true,
+            },
+          },
+        }),
+      } as unknown as IProtocolAdapterRegistry;
+      const catalog = new ModelCatalog(
+        new ProviderCatalogRuntimeService(models, providers),
+        providers,
+        models,
+        stubModelOAuthTokens(tokenProvider),
+        registry,
+        { headers: {}, thirdPartyHeaders: {} },
+      );
+      const events = [];
+      for await (const event of catalog.generate('k1', {
+        systemPrompt: 'sys',
+        tools: [],
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'ping' }], toolCalls: [] }],
+      })) {
+        events.push(event);
+      }
+      expect(events.some((event) => event.type === 'finish')).toBe(true);
+      expect(calls).toBe(2);
+      expect(tokenProvider.calls).toEqual([{}, { force: true }]);
+    } finally {
+      host.dispose();
+    }
+  });
+});
+
 const catalogSections: Record<string, unknown> = {
   providers: {
     kimi: { type: 'kimi', apiKey: 'sk-test', baseUrl: 'https://api.example.test/v1' },
