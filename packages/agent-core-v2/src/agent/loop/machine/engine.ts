@@ -6,6 +6,10 @@ import type { ToolInfo, ToolResult as AgentToolResult, ToolUpdate as AgentToolUp
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { createAgentMachine } from '#human/agent/machine';
 import { createTurnMachine, type AssistantEntry, type HistoryMessage } from '#human/agent/turn';
+import { messageAppended, turnEnded } from '#human/agent/events';
+import { agentSlices, type AgentEventStore } from '#human/agent/slices';
+import { createEventStoreSync } from '#human/eventStore/eventStore';
+import { memoryJournal } from '#human/eventStore/journal';
 import type { LlmErrorMessage } from '#human/llm/errors';
 import type { FinishInfo } from '#human/llm/finish-reason';
 import type { StreamedMessagePart, UserMessage } from '#human/llm/message';
@@ -264,6 +268,11 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
       publish({ type: 'toolBatchFailed', error });
     },
   });
+  const store: AgentEventStore = createEventStoreSync({ journal: memoryJournal(), slices: agentSlices });
+  const initialTurnId = options.initialTurnId ?? 0;
+  if (initialTurnId > 0) {
+    void store.dispatch(turnEnded({ turnId: initialTurnId - 1, outcome: 'done' }));
+  }
   const actor = createActor(
     createAgentMachine({
       tools: tools.tools,
@@ -278,7 +287,7 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
       ),
       abortTimeoutMs: options.abortTimeoutMs,
     }),
-    { input: { request: { model: options.model, systemPrompt: options.systemPrompt }, turnId: options.initialTurnId } },
+    { input: { request: { model: options.model, systemPrompt: options.systemPrompt }, store } },
   );
   const subscriptions: Subscription[] = [
     actor.on('turn.started', (event) => {
@@ -433,7 +442,19 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
       actor.send({ type: 'input.abort' });
     },
     resetHistory: (history) => {
-      actor.send({ type: 'context.reset', history });
+      const journal = memoryJournal();
+      for (const message of history) {
+        void journal.append({ type: messageAppended.type, kind: 'event', data: messageAppended({ message }) });
+      }
+      const nextTurnId = store.slice('turnIndex').nextTurnId;
+      if (nextTurnId > 0) {
+        void journal.append({
+          type: turnEnded.type,
+          kind: 'event',
+          data: turnEnded({ turnId: nextTurnId - 1, outcome: 'done' }),
+        });
+      }
+      void store.reset(journal);
     },
     stop: () => {
       for (const subscription of subscriptions) subscription.unsubscribe();
@@ -442,6 +463,7 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
     snapshot: () => {
       const snapshot = actor.getSnapshot() as unknown as MachineSnapshotLike;
       const value = snapshot.value;
+      const storeState = store.getState();
       const turnRef = snapshot.children['turn'];
       let turn: MachineEngineTurnSnapshot | undefined;
       if (turnRef !== undefined) {
@@ -455,7 +477,7 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
               : ('running' as const);
         const context = turnSnapshot.context;
         turn = {
-          turnId: snapshot.context.turnId,
+          turnId: storeState.turnIndex.nextTurnId,
           phase,
           step: context.steps,
           retry:
@@ -479,10 +501,10 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
         waitingForBackground:
           typeof value === 'object' && value !== null && 'idle' in value &&
           (value as { idle?: unknown }).idle === 'waiting',
-        queueLength: snapshot.context.queue.length,
-        queueIds: snapshot.context.queue.map((entry) => entry.id),
-        notificationCount: snapshot.context.notifications.length,
-        reminderCount: snapshot.context.reminders.length,
+        queueLength: storeState.queue.length,
+        queueIds: storeState.queue.map((entry) => entry.id),
+        notificationCount: storeState.notifications.length,
+        reminderCount: storeState.reminders.length,
         backgroundCount: Object.keys(snapshot.context.background).length,
         turn,
       };

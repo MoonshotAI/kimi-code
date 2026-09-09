@@ -1,11 +1,6 @@
 import { assign, emit, enqueueActions, fromCallback, sendTo, setup } from '#/xstate2';
 
-import {
-  createUserMessage,
-  type SystemMessage,
-  type ToolCall,
-  type UserMessage,
-} from '#/llm/message';
+import { createUserMessage, type SystemMessage, type ToolCall, type UserMessage } from '#/llm/message';
 import type { LlmRequestConfig } from '#/llm/requester/requester';
 import type { ToolExecutor, ToolResult } from '#/tool/executor';
 import { createToolMachine, type ToolEvent, type ToolOutput } from '#/tool/machine';
@@ -13,21 +8,28 @@ import type { ToolDefinition } from '#/tool/tool';
 
 import { createWaitForTasks, type ToolActorRef } from './wait-for';
 import { interruptReasonOf, type TurnInterruptReason } from './errors';
-import { createSystemEntry, createUserEntry } from './turn';
+import {
+  inputCancelled,
+  inputDrained,
+  inputNotified,
+  inputReminded,
+  inputSteered,
+  inputSubmitted,
+  messageAppended,
+  notificationsDrained,
+  queueDrained,
+  turnEnded,
+  turnStarted,
+} from './events';
+import { createUserEntry } from './turn';
 import { createAbortScope, withAbort, type AbortScope } from '#/utils/abort';
-import type {
-  createTurnMachine,
-  HistoryMessage,
-  TurnLlmEvent,
-  TurnOutput,
-  UserEntry,
-} from './turn';
+import type { createTurnMachine, HistoryMessage, TurnLlmEvent, TurnOutput, UserEntry } from './turn';
+import type { AgentStoreActorLogic, AgentStoreState, QueuedPrompt } from './slices';
+
+export type { QueuedPrompt } from './slices';
 
 export interface AgentInput {
   request: LlmRequestConfig;
-  history?: readonly HistoryMessage[];
-  turnId?: number;
-  branchId?: string;
 }
 
 export type AgentEvent =
@@ -43,7 +45,10 @@ export type AgentEvent =
   | { type: 'turn.drain' }
   | { type: 'turn.reminders_consumed'; reminders: HistoryMessage[] }
   | { type: 'step.started'; step: number }
-  | { type: 'context.reset'; history: readonly HistoryMessage[]; branchId?: string };
+  | { type: 'store.ready'; state: AgentStoreState; branch: string }
+  | { type: 'store.changed'; state: AgentStoreState }
+  | { type: 'store.reset'; state: AgentStoreState; branch: string }
+  | { type: 'store.error'; error: unknown };
 
 export type AgentEmitted =
   | TurnLlmEvent
@@ -69,11 +74,6 @@ interface ToolEntry {
   ref: ToolActorRef;
 }
 
-export interface QueuedPrompt {
-  id?: string;
-  message: UserMessage;
-}
-
 export interface AgentMachineContext {
   input: AgentInput;
   messages: HistoryMessage[];
@@ -84,6 +84,7 @@ export interface AgentMachineContext {
   reminders: HistoryMessage[];
   queue: QueuedPrompt[];
   turnId: number;
+  activeTurnId?: number;
   branchId: string;
   drainedId?: string;
 }
@@ -186,24 +187,22 @@ function drainPendingPatch(
   };
 }
 
-function steerPatch(
-  context: AgentMachineContext,
-  id: string,
-): Partial<Pick<AgentMachineContext, 'queue' | 'notifications'>> {
-  const index = context.queue.findIndex((entry) => entry.id === id);
-  if (index === -1) {
-    return {};
-  }
-  const entry = context.queue[index] as QueuedPrompt;
+function mirrorPatch(state: AgentStoreState): Pick<
+  AgentMachineContext,
+  'messages' | 'queue' | 'notifications' | 'reminders'
+> {
   return {
-    queue: context.queue.filter((_, i) => i !== index),
-    notifications: [...context.notifications, createUserEntry(entry.message, { source: 'input' })],
+    messages: [...state.history],
+    queue: [...state.queue],
+    notifications: [...state.notifications],
+    reminders: [...state.reminders],
   };
 }
 
 export interface CreateAgentMachineOptions {
   tools?: readonly ToolDefinition[];
   turnActor: ReturnType<typeof createTurnMachine>;
+  store: AgentStoreActorLogic;
   abortTimeoutMs?: number;
   maxStepsPerTurn?: number;
 }
@@ -233,6 +232,7 @@ function dispatchTools(tools: readonly ToolDefinition[]): ToolExecutor {
 export function createAgentMachine({
   tools,
   turnActor,
+  store,
   abortTimeoutMs,
   maxStepsPerTurn,
 }: CreateAgentMachineOptions) {
@@ -247,6 +247,7 @@ export function createAgentMachine({
     actors: {
       turnActor,
       toolActor: createToolMachine(executor),
+      storeActor: store,
       controllerGuard: fromCallback<AgentEvent, { scope: AbortScope }>(
         ({ input }) =>
           () =>
@@ -257,6 +258,24 @@ export function createAgentMachine({
       forwardToParent: ({ self, event }) => {
         self._parent?.send(event);
       },
+      resetMirror: assign(({ event }) => {
+        if (event.type !== 'store.reset') return {};
+        return {
+          ...mirrorPatch(event.state),
+          turnTools: {},
+          background: {},
+          scope: createAbortScope(),
+          turnId: event.state.turnIndex.nextTurnId,
+          activeTurnId: undefined,
+          branchId: event.branch,
+        };
+      }),
+      emitReset: emit(({ context }) => ({ type: 'context.reset' as const, branchId: context.branchId })),
+      abortBackgroundScopes: enqueueActions(({ context }) => {
+        for (const entry of Object.values(context.background)) {
+          entry.scope.abort();
+        }
+      }),
       spawnTurnTools: assign(({ context, spawn, self, event }) => {
         if (event.type !== 'turn.spawn_tools') {
           return {};
@@ -307,58 +326,73 @@ export function createAgentMachine({
     },
   }).createMachine({
     id: 'agent',
-    initial: 'idle',
+    initial: 'restoring',
     context: ({ input }) => ({
       input,
-      messages: [...(input.history ?? [])],
+      messages: [],
       turnTools: {},
       background: {},
       scope: createAbortScope(),
       notifications: [],
       reminders: [],
       queue: [],
-      turnId: input.turnId ?? 0,
-      branchId: input.branchId ?? 'main',
+      turnId: 0,
+      branchId: 'main',
     }),
-    invoke: {
-      src: 'controllerGuard',
-      input: ({ context }) => ({ scope: context.scope }),
-    },
+    invoke: [
+      {
+        src: 'controllerGuard',
+        input: ({ context }) => ({ scope: context.scope }),
+      },
+      {
+        id: 'store',
+        src: 'storeActor',
+      },
+    ],
     on: {
       'input.submit': {
-        actions: assign({
-          queue: ({ context, event }) => [
-            ...context.queue,
-            { id: event.id, message: event.message },
-          ],
-        }),
+        actions: sendTo('store', ({ event }) => ({
+          type: 'store.append' as const,
+          event: inputSubmitted({ id: event.id, message: event.message }),
+        })),
       },
       'input.notify': {
-        actions: assign({
-          notifications: ({ context, event }) => [
-            ...context.notifications,
-            createUserEntry(event.message, { source: 'notify' }),
-          ],
-        }),
+        actions: sendTo('store', ({ event }) => ({
+          type: 'store.append' as const,
+          event: inputNotified({ message: event.message }),
+        })),
       },
       'input.remind': {
-        actions: assign({
-          reminders: ({ context, event }) => [
-            ...context.reminders.filter((entry) => entry.meta.key !== event.key),
-            event.message.role === 'system'
-              ? createSystemEntry(event.message, { source: 'reminder', key: event.key })
-              : createUserEntry(event.message, { source: 'reminder', key: event.key }),
-          ],
-        }),
+        actions: sendTo('store', ({ event }) => ({
+          type: 'store.append' as const,
+          event: inputReminded({ key: event.key, message: event.message }),
+        })),
       },
       'input.steer': {
-        actions: assign(({ context, event }) => steerPatch(context, event.id)),
+        actions: enqueueActions(({ context, event, enqueue }) => {
+          const entry = context.queue.find((item) => item.id === event.id);
+          if (entry === undefined) return;
+          enqueue.sendTo('store', {
+            type: 'store.append' as const,
+            event: inputSteered({ id: event.id, message: entry.message }),
+          });
+        }),
       },
       'input.cancel': {
-        actions: assign({
-          queue: ({ context, event }) =>
-            context.queue.filter((entry) => entry.id !== event.id),
-        }),
+        actions: sendTo('store', ({ event }) => ({
+          type: 'store.append' as const,
+          event: inputCancelled({ id: event.id }),
+        })),
+      },
+      'store.changed': {
+        actions: assign(({ event }) => mirrorPatch(event.state)),
+      },
+      'store.reset': {
+        target: '.idle',
+        actions: ['abortBackgroundScopes', 'resetMirror', 'emitReset', 'forwardToParent'],
+      },
+      'store.error': {
+        actions: 'forwardToParent',
       },
       'tool.update': {
         actions: [emit(({ event }) => event), 'forwardToParent'],
@@ -381,24 +415,40 @@ export function createAgentMachine({
       },
     },
     states: {
+      restoring: {
+        on: {
+          'store.ready': {
+            target: 'idle',
+            actions: assign(({ event }) => ({
+              ...mirrorPatch(event.state),
+              turnId: event.state.turnIndex.nextTurnId,
+              branchId: event.branch,
+            })),
+          },
+        },
+      },
       idle: {
         initial: 'ready',
         always: {
           guard: ({ context }) => hasPendingWork(context),
           target: 'running',
-          actions: assign(({ context }) => drainPendingPatch(context)),
-        },
-        on: {
-          'context.reset': {
-            actions: [
-              assign(({ context, event }) => ({
-                messages: [...event.history],
-                branchId: event.branchId ?? context.branchId,
-              })),
-              emit(({ context }) => ({ type: 'context.reset' as const, branchId: context.branchId })),
-              'forwardToParent',
-            ],
-          },
+          actions: [
+            sendTo('store', ({ context }) => {
+              const head = context.queue[0];
+              return {
+                type: 'store.append' as const,
+                event: [
+                  ...context.notifications.map((entry) => messageAppended({ message: entry })),
+                  ...(head === undefined
+                    ? []
+                    : [messageAppended({ message: createUserEntry(head.message, { source: 'input' }) })]),
+                  queueDrained({ id: head?.id }),
+                  notificationsDrained({}),
+                ],
+              };
+            }),
+            assign(({ context }) => drainPendingPatch(context)),
+          ],
         },
         states: {
           ready: {
@@ -425,25 +475,52 @@ export function createAgentMachine({
             actions: [
               assign(({ context, event }) => turnOutputPatch(context, event.output)),
               emit(({ context, event }) => turnOutcomeEvent(context, event.output)),
+              sendTo('store', ({ context, event }) => ({
+                type: 'store.append' as const,
+                event: [
+                  ...event.output.produced.map((message) => messageAppended({ message })),
+                  turnEnded({
+                    turnId: context.activeTurnId ?? context.turnId,
+                    outcome: event.output.type,
+                    errorMessage:
+                      event.output.type === 'failed' ? String(event.output.error) : undefined,
+                  }),
+                ],
+              })),
             ],
           },
           onError: {
             target: '#agent.idle',
-            actions: emit(({ context, event }) => ({
-              type: 'turn.failed' as const,
-              error: event.error,
-              messages: context.messages,
-              interruptReason: interruptReasonOf(event.error),
-              branchId: context.branchId,
-            })),
+            actions: [
+              emit(({ context, event }) => ({
+                type: 'turn.failed' as const,
+                error: event.error,
+                messages: context.messages,
+                interruptReason: interruptReasonOf(event.error),
+                branchId: context.branchId,
+              })),
+              sendTo('store', ({ context, event }) => ({
+                type: 'store.append' as const,
+                event: turnEnded({
+                  turnId: context.activeTurnId ?? context.turnId,
+                  outcome: 'failed',
+                  errorMessage: String(event.error),
+                }),
+              })),
+            ],
           },
         },
         entry: [
+          assign({ activeTurnId: ({ context }) => context.turnId }),
           emit(({ context }) => ({
             type: 'turn.started' as const,
             turnId: context.turnId,
             branchId: context.branchId,
             queueItemId: context.drainedId,
+          })),
+          sendTo('store', ({ context }) => ({
+            type: 'store.append' as const,
+            event: turnStarted({ turnId: context.turnId, queueItemId: context.drainedId }),
           })),
         ],
         exit: [
@@ -452,6 +529,18 @@ export function createAgentMachine({
         ],
         initial: 'active',
         on: {
+          'store.reset': {
+            target: '#agent.idle',
+            actions: [
+              'abortTurn',
+              'abortTurnTools',
+              'stopTurnTools',
+              'abortBackgroundScopes',
+              'resetMirror',
+              'emitReset',
+              'forwardToParent',
+            ],
+          },
           'turn.drain': {
             actions: [
               sendTo('turn', ({ context }) => ({
@@ -459,6 +548,10 @@ export function createAgentMachine({
                 messages: [...context.notifications, ...context.reminders],
               })),
               assign({ notifications: [], reminders: [] }),
+              sendTo('store', {
+                type: 'store.append' as const,
+                event: inputDrained({}),
+              }),
             ],
           },
           'tool.detached': {
@@ -544,11 +637,7 @@ export function createAgentMachine({
               },
               'input.abort': {
                 target: 'aborting',
-                actions: [
-                  'abortTurn',
-                  'abortTurnTools',
-                  emit({ type: 'turn.aborting' as const }),
-                ],
+                actions: ['abortTurn', 'abortTurnTools', emit({ type: 'turn.aborting' as const })],
               },
             },
           },
