@@ -139,6 +139,7 @@ interface MessageDriver {
   closeSession(reason: string): Promise<void>;
   setSession(session: unknown): Promise<void>;
   syncRuntimeState(session?: unknown): Promise<void>;
+  resetSessionRuntime(): void;
   getCurrentSessionId(): string;
 }
 
@@ -8893,6 +8894,19 @@ describe('footer ctrl+o hint', () => {
 
     driver.toggleToolOutputExpansion();
     expect(renderFooterLine1(driver)).not.toContain('ctrl+o');
+  });
+});
+
+describe('footer tps slot session boundary', () => {
+  it('clears the decode rate when the session runtime resets', async () => {
+    const { driver } = await makeDriver();
+
+    driver.state.appState.decodeTps = 42.3;
+    driver.resetSessionRuntime();
+
+    // TPS is not persisted, so a resumed session cannot restore it — leaving
+    // it set would show the previous session's rate in the new one.
+    expect(driver.state.appState.decodeTps).toBeUndefined();
   });
 });
 

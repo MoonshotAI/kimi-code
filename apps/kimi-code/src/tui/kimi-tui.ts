@@ -2609,7 +2609,7 @@ export class KimiTUI {
     this.streamingUI.setTodoList([]);
     this.sessionEventHandler.notifications.clear();
     this.streamingUI.setTurnId(undefined);
-    this.setAppState({ mcpServersSummary: null });
+    this.setAppState({ mcpServersSummary: null, decodeTps: undefined });
     this.streamingUI.setStep(0);
     this.streamingUI.resetLiveText();
     this.updateQueueDisplay();
