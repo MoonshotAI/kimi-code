@@ -475,12 +475,12 @@ export class TranscriptService {
       throw error;
     }
     const meta = await this.readSessionMeta(summary.workspaceId, sessionId);
-    const projectionRecords = stripLegacyInheritedRecords(
-      records,
-      meta?.agents?.[agentId]?.forkedFrom,
-    );
+    const forkedFrom = meta?.agents?.[agentId]?.forkedFrom;
+    const projectionRecords = stripLegacyInheritedRecords(records, forkedFrom);
     const messages = [...reduceContextTranscript(projectionRecords).entries].filter(
-      (message) => message.inherited !== true,
+      (message) =>
+        message.inherited !== true &&
+        (forkedFrom === undefined || message.origin?.kind !== 'compaction_summary'),
     );
     const taskOriginTurnTaskIds = new Set<string>();
     const steeredContents = new Map<string, Map<string, number>>();

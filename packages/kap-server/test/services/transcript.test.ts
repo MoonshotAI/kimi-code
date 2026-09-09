@@ -2550,6 +2550,85 @@ describe('AgentTranscriptProjector', () => {
     }
   });
 
+  it('readColdSnapshot excludes compaction summaries from a fork transcript', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-fork-compaction-'));
+    try {
+      const records = [
+        {
+          type: 'context.append_message',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'main question' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+            inherited: true,
+          },
+          time: 1000,
+        },
+        {
+          type: 'turn.prompt',
+          promptId: 'prompt-side',
+          origin: { kind: 'user' },
+          input: [{ type: 'text', text: 'side question' }],
+          time: 3000,
+        },
+        {
+          type: 'context.append_message',
+          message: {
+            id: 'msg-side',
+            role: 'user',
+            content: [{ type: 'text', text: 'side question' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+          time: 3001,
+        },
+        {
+          type: 'context.apply_compaction',
+          summary: 'compacted: the user asked main question and then side question',
+          compactedCount: 2,
+          time: 4000,
+        },
+      ];
+      for (const agentId of ['agent-1', 'main']) {
+        const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', agentId);
+        await mkdir(wireDir, { recursive: true });
+        await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+      }
+      await writeFile(
+        join(home, 'sessions', 'ws', 's1', 'state.json'),
+        JSON.stringify({
+          id: 's1',
+          createdAt: 1,
+          updatedAt: 1,
+          archived: false,
+          agents: { 'agent-1': { type: 'sub', forkedFrom: 'main' } },
+        }),
+      );
+
+      const service = coldTranscriptService(home);
+      const forkSnapshot = await service.readColdSnapshot('s1', 'agent-1');
+      expect(forkSnapshot).toBeDefined();
+      expect(JSON.stringify(forkSnapshot!.items)).not.toContain('compacted:');
+      expect(JSON.stringify(forkSnapshot!.items)).not.toContain('main question');
+      expect(
+        forkSnapshot!.items.some((item) => item.kind === 'marker' && item.marker === 'compaction'),
+      ).toBe(false);
+      const forkTurns = forkSnapshot!.items.filter((item) => item.kind === 'turn');
+      expect(forkTurns).toHaveLength(1);
+      expect(forkTurns[0]).toMatchObject({ prompt: 'side question' });
+
+      const mainSnapshot = await service.readColdSnapshot('s1', 'main');
+      expect(mainSnapshot).toBeDefined();
+      expect(
+        mainSnapshot!.items.some((item) => item.kind === 'marker' && item.marker === 'compaction'),
+      ).toBe(true);
+      expect(JSON.stringify(mainSnapshot!.items)).toContain('compacted:');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('readColdSnapshot keeps unmarked leading messages when the agent is not a fork', async () => {
     const home = await mkdtemp(join(tmpdir(), 'transcript-fork-legacy-main-'));
     try {
