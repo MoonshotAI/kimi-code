@@ -137,6 +137,14 @@ export async function worktreeRemove(cwd: string, path: string): Promise<void> {
   await git(cwd, ['worktree', 'remove', '--force', path]);
 }
 
+export async function listWorktreePaths(cwd: string): Promise<readonly string[]> {
+  const out = await git(cwd, ['worktree', 'list', '--porcelain']);
+  return out
+    .split('\n')
+    .filter((line) => line.startsWith('worktree '))
+    .map((line) => line.slice('worktree '.length));
+}
+
 export async function isWorktreeDirty(path: string): Promise<boolean> {
   const status = await tryGit(path, ['status', '--porcelain']);
   return status !== null && status.trim().length > 0;

@@ -363,6 +363,39 @@ describe('TowerPlanTool', () => {
     const state = await new TowerStore(repo).load();
     expect(state.missions[0]?.context).toBe('Ship it as a single binary.');
   });
+
+  it('rejects a re-planned title whose slugged branch is already taken, guiding a title change', async () => {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Build engine', scope: ['src/engine/**'] }],
+    });
+
+    const result = await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'build engine', scope: ['src/engine-v2/**'] }],
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('feat/build-engine');
+    expect(result.output).toContain('already used by M1');
+    expect(result.output).toContain('change the title');
+    expect((await new TowerStore(repo).load()).missions).toHaveLength(1);
+  });
+
+  it('rejects the slug of an abandoned mission too — reuse would corrupt branch-to-mission resolution', async () => {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Build engine', scope: ['src/engine/**'] }],
+    });
+    await new TowerStore(repo).updateMission('tower', 'M1', { status: 'abandoned' });
+
+    const result = await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Build engine', scope: ['src/web/**'] }],
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('already used by M1 (abandoned)');
+    expect((await new TowerStore(repo).load()).missions).toHaveLength(1);
+  });
 });
 
 describe('TowerTeardownTool', () => {
@@ -496,7 +529,7 @@ describe('TowerStatusTool', () => {
     expect(result.output).toContain('💀 failed');
     expect(result.output).toContain('## Dead workers');
     expect(result.output).toContain('M1 owner w1 died (failed)');
-    expect(result.output).toContain('Agent(resume="agent-w1"');
+    expect(result.output).toContain('Agent(resume="agent-w1", run_in_background=true');
   });
 });
 

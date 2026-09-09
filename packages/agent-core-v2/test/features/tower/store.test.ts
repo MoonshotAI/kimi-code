@@ -6,7 +6,12 @@ import { promisify } from 'node:util';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { TowerProtocolError, TowerStore, parseFrontmatter } from '../../../src/features/tower/protocol';
+import {
+  STATE_FILE,
+  TowerProtocolError,
+  TowerStore,
+  parseFrontmatter,
+} from '../../../src/features/tower/protocol';
 import type {
   TowerFindingType,
   TowerMission,
@@ -77,6 +82,13 @@ async function setupMission(input: {
 
 function worktreeOf(mission: TowerMission): string {
   return store.abs(join('.tower/worktrees', mission.worktree));
+}
+
+async function spliceMissionIntoState(mission: TowerMission): Promise<void> {
+  const file = store.abs(STATE_FILE);
+  const state = JSON.parse(await readFile(file, 'utf8')) as TowerState;
+  state.missions.push(mission);
+  await writeFile(file, `${JSON.stringify(state, null, 2)}\n`);
 }
 
 async function cleanReview(reviewer: string, target: string): Promise<void> {
@@ -208,6 +220,18 @@ describe('init', () => {
     expect(state.missions).toHaveLength(1);
     const log = await store.recentLog(5);
     expect(log.some((line) => line.includes(' adopt ') && line.includes('session=session-b') && line.includes('previous=session-a') && line.includes('retired=agent-build,reviewer-a'))).toBe(true);
+  });
+
+  it('rejects reserved protocol names on roster registration', async () => {
+    await store.init('session-a');
+
+    await expect(
+      store.registerAgent(rosterEntry({ name: 'tower', kind: 'worker', sessionId: 'session-a' })),
+    ).rejects.toThrow(/name "tower" is reserved/);
+    await expect(
+      store.registerAgent(rosterEntry({ name: 'all', kind: 'reviewer', sessionId: 'session-a' })),
+    ).rejects.toThrow(/name "all" is reserved/);
+    expect((await store.load()).roster.agents).toEqual([]);
   });
 
   it('records an explicit local base branch instead of the checked-out one', async () => {
@@ -527,6 +551,35 @@ describe('plan', () => {
     await expect(
       store.plan([{ title: 'touch layers too', scope: ['src/layer/vulkan/shader/**'] }]),
     ).rejects.toThrow(/scopes overlap/);
+  });
+
+  it('rejects a new mission whose slugged branch collides with an existing mission, even a closed one', async () => {
+    await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    await store.updateMission('tower', 'M1', { status: 'abandoned' });
+
+    await expect(store.plan([{ title: 'Feature X', scope: ['src/y/**'] }])).rejects.toThrow(
+      /branch "feat\/feature-x" is already used by M1.*change the title/,
+    );
+    expect((await store.load()).missions).toHaveLength(1);
+  });
+
+  it('rejects duplicate slugged branches within a single plan batch', async () => {
+    await expect(
+      store.plan([
+        { title: 'feature x', scope: ['src/x/**'] },
+        { title: 'Feature X!', scope: ['src/y/**'] },
+      ]),
+    ).rejects.toThrow(/branch "feat\/feature-x" is already used by M1/);
+    expect((await store.load()).missions).toHaveLength(0);
+  });
+
+  it('rejects a new mission whose slugged branch exists in git without a mission record', async () => {
+    await git(repo, 'branch', 'feat/feature-x');
+
+    await expect(store.plan([{ title: 'feature x', scope: ['src/x/**'] }])).rejects.toThrow(
+      /branch "feat\/feature-x" already exists in git.*not owned by any tower mission/s,
+    );
+    expect((await store.load()).missions).toHaveLength(0);
   });
 });
 
@@ -967,6 +1020,53 @@ describe('merge gate', () => {
     const after = await store.merge(third!.branch);
     expect(after.conflictsWith.map((c) => c.branch)).not.toContain(second!.branch);
   });
+
+  it('flips the live mission when an abandoned mission shares its branch — never the abandoned record', async () => {
+    const [stale] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    await store.updateMission('tower', stale!.id, { status: 'abandoned' });
+    const live: TowerMission = {
+      ...stale!,
+      id: 'M2',
+      worktree: 'wt-2',
+      status: 'completed',
+      tasks: [],
+      notes: [],
+      blockers: [],
+    };
+    await spliceMissionIntoState(live);
+    const state = await store.load();
+    await store.addWorktree(live.worktree, live.branch, state.base);
+    await commitFile(worktreeOf(live), 'src/x/x.ts', 'x\n', 'work on M2');
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: live.branch }),
+    );
+    await cleanReview('rev', live.branch);
+
+    await store.merge(live.branch);
+
+    const after = await store.load();
+    expect(after.missions.find((m) => m.id === live.id)?.status).toBe('merged');
+    expect(after.missions.find((m) => m.id === stale!.id)?.status).toBe('abandoned');
+  });
+
+  it('refuses to merge a branch owned only by closed missions and leaves their records untouched', async () => {
+    const [stale] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    const state = await store.load();
+    await store.addWorktree(stale!.worktree, stale!.branch, state.base);
+    await commitFile(worktreeOf(stale!), 'src/x/x.ts', 'x\n', 'work on M1');
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: stale!.branch }),
+    );
+    await cleanReview('rev', stale!.branch);
+    await store.updateMission('tower', stale!.id, { status: 'abandoned' });
+
+    await expect(store.merge(stale!.branch)).rejects.toThrow(/closed mission/);
+
+    const after = await store.load();
+    expect(after.missions.find((m) => m.id === stale!.id)?.status).toBe('abandoned');
+    const log = await readFile(join(repo, '.tower/comms/log/activity.log'), 'utf8');
+    expect(log).toContain('merge.blocked');
+  });
 });
 
 describe('dirty base checkout', () => {
@@ -1334,6 +1434,64 @@ describe('teardown', () => {
     const report = await store.teardown();
     expect(report.join('\n')).toContain(`removed .tower/worktrees/${mission.worktree}`);
     await expect(stat(wt)).rejects.toThrow();
+  });
+
+  it('treats a worktree git no longer knows as already removed, not as a failure', async () => {
+    const mission = await setupMission({
+      title: 'feature gone',
+      scope: 'src/gone/**',
+      file: 'src/gone/gone.ts',
+      content: 'gone\n',
+    });
+    await git(repo, 'worktree', 'remove', '--force', worktreeOf(mission));
+
+    const report = await store.teardown();
+    expect(report.join('\n')).toContain(`already removed .tower/worktrees/${mission.worktree}`);
+    expect(report.join('\n')).not.toContain('failed');
+    const log = (await store.recentLog(20)).join('\n');
+    expect(log).not.toContain('worktree.remove.failed');
+  });
+
+  it('is idempotent across consecutive runs', async () => {
+    const clean = await setupMission({
+      title: 'feature idem clean',
+      scope: 'src/idem-clean/**',
+      file: 'src/idem-clean/c.ts',
+      content: 'c\n',
+    });
+    const dirty = await setupMission({
+      title: 'feature idem dirty',
+      scope: 'src/idem-dirty/**',
+      file: 'src/idem-dirty/d.ts',
+      content: 'd\n',
+    });
+    await writeFile(join(worktreeOf(dirty), 'uncommitted.txt'), 'dirty\n');
+
+    const first = await store.teardown();
+    expect(first.join('\n')).toContain(`removed .tower/worktrees/${clean.worktree}`);
+    expect(first.join('\n')).toContain(`kept .tower/worktrees/${dirty.worktree}`);
+
+    const second = await store.teardown();
+    expect(second.join('\n')).toContain(`already removed .tower/worktrees/${clean.worktree}`);
+    expect(second.join('\n')).toContain(`kept .tower/worktrees/${dirty.worktree}`);
+    expect(second.join('\n')).not.toContain('failed');
+    const log = (await store.recentLog(50)).join('\n');
+    expect(log).not.toContain('worktree.remove.failed');
+  });
+
+  it('still records a failure when git refuses to remove a known worktree', async () => {
+    const mission = await setupMission({
+      title: 'feature locked',
+      scope: 'src/locked/**',
+      file: 'src/locked/l.ts',
+      content: 'l\n',
+    });
+    await git(repo, 'worktree', 'lock', worktreeOf(mission));
+
+    const report = await store.teardown();
+    expect(report.join('\n')).toContain(`failed to remove .tower/worktrees/${mission.worktree}`);
+    const log = (await store.recentLog(20)).join('\n');
+    expect(log).toContain('worktree.remove.failed');
   });
 
   it('removes clean worktrees that contain an initialized submodule', async () => {

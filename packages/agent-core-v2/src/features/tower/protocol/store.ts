@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { appendFile, mkdir, open, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, open, readFile, readdir, realpath, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import picomatch from 'picomatch';
@@ -19,6 +19,7 @@ import {
   isAncestor,
   isInsideRepo,
   isWorktreeDirty,
+  listWorktreePaths,
   mergeNoFf,
   tryGit,
   worktreeAdd,
@@ -138,6 +139,25 @@ const STATUS_EMOJI: Record<TowerMissionStatus, string> = {
 
 function isOpenMission(mission: Pick<TowerMission, 'status'>): boolean {
   return mission.status !== 'merged' && mission.status !== 'abandoned';
+}
+
+function missionNumber(id: string): number {
+  const n = Number.parseInt(id.replace(/^M/, ''), 10);
+  return Number.isNaN(n) ? 0 : n;
+}
+
+export function resolveMissionByBranch(
+  state: TowerState,
+  branch: string,
+): TowerMission | undefined {
+  let resolved: TowerMission | undefined;
+  for (const mission of state.missions) {
+    if (mission.branch !== branch || !isOpenMission(mission)) continue;
+    if (resolved === undefined || missionNumber(mission.id) > missionNumber(resolved.id)) {
+      resolved = mission;
+    }
+  }
+  return resolved;
 }
 
 export async function assertLocalBaseBranch(repoRoot: string, base: string): Promise<void> {
@@ -369,6 +389,11 @@ export class TowerStore {
 
   async registerAgent(entry: TowerRosterEntry): Promise<void> {
     const state = await this.load();
+    if (entry.name === TOWER_NAME || entry.name === BROADCAST_NAME) {
+      throw new TowerProtocolError(
+        `tower agent name "${entry.name}" is reserved by the tower protocol — pick a different name`,
+      );
+    }
     if (this.findAgent(state, entry.name) !== undefined) {
       throw new TowerProtocolError(`tower agent name "${entry.name}" is already registered`);
     }
@@ -403,7 +428,7 @@ export class TowerStore {
         agent: agentId,
         kind: entry.kind,
         status,
-        reason: reason === undefined ? undefined : reason.replace(/\s+/g, ' ').slice(0, 200),
+        reason: reason === undefined ? undefined : reason.replaceAll(/\s+/g, ' ').slice(0, 200),
         mission: entry.missionId,
         target: entry.reviewTarget,
       },
@@ -470,6 +495,23 @@ export class TowerStore {
           throw new TowerProtocolError(`mission ${mission.id} depends on unknown mission "${dep}"`);
         }
       }
+    }
+    const takenBranches = new Map(
+      state.missions.map((m): [string, TowerMission] => [m.branch, m]),
+    );
+    for (const mission of missions) {
+      const existing = takenBranches.get(mission.branch);
+      if (existing !== undefined) {
+        throw new TowerProtocolError(
+          `mission ${mission.id} branch "${mission.branch}" is already used by ${existing.id} (${existing.status}) "${existing.title}" — change the title so its slug differs; branch-to-mission resolution must stay unambiguous`,
+        );
+      }
+      if (await branchExists(this.repoRoot, mission.branch)) {
+        throw new TowerProtocolError(
+          `mission ${mission.id} branch "${mission.branch}" already exists in git but is not owned by any tower mission — the worker would start on that branch's unrelated history; change the title so its slug differs, or delete/rename the stale branch if it is a leftover`,
+        );
+      }
+      takenBranches.set(mission.branch, mission);
     }
     this.assertScopesDisjoint([
       ...state.missions.filter(isOpenMission),
@@ -866,14 +908,21 @@ export class TowerStore {
     readonly noop?: boolean;
   }> {
     const state = await this.load();
-    const mission = state.missions.find((m) => m.branch === branch);
-    if (mission === undefined) {
-      throw new TowerProtocolError(`no tower mission owns branch "${branch}"`);
-    }
     const block = async (reason: string, message: string): Promise<TowerProtocolError> => {
       await this.appendLog(TOWER_NAME, 'merge.blocked', { branch, reason });
       return new TowerProtocolError(message);
     };
+    const mission = resolveMissionByBranch(state, branch);
+    if (mission === undefined) {
+      const closed = state.missions.filter((m) => m.branch === branch);
+      if (closed.length > 0) {
+        throw await block(
+          'branch-owned-by-closed-missions',
+          `merge blocked: branch "${branch}" resolves only to closed mission(s) ${closed.map((m) => `${m.id} (${m.status})`).join(', ')} — TowerMerge never flips a closed mission's status; re-plan the work under a new title if it should land`,
+        );
+      }
+      throw new TowerProtocolError(`no tower mission owns branch "${branch}"`);
+    }
 
     const unmergedDeps = mission.deps.filter((dep) => {
       const depMission = state.missions.find((m) => m.id === dep);
@@ -1035,10 +1084,20 @@ export class TowerStore {
 
   async teardown(options: { readonly force?: boolean } = {}): Promise<readonly string[]> {
     const state = await this.load();
+    const known = new Set(await listWorktreePaths(this.repoRoot));
+    const root = await realpath(this.repoRoot);
     const report: string[] = [];
     for (const mission of state.missions) {
       const rel = join(WORKTREES_DIR, mission.worktree);
       const absPath = this.abs(rel);
+      if (!known.has(join(root, rel).replaceAll('\\', '/'))) {
+        report.push(`already removed ${rel}`);
+        await this.appendLog(TOWER_NAME, 'worktree.remove.skipped', {
+          worktree: mission.worktree,
+          reason: 'already-removed',
+        });
+        continue;
+      }
       if (await isWorktreeDirty(absPath)) {
         if (options.force !== true) {
           report.push(`kept ${rel} (uncommitted changes — rerun with force to remove)`);
