@@ -10,7 +10,7 @@ outline: 2
 
 ### 新功能
 
-- Remote Control 由实验性转为正式，无需再设置 `KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL` 实验开关。详见 [Remote Control](../guides/remote-control.md)。
+- Remote Control 由实验性转为正式，无需再设置 `KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL` 实验开关。详见 [Remote Control](https://moonshotai.github.io/kimi-code/zh/guides/remote-control.html)。
 - Web 版支持从会话行的右键菜单永久删除会话，删除前会要求确认。
 - `/btw` 侧边聊天的 subagent 新增只读工具。
 - Web 版输入框新增可排序的媒体预览栏，可在文本中按需引用图片和视频，排队与发送后预览仍然保留。

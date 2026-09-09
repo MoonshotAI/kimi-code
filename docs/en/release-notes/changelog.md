@@ -10,7 +10,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 ### Features
 
-- Remote Control is now always on; the experimental `KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL` flag has been removed. See [Remote Control](../guides/remote-control.md) for details.
+- Remote Control is now always on; the experimental `KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL` flag has been removed. See [Remote Control](https://moonshotai.github.io/kimi-code/guides/remote-control.html) for details.
 - web: Support permanently deleting sessions from the session row context menu, with a confirmation prompt.
 - Add read-only tools to the `/btw` side agent.
 - web: Preview images and videos in a reorderable media rail in the composer, mention them in the text on demand, and keep the previews after queueing and sending.
