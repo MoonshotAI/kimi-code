@@ -6,7 +6,7 @@ import { inflateRawSync } from 'node:zlib';
 import { ISessionMediaStore } from '@moonshot-ai/agent-core-v2/agent/media/sessionMediaStore';
 import { mcpResultToExecutableOutput } from '@moonshot-ai/agent-core-v2/agent/mcp/output';
 import { renderToolResultForModel } from '@moonshot-ai/agent-core-v2/agent/contextMemory/toolResultRender';
-import { IReadTool } from '@moonshot-ai/agent-core-v2/agent/tools/os/read/read';
+import { IReadTool, ReadInputSchema, type ReadInput } from '@moonshot-ai/agent-core-v2/agent/tools/os/read/read';
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -1228,36 +1228,56 @@ describe('server-v2 /api/v1/sessions', () => {
     ]);
   });
 
-  it('reads an advertised MCP reference through Read after forking and removing the source file', async () => {
+  it('continues a paginated attachment read after forking and removing the source file', async () => {
     const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home as string } });
     const parentId = parent.body.data.id;
     const core = (server as RunningServer).core;
     const session = getLiveSessionById(core.accessor, parentId)!;
-    const body = '{"message":"example forked attachment"}';
+    const body = '😀'.repeat(600) + '\n' + Array.from({ length: 30 }, (_, i) => `line ${String(i)} é`).join('\n');
     const output = await mcpResultToExecutableOutput({
       isError: false,
       content: [{ type: 'resource', resource: {
-        uri: 'example://report', mimeType: 'application/json', blob: Buffer.from(body).toString('base64'),
+        uri: 'example://report', mimeType: 'text/plain', blob: Buffer.from(body).toString('base64'),
       } }],
     }, 'mcp__example__report', { attachmentStore: session.accessor.get(ISessionMediaStore) });
     const text = renderToolResultForModel(output).map((part) => part.type === 'text' ? part.text : '').join('\n');
     const sourcePath = JSON.parse(/Original attachment saved at: ("[^\n]+")/.exec(text)![1]!) as string;
-    const encodedReference = /Attachment reference: ("[^\n]+")/.exec(text)?.[1];
-    expect(encodedReference).toBeDefined();
-    const reference = JSON.parse(encodedReference!) as string;
+    const reference = JSON.parse(/Attachment reference: ("[^\n]+")/.exec(text)![1]!) as string;
+    const sourceAgents = session.accessor.get(IAgentLifecycleService);
+    await sourceAgents.create({ agentId: MAIN_AGENT_ID });
+    let reader = sourceAgents.handleOf(MAIN_AGENT_ID)!.accessor.get(IReadTool);
+    let args: ReadInput | undefined = { path: reference, max_chars: 500 };
+    const firstExecution = await reader.resolveExecution(args);
+    if (firstExecution.isError === true) throw new Error(JSON.stringify(firstExecution.output));
+    const first = await firstExecution.execute({ turnId: 1, toolCallId: 'read-first', signal: new AbortController().signal });
+    expect(first.isError).not.toBe(true);
+    let recovered = (first.output as string).replaceAll(/^\d+\t/gm, '');
+    const firstNext = /Next Read: (\{[^\n]*\})/.exec(first.note ?? '')?.[1];
+    expect(firstNext).toBeDefined();
+    args = ReadInputSchema.parse(JSON.parse(firstNext!));
+    expect(args.path).toBe(reference);
+    expect(args.column_offset).toBeGreaterThan(0);
     const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {});
     expect(forked.body.code).toBe(0);
     await rm(sourcePath);
     const resumed = await resumeSessionById(core.accessor, forked.body.data.id);
     const agents = resumed!.accessor.get(IAgentLifecycleService);
     await agents.create({ agentId: MAIN_AGENT_ID });
-    const reader = agents.handleOf(MAIN_AGENT_ID)!.accessor.get(IReadTool);
-    const execution = await reader.resolveExecution({ path: reference });
-    if (execution.isError === true) throw new Error(JSON.stringify(execution.output));
-    const read = await execution.execute({ turnId: 1, toolCallId: 'read-attachment', signal: new AbortController().signal });
-    expect(read.isError).not.toBe(true);
-    expect(typeof read.output).toBe('string');
-    expect((read.output as string).replaceAll(/^\d+\t/gm, '')).toBe(body);
+    reader = agents.handleOf(MAIN_AGENT_ID)!.accessor.get(IReadTool);
+    let pages = 0;
+    while (args !== undefined && pages < 80) {
+      expect(args.path).toBe(reference);
+      const execution = await reader.resolveExecution(args);
+      if (execution.isError === true) throw new Error(JSON.stringify(execution.output));
+      const read = await execution.execute({ turnId: 1, toolCallId: `read-${String(pages++)}`, signal: new AbortController().signal });
+      expect(read.isError).not.toBe(true);
+      if ((args.column_offset ?? 0) === 0) recovered += '\n';
+      recovered += (read.output as string).replaceAll(/^\d+\t/gm, '');
+      const next = /Next Read: (\{[^\n]*\})/.exec(read.note ?? '')?.[1];
+      args = next === undefined ? undefined : ReadInputSchema.parse(JSON.parse(next));
+    }
+    expect(args).toBeUndefined();
+    expect(recovered).toBe(body);
   });
 
   it('fork copies a corrupted source wire without healing it; the fork heals on resume', async () => {

@@ -1,7 +1,6 @@
 import { join } from 'node:path';
 
 import type { ContentPart } from '#human/llm/message';
-import type { ISessionMediaStore } from './sessionMediaStore';
 
 export type MediaKind = 'image' | 'video' | 'audio' | 'file';
 
@@ -120,13 +119,6 @@ export function parseDaemonFileUrl(url: string): DaemonFileRef | undefined {
   const queryAt = rest.indexOf('?');
   const fileId = queryAt === -1 ? rest : rest.slice(0, queryAt);
   return fileId.length > 0 ? { fileId } : undefined;
-}
-
-export async function resolveSessionMediaPath(reference: string, store?: ISessionMediaStore): Promise<string> {
-  const ref = parseDaemonFileUrl(reference);
-  const path = ref === undefined ? undefined : await store?.resolveDisplayPath(ref.fileId);
-  if (path === undefined) throw new Error(`Attachment ${JSON.stringify(reference)} is not available in the current session.`);
-  return path;
 }
 
 export function daemonFileRefFromPart(

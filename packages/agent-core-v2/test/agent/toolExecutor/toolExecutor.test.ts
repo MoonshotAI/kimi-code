@@ -1300,6 +1300,12 @@ describe('truncation pipeline', () => {
   });
 
   it('resolves attachment references for media reads and exposes binary paths for converters', async () => {
+    const runtimeFs = mediaRuntime.inspect().fs!;
+    vi.spyOn(runtimeFs, 'stat').mockRejectedValue(new Error('client cannot access daemon storage'));
+    vi.spyOn(runtimeFs, 'readBytes').mockRejectedValue(new Error('client cannot access daemon storage'));
+    vi.spyOn(runtimeFs, 'readLines').mockImplementation(() => {
+      throw new Error('client cannot access daemon storage');
+    });
     registry.register(new ReadMediaFileTool(mediaRuntime, { workspaceDir: homeDir, additionalDirs: [] }, {
       image_in: true, video_in: false, audio_in: false, thinking: false, tool_use: true,
     }, undefined, undefined, undefined, undefined, attachmentStore));
@@ -1326,6 +1332,34 @@ describe('truncation pipeline', () => {
     expect(pdf?.isError).toBe(true);
     expect(pdf?.output).toContain(paths[1]);
     expect(readFileSync(paths[1]!).equals(bytes[1]!)).toBe(true);
+  });
+
+  it('reads session text from its owner while workspace text still uses the runtime buffer', async () => {
+    const runtimeFs = mediaRuntime.inspect().fs!;
+    const clientRead = vi.spyOn(runtimeFs, 'readLines').mockImplementation(async function* () {
+      yield 'unsaved client buffer\n';
+    });
+    const workspaceFile = join(homeDir, 'workspace.txt');
+    await writeFile(workspaceFile, 'disk content\n');
+    const bytes = Buffer.from('session attachment\n');
+    const client: MCPClient = {
+      async listTools() { return []; },
+      async callTool() { return { isError: false, content: [{ type: 'resource', resource: {
+        uri: 'example://text', mimeType: 'text/plain', blob: bytes.toString('base64'),
+      } }] }; },
+      async ping() {},
+    };
+    registry.register(createMcpTool('mcp__example__text', { name: 'text', description: 'Example text', parameters: {} }, client, { attachmentStore }), { source: 'mcp' });
+    const [result] = await execute([toolCall('text', 'mcp__example__text', {})]);
+    if (result === undefined) throw new Error('expected MCP output');
+    const text = renderToolResultForModel(result).map((part) => part.type === 'text' ? part.text : '').join('\n');
+    const reference = JSON.parse(/Attachment reference: ("[^\n]+")/.exec(text)![1]!) as string;
+    const [attachment] = await execute([toolCall('read_attachment', 'Read', { path: reference })]);
+    expect(attachment?.output).toBe('1\tsession attachment');
+    expect(clientRead).not.toHaveBeenCalled();
+    const [workspace] = await execute([toolCall('read_workspace', 'Read', { path: workspaceFile })]);
+    expect(workspace?.output).toBe('1\tunsaved client buffer');
+    expect(clientRead).toHaveBeenCalledTimes(1);
   });
 
   it('recovers MCP structured records through spill and Read without repeating the MCP call', async () => {

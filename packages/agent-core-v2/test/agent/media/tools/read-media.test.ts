@@ -435,7 +435,7 @@ describe('ReadMediaFileTool', () => {
 
     expect(result.isError).toBe(false);
     expect(vi.mocked(fs.readBytes)).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(fs.readBytes)).toHaveBeenLastCalledWith('/workspace/large.png');
+    expect(vi.mocked(fs.readBytes)).toHaveBeenLastCalledWith('/workspace/large.png', undefined);
   });
 
   it('returns external preprocessing guidance before loading an oversized region source', async () => {

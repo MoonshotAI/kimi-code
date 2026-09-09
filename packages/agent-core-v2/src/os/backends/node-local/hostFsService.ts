@@ -1,3 +1,4 @@
+import { createReadStream } from 'node:fs';
 import {
   appendFile,
   lstat,
@@ -12,7 +13,7 @@ import {
 } from 'node:fs/promises';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { decodeTextWithErrors, type TextDecodeErrors } from '#/_base/execEnv/decodeText';
+import { decodeTextWithErrors, readUtf8Lines, type TextDecodeErrors } from '#/_base/execEnv/decodeText';
 
 import { type HostDirEntry, type HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { toHostFsError } from '#/os/interface/hostFsErrors';
@@ -114,54 +115,9 @@ export class HostFileSystem implements IHostFileSystem {
         return;
       }
 
-      yield* this._readUtf8Lines(path, errors);
+      yield* readUtf8Lines(createReadStream(path, { highWaterMark: READ_CHUNK_SIZE }), errors);
     } catch (error) {
       throw toHostFsError(error, { path, op: 'read' });
-    }
-  }
-
-  private async *_readUtf8Lines(
-    path: string,
-    errors: TextDecodeErrors,
-  ): AsyncGenerator<string> {
-    const fh = await open(path, 'r');
-    try {
-      const buf = Buffer.alloc(READ_CHUNK_SIZE);
-      let pending: Buffer[] = [];
-      let pendingOffset = 0;
-      let fileOffset = 0;
-
-      while (true) {
-        const { bytesRead } = await fh.read(buf, 0, buf.length, null);
-        if (bytesRead === 0) break;
-        const chunk = buf.subarray(0, bytesRead);
-        let lineStart = 0;
-
-        for (let i = 0; i < chunk.length; i += 1) {
-          const byte = chunk[i];
-          if (byte !== 0x0a) continue;
-          const piece = chunk.subarray(lineStart, i + 1);
-          const lineOffset = pending.length === 0 ? fileOffset + lineStart : pendingOffset;
-          const line = pending.length === 0 ? piece : Buffer.concat([...pending, piece]);
-          yield decodeTextWithErrors(line, 'utf-8', errors, lineOffset !== 0);
-          pending = [];
-          lineStart = i + 1;
-        }
-
-        if (lineStart < chunk.length) {
-          const tail = Buffer.from(chunk.subarray(lineStart));
-          if (pending.length === 0) pendingOffset = fileOffset + lineStart;
-          pending.push(tail);
-        }
-        fileOffset += bytesRead;
-      }
-
-      if (pending.length > 0) {
-        const line = Buffer.concat(pending);
-        yield decodeTextWithErrors(line, 'utf-8', errors, pendingOffset !== 0);
-      }
-    } finally {
-      await fh.close();
     }
   }
 
