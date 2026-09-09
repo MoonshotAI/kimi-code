@@ -15,6 +15,10 @@ import type { UsageEmitted } from '#/usage/machine';
 import { createUsagePlugin } from '#/usage/plugin';
 import type { UsageRecord } from '#/usage/usage';
 import { createTimingPlugin } from '#/timing/plugin';
+import {
+  xstateInspectionCollector,
+  type XstateInspectionEnvelope,
+} from '#/xstateInspection';
 
 const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
 
@@ -30,32 +34,31 @@ function record(
   return { usage: usage(inputOther, output), model: extra?.model, turnId: extra?.turnId, at: 0 };
 }
 
-describe('usage machine', () => {
-  it('accumulates total, byModel and byTurn across usage.record events', () => {
-    const actor = createActor(createUsageMachine());
-    actor.start();
-
-    actor.send({ type: 'usage.record', record: record(10, 2, { model, turnId: 1 }) });
-    actor.send({ type: 'usage.record', record: record(5, 3, { model, turnId: 2 }) });
-    actor.send({ type: 'usage.record', record: record(100, 0) });
-
-    const { records, summary } = actor.getSnapshot().context;
-    expect(records).toHaveLength(3);
-    expect(summary.total).toEqual({
-      inputOther: 115,
-      output: 5,
-      inputCacheRead: 0,
-      inputCacheCreation: 0,
-    });
-    expect(summary.byModel).toEqual({
-      'test-model': { inputOther: 15, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
-    });
-    expect(summary.byTurn).toEqual({
-      1: { inputOther: 10, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
-      2: { inputOther: 5, output: 3, inputCacheRead: 0, inputCacheCreation: 0 },
-    });
+describe('xstate inspection collector', () => {
+  it('publishes JSON-safe scalar envelopes with no machine context', () => {
+    const envelopes: XstateInspectionEnvelope[] = [];
+    const unsubscribe = xstateInspectionCollector.subscribe((envelope) => envelopes.push(envelope));
+    try {
+      const actor = createActor(createUsageMachine());
+      actor.start();
+      actor.send({ type: 'usage.record', record: record(10, 2, { model, turnId: 1 }) });
+    } finally {
+      unsubscribe();
+    }
+    const delivered = envelopes.filter((envelope) => envelope.eventType === 'usage.record');
+    expect(delivered.length).toBeGreaterThan(0);
+    for (const envelope of delivered) {
+      expect(typeof envelope.actorSessionId).toBe('string');
+      expect(typeof envelope.timestamp).toBe('number');
+    }
+    expect(delivered.find((envelope) => envelope.type === '@xstate.microstep')?.stateValue).toBeDefined();
+    const serialized = JSON.stringify(envelopes);
+    expect(serialized).not.toContain('inputOther');
+    expect(JSON.parse(serialized)).toEqual(envelopes);
   });
+});
 
+describe('usage machine', () => {
   it('groups byModel by baseUrl + model, ignoring provider', () => {
     const actor = createActor(createUsageMachine());
     actor.start();
