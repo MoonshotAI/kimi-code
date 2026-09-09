@@ -353,11 +353,15 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
   exit(): void {
     if (!this.agentState.get(towerKey)) return;
     this.lastPublished = false;
+    this.dropInboxWake();
+    void this.dispatcher.dispatch(new TowerModeExit({ agentId: this.agentCtx.agentId }));
+    void this.releaseTowerOwnership();
+  }
+
+  private dropInboxWake(): void {
     this.inboxWakeHandle?.drop();
     this.inboxWakeHandle = undefined;
     this.inboxWakeSignals = 0;
-    void this.dispatcher.dispatch(new TowerModeExit({ agentId: this.agentCtx.agentId }));
-    void this.releaseTowerOwnership();
   }
 
   private async releaseTowerOwnership(): Promise<void> {
@@ -507,6 +511,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       return;
     }
     const effective = this.isActive;
+    if (!effective) this.dropInboxWake();
     if (this.lastPublished === effective) return;
     this.lastPublished = effective;
     void this.dispatcher.dispatch(

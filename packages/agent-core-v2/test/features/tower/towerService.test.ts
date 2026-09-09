@@ -2328,6 +2328,25 @@ describe('AgentTowerService', () => {
       expect(drainWakeMessages()).toEqual([]);
     });
 
+    it('drops a queued wake when the tower becomes unavailable at runtime', async () => {
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      publishInbox({ from: 'w1', to: 'tower', subject: 'need wider scope' });
+      await flushWake();
+      expect(loop.hasPendingRequests()).toBe(true);
+
+      _setTowerFeatureAssembledForTests(false);
+      try {
+        fireUnitsChanged();
+
+        expect(loop.hasPendingRequests()).toBe(false);
+        expect(drainWakeMessages()).toEqual([]);
+      } finally {
+        _setTowerFeatureAssembledForTests(true);
+      }
+    });
+
     it('does not respond on a non-main agent', async () => {
       ix.stub(
         IAgentScopeContext,
