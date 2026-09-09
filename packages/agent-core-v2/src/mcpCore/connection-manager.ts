@@ -41,6 +41,7 @@ export interface McpConnectionView {
   readonly oauthService: McpOAuthService | undefined;
   list(): readonly McpServerEntry[];
   get(name: string): McpServerEntry | undefined;
+  configOf(name: string): McpServerConfig | undefined;
   resolved(
     name: string,
   ):
