@@ -21,10 +21,9 @@ import { applyPatterns } from '#/llm/protocol/rewrite';
 import type { ResponseFormat } from '#/llm/response-format';
 import type { TokenUsage } from '#/llm/usage';
 
-import { buildToolNameById, lowerMessage, type GoogleContent } from './lower';
+import { buildToolNameById, lowerMessage } from './lower';
+import type { GoogleContent } from './contract';
 import { sortToolRunByCallOrder } from './patterns';
-
-export type { GoogleContent, GooglePart } from './lower';
 
 export function toolToGoogleGenAI(tool: ToolDescription): Record<string, unknown> {
   return {

@@ -21,7 +21,7 @@ import type {
   ProtocolFormat,
   StreamParserOptions,
 } from '#/llm/protocol/format';
-import { type StreamedMessagePart, type ToolDescription } from '#/llm/message';
+import { type Message, type StreamedMessagePart, type ToolDescription } from '#/llm/message';
 import { toolResultToPlainText } from '#/llm/protocol/patterns';
 import { applyPatterns } from '#/llm/protocol/rewrite';
 import type { ToolMessageConversion } from '#/llm/requester/requester';
@@ -29,7 +29,6 @@ import type { ResponseFormat } from '#/llm/response-format';
 import type { TokenUsage } from '#/llm/usage';
 
 import type {
-  OpenAILoweredMessage,
   OpenAIRawChunk,
   OpenAIRawStreamToolCallDelta,
   OpenAIRawUsage,
@@ -90,8 +89,6 @@ export function defaultOpenAITool(tool: ToolDescription): Record<string, unknown
   };
 }
 
-export type { OpenAIContentPart, OpenAIWireMessage, OpenAIWireToolCall } from './contract';
-
 interface BufferedStreamToolCall {
   id?: string;
   arguments: string;
@@ -144,6 +141,11 @@ export interface OpenAILowerOptions {
   readonly reasoningKey: string;
   readonly preserveThinking: boolean;
   readonly toolMessageConversion: ToolMessageConversion | undefined;
+}
+
+export interface OpenAILoweredMessage {
+  readonly source: Message;
+  readonly message: OpenAIWireMessage;
 }
 
 export function lowerOpenAIRequest(

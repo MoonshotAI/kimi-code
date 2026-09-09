@@ -1,5 +1,3 @@
-import type { Message } from '#/llm/message';
-
 export type OpenAIContentPart = {
   type: 'text' | 'image_url' | 'audio_url' | 'video_url';
   text?: string | undefined;
@@ -22,11 +20,6 @@ export type OpenAIWireMessage =
       tool_calls?: OpenAIWireToolCall[];
     }
   | { role: 'tool'; tool_call_id: string; content: string | OpenAIContentPart[] };
-
-export interface OpenAILoweredMessage {
-  readonly source: Message;
-  readonly message: OpenAIWireMessage;
-}
 
 export type OpenAIRawUsage = {
   prompt_tokens?: number;

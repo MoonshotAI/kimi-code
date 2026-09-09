@@ -17,14 +17,13 @@ import { NO_FINISH, type FinishInfo, type FinishReason } from '#/llm/finish-reas
 import type { FormatRequestInput, ProtocolFormat } from '#/llm/protocol/format';
 import type { ResponseFormat } from '#/llm/response-format';
 import { SyntaxRequestFormatError } from '#/llm/syntax-errors';
-import type { ToolDescription } from '#/llm/message';
+import type { Message, ToolDescription } from '#/llm/message';
 import { mergeConsecutiveUsers } from '#/llm/protocol/patterns';
 import { applyPatterns } from '#/llm/protocol/rewrite';
 import type { TokenUsage } from '#/llm/usage';
 
 import { CONTEXT_MANAGEMENT_BETA } from './contract';
 import type {
-  AnthropicLoweredMessage,
   AnthropicRawStreamEvent,
   AnthropicRawUsage,
   AnthropicWireMessage,
@@ -32,12 +31,9 @@ import type {
 import { lowerMessage, messageContent } from './lower';
 import { audioToPlaceholder, stripUnsignedThinking } from './patterns';
 import {
-  INTERLEAVED_THINKING_BETA,
   resolveDefaultMaxTokens,
   shouldPreserveUnsignedThinking,
 } from './profile';
-
-export { INTERLEAVED_THINKING_BETA } from './profile';
 
 const CLEAR_THINKING_EDIT = 'clear_thinking_20251015';
 
@@ -53,8 +49,6 @@ const CACHEABLE_TYPES = new Set([
   'server_tool_use',
   'web_search_tool_result',
 ]);
-
-export type { AnthropicWireContentBlock, AnthropicWireMessage } from './contract';
 
 function injectCacheControlOnLastBlock(messages: AnthropicWireMessage[]): void {
   const lastMessage = messages.at(-1);
@@ -185,6 +179,11 @@ export function defaultAnthropicMergeHistory(
       }),
     }),
   ]);
+}
+
+export interface AnthropicLoweredMessage {
+  readonly source: Message;
+  readonly message: AnthropicWireMessage;
 }
 
 export function lowerAnthropicRequest(input: FormatRequestInput): AnthropicLoweredMessage[] {

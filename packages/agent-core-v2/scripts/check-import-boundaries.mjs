@@ -2,10 +2,8 @@
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const PKG_ROOT = resolve(__dirname, '..');
+const PKG_ROOT = resolve(import.meta.dirname, '..');
 export const SRC_ROOT = join(PKG_ROOT, 'src');
 const TEST_ROOT = join(PKG_ROOT, 'test');
 const HUMAN_ROOT = join(SRC_ROOT, 'human');
@@ -18,6 +16,10 @@ const TRAIT_FILE_RE = /\/trait\.ts$/;
 const FORMAT_LOWER_FILE_RE = /\/bases\/[^/]+\/(?:format|lower)\.ts$/;
 const FORMAT_LOWER_MODULE_RE = /\/bases\/[^/]+\/(?:format|lower)$/;
 const TRAIT_MODULE_RE = /\/trait$/;
+const BASES_DIR_RE = /\/llm\/requester\/bases(?:\/|$)/;
+const BASES_INTERNAL_MODULE_RE =
+  /\/llm\/requester\/bases\/[^/]+\/(?:format|lower|patterns|reasoning-key)$/;
+const TEST_DIR_RE = /\/test(?:\/|$)/;
 
 function traitBoundaryViolation(absFile, targetAbs, specifier) {
   const message = `format and trait never import each other ('${specifier}') — both sides speak only the neutral wire/chunk types in the protocol's contract.ts`;
@@ -28,6 +30,13 @@ function traitBoundaryViolation(absFile, targetAbs, specifier) {
     return message;
   }
   return undefined;
+}
+
+function basesInternalViolation(absFile, targetAbs, specifier) {
+  if (!BASES_INTERNAL_MODULE_RE.test(targetAbs)) return undefined;
+  if (TRAIT_FILE_RE.test(absFile) && FORMAT_LOWER_MODULE_RE.test(targetAbs)) return undefined;
+  if (BASES_DIR_RE.test(absFile) || TEST_DIR_RE.test(absFile)) return undefined;
+  return `protocol format modules are internal to the requester pipeline ('${specifier}') — only llm/requester/bases code and tests may import format/lower/patterns; everyone else speaks contract/trait/requester`;
 }
 
 const HUMAN_VOCABULARY = new Set([
@@ -124,6 +133,14 @@ export function checkSource(source, absFile) {
 
     if (!inSrc) continue;
 
+    const targetAbs = resolveIntraV2(specifier, absFile);
+    if (targetAbs !== undefined) {
+      const basesInternal = basesInternalViolation(absFile, stripTs(targetAbs), specifier);
+      if (basesInternal !== undefined) {
+        violations.push({ file: absFile, line, message: basesInternal });
+      }
+    }
+
     if (inHuman) {
       if (specifier.startsWith('#/')) {
         const first = specifier.slice(2).split('/')[0];
@@ -136,7 +153,6 @@ export function checkSource(source, absFile) {
           continue;
         }
       }
-      const targetAbs = resolveIntraV2(specifier, absFile);
       if (targetAbs !== undefined && !isInside(HUMAN_ROOT, targetAbs)) {
         violations.push({
           file: absFile,
@@ -196,7 +212,7 @@ function main() {
   return 1;
 }
 
-const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const isMain = process.argv[1] && resolve(process.argv[1]) === import.meta.filename;
 if (isMain) {
   process.exit(main());
 }

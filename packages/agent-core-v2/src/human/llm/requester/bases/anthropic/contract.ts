@@ -1,5 +1,3 @@
-import type { Message } from '#/llm/message';
-
 export const CONTEXT_MANAGEMENT_BETA = 'context-management-2025-06-27';
 
 export type AnthropicWireContentBlock =
@@ -38,11 +36,6 @@ export type AnthropicWireMessage = {
   role: 'user' | 'assistant';
   content: AnthropicWireContentBlock[];
 };
-
-export interface AnthropicLoweredMessage {
-  readonly source: Message;
-  readonly message: AnthropicWireMessage;
-}
 
 export type AnthropicRawUsage = {
   input_tokens?: number | null;

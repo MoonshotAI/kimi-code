@@ -30,8 +30,6 @@ export function responseFormatToResponsesText(format: ResponseFormat): RawObject
   };
 }
 
-export type { ResponsesInputContentItem, ResponsesInputItem } from './lower';
-
 type ResponseOutputItemView =
   | {
       type: 'message';

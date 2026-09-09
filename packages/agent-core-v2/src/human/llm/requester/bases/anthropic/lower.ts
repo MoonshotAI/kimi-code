@@ -3,8 +3,6 @@ import { SyntaxRequestFormatError } from '#/llm/syntax-errors';
 
 import type { AnthropicWireContentBlock, AnthropicWireMessage } from './contract';
 
-export type { AnthropicWireContentBlock, AnthropicWireMessage } from './contract';
-
 type AnthropicWireImageBlock = Extract<AnthropicWireContentBlock, { type: 'image' }>;
 
 type AnthropicWireVideoBlock = Extract<AnthropicWireContentBlock, { type: 'video' }>;

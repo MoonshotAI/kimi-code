@@ -35,14 +35,13 @@ import {
   defaultAnthropicTool,
   encodeAnthropicMaxTokens,
   encodeAnthropicRequest,
-  INTERLEAVED_THINKING_BETA,
   lowerAnthropicRequest,
   type AnthropicFormatOptions,
   type AnthropicRequestParams,
   convertAnthropicError,
 } from './format';
 import { isAnthropicWireMessageEmpty } from './lower';
-import { encodeThinking, resolveDefaultMaxTokens } from './profile';
+import { encodeThinking, INTERLEAVED_THINKING_BETA, resolveDefaultMaxTokens } from './profile';
 
 const ANTHROPIC_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
   normalize: (id) => sanitizeToolCallId(id, 64),

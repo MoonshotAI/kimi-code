@@ -3,8 +3,6 @@ import { SyntaxRequestFormatError } from '#/llm/syntax-errors';
 
 import type { GoogleContent, GooglePart } from './contract';
 
-export type { GoogleContent, GooglePart } from './contract';
-
 function toolCallIdToName(toolCallId: string, toolNameById: Map<string, string>): string {
   const name = toolNameById.get(toolCallId);
   if (name !== undefined) return name;

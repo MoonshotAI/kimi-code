@@ -140,6 +140,40 @@ describe('check-import-boundaries', () => {
     expect(violations).toHaveLength(0);
   });
 
+  it('flags llm-adapter importing a protocol format module', () => {
+    const violations = checkSource(
+      `import { convertOpenAIError } from '#human/llm/requester/bases/openai/format';`,
+      atAdapter('protocol', 'protocolAdapterRegistry.ts'),
+    );
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.message).toMatch(/internal to the requester pipeline/);
+  });
+
+  it('flags human code outside bases importing a protocol lower module', () => {
+    const violations = checkSource(
+      `import { lowerMessage } from '#/llm/requester/bases/openai/lower';`,
+      atHuman('llm-kimi', 'provider.ts'),
+    );
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.message).toMatch(/internal to the requester pipeline/);
+  });
+
+  it('allows a sibling base importing another base format module', () => {
+    const violations = checkSource(
+      `import { convertOpenAIError } from '../openai/format';`,
+      atHuman('llm/requester/bases/openai-responses', 'format.ts'),
+    );
+    expect(violations).toHaveLength(0);
+  });
+
+  it('allows a test importing a protocol format module', () => {
+    const violations = checkSource(
+      `import { createOpenAIFormat } from '#/llm/requester/bases/openai/format';`,
+      atHuman('test/llm', 'usage.test.ts'),
+    );
+    expect(violations).toHaveLength(0);
+  });
+
   it('allows arbitrary cross-domain imports outside kosong', () => {
     const violations = checkSource(
       `import { IAgentLoopService } from '#/agent/loop/loop';`,
