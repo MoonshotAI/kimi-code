@@ -1,4 +1,5 @@
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionEventBus } from '#/app/event/eventBus';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
@@ -20,6 +21,7 @@ export class TowerSendTool implements ITowerSendTool {
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ISessionEventBus private readonly sessionBus: ISessionEventBus,
+    @IAgentTaskService private readonly tasks: IAgentTaskService,
   ) {}
 
   resolveExecution(args: TowerSendToolInput): ToolExecution {
@@ -47,7 +49,20 @@ export class TowerSendTool implements ITowerSendTool {
           ) {
             this.sessionBus.publish(new TowerInboxSent({ from: caller, to, subject: args.subject }));
           }
-          return { output: `message sent to ${args.to}\nfile: ${rel}` };
+          const entry =
+            caller === TOWER_NAME && to !== TOWER_NAME && to !== BROADCAST_NAME
+              ? state.roster.agents.find((agent) => agent.name === to)
+              : undefined;
+          const undelivered =
+            entry !== undefined &&
+            this.tasks !== undefined &&
+            !this.tasks
+              .list(true)
+              .some((task) => task.kind === 'agent' && task.agentId === entry.agentId);
+          const note = undelivered
+            ? `\nnote: ${to} has no running task in this session — the message sits in its inbox until you deliver it with Agent(resume="${entry.agentId}", run_in_background=true, prompt="...")`
+            : '';
+          return { output: `message sent to ${args.to}\nfile: ${rel}${note}` };
         }),
     };
   }

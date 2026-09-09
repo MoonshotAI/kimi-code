@@ -38,6 +38,7 @@ import { _setTowerFeatureAssembledForTests } from '#/features/tower/towerFeature
 import { AgentTowerService, TOWER_INBOX_WAKE_VARIANT, TOWER_MODE_TOOLS } from '#/features/tower/towerService';
 import { towerKey, TowerInboxSent } from '#/features/tower/towerOps';
 import { TaskTerminatedNotice } from '#/agent/task/taskOps';
+import { IAgentTaskService } from '#/agent/task/task';
 import { SubagentStarted } from '#/session/subagent/mirrorAgentRun';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
@@ -2170,6 +2171,7 @@ describe('AgentTowerService', () => {
         { cwd: repo } as unknown as ISessionContext,
         makeAgentScopeContext({ agentId, agentScope: testWireScope('wire', 'tower-test'), generation: 0 }),
         bus,
+        { list: () => [] } as unknown as IAgentTaskService,
       );
       const result = await executeTool(tool, { turnId: 0, toolCallId: 'call_send', args: input, signal });
       expect(result.isError).toBeFalsy();
