@@ -234,6 +234,18 @@ describe('init', () => {
     expect((await store.load()).roster.agents).toEqual([]);
   });
 
+  it('rejects blank or whitespace-padded names on roster registration', async () => {
+    await store.init('session-a');
+
+    await expect(
+      store.registerAgent(rosterEntry({ name: ' tower ', kind: 'worker', sessionId: 'session-a' })),
+    ).rejects.toThrow(/whitespace/);
+    await expect(
+      store.registerAgent(rosterEntry({ name: 'w1 ', kind: 'worker', sessionId: 'session-a' })),
+    ).rejects.toThrow(/whitespace/);
+    expect((await store.load()).roster.agents).toEqual([]);
+  });
+
   it('records an explicit local base branch instead of the checked-out one', async () => {
     await git(repo, 'branch', 'develop');
 

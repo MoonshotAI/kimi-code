@@ -390,6 +390,11 @@ export class TowerStore {
 
   async registerAgent(entry: TowerRosterEntry): Promise<void> {
     const state = await this.load();
+    if (entry.name.trim().length === 0 || entry.name.trim() !== entry.name) {
+      throw new TowerProtocolError(
+        `tower agent name "${entry.name}" must not be blank or carry surrounding whitespace`,
+      );
+    }
     if (isReservedTowerAgentName(entry.name)) {
       throw new TowerProtocolError(
         `tower agent name "${entry.name}" is reserved by the tower protocol — pick a different name`,

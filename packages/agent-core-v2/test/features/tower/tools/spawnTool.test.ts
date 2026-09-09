@@ -567,6 +567,16 @@ describe('TowerSpawnTool', () => {
     expect(stdout.trim()).toBe('');
   });
 
+  it('refuses a whitespace-padded name before any side effects', async () => {
+    const result = await execute({ ...WORKER_ARGS, name: ' tower ' });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('whitespace');
+    expect(createAgent).not.toHaveBeenCalled();
+    expect(registerTask).not.toHaveBeenCalled();
+    expect((await store.load()).roster.agents).toEqual([]);
+  });
+
   it('snapshots base WIP into the worker branch and records the spawn base', async () => {
     await writeFile(join(repo, 'wip.ts'), 'export const wip = 1;\n');
 

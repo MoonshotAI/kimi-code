@@ -109,6 +109,13 @@ export class TowerSpawnTool implements ITowerSpawnTool {
       const store = this.newStore();
       const state = await store.load();
 
+      if (args.name.trim().length === 0 || args.name.trim() !== args.name) {
+        return {
+          output: `tower agent name "${args.name}" must not be blank or carry surrounding whitespace`,
+          isError: true,
+        };
+      }
+
       if (isReservedTowerAgentName(args.name)) {
         return {
           output: `tower agent name "${args.name}" is reserved by the tower protocol — pick a different name`,
