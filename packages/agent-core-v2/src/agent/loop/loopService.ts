@@ -427,6 +427,35 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.maybeSettle();
   }
 
+  private settleUnboundReservation(
+    pending: { readonly id: number; readonly queueItemId?: string },
+    outcome: { readonly outcome: MachineTurnOutcome; readonly error?: unknown },
+  ): void {
+    if (pending.queueItemId === undefined) return;
+    const index = this.reservations.findIndex(
+      (entry) => entry.machineQueueId === pending.queueItemId,
+    );
+    if (index < 0) return;
+    const [reservation] = this.reservations.splice(index, 1);
+    if (reservation === undefined || reservation.cancelled) return;
+    reservation.cancelled = true;
+    if (outcome.outcome === 'aborted') {
+      const reason = reservation.controller.signal.aborted
+        ? reservation.controller.signal.reason
+        : abortError('Turn aborted');
+      reservation.controller.abort(reason);
+      reservation.turn.state = 'cancelled';
+      reservation.ready.reject(reason instanceof Error ? reason : abortError('Turn aborted'));
+      reservation.result.resolve({ type: 'cancelled', steps: 0, reason });
+      return;
+    }
+    const error = outcome.error ?? new Error2(ErrorCodes.INTERNAL, 'Turn ended before first step');
+    reservation.controller.abort(error);
+    reservation.turn.state = 'failed';
+    reservation.ready.reject(error);
+    reservation.result.resolve({ type: 'failed', steps: 0, error });
+  }
+
   hasPendingRequests(): boolean {
     return (
       this.reservations.some((reservation) => !reservation.cancelled) ||
@@ -762,8 +791,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           return;
         }
         if (this.pendingMachineTurn !== undefined) {
+          const pending = this.pendingMachineTurn;
           this.pendingMachineTurn = undefined;
           this.machineTurnSuppressed = false;
+          this.settleUnboundReservation(pending, outcome);
           this.maybeSettle();
           return;
         }
