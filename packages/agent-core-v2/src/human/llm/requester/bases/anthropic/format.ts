@@ -25,7 +25,6 @@ import type { TokenUsage } from '#/llm/usage';
 import { CONTEXT_MANAGEMENT_BETA } from './contract';
 import type {
   AnthropicLoweredMessage,
-  AnthropicRawResponse,
   AnthropicRawStreamEvent,
   AnthropicRawUsage,
   AnthropicWireMessage,
@@ -262,11 +261,7 @@ export function encodeAnthropicRequest(
   };
 }
 
-export function createAnthropicFormat(): ProtocolFormat<
-  AnthropicRequestParams,
-  AnthropicRawResponse,
-  AnthropicRawStreamEvent
-> {
+export function createAnthropicFormat(): ProtocolFormat<AnthropicRawStreamEvent> {
   return {
     createStreamParser() {
       return (chunk, sink) => {
@@ -345,11 +340,7 @@ export function createAnthropicFormat(): ProtocolFormat<
   };
 }
 
-export const anthropicFormat: ProtocolFormat<
-  AnthropicRequestParams,
-  AnthropicRawResponse,
-  AnthropicRawStreamEvent
-> = createAnthropicFormat();
+export const anthropicFormat: ProtocolFormat<AnthropicRawStreamEvent> = createAnthropicFormat();
 
 export function convertAnthropicError(
   error: unknown,

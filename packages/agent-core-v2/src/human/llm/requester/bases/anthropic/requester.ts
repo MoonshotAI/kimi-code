@@ -218,7 +218,7 @@ export function createAnthropicRequester(options?: AnthropicRequesterOptions): L
       control: LlmRequestControl,
     ): Promise<void> {
       const model = resolveModelConnection(config.model, connection);
-      const { systemPrompt, tools = [] } = config;
+      const { tools = [] } = config;
       const { messages } = content;
       const { signal, onEvent } = control;
       const ctx: TraitContext = { model };
@@ -227,18 +227,11 @@ export function createAnthropicRequester(options?: AnthropicRequesterOptions): L
         const policy = trait?.toolCallIdPolicy ?? ANTHROPIC_TOOL_CALL_ID_POLICY;
         request = planAnthropicRequest(
           {
+            ...config,
             model,
             messages: normalizeToolCallIdsForProvider(messages, policy),
-            systemPrompt,
             tools,
-            cacheKey: config.cacheKey,
-            thinking: config.thinking,
-            responseFormat: config.responseFormat,
-            maxCompletionTokens: config.maxCompletionTokens,
             usedContextTokens: content.usedContextTokens,
-            maxContextTokens: config.maxContextTokens,
-            extraParams: config.extraParams,
-            toolMessageConversion: config.toolMessageConversion,
           },
           { trait, betaApi: options?.betaApi },
         );

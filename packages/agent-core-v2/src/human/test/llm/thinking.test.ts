@@ -186,7 +186,7 @@ describe('kimiOpenAITrait thinking', () => {
 });
 
 describe('openai requester thinking', () => {
-  it('sends kimi thinking params at the top level', async () => {
+  it('sends kimi thinking params at the top level and flattens extra_body', async () => {
     const client = stubOpenAIClient(chatCompletionChunks());
     const requester = createOpenAIRequester({
       ...kimiOpenAI,

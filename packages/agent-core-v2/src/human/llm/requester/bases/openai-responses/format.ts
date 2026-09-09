@@ -431,7 +431,7 @@ export function encodeOpenAIResponsesRequest(
   return { params: params as unknown as OpenAI.Responses.ResponseCreateParamsStreaming };
 }
 
-export function createOpenAIResponsesFormat(): ProtocolFormat<OpenAIResponsesRequestParams> {
+export function createOpenAIResponsesFormat(): ProtocolFormat {
   return {
     createStreamParser(options?: StreamParserOptions<unknown>) {
       const functionCallArgumentsByIndex = new Map<number | string, string>();

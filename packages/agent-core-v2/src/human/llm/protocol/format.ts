@@ -46,10 +46,6 @@ export type StreamParser<TChunk = unknown> = (
   sink: StreamParseSink,
 ) => void;
 
-export interface ProtocolFormat<
-  _TRequest = Record<string, unknown>,
-  _TResponse = unknown,
-  TChunk = unknown,
-> {
+export interface ProtocolFormat<TChunk = unknown> {
   createStreamParser(options?: StreamParserOptions<TChunk>): StreamParser<TChunk>;
 }

@@ -31,7 +31,6 @@ import type { TokenUsage } from '#/llm/usage';
 import type {
   OpenAILoweredMessage,
   OpenAIRawChunk,
-  OpenAIRawResponse,
   OpenAIRawStreamToolCallDelta,
   OpenAIRawUsage,
   OpenAIWireMessage,
@@ -193,11 +192,7 @@ export function encodeOpenAIRequest(params: Record<string, unknown>): OpenAIRequ
   return { params: params as unknown as OpenAI.Chat.ChatCompletionCreateParamsStreaming };
 }
 
-export function createOpenAIFormat(): ProtocolFormat<
-  OpenAIRequestParams,
-  OpenAIRawResponse,
-  OpenAIRawChunk
-> {
+export function createOpenAIFormat(): ProtocolFormat<OpenAIRawChunk> {
   return {
     createStreamParser(options?: StreamParserOptions<OpenAIRawChunk>) {
       const bufferedToolCalls = new Map<number | string, BufferedStreamToolCall>();

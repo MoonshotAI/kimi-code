@@ -184,7 +184,7 @@ export function createOpenAIResponsesRequester(
       control: LlmRequestControl,
     ): Promise<void> {
       const model = resolveModelConnection(config.model, connection);
-      const { systemPrompt, tools = [] } = config;
+      const { tools = [] } = config;
       const { messages } = content;
       const { signal, onEvent } = control;
       const ctx: TraitContext = { model };
@@ -193,18 +193,11 @@ export function createOpenAIResponsesRequester(
         const policy = trait?.toolCallIdPolicy ?? OPENAI_RESPONSES_TOOL_CALL_ID_POLICY;
         request = planOpenAIResponsesRequest(
           {
+            ...config,
             model,
             messages: normalizeToolCallIdsForProvider(messages, policy),
-            systemPrompt,
             tools,
-            cacheKey: config.cacheKey,
-            thinking: config.thinking,
-            responseFormat: config.responseFormat,
-            maxCompletionTokens: config.maxCompletionTokens,
             usedContextTokens: content.usedContextTokens,
-            maxContextTokens: config.maxContextTokens,
-            extraParams: config.extraParams,
-            toolMessageConversion: config.toolMessageConversion,
           },
           { trait },
         );

@@ -16,5 +16,3 @@ export type GooglePart = {
     parts: GooglePart[];
   };
 };
-
-export type GoogleRawChunk = Record<string, unknown>;

@@ -78,8 +78,3 @@ export type AnthropicRawStreamEvent = {
   message?: { id?: string; usage?: AnthropicRawUsage };
   usage?: AnthropicRawUsage;
 };
-
-export type AnthropicRawResponse = {
-  content?: AnthropicRawContentBlock[];
-  usage?: AnthropicRawUsage;
-};

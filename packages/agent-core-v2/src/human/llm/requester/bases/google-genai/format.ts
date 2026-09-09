@@ -230,7 +230,7 @@ export function encodeGoogleGenAIRequest(
   return { params: params as unknown as GenerateContentParameters };
 }
 
-export function createGoogleGenAIFormat(): ProtocolFormat<GoogleGenAIRequestParams> {
+export function createGoogleGenAIFormat(): ProtocolFormat {
   return {
     createStreamParser() {
       return (chunk, sink) => {

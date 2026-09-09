@@ -191,7 +191,7 @@ export function createGoogleGenAIRequester(options?: GoogleGenAIRequesterOptions
       control: LlmRequestControl,
     ): Promise<void> {
       const model = resolveModelConnection(config.model, connection);
-      const { systemPrompt, tools = [] } = config;
+      const { tools = [] } = config;
       const { messages } = content;
       const { signal, onEvent } = control;
       const ctx: TraitContext = { model };
@@ -199,18 +199,11 @@ export function createGoogleGenAIRequester(options?: GoogleGenAIRequesterOptions
       try {
         request = planGoogleGenAIRequest(
           {
+            ...config,
             model,
             messages,
-            systemPrompt,
             tools,
-            cacheKey: config.cacheKey,
-            thinking: config.thinking,
-            responseFormat: config.responseFormat,
-            maxCompletionTokens: config.maxCompletionTokens,
             usedContextTokens: content.usedContextTokens,
-            maxContextTokens: config.maxContextTokens,
-            extraParams: config.extraParams,
-            toolMessageConversion: config.toolMessageConversion,
           },
           { trait },
         );

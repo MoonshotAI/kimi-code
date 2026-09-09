@@ -53,8 +53,3 @@ export type OpenAIRawChunk = {
   }[];
   usage?: OpenAIRawUsage | null;
 };
-
-export type OpenAIRawResponse = {
-  choices?: { message?: { content?: string | null; reasoning_content?: string | null; tool_calls?: unknown[] } }[];
-  usage?: OpenAIRawUsage | null;
-};
