@@ -554,7 +554,7 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 | `[notifications].enabled` | `boolean` | `true` | 是否发送桌面通知 |
 | `[notifications].notification_condition` | `string` | `unfocused` | 何时通知：`unfocused`（仅终端失去焦点时）或 `always`（总是） |
 | `[upgrade].auto_install` | `boolean` | `true` | 是否自动安装新版本 |
-| `[status_line].items` | `string[]` | `[]` | 底部状态栏第一行的内置槽位及顺序：`mode`、`goal`、`model`、`tasks`、`cwd`、`git`、`tips`，未知 id 跳过并告警 |
+| `[status_line].items` | `string[]` | `[]` | 底部状态栏第一行的内置槽位及顺序：`mode`、`goal`、`model`、`tasks`、`cwd`、`tps`、`git`、`tips`，未知 id 跳过并告警 |
 | `[status_line].command` | `string` | `""` | 自定义状态栏命令：stdout 首行替换状态栏，stdin 收 JSON 快照；上限 300ms、每秒一次，失败回退内置布局 |
 
 <details>
@@ -583,7 +583,7 @@ notification_condition = "unfocused" # "unfocused" | "always"
 auto_install = true
 
 # [status_line]
-# items = ["mode", "goal", "model", "tasks", "cwd", "git", "tips"]
+# items = ["mode", "goal", "model", "tasks", "cwd", "tps", "git", "tips"]
 # command = "~/.kimi-code/statusline.sh"
 ```
 

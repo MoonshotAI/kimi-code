@@ -72,7 +72,7 @@ import { openUrl } from '#/utils/open-url';
 import { currentTheme } from '#/tui/theme';
 import type { ColorToken } from '#/tui/theme';
 import { errorReportHintLine } from '../constant/feedback';
-import { formatStepDebugTiming } from '#/utils/usage/debug-timing';
+import { formatStepDebugTiming, stepDecodeTps } from '#/utils/usage/debug-timing';
 import { nextTranscriptId } from '../utils/transcript-id';
 import type { BtwPanelController } from './btw-panel';
 import { isPluginMcpToolName, PluginUpdateNotifier } from './plugin-update-notifier';
@@ -432,6 +432,7 @@ export class SessionEventHandler {
     this.host.streamingUI.flushNow();
     this.clearStepRetry();
     this.host.noteStepUsage(event.usage);
+    this.noteStepDecodeTps(event);
     this.maybeShowDebugTiming(event);
 
     if (event.providerFinishReason === 'filtered') {
@@ -499,6 +500,15 @@ export class SessionEventHandler {
       clearTimeout(this.stepRetryAttemptTimer);
       this.stepRetryAttemptTimer = undefined;
     }
+  }
+
+  // Feed the footer's `tps` slot from the step that just finished. Steps that
+  // drained too fast to time yield null and are skipped, leaving the previous
+  // reading in place rather than clearing the slot.
+  private noteStepDecodeTps(event: TurnStepCompletedEvent): void {
+    const tps = stepDecodeTps(event.usage?.output, event.llmStreamDurationMs);
+    if (tps === null) return;
+    this.host.setAppState({ decodeTps: tps });
   }
 
   private maybeShowDebugTiming(event: TurnStepCompletedEvent): void {
