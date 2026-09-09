@@ -36,7 +36,6 @@ import {
   isRetryableGenerateError,
 } from '#/llm-adapter/contract/errors';
 import { createUserMessage, type Message } from '#/llm-adapter/contract/message';
-import { attemptWithCredentialRecovery } from '#human/credentials/credentials';
 import type { ToolDescription as Tool } from '#human/llm/message';
 import { inputTotal, type TokenUsage } from '#human/llm/usage';
 import { IEventBus } from '#/app/event/eventBus';
@@ -672,11 +671,17 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             active.trace = request.trace;
             return request.result;
           };
-          attempt = collectSummary(
-            credentials === undefined
-              ? await runRequest()
-              : await attemptWithCredentialRecovery(credentials, runRequest, signal),
-          );
+          let result: Awaited<ReturnType<typeof runRequest>>;
+          try {
+            result = await runRequest();
+          } catch (error) {
+            if (signal?.aborted === true || credentials?.canRecover?.(error) !== true) {
+              throw error;
+            }
+            credentials?.invalidate?.();
+            result = await runRequest();
+          }
+          attempt = collectSummary(result);
           break;
         } catch (error) {
           const isContextOverflow = this.shouldRecoverFromContextOverflow(

@@ -9,7 +9,6 @@ import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { type ModelRequester } from '#/llm-adapter/model/model-requester';
-import { attemptWithCredentialRecovery } from '#human/credentials/credentials';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -141,12 +140,21 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
       videoUploader:
         uploader === undefined || requester === undefined
           ? undefined
-          : (input, options) =>
-              attemptWithCredentialRecovery(
-                requester.model.credentials,
-                () => uploader(input, options),
-                options?.signal,
-              ),
+          : async (input, options) => {
+              const credentials = requester.model.credentials;
+              try {
+                return await uploader(input, options);
+              } catch (error) {
+                if (
+                  options?.signal?.aborted === true ||
+                  credentials.canRecover?.(error) !== true
+                ) {
+                  throw error;
+                }
+                credentials.invalidate?.();
+                return uploader(input, options);
+              }
+            },
       inlineVideoSupported: model?.protocol !== 'openai' && model?.protocol !== 'openai_responses',
       providerType: model?.providerType,
       telemetry: this.telemetry,

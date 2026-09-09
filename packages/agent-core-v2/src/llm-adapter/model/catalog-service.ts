@@ -6,12 +6,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
 
 import type { CatalogModel, CatalogProviderInfo } from '#human/llm/provider-catalog';
-import {
-  attemptWithCredentialRecovery,
-  oauthCredentials,
-  staticCredentials,
-  streamWithCredentialRecovery,
-} from '#human/credentials/credentials';
+import { oauthCredentials, staticCredentials } from '#human/credentials/credentials';
 import type { LlmCredentialProvider } from '#human/llm/requester/requester';
 import type { ModelCapability } from '../contract/capability';
 import { CONFIG_INVALID_ERROR_CODE } from '../contract/errors';
@@ -147,11 +142,22 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     params?: ModelRequestParams,
   ): AsyncIterable<ModelRequestEvent> {
     const { requester } = this.entry(id);
-    yield* streamWithCredentialRecovery(
-      requester.model.credentials,
-      () => requester.request(input, signal, params),
-      signal,
-    );
+    const credentials = requester.model.credentials;
+    let recovered = false;
+    let stream = requester.request(input, signal, params);
+    while (true) {
+      try {
+        yield* stream;
+        return;
+      } catch (error) {
+        if (recovered || signal?.aborted === true || credentials.canRecover?.(error) !== true) {
+          throw error;
+        }
+        recovered = true;
+        credentials.invalidate?.();
+        stream = requester.request(input, signal, params);
+      }
+    }
   }
 
   async ping(id: string): Promise<ModelPingResult> {
@@ -181,7 +187,15 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
         }
         return { text: text.trim(), usage, finishReason };
       };
-      const result = await attemptWithCredentialRecovery(requester.model.credentials, consume);
+      const credentials = requester.model.credentials;
+      let result: Awaited<ReturnType<typeof consume>>;
+      try {
+        result = await consume();
+      } catch (error) {
+        if (credentials.canRecover?.(error) !== true) throw error;
+        credentials.invalidate?.();
+        result = await consume();
+      }
       return {
         ok: true,
         durationMs: Date.now() - startedAt,
