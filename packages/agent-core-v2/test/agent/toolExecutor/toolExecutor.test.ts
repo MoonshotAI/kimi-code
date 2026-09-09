@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
+import { Jimp } from 'jimp';
 
 import type { ToolCall } from '#human/llm/message';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
@@ -38,6 +39,7 @@ import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { ToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncationService';
 import { ReadTool } from '#/agent/tools/os/read/readTool';
+import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
 import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { makeSessionContext } from '#/session/sessionContext/sessionContext';
@@ -1052,6 +1054,7 @@ describe('truncation pipeline', () => {
   let readConfig: IConfigService;
   let globProcess: HostProcessService;
   let attachmentStore: SessionMediaStoreService;
+  let mediaRuntime: IAgentRuntimeService;
 
   beforeEach(async () => {
     homeDir = await mkdtemp(join(tmpdir(), 'tool-executor-truncation-'));
@@ -1095,12 +1098,14 @@ describe('truncation pipeline', () => {
       inspect: () => runtime,
       acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
     };
+    mediaRuntime = binding;
     registry.register(new ReadTool(
       binding,
       stubWorkspaceContext(homeDir),
       { catalog: { getSkillRoots: () => [] } } as unknown as ISessionSkillCatalog,
       truncation,
       readConfig,
+      attachmentStore,
     ));
     registry.register(new GlobTool(binding, stubWorkspaceContext(homeDir), noopTelemetryService));
   });
@@ -1274,7 +1279,7 @@ describe('truncation pipeline', () => {
     if (result === undefined) throw new Error('expected batch output');
     const visible = renderToolResultForModel(result).map((part) => part.type === 'text' ? part.text : '').join('\n');
     expect(visible.length).toBeLessThan(50_000);
-    const encodedPath = /MCP attachment details saved at: ("[^\n]+")/.exec(visible)?.[1];
+    const encodedPath = /Attachment details reference: ("[^\n]+")/.exec(visible)?.[1];
     expect(encodedPath).toBeDefined();
     let args: ReadInput | undefined = { path: JSON.parse(encodedPath!) as string, max_chars: 8000 };
     let recovered = '';
@@ -1292,6 +1297,35 @@ describe('truncation pipeline', () => {
     const paths = [...recovered.matchAll(/Original attachment saved at: ("[^\n]+")/g)].map((match) => JSON.parse(match[1]!) as string);
     expect(paths).toHaveLength(150);
     for (const [i, path] of paths.entries()) expect(readFileSync(path).equals(originals[i]!)).toBe(true);
+  });
+
+  it('resolves attachment references for media reads and exposes binary paths for converters', async () => {
+    registry.register(new ReadMediaFileTool(mediaRuntime, { workspaceDir: homeDir, additionalDirs: [] }, {
+      image_in: true, video_in: false, audio_in: false, thinking: false, tool_use: true,
+    }, undefined, undefined, undefined, undefined, attachmentStore));
+    const png = Buffer.from(await new Jimp({ width: 32, height: 32, color: 0x3366ccff }).getBuffer('image/png'));
+    const bytes = [png, Buffer.from('%PDF-1.4\nexample\n%%EOF')];
+    const client: MCPClient = {
+      async listTools() { return []; },
+      async callTool() { return { isError: false, content: bytes.map((data, i) => ({ type: 'resource', resource: {
+        uri: `example://file/${String(i)}`, mimeType: 'application/octet-stream', blob: data.toString('base64'),
+      } })) }; },
+      async ping() {},
+    };
+    registry.register(createMcpTool('mcp__example__binary', { name: 'binary', description: 'Example files', parameters: {} }, client, { attachmentStore }), { source: 'mcp' });
+    const [result] = await execute([toolCall('binary', 'mcp__example__binary', {})]);
+    if (result === undefined) throw new Error('expected MCP output');
+    const text = renderToolResultForModel(result).map((part) => part.type === 'text' ? part.text : '').join('\n');
+    const refs = [...text.matchAll(/Attachment reference: ("[^\n]+")/g)].map((match) => JSON.parse(match[1]!) as string);
+    const paths = [...text.matchAll(/Original attachment saved at: ("[^\n]+")/g)].map((match) => JSON.parse(match[1]!) as string);
+    expect(refs).toHaveLength(2);
+    const [image] = await execute([toolCall('read_image', 'ReadMediaFile', { path: refs[0] })]);
+    expect(image?.isError).not.toBe(true);
+    expect(Array.isArray(image?.output) && image.output.some((part) => part.type === 'image_url')).toBe(true);
+    const [pdf] = await execute([toolCall('read_pdf', 'Read', { path: refs[1] })]);
+    expect(pdf?.isError).toBe(true);
+    expect(pdf?.output).toContain(paths[1]);
+    expect(readFileSync(paths[1]!).equals(bytes[1]!)).toBe(true);
   });
 
   it('recovers MCP structured records through spill and Read without repeating the MCP call', async () => {

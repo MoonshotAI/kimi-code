@@ -3,6 +3,8 @@ import type { ContentPart } from '#human/llm/message';
 import { VideoUploadUnsupportedError } from '#/llm-adapter/contract/errors';
 import { inlineVideoPart, isVideoUploadAuthError } from '#/agent/media/videoUpload';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
+import { isDaemonFileUrl, resolveSessionMediaPath } from '#/agent/media/mediaRef';
 
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
@@ -194,6 +196,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     telemetry?: ITelemetryService,
     inlineVideoSupported?: boolean,
     providerType?: string,
+    private readonly attachmentStore?: ISessionMediaStore,
   ) {
     this.description = buildDescription(capabilities);
     this.telemetry = telemetry;
@@ -221,9 +224,13 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     return inlineVideoPart(data, mimeType);
   }
 
-  resolveExecution(args: ReadMediaFileInput): ToolExecution {
+  resolveExecution(args: ReadMediaFileInput): ToolExecution | Promise<ToolExecution> {
     if (!args.path) {
       return { isError: true, output: 'File path cannot be empty.' };
+    }
+    if (isDaemonFileUrl(args.path)) {
+      return resolveSessionMediaPath(args.path, this.attachmentStore)
+        .then((path) => this.resolveExecution({ ...args, path }));
     }
     const inspected = inspectAgentRuntime(this.runtime);
     const env = inspected.environment;

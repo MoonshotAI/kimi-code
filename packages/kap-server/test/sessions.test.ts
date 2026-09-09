@@ -6,6 +6,7 @@ import { inflateRawSync } from 'node:zlib';
 import { ISessionMediaStore } from '@moonshot-ai/agent-core-v2/agent/media/sessionMediaStore';
 import { mcpResultToExecutableOutput } from '@moonshot-ai/agent-core-v2/agent/mcp/output';
 import { renderToolResultForModel } from '@moonshot-ai/agent-core-v2/agent/contextMemory/toolResultRender';
+import { IReadTool } from '@moonshot-ai/agent-core-v2/agent/tools/os/read/read';
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -1227,29 +1228,36 @@ describe('server-v2 /api/v1/sessions', () => {
     ]);
   });
 
-  it('fork retains MCP attachments at their session-relative paths after the source file is removed', async () => {
+  it('reads an advertised MCP reference through Read after forking and removing the source file', async () => {
     const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home as string } });
     const parentId = parent.body.data.id;
     const core = (server as RunningServer).core;
     const session = getLiveSessionById(core.accessor, parentId)!;
-    const bytes = Buffer.from('%PDF-1.4\nexample forked attachment\n%%EOF');
+    const body = '{"message":"example forked attachment"}';
     const output = await mcpResultToExecutableOutput({
       isError: false,
       content: [{ type: 'resource', resource: {
-        uri: 'example://report', mimeType: 'application/pdf', blob: bytes.toString('base64'),
+        uri: 'example://report', mimeType: 'application/json', blob: Buffer.from(body).toString('base64'),
       } }],
     }, 'mcp__example__report', { attachmentStore: session.accessor.get(ISessionMediaStore) });
     const text = renderToolResultForModel(output).map((part) => part.type === 'text' ? part.text : '').join('\n');
     const sourcePath = JSON.parse(/Original attachment saved at: ("[^\n]+")/.exec(text)![1]!) as string;
-    const relativePath = JSON.parse(/Session-relative attachment: ("[^\n]+")/.exec(text)![1]!) as string;
+    const encodedReference = /Attachment reference: ("[^\n]+")/.exec(text)?.[1];
+    expect(encodedReference).toBeDefined();
+    const reference = JSON.parse(encodedReference!) as string;
     const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {});
     expect(forked.body.code).toBe(0);
     await rm(sourcePath);
-    const forkPath = join(home as string, 'sessions', forked.body.data.workspace_id, forked.body.data.id, relativePath);
-    expect((await readFile(forkPath)).equals(bytes)).toBe(true);
     const resumed = await resumeSessionById(core.accessor, forked.body.data.id);
-    const fileId = relativePath.slice('media/'.length, -'.pdf'.length);
-    expect(await resumed!.accessor.get(ISessionMediaStore).resolveDisplayPath(fileId)).toBe(forkPath);
+    const agents = resumed!.accessor.get(IAgentLifecycleService);
+    await agents.create({ agentId: MAIN_AGENT_ID });
+    const reader = agents.handleOf(MAIN_AGENT_ID)!.accessor.get(IReadTool);
+    const execution = await reader.resolveExecution({ path: reference });
+    if (execution.isError === true) throw new Error(JSON.stringify(execution.output));
+    const read = await execution.execute({ turnId: 1, toolCallId: 'read-attachment', signal: new AbortController().signal });
+    expect(read.isError).not.toBe(true);
+    expect(typeof read.output).toBe('string');
+    expect((read.output as string).replaceAll(/^\d+\t/gm, '')).toBe(body);
   });
 
   it('fork copies a corrupted source wire without healing it; the fork heals on resume', async () => {

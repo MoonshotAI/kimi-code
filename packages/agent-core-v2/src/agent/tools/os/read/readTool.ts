@@ -1,5 +1,7 @@
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
+import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
+import { isDaemonFileUrl, resolveSessionMediaPath } from '#/agent/media/mediaRef';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
@@ -175,6 +177,7 @@ export class ReadTool implements IReadTool {
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
     @IAgentToolResultTruncationService private readonly resultTruncation: IAgentToolResultTruncationService,
     @IConfigService private readonly config: IConfigService,
+    @ISessionMediaStore private readonly attachmentStore?: ISessionMediaStore,
   ) {}
 
   private limits(): { defaultMaxChars: number; maxChars: number } {
@@ -190,7 +193,11 @@ export class ReadTool implements IReadTool {
     return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
-  resolveExecution(args: ReadInput): ToolExecution {
+  resolveExecution(args: ReadInput): ToolExecution | Promise<ToolExecution> {
+    if (isDaemonFileUrl(args.path)) {
+      return resolveSessionMediaPath(args.path, this.attachmentStore)
+        .then((path) => this.resolveExecution({ ...args, path }));
+    }
     if (args.column_offset !== undefined && (args.line_offset ?? 1) < 0) {
       return { isError: true, output: 'column_offset is only supported for forward reads. Use a positive line_offset or the forward Next Read arguments.' };
     }

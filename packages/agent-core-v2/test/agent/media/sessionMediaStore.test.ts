@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { Jimp } from 'jimp';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
@@ -212,6 +212,29 @@ describe('SessionMediaStoreService', () => {
     expect((await readFile(join(sessionDir, JSON.parse(relative!) as string))).equals(bytes)).toBe(true);
   });
 
+  it.each([
+    ['text/csv', 'a,b\n1,2', '.csv'],
+    ['text/html', '<p>hello</p>', '.html'],
+    ['application/json', '{"a":1}', '.json'],
+    ['application/example+json', '{"a":1}', '.json'],
+    ['text/x-example', 'example text', '.txt'],
+  ])('preserves %s blobs with a readable text extension', async (mimeType, body, extension) => {
+    const bytes = Buffer.from(body);
+    const result = await mcpResultToExecutableOutput({
+      isError: false,
+      content: [{ type: 'resource', resource: {
+        uri: 'example://text', mimeType, blob: bytes.toString('base64'),
+      } }],
+    }, 'mcp__example__text', { attachmentStore: store });
+    const encoded = /Original attachment saved at: ("[^\n]+")/.exec(modelText(result))?.[1];
+    expect(encoded).toBeDefined();
+    const path = JSON.parse(encoded!) as string;
+    expect(path.endsWith(extension)).toBe(true);
+    const saved = await readFile(path);
+    expect(saved.equals(bytes)).toBe(true);
+    expect(detectFileType(path, saved).kind).toBe('text');
+  });
+
   it('saves uncompressed SVG as readable SVG text', async () => {
     const bytes = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><circle r="4"/></svg>');
     const output = await mcpResultToExecutableOutput({
@@ -225,6 +248,26 @@ describe('SessionMediaStoreService', () => {
     const saved = await readFile(path);
     expect(saved.equals(bytes)).toBe(true);
     expect(detectFileType(path, saved).kind).toBe('text');
+  });
+
+  it.each([true, false])('stops attachment persistence when cancellation is already triggered=%s', async (alreadyAborted) => {
+    const controller = new AbortController();
+    const reason = new Error('attachment import canceled');
+    const storage = ix.get(IFileSystemStorageService);
+    const writeStream = storage.writeStream.bind(storage);
+    const writes = vi.spyOn(storage, 'writeStream').mockImplementation(async (scope, key, source, options) => {
+      expect(options?.signal).toBe(controller.signal);
+      controller.abort(reason);
+      return writeStream(scope, key, source, options);
+    });
+    if (alreadyAborted) controller.abort(reason);
+    await expect(mcpResultToExecutableOutput({
+      isError: false,
+      content: [1, 2, 3].map((i) => ({ type: 'resource', resource: {
+        uri: `example://file/${String(i)}`, blob: Buffer.from(`file ${String(i)}`).toString('base64'),
+      } })),
+    }, 'mcp__example__files', { attachmentStore: store, signal: controller.signal })).rejects.toBe(reason);
+    expect(writes).toHaveBeenCalledTimes(alreadyAborted ? 0 : 1);
   });
 
   it('keeps a same-size copy without re-reading the stream', async () => {

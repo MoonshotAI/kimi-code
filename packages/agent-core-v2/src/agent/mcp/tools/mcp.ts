@@ -52,6 +52,7 @@ export function createMcpTool(
           result = await retryAfterReconnect(error, client, args, context, options, callTool);
         }
         return mcpResultToExecutableOutput(result, qualifiedName, {
+          signal: context.signal,
           attachmentStore: options.attachmentStore,
           originalsDir: options.originalsDir,
           telemetry: options.telemetry,

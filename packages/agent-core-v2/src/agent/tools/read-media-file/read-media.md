@@ -1,5 +1,7 @@
 Read media content from a file.
 
+The path may be a `kimi-file://` attachment reference. It resolves to the current session's copy, including after a fork.
+
 **Tips:**
 - Make sure you follow the description of each tool parameter.
 - A `<system>` tag accompanies the media content; it summarizes the mime type, byte size and, for images, the original pixel dimensions, and states how the image was delivered (untouched, downsampled, cropped, or native resolution). When outputting coordinates, give relative coordinates first and compute absolute coordinates from the original image size. After generating or editing media via commands or scripts, read the result back before continuing.

@@ -218,7 +218,7 @@ async function execute(
   tool: ReadMediaFileTool,
   args: ReadMediaFileInput,
 ): Promise<ExecutableToolResult> {
-  const execution = tool.resolveExecution(args);
+  const execution = await tool.resolveExecution(args);
   if (!('execute' in execution)) {
     return execution;
   }

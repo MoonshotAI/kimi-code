@@ -873,6 +873,26 @@ describe('mcpResultToExecutableOutput', () => {
 });
 
 describe('createMcpTool', () => {
+  test('propagates cancellation after the remote call instead of processing its attachments', async () => {
+    const controller = new AbortController();
+    const reason = new Error('stop attachment processing');
+    let calls = 0;
+    const client: MCPClient = {
+      async listTools() { return []; },
+      async callTool() {
+        calls++;
+        controller.abort(reason);
+        return { isError: false, content: [{ type: 'audio', mimeType: 'audio/wav', data: 'YXVkaW8=' }] };
+      },
+      async ping() {},
+    };
+    const tool = createMcpTool('mcp__example__audio', { name: 'audio', description: 'Example audio', parameters: {} }, client);
+    const execution = await tool.resolveExecution({});
+    if (execution.isError === true) throw new Error('expected tool execution');
+    await expect(execution.execute({ turnId: 1, toolCallId: 'audio', signal: controller.signal })).rejects.toBe(reason);
+    expect(calls).toBe(1);
+  });
+
   test('omits truncated when the MCP output was not truncated', async () => {
     const client = {
       async listTools() {
