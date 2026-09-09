@@ -529,6 +529,7 @@ describe('TowerSpawnTool', () => {
       agentId: 'agent-7',
       kind: 'reviewer',
       reviewTarget: 'feat/build-gemm',
+      reviewMissionId: 'M1',
     });
     expect(entry?.worktree).toBeUndefined();
   });

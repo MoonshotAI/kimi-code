@@ -7,6 +7,7 @@ export interface TowerRosterEntry {
   readonly kind: TowerAgentKind;
   readonly missionId?: string;
   readonly reviewTarget?: string;
+  readonly reviewMissionId?: string;
   readonly worktree?: string;
   readonly branch?: string;
   readonly spawnedAt: string;

@@ -226,6 +226,10 @@ export class TowerSpawnTool implements ITowerSpawnTool {
           kind: args.kind,
           missionId: mission?.id,
           reviewTarget,
+          reviewMissionId:
+            reviewTarget !== undefined
+              ? resolveMissionByBranch(state, reviewTarget)?.id
+              : undefined,
           worktree: mission?.worktree,
           branch: mission?.branch,
           spawnedAt: new Date().toISOString(),

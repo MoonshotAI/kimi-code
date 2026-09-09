@@ -1063,6 +1063,40 @@ describe('merge gate', () => {
     expect((await store.latestReview(mission!.branch))?.mission).toBe(mission!.id);
   });
 
+  it('stamps the mission recorded on the reviewer roster entry, not the mission resolved at submit time', async () => {
+    const [first] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    const state = await store.load();
+    await store.addWorktree(first!.worktree, first!.branch, state.base);
+    await commitFile(worktreeOf(first!), 'src/x/x.ts', 'x\n', 'work on M1');
+    const second: TowerMission = {
+      ...first!,
+      id: 'M2',
+      worktree: 'wt-2',
+      status: 'active',
+      tasks: [],
+      notes: [],
+      blockers: [],
+    };
+    await spliceMissionIntoState(second);
+    await store.registerAgent(
+      rosterEntry({
+        name: 'rev',
+        kind: 'reviewer',
+        reviewTarget: first!.branch,
+        reviewMissionId: 'M2',
+      }),
+    );
+    await store.updateMission('tower', second.id, { status: 'abandoned' });
+
+    await cleanReview('rev', first!.branch);
+
+    expect((await store.latestReview(first!.branch))?.mission).toBe('M2');
+    await expect(store.merge(first!.branch)).rejects.toThrow(/written for M2/);
+    expect((await store.load()).missions.find((m) => m.id === first!.id)?.status).not.toBe(
+      'merged',
+    );
+  });
+
   it('refuses to merge on an unstamped legacy review when another mission shares the branch', async () => {
     const [stale] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
     const state = await store.load();

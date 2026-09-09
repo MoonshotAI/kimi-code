@@ -801,9 +801,10 @@ export class TowerStore {
 
   async submitReview(callerName: string, input: TowerReviewInput): Promise<string> {
     const state = await this.load();
+    let callerEntry: TowerRosterEntry | undefined;
     if (callerName !== TOWER_NAME) {
-      const caller = this.findAgent(state, callerName);
-      if (caller?.kind !== 'reviewer' || caller.reviewTarget !== input.target) {
+      callerEntry = this.findAgent(state, callerName);
+      if (callerEntry?.kind !== 'reviewer' || callerEntry.reviewTarget !== input.target) {
         throw new TowerProtocolError(
           `agent "${callerName}" is not an assigned reviewer for "${input.target}"`,
         );
@@ -824,7 +825,8 @@ export class TowerStore {
     const myRounds = existing.filter((r) => r.reviewer === callerName).length;
     const round = myRounds + 1;
     const reviewedCommit = await branchTip(this.repoRoot, input.target);
-    const reviewMission = resolveMissionByBranch(state, input.target);
+    const reviewMissionId =
+      callerEntry?.reviewMissionId ?? resolveMissionByBranch(state, input.target)?.id;
 
     const frontmatter = renderFrontmatter({
       date: dateDash(),
@@ -834,7 +836,7 @@ export class TowerStore {
       status: input.status,
       merge: input.merge,
       reviewed_commit: reviewedCommit,
-      ...(reviewMission !== undefined ? { mission: reviewMission.id } : {}),
+      ...(reviewMissionId !== undefined ? { mission: reviewMissionId } : {}),
     });
     const checks = (input.checks ?? []).map((c) => `- [x] ${c}`).join('\n');
     const content = [
