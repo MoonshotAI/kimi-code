@@ -1600,6 +1600,25 @@ describe('teardown', () => {
     }
   });
 
+  it('removes mission worktrees when the tower runs inside a linked git worktree', async () => {
+    const linked = join(await mkdtemp(join(tmpdir(), 'tower-store-linked-')), 'linked');
+    await git(repo, 'worktree', 'add', linked, '-b', 'linked-checkout');
+    try {
+      const linkedStore = new TowerStore(linked);
+      await linkedStore.init();
+      const [mission] = await linkedStore.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+      const state = await linkedStore.load();
+      await linkedStore.addWorktree(mission!.worktree, mission!.branch, state.base);
+
+      const report = await linkedStore.teardown();
+
+      expect(report).toEqual([`removed .tower/worktrees/${mission!.worktree}`]);
+    } finally {
+      await git(repo, 'worktree', 'remove', '--force', linked).catch(() => {});
+      await git(repo, 'branch', '-D', 'linked-checkout').catch(() => {});
+    }
+  });
+
   it('treats a worktree git no longer knows as already removed, not as a failure', async () => {
     const mission = await setupMission({
       title: 'feature gone',
