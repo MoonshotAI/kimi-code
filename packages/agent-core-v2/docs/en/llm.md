@@ -32,7 +32,9 @@ llm/
 │
 ├── requester/
 │   ├── requester.ts      LlmRequester.generate(config, content, control);
-│   │                     ExtraParams typed per protocol {openai?, responses?, anthropic?, googleGenai?}
+│   │                     ExtraParams typed per protocol {openai?, responses?, anthropic?, googleGenai?};
+│   │                     LlmRequestConfig.credentials: credential contribution point
+│   │                     (resolve/canRecover/invalidate), resolved per attempt by the caller
 │   ├── machine.ts        llm state machine (single request + retry/recovery + empty response
 │   │                     judgment; emits llm.retrying / llm.recovering)
 │   ├── retry.ts / recovery.ts   pure retry/recovery policy functions (driven by the llm machine; propose is pure)
@@ -51,7 +53,7 @@ llm/
 └── media/                media contribution points: cache / degrade / ref / resolver / store / upload
 ```
 
-Request lifecycle: `generate` receives (config, content, control) → format lowers the generic Message[] through the Pattern Rewriter into protocol requestParams → internalGenerate calls the official SDK → streaming chunks are converted by the stateless parser callbacks into `llm.streaming.part / streaming.usage / streaming.finish / streaming.message_id` events → errors are converted by format into `llm.failed.*`; on success the requester emits `llm.done`, on failure it ends with `llm.failed.syntax / llm.failed.remote` and never emits `llm.done`. `withEmptyResponseGuard` judges empty responses at finish and raises `llm.failed.remote`; the llm machine first tries recovery on `llm.failed.remote` (replacement messages from the pure `propose` function, emitting `llm.recovering`), then retries with backoff (honoring Retry-After, emitting `llm.retrying`), and only lands in the failed final state once attempts are exhausted. The upper-layer turn holds the HistoryAccumulator, fed by the event stream, rolls it back and recreates it on `llm.retrying / llm.recovering`, and finishes the complete message at `llm.done`; usage accounting, tracing, compaction, and media degradation all attach to the event stream as plugins/contribution points.
+Request lifecycle: `generate` receives (config, content, control) → the caller resolves `config.credentials` into a fully-credentialed model before each attempt (the llm machine's request actor for the machine path), so requests always carry fresh credentials and a credential-refresh recovery (recoverable 401 → `credentials.invalidate()`, emitted as `llm.recovering` with strategy `credentials`) naturally re-resolves on the re-send → format lowers the generic Message[] through the Pattern Rewriter into protocol requestParams → internalGenerate calls the official SDK → streaming chunks are converted by the stateless parser callbacks into `llm.streaming.part / streaming.usage / streaming.finish / streaming.message_id` events → errors are converted by format into `llm.failed.*`; on success the requester emits `llm.done`, on failure it ends with `llm.failed.syntax / llm.failed.remote` and never emits `llm.done`. `withEmptyResponseGuard` judges empty responses at finish and raises `llm.failed.remote`; the llm machine first tries recovery on `llm.failed.remote` (replacement messages from the pure `propose` function, emitting `llm.recovering`), then retries with backoff (honoring Retry-After, emitting `llm.retrying`), and only lands in the failed final state once attempts are exhausted. The upper-layer turn holds the HistoryAccumulator, fed by the event stream, rolls it back and recreates it on `llm.retrying / llm.recovering`, and finishes the complete message at `llm.done`; usage accounting, tracing, compaction, and media degradation all attach to the event stream as plugins/contribution points.
 
 ## Rejected Schemes (do not reintroduce)
 

@@ -8,7 +8,7 @@ import { createMediaDegradeRecovery } from '#/llm/media/degrade';
 import type { LlmModel } from '#/llm/model';
 import { createLlmMachine, type LlmEvent } from '#/llm/requester/machine';
 import type { LlmRecovery } from '#/llm/requester/recovery';
-import type { LlmRequester } from '#/llm/requester/requester';
+import type { LlmCredentialProvider, LlmRequester } from '#/llm/requester/requester';
 import type { LlmRetryOptions } from '#/llm/requester/retry';
 import {
   createTurnMachine,
@@ -532,5 +532,106 @@ describe('turn machine media recovery', () => {
     expect(calls()).toBe(1);
     expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'failed' });
     expect(recovering).toHaveLength(0);
+  });
+});
+
+describe('turn machine credential recovery', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function createCredentials(onInvalidate: () => void): {
+    provider: LlmCredentialProvider;
+    tokens: readonly string[];
+  } {
+    const tokens = ['tok-1', 'tok-2'];
+    let resolutions = 0;
+    return {
+      tokens,
+      provider: {
+        resolve: () => {
+          const apiKey = tokens[Math.min(resolutions, tokens.length - 1)] as string;
+          resolutions += 1;
+          return { apiKey };
+        },
+        canRecover: (error) =>
+          typeof error === 'object' &&
+          error !== null &&
+          (error as { statusCode?: number }).statusCode === 401,
+        invalidate: onInvalidate,
+      },
+    };
+  }
+
+  it('refreshes credentials once on a recoverable 401 and retries', async () => {
+    let invalidations = 0;
+    const { provider } = createCredentials(() => (invalidations += 1));
+    const apiKeys: (string | undefined)[] = [];
+    const requester: LlmRequester = {
+      generate: (config, _content, control) => {
+        apiKeys.push(config.model.apiKey);
+        control.onEvent?.({ type: 'llm.sent' });
+        if (apiKeys.length === 1) {
+          control.onEvent?.({ type: 'llm.failed.remote', error: statusError(401, 'unauthorized') });
+          return Promise.resolve();
+        }
+        control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'done' } });
+        control.onEvent?.({ type: 'llm.done' });
+        return Promise.resolve();
+      },
+    };
+    const { actor, recovering, sent, failed } = startTurnActor(requester, undefined, {
+      request: { model, credentials: provider },
+    });
+
+    await drain();
+
+    expect(apiKeys).toEqual(['tok-1', 'tok-2']);
+    expect(invalidations).toBe(1);
+    expect(recovering).toHaveLength(1);
+    expect(recovering[0]).toMatchObject({
+      strategy: 'credentials',
+      action: 'refresh',
+      statusCode: 401,
+    });
+    expect(sent.map((event) => event.recovery?.action)).toEqual([undefined, 'refresh']);
+    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'done' });
+    expect(failed).toHaveLength(0);
+  });
+
+  it('fails when the attempt after a credential refresh also fails', async () => {
+    let invalidations = 0;
+    const { provider } = createCredentials(() => (invalidations += 1));
+    const { requester, calls } = createStubRequester([
+      statusError(401, 'unauthorized'),
+      statusError(401, 'still unauthorized'),
+    ]);
+    const { actor, recovering, failed } = startTurnActor(requester, undefined, {
+      request: { model, credentials: provider },
+    });
+
+    await drain();
+
+    expect(calls()).toBe(2);
+    expect(invalidations).toBe(1);
+    expect(recovering).toHaveLength(1);
+    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'failed' });
+    expect(failed).toHaveLength(1);
+  });
+
+  it('does not refresh when the request carries no recoverable credentials', async () => {
+    const { requester, calls } = createStubRequester([statusError(401, 'unauthorized')]);
+    const { actor, recovering, failed } = startTurnActor(requester);
+
+    await drain();
+
+    expect(calls()).toBe(1);
+    expect(recovering).toHaveLength(0);
+    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'failed' });
+    expect(failed).toHaveLength(1);
   });
 });

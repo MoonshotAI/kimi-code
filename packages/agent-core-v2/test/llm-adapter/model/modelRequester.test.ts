@@ -418,6 +418,39 @@ describe('ModelRequesterImpl request execution', () => {
     expect(seen).toEqual(['sk-1']);
   });
 
+  it('uploadVideo refreshes credentials once on a raw 401 and retries', async () => {
+    const authCalls: Array<{ force?: boolean }> = [];
+    const uploads: Array<string | undefined> = [];
+    const media: ProviderMediaContribution = {
+      uploadVideo: (_video, options) => {
+        uploads.push(options.model.apiKey);
+        if (uploads.length === 1) {
+          return Promise.reject(Object.assign(new Error('unauthorized'), { status: 401 }));
+        }
+        return Promise.resolve({
+          type: 'video_url',
+          videoUrl: { url: 'https://cdn.example.test/v.mp4' },
+        });
+      },
+    };
+    const impl = new ModelRequesterImpl(
+      modelWith({
+        canRefresh: true,
+        getAuth: (options) => {
+          authCalls.push(options ?? {});
+          return Promise.resolve({ apiKey: authCalls.length === 1 ? 'tok-1' : 'tok-2' });
+        },
+      }),
+      gatewayReturning(new FakeLlmRequester(), media),
+    );
+
+    const part = await impl.uploadVideo({ data: new Uint8Array([1]), mimeType: 'video/mp4' });
+
+    expect(part).toEqual({ type: 'video_url', videoUrl: { url: 'https://cdn.example.test/v.mp4' } });
+    expect(uploads).toEqual(['tok-1', 'tok-2']);
+    expect(authCalls).toEqual([{ force: undefined }, { force: true }]);
+  });
+
   it('reports the event-loop-busy overlap of the decode window as clientBlockedMs', async () => {
     const requester = new FakeLlmRequester();
     requester.handler = (_i, emit) => {

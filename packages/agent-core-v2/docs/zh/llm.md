@@ -32,7 +32,9 @@ llm/
 │
 ├── requester/
 │   ├── requester.ts      LlmRequester.generate(config, content, control)；
-│   │                     ExtraParams 按协议带类型 {openai?, responses?, anthropic?, googleGenai?}
+│   │                     ExtraParams 按协议带类型 {openai?, responses?, anthropic?, googleGenai?}；
+│   │                     LlmRequestConfig.credentials：凭证贡献点
+│   │                     （resolve/canRecover/invalidate），由调用方在每次 attempt 前解析
 │   ├── machine.ts        llm 状态机（单次请求 + 重试/恢复 + empty response 判定；
 │   │                     对外补发 llm.retrying / llm.recovering）
 │   ├── retry.ts / recovery.ts   重试/恢复策略纯函数（由 llm machine 驱动；propose 为纯函数）
@@ -51,7 +53,7 @@ llm/
 └── media/                媒体贡献点：cache / degrade / ref / resolver / store / upload
 ```
 
-请求生命周期：`generate` 收到 (config, content, control) → format 将通用 Message[] 经 Pattern Rewriter 降低为协议 requestParam → internalGenerate 调用官方 SDK → 流式 chunk 经无状态 parser 回调转换为 `llm.streaming.part / streaming.usage / streaming.finish / streaming.message_id` 事件 → 错误由 format 转换为 `llm.failed.*`；成功时 requester 发出 `llm.done`，失败时以 `llm.failed.syntax / llm.failed.remote` 收尾、不再发 `llm.done`。`withEmptyResponseGuard` 在 finish 时判定空响应并转为 `llm.failed.remote`；llm machine 对 `llm.failed.remote` 先尝试 recovery（纯函数 `propose` 产出替换消息，发 `llm.recovering`），再按策略 backoff 重试（尊重 Retry-After，发 `llm.retrying`），耗尽后才以 failed 终态收尾。上层的 turn 持有 HistoryAccumulator 随事件流累积，在 `llm.retrying / llm.recovering` 时 rollback 并重建累加器，`llm.done` 时 finish 出完整消息；usage 统计、trace、compaction、媒体降级均以插件/贡献点身份挂接在事件流上。
+请求生命周期：`generate` 收到 (config, content, control) → 调用方在每次 attempt 前把 `config.credentials` 解析成带完整凭证的 model（machine 路径由 llm machine 的 request actor 完成），请求因此始终携带新鲜凭证，而凭证刷新恢复（可恢复的 401 → `credentials.invalidate()`，以 `llm.recovering`（strategy 为 `credentials`）发出）在重发时自然重新解析 → format 将通用 Message[] 经 Pattern Rewriter 降低为协议 requestParam → internalGenerate 调用官方 SDK → 流式 chunk 经无状态 parser 回调转换为 `llm.streaming.part / streaming.usage / streaming.finish / streaming.message_id` 事件 → 错误由 format 转换为 `llm.failed.*`；成功时 requester 发出 `llm.done`，失败时以 `llm.failed.syntax / llm.failed.remote` 收尾、不再发 `llm.done`。`withEmptyResponseGuard` 在 finish 时判定空响应并转为 `llm.failed.remote`；llm machine 对 `llm.failed.remote` 先尝试 recovery（纯函数 `propose` 产出替换消息，发 `llm.recovering`），再按策略 backoff 重试（尊重 Retry-After，发 `llm.retrying`），耗尽后才以 failed 终态收尾。上层的 turn 持有 HistoryAccumulator 随事件流累积，在 `llm.retrying / llm.recovering` 时 rollback 并重建累加器，`llm.done` 时 finish 出完整消息；usage 统计、trace、compaction、媒体降级均以插件/贡献点身份挂接在事件流上。
 
 ## 已被否决的方案（不要再引入）
 

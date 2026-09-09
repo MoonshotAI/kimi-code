@@ -1,22 +1,19 @@
 import type { BearerTokenProvider } from '@moonshot-ai/kimi-code-oauth';
 
-import type { CredentialSource } from './credential-source';
+import { errorStatusCode } from '#/llm/errors';
+import type { LlmCredentialProvider } from '#/llm/requester/requester';
 
-function statusOf(error: unknown): number | undefined {
-  if (typeof error !== 'object' || error === null) {
-    return undefined;
-  }
-  const record = error as Record<string, unknown>;
-  const status = record['status'] ?? record['statusCode'];
-  return typeof status === 'number' ? status : undefined;
-}
-
-export function kimiOAuthCredentialSource(tokens: BearerTokenProvider): CredentialSource {
+export function kimiOAuthCredentialProvider(tokens: BearerTokenProvider): LlmCredentialProvider {
+  let forceNext = false;
   return {
-    resolve: async (model, options) => ({
-      ...model,
-      apiKey: await tokens.getAccessToken({ force: options?.force === true }),
-    }),
-    canRecover: (_model, error) => statusOf(error) === 401,
+    resolve: async () => {
+      const force = forceNext ? true : undefined;
+      forceNext = false;
+      return { apiKey: await tokens.getAccessToken({ force }) };
+    },
+    canRecover: (error) => errorStatusCode(error) === 401,
+    invalidate: () => {
+      forceNext = true;
+    },
   };
 }

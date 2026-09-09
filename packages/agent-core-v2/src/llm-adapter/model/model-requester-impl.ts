@@ -3,33 +3,28 @@ import * as nodePath from 'node:path';
 import { performance, type EventLoopUtilization } from 'node:perf_hooks';
 
 import { AsyncEventQueue } from '#/_base/asyncEventQueue';
-import type { LlmErrorMessage } from '#human/llm/errors';
+import { errorStatusCode, type LlmErrorMessage } from '#human/llm/errors';
 import { emptyResponseError } from '#human/llm/empty-response';
 import { NO_FINISH, type FinishInfo } from '#human/llm/finish-reason';
 import type { ProviderMediaContribution, VideoUploadInput } from '#human/llm/media/upload';
 import { createMessageAccumulator, type VideoURLPart } from '#human/llm/message';
 import type { LlmModel } from '#human/llm/model';
 import type { ProtocolName } from '#human/llm/protocol/base';
+import { applyCredential, resolveModelCredentials } from '#human/llm/protocol/trait';
 import {
-  mergeRequestHeaders,
   type ExtraParams,
+  type LlmCredentialProvider,
   type LlmRequestConfig,
   type LlmRequestContent,
   type LlmRequestEvent,
   type LlmRequester,
 } from '#human/llm/requester/requester';
 import type { TokenUsage } from '#human/llm/usage';
-import {
-  withAuth,
-  withAuthUpload,
-  type CredentialSource,
-} from '#human/kimi-oauth/credential-source';
 
 import {
   ChatProviderError,
   errorFromLlmMessage,
   isAbortError,
-  isUnauthorizedLlmError,
   llmMessageFromError,
   traceIdFromHeadersRecord,
   VideoUploadUnsupportedError,
@@ -37,7 +32,7 @@ import {
 import { fromLlmAssistantMessage, toLlmMessage, type Tool } from '../contract/message';
 import { mergeUsagePatch } from '#human/llm/usage';
 
-import type { Model, ProviderRequestAuth } from './catalog';
+import type { AuthProvider, Model } from './catalog';
 import type {
   ModelRequestEvent,
   ModelRequestInput,
@@ -83,19 +78,14 @@ export class ModelRequesterImpl implements ModelRequester {
 
   private requesterFor(resolved: ResolvedLlmModel): LlmRequester {
     if (this.cachedRequester === undefined) {
-      this.cachedRequester = withAuth(throwToEvent(resolved.requester), this.credentialSource);
+      this.cachedRequester = throwToEvent(resolved.requester);
     }
     return this.cachedRequester;
   }
 
-  private readonly credentialSource: CredentialSource = {
-    resolve: async (model, options) => {
-      const auth = await this.model.authProvider.getAuth({ force: options?.force });
-      return applyAuth(model, auth);
-    },
-    canRecover: (_model, error) =>
-      this.model.authProvider.canRefresh === true && isUnauthorizedLlmError(error),
-  };
+  private readonly credentials: LlmCredentialProvider = createAuthCredentials(
+    () => this.model.authProvider,
+  );
 
   request(
     input: ModelRequestInput,
@@ -122,8 +112,19 @@ export class ModelRequesterImpl implements ModelRequester {
       );
     }
     const video = typeof input === 'string' ? readVideoFile(input) : input;
-    const wrapped = withAuthUpload(uploader, this.credentialSource);
-    return wrapped(video, { model: resolved.model, signal: options?.signal });
+    const upload = () =>
+      resolveModelCredentials(resolved.model, this.credentials).then((model) =>
+        uploader(video, { model, signal: options?.signal }),
+      );
+    try {
+      return await upload();
+    } catch (error) {
+      if (options?.signal?.aborted === true || !this.credentials.canRecover?.(error)) {
+        throw error;
+      }
+      this.credentials.invalidate?.();
+      return upload();
+    }
   }
 
   private async runRequest(
@@ -172,8 +173,10 @@ export class ModelRequesterImpl implements ModelRequester {
       usedContextTokens: params?.usedContextTokens,
     };
 
-    await requester.generate(config, content, {
-      signal: signal ?? new AbortController().signal,
+    const attemptGenerate = async () => {
+      const credential = await this.credentials.resolve();
+      return requester.generate({ ...config, model: applyCredential(resolved.model, credential) }, content, {
+        signal: signal ?? new AbortController().signal,
       onEvent: (event: LlmRequestEvent) => {
         switch (event.type) {
           case 'llm.sent': {
@@ -236,7 +239,15 @@ export class ModelRequesterImpl implements ModelRequester {
           }
         }
       },
-    });
+      });
+    };
+
+    await attemptGenerate();
+    if (failed !== undefined && signal?.aborted !== true && this.credentials.canRecover?.(failed)) {
+      this.credentials.invalidate?.();
+      failed = undefined;
+      await attemptGenerate();
+    }
 
     if (failed !== undefined) {
       throw errorFromLlmMessage(failed);
@@ -293,12 +304,20 @@ function finalizeDecodeStats(
   };
 }
 
-function applyAuth(model: LlmModel, auth: ProviderRequestAuth | undefined): LlmModel {
-  if (auth === undefined) return model;
+function createAuthCredentials(authProvider: () => AuthProvider): LlmCredentialProvider {
+  let forceNext = false;
   return {
-    ...model,
-    apiKey: auth.apiKey ?? model.apiKey,
-    defaultHeaders: mergeRequestHeaders(model.defaultHeaders, auth.headers),
+    resolve: async () => {
+      const force = forceNext ? true : undefined;
+      forceNext = false;
+      const auth = await authProvider().getAuth({ force });
+      if (auth === undefined) return undefined;
+      return { apiKey: auth.apiKey, headers: auth.headers };
+    },
+    canRecover: (error) => authProvider().canRefresh === true && errorStatusCode(error) === 401,
+    invalidate: () => {
+      forceNext = true;
+    },
   };
 }
 

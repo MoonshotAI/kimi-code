@@ -585,6 +585,37 @@ export function createTurnMachine(
           'llm.failed.remote': [
             {
               guard: ({ context, event }) =>
+                !context.appliedRecoveries.some((record) => record.strategy === 'credentials') &&
+                context.input.request.credentials?.canRecover?.(event.error) === true,
+              target: 'thinking',
+              reenter: true,
+              actions: [
+                ({ context }) => {
+                  context.accumulator.rollback();
+                },
+                assign(({ context, event }) => ({
+                  lastError: event.error,
+                  attempt: 1,
+                  appliedRecoveries: [
+                    ...context.appliedRecoveries,
+                    { strategy: 'credentials', action: 'refresh' },
+                  ],
+                })),
+                ({ context }) => {
+                  context.input.request.credentials?.invalidate?.();
+                },
+                {
+                  type: 'sendToParent',
+                  params: ({ context, event }) =>
+                    llmRecoveringEvent(
+                      context.appliedRecoveries.at(-1) as LlmRecoveryRecord,
+                      event.error,
+                    ),
+                },
+              ],
+            },
+            {
+              guard: ({ context, event }) =>
                 proposeRecovery(recovery, {
                   error: event.error,
                   messages: baseMessages(context),
