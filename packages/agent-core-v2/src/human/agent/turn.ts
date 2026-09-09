@@ -216,6 +216,7 @@ export interface TurnMachineContext {
   delayMs: number;
   appliedRecoveries: LlmRecoveryRecord[];
   lastError?: LlmRemoteErrorMessage;
+  lastAttemptError?: LlmRemoteErrorMessage;
   outcome?: 'done' | 'failed' | 'aborted';
   error?: unknown;
 }
@@ -288,6 +289,7 @@ function attemptMessages(
   return (
     proposeRecovery(recovery, {
       error: lastError,
+      model: context.input.request.model,
       messages: base,
       applied: context.appliedRecoveries.slice(0, -1),
     })?.messages ?? base
@@ -300,7 +302,8 @@ function proposeRecovery(
 ): (LlmRecoveryProposal & LlmRecoveryRecord) | undefined {
   if (recovery === undefined) return undefined;
   const proposal = recovery.propose(ctx);
-  if (proposal === undefined || proposal.messages === ctx.messages) return undefined;
+  if (proposal === undefined) return undefined;
+  if (proposal.messages !== undefined && proposal.messages === ctx.messages) return undefined;
   return { strategy: recovery.id, action: proposal.action, messages: proposal.messages };
 }
 
@@ -436,6 +439,7 @@ export function createTurnMachine(
             return {
               config: context.input.request,
               signal: context.llmScope.signal,
+              lastAttemptError: context.lastAttemptError,
               content: {
                 messages: attemptMessages(context, recovery),
                 usedContextTokens: estimateUsedContextTokens(entries, {
@@ -530,6 +534,7 @@ export function createTurnMachine(
                   return {
                     produced: [...context.produced, entry],
                     pendingToolCalls: [...entry.message.toolCalls],
+                    lastAttemptError: undefined,
                   };
                 }),
               ],
@@ -558,6 +563,7 @@ export function createTurnMachine(
                     ...context.produced,
                     context.accumulator.finish({ source: 'llm' }),
                   ],
+                  lastAttemptError: () => undefined,
                 }),
               ],
             },
@@ -577,6 +583,7 @@ export function createTurnMachine(
               guard: ({ context, event }) =>
                 proposeRecovery(recovery, {
                   error: event.error,
+                  model: context.input.request.model,
                   messages: baseMessages(context),
                   applied: context.appliedRecoveries,
                 }) !== undefined,
@@ -589,12 +596,14 @@ export function createTurnMachine(
                 assign(({ context, event }) => {
                   const proposal = proposeRecovery(recovery, {
                     error: event.error,
+                    model: context.input.request.model,
                     messages: baseMessages(context),
                     applied: context.appliedRecoveries,
                   });
                   if (proposal === undefined) return {};
                   return {
                     lastError: event.error,
+                    lastAttemptError: event.error,
                     appliedRecoveries: [
                       ...context.appliedRecoveries,
                       { strategy: proposal.strategy, action: proposal.action },
@@ -621,6 +630,7 @@ export function createTurnMachine(
                   context.accumulator.rollback();
                 },
                 assign({
+                  lastAttemptError: ({ event }) => event.error,
                   delayMs: ({ context, event }) =>
                     readRetryAfterMs(event.error) ?? retryBackoffDelay(context.attempt - 1),
                 }),

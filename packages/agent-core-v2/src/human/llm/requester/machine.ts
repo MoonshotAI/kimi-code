@@ -1,8 +1,7 @@
 import { assign, emit, fromCallback, setup } from '#/xstate2';
 
-import type { LlmErrorMessage } from '#/llm/errors';
+import { toLlmErrorMessage, type LlmErrorMessage, type LlmRemoteErrorMessage } from '#/llm/errors';
 import type { Message } from '#/llm/message';
-import type { LlmModel } from '#/llm/model';
 
 import type {
   LlmRequestConfig,
@@ -16,19 +15,28 @@ export interface LlmInput {
   readonly config: LlmRequestConfig;
   readonly content: LlmRequestContent;
   readonly signal: AbortSignal;
+  readonly lastAttemptError?: LlmRemoteErrorMessage;
 }
 
-export interface MessageResolveContext {
-  readonly model: LlmModel;
+export interface LlmRequestResolution {
+  readonly config?: LlmRequestConfig;
+  readonly messages?: readonly Message[];
+}
+
+export interface LlmRequestResolverContext {
   readonly signal: AbortSignal;
+  readonly lastAttemptError?: LlmRemoteErrorMessage;
 }
 
-export interface MessageResolver {
+export interface LlmRequestResolver {
   readonly id: string;
   resolve(
-    messages: readonly Message[],
-    ctx: MessageResolveContext,
-  ): Promise<readonly Message[]>;
+    request: {
+      readonly config: LlmRequestConfig;
+      readonly messages: readonly Message[];
+    },
+    ctx: LlmRequestResolverContext,
+  ): Promise<LlmRequestResolution | undefined> | LlmRequestResolution | undefined;
 }
 
 export type LlmEvent =
@@ -63,19 +71,27 @@ export interface LlmMachineContext {
 
 function createRequestActor(
   requester: LlmRequester,
-  messageResolvers: readonly MessageResolver[],
+  resolvers: readonly LlmRequestResolver[],
 ) {
   return fromCallback<LlmEvent, LlmInput>(({ input, sendBack }) => {
     void (async () => {
+      let config = input.config;
       let messages = input.content.messages;
-      for (const resolver of messageResolvers) {
-        messages = await resolver.resolve(messages, {
-          model: input.config.model,
-          signal: input.signal,
-        });
+      try {
+        for (const resolver of resolvers) {
+          const resolved = await resolver.resolve(
+            { config, messages },
+            { signal: input.signal, lastAttemptError: input.lastAttemptError },
+          );
+          config = resolved?.config ?? config;
+          messages = resolved?.messages ?? messages;
+        }
+      } catch (error) {
+        sendBack({ type: 'llm.failed.remote', error: toLlmErrorMessage(error) });
+        return;
       }
       await requester.generate(
-        input.config,
+        config,
         { ...input.content, messages },
         {
           signal: input.signal,
@@ -88,11 +104,11 @@ function createRequestActor(
 
 export interface CreateLlmMachineOptions {
   requester: LlmRequester;
-  messageResolvers?: readonly MessageResolver[];
+  resolvers?: readonly LlmRequestResolver[];
 }
 
 export function createLlmMachine(options: CreateLlmMachineOptions) {
-  const requestActor = createRequestActor(options.requester, options.messageResolvers ?? []);
+  const requestActor = createRequestActor(options.requester, options.resolvers ?? []);
   return setup({
     types: {
       input: {} as LlmInput,

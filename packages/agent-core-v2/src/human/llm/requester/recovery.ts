@@ -1,5 +1,6 @@
 import type { LlmRemoteErrorMessage } from '#/llm/errors';
 import type { Message } from '#/llm/message';
+import type { LlmModel } from '#/llm/model';
 
 export interface LlmRecoveryRecord {
   readonly strategy: string;
@@ -8,13 +9,14 @@ export interface LlmRecoveryRecord {
 
 export interface LlmRecoveryContext {
   readonly error: LlmRemoteErrorMessage;
+  readonly model: LlmModel;
   readonly messages: readonly Message[];
   readonly applied: readonly LlmRecoveryRecord[];
 }
 
 export interface LlmRecoveryProposal {
   readonly action: string;
-  readonly messages: readonly Message[];
+  readonly messages?: readonly Message[];
 }
 
 export interface LlmRecovery {

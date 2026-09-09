@@ -386,14 +386,14 @@ describe('media', () => {
       cache: createMemoryMediaUploadCache(),
     });
     const messages = [videoRefMessage('media://ref-1')];
-    const ctx = { model: mediaModel, signal: new AbortController().signal };
+    const signal = new AbortController().signal;
 
-    const first = await resolver.resolve(messages, ctx);
-    const second = await resolver.resolve(messages, ctx);
+    const first = await resolver.resolve({ config: { model: mediaModel }, messages }, { signal });
+    const second = await resolver.resolve({ config: { model: mediaModel }, messages }, { signal });
 
     expect(uploadVideo).toHaveBeenCalledTimes(1);
-    expect(first[0]?.content).toEqual([uploadedPart]);
-    expect(second[0]?.content).toEqual([uploadedPart]);
+    expect(first?.messages?.[0]?.content).toEqual([uploadedPart]);
+    expect(second?.messages?.[0]?.content).toEqual([uploadedPart]);
   });
 
   it('degrades to a text part when the media source has no bytes', async () => {
@@ -407,11 +407,11 @@ describe('media', () => {
       source: createMemoryMediaSource(),
       cache: createMemoryMediaUploadCache(),
     });
-    const resolved = await resolver.resolve([videoRefMessage('media://missing')], {
-      model: mediaModel,
-      signal: new AbortController().signal,
-    });
-    expect(resolved[0]?.content).toEqual([
+    const resolved = await resolver.resolve(
+      { config: { model: mediaModel }, messages: [videoRefMessage('media://missing')] },
+      { signal: new AbortController().signal },
+    );
+    expect(resolved?.messages?.[0]?.content).toEqual([
       { type: 'text', text: '[video omitted: media unavailable]' },
     ]);
   });
@@ -429,11 +429,11 @@ describe('media', () => {
       }),
       cache: createMemoryMediaUploadCache(),
     });
-    const resolved = await resolver.resolve([videoRefMessage('media://ref-1')], {
-      model: mediaModel,
-      signal: new AbortController().signal,
-    });
-    expect(resolved[0]?.content).toEqual([
+    const resolved = await resolver.resolve(
+      { config: { model: mediaModel }, messages: [videoRefMessage('media://ref-1')] },
+      { signal: new AbortController().signal },
+    );
+    expect(resolved?.messages?.[0]?.content).toEqual([
       {
         type: 'video_url',
         videoUrl: { url: `data:video/mp4;base64,${Buffer.from([1, 2, 3]).toString('base64')}` },

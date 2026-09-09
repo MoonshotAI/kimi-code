@@ -6,10 +6,19 @@ import type { LlmErrorMessage } from '#/llm/errors';
 import type { ContentPart, Message, UserMessage } from '#/llm/message';
 import { createMediaDegradeRecovery } from '#/llm/media/degrade';
 import type { LlmModel } from '#/llm/model';
-import { createLlmMachine, type LlmEvent } from '#/llm/requester/machine';
+import {
+  createLlmMachine,
+  type LlmEvent,
+  type LlmRequestResolver,
+} from '#/llm/requester/machine';
 import type { LlmRecovery } from '#/llm/requester/recovery';
 import type { LlmRequester } from '#/llm/requester/requester';
 import type { LlmRetryOptions } from '#/llm/requester/retry';
+import {
+  credentialRecovery,
+  credentialResolver,
+  type CredentialSource,
+} from '#/kimi-oauth/index';
 import {
   createTurnMachine,
   createUserEntry,
@@ -84,6 +93,7 @@ function startTurnActor(
   requester: LlmRequester,
   options?: CreateTurnMachineOptions,
   turnInput?: Partial<TurnInput>,
+  resolvers?: readonly LlmRequestResolver[],
 ) {
   const harness = setup({
     types: {
@@ -92,7 +102,7 @@ function startTurnActor(
       events: {} as TurnEvent,
       emitted: {} as TurnLlmEvent,
     },
-    actors: { turn: createTurnMachine(createLlmMachine({ requester }), options) },
+    actors: { turn: createTurnMachine(createLlmMachine({ requester, resolvers }), options) },
   }).createMachine({
     id: 'harness',
     initial: 'running',
@@ -532,5 +542,108 @@ describe('turn machine media recovery', () => {
     expect(calls()).toBe(1);
     expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'failed' });
     expect(recovering).toHaveLength(0);
+  });
+});
+
+function createCredentialHarness(plan: readonly (LlmErrorMessage | 'ok')[]) {
+  let calls = 0;
+  const seenApiKeys: (string | undefined)[] = [];
+  const requester: LlmRequester = {
+    generate: (config, _content, { onEvent }) => {
+      seenApiKeys.push(config.model.apiKey);
+      const step = plan[Math.min(calls, plan.length - 1)];
+      calls += 1;
+      onEvent?.({ type: 'llm.sent' });
+      if (step === 'ok') {
+        onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'done' } });
+        onEvent?.({ type: 'llm.done' });
+        return Promise.resolve();
+      }
+      onEvent?.({ type: 'llm.failed.remote', error: step });
+      return Promise.resolve();
+    },
+  };
+  const source: CredentialSource = {
+    resolve: (m, options) => ({ ...m, apiKey: options?.force === true ? 'token-2' : 'token-1' }),
+    canRecover: (_m, error) =>
+      typeof error === 'object' &&
+      error !== null &&
+      (error as { statusCode?: unknown }).statusCode === 401,
+  };
+  return { requester, source, calls: () => calls, seenApiKeys };
+}
+
+describe('turn machine credential recovery', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('refreshes credentials after a 401 and resends with the recovered model', async () => {
+    const { requester, source, calls, seenApiKeys } = createCredentialHarness([
+      statusError(401, 'unauthorized'),
+      'ok',
+    ]);
+    const { actor, recovering, sent, retrying, failed } = startTurnActor(
+      requester,
+      { recovery: credentialRecovery(source) },
+      undefined,
+      [credentialResolver(source)],
+    );
+
+    await drain();
+
+    expect(calls()).toBe(2);
+    expect(seenApiKeys).toEqual(['token-1', 'token-2']);
+    expect(recovering.map((event) => `${event.strategy}:${event.action}`)).toEqual([
+      'credential:refresh-credentials',
+    ]);
+    expect(sent.map((event) => event.recovery?.action)).toEqual([
+      undefined,
+      'refresh-credentials',
+    ]);
+    expect(retrying).toHaveLength(0);
+    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'done' });
+    expect(failed).toHaveLength(0);
+  });
+
+  it('fails when the request stays rejected after the refresh', async () => {
+    const { requester, source, calls, seenApiKeys } = createCredentialHarness([
+      statusError(401, 'unauthorized'),
+      statusError(401, 'unauthorized'),
+    ]);
+    const { actor, recovering, failed } = startTurnActor(
+      requester,
+      { recovery: credentialRecovery(source) },
+      undefined,
+      [credentialResolver(source)],
+    );
+
+    await drain();
+
+    expect(calls()).toBe(2);
+    expect(seenApiKeys).toEqual(['token-1', 'token-2']);
+    expect(recovering).toHaveLength(1);
+    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'failed' });
+    expect(failed).toHaveLength(1);
+    expect(failed[0]).toMatchObject({ kind: 'status', statusCode: 401 });
+  });
+
+  it('fails a 401 immediately without the credential contribution', async () => {
+    const { requester, calls } = createCredentialHarness([statusError(401, 'unauthorized'), 'ok']);
+    const { actor, recovering, retrying, failed } = startTurnActor(requester, {
+      retry: { maxAttemptsPerStep: 5 },
+    });
+
+    await drain();
+
+    expect(calls()).toBe(1);
+    expect(recovering).toHaveLength(0);
+    expect(retrying).toHaveLength(0);
+    expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'failed' });
+    expect(failed).toHaveLength(1);
   });
 });

@@ -29,7 +29,7 @@ import {
   DYNAMIC_TOOL_SCHEMA_REMINDER_KEY,
   LOADABLE_TOOLS_REMINDER_KEY,
 } from '#/tool-select/plugin';
-import { createToolSelectMessageResolver } from '#/tool-select/resolver';
+import { createToolSelectResolver } from '#/tool-select/resolver';
 
 const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
 
@@ -226,22 +226,22 @@ describe('tool select message resolver', () => {
 
   it('strips tool declarations when disabled', async () => {
     const state = createToolSelectState({ loadable: () => [weatherTool()], enabled: () => false });
-    const resolver = createToolSelectMessageResolver(state);
-    const resolved = await resolver.resolve([declaration, createUserMessage('hi')], {
-      model,
-      signal: new AbortController().signal,
-    });
-    expect(resolved).toEqual([createUserMessage('hi')]);
+    const resolver = createToolSelectResolver(state);
+    const resolved = await resolver.resolve(
+      { config: { model }, messages: [declaration, createUserMessage('hi')] },
+      { signal: new AbortController().signal },
+    );
+    expect(resolved?.messages).toEqual([createUserMessage('hi')]);
   });
 
   it('drops declarations for tools that are no longer loadable', async () => {
     const state = enabledState();
-    const resolver = createToolSelectMessageResolver(state);
-    const resolved = await resolver.resolve([declaration], {
-      model,
-      signal: new AbortController().signal,
-    });
-    const message = resolved[0] as SystemMessage;
+    const resolver = createToolSelectResolver(state);
+    const resolved = await resolver.resolve(
+      { config: { model }, messages: [declaration] },
+      { signal: new AbortController().signal },
+    );
+    const message = resolved?.messages?.[0] as SystemMessage;
     expect(message.tools?.map((tool) => tool.name)).toEqual(['get_weather']);
   });
 });

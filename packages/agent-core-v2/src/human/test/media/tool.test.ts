@@ -169,7 +169,7 @@ describe('media stack wiring', () => {
         turnActor: createTurnMachine(
           createLlmMachine({
             requester,
-            messageResolvers: [
+            resolvers: [
               createMediaRefResolver({
                 providers: [provider],
                 source: store,

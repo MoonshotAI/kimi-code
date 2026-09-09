@@ -1,27 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
 import { UNKNOWN_CAPABILITY } from '#/llm/capability';
-import type { StreamedMessagePart, VideoURLPart } from '#/llm/message';
-import type { MediaVideoUploader } from '#/llm/media/upload';
 import type { LlmErrorMessage } from '#/llm/errors';
 import type { LlmModel } from '#/llm/model';
-import type { LlmRequestControl, LlmRequester } from '#/llm/requester/requester';
+import type { LlmRecoveryRecord } from '#/llm/requester/recovery';
 import {
+  credentialRecovery,
+  credentialResolver,
   kimiOAuthCredentialSource,
-  withAuth,
-  withAuthUpload,
   type CredentialSource,
 } from '#/kimi-oauth/index';
 
 const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
 
-type GenerateArgs = Parameters<LlmRequester['generate']>;
-
-function generateArgs(control: Partial<LlmRequestControl> = {}): GenerateArgs {
-  return [{ model }, { messages: [] }, { signal: new AbortController().signal, ...control }];
-}
-
-function statusError(status: number): LlmErrorMessage {
+function statusError(status: number): LlmErrorMessage<'status'> {
   return {
     kind: 'status',
     statusCode: status,
@@ -32,75 +24,33 @@ function statusError(status: number): LlmErrorMessage {
   };
 }
 
-interface InnerCall {
-  readonly model: LlmModel;
-}
-
-function createInner(plan: readonly (LlmErrorMessage | 'ok')[]) {
-  const calls: InnerCall[] = [];
-  const requester: LlmRequester = {
-    generate: (config, _content, { onEvent }) => {
-      calls.push({ model: config.model });
-      const step = plan[Math.min(calls.length - 1, plan.length - 1)];
-      if (step === 'ok') {
-        onEvent?.({
-          type: 'llm.streaming.part',
-          part: { type: 'text', text: `call-${calls.length}` },
-        });
-        onEvent?.({ type: 'llm.done' });
-        return Promise.resolve();
-      }
-      onEvent?.({ type: 'llm.failed.remote', error: step });
-      return Promise.resolve();
-    },
-  };
-  return { requester, calls };
-}
-
-async function generateFailures(
-  requester: LlmRequester,
-  control: Partial<LlmRequestControl> = {},
-): Promise<LlmErrorMessage[]> {
-  const failures: LlmErrorMessage[] = [];
-  await requester.generate(
-    ...generateArgs({
-      ...control,
-      onEvent: (event) => {
-        if (event.type === 'llm.failed.remote' || event.type === 'llm.failed.syntax') {
-          failures.push(event.error);
-        }
-      },
-    }),
-  );
-  return failures;
-}
-
-describe('withAuth', () => {
-  it('resolves credentials before each generate and forwards the resolved model', async () => {
-    const { requester, calls } = createInner(['ok']);
+describe('credentialResolver', () => {
+  it('resolves credentials before each attempt and forwards the resolved model', async () => {
     const source: CredentialSource = {
       resolve: (m) => ({ ...m, apiKey: 'token-1' }),
     };
-    const wrapped = withAuth(requester, source);
+    const resolver = credentialResolver(source);
 
-    const parts: StreamedMessagePart[] = [];
-    await wrapped.generate(
-      ...generateArgs({
-        onEvent: (event) => {
-          if (event.type === 'llm.streaming.part') {
-            parts.push(event.part);
-          }
-        },
-      }),
+    const resolved = await resolver.resolve(
+      { config: { model }, messages: [] },
+      { signal: new AbortController().signal },
     );
 
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.model).toEqual({ ...model, apiKey: 'token-1' });
-    expect(parts).toEqual([{ type: 'text', text: 'call-1' }]);
+    expect(resolved?.config?.model).toEqual({ ...model, apiKey: 'token-1' });
   });
 
-  it('retries once with forced credentials when canRecover accepts the error', async () => {
-    const { requester, calls } = createInner([statusError(401), 'ok']);
+  it('returns undefined when the source keeps the same model', async () => {
+    const resolver = credentialResolver({ resolve: (m) => m });
+
+    const resolved = await resolver.resolve(
+      { config: { model }, messages: [] },
+      { signal: new AbortController().signal },
+    );
+
+    expect(resolved).toBeUndefined();
+  });
+
+  it('forces a refresh when the last attempt failed recoverably', async () => {
     const resolveOptions: unknown[] = [];
     const source: CredentialSource = {
       resolve: (m, options) => {
@@ -109,129 +59,75 @@ describe('withAuth', () => {
       },
       canRecover: (_m, error) => statusErrorStatus(error) === 401,
     };
-    const wrapped = withAuth(requester, source);
+    const resolver = credentialResolver(source);
 
-    const parts: StreamedMessagePart[] = [];
-    await wrapped.generate(
-      ...generateArgs({
-        onEvent: (event) => {
-          if (event.type === 'llm.streaming.part') {
-            parts.push(event.part);
-          }
-        },
-      }),
+    const first = await resolver.resolve(
+      { config: { model }, messages: [] },
+      { signal: new AbortController().signal },
+    );
+    const second = await resolver.resolve(
+      { config: { model }, messages: [] },
+      { signal: new AbortController().signal, lastAttemptError: statusError(401) },
     );
 
-    expect(calls).toHaveLength(2);
-    expect(calls[0]?.model.apiKey).toBe('token-1');
-    expect(calls[1]?.model.apiKey).toBe('token-2');
+    expect(first?.config?.model.apiKey).toBe('token-1');
+    expect(second?.config?.model.apiKey).toBe('token-2');
     expect(resolveOptions).toEqual([undefined, { force: true }]);
-    expect(parts).toEqual([{ type: 'text', text: 'call-2' }]);
   });
 
-  it('emits the failure when the retry also fails', async () => {
-    const { requester, calls } = createInner([statusError(401), statusError(401)]);
+  it('does not force a refresh when the last error is not recoverable', async () => {
+    const resolveOptions: unknown[] = [];
     const source: CredentialSource = {
-      resolve: (m) => m,
-      canRecover: () => true,
+      resolve: (m, options) => {
+        resolveOptions.push(options);
+        return m;
+      },
+      canRecover: (_m, error) => statusErrorStatus(error) === 401,
     };
-    const wrapped = withAuth(requester, source);
+    const resolver = credentialResolver(source);
 
-    const failures = await generateFailures(wrapped);
+    await resolver.resolve(
+      { config: { model }, messages: [] },
+      { signal: new AbortController().signal, lastAttemptError: statusError(500) },
+    );
 
-    expect(calls).toHaveLength(2);
-    expect(failures).toHaveLength(1);
-    expect(failures[0]).toMatchObject({ kind: 'status', statusCode: 401 });
+    expect(resolveOptions).toEqual([undefined]);
+  });
+});
+
+describe('credentialRecovery', () => {
+  function propose(
+    source: CredentialSource,
+    error: LlmErrorMessage<'status'>,
+    applied: readonly LlmRecoveryRecord[] = [],
+  ) {
+    return credentialRecovery(source).propose({ error, model, messages: [], applied });
+  }
+
+  it('proposes a credential refresh for recoverable errors', () => {
+    const proposal = propose({ resolve: (m) => m, canRecover: () => true }, statusError(401));
+
+    expect(proposal).toEqual({ action: 'refresh-credentials' });
   });
 
-  it('does not retry when canRecover rejects the error', async () => {
-    const { requester, calls } = createInner([statusError(401)]);
-    const source: CredentialSource = {
-      resolve: (m) => m,
-      canRecover: () => false,
-    };
-    const wrapped = withAuth(requester, source);
+  it('ignores non-recoverable errors', () => {
+    const proposal = propose({ resolve: (m) => m, canRecover: () => false }, statusError(401));
 
-    const failures = await generateFailures(wrapped);
-
-    expect(calls).toHaveLength(1);
-    expect(failures).toHaveLength(1);
-    expect(failures[0]).toMatchObject({ kind: 'status', statusCode: 401 });
+    expect(proposal).toBeUndefined();
   });
 
-  it('does not retry when the source has no canRecover', async () => {
-    const { requester, calls } = createInner([statusError(401)]);
-    const wrapped = withAuth(requester, { resolve: (m) => m });
+  it('ignores errors when the source has no canRecover', () => {
+    const proposal = propose({ resolve: (m) => m }, statusError(401));
 
-    const failures = await generateFailures(wrapped);
-
-    expect(calls).toHaveLength(1);
-    expect(failures).toHaveLength(1);
-    expect(failures[0]).toMatchObject({ kind: 'status', statusCode: 401 });
+    expect(proposal).toBeUndefined();
   });
 
-  it('does not retry when the signal is aborted', async () => {
-    const { requester, calls } = createInner([statusError(401)]);
-    const controller = new AbortController();
-    controller.abort();
-    const source: CredentialSource = {
-      resolve: (m) => m,
-      canRecover: () => true,
-    };
-    const wrapped = withAuth(requester, source);
+  it('does not propose again once a credential recovery was applied', () => {
+    const proposal = propose({ resolve: (m) => m, canRecover: () => true }, statusError(401), [
+      { strategy: 'credential', action: 'refresh-credentials' },
+    ]);
 
-    const failures = await generateFailures(wrapped, { signal: controller.signal });
-
-    expect(calls).toHaveLength(1);
-    expect(failures).toHaveLength(1);
-    expect(failures[0]).toMatchObject({ kind: 'status', statusCode: 401 });
-  });
-
-  it('wraps uploadVideo with the same credential flow', async () => {
-    const part: VideoURLPart = { type: 'video_url', videoUrl: { url: 'ms://file-1', id: 'file-1' } };
-    const seen: (string | undefined)[] = [];
-    let attempts = 0;
-    const inner: MediaVideoUploader = (_video, options) => {
-      attempts += 1;
-      seen.push(options.model.apiKey);
-      if (attempts === 1) {
-        return Promise.reject(statusError(401));
-      }
-      return Promise.resolve(part);
-    };
-    const source: CredentialSource = {
-      resolve: (m, options) => ({ ...m, apiKey: options?.force === true ? 'fresh' : 'stale' }),
-      canRecover: () => true,
-    };
-    const wrapped = withAuthUpload(inner, source);
-
-    const result = await wrapped({ data: new Uint8Array([1]), mimeType: 'video/mp4' }, { model });
-
-    expect(result).toBe(part);
-    expect(seen).toEqual(['stale', 'fresh']);
-  });
-
-  it('does not retry the upload when the signal is aborted', async () => {
-    const failure = statusError(401);
-    let attempts = 0;
-    const inner: MediaVideoUploader = () => {
-      attempts += 1;
-      return Promise.reject(failure);
-    };
-    const controller = new AbortController();
-    controller.abort();
-    const wrapped = withAuthUpload(inner, {
-      resolve: (m) => m,
-      canRecover: () => true,
-    });
-
-    await expect(
-      wrapped(
-        { data: new Uint8Array([1]), mimeType: 'video/mp4' },
-        { model, signal: controller.signal },
-      ),
-    ).rejects.toBe(failure);
-    expect(attempts).toBe(1);
+    expect(proposal).toBeUndefined();
   });
 });
 

@@ -19,11 +19,6 @@ import {
   type LlmRequester,
 } from '#human/llm/requester/requester';
 import type { TokenUsage } from '#human/llm/usage';
-import {
-  withAuth,
-  withAuthUpload,
-  type CredentialSource,
-} from '#human/kimi-oauth/credential-source';
 
 import {
   ChatProviderError,
@@ -46,6 +41,7 @@ import type {
   ModelRequestTiming,
   SamplingOptions,
 } from './model-requester';
+import { withAuth, withAuthUpload, type CredentialSource } from './request-auth';
 import { translateProviderError } from '../protocol/errors';
 
 export interface ResolvedLlmModel {

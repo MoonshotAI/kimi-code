@@ -1,7 +1,8 @@
 import type { ModelCapability } from '#/llm/capability';
 import type { ContentPart, Message, VideoURLPart } from '#/llm/message';
+import type { LlmModel } from '#/llm/model';
 import type { Provider } from '#/llm/provider/definition';
-import type { MessageResolveContext, MessageResolver } from '#/llm/requester/machine';
+import type { LlmRequestResolver } from '#/llm/requester/machine';
 
 import type { MediaUploadCache } from './cache';
 import { mediaKindForMime, mediaMimeForPath, type MediaKind } from './mime';
@@ -45,7 +46,7 @@ function hasMediaRef(message: Message): boolean {
   return message.content.some((part) => mediaRefFromPart(part) !== undefined);
 }
 
-export function createMediaRefResolver(deps: MediaRefResolverDeps): MessageResolver {
+export function createMediaRefResolver(deps: MediaRefResolverDeps): LlmRequestResolver {
   const providers = new Map(deps.providers.map((provider) => [provider.id, provider]));
   const imageMemo = new Map<string, ContentPart>();
 
@@ -69,12 +70,13 @@ export function createMediaRefResolver(deps: MediaRefResolverDeps): MessageResol
 
   const resolveVideoPart = async (
     ref: string,
-    ctx: MessageResolveContext,
+    model: LlmModel,
+    signal: AbortSignal,
     provider: Provider | undefined,
     capability: ModelCapability | undefined,
   ): Promise<ContentPart> => {
     if (capability?.video_in !== true) return unavailableText('video');
-    const providerKey = ctx.model.provider;
+    const providerKey = model.provider;
     const cached = await deps.cache.get(ref, providerKey);
     if (cached !== undefined) return cached;
     const content = await deps.source.get(ref);
@@ -85,12 +87,12 @@ export function createMediaRefResolver(deps: MediaRefResolverDeps): MessageResol
       try {
         const part: VideoURLPart = await uploader(
           { data: content.bytes, mimeType, filename: content.filename },
-          { model: ctx.model, signal: ctx.signal },
+          { model, signal },
         );
         await deps.cache.put(ref, providerKey, part);
         return part;
       } catch (error) {
-        if (ctx.signal.aborted || isMediaUploadAuthError(error)) throw error;
+        if (signal.aborted || isMediaUploadAuthError(error)) throw error;
       }
     }
     if (provider?.media?.inlineVideo === true) {
@@ -101,10 +103,10 @@ export function createMediaRefResolver(deps: MediaRefResolverDeps): MessageResol
 
   return {
     id: 'media-ref',
-    resolve: async (messages, ctx) => {
-      if (!messages.some(hasMediaRef)) return messages;
-      const provider = providers.get(ctx.model.provider);
-      const capability = ctx.model.capability;
+    resolve: async ({ config, messages }, ctx) => {
+      if (!messages.some(hasMediaRef)) return undefined;
+      const provider = providers.get(config.model.provider);
+      const capability = config.model.capability;
       const out: Message[] = [];
       for (const message of messages) {
         if (!hasMediaRef(message)) {
@@ -121,12 +123,12 @@ export function createMediaRefResolver(deps: MediaRefResolverDeps): MessageResol
           content.push(
             ref.kind === 'image'
               ? await resolveImagePart(ref.ref, capability)
-              : await resolveVideoPart(ref.ref, ctx, provider, capability),
+              : await resolveVideoPart(ref.ref, config.model, ctx.signal, provider, capability),
           );
         }
         out.push({ ...message, content });
       }
-      return out;
+      return { messages: out };
     },
   };
 }

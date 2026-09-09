@@ -1,12 +1,12 @@
 import type { Message } from '#/llm/message';
-import type { MessageResolver } from '#/llm/requester/machine';
+import type { LlmRequestResolver } from '#/llm/requester/machine';
 
 import type { ToolSelectState } from './state';
 
-export function createToolSelectMessageResolver(state: ToolSelectState): MessageResolver {
+export function createToolSelectResolver(state: ToolSelectState): LlmRequestResolver {
   return {
     id: 'tool-select',
-    resolve: (messages) => {
+    resolve: ({ messages }) => {
       let shaped: Message[] | undefined;
       for (let i = 0; i < messages.length; i += 1) {
         const message = messages[i] as Message;
@@ -18,7 +18,7 @@ export function createToolSelectMessageResolver(state: ToolSelectState): Message
         shaped ??= messages.slice(0, i);
         if (next !== undefined) shaped.push(next);
       }
-      return Promise.resolve(shaped ?? messages);
+      return Promise.resolve(shaped === undefined ? undefined : { messages: shaped });
     },
   };
 }

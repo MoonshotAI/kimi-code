@@ -1,12 +1,6 @@
-import type { MediaVideoUploader } from '#/llm/media/upload';
-import type { LlmRemoteErrorMessage } from '#/llm/errors';
 import type { LlmModel } from '#/llm/model';
-import type {
-  LlmRequestConfig,
-  LlmRequestContent,
-  LlmRequestControl,
-  LlmRequester,
-} from '#/llm/requester/requester';
+import type { LlmRequestResolver } from '#/llm/requester/machine';
+import type { LlmRecovery } from '#/llm/requester/recovery';
 
 export interface CredentialResolveOptions {
   readonly force?: boolean;
@@ -17,63 +11,28 @@ export interface CredentialSource {
   canRecover?(model: LlmModel, error: unknown): boolean;
 }
 
-async function runWithCredentials<T>(
-  source: CredentialSource,
-  model: LlmModel,
-  aborted: () => boolean,
-  run: (model: LlmModel) => Promise<T>,
-): Promise<T> {
-  const resolved = await source.resolve(model);
-  try {
-    return await run(resolved);
-  } catch (error) {
-    if (aborted() || source.canRecover?.(resolved, error) !== true) {
-      throw error;
-    }
-  }
-  const refreshed = await source.resolve(model, { force: true });
-  return run(refreshed);
-}
-
-export function withAuth(inner: LlmRequester, source: CredentialSource): LlmRequester {
+export function credentialResolver(source: CredentialSource): LlmRequestResolver {
   return {
-    async generate(
-      config: LlmRequestConfig,
-      content: LlmRequestContent,
-      control: LlmRequestControl,
-    ): Promise<void> {
-      const resolved = await source.resolve(config.model);
-      let failed: LlmRemoteErrorMessage | undefined;
-      await inner.generate({ ...config, model: resolved }, content, {
-        ...control,
-        onEvent: (event) => {
-          if (event.type === 'llm.failed.remote') {
-            failed = event.error;
-            return;
-          }
-          control.onEvent?.(event);
-        },
-      });
-      if (failed === undefined) {
-        return;
-      }
-      const failure: LlmRemoteErrorMessage = failed;
-      if (control.signal.aborted || source.canRecover?.(resolved, failure) !== true) {
-        control.onEvent?.({ type: 'llm.failed.remote', error: failure });
-        return;
-      }
-      const refreshed = await source.resolve(config.model, { force: true });
-      await inner.generate({ ...config, model: refreshed }, content, control);
+    id: 'credential',
+    resolve: async ({ config }, ctx) => {
+      const force =
+        ctx.lastAttemptError !== undefined &&
+        source.canRecover?.(config.model, ctx.lastAttemptError) === true;
+      const model = await source.resolve(config.model, force ? { force: true } : undefined);
+      if (model === config.model) return undefined;
+      return { config: { ...config, model } };
     },
   };
 }
 
-export function withAuthUpload(
-  inner: MediaVideoUploader,
-  source: CredentialSource,
-): MediaVideoUploader {
-  return (video, options) =>
-    runWithCredentials(source, options.model, () => options.signal?.aborted === true, (model) =>
-      inner(video, { ...options, model }),
-    );
+export function credentialRecovery(source: CredentialSource): LlmRecovery {
+  const id = 'credential';
+  return {
+    id,
+    propose: ({ model, error, applied }) => {
+      if (applied.some((record) => record.strategy === id)) return undefined;
+      if (source.canRecover?.(model, error) !== true) return undefined;
+      return { action: 'refresh-credentials' };
+    },
+  };
 }
