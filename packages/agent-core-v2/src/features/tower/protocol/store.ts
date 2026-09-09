@@ -899,6 +899,7 @@ export class TowerStore {
       const { fields } = parseFrontmatter(text);
       const round = Number.parseInt(fields['round'] ?? '', 10);
       if (Number.isNaN(round)) continue;
+      const { mtimeMs } = await stat(this.abs(rel));
       reviews.push({
         reviewer: fields['reviewer'] ?? 'unknown',
         target: fields['target'] ?? target,
@@ -908,10 +909,11 @@ export class TowerStore {
         reviewedCommit: fields['reviewed_commit'] ?? '',
         date: fields['date'] ?? '',
         file: rel,
+        mtimeMs,
         mission: fields['mission'],
       });
     }
-    reviews.sort((a, b) => a.round - b.round);
+    reviews.sort((a, b) => a.mtimeMs - b.mtimeMs || a.round - b.round || a.file.localeCompare(b.file));
     return reviews;
   }
 
@@ -971,9 +973,15 @@ export class TowerStore {
     }
 
     const reviews = await this.reviewsFor(branch);
+    const siblingMissions = state.missions.filter((m) => m.branch === branch && m.id !== mission.id);
     const stamped = reviews.filter((r) => r.mission === mission.id);
     const candidates =
-      stamped.length > 0 ? stamped : reviews.filter((r) => r.mission === undefined);
+      stamped.length > 0
+        ? reviews.filter(
+            (r) =>
+              r.mission === mission.id || (r.mission === undefined && siblingMissions.length === 0),
+          )
+        : reviews.filter((r) => r.mission === undefined);
     const review = candidates.at(-1);
     if (review === undefined) {
       throw await block(
@@ -994,7 +1002,6 @@ export class TowerStore {
         `merge blocked: ${branch} moved since the clean review (reviewed ${review.reviewedCommit.slice(0, 7)}, tip ${tip.slice(0, 7)}) — re-review required`,
       );
     }
-    const siblingMissions = state.missions.filter((m) => m.branch === branch && m.id !== mission.id);
     if (review.mission === undefined && siblingMissions.length > 0) {
       throw await block(
         'review-mission-mismatch',

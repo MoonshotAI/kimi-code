@@ -1270,6 +1270,61 @@ describe('merge gate', () => {
     expect((await store.load()).missions.find((m) => m.id === live.id)?.status).toBe('merged');
   });
 
+  it('blocks on a later unstamped legacy verdict on an unshared branch even after a stamped clean review', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/x.ts',
+      content: 'x\n',
+    });
+    await store.registerAgent(
+      rosterEntry({ name: 'rev-new', kind: 'reviewer', reviewTarget: mission.branch, reviewMissionId: mission.id }),
+    );
+    await store.registerAgent(
+      rosterEntry({ name: 'rev-old', kind: 'reviewer', reviewTarget: mission.branch }),
+    );
+    await cleanReview('rev-new', mission.branch);
+    await store.submitReview('rev-old', {
+      target: mission.branch,
+      status: 'p1-1items',
+      merge: 'hold',
+      findings: 'a real problem',
+      decision: 'do not merge',
+    });
+
+    await expect(store.merge(mission.branch)).rejects.toThrow(/clean round is required/);
+    expect((await store.load()).missions.find((m) => m.id === mission.id)?.status).not.toBe(
+      'merged',
+    );
+  });
+
+  it('merges an unshared branch when a stamped clean review is the latest verdict after a legacy p1', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/x.ts',
+      content: 'x\n',
+    });
+    await store.registerAgent(
+      rosterEntry({ name: 'rev-new', kind: 'reviewer', reviewTarget: mission.branch, reviewMissionId: mission.id }),
+    );
+    await store.registerAgent(
+      rosterEntry({ name: 'rev-old', kind: 'reviewer', reviewTarget: mission.branch }),
+    );
+    await store.submitReview('rev-old', {
+      target: mission.branch,
+      status: 'p1-1items',
+      merge: 'hold',
+      findings: 'a real problem',
+      decision: 'do not merge',
+    });
+    await cleanReview('rev-new', mission.branch);
+
+    await store.merge(mission.branch);
+
+    expect((await store.load()).missions.find((m) => m.id === mission.id)?.status).toBe('merged');
+  });
+
   it('refuses to merge a branch owned only by closed missions and leaves their records untouched', async () => {
     const [stale] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
     const state = await store.load();
