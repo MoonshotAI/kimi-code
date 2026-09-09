@@ -135,8 +135,10 @@ export class CustomEditor extends Editor {
   public onCtrlB?: () => boolean;
   /** Return `true` to consume Ctrl+T (the todo list had overflow to toggle); return `false`/`undefined` to fall through to the editor default. */
   public onToggleTodoExpand?: () => boolean;
-  /** Return true to page Updates with Ctrl+P / Ctrl+N; otherwise use the editor bindings. */
-  public onPageNotify?: (direction: -1 | 1) => boolean;
+  /** Return true to consume Ctrl+N (the Updates panel grabbed or released focus); otherwise use the editor bindings. */
+  public onPageNotify?: () => boolean;
+  /** Route `←`/`→`/`↑`/`↓`/`Esc` to the focused Updates panel; return `true` to consume. */
+  public onNotifyPanelKey?: (key: 'left' | 'right' | 'up' | 'down' | 'escape') => boolean;
   public onUndo?: () => void;
   public onTextPaste?: () => void;
   /**
@@ -485,9 +487,35 @@ export class CustomEditor extends Editor {
       if (this.onToggleTodoExpand?.() === true) return;
     }
 
-    if (matchesKey(normalized, Key.ctrl('p')) || matchesKey(normalized, Key.ctrl('n'))) {
-      const direction = matchesKey(normalized, Key.ctrl('p')) ? -1 : 1;
-      if (this.onPageNotify?.(direction) === true) return;
+    if (matchesKey(normalized, Key.ctrl('n'))) {
+      // Only consume the key when the Updates panel grabbed or released
+      // focus; otherwise fall through to the editor default.
+      if (this.onPageNotify?.() === true) return;
+    }
+
+    // A focused Updates panel owns ←/→ (channel switching), ↑/↓ (paging the
+    // channel's updates) and Esc (release focus); when it is not focused the
+    // handler returns false and every key falls through to the normal editor
+    // behavior below. Active autocomplete outranks the panel: its menu needs
+    // the same keys for selection and dismissal.
+    if (
+      !this.hasAutocompleteActivity() &&
+      (matchesKey(normalized, Key.left) ||
+        matchesKey(normalized, Key.right) ||
+        matchesKey(normalized, Key.up) ||
+        matchesKey(normalized, Key.down) ||
+        matchesKey(normalized, Key.escape))
+    ) {
+      const panelKey = matchesKey(normalized, Key.left)
+        ? ('left' as const)
+        : matchesKey(normalized, Key.right)
+          ? ('right' as const)
+          : matchesKey(normalized, Key.up)
+            ? ('up' as const)
+            : matchesKey(normalized, Key.down)
+              ? ('down' as const)
+              : ('escape' as const);
+      if (this.onNotifyPanelKey?.(panelKey) === true) return;
     }
 
     if (matchesKey(normalized, 'shift+tab')) {

@@ -1,26 +1,20 @@
 /**
- * Model Catalog view — a three-column inspector:
+ * Model Catalog view — providers with their models and the default marker:
  *
  *   left:   every configured model (provider-grouped), its highlight synced
  *           both ways with the center column — scrolling the center moves the
  *           highlight (scrollspy), clicking an entry jumps the center to that
  *           model;
- *   center: one section per model with its god object as a selectable JSON
- *           tree (provider / model layers + the resolved runtime view);
- *   right:  the selected value and its provenance (source kind + detail) for
- *           the ACTIVE model. The selected path sticks across models, so the
- *           same field can be compared while scrolling.
+ *   center: one section per model with ping and session creation actions.
  *
  * All data goes through the channel layer — `IModelCatalog` +
- * `IModelService` for the list, `IModelCatalog.inspect` per model for the god
- * objects — over the `/api/v1/debug` RPC surface. No bespoke REST calls.
+ * `IModelService` for the list — over the `/api/v1/debug` RPC surface.
  * There is no live event push; the queries refresh on a slow poll.
  */
 
 import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
 import type { TokenUsage } from '@moonshot-ai/agent-core-v2/human/llm/usage';
-import type { InspectionSource } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/inspection';
 import {
   IModelCatalog,
   type ModelCatalogItem,
@@ -32,40 +26,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 
 import { useConnection } from '../connection';
-import { ActionButton, Badge, ErrorLine, JsonTree, JsonView, errorMessage } from '../ui';
-
-const SOURCE_TONES: Record<
-  InspectionSource['kind'],
-  'sky' | 'amber' | 'violet' | 'green' | 'neutral' | 'red'
-> = {
-  config: 'sky',
-  override: 'amber',
-  builtin: 'violet',
-  env: 'green',
-  synthesized: 'neutral',
-  none: 'red',
-};
-
-/** Row accent (left bar + text) of a tree node by its finally-effective source. */
-const KIND_ROW_CLASSES: Record<InspectionSource['kind'], string> = {
-  config: 'border-sky-500/70 text-sky-300',
-  override: 'border-amber-500/70 text-amber-300',
-  builtin: 'border-violet-500/70 text-violet-300',
-  env: 'border-emerald-500/70 text-emerald-300',
-  synthesized: 'border-neutral-600 text-neutral-500',
-  none: 'border-red-500/70 text-red-400',
-};
-
-const KIND_DOT_CLASSES: Record<InspectionSource['kind'], string> = {
-  config: 'bg-sky-400',
-  override: 'bg-amber-400',
-  builtin: 'bg-violet-400',
-  env: 'bg-emerald-400',
-  synthesized: 'bg-neutral-500',
-  none: 'bg-red-400',
-};
-
-const SOURCE_KINDS = ['config', 'override', 'builtin', 'env', 'synthesized', 'none'] as const;
+import { ActionButton, Badge, ErrorLine, errorMessage } from '../ui';
 
 interface FlatEntry {
   readonly item: ModelCatalogItem;
@@ -125,7 +86,6 @@ export function ModelCatalogView({
 
   // --- two-way sync between the left list and the center scroll ----------
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [selectedPath, setSelectedPath] = useState('resolved');
   const scrollRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef(new Map<string, HTMLElement>());
@@ -179,14 +139,8 @@ export function ModelCatalogView({
     sectionRefs.current.get(modelId)?.scrollIntoView({ behavior: 'instant', block: 'start' });
   };
 
-  const selectIn = (modelId: string, path: string) => {
-    setActiveId(modelId);
-    setSelectedPath(path);
-  };
-
   const loading = providers.isLoading || models.isLoading || records.isLoading;
   const error = providers.error ?? models.error ?? records.error;
-  const activeItem = flatEntries.find((entry) => entry.item.model === activeId)?.item;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -197,14 +151,6 @@ export function ModelCatalogView({
         <span className="text-[11px] text-neutral-600">
           {providerList.length} providers · {items.length} models
         </span>
-        <div className="ml-4 flex items-center gap-2.5">
-          {SOURCE_KINDS.map((kind) => (
-            <span key={kind} className="flex items-center gap-1 text-[10px] text-neutral-500">
-              <span className={`inline-block h-2 w-2 rounded-full ${KIND_DOT_CLASSES[kind]}`} />
-              {kind}
-            </span>
-          ))}
-        </div>
         <div className="flex-1" />
         <ActionButton onClick={() => queryClient.invalidateQueries({ queryKey: ['modelCatalog'] })}>
           Refresh
@@ -229,7 +175,7 @@ export function ModelCatalogView({
         >
           <LeftList entries={flatEntries} activeId={activeId} onJump={jumpTo} itemRefs={itemRefs} />
         </div>
-        {/* center: one god object per model */}
+        {/* center: one section per model */}
         <div
           ref={scrollRef}
           className="relative min-w-0 flex-1 overflow-y-auto"
@@ -239,8 +185,6 @@ export function ModelCatalogView({
             <ModelSection
               key={entry.item.model}
               entry={entry}
-              selectedPath={entry.item.model === activeId ? selectedPath : undefined}
-              onSelect={selectIn}
               onOpenSession={onOpenSession}
               registerRef={(el) => {
                 if (el === null) sectionRefs.current.delete(entry.item.model);
@@ -248,14 +192,6 @@ export function ModelCatalogView({
               }}
             />
           ))}
-        </div>
-        {/* right: the selected value's provenance for the active model */}
-        <div className="w-[360px] shrink-0 overflow-y-auto border-l border-neutral-800 px-3 py-2">
-          {activeItem !== undefined ? (
-            <SourcePane modelId={activeItem.model} path={selectedPath} />
-          ) : (
-            <div className="text-[11px] text-neutral-600">select a model</div>
-          )}
         </div>
       </div>
     </div>
@@ -349,24 +285,15 @@ function LeftList({
 
 function ModelSection({
   entry,
-  selectedPath,
-  onSelect,
   onOpenSession,
   registerRef,
 }: {
   readonly entry: FlatEntry;
-  readonly selectedPath?: string;
-  readonly onSelect: (modelId: string, path: string) => void;
   readonly onOpenSession: (sessionId: string) => void;
   readonly registerRef: (el: HTMLElement | null) => void;
 }) {
   const { klient, baseUrl, config } = useConnection();
   const { item, provider } = entry;
-  const inspection = useQuery({
-    queryKey: ['modelCatalog', 'inspect', item.model],
-    queryFn: () => klient.core(IModelCatalog).inspect(item.model),
-    refetchInterval: 15_000,
-  });
   const [ping, setPing] = useState<
     | { readonly status: 'idle' | 'running' }
     | { readonly status: 'done'; readonly result: ModelPingResult }
@@ -419,21 +346,6 @@ function ModelSection({
     }
   };
 
-  const god =
-    inspection.data === undefined
-      ? undefined
-      : {
-          model: inspection.data.model,
-          provider: inspection.data.provider,
-          resolved: inspection.data.resolved,
-        };
-  const sources = inspection.data?.sources;
-  const classForPath = (path: string): string | undefined => {
-    if (sources === undefined) return undefined;
-    const kind = findSource(sources, path).source?.kind;
-    return kind === undefined ? undefined : KIND_ROW_CLASSES[kind];
-  };
-
   return (
     <section ref={registerRef} className="border-b border-neutral-800 px-4 py-3">
       <header className="mb-1 flex flex-wrap items-center gap-2">
@@ -481,20 +393,6 @@ function ModelSection({
         </div>
       ) : null}
       {sessionError !== null ? <ErrorLine error={sessionError} /> : null}
-      {inspection.isLoading ? (
-        <div className="text-[11px] text-neutral-600">resolving inspection…</div>
-      ) : null}
-      {inspection.error !== null ? <ErrorLine error={inspection.error} /> : null}
-      {god !== undefined ? (
-        <JsonTree
-          data={god}
-          selectedPath={selectedPath}
-          onSelect={(path) => {
-            onSelect(item.model, path);
-          }}
-          rowClassName={classForPath}
-        />
-      ) : null}
     </section>
   );
 }
@@ -502,92 +400,6 @@ function ModelSection({
 function usageLine(usage: TokenUsage): string {
   const input = usage.inputOther + usage.inputCacheRead + usage.inputCacheCreation;
   return `in ${input} · out ${usage.output}`;
-}
-
-// ---------------------------------------------------------------------------
-// right column
-// ---------------------------------------------------------------------------
-
-function SourcePane({ modelId, path }: { readonly modelId: string; readonly path: string }) {
-  const { klient } = useConnection();
-  const inspection = useQuery({
-    queryKey: ['modelCatalog', 'inspect', modelId],
-    queryFn: () => klient.core(IModelCatalog).inspect(modelId),
-    refetchInterval: 15_000,
-  });
-  if (inspection.isLoading) {
-    return <div className="text-[11px] text-neutral-600">resolving inspection…</div>;
-  }
-  if (inspection.error !== null) return <ErrorLine error={inspection.error} />;
-  if (inspection.data === undefined) return null;
-
-  const data = inspection.data;
-  const god = {
-    model: data.model,
-    provider: data.provider,
-    resolved: data.resolved,
-  };
-  const value = getPath(god, path);
-  const { source, inheritedFrom } = findSource(data.sources, path);
-
-  return (
-    <div>
-      <div className="mb-1 truncate font-mono text-[11px] text-neutral-500" title={modelId}>
-        {modelId}
-      </div>
-      <div className="mb-2 break-all rounded bg-neutral-800/70 px-2 py-1 font-mono text-[11px] text-sky-300">
-        {path}
-      </div>
-      <div className="mb-2 flex flex-wrap items-center gap-1.5">
-        {source !== undefined ? (
-          <Badge tone={SOURCE_TONES[source.kind]}>{source.kind}</Badge>
-        ) : (
-          <Badge>no source</Badge>
-        )}
-        {inheritedFrom !== undefined ? (
-          <span className="text-[10px] text-neutral-600">inherited from {inheritedFrom}</span>
-        ) : null}
-      </div>
-      {source?.detail !== undefined ? (
-        <div className="mb-3 rounded border border-neutral-800 bg-neutral-900/60 px-2 py-1.5 text-[11px] leading-relaxed text-neutral-300">
-          {source.detail}
-        </div>
-      ) : null}
-      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-neutral-600">
-        value
-      </div>
-      <JsonView data={value ?? null} empty="(absent)" />
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
-
-function getPath(root: unknown, path: string): unknown {
-  let current = root;
-  for (const segment of path.split('.')) {
-    if (current === null || current === undefined || typeof current !== 'object') return undefined;
-    current = (current as Record<string, unknown>)[segment];
-  }
-  return current;
-}
-
-function findSource(
-  sources: Readonly<Record<string, InspectionSource>>,
-  path: string,
-): { readonly source?: InspectionSource; readonly inheritedFrom?: string } {
-  let current = path;
-  while (current !== '') {
-    const hit = sources[current];
-    if (hit !== undefined) {
-      return { source: hit, inheritedFrom: current === path ? undefined : current };
-    }
-    const index = current.lastIndexOf('.');
-    current = index === -1 ? '' : current.slice(0, index);
-  }
-  return {};
 }
 
 function formatContextSize(size: number): string {

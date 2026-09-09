@@ -29,7 +29,9 @@ import { IModelService } from '#/llm-adapter/model/model';
 import { ErrorCodes, Error2 } from '#/errors';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { IAgentActivityView } from '#/agent/activityView/activityView';
+import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 
 import { ISessionLegacyService } from './sessionLegacy';
 
@@ -107,8 +109,10 @@ export class SessionLegacyService implements ISessionLegacyService {
     for (const agent of agents.list()) {
       const agentHandle = agents.handleOf(agent.agentId);
       if (agentHandle === undefined) continue;
-      const state = agentHandle.accessor.get(IAgentActivityView).state();
-      if (state.turn !== undefined || state.background.length > 0) return true;
+      if (agentHandle.accessor.get(IAgentLoopService).status().state === 'running') return true;
+      const tasks = agentHandle.accessor.get(IAgentTaskService);
+      if (tasks.list(true).length > 0) return true;
+      if (agentHandle.accessor.get(IAgentFullCompactionService).compacting !== null) return true;
     }
     return false;
   }

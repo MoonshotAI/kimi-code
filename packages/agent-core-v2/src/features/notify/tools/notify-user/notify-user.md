@@ -1,4 +1,4 @@
-Show the end user a short progress update without ending your turn. Main-agent and subagent updates appear together in the TUI's Updates panel, with source labels added automatically. The panel keeps every update in order until the main agent starts a new turn. It remains visible when work ends, and the user can page through the complete messages.
+Show the end user a progress update without ending your turn. Main-agent and subagent updates appear together in the TUI's Updates panel, with source labels added automatically. The panel keeps every update in order until the main agent starts a new turn. It remains visible when work ends, and the user can page through the complete messages.
 
 **When to use:**
 1. Early in a multi-step task, describe your approach so the user can follow your work.
@@ -7,7 +7,7 @@ Show the end user a short progress update without ending your turn. Main-agent a
 4. When blocked, explain the blocker and your next step.
 
 **How to use:**
-- Write one or two sentences of light Markdown in the end user's language. Avoid repeating unchanged status or narrating individual tool calls.
+- Write the way you would update a colleague in chat, in the end user's language, in light Markdown. Give each update a two-part layout: open with a short flowing paragraph (two to four sentences — the conclusion and the evidence behind it), then put the details into structure — a few bullet points, short separated paragraphs, or key-value lines with file paths and error excerpts. Avoid tables and wide code blocks; the panel is narrower than the chat. Keep the whole update under roughly 1000 characters, self-contained enough to read on its own page. Avoid repeating unchanged status or narrating individual tool calls.
 - When working as a subagent, describe only your own subtask. Its completion does not mean the whole task is complete.
 - Do not add an agent name or source prefix; the UI supplies it.
 - Batch the update with your next tool calls when possible.

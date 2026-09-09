@@ -14,7 +14,7 @@ export const NotifyUserInputSchema: z.ZodType<NotifyUserInput> = z.object({
     .string()
     .min(1)
     .describe(
-      "The update to show the user: a sentence or two of light Markdown in the user's language.",
+      "The update to show the user: a short intro paragraph followed by a few bullet points of light Markdown, in the user's language, under ~1000 characters.",
     ),
 });
 

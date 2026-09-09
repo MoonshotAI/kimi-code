@@ -38,6 +38,7 @@ const turnPromptSchema = z.object({
   input: z.custom<readonly ContentPart[]>(),
   origin: z.custom<PromptOrigin>(),
   promptId: z.string().optional(),
+  turnId: z.number().optional(),
 });
 
 export class TurnPrompt extends AgentEvent2<z.infer<typeof turnPromptSchema>> {
@@ -50,6 +51,7 @@ export interface TurnPrompt {
   readonly input: readonly ContentPart[];
   readonly origin: PromptOrigin;
   readonly promptId?: string;
+  readonly turnId?: number;
 }
 
 const turnSteerSchema = z.object(turnInputShape);
@@ -143,9 +145,10 @@ export const turnKey = defineState(
     if (next !== s) return next;
   })
   .on(TurnPrompt, (s, e) => {
-    const next = advanceTurnClock(s, s.nextTurnId + 1);
+    const assigned = e.turnId ?? s.nextTurnId;
+    const next = advanceTurnClock(s, assigned + 1);
     if (!isUndoAnchorOrigin(e.origin)) return next;
-    return { ...next, anchorTurnIds: [...s.anchorTurnIds, s.nextTurnId] };
+    return { ...next, anchorTurnIds: [...s.anchorTurnIds, assigned] };
   })
   .on(TurnSteer, () => {})
   .on(ContextUndo, (s, e) => {

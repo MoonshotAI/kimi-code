@@ -331,8 +331,6 @@ export * from '#/app/flag/flagRegistryService';
 export * from '#/app/flag/flag';
 export * from '#/app/flag/flagService';
 
-export * from '#/agent/activityView/activityView';
-import '#/agent/activityView/activityViewService';
 export * from '#/agent/modeMutex/modeMutex';
 import '#/agent/modeMutex/modeMutexService';
 export * from '#/features/btw/btw';

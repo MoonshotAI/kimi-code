@@ -1375,7 +1375,7 @@ describe('agent machine max steps', () => {
 });
 
 describe('agent machine context reset', () => {
-  it('replaces messages, turnId and branchId when idle', async () => {
+  it('replaces messages and branchId when idle without rewinding the turn clock', async () => {
     const requester = createStubRequester([
       createAssistantMessage([{ type: 'text', text: 'reply' }]),
     ]);
@@ -1402,12 +1402,11 @@ describe('agent machine context reset', () => {
     actor.send({
       type: 'context.reset',
       history: [createUserEntry(createUserMessage('seed'), { source: 'input' })],
-      turnId: 0,
       branchId: 'main~2',
     });
 
     expect(actor.getSnapshot().context.messages).toHaveLength(1);
-    expect(actor.getSnapshot().context.turnId).toBe(0);
+    expect(actor.getSnapshot().context.turnId).toBe(1);
     expect(actor.getSnapshot().context.branchId).toBe('main~2');
     expect(resets).toEqual(['main~2']);
 
@@ -1417,9 +1416,9 @@ describe('agent machine context reset', () => {
       (s) => s.matches('idle') && s.context.messages.length === 3,
       { timeout: 5000 },
     );
-    expect(snapshot.context.turnId).toBe(1);
+    expect(snapshot.context.turnId).toBe(2);
     expect(turnStarts).toEqual([
-      { turnId: 1, branchId: 'main' },
+      { turnId: 0, branchId: 'main' },
       { turnId: 1, branchId: 'main~2' },
     ]);
   });
@@ -1446,7 +1445,7 @@ describe('agent machine context reset', () => {
     actor.send({ type: 'input.submit', message: createUserMessage('hi') });
     await vi.waitFor(() => expect(calls).toBe(1));
 
-    actor.send({ type: 'context.reset', history: [], turnId: 0, branchId: 'other' });
+    actor.send({ type: 'context.reset', history: [], branchId: 'other' });
     expect(actor.getSnapshot().context.branchId).toBe('main');
 
     releases[0]?.();
@@ -1456,7 +1455,7 @@ describe('agent machine context reset', () => {
 
     actor.send({ type: 'input.notify', message: createUserMessage('note') });
     await vi.waitFor(() => expect(calls).toBe(2));
-    actor.send({ type: 'context.reset', history: [], turnId: 0, branchId: 'other' });
+    actor.send({ type: 'context.reset', history: [], branchId: 'other' });
     expect(actor.getSnapshot().context.branchId).toBe('main');
 
     releases[1]?.();

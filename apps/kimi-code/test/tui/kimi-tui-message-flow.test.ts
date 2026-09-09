@@ -1049,21 +1049,31 @@ describe('KimiTUI message flow', () => {
     expect(turns[2]!.entries[1]!.content).toBe('please /commit');
   });
 
-  it('pages Updates with Ctrl+P / Ctrl+N while keeping the editor focused', async () => {
+  it('pages Updates with Ctrl+N and arrow keys while keeping the editor focused', async () => {
     const { driver } = await makeDriver(makeSession());
     const notifications = driver.sessionEventHandler.notifications;
     notifications.setEnabled(true);
     notifications.handleEvent({ type: 'turn.started', agentId: 'main', sessionId: 's1', turnId: 1, origin: { kind: 'user' } });
-    notifications.handleEvent({ type: 'tool.call.started', agentId: 'main', sessionId: 's1', turnId: 1, toolCallId: 'n1', name: 'NotifyUser', args: { message: Array.from({ length: 24 }, (_, i) => `- line ${i + 1}`).join('\n') } });
-    notifications.handleEvent({ type: 'tool.result', agentId: 'main', sessionId: 's1', turnId: 1, toolCallId: 'n1', output: 'Update shown to the user.' });
+    for (const [toolCallId, message] of [
+      ['n1', 'first update'],
+      ['n2', 'second update'],
+      ['n3', 'third update'],
+    ] as const) {
+      notifications.handleEvent({ type: 'tool.call.started', agentId: 'main', sessionId: 's1', turnId: 1, toolCallId, name: 'NotifyUser', args: { message } });
+      notifications.handleEvent({ type: 'tool.result', agentId: 'main', sessionId: 's1', turnId: 1, toolCallId, output: 'Update shown to the user.' });
+    }
     driver.state.editor.setText('unsent follow-up');
     const cursor = driver.state.editor.getCursor();
     const setFocus = vi.spyOn(driver.state.ui, 'setFocus');
-    expect(driver.state.notifyPanel.render(100)[0]).toContain('3/3');
-    driver.state.editor.handleInput('\u0010');
-    expect(driver.state.notifyPanel.render(100)[0]).toContain('2/3');
+    expect(driver.state.notifyPanel.render(100)[1]).toContain('Updates 3/3');
     driver.state.editor.handleInput('\u000E');
-    expect(driver.state.notifyPanel.render(100)[0]).toContain('3/3');
+    expect(driver.state.notifyPanel.render(100)[1]).toContain('esc close');
+    driver.state.editor.handleInput('\u001B[A');
+    expect(driver.state.notifyPanel.render(100)[1]).toContain('Updates 2/3');
+    driver.state.editor.handleInput('\u001B[B');
+    expect(driver.state.notifyPanel.render(100)[1]).toContain('Updates 3/3');
+    driver.state.editor.handleInput('\u001B');
+    expect(driver.state.notifyPanel.render(100)[1]).toContain('ctrl+n page');
     expect(setFocus).not.toHaveBeenCalled();
     expect(driver.state.editor.getText()).toBe('unsent follow-up');
     expect(driver.state.editor.getCursor()).toEqual(cursor);
@@ -8979,7 +8989,7 @@ describe('KimiTUI session rating survey', () => {
       );
       expect(harness.track).toHaveBeenCalledTimes(1);
 
-      driver.state.editor.handleInput('');
+      driver.state.editor.handleInput('\u001B');
       vi.advanceTimersByTime(3_000);
       expect(harness.track).toHaveBeenCalledTimes(1);
       expect(stripSgr(driver.state.surveyContainer.render(120).join('\n'))).toContain(

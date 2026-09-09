@@ -9,21 +9,11 @@
 
 import type { z } from 'zod';
 
-import type {
-  ActivityLastTurnState,
-  ActivityRetryState,
-  ActivityTurnState,
-  ActivityViewLifecycle,
-  AgentActivityState,
-  ApprovalRef,
-  BackgroundRef,
-  ToolCallRef,
-  TurnPhase,
-} from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
 import type { AgentContextData } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import type { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
 import type { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/agent/runtimeBinding/runtimeBinding';
 import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
+import type { SessionActivityState } from '@moonshot-ai/agent-core-v2/session/sessionActivity/sessionActivity';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
 import type { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import type { IAgentPromptService } from '@moonshot-ai/agent-core-v2/agent/prompt/prompt';
@@ -166,18 +156,7 @@ import type {
 } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import type { WarningEvent } from '@moonshot-ai/agent-core-v2/errors';
 
-import {
-  activityLastTurnStateSchema,
-  activityRetryStateSchema,
-  activityTurnStateSchema,
-  activityViewLifecycleSchema,
-  agentActivityStateSchema,
-  approvalRefSchema,
-  backgroundRefSchema,
-  toolCallRefSchema,
-  turnEndReasonSchema,
-  turnPhaseSchema,
-} from '../src/contract/agent/activity.js';
+import { sessionActivityStateSchema } from '../src/contract/session/activity.js';
 import {
   agentCommandInfoSchema,
   agentContextDataSchema,
@@ -605,24 +584,8 @@ const _generateTitleOutput: AssertWire<
   Awaited<ReturnType<ISessionTitleService['generateTitle']>>
 > = true;
 
-// agent/activity.ts
-const _turnPhase: AssertWire<typeof turnPhaseSchema, TurnPhase> = true;
-const _approvalRef: AssertWire<typeof approvalRefSchema, ApprovalRef> = true;
-const _toolCallRef: AssertWire<typeof toolCallRefSchema, ToolCallRef> = true;
-const _activityRetryState: AssertWire<typeof activityRetryStateSchema, ActivityRetryState> = true;
-// One-directional: `origin` is the deep `PromptOrigin` union mirrored as
-// `unknown`; the wire schema cannot be assignable back to the engine type.
-const _activityTurnState: AssertEngineToWire<typeof activityTurnStateSchema, ActivityTurnState> =
-  true;
-const _turnEndReason: AssertWire<typeof turnEndReasonSchema, TurnEndReason> = true;
-const _activityLastTurnState: AssertWire<
-  typeof activityLastTurnStateSchema,
-  ActivityLastTurnState
-> = true;
-const _backgroundRef: AssertWire<typeof backgroundRefSchema, BackgroundRef> = true;
-const _activityViewLifecycle: AssertWire<typeof activityViewLifecycleSchema, ActivityViewLifecycle> =
-  true;
-const _agentActivityState: AssertEngineToWire<typeof agentActivityStateSchema, AgentActivityState> =
+// session/activity.ts
+const _sessionActivityState: AssertWire<typeof sessionActivityStateSchema, SessionActivityState> =
   true;
 
 // ── agent scope (services.ts / schemas.ts) ──────────────────────────────────

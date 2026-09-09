@@ -170,28 +170,6 @@ describe('resolveCapability', () => {
   });
 });
 
-describe('explainCapability', () => {
-  it('reports the trait level when a trait hook answers', () => {
-    const { capability, source } = registry.explainCapability('openai', 'special-model', 'cap-vendor');
-    expect(capability.image_in).toBe(true);
-    expect(source.kind).toBe('builtin');
-    expect(source.detail).toContain('trait');
-  });
-
-  it('reports the base catalog level', () => {
-    const { capability, source } = registry.explainCapability('openai', 'gpt-4o');
-    expect(capability.image_in).toBe(true);
-    expect(source.kind).toBe('builtin');
-    expect(source.detail).toContain('base');
-  });
-
-  it('reports none when nothing knows the model', () => {
-    const { capability, source } = registry.explainCapability('openai', 'mystery-model');
-    expect(isUnknownCapability(capability)).toBe(true);
-    expect(source.kind).toBe('none');
-  });
-});
-
 describe('resolve gateway routes', () => {
   it('routes kimi+openai to the kimi trait with the video upload media', () => {
     const resolved = registry.resolve(modelWith({ protocol: 'openai', providerType: 'kimi' }));

@@ -291,7 +291,7 @@ describe('undoAgentTurns', () => {
 
     const snapshot = agentRef(session, 'main').getSnapshot();
     expect(snapshot.context.branchId).toBe('main~2');
-    expect(snapshot.context.turnId).toBe(1);
+    expect(snapshot.context.turnId).toBe(2);
     expect(snapshot.context.messages).toHaveLength(2);
 
     const undoBranch = tree.openBranch('main~2');
@@ -333,7 +333,7 @@ describe('undoAgentTurns', () => {
     const { session: restored, loaded } = await restoreSession(await reopened.tree('sess'));
     expect(loaded.agents).toHaveLength(1);
     expect(loaded.agents[0]?.branch).toBe('main~2');
-    expect(loaded.agents[0]?.turnId).toBe(2);
+    expect(loaded.agents[0]?.turnId).toBe(3);
     expect(toInputMessages(loaded.agents[0]?.messages ?? []).map(extractText)).toEqual([
       'first',
       'echo:first',

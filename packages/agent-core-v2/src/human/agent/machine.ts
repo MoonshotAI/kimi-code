@@ -37,16 +37,19 @@ export type AgentEvent =
   | { type: 'input.notify'; message: UserMessage }
   | { type: 'input.remind'; key: string; message: UserMessage | SystemMessage }
   | { type: 'input.steer'; id: string }
+  | { type: 'input.cancel'; id: string }
   | { type: 'input.abort' }
   | { type: 'turn.spawn_tools'; toolCalls: ToolCall[] }
   | { type: 'turn.drain' }
   | { type: 'turn.reminders_consumed'; reminders: HistoryMessage[] }
-  | { type: 'context.reset'; history: readonly HistoryMessage[]; turnId: number; branchId?: string };
+  | { type: 'step.started'; step: number }
+  | { type: 'context.reset'; history: readonly HistoryMessage[]; branchId?: string };
 
 export type AgentEmitted =
   | TurnLlmEvent
   | ToolEvent
-  | { type: 'turn.started'; turnId: number; branchId: string }
+  | { type: 'turn.started'; turnId: number; branchId: string; queueItemId?: string }
+  | { type: 'step.started'; step: number }
   | { type: 'turn.aborting' }
   | { type: 'turn.reminders_consumed'; reminders: HistoryMessage[] }
   | { type: 'turn.done'; messages: HistoryMessage[]; branchId: string }
@@ -82,6 +85,7 @@ export interface AgentMachineContext {
   queue: QueuedPrompt[];
   turnId: number;
   branchId: string;
+  drainedId?: string;
 }
 
 function completionNotification(toolCall: ToolCall, output: ToolOutput): UserEntry {
@@ -168,7 +172,7 @@ function hasBackgroundWork(context: AgentMachineContext): boolean {
 
 function drainPendingPatch(
   context: AgentMachineContext,
-): Pick<AgentMachineContext, 'messages' | 'notifications' | 'queue'> {
+): Pick<AgentMachineContext, 'messages' | 'notifications' | 'queue' | 'drainedId'> {
   const [head, ...rest] = context.queue;
   return {
     messages: [
@@ -178,6 +182,7 @@ function drainPendingPatch(
     ],
     notifications: [],
     queue: rest,
+    drainedId: head?.id,
   };
 }
 
@@ -349,6 +354,12 @@ export function createAgentMachine({
       'input.steer': {
         actions: assign(({ context, event }) => steerPatch(context, event.id)),
       },
+      'input.cancel': {
+        actions: assign({
+          queue: ({ context, event }) =>
+            context.queue.filter((entry) => entry.id !== event.id),
+        }),
+      },
       'tool.update': {
         actions: [emit(({ event }) => event), 'forwardToParent'],
       },
@@ -382,7 +393,6 @@ export function createAgentMachine({
             actions: [
               assign(({ context, event }) => ({
                 messages: [...event.history],
-                turnId: event.turnId,
                 branchId: event.branchId ?? context.branchId,
               })),
               emit(({ context }) => ({ type: 'context.reset' as const, branchId: context.branchId })),
@@ -429,10 +439,17 @@ export function createAgentMachine({
           },
         },
         entry: [
-          assign({ turnId: ({ context }) => context.turnId + 1 }),
-          emit(({ context }) => ({ type: 'turn.started' as const, turnId: context.turnId, branchId: context.branchId })),
+          emit(({ context }) => ({
+            type: 'turn.started' as const,
+            turnId: context.turnId,
+            branchId: context.branchId,
+            queueItemId: context.drainedId,
+          })),
         ],
-        exit: assign({ turnTools: {} }),
+        exit: [
+          assign({ turnTools: {} }),
+          assign({ turnId: ({ context }) => context.turnId + 1 }),
+        ],
         initial: 'active',
         on: {
           'turn.drain': {
@@ -492,6 +509,9 @@ export function createAgentMachine({
             ],
           },
           'llm.sent': {
+            actions: [emit(({ event }) => event), 'forwardToParent'],
+          },
+          'step.started': {
             actions: [emit(({ event }) => event), 'forwardToParent'],
           },
           'llm.streaming.*': {

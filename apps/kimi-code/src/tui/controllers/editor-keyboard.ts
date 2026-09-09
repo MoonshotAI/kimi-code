@@ -65,8 +65,9 @@ export interface EditorKeyboardHost {
   updateQueueDisplay(): void;
   toggleToolOutputExpansion(): void;
   toggleTodoPanelExpansion(): void;
-  /** Returns true while the experimental Updates panel has multiple pages. */
-  pageNotifyPanel(direction: -1 | 1): boolean;
+  /** Returns true when the Updates panel grabbed or released focus. */
+  toggleNotifyPanelFocus(): boolean;
+  handleNotifyPanelKey(key: 'left' | 'right' | 'up' | 'down' | 'escape'): boolean;
   detachCurrentForegroundTask(): void;
   cancelRunningShellCommand(): void;
   hideSessionPicker(): void;
@@ -304,12 +305,14 @@ export class EditorKeyboardController {
       return true;
     };
 
-    editor.onPageNotify = (direction): boolean => {
-      if (!host.pageNotifyPanel(direction)) return false;
+    editor.onPageNotify = (): boolean => {
+      if (!host.toggleNotifyPanelFocus()) return false;
       this.clearPendingExit();
-      host.track('shortcut_notify_page', { direction: direction < 0 ? 'previous' : 'next' });
+      host.track('shortcut_notify_page');
       return true;
     };
+
+    editor.onNotifyPanelKey = (key) => host.handleNotifyPanelKey(key);
 
     editor.onCtrlS = () => {
       if (

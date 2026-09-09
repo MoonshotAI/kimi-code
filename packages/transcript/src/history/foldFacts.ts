@@ -74,6 +74,7 @@ interface TurnStepInterruptedPayload {
 interface TurnPromptPayload {
   readonly origin?: unknown;
   readonly promptId?: unknown;
+  readonly turnId?: unknown;
 }
 interface ContextUndoPayload {
   readonly count?: unknown;
@@ -230,6 +231,7 @@ export function foldWireRecordFacts(
   const interruptedSteps = new Map<number, Map<number, HistoryWireRecord>>();
   const turnPromptIds = new Map<number, string>();
   const turnOrigins = new Map<number, unknown>();
+  let hasExplicitTurnId = false;
   let nextTurnId = 0;
   const cancelledTurnIds = new Set<number>();
   const hiddenTurnIds = new Set<number>();
@@ -559,9 +561,10 @@ export function foldWireRecordFacts(
       }
       case 'turn.prompt': {
         skipCancelledTurnIds();
-        const turnId = nextTurnId;
-        nextTurnId += 1;
         const payload = record as TurnPromptPayload;
+        const turnId = typeof payload.turnId === 'number' ? payload.turnId : nextTurnId;
+        hasExplicitTurnId ||= typeof payload.turnId === 'number';
+        nextTurnId = Math.max(nextTurnId, turnId + 1);
         turnOrigins.set(turnId, payload.origin);
         if (typeof payload.promptId === 'string') turnPromptIds.set(turnId, payload.promptId);
         if (isUndoAnchorTurnOrigin(payload.origin)) pendingUndoAnchorTurnIds.push(turnId);
@@ -603,7 +606,14 @@ export function foldWireRecordFacts(
   const rawTurnIds = Array.from(
     { length: lastRawTurnId + 1 },
     (_, turnId) => turnId,
-  ).filter((turnId) => !hiddenTurnIds.has(turnId));
+  ).filter(
+    (turnId) =>
+      !hiddenTurnIds.has(turnId) &&
+      (!hasExplicitTurnId ||
+        turnOrigins.has(turnId) ||
+        endedTurns.has(turnId) ||
+        interruptedSteps.has(turnId)),
+  );
   for (const turnId of rawTurnIds) {
     const promptId = turnPromptIds.get(turnId);
     const matchedOrdinal = promptId === undefined ? undefined : ordinalByPromptId.get(promptId);

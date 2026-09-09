@@ -7,11 +7,9 @@ import type { TokenUsage } from '#human/llm/usage';
 import type { Protocol, ProtocolProviderOptions } from '../protocol/protocol';
 import type { ProviderConfig } from '../provider/provider';
 
-import type { ModelInspection } from './inspection';
 import type { ModelRecord } from './model';
 import { effectiveModelConfig } from './model-auth';
 import type { ModelRequester } from './model-requester';
-
 export interface ProviderRequestAuth {
   apiKey?: string;
   headers?: Record<string, string>;
@@ -184,7 +182,6 @@ export interface IModelCatalog {
 
   get(id: string): Model;
   getRequester(id: string): ModelRequester;
-  inspect(id: string): ModelInspection;
   ping(id: string): Promise<ModelPingResult>;
   findByName(name: string): readonly string[];
 

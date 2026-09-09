@@ -60,7 +60,8 @@ function makeHarness(enabled = true, fullscreen = false) {
     editor,
   } as never);
   controller.setEnabled(enabled);
-  editor.onPageNotify = (direction) => controller.changePage(direction);
+  editor.onPageNotify = () => controller.toggleFocus();
+  editor.onNotifyPanelKey = (key) => controller.handlePanelKey(key);
   const emit = (
     type: string,
     fields: Record<string, unknown> = {},
@@ -117,7 +118,7 @@ describe('NotifyController', () => {
     h.controller.restore(snapshot());
     expect(h.texts()).toEqual([]);
     expect(h.notifyPanelContainer.children).toEqual([]);
-    expect(h.controller.changePage(-1)).toBe(false);
+    expect(h.controller.toggleFocus()).toBe(false);
     expect(h.requestRender).not.toHaveBeenCalled();
   });
 
@@ -229,7 +230,7 @@ describe('NotifyController', () => {
     expect(h.notifyPanelContainer.children).toEqual([h.notifyPanel]);
   });
 
-  it('isolates identical call ids by agent and carries source information', () => {
+  it('isolates identical call ids by agent and labels channels by agent name', () => {
     const h = makeHarness();
     h.emit('subagent.spawned', {
       subagentId: 'agent-1',
@@ -242,10 +243,10 @@ describe('NotifyController', () => {
     expect(h.texts()).toEqual(['main findings', 'child findings']);
     expect(h.notifyPanel.getEntries()[0]!.agentId).toBe('main');
     expect(h.notifyPanel.getEntries()[1]!.agentId).toBe('agent-1');
-    expect(h.rendered()).toContain('[agent-1]');
-    expect(h.rendered()).not.toMatch(/\[main\]|\[sub|explore|Authentication checks/);
+    expect(h.rendered()).toContain('explore');
+    expect(h.rendered()).not.toContain('Authentication checks');
     h.emit('subagent.completed', { subagentId: 'agent-1' });
-    expect(h.rendered()).toContain('[agent-1]');
+    expect(h.rendered()).toContain('explore');
   });
 
   it('keeps background agents working after the main agent ends', () => {
@@ -260,12 +261,15 @@ describe('NotifyController', () => {
     h.emit('turn.started', {}, 'agent-1');
     h.send('n1', 'main done');
     h.emit('turn.ended', { reason: 'completed' });
+    expect(h.rendered()).toContain('ctrl+n');
+    h.controller.toggleFocus();
     expect(h.rendered()).toContain('main done');
     h.send('n2', 'background finding', 'agent-1');
     expect(h.texts()).toEqual(['main done', 'background finding']);
-    expect(h.rendered()).toContain('[agent-1]');
+    expect(h.rendered()).toContain('coder●');
+    h.controller.handlePanelKey('right');
+    expect(h.rendered()).toContain('background finding');
     h.emit('subagent.completed', { subagentId: 'agent-1' });
-    expect(h.rendered()).toContain('main done');
     expect(h.rendered()).toContain('background finding');
   });
 
@@ -302,7 +306,7 @@ describe('NotifyController', () => {
       'agent-29',
     );
     expect(h.texts()).toEqual(['Working']);
-    expect(h.rendered()).toContain('[agent-29]');
+    expect(h.rendered()).toContain('coder');
   });
 
   it('uses real agent ids regardless of creation order, updates or turn boundaries', () => {
@@ -318,10 +322,10 @@ describe('NotifyController', () => {
     h.send('b', 'Second worker reports first', 'agent-29');
     h.send('c', 'Third worker reports next', 'agent-105');
     h.send('a', 'First worker reports last', 'agent-7');
-    expect(h.rendered().match(/\[agent-\d+\]/g)).toEqual([
-      '[agent-29]',
-      '[agent-105]',
-      '[agent-7]',
+    expect(h.notifyPanel.getChannels().map((ch) => ch.label)).toEqual([
+      'coder',
+      'coder(2)',
+      'coder(3)',
     ]);
     h.emit('background.task.started', {
       info: { kind: 'agent', agentId: 'agent-29', description: 'Changed task', status: 'running' },
@@ -329,14 +333,16 @@ describe('NotifyController', () => {
     h.emit('subagent.started', { subagentId: 'agent-29' });
     h.emit('turn.started', {}, 'main', 2);
     h.send('again', 'Second worker continues', 'agent-29');
-    expect(h.rendered()).toContain('[agent-29]');
-    expect(h.rendered()).not.toMatch(/\[sub|coder|description|Changed task/);
+    expect(h.rendered()).toContain('coder');
+    expect(h.rendered()).not.toContain('Changed task');
     h.controller.clear();
     h.send('c-again', 'Third worker continues', 'agent-105');
-    expect(h.rendered()).toContain('[agent-105]');
+    expect(h.notifyPanel.getEntries()[0]!.agentId).toBe('agent-105');
+    expect(h.rendered()).toContain('coder');
     h.controller.reset();
     h.send('new-session', 'A new session', 'agent-105');
-    expect(h.rendered()).toContain('[agent-105]');
+    expect(h.notifyPanel.getEntries()[0]!.agentId).toBe('agent-105');
+    expect(h.rendered()).toContain('agent-105');
   });
 
   it('uses the same agent id before lifecycle metadata arrives and after toggling the feature', () => {
@@ -344,12 +350,12 @@ describe('NotifyController', () => {
     h.send('first', 'Early update', 'agent-29');
     h.emit('subagent.spawned', { subagentId: 'agent-29', subagentName: 'coder' });
     h.send('second', 'Later update', 'agent-29');
-    expect(h.rendered().match(/\[agent-29\]/g)).toHaveLength(2);
+    expect(h.rendered()).toContain('agent-29');
     h.controller.setEnabled(false);
     h.emit('subagent.spawned', { subagentId: 'hidden', subagentName: 'coder' });
     h.controller.setEnabled(true);
     h.send('third', 'After enabling', 'agent-29');
-    expect(h.rendered()).toContain('[agent-29]');
+    expect(h.rendered()).toContain('agent-29');
   });
 
   it.each([
@@ -469,37 +475,74 @@ describe('NotifyController', () => {
     h.controller.restore(state);
     expect(h.texts()).toEqual([]);
     h.send('fresh', 'New background progress', 'agent-1');
-    expect(h.rendered()).toContain('[agent-1]');
+    expect(h.rendered()).toContain('agent-1');
     h.emit('turn.ended', { reason: 'completed' });
     h.send('later', 'Still working', 'agent-1');
     expect(h.texts()).toEqual(['New background progress', 'Still working']);
     expect(h.notifyPanelContainer.children).toEqual([h.notifyPanel]);
   });
+  it('labels channels of subagents restored from a snapshot by subagent type', () => {
+    const state = snapshot();
+    Object.assign(state.agents['main']!, {
+      background: [
+        {
+          kind: 'agent',
+          agentId: 'agent-1',
+          subagentType: 'explore',
+          description: 'Search the codebase',
+          status: 'running',
+        },
+        {
+          kind: 'agent',
+          agentId: 'agent-2',
+          subagentType: 'coder',
+          description: 'Finished task',
+          status: 'completed',
+        },
+      ],
+    });
+    const h = makeHarness();
+    h.controller.restore(state);
+    h.send('fresh', 'Progress from a resumed subagent', 'agent-1');
+    expect(h.notifyPanel.getChannels().map((ch) => ch.label)).toEqual(['explore']);
+    h.send('late', 'Settled before resume', 'agent-2');
+    expect(h.notifyPanel.getChannels().map((ch) => ch.label)).toEqual(['explore', 'agent-2']);
+  });
   it.each([false, true])(
-    'pages in place in regular/fullscreen mode and keeps the page after turn end: %s',
+    'focuses and pages with the keyboard in regular/fullscreen mode without touching the editor: %s',
     (fullscreen) => {
       const h = makeHarness(true, fullscreen);
-      h.send('first', Array.from({ length: 24 }, (_, i) => `- line ${i + 1}`).join('\n'));
+      h.send('first', 'update one');
+      h.send('second', 'update two');
+      h.send('third', 'update three');
       h.ui.start();
       try {
         h.ui.renderNow();
         const editorCursor = h.editor.getCursor();
         const root = h.ui instanceof TuiAltScreen ? h.ui.getLayoutRoot() : [...h.ui.children];
-        expect(h.rendered()).toContain('3/3');
-        h.input('\u0010');
-        expect(h.rendered()).toContain('2/3');
+        expect(h.rendered()).toContain('Updates 3/3');
         h.input('\u000E');
-        expect(h.rendered()).toContain('3/3');
-        h.input('\u0010');
-        const page = h.rendered();
+        expect(h.rendered()).toContain('esc close');
+        h.input('\u001B[A');
+        expect(h.rendered()).toContain('Updates 2/3');
+        h.input('\u001B[A');
+        expect(h.rendered()).toContain('Updates 1/3');
+        h.input('\u001B[B');
+        expect(h.rendered()).toContain('Updates 2/3');
+        h.rendered();
         h.emit('turn.ended', { reason: 'completed' });
-        expect(h.rendered()).toBe(page);
+        expect(h.rendered()).toContain('Updates 2/3');
+        expect(h.rendered()).toContain('update two');
         expect(h.notifyPanelContainer.children).toEqual([h.notifyPanel]);
         expect(h.ui.getFocusedComponent()).toBe(h.editor);
         expect(h.editor.getText()).toBe('unsent draft');
         expect(h.editor.getCursor()).toEqual(editorCursor);
         if (h.ui instanceof TuiAltScreen) expect(h.ui.getLayoutRoot()).toBe(root);
         else expect(h.ui.children).toEqual(root);
+        h.input('\u001B');
+        expect(h.rendered()).toContain('ctrl+n');
+        expect(h.rendered()).toContain('update two');
+        expect(h.rendered()).not.toContain('update three');
         h.emit('turn.started', {}, 'main', 2);
         expect(h.texts()).toEqual([]);
         expect(h.notifyPanelContainer.children).toEqual([]);
@@ -548,16 +591,162 @@ describe('NotifyController', () => {
     expect(h.texts()[0]).toBe('update 0');
   });
 
-  it('disabling clears retained messages and paging without touching input focus', () => {
+  it('disabling clears retained messages and focus without touching input focus', () => {
     const h = makeHarness();
-    h.send('done', '- a\n- b\n- c\n- d\n- e\n- f\n- g\n- h\n- i');
-    h.rendered();
-    h.controller.changePage(-1);
+    h.send('done', 'done update');
+    h.controller.toggleFocus();
     h.emit('turn.ended', { reason: 'completed' });
     h.controller.setEnabled(false);
     expect(h.ui.getFocusedComponent()).toBe(h.editor);
     expect(h.texts()).toEqual([]);
-    expect(h.controller.changePage(-1)).toBe(false);
-    expect(h.controller.changePage(1)).toBe(false);
+    expect(h.controller.toggleFocus()).toBe(false);
+    expect(h.controller.handlePanelKey('left')).toBe(false);
+  });
+
+  it('mirrors Agent and AgentSwarm delegations into the panel immediately', () => {
+    const h = makeHarness();
+    h.emit('tool.call.started', {
+      toolCallId: 'a1',
+      name: 'Agent',
+      args: { description: '调研 example 项目', subagent_type: 'explore', prompt: '…' },
+    });
+    expect(h.texts()).toEqual(['▸ Delegated to explore: **调研 example 项目**']);
+    expect(h.notifyPanelContainer.children).toEqual([h.notifyPanel]);
+
+    h.emit('tool.call.started', {
+      toolCallId: 'a2',
+      name: 'AgentSwarm',
+      args: { items: [{ prompt: 'x' }, { prompt: 'y' }, { prompt: 'z' }] },
+    });
+    expect(h.texts()).toEqual([
+      '▸ Delegated to explore: **调研 example 项目**',
+      '▸ Delegated to a swarm of 3 subagents',
+    ]);
+  });
+
+  it('counts resumed subagents in AgentSwarm delegation entries', () => {
+    const h = makeHarness();
+    h.emit('tool.call.started', {
+      toolCallId: 'a1',
+      name: 'AgentSwarm',
+      args: { resume_agent_ids: { 'agent-1': 'continue the review', 'agent-2': 'keep going' } },
+    });
+    expect(h.texts()).toEqual(['▸ Delegated to a swarm of 2 subagents']);
+
+    h.emit('tool.call.started', {
+      toolCallId: 'a2',
+      name: 'AgentSwarm',
+      args: { items: ['x', 'y'], resume_agent_ids: { 'agent-3': 'resume' } },
+    });
+    expect(h.texts()).toEqual([
+      '▸ Delegated to a swarm of 2 subagents',
+      '▸ Delegated to a swarm of 3 subagents',
+    ]);
+  });
+
+  it('retracts delegation entries when the launch fails or is interrupted', () => {
+    const h = makeHarness();
+    h.emit('tool.call.started', {
+      toolCallId: 'a1',
+      name: 'Agent',
+      args: { description: 'keep me', subagent_type: 'explore', prompt: '…' },
+    });
+    h.emit('tool.call.started', {
+      toolCallId: 'a2',
+      name: 'AgentSwarm',
+      args: { items: ['x', 'y'] },
+    });
+    h.emit('tool.call.started', {
+      toolCallId: 'a3',
+      name: 'Agent',
+      args: { description: 'interrupted', prompt: '…' },
+    });
+    expect(h.texts()).toHaveLength(3);
+
+    h.emit('tool.result', { toolCallId: 'a2', isError: true, output: 'swarm validation failed' });
+    expect(h.texts()).toEqual([
+      '▸ Delegated to explore: **keep me**',
+      '▸ Delegated to subagent: **interrupted**',
+    ]);
+
+    h.emit('tool.result', { toolCallId: 'a3', synthetic: true, output: '' });
+    expect(h.texts()).toEqual(['▸ Delegated to explore: **keep me**']);
+
+    h.emit('tool.result', { toolCallId: 'a1', output: 'subagent finished' });
+    expect(h.texts()).toEqual(['▸ Delegated to explore: **keep me**']);
+    expect(h.notifyPanelContainer.children).toEqual([h.notifyPanel]);
+  });
+
+  it('releases panel focus when a retraction empties the panel', () => {
+    const h = makeHarness();
+    h.emit('tool.call.started', {
+      toolCallId: 'a1',
+      name: 'Agent',
+      args: { description: 'doomed launch', prompt: '…' },
+    });
+    expect(h.controller.toggleFocus()).toBe(true);
+
+    h.emit('tool.result', { toolCallId: 'a1', isError: true, output: 'unknown profile' });
+    expect(h.notifyPanel.isEmpty()).toBe(true);
+    expect(h.notifyPanel.isFocused()).toBe(false);
+    expect(h.notifyPanelContainer.children).toEqual([]);
+    expect(h.controller.handlePanelKey('up')).toBe(false);
+    expect(h.controller.handlePanelKey('down')).toBe(false);
+  });
+
+  it('keeps the delegation entry when another agent errors with the same tool call id', () => {
+    const h = makeHarness();
+    h.emit('tool.call.started', {
+      toolCallId: 'a1',
+      name: 'Agent',
+      args: { description: 'keep me', subagent_type: 'explore', prompt: '…' },
+    });
+    h.emit('subagent.spawned', { subagentId: 'agent-9', subagentName: 'coder' });
+
+    h.emit('tool.result', { toolCallId: 'a1', isError: true, output: 'subagent tool failed' }, 'agent-9');
+    expect(h.texts()).toEqual(['▸ Delegated to explore: **keep me**']);
+  });
+
+  it('folds the panel to a one-line preview stub when the main turn ends', () => {
+    const h = makeHarness();
+    h.send('n1', 'phase report intro\n\n- detail A');
+    h.emit('turn.ended', { reason: 'completed' });
+    expect(h.rendered()).toContain('ctrl+n');
+    expect(h.rendered()).toContain('phase report intro');
+    expect(h.rendered()).not.toContain('detail A');
+
+    h.controller.toggleFocus();
+    expect(h.rendered()).toContain('detail A');
+    h.controller.handlePanelKey('escape');
+    expect(h.rendered()).toContain('ctrl+n');
+    expect(h.rendered()).not.toContain('detail A');
+  });
+
+  it('re-collapses the panel once the last background agent completes', () => {
+    const h = makeHarness();
+    h.emit('subagent.spawned', { subagentId: 'agent-1', subagentName: 'explore' });
+    h.emit('turn.ended', { reason: 'completed' });
+
+    h.send('s1', 'bg intro\n\n- bg detail', 'agent-1');
+    expect(h.rendered()).toContain('bg detail');
+
+    h.emit('subagent.completed', { subagentId: 'agent-1' });
+    expect(h.rendered()).toContain('ctrl+n');
+    expect(h.rendered()).toContain('bg intro');
+    expect(h.rendered()).not.toContain('bg detail');
+  });
+
+  it('keeps the panel expanded while a background agent is still running', () => {
+    const h = makeHarness();
+    h.emit('subagent.spawned', { subagentId: 'agent-1', subagentName: 'explore' });
+    h.emit('subagent.spawned', { subagentId: 'agent-2', subagentName: 'coder' });
+    h.emit('turn.ended', { reason: 'completed' });
+
+    h.send('s1', 'bg intro\n\n- bg detail', 'agent-1');
+    h.emit('subagent.completed', { subagentId: 'agent-1' });
+    expect(h.rendered()).toContain('bg detail');
+
+    h.emit('subagent.completed', { subagentId: 'agent-2' });
+    expect(h.rendered()).not.toContain('bg detail');
   });
 });

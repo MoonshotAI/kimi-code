@@ -16,7 +16,7 @@
  * every Service.
  */
 
-import { IAgentActivityView } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
+import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
 import { IAgentPermissionModeService } from '@moonshot-ai/agent-core-v2/agent/permissionMode/permissionMode';
 import { IAgentPermissionRulesService } from '@moonshot-ai/agent-core-v2/agent/permissionRules/permissionRules';
@@ -127,10 +127,10 @@ export const SESSION_PANELS: readonly ServicePanelDef[] = [
 
 export const AGENT_PANELS: readonly ServicePanelDef[] = [
   {
-    id: String(IAgentActivityView),
-    label: 'AgentActivityView',
+    id: String(IAgentLoopService),
+    label: 'AgentLoopService',
     scope: 'agent',
-    fetch: (svc) => call(svc, 'state'),
+    fetch: (svc) => call(svc, 'activitySnapshot'),
   },
   {
     id: String(IAgentProfileService),
