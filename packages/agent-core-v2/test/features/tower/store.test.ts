@@ -1579,6 +1579,27 @@ describe('teardown', () => {
     await expect(stat(wt)).rejects.toThrow();
   });
 
+  it('removes mission worktrees when the repository path contains a newline', async () => {
+    const nlRepo = await mkdtemp(join(tmpdir(), 'tower-store-nl\n-'));
+    try {
+      await git(nlRepo, 'init', '-b', 'main');
+      await git(nlRepo, 'config', 'user.email', 'tower-test@example.com');
+      await git(nlRepo, 'config', 'user.name', 'Tower Test');
+      await commitFile(nlRepo, 'README.md', '# fixture\n', 'initial');
+      const nlStore = new TowerStore(nlRepo);
+      await nlStore.init();
+      const [mission] = await nlStore.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+      const state = await nlStore.load();
+      await nlStore.addWorktree(mission!.worktree, mission!.branch, state.base);
+
+      const report = await nlStore.teardown();
+
+      expect(report).toEqual([`removed .tower/worktrees/${mission!.worktree}`]);
+    } finally {
+      await rm(nlRepo, { recursive: true, force: true });
+    }
+  });
+
   it('treats a worktree git no longer knows as already removed, not as a failure', async () => {
     const mission = await setupMission({
       title: 'feature gone',

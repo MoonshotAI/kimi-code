@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process';
+import { realpath } from 'node:fs/promises';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 
 const GIT_TIMEOUT_MS = 60_000;
 
@@ -137,12 +139,13 @@ export async function worktreeRemove(cwd: string, path: string): Promise<void> {
   await git(cwd, ['worktree', 'remove', '--force', path]);
 }
 
-export async function listWorktreePaths(cwd: string): Promise<readonly string[]> {
-  const out = await git(cwd, ['worktree', 'list', '--porcelain']);
-  return out
-    .split('\n')
-    .filter((line) => line.startsWith('worktree '))
-    .map((line) => line.slice('worktree '.length));
+export async function isRegisteredWorktree(repoRoot: string, path: string): Promise<boolean> {
+  const gitDir = await tryGit(path, ['rev-parse', '--git-dir']);
+  if (gitDir === null) return false;
+  const adminRoot = join(await realpath(repoRoot), '.git', 'worktrees');
+  const resolved = resolve(await realpath(path), gitDir.trim());
+  const inside = relative(adminRoot, resolved);
+  return inside.length > 0 && !inside.startsWith('..') && !isAbsolute(inside);
 }
 
 export async function isWorktreeDirty(path: string): Promise<boolean> {

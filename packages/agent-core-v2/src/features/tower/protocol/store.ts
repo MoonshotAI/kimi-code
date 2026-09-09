@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { appendFile, mkdir, open, readFile, readdir, realpath, rename, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, open, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import picomatch from 'picomatch';
@@ -18,8 +18,8 @@ import {
   initRepository,
   isAncestor,
   isInsideRepo,
+  isRegisteredWorktree,
   isWorktreeDirty,
-  listWorktreePaths,
   mergeNoFf,
   tryGit,
   worktreeAdd,
@@ -1105,13 +1105,11 @@ export class TowerStore {
 
   async teardown(options: { readonly force?: boolean } = {}): Promise<readonly string[]> {
     const state = await this.load();
-    const known = new Set(await listWorktreePaths(this.repoRoot));
-    const root = await realpath(this.repoRoot);
     const report: string[] = [];
     for (const mission of state.missions) {
       const rel = join(WORKTREES_DIR, mission.worktree);
       const absPath = this.abs(rel);
-      if (!known.has(join(root, rel).replaceAll('\\', '/'))) {
+      if (!(await isRegisteredWorktree(this.repoRoot, absPath))) {
         report.push(`already removed ${rel}`);
         await this.appendLog(TOWER_NAME, 'worktree.remove.skipped', {
           worktree: mission.worktree,
