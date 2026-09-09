@@ -1319,7 +1319,7 @@ describe('FileSessionIndex (read model)', () => {
     expect(docs.gets).toBe(0);
   });
 
-  it('re-projects on the next startup when the session directories changed externally', async () => {
+  it('reconciles the current generation on the next startup when the session directories changed externally', async () => {
     await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
     await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
 
@@ -1341,9 +1341,38 @@ describe('FileSessionIndex (read model)', () => {
 
     const second = build();
     const status = await second.prepare();
-    expect(status).toEqual({ state: 'ready', generation: 2, degradedCount: 0 });
+    expect(status).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
     const page = await second.listRecent({ workspaceIds: [workspaceId] });
     expect(page.items.map((s) => s.id)).toEqual(['c', 'b', 'a']);
+  });
+
+  it('the periodic tick skips reconciliation while the session directories are unchanged', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
+    const store = build();
+    await store.prepare();
+    const internals = store as unknown as {
+      projector: { reconcile(generation: number): Promise<unknown> };
+      tick(): Promise<void>;
+    };
+    let reconciles = 0;
+    const original = internals.projector.reconcile.bind(internals.projector);
+    internals.projector.reconcile = async (generation: number) => {
+      reconciles += 1;
+      return original(generation);
+    };
+
+    await internals.tick();
+    expect(reconciles).toBe(0);
+
+    await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
+    const future = new Date(Date.now() + 60_000);
+    await fsp.utimes(
+      join(sessionsDir, workspaceId, 'b', 'session-meta', 'state.json'),
+      future,
+      future,
+    );
+    await internals.tick();
+    expect(reconciles).toBe(1);
   });
 
   it('treats a published checkpoint without sourceMaxMtimeMs as stale and re-projects', async () => {

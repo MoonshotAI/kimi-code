@@ -67,6 +67,7 @@ export type WriteOp =
 export interface Checkpoint {
   readonly seq: number;
   readonly sourceMaxMtimeMs?: number;
+  readonly schemaVersion?: number;
 }
 
 export interface ColumnBounds {

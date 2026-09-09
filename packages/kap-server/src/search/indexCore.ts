@@ -3,6 +3,7 @@ import { open, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 
 import {
+  classifyStorageError,
   LockError,
   MiniDb,
   OpTracker,
@@ -59,7 +60,19 @@ function legacyFileMetaKey(filePath: string): string {
 
 const WIRE_READ_CHUNK_BYTES = 1 << 20;
 const WIRE_BATCH_OPS = 1_000;
+const SYNC_ROUND_BYTE_BUDGET = 64 << 20;
+const SYNC_ROUND_TIME_BUDGET_MS = 30_000;
+const SYNC_FAILURE_ESCALATION_LIMIT = 5;
 const EMPTY_BUFFER = Buffer.alloc(0);
+
+interface SyncRoundBudget {
+  bytesLeft: number;
+  deadline: number;
+}
+
+function syncBudgetExhausted(budget: SyncRoundBudget): boolean {
+  return budget.bytesLeft <= 0 || Date.now() >= budget.deadline;
+}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -178,6 +191,7 @@ export interface CoreSyncOutcome {
   readonly noop: boolean;
   readonly sessions: number;
   readonly documents: number;
+  readonly truncated: boolean;
   readonly lockToken?: string;
   readonly lifecycle: CoreLifecycleReport;
 }
@@ -219,6 +233,8 @@ export class SearchIndexCore {
   private openError: string | null = null;
   private fileMetaMigrated = false;
   private lockToken: string | undefined;
+  private lastMaintenanceDetail: string | undefined;
+  private consecutiveSyncFailures = 0;
 
   db: MiniDb<SearchDoc> | null = null;
   openPromise: Promise<void> | null = null;
@@ -318,6 +334,7 @@ export class SearchIndexCore {
     const opts = {
       dir: this.indexDir,
       valueCodec: 'json',
+      valueMode: 'disk',
       fsyncPolicy: 'everysec',
       onLockFail: 'readonly',
       onLockAcquired: (info: { readonly token: string }) => {
@@ -328,10 +345,10 @@ export class SearchIndexCore {
     try {
       return await MiniDb.open<SearchDoc>(opts);
     } catch (error) {
-      if (!isRebuildableCorruption(error)) throw error;
+      if (classifyStorageError(error) !== 'rebuild') throw error;
       let probeError: unknown;
       try {
-        const probe = await MiniDb.open<SearchDoc>({ dir: opts.dir, valueCodec: opts.valueCodec });
+        const probe = await MiniDb.open<SearchDoc>({ dir: opts.dir, valueCodec: opts.valueCodec, valueMode: opts.valueMode });
         await probe.close().catch(() => {});
         probeError = undefined;
       } catch (error) {
@@ -431,37 +448,66 @@ export class SearchIndexCore {
   }
 
   async sync(sessions: readonly SyncSessionInput[]): Promise<CoreSyncOutcome> {
-    let outcome: CoreSyncPassOutcome = { noop: true, sessions: 0, documents: 0 };
+    let outcome: CoreSyncPassOutcome = { noop: true, sessions: 0, documents: 0, truncated: false };
     await this.tracked(async () => {
-      outcome = await this.runSync(sessions);
+      try {
+        outcome = await this.runSync(sessions);
+        this.consecutiveSyncFailures = 0;
+      } catch (error) {
+        if (classifyStorageError(error) !== 'rebuild') {
+          this.consecutiveSyncFailures += 1;
+          if (this.consecutiveSyncFailures < SYNC_FAILURE_ESCALATION_LIMIT) throw error;
+        }
+        this.consecutiveSyncFailures = 0;
+        await this.recoverByRebuild(error);
+        outcome = { noop: false, sessions: 0, documents: 0, truncated: true };
+      }
     });
     return { ...outcome, lockToken: this.lockToken, lifecycle: this.lifecycleState() };
   }
 
+  private async recoverByRebuild(cause: unknown): Promise<void> {
+    this.log.warn('global search: search-index state is unrecoverable; wiping and rebuilding from the transcripts', {
+      dir: this.indexDir,
+      error: errorMessage(cause),
+    });
+    await this.reindex();
+  }
+
   private async runSync(sessions: readonly SyncSessionInput[]): Promise<CoreSyncPassOutcome> {
-    if (this.disposed) return { noop: true, sessions: 0, documents: 0 };
+    if (this.disposed) return { noop: true, sessions: 0, documents: 0, truncated: false };
     this.syncReplaced = false;
     await this.ensureOpen();
     const db = this.db;
-    if (!db || db.readOnly || this.disposed) return { noop: true, sessions: 0, documents: 0 };
+    if (!db || db.readOnly || this.disposed) return { noop: true, sessions: 0, documents: 0, truncated: false };
 
     await this.migrateFileMetaKeys(db);
 
     const currentIds = new Set(sessions.map((s) => s.id));
 
     for (const row of db.query({ key: { prefix: SESSION_META_PREFIX }, project: [] })) {
-      if (this.disposed) return { noop: true, sessions: 0, documents: 0 };
+      if (this.disposed) return { noop: true, sessions: 0, documents: 0, truncated: false };
       const sessionId = row.key.slice(SESSION_META_PREFIX.length);
       if (!currentIds.has(sessionId)) await this.deleteSessionDocs(db, sessionId);
     }
 
+    const budget: SyncRoundBudget = {
+      bytesLeft: SYNC_ROUND_BYTE_BUDGET,
+      deadline: Date.now() + SYNC_ROUND_TIME_BUDGET_MS,
+    };
     let indexed = 0;
+    let truncated = false;
     for (const summary of sessions) {
-      if (this.disposed) return { noop: true, sessions: 0, documents: 0 };
+      if (this.disposed) return { noop: true, sessions: 0, documents: 0, truncated: false };
+      if (syncBudgetExhausted(budget)) {
+        truncated = true;
+        break;
+      }
       try {
-        await this.syncSession(db, summary);
+        await this.syncSession(db, summary, budget);
         indexed++;
       } catch (error) {
+        if (classifyStorageError(error) === 'rebuild') throw error;
         this.log.warn('global search: failed to index session', {
           sessionId: summary.id,
           error: error instanceof Error ? error.message : String(error),
@@ -469,7 +515,7 @@ export class SearchIndexCore {
       }
     }
 
-    if (this.disposed) return { noop: true, sessions: 0, documents: 0 };
+    if (this.disposed) return { noop: true, sessions: 0, documents: 0, truncated: false };
     const metaCount = db.query({ key: { prefix: '\0meta\\' }, project: [] }).length;
     const stats: StatsDoc = {
       kind: 'stats',
@@ -482,7 +528,7 @@ export class SearchIndexCore {
     if (this.syncReplaced) {
       this.generation++;
     }
-    return { noop: false, sessions: indexed, documents: stats.documents };
+    return { noop: false, sessions: indexed, documents: stats.documents, truncated };
   }
 
   private async migrateFileMetaKeys(db: MiniDb<SearchDoc>): Promise<void> {
@@ -510,7 +556,7 @@ export class SearchIndexCore {
     await db.del(SESSION_META_PREFIX + sessionId);
   }
 
-  private async syncSession(db: MiniDb<SearchDoc>, summary: SyncSessionInput): Promise<void> {
+  private async syncSession(db: MiniDb<SearchDoc>, summary: SyncSessionInput, budget: SyncRoundBudget): Promise<void> {
     const wireFiles = await collectWireFiles(summary.dir);
     const seenPaths = new Set(wireFiles.map((file) => file.path));
 
@@ -523,7 +569,7 @@ export class SearchIndexCore {
     }
 
     for (const file of wireFiles) {
-      await this.syncWireFile(db, summary, file);
+      await this.syncWireFile(db, summary, file, budget);
     }
 
     const title = summary.title ?? '';
@@ -564,6 +610,7 @@ export class SearchIndexCore {
     db: MiniDb<SearchDoc>,
     summary: SyncSessionInput,
     file: WireFileRef,
+    budget: SyncRoundBudget,
   ): Promise<void> {
     let st: { size: number; mtimeMs: number; ino: number };
     try {
@@ -642,6 +689,7 @@ export class SearchIndexCore {
       const chunk = Buffer.allocUnsafe(WIRE_READ_CHUNK_BYTES);
       while (position < size) {
         if (this.disposed) return;
+        if (syncBudgetExhausted(budget)) break;
         const { bytesRead } = await handle.read(
           chunk,
           0,
@@ -649,6 +697,7 @@ export class SearchIndexCore {
           position,
         );
         if (bytesRead === 0) break;
+        budget.bytesLeft -= bytesRead;
         const slice = chunk.subarray(0, bytesRead);
         position += bytesRead;
         let start = 0;
@@ -677,6 +726,11 @@ export class SearchIndexCore {
             ? Buffer.concat([pending, slice.subarray(start)])
             : Buffer.from(slice.subarray(start));
         if (ops.length >= WIRE_BATCH_OPS) {
+          ops.push({ op: 'set', key: metaKey, value: fileMeta(byteCursor, turnState, stepState) });
+          if (legacyKey !== null) {
+            ops.push({ op: 'del', key: legacyKey });
+            legacyKey = null;
+          }
           await db.batch(ops);
           ops.length = 0;
         }
@@ -900,6 +954,7 @@ export class SearchIndexCore {
   lifecycleState(): CoreLifecycleReport {
     if (this.disposed) return { state: this.db === null ? 'stopped' : 'closing' };
     const db = this.db;
+    if (db !== null) this.noteMaintenanceDetail(db);
     if (db === null) {
       if (this.openPromise !== null) return { state: 'opening' };
       if (this.openError !== null) return { state: 'degraded', detail: this.openError };
@@ -911,12 +966,32 @@ export class SearchIndexCore {
     return { state: 'ready' };
   }
 
+  private maintenanceDetail(db: MiniDb<SearchDoc>): string | undefined {
+    const failure = db.lastCompactError ?? db.lastGenBuildError;
+    return failure === null ? undefined : errorMessage(failure);
+  }
+
+  private noteMaintenanceDetail(db: MiniDb<SearchDoc>): void {
+    const detail = this.maintenanceDetail(db);
+    if (detail === this.lastMaintenanceDetail) return;
+    const previous = this.lastMaintenanceDetail;
+    this.lastMaintenanceDetail = detail;
+    if (detail !== undefined) {
+      this.log.warn('global search: index maintenance is failing; the WAL keeps growing until it recovers', {
+        error: detail,
+      });
+    } else if (previous !== undefined) {
+      this.log.info('global search: index maintenance recovered');
+    }
+  }
+
   async status(): Promise<CoreStatus> {
     await this.ensureOpen();
     if (this.db?.readOnly === true) {
       await this.refresh();
     }
     const stats = this.db?.get(STATS_KEY);
+    const maintenance = this.db !== null ? this.maintenanceDetail(this.db) : undefined;
     return {
       sessions: stats?.kind === 'stats' ? stats.sessions : 0,
       documents: stats?.kind === 'stats' ? stats.documents : 0,
@@ -924,7 +999,7 @@ export class SearchIndexCore {
       generation: this.generation,
       readOnly: this.db?.readOnly === true,
       lockToken: this.lockToken,
-      degraded: this.lastRefreshError?.message,
+      degraded: this.lastRefreshError?.message ?? maintenance,
       lifecycle: this.lifecycleState(),
     };
   }
@@ -989,13 +1064,4 @@ async function collectWireFiles(sessionDir: string): Promise<WireFileRef[]> {
 
 function docKeyPrefix(sessionId: string, file: WireFileRef): string {
   return `${sessionId}/${file.agentId}/${file.source}:`;
-}
-
-function isRebuildableCorruption(error: unknown): boolean {
-  return (
-    error instanceof SyntaxError ||
-    (error !== null &&
-      typeof error === 'object' &&
-      (error as { name?: string }).name === 'CorruptFrameError')
-  );
 }

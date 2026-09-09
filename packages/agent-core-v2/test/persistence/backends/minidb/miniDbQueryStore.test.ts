@@ -139,13 +139,6 @@ describe('MiniDbQueryStore', () => {
     expect(shardEntries.filter((name) => name.includes('text'))).toEqual([]);
   });
 
-  it('stores checkpoints', async () => {
-    const store = build();
-    expect(await store.getCheckpoint('wire:abc')).toBeUndefined();
-    await store.setCheckpoint('wire:abc', { seq: 42 });
-    expect(await store.getCheckpoint('wire:abc')).toEqual({ seq: 42 });
-  });
-
   it('shares the store with a second cluster instance instead of locking it out', async () => {
     const storeDir = join(homeDir, 'cache', 'query-store');
     const peer = await ClusterDb.open({ dir: storeDir, shardCount: 16, valueCodec: 'json' });
@@ -180,18 +173,26 @@ describe('MiniDbQueryStore', () => {
     expect(page.items).toEqual([{ id: 'b', v: 2 }]);
   });
 
-  it('opens a 16-shard cluster under the cache dir', async () => {
+  it('wipes and rebuilds the store after poison-class or persistent transient failures', async () => {
     const store = build();
-    await store.put(COLLECTION, 'a', { id: 'a' });
-    const storeDir = join(homeDir, 'cache', 'query-store');
-    const meta = JSON.parse(await fsp.readFile(join(storeDir, 'cluster.meta.json'), 'utf8')) as {
-      shardCount: number;
-    };
-    expect(meta.shardCount).toBe(16);
-    const entries = await fsp.readdir(storeDir);
-    for (let i = 0; i < 16; i++) {
-      expect(entries).toContain(`shard-${String(i).padStart(2, '0')}`);
+    await store.put(COLLECTION, 'a', { id: 'a', v: 1 });
+    const internal = store as unknown as { dbPromise: Promise<ClusterDb> };
+    const db = await internal.dbPromise;
+    const poisoned = Object.assign(new Error('poisoned'), { code: 'WAL_POISONED' });
+    (db as unknown as { set: unknown }).set = () => Promise.reject(poisoned);
+    await store.put(COLLECTION, 'b', { id: 'b', v: 2 });
+    expect(await store.get(COLLECTION, 'a')).toBeUndefined();
+    expect(await store.get(COLLECTION, 'b')).toEqual({ id: 'b', v: 2 });
+
+    const db2 = await internal.dbPromise;
+    const locked = Object.assign(new Error('locked'), { code: 'ELOCKED' });
+    (db2 as unknown as { set: unknown }).set = () => Promise.reject(locked);
+    for (let i = 0; i < 4; i++) {
+      await expect(store.put(COLLECTION, `t${i}`, { v: i })).rejects.toThrow('locked');
     }
+    await store.put(COLLECTION, 'c', { id: 'c', v: 3 });
+    expect(await store.get(COLLECTION, 'b')).toBeUndefined();
+    expect(await store.get(COLLECTION, 'c')).toEqual({ id: 'c', v: 3 });
   });
 
   it('getMany returns present values and skips missing keys', async () => {

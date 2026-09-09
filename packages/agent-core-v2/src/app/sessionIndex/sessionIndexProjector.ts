@@ -8,6 +8,7 @@ import { PARENT_SESSION_ID_KEY, type SessionSummary } from './sessionIndex';
 import {
   PARENT_INDEX_NAME,
   SESSION_INDEX_MANIFEST,
+  SESSION_INDEX_SCHEMA_VERSION,
   recencyColumn,
   sessionCollection,
   sessionCountersCollection,
@@ -129,6 +130,7 @@ export class SessionIndexProjector {
     await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, {
       seq: generation,
       sourceMaxMtimeMs,
+      schemaVersion: SESSION_INDEX_SCHEMA_VERSION,
     });
     log.info('session index generation published', {
       generation,
@@ -186,7 +188,7 @@ export class SessionIndexProjector {
     const manifest = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
     if (manifest?.seq === generation) {
       await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, {
-        seq: generation,
+        ...manifest,
         sourceMaxMtimeMs: Math.max(manifest.sourceMaxMtimeMs ?? 0, sourceMaxMtimeMs),
       });
     }

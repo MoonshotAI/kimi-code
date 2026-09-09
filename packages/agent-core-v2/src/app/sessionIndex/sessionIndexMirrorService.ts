@@ -168,18 +168,26 @@ export class SessionIndexMirror extends Disposable implements ISessionIndexMirro
       for (const [id, summary] of chunk) {
         if (this.pendingMap.get(id) === summary) this.pendingMap.delete(id);
       }
+      if (this.consecutiveFailures > 0) {
+        this.log.info('session index mirror flush recovered', {
+          afterFailures: this.consecutiveFailures,
+          pending: this.pendingMap.size,
+        });
+      }
       this.consecutiveFailures = 0;
       this.giveUpTracked = false;
     } catch (error) {
       this.consecutiveFailures += 1;
-      this.log.warn('failed to flush session index mirror chunk', {
-        pending: this.pendingMap.size,
-        failures: this.consecutiveFailures,
-        error: String(error),
-      });
+      if (this.consecutiveFailures === 1) {
+        this.log.warn('failed to flush session index mirror chunk', {
+          pending: this.pendingMap.size,
+          error: String(error),
+        });
+      }
       if (this.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
         this.log.warn('session index mirror giving up until the next record; reconciliation will heal', {
           pending: this.pendingMap.size,
+          failures: this.consecutiveFailures,
         });
         if (!this.giveUpTracked) {
           this.giveUpTracked = true;

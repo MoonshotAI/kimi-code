@@ -2,7 +2,7 @@ import { promises as fsp } from 'node:fs';
 
 import { join } from 'pathe';
 
-import { type QueryOptions } from '@moonshot-ai/minidb';
+import { classifyStorageError, LockError, type QueryOptions } from '@moonshot-ai/minidb';
 import { ClusterDb } from '@moonshot-ai/minidb/cluster';
 
 import { Disposable, toDisposable } from '#/_base/di/lifecycle';
@@ -29,6 +29,7 @@ const STORE_SUBDIR = 'query-store';
 const SHARD_COUNT = 16;
 const LOCK_ACQUIRE_TIMEOUT_MS = 1000;
 const DROP_BATCH_SIZE = 500;
+const TRANSIENT_ESCALATION_LIMIT = 5;
 
 function physicalKey(collection: string, key: string): string {
   return `${collection}${SEP}${key}`;
@@ -36,10 +37,6 @@ function physicalKey(collection: string, key: string): string {
 
 function indexName(collection: string, name: string): string {
   return `${collection}:${name}`;
-}
-
-function isRebuildable(error: unknown): boolean {
-  return error instanceof SyntaxError || (error as { name?: string }).name === 'CorruptFrameError';
 }
 
 const pendingDisposals = new Set<Promise<void>>();
@@ -54,6 +51,7 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
   private readonly dir: string;
   private dbPromise: Promise<ClusterDb> | undefined;
   private rebuildPromise: Promise<void> | undefined;
+  private transientFailures = 0;
   private readonly ensuredIndexes = new Set<string>();
 
   constructor(
@@ -95,7 +93,7 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
 
   private rebuild(cause: unknown): Promise<void> {
     this.rebuildPromise ??= (async () => {
-      this.log.warn('minidb query-store rebuilt after corruption', {
+      this.log.warn('minidb query-store rebuilt after unrecoverable failure', {
         dir: this.dir,
         error: String(cause),
       });
@@ -106,16 +104,45 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
         const db = await previous.catch(() => undefined);
         await db?.close().catch(() => {});
       }
+      let probeError: unknown;
+      try {
+        const probe = await ClusterDb.open({
+          dir: this.dir,
+          shardCount: SHARD_COUNT,
+          valueCodec: 'json',
+          lockAcquireTimeoutMs: LOCK_ACQUIRE_TIMEOUT_MS,
+        });
+        await probe.close().catch(() => {});
+        probeError = undefined;
+      } catch (error) {
+        probeError = error;
+      }
+      if (probeError instanceof LockError) throw cause;
       await fsp.rm(this.dir, { recursive: true, force: true });
     })();
-    return this.rebuildPromise;
+    const settled = this.rebuildPromise;
+    return settled.then(
+      () => {
+        if (this.rebuildPromise === settled) this.rebuildPromise = undefined;
+      },
+      (error: unknown) => {
+        if (this.rebuildPromise === settled) this.rebuildPromise = undefined;
+        throw error;
+      },
+    );
   }
 
   private async withDb<T>(op: (db: ClusterDb) => Promise<T>): Promise<T> {
     try {
-      return await op(await this.openDb());
+      const result = await op(await this.openDb());
+      this.transientFailures = 0;
+      return result;
     } catch (error) {
-      if (!isRebuildable(error)) throw error;
+      if (classifyStorageError(error) !== 'rebuild') {
+        this.transientFailures += 1;
+        if (this.transientFailures < TRANSIENT_ESCALATION_LIMIT) throw error;
+      }
+      this.transientFailures = 0;
       await this.rebuild(error);
       return op(await this.openDb());
     }
