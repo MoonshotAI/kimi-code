@@ -27,7 +27,7 @@ export function registerMediaTools(
   deps: RegisterMediaToolsDeps,
 ): IDisposable {
   if (
-    !deps.runtime.isAvailable(['fs']) ||
+    (!deps.runtime.isAvailable(['fs']) && deps.attachmentStore === undefined) ||
     (!deps.capabilities.image_in && !deps.capabilities.video_in)
   ) {
     return toDisposable(() => {});

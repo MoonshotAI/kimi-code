@@ -17,6 +17,9 @@ import { lowerMessage as lowerOpenAI } from '#human/llm/requester/bases/openai/l
 import { lowerMessage as lowerAnthropic } from '#human/llm/requester/bases/anthropic/lower';
 import { UNKNOWN_CAPABILITY } from '#human/llm/capability';
 import type { ToolMessage } from '#human/llm/message';
+import { degradeOlderMediaParts } from '#/agent/contextProjector/mediaProjection';
+import { parseDaemonFileUrl } from '#/agent/media/mediaRef';
+import type { Message } from '#/llm-adapter/contract/message';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
@@ -197,6 +200,45 @@ describe('SessionMediaStoreService', () => {
       : lowerAnthropic(message, { trait: undefined, ctx });
     expect(JSON.stringify(wire)).toContain(JSON.stringify(encodedPath!).slice(1, -1));
     expect(JSON.stringify(wire)).not.toContain(bytes.toString('base64'));
+  });
+
+  it('provides a readable attachment reference when the backing store has no local path', async () => {
+    const storage = new InMemoryStorageService();
+    const memoryStore = new SessionMediaStoreService(ix.get(ISessionContext), storage, new JsonAtomicDocumentStore(storage));
+    const bytes = Buffer.from('memory attachment');
+    const result = await mcpResultToExecutableOutput({ isError: false, content: [{ type: 'resource', resource: {
+      uri: 'example://memory', mimeType: 'text/plain', blob: bytes.toString('base64'),
+    } }] }, 'mcp__example__memory', { attachmentStore: memoryStore });
+    const text = modelText(result);
+    expect(text).not.toContain('could not be saved');
+    expect(text).not.toContain('Original attachment saved at:');
+    const reference = JSON.parse(/Attachment reference: ("[^\n]+")/.exec(text)![1]!) as string;
+    const file = await memoryStore.read(parseDaemonFileUrl(reference)!.fileId);
+    expect(Buffer.from(file!.data).equals(bytes)).toBe(true);
+  });
+
+  it('preserves an unchanged image before older media is degraded', async () => {
+    const bytes = Buffer.from(await new Jimp({ width: 32, height: 32, color: 0x3366ccff }).getBuffer('image/png'));
+    const result = await mcpResultToExecutableOutput({
+      isError: false,
+      content: [{ type: 'image', mimeType: 'image/png', data: bytes.toString('base64') }],
+    }, 'mcp__example__image', { attachmentStore: store });
+    const content = renderToolResultForModel(result);
+    const messages: Message[] = [
+      { role: 'tool', toolCallId: 'image', content, toolCalls: [] },
+      { role: 'user', toolCalls: [], content: [
+        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,bmV3' } },
+        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,bmV3Mg==' } },
+      ] },
+    ];
+    const degraded = degradeOlderMediaParts(messages, 2)[0]!;
+    const text = degraded.content.map((part) => part.type === 'text' ? part.text : '').join('\n');
+    expect(degraded.content.some((part) => part.type === 'image_url')).toBe(false);
+    expect(text).not.toContain('Image compressed');
+    const path = /Original attachment saved at: ("[^\n]+")/.exec(text)?.[1];
+    expect(path).toBeDefined();
+    expect((await readFile(JSON.parse(path!) as string)).equals(bytes)).toBe(true);
+    expect(text).toContain('Attachment reference: "kimi-file://');
   });
 
   it('provides a session-relative path for an original preserved during image compression', async () => {

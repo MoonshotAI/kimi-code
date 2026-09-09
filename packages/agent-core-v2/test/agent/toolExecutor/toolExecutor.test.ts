@@ -1328,6 +1328,14 @@ describe('truncation pipeline', () => {
     const [image] = await execute([toolCall('read_image', 'ReadMediaFile', { path: refs[0] })]);
     expect(image?.isError).not.toBe(true);
     expect(Array.isArray(image?.output) && image.output.some((part) => part.type === 'image_url')).toBe(true);
+    if (image === undefined) throw new Error('expected image output');
+    const imageText = renderToolResultForModel(image).map((part) => part.type === 'text' ? part.text : '').join('\n');
+    const tagPath = /<image path="([^"]+)">/.exec(imageText)?.[1];
+    expect(tagPath).toBe(refs[0]);
+    const [crop] = await execute([toolCall('read_crop', 'ReadMediaFile', {
+      path: tagPath, region: { x: 0, y: 0, width: 16, height: 16 },
+    })]);
+    expect(crop?.isError).not.toBe(true);
     const [pdf] = await execute([toolCall('read_pdf', 'Read', { path: refs[1] })]);
     expect(pdf?.isError).toBe(true);
     expect(pdf?.output).toContain(paths[1]);

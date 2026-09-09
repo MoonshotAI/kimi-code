@@ -598,5 +598,4 @@ export class ReadTool implements IReadTool {
 registerAgentToolService(IReadTool, ReadTool, {
   name: 'Read',
   domain: 'os/backends',
-  requiredRuntimeCapabilities: ['fs'],
 });

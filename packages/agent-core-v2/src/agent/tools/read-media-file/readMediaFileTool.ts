@@ -509,7 +509,8 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
       }
 
       const tag = fileType.kind === 'image' ? 'image' : 'video';
-      const openText = `<${tag} path="${safePath}">`;
+      const tagPath = isDaemonFileUrl(args.path) ? args.path : safePath;
+      const openText = `<${tag} path="${tagPath}">`;
       const closeText = `</${tag}>`;
 
       const note = buildMediaNote({

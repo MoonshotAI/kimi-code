@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { basename, extname } from 'node:path';
 import { Readable } from 'node:stream';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -145,6 +144,7 @@ export async function mcpResultToExecutableOutput(
   for (const block of result.content) {
     options.signal?.throwIfAborted();
     const part = convertMCPContentBlock(block, options.providerType);
+    if (part.type === 'image_url' && options.attachmentStore !== undefined) await preserveInlineMedia(part.imageUrl.url);
     if (part.type === 'audio_url') await preserveInlineMedia(part.audioUrl.url);
     if (part.type === 'video_url') await preserveInlineMedia(part.videoUrl.url);
     const gated = gateImageFormatParts([part], options.providerType);
@@ -201,9 +201,9 @@ export async function mcpResultToExecutableOutput(
     annotate: {
       persistOriginal: async (bytes, mimeType) => {
         if (options.attachmentStore !== undefined) {
-          const path = await saveAttachment(bytes, mimeType, options.attachmentStore, options.signal);
-          if (path !== undefined) attachmentNotices.push(attachmentNotice(path, mimeType, bytes.length));
-          return path ?? null;
+          const saved = await saveAttachment(bytes, mimeType, options.attachmentStore, options.signal);
+          attachmentNotices.push(attachmentNotice(saved, mimeType, bytes.length));
+          return saved.reference;
         }
         return persistOriginalImage(
           bytes,
@@ -233,16 +233,15 @@ async function attachmentDetails(
   options: McpOutputOptions,
 ): Promise<{ readonly content: string; readonly suffix: string }> {
   options.signal?.throwIfAborted();
-  const content = notices.join('\n');
+  const content = [...new Set(notices)].join('\n');
   if (content.length <= MCP_MAX_INLINE_NOTICES_CHARS) return { content, suffix: content };
   try {
     if (options.attachmentStore === undefined) throw new Error('Session attachment storage is unavailable');
-    const path = await saveAttachment(Buffer.from(content, 'utf8'), 'text/plain', options.attachmentStore, options.signal);
-    if (path === undefined) throw new Error('Attachment storage has no accessible file path');
+    const saved = await saveAttachment(Buffer.from(content, 'utf8'), 'text/plain', options.attachmentStore, options.signal);
     const pointer = [
-      `MCP attachment details saved at: ${JSON.stringify(path)}`,
-      `Attachment details reference: ${JSON.stringify(attachmentReference(path))}`,
-      `Session-relative attachment details: ${JSON.stringify(`media/${basename(path)}`)}`,
+      ...(saved.path === undefined ? [] : [`MCP attachment details saved at: ${JSON.stringify(saved.path)}`]),
+      `Attachment details reference: ${JSON.stringify(saved.reference)}`,
+      `Session-relative attachment details: ${JSON.stringify(saved.relativePath)}`,
       'Pass the attachment details reference to Read to retrieve all original attachment references and compression details in the current session.',
     ].join('\n');
     return { content: pointer, suffix: pointer };
@@ -267,26 +266,27 @@ async function preserveAttachment(
     if (canonical !== compact && canonical.replace(/=+$/, '') !== compact) {
       throw new Error('Invalid base64 attachment');
     }
-    const path = await saveAttachment(bytes, mimeType, options.attachmentStore, options.signal);
-    if (path === undefined) throw new Error('Attachment storage has no accessible file path');
-    return attachmentNotice(path, mimeType, bytes.length);
+    const saved = await saveAttachment(bytes, mimeType, options.attachmentStore, options.signal);
+    return attachmentNotice(saved, mimeType, bytes.length);
   } catch (error) {
     options.signal?.throwIfAborted();
     return `Original attachment could not be saved (${JSON.stringify(mimeType)}): ${error instanceof Error ? error.message : String(error)}. No readable original path is available; original attachment preservation is incomplete. Do not repeat the MCP call automatically.`;
   }
 }
 
-function attachmentNotice(path: string, mimeType: string, size: number): string {
-  return [
-    `Original attachment saved at: ${JSON.stringify(path)}`,
-    `Attachment reference: ${JSON.stringify(attachmentReference(path))}`,
-    `Session-relative attachment: ${JSON.stringify(`media/${basename(path)}`)}`,
-    `MIME: ${JSON.stringify(mimeType)}; size: ${String(size)} bytes. Pass the attachment reference to Read or ReadMediaFile in the current session. For other binary formats, Read reports the resolved local path for a converter.`,
-  ].join('\n');
+interface SavedAttachment {
+  readonly path?: string;
+  readonly reference: string;
+  readonly relativePath: string;
 }
 
-function attachmentReference(path: string): string {
-  return buildDaemonFileUrl(basename(path, extname(path)));
+function attachmentNotice(saved: SavedAttachment, mimeType: string, size: number): string {
+  return [
+    ...(saved.path === undefined ? [] : [`Original attachment saved at: ${JSON.stringify(saved.path)}`]),
+    `Attachment reference: ${JSON.stringify(saved.reference)}`,
+    `Session-relative attachment: ${JSON.stringify(saved.relativePath)}`,
+    `MIME: ${JSON.stringify(mimeType)}; size: ${String(size)} bytes. Pass the attachment reference to Read or ReadMediaFile in the current session. For other binary formats, Read reports the resolved local path for a converter.`,
+  ].join('\n');
 }
 
 async function saveAttachment(
@@ -294,7 +294,7 @@ async function saveAttachment(
   mimeType: string,
   store: ISessionMediaStore,
   signal?: AbortSignal,
-): Promise<string | undefined> {
+): Promise<SavedAttachment> {
   signal?.throwIfAborted();
   const mime = mimeType.split(';')[0]!.trim().toLowerCase();
   const hash = createHash('sha256').update(mime).update('\0').update(bytes).digest('hex');
@@ -305,8 +305,9 @@ async function saveAttachment(
     : mime === 'application/pdf' ? '.pdf'
     : mime === 'image/svg+xml' ? (bytes[0] === 0x1f && bytes[1] === 0x8b ? '.svgz' : '.svg')
       : mediaExtensionForMime(mime) ?? '.bin';
+  const fileId = `f_mcp_${hash}`;
   const path = await store.materialize({
-    fileId: `f_mcp_${hash}`,
+    fileId,
     size: bytes.length,
     name: `attachment${ext}`,
     mimeType: mime,
@@ -314,7 +315,7 @@ async function saveAttachment(
     signal,
   });
   signal?.throwIfAborted();
-  return path;
+  return { path, reference: buildDaemonFileUrl(fileId), relativePath: `media/${fileId}${ext}` };
 }
 
 function parseComparableJson(text: string): unknown {
