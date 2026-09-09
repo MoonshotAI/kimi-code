@@ -9,6 +9,7 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
+import { mcpResultToExecutableOutput } from '#/agent/mcp/output';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
@@ -79,6 +80,85 @@ describe('SessionMediaStoreService', () => {
     expect(target).toBe(pathFor('f_1', '.mp4'));
     expect(target).toBe(join(sessionDir, 'media', 'f_1.mp4'));
     expect(await readFile(target!)).toEqual(BYTES);
+  });
+
+  it('preserves an embedded MCP PDF as bytes at the advertised session path', async () => {
+    const bytes = Buffer.from('%PDF-1.4\nexample attachment\n%%EOF');
+    const output = await mcpResultToExecutableOutput({
+      isError: false,
+      content: [{ type: 'resource', resource: {
+        uri: 'example://report', mimeType: 'application/pdf', blob: bytes.toString('base64'),
+      } }],
+    }, 'mcp__example__report', { attachmentStore: store });
+    const path = /Original attachment saved at: ("[^\n]+")/.exec(output.note ?? '')?.[1];
+    expect(path).toBeDefined();
+    const savedPath = JSON.parse(path!) as string;
+    expect(savedPath.startsWith(join(sessionDir, 'media') + '/')).toBe(true);
+    expect(savedPath.endsWith('.pdf')).toBe(true);
+    expect(await readFile(savedPath)).toEqual(bytes);
+  });
+
+  it.each(['image/tiff', 'audio/wav', 'video/mp4'])('preserves an omitted MCP %s attachment exactly', async (mimeType) => {
+    const bytes = mimeType === 'image/tiff'
+      ? Buffer.from([0x49, 0x49, 0x2a, 0, 8, 0, 0, 0])
+      : Buffer.alloc(10 * 1024 * 1024 + 1, 0x63);
+    const output = await mcpResultToExecutableOutput({
+      isError: false,
+      content: [{ type: 'resource', resource: {
+        uri: 'example://attachment', mimeType, blob: bytes.toString('base64'),
+      } }],
+    }, 'mcp__example__attachment', { attachmentStore: store, providerType: 'anthropic' });
+    const encodedPath = /Original attachment saved at: ("[^\n]+")/.exec(output.note ?? '')?.[1];
+    expect(encodedPath).toBeDefined();
+    expect((await readFile(JSON.parse(encodedPath!) as string)).equals(bytes)).toBe(true);
+    expect(output.note).not.toContain('could not be saved');
+  });
+
+  it('keeps other MCP output and reports attachment save failures without inventing a path', async () => {
+    await writeFile(join(sessionDir, 'media'), 'not a directory');
+    const output = await mcpResultToExecutableOutput({
+      isError: false,
+      content: [
+        { type: 'text', text: 'The report was generated.' },
+        { type: 'resource', resource: {
+          uri: 'example://report', mimeType: 'application/pdf', blob: Buffer.from('%PDF-1.4').toString('base64'),
+        } },
+      ],
+    }, 'mcp__example__report', { attachmentStore: store });
+    expect(JSON.stringify(output.output)).toContain('The report was generated.');
+    expect(output.isError).not.toBe(true);
+    expect(output.note).toContain('attachment delivery is incomplete');
+    expect(output.note).not.toContain('Original attachment saved at:');
+    expect(output.note).toContain('Do not repeat the MCP call automatically');
+  });
+
+  it('reports malformed base64 instead of saving silently repaired bytes', async () => {
+    const output = await mcpResultToExecutableOutput({
+      isError: false,
+      content: [{ type: 'resource', resource: {
+        uri: 'example://report', blob: '%%%invalid base64===',
+      } }],
+    }, 'mcp__example__report', { attachmentStore: store });
+    expect(output.note).toContain('Invalid base64 attachment');
+    expect(output.note).not.toContain('Original attachment saved at:');
+  });
+
+  it('keeps unknown binary bytes and metadata accessible after reopening the session store', async () => {
+    const bytes = Buffer.from([0, 255, 128, 65, 0]);
+    const output = await mcpResultToExecutableOutput({
+      isError: false,
+      content: [{ type: 'resource', resource: { uri: 'example://unknown', blob: bytes.toString('base64') } }],
+    }, 'mcp__example__unknown', { attachmentStore: store });
+    const encodedPath = /Original attachment saved at: ("[^\n]+")/.exec(output.note ?? '')?.[1];
+    expect(encodedPath).toBeDefined();
+    const path = JSON.parse(encodedPath!) as string;
+    expect(path.endsWith('.bin')).toBe(true);
+    const fileId = path.split('/').at(-1)!.replace(/\.bin$/, '');
+    const reopened = new SessionMediaStoreService(ix.get(ISessionContext), ix.get(IFileSystemStorageService), ix.get(IAtomicDocumentStore));
+    const file = await reopened.open(fileId);
+    expect(file?.mediaType).toBe('application/octet-stream');
+    expect(file?.path).toBe(path);
+    expect(Buffer.from((await reopened.read(fileId))!.data).equals(bytes)).toBe(true);
   });
 
   it('keeps a same-size copy without re-reading the stream', async () => {

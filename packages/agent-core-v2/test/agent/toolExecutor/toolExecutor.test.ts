@@ -38,6 +38,9 @@ import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { ToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncationService';
 import { ReadTool } from '#/agent/tools/os/read/readTool';
+import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
+import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
+import { makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { GlobTool } from '#/agent/tools/os/glob/globTool';
 import { ReadInputSchema, type ReadInput } from '#/agent/tools/os/read/read';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
@@ -1048,6 +1051,7 @@ describe('truncation pipeline', () => {
   let homeDir: string;
   let readConfig: IConfigService;
   let globProcess: HostProcessService;
+  let attachmentStore: SessionMediaStoreService;
 
   beforeEach(async () => {
     homeDir = await mkdtemp(join(tmpdir(), 'tool-executor-truncation-'));
@@ -1060,7 +1064,13 @@ describe('truncation pipeline', () => {
         agentScope: 'sessions/workspace/session/agents/main',
       }),
     );
-    truncationContainer.stub(IFileSystemStorageService, new FileStorageService(homeDir));
+    const storage = new FileStorageService(homeDir);
+    truncationContainer.stub(IFileSystemStorageService, storage);
+    attachmentStore = new SessionMediaStoreService(makeSessionContext({
+      sessionId: 'session', workspaceId: 'workspace', cwd: homeDir,
+      sessionDir: join(homeDir, 'sessions/workspace/session'),
+      sessionScope: 'sessions/workspace/session',
+    }), storage, new JsonAtomicDocumentStore(storage));
     truncationContainer.set(
       IAgentToolResultTruncationService,
       new SyncDescriptor(ToolResultTruncationService),
@@ -1210,6 +1220,36 @@ describe('truncation pipeline', () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  it('keeps the MCP attachment path visible after text spill without repeating the remote call', async () => {
+    const bytes = Buffer.from('%PDF-1.4\nexample report\n%%EOF');
+    const client = {
+      async listTools() { return []; },
+      callTool: vi.fn(async () => ({
+        isError: false,
+        content: [
+          { type: 'text', text: 'x'.repeat(100_000) },
+          { type: 'resource', resource: {
+            uri: 'example://report', mimeType: 'application/pdf', blob: bytes.toString('base64'),
+          } },
+        ],
+      })),
+      async ping() {},
+    } satisfies MCPClient;
+    registry.register(createMcpTool('mcp__example__report', {
+      name: 'report', description: 'Example report', parameters: {},
+    }, client, { attachmentStore }), { source: 'mcp' });
+    const [result] = await execute([toolCall('report', 'mcp__example__report', {})]);
+    expect(result?.isError).not.toBe(true);
+    if (result === undefined) throw new Error('expected MCP result');
+    const visible = renderToolResultForModel(result).map((part) => part.type === 'text' ? part.text : '').join('\n');
+    expect(visible).toContain('output_path:');
+    expect(visible.length).toBeLessThan(50_000);
+    const encodedPath = /Original attachment saved at: ("[^\n]+")/.exec(visible)?.[1];
+    expect(encodedPath).toBeDefined();
+    expect(readFileSync(JSON.parse(encodedPath!) as string).equals(bytes)).toBe(true);
+    expect(client.callTool).toHaveBeenCalledTimes(1);
   });
 
   it('recovers MCP structured records through spill and Read without repeating the MCP call', async () => {

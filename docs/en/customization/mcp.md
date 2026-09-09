@@ -4,6 +4,8 @@
 
 MCP tool results can include text (`content`) and structured data (`structuredContent`). Kimi Code CLI makes both available to the agent and omits the structured copy only when it can confirm that a text block already contains the same complete JSON value. Text summaries and media do not replace structured records.
 
+When an embedded MCP attachment cannot be delivered directly because its format is unsupported or it exceeds the attachment size limit, Kimi Code CLI saves the original bytes in the session's media storage and provides the file path. The path remains visible when accompanying text is shortened, and the file is retained with the session instead of being evicted from the image cache. A session-relative path is also provided to locate the copy in a forked session. The agent can use an appropriate local reader or converter; `Read` only accepts text files. If decoding or saving fails, the result explicitly reports incomplete attachment delivery while preserving other usable output. Resource links are not automatically downloaded.
+
 ## Connection Methods
 
 Kimi Code CLI supports three MCP server connection methods:

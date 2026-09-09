@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { inflateRawSync } from 'node:zlib';
+import { ISessionMediaStore } from '@moonshot-ai/agent-core-v2/agent/media/sessionMediaStore';
+import { mcpResultToExecutableOutput } from '@moonshot-ai/agent-core-v2/agent/mcp/output';
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -1222,6 +1224,30 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(forkedCron.list().map((t) => ({ id: t.id, prompt: t.prompt }))).toEqual([
       { id: task.id, prompt: 'fork me' },
     ]);
+  });
+
+  it('fork retains MCP attachments at their session-relative paths after the source file is removed', async () => {
+    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home as string } });
+    const parentId = parent.body.data.id;
+    const core = (server as RunningServer).core;
+    const session = getLiveSessionById(core.accessor, parentId)!;
+    const bytes = Buffer.from('%PDF-1.4\nexample forked attachment\n%%EOF');
+    const output = await mcpResultToExecutableOutput({
+      isError: false,
+      content: [{ type: 'resource', resource: {
+        uri: 'example://report', mimeType: 'application/pdf', blob: bytes.toString('base64'),
+      } }],
+    }, 'mcp__example__report', { attachmentStore: session.accessor.get(ISessionMediaStore) });
+    const sourcePath = JSON.parse(/Original attachment saved at: ("[^\n]+")/.exec(output.note!)![1]!) as string;
+    const relativePath = JSON.parse(/Session-relative attachment: ("[^\n]+")/.exec(output.note!)![1]!) as string;
+    const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {});
+    expect(forked.body.code).toBe(0);
+    await rm(sourcePath);
+    const forkPath = join(home as string, 'sessions', forked.body.data.workspace_id, forked.body.data.id, relativePath);
+    expect((await readFile(forkPath)).equals(bytes)).toBe(true);
+    const resumed = await resumeSessionById(core.accessor, forked.body.data.id);
+    const fileId = relativePath.slice('media/'.length, -'.pdf'.length);
+    expect(await resumed!.accessor.get(ISessionMediaStore).resolveDisplayPath(fileId)).toBe(forkPath);
   });
 
   it('fork copies a corrupted source wire without healing it; the fork heals on resume', async () => {
