@@ -15,8 +15,8 @@ describe('ThinkingComponent', () => {
     const component = new ThinkingComponent('working it out', true, 'live');
     const out = strip(component.render(80).join('\n'));
 
-    expect(out).toContain('⠋ thinking...');
-    expect(out).not.toContain('  ⠋ thinking...');
+    expect(out).toContain('⠋ thinking…');
+    expect(out).not.toContain('  ⠋ thinking…');
     expect(out).not.toContain(`${STATUS_BULLET}⠋`);
     expect(out).toContain('  working it out');
   });
@@ -40,11 +40,11 @@ describe('ThinkingComponent', () => {
       requestRender,
     } as unknown as TUI);
 
-    expect(strip(component.render(80).join('\n'))).toContain('⠋ thinking...');
+    expect(strip(component.render(80).join('\n'))).toContain('⠋ thinking…');
 
     vi.advanceTimersByTime(80);
     expect(requestRender).toHaveBeenCalled();
-    expect(strip(component.render(80).join('\n'))).toContain('⠙ thinking...');
+    expect(strip(component.render(80).join('\n'))).toContain('⠙ thinking…');
 
     component.finalize();
     requestRender.mockClear();
@@ -63,7 +63,7 @@ describe('ThinkingComponent', () => {
     expect(out).toContain('line2');
     expect(out).not.toContain('line3');
     expect(out).not.toContain('line4');
-    expect(out).toContain('... (5 more lines, ctrl+o to expand)');
+    expect(out).toContain('… (5 more lines, ctrl+o to expand)');
   });
 
   it('expands and collapses after finalization', () => {

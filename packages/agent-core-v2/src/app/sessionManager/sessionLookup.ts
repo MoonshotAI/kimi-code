@@ -39,7 +39,7 @@ export async function resumeSessionById(
   } catch (error) {
     accessor
       .get(ITelemetryService)
-      .withContext({ sessionId })
+      .withContext({ session_id: sessionId })
       .track2('session_load_failed', {
         reason: isError2(error) ? error.code : error instanceof Error ? error.name : 'unknown',
       });

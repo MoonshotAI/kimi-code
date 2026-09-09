@@ -110,7 +110,7 @@ export type {
   ConfigDiagnostic,
   ConfigInspectValue,
 } from '@moonshot-ai/agent-core-v2/app/config/config';
-export type { ProviderConfig } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
+export type { ProviderConfig } from '@moonshot-ai/agent-core-v2/llm-adapter/provider/provider';
 export type { AuthStatus } from '@moonshot-ai/agent-core-v2/app/auth/auth';
 export type { ExperimentalFeatureState } from '@moonshot-ai/agent-core-v2/app/flag/flag';
 export type {
@@ -133,15 +133,15 @@ export type {
 export type {
   ApprovalRequest,
   ApprovalResponse,
-} from '@moonshot-ai/agent-core-v2/session/approval/approval';
+} from '@moonshot-ai/agent-core-v2/agent/interaction/approval';
 export type {
   QuestionRequest,
   QuestionResult,
-} from '@moonshot-ai/agent-core-v2/session/question/question';
+} from '@moonshot-ai/agent-core-v2/agent/interaction/question';
 export type {
   Interaction,
   InteractionKind,
-} from '@moonshot-ai/agent-core-v2/features/interaction/interaction';
+} from '@moonshot-ai/agent-core-v2/human/interaction/interaction';
 export type { SkillSummary } from '@moonshot-ai/agent-core-v2/features/skill/catalog/types';
 export type {
   GlobalMcpServerConfig,
@@ -154,5 +154,5 @@ export type {
   McpServerTestResult,
   McpServerTestTarget,
 } from '@moonshot-ai/agent-core-v2/app/mcpManagement/mcpManagement';
-export type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
+export type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 export type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';

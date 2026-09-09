@@ -1,14 +1,13 @@
 import { Feature } from '#/features/feature';
 import { registerFeature } from '#/features/featureRegistry';
-
-import { dateChangeAgentRuntimeProvider } from './dateChangeAgentRuntime';
+import { AgentDateChangeService, IAgentDateChangeService } from '#/features/dateChange/dateChangeService';
 
 export class DateChangeFeature extends Feature {
   static override readonly name = 'dateChange';
 
   constructor() {
     super();
-    this.contributeAgentRuntime(dateChangeAgentRuntimeProvider);
+    this.contributeAgentService(IAgentDateChangeService, AgentDateChangeService);
   }
 }
 

@@ -10,7 +10,7 @@ import {
 } from '#/_base/errors/unexpectedError';
 import {
   WIRE_PROTOCOL_VERSION,
-  AgentGoal,
+  IAgentGoalService,
   type WireRecord,
   type PromptOrigin,
 } from '#/index';
@@ -164,6 +164,58 @@ describe('Agent resume', () => {
     }
   });
 
+  it('closes a restored open tool call with an interrupted result before the next prompt', async () => {
+    const persistence = new RecordingAgentPersistence([
+      resumeConfigRecord(),
+      contextAppendRecord(0, [{ role: 'user', text: 'Run lookup', origin: { kind: 'user' } }]),
+      turnPromptRecord(0, { kind: 'user' }),
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: 'step-0', turnId: '0', step: 1 },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.call',
+          uuid: 'call-0',
+          turnId: '0',
+          step: 1,
+          stepUuid: 'step-0',
+          toolCallId: 'call_open',
+          name: 'Lookup',
+          args: { query: 'moon' },
+        },
+      },
+    ] as unknown as WireRecord[]);
+    const ctx = testAgent({ persistence, autoConfigure: false });
+
+    try {
+      await ctx.restorePersisted();
+
+      expect(ctx.llmCalls).toHaveLength(0);
+
+      ctx.mockNextResponse({ type: 'text', text: 'Fresh response after resume.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fresh prompt after resume' }] });
+      await ctx.untilTurnEnd();
+
+      expect(findRpcEvent(ctx.allEvents, 'error')).toBeUndefined();
+      expect(ctx.llmInputs()).toMatchInlineSnapshot(`
+        call 1:
+          system: <system-prompt>
+          tools: Agent, AgentSwarm, AskUserQuestion, Bash, CreateGoal, CronCreate, CronDelete, CronList, Edit, EnterPlanMode, ExitPlanMode, FetchURL, GetGoal, Glob, Grep, Read, SetGoalBudget, Skill, TaskList, TaskOutput, TaskStop, TodoList, UpdateGoal, WaitFor, Write
+          messages:
+            user: text "Run lookup"
+            assistant: []  calls call_open:Lookup { "query": "moon" }
+            tool[call_open]: text "<system>ERROR: Tool execution failed.</system>\\nTool execution was interrupted before its result was recorded. Do not assume the tool completed successfully."
+            user: text "Fresh prompt after resume"
+            user: text <date-reminder>
+      `);
+      await ctx.expectResumeMatches();
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
   it('does not reconcile a legacy interruption whose delivery was recorded', async () => {
     const persistence = new RecordingAgentPersistence([
       resumeConfigRecord(),
@@ -195,6 +247,26 @@ describe('Agent resume', () => {
       expect(ctx.context.get()).not.toContainEqual(
         expect.objectContaining({ origin: { kind: 'injection', variant: 'interruption' } }),
       );
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('persists prompt terminal events as durable records so replays can reconcile the queue', async () => {
+    const persistence = new RecordingAgentPersistence([resumeConfigRecord()]);
+    const ctx = testAgent({ persistence, autoConfigure: false });
+
+    try {
+      await ctx.restorePersisted();
+      ctx.mockNextResponse({ type: 'text', text: 'done' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello' }] });
+      await ctx.untilTurnEnd();
+
+      await vi.waitFor(() => {
+        const types = persistence.appended.map((record) => record.type);
+        expect(types).toContain('prompt.accepted');
+        expect(types).toContain('prompt.completed');
+      });
     } finally {
       await ctx.dispose();
     }
@@ -776,7 +848,7 @@ describe('Agent resume', () => {
     try {
       await ctx.restorePersisted();
 
-      const goal = ctx.resolve(AgentGoal).getGoal().goal;
+      const goal = ctx.get(IAgentGoalService).getGoal().goal;
       expect(goal).toMatchObject({
         status: 'paused',
         wallClockMs: 7_000,
@@ -833,7 +905,7 @@ describe('Agent resume', () => {
     try {
       await ctx.restorePersisted();
 
-      expect(ctx.resolve(AgentGoal).getGoal().goal).toMatchObject({
+      expect(ctx.get(IAgentGoalService).getGoal().goal).toMatchObject({
         status: 'paused',
         wallClockMs: 5_000,
       });

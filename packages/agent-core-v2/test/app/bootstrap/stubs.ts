@@ -16,6 +16,7 @@ export function stubBootstrap(
   homeDir = '/tmp/kimi-home',
   env: NodeJS.ProcessEnv = {},
   args: HostArgsInput = {},
+  osHomeDir = '/home/test',
 ): IBootstrapService {
   const scopes: Record<PersistenceScopeName, string> = {
     config: '',
@@ -31,7 +32,7 @@ export function stubBootstrap(
     platform: 'linux',
     arch: 'x64',
     cwd: '/tmp',
-    osHomeDir: '/home/test',
+    osHomeDir,
     homeDir,
     configPath: `${homeDir}/config.toml`,
     configKey: 'config.toml',

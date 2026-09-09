@@ -6,7 +6,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 import {
   type AppendLogTruncation,
   IAppendLogStore,
@@ -38,6 +38,9 @@ export class WireService extends Service implements IWireService {
   declare readonly _serviceBrand: undefined;
 
   private readonly wireScope: string;
+  private lines = 0;
+  private lastClearLine: number | undefined;
+  private readonly agentId: string;
   private persistQueue: Promise<void> | undefined;
   private pendingRepair:
     | { readonly records: WireRecord[]; readonly truncation: AppendLogTruncation }
@@ -54,6 +57,7 @@ export class WireService extends Service implements IWireService {
   ) {
     super();
     this.wireScope = scopeContext.scope();
+    this.agentId = scopeContext.agentId;
     this._register(this.log.acquire(this.wireScope, AGENT_WIRE_RECORD_KEY));
   }
 
@@ -109,15 +113,20 @@ export class WireService extends Service implements IWireService {
     let rewrittenRecords: WireRecord[] | undefined;
     let newerWireVersion = false;
     let recordIndex = 0;
+    let lineCount = 0;
     let hasRecords = false;
+    let legacyPlanRevisionMigrated = false;
 
     for await (const candidate of source) {
+      lineCount++;
+      this.lines = lineCount;
       const sourceRecord: unknown = candidate;
       if (!isWireRecord(sourceRecord)) {
         this.reportSkippedRecord(undefined, recordIndex, true);
         recordIndex++;
         continue;
       }
+      if (sourceRecord.type === 'context.clear') this.lastClearLine = lineCount;
       if (!hasRecords) {
         hasRecords = true;
         if (sourceRecord.type !== 'metadata') {
@@ -144,13 +153,31 @@ export class WireService extends Service implements IWireService {
         !newerWireVersion && migratedRecord.type === 'metadata'
           ? { ...migratedRecord, protocol_version: WIRE_PROTOCOL_VERSION }
           : migratedRecord;
-      rewrittenRecords?.push(record);
-      yield record;
-      if (record.type !== 'metadata') {
+      const normalized = newerWireVersion
+        ? record
+        : this.normalizePlanRevisionRecord(record, recordIndex);
+      if (
+        !newerWireVersion &&
+        normalized !== undefined &&
+        'path' in record &&
+        !('key' in record)
+      ) {
+        legacyPlanRevisionMigrated = true;
+      }
+      if (normalized === undefined) {
+        if (record.type === 'plan.revision') recordIndex++;
+        continue;
+      }
+      rewrittenRecords?.push(normalized);
+      yield normalized;
+      if (normalized.type !== 'metadata') {
         recordIndex++;
       }
     }
 
+    if (legacyPlanRevisionMigrated && rewrittenRecords === undefined) {
+      rewrittenRecords = await this.rebuildRewriteRecords(migrations, newerWireVersion);
+    }
     if (!hasRecords) {
       rewrittenRecords = [createWireMetadataRecord()];
     }
@@ -158,7 +185,21 @@ export class WireService extends Service implements IWireService {
       await this.repairJournal(truncation, rewrittenRecords);
     } else if (rewrittenRecords !== undefined) {
       await this.log.rewrite(this.wireScope, AGENT_WIRE_RECORD_KEY, rewrittenRecords);
+      this.lines = rewrittenRecords.length;
+      this.lastClearLine = lastContextClearLineOf(rewrittenRecords);
     }
+  }
+
+  lineCount(): number {
+    return this.lines;
+  }
+
+  lastContextClearLine(): number | undefined {
+    return this.lastClearLine;
+  }
+
+  journalPath(): string | undefined {
+    return this.storage.pathFor(this.wireScope, AGENT_WIRE_RECORD_KEY);
   }
 
   private async repairJournal(
@@ -189,6 +230,10 @@ export class WireService extends Service implements IWireService {
       truncation,
     );
     this.pendingRepair = outcome === 'failed' ? { records, truncation } : undefined;
+    if (outcome !== 'failed') {
+      this.lines = records.length;
+      this.lastClearLine = lastContextClearLineOf(records);
+    }
   }
 
   private async repairPendingJournal(): Promise<void> {
@@ -212,12 +257,74 @@ export class WireService extends Service implements IWireService {
     }
   }
 
+  async drainPersisted(): Promise<void> {
+    await this.persistQueue;
+  }
+
   async flush(): Promise<void> {
     await this.persistQueue;
     const persistError = this.persistError;
     this.persistError = undefined;
     if (persistError !== undefined) throw persistError;
     await this.log.flush();
+  }
+
+  private async rebuildRewriteRecords(
+    migrations: readonly WireMigration[],
+    newerWireVersion: boolean,
+  ): Promise<WireRecord[]> {
+    const records: WireRecord[] = [];
+    const tolerate = { onTruncate: () => {} };
+    for await (const candidate of this.log.read<WireRecord>(
+      this.wireScope,
+      AGENT_WIRE_RECORD_KEY,
+      tolerate,
+    )) {
+      if (!isWireRecord(candidate)) continue;
+      const migratedRecord = migrateWireRecord(candidate, migrations);
+      const record =
+        !newerWireVersion && migratedRecord.type === 'metadata'
+          ? { ...migratedRecord, protocol_version: WIRE_PROTOCOL_VERSION }
+          : migratedRecord;
+      const normalized = newerWireVersion
+        ? record
+        : this.normalizePlanRevisionRecord(record, 0, false);
+      if (normalized !== undefined) records.push(normalized);
+    }
+    return records;
+  }
+
+  private normalizePlanRevisionRecord(
+    record: WireRecord,
+    index: number,
+    report = true,
+  ): WireRecord | undefined {
+    if (record.type !== 'plan.revision' || 'key' in record) return record;
+    if (!('path' in record) || typeof record['path'] !== 'string') {
+      if (report) {
+        this.telemetry.track2('wire_plan_revision_migrated', {
+          record_type: 'plan.revision',
+          legacy_field: 'path',
+          migration_outcome: 'skipped',
+        });
+        this.reportSkippedRecord(record.type, index, true);
+      }
+      return undefined;
+    }
+    const key = extractLegacyPlanRevisionKey(record['path'], this.agentId);
+    if (report) {
+      this.telemetry.track2('wire_plan_revision_migrated', {
+        record_type: 'plan.revision',
+        legacy_field: 'path',
+        migration_outcome: key === undefined ? 'skipped' : 'migrated',
+      });
+    }
+    if (key === undefined) {
+      if (report) this.reportSkippedRecord(record.type, index, true);
+      return undefined;
+    }
+    const { path: _path, ...rest } = record;
+    return { ...rest, key };
   }
 
   private reportSkippedRecord(type: string | undefined, index: number, malformed = false): void {
@@ -238,7 +345,32 @@ export class WireService extends Service implements IWireService {
     this.log.append(this.wireScope, AGENT_WIRE_RECORD_KEY, record, {
       onError: onUnexpectedError,
     });
+    this.lines += 1;
+    if (record.type === 'context.clear') this.lastClearLine = this.lines;
   }
+}
+
+function lastContextClearLineOf(records: readonly WireRecord[]): number | undefined {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    if (records[index]!.type === 'context.clear') return index + 1;
+  }
+  return undefined;
+}
+
+function extractLegacyPlanRevisionKey(path: string, agentId: string): string | undefined {
+  if (path.includes('\\')) return undefined;
+  const segments = path.split('/');
+  if (
+    segments.length < 8 ||
+    segments[0] !== 'sessions' ||
+    segments[3] !== 'agents' ||
+    segments[4] !== agentId ||
+    segments.slice(1, 3).some((segment) => segment.length === 0 || segment === '.' || segment === '..')
+  ) {
+    return undefined;
+  }
+  const key = segments.slice(5).join('/');
+  return /^plan\/[^/]+\/v[0-9]+\.md$/.test(key) ? key : undefined;
 }
 
 registerScopedService(

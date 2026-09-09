@@ -186,6 +186,7 @@ export function WireTab({ sessionId, initialAgentId = 'main' }: WireTabProps) {
             {agents.map((a) => (
               <option key={a.agentId} value={a.agentId}>
                 {a.agentId} ({a.type}
+                {a.profileName ? ` · ${a.profileName}` : ''}
                 {a.parentAgentId ? ` ← ${a.parentAgentId}` : ''})
               </option>
             ))}

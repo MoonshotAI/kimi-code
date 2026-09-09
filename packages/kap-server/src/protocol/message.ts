@@ -40,28 +40,51 @@ export const imageSourceSchema = z.discriminatedUnion('kind', [
   }),
   z.object({ kind: z.literal('file'), file_id: z.string().min(1) }),
   z.object({ kind: z.literal('session_media'), file_id: z.string().min(1) }),
+  z.object({ kind: z.literal('path'), path: z.string().min(1) }),
 ]);
 export type ImageSource = z.infer<typeof imageSourceSchema>;
 
 export const imageContentSchema = z.object({
   type: z.literal('image'),
   source: imageSourceSchema,
+  name: z.string().min(1).optional(),
 });
 export type ImageContent = z.infer<typeof imageContentSchema>;
 
 export const videoContentSchema = z.object({
   type: z.literal('video'),
   source: imageSourceSchema,
+  name: z.string().min(1).optional(),
 });
 export type VideoContent = z.infer<typeof videoContentSchema>;
 
-export const fileContentSchema = z.object({
-  type: z.literal('file'),
-  file_id: z.string().min(1),
-  name: z.string(),
-  media_type: z.string().min(1),
-  size: z.number().int().nonnegative(),
-});
+export const fileContentSchema = z
+  .object({
+    type: z.literal('file'),
+    file_id: z.string().min(1).optional(),
+    path: z.string().min(1).optional(),
+    name: z.string().optional(),
+    media_type: z.string().min(1).optional(),
+    size: z.number().int().nonnegative().optional(),
+  })
+  .superRefine((part, ctx) => {
+    const hasFileId = part.file_id !== undefined;
+    const hasPath = part.path !== undefined;
+    if (hasFileId === hasPath) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'exactly one of file_id or path is required',
+        path: hasFileId ? ['path'] : ['file_id'],
+      });
+      return;
+    }
+    if (hasPath) return;
+    for (const key of ['name', 'media_type', 'size'] as const) {
+      if (part[key] === undefined) {
+        ctx.addIssue({ code: 'custom', message: `${key} is required with file_id`, path: [key] });
+      }
+    }
+  });
 export type FileContent = z.infer<typeof fileContentSchema>;
 
 export const thinkingContentSchema = z.object({

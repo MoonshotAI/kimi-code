@@ -68,7 +68,6 @@ describe('PlanModeService dynamic injection content', () => {
     context = ctx.get(IAgentContextMemoryService);
     plan = ctx.get(IAgentPlanService);
     await ctx.restorePersisted();
-    await ctx.restoreRuntimes();
   });
 
   afterEach(async () => {
@@ -146,7 +145,6 @@ describe('PlanModeService dynamic injection cadence', () => {
     context = ctx.get(IAgentContextMemoryService);
     plan = ctx.get(IAgentPlanService);
     await ctx.restorePersisted();
-    await ctx.restoreRuntimes();
   });
 
   afterEach(async () => {

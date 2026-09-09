@@ -1,5 +1,5 @@
-import type { ModelCapability } from '#/kosong/contract/capability';
-import type { ModelRequester } from '#/kosong/model/modelRequester';
+import type { ModelCapability } from '#human/llm/capability';
+import type { ModelRequester } from '#/llm-adapter/model/model-requester';
 import type { VideoUploadEvent } from '#/app/telemetry/events';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 
@@ -17,6 +17,7 @@ export interface RegisterMediaToolsDeps {
   readonly videoUploader?: VideoUploader;
   readonly telemetry?: ITelemetryService;
   readonly inlineVideoSupported?: boolean;
+  readonly providerType?: string;
 }
 
 export function registerMediaTools(
@@ -37,6 +38,7 @@ export function registerMediaTools(
       deps.videoUploader,
       deps.telemetry,
       deps.inlineVideoSupported,
+      deps.providerType,
     ),
   );
 }

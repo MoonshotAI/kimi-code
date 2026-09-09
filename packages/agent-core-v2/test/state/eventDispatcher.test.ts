@@ -42,7 +42,10 @@ function stubWireJournal(journal: WireRecord[]): IWireService {
     readJournal: async function* () {
       for (const record of journal) yield record;
     },
-    flush: async () => {},
+    flush: async () => {}, drainPersisted: async () => {},
+    lineCount: () => journal.length,
+    lastContextClearLine: () => undefined,
+    journalPath: () => undefined,
   };
 }
 
@@ -368,6 +371,8 @@ describe('EventDispatcherService', () => {
         IWireService,
         stubWireJournal([
           { type: 'state.test.unknown', value: 1, time: 1 },
+          { type: 'staleGuard.recorded', path: '/tmp/a.txt', mtimeMs: 111, time: 1 },
+          { type: 'staleGuard.cleared', time: 1 },
           { type: 'state.test.item.add', item: 42, time: 2 },
           { type: 'state.test.item.add', item: 'ok', time: 3 },
         ]),
@@ -492,6 +497,84 @@ describe('EventDispatcherService', () => {
       id: 'runtime.test.checkpointed',
       depth: 0,
     });
+  });
+
+  it('replays journal history into a late-attached participant and folds live events after', async () => {
+    await dispatcher.dispatch(new ItemAdd({ item: 'a' }));
+    await dispatcher.dispatch(new AnchorEvent({}));
+    await dispatcher.dispatch(new ItemAdd({ item: 'b' }));
+    await dispatcher.restore();
+
+    let state: CheckpointedState = { items: [] };
+    await dispatcher.attachLate({
+      id: 'runtime.test.late',
+      events: [ItemAdd, AnchorEvent, UndoEvent],
+      undoable: true,
+      transition: (draft, event, ctx) => {
+        if (event instanceof ItemAdd) draft.items.push(event.item);
+        if (event instanceof AnchorEvent) ctx.checkpoint();
+        if (event instanceof UndoEvent) ctx.undoToCheckpoint(event.count);
+      },
+      getState: () => state,
+      commit: (next) => { state = next; },
+    });
+
+    expect(state.items).toEqual(['a', 'b']);
+    expect(dispatcher.modelCheckpointDepths()).toContainEqual({
+      id: 'runtime.test.late',
+      depth: 1,
+    });
+
+    await dispatcher.dispatch(new ItemAdd({ item: 'c' }));
+    expect(state.items).toEqual(['a', 'b', 'c']);
+
+    await dispatcher.dispatch(new UndoEvent({ count: 1 }));
+    expect(state.items).toEqual(['a']);
+  });
+
+  it('queues live dispatch during a late attach and drains it after the catch-up', async () => {
+    await dispatcher.dispatch(new ItemAdd({ item: 'history' }));
+    await dispatcher.restore();
+
+    let state: CheckpointedState = { items: [] };
+    const participant = {
+      id: 'runtime.test.late-gated',
+      events: [ItemAdd] as const,
+      undoable: false,
+      transition: (draft: CheckpointedState, event: unknown) => {
+        if (event instanceof ItemAdd) draft.items.push(event.item);
+      },
+      getState: () => state,
+      commit: (next: CheckpointedState) => { state = next; },
+    };
+    const late = dispatcher.attachLate(participant);
+    const live = dispatcher.dispatch(new ItemAdd({ item: 'live' }));
+    await late;
+    await live;
+
+    expect(state.items).toEqual(['history', 'live']);
+  });
+
+  it('rejects late attach before restore and keeps sync attach rejected after restore', async () => {
+    const participant = {
+      id: 'runtime.test.late-phase',
+      events: [] as const,
+      undoable: false,
+      transition: () => {},
+      getState: () => 0,
+      commit: () => {},
+    };
+
+    await expect(dispatcher.attachLate({ ...participant })).rejects.toThrow(
+      /late-attached while the event dispatcher is in phase 'new'/,
+    );
+
+    await dispatcher.restore();
+
+    expect(() => dispatcher.attach({ ...participant })).toThrow(
+      /must attach before restore/,
+    );
+    await expect(dispatcher.attachLate({ ...participant })).resolves.toBeDefined();
   });
 
   it('does not own AgentSpace teardown', () => {

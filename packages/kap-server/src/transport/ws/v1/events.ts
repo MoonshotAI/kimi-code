@@ -48,6 +48,11 @@ export interface SessionArchivedEvent {
   readonly workspace_id: string;
 }
 
+export interface SessionDeletedEvent {
+  readonly type: 'event.session.deleted';
+  readonly workspace_id: string;
+}
+
 export interface WorkspaceCreatedEvent {
   readonly type: 'event.workspace.created';
   readonly workspace: Workspace;
@@ -100,6 +105,25 @@ export interface ConfigWarningItem {
 export interface ConfigWarningEvent {
   readonly type: 'event.config.warning';
   readonly warnings: readonly ConfigWarningItem[];
+}
+
+export interface ModelCatalogRefreshChange {
+  readonly provider_id: string;
+  readonly provider_name: string;
+  readonly added: number;
+  readonly removed: number;
+}
+
+export interface ModelCatalogRefreshFailure {
+  readonly provider: string;
+  readonly reason: string;
+}
+
+export interface ModelCatalogChangedEvent {
+  readonly type: 'event.model_catalog.changed';
+  readonly changed: readonly ModelCatalogRefreshChange[];
+  readonly unchanged: readonly string[];
+  readonly failed: readonly ModelCatalogRefreshFailure[];
 }
 
 export interface PluginChangedEvent {
@@ -199,6 +223,7 @@ export type AgentEvent =
   | SessionMetaUpdatedEvent
   | SessionCreatedEvent
   | SessionArchivedEvent
+  | SessionDeletedEvent
   | WorkspaceCreatedEvent
   | WorkspaceUpdatedEvent
   | WorkspaceDeletedEvent
@@ -206,6 +231,7 @@ export type AgentEvent =
   | SessionStatusChangedEvent
   | ConfigChangedEvent
   | ConfigWarningEvent
+  | ModelCatalogChangedEvent
   | PluginChangedEvent
   | CapabilityChangedEvent
   | DiUnitChangedEvent

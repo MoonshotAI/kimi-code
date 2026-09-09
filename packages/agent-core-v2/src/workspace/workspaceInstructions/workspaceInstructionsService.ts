@@ -8,10 +8,10 @@ import { agentsMdWatchRoots, loadAgentsMdForRoots } from '#/agent/profile/contex
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IHostEnvironment, type HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IHostFsWatchService, type HostFsChange } from '#/os/interface/hostFsWatch';
 import type { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { watch, type WatchChange } from '#human/utils/watch';
 
 import {
   IWorkspaceInstructionsService,
@@ -32,19 +32,18 @@ export class WorkspaceInstructionsService
   declare readonly _serviceBrand: undefined;
 
   readonly ready: Promise<void>;
-  private readonly onDidChangeEmitter = this._register(new Emitter<readonly HostFsChange[]>());
-  readonly onDidChange: Event<readonly HostFsChange[]> = this.onDidChangeEmitter.event;
+  private readonly onDidChangeEmitter = this._register(new Emitter<readonly WatchChange[]>());
+  readonly onDidChange: Event<readonly WatchChange[]> = this.onDidChangeEmitter.event;
   private readonly watchDebounce = this._register(new TimeoutTimer());
   private reloadTail: Promise<void> = Promise.resolve();
   private loaded = false;
-  private readonly pendingChanges = new Map<string, HostFsChange>();
+  private readonly pendingChanges = new Map<string, WatchChange>();
 
   constructor(
     @IWorkspaceContext private readonly workspace: IWorkspaceContext,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IHostEnvironment private readonly env: HostEnvironmentInfo,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
-    @IHostFsWatchService private readonly fsWatch: IHostFsWatchService,
     @ILogService private readonly log: ILogService,
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
   ) {
@@ -122,7 +121,7 @@ export class WorkspaceInstructionsService
     );
     for (const { root, candidates } of plan) {
       try {
-        const handle = this.fsWatch.watch(root, {
+        const handle = watch(root, {
           ignored: subtreeWatchFilter(root, candidates),
         });
         this._register(handle);

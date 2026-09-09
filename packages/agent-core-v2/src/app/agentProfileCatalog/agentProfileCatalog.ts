@@ -9,12 +9,6 @@ export interface AgentProfilePromptPrefixContext {
   readonly log?: ILogger;
 }
 
-export interface AgentProfileSummaryPolicy {
-  readonly minChars: number;
-  readonly continuationPrompt: string;
-  readonly retries: number;
-}
-
 export interface AgentProfileContext {
   readonly cwd?: string;
   readonly cwdListing?: string;
@@ -23,21 +17,17 @@ export interface AgentProfileContext {
   readonly osKind?: string;
   readonly shellName?: string;
   readonly shellPath?: string;
-  readonly now?: string;
-  readonly timeZone?: string;
   readonly skills?: string;
   readonly skillActive?: boolean;
   readonly pluginSections?: string;
   readonly productName?: string;
   readonly replyStyleGuide?: string;
+  readonly notifyUserActive?: boolean;
   readonly [key: string]: unknown;
 }
 
 export interface EnvironmentDisclosureSnapshot {
   readonly cwd: string;
-  readonly date:
-    | { readonly disclosed: true; readonly value: { readonly localDate: string; readonly timeZone: string } }
-    | { readonly disclosed: false };
 }
 
 export interface SystemPromptRenderResult {
@@ -56,7 +46,6 @@ export interface AgentProfile {
   readonly systemPrompt: (context: AgentProfileContext) => string;
   readonly renderSystemPrompt: (context: AgentProfileContext) => SystemPromptRenderResult;
   readonly promptPrefix?: (ctx: AgentProfilePromptPrefixContext) => Promise<string>;
-  readonly summaryPolicy?: AgentProfileSummaryPolicy;
 }
 
 export type AgentProfileInput = Omit<AgentProfile, 'systemPrompt' | 'renderSystemPrompt'> &
@@ -89,7 +78,7 @@ export function normalizeAgentProfile(input: AgentProfileInput): AgentProfile {
       systemPrompt,
       renderSystemPrompt: (context) => ({
         text: systemPrompt(context),
-        environment: { cwd: context.cwd ?? '', date: { disclosed: false } },
+        environment: { cwd: context.cwd ?? '' },
       }),
     };
   }

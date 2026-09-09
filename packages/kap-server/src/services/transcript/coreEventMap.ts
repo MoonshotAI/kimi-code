@@ -1,4 +1,3 @@
-import type { AgentActivityUpdated } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
 import type { ContextSpliced } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
 import type { HookResult } from '@moonshot-ai/agent-core-v2/features/externalHooks/agent/agentExternalHooksService';
 import type {
@@ -15,9 +14,11 @@ import type {
   TurnStarted,
   TurnStepCompleted,
   TurnStepInterrupted,
+  TurnStepRetrying,
   TurnStepStarted,
 } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { TurnEnded, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import type { AgentActivitySnapshot } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import type { AgentErrorEvent } from '@moonshot-ai/agent-core-v2/agent/mcp/mcpEvents';
 import type { PluginCommandActivated } from '@moonshot-ai/agent-core-v2/agent/pluginCommand/pluginCommand';
 import type { WarningIssued } from '@moonshot-ai/agent-core-v2/agent/profile/profileOps';
@@ -36,12 +37,15 @@ import type {
   ShellStarted,
 } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommandService';
 import type { SkillActivated } from '@moonshot-ai/agent-core-v2/features/skill/skillOps';
-import type { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/agent/stepRetry/stepRetryService';
 import type {
   TaskNotified,
   TaskStarted,
   TaskTerminatedNotice,
 } from '@moonshot-ai/agent-core-v2/agent/task/taskOps';
+import type {
+  PermissionApprovalRequested,
+  PermissionApprovalResolved,
+} from '@moonshot-ai/agent-core-v2/agent/toolApproval/toolApprovalService';
 import type {
   ToolCallStarted,
   ToolProgress,
@@ -56,30 +60,33 @@ import type {
   SubagentSpawned,
   SubagentStarted,
 } from '@moonshot-ai/agent-core-v2/session/subagent/mirrorAgentRun';
-import type {
-  AgentRef,
-  AgentUsageMeta,
-  StepHeader,
-  StepUsage,
-  TextFrame,
-  ToolCallFrame,
-  ToolFrameProgress,
-  TranscriptAttachment,
-  TranscriptFrame,
-  TranscriptInteraction,
-  TranscriptItem,
-  TranscriptMarker,
-  TranscriptOperation,
-  TranscriptPrompt,
-  TranscriptTask,
-  TranscriptTodo,
-  TranscriptUsage,
-  TurnHeader,
-  TurnOrigin,
-  TurnState,
+import {
+  projectTranscriptUserOrigin,
+  type AgentRef,
+  type AgentUsageMeta,
+  type StepHeader,
+  type StepUsage,
+  type TextFrame,
+  type ToolCallFrame,
+  type ToolFrameProgress,
+  type TranscriptAttachment,
+  type TranscriptFrame,
+  type TranscriptInteraction,
+  type TranscriptItem,
+  type TranscriptMarker,
+  type TranscriptOperation,
+  type TranscriptPrompt,
+  type TranscriptTask,
+  type TranscriptTodo,
+  type TranscriptUsage,
+  type TranscriptUserOrigin,
+  type TurnHeader,
+  type TurnOrigin,
+  type TurnState,
 } from '@moonshot-ai/transcript';
 
-import { toLegacyPhase } from '../legacyStatus/legacyStatus';
+import { toLegacyPhase, type LegacyActivityApproval } from '../legacyStatus/legacyStatus';
+import { LegacyActivityTracker, phaseFromDomainEvent } from '../legacyStatus/legacyActivity';
 import { toWireQuestion } from '../../protocol/question-wire';
 import { projectPromptContentParts } from '../messages/messageProjection';
 
@@ -87,13 +94,11 @@ export interface ProjectorInteraction {
   readonly id: string;
   readonly kind: 'approval' | 'question';
   readonly payload: unknown;
-  readonly origin: { readonly agentId?: string; readonly turnId?: number };
   readonly createdAt: number;
 }
 
 type PlanRevisionEvent = { readonly type: 'plan.revision' } & PlanRevision;
 
-type AgentActivityUpdatedEvent = { readonly type: 'agent.activity.updated' } & AgentActivityUpdated;
 type PromptAcceptedEvent = { readonly type: 'prompt.accepted' } & PromptAccepted;
 type PromptQueuedEvent = { readonly type: 'prompt.queued' } & PromptQueued;
 type PromptSubmittedEvent = { readonly type: 'prompt.submitted' } & PromptSubmitted;
@@ -117,6 +122,8 @@ export type ProjectorBusEvent =
   | ({ readonly type: 'tool.progress' } & ToolProgress)
   | ({ readonly type: 'tool.call.started' } & ToolCallStarted)
   | ({ readonly type: 'tool.result' } & ToolResultEvent)
+  | ({ readonly type: 'permission.approval.requested' } & PermissionApprovalRequested)
+  | ({ readonly type: 'permission.approval.resolved' } & PermissionApprovalResolved)
   | ({ readonly type: 'task.started' } & TaskStarted)
   | ({ readonly type: 'task.terminated' } & TaskTerminatedNotice)
   | ({ readonly type: 'task.notified' } & TaskNotified)
@@ -130,7 +137,6 @@ export type ProjectorBusEvent =
   | ({ readonly type: 'subagent.suspended' } & SubagentSuspended)
   | ({ readonly type: 'goal.updated' } & GoalUpdated)
   | ({ readonly type: 'agent.status.updated' } & AgentStatusUpdated)
-  | AgentActivityUpdatedEvent
   | PromptAcceptedEvent
   | PromptQueuedEvent
   | PromptSubmittedEvent
@@ -165,12 +171,17 @@ export type ProjectorTurnLookup = (turnId: string) => TurnHeader | undefined;
 
 export type ProjectorItemsLookup = () => readonly TranscriptItem[] | undefined;
 
+export type ProjectorPlanRevisionKey = (key: string) => string;
+
 export interface ProjectorLookups {
   readonly stepFrames?: ProjectorFrameLookup;
   readonly toolFrame?: ProjectorToolFrameLookup;
   readonly stepOrdinal?: ProjectorStepOrdinalLookup;
   readonly turn?: ProjectorTurnLookup;
   readonly items?: ProjectorItemsLookup;
+  readonly resolvePlanRevisionKey?: ProjectorPlanRevisionKey;
+  readonly activitySnapshot?: () => AgentActivitySnapshot;
+  readonly pendingApprovals?: () => readonly LegacyActivityApproval[];
 }
 
 interface OpenTextFrame {
@@ -189,7 +200,11 @@ export class AgentTranscriptProjector {
   private currentTurn: TurnHeader | undefined;
   private currentStep: StepHeader | undefined;
   private pendingTaskNotifications: { text: string; taskId: string | undefined }[] = [];
-  private pendingSteers: { input: readonly ContentPart[]; promptIds: readonly string[] | undefined }[] = [];
+  private pendingSteers: {
+    input: readonly ContentPart[];
+    promptIds: readonly string[] | undefined;
+    origin: TranscriptUserOrigin;
+  }[] = [];
   private unpairedSteerPromptIds: string[][] = [];
   private readonly stepOrdinals = new Map<string, number>();
   private frameOrdinal = 0;
@@ -200,6 +215,7 @@ export class AgentTranscriptProjector {
   private readonly tasks = new Map<string, TranscriptTask>();
   private readonly shellTasks = new Map<string, string>();
   private readonly subagentTaskIds = new Map<string, string>();
+  private activityTracker: LegacyActivityTracker | undefined;
 
   seedSubagentTask(info: {
     readonly taskId: string;
@@ -224,6 +240,22 @@ export class AgentTranscriptProjector {
     }));
     return [{ op: 'task.upsert', task }];
   }
+
+  seedActiveTurn(info: { turnId: number; promptId?: string }): void {
+    const turnId = `t${info.turnId}`;
+    const prev = this.lookups?.turn?.(turnId);
+    this.currentTurn = {
+      kind: 'turn',
+      turnId,
+      ordinal: info.turnId,
+      state: 'running',
+      triggerPromptId: info.promptId ?? prev?.triggerPromptId,
+      origin: prev?.origin ?? { kind: 'other' },
+      prompt: prev?.prompt,
+      attachmentIds: prev?.attachmentIds,
+      startedAt: prev?.startedAt,
+    };
+  }
   private readonly interactions = new Map<string, TranscriptInteraction>();
   private readonly prompts = new Map<string, TranscriptPrompt>();
   private readonly stepUsageByTurn = new Map<string, StepUsage[]>();
@@ -237,6 +269,24 @@ export class AgentTranscriptProjector {
   ) {}
 
   map(event: ProjectorBusEvent): TranscriptOperation[] {
+    const ops = this.mapEvent(event);
+    const phase = this.phaseFor(event);
+    if (phase === undefined) return ops;
+    return [...ops, { op: 'meta.merge', meta: { agent: { phase } } }];
+  }
+
+  private phaseFor(event: ProjectorBusEvent): ReturnType<typeof toLegacyPhase> {
+    if (this.lookups?.activitySnapshot === undefined || this.lookups.pendingApprovals === undefined) {
+      return undefined;
+    }
+    this.activityTracker ??= new LegacyActivityTracker(
+      this.lookups.activitySnapshot,
+      this.lookups.pendingApprovals,
+    );
+    return phaseFromDomainEvent(this.activityTracker, event);
+  }
+
+  private mapEvent(event: ProjectorBusEvent): TranscriptOperation[] {
     switch (event.type) {
       case 'plan.revision':
         return this.onPlanRevision(event);
@@ -264,6 +314,9 @@ export class AgentTranscriptProjector {
         return this.onToolCallStarted(event);
       case 'tool.result':
         return this.onToolResult(event);
+      case 'permission.approval.requested':
+      case 'permission.approval.resolved':
+        return [];
       case 'task.started':
       case 'task.terminated':
         return this.onTaskLifecycle(event);
@@ -286,8 +339,6 @@ export class AgentTranscriptProjector {
         return this.onGoalUpdated(event);
       case 'agent.status.updated':
         return this.onAgentStatusUpdated(event);
-      case 'agent.activity.updated':
-        return this.onAgentActivityUpdated(event);
       case 'prompt.accepted':
         return this.onPromptAccepted(event);
       case 'prompt.queued':
@@ -337,26 +388,40 @@ export class AgentTranscriptProjector {
 
   private onTurnStarted(event: {
     turnId: number;
+    promptId?: string;
     origin: unknown;
     prompt?: string;
-    promptAttachments?: readonly { kind: 'image' | 'video' | 'audio'; fileId: string }[];
+    promptAttachments?: readonly (
+      | { kind: 'image' | 'video' | 'audio'; fileId: string; name?: string }
+      | { kind: 'file'; name: string; mediaType: string; size: number; path: string }
+    )[];
   }): TranscriptOperation[] {
     const n = event.turnId;
     const turnId = `t${n}`;
     const ops: TranscriptOperation[] = [];
     const attachmentIds: string[] = [];
     for (const input of event.promptAttachments ?? []) {
-      const attachment: TranscriptAttachment = {
-        attachmentId: `${turnId}.att${attachmentIds.length + 1}`,
-        mediaType: `${input.kind}/*`,
-        source: { kind: 'session_media', fileId: input.fileId },
-      };
+      const attachment: TranscriptAttachment =
+        input.kind === 'file'
+          ? {
+              attachmentId: `${turnId}.att${attachmentIds.length + 1}`,
+              mediaType: input.mediaType,
+              name: input.name,
+              size: input.size,
+            }
+          : {
+              attachmentId: `${turnId}.att${attachmentIds.length + 1}`,
+              mediaType: `${input.kind}/*`,
+              name: input.name,
+              source: { kind: 'session_media', fileId: input.fileId },
+            };
       ops.push({ op: 'attachment.upsert', attachment });
       attachmentIds.push(attachment.attachmentId);
     }
     this.currentTurn = {
       kind: 'turn',
       turnId,
+      triggerPromptId: event.promptId,
       ordinal: n,
       state: 'running',
       origin: mapTurnOrigin(event.origin),
@@ -390,9 +455,30 @@ export class AgentTranscriptProjector {
       this.currentStep = step;
       ops.push({ op: 'step.upsert', turnId: step.turnId, step });
     }
+    if (this.currentStep === undefined && this.pendingSteers.length > 0) {
+      const ordinal = (this.stepOrdinals.get(turnId) ?? this.lookups?.stepOrdinal?.(turnId) ?? 0) + 1;
+      const step: StepHeader = {
+        kind: 'step',
+        stepId: `${turnId}.${ordinal}`,
+        turnId,
+        ordinal,
+        state: 'interrupted',
+        endedAt: nowIso(),
+      };
+      this.stepOrdinals.set(turnId, ordinal);
+      this.currentStep = step;
+      ops.push({ op: 'step.upsert', turnId, step });
+    }
     if (this.currentStep !== undefined) {
       for (const pending of this.pendingSteers) {
-        this.steerUserFrame(ops, turnId, this.currentStep.stepId, pending.input, pending.promptIds);
+        this.steerUserFrame(
+          ops,
+          turnId,
+          this.currentStep.stepId,
+          pending.input,
+          pending.promptIds,
+          pending.origin,
+        );
       }
     }
     this.pendingSteers = [];
@@ -404,6 +490,7 @@ export class AgentTranscriptProjector {
       turnId,
       ordinal: event.turnId,
       state,
+      triggerPromptId: prev?.triggerPromptId,
       origin: prev?.origin ?? { kind: 'other' },
       prompt: prev?.prompt,
       attachmentIds: prev?.attachmentIds,
@@ -479,7 +566,7 @@ export class AgentTranscriptProjector {
     }
     this.pendingTaskNotifications = [];
     for (const pending of this.pendingSteers) {
-      this.steerUserFrame(ops, turnId, stepId, pending.input, pending.promptIds);
+      this.steerUserFrame(ops, turnId, stepId, pending.input, pending.promptIds, pending.origin);
     }
     this.pendingSteers = [];
     return ops;
@@ -498,6 +585,7 @@ export class AgentTranscriptProjector {
     llmServerFirstTokenMs?: number;
     llmServerDecodeMs?: number;
     llmClientConsumeMs?: number;
+    llmClientBlockedMs?: number;
   }): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
     this.flushOpenFrames(ops);
@@ -526,6 +614,7 @@ export class AgentTranscriptProjector {
         llmServerFirstTokenMs: event.llmServerFirstTokenMs,
         llmServerDecodeMs: event.llmServerDecodeMs,
         llmClientConsumeMs: event.llmClientConsumeMs,
+        llmClientBlockedMs: event.llmClientBlockedMs,
       },
     };
     ops.push({ op: 'step.upsert', turnId, step: this.currentStep });
@@ -1199,18 +1288,15 @@ export class AgentTranscriptProjector {
     return ops;
   }
 
-  private onAgentActivityUpdated(event: AgentActivityUpdatedEvent): TranscriptOperation[] {
-    const phase = toLegacyPhase(event);
-    if (phase === undefined) return [];
-    return [{ op: 'meta.merge', meta: { agent: { phase } } }];
-  }
-
   private onPlanRevision(event: PlanRevisionEvent): TranscriptOperation[] {
-    const ops: TranscriptOperation[] = [this.markerOp('plan.revision', restOf(event))];
+    const path = this.lookups?.resolvePlanRevisionKey?.(event.key) ?? event.key;
+    const { key: _key, ...rest } = restOf(event);
+    const payload = { ...rest, path };
+    const ops: TranscriptOperation[] = [this.markerOp('plan.revision', payload)];
     if (this.planModeActive) {
       ops.push({
         op: 'meta.merge',
-        meta: { modes: { plan: { reviewPath: event.path, version: event.version } } },
+        meta: { modes: { plan: { reviewPath: path, version: event.version } } },
       });
     }
     return ops;
@@ -1375,7 +1461,9 @@ export class AgentTranscriptProjector {
 
   private onTurnSteered(event: TurnSteerEvent): TranscriptOperation[] {
     const origin = event.origin;
-    if (origin?.kind !== 'user') return [];
+    if (origin.kind !== 'user') return [];
+    const frameOrigin = projectTranscriptUserOrigin(origin);
+    if (frameOrigin === undefined) return [];
     const turn = this.currentTurn;
     if (turn !== undefined && turn.state !== 'running') return [];
     const skip = origin.skillActivations?.length ?? 0;
@@ -1383,10 +1471,21 @@ export class AgentTranscriptProjector {
     const step = this.currentStep;
     if (step !== undefined && step.state === 'running') {
       const ops: TranscriptOperation[] = [];
-      this.steerUserFrame(ops, step.turnId, step.stepId, input, this.unpairedSteerPromptIds.shift());
+      this.steerUserFrame(
+        ops,
+        step.turnId,
+        step.stepId,
+        input,
+        this.unpairedSteerPromptIds.shift(),
+        frameOrigin,
+      );
       return ops;
     }
-    this.pendingSteers.push({ input, promptIds: this.unpairedSteerPromptIds.shift() });
+    this.pendingSteers.push({
+      input,
+      promptIds: this.unpairedSteerPromptIds.shift(),
+      origin: frameOrigin,
+    });
     return [];
   }
 
@@ -1396,6 +1495,7 @@ export class AgentTranscriptProjector {
     stepId: string,
     input: readonly ContentPart[],
     promptIds: readonly string[] | undefined,
+    origin: TranscriptUserOrigin,
   ): void {
     const texts: string[] = [];
     const attachmentIds: string[] = [];
@@ -1409,6 +1509,12 @@ export class AgentTranscriptProjector {
       const attachment: TranscriptAttachment = {
         attachmentId: `${stepId}.att${++this.attachmentOrdinal}`,
         mediaType: `${ref.kind}/*`,
+        name:
+          part.type === 'image_url'
+            ? part.imageUrl.name
+            : part.type === 'video_url'
+              ? part.videoUrl.name
+              : undefined,
         source: { kind: 'session_media', fileId: ref.ref.fileId },
       };
       ops.push({ op: 'attachment.upsert', attachment });
@@ -1425,6 +1531,7 @@ export class AgentTranscriptProjector {
         text: texts.join(''),
         attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
         promptIds,
+        origin,
       },
     });
   }

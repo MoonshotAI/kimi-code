@@ -13,15 +13,15 @@ import { AuthErrors } from '#/app/auth/errors';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
-import { ModelCatalogErrors } from '#/kosong/model/errors';
-import { type ModelRecord } from '#/kosong/model/model';
+import { ModelCatalogErrors } from '#/llm-adapter/model/errors';
+import { type ModelRecord } from '#/llm-adapter/model/model';
 import {
   IProviderService,
   type ModelSource,
   type OAuthRef,
   type ProviderConfig,
-} from '#/kosong/provider/provider';
-import { getProviderDefinition } from '#/kosong/provider/providerDefinition';
+} from '#/llm-adapter/provider/provider';
+import { getProviderDefinition } from '#/llm-adapter/provider/provider-definition';
 
 import {
   DEFAULT_MODEL_SECTION,
@@ -159,9 +159,15 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
     const defaultModel = this.config.inspect<string>(DEFAULT_MODEL_SECTION).userValue;
     const thinking =
       this.config.inspect<ManagedKimiConfigShape['thinking']>(THINKING_SECTION).userValue;
+    const visibleModels = withoutKeys(models, exclusion.models);
+    const excludedDefaultModel = exclusion.defaultModel;
+    const excludedDefaultRecord =
+      excludedDefaultModel !== undefined ? models[excludedDefaultModel] : undefined;
     return {
       providers: withoutKeys(providers, exclusion.providers) as ManagedKimiConfigShape['providers'],
-      models: withoutKeys(models, exclusion.models) as ManagedKimiConfigShape['models'],
+      models: (excludedDefaultModel !== undefined && excludedDefaultRecord !== undefined
+        ? { ...visibleModels, [excludedDefaultModel]: excludedDefaultRecord }
+        : visibleModels) as ManagedKimiConfigShape['models'],
       defaultModel,
       thinking: thinking === undefined ? undefined : { ...thinking },
     };

@@ -28,7 +28,6 @@ import { handleLoginCommand, handleLogoutCommand } from './auth';
 import { handleBtwCommand } from './btw';
 import { handleCopyCommand } from './copy';
 import {
-  handleAutoCommand,
   handleCompactCommand,
   handleEditorCommand,
   handleEffortCommand,
@@ -36,7 +35,6 @@ import {
   handlePlanCommand,
   handleSecondaryModelCommand,
   handleThemeCommand,
-  handleYoloCommand,
   showExperimentsPanel,
   showModelPicker,
   showPermissionPicker,
@@ -82,7 +80,6 @@ export { handleBtwCommand } from './btw';
 export { handleCopyCommand } from './copy';
 export { handleAddDirCommand } from './add-dir';
 export {
-  handleAutoCommand,
   handleCompactCommand,
   handleEditorCommand,
   handleEffortCommand,
@@ -90,7 +87,6 @@ export {
   handlePlanCommand,
   handleSecondaryModelCommand,
   handleThemeCommand,
-  handleYoloCommand,
   showModelPicker,
   showExperimentsPanel,
   showPermissionPicker,
@@ -120,8 +116,6 @@ export interface SlashCommandHost {
   state: TUIState;
   session: Session | undefined;
   readonly harness: KimiHarness;
-  /** agent-core-v2 engine; enables lazy session creation. */
-  readonly engineV2: boolean;
   cancelInFlight: (() => void) | undefined;
   deferUserMessages: boolean;
 
@@ -229,20 +223,17 @@ export function dispatchInput(host: SlashCommandHost, text: string): void {
   if (parseSlashInput(text) !== null) {
     // A leading skill command combined with further inline skill tokens
     // (`/skill:a args /skill:b`) is one grouped submission on the v2 engine.
-    if (host.engineV2 && dispatchInlineSkillCombo(host, text)) {
+    if (dispatchInlineSkillCombo(host, text)) {
       return;
     }
     void executeSlashCommand(host, text);
     return;
   }
-  // Inline skill tokens anywhere in a plain prompt (v2 engine only); on the
-  // legacy engine they keep their plain-text meaning.
-  if (host.engineV2) {
-    const activations = extractInlineSkillActivations(text, host.skillCommandMap);
-    if (activations.length > 0) {
-      void host.sendInlineSkillUserInput(text, activations);
-      return;
-    }
+  // Inline skill tokens anywhere in a plain prompt activate the skills.
+  const activations = extractInlineSkillActivations(text, host.skillCommandMap);
+  if (activations.length > 0) {
+    void host.sendInlineSkillUserInput(text, activations);
+    return;
   }
   host.sendNormalUserInput(text);
 }
@@ -271,7 +262,6 @@ function dispatchInlineSkillCombo(host: SlashCommandHost, text: string): boolean
     pluginCommandMap: host.pluginCommandMap,
     isStreaming: false,
     isCompacting: false,
-    engineV2: host.engineV2,
   });
   if (intent.kind !== 'skill' && intent.kind !== 'message') return false;
 
@@ -309,7 +299,6 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
     pluginCommandMap: host.pluginCommandMap,
     isStreaming: host.state.appState.streamingPhase !== 'idle',
     isCompacting: host.state.appState.isCompacting,
-    engineV2: host.engineV2,
   });
 
   switch (intent.kind) {
@@ -405,16 +394,11 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
 }
 
 /**
- * Lazy-create the session for a slash command that needs one (v2 engine).
- * v1 keeps the historical "no active session" error; on v2 a missing session
- * means the TUI started session-less, so commands create it on first use.
- * Returns undefined (error already shown) when creation fails.
+ * Lazy-create the session for a slash command that needs one (v2 engine). A
+ * missing session means the TUI started session-less, so commands create it
+ * on first use. Returns undefined (error already shown) when creation fails.
  */
 async function ensureSessionForCommand(host: SlashCommandHost): Promise<Session | undefined> {
-  if (!host.engineV2) {
-    host.showError(LLM_NOT_SET_MESSAGE);
-    return undefined;
-  }
   return host.ensureSession();
 }
 
@@ -566,10 +550,10 @@ async function handleBuiltInSlashCommand(
       await handleTitleCommand(host, args);
       return;
     case 'yolo':
-      await handleYoloCommand(host, args);
+      showPermissionPicker(host, 'yolo');
       return;
     case 'auto':
-      await handleAutoCommand(host, args);
+      showPermissionPicker(host, 'auto');
       return;
     case 'plan':
       await handlePlanCommand(host, args);

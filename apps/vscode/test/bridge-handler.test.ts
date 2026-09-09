@@ -4,7 +4,7 @@
  * Wiring: the real BridgeHandler and handlers; VS Code and the public Node SDK harness boundary are replaced.
  * Run: pnpm --filter kimi-code exec vitest run --config vitest.config.ts test/bridge-handler.test.ts
  */
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -56,7 +56,6 @@ const host = vi.hoisted(() => {
     watcher,
     harness,
     createKimiHarness: vi.fn(() => harness),
-    createKimiHarnessV2: vi.fn(() => harness),
     showWarningMessage,
     workspaceFolders: [] as Array<{ uri: Uri }>,
   };
@@ -80,7 +79,6 @@ vi.mock("@moonshot-ai/kimi-code-sdk", async (importOriginal) => {
   return {
     ...original,
     createKimiHarness: () => host.createKimiHarness(),
-    createKimiHarnessV2: () => host.createKimiHarnessV2(),
   };
 });
 
@@ -99,7 +97,6 @@ beforeEach(async () => {
   host.harness.getConfig.mockReset();
   host.harness.getConfig.mockResolvedValue({ models: {} });
   host.createKimiHarness.mockImplementation(() => host.harness);
-  host.createKimiHarnessV2.mockImplementation(() => host.harness);
   host.showWarningMessage.mockReset();
   host.showWarningMessage.mockResolvedValue(undefined);
   workspaceState = { get: vi.fn((_key, fallback) => fallback), update: vi.fn() };
@@ -132,25 +129,12 @@ describe("Engine startup", () => {
     );
   }
 
-  it("reports the rollback setting when the default engine cannot start", () => {
-    // Keep v2 the default even when the suite itself runs under the legacy flag.
-    vi.stubEnv("KIMI_CODE_LEGACY_FLAG", "");
-    host.createKimiHarnessV2.mockImplementationOnce(() => {
+  it("surfaces the failure when the engine cannot start", () => {
+    host.createKimiHarness.mockImplementationOnce(() => {
       throw new Error("engine boom");
     });
 
-    expect(constructBridge).toThrow(
-      /Failed to start the Kimi engine: engine boom\..*kimi\.useAgentCoreV1/s,
-    );
-  });
-
-  it("reports no rollback hint when the legacy engine itself cannot start", () => {
-    vi.stubEnv("KIMI_CODE_LEGACY_FLAG", "1");
-    host.createKimiHarness.mockImplementationOnce(() => {
-      throw new Error("legacy boom");
-    });
-
-    expect(constructBridge).toThrow(/^Failed to start the Kimi engine: legacy boom\.$/);
+    expect(constructBridge).toThrow(/^Failed to start the Kimi engine: engine boom\.$/);
   });
 });
 
@@ -498,6 +482,41 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
       expect.stringContaining("Session state is invalid JSON at line 4"),
     );
     expect(next).toEqual({ id: "rpc-2", result: { ok: true } });
+  });
+});
+
+describe("Registered working directories", () => {
+  it("lists the workspace root when there is no session history", async () => {
+    host.harness.listSessions.mockResolvedValueOnce([] as never);
+
+    const result = await bridge.handle({ id: "rpc-1", method: Methods.GetRegisteredWorkDirs }, "view-1");
+
+    expect(result).toEqual({ id: "rpc-1", result: [root] });
+  });
+
+  it("keeps the selected working directory visible without session history", async () => {
+    const sub = join(root, "packages", "demo");
+    await mkdir(sub, { recursive: true });
+    host.harness.listSessions.mockResolvedValue([] as never);
+
+    await bridge.handle({ id: "rpc-1", method: Methods.SetWorkDir, params: { workDir: sub } }, "view-1");
+    const result = await bridge.handle({ id: "rpc-2", method: Methods.GetRegisteredWorkDirs }, "view-1");
+
+    expect(result).toEqual({ id: "rpc-2", result: [root, sub].toSorted() });
+  });
+
+  it("merges session-history directories and hides directories outside the workspace", async () => {
+    const inside = join(root, "nested");
+    host.harness.listSessions.mockResolvedValueOnce([
+      { id: "s-1", workDir: inside },
+      { id: "s-2", workDir: "/private/outside" },
+      { id: "s-3", workDir: root },
+    ] as never);
+
+    const result = await bridge.handle({ id: "rpc-1", method: Methods.GetRegisteredWorkDirs }, "view-1");
+
+    expect(result).toEqual({ id: "rpc-1", result: [inside, root].toSorted() });
+    expect(JSON.stringify(result)).not.toContain("/private/outside");
   });
 });
 

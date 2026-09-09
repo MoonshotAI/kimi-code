@@ -32,7 +32,6 @@ const mocks = vi.hoisted(() => {
     loadTuiConfig: vi.fn(),
     detectTerminalTheme: vi.fn(),
     kimiHarnessConstructor: vi.fn(),
-    kimiHarnessV2Constructor: vi.fn(),
     harnessEnsureConfigFile: vi.fn(),
     harnessGetConfig: vi.fn(async () => ({
       providers: {},
@@ -99,10 +98,6 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
       mocks.kimiHarnessConstructor(...args);
       return makeHarnessStub(args);
     },
-    createKimiHarnessV2: (...args: unknown[]) => {
-      mocks.kimiHarnessV2Constructor(...args);
-      return makeHarnessStub(args);
-    },
   };
 });
 
@@ -152,7 +147,8 @@ vi.mock('../../src/tui/theme/detect', () => ({
   detectTerminalTheme: mocks.detectTerminalTheme,
 }));
 
-vi.mock('../../src/migration/index', () => ({
+vi.mock('../../src/migration/index', async (importOriginal) => ({
+  ...(await importOriginal()),
   detectPendingMigration: mocks.detectPendingMigration,
 }));
 
@@ -167,7 +163,6 @@ vi.mock('../../src/utils/process/resolve-command', () => ({
 
 describe('runShell', () => {
   beforeEach(() => {
-    vi.stubEnv('KIMI_CODE_LEGACY_FLAG', '1');
     // Pin region to cn: the telemetry endpoint assertion below must not
     // follow the dev machine's own login/marker state.
     vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://auth.kimi.com');
@@ -240,37 +235,10 @@ describe('runShell', () => {
     });
   }
 
-  it('builds the v2 harness by default', async () => {
+  it('builds the harness through the SDK factory', async () => {
     stubTuiStartup();
-    await withEnv(
-      { KIMI_CODE_LEGACY_FLAG: undefined, KIMI_CODE_EXPERIMENTAL_FLAG: undefined },
-      async () => {
-        await runShell(minimalCliOptions, '1.2.3-test');
-      },
-    );
-    expect(mocks.kimiHarnessV2Constructor).toHaveBeenCalledTimes(1);
-    expect(mocks.kimiHarnessConstructor).not.toHaveBeenCalled();
-  });
-
-  it('uses the legacy harness when the legacy flag is truthy', async () => {
-    stubTuiStartup();
-    await withEnv({ KIMI_CODE_LEGACY_FLAG: '1' }, async () => {
-      await runShell(minimalCliOptions, '1.2.3-test');
-    });
+    await runShell(minimalCliOptions, '1.2.3-test');
     expect(mocks.kimiHarnessConstructor).toHaveBeenCalledTimes(1);
-    expect(mocks.kimiHarnessV2Constructor).not.toHaveBeenCalled();
-  });
-
-  it('lets the legacy flag take priority over the experimental master switch', async () => {
-    stubTuiStartup();
-    await withEnv(
-      { KIMI_CODE_LEGACY_FLAG: '1', KIMI_CODE_EXPERIMENTAL_FLAG: '1' },
-      async () => {
-        await runShell(minimalCliOptions, '1.2.3-test');
-      },
-    );
-    expect(mocks.kimiHarnessConstructor).toHaveBeenCalledTimes(1);
-    expect(mocks.kimiHarnessV2Constructor).not.toHaveBeenCalled();
   });
 
   it('constructs KimiHarness and KimiTUI with startup input', async () => {
@@ -339,6 +307,7 @@ describe('runShell', () => {
       sessionId: undefined,
       endpoint: expect.any(Function),
       getAccessToken: expect.any(Function),
+      onUnexpectedError: expect.any(Function),
     });
     // The endpoint resolver defers to the active region profile at flush time.
     const telemetryOptions = mocks.initializeTelemetry.mock.calls[0]![0] as {
@@ -359,6 +328,7 @@ describe('runShell', () => {
       },
       version: '1.2.3-test',
       workDir: process.cwd(),
+      telemetryDisabled: false,
     });
     expect(mocks.tuiStart).toHaveBeenCalledOnce();
     expect(mocks.withTelemetryContext).toHaveBeenCalledWith({ sessionId: 'ses-startup' });
@@ -419,6 +389,20 @@ describe('runShell', () => {
 
     const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
     expect(startupInput).toMatchObject({ agentProfile: 'reviewer' });
+  });
+
+  it('forwards the telemetry opt-out from config to the TUI startup input', async () => {
+    stubTuiStartup();
+    mocks.harnessGetConfig.mockResolvedValue({
+      providers: {},
+      defaultModel: 'k2',
+      telemetry: false,
+    });
+
+    await runShell(minimalCliOptions, '1.2.3-test');
+
+    const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
+    expect(startupInput).toMatchObject({ telemetryDisabled: true });
   });
 
   it('forwards skillsDirs from CLI options to the harness', async () => {
@@ -980,5 +964,20 @@ describe('runShell', () => {
       ),
     ).rejects.toThrow('Invalid configuration');
     expect(mocks.tuiStart).not.toHaveBeenCalled();
+  });
+
+  it('refuses migration when KIMI_SHARE_DIR resolves to the Kimi Code home', async () => {
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      await withEnv({ KIMI_SHARE_DIR: '/tmp/kimi-code-test-home' }, async () => {
+        await runShell(minimalCliOptions, '1.2.3-test', { migrateOnly: true });
+      });
+      expect(mocks.detectPendingMigration).not.toHaveBeenCalled();
+      expect(mocks.harnessClose).toHaveBeenCalledOnce();
+      expect(mocks.tuiStart).not.toHaveBeenCalled();
+      expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('KIMI_SHARE_DIR'));
+    } finally {
+      stderrSpy.mockRestore();
+    }
   });
 });

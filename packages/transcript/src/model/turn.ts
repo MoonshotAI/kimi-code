@@ -35,6 +35,7 @@ export interface StepTiming {
   readonly llmServerFirstTokenMs?: number;
   readonly llmServerDecodeMs?: number;
   readonly llmClientConsumeMs?: number;
+  readonly llmClientBlockedMs?: number;
 }
 
 export interface StepRetry {
@@ -50,6 +51,7 @@ export interface StepRetry {
 export interface TranscriptTurn {
   readonly kind: 'turn';
   readonly turnId: TurnId;
+  readonly triggerPromptId?: string;
   readonly ordinal: number;
   readonly state: TurnState;
   readonly origin: TurnOrigin;

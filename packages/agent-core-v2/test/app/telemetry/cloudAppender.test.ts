@@ -101,7 +101,7 @@ describe('CloudAppender', () => {
       }),
     );
 
-    appender.track('tool.call', { name: 'bash', count: 2 });
+    appender.track({ event: 'tool.call', context: {}, properties: { name: 'bash', count: 2 } });
     await appender.flush();
 
     expect(requests).toHaveLength(1);
@@ -134,7 +134,7 @@ describe('CloudAppender', () => {
       }),
     );
 
-    appender.track('tool.call', { name: 'bash' });
+    appender.track({ event: 'tool.call', context: {}, properties: { name: 'bash' } });
     await appender.flush();
 
     expect(requests).toHaveLength(1);
@@ -154,7 +154,7 @@ describe('CloudAppender', () => {
       }),
     );
 
-    appender.track('tool.call', { name: 'bash' });
+    appender.track({ event: 'tool.call', context: {}, properties: { name: 'bash' } });
     await appender.flush();
 
     expect(requests).toHaveLength(1);
@@ -175,7 +175,7 @@ describe('CloudAppender', () => {
       }),
     );
 
-    appender.track('tool.call', { name: 'bash' });
+    appender.track({ event: 'tool.call', context: {}, properties: { name: 'bash' } });
     await appender.flush();
 
     expect(requests).toHaveLength(1);
@@ -198,7 +198,7 @@ describe('CloudAppender', () => {
         }),
       );
 
-      appender.track('tool.call', { name: 'bash' });
+      appender.track({ event: 'tool.call', context: {}, properties: { name: 'bash' } });
       await appender.flush();
 
       expect(requests).toHaveLength(1);
@@ -209,13 +209,13 @@ describe('CloudAppender', () => {
     }
   });
 
-  it('applies setContext sessionId and model updates to subsequent events', async () => {
+  it('uses the ambient session_id for the top-level envelope session_id', async () => {
     const requests: CapturedRequest[] = [];
     const appender = new CloudAppender(
       baseOptions({
         homeDir,
         deviceId: 'dev123',
-        model: 'initial-model',
+        sessionId: 'default-session',
         fetchImpl: makeFetch((req) => {
           requests.push(req);
           return okResponse();
@@ -223,16 +223,18 @@ describe('CloudAppender', () => {
       }),
     );
 
-    appender.setContext({ sessionId: 'sess42', model: 'switched-model' });
-    appender.track('turn_started', {});
+    appender.track({
+      event: 'turn_started',
+      context: { session_id: 'ambient-session' },
+      properties: { sessionId: 'ambient-session' },
+    });
     await appender.flush();
 
-    const event = requests[0]?.body.events[0];
-    expect(event?.['session_id']).toBe('sess42');
-    expect(event?.['context_model']).toBe('switched-model');
+    expect(requests[0]?.body.events[0]?.['session_id']).toBe('ambient-session');
+    expect(requests[0]?.body.events[0]?.['property_sessionId']).toBe('ambient-session');
   });
 
-  it('uses the event sessionId for top-level session_id when it differs from appender context', async () => {
+  it('falls back to the appender static session id when ambient has none', async () => {
     const requests: CapturedRequest[] = [];
     const appender = new CloudAppender(
       baseOptions({
@@ -245,10 +247,47 @@ describe('CloudAppender', () => {
       }),
     );
 
-    appender.track('evt', { sessionId: 'event-session' });
+    appender.track({ event: 'turn_started', context: {}, properties: {} });
     await appender.flush();
 
-    expect(requests[0]?.body.events[0]?.['session_id']).toBe('event-session');
+    expect(requests[0]?.body.events[0]?.['session_id']).toBe('default-session');
+  });
+
+  it('uses the ambient model for the envelope context when constructed without a model', async () => {
+    const requests: CapturedRequest[] = [];
+    const appender = new CloudAppender(
+      baseOptions({
+        homeDir,
+        fetchImpl: makeFetch((req) => {
+          requests.push(req);
+          return okResponse();
+        }),
+      }),
+    );
+
+    appender.track({ event: 'turn_started', context: { model: 'ambient-model' }, properties: {} });
+    await appender.flush();
+
+    expect(requests[0]?.body.events[0]?.['context_model']).toBe('ambient-model');
+  });
+
+  it('prefers the ambient model over the constructor model in the envelope context', async () => {
+    const requests: CapturedRequest[] = [];
+    const appender = new CloudAppender(
+      baseOptions({
+        homeDir,
+        model: 'constructor-model',
+        fetchImpl: makeFetch((req) => {
+          requests.push(req);
+          return okResponse();
+        }),
+      }),
+    );
+
+    appender.track({ event: 'turn_started', context: { model: 'ambient-model' }, properties: {} });
+    await appender.flush();
+
+    expect(requests[0]?.body.events[0]?.['context_model']).toBe('ambient-model');
   });
 
   it('sends Authorization header when a token is provided', async () => {
@@ -264,7 +303,7 @@ describe('CloudAppender', () => {
       }),
     );
 
-    appender.track('evt');
+    appender.track({ event: 'evt', context: {}, properties: {} });
     await appender.flush();
 
     expect(requests[0]?.headers['Authorization']).toBe('Bearer tok123');
@@ -283,10 +322,10 @@ describe('CloudAppender', () => {
       }),
     );
 
-    appender.track('e1');
-    appender.track('e2');
+    appender.track({ event: 'e1', context: {}, properties: {} });
+    appender.track({ event: 'e2', context: {}, properties: {} });
     expect(sends).toBe(0);
-    appender.track('e3');
+    appender.track({ event: 'e3', context: {}, properties: {} });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(sends).toBe(1);
   });
@@ -303,7 +342,7 @@ describe('CloudAppender', () => {
       }),
     );
 
-    appender.track('e1');
+    appender.track({ event: 'e1', context: {}, properties: {} });
     await appender.shutdown();
     expect(sends).toBe(1);
   });
@@ -320,7 +359,7 @@ describe('CloudAppender', () => {
       }),
     );
 
-    appender.track('evt');
+    appender.track({ event: 'evt', context: {}, properties: {} });
     await appender.flush();
 
     expect(attempts).toBe(4);
@@ -344,7 +383,7 @@ describe('CloudAppender', () => {
       }),
     );
 
-    appender.track('evt');
+    appender.track({ event: 'evt', context: {}, properties: {} });
     await appender.flush();
 
     expect(seenAuths).toEqual(['Bearer tok', undefined]);
@@ -359,7 +398,7 @@ describe('CloudAppender', () => {
       }),
     );
 
-    appender.track('evt');
+    appender.track({ event: 'evt', context: {}, properties: {} });
     await appender.flush();
     expect(
       readdirSync(join(homeDir, 'telemetry')).filter((f) => f.startsWith('failed_')),
@@ -370,6 +409,29 @@ describe('CloudAppender', () => {
     expect(
       readdirSync(join(homeDir, 'telemetry')).filter((f) => f.startsWith('failed_')),
     ).toHaveLength(0);
+  });
+
+  it('drops null values from the outbound payload', async () => {
+    const requests: CapturedRequest[] = [];
+    const appender = new CloudAppender(
+      baseOptions({
+        homeDir,
+        deviceId: 'dev123',
+        fetchImpl: makeFetch((req) => {
+          requests.push(req);
+          return okResponse();
+        }),
+      }),
+    );
+
+    appender.track({ event: 'evt', context: {}, properties: { empty: null, keep: 'yes' } });
+    await appender.flush();
+
+    expect(requests).toHaveLength(1);
+    const event = requests[0]?.body.events[0];
+    expect(event?.['property_keep']).toBe('yes');
+    expect(event).not.toHaveProperty('property_empty');
+    expect(event).not.toHaveProperty('session_id');
   });
 
   it('drops non-primitive properties and reports the violation', async () => {
@@ -387,7 +449,11 @@ describe('CloudAppender', () => {
         }),
       );
 
-      appender.track('evt', { ok: 'yes', bad: { nested: true } as unknown as string });
+      appender.track({
+        event: 'evt',
+        context: {},
+        properties: { ok: 'yes', bad: { nested: true } as unknown as string },
+      });
       await appender.flush();
 
       const event = requests[0]?.body.events[0];

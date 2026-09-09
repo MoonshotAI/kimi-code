@@ -19,7 +19,15 @@ export const TowerPlanToolInputSchema = z
             tasks: z
               .array(z.string())
               .optional()
-              .describe('Checklist the worker will tick off via TowerMission task_done'),
+              .describe(
+                'Checklist the worker will tick off via TowerMission task_done — write each task as a verifiable item a reviewer can map to the diff',
+              ),
+            context: z
+              .string()
+              .optional()
+              .describe(
+                "The user's own key sentences about this mission, copied verbatim — the tower's paraphrase supplements them, never replaces them. Fill this whenever the requirement could be misread; never paste the full conversation history.",
+              ),
             deps: z
               .array(z.string())
               .optional()

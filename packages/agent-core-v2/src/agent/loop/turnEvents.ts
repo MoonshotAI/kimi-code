@@ -1,10 +1,12 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+import { z } from 'zod';
+
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { parseDaemonFileUrl } from '#/agent/media/mediaRef';
-import { AgentEvent2 } from '#/app/event/event2';
-import type { FinishReason } from '#/kosong/contract/provider';
-import type { ContentPart, TextPart } from '#/kosong/contract/message';
-import type { TokenUsage } from '#/kosong/contract/usage';
+import { AgentEvent2, registerEvent2Class } from '#/app/event/event2';
+import type { FinishReason } from '#human/llm/finish-reason';
+import type { ContentPart, TextPart } from '#human/llm/message';
+import type { TokenUsage } from '#human/llm/usage';
 
 export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'blocked';
 
@@ -16,12 +18,25 @@ export type TurnInterruptReason =
   | 'filtered'
   | 'blocked';
 
+export interface TurnPromptAttachmentFile {
+  readonly kind: 'file';
+  readonly name: string;
+  readonly mediaType: string;
+  readonly size: number;
+  readonly path: string;
+}
+
+export type TurnPromptAttachment =
+  | { readonly kind: 'image' | 'video' | 'audio'; readonly fileId: string; readonly name?: string }
+  | TurnPromptAttachmentFile;
+
 export interface TurnStartedPayload {
   readonly agentId: string;
   readonly turnId: number;
+  readonly promptId?: string;
   readonly origin: PromptOrigin;
   readonly prompt?: string;
-  readonly promptAttachments?: readonly { kind: 'image' | 'video' | 'audio'; fileId: string }[];
+  readonly promptAttachments?: readonly TurnPromptAttachment[];
 }
 
 export class TurnStarted extends AgentEvent2<TurnStartedPayload> {
@@ -45,8 +60,9 @@ export function turnPromptText(
 
 export function turnPromptAttachments(
   input: readonly ContentPart[],
+  origin?: PromptOrigin,
 ): TurnStartedPayload['promptAttachments'] {
-  const attachments: { kind: 'image' | 'video' | 'audio'; fileId: string }[] = [];
+  const attachments: TurnPromptAttachment[] = [];
   const promptMediaFileId = (url: string, id: string | undefined): string | undefined => {
     const fileId = parseDaemonFileUrl(url)?.fileId;
     if (id === undefined) return fileId;
@@ -55,13 +71,18 @@ export function turnPromptAttachments(
   for (const part of input) {
     if (part.type === 'image_url') {
       const fileId = promptMediaFileId(part.imageUrl.url, part.imageUrl.id);
-      if (fileId !== undefined) attachments.push({ kind: 'image', fileId });
+      if (fileId !== undefined) attachments.push({ kind: 'image', fileId, name: part.imageUrl.name });
     } else if (part.type === 'video_url') {
       const fileId = promptMediaFileId(part.videoUrl.url, part.videoUrl.id);
-      if (fileId !== undefined) attachments.push({ kind: 'video', fileId });
+      if (fileId !== undefined) attachments.push({ kind: 'video', fileId, name: part.videoUrl.name });
     } else if (part.type === 'audio_url') {
       const fileId = promptMediaFileId(part.audioUrl.url, part.audioUrl.id);
       if (fileId !== undefined) attachments.push({ kind: 'audio', fileId });
+    }
+  }
+  if (origin?.kind === 'user' || origin?.kind === 'skill_activation') {
+    for (const attachment of origin.attachments ?? []) {
+      attachments.push({ kind: 'file', ...attachment });
     }
   }
   return attachments.length > 0 ? attachments : undefined;
@@ -102,6 +123,7 @@ export interface TurnStepCompletedPayload {
   readonly llmServerFirstTokenMs?: number;
   readonly llmServerDecodeMs?: number;
   readonly llmClientConsumeMs?: number;
+  readonly llmClientBlockedMs?: number;
   readonly providerFinishReason?: FinishReason;
   readonly rawFinishReason?: string;
 }
@@ -121,11 +143,58 @@ export interface TurnStepInterruptedPayload {
   readonly message?: string;
 }
 
+const turnStepInterruptedSchema = z.object({
+  agentId: z.string(),
+  turnId: z.number(),
+  step: z.number(),
+  stepId: z.string().optional(),
+  reason: z.string(),
+  message: z.string().optional(),
+});
+
 export class TurnStepInterrupted extends AgentEvent2<TurnStepInterruptedPayload> {
   static override readonly type = 'turn.step.interrupted';
+  static override readonly durable = true;
   static override readonly observable = true;
+  static override readonly schema = turnStepInterruptedSchema;
 }
 export interface TurnStepInterrupted extends TurnStepInterruptedPayload {}
+
+export interface TurnStepRetryingPayload {
+  readonly agentId: string;
+  readonly turnId: number;
+  readonly step: number;
+  readonly stepId?: string;
+  readonly failedAttempt: number;
+  readonly nextAttempt: number;
+  readonly maxAttempts: number;
+  readonly delayMs: number;
+  readonly errorName: string;
+  readonly errorMessage: string;
+  readonly statusCode?: number;
+}
+
+const turnStepRetryingSchema = z.object({
+  agentId: z.string(),
+  turnId: z.number(),
+  step: z.number(),
+  stepId: z.string().optional(),
+  failedAttempt: z.number(),
+  nextAttempt: z.number(),
+  maxAttempts: z.number(),
+  delayMs: z.number(),
+  errorName: z.string(),
+  errorMessage: z.string(),
+  statusCode: z.number().optional(),
+});
+
+export class TurnStepRetrying extends AgentEvent2<TurnStepRetryingPayload> {
+  static override readonly type = 'turn.step.retrying';
+  static override readonly durable = true;
+  static override readonly observable = true;
+  static override readonly schema = turnStepRetryingSchema;
+}
+export interface TurnStepRetrying extends TurnStepRetryingPayload {}
 
 export interface AssistantDeltaPayload {
   readonly agentId: string;
@@ -164,3 +233,34 @@ export class ToolCallDelta extends AgentEvent2<ToolCallDeltaPayload> {
   static override readonly observable = true;
 }
 export interface ToolCallDelta extends ToolCallDeltaPayload {}
+
+registerEvent2Class(TurnStepInterrupted);
+registerEvent2Class(TurnStepRetrying);
+
+export interface TurnStartedEvent extends Omit<TurnStartedPayload, 'agentId'> {
+  readonly type: 'turn.started';
+}
+
+export interface TurnStepStartedEvent extends Omit<TurnStepStartedPayload, 'agentId'> {
+  readonly type: 'turn.step.started';
+}
+
+export interface TurnStepCompletedEvent extends Omit<TurnStepCompletedPayload, 'agentId'> {
+  readonly type: 'turn.step.completed';
+}
+
+export interface TurnStepRetryingEvent extends Omit<TurnStepRetryingPayload, 'agentId'> {
+  readonly type: 'turn.step.retrying';
+}
+
+export interface TurnStepInterruptedEvent extends Omit<TurnStepInterruptedPayload, 'agentId'> {
+  readonly type: 'turn.step.interrupted';
+}
+
+export interface AssistantDeltaEvent extends Omit<AssistantDeltaPayload, 'agentId'> {
+  readonly type: 'assistant.delta';
+}
+
+export interface ThinkingDeltaEvent extends Omit<ThinkingDeltaPayload, 'agentId'> {
+  readonly type: 'thinking.delta';
+}

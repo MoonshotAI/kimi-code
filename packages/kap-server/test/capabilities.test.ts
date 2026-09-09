@@ -1,16 +1,10 @@
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
   capabilityStatusSchema,
   listCapabilitiesResponseSchema,
 } from '../src/protocol/rest-capability';
-import { type RunningServer, startServer } from '../src/start';
-import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
-import { authHeaders } from './helpers/auth';
+import { sharedAuthHeaders, sharedServer } from './helpers/sharedServer';
 
 interface Envelope<T> {
   code: number;
@@ -20,44 +14,17 @@ interface Envelope<T> {
 }
 
 describe('server-v2 /api/v1 capabilities', () => {
-  let server: RunningServer | undefined;
-  let home: string | undefined;
-  let base: string;
-
-  beforeEach(async () => {
-    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-capabilities-'));
-    server = await startServer({
-      hostIdentity: TEST_HOST_IDENTITY,
-      host: '127.0.0.1',
-      port: 0,
-      homeDir: home,
-      logLevel: 'silent',
-    });
-    base = `http://127.0.0.1:${server.port}`;
-  });
-
-  afterEach(async () => {
-    if (server !== undefined) {
-      await server.close();
-      server = undefined;
-    }
-    if (home !== undefined) {
-      await rm(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 } as never);
-      home = undefined;
-    }
-  });
-
   async function getJson<T>(path: string): Promise<{ status: number; body: Envelope<T> }> {
-    const res = await fetch(`${base}${path}`, {
-      headers: authHeaders(server as RunningServer),
+    const res = await fetch(`${sharedServer().base}${path}`, {
+      headers: sharedAuthHeaders(),
     } as never);
     return { status: res.status, body: (await res.json()) as Envelope<T> };
   }
 
   async function postJson<T>(path: string): Promise<{ status: number; body: Envelope<T> }> {
-    const res = await fetch(`${base}${path}`, {
+    const res = await fetch(`${sharedServer().base}${path}`, {
       method: 'POST',
-      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      headers: sharedAuthHeaders({ 'content-type': 'application/json' }),
       body: '{}',
     } as never);
     return { status: res.status, body: (await res.json()) as Envelope<T> };

@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { bridge } from "@/services";
 import { toast } from "@/components/ui/sonner";
 import type { ExtensionConfig } from "shared/types";
-import type { MCPServerConfig, ModelConfig, ThinkingMode, SlashCommandInfo } from "shared/legacy-sdk";
+import type { ModelConfig, ThinkingMode, SlashCommandInfo } from "shared/legacy-sdk";
 
 let settingsSaveRevision = 0;
 const MANAGED_KIMI_CODE_PROVIDER = "managed:kimi-code";
@@ -160,7 +160,6 @@ interface SettingsState {
   currentModel: string;
   thinkingEffort: string;
   extensionConfig: ExtensionConfig;
-  mcpServers: MCPServerConfig[];
   mcpModalOpen: boolean;
   workDirModalOpen: boolean;
   currentWorkDir: string | null;
@@ -180,7 +179,6 @@ interface SettingsState {
   toggleThinking: () => void;
   selectThinkingEffort: (effort: string) => void;
   setExtensionConfig: (config: ExtensionConfig) => void;
-  setMCPServers: (servers: MCPServerConfig[]) => void;
   setMCPModalOpen: (open: boolean) => void;
   setWorkDirModalOpen: (open: boolean) => void;
   setCurrentWorkDir: (workDir: string | null) => void;
@@ -195,7 +193,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   currentModel: "",
   thinkingEffort: "off",
   extensionConfig: DEFAULT_EXTENSION_CONFIG,
-  mcpServers: [],
   mcpModalOpen: false,
   workDirModalOpen: false,
   currentWorkDir: null,
@@ -307,8 +304,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   setExtensionConfig: (extensionConfig) => set({ extensionConfig }),
-
-  setMCPServers: (mcpServers) => set({ mcpServers }),
 
   setMCPModalOpen: (mcpModalOpen) => set({ mcpModalOpen }),
 

@@ -7,8 +7,8 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventBus } from '#/app/event/eventBus';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IModelCatalog, type Model } from '#/kosong/model/catalog';
-import { type ModelRequester } from '#/kosong/model/modelRequester';
+import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
+import { type ModelRequester } from '#/llm-adapter/model/model-requester';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -56,6 +56,15 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     this.states.set(mediaRegisteredKeyKey, value);
   }
 
+  private tryResolveModel(alias: string): Model | undefined {
+    if (alias === '') return undefined;
+    try {
+      return this.modelCatalog.get(alias);
+    } catch {
+      return undefined;
+    }
+  }
+
   private refresh(): void {
     const capabilities = this.profile.getModelCapabilities();
     const modelAlias = this.profile.getModel();
@@ -78,8 +87,11 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
       inspected.identity.runtimeId,
       inspected.identity.generation,
     ].join('|');
+    const model = this.tryResolveModel(modelAlias);
     const key = [
       modelAlias,
+      model?.providerType ?? '',
+      model?.protocol ?? '',
       String(capabilities.image_in),
       String(capabilities.video_in),
       identityKey,
@@ -95,14 +107,11 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     const runtime = this.runtime;
     const pathClass = inspected.environment.pathClass;
     let requester: ModelRequester | undefined;
-    let model: Model | undefined;
-    if (modelAlias !== '') {
+    if (model !== undefined) {
       try {
         requester = this.modelCatalog.getRequester(modelAlias);
-        model = requester.model;
       } catch {
         requester = undefined;
-        model = undefined;
       }
     }
     this.registration = registerMediaTools(this.toolRegistry, {
@@ -129,6 +138,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
         },
       }),
       inlineVideoSupported: model?.protocol !== 'openai' && model?.protocol !== 'openai_responses',
+      providerType: model?.providerType,
       telemetry: this.telemetry,
     });
   }

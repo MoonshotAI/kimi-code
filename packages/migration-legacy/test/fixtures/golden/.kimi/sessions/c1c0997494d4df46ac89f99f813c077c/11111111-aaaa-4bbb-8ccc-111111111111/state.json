@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "approval": {
+    "yolo": false,
+    "afk": false,
+    "auto_approve_actions": []
+  },
+  "additional_dirs": [
+    "/work/golden-extra"
+  ],
+  "custom_title": "Golden rich session",
+  "title_generated": false,
+  "title_generate_attempts": 0,
+  "plan_mode": false,
+  "plan_session_id": null,
+  "plan_slug": null,
+  "wire_mtime": 1735689600.0,
+  "archived": false,
+  "archived_at": null,
+  "auto_archive_exempt": false,
+  "todos": [
+    {
+      "title": "follow up on the review",
+      "status": "pending"
+    }
+  ]
+}

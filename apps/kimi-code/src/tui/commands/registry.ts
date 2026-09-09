@@ -148,14 +148,14 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'yolo',
     aliases: ['yes'],
-    description: 'Toggle YOLO mode: auto-approve tool actions, but the agent may still ask questions.',
+    description: 'Ask When Needed mode: routine edits and commands run automatically; risky actions, questions, and plans still ask.',
     priority: 101,
     availability: 'always',
   },
   {
     name: 'auto',
     aliases: [],
-    description: 'Toggle Auto mode: fully autonomous, agent decides everything without asking.',
+    description: 'Never Ask mode: never interrupts you; everything runs and is decided automatically.',
     priority: 99,
     availability: 'always',
   },
@@ -192,16 +192,15 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'tower',
     aliases: [],
-    description: 'Report tower status, toggle tower mode, or set the tower objective',
+    description: 'Report tower status, toggle tower mode, or turn it on with a base branch',
     priority: 100,
-    argumentHint: '[status|teardown|on|off] | <objective>',
+    argumentHint: '[status|teardown|on|off] | <base-branch>',
     completeArgs: towerArgumentCompletions,
-    // Every form stays available while busy: objectives steer into the
-    // running coordinator turn (see sendMessage in kimi-tui.ts), so /tower
-    // commands never wait for the previous one to finish.
+    // Every form stays available while busy: base selections apply to the next
+    // TowerInit of the running coordinator turn, so /tower commands never wait
+    // for the previous one to finish.
     availability: 'always',
     experimentalFlag: 'tower',
-    requiresEngineV2: true,
   },
   {
     name: 'model',
@@ -216,7 +215,6 @@ export const BUILTIN_SLASH_COMMANDS = [
     description: 'Configure the secondary model for subagents',
     priority: 90,
     availability: 'always',
-    experimentalFlag: 'secondary-model',
   },
   {
     name: 'effort',
@@ -434,10 +432,9 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'remote-control',
     aliases: ['rc'],
-    description: 'Open the current session through Kimi Remote Control (experimental)',
+    description: 'Open the current session through Kimi Remote Control',
     priority: 40,
     availability: 'always',
-    experimentalFlag: 'remote-control',
   },
   {
     name: 'exit',

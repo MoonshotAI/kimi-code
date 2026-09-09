@@ -1,6 +1,6 @@
 import { Service } from '#/_base/di/service';
 import { defineState } from '#/state/state';
-import type { ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
+import type { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentPlanService } from '#/features/plan/plan';
@@ -22,7 +22,7 @@ export const planWasActiveKey = defineState<boolean>('plan.wasActive', () => fal
 
 export class PlanModeInjection extends Service {
   constructor(
-    injector: ReminderRuntime,
+    injector: IAgentReminderService,
     @IAgentPlanService private readonly plan: IAgentPlanService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentStateService private readonly states: IAgentStateService,

@@ -30,6 +30,7 @@ function chunkedStorage(chunks: Uint8Array[]): IFileSystemStorageService {
     list: async () => [],
     delete: async () => {},
     size: async () => undefined,
+    mtime: async () => undefined,
     pathFor: () => undefined,
     flush: async () => {},
     close: async () => {},
@@ -758,5 +759,36 @@ describe('AppendLogStore', () => {
       { n: 1, s: '中文' },
       { n: 2, s: '日本語' },
     ]);
+  });
+
+  it('does not emit onDidWrite when a flush persists nothing', async () => {
+    const events: string[] = [];
+    record.onDidWrite((write) => events.push(`${write.scope}/${write.key}`));
+
+    record.append<Rec>(SCOPE, KEY, { n: 1 });
+    await record.flush();
+    expect(events).toEqual([`${SCOPE}/${KEY}`]);
+
+    await record.flush();
+    await record.flush();
+    expect(events).toEqual([`${SCOPE}/${KEY}`]);
+  });
+
+  it('emits onDidWrite for batches persisted before a later drain failure', async () => {
+    const events: string[] = [];
+    record.onDidWrite((write) => events.push(`${write.scope}/${write.key}`));
+    const original = storage.append.bind(storage);
+    let calls = 0;
+    storage.append = async (scope, key, data, options) => {
+      calls += 1;
+      if (calls > 1) throw new Error('disk full');
+      const result = await original(scope, key, data, options);
+      record.append<Rec>(scope, key, { n: 2 });
+      return result;
+    };
+
+    record.append<Rec>(SCOPE, KEY, { n: 1 });
+    await expect(record.flush()).rejects.toThrow('disk full');
+    expect(events).toEqual([`${SCOPE}/${KEY}`]);
   });
 });

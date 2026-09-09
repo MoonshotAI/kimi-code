@@ -1,19 +1,20 @@
 import type { AgentTranscriptSnapshot } from '../ops/operation';
 import type { TranscriptAttachment } from '../model/attachment';
-import type { TranscriptFrame } from '../model/frame';
+import type { TranscriptFrame, TranscriptUserOrigin } from '../model/frame';
 import type { TranscriptItem, TranscriptMarker } from '../model/item';
 import type { TurnOrigin } from '../model/turn';
 import { daemonFileRefFromPairingPart } from '../contract/mediaRef';
+import { projectTranscriptUserOrigin } from '../contract/origin';
 
 export type HistoryMediaSource =
   | { readonly kind: 'url'; readonly url: string }
   | { readonly kind: 'base64'; readonly media_type: string; readonly data: string }
-  | { readonly kind: 'file'; readonly file_id: string };
+  | { readonly kind: 'file' | 'session_media'; readonly file_id: string };
 
 export type HistoryContentPart =
   | { readonly type: 'text'; readonly text: string }
   | { readonly type: 'think'; readonly think: string }
-  | { readonly type: 'image' | 'video' | 'audio'; readonly source: HistoryMediaSource }
+  | { readonly type: 'image' | 'video' | 'audio'; readonly source: HistoryMediaSource; readonly name?: string }
   | {
       readonly type: 'file';
       readonly file_id: string;
@@ -30,6 +31,7 @@ export interface HistoryToolCall {
 }
 
 export interface HistoryMessage {
+  readonly id?: string;
   readonly role: string;
   readonly content?: readonly HistoryContentPart[];
   readonly toolCalls?: readonly HistoryToolCall[];
@@ -41,6 +43,7 @@ export interface HistoryMessage {
 interface TurnDraft {
   turnId: string;
   ordinal: number;
+  triggerPromptId?: string;
   origin: TurnOrigin;
   prompt?: string;
   attachmentIds?: string[];
@@ -67,18 +70,21 @@ export function groupMessagesIntoSnapshot(
   messages: readonly HistoryMessage[],
   options?: {
     readonly taskOriginTurnTaskIds?: ReadonlySet<string>;
-    readonly steeredContents?: ReadonlyMap<string, number>;
+    readonly steeredContents?: ReadonlyMap<string, ReadonlyMap<string, number>>;
   },
 ): AgentTranscriptSnapshot {
   const items: TranscriptItem[] = [];
   const attachments: TranscriptAttachment[] = [];
-  const steeredContents = new Map(options?.steeredContents ?? []);
+  const steeredContents = new Map(
+    [...(options?.steeredContents ?? [])].map(([key, byKind]) => [key, new Map(byKind)]),
+  );
   let turn: TurnDraft | undefined;
   let pendingNotificationFrames: {
     text: string;
     taskId: string | undefined;
     attachmentIds?: string[];
     promptIds?: readonly string[];
+    origin?: TranscriptUserOrigin;
     steered?: boolean;
   }[] = [];
   let nextOrdinal = 0;
@@ -102,11 +108,12 @@ export function groupMessagesIntoSnapshot(
           attachmentId: `att_${attachments.length + 1}`,
           mediaType:
             source.kind === 'base64' ? source.media_type : `${part.type}/*`,
+          name: part.name,
           source:
             source.kind === 'url'
               ? { kind: 'url', url: source.url }
-              : source.kind === 'file'
-                ? { kind: 'file', fileId: source.file_id }
+              : source.kind === 'file' || source.kind === 'session_media'
+                ? { kind: source.kind, fileId: source.file_id }
                 : undefined,
         };
         attachments.push(entity);
@@ -130,11 +137,22 @@ export function groupMessagesIntoSnapshot(
         const entity: TranscriptAttachment = {
           attachmentId: `att_${attachments.length + 1}`,
           mediaType: `${ref.kind}/*`,
+          name: ref.name,
           source: { kind: 'session_media', fileId: ref.ref.fileId },
         };
         attachments.push(entity);
         ids.push(entity.attachmentId);
       }
+    }
+    for (const attachment of originFileAttachments(message)) {
+      const entity: TranscriptAttachment = {
+        attachmentId: `att_${attachments.length + 1}`,
+        mediaType: attachment.mediaType,
+        name: attachment.name,
+        size: attachment.size,
+      };
+      attachments.push(entity);
+      ids.push(entity.attachmentId);
     }
     return { text: texts.join(''), attachmentIds: ids.length > 0 ? ids : undefined };
   };
@@ -154,10 +172,16 @@ export function groupMessagesIntoSnapshot(
     if (leftovers.length === 0) return;
     pendingNotificationFrames = pendingNotificationFrames.filter((pending) => !pending.steered);
     for (const pending of leftovers) {
-      const lastStep = turn?.steps.at(-1);
-      if (turn === undefined || lastStep === undefined) {
-        startTurn({ kind: 'user' }, pending.text, pending.attachmentIds);
-        continue;
+      const targetTurn = turn ?? startTurn({ kind: 'user' });
+      let lastStep = targetTurn.steps.at(-1);
+      if (lastStep === undefined) {
+        const ordinal = targetTurn.steps.length + 1;
+        lastStep = {
+          stepId: `${targetTurn.turnId}.${ordinal}`,
+          ordinal,
+          frames: [],
+        };
+        targetTurn.steps.push(lastStep);
       }
       lastStep.frames.push({
         kind: 'text',
@@ -166,17 +190,23 @@ export function groupMessagesIntoSnapshot(
         text: pending.text,
         attachmentIds: pending.attachmentIds,
         promptIds: pending.promptIds,
+        origin: pending.origin,
       });
-      syncTurnItem(items, turn);
+      syncTurnItem(items, targetTurn);
     }
   };
 
-  const startTurn = (origin: TurnOrigin, prompt?: string, attachmentIds?: string[]): TurnDraft => {
+  const startTurn = (
+    origin: TurnOrigin,
+    prompt?: string,
+    attachmentIds?: string[],
+    triggerPromptId?: string,
+  ): TurnDraft => {
     flushSteeredLeftovers();
     const ordinal = nextOrdinal;
     nextOrdinal += 1;
     pendingNotificationFrames = [];
-    turn = { turnId: `t${ordinal}`, ordinal, origin, prompt, attachmentIds, steps: [] };
+    turn = { turnId: `t${ordinal}`, ordinal, triggerPromptId, origin, prompt, attachmentIds, steps: [] };
     items.push(draftToTurnItem(turn));
     return turn;
   };
@@ -207,10 +237,17 @@ export function groupMessagesIntoSnapshot(
         }
         continue;
       }
+      const markerKey = originKind !== undefined ? MARKER_USER_ORIGINS[originKind] : undefined;
+      if (markerKey !== undefined && !isUserSlashPrompt(message)) {
+        pushMarker(markerKey, { text: textOf(message), origin: message.origin });
+        continue;
+      }
       const contentKey = JSON.stringify(message.content ?? []);
-      const steeredRemaining = steeredContents.get(contentKey) ?? 0;
-      if (steeredRemaining > 0) {
-        steeredContents.set(contentKey, steeredRemaining - 1);
+      const steerKind = originKind ?? 'user';
+      const steeredByKind = steeredContents.get(contentKey);
+      const steeredRemaining = steeredByKind?.get(steerKind) ?? 0;
+      if (steeredByKind !== undefined && steeredRemaining > 0) {
+        steeredByKind.set(steerKind, steeredRemaining - 1);
         const bundled = bundledSkillActivations(message);
         const parts = message.content ?? [];
         bundled.forEach((activation, index) => {
@@ -225,16 +262,16 @@ export function groupMessagesIntoSnapshot(
           text: opening.text,
           taskId: undefined,
           attachmentIds: opening.attachmentIds,
+          origin: projectTranscriptUserOrigin(message.origin),
           steered: true,
         });
         continue;
       }
-      const markerKey = originKind !== undefined ? MARKER_USER_ORIGINS[originKind] : undefined;
       if (markerKey !== undefined) {
         const opening = isUserSlashPrompt(message) ? foldTurnOpeningInput(message) : undefined;
         pushMarker(markerKey, { text: opening?.text ?? textOf(message), origin: message.origin });
         if (opening !== undefined) {
-          startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
+          startTurn(mapOrigin(message), opening.text, opening.attachmentIds, triggerPromptIdOf(message));
         }
         continue;
       }
@@ -266,11 +303,11 @@ export function groupMessagesIntoSnapshot(
         });
         const callerMessage = { ...message, content: parts.slice(bundled.length) };
         const opening = foldTurnOpeningInput(callerMessage);
-        startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
+        startTurn(mapOrigin(message), opening.text, opening.attachmentIds, triggerPromptIdOf(message));
         continue;
       }
       const opening = foldTurnOpeningInput(message);
-      startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
+      startTurn(mapOrigin(message), opening.text, opening.attachmentIds, triggerPromptIdOf(message));
       continue;
     }
 
@@ -297,6 +334,7 @@ export function groupMessagesIntoSnapshot(
           taskId: pending.taskId,
           attachmentIds: pending.attachmentIds,
           promptIds: pending.promptIds,
+          origin: pending.origin,
         });
       }
       pendingNotificationFrames = [];
@@ -365,7 +403,11 @@ function notificationFrameText(text: string): string {
   const bodyLines = lines.slice(bodyStart);
   const childStart = bodyLines.findIndex((line) => {
     const trimmed = line.trimStart();
-    return trimmed.startsWith('<output-file') || trimmed.startsWith('<output-preview');
+    return (
+      trimmed.startsWith('<output-file') ||
+      trimmed.startsWith('<output-preview') ||
+      trimmed.startsWith('<answer')
+    );
   });
   const body = (childStart === -1 ? bodyLines : bodyLines.slice(0, childStart)).join('\n').trim();
   if (title.length > 0 && body.length > 0) return `${title}\n${body}`;
@@ -387,6 +429,18 @@ function isUserSlashPrompt(message: HistoryMessage): boolean {
     (origin?.kind === 'skill_activation' || origin?.kind === 'plugin_command') &&
     origin.trigger === 'user-slash'
   );
+}
+
+function triggerPromptIdOf(message: HistoryMessage): string | undefined {
+  if (typeof message.id !== 'string' || message.id.length === 0) return undefined;
+  const origin = message.origin as { kind?: unknown; trigger?: unknown } | undefined;
+  if (origin?.kind === undefined || origin.kind === 'user') return message.id;
+  return (
+    (origin.kind === 'skill_activation' || origin.kind === 'plugin_command') &&
+    origin.trigger === 'user-slash'
+  )
+    ? message.id
+    : undefined;
 }
 
 function mapOrigin(message: HistoryMessage): TurnOrigin {
@@ -438,6 +492,28 @@ function bundledSkillActivations(message: HistoryMessage): readonly BundledSkill
   );
 }
 
+interface OriginFileAttachment {
+  readonly name: string;
+  readonly mediaType: string;
+  readonly size: number;
+  readonly path: string;
+}
+
+function originFileAttachments(message: HistoryMessage): readonly OriginFileAttachment[] {
+  if (message.origin?.kind !== 'user' && message.origin?.kind !== 'skill_activation') return [];
+  const attachments = (message.origin as { readonly attachments?: unknown }).attachments;
+  if (!Array.isArray(attachments)) return [];
+  return attachments.filter(
+    (attachment): attachment is OriginFileAttachment =>
+      typeof attachment === 'object' &&
+      attachment !== null &&
+      typeof (attachment as { name?: unknown }).name === 'string' &&
+      typeof (attachment as { mediaType?: unknown }).mediaType === 'string' &&
+      typeof (attachment as { size?: unknown }).size === 'number' &&
+      typeof (attachment as { path?: unknown }).path === 'string',
+  );
+}
+
 function textOf(message: HistoryMessage): string {
   return (message.content ?? [])
     .filter((part): part is { readonly type: 'text'; readonly text: string } => part.type === 'text' && 'text' in part)
@@ -458,6 +534,7 @@ function draftToTurnItem(draft: TurnDraft): TranscriptItem {
   return {
     kind: 'turn',
     turnId: draft.turnId,
+    triggerPromptId: draft.triggerPromptId,
     ordinal: draft.ordinal,
     state: 'completed',
     origin: draft.origin,

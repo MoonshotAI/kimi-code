@@ -6,6 +6,97 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 0.42.0（2026-09-09）
+
+### 新功能
+
+- Remote Control 由实验性转为正式，无需再设置 `KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL` 实验开关。详见 [Remote Control](https://moonshotai.github.io/kimi-code/zh/guides/remote-control.html)。
+- Web 版支持从会话行的右键菜单永久删除会话，删除前会要求确认。
+- `/btw` 侧边聊天的 subagent 新增只读工具。
+- Web 版输入框新增可排序的媒体预览栏，可在文本中按需引用图片和视频，排队与发送后预览仍然保留。
+- 模型由 Kimi 提供时，支持在提示词附件与 `ReadMediaFile` 中使用 HEIC、HEIF 和 BMP 图片。
+
+### 优化
+
+- 消息记录中已完成的工具调用现折叠为标题加一行结果摘要：短输出完整展示，隐藏内容以 `N more lines`、`+N more` 计数并按 `Ctrl-O` 展开，页脚会在可用时提示。
+- 符合条件的用户的默认思考强度升级为推荐级别。
+- 子 Agent 模型池（`[secondary_model]`）现已始终开启，实验开关与 `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL` 退出选项已移除。
+- `Read` 新增可配置的字符上限，长行文件可续读，输出不再被反复截断。详见 [`read`](https://moonshotai.github.io/kimi-code/zh/configuration/config-files.html#read)。
+- minidb 会话索引读模型与全局搜索 worker 现已始终开启，实验开关由 `[database]` 配置段与 `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` / `KIMI_CODE_SEARCH_WORKER` 环境变量取代。详见 [`database`](https://moonshotai.github.io/kimi-code/zh/configuration/config-files.html#database)。
+
+### 修复
+
+- 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
+## 0.41.0（2026-09-04）
+
+### 新功能
+
+- Web 版新增 tower 多智能体协作模式（实验功能），可通过 `/tower` 命令或输入框加号菜单开启，`/tower <base-branch>` 可指定基准分支。
+- Web 版新增划词标注：在消息、文件预览、diff 与每轮改动面板或终端中选中文字，即可添加评论或引用到对话。
+- CLI 中新增会话评分提示，适时在输入框上方邀请为本次会话打分。
+
+### 优化
+
+- 自动权限模式不再拦截危险命令和无法静态分析的命令。
+- 自动压缩前提醒模型关注上下文预算，压缩后指引其查阅会话事件日志获取精确细节。
+- Web 版三档权限模式更名为「始终询问 / 必要时询问 / 完全自动」并更新描述；切换到「必要时询问」或「完全自动」权限模式后，提示该模式下文件可能被直接修改或删除。
+- Web 版 Esc 不再关闭右侧详情面板。
+- Web 版右侧面板中的 Bash 命令改为终端样式。
+- 后台提问的回答直接送达 Agent，不再经输出文件中转。
+- 子 Agent 的最终回复较短（200 字符以内）时不再被要求扩写。
+
+### 修复
+
+- 修复 `kimi -p` 在出错或收到终止信号退出时丢失会话记录的问题。
+- 修复 `kimi -p` 忽略 `KIMI_DISABLE_TELEMETRY` 环境变量的问题。
+- 修复 tower 模式（实验）在 config.toml 中通过 `[experimental] tower = true` 启用时不生效的问题；`/tower` 现可在非 git 仓库目录使用；启用失败时报错会指明具体原因。
+- 修复后台提问在 Agent 回合结束即被取消的问题。
+- 修复会话在新进程重开后无法按 agent id 恢复子 Agent 的问题；恢复的子 Agent 遵循当前权限模式。
+- 修复一轮中多次编辑同一文件时，每轮改动预览出现从未真实存在的增删行且行数统计不准的问题；改动卡片现只展示精确统计。
+- 修复设置中默认思考强度无法设为最高档（Max）的问题。
+- 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
+## 0.40.1（2026-09-02）
+
+### 修复
+
+- 修复 kimi-cli 迁移完成或关闭后仍重复弹出迁移提示的问题。
+
+## 0.40.0（2026-09-02）
+
+### 新功能
+
+- Web 版设置新增「插件」面板：可浏览插件市场并安装、启停、移除插件。
+- 支持在一条消息中同时激活多个技能。
+- 新增 `kimi session list` 命令，可在命令行直接列出会话。
+- Tower 模式（实验性）行为调整：agent 不再自行进入，需用 `/tower on` 或 `/tower <base-branch>` 显式开启。
+- 子代理设置（`[secondary_model]`）功能由实验性转为正式。
+- 新增危险命令护栏：Auto 模式直接拦截 shutdown、reboot、rm -rf 等危险命令，Manual 与 YOLO 模式执行前必定询问；可用 `[permission] dangerous_command_guard = false` 或 `KIMI_CODE_DANGEROUS_COMMAND_GUARD=false` 关闭。
+
+### 优化
+
+- 更新配置时完整保留 config.toml 的注释、键顺序与格式。
+- Bash 工具的 cwd 参数不再限制在工作区内。
+- 工作区信任弹窗默认选中「Trust this folder」。
+- `kimi acp` 子命令不再识别 `KIMI_CODE_LEGACY_FLAG`，始终运行在默认 agent 引擎。
+- Web 版 Diff 面板新增代码折行开关，并精简了面板头部。
+
+### 修复
+
+- 修复实验开关优先级：config.toml 中显式设为 `false` 的 `[experimental]` 条目现在稳定优先于 `KIMI_CODE_EXPERIMENTAL_FLAG` 总开关（单项 `KIMI_CODE_EXPERIMENTAL_<NAME>` 变量仍覆盖两者）。
+- 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
+## 0.39.1（2026-08-28）
+
+### 修复
+
+- 修复在一个会话中切换权限模式会改动所有会话的问题，权限模式现按会话独立生效。
+- 修复登录相关问题
+- 修复点击输入框占位提示后，输入法或键盘首个字符被吞的问题
+- 修复新会话中附件上传完成后仍显示"上传中"的问题
+- 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
 ## 0.39.0（2026-08-27）
 
 ### 新功能

@@ -5,7 +5,11 @@ import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { AgentEvent2 } from '#/app/event/event2';
 import { defineState } from '#/state/state';
 
-const towerModeEnterSchema = z.object({ agentId: z.string(), sessionId: z.string().optional() });
+const towerModeEnterSchema = z.object({
+  agentId: z.string(),
+  sessionId: z.string().optional(),
+  base: z.string().optional(),
+});
 
 export class TowerModeEnter extends AgentEvent2<z.infer<typeof towerModeEnterSchema>> {
   static override readonly type = 'tower_mode.enter';
@@ -15,6 +19,7 @@ export class TowerModeEnter extends AgentEvent2<z.infer<typeof towerModeEnterSch
 export interface TowerModeEnter {
   readonly agentId: string;
   readonly sessionId?: string;
+  readonly base?: string;
 }
 
 const towerModeExitSchema = z.object({ agentId: z.string() });
@@ -46,3 +51,10 @@ export const towerOwnerKey = defineState('tower.owner', () => undefined as strin
   })
   .on(TowerModeEnter, (_s, e) => e.sessionId)
   .on(TowerModeExit, () => undefined);
+
+export const towerBaseKey = defineState('tower.base', (): string | null => null)
+  .replayable({
+    schema: z.custom<string | null>(),
+  })
+  .on(TowerModeEnter, (_s, e) => e.base ?? null)
+  .on(TowerModeExit, () => null);

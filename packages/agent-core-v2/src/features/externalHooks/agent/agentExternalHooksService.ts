@@ -14,7 +14,6 @@ import {
 } from '#/agent/fullCompaction/fullCompaction';
 import type { CompactionResult } from '#/agent/fullCompaction/types';
 import { IAgentLoopService, type AfterStepContext } from '#/agent/loop/loop';
-import { ContinuationStepRequest } from '#/agent/loop/stepRequest';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import {
@@ -59,6 +58,10 @@ export class HookResult extends AgentEvent2<HookResultPayload> {
   static override readonly observable = true;
 }
 export interface HookResult extends HookResultPayload {}
+
+export interface HookResultEvent extends Omit<HookResultPayload, 'agentId'> {
+  readonly type: 'hook.result';
+}
 
 export const externalHooksStopHookContinuationUsedKey = defineState<boolean>(
   'externalHooks.stopHookContinuationUsed',
@@ -252,13 +255,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
             toolCalls: [],
             origin: { kind: 'system_trigger', name: 'stop_hook' },
           });
-          loop.enqueue(
-            new ContinuationStepRequest({
-              kind: 'stop_hook',
-              mergeable: true,
-              admission: 'activeOrNextTurn',
-            }),
-          );
+          loop.notify();
           return;
         }
       }),

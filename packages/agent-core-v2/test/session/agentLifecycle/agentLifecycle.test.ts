@@ -25,24 +25,28 @@ import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBindi
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { reminderAgentRuntimeProvider } from '#/features/reminder/reminderAgentRuntime';
+import { AgentReminderService, IAgentReminderService } from '#/features/reminder/reminderService';
 import '#/agent/contextMemory/contextMemoryService';
 import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/agent/contextMemory/openToolExchange';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { agentContextOf, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
-import { IModelCatalog } from '#/kosong/model/catalog';
-import type { ToolCall } from '#/kosong/contract/message';
-import { IProtocolAdapterRegistry } from '#/kosong/protocol/protocol';
+import { IModelCatalog } from '#/llm-adapter/model/catalog';
+import type { ToolCall } from '#human/llm/message';
+import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { IHostClock } from '#/os/interface/hostClock';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleService';
+import {
+  cancelInteractionsForTurn,
+  detachInteractionAgent,
+} from '#/agent/interaction/interactionWiring';
+import { interactions } from '#/human/interaction/facade';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
@@ -55,23 +59,23 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import '#/wire/wireService';
 import '#/state/eventDispatcherService';
 import { IAgentTaskService } from '#/agent/task/task';
-import { AgentCron, cronAgentRuntimeProvider } from '#/features/cron/cronAgentRuntime';
+import { AgentCronService, IAgentCronService } from '#/features/cron/cronService';
 import { ICronCreateTool } from '#/features/cron/tools/cron-create/cron-create';
 import { ICronDeleteTool } from '#/features/cron/tools/cron-delete/cron-delete';
 import { ICronListTool } from '#/features/cron/tools/cron-list/cron-list';
 import { CRON_SECTION } from '#/features/cron/configSection';
-import { interactionAgentRuntimeProvider } from '#/features/interaction/interactionAgentRuntime';
 import { Ledger } from '#/_base/lifecycle/ledger';
 import { BugIndicatingError } from '#/_base/errors/errors';
-import { AgentRuntimeContributionPoint } from '#/agent/runtime/agentRuntime';
-import { AgentTodo, todoAgentRuntimeProvider } from '#/features/todo/todoAgentRuntime';
+import { AgentTodoService, IAgentTodoService } from '#/features/todo/todoService';
 import '#/agent/toolDedupe/toolDedupeService';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
+import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import '#/app/event/eventBusService';
-import { AgentActivityUpdated } from '#/agent/activityView/activityView';
+import { TurnStarted } from '#/agent/loop/turnEvents';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
 import { ILogService } from '#/_base/log/log';
@@ -88,7 +92,6 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
@@ -101,7 +104,7 @@ import '#/agent/toolActivation/toolActivationService';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
-import { ScopeUnits } from '#/_base/di/fiber';
+import { ScopeUnits, type Fiber } from '#/_base/di/fiber';
 import {
   IRuntimeResolver,
   IWorkspaceInstanceManager,
@@ -152,6 +155,7 @@ function recordingAppendLog(initial: readonly WireRecord[] = []): {
   const state: { rewritten?: readonly WireRecord[] } = {};
   const store: IAppendLogStore = {
     _serviceBrand: undefined,
+    onDidWrite: Event.None as IAppendLogStore['onDidWrite'],
     append: <R>(_scope: string, _key: string, record: R) => {
       const persisted = record as unknown as WireRecord;
       records.push(persisted);
@@ -199,8 +203,9 @@ describe('AgentLifecycleService', () => {
   let permissionModeSetMode: ReturnType<typeof vi.fn>;
   let stopAllOnExit: ReturnType<typeof vi.fn>;
   let loopActiveTurnId: number | undefined;
-  let loopPendingTurnIds: number[];
+  let loopPendingPromptIds: string[];
   let loopCancel: ReturnType<typeof vi.fn<IAgentLoopService['cancel']>>;
+  let loopCancelQueued: ReturnType<typeof vi.fn<IAgentLoopService['cancelQueued']>>;
   let loopSettled: ReturnType<typeof vi.fn<IAgentLoopService['settled']>>;
   let promptDrain: ReturnType<typeof vi.fn<IAgentPromptService['drain']>>;
   let beforeExecuteListeners: number;
@@ -260,6 +265,11 @@ describe('AgentLifecycleService', () => {
       homeDir: '/tmp/kimi-agentLifecycle-home',
       cwd: '/tmp/kimi-agentLifecycle-home',
     } as unknown as IBootstrapService);
+    ix.stub(IFlagService, {
+      _serviceBrand: undefined,
+      enabled: () => false,
+    } as unknown as IFlagService);
+    ix.stub(ISessionNotify, { _serviceBrand: undefined, ready: Promise.resolve(), enabled: false });
     ix.stub(ISessionWorkspaceContext, {
       _serviceBrand: undefined,
       workDir: '/tmp/kimi-agentLifecycle-work',
@@ -285,7 +295,6 @@ describe('AgentLifecycleService', () => {
         [...atomicDocs.keys()]
           .filter((key) => key.startsWith(`${scope}/${prefix}`))
           .map((key) => key.slice(scope.length + 1)),
-      watch: () => Event.None as Event<void>,
       acquire: () => ({ dispose: () => {} }),
     };
     ix.stub(IAtomicDocumentStore, atomicDocsStore);
@@ -322,17 +331,19 @@ describe('AgentLifecycleService', () => {
       },
     } as unknown as IAgentToolExecutorService);
     loopActiveTurnId = undefined;
-    loopPendingTurnIds = [];
+    loopPendingPromptIds = [];
     loopCancel = vi.fn<IAgentLoopService['cancel']>((turnId) => {
       if (turnId === undefined) {
         loopActiveTurnId = undefined;
-      } else {
-        loopPendingTurnIds = loopPendingTurnIds.filter((id) => id !== turnId);
       }
       return true;
     });
+    loopCancelQueued = vi.fn<IAgentLoopService['cancelQueued']>((queueId) => {
+      loopPendingPromptIds = loopPendingPromptIds.filter((id) => id !== queueId);
+      return true;
+    });
     loopSettled = vi.fn<IAgentLoopService['settled']>(async () => {
-      if (loopActiveTurnId !== undefined || loopPendingTurnIds.length > 0) {
+      if (loopActiveTurnId !== undefined || loopPendingPromptIds.length > 0) {
         throw new Error('Agent loop did not settle');
       }
     });
@@ -346,16 +357,19 @@ describe('AgentLifecycleService', () => {
       status: () => ({
         state: loopActiveTurnId === undefined ? 'idle' : 'running',
         activeTurnId: loopActiveTurnId,
-        pendingTurnIds: loopPendingTurnIds,
-        hasPendingRequests: loopActiveTurnId !== undefined || loopPendingTurnIds.length > 0,
+        pendingPromptIds: loopPendingPromptIds,
+        hasPendingRequests: loopActiveTurnId !== undefined || loopPendingPromptIds.length > 0,
       }),
       cancel: loopCancel,
+      cancelQueued: loopCancelQueued,
       settled: loopSettled,
+      tryAcquireQuiescence: vi.fn(() => ({ dispose: vi.fn() })),
     } as unknown as IAgentLoopService);
     promptDrain = vi.fn<IAgentPromptService['drain']>(async () => {});
     ix.stub(IAgentPromptService, {
       _serviceBrand: undefined,
       drain: promptDrain,
+      list: () => ({ launching: false, active: undefined, pending: [] }),
     } as unknown as IAgentPromptService);
     ix.stub(ITelemetryService, {
       _serviceBrand: undefined,
@@ -365,11 +379,6 @@ describe('AgentLifecycleService', () => {
         track2: () => {},
       }) as unknown as ITelemetryService,
     } as unknown as ITelemetryService);
-    ix.stub(IAgentTelemetryContextService, {
-      _serviceBrand: undefined,
-      get: () => ({ mode: 'agent' }),
-      set: () => {},
-    });
     ix.stub(IHostEnvironment, { _serviceBrand: undefined } as IHostEnvironment);
     ix.stub(IHostFileSystem, { _serviceBrand: undefined } as IHostFileSystem);
     ix.stub(IHostClock, { _serviceBrand: undefined } as IHostClock);
@@ -460,10 +469,15 @@ describe('AgentLifecycleService', () => {
       compacting: null,
     } as unknown as IAgentFullCompactionService);
     ix.fiberHost.addCollectionRecord(
-      AgentRuntimeContributionPoint,
+      ScopeUnits(LifecycleScope.Agent),
       'test-reminder',
       new Ledger('test-reminder'),
-      reminderAgentRuntimeProvider,
+      {
+        name: 'test:agentReminderService',
+        apply(fiber: Fiber): void {
+          fiber.provide(IAgentReminderService, AgentReminderService);
+        },
+      },
     );
     ix.set(IAgentLifecycleService, new SyncDescriptor(AgentLifecycleService));
   });
@@ -472,30 +486,31 @@ describe('AgentLifecycleService', () => {
     vi.restoreAllMocks();
   });
 
-  function contributeTodo(): () => void {
-    return ix.fiberHost.addCollectionRecord(
-      AgentRuntimeContributionPoint,
+  function contributeTodoService(): void {
+    ix.fiberHost.addCollectionRecord(
+      ScopeUnits(LifecycleScope.Agent),
       'test',
       new Ledger('test'),
-      todoAgentRuntimeProvider,
+      {
+        name: 'test:agentTodoService',
+        apply(fiber: Fiber): void {
+          fiber.provide(IAgentTodoService, AgentTodoService);
+        },
+      },
     );
   }
 
-  function contributeCron(): () => void {
-    return ix.fiberHost.addCollectionRecord(
-      AgentRuntimeContributionPoint,
+  function contributeCronService(): void {
+    ix.fiberHost.addCollectionRecord(
+      ScopeUnits(LifecycleScope.Agent),
       'test',
       new Ledger('test'),
-      cronAgentRuntimeProvider,
-    );
-  }
-
-  function contributeInteraction(): () => void {
-    return ix.fiberHost.addCollectionRecord(
-      AgentRuntimeContributionPoint,
-      'test',
-      new Ledger('test'),
-      interactionAgentRuntimeProvider,
+      {
+        name: 'test:agentCronService',
+        apply(fiber: Fiber): void {
+          fiber.provide(IAgentCronService, AgentCronService);
+        },
+      },
     );
   }
 
@@ -511,12 +526,21 @@ describe('AgentLifecycleService', () => {
     expect(svc.handleOf('main')).toBeUndefined();
   });
 
+  it('remove flushes the agent wire journal before disposal', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+    const dispatcher = svc.handleOf('main')!.accessor.get(IEventDispatcher);
+    const flush = vi.spyOn(dispatcher, 'flush');
+    await svc.remove(svc.get('main')!);
+    expect(flush).toHaveBeenCalled();
+  });
+
   it('remove keeps the lifecycle context active through async scope teardown', async () => {
     const svc = ix.get(IAgentLifecycleService);
     const bus = ix.get(ISessionEventBus);
     const main = await svc.create({ agentId: 'main' });
     const seen: string[] = [];
-    disposables.add(bus.subscribe(AgentActivityUpdated, (event) => seen.push(event.lifecycle)));
+    disposables.add(bus.subscribe(TurnStarted, () => seen.push('delivered')));
     const agentScope = ix.children.find((child) => child.debugLabel === 'main');
     expect(agentScope).toBeDefined();
     let releaseDrain!: () => void;
@@ -538,19 +562,13 @@ describe('AgentLifecycleService', () => {
     try {
       const removal = svc.remove(main);
       await entered;
-      bus.publish(
-        new AgentActivityUpdated({ lifecycle: 'disposed', background: [], agentId: 'main' }),
-        main,
-      );
-      expect(seen).toEqual(['disposed']);
+      bus.publish(new TurnStarted({ agentId: 'main', turnId: 1, origin: { kind: 'user' } }), main);
+      expect(seen).toEqual(['delivered']);
       releaseDrain();
       await removal;
       expect(() =>
-        bus.publish(
-          new AgentActivityUpdated({ lifecycle: 'disposed', background: [], agentId: 'main' }),
-          main,
-        ),
-      ).toThrow("Agent event 'agent.activity.updated' has no active lifecycle context");
+        bus.publish(new TurnStarted({ agentId: 'main', turnId: 2, origin: { kind: 'user' } }), main),
+      ).toThrow("Agent event 'turn.started' has no active lifecycle context");
       expect(unhandled).toEqual([]);
     } finally {
       process.off('unhandledRejection', onUnhandled);
@@ -581,11 +599,7 @@ describe('AgentLifecycleService', () => {
 
   function publishDisposed(eventBus: ISessionEventBus, scope: IAgentScopeContext): void {
     eventBus.publish(
-      new AgentActivityUpdated({
-        lifecycle: 'disposed',
-        background: [],
-        agentId: scope.agentId,
-      }),
+      new TurnStarted({ agentId: scope.agentId, turnId: 1, origin: { kind: 'user' } }),
       scope.agentContext,
     );
   }
@@ -594,7 +608,7 @@ describe('AgentLifecycleService', () => {
     const svc = ix.get(IAgentLifecycleService);
     const bus = ix.get(ISessionEventBus);
     const seen: string[] = [];
-    disposables.add(bus.subscribe(AgentActivityUpdated, (event) => seen.push(event.lifecycle)));
+    disposables.add(bus.subscribe(TurnStarted, () => seen.push('delivered')));
 
     contributeDisposeBeacon(publishDisposed);
 
@@ -606,7 +620,7 @@ describe('AgentLifecycleService', () => {
     try {
       const main = await svc.create({ agentId: 'main' });
       await svc.remove(main);
-      expect(seen).toEqual(['disposed']);
+      expect(seen).toEqual(['delivered']);
       expect(unhandled).toEqual([]);
     } finally {
       process.off('unhandledRejection', onUnhandled);
@@ -618,7 +632,7 @@ describe('AgentLifecycleService', () => {
     const svc = ix.get(IAgentLifecycleService);
     const bus = ix.get(ISessionEventBus);
     const seen: string[] = [];
-    disposables.add(bus.subscribe(AgentActivityUpdated, (event) => seen.push(event.lifecycle)));
+    disposables.add(bus.subscribe(TurnStarted, () => seen.push('delivered')));
 
     class GatedBeacon {
       constructor(
@@ -651,7 +665,7 @@ describe('AgentLifecycleService', () => {
     process.on('unhandledRejection', onUnhandled);
     try {
       await expect(svc.create({ agentId: 'main' })).rejects.toThrow('boom');
-      expect(seen).toEqual(['disposed']);
+      expect(seen).toEqual(['delivered']);
       expect(unhandled).toEqual([]);
     } finally {
       process.off('unhandledRejection', onUnhandled);
@@ -662,7 +676,7 @@ describe('AgentLifecycleService', () => {
     const svc = ix.get(IAgentLifecycleService);
     const bus = ix.get(ISessionEventBus);
     const seen: string[] = [];
-    disposables.add(bus.subscribe(AgentActivityUpdated, (event) => seen.push(event.lifecycle)));
+    disposables.add(bus.subscribe(TurnStarted, () => seen.push('delivered')));
 
     contributeDisposeBeacon(async (eventBus, scope) => {
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -677,7 +691,7 @@ describe('AgentLifecycleService', () => {
     try {
       const main = await svc.create({ agentId: 'main' });
       await svc.remove(main);
-      expect(seen).toEqual(['disposed']);
+      expect(seen).toEqual(['delivered']);
       expect(unhandled).toEqual([]);
     } finally {
       process.off('unhandledRejection', onUnhandled);
@@ -724,13 +738,14 @@ describe('AgentLifecycleService', () => {
 
   it('remove cancels queued turns before waiting for the active turn to settle', async () => {
     loopActiveTurnId = 1;
-    loopPendingTurnIds = [2, 3];
+    loopPendingPromptIds = ['q2', 'q3'];
     const svc = ix.get(IAgentLifecycleService);
     const main = await svc.create({ agentId: 'main' });
 
     await svc.remove(main);
 
-    expect(loopCancel.mock.calls.map(([turnId]) => turnId)).toEqual([2, 3, undefined]);
+    expect(loopCancelQueued.mock.calls.map(([queueId]) => queueId)).toEqual(['q2', 'q3']);
+    expect(loopCancel.mock.calls.map(([turnId]) => turnId)).toEqual([undefined]);
     expect(loopSettled).toHaveBeenCalledOnce();
   });
 
@@ -823,11 +838,11 @@ describe('AgentLifecycleService', () => {
 
     expect(records).toContainEqual({
       event: 'yolo_toggle',
-      properties: { agent_id: 'main', enabled: true },
+      properties: { agent_id: 'main', enabled: true, mode: 'agent' },
     });
     expect(records).toContainEqual({
       event: 'yolo_toggle',
-      properties: { agent_id: sub.agentId, enabled: false },
+      properties: { agent_id: sub.agentId, enabled: false, mode: 'agent' },
     });
   });
 
@@ -947,7 +962,6 @@ describe('AgentLifecycleService', () => {
         value: [{ title: 'bridged', status: 'pending' }],
         time: 2,
       },
-      { type: 'interaction.request', id: 'i1', kind: 'question', request: { q: 1 }, time: 3 },
       {
         type: 'cron.add',
         task: { id: 'cron-1', cron: '0 9 * * *', prompt: 'ping', createdAt: 1, recurring: true },
@@ -967,22 +981,17 @@ describe('AgentLifecycleService', () => {
     ix.stub(ICronCreateTool, { _serviceBrand: undefined });
     ix.stub(ICronListTool, { _serviceBrand: undefined });
     ix.stub(ICronDeleteTool, { _serviceBrand: undefined });
-    contributeTodo();
-    contributeCron();
-    contributeInteraction();
+    contributeTodoService();
+    contributeCronService();
 
     const svc = ix.get(IAgentLifecycleService);
     const main = await svc.create({ agentId: 'main' });
 
-    const contributions = svc.inspect(main).contributions;
-    expect(contributions.find((line) => line.id === 'todo')?.state).toEqual([
+    expect(svc.handleOf('main')!.accessor.get(IAgentTodoService).get()).toEqual([
       { title: 'bridged', status: 'pending' },
     ]);
-    expect(contributions.find((line) => line.id === 'interaction')?.state).toEqual([
-      { id: 'i1', kind: 'question', resolved: false },
-    ]);
-    expect(contributions.find((line) => line.id === 'cron')?.state).toEqual([
-      { id: 'cron-1', cron: '0 9 * * *', recurring: true, createdAt: 1, lastFiredAt: undefined },
+    expect(svc.handleOf('main')!.accessor.get(IAgentCronService).list()).toEqual([
+      { id: 'cron-1', cron: '0 9 * * *', prompt: 'ping', recurring: true, createdAt: 1, lastFiredAt: undefined },
     ]);
   });
 
@@ -996,7 +1005,7 @@ describe('AgentLifecycleService', () => {
         : undefined) as IConfigService['get'],
       onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
     } as unknown as IConfigService);
-    contributeCron();
+    contributeCronService();
     const svc = ix.get(IAgentLifecycleService);
     let created = false;
 
@@ -1009,10 +1018,10 @@ describe('AgentLifecycleService', () => {
     expect(created).toBe(false);
 
     releaseConfig();
-    const agent = await creation;
+    await creation;
 
     expect(created).toBe(true);
-    expect(svc.resolve(agent, AgentCron).isDisabled()).toBe(false);
+    expect(svc.handleOf('main')!.accessor.get(IAgentCronService).isDisabled()).toBe(false);
   });
 
   it('broadcastPermissionMode sets the mode on every live agent', async () => {
@@ -1265,6 +1274,56 @@ describe('AgentLifecycleService', () => {
     );
   });
 
+  it('records the bound profile in the subagent metadata at registration', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+
+    await svc
+      .create({
+        agentId: 'child',
+        binding: { profile: 'coder', model: 'kimi-test' },
+        labels: { parentAgentId: 'main' },
+      })
+      .catch(() => undefined);
+
+    expect(registerAgent).toHaveBeenCalledWith(
+      'child',
+      expect.objectContaining({
+        type: 'sub',
+        labels: { parentAgentId: 'main', profileName: 'coder' },
+      }),
+    );
+  });
+
+  it('fork records the inherited profile in the subagent metadata', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const source = await svc.create({ agentId: 'main' });
+    svc.handleOf('main')!.accessor.get(IAgentProfileService).applyBindingSnapshot({
+      profileName: 'coder',
+      thinkingLevel: 'off',
+      systemPrompt: 'coder prompt',
+      activeToolNames: ['Read'],
+      disallowedTools: [],
+      subagents: undefined,
+    });
+
+    await svc.fork(agentContextOf(svc.handleOf(source.agentId)!), {
+      agentId: 'forked',
+      labels: { parentAgentId: 'main' },
+    });
+
+    expect(registerAgent).toHaveBeenCalledWith(
+      'forked',
+      expect.objectContaining({
+        forkedFrom: 'main',
+        labels: { parentAgentId: 'main', profileName: 'coder' },
+      }),
+    );
+    expect(registerAgent).toHaveBeenCalledWith(
+      'main',
+      expect.objectContaining({ type: 'main', labels: undefined }),
+    );
+  });
+
   it('run throws when the agent does not exist', () => {
     ix.set(ISessionSubagentService, new SyncDescriptor(SessionSubagentService));
     const svc = ix.get(ISessionSubagentService);
@@ -1291,6 +1350,17 @@ describe('AgentLifecycleService', () => {
     expect(closed).toEqual([a.agentId]);
   });
 
+  it('registers agent metadata before firing onDidCreate', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const order: string[] = [];
+    registerAgent.mockImplementation(async () => { order.push('register'); });
+    disposables.add(svc.onDidCreate(() => { order.push('create'); }));
+    disposables.add(svc.onDidCreateScope(() => { order.push('createScope'); }));
+
+    await svc.create({ agentId: 'main' });
+    expect(order).toEqual(['register', 'create', 'createScope']);
+  });
+
   it('assigns a new lifecycle generation when recreating the same agent id', async () => {
     const svc = ix.get(IAgentLifecycleService);
     const first = await svc.create({ agentId: 'main' });
@@ -1307,37 +1377,21 @@ describe('AgentLifecycleService', () => {
   });
 
   it('rejects a stale context after the same agent id is recreated', async () => {
-    contributeTodo();
+    contributeTodoService();
     const svc = ix.get(IAgentLifecycleService);
-    const first = await svc.create({ agentId: 'main' });
+    const first = await svc.create({ agentId: 'agent-1' });
+    const firstHandle = svc.handleOf('agent-1')!;
     await svc.remove(first);
-    const second = await svc.create({ agentId: 'main' });
+    const second = await svc.create({ agentId: 'agent-1' });
 
-    expect(() => svc.resolve(first, AgentTodo)).toThrow('is not a lifecycle-issued context');
-    expect(() => svc.inspect(first)).toThrow('is not a lifecycle-issued context');
-    expect(svc.resolve(second, AgentTodo).get()).toEqual([]);
+    expect(svc.get('agent-1')).toBe(second);
+    expect(() => firstHandle.accessor.get(IAgentTodoService)).toThrow('has been disposed');
+    expect(svc.handleOf('agent-1')!.accessor.get(IAgentTodoService).get()).toEqual([]);
   });
 
-  it('rejects a forged context that the manager never issued', async () => {
-    contributeTodo();
-    const svc = ix.get(IAgentLifecycleService);
-    const main = await svc.create({ agentId: 'main' });
-    const forged: AgentContext = {
-      agentId: main.agentId,
-      generation: main.generation,
-      space: main.space,
-    };
-
-    expect(() => svc.resolve(forged, AgentTodo)).toThrow('is not a lifecycle-issued context');
-    expect(() => svc.inspect(forged)).toThrow('is not a lifecycle-issued context');
-
-    await svc.remove(main);
-    expect(() => svc.resolve(main, AgentTodo)).toThrow('is not a lifecycle-issued context');
-  });
-
-  it('retires agent runtimes before disposing the agent scope on remove', async () => {
+  it('disposes the agent scope on remove', async () => {
     const order: string[] = [];
-    contributeTodo();
+    contributeTodoService();
     const svc = ix.get(IAgentLifecycleService);
     const willClose: string[] = [];
     disposables.add(svc.onWillClose((agent) => willClose.push(agent.agentId)));
@@ -1348,7 +1402,7 @@ describe('AgentLifecycleService', () => {
       order.push('scope-disposed');
       return originalDispose();
     };
-    svc.resolve(main, AgentTodo).get();
+    handle.accessor.get(IAgentTodoService).get();
 
     await svc.remove(main);
 
@@ -1372,21 +1426,6 @@ describe('AgentLifecycleService', () => {
         commit: () => {},
       }),
     ).toThrow(BugIndicatingError);
-  });
-
-  it('retires a withdrawn runtime definition and rejects new resolves', async () => {
-    const withdraw = contributeTodo();
-    const svc = ix.get(IAgentLifecycleService);
-    const main = await svc.create({ agentId: 'main' });
-    svc.resolve(main, AgentTodo).get();
-
-    withdraw();
-
-    expect(() => svc.resolve(main, AgentTodo)).toThrow('unavailable');
-    expect(svc.inspect(main).contributions.find((entry) => entry.id === 'todo')).toMatchObject({
-      id: 'todo',
-      status: 'retired',
-    });
   });
 
   it('de-dupes concurrent create calls for the same agent id', async () => {
@@ -1414,5 +1453,32 @@ describe('AgentLifecycleService', () => {
 
     expect(second).toBe(first);
     expect(registerAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancelInteractionsForTurn and detachInteractionAgent stay within their session', () => {
+    const own = interactions.enqueue({
+      kind: 'approval',
+      payload: {},
+      tags: { agentId: 'main', sessionId: 'sess_test', turnId: 1 },
+    });
+    const other = interactions.enqueue({
+      kind: 'approval',
+      payload: {},
+      tags: { agentId: 'main', sessionId: 'sess_other', turnId: 1 },
+    });
+
+    cancelInteractionsForTurn('main', 'sess_test', 1);
+    expect(interactions.findOne({ id: own.id })).toMatchObject({
+      resolved: true,
+      response: { cancelled: true, reason: 'turn_ended' },
+    });
+    expect(interactions.findOne({ id: other.id, resolved: false })).toBeDefined();
+
+    detachInteractionAgent('main', 'sess_test');
+    expect(interactions.findOne({ id: other.id, resolved: false })).toBeDefined();
+
+    interactions.respond(other.id, { decision: 'approved' });
+    interactions.purgeSession('sess_test');
+    interactions.purgeSession('sess_other');
   });
 });

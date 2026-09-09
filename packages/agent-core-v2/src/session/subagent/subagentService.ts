@@ -8,7 +8,6 @@ import {
   registerScopedService,
 } from '#/_base/di/scope';
 import { Emitter } from '#/_base/event';
-import type { AgentProfileSummaryPolicy } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
 import {
   rootDelegationExtras,
@@ -23,14 +22,14 @@ import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { Runtime } from '#/runtime/runtime';
 import { IConfigService } from '#/app/config/config';
-import { IFlagService } from '#/app/flag/flag';
-import { IModelCatalog, type Model } from '#/kosong/model/catalog';
+import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { ILogService } from '#/_base/log/log';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { createHooks } from '#/hooks';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 
 import {
   type AgentRunHandle,
@@ -71,7 +70,6 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @IConfigService private readonly configService: IConfigService,
-    @IFlagService private readonly flags: IFlagService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ILogService private readonly log: ILogService,
@@ -86,11 +84,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
         details: { agentId: agent.agentId },
       });
     }
-    return runAgentTurn(handle, request, {
-      summaryPolicy: opts.summaryPolicy ?? this.summaryPolicyFor(handle),
-      signal: opts.signal,
-      onReady: opts.onReady,
-    });
+    return runAgentTurn(handle, request, { signal: opts.signal, onReady: opts.onReady });
   }
 
   async planSpawn(input: SubagentSpawnPlanInput): Promise<SubagentSpawnPlan> {
@@ -130,10 +124,9 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       });
     }
     const binding = fork
-      ? { model: own.modelAlias, thinking: own.thinkingLevel }
+      ? { model: own.modelAlias, thinking: own.thinkingLevel, modelSource: 'inherited' as const }
       : resolveSubagentBinding(
           this.configService,
-          this.flags,
           { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
           input.model,
         );
@@ -146,6 +139,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     return {
       profileName: profile?.name ?? requestedProfileName,
       model: binding.model,
+      modelSource: binding.modelSource,
       thinking: resolveSubagentThinking(this.configService, model, binding.thinking),
       fork,
     };
@@ -165,6 +159,9 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
             labels: opts.labels,
           });
           created = this.agentLifecycle.handleOf(forked.agentId)!;
+          created.accessor
+            .get(IAgentReminderService)
+            .notify(FORK_CONTEXT_NOTICE, { variant: 'fork_context' });
         } else {
           const createdContext = await this.agentLifecycle.create({
             binding: {
@@ -196,12 +193,13 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
         createdUserTools.inheritUserTools(callerUserTools);
       }
       const promptText = plan.fork
-        ? `${FORK_CONTEXT_NOTICE}\n\n${opts.prompt}`
+        ? opts.prompt
         : await this.applyPromptPrefix(plan.profileName, opts.prompt, lease!.runtime);
       return {
         agentId: created.id,
         profileName: plan.profileName,
         model: plan.model,
+        modelSource: plan.modelSource,
         promptText,
       };
     } finally {
@@ -238,12 +236,6 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       });
     }
     return handle;
-  }
-
-  private summaryPolicyFor(handle: IAgentScopeHandle): AgentProfileSummaryPolicy | undefined {
-    const profileName = handle.accessor.get(IAgentProfileService).data().profileName;
-    if (profileName === undefined) return undefined;
-    return this.catalog.get(profileName)?.summaryPolicy;
   }
 }
 

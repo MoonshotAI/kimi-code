@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useRequest } from "ahooks";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { IconSearch, IconDots, IconTrash, IconCheck } from "@tabler/icons-react";
 import { Input } from "@/components/ui/input";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -14,6 +14,9 @@ import { toast } from "./ui/sonner";
 interface SessionListProps {
   onClose: () => void;
 }
+
+const KIMI_SESSIONS_KEY = ["kimiSessions"] as const;
+const NO_SESSIONS: SessionInfo[] = [];
 
 function formatRelativeDate(timestamp: number): string {
   const diff = Date.now() - timestamp;
@@ -86,7 +89,11 @@ export function SessionList({ onClose }: SessionListProps) {
   const [isDeleting, setIsDeleting] = useState(false);
   const [pendingSession, setPendingSession] = useState<SessionInfo | null>(null);
 
-  const { data: kimiSessions = [], loading, mutate } = useRequest(() => bridge.getAllKimiSessions());
+  const queryClient = useQueryClient();
+  const { data: kimiSessions = NO_SESSIONS, isPending: loading } = useQuery({
+    queryKey: KIMI_SESSIONS_KEY,
+    queryFn: () => bridge.getAllKimiSessions(),
+  });
 
   const getWorkDirLabel = (sessionWorkDir: string): string | null => {
     const activeWorkDir = currentWorkDir || workspaceRoot;
@@ -157,7 +164,7 @@ export function SessionList({ onClose }: SessionListProps) {
         await startNewConversation();
       }
 
-      mutate((prev) => prev?.filter((s) => s.id !== deleteTarget.id) || []);
+      queryClient.setQueryData<SessionInfo[]>(KIMI_SESSIONS_KEY, (prev) => prev?.filter((s) => s.id !== deleteTarget.id) ?? []);
     } catch (error) {
       console.error("[SessionList] Failed to delete session:", error);
       toast.error(`Unable to delete the conversation: ${error instanceof Error ? error.message : String(error)}`);
@@ -173,13 +180,13 @@ export function SessionList({ onClose }: SessionListProps) {
         <div className="p-2 border-b border-border shrink-0">
           <div className="relative">
             <IconSearch className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
-            <Input placeholder="Search conversations..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-8 h-8 text-xs" />
+            <Input placeholder="Search conversations…" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-8 h-8 text-xs" />
           </div>
         </div>
         <div className="overflow-y-auto flex-1 min-h-0">
           <div className="p-1.5 space-y-1">
             {loading ? (
-              <div className="px-3 py-8 text-center text-xs text-muted-foreground">Loading...</div>
+              <div className="px-3 py-8 text-center text-xs text-muted-foreground">Loading…</div>
             ) : filteredSessions.length === 0 ? (
               <div className="px-3 py-8 text-center text-xs text-muted-foreground">{searchQuery ? "No conversations found" : "No conversations yet"}</div>
             ) : (

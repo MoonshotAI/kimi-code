@@ -11,8 +11,7 @@
  * entries keep their order and priority; failures (no resolvable shell,
  * hung or broken profile) silently leave PATH untouched.
  *
- * launchd/daemon launches can leave `$SHELL` unset or blank (see
- * `defaultShell()` in agent-core's terminalService for the same case), so
+ * launchd/daemon launches can leave `$SHELL` unset or blank, so
  * the probe falls back to the OS account's login shell from the user
  * database before giving up.
  *

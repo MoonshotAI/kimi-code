@@ -2,7 +2,6 @@ import { z } from 'zod';
 
 import { Error2, ErrorCodes, isError2 } from '#/errors';
 import { isPlainObject } from '#/app/config/toml';
-import type { IFlagService } from '#/app/flag/flag';
 import {
   type EnvBindings,
   envBindings,
@@ -11,13 +10,11 @@ import {
 } from '#/app/config/config';
 import { registerConfigSection } from '#/app/config/configSectionContributions';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
-import type { IModelCatalog, Model } from '#/kosong/model/catalog';
+import type { IModelCatalog, Model } from '#/llm-adapter/model/catalog';
 import {
   declaredDefaultEffortForModel,
   type ThinkingConfig,
-} from '#/kosong/model/thinking';
-
-import { SECONDARY_MODEL_FLAG_ID } from './flag';
+} from '#/llm-adapter/model/thinking';
 
 export const SUBAGENT_SECTION = 'subagent';
 export const SECONDARY_MODEL_SECTION = 'secondaryModel';
@@ -111,8 +108,7 @@ export function isSubagentModelForced(config: IConfigService): boolean {
   return config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION)?.force === true;
 }
 
-export function exposesSubagentModelChoice(config: IConfigService, flags: IFlagService): boolean {
-  if (!flags.enabled(SECONDARY_MODEL_FLAG_ID)) return false;
+export function exposesSubagentModelChoice(config: IConfigService): boolean {
   if (isSubagentModelForced(config)) return false;
   return resolveSubagentModelPool(config) !== undefined;
 }
@@ -163,10 +159,8 @@ export function assertValidSubagentModelPool(
 
 export function assertValidSubagentModelConfig(
   config: IConfigService,
-  flags: IFlagService,
   modelCatalog: IModelCatalog,
 ): void {
-  if (!flags.enabled(SECONDARY_MODEL_FLAG_ID)) return;
   const section = config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
   if (section?.force === true) {
     if (section.models !== undefined) {
@@ -184,15 +178,15 @@ export function assertValidSubagentModelConfig(
   if (pool !== undefined) assertValidSubagentModelPool(pool, modelCatalog);
 }
 
+export type SubagentModelSource = 'forced' | 'primary_override' | 'inherited' | 'secondary_pool';
+
 export function resolveSubagentBinding(
   config: IConfigService,
-  flags: IFlagService,
   own: { modelAlias: string; thinkingLevel: string },
   requested?: string,
-): { model: string; thinking?: string } {
-  const enabled = flags.enabled(SECONDARY_MODEL_FLAG_ID);
+): { model: string; thinking?: string; modelSource: SubagentModelSource } {
   const section = config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
-  if (enabled && section?.force === true) {
+  if (section?.force === true) {
     if (section.models !== undefined) {
       throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_FORCE_EXCLUDES_MODELS_MESSAGE, {
         details: { section: SECONDARY_MODEL_SECTION, field: 'force' },
@@ -211,12 +205,12 @@ export function resolveSubagentBinding(
         { details: { model: requested } },
       );
     }
-    return { model: forcedModel, thinking: section.defaultEffort };
+    return { model: forcedModel, thinking: section.defaultEffort, modelSource: 'forced' };
   }
   if (requested === PRIMARY_SUBAGENT_MODEL_CHOICE) {
-    return { model: own.modelAlias, thinking: own.thinkingLevel };
+    return { model: own.modelAlias, thinking: own.thinkingLevel, modelSource: 'primary_override' };
   }
-  const pool = enabled ? resolveSubagentModelPool(config) : undefined;
+  const pool = resolveSubagentModelPool(config);
   if (pool === undefined) {
     if (requested !== undefined) {
       throw new Error2(
@@ -225,7 +219,7 @@ export function resolveSubagentBinding(
         { details: { model: requested } },
       );
     }
-    return { model: own.modelAlias, thinking: own.thinkingLevel };
+    return { model: own.modelAlias, thinking: own.thinkingLevel, modelSource: 'inherited' };
   }
   if (Object.hasOwn(pool.models, PRIMARY_SUBAGENT_MODEL_CHOICE)) {
     throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_PRIMARY_MODEL_RESERVED_MESSAGE, {
@@ -250,7 +244,7 @@ export function resolveSubagentBinding(
       { details: { model: choice, availableModels: available } },
     );
   }
-  return { model: choice, thinking: section?.defaultEffort };
+  return { model: choice, thinking: section?.defaultEffort, modelSource: 'secondary_pool' };
 }
 
 export function resolveSubagentThinking(
@@ -265,34 +259,42 @@ export function resolveSubagentThinking(
 
 export function buildSubagentModelDescriptions(
   config: IConfigService,
-  flags: IFlagService,
   callerModelAlias: string | undefined,
 ): string | undefined {
-  if (!exposesSubagentModelChoice(config, flags)) return undefined;
+  if (!exposesSubagentModelChoice(config)) return undefined;
   const pool = resolveSubagentModelPool(config)!;
   const lines = ['Available models (pass via model):'];
   const defaultModel = pool.defaultModel;
-  const markersFor = (alias: string): string => {
-    const markers: string[] = [];
-    if (alias === defaultModel) markers.push('[default]');
-    if (alias === callerModelAlias) markers.push('[main model]');
-    return markers.length === 0 ? '' : ` ${markers.join(' ')}`;
-  };
-  if (defaultModel !== undefined && Object.hasOwn(pool.models, defaultModel)) {
-    lines.push(
-      formatPoolLine(`${defaultModel}${markersFor(defaultModel)}`, pool.models[defaultModel]!),
-    );
+  for (const alias of orderedPoolAliases(pool)) {
+    const marker = alias === defaultModel ? ' [default]' : '';
+    lines.push(formatPoolLine(`${alias}${marker}`, pool.models[alias]!));
   }
-  for (const [alias, description] of Object.entries(pool.models)) {
-    if (alias === defaultModel) continue;
-    lines.push(formatPoolLine(`${alias}${markersFor(alias)}`, description));
-  }
-  const callerInPool =
-    callerModelAlias !== undefined && Object.hasOwn(pool.models, callerModelAlias);
+  const primaryLabel =
+    callerModelAlias === undefined
+      ? PRIMARY_SUBAGENT_MODEL_CHOICE
+      : `${PRIMARY_SUBAGENT_MODEL_CHOICE} (= ${callerModelAlias})`;
   lines.push(
-    `- ${PRIMARY_SUBAGENT_MODEL_CHOICE}${callerInPool ? ` (${callerModelAlias})` : ''}: the main model you are running on, bound with your current thinking level; use it for hard, quality-sensitive subagent tasks`,
+    `- ${primaryLabel}: your current model and thinking level`,
   );
+  lines.push("Pool entries don't inherit your thinking level.");
   return lines.join('\n');
+}
+
+export function buildSubagentModelSummary(config: IConfigService): string | undefined {
+  if (!exposesSubagentModelChoice(config)) return undefined;
+  const pool = resolveSubagentModelPool(config)!;
+  const labels = orderedPoolAliases(pool).map((alias) =>
+    alias === pool.defaultModel ? `${alias} [default]` : alias,
+  );
+  labels.push(`${PRIMARY_SUBAGENT_MODEL_CHOICE} (your current model and thinking level)`);
+  return `Available models (pass via model): ${labels.join(', ')}.`;
+}
+
+function orderedPoolAliases(pool: SubagentModelPool): string[] {
+  const aliases = Object.keys(pool.models);
+  const defaultModel = pool.defaultModel;
+  if (defaultModel === undefined || !Object.hasOwn(pool.models, defaultModel)) return aliases;
+  return [defaultModel, ...aliases.filter((alias) => alias !== defaultModel)];
 }
 
 function formatPoolLine(label: string, description: string): string {

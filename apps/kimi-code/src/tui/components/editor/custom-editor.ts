@@ -125,6 +125,7 @@ export class CustomEditor extends Editor {
    * double-Esc so only two consecutive Escape presses trigger the shortcut.
    */
   public onNonEscapeInput?: () => void;
+  public onPreInput?: (data: string) => boolean;
   public onCtrlD?: () => void;
   public onCtrlC?: () => void;
   public onToggleToolExpand?: () => void;
@@ -134,6 +135,10 @@ export class CustomEditor extends Editor {
   public onCtrlB?: () => boolean;
   /** Return `true` to consume Ctrl+T (the todo list had overflow to toggle); return `false`/`undefined` to fall through to the editor default. */
   public onToggleTodoExpand?: () => boolean;
+  /** Return true to consume Ctrl+N (the Updates panel grabbed or released focus); otherwise use the editor bindings. */
+  public onPageNotify?: () => boolean;
+  /** Route `←`/`→`/`↑`/`↓`/`Esc` to the focused Updates panel; return `true` to consume. */
+  public onNotifyPanelKey?: (key: 'left' | 'right' | 'up' | 'down' | 'escape') => boolean;
   public onUndo?: () => void;
   public onTextPaste?: () => void;
   /**
@@ -256,7 +261,7 @@ export class CustomEditor extends Editor {
     return false;
   }
 
-  private hasAutocompleteActivity(): boolean {
+  public hasAutocompleteActivity(): boolean {
     const autocomplete = this as unknown as AutocompleteInternals;
     return (
       this.isShowingAutocomplete() ||
@@ -382,6 +387,10 @@ export class CustomEditor extends Editor {
       this.onNonEscapeInput?.();
     }
 
+    if (this.onPreInput?.(normalized) === true) {
+      return;
+    }
+
     // When a paste marker was just expanded, discard the trailing bracketed
     // paste data that the terminal sends alongside the Ctrl-V keystroke.
     if (this.consumingPaste) {
@@ -476,6 +485,37 @@ export class CustomEditor extends Editor {
       // Only consume the key when the todo list actually has overflow to
       // expand/collapse; otherwise fall through to the editor default.
       if (this.onToggleTodoExpand?.() === true) return;
+    }
+
+    if (matchesKey(normalized, Key.ctrl('n'))) {
+      // Only consume the key when the Updates panel grabbed or released
+      // focus; otherwise fall through to the editor default.
+      if (this.onPageNotify?.() === true) return;
+    }
+
+    // A focused Updates panel owns ←/→ (channel switching), ↑/↓ (paging the
+    // channel's updates) and Esc (release focus); when it is not focused the
+    // handler returns false and every key falls through to the normal editor
+    // behavior below. Active autocomplete outranks the panel: its menu needs
+    // the same keys for selection and dismissal.
+    if (
+      !this.hasAutocompleteActivity() &&
+      (matchesKey(normalized, Key.left) ||
+        matchesKey(normalized, Key.right) ||
+        matchesKey(normalized, Key.up) ||
+        matchesKey(normalized, Key.down) ||
+        matchesKey(normalized, Key.escape))
+    ) {
+      const panelKey = matchesKey(normalized, Key.left)
+        ? ('left' as const)
+        : matchesKey(normalized, Key.right)
+          ? ('right' as const)
+          : matchesKey(normalized, Key.up)
+            ? ('up' as const)
+            : matchesKey(normalized, Key.down)
+              ? ('down' as const)
+              : ('escape' as const);
+      if (this.onNotifyPanelKey?.(panelKey) === true) return;
     }
 
     if (matchesKey(normalized, 'shift+tab')) {

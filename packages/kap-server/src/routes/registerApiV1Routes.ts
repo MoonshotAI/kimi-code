@@ -15,6 +15,7 @@ import { registerAuthRoute } from './auth';
 import { registerCapabilitiesRoutes } from './capabilities';
 import { registerConfigRoutes } from './config';
 import { registerConnectionsRoutes } from './connections';
+import { registerFileHistoryRoutes } from './fileHistory';
 import { registerFilesRoutes } from './files';
 import { registerFsRoutes } from './fs';
 import { registerGuiStoreRoutes } from './guiStore';
@@ -27,6 +28,7 @@ import { registerOAuthRoutes } from './oauth';
 import { registerPluginsRoutes } from './plugins';
 import { registerPromptsRoutes } from './prompts';
 import { registerQuestionsRoutes } from './questions';
+import { registerRemoteControlRoutes, type RemoteControlRouteOptions } from './remoteControl';
 import { registerRuntimeRoutes } from './runtime';
 import { registerSearchRoutes } from './search';
 import { registerSessionMediaRoutes } from './sessionMedia';
@@ -70,6 +72,7 @@ export interface RegisterApiV1RoutesOptions {
   readonly transcriptService: TranscriptService;
   readonly pluginMarketplaceUrl: () => string;
   readonly pluginMarketplaceIsDefault: boolean;
+  readonly remoteControl: RemoteControlRouteOptions;
   readonly dangerousBypassAuth?: boolean;
   readonly webTitle?: string;
 }
@@ -118,6 +121,7 @@ export async function registerApiV1Routes(
       registerSessionsRoutes(
         apiV1 as unknown as Parameters<typeof registerSessionsRoutes>[0],
         core,
+        { sessionEventCursor: (sessionId) => opts.broadcaster.getCursor(sessionId) },
       );
       registerRuntimeRoutes(apiV1 as unknown as Parameters<typeof registerRuntimeRoutes>[0], core);
       registerSessionExportRoute(
@@ -152,6 +156,10 @@ export async function registerApiV1Routes(
         apiV1 as unknown as Parameters<typeof registerPromptsRoutes>[0],
         core,
       );
+      registerRemoteControlRoutes(
+        apiV1 as unknown as Parameters<typeof registerRemoteControlRoutes>[0],
+        opts.remoteControl,
+      );
       registerWorkspacesRoutes(
         apiV1 as unknown as Parameters<typeof registerWorkspacesRoutes>[0],
         core,
@@ -168,6 +176,10 @@ export async function registerApiV1Routes(
       registerFsRoutes(apiV1 as unknown as Parameters<typeof registerFsRoutes>[0], core);
       registerGuiStoreRoutes(apiV1 as unknown as Parameters<typeof registerGuiStoreRoutes>[0], opts.guiStore);
       registerToolsRoutes(apiV1 as unknown as Parameters<typeof registerToolsRoutes>[0], core);
+      registerFileHistoryRoutes(
+        apiV1 as unknown as Parameters<typeof registerFileHistoryRoutes>[0],
+        core,
+      );
       if (opts.enableTerminals !== false) {
         registerTerminalsRoutes(
           apiV1 as unknown as Parameters<typeof registerTerminalsRoutes>[0],
