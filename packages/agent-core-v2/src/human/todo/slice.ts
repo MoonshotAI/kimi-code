@@ -1,6 +1,6 @@
 import { createSlice } from '#/eventStore/slice';
 
-import type { StateUpdated, TurnStarted } from '#/agent/events';
+import { stateUpdated, turnStarted, type StateUpdated, type TurnStarted } from '#/agent/events';
 
 import { readTodoItems, type TodoItem } from './todoItem';
 
@@ -19,7 +19,7 @@ export const todoSlice = createSlice({
   name: 'todo',
   initialState: (): TodoSliceState => ({ todos: [], currentTurn: 0, lastWriteTurn: 0 }),
   reducers: {
-    'state.updated': (draft, event: StateUpdated) => {
+    [stateUpdated.type]: (draft, event: StateUpdated) => {
       if (event.name !== 'todo') return;
       const value = event.value as { todos?: unknown; lastWriteTurn?: unknown };
       draft.todos = readTodoItems(value.todos);
@@ -27,7 +27,7 @@ export const todoSlice = createSlice({
         draft.lastWriteTurn = value.lastWriteTurn;
       }
     },
-    'turn.started': (draft, _event: TurnStarted) => {
+    [turnStarted.type]: (draft, _event: TurnStarted) => {
       draft.currentTurn += 1;
     },
   },

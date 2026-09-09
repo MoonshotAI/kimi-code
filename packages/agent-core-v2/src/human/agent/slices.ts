@@ -1,4 +1,3 @@
-import type { StoreActorLogic } from '#/eventStore/actor';
 import type { CombinedState, EventStore } from '#/eventStore/eventStore';
 import { createSlice } from '#/eventStore/slice';
 import type { BranchRef } from '#/store/types';
@@ -128,4 +127,3 @@ export const agentSlices = {
 export type AgentSlices = typeof agentSlices;
 export type AgentEventStore = EventStore<AgentSlices>;
 export type AgentStoreState = CombinedState<AgentSlices>;
-export type AgentStoreActorLogic = StoreActorLogic<AgentSlices>;

@@ -21,15 +21,17 @@ import {
   turnEnded,
   turnStarted,
 } from './events';
-import { createUserEntry } from './turn';
+import { createSystemEntry, createUserEntry } from './turn';
 import { createAbortScope, withAbort, type AbortScope } from '#/utils/abort';
 import type { createTurnMachine, HistoryMessage, TurnLlmEvent, TurnOutput, UserEntry } from './turn';
-import type { AgentStoreActorLogic, AgentStoreState, QueuedPrompt } from './slices';
+import { storeActor } from '#/eventStore/actor';
+import type { AgentEventStore, AgentStoreState, QueuedPrompt } from './slices';
 
 export type { QueuedPrompt } from './slices';
 
 export interface AgentInput {
   request: LlmRequestConfig;
+  store: AgentEventStore;
 }
 
 export type AgentEvent =
@@ -202,7 +204,6 @@ function mirrorPatch(state: AgentStoreState): Pick<
 export interface CreateAgentMachineOptions {
   tools?: readonly ToolDefinition[];
   turnActor: ReturnType<typeof createTurnMachine>;
-  store: AgentStoreActorLogic;
   abortTimeoutMs?: number;
   maxStepsPerTurn?: number;
 }
@@ -232,7 +233,6 @@ function dispatchTools(tools: readonly ToolDefinition[]): ToolExecutor {
 export function createAgentMachine({
   tools,
   turnActor,
-  store,
   abortTimeoutMs,
   maxStepsPerTurn,
 }: CreateAgentMachineOptions) {
@@ -247,7 +247,7 @@ export function createAgentMachine({
     actors: {
       turnActor,
       toolActor: createToolMachine(executor),
-      storeActor: store,
+      storeActor,
       controllerGuard: fromCallback<AgentEvent, { scope: AbortScope }>(
         ({ input }) =>
           () =>
@@ -271,11 +271,9 @@ export function createAgentMachine({
         };
       }),
       emitReset: emit(({ context }) => ({ type: 'context.reset' as const, branchId: context.branchId })),
-      abortBackgroundScopes: enqueueActions(({ context }) => {
-        for (const entry of Object.values(context.background)) {
-          entry.scope.abort();
-        }
-      }),
+      abortScope: ({ context }) => {
+        context.scope.abort();
+      },
       spawnTurnTools: assign(({ context, spawn, self, event }) => {
         if (event.type !== 'turn.spawn_tools') {
           return {};
@@ -347,31 +345,69 @@ export function createAgentMachine({
       {
         id: 'store',
         src: 'storeActor',
+        input: ({ context }) => ({ store: context.input.store }),
       },
     ],
     on: {
       'input.submit': {
-        actions: sendTo('store', ({ event }) => ({
-          type: 'store.append' as const,
-          event: inputSubmitted({ id: event.id, message: event.message }),
-        })),
+        actions: [
+          assign(({ context, event }) => {
+            if (event.type !== 'input.submit') return {};
+            return { queue: [...context.queue, { id: event.id, message: event.message }] };
+          }),
+          sendTo('store', ({ event }) => ({
+            type: 'store.append' as const,
+            event: inputSubmitted({ id: event.id, message: event.message }),
+          })),
+        ],
       },
       'input.notify': {
-        actions: sendTo('store', ({ event }) => ({
-          type: 'store.append' as const,
-          event: inputNotified({ message: event.message }),
-        })),
+        actions: [
+          assign(({ context, event }) => {
+            if (event.type !== 'input.notify') return {};
+            return {
+              notifications: [
+                ...context.notifications,
+                createUserEntry(event.message, { source: 'notify' }),
+              ],
+            };
+          }),
+          sendTo('store', ({ event }) => ({
+            type: 'store.append' as const,
+            event: inputNotified({ message: event.message }),
+          })),
+        ],
       },
       'input.remind': {
-        actions: sendTo('store', ({ event }) => ({
-          type: 'store.append' as const,
-          event: inputReminded({ key: event.key, message: event.message }),
-        })),
+        actions: [
+          assign(({ context, event }) => {
+            if (event.type !== 'input.remind') return {};
+            const kept = context.reminders.filter((entry) => entry.meta.key !== event.key);
+            kept.push(
+              event.message.role === 'system'
+                ? createSystemEntry(event.message, { source: 'reminder', key: event.key })
+                : createUserEntry(event.message, { source: 'reminder', key: event.key }),
+            );
+            return { reminders: kept };
+          }),
+          sendTo('store', ({ event }) => ({
+            type: 'store.append' as const,
+            event: inputReminded({ key: event.key, message: event.message }),
+          })),
+        ],
       },
       'input.steer': {
         actions: enqueueActions(({ context, event, enqueue }) => {
+          if (event.type !== 'input.steer') return;
           const entry = context.queue.find((item) => item.id === event.id);
           if (entry === undefined) return;
+          enqueue.assign({
+            queue: context.queue.filter((item) => item.id !== event.id),
+            notifications: [
+              ...context.notifications,
+              createUserEntry(entry.message, { source: 'input' }),
+            ],
+          });
           enqueue.sendTo('store', {
             type: 'store.append' as const,
             event: inputSteered({ id: event.id, message: entry.message }),
@@ -379,17 +415,20 @@ export function createAgentMachine({
         }),
       },
       'input.cancel': {
-        actions: sendTo('store', ({ event }) => ({
-          type: 'store.append' as const,
-          event: inputCancelled({ id: event.id }),
-        })),
-      },
-      'store.changed': {
-        actions: assign(({ event }) => mirrorPatch(event.state)),
+        actions: [
+          assign(({ context, event }) => {
+            if (event.type !== 'input.cancel') return {};
+            return { queue: context.queue.filter((item) => item.id !== event.id) };
+          }),
+          sendTo('store', ({ event }) => ({
+            type: 'store.append' as const,
+            event: inputCancelled({ id: event.id }),
+          })),
+        ],
       },
       'store.reset': {
         target: '.idle',
-        actions: ['abortBackgroundScopes', 'resetMirror', 'emitReset', 'forwardToParent'],
+        actions: ['abortScope', 'resetMirror', 'emitReset', 'forwardToParent'],
       },
       'store.error': {
         actions: 'forwardToParent',
@@ -441,9 +480,11 @@ export function createAgentMachine({
                   ...context.notifications.map((entry) => messageAppended({ message: entry })),
                   ...(head === undefined
                     ? []
-                    : [messageAppended({ message: createUserEntry(head.message, { source: 'input' }) })]),
-                  queueDrained({ id: head?.id }),
-                  notificationsDrained({}),
+                    : [
+                        messageAppended({ message: createUserEntry(head.message, { source: 'input' }) }),
+                        queueDrained({ id: head.id }),
+                      ]),
+                  ...(context.notifications.length === 0 ? [] : [notificationsDrained({})]),
                 ],
               };
             }),
@@ -524,6 +565,8 @@ export function createAgentMachine({
           })),
         ],
         exit: [
+          'abortTurnTools',
+          'stopTurnTools',
           assign({ turnTools: {} }),
           assign({ turnId: ({ context }) => context.turnId + 1 }),
         ],
@@ -532,27 +575,23 @@ export function createAgentMachine({
           'store.reset': {
             target: '#agent.idle',
             actions: [
-              'abortTurn',
-              'abortTurnTools',
-              'stopTurnTools',
-              'abortBackgroundScopes',
+              'abortScope',
               'resetMirror',
               'emitReset',
               'forwardToParent',
             ],
           },
           'turn.drain': {
-            actions: [
-              sendTo('turn', ({ context }) => ({
-                type: 'turn.notify' as const,
-                messages: [...context.notifications, ...context.reminders],
-              })),
-              assign({ notifications: [], reminders: [] }),
-              sendTo('store', {
+            actions: enqueueActions(({ context, enqueue }) => {
+              const messages = [...context.notifications, ...context.reminders];
+              enqueue.sendTo('turn', { type: 'turn.notify' as const, messages });
+              if (messages.length === 0) return;
+              enqueue.assign({ notifications: [], reminders: [] });
+              enqueue.sendTo('store', {
                 type: 'store.append' as const,
                 event: inputDrained({}),
-              }),
-            ],
+              });
+            }),
           },
           'tool.detached': {
             guard: ({ context, event }) => context.turnTools[event.toolCallId] !== undefined,

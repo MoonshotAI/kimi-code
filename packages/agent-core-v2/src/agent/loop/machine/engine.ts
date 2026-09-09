@@ -161,7 +161,7 @@ export interface MachineEngine {
   remind(key: string, message: UserMessage): void;
   cancelQueueItem(id: string): void;
   abort(): void;
-  resetHistory(history: readonly HistoryMessage[]): void;
+  resetHistory(history: readonly HistoryMessage[]): Promise<void>;
   stop(): void;
   snapshot(): MachineEngineSnapshot;
   currentStep(): number;
@@ -268,11 +268,16 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
       publish({ type: 'toolBatchFailed', error });
     },
   });
-  const store: AgentEventStore = createEventStoreSync({ journal: memoryJournal(), slices: agentSlices });
+  const journal = memoryJournal();
   const initialTurnId = options.initialTurnId ?? 0;
   if (initialTurnId > 0) {
-    void store.dispatch(turnEnded({ turnId: initialTurnId - 1, outcome: 'done' }));
+    void journal.append({
+      type: turnEnded.type,
+      kind: 'event',
+      data: turnEnded({ turnId: initialTurnId - 1, outcome: 'done' }),
+    });
   }
+  const store: AgentEventStore = createEventStoreSync({ journal, slices: agentSlices });
   const actor = createActor(
     createAgentMachine({
       tools: tools.tools,
@@ -446,7 +451,7 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
       for (const message of history) {
         void journal.append({ type: messageAppended.type, kind: 'event', data: messageAppended({ message }) });
       }
-      const nextTurnId = store.slice('turnIndex').nextTurnId;
+      const nextTurnId = (actor.getSnapshot() as unknown as MachineSnapshotLike).context.turnId;
       if (nextTurnId > 0) {
         void journal.append({
           type: turnEnded.type,
@@ -454,7 +459,7 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
           data: turnEnded({ turnId: nextTurnId - 1, outcome: 'done' }),
         });
       }
-      void store.reset(journal);
+      return store.reset(journal);
     },
     stop: () => {
       for (const subscription of subscriptions) subscription.unsubscribe();
@@ -463,7 +468,6 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
     snapshot: () => {
       const snapshot = actor.getSnapshot() as unknown as MachineSnapshotLike;
       const value = snapshot.value;
-      const storeState = store.getState();
       const turnRef = snapshot.children['turn'];
       let turn: MachineEngineTurnSnapshot | undefined;
       if (turnRef !== undefined) {
@@ -477,7 +481,7 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
               : ('running' as const);
         const context = turnSnapshot.context;
         turn = {
-          turnId: storeState.turnIndex.nextTurnId,
+          turnId: snapshot.context.turnId,
           phase,
           step: context.steps,
           retry:
@@ -501,10 +505,10 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
         waitingForBackground:
           typeof value === 'object' && value !== null && 'idle' in value &&
           (value as { idle?: unknown }).idle === 'waiting',
-        queueLength: storeState.queue.length,
-        queueIds: storeState.queue.map((entry) => entry.id),
-        notificationCount: storeState.notifications.length,
-        reminderCount: storeState.reminders.length,
+        queueLength: snapshot.context.queue.length,
+        queueIds: snapshot.context.queue.map((entry) => entry.id),
+        notificationCount: snapshot.context.notifications.length,
+        reminderCount: snapshot.context.reminders.length,
         backgroundCount: Object.keys(snapshot.context.background).length,
         turn,
       };

@@ -1314,7 +1314,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           turn.interruptStep = undefined;
           if (turn.retryRequested) {
             turn.retryRequested = false;
-            this.machineEngine().resetHistory(historyFromContext(this.context.get()));
+            await this.machineEngine().resetHistory(historyFromContext(this.context.get()));
             this.machineEngine().notify(EMPTY_MACHINE_PROMPT);
           }
           return;

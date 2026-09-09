@@ -1,7 +1,6 @@
-import { fromEventStore } from '#/eventStore/actor';
 import { createEventStore, type EventStore } from '#/eventStore/eventStore';
 import { journalFromBranch } from '#/eventStore/journal';
-import { agentSlices, type AgentEventStore, type AgentStoreActorLogic } from '#/agent/slices';
+import { agentSlices, type AgentEventStore } from '#/agent/slices';
 import type { StoreBackend } from '#/store/backend/backend';
 import { StoreError, type BranchRef } from '#/store/types';
 import type { Tree } from '#/store/tree';
@@ -10,11 +9,6 @@ import { agentClosed, agentOpened, agentSwitched, SESSION_LOG_BRANCH } from './e
 import { sessionSlices } from './slices';
 
 export type SessionStore = EventStore<typeof sessionSlices>;
-
-export interface OpenedAgentStore {
-  store: AgentStoreActorLogic;
-  engine: AgentEventStore;
-}
 
 export type UndoErrorReason = 'unknown-agent' | 'invalid-count' | 'insufficient';
 
@@ -74,10 +68,10 @@ export class SessionStores {
     return this.sessionStore;
   }
 
-  async open(agentId: string, opts?: { from?: BranchRef }): Promise<OpenedAgentStore> {
+  async open(agentId: string, opts?: { from?: BranchRef }): Promise<AgentEventStore> {
     const existing = this.agents.get(agentId);
     if (existing !== undefined) {
-      return { store: fromEventStore(existing), engine: existing };
+      return existing;
     }
     const existed = this.tree.has(agentId);
     const branch = existed
@@ -91,10 +85,10 @@ export class SessionStores {
     if (!existed) {
       await (await this.session()).dispatch(agentOpened({ agentId, branch: branch.name }));
     }
-    return { store: fromEventStore(engine), engine };
+    return engine;
   }
 
-  async fork(sourceId: string, agentId: string): Promise<OpenedAgentStore> {
+  async fork(sourceId: string, agentId: string): Promise<AgentEventStore> {
     const source = this.agents.get(sourceId);
     if (source === undefined) {
       throw new StoreError('unknown-agent', `unknown agent '${sourceId}'`);
