@@ -552,6 +552,20 @@ describe('TowerSpawnTool', () => {
     expect(createAgent).not.toHaveBeenCalled();
   });
 
+  it('refuses a reserved protocol name before any side effects', async () => {
+    const result = await execute({ ...WORKER_ARGS, name: 'tower' });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('reserved');
+    expect(createAgent).not.toHaveBeenCalled();
+    expect(registerTask).not.toHaveBeenCalled();
+    expect((await store.load()).roster.agents).toEqual([]);
+    const { stdout } = await execFileAsync('git', ['branch', '--list', 'feat/build-gemm'], {
+      cwd: repo,
+    });
+    expect(stdout.trim()).toBe('');
+  });
+
   it('snapshots base WIP into the worker branch and records the spawn base', async () => {
     await writeFile(join(repo, 'wip.ts'), 'export const wip = 1;\n');
 

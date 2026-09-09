@@ -37,6 +37,7 @@ import {
   STATE_FILE,
   TOWER_NAME,
   WORKTREES_DIR,
+  isReservedTowerAgentName,
   dateDash,
   findingFileName,
   inboxFileName,
@@ -389,7 +390,7 @@ export class TowerStore {
 
   async registerAgent(entry: TowerRosterEntry): Promise<void> {
     const state = await this.load();
-    if (entry.name === TOWER_NAME || entry.name === BROADCAST_NAME) {
+    if (isReservedTowerAgentName(entry.name)) {
       throw new TowerProtocolError(
         `tower agent name "${entry.name}" is reserved by the tower protocol — pick a different name`,
       );
@@ -823,6 +824,7 @@ export class TowerStore {
     const myRounds = existing.filter((r) => r.reviewer === callerName).length;
     const round = myRounds + 1;
     const reviewedCommit = await branchTip(this.repoRoot, input.target);
+    const reviewMission = resolveMissionByBranch(state, input.target);
 
     const frontmatter = renderFrontmatter({
       date: dateDash(),
@@ -832,6 +834,7 @@ export class TowerStore {
       status: input.status,
       merge: input.merge,
       reviewed_commit: reviewedCommit,
+      ...(reviewMission !== undefined ? { mission: reviewMission.id } : {}),
     });
     const checks = (input.checks ?? []).map((c) => `- [x] ${c}`).join('\n');
     const content = [
@@ -891,6 +894,7 @@ export class TowerStore {
         reviewedCommit: fields['reviewed_commit'] ?? '',
         date: fields['date'] ?? '',
         file: rel,
+        mission: fields['mission'],
       });
     }
     reviews.sort((a, b) => a.round - b.round);
@@ -970,6 +974,19 @@ export class TowerStore {
       throw await block(
         'tip-moved',
         `merge blocked: ${branch} moved since the clean review (reviewed ${review.reviewedCommit.slice(0, 7)}, tip ${tip.slice(0, 7)}) — re-review required`,
+      );
+    }
+    const siblingMissions = state.missions.filter((m) => m.branch === branch && m.id !== mission.id);
+    if (review.mission !== undefined && review.mission !== mission.id) {
+      throw await block(
+        'review-mission-mismatch',
+        `merge blocked: latest clean review (round ${review.round} by ${review.reviewer}) was written for ${review.mission}, but "${branch}" resolves to ${mission.id} — re-review the mission being merged`,
+      );
+    }
+    if (review.mission === undefined && siblingMissions.length > 0) {
+      throw await block(
+        'review-mission-mismatch',
+        `merge blocked: "${branch}" is shared with other mission record(s) ${siblingMissions.map((m) => `${m.id} (${m.status})`).join(', ')}, and the latest clean review (round ${review.round} by ${review.reviewer}) predates mission-stamped reviews — re-review ${mission.id} so the gate can tell which mission was audited`,
       );
     }
 

@@ -78,6 +78,7 @@ export interface TowerReviewInfo {
   readonly reviewedCommit: string;
   readonly date: string;
   readonly file: string;
+  readonly mission?: string;
 }
 
 export interface TowerInboxItem {

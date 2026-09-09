@@ -1049,6 +1049,76 @@ describe('merge gate', () => {
     expect(after.missions.find((m) => m.id === stale!.id)?.status).toBe('abandoned');
   });
 
+  it('stamps the resolved mission on new reviews', async () => {
+    const [mission] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    const state = await store.load();
+    await store.addWorktree(mission!.worktree, mission!.branch, state.base);
+    await commitFile(worktreeOf(mission!), 'src/x/x.ts', 'x\n', 'work on M1');
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: mission!.branch }),
+    );
+
+    await cleanReview('rev', mission!.branch);
+
+    expect((await store.latestReview(mission!.branch))?.mission).toBe(mission!.id);
+  });
+
+  it('refuses to merge on an unstamped legacy review when another mission shares the branch', async () => {
+    const [stale] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    const state = await store.load();
+    await store.addWorktree(stale!.worktree, stale!.branch, state.base);
+    await commitFile(worktreeOf(stale!), 'src/x/x.ts', 'x\n', 'work on M1');
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: stale!.branch }),
+    );
+    await store.updateMission('tower', stale!.id, { status: 'abandoned' });
+    await cleanReview('rev', stale!.branch);
+    expect((await store.latestReview(stale!.branch))?.mission).toBeUndefined();
+
+    const live: TowerMission = {
+      ...stale!,
+      id: 'M2',
+      worktree: 'wt-2',
+      status: 'completed',
+      tasks: [],
+      notes: [],
+      blockers: [],
+    };
+    await spliceMissionIntoState(live);
+
+    await expect(store.merge(stale!.branch)).rejects.toThrow(/predates mission-stamped reviews/);
+    const after = await store.load();
+    expect(after.missions.find((m) => m.id === live.id)?.status).toBe('completed');
+  });
+
+  it('refuses to merge when the latest clean review was stamped for a different mission', async () => {
+    const [stale] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    const state = await store.load();
+    await store.addWorktree(stale!.worktree, stale!.branch, state.base);
+    await commitFile(worktreeOf(stale!), 'src/x/x.ts', 'x\n', 'work on M1');
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: stale!.branch }),
+    );
+    await cleanReview('rev', stale!.branch);
+    expect((await store.latestReview(stale!.branch))?.mission).toBe('M1');
+
+    await store.updateMission('tower', stale!.id, { status: 'abandoned' });
+    const live: TowerMission = {
+      ...stale!,
+      id: 'M2',
+      worktree: 'wt-2',
+      status: 'completed',
+      tasks: [],
+      notes: [],
+      blockers: [],
+    };
+    await spliceMissionIntoState(live);
+
+    await expect(store.merge(stale!.branch)).rejects.toThrow(/written for M1/);
+    const after = await store.load();
+    expect(after.missions.find((m) => m.id === live.id)?.status).toBe('completed');
+  });
+
   it('refuses to merge a branch owned only by closed missions and leaves their records untouched', async () => {
     const [stale] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
     const state = await store.load();

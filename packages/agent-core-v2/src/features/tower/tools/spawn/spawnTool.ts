@@ -14,6 +14,7 @@ import {
   TowerProtocolError,
   TowerStore,
   WORKTREES_DIR,
+  isReservedTowerAgentName,
   missionFileName,
   resolveMissionByBranch,
   resolveTowerRepoRoot,
@@ -107,6 +108,13 @@ export class TowerSpawnTool implements ITowerSpawnTool {
       }
       const store = this.newStore();
       const state = await store.load();
+
+      if (isReservedTowerAgentName(args.name)) {
+        return {
+          output: `tower agent name "${args.name}" is reserved by the tower protocol — pick a different name`,
+          isError: true,
+        };
+      }
 
       const existing = store.findByName(state, args.name);
       if (existing !== undefined) {
