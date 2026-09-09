@@ -23,6 +23,7 @@ import {
   mergeNoFf,
   tryGit,
   worktreeAdd,
+  worktreeAddNewBranch,
   worktreeRemove,
 } from './git';
 import {
@@ -159,6 +160,10 @@ export function resolveMissionByBranch(
     }
   }
   return resolved;
+}
+
+function unownedBranchMessage(branch: string): string {
+  return `branch "${branch}" exists in git but is not owned by any tower mission (it appeared after planning) — refusing to build the worker on unrelated history; delete or rename that branch if it is stale, or re-plan the mission under a new title`;
 }
 
 export async function assertLocalBaseBranch(repoRoot: string, base: string): Promise<void> {
@@ -1079,11 +1084,9 @@ export class TowerStore {
         () => false,
       );
       if (mission?.owner === undefined && !dirExists) {
-        throw new TowerProtocolError(
-          `branch "${branch}" exists in git but is not owned by any tower mission (it appeared after planning) — refusing to build the worker on unrelated history; delete or rename that branch if it is stale, or re-plan the mission under a new title`,
-        );
+        throw new TowerProtocolError(unownedBranchMessage(branch));
       }
-      await worktreeAdd(this.repoRoot, this.abs(rel), branch, spawnBase ?? base);
+      await worktreeAdd(this.repoRoot, this.abs(rel), branch);
       await this.appendLog(TOWER_NAME, 'worktree.add', { worktree, branch, base, spawn_base: spawnBase });
       return { rel, spawnBase };
     }
@@ -1115,7 +1118,14 @@ export class TowerStore {
         dirty.map((entry) => entry.path),
         `tower: snapshot of uncommitted base checkout changes (worktree ${worktree})`,
       )) ?? undefined;
-    await worktreeAdd(this.repoRoot, this.abs(rel), branch, spawnBase ?? base);
+    try {
+      await worktreeAddNewBranch(this.repoRoot, this.abs(rel), branch, spawnBase ?? base);
+    } catch (error) {
+      if (await branchExists(this.repoRoot, branch)) {
+        throw new TowerProtocolError(unownedBranchMessage(branch));
+      }
+      throw error;
+    }
     await this.appendLog(TOWER_NAME, 'worktree.add', { worktree, branch, base, spawn_base: spawnBase });
     return { rel, spawnBase };
   }

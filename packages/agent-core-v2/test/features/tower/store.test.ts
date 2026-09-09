@@ -11,6 +11,7 @@ import {
   TowerProtocolError,
   TowerStore,
   parseFrontmatter,
+  worktreeAddNewBranch,
 } from '../../../src/features/tower/protocol';
 import type {
   TowerFindingType,
@@ -1795,6 +1796,18 @@ describe('addWorktree branch ownership', () => {
     await expect(store.addWorktree(mission!.worktree, mission!.branch, state.base)).rejects.toThrow(
       /not owned by any tower mission/,
     );
+  });
+
+  it('creates the mission branch atomically, refusing an existing ref instead of checking it out', async () => {
+    await git(repo, 'branch', 'feat/taken');
+    const target = join(repo, 'wt-taken');
+
+    await expect(worktreeAddNewBranch(repo, target, 'feat/taken', 'main')).rejects.toThrow(
+      /already exists/,
+    );
+
+    const listed = await git(repo, 'worktree', 'list', '--porcelain');
+    expect(listed).not.toContain('wt-taken');
   });
 
   it('allows re-adding the worktree of a mission that already has an owner', async () => {

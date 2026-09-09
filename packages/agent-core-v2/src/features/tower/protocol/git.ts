@@ -122,16 +122,16 @@ export async function isAncestor(cwd: string, ancestor: string, ref: string): Pr
   return (await tryGit(cwd, ['merge-base', '--is-ancestor', ancestor, ref])) !== null;
 }
 
-export async function worktreeAdd(
+export async function worktreeAdd(cwd: string, path: string, branch: string): Promise<void> {
+  await git(cwd, ['worktree', 'add', path, branch]);
+}
+
+export async function worktreeAddNewBranch(
   cwd: string,
   path: string,
   branch: string,
   base: string,
 ): Promise<void> {
-  if (await branchExists(cwd, branch)) {
-    await git(cwd, ['worktree', 'add', path, branch]);
-    return;
-  }
   await git(cwd, ['worktree', 'add', path, '-b', branch, base]);
 }
 
