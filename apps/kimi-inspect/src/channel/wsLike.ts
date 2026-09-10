@@ -1,8 +1,9 @@
 /**
  * Minimal DOM-compatible WebSocket surface shared by the app's socket
- * clients (today only the transcript `/api/v1/ws` client). Coding against
- * this structural type keeps the clients testable with an injected fake;
- * the default is the global `WebSocket` (browsers, Node ≥ 21).
+ * clients (the transcript chat client and the activity global-events
+ * client, both on `/api/v3/ws`). Coding against this structural type keeps
+ * the clients testable with an injected fake; the default is the global
+ * `WebSocket` (browsers, Node ≥ 21).
  */
 export interface WsLike {
   readonly readyState: number;

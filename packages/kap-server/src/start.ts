@@ -31,7 +31,6 @@ import {
   kimiRegionProfile,
   type KimiHostIdentity,
 } from '@moonshot-ai/kimi-code-oauth';
-import { createAsyncApiDocument } from './protocol/asyncapi';
 import Fastify, { type FastifyInstance } from 'fastify';
 
 import { installErrorHandler } from './error-handler';
@@ -57,9 +56,6 @@ import {
   type IConnectionRegistry,
 } from './transport/ws/connectionRegistry';
 import { extractWsBearerToken } from './transport/ws/bearerProtocol';
-import { SessionEventBroadcaster } from './transport/ws/v1/sessionEventBroadcaster';
-import type { ConfigWarningItem } from './transport/ws/v1/events';
-import { registerWsV1, WS_PATH as WS_PATH_V1 } from './transport/ws/v1/registerWsV1';
 import { registerWsDebug, WS_DEBUG_PATH } from './transport/ws/debug/registerWsDebug';
 import { registerWsV3, WS_PATH_V3 } from './transport/ws/v3/registerWsV3';
 import { getServerVersion } from './version';
@@ -78,7 +74,6 @@ import {
   type ServerTelemetry,
   shutdownServerTelemetry,
 } from './services/telemetry';
-import { TranscriptService } from './services/transcript/transcriptService';
 import { ProjectionService } from './services/projection';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
 import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
@@ -91,6 +86,7 @@ import { resolvePasswordHash } from './services/auth/password';
 import { createTokenStore } from './services/auth/tokenStore';
 
 import { drainGlobalSearchDisposals, IGlobalSearchService } from './search/searchService';
+import { LocalLiveTranscriptSource } from './search/liveSource';
 
 export interface ServerHostIdentity extends KimiHostIdentity {
   readonly displayName?: string;
@@ -348,19 +344,14 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   };
 
   const connectionRegistry = new ConnectionRegistry();
-  const transcriptService = new TranscriptService({ homeDir, core, logger });
-  core.accessor.get(IGlobalSearchService).setLiveTranscriptSource(transcriptService);
-  const broadcaster = new SessionEventBroadcaster({
-    eventsDir: join(homeDir, 'server', 'events'),
-    core,
-    logger,
-    transcriptService,
-  });
+  core.accessor
+    .get(IGlobalSearchService)
+    .setLiveTranscriptSource(new LocalLiveTranscriptSource({ homeDir, core }));
   const projectionService = new ProjectionService({ homeDir, core, logger });
 
   const configService = core.accessor.get(IConfigService);
   const publishConfigWarnings = (diagnostics: readonly ConfigDiagnostic[]): void => {
-    const warnings: ConfigWarningItem[] = diagnostics
+    const warnings = diagnostics
       .filter((diagnostic) => diagnostic.severity === 'warning')
       .map((diagnostic) =>
         diagnostic.domain === undefined
@@ -411,9 +402,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
           { name: 'sessions', description: 'Session lifecycle' },
           { name: 'v2-sessions', description: 'Domain-grouped session list query (API v2)' },
           { name: 'workspaces', description: 'Workspace registry + folder picker' },
-          { name: 'messages', description: 'Message history' },
           { name: 'search', description: 'Global message search' },
-          { name: 'transcript', description: 'Turn-granular session transcript' },
           { name: 'prompts', description: 'Prompt submission & abort' },
           { name: 'approvals', description: 'Approval resolution' },
           { name: 'questions', description: 'Question resolution & dismiss' },
@@ -466,8 +455,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       void close().catch((err: unknown) => logger.error({ err }, 'server close failed'));
     },
     connectionRegistry,
-    broadcaster,
-    transcriptService,
     homeDir,
     projectionService,
     dangerousBypassAuth: opts.disableAuth === true,
@@ -476,12 +463,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
 
   await registerApiV2Routes(app, core);
 
-  const wssV1 = registerWsV1(core, {
-    validateCredential,
-    registry: connectionRegistry,
-    broadcaster,
-    logger,
-  });
   const wssDebug = registerWsDebug();
 
   const { wss: wssV3, hub: wsV3Hub } = registerWsV3(core, {
@@ -497,10 +478,9 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     head: Buffer,
   ): Promise<void> => {
     const url = req.url ?? '';
-    const isV1 = url === WS_PATH_V1 || url.startsWith(`${WS_PATH_V1}?`);
     const isV3 = url === WS_PATH_V3 || url.startsWith(`${WS_PATH_V3}?`);
     const isDebug = url === WS_DEBUG_PATH || url.startsWith(`${WS_DEBUG_PATH}?`);
-    const wss = isV1 ? wssV1 : isV3 ? wssV3 : isDebug ? wssDebug : undefined;
+    const wss = isV3 ? wssV3 : isDebug ? wssDebug : undefined;
     if (wss === undefined) {
       socket.destroy();
       return;
@@ -573,17 +553,9 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
 
   app.addHook('onClose', async () => {
     connectionRegistry.closeAll('server shutting down');
-    wssV1.close();
     wssDebug.close();
     wssV3.close();
     wsV3Hub.dispose();
-    await broadcaster.close();
-  });
-
-  app.get('/asyncapi.json', async (_req, reply) => {
-    return reply
-      .type('application/json')
-      .send(createAsyncApiDocument({ version: serverVersion, serverHost: host }));
   });
 
   app.get('/openapi.json', async (_req, reply) => {
