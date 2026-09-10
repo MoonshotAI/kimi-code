@@ -1430,6 +1430,105 @@ export function foldWireHistory(
   };
   synthesizeSubagentTasks();
 
+  const synthesizeSwarmMemberTasks = (): void => {
+    for (const tool of tools.values()) {
+      if (tool.name !== 'AgentSwarm') continue;
+      const args = (tool.input ?? {}) as Record<string, unknown>;
+      const resumeIds =
+        args['resume_agent_ids'] !== null && typeof args['resume_agent_ids'] === 'object'
+          ? Object.keys(args['resume_agent_ids'] as Record<string, unknown>)
+          : [];
+      const items = Array.isArray(args['items'])
+        ? (args['items'] as unknown[]).filter((item): item is string => typeof item === 'string')
+        : [];
+      const outputText = typeof tool.output === 'string' ? tool.output : undefined;
+      const members = outputText === undefined ? [] : parseSwarmMembers(outputText);
+      for (const agentId of resumeIds) {
+        if (!tool.agentRefs.some((ref) => ref.agent_id === agentId)) {
+          tool.agentRefs = [...tool.agentRefs, { agent_id: agentId, role: 'member' }];
+        }
+      }
+      for (const member of members) {
+        if (
+          member.agentId !== undefined &&
+          !tool.agentRefs.some((ref) => ref.agent_id === member.agentId)
+        ) {
+          tool.agentRefs = [...tool.agentRefs, { agent_id: member.agentId, role: 'member' }];
+        }
+      }
+      const model = typeof args['model'] === 'string' ? args['model'] : undefined;
+      const thinkingEffort = typeof args['thinking'] === 'string' ? args['thinking'] : undefined;
+      const swarmDescription =
+        typeof args['description'] === 'string' ? args['description'] : undefined;
+      let insertOffset = 1;
+      const pushMemberTask = (
+        agentId: string,
+        index: number,
+        member: SwarmMemberResult | undefined,
+      ): void => {
+        if (tasks.has(agentId)) return;
+        const outcome = member?.outcome;
+        const status =
+          outcome === 'completed'
+            ? 'completed'
+            : outcome === undefined
+              ? tool.status === 'done'
+                ? 'completed'
+                : 'failed'
+              : 'failed';
+        tasks.set(agentId, {
+          taskId: agentId,
+          kind: 'subagent',
+          status,
+          detached: false,
+          description:
+            swarmDescription === undefined ? undefined : `${swarmDescription} #${String(index)}`,
+          childAgentId: agentId,
+          outputTail: '',
+          startedAt: new Date(tool.at).toISOString(),
+          endedAt: tool.status === 'running' ? undefined : new Date(tool.at).toISOString(),
+          resultSummary:
+            outcome === 'completed' && member !== undefined && member.body.length > 0
+              ? member.body
+              : undefined,
+          error:
+            outcome !== undefined && outcome !== 'completed' && member !== undefined
+              ? member.body
+              : undefined,
+          stateReason:
+            member?.stopReason ??
+            (outcome === 'aborted'
+              ? 'aborted'
+              : status === 'failed' && tool.status === 'running'
+                ? 'interrupted'
+                : undefined),
+          usage: undefined,
+          model,
+          thinkingEffort,
+          at: tool.at,
+        });
+        const toolIndex = order.indexOf(`tool:${tool.toolCallId}`);
+        if (toolIndex >= 0) order.splice(toolIndex + insertOffset, 0, `task:${agentId}`);
+        else order.push(`task:${agentId}`);
+        insertOffset += 1;
+      };
+      for (const [position, agentId] of resumeIds.entries()) {
+        pushMemberTask(
+          agentId,
+          position + 1,
+          members.find((member) => member.agentId === agentId),
+        );
+      }
+      for (const member of members) {
+        if (member.agentId === undefined || resumeIds.includes(member.agentId)) continue;
+        const itemPosition =
+          member.item === undefined ? -1 : items.findIndex((item) => item.trim() === member.item);
+        pushMemberTask(member.agentId, resumeIds.length + itemPosition + 1, member);
+      }
+    }
+  };
+  synthesizeSwarmMemberTasks();
+
   const messages: HistoryMessage[] = [];
   for (const key of order) {
     const [kind, id] = splitKey(key);
@@ -1608,6 +1707,43 @@ export function foldWireHistory(
     }
   }
   return messages;
+}
+
+interface SwarmMemberResult {
+  readonly agentId?: string;
+  readonly item?: string;
+  readonly outcome?: string;
+  readonly stopReason?: string;
+  readonly body: string;
+}
+
+function parseSwarmMembers(output: string): SwarmMemberResult[] {
+  if (!output.includes('<agent_swarm_result>')) return [];
+  const members: SwarmMemberResult[] = [];
+  for (const match of output.matchAll(/<subagent\b([^>]*)>([\s\S]*?)<\/subagent>/g)) {
+    const attrs = match[1]!;
+    const attr = (name: string): string | undefined => {
+      const value = attrs.match(new RegExp(`${name}="([^"]*)"`))?.[1];
+      return value === undefined ? undefined : unescapeXmlAttr(value);
+    };
+    const agentId = attr('agent_id')?.trim();
+    members.push({
+      agentId: agentId !== undefined && agentId.length > 0 ? agentId : undefined,
+      item: attr('item'),
+      outcome: attr('outcome'),
+      stopReason: attr('stop_reason'),
+      body: (match[2] ?? '').trim(),
+    });
+  }
+  return members;
+}
+
+function unescapeXmlAttr(value: string): string {
+  return value
+    .replaceAll('&quot;', '"')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&amp;', '&');
 }
 
 function splitKey(key: string): [string, string] {
