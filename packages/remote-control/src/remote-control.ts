@@ -226,16 +226,19 @@ export function rewriteRemoteControlResponse(
 }
 
 function acceptsGzipEncoding(headers: readonly [string, string][]): boolean {
+  let wildcard = false;
   for (const [name, value] of headers) {
     if (name.toLowerCase() !== 'accept-encoding') continue;
     for (const token of value.split(',')) {
       const [encoding, ...params] = token.trim().toLowerCase().split(';');
       if (encoding !== 'gzip' && encoding !== '*') continue;
       const quality = params.map((param) => param.trim()).find((param) => param.startsWith('q='));
-      if (quality === undefined || Number(quality.slice(2)) > 0) return true;
+      const acceptable = quality === undefined || Number(quality.slice(2)) > 0;
+      if (encoding === 'gzip') return acceptable;
+      wildcard = wildcard || acceptable;
     }
   }
-  return false;
+  return wildcard;
 }
 
 function isGzipCompressibleType(contentType: string): boolean {

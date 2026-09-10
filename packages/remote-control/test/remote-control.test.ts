@@ -461,6 +461,29 @@ describe('Remote Control tunnel', () => {
     );
     expect(binaryResponse.subarray(binarySeparator + 4).equals(assetPng)).toBe(true);
 
+    const excludedResponsePromise = nextJsonMessage(httpConnections[0]!);
+    httpConnections[0]!.send(
+      JSON.stringify({
+        request_id: 'request-5',
+        type: 'request',
+        is_last: true,
+        body_base64: Buffer.from(
+          'GET /assets/index.js HTTP/1.1\r\nHost: relay.test\r\nAccept-Encoding: gzip;q=0, *;q=1\r\n\r\n',
+        ).toString('base64'),
+      }),
+    );
+    const excludedResponse = Buffer.from(
+      (await excludedResponsePromise)['body_base64'] as string,
+      'base64',
+    );
+    const excludedSeparator = excludedResponse.indexOf('\r\n\r\n');
+    expect(excludedResponse.subarray(0, excludedSeparator).toString('latin1')).not.toContain(
+      'Content-Encoding',
+    );
+    expect(excludedResponse.subarray(excludedSeparator + 4).toString()).toBe(
+      assetJs.replaceAll('"/assets/', `"/coding-relay/devices/${handle.deviceId}/assets/`),
+    );
+
     managementConnections[0]!.send(
       JSON.stringify({
         type: 'open_ws',
