@@ -5,9 +5,10 @@ export type XstateInspectionEventType = InspectionEvent['type'];
 export interface XstateInspectionEnvelope {
   readonly type: XstateInspectionEventType;
   readonly timestamp: number;
-  readonly actorSessionId: string;
-  readonly actorId?: string;
+  readonly actorId: string;
+  readonly refId?: string;
   readonly logicId?: string;
+  readonly parentActorId?: string;
   readonly eventType?: string;
   readonly stateValue?: unknown;
 }
@@ -24,15 +25,17 @@ function scalar(value: unknown): string | undefined {
 }
 
 function toEnvelope(event: InspectionEvent, now: () => number): XstateInspectionEnvelope {
-  const actorRef = event.actorRef as { id?: unknown; logic?: unknown };
+  const actorRef = event.actorRef as { id?: unknown; logic?: unknown; _parent?: unknown };
   const logic = actorRef.logic as { id?: unknown } | undefined;
+  const parent = actorRef._parent as { sessionId?: unknown } | undefined;
   const snapshot = 'snapshot' in event ? (event.snapshot as { value?: unknown }) : undefined;
   return {
     type: event.type,
     timestamp: now(),
-    actorSessionId: event.actorRef.sessionId,
-    actorId: scalar(actorRef.id),
+    actorId: event.actorRef.sessionId,
+    refId: scalar(actorRef.id),
     logicId: scalar(logic?.id),
+    parentActorId: scalar(parent?.sessionId),
     eventType:
       'event' in event
         ? event.event.type
