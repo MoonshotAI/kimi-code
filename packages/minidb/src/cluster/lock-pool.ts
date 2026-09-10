@@ -269,8 +269,12 @@ export class ShardLockPool {
               entry.retire = true;
               return;
             }
+            if (!this.writerOps.enter()) return;
             if (this.writers.get(shardId) === entry) this.writers.delete(shardId);
-            void entry.handle.close().catch(() => {});
+            void entry.handle
+              .close()
+              .catch(() => {})
+              .finally(() => this.writerOps.leave());
           }, this.opts.lockHoldMs);
           timer.unref();
         }

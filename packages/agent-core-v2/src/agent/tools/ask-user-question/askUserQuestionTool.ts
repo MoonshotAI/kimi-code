@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { randomUUID } from 'node:crypto';
 
 import { CoreErrors } from '#/_base/errors/codes';
 import { Error2 } from '#/_base/errors/errors';
@@ -6,6 +6,7 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { isAbortError } from '#/_base/utils/abort';
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { QuestionAnsweredEvent, QuestionDismissedEvent } from '#/app/telemetry/events';
 import type {
@@ -15,14 +16,25 @@ import type {
 } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
-import { ISessionQuestionService } from '#/session/question/question';
+import {
+  INTERACTION_TAG_AGENT_ID,
+  INTERACTION_TAG_SESSION_ID,
+  INTERACTION_TAG_TOOL_CALL_ID,
+  INTERACTION_TAG_TURN_ID,
+  isInteractionCancellation,
+  type InteractionTags,
+} from '#/human/interaction/interaction';
+import { interactions } from '#/human/interaction/facade';
 import type {
   QuestionAnswers,
   QuestionAnswerMethod,
+  QuestionRequest,
   QuestionResponse,
   QuestionResult,
-} from '#/session/question/question';
+} from '#/agent/interaction/question';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import {
+  AskUserQuestionInputSchema,
   AskUserQuestionInputSchemaWithBackground,
   IAskUserQuestionTool,
   questionUniquenessError,
@@ -36,20 +48,33 @@ const QUESTION_DISMISSED_MESSAGE = 'User dismissed the question without answerin
 const QUESTION_UNSUPPORTED_FAILURE_MESSAGE =
   'The connected client does not support interactive questions. Do NOT call this tool again. Ask the user directly in your text response instead.';
 
+const BACKGROUND_DESCRIPTION =
+  '- Set background=true when you can keep working without the answer. This starts a background question task and returns a task_id immediately. The answer arrives automatically in a later turn — you do not need to poll, sleep, or check on it. Continue with other work; never fabricate or predict the answer.';
+
+const BACKGROUND_UNAVAILABLE_MESSAGE =
+  'Background questions are not available for this agent because TaskList, TaskOutput, and TaskStop are not enabled.';
+
+const PARAMETERS_WITH_BACKGROUND = toInputJsonSchema(AskUserQuestionInputSchemaWithBackground);
+const PARAMETERS_FOREGROUND_ONLY = toInputJsonSchema(AskUserQuestionInputSchema);
+
 export class AskUserQuestionTool implements IAskUserQuestionTool {
   declare readonly _serviceBrand: undefined;
   readonly name = 'AskUserQuestion' as const;
-  readonly description: string;
-  readonly parameters: Record<string, unknown>;
 
   constructor(
-    @ISessionQuestionService private readonly question: ISessionQuestionService,
+    @ISessionContext private readonly session: ISessionContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-  ) {
-    this.description = `${DESCRIPTION}- Set background=true when you can keep working without the answer. This starts a background question task and returns a task_id immediately. The answer arrives automatically in a later turn — you do not need to poll, sleep, or check on it. Continue with other work; never fabricate or predict the answer.`;
-    this.parameters = toInputJsonSchema(this.inputSchema());
+    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
+  ) {}
+
+  get description(): string {
+    return `${DESCRIPTION}${this.allowBackground() ? BACKGROUND_DESCRIPTION : ''}`;
+  }
+
+  get parameters(): Record<string, unknown> {
+    return this.allowBackground() ? PARAMETERS_WITH_BACKGROUND : PARAMETERS_FOREGROUND_ONLY;
   }
 
   resolveExecution(args: AskUserQuestionInput): ToolExecution {
@@ -67,6 +92,10 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
     args: AskUserQuestionInput,
     { toolCallId, signal, turnId, trace }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
+    if (args.background === true && !this.allowBackground()) {
+      return { isError: true, output: BACKGROUND_UNAVAILABLE_MESSAGE };
+    }
+
     const uniquenessError = questionUniquenessError(args.questions);
     if (uniquenessError !== null) {
       return { isError: true, output: uniquenessError };
@@ -79,8 +108,12 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
     return this.executeQuestion(args, { toolCallId, turnId, signal, trace });
   }
 
-  private inputSchema(): z.ZodType<AskUserQuestionInput> {
-    return AskUserQuestionInputSchemaWithBackground;
+  private allowBackground(): boolean {
+    return (
+      this.toolPolicy.isToolActive('TaskList') &&
+      this.toolPolicy.isToolActive('TaskOutput') &&
+      this.toolPolicy.isToolActive('TaskStop')
+    );
   }
 
   private executeInBackground(
@@ -119,13 +152,8 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
       isError: false,
       output:
         `task_id: ${taskId}\n` +
-        `description: ${description}\n` +
         `status: ${status}\n` +
-        `automatic_notification: true\n` +
-        'next_step: Continue your current work; the answer will arrive automatically when the user responds.\n' +
-        'next_step: Use TaskOutput with this task_id for a non-blocking status/answer snapshot.\n' +
-        'next_step: Use TaskStop only if the question should be cancelled.\n' +
-        'human_shell_hint: The pending question is also visible in /tasks.',
+        'next_step: Continue your work; the answer arrives automatically in a later message. Use TaskStop only to cancel the question.',
     };
   }
 
@@ -139,22 +167,7 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
     }: Pick<ExecutableToolContext, 'toolCallId' | 'signal' | 'turnId' | 'trace'>,
   ): Promise<ExecutableToolResult> {
     try {
-      const result = await this.question.request(
-        {
-          turnId,
-          toolCallId,
-          questions: args.questions.map((q) => ({
-            question: q.question,
-            header: q.header,
-            options: q.options.map((o) => ({
-              label: o.label,
-              description: o.description,
-            })),
-            multiSelect: q.multi_select,
-          })),
-        },
-        { signal, agentId: this.scopeContext.agentId },
-      );
+      const result = await this.requestQuestion(args, { toolCallId, turnId, signal });
 
       const normalized = normalizeQuestionResult(result);
       if (normalized === null || Object.keys(normalized.answers).length === 0) {
@@ -187,6 +200,55 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
 
       return dismissedQuestionResult();
     }
+  }
+
+  private requestQuestion(
+    args: AskUserQuestionInput,
+    {
+      toolCallId,
+      signal,
+      turnId,
+    }: Pick<ExecutableToolContext, 'toolCallId' | 'signal' | 'turnId'>,
+  ): Promise<QuestionResult> {
+    const id = `question_${randomUUID()}`;
+    const tags: InteractionTags = {
+      [INTERACTION_TAG_AGENT_ID]: this.scopeContext.agentId,
+      [INTERACTION_TAG_SESSION_ID]: this.session.sessionId,
+      [INTERACTION_TAG_TOOL_CALL_ID]: toolCallId,
+    };
+    if (args.background !== true) tags[INTERACTION_TAG_TURN_ID] = turnId;
+    const pending = interactions
+      .request<QuestionRequest, unknown>({
+        id,
+        kind: 'question',
+        payload: {
+          turnId,
+          toolCallId,
+          questions: args.questions.map((q) => ({
+            question: q.question,
+            header: q.header,
+            options: q.options.map((o) => ({
+              label: o.label,
+              description: o.description,
+            })),
+            multiSelect: q.multi_select,
+          })),
+        },
+        tags,
+      })
+      .then((response) => (isInteractionCancellation(response) ? null : (response as QuestionResult)));
+    if (signal.aborted) {
+      interactions.respond(id, null);
+    } else {
+      const onAbort = (): void => {
+        interactions.respond(id, null);
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      void pending.finally(() => {
+        signal.removeEventListener('abort', onAbort);
+      });
+    }
+    return pending;
   }
 }
 

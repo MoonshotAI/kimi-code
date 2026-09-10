@@ -490,6 +490,30 @@ describe('AgentTaskService', () => {
     });
   });
 
+  it('keeps a detached process task running when the register-time signal aborts', async () => {
+    const { manager } = createAgentTaskService();
+    const { proc, killSpy } = pendingProcess();
+    const controller = new AbortController();
+    const taskId = manager.registerTask(
+      new ProcessTask(proc, 'sleep 10', 'foreground process'),
+      {
+        detached: false,
+        signal: controller.signal,
+      },
+    );
+
+    const waiting = manager.waitForForegroundRelease(taskId);
+    expect(manager.detach(taskId)).toMatchObject({ detached: true });
+    controller.abort();
+
+    await expect(waiting).resolves.toBe('detached');
+    expect(killSpy).not.toHaveBeenCalled();
+    expect(manager.getTask(taskId)).toMatchObject({
+      status: 'running',
+      detached: true,
+    });
+  });
+
   it('forwards foreground signal abort reasons to agent task controllers', async () => {
     const { manager } = createAgentTaskService();
     const foregroundController = new AbortController();
@@ -519,6 +543,30 @@ describe('AgentTaskService', () => {
       stopReason: 'Aborted by the user',
     });
     expect(isUserCancellation(subagentController.signal.reason)).toBe(true);
+  });
+
+  it('does not forward register-time signal aborts to a detached agent task', async () => {
+    const { manager } = createAgentTaskService();
+    const foregroundController = new AbortController();
+    const subagentController = new AbortController();
+    const taskId = manager.registerTask(
+      agentTask(new Promise(() => {}), 'foreground agent', {
+        abortController: subagentController,
+      }),
+      {
+        detached: false,
+        signal: foregroundController.signal,
+      },
+    );
+
+    expect(manager.detach(taskId)).toMatchObject({ detached: true });
+    foregroundController.abort(userCancellationReason());
+
+    expect(subagentController.signal.aborted).toBe(false);
+    expect(manager.getTask(taskId)).toMatchObject({
+      status: 'running',
+      detached: true,
+    });
   });
 
   it('does not count foreground tasks against the detached task limit', () => {
@@ -701,7 +749,7 @@ describe('AgentTaskService', () => {
       expect(info).toMatchObject({ status: 'killed' });
       expect(output.outputSizeBytes).toBeLessThanOrEqual(LIMIT_BYTES);
     } finally {
-      await rm(sessionDir, { recursive: true, force: true });
+      await rm(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   });
 
@@ -727,7 +775,7 @@ describe('AgentTaskService', () => {
       expect(info?.stopReason ?? '').toMatch(/output limit/i);
       expect(output.outputSizeBytes).toBeLessThanOrEqual(LIMIT_BYTES);
     } finally {
-      await rm(sessionDir, { recursive: true, force: true });
+      await rm(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   });
 
@@ -747,7 +795,7 @@ describe('AgentTaskService', () => {
       expect(info).toMatchObject({ status: 'completed' });
       expect(output.outputSizeBytes).toBe(Buffer.byteLength(result));
     } finally {
-      await rm(sessionDir, { recursive: true, force: true });
+      await rm(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   });
 
@@ -1098,7 +1146,7 @@ describe('AgentTaskService', () => {
         stopReason: 'user requested',
       });
     } finally {
-      await rm(sessionDir, { recursive: true, force: true });
+      await rm(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   });
 
@@ -1293,7 +1341,7 @@ describe('AgentTaskService', () => {
       expect(await persistence!.listTasks()).toEqual([]);
       await ctx.get(ISessionMetadata).ready;
     } finally {
-      await rm(sessionDir, { recursive: true, force: true });
+      await rm(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   });
 

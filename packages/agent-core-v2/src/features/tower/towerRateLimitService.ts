@@ -6,9 +6,7 @@ import {
 
 export const RATE_LIMIT_CAPACITY_SHRINK_INTERVAL_MS = 2_000;
 export const RATE_LIMIT_CAPACITY_RECOVERY_INTERVAL_MS = 180_000;
-/** Tower-only: how long new spawns stay paused after a 429 episode. */
 export const TOWER_SPAWN_PAUSE_MS = 60_000;
-/** Tower-only: ceiling the capacity may recover to. */
 export const TOWER_MAX_BUDGET = 16;
 
 export class RateLimitCapacityGovernor {
@@ -146,4 +144,3 @@ export class TowerRateLimitService extends Disposable implements ITowerRateLimit
     this.blockedUntil = null;
   }
 }
-

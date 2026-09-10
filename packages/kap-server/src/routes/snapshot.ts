@@ -1,10 +1,10 @@
 import {
-  ensureMainAgent,
   IAgentPromptService,
+  INTERACTION_TAG_SESSION_ID,
   ISessionContext,
-  ISessionInteractionService,
   ISessionMetadata,
   IWorkspaceService,
+  interactions,
   resumeSessionById,
   type IAgentScopeHandle,
   type Scope,
@@ -12,6 +12,7 @@ import {
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import { ensureMainAgent } from '../transport/mainAgent';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import {
@@ -27,7 +28,7 @@ import {
 import { loadMessageHistory } from '../services/messages/messageHistory';
 import { type SessionEventBroadcaster } from '../transport/ws/v1/sessionEventBroadcaster';
 import { toWireApproval } from './approvals';
-import { toWireQuestion } from './questions';
+import { toWireQuestion } from '../protocol/question-wire';
 import { resolveSessionFacts, toWireSession } from './sessions';
 
 const SNAPSHOT_MESSAGE_PAGE_SIZE = 100;
@@ -129,12 +130,19 @@ async function assembleSnapshot(
   const currentPromptId = snapState.inFlightTurn === null ? undefined : readCurrentPromptId(main);
   const inFlightTurn = attachCurrentPromptIdToInFlight(snapState.inFlightTurn, currentPromptId);
 
-  const interaction = handle.accessor.get(ISessionInteractionService);
-  const pendingApprovals = interaction
-    .listPending('approval')
+  const pendingApprovals = interactions
+    .findAll({
+      kind: 'approval',
+      resolved: false,
+      tags: { [INTERACTION_TAG_SESSION_ID]: sessionId },
+    })
     .map((i) => toWireApproval(i, sessionId));
-  const pendingQuestions = interaction
-    .listPending('question')
+  const pendingQuestions = interactions
+    .findAll({
+      kind: 'question',
+      resolved: false,
+      tags: { [INTERACTION_TAG_SESSION_ID]: sessionId },
+    })
     .map((i) => toWireQuestion(i, sessionId));
 
   return {

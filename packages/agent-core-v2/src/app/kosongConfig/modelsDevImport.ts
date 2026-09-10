@@ -1,5 +1,5 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import type { ProviderCatalogItem } from '#/kosong/model/catalog';
+import type { ProviderCatalogItem } from '#/llm-adapter/model/catalog';
 
 export interface ModelsDevModelItem {
   readonly id: string;

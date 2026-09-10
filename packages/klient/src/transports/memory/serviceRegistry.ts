@@ -9,10 +9,10 @@ import type { ServiceIdentifier } from '@moonshot-ai/agent-core-v2/_base/di/inst
 import { ISessionIndex } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
 import { IWorkspaceService } from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
-import { IModelService } from '@moonshot-ai/agent-core-v2/kosong/model/model';
-import { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
+import { IModelService } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
+import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
-import { IProviderService } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
+import { IProviderService } from '@moonshot-ai/agent-core-v2/llm-adapter/provider/provider';
 import {
   IAuthSummaryService,
   IOAuthService,
@@ -27,27 +27,24 @@ import { IHostFolderBrowser } from '@moonshot-ai/agent-core-v2/app/hostFolderBro
 import { IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2/workspace/workspaceInstance/workspaceInstanceManager';
 import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
 import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
-import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
-import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
-import { ISessionQuestionService } from '@moonshot-ai/agent-core-v2/session/question/question';
-import { ISessionSkillCatalog } from '@moonshot-ai/agent-core-v2/session/sessionSkillCatalog/skillCatalog';
+import { ISessionSkillCatalog } from '@moonshot-ai/agent-core-v2/features/skill/session/skillCatalog';
 import { ISessionTitleService } from '@moonshot-ai/agent-core-v2/session/sessionTitle/sessionTitle';
 import { IAgentPromptService } from '@moonshot-ai/agent-core-v2/agent/prompt/prompt';
-import { IAgentSkillService } from '@moonshot-ai/agent-core-v2/agent/skill/skill';
 import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import { IAgentPermissionModeService } from '@moonshot-ai/agent-core-v2/agent/permissionMode/permissionMode';
 import { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
 import { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/agent/runtimeBinding/runtimeBinding';
 import { IAgentContextMemoryService } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextMemory';
-import { IAgentTokenCountingService } from '@moonshot-ai/agent-core-v2/agent/tokenCounting/tokenCounting';
-import { IAgentActivityView } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
+import { ISessionTokenCountingService } from '@moonshot-ai/agent-core-v2/session/tokenCounting/sessionTokenCounting';
+import { ISessionActivityView } from '@moonshot-ai/agent-core-v2/session/sessionActivity/sessionActivity';
 import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
 import { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
-import { IAgentUsageService } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
+import { ISessionUsageService } from '@moonshot-ai/agent-core-v2/session/usage/sessionUsage';
 import { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
 import { IAgentFullCompactionService } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/fullCompaction';
+import { IMcpManagementService } from '@moonshot-ai/agent-core-v2/app/mcpManagement/mcpManagement';
 
 /** Wire service name (decorator id string) → token. */
 export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>> = {
@@ -69,27 +66,24 @@ export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>>
   workspaceInstanceManager: IWorkspaceInstanceManager,
   sessionManager: ISessionManager,
   sessionMetadata: ISessionMetadata,
-  sessionInteractionService: ISessionInteractionService,
-  sessionApprovalService: ISessionApprovalService,
-  sessionQuestionService: ISessionQuestionService,
   sessionSkillCatalog: ISessionSkillCatalog,
   sessionTitleService: ISessionTitleService,
   agentPromptService: IAgentPromptService,
-  agentSkillService: IAgentSkillService,
   agentLoopService: IAgentLoopService,
   agentPermissionModeService: IAgentPermissionModeService,
   agentCommandService: IAgentCommandService,
   agentRuntimeBindingService: IAgentRuntimeBindingService,
   agentContextMemoryService: IAgentContextMemoryService,
-  agentTokenCountingService: IAgentTokenCountingService,
-  agentActivityView: IAgentActivityView,
+  agentTokenCountingService: ISessionTokenCountingService,
+  sessionActivityView: ISessionActivityView,
   agentShellCommandService: IAgentShellCommandService,
   agentProfileService: IAgentProfileService,
-  agentUsageService: IAgentUsageService,
+  agentUsageService: ISessionUsageService,
   agentPlanService: IAgentPlanService,
   agentTaskService: IAgentTaskService,
   agentMcpService: IAgentMcpService,
   agentFullCompactionService: IAgentFullCompactionService,
+  mcpManagementService: IMcpManagementService,
 };
 
 export { IEventService };

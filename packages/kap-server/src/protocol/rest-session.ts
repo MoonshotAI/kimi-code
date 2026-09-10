@@ -162,10 +162,10 @@ export type ArchiveSessionResponse = z.infer<typeof archiveSessionResponseSchema
 export const restoreSessionResponseSchema = sessionSchema;
 export type RestoreSessionResponse = z.infer<typeof restoreSessionResponseSchema>;
 
-/** @deprecated kept as an alias for backward compatibility; prefer archiveSessionResponseSchema. */
-export const deleteSessionResponseSchema = archiveSessionResponseSchema;
-/** @deprecated kept as an alias for backward compatibility; prefer ArchiveSessionResponse. */
-export type DeleteSessionResponse = ArchiveSessionResponse;
+export const deleteSessionResponseSchema = z.object({
+  deleted: z.literal(true),
+});
+export type DeleteSessionResponse = z.infer<typeof deleteSessionResponseSchema>;
 
 export const sessionAbortResponseSchema = z.object({
   aborted: z.boolean(),

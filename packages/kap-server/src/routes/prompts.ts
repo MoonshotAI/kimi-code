@@ -5,6 +5,7 @@ import {
   IAgentLifecycleService,
   IAgentPermissionModeService,
   IAgentProfileService,
+  IAgentRuntimeBindingService,
   IAgentToolPolicyService,
   IAgentPromptService,
   IAgentSkillService,
@@ -50,9 +51,11 @@ import { z } from 'zod';
 import { errEnvelope, okEnvelope } from '../envelope';
 import {
   assertPromptFileRefs,
-  assertPromptSessionMediaRefs,
+  assertPromptPathRefs,
+  contentHasPathRefs,
   contentToCoreParts,
   resolvePromptMediaFiles,
+  resolvePromptSessionMediaRefs,
   type PromptMediaPreparation,
 } from '../lib/promptMedia';
 import { requestLog } from '../lib/requestLog';
@@ -103,7 +106,7 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
   const agent =
     agentId === undefined || agentId === MAIN_AGENT_ID
       ? await ensureMainAgent(session)
-      : session.accessor.get(IAgentLifecycleService).get(agentId);
+      : session.accessor.get(IAgentLifecycleService).handleOf(agentId);
   if (agent === undefined) {
     throw new Error2('agent.not_found', `agent ${agentId} does not exist`);
   }
@@ -115,6 +118,7 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     profile: agent.accessor.get(IAgentProfileService),
     toolPolicy: agent.accessor.get(IAgentToolPolicyService),
     permissionMode: agent.accessor.get(IAgentPermissionModeService),
+    binding: agent.accessor.get(IAgentRuntimeBindingService),
   };
 }
 
@@ -200,6 +204,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.AUTH_TOKEN_UNAUTHORIZED]: { detailsSchema: authProviderDetailsSchema },
         [ErrorCode.AUTH_MODEL_NOT_RESOLVED]: { detailsSchema: authModelDetailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.FILE_NOT_FOUND]: {},
         [ErrorCode.PROMPT_ID_CONFLICT]: {},
         [ErrorCode.PROMPT_ALREADY_COMPLETED]: { dataSchema: z.object({ aborted: z.literal(false) }) },
       },
@@ -213,8 +218,19 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
       let reservation: PromptReservation | undefined;
       let enqueued = false;
       try {
-        await assertPromptFileRefs(req.body.content, core.accessor.get(IFileService));
         const session = await resolveSession(core, session_id);
+        let resolved: Awaited<ReturnType<typeof resolvePromptFromSession>> | undefined;
+        if (contentHasPathRefs(req.body.content)) {
+          resolved = await resolvePromptFromSession(session, req.body.agent_id);
+          if (resolved.binding.get().runtimeId !== 'local') {
+            throw new Error2(
+              ErrorCodes.REQUEST_INVALID,
+              'file attachments by server-local path require the local runtime',
+            );
+          }
+        }
+        await assertPromptFileRefs(req.body.content, core.accessor.get(IFileService));
+        await assertPromptPathRefs(req.body.content);
         if (req.body.skills !== undefined) {
           if (req.body.prompt_id !== undefined) {
             throw new Error2(
@@ -227,21 +243,28 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             req.body.skills,
           );
         }
-        await assertPromptSessionMediaRefs(
+        const resolvedSessionMedia = await resolvePromptSessionMediaRefs(
           req.body.content,
           session.accessor.get(ISessionMediaStore),
         );
-        const resolved = await resolvePromptFromSession(session, req.body.agent_id);
+        resolved ??= await resolvePromptFromSession(session, req.body.agent_id);
         reservation = reservePrompt(resolved.prompt, req.body.prompt_id);
-        await resolved.auth.ensureReady();
+        const sessionModel = resolved.profile.getModel();
+        const switchingProfile =
+          req.body.profile !== undefined &&
+          req.body.profile !== resolved.profile.data().profileName;
+        await resolved.auth.ensureReady(
+          req.body.model ?? (switchingProfile ? undefined : sessionModel || undefined),
+        );
 
-        const telemetry = core.accessor.get(ITelemetryService).withContext({ sessionId: session_id });
+        const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
         preparedMedia = await resolvePromptMediaFiles(
-          req.body.content,
+          resolvedSessionMedia,
           core.accessor.get(IFileService),
           core.accessor.get(IBootstrapService).cacheDir,
           {
             telemetry,
+            providerType: resolved.profile.getModelProviderType(req.body.model),
             resolveOriginalsDir: async () => {
               const session = await resumeSessionById(core.accessor, session_id);
               if (session === undefined) return undefined;
@@ -255,6 +278,8 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           },
         );
         const resolvedContent = preparedMedia.content;
+        const promptAttachments =
+          preparedMedia.attachments.length > 0 ? preparedMedia.attachments : undefined;
 
         let thinkingConsumed = false;
         if (req.body.profile !== undefined) {
@@ -295,6 +320,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             result = await resolved.skill.promptWithSkills({
               input: parts,
               skills: req.body.skills,
+              attachments: promptAttachments,
             });
           } catch (error) {
             settlement.dispose();
@@ -325,7 +351,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           role: 'user',
           content: parts,
           toolCalls: [],
-          origin: { kind: 'user' },
+          origin: { kind: 'user', attachments: promptAttachments },
         });
         enqueued = true;
         const staging = preparedMedia;

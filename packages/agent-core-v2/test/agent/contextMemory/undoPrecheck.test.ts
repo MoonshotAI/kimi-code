@@ -112,7 +112,7 @@ describe('contextUndo op', () => {
 
   function applyContextUndo(state: ContextMessage[], count: number): ContextMessage[] {
     const fold = expandedStateFolds(contextMemoryKey).get(ContextUndo)!;
-    const result = fold(castDraft(state), new ContextUndo({ count }), foldContext);
+    const result = fold(castDraft(state), new ContextUndo({ agentId: 'main', count }), foldContext);
     return result === undefined ? state : result;
   }
 

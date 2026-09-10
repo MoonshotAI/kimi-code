@@ -10,6 +10,7 @@ import {
   peekClientConfig,
   resetClientConfigCache,
 } from '#/utils/client-configs';
+import { refreshKimiRegion } from '#/utils/region';
 import { z } from 'zod';
 
 const configSchema = z.object({
@@ -352,5 +353,52 @@ describe('getClientConfig disk cache', () => {
     });
 
     expect(result).toEqual(CONFIG);
+  });
+});
+
+describe('region awareness', () => {
+  beforeEach(() => {
+    vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://auth.kimi.ai');
+    refreshKimiRegion();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    refreshKimiRegion();
+  });
+
+  it('fetches from the active region profile and partitions the cache by region', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(ENVELOPE));
+
+    const data = await getClientConfig('estimated_cache_duration', configSchema, {
+      fetchImpl: fetchImpl as typeof fetch,
+      cacheFile: null,
+    });
+
+    expect(data).toEqual(CONFIG);
+    expect(fetchImpl).toHaveBeenCalledWith(
+      expect.stringContaining('https://api.kimi.ai/coding/v1/client_configs'),
+      expect.anything(),
+    );
+    expect(peekClientConfig('estimated_cache_duration', configSchema)).toEqual(CONFIG);
+
+    // A region switch must not serve the other deployment's cached entry.
+    vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://auth.kimi.com');
+    refreshKimiRegion();
+    expect(peekClientConfig('estimated_cache_duration', configSchema)).toBeUndefined();
+  });
+
+  it('keeps honoring the KIMI_CODE_BASE_URL override ahead of the profile', async () => {
+    vi.stubEnv('KIMI_CODE_BASE_URL', 'https://env-api.example.com');
+    const fetchImpl = vi.fn(async () => jsonResponse(ENVELOPE));
+
+    await fetchClientConfig('estimated_cache_duration', configSchema, {
+      fetchImpl: fetchImpl as typeof fetch,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      expect.stringContaining('https://env-api.example.com/client_configs'),
+      expect.anything(),
+    );
   });
 });

@@ -2,33 +2,48 @@
 import { original } from 'immer';
 import { z } from 'zod';
 
-import { Event2 } from '#/app/event/event2';
+import { AgentEvent2 } from '#/app/event/event2';
 import { defineState } from '#/state/state';
 
 import type { UserToolRegistration } from './userTool';
 
 export type UserToolModelState = Map<string, UserToolRegistration>;
 
-const toolsRegisterUserToolSchema = z.custom<UserToolRegistration>();
+const toolsRegisterUserToolSchema = z.object({
+  agentId: z.string(),
+  name: z.string(),
+  description: z.string(),
+  parameters: z.custom<UserToolRegistration['parameters']>(),
+  disclosure: z.custom<UserToolRegistration['disclosure']>().optional(),
+});
 
-export class ToolsRegisterUserTool extends Event2<z.infer<typeof toolsRegisterUserToolSchema>> {
+export class ToolsRegisterUserTool extends AgentEvent2<
+  z.infer<typeof toolsRegisterUserToolSchema>
+> {
   static override readonly type = 'tools.register_user_tool';
   static override readonly durable = true;
   static override readonly schema = toolsRegisterUserToolSchema;
 }
-export interface ToolsRegisterUserTool extends z.infer<typeof toolsRegisterUserToolSchema> {}
+export interface ToolsRegisterUserTool extends UserToolRegistration {
+  readonly agentId: string;
+}
 
-const toolsUnregisterUserToolSchema = z.object({ name: z.string() });
+const toolsUnregisterUserToolSchema = z.object({
+  agentId: z.string(),
+  name: z.string(),
+});
 
-export class ToolsUnregisterUserTool extends Event2<
+export class ToolsUnregisterUserTool extends AgentEvent2<
   z.infer<typeof toolsUnregisterUserToolSchema>
 > {
   static override readonly type = 'tools.unregister_user_tool';
   static override readonly durable = true;
   static override readonly schema = toolsUnregisterUserToolSchema;
 }
-export interface ToolsUnregisterUserTool
-  extends z.infer<typeof toolsUnregisterUserToolSchema> {}
+export interface ToolsUnregisterUserTool {
+  readonly agentId: string;
+  readonly name: string;
+}
 
 function equalRegistration(a: UserToolRegistration, b: UserToolRegistration): boolean {
   return (

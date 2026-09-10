@@ -1,14 +1,21 @@
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { toDisposable } from '#/_base/di/lifecycle';
 import type { ServiceRegistration, TestInstantiationService } from '#/_base/di/test';
+import { Event } from '#/_base/event';
+import { ILogService } from '#/_base/log/log';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import { IAgentScopeContext, type IAgentScopeContext as AgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IEventBus } from '#/app/event/eventBus';
+import { IAgentScopeContext, makeAgentScopeContext, type IAgentScopeContext as AgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
+import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
+import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
+import { AgentTodoService, IAgentTodoService } from '#/features/todo/todoService';
+import { AgentGoalService, IAgentGoalService } from '#/features/goal/goalService';
 import {
   IWireService,
   type IWireService as AgentWire,
@@ -20,16 +27,21 @@ interface TestAgentWireDependencies {
   readonly log?: IAppendLogStore;
   readonly blob?: IAgentBlobService;
   readonly eventBus?: IEventBus;
+  readonly storage?: IFileSystemStorageService;
+  readonly logger?: ILogService;
+  readonly telemetry?: ITelemetryService;
 }
 
 const noopLog: IAppendLogStore = {
   _serviceBrand: undefined,
+  onDidWrite: Event.None as IAppendLogStore['onDidWrite'],
   append: () => {},
   read: async function* () {},
   rewrite: async () => {},
   flush: async () => {},
   close: async () => {},
   acquire: () => toDisposable(() => {}),
+  drainRetirements: () => Promise.resolve(),
 };
 
 const noopBlob: IAgentBlobService = {
@@ -45,17 +57,24 @@ const noopEventBus: IEventBus = {
   subscribe: () => toDisposable(() => {}),
 };
 
+export const noopLogger: ILogService = {
+  _serviceBrand: undefined,
+  level: 'off',
+  error: () => {},
+  warn: () => {},
+  info: () => {},
+  debug: () => {},
+  child: () => noopLogger,
+  setLevel: () => {},
+  flush: async () => {},
+};
+
 export function testWireScope(scope: string, journal: string): string {
   return `${scope}/${journal}`;
 }
 
 export function stubAgentScopeContext(scope: string): AgentScopeContext {
-  return {
-    _serviceBrand: undefined,
-    agentId: 'test-agent',
-    scope: (subKey?: string): string =>
-      subKey === undefined || subKey === '' ? scope : `${scope}/${subKey}`,
-  };
+  return makeAgentScopeContext({ agentId: 'test-agent', agentScope: scope, generation: 0 });
 }
 
 export function registerTestAgentWire(
@@ -63,11 +82,25 @@ export function registerTestAgentWire(
   scope: string,
   dependencies: TestAgentWireDependencies = {},
 ): AgentWire {
-  ix.stub(IAgentScopeContext, stubAgentScopeContext(scope));
+  const agentScope = stubAgentScopeContext(scope);
+  ix.stub(IAgentScopeContext, agentScope);
   ix.set(IAppendLogStore, dependencies.log ?? noopLog);
   ix.set(IAgentBlobService, dependencies.blob ?? noopBlob);
   ix.set(IEventBus, dependencies.eventBus ?? noopEventBus);
+  if (dependencies.storage !== undefined) {
+    ix.stub(IFileSystemStorageService, dependencies.storage);
+  }
+  if (dependencies.logger !== undefined) {
+    ix.stub(ILogService, dependencies.logger);
+  }
+  if (dependencies.telemetry !== undefined) {
+    ix.stub(ITelemetryService, dependencies.telemetry);
+  }
   ix.set(IWireService, new SyncDescriptor(WireService));
+  const eventBus = ix.get(IEventBus);
+  if (typeof (eventBus as Partial<ISessionEventBus>).activateAgent === 'function') {
+    (eventBus as ISessionEventBus).activateAgent(agentScope.agentContext);
+  }
   return ix.get(IWireService);
 }
 
@@ -79,6 +112,9 @@ export function registerTestAgentWireServices(
   registration.defineInstance(IAppendLogStore, noopLog);
   registration.defineInstance(IAgentBlobService, noopBlob);
   registration.defineInstance(IEventBus, noopEventBus);
+  registration.defineInstance(IFileSystemStorageService, new InMemoryStorageService());
+  registration.defineInstance(ILogService, noopLogger);
+  registration.defineInstance(ITelemetryService, noopTelemetryService);
   registration.defineInstance(IAgentStateService, new AgentStateService());
   registration.define(IWireService, WireService);
   registration.define(IEventDispatcher, EventDispatcherService);
@@ -91,6 +127,16 @@ export function registerTestEventDispatcher(ix: TestInstantiationService): IEven
   }
   ix.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
   return ix.get(IEventDispatcher);
+}
+
+export function attachTodoService(ix: TestInstantiationService): AgentTodoService {
+  ix.set(IAgentTodoService, new SyncDescriptor(AgentTodoService));
+  return ix.get(IAgentTodoService) as AgentTodoService;
+}
+
+export function attachGoalService(ix: TestInstantiationService): AgentGoalService {
+  ix.set(IAgentGoalService, new SyncDescriptor(AgentGoalService));
+  return ix.get(IAgentGoalService) as AgentGoalService;
 }
 
 export async function restoreTestEventDispatcher(
@@ -112,6 +158,10 @@ export function stubAgentWire(
     appendRecord: () => {},
     readJournal: async function* () {},
     flush,
+    drainPersisted: async () => {},
+    lineCount: () => 0,
+    lastContextClearLine: () => undefined,
+    journalPath: () => undefined,
   };
 }
 
@@ -133,6 +183,7 @@ export function recordingWireLog(
 ): IAppendLogStore {
   return {
     _serviceBrand: undefined,
+    onDidWrite: Event.None as IAppendLogStore['onDidWrite'],
     append: (_scope, _key, record) => {
       records.push(record as WireRecord);
       onAppend?.(record as WireRecord);
@@ -146,5 +197,6 @@ export function recordingWireLog(
     flush: async () => {},
     close: async () => {},
     acquire: () => toDisposable(() => {}),
+    drainRetirements: () => Promise.resolve(),
   };
 }

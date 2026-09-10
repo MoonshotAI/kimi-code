@@ -4,9 +4,9 @@ import { log, type Logger } from '@moonshot-ai/kimi-code-sdk';
 import type { TelemetryProperties } from '@moonshot-ai/kimi-telemetry';
 
 import {
-  KIMI_CODE_OFFICIAL_INSTALL_URL,
-  NATIVE_INSTALL_COMMAND_UNIX,
-  NATIVE_INSTALL_COMMAND_WIN,
+  kimiCodeOfficialInstallUrl,
+  nativeInstallCommandUnix,
+  nativeInstallCommandWin,
 } from '#/constant/app';
 import { loadTuiConfig } from '#/tui/config';
 import { resolveCommandPath } from '#/utils/process/resolve-command';
@@ -82,7 +82,7 @@ export function installCommandFor(
     case 'homebrew':
       return 'brew upgrade kimi-code';
     case 'native':
-      return platform === 'win32' ? NATIVE_INSTALL_COMMAND_WIN : NATIVE_INSTALL_COMMAND_UNIX;
+      return platform === 'win32' ? nativeInstallCommandWin() : nativeInstallCommandUnix();
     case 'unsupported':
       return `npm install -g ${NPM_PACKAGE_NAME}@${version}`;
   }
@@ -184,9 +184,13 @@ function resolveInstallSpawn(
   return { resolvedCmd, args, shell: platform === 'win32' };
 }
 
-const THIRD_PARTY_SOURCE_NOTE =
-  '\nNote: Third-party sources may lag behind the official release.\n' +
-  `For the latest updates, use the official installer: ${KIMI_CODE_OFFICIAL_INSTALL_URL}\n`;
+// Built per call: the official-installer URL follows the current region.
+function thirdPartySourceNote(): string {
+  return (
+    '\nNote: Third-party sources may lag behind the official release.\n' +
+    `For the latest updates, use the official installer: ${kimiCodeOfficialInstallUrl()}\n`
+  );
+}
 
 export function renderManualUpdateMessage(
   currentVersion: string,
@@ -217,7 +221,7 @@ export function renderManualUpdateMessage(
     `(${currentVersion} -> ${target.version}).\n` +
     `Detected install source: ${sourceDesc}\n` +
     `To update manually, run: ${installCommand}\n` +
-    (source === 'homebrew' ? THIRD_PARTY_SOURCE_NOTE : '')
+    (source === 'homebrew' ? thirdPartySourceNote() : '')
   );
 }
 

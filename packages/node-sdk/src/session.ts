@@ -1,10 +1,7 @@
-import {
-  ErrorCodes,
-  KimiError,
-  type AgentContextData,
-  type KimiErrorCode,
-  type SwarmModeTrigger,
-} from '@moonshot-ai/agent-core';
+import type { SwarmModeTrigger } from '@moonshot-ai/agent-core-v2/features/swarm/agent/swarm';
+
+import type { AgentContextData } from '#/context';
+import { ErrorCodes, KimiError, type KimiErrorCode } from '#/errors';
 
 import { type ApprovalHandler, type Event, type QuestionHandler } from '#/events';
 import type { SDKRpcClientBase } from '#/rpc';
@@ -339,6 +336,23 @@ export class Session {
     } else {
       await this.rpc.setSwarmMode({ sessionId: this.id, enabled: false });
     }
+  }
+
+  async setTowerMode(enabled: boolean, base?: string): Promise<void> {
+    this.ensureOpen();
+    if (typeof enabled !== 'boolean') {
+      throw new KimiError(
+        ErrorCodes.REQUEST_INVALID,
+        'Session tower mode must be a boolean',
+      );
+    }
+    if (base !== undefined && typeof base !== 'string') {
+      throw new KimiError(
+        ErrorCodes.REQUEST_INVALID,
+        'Session tower mode base must be a string',
+      );
+    }
+    await this.rpc.setTowerMode({ sessionId: this.id, enabled, base });
   }
 
   async getPlan(): Promise<SessionPlan> {

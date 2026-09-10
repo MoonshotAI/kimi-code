@@ -2,35 +2,71 @@
 import { z } from 'zod';
 
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
-import { Event2 } from '#/app/event/event2';
+import { AgentEvent2, Event2 } from '#/app/event/event2';
 import { defineState } from '#/state/state';
 
-const towerModeEnterSchema = z.object({});
+const towerModeEnterSchema = z.object({
+  agentId: z.string(),
+  sessionId: z.string().optional(),
+  base: z.string().optional(),
+});
 
-export class TowerModeEnter extends Event2<z.infer<typeof towerModeEnterSchema>> {
+export class TowerModeEnter extends AgentEvent2<z.infer<typeof towerModeEnterSchema>> {
   static override readonly type = 'tower_mode.enter';
   static override readonly durable = true;
   static override readonly schema = towerModeEnterSchema;
 }
-export interface TowerModeEnter extends z.infer<typeof towerModeEnterSchema> {}
+export interface TowerModeEnter {
+  readonly agentId: string;
+  readonly sessionId?: string;
+  readonly base?: string;
+}
 
-const towerModeExitSchema = z.object({});
+const towerModeExitSchema = z.object({ agentId: z.string() });
 
-export class TowerModeExit extends Event2<z.infer<typeof towerModeExitSchema>> {
+export class TowerModeExit extends AgentEvent2<z.infer<typeof towerModeExitSchema>> {
   static override readonly type = 'tower_mode.exit';
   static override readonly durable = true;
   static override readonly schema = towerModeExitSchema;
 }
-export interface TowerModeExit extends z.infer<typeof towerModeExitSchema> {}
+export interface TowerModeExit {
+  readonly agentId: string;
+}
+
+export interface TowerInboxSentPayload {
+  readonly from: string;
+  readonly to: string;
+  readonly subject: string;
+}
+
+export class TowerInboxSent extends Event2<TowerInboxSentPayload> {
+  static override readonly type = 'tower.inbox.sent';
+  static override readonly observable = true;
+}
+export interface TowerInboxSent extends TowerInboxSentPayload {}
 
 export const towerKey = defineState('tower', () => false).replayable({
   schema: z.boolean(),
 })
-  .on(TowerModeEnter, (_s, _e, ctx) => {
-    ctx.emit(new AgentStatusUpdated({ towerMode: true }));
+  .on(TowerModeEnter, (_s, e, ctx) => {
+    ctx.emit(new AgentStatusUpdated({ agentId: e.agentId, towerMode: true }));
     return true;
   })
-  .on(TowerModeExit, (_s, _e, ctx) => {
-    ctx.emit(new AgentStatusUpdated({ towerMode: false }));
+  .on(TowerModeExit, (_s, e, ctx) => {
+    ctx.emit(new AgentStatusUpdated({ agentId: e.agentId, towerMode: false }));
     return false;
   });
+
+export const towerOwnerKey = defineState('tower.owner', () => undefined as string | undefined)
+  .replayable({
+    schema: z.string().optional(),
+  })
+  .on(TowerModeEnter, (_s, e) => e.sessionId)
+  .on(TowerModeExit, () => undefined);
+
+export const towerBaseKey = defineState('tower.base', (): string | null => null)
+  .replayable({
+    schema: z.custom<string | null>(),
+  })
+  .on(TowerModeEnter, (_s, e) => e.base ?? null)
+  .on(TowerModeExit, () => null);

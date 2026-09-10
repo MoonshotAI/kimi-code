@@ -33,6 +33,7 @@ export function useSessionActivities(): {
       onListChanged: () => {
         void queryClient.invalidateQueries({ queryKey: ['sessions'] });
         void queryClient.invalidateQueries({ queryKey: ['v2-sessions'] });
+        void queryClient.invalidateQueries({ queryKey: ['workspaces'] });
       },
     });
     setHub(created);

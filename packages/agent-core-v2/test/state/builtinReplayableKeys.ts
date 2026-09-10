@@ -1,10 +1,7 @@
 import type { ReplayableStateKey } from '#/state/state';
 
 import { contextMemoryKey } from '#/agent/contextMemory/contextOps';
-import { staleGuardKey } from '#/features/staleGuard/staleGuardOps';
-import { fullCompactionKey } from '#/agent/fullCompaction/compactionOps';
-import { goalKey } from '#/agent/goal/goalOps';
-import { goalForkNoticeKey } from '#/agent/goal/goalService';
+import { fullCompactionKey, fullCompactionWireRangesKey } from '#/agent/fullCompaction/compactionOps';
 import { interruptionReminderKey } from '#/agent/interruptionReminder/interruptionReminderOps';
 import { llmRequestTraceKey } from '#/agent/llmRequester/llmRequestOps';
 import { turnKey } from '#/agent/loop/turnOps';
@@ -16,27 +13,21 @@ import {
 import { permissionRulesKey } from '#/agent/permissionRules/permissionRulesOps';
 import { pluginSessionStartSnapshotKey } from '#/agent/plugin/agentPluginOps';
 import { promptAdmissionKey } from '#/agent/prompt/promptOps';
+import { promptResolutionKey } from '#/agent/prompt/promptService';
 import { profileActiveToolsKey, profileKey } from '#/agent/profile/profileOps';
 import { runtimeBindingKey } from '#/agent/runtimeBinding/runtimeBindingOps';
-import { skillKey } from '#/agent/skill/skillOps';
 import { taskKey } from '#/agent/task/taskOps';
 import { taskNotificationDeliveryKey } from '#/agent/task/taskService';
-import { tokenCountingKey } from '#/agent/tokenCounting/tokenCountingOps';
-import { usageKey } from '#/agent/usage/usageOps';
 import { userToolKey } from '#/agent/userTool/userToolOps';
+import { fileHistoryKey } from '#/features/fileHistory/fileHistoryOps';
 import { planKey } from '#/features/plan/planOps';
 import { swarmKey } from '#/features/swarm/swarmOps';
-import { towerKey } from '#/features/tower/towerOps';
-import { cronKey } from '#/session/cron/cronOps';
-import { interactionKey } from '#/session/interaction/interactionOps';
-import { todoKey } from '#/session/todo/todoOps';
+import { towerBaseKey, towerKey, towerOwnerKey } from '#/features/tower/towerOps';
 
 export const BUILTIN_REPLAYABLE_STATE_KEYS: readonly ReplayableStateKey<any>[] = [
   contextMemoryKey,
-  staleGuardKey,
   fullCompactionKey,
-  goalKey,
-  goalForkNoticeKey,
+  fullCompactionWireRangesKey,
   interruptionReminderKey,
   llmRequestTraceKey,
   turnKey,
@@ -46,19 +37,17 @@ export const BUILTIN_REPLAYABLE_STATE_KEYS: readonly ReplayableStateKey<any>[] =
   permissionRulesKey,
   pluginSessionStartSnapshotKey,
   promptAdmissionKey,
+  promptResolutionKey,
   profileKey,
   profileActiveToolsKey,
   runtimeBindingKey,
-  skillKey,
   taskKey,
   taskNotificationDeliveryKey,
-  tokenCountingKey,
-  usageKey,
   userToolKey,
+  fileHistoryKey,
   planKey,
   swarmKey,
   towerKey,
-  cronKey,
-  interactionKey,
-  todoKey,
+  towerOwnerKey,
+  towerBaseKey,
 ];

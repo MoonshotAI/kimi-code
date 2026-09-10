@@ -8,17 +8,20 @@ import { Event } from '#/_base/event';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { TurnSteer } from '#/agent/loop/turnOps';
+import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
-import { AgentPromptService, PromptQueued, PromptSteered } from '#/agent/prompt/promptService';
+import { AgentPromptService, PromptAborted, PromptCompleted, PromptQueued, PromptStarted, PromptSteered, PromptSubmitted } from '#/agent/prompt/promptService';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
-import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
+import { wrapSystemReminder } from '#/features/reminder/systemReminder';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
+import { createReminderStub } from '../../features/reminder/stubs';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import { IEventBus } from '#/app/event/eventBus';
+import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { IEventService } from '#/app/event/event';
 import { EventBusService } from '#/app/event/eventBusService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -35,7 +38,6 @@ import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { stubContextMemory } from '../contextMemory/stubs';
 import { stubLoopWithHooks, stubToolExecutor, stubWire, type StubLoopOptions } from '../loop/stubs';
 import { registerStateServices } from '../../state/stubs';
-import { SteerStepRequest } from '#/agent/prompt/promptStepRequests';
 
 function message(text: string): ContextMessage {
   return { role: 'user', content: [{ type: 'text', text }], toolCalls: [], origin: { kind: 'user' } };
@@ -57,10 +59,23 @@ const noopBlob: IAgentBlobService = {
   isBlobRef: () => false,
 };
 
-function harness(loopOptions: StubLoopOptions = { pendingTurnResult: true }) {
+function harness(
+  loopOptions: StubLoopOptions = { pendingTurnResult: true },
+  providerType?: string,
+) {
   const disposables = new DisposableStore();
   onTestFinished(() => disposables.dispose());
   const context = stubContextMemory();
+  const reminder = createReminderStub({
+    notify: (content, notification) => {
+      context.append({
+        role: 'user',
+        content: [{ type: 'text', text: wrapSystemReminder(content) }],
+        toolCalls: [],
+        origin: { kind: 'injection', ...notification },
+      });
+    },
+  });
   const loop = stubLoopWithHooks(loopOptions);
   const fullCompaction = {
     _serviceBrand: undefined,
@@ -94,20 +109,27 @@ function harness(loopOptions: StubLoopOptions = { pendingTurnResult: true }) {
       reg.definePartialInstance(IAgentToolPolicyService, { setSessionDisabledTools: async () => {} });
       reg.defineInstance(IAgentFullCompactionService, fullCompaction);
       reg.define(IEventBus, EventBusService);
-      reg.define(IAgentSystemReminderService, AgentSystemReminderService);
+      reg.defineInstance(IAgentReminderService, reminder);
       reg.define(IAgentPromptService, AgentPromptService);
-      reg.definePartialInstance(ITelemetryService, { track: () => {}, track2: () => {} });
+      reg.definePartialInstance(ITelemetryService, { track2: () => {} });
+      reg.definePartialInstance(IAgentProfileService, {
+        getModelProviderType: () => providerType,
+      });
       reg.definePartialInstance(ISessionMetadata, {
         read: async () => ({ id: 'test-session', createdAt: 0, updatedAt: 0, archived: false }),
         update: async () => {},
       });
       reg.definePartialInstance(IEventService, { publish: () => {} });
       reg.definePartialInstance(ISessionContext, { sessionId: 'test-session' });
-      reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
+      const agentScope = makeAgentScopeContext({ agentId: 'main', agentScope: '' });
+      reg.defineInstance(IAgentScopeContext, agentScope);
       reg.definePartialInstance(IFileService, { get: intake.get });
       reg.definePartialInstance(ISessionMediaStore, { materialize: intake.materialize });
     }
   });
+  (ix.get(IEventBus) as ISessionEventBus).activateAgent(
+    ix.get(IAgentScopeContext).agentContext,
+  );
   return { prompt: ix.get(IAgentPromptService), loop, context, fullCompaction, eventBus: ix.get(IEventBus), intake };
 }
 
@@ -142,6 +164,32 @@ describe('AgentPromptService', () => {
     expect(queued).toEqual([{ promptId: 'waiting', queueLength: 1 }]);
   });
 
+  it('publishes prompt.submitted for every user prompt and prompt.started on launch', async () => {
+    const { prompt, eventBus } = harness();
+    const submitted: Array<{ promptId: string; userMessageId: string; status: string; content: ContentPart[] }> = [];
+    const started: string[] = [];
+    eventBus.subscribe(PromptSubmitted, (e) => {
+      submitted.push({ promptId: e.promptId, userMessageId: e.userMessageId, status: e.status, content: e.content });
+    });
+    eventBus.subscribe(PromptStarted, (e) => {
+      started.push(e.promptId);
+    });
+
+    const active = await prompt.enqueue({ id: 'active', message: message('active') });
+    expect(submitted).toEqual([
+      { promptId: 'active', userMessageId: 'active', status: 'running', content: [{ type: 'text', text: 'active' }] },
+    ]);
+    await active.launched;
+    expect(started).toEqual(['active']);
+
+    await prompt.enqueue({ id: 'waiting', message: message('waiting') });
+    expect(submitted).toEqual([
+      { promptId: 'active', userMessageId: 'active', status: 'running', content: [{ type: 'text', text: 'active' }] },
+      { promptId: 'waiting', userMessageId: 'waiting', status: 'queued', content: [{ type: 'text', text: 'waiting' }] },
+    ]);
+    expect(started).toEqual(['active']);
+  });
+
   it('atomically rejects steer when any id is not pending', async () => {
     const { prompt } = harness();
     await prompt.enqueue({ message: message('active') });
@@ -151,36 +199,89 @@ describe('AgentPromptService', () => {
   });
 
   it('steers selected prompts in FIFO order', async () => {
-    const { prompt, context, loop } = harness();
+    const { prompt, context, loop, eventBus } = harness();
+    const steered: PromptSteered[] = [];
+    eventBus.subscribe(PromptSteered, (event) => steered.push(event));
     const active = await prompt.enqueue({ message: message('active') });
     await active.launched;
     const one = await prompt.enqueue({ message: message('one') });
     const two = await prompt.enqueue({ message: message('two') });
     const handles = await prompt.steer([two.id, one.id]);
     expect(handles.map((item) => item.id)).toEqual([one.id, two.id]);
+    expect(steered.map((event) => [event.activePromptId, event.promptIds])).toEqual([
+      [active.id, [one.id, two.id]],
+    ]);
     loop.drainNextBatch(context);
   });
 
+  it('publishes turn.steer at materialize time without altering the wire payload shape', async () => {
+    const { prompt, context, loop, eventBus } = harness();
+    const events: TurnSteer[] = [];
+    eventBus.subscribe(TurnSteer, (event) => events.push(event));
+    const active = await prompt.enqueue({ message: message('active') });
+    await active.launched;
+    const one = await prompt.enqueue({ message: message('one') });
+    const two = await prompt.enqueue({ message: message('two') });
+
+    await prompt.steer([two.id, one.id]);
+    loop.drainNextBatch(context);
+    await Promise.resolve();
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.input).toEqual([
+      { type: 'text', text: 'one' },
+      { type: 'text', text: 'two' },
+    ]);
+    expect(events[0]).not.toHaveProperty('messageId');
+    expect(events[0]).not.toHaveProperty('promptIds');
+  });
+
   it('aborts pending prompts and settles completion', async () => {
-    const { prompt } = harness();
+    const { prompt, eventBus } = harness();
+    const aborted: PromptAborted[] = [];
+    eventBus.subscribe(PromptAborted, (event) => aborted.push(event));
     await prompt.enqueue({ message: message('active') });
     const handle = await prompt.enqueue({ message: message('queued') });
     expect(prompt.abort(handle.id)).toBe(true);
     await expect(handle.completion).resolves.toMatchObject({ state: 'cancelled' });
     expect(prompt.list().pending).toEqual([]);
+    expect(aborted.map((event) => event.promptId)).toEqual([handle.id]);
   });
 
   it('keeps injections outside the prompt queue', async () => {
     const { prompt } = harness();
     await prompt.inject({ ...message('system'), origin: { kind: 'injection', variant: 'test' } });
-    expect(prompt.list()).toEqual({ active: undefined, pending: [] });
+    expect(prompt.list()).toEqual({ active: undefined, pending: [], launching: false });
   });
 
   it('settles blocked prompts', async () => {
-    const { prompt } = harness();
+    const { prompt, eventBus } = harness();
+    const completed: PromptCompleted[] = [];
+    eventBus.subscribe(PromptCompleted, (event) => completed.push(event));
     prompt.hooks.onBeforeSubmitPrompt.register('block', async (ctx, next) => { ctx.block = true; await next(); });
     const handle = await prompt.enqueue({ message: message('blocked') });
     await expect(handle.completion).resolves.toMatchObject({ state: 'blocked' });
+    expect(completed.map((event) => [event.promptId, event.reason])).toEqual([[handle.id, 'blocked']]);
+  });
+
+  it('marks the launch window as busy in the queue snapshot', async () => {
+    const { prompt } = harness();
+    let releaseHook!: () => void;
+    prompt.hooks.onBeforeSubmitPrompt.register('gate', async (_ctx, next) => {
+      await new Promise<void>((resolve) => {
+        releaseHook = resolve;
+      });
+      await next();
+    });
+    const enqueued = prompt.enqueue({ message: message('launching') });
+    await vi.waitFor(() => {
+      expect(prompt.list().launching).toBe(true);
+    });
+    expect(prompt.list().active).toBeUndefined();
+    expect(prompt.list().pending).toEqual([]);
+    releaseHook();
+    await enqueued;
+    expect(prompt.list().launching).toBe(false);
   });
 
   it('delivers a blocked prompt’s compression captions right after their host message', async () => {
@@ -212,14 +313,14 @@ describe('AgentPromptService', () => {
 
   it('settles the prompt as failed when the loop throws on launch', async () => {
     const { prompt, loop } = harness();
-    vi.spyOn(loop, 'enqueue').mockImplementation(() => {
+    vi.spyOn(loop, 'submit').mockImplementation(() => {
       throw new Error2(ErrorCodes.TURN_AGENT_BUSY, 'Cannot launch a new turn while another turn is active');
     });
     const handle = await prompt.enqueue({ id: 'prompt-x', message: message('hello') });
     expect(handle.state).toBe('failed');
     await expect(handle.launched).resolves.toBeUndefined();
     await expect(handle.completion).resolves.toMatchObject({ state: 'failed', result: undefined });
-    expect(prompt.list()).toEqual({ active: undefined, pending: [] });
+    expect(prompt.list()).toEqual({ active: undefined, pending: [], launching: false });
   });
 
   it('replaces an unsupported prompt image with a text notice at the history funnel', async () => {
@@ -243,6 +344,27 @@ describe('AgentPromptService', () => {
     expect(parts.some((part) => part.type === 'image_url')).toBe(false);
     expect(parts[0]).toMatchObject({ type: 'text' });
     expect((parts[0] as { text: string }).text).toContain('image/avif');
+  });
+
+  it('keeps a prompt image whose format the bound provider accepts', async () => {
+    const { prompt, context, loop } = harness({ pendingTurnResult: true }, 'kimi');
+    const heicUrl = `data:image/heic;base64,${Buffer.from([
+      0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63,
+    ]).toString('base64')}`;
+    const handle = await prompt.enqueue({
+      id: 'prompt-heic',
+      message: {
+        role: 'user',
+        content: [{ type: 'image_url', imageUrl: { url: heicUrl } }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    });
+    await handle.launched;
+    loop.drainNextBatch(context);
+
+    const parts = context.get()[0]!.content;
+    expect(parts).toEqual([{ type: 'image_url', imageUrl: { url: heicUrl } }]);
   });
 
   it('gates steered prompt images too', async () => {
@@ -317,7 +439,7 @@ describe('AgentPromptService', () => {
     await prompt.enqueue({ id: 'a', message: message('a') });
     await prompt.enqueue({ id: 'b', message: message('b') });
     await prompt.enqueue({ id: 'c', message: message('c') });
-    vi.spyOn(loop, 'enqueue').mockImplementation(() => {
+    vi.spyOn(loop, 'steer').mockImplementation(() => {
       throw new Error('boom');
     });
 
@@ -402,6 +524,46 @@ describe('AgentPromptService', () => {
     ]);
   });
 
+  it('concatenates origin file attachments when steering queued prompts', async () => {
+    const { prompt, context, loop } = harness();
+    const active = await prompt.enqueue({ message: message('active') });
+    await active.launched;
+    const one = await prompt.enqueue({
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'one' }],
+        toolCalls: [],
+        origin: {
+          kind: 'user',
+          attachments: [{ name: 'a.txt', mediaType: 'text/plain', size: 1, path: '/data/a.txt' }],
+        },
+      },
+    });
+    const two = await prompt.enqueue({
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'two' }],
+        toolCalls: [],
+        origin: {
+          kind: 'user',
+          attachments: [{ name: 'b.txt', mediaType: 'text/plain', size: 2, path: '/data/b.txt' }],
+        },
+      },
+    });
+
+    await prompt.steer([one.id, two.id]);
+    loop.drainNextBatch(context);
+
+    const merged = context
+      .get()
+      .find((entry) => entry.origin?.kind === 'user' && entry.origin.attachments !== undefined);
+    expect(merged?.origin?.kind === 'user' && merged.origin.attachments).toEqual([
+      { name: 'a.txt', mediaType: 'text/plain', size: 1, path: '/data/a.txt' },
+      { name: 'b.txt', mediaType: 'text/plain', size: 2, path: '/data/b.txt' },
+    ]);
+    expect(merged?.origin?.kind === 'user' && merged.origin.skillActivations).toBeUndefined();
+  });
+
   it('restarts the queue after restoring a steer raced by the active turn settling', async () => {
     const { prompt, loop } = harness({ manualTurnResult: true });
     const active = await prompt.enqueue({ message: message('active') });
@@ -411,68 +573,36 @@ describe('AgentPromptService', () => {
     const enqueued = new Promise<void>((resolve) => {
       steerEnqueued = resolve;
     });
-    let rejectSteer!: (reason?: unknown) => void;
-    const original = loop.enqueue.bind(loop);
-    vi.spyOn(loop, 'enqueue').mockImplementation((request, options) => {
-      if (request instanceof SteerStepRequest) {
-        return {
-          assigned: new Promise<never>((_, reject) => {
-            rejectSteer = reject;
-            steerEnqueued();
-          }),
-          abort: () => true,
-        };
-      }
-      return original(request, options);
+    vi.spyOn(loop, 'steer').mockImplementation(() => {
+      steerEnqueued();
+      throw new Error('held');
     });
 
     const steerPromise = prompt.steer([queued.id]);
     await enqueued;
     loop.settleActive();
-    rejectSteer(new Error('held'));
 
     await expect(steerPromise).rejects.toMatchObject({ code: 'prompt.not_found' });
     await expect(queued.launched).resolves.toBeDefined();
     expect(prompt.list().active?.id).toBe('queued');
   });
 
-  it('does not advance the queue while a steer assignment is in flight', async () => {
+  it('restores the original queue order when a steer assignment fails', async () => {
     const { prompt, loop } = harness({ manualTurnResult: true });
     const active = await prompt.enqueue({ message: message('active') });
     await active.launched;
     const a = await prompt.enqueue({ id: 'a', message: message('a') });
     await prompt.enqueue({ id: 'b', message: message('b') });
-    let steerEnqueued!: () => void;
-    const enqueued = new Promise<void>((resolve) => {
-      steerEnqueued = resolve;
-    });
-    let rejectSteer!: (reason?: unknown) => void;
-    const original = loop.enqueue.bind(loop);
-    vi.spyOn(loop, 'enqueue').mockImplementation((request, options) => {
-      if (request instanceof SteerStepRequest) {
-        return {
-          assigned: new Promise<never>((_, reject) => {
-            rejectSteer = reject;
-            steerEnqueued();
-          }),
-          abort: () => true,
-        };
-      }
-      return original(request, options);
+    vi.spyOn(loop, 'steer').mockImplementation(() => {
+      throw new Error('held');
     });
 
-    const steerPromise = prompt.steer([a.id]);
-    await enqueued;
+    await expect(prompt.steer([a.id])).rejects.toMatchObject({ code: 'prompt.not_found' });
     loop.settleActive();
-    await new Promise<void>((resolve) => {
-      setImmediate(resolve);
-    });
-    expect(loop.launches).toHaveLength(1);
-    rejectSteer(new Error('held'));
 
-    await expect(steerPromise).rejects.toMatchObject({ code: 'prompt.not_found' });
     await expect(a.launched).resolves.toBeDefined();
     expect(prompt.list().active?.id).toBe('a');
     expect(prompt.list().pending.map((item) => item.id)).toEqual(['b']);
+    expect(loop.launches).toHaveLength(2);
   });
 });

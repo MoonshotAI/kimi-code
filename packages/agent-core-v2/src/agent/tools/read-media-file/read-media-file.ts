@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-import type { VideoURLPart } from '#/kosong/contract/message';
-import type { VideoUploadInput as ProviderVideoUploadInput } from '#/kosong/contract/provider';
+import type { VideoURLPart } from '#human/llm/message';
+import type { VideoUploadInput as ProviderVideoUploadInput } from '#human/llm/media/upload';
 
 export const MAX_MEDIA_MEGABYTES = 100;
 export const MAX_MEDIA_BYTES = MAX_MEDIA_MEGABYTES * 1024 * 1024;
@@ -17,7 +17,7 @@ export const ReadMediaFileInputSchema = z.object({
   path: z
     .string()
     .describe(
-      'Path to an image or video file. Relative paths resolve against the working directory; ' +
+      'Path to an image or video file, or a kimi-file:// attachment reference in the current session. Relative filesystem paths resolve against the working directory; ' +
         'a path outside the working directory must be absolute. ' +
         'Directories and text files are not supported.',
     ),

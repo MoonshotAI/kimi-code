@@ -1,11 +1,11 @@
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 import { describe, expect, it } from 'vitest';
 
 import {
   estimateTokensForContentPart,
   estimateTokensForMessage,
   MEDIA_TOKEN_ESTIMATE,
-} from '#/kosong/contract/tokens';
+} from '#/llm-adapter/contract/tokens';
 
 describe('token estimates for media content parts', () => {
   const imagePart: ContentPart = {

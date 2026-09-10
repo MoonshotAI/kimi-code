@@ -57,6 +57,7 @@ export class AgentPluginCommandService implements IAgentPluginCommandService {
     };
     await this.dispatcher.dispatch(
       new PluginCommandActivated({
+        agentId: this.scopeContext.agentId,
         activationId: origin.activationId,
         pluginId: origin.pluginId,
         commandName: origin.commandName,

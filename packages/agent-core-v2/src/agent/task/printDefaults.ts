@@ -1,6 +1,7 @@
 import { MAX_TIMER_DELAY_MS } from '#/_base/utils/timer';
 import { ConfigTarget, type ConfigInspectValue, type IConfigService } from '#/app/config/config';
 import { LOOP_CONTROL_SECTION } from '#/agent/loop/configSection';
+import { SWARM_SECTION } from '#/features/swarm/configSection';
 import { SUBAGENT_SECTION } from '#/session/subagent/configSection';
 
 import { LEGACY_BACKGROUND_SECTION, TASK_SECTION } from './configSection';
@@ -12,6 +13,8 @@ export const PRINT_MAX_TURNS_DEFAULT = 100_000;
 export const PRINT_BASH_TASK_TIMEOUT_S_DEFAULT = 0;
 
 export const PRINT_SUBAGENT_TIMEOUT_MS_DEFAULT = 0;
+
+export const PRINT_SWARM_TIMEOUT_MS_DEFAULT = 0;
 
 type SectionValue = Record<string, unknown>;
 
@@ -51,4 +54,5 @@ export async function applyPrintModeConfigDefaults(config: IConfigService): Prom
     'timeoutMs',
     PRINT_SUBAGENT_TIMEOUT_MS_DEFAULT,
   );
+  await fillSectionDefault(config, SWARM_SECTION, 'timeoutMs', PRINT_SWARM_TIMEOUT_MS_DEFAULT);
 }

@@ -28,15 +28,18 @@ describe('kimiCodeBaseUrl', () => {
 });
 
 describe('isManagedKimiCodeBaseUrl', () => {
-  it('matches the default managed endpoint, with or without a trailing slash', () => {
+  it('matches both official managed endpoints, with or without a trailing slash', () => {
     expect(isManagedKimiCodeBaseUrl('https://api.kimi.com/coding/v1')).toBe(true);
     expect(isManagedKimiCodeBaseUrl('https://api.kimi.com/coding/v1/')).toBe(true);
+    expect(isManagedKimiCodeBaseUrl('https://api.kimi.ai/coding/v1')).toBe(true);
+    expect(isManagedKimiCodeBaseUrl('https://api.kimi.ai/coding/v1/')).toBe(true);
   });
 
-  it('matches against the KIMI_CODE_BASE_URL override', () => {
+  it('matches against the KIMI_CODE_BASE_URL override as the sole benchmark', () => {
     vi.stubEnv('KIMI_CODE_BASE_URL', 'https://gw.example.com/coding/v1/');
     expect(isManagedKimiCodeBaseUrl('https://gw.example.com/coding/v1')).toBe(true);
     expect(isManagedKimiCodeBaseUrl('https://api.kimi.com/coding/v1')).toBe(false);
+    expect(isManagedKimiCodeBaseUrl('https://api.kimi.ai/coding/v1')).toBe(false);
   });
 
   it('is case-insensitive on the origin but strict on the path', () => {

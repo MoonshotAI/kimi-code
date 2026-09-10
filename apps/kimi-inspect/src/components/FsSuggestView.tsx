@@ -3,7 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 
 import { useConnection } from '../connection';
-import { fetchWorkspaceFsSuggest, type FsSuggestResult } from '../fs/api';
+import { fetchFsSuggest, type FsSuggestResult } from '../fs/api';
 import { Badge, ErrorLine } from '../ui';
 import { WorkspaceDirBrowser } from './WorkspaceDirBrowser';
 
@@ -15,9 +15,17 @@ function parseGlobs(value: string): string[] | undefined {
   return globs.length === 0 ? undefined : globs;
 }
 
+function parseRoots(value: string): string[] {
+  return value
+    .split(/[\n,]/)
+    .map((root) => root.trim())
+    .filter((root) => root.length > 0);
+}
+
 export function FsSuggestView() {
   const { klient, baseUrl } = useConnection();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [rootsText, setRootsText] = useState('');
   const [query, setQuery] = useState('');
   const [limit, setLimit] = useState('50');
   const [followGitignore, setFollowGitignore] = useState(true);
@@ -32,19 +40,23 @@ export function FsSuggestView() {
 
   const suggest = useMutation<FsSuggestResult, Error>({
     mutationFn: async () => {
-      if (workspace === null) throw new Error('select a workspace first');
+      const roots = parseRoots(rootsText);
       const parsedLimit = Number.parseInt(limit, 10);
-      return fetchWorkspaceFsSuggest({
+      const shared = {
         baseUrl: klient.baseUrl,
         token: klient.token,
-        workspace: workspace.id,
         query,
         limit: Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : undefined,
         followGitignore,
         showHidden,
         includeGlobs: parseGlobs(includeGlobs),
         excludeGlobs: parseGlobs(excludeGlobs),
-      });
+      };
+      if (roots.length > 0) {
+        return fetchFsSuggest({ ...shared, roots });
+      }
+      if (workspace === null) throw new Error('select a workspace or enter roots first');
+      return fetchFsSuggest({ ...shared, roots: [workspace.root] });
     },
   });
 
@@ -81,7 +93,9 @@ export function FsSuggestView() {
           <div>
             <h1 className="text-sm font-semibold text-neutral-200">Filesystem Suggest</h1>
             <p className="mt-1 text-[11px] text-neutral-500">
-              Query file and directory completion candidates from the selected workspace.
+              Query file and directory completion candidates via the workspace-independent
+              fs:suggest API — the selected workspace supplies its root, or enter arbitrary
+              roots to override it.
             </p>
           </div>
           <form
@@ -91,6 +105,17 @@ export function FsSuggestView() {
               suggest.mutate();
             }}
           >
+            <label className="md:col-span-2">
+              <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+                Roots (absolute paths, one per line or comma-separated; overrides the workspace selection)
+              </span>
+              <textarea
+                className="h-16 w-full resize-y rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 font-mono text-[12px] text-neutral-100 outline-none focus:border-sky-600"
+                value={rootsText}
+                onChange={(event) => setRootsText(event.target.value)}
+                placeholder="/abs/primary-root&#10;/abs/additional-root"
+              />
+            </label>
             <label className="md:col-span-2">
               <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
                 Query
@@ -157,13 +182,13 @@ export function FsSuggestView() {
             <div className="flex items-end md:col-span-2">
               <button
                 type="submit"
-                disabled={workspace === null || suggest.isPending}
+                disabled={(workspace === null && parseRoots(rootsText).length === 0) || suggest.isPending}
                 className="rounded bg-sky-600 px-3 py-1.5 text-[12px] font-medium text-white hover:bg-sky-500 disabled:opacity-40"
               >
                 {suggest.isPending ? 'loading…' : 'Suggest'}
               </button>
-              {workspace === null ? (
-                <span className="ml-3 text-[11px] text-neutral-600">select a workspace first</span>
+              {workspace === null && parseRoots(rootsText).length === 0 ? (
+                <span className="ml-3 text-[11px] text-neutral-600">select a workspace or enter roots first</span>
               ) : null}
             </div>
           </form>

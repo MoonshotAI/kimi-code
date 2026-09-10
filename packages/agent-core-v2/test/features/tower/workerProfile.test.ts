@@ -36,10 +36,8 @@ describe('tower-worker profile', () => {
     }
   });
 
-  it('keeps the coder summary policy and whenToUse', () => {
+  it('keeps the coder whenToUse', () => {
     const coder = builtinProfile('coder');
-    expect(TOWER_WORKER_PROFILE_DEF.summaryPolicy).toEqual(coder.summaryPolicy);
-    expect(TOWER_WORKER_PROFILE_DEF.summaryPolicy).toBeDefined();
     expect(TOWER_WORKER_PROFILE_DEF.whenToUse).toBe(coder.whenToUse);
   });
 });

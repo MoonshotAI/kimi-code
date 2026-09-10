@@ -12,8 +12,17 @@ import type {
   ExecutableToolResult,
 } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { ISessionInteractionService } from '#/session/interaction/interaction';
 import { IAgentStateService } from '#/agent/state/agentState';
+import {
+  INTERACTION_TAG_AGENT_ID,
+  INTERACTION_TAG_SESSION_ID,
+  INTERACTION_TAG_TOOL_CALL_ID,
+  INTERACTION_TAG_TURN_ID,
+  type InteractionTags,
+} from '#/human/interaction/interaction';
+import { interactions } from '#/human/interaction/facade';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { IAgentUserToolService, type UserToolRegistration } from './userTool';
@@ -36,9 +45,10 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
   private readonly registrations = new Map<string, IDisposable>();
 
   constructor(
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
-    @ISessionInteractionService private readonly interaction: ISessionInteractionService,
+    @ISessionContext private readonly session: ISessionContext,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentStateService private readonly agentState: IAgentStateService,
   ) {
@@ -56,19 +66,31 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
     return [...this.agentState.get(userToolKey).values()];
   }
 
-  inheritUserTools(parent: IAgentUserToolService): void {
+  inheritUserTools(
+    parent: IAgentUserToolService,
+    activeToolNames?: readonly string[],
+  ): void {
     for (const registration of parent.list()) {
-      this.register(registration);
+      void this.dispatcher.dispatch(
+        new ToolsRegisterUserTool({ ...registration, agentId: this.scopeContext.agentId }),
+      );
+      const activate =
+        activeToolNames === undefined || activeToolNames.includes(registration.name);
+      this.applyRegister(registration, { activate });
     }
   }
 
   register(input: UserToolRegistration): void {
-    void this.dispatcher.dispatch(new ToolsRegisterUserTool(input));
+    void this.dispatcher.dispatch(
+      new ToolsRegisterUserTool({ ...input, agentId: this.scopeContext.agentId }),
+    );
     this.applyRegister(input);
   }
 
   unregister(name: string): void {
-    void this.dispatcher.dispatch(new ToolsUnregisterUserTool({ name }));
+    void this.dispatcher.dispatch(
+      new ToolsUnregisterUserTool({ agentId: this.scopeContext.agentId, name }),
+    );
     this.applyUnregister(name);
   }
 
@@ -117,7 +139,13 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
     args: unknown,
   ): Promise<ExecutableToolResult> {
     const id = `user_tool_${randomUUID()}`;
-    const request = this.interaction.request<UserToolExecutionRequest, ExecutableToolResult>({
+    const tags: InteractionTags = {
+      [INTERACTION_TAG_AGENT_ID]: this.scopeContext.agentId,
+      [INTERACTION_TAG_SESSION_ID]: this.session.sessionId,
+      [INTERACTION_TAG_TOOL_CALL_ID]: context.toolCallId,
+    };
+    if (context.turnId !== undefined) tags[INTERACTION_TAG_TURN_ID] = context.turnId;
+    const request = interactions.request<UserToolExecutionRequest, ExecutableToolResult>({
       id,
       kind: 'user_tool',
       payload: {
@@ -126,15 +154,13 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
         name,
         args,
       },
-      origin: {
-        turnId: context.turnId,
-      },
+      tags,
     });
     try {
       return await abortable(request, context.signal);
     } catch (error) {
       if (context.signal.aborted) {
-        this.interaction.respond(id, {
+        interactions.respond(id, {
           output: `User tool "${name}" was aborted.`,
           isError: true,
         });

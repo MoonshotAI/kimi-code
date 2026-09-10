@@ -6,32 +6,28 @@ import { OrderedHookSlot } from '#/hooks';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2, Event2Class } from '#/app/event/event2';
 import { IFlagService } from '#/app/flag/flag';
-import type { ModelCapability } from '#/kosong/contract/capability';
-import type { ToolCall } from '#/kosong/contract/message';
+import type { ModelCapability } from '#/llm-adapter/contract/capability';
+import type { ToolCall } from '#human/llm/message';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { UndoCut } from '#/agent/contextMemory/contextOps';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
-import { AgentContextInjectorService } from '#/agent/contextInjector/contextInjectorService';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
+import { createReminderHarness } from '../../features/reminder/stubs';
 import { CompactionCompleted } from '#/agent/fullCompaction/compactionOps';
 import {
   IAgentLoopService,
   type AfterStepContext,
   type BeforeStepContext,
-  type EnqueueReceipt,
-  type LoopRunResult,
-  type StepEnqueueOptions,
+  type LoopNotifyHandle,
+  type LoopPromptSubmit,
   type Turn,
 } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
-import type { StepRequest } from '#/agent/loop/stepRequest';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
-import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
 import type {
   ExecutableTool,
   ToolDisclosure,
@@ -213,19 +209,31 @@ class FakeLoopService implements IAgentLoopService {
 
   cancelFromUser(): void {}
 
-  enqueue(_request: StepRequest, _options?: StepEnqueueOptions): EnqueueReceipt {
+  submit(_prompt: LoopPromptSubmit): { readonly turn: Turn } {
     throw new Error('unused in this suite');
   }
 
-  async run(): Promise<LoopRunResult> {
+  steer(): undefined {
+    return undefined;
+  }
+
+  notify(): LoopNotifyHandle {
     throw new Error('unused in this suite');
   }
 
   status() {
-    return { state: 'idle' as const, pendingTurnIds: [], hasPendingRequests: false };
+    return { state: 'idle' as const, pendingPromptIds: [], hasPendingRequests: false };
+  }
+
+  activitySnapshot() {
+    return {};
   }
 
   cancel(_turnId?: number, _reason?: unknown): boolean {
+    throw new Error('unused in this suite');
+  }
+
+  cancelQueued(_queueId: string, _reason?: unknown): boolean {
     throw new Error('unused in this suite');
   }
 
@@ -312,6 +320,10 @@ function registerSharedServices(
   reg.defineInstance(IEventBus, eventBus);
   reg.defineInstance(IAgentLoopService, loop);
   reg.defineInstance(IAgentContextMemoryService, contextMemory);
+  reg.defineInstance(
+    IAgentScopeContext,
+    makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main', generation: 1 }),
+  );
   reg.definePartialInstance(IAgentProfileService, {
     getModelCapabilities: () => capabilities,
   });
@@ -330,12 +342,14 @@ function registerSharedServices(
       eventBus.publish(event);
     },
   } as unknown as IEventDispatcher);
-  reg.define(IAgentContextInjectorService, AgentContextInjectorService);
+  reg.defineInstance(
+    IAgentReminderService,
+    createReminderHarness(loop, contextMemory, eventBus),
+  );
   reg.define(IAgentToolRegistryService, AgentToolRegistryService);
   reg.define(IAgentToolSelectService, AgentToolSelectService);
   reg.define(IAgentToolSelectAnnouncementsService, AgentToolSelectAnnouncementsService);
   reg.define(IAgentToolSelectSchemasService, AgentToolSelectSchemasService);
-  reg.define(IAgentSystemReminderService, AgentSystemReminderService);
   registerLogServices(reg);
 }
 
@@ -440,7 +454,7 @@ async function announce(h: Harness, step = 1): Promise<string | undefined> {
 
 async function announceAfterCompaction(h: Harness): Promise<string | undefined> {
   h.eventBus.publish(
-    new ContextSpliced({
+    new ContextSpliced({ agentId: 'main',
       start: 0,
       deleteCount: 1,
       messages: [
@@ -819,7 +833,7 @@ describe('AgentToolSelectService.load', () => {
 
     h.sut.load([MCP_ALPHA]);
     h.eventBus.publish(
-      new CompactionCompleted({
+      new CompactionCompleted({ agentId: 'main',
         result: { summary: '', compactedCount: 0, tokensBefore: 0, tokensAfter: 0 },
       }),
     );
@@ -831,7 +845,7 @@ describe('AgentToolSelectService.load', () => {
     registerMcp(h, new StubMcpTool(MCP_ALPHA));
 
     h.sut.load([MCP_ALPHA]);
-    h.eventBus.publish(new ContextSpliced({ start: 0, deleteCount: 2, messages: [] }));
+    h.eventBus.publish(new ContextSpliced({ agentId: 'main', start: 0, deleteCount: 2, messages: [] }));
     expect(h.sut.load([MCP_ALPHA]).toLoad).toEqual([MCP_ALPHA]);
   });
 
@@ -841,7 +855,7 @@ describe('AgentToolSelectService.load', () => {
 
     h.sut.load([MCP_ALPHA]);
     h.eventBus.publish(
-      new ContextSpliced({
+      new ContextSpliced({ agentId: 'main',
         start: 0,
         deleteCount: 2,
         messages: [userMessage('Compacted summary.')],
@@ -866,7 +880,7 @@ describe('AgentToolSelectService.load', () => {
     expect(h.sut.load([MCP_BETA]).alreadyAvailable).toEqual([MCP_BETA]);
 
     h.contextMemory.history.splice(1, 1);
-    h.eventBus.publish(new ContextSpliced({ start: 1, deleteCount: 2, messages: [] }));
+    h.eventBus.publish(new ContextSpliced({ agentId: 'main', start: 1, deleteCount: 2, messages: [] }));
 
     expect(h.sut.load([MCP_ALPHA]).alreadyAvailable).toEqual([MCP_ALPHA]);
     expect(h.sut.load([MCP_BETA]).toLoad).toEqual([MCP_BETA]);
@@ -878,7 +892,7 @@ describe('AgentToolSelectService.load', () => {
 
     h.sut.load([MCP_ALPHA]);
     h.eventBus.publish(
-      new ContextSpliced({ start: 3, deleteCount: 0, messages: [userMessage('x')] }),
+      new ContextSpliced({ agentId: 'main', start: 3, deleteCount: 0, messages: [userMessage('x')] }),
     );
     expect(h.sut.load([MCP_ALPHA]).alreadyAvailable).toEqual([MCP_ALPHA]);
   });
@@ -1071,7 +1085,7 @@ describe('AgentToolSelectService loadable-tools announcements', () => {
     registerMcp(h, new StubMcpTool(MCP_GAMMA));
     expect(await announce(h, 2)).toBeUndefined();
 
-    h.eventBus.publish(new TurnStarted({ turnId: 99, origin: { kind: 'user' } }));
+    h.eventBus.publish(new TurnStarted({ agentId: 'main', turnId: 99, origin: { kind: 'user' } }));
     const diff = await announce(h);
     expect(diff).toContain(`<tools_added>\n${MCP_GAMMA}\n</tools_added>`);
   });
@@ -1086,7 +1100,7 @@ describe('AgentToolSelectService loadable-tools announcements', () => {
 
     betaRegistration.dispose();
     registerMcp(h, new StubMcpTool(MCP_GAMMA));
-    h.eventBus.publish(new TurnStarted({ turnId: 99, origin: { kind: 'user' } }));
+    h.eventBus.publish(new TurnStarted({ agentId: 'main', turnId: 99, origin: { kind: 'user' } }));
 
     const diff = await announce(h);
     expect(diff).toContain(`<tools_added>\n${MCP_GAMMA}\n</tools_added>`);

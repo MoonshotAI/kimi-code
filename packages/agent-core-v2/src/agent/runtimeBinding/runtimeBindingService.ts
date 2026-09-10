@@ -3,6 +3,7 @@ import { defineState } from '#/state/state';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
 import { LifecycleScope } from '#/app/scopes';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import type { RuntimeBinding } from '#/runtime/runtime';
 import { RuntimeError } from '#/runtime/runtimeRegistry';
@@ -22,6 +23,7 @@ export class AgentRuntimeBindingService implements IAgentRuntimeBindingService {
   private readonly restoreHook: IDisposable;
 
   constructor(
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly state: IAgentStateService,
     @IAgentRuntimeBindingSeed seed: IAgentRuntimeBindingSeed,
     @ISessionContext private readonly session: ISessionContext,
@@ -36,7 +38,9 @@ export class AgentRuntimeBindingService implements IAgentRuntimeBindingService {
     this.restoreHook = dispatcher.hooks.onDidRestore.register('agent-runtime-binding', async (_ctx, next) => {
       const replayed = this.state.get(runtimeBindingKey);
       if (replayed === undefined) {
-        void this.dispatcher.dispatch(new RuntimeSetBinding(this.current));
+        void this.dispatcher.dispatch(
+          new RuntimeSetBinding({ ...this.current, agentId: this.scopeContext.agentId }),
+        );
       } else {
         this.assertSessionWorkspace(replayed);
         this.state.set(agentRuntimeBindingKey, replayed);
@@ -70,7 +74,9 @@ export class AgentRuntimeBindingService implements IAgentRuntimeBindingService {
       return this.current;
     }
     const next = { workspaceId: binding.workspaceId, runtimeId: binding.runtimeId };
-    void this.dispatcher.dispatch(new RuntimeSetBinding(next));
+    void this.dispatcher.dispatch(
+      new RuntimeSetBinding({ ...next, agentId: this.scopeContext.agentId }),
+    );
     this.state.set(agentRuntimeBindingKey, next);
     this.changeEmitter.fire(next);
     return next;

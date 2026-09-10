@@ -1,7 +1,6 @@
 export interface ServerHelloPayload {
   ws_connection_id: string;
   protocol_version: number;
-  /** Server heartbeat cadence — a `ping` frame arrives at least this often. */
   heartbeat_ms: number;
   max_event_buffer_size: number;
   capabilities: {

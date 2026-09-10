@@ -5,13 +5,11 @@ import { join } from 'node:path';
 import { resolveKimiHome } from '@moonshot-ai/agent-core-v2';
 import { ulid } from 'ulid';
 
-/** Default cadence for refreshing `heartbeat_at`. */
 export const HEARTBEAT_INTERVAL_MS = 15_000;
 
 export const DEFAULT_SERVER_DIR = join(resolveKimiHome(), 'server');
 export const DEFAULT_SERVER_INSTANCES_DIR = join(DEFAULT_SERVER_DIR, 'instances');
 
-/** In-memory shape of a registered instance. camelCase for TS consumers. */
 export interface ServerInstanceInfo {
   readonly serverId: string;
   readonly pid: number;
@@ -34,30 +32,20 @@ interface ServerInstanceDisk {
 
 export interface InstanceRegistration {
   readonly serverId: string;
-  /** Rewrite this instance's file with a fresh heartbeat and, optionally, a new port. */
   update(patch: { port?: number }): Promise<void>;
-  /** Remove the instance file and stop heartbeating. Idempotent, best-effort on shutdown. */
   release(): Promise<void>;
 }
 
 export interface IInstanceRegistry {
-  /**
-   * Register this process. Sweeps stale (dead-pid) entries as a side effect,
-   * writes the instance file, and starts the heartbeat timer.
-   */
   register(
     info: Omit<ServerInstanceInfo, 'serverId' | 'heartbeatAt'>,
   ): Promise<InstanceRegistration>;
-  /** List live instances; dead-pid entries are filtered and lazily removed. */
   listLive(): Promise<readonly ServerInstanceInfo[]>;
 }
 
 export interface InstanceRegistryOptions {
-  /** Directory holding `<serverId>.json` files. Defaults to `<KIMI_CODE_HOME>/server/instances`. */
   readonly instancesDir?: string;
-  /** Override `Date.now` — used in tests for deterministic timestamps. */
   readonly now?: () => number;
-  /** Override the heartbeat cadence — used in tests to avoid a 15s wait. */
   readonly heartbeatIntervalMs?: number;
 }
 
@@ -275,25 +263,18 @@ export function createInstanceRegistry(options: InstanceRegistryOptions = {}): I
   };
 }
 
-/** Resolve the instances directory for a given home (or the default kimi home). */
 export function resolveServerInstancesDir(homeDir?: string): string {
   return homeDir === undefined
     ? DEFAULT_SERVER_INSTANCES_DIR
     : join(homeDir, 'server', 'instances');
 }
 
-/** Convenience one-shot read: list live instances under a home directory. */
 export async function listLiveServerInstances(
   homeDir?: string,
 ): Promise<readonly ServerInstanceInfo[]> {
   return createInstanceRegistry({ instancesDir: resolveServerInstancesDir(homeDir) }).listLive();
 }
 
-/**
- * Convenience one-shot read: return the longest-running live instance, or
- * `undefined` when none exist. For callers that only need a single daemon to
- * talk to (e.g. the CLI's `server ps/kill` and the `kimi web` spawner).
- */
 export async function getLiveServerInstance(
   homeDir?: string,
 ): Promise<ServerInstanceInfo | undefined> {

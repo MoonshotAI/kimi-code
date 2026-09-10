@@ -151,10 +151,15 @@ export class SessionAgentProfileCatalogService
           });
           continue;
         }
-        merged.set(candidate.profile.name, candidate.profile);
+        const replaced = merged.get(candidate.profile.name);
+        const effective =
+          candidate.profile.subagents === undefined && replaced?.subagents !== undefined
+            ? { ...candidate.profile, subagents: replaced.subagents }
+            : candidate.profile;
+        merged.set(candidate.profile.name, effective);
         inspections.set(candidate.profile.name, {
           name: candidate.profile.name,
-          profile: candidate.profile,
+          profile: effective,
           sourceId: candidate.sourceId,
           priority: candidate.priority,
           suppressed: [

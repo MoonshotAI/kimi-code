@@ -5,6 +5,7 @@ import { OAuthTokenTransaction } from '../src/oauth-token-transaction';
 interface TestTokens {
   access_token: string;
   refresh_token?: string;
+  obtained_at?: number;
 }
 
 describe('OAuthTokenTransaction', () => {
@@ -39,6 +40,19 @@ describe('OAuthTokenTransaction', () => {
     await peer.save(tokens('access-1', 'refresh-1'));
     await rejected.invalidateFromSdk('tokens');
     expect(stored).toEqual(tokens('access-1', 'refresh-1'));
+  });
+
+  it('preserves a refresh token when the SDK save omits it after refresh', async () => {
+    let stored: TestTokens | undefined = tokens('access-0', 'refresh-0');
+    const subject = transaction('same-server', () => stored, (value) => (stored = value));
+    const response = await subject.createFetch(async () => json({ access_token: 'access-1' }))(
+      'https://issuer.example.test/token',
+      refreshRequest('refresh-0'),
+    );
+
+    await subject.save((await response.json()) as TestTokens);
+
+    expect(stored).toEqual(tokens('access-1', 'refresh-0'));
   });
 
   it('preserves an access-only winner when an older refresh is queued', async () => {
@@ -110,12 +124,68 @@ describe('OAuthTokenTransaction', () => {
     await expect(subject.invalidateFromSdk('tokens')).resolves.toBe(false);
     expect(stored).toEqual(tokens('access-0', 'refresh-0'));
   });
+
+  it('coalesces a stripped SDK save against a stamped durable winner without a second write', async () => {
+    let stored: TestTokens | undefined = {
+      access_token: 'access-1',
+      refresh_token: 'refresh-1',
+      obtained_at: 123,
+    };
+    let writes = 0;
+    const subject = transaction(
+      'same-server',
+      () => stored,
+      (value) => {
+        writes += 1;
+        stored = value;
+      },
+      { normalize: stripDurableStamp },
+    );
+    const tokenEndpoint = vi.fn<typeof fetch>();
+
+    const response = await subject.createFetch(tokenEndpoint)(
+      'https://issuer.example.test/token',
+      refreshRequest('refresh-0'),
+    );
+
+    expect(response.status).toBe(200);
+    expect(tokenEndpoint).not.toHaveBeenCalled();
+    const stripped = parseTokens(await response.json());
+    if (stripped === undefined) throw new Error('invalid test token response');
+    await subject.save(stripped);
+
+    expect(writes).toBe(0);
+    expect(stored).toEqual({ access_token: 'access-1', refresh_token: 'refresh-1', obtained_at: 123 });
+  });
+
+  it('does not resurrect a cleared credential when a stripped SDK save arrives late', async () => {
+    let stored: TestTokens | undefined = {
+      access_token: 'access-1',
+      refresh_token: 'refresh-1',
+      obtained_at: 123,
+    };
+    const subject = transaction('same-server', () => stored, (value) => (stored = value), {
+      normalize: stripDurableStamp,
+    });
+
+    const response = await subject.createFetch(vi.fn<typeof fetch>())(
+      'https://issuer.example.test/token',
+      refreshRequest('refresh-0'),
+    );
+    const stripped = parseTokens(await response.json());
+    if (stripped === undefined) throw new Error('invalid test token response');
+
+    await subject.clear();
+    await subject.save(stripped);
+    expect(stored).toBeUndefined();
+  });
 });
 
 function transaction(
   key: string,
   read: () => TestTokens | undefined,
   write: (tokens: TestTokens | undefined) => void,
+  extras?: { readonly normalize?: (tokens: TestTokens) => TestTokens },
 ): OAuthTokenTransaction<TestTokens> {
   return new OAuthTokenTransaction({
     key,
@@ -127,7 +197,13 @@ function transaction(
       write(undefined);
     },
     parse: parseTokens,
+    normalize: extras?.normalize,
   });
+}
+
+function stripDurableStamp(value: TestTokens): TestTokens {
+  const { obtained_at: _omitted, ...stripped } = value;
+  return stripped;
 }
 
 async function sdkRefresh(

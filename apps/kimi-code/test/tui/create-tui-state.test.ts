@@ -16,6 +16,7 @@ function fakeInitialAppState(): AppState {
     planMode: false,
     inputMode: 'prompt',
     swarmMode: false,
+    towerMode: false,
     thinkingEffort: 'off',
     contextUsage: 0,
     contextTokens: 0,
@@ -57,10 +58,13 @@ describe('createTUIState', () => {
     expect(state.activityContainer).toBeDefined();
     expect(state.todoPanelContainer).toBeDefined();
     expect(state.queueContainer).toBeDefined();
+    expect(state.surveyContainer).toBeDefined();
     expect(state.editorContainer).toBeDefined();
     expect(state.editor).toBeDefined();
     expect(state.footer).toBeDefined();
     expect(state.todoPanel).toBeDefined();
+    expect(state.notifyPanelContainer).toBeDefined();
+    expect(state.notifyPanel).toBeDefined();
     expect(state.theme.palette).toBeDefined();
 
     // App state is cloned from initialAppState, not reused by reference.
@@ -126,8 +130,10 @@ describe('createTUIState', () => {
     expect(dock?.children).toEqual([
       state.activityContainer,
       state.todoPanelContainer,
+      state.notifyPanelContainer,
       state.queueContainer,
       state.btwPanelContainer,
+      state.surveyContainer,
       state.editorContainer,
     ]);
 

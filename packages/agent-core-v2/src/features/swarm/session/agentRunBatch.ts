@@ -1,10 +1,11 @@
-import { isProviderRateLimitError } from '#/kosong/contract/errors';
-import { type TokenUsage } from '#/kosong/contract/usage';
+import { isProviderRateLimitError } from '#/llm-adapter/contract/errors';
+import { type TokenUsage } from '#human/llm/usage';
 import * as retry from 'retry';
 
 import { isUserCancellation } from '#/_base/utils/abort';
 import { setClampedTimeout } from '#/_base/utils/timer';
 import { BugIndicatingError, Error2, ErrorCodes } from '#/errors';
+import type { SubagentSpawnPlan } from '#/session/subagent/spawn';
 import type { SessionSwarmRunResult, SessionSwarmTask } from './sessionSwarm';
 
 export interface AgentRunAttemptOptions {
@@ -22,7 +23,7 @@ export interface AgentRunAttemptOptions {
 export interface AgentSpawnAttemptOptions extends AgentRunAttemptOptions {
   readonly profileName: string;
   readonly swarmItem?: string;
-  readonly binding?: { readonly model: string; readonly thinking?: string };
+  readonly plan: SubagentSpawnPlan;
 }
 
 export type AgentRunAttemptHandle = {
@@ -31,6 +32,7 @@ export type AgentRunAttemptHandle = {
   readonly completion: Promise<{
     readonly result: string;
     readonly usage?: TokenUsage;
+    readonly stopReason?: string;
   }>;
 };
 
@@ -292,7 +294,7 @@ export class AgentRunBatch<T> {
         const spawnOptions: AgentSpawnAttemptOptions = {
           profileName: task.profileName,
           swarmItem: task.swarmItem,
-          binding: task.binding,
+          plan: task.plan,
           ...runOptions,
         };
         handle = await this.launcher.spawn(spawnOptions);
@@ -310,6 +312,7 @@ export class AgentRunBatch<T> {
         status: 'completed',
         result: completion.result,
         usage: completion.usage,
+        stopReason: completion.stopReason,
       };
     } catch (error) {
       if (isProviderRateLimitError(error)) {

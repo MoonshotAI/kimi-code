@@ -89,14 +89,6 @@ export interface ProviderRemovalPlan {
   readonly models: Record<string, unknown>;
   readonly clearDefaultModel: boolean;
   readonly clearDefaultProvider: boolean;
-  /**
-   * Cascade for the `[secondary_model]` subagent pool / legacy recipe:
-   * `undefined` = unchanged, `null` = drop the whole section (its effective
-   * default dangles, so the section can no longer validate), otherwise the
-   * replacement section with pool entries pointing at removed models
-   * filtered out.
-   */
-  readonly secondaryModel: Record<string, unknown> | null | undefined;
 }
 
 /**
@@ -107,18 +99,16 @@ export interface ProviderRemovalPlan {
  * cascade through the config facade. Inputs are the USER-layer values
  * (`inspect().userValue`), matching v1's disk-config write base.
  *
- * The `[secondary_model]` section cascades too: pool entries that name a
- * removed model alias are filtered out, and when the effective default
- * (`defaultModel`, or the legacy recipe's `model` fallback) dangles the
- * whole section is dropped — a surviving `[secondary_model.models]` table
- * without its default would fail pool validation on every session create.
+ * The `[secondary_model]` section is deliberately left untouched: it is the
+ * user's own configuration, and an entry whose model no longer resolves
+ * fails pool validation on the next session create with a message naming
+ * the offending alias — a loud error beats a silent rewrite.
  */
 export function planProviderRemoval(input: {
   readonly providers: Record<string, unknown> | undefined;
   readonly models: Record<string, Record<string, unknown>> | undefined;
   readonly defaultModel: string | undefined;
   readonly defaultProvider: string | undefined;
-  readonly secondaryModel?: Record<string, unknown>;
   readonly providerId: string;
 }): ProviderRemovalPlan {
   const providers = { ...input.providers };
@@ -139,34 +129,7 @@ export function planProviderRemoval(input: {
     models,
     clearDefaultModel: removedDefault,
     clearDefaultProvider: input.defaultProvider === input.providerId,
-    secondaryModel: planSecondaryModelCascade(input.secondaryModel, models),
   };
-}
-
-/**
- * Cascade the provider removal into the `[secondary_model]` section against
- * the surviving model-alias table. See `ProviderRemovalPlan.secondaryModel`
- * for the tri-state result.
- */
-function planSecondaryModelCascade(
-  secondaryModel: Record<string, unknown> | undefined,
-  survivingModels: Record<string, unknown>,
-): Record<string, unknown> | null | undefined {
-  if (secondaryModel === undefined) return undefined;
-
-  const defaultAlias = secondaryModel['defaultModel'] ?? secondaryModel['model'];
-  if (typeof defaultAlias === 'string' && !(defaultAlias in survivingModels)) {
-    return null;
-  }
-
-  const pool = secondaryModel['models'];
-  if (pool === undefined || typeof pool !== 'object' || pool === null) {
-    return undefined;
-  }
-  const entries = Object.entries(pool as Record<string, unknown>);
-  const surviving = entries.filter(([alias]) => alias in survivingModels);
-  if (surviving.length === entries.length) return undefined;
-  return { ...secondaryModel, models: Object.fromEntries(surviving) };
 }
 
 /**
@@ -183,7 +146,6 @@ export function removeProviderFromConfig(config: KimiConfig, providerId: string)
     models: config.models as Record<string, Record<string, unknown>> | undefined,
     defaultModel: config.defaultModel,
     defaultProvider: config.defaultProvider,
-    secondaryModel: config.secondaryModel as Record<string, unknown> | undefined,
     providerId,
   });
   return {
@@ -192,9 +154,5 @@ export function removeProviderFromConfig(config: KimiConfig, providerId: string)
     models: plan.models as KimiConfig['models'],
     defaultModel: plan.clearDefaultModel ? undefined : config.defaultModel,
     defaultProvider: plan.clearDefaultProvider ? undefined : config.defaultProvider,
-    secondaryModel:
-      plan.secondaryModel === null
-        ? undefined
-        : ((plan.secondaryModel ?? config.secondaryModel) as KimiConfig['secondaryModel']),
   };
 }

@@ -1423,6 +1423,40 @@ describe('managed protocol routing', () => {
     expect(models[0]?.protocol).toBe('anthropic');
   });
 
+  it('maps the server "response" protocol value to openai_responses', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: [{ id: 'k3', context_length: 1048576, protocol: 'response' }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    ) as unknown as typeof fetch;
+
+    const models = await fetchManagedKimiCodeModels({ accessToken: 't', fetchImpl });
+    expect(models).toHaveLength(1);
+    expect(models[0]?.protocol).toBe('openai_responses');
+  });
+
+  it('records openai_responses protocol without anthropic routing fields', () => {
+    const config: ManagedKimiConfigShape = { providers: {} };
+    applyManagedKimiCodeConfig(config, {
+      baseUrl: KIMI_BASE_URL,
+      models: [makeModelInfo('k3', { protocol: 'openai_responses', supportsReasoning: true })],
+    });
+
+    expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toMatchObject({
+      type: 'kimi',
+      baseUrl: KIMI_BASE_URL,
+      apiKey: '',
+    });
+    const alias = config.models?.['kimi-code/k3'];
+    expect(alias?.protocol).toBe('openai_responses');
+    expect(alias?.betaApi).toBeUndefined();
+    expect(alias?.adaptiveThinking).toBeUndefined();
+  });
+
   it('keeps the provider on the kimi REST base and records the model protocol when anthropic', () => {
     const config: ManagedKimiConfigShape = { providers: {} };
     applyManagedKimiCodeConfig(config, {

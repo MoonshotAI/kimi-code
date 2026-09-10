@@ -1,6 +1,6 @@
 # Agent Skills
 
-Agent Skills are a lightweight mechanism for extending model capabilities in Kimi Code CLI. A Skill is a Markdown document with YAML frontmatter that describes a specialized area of knowledge or a workflow — for example, a project's code style guidelines, a PR review process, or a commit message format.
+Agent Skills are a lightweight mechanism for extending model capabilities in Kimi Code CLI. A Skill is a Markdown document with YAML frontmatter that describes a specialized area of knowledge or a workflow: a project's code style guidelines, a PR review process, or a commit message format.
 
 Compared to pasting the same instructions into a prompt every time, Skills offer the advantage of keeping content in a file, enabling reuse across projects and teams, allowing instant loading via a slash command, and letting the model invoke them automatically when needed.
 
@@ -39,12 +39,12 @@ Please handle code according to the following guidelines:
 
 | Field | Description |
 | --- | --- |
-| `name` | Skill name. Required in a directory-form `SKILL.md`; when omitted in a flat `.md` file, the filename is used. Names are case-insensitive |
-| `description` | A one-line summary; the model uses this to decide when to use the Skill. Required in a directory-form `SKILL.md`; when omitted in a flat `.md` file, falls back to the first non-empty line of the body (up to 240 characters) |
-| `type` | Skill type: `prompt` (default), `inline` (same semantics as `prompt`), `flow` (manual invocation only; not available for automatic model invocation). Other values are skipped |
+| `name` | Skill name (case-insensitive). Required in directory-form `SKILL.md`; flat `.md` uses the filename |
+| `description` | One-line summary the model uses to decide when to invoke. Required in directory-form `SKILL.md`; flat `.md` falls back to the first non-empty body line (up to 240 characters) |
+| `type` | Skill type: `prompt` (default), `inline` (same as `prompt`), `flow` (manual invocation only). Other values are skipped |
 | `whenToUse` | Description of when the Skill should be triggered. Also accepts `when-to-use` and `when_to_use` |
-| `disableModelInvocation` | When set to `true`, prevents the model from invoking this Skill automatically. Also accepts `disable-model-invocation` and `disable_model_invocation` |
-| `arguments` | List of named parameters; can be written as a string array or a whitespace-separated string (e.g., `arguments: target mode`). Once declared, parameters can be read in the body with `$<name>` |
+| `disableModelInvocation` | If `true`, blocks automatic model invocation. Also accepts `disable-model-invocation`, `disable_model_invocation` |
+| `arguments` | Named parameters; a string array or whitespace-separated string (e.g., `arguments: target mode`). Once declared, readable in the body as `$<name>` |
 
 ::: warning Note
 In a directory-form `SKILL.md`, both `name` and `description` **must** be explicitly provided. Omitting either one will cause parsing to fail.
@@ -81,7 +81,7 @@ The Kimi-specific user Skill directory moves with `KIMI_CODE_HOME`, so isolated 
 extra_skill_dirs = ["~/team-skills", ".agents/team-skills"]
 ```
 
-**Built-in Skills** are distributed with the CLI and have the lowest priority. They provide out-of-the-box workflows for common tasks — for example, configuring MCP servers, customizing the TUI theme, and editing config files. See [Built-in skill commands](../reference/slash-commands.md#built-in-skill-commands) for the full list. Those describing Kimi Code itself can be turned off with the top-level [`builtin_product_skills`](../configuration/config-files.md#top-level-fields) field.
+**Built-in Skills** are distributed with the CLI and have the lowest priority. They provide out-of-the-box workflows for common tasks: configuring MCP servers, customizing the TUI theme, and editing config files. See [Built-in skill commands](../reference/slash-commands.md#built-in-skill-commands) for the full list. Those describing Kimi Code itself can be turned off with the top-level [`builtin_product_skills`](../configuration/config-files.md#top-level-fields) field.
 
 ## Invoking a Skill
 

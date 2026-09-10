@@ -29,7 +29,7 @@ function walk(dir: string, out: string[] = []): string[] {
 
 const TYPE_DECL_RE = /static\s+override\s+readonly\s+type\s*=\s*'([^']+)'/g;
 const DURABLE_DECL_RE = /static\s+override\s+readonly\s+durable\s*=\s*true/;
-const CLASS_DECL_RE = /class\s+(\w+)\s+extends\s+Event2/g;
+const CLASS_DECL_RE = /class\s+(\w+)\s+extends\s+(?:AgentEvent2|Event2)/g;
 
 function scanEventDeclarations(): {
   owners: Map<string, string>;

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import {
+  type ConfigDiagnostic,
   type ConfigStripEnv,
   envBindings,
 } from '#/app/config/config';
@@ -15,10 +16,10 @@ import {
   transformPlainObject,
 } from '#/app/config/toml';
 import { type AssertExact, type Equal } from '#/_base/utils/typeEquality';
-import type { ModelOverride, ModelRecord, ModelsSection } from '#/kosong/model/model';
-import type { ThinkingConfig } from '#/kosong/model/thinking';
-import type { OAuthRef, ProviderConfig, ProvidersSection } from '#/kosong/provider/provider';
-import { ProtocolSchema } from '#/kosong/protocol/protocol';
+import type { ModelOverride, ModelRecord, ModelsSection } from '#/llm-adapter/model/model';
+import type { ThinkingConfig } from '#/llm-adapter/model/thinking';
+import type { OAuthRef, ProviderConfig, ProvidersSection } from '#/llm-adapter/provider/provider';
+import { ProtocolSchema } from '#/llm-adapter/protocol/protocol';
 
 export const PROVIDERS_SECTION = 'providers';
 
@@ -195,6 +196,54 @@ type _AssertModelsSection = AssertExact<
   Equal<z.infer<typeof ModelsSectionSchema>, ModelsSection>
 >;
 
+const MODEL_OBJECT_FIELDS = new Set(
+  Object.entries(ModelRecordSchema.shape)
+    .filter(([, field]) => unwrapWrapperSchema(field as z.ZodTypeAny) instanceof z.ZodObject)
+    .map(([key]) => camelToSnake(key)),
+);
+
+function unwrapWrapperSchema(schema: z.ZodTypeAny): z.ZodTypeAny {
+  let current = schema;
+  while (
+    current instanceof z.ZodOptional ||
+    current instanceof z.ZodNullable ||
+    current instanceof z.ZodDefault
+  ) {
+    current = current.unwrap() as z.ZodTypeAny;
+  }
+  return current;
+}
+
+function collectMalformedModelEntries(rawModels: unknown): ConfigDiagnostic[] {
+  if (!isPlainObject(rawModels)) return [];
+  const diagnostics: ConfigDiagnostic[] = [];
+  for (const [alias, entry] of Object.entries(rawModels)) {
+    if (!isPlainObject(entry)) continue;
+    if (entry['model'] !== undefined || entry['name'] !== undefined) continue;
+    diagnostics.push({
+      domain: MODELS_SECTION,
+      severity: 'warning',
+      message: malformedModelMessage(alias, entry),
+    });
+  }
+  return diagnostics;
+}
+
+function malformedModelMessage(alias: string, entry: Record<string, unknown>): string {
+  const base = `[models] entry '${alias}' is missing the 'model' field and cannot be used as a model`;
+  const dottedAlias = dottedAliasSuffix(alias, entry);
+  if (dottedAlias === undefined) return `${base}.`;
+  return `${base}; if the alias contains dots, quote the table name (e.g. [models."${dottedAlias}"]).`;
+}
+
+function dottedAliasSuffix(alias: string, entry: Record<string, unknown>): string | undefined {
+  for (const [key, value] of Object.entries(entry)) {
+    if (MODEL_OBJECT_FIELDS.has(key) || !isPlainObject(value)) continue;
+    return dottedAliasSuffix(`${alias}.${key}`, value) ?? `${alias}.${key}`;
+  }
+  return undefined;
+}
+
 export const modelsFromToml = (rawSnake: unknown): unknown => {
   if (!isPlainObject(rawSnake)) return rawSnake;
   const out: Record<string, unknown> = {};
@@ -255,6 +304,7 @@ registerConfigSection(MODELS_SECTION, ModelsSectionSchema, {
   defaultValue: {},
   fromToml: modelsFromToml,
   toToml: modelsToToml,
+  collectDiagnostics: collectMalformedModelEntries,
 });
 
 export const THINKING_SECTION = 'thinking';

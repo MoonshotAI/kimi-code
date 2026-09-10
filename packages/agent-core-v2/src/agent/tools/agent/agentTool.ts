@@ -6,6 +6,8 @@ import {
   userCancellationReason,
 } from '#/_base/utils/abort';
 import { Error2, ErrorCodes, isError2 } from '#/errors';
+import { REPEAT_BREAKER_STOP_REASON } from '#/agent/toolDedupe/toolDedupe';
+import type { AgentTaskInfo } from '#/agent/task/types';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
 import {
@@ -18,10 +20,9 @@ import {
   resolveActiveToolNames,
 } from '#/agent/toolPolicy/evaluate';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentUserToolService } from '#/agent/userTool/userTool';
+import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import {
   ToolAccesses,
   type ExecutableToolContext,
@@ -35,33 +36,40 @@ import {
 import { IAgentToolRegistryService, type ToolReference } from '#/agent/toolRegistry/toolRegistry';
 import { type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
-import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
 import {
+  rootDelegationExtras,
   subagentAllowlistFor,
-  subagentTypeNotAllowedMessage,
+  withoutDelegatingTargets,
 } from '#/app/agentProfileCatalog/profile-shared';
 import { ILogService } from '#/_base/log/log';
+import { hasPinnedPermissionMode } from '#/features/tower/tower';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
-import { IModelCatalog } from '#/kosong/model/catalog';
+import { ISessionNotify } from '#/features/notify/sessionNotify';
+import { NOTIFY_USER_TOOL_NAME } from '#/features/notify/tools/notify-user/notify-user';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { isSubagentMeta, subagentLabels, subagentParentAgentId } from '#/session/agentLifecycle/subagentMetadata';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import type { Runtime } from '#/runtime/runtime';
-import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import {
+  isSubagentMeta,
+  labelsFromAgentMeta,
+  subagentLabels,
+  subagentParentAgentId,
+  subagentProfileName,
+} from '#/session/agentLifecycle/subagentMetadata';
+import { type AgentMeta, ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
 import { emitAgentRunSpawned, mirrorAgentRun, SubagentStarted } from '#/session/subagent/mirrorAgentRun';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
+import { FORK_EXPERIMENTAL_UNAVAILABLE, forkIncompatibility } from '#/session/subagent/spawn';
+import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
 import {
   buildSubagentModelDescriptions,
   exposesSubagentModelChoice,
   formatSubagentTimeoutDescription,
-  resolveSubagentBinding,
   resolveSubagentTimeoutMs,
+  stripSubagentForkParameter,
   stripSubagentModelParameter,
-  wrapSubagentModelError,
+  type SubagentModelSource,
 } from '#/session/subagent/configSection';
 import {
   BACKGROUND_AGENT_UNAVAILABLE,
@@ -79,6 +87,7 @@ import { SubagentTask, type SubagentHandle } from './subagent-task';
 import AGENT_BACKGROUND_DISABLED_DESCRIPTION from './agent-background-disabled.md?raw';
 import AGENT_BACKGROUND_DESCRIPTION from './agent-background-enabled.md?raw';
 import AGENT_DESCRIPTION_BASE from './agent.md?raw';
+import AGENT_FORK_DESCRIPTION from './agent-fork.md?raw';
 
 const SUBAGENT_TOOL_PARAMETERS = toInputJsonSchema(SubagentToolInputSchema);
 const SUBAGENT_TOOL_PARAMETERS_NO_MODEL = stripSubagentModelParameter(SUBAGENT_TOOL_PARAMETERS);
@@ -88,9 +97,12 @@ export class SubagentTool implements ISubagentTool {
   readonly name: string = 'Agent';
 
   get parameters(): Record<string, unknown> {
-    return exposesSubagentModelChoice(this.config, this.flags)
+    const parameters = exposesSubagentModelChoice(this.config)
       ? SUBAGENT_TOOL_PARAMETERS
       : SUBAGENT_TOOL_PARAMETERS_NO_MODEL;
+    return this.flags.enabled(SUBAGENT_FORK_FLAG_ID)
+      ? parameters
+      : stripSubagentForkParameter(parameters);
   }
 
   private readonly callerAgentId: string;
@@ -99,7 +111,7 @@ export class SubagentTool implements ISubagentTool {
   private frozenCatalogProfiles: readonly AgentProfile[] | undefined;
 
   constructor(
-    @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @IAgentScopeContext scopeContext: IAgentScopeContext,
@@ -107,14 +119,12 @@ export class SubagentTool implements ISubagentTool {
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
-    @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
     @ISessionMetadata private readonly sessionMetadata: ISessionMetadata,
     @ILogService private readonly log: ILogService,
-    @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
     @IConfigService private readonly config: IConfigService,
     @IFlagService private readonly flags: IFlagService,
-    @IModelCatalog private readonly modelCatalog: IModelCatalog,
+    @ISessionNotify private readonly notify: ISessionNotify,
     @AgentToolContribution private readonly contributions: CollectionView<AgentToolContribution>,
   ) {
     this.callerAgentId = scopeContext.agentId;
@@ -132,14 +142,22 @@ export class SubagentTool implements ISubagentTool {
       ? AGENT_BACKGROUND_DESCRIPTION
       : AGENT_BACKGROUND_DISABLED_DESCRIPTION;
     let description = `${AGENT_DESCRIPTION_BASE}\n\n${backgroundDescription}`;
-    const allowlist = subagentAllowlistFor(this.catalog, this.profile.data());
+    if (this.flags.enabled(SUBAGENT_FORK_FLAG_ID)) {
+      description += `\n\n${AGENT_FORK_DESCRIPTION}`;
+    }
+    const own = this.profile.data();
     const catalogProfiles = this.catalogProfiles();
+    const allowlist = this.effectiveAllowlist(own, catalogProfiles);
     const profiles =
       allowlist === undefined
         ? catalogProfiles
         : catalogProfiles.filter((profile) => allowlist.includes(profile.name));
+    const notifyAvailable = this.notify.enabled;
     const typeLines = buildProfileDescriptions(
-      profiles,
+      profiles.map((profile) => ({
+        ...profile,
+        tools: profile.tools?.filter((name) => name !== NOTIFY_USER_TOOL_NAME || notifyAvailable),
+      })),
       this.knownToolReferences(),
       (profile, name, source) =>
         this.toolPolicy.isToolActiveForProfile(profile, name, source),
@@ -149,7 +167,6 @@ export class SubagentTool implements ISubagentTool {
     }
     const modelLines = buildSubagentModelDescriptions(
       this.config,
-      this.flags,
       this.profile.data().modelAlias,
     );
     if (modelLines !== undefined) {
@@ -163,6 +180,33 @@ export class SubagentTool implements ISubagentTool {
     const profiles = this.catalog.list();
     if (this.catalogReady) this.frozenCatalogProfiles = profiles;
     return profiles;
+  }
+
+  private delegationExtras(
+    own: {
+      readonly profileName?: string;
+      readonly subagents?: readonly string[];
+    },
+    profiles: readonly AgentProfile[],
+  ): readonly string[] | undefined {
+    if (this.callerAgentId !== 'main') return undefined;
+    return rootDelegationExtras(this.catalog, own, profiles);
+  }
+
+  private effectiveAllowlist(
+    own: {
+      readonly profileName?: string;
+      readonly subagents?: readonly string[];
+    },
+    profiles: readonly AgentProfile[],
+  ): readonly string[] | undefined {
+    const allowlist = subagentAllowlistFor(
+      this.catalog,
+      own,
+      this.delegationExtras(own, profiles),
+    );
+    if (allowlist === undefined || own.subagents !== undefined) return allowlist;
+    return withoutDelegatingTargets(this.catalog, allowlist);
   }
 
   private knownToolReferences(): ToolReference[] {
@@ -191,10 +235,23 @@ export class SubagentTool implements ISubagentTool {
       return { output: RESUME_WITH_TYPE_UNAVAILABLE, isError: true };
     }
 
+    if (args.fork === true) {
+      if (!this.flags.enabled(SUBAGENT_FORK_FLAG_ID)) {
+        return { output: FORK_EXPERIMENTAL_UNAVAILABLE, isError: true };
+      }
+      const forkError = forkIncompatibility(args, this.profile.data());
+      if (forkError !== undefined) {
+        return { output: forkError, isError: true };
+      }
+    }
+
     const profileNameForDisplay =
       resumeAgentId !== undefined && resumeAgentId.length > 0
-        ? this.resumeProfileName(resumeAgentId) ?? RESUMED_LABEL
-        : requestedProfileName ?? DEFAULT_PROFILE_NAME;
+        ? (await this.resumeProfileName(resumeAgentId)) ?? RESUMED_LABEL
+        : (requestedProfileName ??
+            (args.fork === true
+              ? (this.profile.data().profileName ?? DEFAULT_PROFILE_NAME)
+              : DEFAULT_PROFILE_NAME));
     const prefix = args.run_in_background === true ? 'Launching background' : 'Launching';
     return {
       description: `${prefix} ${profileNameForDisplay} agent: ${args.description}`,
@@ -211,19 +268,18 @@ export class SubagentTool implements ISubagentTool {
     };
   }
 
-  private resumeProfileName(agentId: string): string | undefined {
-    const target = this.lifecycle.get(agentId);
-    if (target === undefined) return undefined;
-    return target.accessor.get(IAgentProfileService).data().profileName;
+  private async resumeProfileName(agentId: string): Promise<string | undefined> {
+    const target = this.agentLifecycle.handleOf(agentId);
+    if (target !== undefined) return target.accessor.get(IAgentProfileService).data().profileName;
+    return subagentProfileName((await this.sessionMetadata.read()).agents?.[agentId]);
   }
 
   private async launch(
     args: SubagentToolInput,
     toolCallId: string,
     controller: AbortController,
-    runtime: Runtime,
   ): Promise<SubagentHandle> {
-    const requester = this.lifecycle.get(this.callerAgentId);
+    const requester = this.agentLifecycle.handleOf(this.callerAgentId);
     if (requester === undefined) {
       throw new Error2(
         ErrorCodes.AGENT_NOT_FOUND,
@@ -238,81 +294,38 @@ export class SubagentTool implements ISubagentTool {
     let agentId: string;
     let profileName: string;
     let displayModel: string | undefined;
+    let displayModelSource: SubagentModelSource | undefined;
     let promptText = args.prompt;
     if (isResume) {
-      const target = this.lifecycle.get(resumeAgentId);
-      if (target === undefined) {
-        throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent instance "${resumeAgentId}" does not exist`, {
-          details: { agentId: resumeAgentId },
-        });
-      }
-      await this.ensureOwnedIdleSubagent(resumeAgentId, target);
+      const target = await this.resolveResumeTarget(resumeAgentId);
       agentId = target.id;
       const resumed = target.accessor.get(IAgentProfileService).data();
       profileName = resumed.profileName ?? RESUMED_LABEL;
       displayModel = resumed.modelAlias;
     } else {
-      const requestedProfileName = args.subagent_type?.length
-        ? args.subagent_type
-        : DEFAULT_PROFILE_NAME;
-      await this.catalog.ready;
-      const own = this.profile.data();
-      const allowlist = subagentAllowlistFor(this.catalog, own);
-      if (allowlist !== undefined && !allowlist.includes(requestedProfileName)) {
-        throw new Error2(
-          ErrorCodes.AGENT_TYPE_NOT_ALLOWED,
-          subagentTypeNotAllowedMessage(requestedProfileName, allowlist),
-          { details: { profileName: requestedProfileName, allowlist } },
-        );
-      }
-      const profile = this.catalog.get(requestedProfileName);
-      if (profile === undefined) {
-        throw new Error2(ErrorCodes.PROFILE_UNKNOWN, `Unknown agent type: "${requestedProfileName}"`, {
-          details: { profileName: requestedProfileName },
-        });
-      }
-      if (own.modelAlias === undefined) {
-        throw new Error2(ErrorCodes.MODEL_NOT_CONFIGURED, 'Caller agent has no model bound', {
-          details: { agentId: this.callerAgentId },
-        });
-      }
-      const binding = resolveSubagentBinding(
-        this.config,
-        this.flags,
-        { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
-        args.model,
-      );
-      let created: IAgentScopeHandle;
-      try {
-        this.modelCatalog.get(binding.model);
-        created = await this.lifecycle.create({
-          binding: {
-            profile: profile.name,
-            model: binding.model,
-            thinking: binding.thinking,
-          },
-          labels: subagentLabels(this.callerAgentId),
-          runtimeId: runtime.identity.runtimeId,
-        });
-      } catch (error) {
-        throw wrapSubagentModelError(error, binding.model, own.modelAlias);
-      }
-      created.accessor.get(IAgentPermissionModeService).setMode(this.permissionMode.mode);
-      created.accessor
-        .get(IAgentUserToolService)
-        .inheritUserTools(requester.accessor.get(IAgentUserToolService));
-      agentId = created.id;
-      profileName = profile.name;
-      displayModel = binding.model;
-      promptText = await applyProfilePromptPrefix(profile, args.prompt, {
-        cwd: this.workspace.workDir,
-        process: runtime.process!,
-        log: this.log,
+      const plan = await this.subagents.planSpawn({
+        callerAgentId: this.callerAgentId,
+        profileName: args.subagent_type,
+        model: args.model,
+        fork: args.fork === true,
       });
+      const spawned = await this.subagents.spawn({
+        callerAgentId: this.callerAgentId,
+        plan,
+        labels: subagentLabels(this.callerAgentId),
+        prompt: args.prompt,
+      });
+      agentId = spawned.agentId;
+      profileName = spawned.profileName;
+      displayModel = spawned.model;
+      displayModelSource = spawned.modelSource;
+      promptText = spawned.promptText;
     }
 
+    const target = this.agentLifecycle.handleOf(agentId);
+    if (target === undefined) throw new Error(`Agent "${agentId}" does not exist`);
     const run = await this.subagents.run(
-      agentId,
+      target.accessor.get(IAgentScopeContext).agentContext,
       { kind: 'prompt', prompt: promptText },
       { signal: controller.signal },
     );
@@ -330,20 +343,27 @@ export class SubagentTool implements ISubagentTool {
       profileName,
       parentToolCallId: toolCallId,
       model: displayModel,
-      thinkingEffort: this.lifecycle
-        .get(agentId)
+      modelSource: displayModelSource,
+      thinkingEffort: this.agentLifecycle.handleOf(agentId)
         ?.accessor.get(IAgentProfileService)
         .getEffectiveThinkingLevel(),
-      completion: mirrored.then((r) => ({ result: r.summary, usage: r.usage })),
+      completion: mirrored.then((r) => ({
+        result: r.summary,
+        usage: r.usage,
+        stopReason: r.stopReason,
+      })),
     };
   }
 
-  private async ensureOwnedIdleSubagent(
-    agentId: string,
-    target: IAgentScopeHandle,
-  ): Promise<void> {
+  private async resolveResumeTarget(agentId: string): Promise<IAgentScopeHandle> {
+    const live = this.agentLifecycle.handleOf(agentId);
     const meta = (await this.sessionMetadata.read()).agents?.[agentId];
-    if (!isSubagentMeta(meta)) {
+    if (meta === undefined && live === undefined) {
+      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent instance "${agentId}" does not exist`, {
+        details: { agentId },
+      });
+    }
+    if (meta === undefined || !isSubagentMeta(meta)) {
       throw new Error2(ErrorCodes.AGENT_NOT_A_SUBAGENT, `Agent instance "${agentId}" is not a subagent`, {
         details: { agentId },
       });
@@ -355,6 +375,7 @@ export class SubagentTool implements ISubagentTool {
         { details: { agentId, callerAgentId: this.callerAgentId } },
       );
     }
+    const target = live ?? (await this.rebuildSubagent(agentId, meta));
     if (target.accessor.get(IAgentLoopService).status().state === 'running') {
       throw new Error2(
         ErrorCodes.AGENT_ALREADY_RUNNING,
@@ -362,6 +383,26 @@ export class SubagentTool implements ISubagentTool {
         { details: { agentId } },
       );
     }
+    return target;
+  }
+
+  private async rebuildSubagent(agentId: string, meta: AgentMeta): Promise<IAgentScopeHandle> {
+    await this.agentLifecycle.create({
+      agentId,
+      labels: labelsFromAgentMeta(meta),
+      forkedFrom: meta.forkedFrom,
+    });
+    const rebuilt = this.agentLifecycle.handleOf(agentId);
+    if (rebuilt === undefined) {
+      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent instance "${agentId}" does not exist`, {
+        details: { agentId },
+      });
+    }
+    if (!hasPinnedPermissionMode(rebuilt.accessor.get(IAgentProfileService).data().profileName)) {
+      rebuilt.accessor.get(IAgentPermissionModeService).setMode(this.permissionMode.mode);
+    }
+    this.log.info('subagent rebuilt for resume', { agentId, callerAgentId: this.callerAgentId });
+    return rebuilt;
   }
 
   private async execution(
@@ -379,12 +420,21 @@ export class SubagentTool implements ISubagentTool {
         return { output: RESUME_WITH_TYPE_UNAVAILABLE, isError: true };
       }
 
+      if (args.fork === true) {
+        if (!this.flags.enabled(SUBAGENT_FORK_FLAG_ID)) {
+          return { output: FORK_EXPERIMENTAL_UNAVAILABLE, isError: true };
+        }
+        const forkError = forkIncompatibility(args, this.profile.data());
+        if (forkError !== undefined) {
+          return { output: forkError, isError: true };
+        }
+      }
+
       const allowBackground = this.canRunInBackground();
       if (runInBackground && !allowBackground) {
         return { output: BACKGROUND_AGENT_UNAVAILABLE, isError: true };
       }
       const timeoutMs = resolveSubagentTimeoutMs(this.config);
-      const runtimeLease = this.runtime.acquire(['process']);
 
       const controller = new AbortController();
       const abortBeforeRegister = (): void => {
@@ -396,7 +446,7 @@ export class SubagentTool implements ISubagentTool {
 
       let handle: SubagentHandle;
       try {
-        handle = await this.launch(args, toolCallId, controller, runtimeLease.runtime);
+        handle = await this.launch(args, toolCallId, controller);
       } catch (error) {
         signal.removeEventListener('abort', abortBeforeRegister);
         this.log.warn('subagent launch failed', {
@@ -408,8 +458,6 @@ export class SubagentTool implements ISubagentTool {
           error,
         });
         throw error;
-      } finally {
-        runtimeLease.dispose();
       }
 
       let taskId: string;
@@ -444,14 +492,16 @@ export class SubagentTool implements ISubagentTool {
         };
       }
 
-      const requester = this.lifecycle.get(this.callerAgentId);
+      const requester = this.agentLifecycle.handleOf(this.callerAgentId);
       if (requester !== undefined) {
         emitAgentRunSpawned(requester, handle.agentId, {
           profileName: handle.profileName,
           parentToolCallId: toolCallId,
           description: args.description,
           runInBackground,
+          fork: args.fork === true,
           model: handle.model,
+          modelSource: handle.modelSource,
           taskId,
         });
         void requester.accessor
@@ -461,14 +511,14 @@ export class SubagentTool implements ISubagentTool {
 
       if (runInBackground) {
         return {
-          output: formatBackgroundAgentResult(taskId, handle, args.description, allowBackground),
+          output: formatBackgroundAgentResult(taskId, handle, args.description, allowBackground, false),
         };
       }
 
       const release = await this.tasks.waitForForegroundRelease(taskId);
       if (release === 'detached') {
         return {
-          output: formatBackgroundAgentResult(taskId, handle, args.description, allowBackground),
+          output: formatBackgroundAgentResult(taskId, handle, args.description, allowBackground, true),
         };
       }
       return await this.formatForegroundResult(taskId, handle, timeoutMs);
@@ -483,9 +533,10 @@ export class SubagentTool implements ISubagentTool {
     timeoutMs: number,
   ): Promise<ExecutableToolResult> {
     const info = this.tasks.getTask(taskId);
+    const stopCode = info?.kind === 'agent' ? info.stopCode : undefined;
     if (info?.status === 'completed') {
       return {
-        output: formatForegroundAgentSuccess(handle, await this.tasks.readOutput(taskId)),
+        output: formatForegroundAgentSuccess(handle, await this.tasks.readOutput(taskId), stopCode),
       };
     }
     const timedOut = info?.status === 'timed_out';
@@ -493,10 +544,85 @@ export class SubagentTool implements ISubagentTool {
       ? `Agent timed out after ${formatSubagentTimeoutDescription(timeoutMs)}.`
       : formatSubagentStoppedMessage(info?.stopReason);
     return {
-      output: formatForegroundAgentFailure(handle, message, timedOut),
+      output: formatForegroundAgentFailure(handle, message, failureStopReason(info, stopCode)),
       isError: true,
     };
   }
+}
+
+type SubagentStopReason =
+  | 'completed'
+  | 'repeat_breaker'
+  | 'max_tokens'
+  | 'max_steps'
+  | 'filtered'
+  | 'provider_error'
+  | 'no_final_message'
+  | 'cancelled'
+  | 'stopped'
+  | 'timed_out'
+  | 'error';
+
+const REASON_MAX_CHARS = 2000;
+
+const REPEAT_BREAKER_NOTICE =
+  'notice: The subagent was stopped by the repeat breaker after issuing the same tool call repeatedly. The summary below is its handoff, not a finished result.';
+
+function resumeHint(agentId: string, prompt: string): string {
+  return `resume_hint: Continue with Agent(resume="${agentId}", prompt="${prompt}"). Use agent_id only; do not set subagent_type. The subagent retains its prior context; redo any unfinished tool call if its result was lost.`;
+}
+
+const RESUME_NEXT_STEP =
+  'next_step: Resume to continue where it stopped, or take over the task yourself; if neither works, report the failure to the user.';
+
+const NEXT_STEP_BY_REASON: Readonly<Record<SubagentStopReason, string | undefined>> = {
+  completed: undefined,
+  repeat_breaker:
+    'next_step: The subagent was stuck on one tool call. If you resume it, change the instructions or supply the missing input; otherwise continue the work yourself.',
+  cancelled: 'next_step: The user stopped this subagent. Do not restart it unless the user asks.',
+  filtered:
+    'next_step: Resuming is unlikely to help; rephrase or split the task before trying again.',
+  max_tokens: RESUME_NEXT_STEP,
+  max_steps: RESUME_NEXT_STEP,
+  provider_error: RESUME_NEXT_STEP,
+  no_final_message: RESUME_NEXT_STEP,
+  stopped: RESUME_NEXT_STEP,
+  timed_out: RESUME_NEXT_STEP,
+  error: RESUME_NEXT_STEP,
+};
+
+const STOP_REASON_BY_CODE: Readonly<Record<string, SubagentStopReason>> = {
+  [REPEAT_BREAKER_STOP_REASON]: 'repeat_breaker',
+  [ErrorCodes.AGENT_MAX_TOKENS_EXCEEDED]: 'max_tokens',
+  [ErrorCodes.LOOP_MAX_STEPS_EXCEEDED]: 'max_steps',
+  [ErrorCodes.PROVIDER_FILTERED]: 'filtered',
+  [ErrorCodes.PROVIDER_RATE_LIMIT]: 'provider_error',
+  [ErrorCodes.PROVIDER_API_ERROR]: 'provider_error',
+  [ErrorCodes.PROVIDER_OVERLOADED]: 'provider_error',
+  [ErrorCodes.PROVIDER_CONNECTION_ERROR]: 'provider_error',
+  [ErrorCodes.PROVIDER_AUTH_ERROR]: 'provider_error',
+  [ErrorCodes.AGENT_NO_FINAL_MESSAGE]: 'no_final_message',
+};
+
+function nextStep(reason: SubagentStopReason): string | undefined {
+  return NEXT_STEP_BY_REASON[reason];
+}
+
+function failureStopReason(
+  info: AgentTaskInfo | undefined,
+  stopCode: string | undefined,
+): SubagentStopReason {
+  if (info?.status === 'timed_out') return 'timed_out';
+  if (info?.status === 'killed') {
+    return info.stopReason?.trim() === userCancellationReason().message ? 'cancelled' : 'stopped';
+  }
+  if (stopCode === undefined) return 'error';
+  return STOP_REASON_BY_CODE[stopCode] ?? 'error';
+}
+
+function truncateReason(reason: string): string {
+  if (reason.length <= REASON_MAX_CHARS) return reason;
+  return `${reason.slice(0, REASON_MAX_CHARS)}… [truncated]`;
 }
 
 registerAgentToolService(ISubagentTool, SubagentTool, {
@@ -554,7 +680,11 @@ function formatBackgroundAgentResult(
   handle: SubagentHandle,
   description: string,
   allowBackground: boolean,
+  detachedByUser: boolean,
 ): string {
+  const nextStep = allowBackground
+    ? `next_step: The completion arrives automatically in a later turn — do NOT wait, poll, or call TaskOutput on it; continue with other work or hand back to the user. (If you have nothing to do until it finishes, run such tasks in the foreground next time.)`
+    : 'next_step: The completion arrives automatically in a later turn.';
   return [
     `task_id: ${taskId}`,
     'status: running',
@@ -564,41 +694,47 @@ function formatBackgroundAgentResult(
     '',
     `description: ${description}`,
     '',
-    allowBackground
-      ? `next_step: The completion arrives automatically in a later turn — do NOT wait, poll, or call TaskOutput on it; continue with other work or hand back to the user. (If you have nothing to do until it finishes, run such tasks in the foreground next time.)`
-      : 'next_step: The completion arrives automatically in a later turn.',
+    detachedByUser ? `note: The user moved this subagent to the background.\n${nextStep}` : nextStep,
     `resume_hint: To continue or recover this same subagent later, call Agent(resume="${handle.agentId}", prompt="..."). The parameter is agent_id ("${handle.agentId}"), NOT task_id ("${taskId}") or source_id from a later <notification>. Recovery cases: a later <notification type="task.lost" | "task.failed" | "task.killed"> for this subagent — its conversation history is preserved across session restarts and resume will pick it up.`,
   ].join('\n');
 }
 
-function formatForegroundAgentSuccess(handle: SubagentHandle, result: string): string {
-  return [
+function formatForegroundAgentSuccess(
+  handle: SubagentHandle,
+  result: string,
+  stopCode: string | undefined,
+): string {
+  const reason: SubagentStopReason =
+    stopCode === REPEAT_BREAKER_STOP_REASON ? 'repeat_breaker' : 'completed';
+  const lines = [
     `agent_id: ${handle.agentId}`,
     `actual_subagent_type: ${handle.profileName}`,
     'status: completed',
-    '',
-    '[summary]',
-    result,
-  ].join('\n');
+    `stop_reason: ${reason}`,
+  ];
+  if (reason === 'repeat_breaker') lines.push(REPEAT_BREAKER_NOTICE);
+  lines.push('', '[summary]', result, '', resumeHint(handle.agentId, '...'));
+  const next = nextStep(reason);
+  if (next !== undefined) lines.push(next);
+  return lines.join('\n');
 }
 
 function formatForegroundAgentFailure(
   handle: SubagentHandle,
   message: string,
-  timedOut: boolean,
+  reason: SubagentStopReason,
 ): string {
   const lines = [
     `agent_id: ${handle.agentId}`,
     `actual_subagent_type: ${handle.profileName}`,
     'status: failed',
+    `stop_reason: ${reason}`,
     '',
     `subagent error: ${message}`,
   ];
-  if (timedOut) {
-    lines.push(
-      `resume_hint: Continue with Agent(resume="${handle.agentId}", prompt="continue"). Use agent_id only; do not set subagent_type. The subagent retains its prior context; redo any unfinished tool call if its result was lost.`,
-    );
-  }
+  if (reason !== 'cancelled') lines.push(resumeHint(handle.agentId, 'continue'));
+  const next = nextStep(reason);
+  if (next !== undefined) lines.push(next);
   return lines.join('\n');
 }
 
@@ -612,7 +748,7 @@ function formatSubagentStoppedMessage(reason: string | undefined): string {
   const normalized = reason?.trim();
   if (normalized === userCancellationReason().message) return USER_INTERRUPTED_SUBAGENT_MESSAGE;
   if (normalized === undefined || normalized.length === 0) return SUBAGENT_STOPPED_MESSAGE;
-  return `${SUBAGENT_STOPPED_MESSAGE} Reason: ${normalized}`;
+  return `${SUBAGENT_STOPPED_MESSAGE} Reason: ${truncateReason(normalized)}`;
 }
 
 function errorMessage(error: unknown): string | undefined {

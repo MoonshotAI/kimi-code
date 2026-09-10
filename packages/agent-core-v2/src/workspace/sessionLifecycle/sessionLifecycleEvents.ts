@@ -3,6 +3,7 @@ import { Event2 } from '#/app/event/event2';
 
 export interface SessionArchivedPayload {
   readonly sessionId: string;
+  readonly workspaceId: string;
 }
 
 export class SessionArchived extends Event2<{ readonly payload: SessionArchivedPayload }> {
@@ -10,6 +11,18 @@ export class SessionArchived extends Event2<{ readonly payload: SessionArchivedP
 }
 export interface SessionArchived {
   readonly payload: SessionArchivedPayload;
+}
+
+export interface SessionDeletedPayload {
+  readonly sessionId: string;
+  readonly workspaceId: string;
+}
+
+export class SessionDeleted extends Event2<{ readonly payload: SessionDeletedPayload }> {
+  static override readonly type = 'event.session.deleted';
+}
+export interface SessionDeleted {
+  readonly payload: SessionDeletedPayload;
 }
 
 export interface SessionCreatedPayload {

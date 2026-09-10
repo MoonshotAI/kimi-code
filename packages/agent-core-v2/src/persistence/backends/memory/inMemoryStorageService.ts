@@ -1,28 +1,15 @@
 import {
-  DisposableStore,
-  combinedDisposable,
-  toDisposable,
-  type IDisposable,
-} from '#/_base/di/lifecycle';
-import { Emitter, type Event } from '#/_base/event';
-
-import {
   IFileSystemStorageService,
   type StorageAppendOptions,
   type StorageReadRange,
   type StorageWriteOptions,
 } from '#/persistence/interface/storage';
 
-interface WatchEntry {
-  readonly emitter: Emitter<void>;
-  count: number;
-}
-
 export class InMemoryStorageService implements IFileSystemStorageService {
   declare readonly _serviceBrand: undefined;
 
   private readonly scopes = new Map<string, Map<string, Uint8Array>>();
-  private readonly watchers = new Map<string, WatchEntry>();
+  private readonly mtimes = new Map<string, number>();
 
   async read(scope: string, key: string): Promise<Uint8Array | undefined> {
     return this.scopes.get(scope)?.get(key);
@@ -52,7 +39,7 @@ export class InMemoryStorageService implements IFileSystemStorageService {
   ): Promise<void> {
     options.signal?.throwIfAborted();
     this.bucket(scope).set(key, data);
-    this.notifyWatchers(scope, key);
+    this.mtimes.set(this.keyFor(scope, key), Date.now());
   }
 
   async writeStream(
@@ -76,7 +63,7 @@ export class InMemoryStorageService implements IFileSystemStorageService {
       offset += chunk.byteLength;
     }
     this.bucket(scope).set(key, merged);
-    this.notifyWatchers(scope, key);
+    this.mtimes.set(this.keyFor(scope, key), Date.now());
   }
 
   async append(
@@ -89,14 +76,14 @@ export class InMemoryStorageService implements IFileSystemStorageService {
     const existing = bucket.get(key);
     if (existing === undefined) {
       bucket.set(key, data);
-      this.notifyWatchers(scope, key);
+      this.mtimes.set(this.keyFor(scope, key), Date.now());
       return;
     }
     const merged = new Uint8Array(existing.byteLength + data.byteLength);
     merged.set(existing, 0);
     merged.set(data, existing.byteLength);
     bucket.set(key, merged);
-    this.notifyWatchers(scope, key);
+    this.mtimes.set(this.keyFor(scope, key), Date.now());
   }
 
   async list(scope: string, prefix?: string): Promise<readonly string[]> {
@@ -108,58 +95,28 @@ export class InMemoryStorageService implements IFileSystemStorageService {
 
   async delete(scope: string, key: string): Promise<void> {
     this.scopes.get(scope)?.delete(key);
-    this.notifyWatchers(scope, key);
+    this.mtimes.delete(this.keyFor(scope, key));
   }
 
   async size(scope: string, key: string): Promise<number | undefined> {
     return this.scopes.get(scope)?.get(key)?.byteLength;
   }
 
+  async mtime(scope: string, key: string): Promise<number | undefined> {
+    return this.mtimes.get(this.keyFor(scope, key));
+  }
+
   pathFor(_scope: string, _key: string): undefined {
     return undefined;
-  }
-
-  watch(scope: string, key: string): Event<void> {
-    const id = this.watchKey(scope, key);
-    return (listener, thisArg, disposables) => {
-      let entry = this.watchers.get(id);
-      if (entry === undefined) {
-        entry = { emitter: new Emitter<void>(), count: 0 };
-        this.watchers.set(id, entry);
-      }
-      entry.count++;
-      const subscription = entry.emitter.event(listener, thisArg);
-      let tornDown = false;
-      const teardown = toDisposable(() => {
-        if (tornDown) return;
-        tornDown = true;
-        entry!.count--;
-        if (entry!.count === 0) {
-          entry!.emitter.dispose();
-          this.watchers.delete(id);
-        }
-      });
-      const combined = combinedDisposable(subscription, teardown);
-      if (disposables instanceof DisposableStore) {
-        disposables.add(combined);
-      } else if (disposables !== undefined) {
-        (disposables as IDisposable[]).push(combined);
-      }
-      return combined;
-    };
-  }
-
-  private notifyWatchers(scope: string, key: string): void {
-    this.watchers.get(this.watchKey(scope, key))?.emitter.fire();
-  }
-
-  private watchKey(scope: string, key: string): string {
-    return `${scope}\0${key}`;
   }
 
   async flush(): Promise<void> {}
 
   async close(): Promise<void> {}
+
+  private keyFor(scope: string, key: string): string {
+    return `${scope}\0${key}`;
+  }
 
   private bucket(scope: string): Map<string, Uint8Array> {
     let bucket = this.scopes.get(scope);

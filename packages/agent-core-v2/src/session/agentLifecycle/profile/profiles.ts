@@ -7,7 +7,6 @@ import {
 } from '#/app/agentProfileCatalog/profile-shared';
 
 import EXPLORE_ROLE from './explore-overlay.md?raw';
-import SUMMARY_CONTINUATION_PROMPT from './summary-continuation.md?raw';
 
 const AGENT_TOOLS = [
   'Read',
@@ -31,6 +30,7 @@ const AGENT_TOOLS = [
   'AgentSwarm',
   'FetchURL',
   'AskUserQuestion',
+  'NotifyUser',
   'EnterPlanMode',
   'ExitPlanMode',
   'CreateGoal',
@@ -38,10 +38,13 @@ const AGENT_TOOLS = [
   'SetGoalBudget',
   'UpdateGoal',
   'TowerInit',
+  'TowerStatus',
+  'TowerTeardown',
   'mcp__*',
 ] as const;
 
 const CODER_TOOLS = [
+  'NotifyUser',
   'Bash',
   'CronCreate',
   'CronDelete',
@@ -66,6 +69,7 @@ const CODER_TOOLS = [
 ] as const;
 
 const EXPLORE_TOOLS = [
+  'NotifyUser',
   'Bash',
   'Read',
   'ReadMediaFile',
@@ -80,19 +84,14 @@ const CODER_ROLE =
   'Your final message is the entire handoff — the parent sees nothing else from your run. ' +
   'Make it technically complete: what you changed and why, the path of every file you touched, ' +
   'how you verified the change (tests or commands run, with results), and anything left undone ' +
-  'or worth follow-up. A final message of only a sentence or two is treated as too brief and ' +
-  'sent back to you for expansion, costing an extra turn.';
-
-const DEFAULT_SUMMARY_POLICY = {
-  minChars: 200,
-  continuationPrompt: SUMMARY_CONTINUATION_PROMPT,
-  retries: 1,
-} as const;
+  'or worth follow-up. If you are stopped before finishing, the parent receives only what ' +
+  'you have written so far, so keep the handoff current.';
 
 registerAgentProfile({
   name: 'agent',
   description: 'Default agent',
   tools: AGENT_TOOLS,
+  subagents: ['coder', 'explore', 'plan'],
   renderSystemPrompt: (context) =>
     renderSystemPromptResult('', context, { skillActive: skillActiveFor(AGENT_TOOLS) }),
 });
@@ -106,7 +105,6 @@ registerAgentProfile({
   tools: CODER_TOOLS,
   renderSystemPrompt: (context) =>
     renderSystemPromptResult(CODER_ROLE, context, { skillActive: skillActiveFor(CODER_TOOLS) }),
-  summaryPolicy: DEFAULT_SUMMARY_POLICY,
 });
 
 registerAgentProfile({
@@ -124,5 +122,4 @@ registerAgentProfile({
       return '';
     }
   },
-  summaryPolicy: DEFAULT_SUMMARY_POLICY,
 });

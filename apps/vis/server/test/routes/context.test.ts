@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { buildCompactionContinuationText } from '@moonshot-ai/agent-core-v2/agent/contextMemory/compactionHandoff';
 import { buildSessionFixture } from '../fixtures/build';
 import { contextRoute } from '../../src/routes/context';
 
@@ -77,10 +78,11 @@ describe('context route', () => {
       messages: { source: string; message: { content: { type: string; text?: string }[] } }[];
     };
     expect(modelBody.messages.map((m) => m.source)).toEqual([
-      'append_message', 'compaction_summary', 'append_message',
+      'append_message', 'compaction_summary', 'append_message', 'append_message',
     ]);
     expect(modelBody.messages[0]!.message.content[0]).toMatchObject({ text: 'before compaction' });
-    expect(modelBody.messages[2]!.message.content[0]).toMatchObject({ text: 'after compaction' });
+    expect(modelBody.messages[2]!.message.content[0]).toMatchObject({ text: buildCompactionContinuationText() });
+    expect(modelBody.messages[3]!.message.content[0]).toMatchObject({ text: 'after compaction' });
 
     // Full history: every pre-compaction message (user prompt + assistant reply)
     // is KEPT, then the summary marker, then the post-compaction tail.

@@ -195,6 +195,33 @@ describe('plugins selector dialogs', () => {
     })).toBe('third-party');
   });
 
+  it('trusts the .ai Kimi plugin hosts with the same path rules', () => {
+    const labelFor = (originalSource: string) =>
+      pluginTrustLabel({
+        id: 'demo',
+        displayName: 'Demo',
+        enabled: true,
+        state: 'ok',
+        skillCount: 0,
+        mcpServerCount: 0,
+        enabledMcpServerCount: 0,
+        hookCount: 0,
+        commandCount: 0,
+        hasErrors: false,
+        source: 'zip-url',
+        originalSource,
+      });
+    // code.kimi.ai mirrors the cdnBase rules; cdn.kimi.ai the content-CDN ones.
+    expect(labelFor('https://code.kimi.ai/kimi-code/plugins/official/kimi-datasource.zip')).toBe('official');
+    expect(labelFor('https://code.kimi.ai/kimi-code/plugins/curated/superpowers.zip')).toBe('curated');
+    expect(labelFor('https://cdn.kimi.ai/kimi-computer-use/latest/kimi-cu-plugin.zip')).toBe('official');
+    expect(labelFor('https://cdn.kimi.ai/kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip')).toBe('official');
+    // Non-plugin paths on the .ai hosts, and lookalike hosts, stay third-party.
+    expect(labelFor('https://code.kimi.ai/demo.zip')).toBe('third-party');
+    expect(labelFor('https://cdn.kimi.ai/unrelated/plugin.zip')).toBe('third-party');
+    expect(labelFor('https://code.kimi.ai.example.test/kimi-code/plugins/official/x.zip')).toBe('third-party');
+  });
+
   it('recognizes installed plugins by official provenance', () => {
     const base = {
       id: 'kimi-datasource',
@@ -213,6 +240,11 @@ describe('plugins selector dialogs', () => {
       ...base,
       source: 'zip-url',
       originalSource: 'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
+    })).toBe(true);
+    expect(isOfficialPluginInstall({
+      ...base,
+      source: 'zip-url',
+      originalSource: 'https://code.kimi.ai/kimi-code/plugins/official/kimi-datasource.zip',
     })).toBe(true);
     expect(isOfficialPluginInstall({
       ...base,
@@ -272,6 +304,16 @@ describe('plugins selector dialogs', () => {
         'https://cdn.kimi.com/kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip',
       ),
     ).toBe(true);
+    // The .ai region family follows the same path rules.
+    expect(isOfficialPluginSource('https://code.kimi.ai/kimi-code/plugins/official/kimi-datasource.zip')).toBe(true);
+    expect(isOfficialPluginSource('https://cdn.kimi.ai/kimi-computer-use/latest/kimi-cu-plugin.zip')).toBe(true);
+    expect(
+      isOfficialPluginSource(
+        'https://cdn.kimi.ai/kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip',
+      ),
+    ).toBe(true);
+    expect(isOfficialPluginSource('https://code.kimi.ai/kimi-code/plugins/curated/superpowers.zip')).toBe(false);
+    expect(isOfficialPluginSource('https://cdn.kimi.ai/unrelated/plugin.zip')).toBe(false);
     // Curated and other Kimi CDN paths are not "official" for the install gate.
     expect(isOfficialPluginSource('https://code.kimi.com/kimi-code/plugins/curated/superpowers.zip')).toBe(false);
     expect(isOfficialPluginSource('https://code.kimi.com/kimi-code/plugins/foo.zip')).toBe(false);

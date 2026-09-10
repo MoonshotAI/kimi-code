@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -7,6 +7,7 @@ import {
   ErrorCodes,
   ISessionIndex,
   IEventService,
+  IWorkspaceAliases,
   closeSessionById,
   getLiveSessionById,
   resumeSessionById,
@@ -19,7 +20,7 @@ import {
   type FsPullRequest,
   IGitService,
 } from '@moonshot-ai/agent-core-v2/app/git/git';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { mapActivityStatus } from '../src/routes/v2/sessions';
@@ -36,7 +37,7 @@ interface SessionWireV2 {
     updated_at: number;
     archived: boolean;
   };
-  activity: { status: 'running' | 'approval' | 'question' | 'failed' | 'idle' };
+  activity: { status: 'running' | 'approval' | 'question' | 'failed' | 'idle'; model: string | null };
   git?: {
     branch: string | null;
     pull_request: { number: number; state: 'open' | 'closed' | 'merged'; url: string } | null;
@@ -160,10 +161,17 @@ describe('server /api/v2/sessions', () => {
   let home: string | undefined;
   let base: string;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-list-'));
+    await bootSeeded();
+  });
+
+  beforeEach(() => {
     gitState.calls = [];
     gitState.responses = new Map();
-    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-list-'));
+  });
+
+  async function bootSeeded(): Promise<void> {
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
@@ -176,9 +184,9 @@ describe('server /api/v2/sessions', () => {
       ],
     });
     base = `http://127.0.0.1:${server.port}`;
-  });
+  }
 
-  afterEach(async () => {
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -227,13 +235,67 @@ describe('server /api/v2/sessions', () => {
       archived: false,
       archived_at: null,
     });
-    expect(first.activity).toEqual({ status: 'idle' });
+    expect(first.activity).toEqual({ status: 'idle', model: null });
     expect('git' in first).toBe(false);
 
     const second = page.items[1] as SessionWireV2;
     expect(second.meta.title).toBeNull();
     const third = page.items[2] as SessionWireV2;
     expect(third.meta.last_prompt).toBeNull();
+  });
+
+  it('exposes the live session model in the activity domain', async () => {
+    await (server as RunningServer).close();
+    await writeFile(
+      join(home as string, 'config.toml'),
+      [
+        'default_model = "stub"',
+        '',
+        '[providers.stub]',
+        'type = "openai"',
+        'base_url = "http://127.0.0.1:9999"',
+        'api_key = "stub"',
+        '',
+        '[models.stub]',
+        'provider = "stub"',
+        'model = "stub"',
+        'max_context_size = 1000',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+    base = `http://127.0.0.1:${server.port}`;
+
+    const created = await authedFetch(server, base, '/api/v1/sessions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ metadata: { cwd: home } }),
+    });
+    const createdBody = (await created.json()) as { code: number; data: { id: string } };
+    expect(createdBody.code).toBe(0);
+    const id = createdBody.data.id;
+
+    const bound = await authedFetch(server, base, `/api/v1/sessions/${id}/profile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ agent_config: { model: 'stub' } }),
+    });
+    expect(((await bound.json()) as { code: number }).code).toBe(0);
+
+    const page = await getData();
+    const item = page.items.find((entry) => entry.id === id);
+    expect(item?.activity).toEqual({ status: 'idle', model: 'stub' });
+
+    await rm(join(home as string, 'config.toml'), { force: true });
+    await (server as RunningServer).close();
+    await bootSeeded();
   });
 
   it('filters by workspace.id (single, repeated OR, unknown)', async () => {
@@ -502,6 +564,8 @@ describe('server /api/v2/sessions', () => {
   });
 
   it('degrades non-git cwds to null fields without failing the request', async () => {
+    await (server as RunningServer).close();
+    await bootSeeded();
     const page = await getData('?include=git&meta.archived=all');
     for (const item of page.items) {
       expect(item.git).toEqual({ branch: null, pull_request: null });
@@ -522,6 +586,193 @@ describe('server /api/v2/sessions', () => {
       headers: authHeaders(server as RunningServer),
     } as never);
     expect(res.status).toBe(200);
+  });
+
+  interface GroupWireV2 {
+    workspace: { id: string; cwd: string | null };
+    sessions: (SessionWireV2 | { id: string; archived: boolean })[];
+    total: number;
+  }
+
+  interface GroupPageWireV2 {
+    groups: GroupWireV2[];
+    total: number;
+    has_more: boolean;
+    next_page_token: string | null;
+  }
+
+  async function getGroupData(query = ''): Promise<GroupPageWireV2> {
+    const { status, body } = await getPage(query);
+    expect(status).toBe(200);
+    expect(body.code).toBe(0);
+    if (body.data === null) throw new Error('expected a data payload');
+    return body.data as unknown as GroupPageWireV2;
+  }
+
+  it('groups the matching set per workspace with per-group totals (view=by_workspace)', async () => {
+    const page = await getGroupData('?view=by_workspace');
+    expect(page.total).toBe(2);
+    expect(page.has_more).toBe(false);
+    expect(page.next_page_token).toBeNull();
+
+    expect(page.groups.map((group) => group.workspace.id)).toEqual([WS_A, WS_B]);
+    const [a, b] = page.groups as [GroupWireV2, GroupWireV2];
+    expect(a.workspace).toEqual({ id: WS_A, cwd: '/repo/a' });
+    expect(a.sessions.map((item) => item.id)).toEqual(['s1', 's2']);
+    expect(a.total).toBe(2);
+    expect(b.workspace).toEqual({ id: WS_B, cwd: '/repo/b' });
+    expect(b.sessions.map((item) => item.id)).toEqual(['s3']);
+    expect(b.total).toBe(1);
+
+    const first = a.sessions[0] as SessionWireV2;
+    expect(first.meta.last_prompt).toBe('do alpha');
+    expect(first.activity).toEqual({ status: 'idle', model: null });
+    expect('git' in first).toBe(false);
+  });
+
+  it('caps each group at group.page_size while total keeps the full matching count', async () => {
+    const page = await getGroupData('?view=by_workspace&group.page_size=1');
+    const [a, b] = page.groups as [GroupWireV2, GroupWireV2];
+    expect(a.sessions.map((item) => item.id)).toEqual(['s1']);
+    expect(a.total).toBe(2);
+    expect(b.sessions.map((item) => item.id)).toEqual(['s3']);
+    expect(b.total).toBe(1);
+  });
+
+  it('matches the per-workspace v1 exclude_empty listing via meta.has_prompt=true', async () => {
+    const flat = await getData('?meta.has_prompt=true');
+    expect(flat.items.map((item) => item.id)).toEqual(['s1', 's2']);
+
+    const inverted = await getData('?meta.has_prompt=false');
+    expect(inverted.items.map((item) => item.id)).toEqual(['s3']);
+
+    const grouped = await getGroupData('?view=by_workspace&meta.has_prompt=true');
+    expect(grouped.groups.map((group) => group.workspace.id)).toEqual([WS_A]);
+    expect(grouped.groups[0]?.sessions.map((item) => item.id)).toEqual(['s1', 's2']);
+    expect(grouped.groups[0]?.total).toBe(2);
+  });
+
+  it('applies sort, workspace.id, and meta.archived to groups with flat-view semantics', async () => {
+    const asc = await getGroupData('?view=by_workspace&sort=meta.updated_at_asc');
+    expect(asc.groups.map((group) => group.workspace.id)).toEqual([WS_B, WS_A]);
+    expect(asc.groups[1]?.sessions.map((item) => item.id)).toEqual(['s2', 's1']);
+
+    const filtered = await getGroupData(`?view=by_workspace&workspace.id=${WS_B}`);
+    expect(filtered.groups.map((group) => group.workspace.id)).toEqual([WS_B]);
+    expect(filtered.total).toBe(1);
+
+    const all = await getGroupData('?view=by_workspace&meta.archived=all');
+    const b = all.groups.find((group) => group.workspace.id === WS_B);
+    expect(b?.sessions.map((item) => item.id)).toEqual(['s3', 's4']);
+    expect(b?.total).toBe(2);
+  });
+
+  it('paginates groups with the opaque cursor and rejects condition drift (40922)', async () => {
+    const page1 = await getGroupData('?view=by_workspace&page_size=1');
+    expect(page1.groups.map((group) => group.workspace.id)).toEqual([WS_A]);
+    expect(page1.total).toBe(2);
+    expect(page1.has_more).toBe(true);
+
+    const page2 = await getGroupData(
+      `?view=by_workspace&page_size=1&page_token=${page1.next_page_token}`,
+    );
+    expect(page2.groups.map((group) => group.workspace.id)).toEqual([WS_B]);
+    expect(page2.total).toBe(2);
+    expect(page2.has_more).toBe(false);
+    expect(page2.next_page_token).toBeNull();
+
+    for (const drifted of [
+      `?view=by_workspace&page_size=1&group.page_size=2&page_token=${page1.next_page_token}`,
+      `?view=by_workspace&page_size=1&meta.has_prompt=true&page_token=${page1.next_page_token}`,
+      `?page_size=1&page_token=${page1.next_page_token}`,
+    ]) {
+      expect((await getError(drifted)).code).toBe(40922);
+    }
+  });
+
+  it('paginates groups by 1-based page without minting tokens', async () => {
+    const page2 = await getGroupData('?view=by_workspace&page=2&page_size=1');
+    expect(page2.groups.map((group) => group.workspace.id)).toEqual([WS_B]);
+    expect(page2.total).toBe(2);
+    expect(page2.has_more).toBe(false);
+    expect(page2.next_page_token).toBeNull();
+
+    const beyond = await getGroupData('?view=by_workspace&page=7&page_size=1');
+    expect(beyond.groups).toEqual([]);
+    expect(beyond.total).toBe(2);
+  });
+
+  it('supports the ids projection and include=git inside groups', async () => {
+    await (server as RunningServer).close();
+    await bootSeeded();
+    const projected = await getGroupData('?view=by_workspace&fields=id,archived');
+    expect(projected.groups[0]?.sessions).toEqual([
+      { id: 's1', archived: false },
+      { id: 's2', archived: false },
+    ]);
+
+    gitState.responses.set('/repo/a', { branch: 'main', pullRequest: null });
+    const withGit = await getGroupData('?view=by_workspace&include=git');
+    const s1 = withGit.groups[0]?.sessions.find((item) => item.id === 's1') as SessionWireV2;
+    expect(s1.git).toEqual({ branch: 'main', pull_request: null });
+    const s3 = withGit.groups[1]?.sessions.find((item) => item.id === 's3') as SessionWireV2;
+    expect(s3.git).toEqual({ branch: null, pull_request: null });
+  });
+
+  it('rejects group.page_size without the grouped view or beyond the ceiling (40001)', async () => {
+    expect((await getError('?group.page_size=5')).code).toBe(40001);
+    expect((await getError('?view=by_workspace&group.page_size=0')).code).toBe(40001);
+    expect((await getError('?view=by_workspace&group.page_size=101')).code).toBe(40001);
+    expect((await getError('?view=by_workspace&group.page_size=abc')).code).toBe(40001);
+
+    const projected = await getGroupData(
+      '?view=by_workspace&fields=id,archived&group.page_size=10000',
+    );
+    expect(projected.total).toBe(2);
+    expect(
+      (await getError('?view=by_workspace&fields=id,archived&group.page_size=10001')).code,
+    ).toBe(40001);
+  });
+
+  it('merges legacy split workspace ids into one group via alias canonicalization', async () => {
+    await (server as RunningServer).close();
+    const aliasSummaries: SessionSummary[] = [
+      ...SUMMARIES,
+      {
+        id: 's5',
+        workspaceId: 'ws_aaa_legacy',
+        cwd: '/repo/a',
+        title: 'Legacy bucket',
+        lastPrompt: 'legacy one',
+        createdAt: 6_000,
+        updatedAt: 6_000,
+        archived: false,
+      },
+    ];
+    const aliasStub: IWorkspaceAliases = {
+      _serviceBrand: undefined,
+      resolveAliasIds: async (id) =>
+        id === WS_A || id === 'ws_aaa_legacy' ? [WS_A, 'ws_aaa_legacy'] : [id],
+    };
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      seeds: [
+        [ISessionIndex, stubSessionIndex(aliasSummaries)],
+        [IGitService, gitStub],
+        [IWorkspaceAliases, aliasStub],
+      ],
+    });
+    base = `http://127.0.0.1:${server.port}`;
+
+    const page = await getGroupData('?view=by_workspace');
+    expect(page.total).toBe(2);
+    const merged = page.groups.find((group) => group.workspace.id === WS_A);
+    expect(merged?.sessions.map((item) => item.id)).toEqual(['s5', 's1', 's2']);
+    expect(merged?.total).toBe(3);
   });
 });
 
@@ -550,7 +801,7 @@ describe('server /api/v2/sessions batch archive/restore', () => {
   let home: string | undefined;
   let base: string;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-batch-'));
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
@@ -562,8 +813,11 @@ describe('server /api/v2/sessions batch archive/restore', () => {
     base = `http://127.0.0.1:${server.port}`;
   });
 
-  afterEach(async () => {
+  afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -666,7 +920,12 @@ describe('server /api/v2/sessions batch archive/restore', () => {
           type: event.type,
           payload: (event as { readonly payload?: unknown }).payload,
         })),
-    ).toEqual([{ type: 'event.session.archived', payload: { sessionId: created.id } }]);
+    ).toEqual([
+      {
+        type: 'event.session.archived',
+        payload: { sessionId: created.id, workspaceId: created.workspace_id },
+      },
+    ]);
     dispose();
   });
 

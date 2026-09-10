@@ -5,34 +5,57 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  IAgentCronService,
   IAgentGoalService,
   IAgentLifecycleService,
+  IAgentLoopService,
   IAgentPermissionModeService,
   IAgentProfileService,
   IAgentPromptService,
+  IAgentScopeContext,
   IAgentTaskService,
   IAuthSummaryService,
   IBootstrapService,
   IConfigService,
   IEventBus,
+  IEventDispatcher,
   IFileSystemStorageService,
+  IHostFileSystem,
   IOAuthToolkit,
-  ISessionCronService,
   ISessionIndex,
   ISessionManager,
   ITelemetryService,
+  IWorkspaceInstanceManager,
+  makeAgentScopeContext,
+  resolveKimiHome,
   type BootstrapInput,
   type Event2,
 } from '@moonshot-ai/agent-core-v2';
+
+import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_USER_AGENT_PRODUCT } from '#/constant/app';
 
 import { runV2Print } from '../../src/cli/v2/run-v2-print';
 
 const mocks = vi.hoisted(() => ({
   bootstrap: vi.fn(),
   ensureMainAgent: vi.fn(),
+  loadMcpServersDetailed: vi.fn(async () => ({
+    servers: {},
+    origins: {},
+  })),
+  resolveMcpJsonPaths: vi.fn(async () => ({
+    user: '/tmp/kimi-code-test-home/mcp.json',
+    projectRoot: '/tmp/project/.mcp.json',
+    project: '/tmp/project/.kimi-code/mcp.json',
+  })),
   createKimiDefaultHeaders: vi.fn(() => ({})),
   resolveKimiHome: vi.fn((homeDir?: string) => homeDir ?? '/tmp/kimi-code-test-home'),
   createKimiDeviceId: vi.fn(() => 'device-1'),
+  initializeTelemetry: vi.fn(),
+  setCrashPhase: vi.fn(),
+  setTelemetryContext: vi.fn(),
+  setTelemetryModel: vi.fn(),
+  shutdownTelemetry: vi.fn(async () => {}),
 }));
 
 vi.mock('@moonshot-ai/agent-core-v2', async (importOriginal) => {
@@ -43,6 +66,11 @@ vi.mock('@moonshot-ai/agent-core-v2', async (importOriginal) => {
     ensureMainAgent: mocks.ensureMainAgent,
   };
 });
+
+vi.mock('@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader', () => ({
+  loadMcpServersDetailed: mocks.loadMcpServersDetailed,
+  resolveMcpJsonPaths: mocks.resolveMcpJsonPaths,
+}));
 
 vi.mock('@moonshot-ai/kimi-code-oauth', async () => {
   const actual = await vi.importActual<typeof import('@moonshot-ai/kimi-code-oauth')>(
@@ -63,14 +91,22 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
   };
 });
 
-vi.mock('@moonshot-ai/kimi-telemetry', () => ({
-  initializeTelemetry: vi.fn(),
-  setCrashPhase: vi.fn(),
-  shutdownTelemetry: vi.fn(),
-  track: vi.fn(),
-  setTelemetryContext: vi.fn(),
-  withTelemetryContext: vi.fn(() => ({ track: vi.fn() })),
-}));
+vi.mock('@moonshot-ai/kimi-telemetry', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@moonshot-ai/kimi-telemetry')>();
+  return {
+    // Keep the real `shouldEnableTelemetry` so the tests exercise the actual
+    // KIMI_DISABLE_TELEMETRY semantics; only the side-effecting entry points
+    // are stubbed.
+    ...actual,
+    initializeTelemetry: mocks.initializeTelemetry,
+    setCrashPhase: mocks.setCrashPhase,
+    setTelemetryContext: mocks.setTelemetryContext,
+    setTelemetryModel: mocks.setTelemetryModel,
+    shutdownTelemetry: mocks.shutdownTelemetry,
+    track: vi.fn(),
+    withTelemetryContext: vi.fn(() => ({ track: vi.fn() })),
+  };
+});
 
 interface FakeScope {
   readonly id: string;
@@ -125,7 +161,9 @@ function makeFakeHarness() {
   // emits a streaming assistant delta before completing.
   const eventListeners = new Set<(event: Event2<any>) => void>();
   const profileState: { profileName: string | undefined } = { profileName: undefined };
+  const trustState = { trusted: true };
 
+  const goal = { createGoal: vi.fn(), getGoal: vi.fn() };
   const agentServices = new Map<unknown, unknown>([
     [
       IAgentProfileService,
@@ -162,18 +200,39 @@ function makeFakeHarness() {
             }),
           };
         }),
+        drain: vi.fn(async () => {}),
+        list: vi.fn(() => ({ launching: false, active: undefined, pending: [] })),
       },
     ],
-    [IAgentTaskService, { list: vi.fn(() => []) }],
-    [IAgentGoalService, { createGoal: vi.fn(), getGoal: vi.fn() }],
+    [IAgentTaskService, { list: vi.fn(() => []), stopAllOnExit: vi.fn(async () => []) }],
+    [IAgentCronService, { getNextFireTime: vi.fn(() => null) }],
+    [IAgentGoalService, goal],
+    [IEventDispatcher, { flush: vi.fn(async () => {}) }],
+    [
+      IAgentLoopService,
+      {
+        status: vi.fn(() => ({ state: 'idle', pendingPromptIds: [] })),
+        cancel: vi.fn(() => false),
+        settled: vi.fn(async () => {}),
+        tryAcquireQuiescence: vi.fn(() => ({ dispose: vi.fn() })),
+      },
+    ],
+    [
+      IAgentScopeContext,
+      makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }),
+    ],
   ]);
   const agent = fakeScope('main', agentServices);
 
   const sessionServices = new Map<unknown, unknown>([
     // drain enumerates agents; empty → no background work to wait on.
-    [IAgentLifecycleService, { list: vi.fn(() => []) }],
-    // No scheduled cron tasks → no future fire time to wait on.
-    [ISessionCronService, { getNextFireTime: vi.fn(() => null) }],
+    [
+      IAgentLifecycleService,
+      {
+        list: vi.fn(() => []),
+        handleOf: vi.fn(() => agent),
+      },
+    ],
   ]);
   const session = fakeScope('ses_v2', sessionServices);
 
@@ -230,11 +289,20 @@ function makeFakeHarness() {
     ],
     [IOAuthToolkit, { getCachedAccessToken: vi.fn(async () => undefined) }],
     [IFileSystemStorageService, {}],
+    [IHostFileSystem, {}],
+    [
+      IWorkspaceInstanceManager,
+      {
+        getOrCreate: vi.fn(async () => ({
+          program: { trust: { get: vi.fn(async () => trustState.trusted) } },
+        })),
+      },
+    ],
     [
       ITelemetryService,
       (() => {
         const svc = {
-          setAppender: vi.fn(),
+          addAppender: vi.fn(() => ({ dispose: vi.fn() })),
           setContext: vi.fn(),
           track: vi.fn(),
           track2: vi.fn(),
@@ -246,13 +314,21 @@ function makeFakeHarness() {
     ],
   ]);
   const app = fakeScope('app', appServices);
-  return { app, agent, session, agentServices, appServices, profileState };
+  return { app, agent, session, agentServices, sessionServices, appServices, profileState, trustState };
 }
 
 describe('runV2Print', () => {
   beforeEach(() => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '1');
     vi.stubEnv('KIMI_MODEL_OUTPUT_FORMAT', '');
+    // Pin the telemetry kill-switch to "unset" so the host environment cannot
+    // flip the default telemetry-on path these tests exercise.
+    vi.stubEnv('KIMI_DISABLE_TELEMETRY', '');
+    // `vi.clearAllMocks` keeps implementations, so re-pin the default here.
+    mocks.loadMcpServersDetailed.mockImplementation(async () => ({
+      servers: {},
+      origins: {},
+    }));
   });
 
   afterEach(() => {
@@ -266,7 +342,7 @@ describe('runV2Print', () => {
     const { app, agent, agentServices } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
 
@@ -291,7 +367,7 @@ describe('runV2Print', () => {
     const { app, agent } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(opts({ skillsDirs: ['/skills'] }) as never, '1.2.3-test', {
       stdout,
@@ -308,7 +384,7 @@ describe('runV2Print', () => {
     const { app, agent } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
 
@@ -322,7 +398,7 @@ describe('runV2Print', () => {
     const { app, agent, appServices, agentServices } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(
       opts({ agent: 'reviewer', agentFiles: ['/agents/reviewer.md'] }) as never,
@@ -355,7 +431,7 @@ describe('runV2Print', () => {
     const { app, agent, appServices, agentServices } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(opts({ agentFiles: [agentFile] }) as never, '1.2.3-test', {
       stdout,
@@ -399,7 +475,7 @@ describe('runV2Print', () => {
     const { app, agent, agentServices } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await expect(
       runV2Print(opts({ agentFiles: [agentFile] }) as never, '1.2.3-test', { stdout, stderr }),
@@ -417,7 +493,7 @@ describe('runV2Print', () => {
     const { app, agent } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
 
@@ -431,7 +507,7 @@ describe('runV2Print', () => {
     const { app, agent } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(
       opts({ agent: 'reviewer', agentFiles: ['~/agents/reviewer.md'] }) as never,
@@ -453,7 +529,7 @@ describe('runV2Print', () => {
     index.get.mockResolvedValue({ id: 'ses_1', cwd: process.cwd() });
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(opts({ session: 'ses_1', agent: 'reviewer' }) as never, '1.2.3-test', {
       stdout,
@@ -478,7 +554,7 @@ describe('runV2Print', () => {
     index.get.mockResolvedValue({ id: 'ses_1', cwd: process.cwd() });
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(
       opts({ session: 'ses_1', agent: 'reviewer', model: 'new-model' }) as never,
@@ -492,5 +568,393 @@ describe('runV2Print', () => {
     };
     expect(profile.bind).not.toHaveBeenCalled();
     expect(profile.setModel).toHaveBeenCalledWith('new-model');
+  });
+
+  it('honors KIMI_DISABLE_TELEMETRY: no cloud appender and no v1 pipeline', async () => {
+    vi.stubEnv('KIMI_DISABLE_TELEMETRY', '1');
+    const stdout = writer();
+    const stderr = writer();
+    const { app, appServices } = makeFakeHarness();
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
+
+    const telemetry = appServices.get(ITelemetryService) as {
+      addAppender: ReturnType<typeof vi.fn>;
+    };
+    expect(telemetry.addAppender).not.toHaveBeenCalled();
+    expect(mocks.initializeTelemetry).not.toHaveBeenCalled();
+    // The run itself is unaffected: the prompt still renders and cleanup runs.
+    expect(stdout.text()).toContain('hello world');
+    expect(app.dispose).toHaveBeenCalled();
+  });
+
+  it('initializes the v1 telemetry pipeline alongside the cloud appender', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, appServices } = makeFakeHarness();
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
+
+    const telemetry = appServices.get(ITelemetryService) as {
+      addAppender: ReturnType<typeof vi.fn>;
+    };
+    expect(telemetry.addAppender).toHaveBeenCalledTimes(1);
+    expect(mocks.initializeTelemetry).toHaveBeenCalledTimes(1);
+    expect(mocks.initializeTelemetry).toHaveBeenCalledWith({
+      homeDir: resolveKimiHome(),
+      deviceId: 'device-1',
+      appName: CLI_USER_AGENT_PRODUCT,
+      version: '1.2.3-test',
+      uiMode: 'print',
+      model: 'k2',
+      endpoint: expect.any(Function),
+      getAccessToken: expect.any(Function),
+      onUnexpectedError: expect.any(Function),
+    });
+    // The resolved session id is synced onto the v1 client so crash events and
+    // system metrics carry it; the sink model is reconciled too (same value
+    // here, since the fresh session uses the configured default).
+    expect(mocks.setTelemetryContext).toHaveBeenCalledWith({ sessionId: 'ses_v2' });
+    expect(mocks.setTelemetryModel).toHaveBeenCalledWith('k2');
+    expect(mocks.setCrashPhase).toHaveBeenCalledWith('runtime');
+    expect(mocks.setCrashPhase).toHaveBeenCalledWith('shutdown');
+    expect(mocks.shutdownTelemetry).toHaveBeenCalledWith({
+      timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS,
+    });
+  });
+
+  it('reconciles the v1 sink model with the resumed session model', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, appServices, agentServices } = makeFakeHarness();
+
+    // The resumed session's stored model differs from the configured default.
+    const profile = agentServices.get(IAgentProfileService) as { getModel: () => string };
+    profile.getModel = () => 'resumed-model';
+    const index = appServices.get(ISessionIndex) as { get: ReturnType<typeof vi.fn> };
+    index.get.mockResolvedValue({ id: 'ses_1', cwd: process.cwd() });
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts({ session: 'ses_1' }) as never, '1.2.3-test', { stdout, stderr });
+
+    // The v1 pipeline was initialized up front with the best-known model, so
+    // crash events during session resolution still reach a sink...
+    expect(mocks.initializeTelemetry).toHaveBeenCalledTimes(1);
+    expect(mocks.initializeTelemetry).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'k2' }),
+    );
+    // ...and the sink's model was reconciled to the resumed session's real
+    // model only after the session resolved.
+    expect(mocks.setTelemetryModel).toHaveBeenCalledWith('resumed-model');
+    const initOrder = mocks.initializeTelemetry.mock.invocationCallOrder[0];
+    const reconcileOrder = mocks.setTelemetryModel.mock.invocationCallOrder[0];
+    expect(initOrder).toBeDefined();
+    expect(reconcileOrder).toBeGreaterThan(initOrder!);
+  });
+
+  it('flushes the wire journal before disposing the app', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agentServices } = makeFakeHarness();
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
+
+    const dispatcher = agentServices.get(IEventDispatcher) as {
+      flush: ReturnType<typeof vi.fn>;
+    };
+    expect(dispatcher.flush).toHaveBeenCalled();
+    const flushOrder = dispatcher.flush.mock.invocationCallOrder[0];
+    const disposeOrder = app.dispose.mock.invocationCallOrder[0];
+    expect(flushOrder).toBeDefined();
+    expect(disposeOrder).toBeGreaterThan(flushOrder!);
+  });
+
+  it('flushes the wire journal when the turn fails', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agentServices } = makeFakeHarness();
+
+    const promptService = agentServices.get(IAgentPromptService) as {
+      enqueue: ReturnType<typeof vi.fn>;
+    };
+    promptService.enqueue.mockResolvedValueOnce({
+      launched: Promise.resolve({
+        id: 1,
+        result: Promise.resolve({
+          type: 'failed',
+          error: { code: 'provider.overloaded', message: 'llm request failed' },
+        }),
+      }),
+    });
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await expect(runV2Print(opts() as never, '1.2.3-test', { stdout, stderr })).rejects.toThrow(
+      'provider.overloaded: llm request failed',
+    );
+
+    const dispatcher = agentServices.get(IEventDispatcher) as {
+      flush: ReturnType<typeof vi.fn>;
+    };
+    expect(dispatcher.flush).toHaveBeenCalled();
+    const flushOrder = dispatcher.flush.mock.invocationCallOrder[0];
+    const disposeOrder = app.dispose.mock.invocationCallOrder[0];
+    expect(disposeOrder).toBeGreaterThan(flushOrder!);
+  });
+
+  it('does not let a wire flush failure mask the turn outcome', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agentServices } = makeFakeHarness();
+
+    const promptService = agentServices.get(IAgentPromptService) as {
+      enqueue: ReturnType<typeof vi.fn>;
+    };
+    promptService.enqueue.mockResolvedValueOnce({
+      launched: Promise.resolve({
+        id: 1,
+        result: Promise.resolve({
+          type: 'failed',
+          error: { code: 'provider.overloaded', message: 'llm request failed' },
+        }),
+      }),
+    });
+    const dispatcher = agentServices.get(IEventDispatcher) as {
+      flush: ReturnType<typeof vi.fn>;
+    };
+    dispatcher.flush.mockRejectedValueOnce(new Error('disk full'));
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await expect(runV2Print(opts() as never, '1.2.3-test', { stdout, stderr })).rejects.toThrow(
+      'provider.overloaded: llm request failed',
+    );
+    expect(app.dispose).toHaveBeenCalled();
+  });
+
+  it('cancels and settles the active turn before flushing on a termination signal', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agentServices } = makeFakeHarness();
+
+    const order: string[] = [];
+    const loop = agentServices.get(IAgentLoopService) as {
+      status: ReturnType<typeof vi.fn>;
+      cancel: ReturnType<typeof vi.fn>;
+      settled: ReturnType<typeof vi.fn>;
+      tryAcquireQuiescence: ReturnType<typeof vi.fn>;
+    };
+    loop.status.mockReturnValue({ state: 'running', pendingPromptIds: [] });
+    loop.cancel.mockImplementation(() => {
+      if (!order.includes('cancel')) order.push('cancel');
+      return true;
+    });
+    loop.settled = vi.fn(async () => {
+      if (!order.includes('settled')) order.push('settled');
+    });
+    const guardDispose = vi.fn();
+    loop.tryAcquireQuiescence = vi.fn(() => ({ dispose: guardDispose }));
+    const taskService = agentServices.get(IAgentTaskService) as {
+      stopAllOnExit: ReturnType<typeof vi.fn>;
+    };
+    taskService.stopAllOnExit = vi.fn(async () => {
+      if (!order.includes('stop')) order.push('stop');
+      return [];
+    });
+    const dispatcher = agentServices.get(IEventDispatcher) as {
+      flush: ReturnType<typeof vi.fn>;
+    };
+    dispatcher.flush = vi.fn(async () => {
+      order.push('flush');
+    });
+
+    // A turn still in flight when the signal arrives: the prompt queue reports
+    // the launch window, then the running prompt, then goes empty.
+    const promptService = agentServices.get(IAgentPromptService) as {
+      enqueue: ReturnType<typeof vi.fn>;
+      drain: ReturnType<typeof vi.fn>;
+      list: ReturnType<typeof vi.fn>;
+    };
+    let settleTurn!: (result: unknown) => void;
+    promptService.enqueue.mockResolvedValueOnce({
+      launched: Promise.resolve({
+        id: 1,
+        result: new Promise((resolve) => {
+          settleTurn = resolve;
+        }),
+      }),
+    });
+    let promptPhase: 'launching' | 'active' | 'empty' = 'launching';
+    promptService.list = vi.fn(() => {
+      if (promptPhase === 'launching') {
+        return { launching: true, active: undefined, pending: [] };
+      }
+      if (promptPhase === 'active') {
+        return { launching: false, active: { id: 'p1' }, pending: [] };
+      }
+      return { launching: false, active: undefined, pending: [] };
+    });
+
+    const handlers = new Map<string, () => Promise<void>>();
+    const fakeProcess = {
+      once: (signal: string, handler: () => Promise<void>) => {
+        handlers.set(signal, handler);
+      },
+      off: () => {},
+      exit: vi.fn((code?: number) => {
+        order.push(`exit:${code}`);
+      }),
+    };
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    const run = runV2Print(opts() as never, '1.2.3-test', {
+      stdout,
+      stderr,
+      process: fakeProcess as never,
+    });
+    const outcome = run.catch((error: unknown) => error);
+    for (let i = 0; i < 100 && !handlers.has('SIGINT'); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const onSigint = handlers.get('SIGINT')!;
+    settleTurn({ type: 'cancelled', steps: 0, reason: new Error('aborted') });
+    const sigintRun = onSigint();
+    // The flush must wait for the prompt queue to empty, even with idle loops.
+    for (let i = 0; i < 100 && !order.includes('settled'); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(promptService.drain).toHaveBeenCalled();
+    expect(order).toEqual(['stop', 'cancel', 'settled']);
+    promptPhase = 'active';
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(order).toEqual(['stop', 'cancel', 'settled']);
+    promptPhase = 'empty';
+    await sigintRun;
+
+    expect(order).toEqual(['stop', 'cancel', 'settled', 'flush', 'exit:130']);
+    // The guard taken during quiesce is only released after app.dispose().
+    expect(loop.tryAcquireQuiescence).toHaveBeenCalled();
+    const lastGuardRelease = guardDispose.mock.invocationCallOrder.at(-1);
+    const appDisposeOrder = app.dispose.mock.invocationCallOrder[0];
+    expect(lastGuardRelease).toBeGreaterThan(appDisposeOrder!);
+    expect(await outcome).toBeInstanceOf(Error);
+  });
+
+  it('warns on stderr when workspace trust skips project-level MCP servers', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, trustState } = makeFakeHarness();
+    trustState.trusted = false;
+    mocks.loadMcpServersDetailed.mockResolvedValue({
+      servers: {
+        fs: { transport: 'stdio', command: 'node', args: ['server.js'] },
+        api: { transport: 'http', url: 'https://example.com/mcp' },
+      },
+      origins: {
+        fs: '/tmp/project/.mcp.json',
+        api: '/tmp/project/.kimi-code/mcp.json',
+      },
+    });
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
+
+    expect(stderr.text()).toContain(
+      'Warning: this folder is not trusted; skipped 2 project-level MCP servers: ' +
+        'api (http: https://example.com/mcp), fs (stdio: node server.js).',
+    );
+    expect(stderr.text()).toContain('"Trust this folder"');
+    // The warning is advisory only — the run itself is unaffected.
+    expect(stdout.text()).toContain('hello world');
+  });
+
+  it('does not read mcp.json for the trust warning when the folder is trusted', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app } = makeFakeHarness();
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
+
+    expect(mocks.loadMcpServersDetailed).not.toHaveBeenCalled();
+    expect(stderr.text()).not.toContain('not trusted');
+  });
+
+  it('stays silent when untrusted but no project-level MCP servers are declared', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, trustState } = makeFakeHarness();
+    trustState.trusted = false;
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
+
+    expect(mocks.loadMcpServersDetailed).toHaveBeenCalled();
+    expect(stderr.text()).not.toContain('not trusted');
+  });
+
+  it('warns for a project server that overrides a same-named user server', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, trustState } = makeFakeHarness();
+    trustState.trusted = false;
+    mocks.loadMcpServersDetailed.mockResolvedValue({
+      servers: {
+        github: { transport: 'stdio', command: './project-github' },
+        toString: { transport: 'http', url: 'https://example.com/mcp' },
+      },
+      origins: {
+        github: '/tmp/project/.mcp.json',
+        toString: '/tmp/project/.kimi-code/mcp.json',
+      },
+    });
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
+
+    expect(stderr.text()).toContain('github (stdio: ./project-github)');
+    expect(stderr.text()).toContain('toString (http: https://example.com/mcp)');
+  });
+
+  it('still runs when the trust-gated MCP probe fails', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, appServices, trustState } = makeFakeHarness();
+    trustState.trusted = false;
+    const workspaces = appServices.get(IWorkspaceInstanceManager) as {
+      getOrCreate: ReturnType<typeof vi.fn>;
+    };
+    workspaces.getOrCreate.mockRejectedValueOnce(new Error('trust store unavailable'));
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
+
+    expect(stdout.text()).toContain('hello world');
   });
 });

@@ -1,4 +1,4 @@
-import { type ContentPart, type ToolCall } from '#/kosong/contract/message';
+import { type ContentPart, type ToolCall } from '#human/llm/message';
 import type { WireRecord } from '#/wire/record';
 
 import {
@@ -190,7 +190,7 @@ function recoverFoldedLength(
   const keptHeadUserMessageCount = readNumber(record, 'keptHeadUserMessageCount');
   const compactedCount = readNumber(record, 'compactedCount');
   if (keptUserMessageCount !== undefined) {
-    return keptUserMessageCount + (keptHeadUserMessageCount === undefined ? 1 : 2);
+    return keptUserMessageCount + (keptHeadUserMessageCount === undefined ? 2 : 3);
   }
   if (compactedCount !== undefined && compactedCount < foldedLength) {
     return 1 + (foldedLength - compactedCount);

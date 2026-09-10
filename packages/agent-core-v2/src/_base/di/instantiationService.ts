@@ -487,6 +487,10 @@ export class InstantiationService implements IInstantiationService {
     return this._ledger.register(disposer, label);
   }
 
+  anchorKernelFinalizer(disposer: Disposer, label: string): LedgerEntry {
+    return this._ledger.registerFinalizer(disposer, label);
+  }
+
   private _getFiberHost(): FiberHost {
     this._fiberHost ??= {
       mintUid: () => ++this._root()._nextUnitUid,
@@ -648,18 +652,31 @@ export class InstantiationService implements IInstantiationService {
     return new InstantiationService(services, this._strict, this, this._enableTracing);
   }
 
+  private _disposePromise: Promise<void> | undefined;
+
   dispose(): void {
+    void this.disposeAsync();
+  }
+
+  disposeAsync(): Promise<void> {
+    this._disposePromise ??= this.disposeCore();
+    return this._disposePromise;
+  }
+
+  private disposeCore(): Promise<void> {
     if (this._disposed) {
-      return;
+      return Promise.resolve();
     }
     this._disposed = true;
 
+    const childTeardowns: Promise<void>[] = [];
+    let teardown: void | Promise<void> = undefined;
     try {
       for (const child of Array.from(this._children)) {
-        child.dispose();
+        childTeardowns.push(child.disposeAsync());
       }
       this._children.clear();
-      void this._ledger.teardown('scope-close');
+      teardown = this._ledger.teardown('scope-close');
       this._services.dispose();
       this.cascade.dispose();
       for (const view of this._collectionViews.values()) {
@@ -674,6 +691,7 @@ export class InstantiationService implements IInstantiationService {
         this._parent._children.delete(this);
       }
     }
+    return Promise.all([...childTeardowns, Promise.resolve(teardown)]).then(() => undefined);
   }
 
   private _createInstance<T>(ctor: any, args: unknown[], _trace: Trace, unit?: {

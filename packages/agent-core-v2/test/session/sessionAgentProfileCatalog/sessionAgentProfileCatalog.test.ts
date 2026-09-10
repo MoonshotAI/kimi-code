@@ -38,10 +38,14 @@ class Contributor extends Service implements IContributor {
   }
 }
 
-function profile(name: string, options?: { readonly override?: boolean }): AgentProfile {
+function profile(
+  name: string,
+  options?: { readonly override?: boolean; readonly subagents?: readonly string[] },
+): AgentProfile {
   return normalizeAgentProfile({
     name,
     override: options?.override,
+    subagents: options?.subagents,
     systemPrompt: () => `prompt:${name}`,
   });
 }
@@ -193,6 +197,43 @@ describe('SessionAgentProfileCatalogService (registry projection)', () => {
       priority: AGENT_PROFILE_SOURCE_PRIORITY.workspace,
       suppressed: [],
     });
+    catalog.dispose();
+    container.dispose();
+  });
+
+  it('inherits the replaced builtin subagent allowlist when the override declares none', () => {
+    const { container, catalog, contribute } = makeCatalog();
+    const builtinProfile = profile(DEFAULT_AGENT_PROFILE_NAME, {
+      subagents: ['coder', 'explore', 'plan'],
+    });
+    const overrideProfile = profile(DEFAULT_AGENT_PROFILE_NAME, { override: true });
+    contribute(BUILTIN_AGENT_PROFILE_SOURCE_ID, [builtinProfile]);
+    contribute('workspace', [overrideProfile], {
+      priority: AGENT_PROFILE_SOURCE_PRIORITY.workspace,
+      workspaceKey: 'wd_a',
+    });
+
+    expect(catalog.get(DEFAULT_AGENT_PROFILE_NAME)?.subagents).toEqual(['coder', 'explore', 'plan']);
+    catalog.dispose();
+    container.dispose();
+  });
+
+  it('honors an override allowlist explicitly declared on the default profile', () => {
+    const { container, catalog, contribute } = makeCatalog();
+    const builtinProfile = profile(DEFAULT_AGENT_PROFILE_NAME, {
+      subagents: ['coder', 'explore', 'plan'],
+    });
+    const overrideProfile = profile(DEFAULT_AGENT_PROFILE_NAME, {
+      override: true,
+      subagents: ['*'],
+    });
+    contribute(BUILTIN_AGENT_PROFILE_SOURCE_ID, [builtinProfile]);
+    contribute('workspace', [overrideProfile], {
+      priority: AGENT_PROFILE_SOURCE_PRIORITY.workspace,
+      workspaceKey: 'wd_a',
+    });
+
+    expect(catalog.get(DEFAULT_AGENT_PROFILE_NAME)?.subagents).toEqual(['*']);
     catalog.dispose();
     container.dispose();
   });

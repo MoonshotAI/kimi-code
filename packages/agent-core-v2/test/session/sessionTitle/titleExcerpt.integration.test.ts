@@ -62,9 +62,7 @@ describe('title excerpts over the real context memory', () => {
       assistant: '部署完成，服务在 8080 端口',
     });
     await expect(source.digestExcerpt()).resolves.toEqual({
-      firstUser: '帮我部署这个服务',
-      lastUser: undefined,
-      assistant: '部署完成，服务在 8080 端口',
+      turns: [{ user: '帮我部署这个服务', assistant: '部署完成，服务在 8080 端口' }],
     });
   });
 

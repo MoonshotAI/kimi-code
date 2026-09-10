@@ -87,19 +87,34 @@ describe('task ops (wire-backed)', () => {
   it('started/terminated fold into the task map by id and persist to the journal', async () => {
     expect(agentState.get(taskKey).size).toBe(0);
 
-    await dispatcher.dispatch(new TaskStarted({ info: info('t1', 'running') }));
+    await dispatcher.dispatch(new TaskStarted({ agentId: 'test-agent', info: info('t1', 'running') }));
     expect(agentState.get(taskKey).get('t1')?.status).toBe('running');
 
-    await dispatcher.dispatch(new TaskTerminated({ info: info('t1', 'completed') }));
+    await dispatcher.dispatch(new TaskTerminated({ agentId: 'test-agent', info: info('t1', 'completed') }));
     expect(agentState.get(taskKey).get('t1')?.status).toBe('completed');
 
-    await dispatcher.dispatch(new TaskStarted({ info: info('t2', 'running') }));
+    await dispatcher.dispatch(new TaskStarted({ agentId: 'test-agent', info: info('t2', 'running') }));
     expect(agentState.get(taskKey).size).toBe(2);
 
     expect(await readRecords()).toEqual([
-      { type: 'task.started', info: info('t1', 'running'), time: expect.any(Number) },
-      { type: 'task.terminated', info: info('t1', 'completed'), time: expect.any(Number) },
-      { type: 'task.started', info: info('t2', 'running'), time: expect.any(Number) },
+      {
+        type: 'task.started',
+        agentId: 'test-agent',
+        info: info('t1', 'running'),
+        time: expect.any(Number),
+      },
+      {
+        type: 'task.terminated',
+        agentId: 'test-agent',
+        info: info('t1', 'completed'),
+        time: expect.any(Number),
+      },
+      {
+        type: 'task.started',
+        agentId: 'test-agent',
+        info: info('t2', 'running'),
+        time: expect.any(Number),
+      },
     ]);
   });
 
@@ -111,12 +126,13 @@ describe('task ops (wire-backed)', () => {
       }),
     );
     await dispatcher.dispatch(
-      new TaskTerminated({ info: info('t1', 'completed'), outputTail: 'last lines' }),
+      new TaskTerminated({ agentId: 'test-agent', info: info('t1', 'completed'), outputTail: 'last lines' }),
     );
 
     expect(await readRecords()).toEqual([
       {
         type: 'task.terminated',
+        agentId: 'test-agent',
         info: info('t1', 'completed'),
         outputTail: 'last lines',
         time: expect.any(Number),
@@ -126,6 +142,7 @@ describe('task ops (wire-backed)', () => {
     expect(published).toEqual([
       {
         type: 'task.terminated',
+        agentId: 'test-agent',
         info: info('t1', 'completed'),
         time: expect.any(Number),
       },
@@ -134,7 +151,7 @@ describe('task ops (wire-backed)', () => {
 
   it('apply returns a new Map on change (the model is the restore seed)', async () => {
     const before = agentState.get(taskKey);
-    await dispatcher.dispatch(new TaskStarted({ info: info('t1', 'running') }));
+    await dispatcher.dispatch(new TaskStarted({ agentId: 'test-agent', info: info('t1', 'running') }));
     const after = agentState.get(taskKey);
     expect(after).not.toBe(before);
     expect(after.get('t1')?.status).toBe('running');

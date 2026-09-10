@@ -13,6 +13,7 @@ import type {
   IRuntimeResolver,
   IWorkspaceInstanceManager,
 } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { stubAgentContext } from '../agentContext/stubs';
 
 function runtime(
   runtimeId: string,
@@ -27,7 +28,6 @@ function runtime(
   return Object.assign(value, {
     fs: capabilities.includes('fs') ? {} : undefined,
     process: capabilities.includes('process') ? {} : undefined,
-    watch: capabilities.includes('watch') ? {} : undefined,
     terminal: capabilities.includes('terminal') ? {} : undefined,
   });
 }
@@ -58,6 +58,12 @@ function setup() {
     hooks: { onDidRestore: { register: () => ({ dispose: () => {} }) } },
   } as unknown as IEventDispatcher;
   const binding = new AgentRuntimeBindingService(
+    {
+      _serviceBrand: undefined,
+      agentId: 'main',
+      agentContext: stubAgentContext('main', 1),
+      scope: (subKey?: string) => subKey ?? '',
+    },
     state,
     { _serviceBrand: undefined, binding: { workspaceId: 'workspace', runtimeId: 'local' } },
     session,

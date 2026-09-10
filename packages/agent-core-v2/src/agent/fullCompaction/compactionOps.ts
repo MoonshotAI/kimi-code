@@ -1,8 +1,14 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
-import { Event2 } from '#/app/event/event2';
+import { AgentEvent2, type AgentDomainTrait } from '#/app/event/event2';
 import { defineState } from '#/state/state';
+import {
+  ContextApplyCompaction,
+  ContextClear,
+  type ContextApplyCompactionPayload,
+} from '#/agent/contextMemory/contextEvents';
+import type { WireLineRange } from '#/wire/record';
 
 import type { CompactionBeginData, CompactionResult, CompactionSource } from './types';
 
@@ -12,68 +18,106 @@ export interface CompactionState {
   readonly phase: CompactionPhase;
 }
 
-const fullCompactionBeginSchema = z.custom<CompactionBeginData>();
+const fullCompactionBeginSchema = z.object({
+  agentId: z.string(),
+  instruction: z.string().optional(),
+  source: z.custom<CompactionSource>(),
+});
 
-export class FullCompactionBegin extends Event2<z.infer<typeof fullCompactionBeginSchema>> {
+export class FullCompactionBegin extends AgentEvent2<
+  z.infer<typeof fullCompactionBeginSchema>
+> {
   static override readonly type = 'full_compaction.begin';
   static override readonly durable = true;
   static override readonly schema = fullCompactionBeginSchema;
 }
-export interface FullCompactionBegin extends z.infer<typeof fullCompactionBeginSchema> {}
+export interface FullCompactionBegin extends CompactionBeginData {
+  readonly agentId: string;
+}
 
-const fullCompactionCancelSchema = z.object({});
+const fullCompactionCancelSchema = z.object({ agentId: z.string() });
 
-export class FullCompactionCancel extends Event2<z.infer<typeof fullCompactionCancelSchema>> {
+export class FullCompactionCancel extends AgentEvent2<
+  z.infer<typeof fullCompactionCancelSchema>
+> {
   static override readonly type = 'full_compaction.cancel';
   static override readonly durable = true;
   static override readonly schema = fullCompactionCancelSchema;
 }
-export interface FullCompactionCancel extends z.infer<typeof fullCompactionCancelSchema> {}
+export interface FullCompactionCancel {
+  readonly agentId: string;
+}
 
-const fullCompactionCompleteSchema = z.object({});
+const fullCompactionCompleteSchema = z.object({ agentId: z.string() });
 
-export class FullCompactionComplete extends Event2<z.infer<typeof fullCompactionCompleteSchema>> {
+export class FullCompactionComplete extends AgentEvent2<
+  z.infer<typeof fullCompactionCompleteSchema>
+> {
   static override readonly type = 'full_compaction.complete';
   static override readonly durable = true;
   static override readonly schema = fullCompactionCompleteSchema;
 }
-export interface FullCompactionComplete extends z.infer<typeof fullCompactionCompleteSchema> {}
+export interface FullCompactionComplete {
+  readonly agentId: string;
+}
 
 export interface CompactionStartedPayload {
+  readonly agentId: string;
   readonly trigger: CompactionSource;
   readonly instruction?: string;
 }
 
-export class CompactionStarted extends Event2<CompactionStartedPayload> {
+export class CompactionStarted extends AgentEvent2<CompactionStartedPayload> {
   static override readonly type = 'compaction.started';
   static override readonly observable = true;
 }
 export interface CompactionStarted extends CompactionStartedPayload {}
 
 export interface CompactionBlockedPayload {
+  readonly agentId: string;
   readonly turnId?: number;
 }
 
-export class CompactionBlocked extends Event2<CompactionBlockedPayload> {
+export class CompactionBlocked extends AgentEvent2<CompactionBlockedPayload> {
   static override readonly type = 'compaction.blocked';
   static override readonly observable = true;
 }
 export interface CompactionBlocked extends CompactionBlockedPayload {}
 
-export class CompactionCancelled extends Event2<Record<string, never>> {
+export class CompactionCancelled extends AgentEvent2<AgentDomainTrait> {
   static override readonly type = 'compaction.cancelled';
   static override readonly observable = true;
 }
+export interface CompactionCancelled {
+  readonly agentId: string;
+}
 
 export interface CompactionCompletedPayload {
+  readonly agentId: string;
   readonly result: CompactionResult;
 }
 
-export class CompactionCompleted extends Event2<CompactionCompletedPayload> {
+export class CompactionCompleted extends AgentEvent2<CompactionCompletedPayload> {
   static override readonly type = 'compaction.completed';
   static override readonly observable = true;
 }
 export interface CompactionCompleted extends CompactionCompletedPayload {}
+
+export interface CompactionStartedEvent extends Omit<CompactionStartedPayload, 'agentId'> {
+  readonly type: 'compaction.started';
+}
+
+export interface CompactionBlockedEvent extends Omit<CompactionBlockedPayload, 'agentId'> {
+  readonly type: 'compaction.blocked';
+}
+
+export interface CompactionCancelledEvent {
+  readonly type: 'compaction.cancelled';
+}
+
+export interface CompactionCompletedEvent extends Omit<CompactionCompletedPayload, 'agentId'> {
+  readonly type: 'compaction.completed';
+}
 
 export const fullCompactionKey = defineState(
   'fullCompaction',
@@ -83,7 +127,13 @@ export const fullCompactionKey = defineState(
     if (s.phase !== 'running') {
       s.phase = 'running';
     }
-    ctx.emit(new CompactionStarted({ trigger: e.source, instruction: e.instruction }));
+    ctx.emit(
+      new CompactionStarted({
+        agentId: e.agentId,
+        trigger: e.source,
+        instruction: e.instruction,
+      }),
+    );
   })
   .on(FullCompactionCancel, (s) => {
     if (s.phase !== 'idle') {
@@ -95,3 +145,14 @@ export const fullCompactionKey = defineState(
       s.phase = 'idle';
     }
   });
+
+export const fullCompactionWireRangesKey = defineState<readonly WireLineRange[]>(
+  'fullCompaction.wireRanges',
+  () => [],
+)
+  .replayable({ schema: z.custom<readonly WireLineRange[]>() })
+  .on(ContextApplyCompaction, (s, e) => {
+    const wireLines = (e as unknown as ContextApplyCompactionPayload).wireLines;
+    return wireLines === undefined ? undefined : [...s, wireLines];
+  })
+  .on(ContextClear, (s) => (s.length === 0 ? undefined : []));

@@ -23,6 +23,7 @@ export abstract class Event2<P = Record<string, unknown>> {
   declare static readonly type: string;
   static readonly durable: boolean = false;
   static readonly observable: boolean = false;
+  static readonly agentDomain: boolean = false;
   declare static readonly schema: z.ZodType<any> | undefined;
 
   readonly type: string;
@@ -45,11 +46,22 @@ export abstract class Event2<P = Record<string, unknown>> {
   }
 }
 
+export interface AgentDomainTrait {
+  readonly agentId: string;
+}
+
+export abstract class AgentEvent2<P extends AgentDomainTrait> extends Event2<P> {
+  static override readonly agentDomain = true;
+
+  declare readonly agentId: string;
+}
+
 export interface Event2Class<P = any, E extends Event2<P> = Event2<P>> {
   new (payload: P, time?: number): E;
   readonly type: string;
   readonly durable: boolean;
   readonly observable: boolean;
+  readonly agentDomain: boolean;
   readonly schema: z.ZodType<P> | undefined;
 }
 

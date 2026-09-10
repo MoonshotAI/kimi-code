@@ -15,7 +15,8 @@
 
 import type { Component } from '@moonshot-ai/pi-tui';
 import { Text } from '@moonshot-ai/pi-tui';
-import chalk from 'chalk';
+
+import { currentTheme } from '#/tui/theme';
 
 import type { ChipProvider } from './chip';
 import { renderTruncated } from './truncated';
@@ -129,7 +130,7 @@ export const readMediaSummary: ResultRenderer = (toolCall, result, ctx) => {
   if (summary === null) return renderTruncated(toolCall, result, ctx);
   if (!ctx.expanded) return [];
 
-  const dim = chalk.dim;
+  const dim = (text: string): string => currentTheme.dim(text);
   const out: Component[] = [];
   if (summary.path !== undefined) {
     out.push(new Text(`  ${dim(summary.path)}`, 0, 0));

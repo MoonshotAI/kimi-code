@@ -12,6 +12,8 @@ Write the objective after `/goal`:
 
 Kimi Code saves the objective, sends it as the next user message, and starts goal mode. After each turn, it checks whether the goal is complete, blocked, paused, or still active.
 
+Objectives are capped at 4000 characters; a longer objective is rejected with a warning, and the typed text is kept in the input box for editing.
+
 Goals work best when the objective names the finish line and the evidence that proves it:
 
 ```sh

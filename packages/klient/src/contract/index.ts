@@ -7,7 +7,6 @@
  */
 
 import type { KlientContract } from './types.js';
-import { agentActivityViewContract } from './agent/activity.js';
 import {
   agentCommandContract,
   agentContextMemoryContract,
@@ -35,11 +34,13 @@ import { filesContract } from './global/files.js';
 import { flagsContract } from './global/flags.js';
 import { hostFsContract } from './global/hostFs.js';
 import { modelsContract } from './global/models.js';
+import { mcpManagementContract } from './global/mcpManagement.js';
 import { pluginsContract } from './global/plugins.js';
 import { providersContract } from './global/providers.js';
 import { sessionsContract } from './global/sessions.js';
 import { workspacesContract } from './global/workspaces.js';
 import { sessionApprovalContract } from './session/approval.js';
+import { sessionActivityViewContract } from './session/activity.js';
 import { sessionInteractionContract } from './session/interaction.js';
 import { sessionManagerContract } from './session/lifecycle.js';
 import { sessionMetadataContract } from './session/metadata.js';
@@ -64,6 +65,7 @@ export const globalContract: KlientContract = {
   hostFolderBrowser: hostFsContract,
   bootstrapService: envContract,
   fileService: filesContract,
+  mcpManagementService: mcpManagementContract,
   sessionManager: sessionManagerContract,
   // session scope
   sessionMetadata: sessionMetadataContract,
@@ -72,6 +74,7 @@ export const globalContract: KlientContract = {
   sessionQuestionService: sessionQuestionContract,
   sessionSkillCatalog: sessionSkillCatalogContract,
   sessionTitleService: sessionTitleContract,
+  sessionActivityView: sessionActivityViewContract,
   // agent scope
   agentPromptService: agentPromptContract,
   agentSkillService: agentSkillContract,
@@ -81,7 +84,6 @@ export const globalContract: KlientContract = {
   agentRuntimeBindingService: agentRuntimeBindingContract,
   agentContextMemoryService: agentContextMemoryContract,
   agentTokenCountingService: agentTokenCountingContract,
-  agentActivityView: agentActivityViewContract,
   agentShellCommandService: agentShellCommandContract,
   agentProfileService: agentProfileContract,
   agentUsageService: agentUsageContract,
