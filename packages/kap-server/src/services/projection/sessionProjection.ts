@@ -450,6 +450,20 @@ export class SessionProjection {
           if (!this.disposed) this.recomputeAgentTurn(agentId);
         });
         return;
+      case 'compaction.started': {
+        const tracker = this.agentStates.get(agentId);
+        if (tracker === undefined) return;
+        if (tracker.compactionStarted()) this.emitAgentState(agentId);
+        return;
+      }
+      case 'compaction.completed':
+      case 'compaction.cancelled': {
+        const tracker = this.agentStates.get(agentId);
+        if (tracker === undefined) return;
+        tracker.compactionEnded();
+        this.recomputeAgentTurn(agentId);
+        return;
+      }
       default:
         return;
     }
