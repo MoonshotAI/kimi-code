@@ -1139,6 +1139,7 @@ describe('agent machine input.abort', () => {
   it('aborts running turn tools and completes the transcript with aborted tool messages', async () => {
     const requester = createStubRequester([
       createAssistantMessage([], [toolCall('call-1', 'slow_tool')]),
+      createAssistantMessage([{ type: 'text', text: 'resumed' }], []),
     ]);
     const signals: AbortSignal[] = [];
     const tools = stubTools(({ signal }) => {
@@ -1171,6 +1172,20 @@ describe('agent machine input.abort', () => {
       'assistant:',
       'tool:aborted',
     ]);
+
+    actor.send({ type: 'input.continue' });
+    await waitFor(
+      actor,
+      (s) => s.matches('idle') && store.getState().history.length === 4,
+      { timeout: 5000 },
+    );
+    expect(rolesAndTexts(store.getState().history)).toEqual([
+      'user:hi',
+      'assistant:',
+      'tool:aborted',
+      'assistant:resumed',
+    ]);
+    expect(store.getState().turnIndex.nextTurnId).toBe(2);
   });
 
   it('waits for the real outcome of a tool that settles after the abort signal', async () => {
@@ -1377,6 +1392,131 @@ describe('agent machine input.abort', () => {
 
     actor.stop();
     expect(bgSignals[0]?.aborted).toBe(true);
+  });
+});
+
+describe('agent machine input.pause/input.continue', () => {
+  it('gates queue drain while paused and resumes on continue', async () => {
+    const requester = createStubRequester([
+      createAssistantMessage([{ type: 'text', text: 'hi there' }], []),
+    ]);
+    const store = await testStore();
+    const actor = createActor(createTestAgentMachine([], requester), {
+      input: { request: { model }, store },
+    });
+    actor.start();
+    actor.send({ type: 'input.pause' });
+    actor.send({ type: 'input.submit', message: createUserMessage('hi') });
+
+    await vi.waitFor(() => {
+      expect(store.getState().queue).toHaveLength(1);
+    });
+    expect(actor.getSnapshot().matches('running')).toBe(false);
+
+    actor.send({ type: 'input.continue' });
+    await waitFor(
+      actor,
+      (s) => s.matches('idle') && store.getState().history.length === 2,
+      { timeout: 5000 },
+    );
+    expect(rolesAndTexts(store.getState().history)).toEqual(['user:hi', 'assistant:hi there']);
+    expect(actor.getSnapshot().context.paused).toBe(false);
+    actor.stop();
+  });
+
+  it('ends the turn at the acting boundary when paused and resumes with a new turn on continue', async () => {
+    let calls = 0;
+    const base = createStubRequester([
+      createAssistantMessage([], [toolCall('call-1', 'fast_tool')]),
+      createAssistantMessage([{ type: 'text', text: 'final' }], []),
+    ]);
+    const requester: LlmRequester = {
+      generate: (config, content, control) => {
+        calls += 1;
+        return base.generate(config, content, control);
+      },
+    };
+    let releaseTool: (() => void) | undefined;
+    const tools = stubTools(
+      () =>
+        new Promise((resolve) => {
+          releaseTool = () => resolve({ content: [{ type: 'text', text: 'tool result' }] });
+        }),
+      'fast_tool',
+    );
+    const store = await testStore();
+    const actor = createActor(createTestAgentMachine(tools, requester), {
+      input: { request: { model }, store },
+    });
+    actor.start();
+    actor.send({ type: 'input.submit', message: createUserMessage('hi') });
+
+    await vi.waitFor(() => {
+      expect(actor.getSnapshot().context.turnTools['call-1']).toBeDefined();
+    });
+    actor.send({ type: 'input.pause' });
+    (releaseTool as () => void)();
+
+    await waitFor(
+      actor,
+      (s) => s.matches('idle') && store.getState().history.length === 3,
+      { timeout: 5000 },
+    );
+    expect(rolesAndTexts(store.getState().history)).toEqual([
+      'user:hi',
+      'assistant:',
+      'tool:tool result',
+    ]);
+    expect(calls).toBe(1);
+    expect(store.getState().turnIndex.nextTurnId).toBe(1);
+
+    actor.send({ type: 'input.continue' });
+    await waitFor(
+      actor,
+      (s) => s.matches('idle') && store.getState().history.length === 4,
+      { timeout: 5000 },
+    );
+    expect(rolesAndTexts(store.getState().history)).toEqual([
+      'user:hi',
+      'assistant:',
+      'tool:tool result',
+      'assistant:final',
+    ]);
+    expect(calls).toBe(2);
+    expect(store.getState().turnIndex.nextTurnId).toBe(2);
+    actor.stop();
+  });
+
+  it('does not start a turn on continue when history ends with a plain assistant message', async () => {
+    let calls = 0;
+    const base = createStubRequester([
+      createAssistantMessage([{ type: 'text', text: 'done' }], []),
+    ]);
+    const requester: LlmRequester = {
+      generate: (config, content, control) => {
+        calls += 1;
+        return base.generate(config, content, control);
+      },
+    };
+    const store = await testStore();
+    const actor = createActor(createTestAgentMachine([], requester), {
+      input: { request: { model }, store },
+    });
+    actor.start();
+    actor.send({ type: 'input.submit', message: createUserMessage('hi') });
+    await waitFor(
+      actor,
+      (s) => s.matches('idle') && store.getState().history.length === 2,
+      { timeout: 5000 },
+    );
+
+    actor.send({ type: 'input.continue' });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    expect(actor.getSnapshot().matches('idle')).toBe(true);
+    expect(store.getState().history).toHaveLength(2);
+    expect(calls).toBe(1);
+    actor.stop();
   });
 });
 

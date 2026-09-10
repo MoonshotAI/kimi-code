@@ -6,7 +6,8 @@ import { createUserMessage, extractText } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
 import type { LlmRequester } from '#/llm/requester/requester';
 import { createAgentMachine } from '#/agent/machine';
-import { createTurnMachine } from '#/agent/turn';
+import { inputSubmitted, messageAppended, turnEnded, turnStarted } from '#/agent/events';
+import { createTurnMachine, createUserEntry } from '#/agent/turn';
 import type { AgentEventStore } from '#/agent/slices';
 import { SessionStores } from '#/session/stores';
 import { MemoryBackend } from '#/store/backend/memory';
@@ -216,6 +217,62 @@ describe('SessionStores reopen', () => {
       'echo:again',
     ]);
     expect(restoredMain.getState().turnIndex.nextTurnId).toBe(3);
+
+    actor2.stop();
+  });
+});
+
+describe('SessionStores switchBranch', () => {
+  it('seeds a fresh branch, resets the store, and blocks undo across the switch', async () => {
+    const env = await testEnv();
+    const main = await env.stores.open('main');
+    const actor = startAgent(main);
+    await runTurn(actor, main, 'first', 2);
+    actor.stop();
+    const switched: { branch: string; reason?: string; stats?: Record<string, number> }[] = [];
+    (await env.stores.session()).subscribe((_state, cause) => {
+      if (cause.kind === 'event' && cause.event.type === 'agent.switched') {
+        const event = cause.event as { branch: string; reason?: string; stats?: Record<string, number> };
+        switched.push({ branch: event.branch, reason: event.reason, stats: event.stats });
+      }
+    });
+
+    const result = await env.stores.switchBranch('main', {
+      reason: 'compaction',
+      stats: { compactedCount: 2, tokensBefore: 10, tokensAfter: 5 },
+      seed: [
+        turnStarted({ turnId: 1 }),
+        messageAppended({ message: createUserEntry(createUserMessage('seed-user')) }),
+        messageAppended({ message: createUserEntry(createUserMessage('seed-summary')) }),
+        turnEnded({ turnId: 1, outcome: 'done' }),
+        inputSubmitted({ message: createUserMessage('queued') }),
+      ],
+    });
+
+    expect(result.branchId).toBe('main~2');
+    expect(main.ref.branch).toBe('main~2');
+    expect(historyTexts(main)).toEqual(['seed-user', 'seed-summary']);
+    expect(main.getState().turnIndex).toEqual({
+      turns: [{ turnId: 1, start: { branch: 'main~2', seq: 0 }, end: { branch: 'main~2', seq: 3 } }],
+      nextTurnId: 2,
+    });
+    expect(main.getState().queue).toEqual([{ id: undefined, message: createUserMessage('queued') }]);
+    expect(env.tree.openBranch('main~2').header.parentBranch).toBeUndefined();
+    expect(switched).toEqual([
+      {
+        branch: 'main~2',
+        reason: 'compaction',
+        stats: { compactedCount: 2, tokensBefore: 10, tokensAfter: 5 },
+      },
+    ]);
+    await expect(env.stores.undo('main', 1)).rejects.toMatchObject({ reason: 'insufficient' });
+
+    const actor2 = startAgent(main);
+    await waitFor(actor2, (s) => s.matches('idle') && main.getState().history.length === 4, {
+      timeout: 5000,
+    });
+    expect(historyTexts(main)).toEqual(['seed-user', 'seed-summary', 'queued', 'echo:queued']);
+    expect(main.getState().turnIndex.nextTurnId).toBe(3);
 
     actor2.stop();
   });

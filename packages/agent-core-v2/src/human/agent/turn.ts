@@ -1,4 +1,4 @@
-import { assign, raise, setup } from '#/xstate2';
+import { assign, fromPromise, raise, setup } from '#/xstate2';
 
 import { emptyResponseError } from '#/llm/empty-response';
 import type { LlmErrorMessage } from '#/llm/errors';
@@ -188,6 +188,8 @@ export type TurnEvent =
   | LlmEvent
   | TurnToolEvent
   | { type: 'turn.notify'; messages: HistoryMessage[] }
+  | { type: 'turn.pause' }
+  | { type: 'turn.continue' }
   | { type: 'turn.abort' }
   | {
       type: 'turn.failure.triaged';
@@ -224,6 +226,8 @@ export interface TurnMachineContext {
   delayMs: number;
   appliedRecoveries: LlmRecoveryRecord[];
   recoveryMessages?: readonly Message[];
+  paused: boolean;
+  lastError?: LlmRemoteErrorMessage;
   outcome?: 'done' | 'failed' | 'aborted';
   error?: unknown;
 }
@@ -342,11 +346,19 @@ function emptyErrorOf(context: TurnMachineContext): LlmErrorMessage<'empty_respo
   );
 }
 
+export interface TurnBeforeStepContext {
+  messages: readonly HistoryMessage[];
+  request: LlmRequestConfig;
+}
+
+export type TurnBeforeStep = (context: TurnBeforeStepContext) => void | Promise<void>;
+
 export interface CreateTurnMachineOptions {
   readonly recovery?: LlmRecovery;
   readonly retry?: LlmRetryOptions;
   readonly abortGraceMs?: number;
   readonly messageResolvers?: readonly MessageResolver[];
+  readonly onBeforeStep?: TurnBeforeStep;
 }
 
 export function createTurnMachine(
@@ -365,6 +377,9 @@ export function createTurnMachine(
     },
     actors: {
       llmActor: createRequestActor(requester, options?.messageResolvers),
+      onBeforeStepActor: fromPromise<void, TurnBeforeStepContext>(async ({ input }) => {
+        await options?.onBeforeStep?.(input);
+      }),
     },
     actions: {
       forwardToParent: ({ self, event }) => {
@@ -403,7 +418,7 @@ export function createTurnMachine(
     },
   }).createMachine({
     id: 'turn',
-    initial: 'thinking',
+    initial: 'gating',
     context: ({ input }) => {
       const toolCallIds = new ToolCallIdNormalizer();
       toolCallIds.seedFrom(toInputMessages(input.history));
@@ -420,9 +435,36 @@ export function createTurnMachine(
         attempt: 1,
         delayMs: 0,
         appliedRecoveries: [],
+        paused: false,
       };
     },
+    on: {
+      'turn.pause': {
+        actions: assign({ paused: true }),
+      },
+      'turn.continue': {
+        actions: assign({ paused: false }),
+      },
+    },
     states: {
+      gating: {
+        always: [{ guard: () => options?.onBeforeStep === undefined, target: 'thinking' }],
+        invoke: {
+          src: 'onBeforeStepActor',
+          input: ({ context }) => ({
+            messages: [...context.input.history, ...context.produced],
+            request: context.input.request,
+          }),
+          onDone: { target: 'thinking' },
+          onError: { target: 'done' },
+        },
+        on: {
+          'turn.abort': {
+            target: 'aborted',
+            actions: assign({ outcome: 'aborted' as const }),
+          },
+        },
+      },
       thinking: {
         entry: [
           assign({
@@ -785,6 +827,16 @@ export function createTurnMachine(
         on: {
           'turn.notify': [
             {
+              guard: ({ context }) => context.paused,
+              target: 'done',
+              actions: [
+                assign(({ context, event }) => ({
+                  produced: [...context.produced, ...event.messages],
+                })),
+                'signalRemindersConsumed',
+              ],
+            },
+            {
               guard: ({ context, event }) =>
                 event.messages.length === 0 && maxStepsExceeded(context),
               target: 'failed',
@@ -794,7 +846,7 @@ export function createTurnMachine(
               })),
             },
             {
-              target: 'thinking',
+              target: 'gating',
               actions: [
                 assign(({ context, event }) => ({
                   produced: [...context.produced, ...event.messages],
