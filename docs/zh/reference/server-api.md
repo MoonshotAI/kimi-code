@@ -960,7 +960,7 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 | `session_id` | path | string | **必填。** 会话 id |
 | `agent_id` | query | string | **必填。** Agent id（纯文本形式，约束与转录端点相同） |
 | `since_seq` | query | integer | **必填。** 调用方已应用的最后一个 op 批次 seq，最小为 `0`；返回其之后的批次 |
-| `limit` | query | integer | 每次响应最多返回的批次数，1–500。默认 `500` |
+| `limit` | query | integer | 每次响应最多返回的批次数，1–500。省略时返回 `since_seq` 之后的全部批次（与引入 `limit` 之前的行为一致） |
 
 成功时，`data` 为 `{ agent_id, batches, latest_seq, complete, has_more }`，每个批次为 `{ seq, ops }`。`latest_seq` 是本次响应覆盖到的最新 seq：未截断时为日志中最新的 seq，被 `limit` 截断时为最后返回的批次 `seq`。`has_more: true` 表示响应被截断、之后仍有更新的批次未返回——请把 `since_seq` 设为 `latest_seq` 再次调用，直到 `has_more` 为 `false`。`complete: true` 表示从 `since_seq` 到 `latest_seq` 的全部批次都已包含（被截断的响应仍然是 `complete`）；`complete: false` 表示日志已不再覆盖到 `since_seq`（或会话根本不是活跃状态），调用方必须回退为一次完整的 `GET .../transcript` 刷新。
 

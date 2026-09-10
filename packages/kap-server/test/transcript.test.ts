@@ -944,6 +944,34 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     });
   });
 
+  it('returns every journaled batch when limit is omitted, even past the 500 cap', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+
+    const bound = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+    const base = bound.body.data.seq!;
+
+    const bus = mainAgentBus(id);
+    for (let turnId = 1; turnId <= 260; turnId += 1) {
+      bus.publish(serverEvent({ type: 'turn.started', turnId, origin: { kind: 'user' } }));
+      bus.publish(serverEvent({ type: 'turn.ended', turnId, reason: 'completed' }));
+    }
+
+    const unsized = await getJson<OpsCatchupContract>(
+      `/api/v1/sessions/${id}/transcript/ops?agent_id=main&since_seq=${base}`,
+    );
+    expect(unsized.body.code).toBe(0);
+    expect(unsized.body.data.batches.length).toBeGreaterThan(500);
+    expect(unsized.body.data).toMatchObject({ has_more: false, complete: true });
+    expect(unsized.body.data.latest_seq).toBe(unsized.body.data.batches.at(-1)!.seq);
+
+    const capped = await getJson<OpsCatchupContract>(
+      `/api/v1/sessions/${id}/transcript/ops?agent_id=main&since_seq=${base}&limit=500`,
+    );
+    expect(capped.body.data.batches).toHaveLength(500);
+    expect(capped.body.data.has_more).toBe(true);
+  });
+
   it('rejects an out-of-range limit on the ops route with 40001', async () => {
     const id = await createSession();
     const zero = await getJson<null>(
