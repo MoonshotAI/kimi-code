@@ -261,7 +261,9 @@ function requestMatchesETag(
   for (const [name, value] of headers) {
     if (name.toLowerCase() !== 'if-none-match') continue;
     for (const token of value.split(',')) {
-      if (candidates.includes(token.trim())) return true;
+      const candidate = token.trim();
+      if (candidate === '*') return true;
+      if (candidates.includes(candidate)) return true;
     }
   }
   return false;
@@ -878,7 +880,12 @@ function requestLocalHttp(
             if (rewritten) {
               const etag = rewrittenResponseETag(body);
               headers.push('Cache-Control', 'no-cache', 'ETag', etag);
-              if (requestMatchesETag(parsed.headers, etag)) {
+              const statusCode = response.statusCode ?? 502;
+              const revalidatable =
+                (parsed.method === 'GET' || parsed.method === 'HEAD') &&
+                statusCode >= 200 &&
+                statusCode < 300;
+              if (revalidatable && requestMatchesETag(parsed.headers, etag)) {
                 return Buffer.from(`HTTP/1.1 304 Not Modified\r\n${headerLines(headers)}\r\n\r\n`);
               }
             }
