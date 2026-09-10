@@ -1,9 +1,8 @@
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 
 import type { SpineTrimOp, SpineTrimProjection, SpineTrimSliceShape } from './spineTrimDerive';
 
-/** Placeholder body of a snipped result — verbatim upstream wording. */
 export const SPINE_TRIM_SNIPPED_PLACEHOLDER = '[Old tool result content cleared]';
 
 export function applySpineTrim(

@@ -9,17 +9,11 @@ export interface ConnectionLike {
 }
 
 export interface IConnectionRegistry {
-  /** Insert a freshly-accepted connection. */
   add(conn: ConnectionLike): void;
-  /** Remove a closed connection. Idempotent. */
   remove(connId: string): void;
-  /** Look up by id. */
   get(connId: string): ConnectionLike | undefined;
-  /** Iterate all currently-attached connections. */
   values(): Iterable<ConnectionLike>;
-  /** Close every attached connection (used on shutdown). */
   closeAll(reason?: string): void;
-  /** Number of currently-attached connections. */
   size(): number;
 }
 

@@ -14,7 +14,7 @@ import {
   listMcpServersResponseSchema,
   listToolsResponseSchema,
 } from '../src/protocol/rest-tool';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -41,7 +41,7 @@ describe('server-v2 /api/v1 tools + mcp', () => {
   let home: string | undefined;
   let base: string;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-tools-'));
     const modelCatalog: IModelCatalog = {
       _serviceBrand: undefined,
@@ -50,9 +50,6 @@ describe('server-v2 /api/v1 tools + mcp', () => {
       },
       getRequester: () => {
         throw new Error('modelCatalog.getRequester not exercised in this test');
-      },
-      inspect: () => {
-        throw new Error('modelCatalog.inspect not exercised in this test');
       },
       ping: () => {
         throw new Error('modelCatalog.ping not exercised in this test');
@@ -78,7 +75,7 @@ describe('server-v2 /api/v1 tools + mcp', () => {
     base = `http://127.0.0.1:${server.port}`;
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;

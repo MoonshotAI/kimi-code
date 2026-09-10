@@ -94,8 +94,8 @@ import type {
   ShellOutputPayload,
   ShellStartedPayload,
 } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommandService';
-import type { SkillActivatedPayload } from '@moonshot-ai/agent-core-v2/agent/skill/skillOps';
-import type { TurnStepRetryingPayload } from '@moonshot-ai/agent-core-v2/agent/stepRetry/stepRetryService';
+import type { SkillActivatedPayload } from '@moonshot-ai/agent-core-v2/features/skill/skillOps';
+import type { TurnStepRetryingPayload } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { TaskTerminatedNoticePayload } from '@moonshot-ai/agent-core-v2/agent/task/taskOps';
 import type {
   ToolCallStartedPayload,

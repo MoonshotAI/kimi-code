@@ -24,7 +24,6 @@ interface TurnAccum {
 }
 
 export interface VolatileAnnotation {
-  /** Pre-append offset for text-delta frames. */
   offset?: number;
 }
 

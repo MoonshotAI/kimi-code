@@ -1,11 +1,7 @@
-import { createReadStream, mkdirSync } from 'node:fs';
+import { createReadStream } from 'node:fs';
 import { mkdir, open, readFile, readdir, stat, unlink } from 'node:fs/promises';
-import { FSWatcher } from 'chokidar';
-import { dirname, join, normalize } from 'pathe';
+import { dirname, join } from 'pathe';
 
-import { DisposableStore, combinedDisposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
-import { Emitter, type Event } from '#/_base/event';
-import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { atomicWrite, atomicWriteStream, syncDir } from '#/_base/utils/fs';
 
 import type {
@@ -16,7 +12,8 @@ import type {
 } from '#/persistence/interface/storage';
 import { toStorageIoError } from '#/persistence/interface/storage';
 
-const WATCH_DEBOUNCE_MS = 150;
+const TORN_READ_RETRIES = 3;
+const TORN_READ_RETRY_DELAY_MS = 15;
 
 function isEnoent(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === 'ENOENT';
@@ -35,11 +32,23 @@ export class FileStorageService implements IFileSystemStorageService {
 
   async read(scope: string, key: string): Promise<Uint8Array | undefined> {
     const filePath = this.pathFor(scope, key);
-    try {
-      return await readFile(filePath);
-    } catch (error) {
-      if (isEnoent(error)) return undefined;
-      throw toStorageIoError(error, { path: filePath, op: 'read' });
+    for (let attempt = 0; ; attempt += 1) {
+      let bytes: Uint8Array;
+      try {
+        bytes = await readFile(filePath);
+      } catch (error) {
+        if (isEnoent(error)) return undefined;
+        throw toStorageIoError(error, { path: filePath, op: 'read' });
+      }
+      if (attempt >= TORN_READ_RETRIES) return bytes;
+      let size: number | undefined;
+      try {
+        size = (await stat(filePath)).size;
+      } catch {
+        size = undefined;
+      }
+      if (size === undefined || size === bytes.length) return bytes;
+      await new Promise((resolve) => setTimeout(resolve, TORN_READ_RETRY_DELAY_MS));
     }
   }
 
@@ -156,68 +165,14 @@ export class FileStorageService implements IFileSystemStorageService {
     }
   }
 
-  watch(scope: string, key: string): Event<void> {
-    const target = this.pathFor(scope, key);
-    const dir = dirname(target);
-    const normalizedTarget = normalize(target);
-    const emitter = new Emitter<void>();
-
-    let watcher: FSWatcher | undefined;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let refCount = 0;
-
-    const schedule = (): void => {
-      if (timer !== undefined) clearTimeout(timer);
-      timer = setTimeout(() => emitter.fire(), WATCH_DEBOUNCE_MS);
-    };
-
-    const arm = (): void => {
-      try {
-        mkdirSync(dir, { recursive: true, mode: this.dirMode });
-        watcher = new FSWatcher({
-          ignoreInitial: true,
-          awaitWriteFinish: false,
-          depth: 0,
-        });
-        watcher.on('all', (_event, changedPath) => {
-          if (normalize(changedPath) === normalizedTarget) schedule();
-        });
-        watcher.on('error', (error: unknown) => onUnexpectedError(error));
-        watcher.add(dir);
-      } catch (error) {
-        onUnexpectedError(error);
-      }
-    };
-
-    const disarm = (): void => {
-      if (timer !== undefined) {
-        clearTimeout(timer);
-        timer = undefined;
-      }
-      const closeResult = watcher?.close();
-      if (closeResult !== undefined) void closeResult.catch(() => undefined);
-      watcher = undefined;
-    };
-
-    return (listener, thisArg, disposables) => {
-      if (refCount === 0) arm();
-      refCount++;
-      const subscription = emitter.event(listener, thisArg);
-      let tornDown = false;
-      const teardown = toDisposable(() => {
-        if (tornDown) return;
-        tornDown = true;
-        refCount--;
-        if (refCount === 0) disarm();
-      });
-      const combined = combinedDisposable(subscription, teardown);
-      if (disposables instanceof DisposableStore) {
-        disposables.add(combined);
-      } else if (disposables !== undefined) {
-        (disposables as IDisposable[]).push(combined);
-      }
-      return combined;
-    };
+  async mtime(scope: string, key: string): Promise<number | undefined> {
+    const filePath = this.pathFor(scope, key);
+    try {
+      return (await stat(filePath)).mtimeMs;
+    } catch (error) {
+      if (isEnoent(error)) return undefined;
+      throw toStorageIoError(error, { path: filePath, op: 'stat' });
+    }
   }
 
   async flush(): Promise<void> {

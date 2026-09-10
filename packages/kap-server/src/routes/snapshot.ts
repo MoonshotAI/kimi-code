@@ -1,10 +1,10 @@
 import {
   AGENT_WIRE_RECORD_KEY,
   IAgentContextMemoryService,
-  IAgentLifecycleService,
   IAgentPromptService,
   IAgentScopeContext,
   IAppendLogStore,
+  INTERACTION_TAG_SESSION_ID,
   ISessionContext,
   ISessionMetadata,
   IWireService,
@@ -12,8 +12,8 @@ import {
   createContextTranscriptReducer,
   deriveSpineState,
   epochStartupNodeId,
+  interactions,
   isRootEpoch,
-  listSessionPendingInteractions,
   resumeSessionById,
   spineTreeViewFromState,
   type ContextMessage,
@@ -43,7 +43,7 @@ import {
 import { loadMessageHistory } from '../services/messages/messageHistory';
 import { type SessionEventBroadcaster } from '../transport/ws/v1/sessionEventBroadcaster';
 import { toWireApproval } from './approvals';
-import { toWireQuestion } from './questions';
+import { toWireQuestion } from '../protocol/question-wire';
 import { resolveSessionFacts, toWireSession } from './sessions';
 
 const SNAPSHOT_MESSAGE_PAGE_SIZE = 100;
@@ -97,12 +97,12 @@ export function registerSnapshotRoutes(app: SnapshotRouteHost, deps: SnapshotRou
       try {
         const data = await assembleSnapshot(core, broadcaster, session_id);
         reply.send(okEnvelope(data, req.id));
-      } catch (err) {
-        if (err instanceof SnapshotNotFoundError) {
-          reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, req.id, err.stack));
+      } catch (error) {
+        if (error instanceof SnapshotNotFoundError) {
+          reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, error.message, req.id, error.stack));
           return;
         }
-        throw err;
+        throw error;
       }
     },
   );
@@ -146,10 +146,19 @@ async function assembleSnapshot(
   const currentPromptId = snapState.inFlightTurn === null ? undefined : readCurrentPromptId(main);
   const inFlightTurn = attachCurrentPromptIdToInFlight(snapState.inFlightTurn, currentPromptId);
 
-  const agents = handle.accessor.get(IAgentLifecycleService);
-  const pendingApprovals = listSessionPendingInteractions(agents, 'approval')
+  const pendingApprovals = interactions
+    .findAll({
+      kind: 'approval',
+      resolved: false,
+      tags: { [INTERACTION_TAG_SESSION_ID]: sessionId },
+    })
     .map((i) => toWireApproval(i, sessionId));
-  const pendingQuestions = listSessionPendingInteractions(agents, 'question')
+  const pendingQuestions = interactions
+    .findAll({
+      kind: 'question',
+      resolved: false,
+      tags: { [INTERACTION_TAG_SESSION_ID]: sessionId },
+    })
     .map((i) => toWireQuestion(i, sessionId));
 
   return {
@@ -213,18 +222,6 @@ async function loadContextHistory(
   return [...transcript.entries, ...live.slice(transcript.foldedLength)];
 }
 
-/**
- * Spine task tree derived from the COMPLETE (pre-window) transcript, adapted
- * from the engine's recursive camelCase view (`spineTreeViewFromState`) to
- * the flat snake_case wire shape. Synthetic scaffolding (root-epoch nodes and
- * each epoch's startup node) is flattened away, its real children re-attached
- * to the nearest emitted ancestor, so a session without spine activity seeds
- * an empty node list. Fail-open: a derivation failure returns `undefined`
- * (the client falls back to replaying the messages window) instead of failing
- * the snapshot. `covered_through_id` is the wire id of the LAST message in
- * the sliced `items` page — never a full-transcript index, which would
- * misalign the client's coverage watermark.
- */
 export function deriveSpineTree(
   messages: readonly ContextMessage[],
   items: readonly { id: string }[],

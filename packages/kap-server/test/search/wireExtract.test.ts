@@ -56,6 +56,14 @@ describe('extractFromWireLine', () => {
     },
   );
 
+  it('filters out subagent system triggers even though they open transcript turns', () => {
+    expect(
+      extractFromWireLine(
+        userRecord('scan the repo', 1_700_000_000_000, { kind: 'system_trigger', name: 'subagent' }),
+      ),
+    ).toEqual([]);
+  });
+
   it.each(['skill_activation', 'plugin_command'])(
     'keeps %s messages the user typed as a slash command',
     (kind) => {

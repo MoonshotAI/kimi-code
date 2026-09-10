@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { AgentCron, type CronRuntime } from '#/features/cron/cronAgentRuntime';
+import { IAgentCronService } from '#/features/cron/cronService';
 import type { CronConfig } from '#/features/cron/configSection';
 import type { CronCreateInput } from '#/features/cron/tools/cron-create/cron-create';
 import type { CronCreateTool } from '#/features/cron/tools/cron-create/cronCreateTool';
@@ -20,12 +20,12 @@ const BASE_CRON_CONFIG: CronConfig = {
 describe('Agent + Cron integration', () => {
   describe('default cron wiring', () => {
     let ctx: TestAgentContext;
-    let cron: CronRuntime;
+    let cron: IAgentCronService;
 
     beforeEach(() => {
       ctx = createTestAgent();
       ctx.kimiConfig = { ...ctx.kimiConfig, cron: BASE_CRON_CONFIG };
-      cron = ctx.resolve(AgentCron);
+      cron = ctx.get(IAgentCronService);
       const profile = ctx.get(IAgentProfileService);
       profile.update({ activeToolNames: ['CronCreate', 'CronList', 'CronDelete'] });
     });
@@ -39,7 +39,6 @@ describe('Agent + Cron integration', () => {
     });
 
     it('exposes the cron runtime with an empty task set on construction', () => {
-      expect(cron.isEnabled).toBe(true);
       expect(cron.isDisabled()).toBe(false);
       expect(cron.list()).toEqual([]);
     });
@@ -57,13 +56,13 @@ describe('Agent + Cron integration', () => {
 
   describe('disabled cron config', () => {
     let ctx: TestAgentContext;
-    let cron: CronRuntime;
+    let cron: IAgentCronService;
     let tools: IAgentToolRegistryService;
 
     beforeEach(() => {
       ctx = createTestAgent();
       ctx.kimiConfig = { ...ctx.kimiConfig, cron: { ...BASE_CRON_CONFIG, disabled: true } };
-      cron = ctx.resolve(AgentCron);
+      cron = ctx.get(IAgentCronService);
       tools = ctx.get(IAgentToolRegistryService);
       ctx.get(IAgentProfileService).update({ activeToolNames: ['CronCreate'] });
     });
@@ -84,7 +83,7 @@ describe('Agent + Cron integration', () => {
         prompt: 'x',
         recurring: true,
       };
-      const result = await tool!.resolveExecution(args);
+      const result = tool!.resolveExecution(args);
 
       expect(result).toMatchObject({ isError: true });
       expect('output' in result ? result.output : '').toMatch(/disabled/i);

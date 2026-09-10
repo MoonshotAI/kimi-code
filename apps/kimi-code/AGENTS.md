@@ -43,7 +43,7 @@ Main directories:
 - `interactions` turns the core pending approval/question entries into the data shape a UI panel/dialog needs, and writes the user's choice back through `decide`/`answer`/`dismiss`.
 - `theme` is the single source of truth for colors and styles. Components must not bypass the theme system and use chalk named colors directly.
 - `utils` holds utility functions with no UI-state dependency. Logic that needs `TUIState` or a component instance must not live under app-level `src/utils`.
-- The interactive TUI reaches the agent engine only through `src/core/` (`CoreHarness`/`CoreSession`). TUI files must not import `@moonshot-ai/agent-core-v2` or `@moonshot-ai/kimi-code-sdk` directly — add types/capabilities to the `src/core` facade instead. Print (`src/cli/v2/`), ACP, and other subcommands are exempt and still consume `@moonshot-ai/kimi-code-sdk`. No app code may import `@moonshot-ai/agent-core` (v1) directly.
+- The interactive TUI reaches the agent engine only through `src/core/` (`CoreHarness`/`CoreSession`). TUI files must not import `@moonshot-ai/agent-core-v2` or `@moonshot-ai/kimi-code-sdk` directly — add types/capabilities to the `src/core` facade instead. Print (`src/cli/v2/`), ACP, and other subcommands are exempt and consume `@moonshot-ai/kimi-code-sdk`.
 
 ## TUI Coding Conventions
 

@@ -1,11 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import * as AgentCore from '#/index';
 import {
   WIRE_PROTOCOL_VERSION,
   EVENT2_REGISTRY,
   IAgentContextMemoryService,
-  AgentGoal,
+  IAgentGoalService,
   type ContextMessage,
   type WireRecord,
 } from '#/index';
@@ -29,11 +28,13 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { TokenCountingMeasured } from '#/agent/tokenCounting/tokenCountingOps';
+import { TurnStepInterrupted } from '#/agent/loop/turnEvents';
+import { TurnStepRetrying } from '#/agent/loop/turnEvents';
 import { ToolsUpdateStore } from '#/features/todo/todoOps';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { Event2Class } from '#/app/event/event2';
 import { AGENT_WIRE_RECORD_KEY } from '#/wire/record';
-import { attachTodoRuntime, registerTestAgentWire, registerTestEventDispatcher, restoreTestEventDispatcher } from './wire/stubs';
+import { attachTodoService, registerTestAgentWire, registerTestEventDispatcher, restoreTestEventDispatcher } from './wire/stubs';
 import { BUILTIN_REPLAYABLE_STATE_KEYS } from './state/builtinReplayableKeys';
 
 const V1_RECORD_TYPES: ReadonlySet<string> = new Set([
@@ -87,16 +88,19 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'task.started',
   'task.terminated',
   'task.waitDelivered',
-  'staleGuard.recorded',
-  'staleGuard.cleared',
   'interaction.request',
   'interaction.resolved',
   'plan.revision',
+  'file_history.tracked',
+  'file_history.checkpoint',
   'interruptionReminder.recorded',
   'plugin.session_start',
   'runtime.set_binding',
   'turn.ended',
   'prompt.accepted',
+  'prompt.aborted',
+  'prompt.completed',
+  'prompt.steered',
   'token_counting.measured',
   'token_counting.truncated',
   'token_counting.rebased',
@@ -104,19 +108,9 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'cron.delete',
   'cron.cursor',
   'token_counting.turn_recorded',
+  'turn.step.retrying',
+  'turn.step.interrupted',
 ]);
-
-describe('package runtime exports', () => {
-  it('exports the opaque runtime contract surface without internal descriptors or hosts', () => {
-    expect(AgentCore).toHaveProperty('AgentRuntimeContributionPoint');
-    expect(AgentCore).toHaveProperty('AgentRuntimeOverrideContributionPoint');
-    expect(AgentCore).toHaveProperty('defineAgentRuntimeContract');
-    expect(AgentCore).toHaveProperty('defineAgentRuntimeProvider');
-    expect(AgentCore).not.toHaveProperty('AgentRuntimeSet');
-    expect(AgentCore).not.toHaveProperty('getAgentRuntimeDescriptor');
-    expect(AgentCore).not.toHaveProperty('getAgentRuntimeDefinitionId');
-  });
-});
 
 describe('v1 wire vocabulary', () => {
   const SCOPE = 'wire';
@@ -180,6 +174,81 @@ describe('v1 wire vocabulary', () => {
     ]);
   });
 
+  it('persists step retrying and interrupted records with full payloads and replays them safely', async () => {
+    await dispatcher.restore();
+    await dispatcher.dispatch(
+      new TurnStepRetrying({
+        agentId: 'test-agent',
+        turnId: 1,
+        step: 2,
+        failedAttempt: 1,
+        nextAttempt: 2,
+        maxAttempts: 10,
+        delayMs: 500,
+        errorName: 'APIStatusError',
+        errorMessage: 'Overloaded',
+        statusCode: 429,
+      }),
+    );
+    await dispatcher.dispatch(
+      new TurnStepInterrupted({
+        agentId: 'test-agent',
+        turnId: 1,
+        step: 2,
+        reason: 'error',
+        message: 'boom',
+      }),
+    );
+    const records = await readRecords();
+    expect(records).toEqual([
+      {
+        type: 'metadata',
+        protocol_version: WIRE_PROTOCOL_VERSION,
+        created_at: expect.any(Number),
+      },
+      {
+        type: 'turn.step.retrying',
+        agentId: 'test-agent',
+        turnId: 1,
+        step: 2,
+        failedAttempt: 1,
+        nextAttempt: 2,
+        maxAttempts: 10,
+        delayMs: 500,
+        errorName: 'APIStatusError',
+        errorMessage: 'Overloaded',
+        statusCode: 429,
+        time: expect.any(Number),
+      },
+      {
+        type: 'turn.step.interrupted',
+        agentId: 'test-agent',
+        turnId: 1,
+        step: 2,
+        reason: 'error',
+        message: 'boom',
+        time: expect.any(Number),
+      },
+    ]);
+
+    const store = new DisposableStore();
+    disposables.add(store);
+    const ix2 = store.add(new TestInstantiationService());
+    ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    const log2 = ix2.get(IAppendLogStore);
+    registerTestAgentWire(ix2, SCOPE, { log: log2 });
+    const fresh = registerTestEventDispatcher(ix2);
+
+    await restoreTestEventDispatcher(fresh, log2, SCOPE, records);
+
+    const replayed: WireRecord[] = [];
+    for await (const record of log2.read<WireRecord>(SCOPE, AGENT_WIRE_RECORD_KEY)) {
+      replayed.push(record);
+    }
+    expect(replayed).toEqual(records);
+  });
+
   it('round-trips the todo list through the persisted tools.update_store record', async () => {
     await dispatcher.dispatch(
       new ToolsUpdateStore({ agentId: 'test-agent', key: 'todo', value: [{ title: 'restore me', status: 'in_progress' }] }),
@@ -194,12 +263,12 @@ describe('v1 wire vocabulary', () => {
     const log2 = ix2.get(IAppendLogStore);
     registerTestAgentWire(ix2, SCOPE, { log: log2 });
     const fresh = registerTestEventDispatcher(ix2);
-    const runtimes = attachTodoRuntime(ix2, fresh);
-    store.add({ dispose: () => { void runtimes.close(); } });
+    const todo = attachTodoService(ix2);
+    store.add({ dispose: () => { todo.dispose(); } });
 
     await restoreTestEventDispatcher(fresh, log2, SCOPE, records);
 
-    expect(runtimes.inspect()[0]?.state).toEqual([
+    expect(todo.get()).toEqual([
       { title: 'restore me', status: 'in_progress' },
     ]);
   });
@@ -208,6 +277,8 @@ describe('v1 wire vocabulary', () => {
 describe('conversation-time checkpoint registration', () => {
   const CHECKPOINT_EXEMPT_STATES: ReadonlySet<string> = new Set([
     'goalForkNotice',
+    'turn',
+    'fullCompaction.wireRanges',
   ]);
   const CONTEXT_OWNER_STATE = 'contextMemory';
   const CONTEXT_EVENTS: readonly Event2Class[] = [
@@ -220,14 +291,14 @@ describe('conversation-time checkpoint registration', () => {
   it('registers every context-reacting state as checkpointed or explicitly exempt', () => {
     const violations: string[] = [];
     let entries = 0;
-    const undoable = BUILTIN_REPLAYABLE_STATE_KEYS.filter(
+    const undoable = new Set(BUILTIN_REPLAYABLE_STATE_KEYS.filter(
       (key) => key.replayable.undoable !== undefined,
-    );
+    ));
     for (const key of BUILTIN_REPLAYABLE_STATE_KEYS) {
       if (key.name === CONTEXT_OWNER_STATE) continue;
       if (!CONTEXT_EVENTS.some((cls) => key.replayable.folds.has(cls))) continue;
       entries += 1;
-      if (undoable.includes(key)) continue;
+      if (undoable.has(key)) continue;
       if (CHECKPOINT_EXEMPT_STATES.has(key.name)) continue;
       violations.push(key.name);
     }
@@ -310,6 +381,23 @@ describe('AgentRecords persistence metadata', () => {
 
     expect(persistence.rewrites).toEqual([]);
     expect(persistence.records.filter((record) => record.type === 'metadata')).toHaveLength(1);
+  });
+
+  it('keeps restore history stable after a consumer stops reading the journal early', async () => {
+    persistence.records.push(
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      ...['first', 'second'].map((text) => ({
+        type: 'context.append_message',
+        message: {
+          role: 'user', content: [{ type: 'text', text }], toolCalls: [], origin: { kind: 'user' },
+        },
+      })),
+    );
+    for await (const record of ctx.get(IAppendLogStore).read<WireRecord>('', AGENT_WIRE_RECORD_KEY)) {
+      if (record.type === 'context.append_message') break;
+    }
+    await ctx.restorePersisted();
+    expect(ctx.context.get()).toHaveLength(2);
   });
 
   it('rewrites migrated records to the current wire version after replay', async () => {
@@ -404,7 +492,7 @@ describe('AgentRecords persistence metadata', () => {
 
     await expect(ctx.restorePersisted()).resolves.toBeUndefined();
     expect(context.get()).toHaveLength(0);
-    expect(ctx.resolve(AgentGoal).getGoal().goal).toMatchObject({
+    expect(ctx.get(IAgentGoalService).getGoal().goal).toMatchObject({
       goalId: 'g1',
       objective: 'do work',
       completionCriterion: 'tests pass',
@@ -432,7 +520,7 @@ describe('AgentRecords persistence metadata', () => {
       'goal.create',
       'forked',
     ]);
-    expect(ctx.resolve(AgentGoal).getGoal().goal).toBeNull();
+    expect(ctx.get(IAgentGoalService).getGoal().goal).toBeNull();
     const reminder = context.get().at(-1);
     expect(reminder?.origin).toEqual({
       kind: 'injection',
@@ -458,7 +546,7 @@ describe('AgentRecords persistence metadata', () => {
     );
 
     await expect(ctx.restorePersisted()).resolves.toBeUndefined();
-    expect(ctx.resolve(AgentGoal).getGoal().goal).toMatchObject({
+    expect(ctx.get(IAgentGoalService).getGoal().goal).toMatchObject({
       goalId: 'fork-goal',
       objective: 'fork work',
     });

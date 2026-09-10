@@ -6,11 +6,10 @@
 // `handleOf('main')` returns the fake main handle.
 import { describe, expect, it } from 'vitest';
 import {
-  AgentGoal,
-  AgentInteraction,
   IAgentContextMemoryService,
   IAgentConversationUndoService,
   IAgentFullCompactionService,
+  IAgentGoalService,
   IAgentLifecycleService,
   IAgentLoopService,
   IAgentMcpService,
@@ -23,7 +22,6 @@ import {
   IAgentShellCommandService,
   IAgentSkillService,
   IAgentSwarmService,
-  IAgentSystemReminderService,
   IAgentTaskService,
   IAgentTowerService,
   IBootstrapService,
@@ -31,11 +29,12 @@ import {
   IEventService,
   IHostEnvironment,
   IHostFileSystem,
-  ISessionApprovalService,
+  interactions,
+  INTERACTION_TAG_AGENT_ID,
+  INTERACTION_TAG_SESSION_ID,
   ISessionBtwService,
   ISessionContext,
   ISessionMetadata,
-  ISessionQuestionService,
   ISessionSkillCatalog,
   ISessionSwarmService,
   ISessionTokenCountingService,
@@ -74,22 +73,19 @@ interface FakeInteraction {
   readonly createdAt: number;
 }
 
-function makeFakeInteractionKernel(pending: FakeInteraction[]) {
-  const changeListeners = new Set<(e: { pending: readonly string[] }) => void>();
-  const resolveListeners = new Set<(e: { id: string; response: unknown }) => void>();
-  return {
-    listPending: (kind?: string) => (kind === undefined ? pending : pending.filter((i) => i.kind === kind)),
-    onDidChangePending: (l: (e: { pending: readonly string[] }) => void) => {
-      changeListeners.add(l);
-      return { dispose: () => changeListeners.delete(l) };
-    },
-    onDidResolve: (l: (e: { id: string; response: unknown }) => void) => {
-      resolveListeners.add(l);
-      return { dispose: () => resolveListeners.delete(l) };
-    },
-    _fireChange: () => { for (const l of [...changeListeners]) l({ pending: pending.map((i) => i.id) }); },
-    _fireResolve: (id: string, response: unknown) => { for (const l of [...resolveListeners]) l({ id, response }); },
-  };
+function seedPendingInteractions(sessionId: string, pending: readonly FakeInteraction[]): void {
+  interactions.purgeSession(sessionId);
+  for (const i of pending) {
+    interactions.enqueue({
+      id: i.id,
+      kind: i.kind,
+      payload: i.payload,
+      tags: {
+        ...(i.origin.agentId === undefined ? {} : { [INTERACTION_TAG_AGENT_ID]: i.origin.agentId }),
+        [INTERACTION_TAG_SESSION_ID]: sessionId,
+      },
+    });
+  }
 }
 
 function makeFixture(options?: {
@@ -201,7 +197,6 @@ function makeFixture(options?: {
             detach: recordReturning(`${id}.tasks.detach`, taskInfo),
           },
         ],
-        [IAgentSystemReminderService, { appendSystemReminder: record(`${id}.appendSystemReminder`) }],
       ] as ReadonlyArray<readonly [unknown, unknown]>,
     };
   };
@@ -210,7 +205,6 @@ function makeFixture(options?: {
   const btwServices = makeAgentServices('btw-1');
   const handles = new Map<string, unknown>();
 
-  const kernel = makeFakeInteractionKernel(options?.pendingInteractions ?? []);
   const goalRuntime = (id: string) => ({
     getGoal: recordReturning(`${id}.getGoal`, goalResult),
     createGoal: recordReturning(`${id}.createGoal`, Promise.resolve(goalSnapshot)),
@@ -218,13 +212,6 @@ function makeFixture(options?: {
     resumeGoal: recordReturning(`${id}.resumeGoal`, Promise.resolve(goalSnapshot)),
     cancelGoal: recordReturning(`${id}.cancelGoal`, Promise.resolve(goalSnapshot)),
   });
-  const runtimes = new Map<string, Map<unknown, unknown>>([
-    ['main', new Map<unknown, unknown>([[AgentGoal, goalRuntime('main')], [AgentInteraction, kernel]])],
-    [
-      'btw-1',
-      new Map<unknown, unknown>([[AgentGoal, goalRuntime('btw-1')], [AgentInteraction, makeFakeInteractionKernel([])]]),
-    ],
-  ]);
 
   const getHandleCalls: string[] = [];
   const lifecycle = {
@@ -238,13 +225,6 @@ function makeFixture(options?: {
       getHandleCalls.push(id);
       return id === 'btw-1' ? btwServices.context : mainServices.context;
     },
-    resolve: (context: { agentId: string }, definition: unknown) => {
-      const runtime = runtimes.get(context.agentId)?.get(definition);
-      if (runtime === undefined) {
-        throw new Error(`fake lifecycle: unexpected runtime for agent "${context.agentId}"`);
-      }
-      return runtime;
-    },
     onDidCreate: () => ({ dispose: () => {} }),
     onDidClose: () => ({ dispose: () => {} }),
   };
@@ -254,12 +234,20 @@ function makeFixture(options?: {
   const mainAgent = {
     id: 'main',
     kind: 'agent',
-    accessor: makeAccessor([...mainServices.entries, [IAgentLifecycleService, lifecycle]]),
+    accessor: makeAccessor([
+      ...mainServices.entries,
+      [IAgentGoalService, goalRuntime('main')],
+      [IAgentLifecycleService, lifecycle],
+    ]),
   };
   const btwAgent = {
     id: 'btw-1',
     kind: 'agent',
-    accessor: makeAccessor([...btwServices.entries, [IAgentLifecycleService, lifecycle]]),
+    accessor: makeAccessor([
+      ...btwServices.entries,
+      [IAgentGoalService, goalRuntime('btw-1')],
+      [IAgentLifecycleService, lifecycle],
+    ]),
   };
   handles.set('main', mainAgent);
   handles.set('btw-1', btwAgent);
@@ -281,16 +269,15 @@ function makeFixture(options?: {
     kind: 'session',
     accessor: makeAccessor([
       [IAgentLifecycleService, lifecycle],
-      [ISessionApprovalService, { decide: record('approvals.decide') }],
-      [ISessionQuestionService, { answer: record('questions.answer'), dismiss: record('questions.dismiss') }],
       [ISessionBtwService, { start: () => Promise.resolve('btw-1') }],
       [ISessionSwarmService, sessionSwarm],
       [ISessionSkillCatalog, { ready: Promise.resolve(), catalog: { listSkills: () => skillDefinitions } }],
       [IWorkspaceDirs, { addDir: recordReturning('addAdditionalDir', Promise.resolve(addDirResult)) }],
-      [ISessionContext, { cwd: '/work' }],
+      [ISessionContext, { sessionId: 'sess-1', cwd: '/work' }],
       [ISessionMetadata, { read: () => Promise.resolve(sessionMeta) }],
     ]),
   };
+  seedPendingInteractions('sess-1', options?.pendingInteractions ?? []);
 
   // App scope: global event bus; the remaining host services are pre-wired fakes.
   const appBus = makeFakeBus();
@@ -352,7 +339,6 @@ function makeFixture(options?: {
     mainBus: mainServices.bus,
     btwBus: btwServices.bus,
     appBus,
-    kernel,
     swarmRunCalls,
     getHandleCalls,
     getOnCloseCalls: () => onCloseCalls,
@@ -676,33 +662,44 @@ describe('CoreSession interactions', () => {
     ]);
   });
 
-  it('decide/answer/dismiss write through to the session brokers', () => {
+  it('decide/answer/dismiss resolve the parked interactions', () => {
     const fx = makeFixture({ pendingInteractions });
     fx.core.approvals.decide('a1', { decision: 'approved' });
     fx.core.questions.answer('q1', { item0: 'yes' });
     fx.core.questions.dismiss('q2');
-    expect(fx.calls['approvals.decide']).toEqual([['a1', { decision: 'approved' }]]);
-    expect(fx.calls['questions.answer']).toEqual([['q1', { item0: 'yes' }]]);
-    expect(fx.calls['questions.dismiss']).toEqual([['q2']]);
+    const pending = interactions
+      .findAll({ resolved: false, tags: { [INTERACTION_TAG_SESSION_ID]: 'sess-1' } })
+      .map((i) => i.id);
+    expect(pending).toEqual(['a2', 'a3']);
   });
 
-  it('onDidChangePending and onDidResolve subscribe to the kernel and unsubscribe cleanly', () => {
+  it('onDidChangePending and onDidResolve subscribe to the facade and unsubscribe cleanly', () => {
     const fx = makeFixture({ pendingInteractions });
     let changes = 0;
     const resolved: string[] = [];
     const offChange = fx.core.approvals.onDidChangePending(() => { changes += 1; });
     const offResolve = fx.core.questions.onDidResolve((id) => resolved.push(id));
 
-    fx.kernel._fireChange();
-    fx.kernel._fireResolve('q1', { item0: 'yes' });
-    expect(changes).toBe(1);
+    interactions.enqueue({
+      id: 'a9',
+      kind: 'approval',
+      payload: {},
+      tags: { [INTERACTION_TAG_SESSION_ID]: 'sess-1' },
+    });
+    interactions.respond('q1', { item0: 'yes' });
+    expect(changes).toBe(2);
     expect(resolved).toEqual(['q1']);
 
     offChange();
     offResolve();
-    fx.kernel._fireChange();
-    fx.kernel._fireResolve('q2', null);
-    expect(changes).toBe(1);
+    interactions.enqueue({
+      id: 'a10',
+      kind: 'approval',
+      payload: {},
+      tags: { [INTERACTION_TAG_SESSION_ID]: 'sess-1' },
+    });
+    interactions.respond('q2', null);
+    expect(changes).toBe(2);
     expect(resolved).toEqual(['q1']);
   });
 });

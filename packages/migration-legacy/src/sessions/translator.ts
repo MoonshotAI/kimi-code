@@ -1,4 +1,4 @@
-import type { ToolInputDisplay } from '@moonshot-ai/agent-core';
+import type { ToolInputDisplay } from '@moonshot-ai/agent-core-v2/tool/toolInputDisplay';
 
 import { normalizeContentPart, type NormalizedContentPart } from './content-part.js';
 
@@ -68,6 +68,34 @@ export function analyzeContextContent(lines: readonly string[]): ContextContent 
  */
 export function containsUsableMessage(lines: readonly string[]): boolean {
   return analyzeContextContent(lines) === 'real';
+}
+
+/**
+ * The last `_usage` row's cumulative `token_count` — kimi-cli's own measured
+ * context size at the end of the session. Used to seed a
+ * `token_counting.measured` anchor so a resumed session shows a measured
+ * context size instead of an estimate until the engine re-measures.
+ */
+export function extractLastUsageTokenCount(lines: readonly string[]): number | undefined {
+  let last: number | undefined;
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (line === '') continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (typeof parsed !== 'object' || parsed === null) continue;
+    const obj = parsed as Record<string, unknown>;
+    if (obj['role'] !== '_usage') continue;
+    const tokenCount = obj['token_count'];
+    if (typeof tokenCount === 'number' && Number.isFinite(tokenCount) && tokenCount >= 0) {
+      last = tokenCount;
+    }
+  }
+  return last;
 }
 
 export function translateContextLines(

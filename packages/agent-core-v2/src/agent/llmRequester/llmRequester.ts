@@ -1,11 +1,12 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
-import type { FinishReason, ThinkingEffort } from '#/kosong/contract/provider';
-import type { Message, StreamedMessagePart } from '#/kosong/contract/message';
-import type { Tool } from '#/kosong/contract/tool';
-import type { TokenUsage } from '#/kosong/contract/usage';
-import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
-import type { ModelRequestTiming } from '#/kosong/model/modelRequester';
+import type { FinishReason } from '#human/llm/finish-reason';
+import type { ThinkingEffort } from '#human/llm/thinking';
+import type { Message } from '#/llm-adapter/contract/message';
+import type { StreamedMessagePart, ToolDescription as Tool } from '#human/llm/message';
+import type { TokenUsage } from '#human/llm/usage';
+import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
+import type { ModelRequestTiming } from '#/llm-adapter/model/model-requester';
 import type { LogContext } from '#/_base/log/log';
 
 export type AgentLLMRequestLogFields = Readonly<LogContext>;
@@ -43,10 +44,6 @@ export interface LLMRequestRetryOptions {
   readonly onRetry?: LLMRequestRetryHandler;
 }
 
-/**
- * Spine name kept as an alias of kosong's canonical `ModelRequestTiming`
- * (identical shape); new code should import `ModelRequestTiming` directly.
- */
 export type LLMStreamTiming = ModelRequestTiming;
 
 export interface LLMRequestParams {
@@ -78,30 +75,11 @@ export interface AgentLLMRequestOverrides {
   retry?: LLMRequestRetryOptions;
 }
 
-/**
- * Read-only view of the request being assembled, handed to system-prompt
- * contributions so they can decide whether they apply: `source` distinguishes
- * turns from operations (e.g. compaction), and `tools` is the final
- * provider-visible tool list of the request.
- */
 export interface SystemPromptContributionContext {
   readonly source: AgentLLMRequestSource | undefined;
   readonly tools: readonly Tool[];
 }
 
-/**
- * Transform over the assembled system prompt. Prompt-shaping features (e.g.
- * the spine view protocol block) register a contribution instead of the
- * requester importing them: the requester stays closed for modification.
- *
- * The contract a contribution signs up for:
- *   - It receives the prompt assembled so far plus the request's source and
- *     final tool list, and returns the prompt to pass on; return the input
- *     unchanged to decline.
- *   - Contributions compose in registration order, each seeing the output of
- *     the previous one.
- *   - The input prompt and context are read-only.
- */
 export type SystemPromptContribution = (
   prompt: string,
   context: SystemPromptContributionContext,
@@ -126,11 +104,6 @@ export interface IAgentLLMRequesterService {
     signal?: AbortSignal,
   ): Promise<AgentLLMRequestFinish>;
 
-  /**
-   * Register a contribution applied to every assembled system prompt; returns
-   * a disposable that unregisters it. With no contributions registered the
-   * profile's system prompt passes through unchanged.
-   */
   registerSystemPromptContribution(
     id: string,
     contribution: SystemPromptContribution,

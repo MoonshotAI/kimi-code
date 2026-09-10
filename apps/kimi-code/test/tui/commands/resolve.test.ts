@@ -17,7 +17,6 @@ function resolve(
     pluginCommandMap: new Map<string, string>(),
     isStreaming: false,
     isCompacting: false,
-    engineV2: true,
     ...overrides,
   });
 }
@@ -62,6 +61,11 @@ describe('resolveSlashCommandInput', () => {
       name: 'experiments',
       args: '',
     });
+  });
+
+  it('resolves /remote-control and /rc as built-ins', () => {
+    expect(resolve('/rc')).toMatchObject({ kind: 'builtin', name: 'remote-control' });
+    expect(resolve('/remote-control')).toMatchObject({ kind: 'builtin', name: 'remote-control' });
   });
 
   it('blocks idle-only built-ins while streaming', () => {
@@ -270,15 +274,6 @@ describe('resolveSlashCommandInput', () => {
     expect(resolve('/tower Ship feature X')).toEqual({
       kind: 'message',
       input: '/tower Ship feature X',
-    });
-  });
-
-  it('does not resolve /tower as a builtin on the legacy engine', () => {
-    setExperimentalFeatures([{ id: 'tower', enabled: true }]);
-
-    expect(resolve('/tower on', { engineV2: false })).toEqual({
-      kind: 'message',
-      input: '/tower on',
     });
   });
 });

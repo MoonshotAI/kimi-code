@@ -5,9 +5,9 @@ import type {
   TokenCountingRequest,
   TokenCountingStrategy,
 } from '#/agent/tokenCounting/tokenCounting';
-import type { Message } from '#/kosong/contract/message';
-import type { Tool } from '#/kosong/contract/tool';
-import type { TokenUsage } from '#/kosong/contract/usage';
+import type { Message } from '#/llm-adapter/contract/message';
+import type { ToolDescription as Tool } from '#human/llm/message';
+import type { TokenUsage } from '#human/llm/usage';
 
 export interface TokenCountingRebaseInput {
   readonly length: number;
@@ -33,24 +33,9 @@ export interface ISessionTokenCountingService {
     output: readonly Message[],
     usage: TokenUsage,
   ): void;
-  /** Tokens of the most recent measured anchor (0 when none) — a real reading
-   *  that stays valid across transient uncascaded context rewrites. */
   latestMeasured(agent: AgentContext): number;
-  /** The latest anchor as a measurement (`undefined` before the first one):
-   *  `measured` distinguishes a real provider reading from an estimate
-   *  re-base. */
   latestMeasurement(agent: AgentContext): TokenMeasurement | undefined;
-  /** The externally reported context size — the ONLY reading the
-   *  `[token_counting]` strategy selects: `measured` reports the latest
-   *  measured anchor alone, `estimated` reports a pure estimate with anchors
-   *  ignored, and the default reports the live size floored by the last
-   *  measured total. Internal logic (triggers, budgets, overflow backoff)
-   *  must use `get()` / the estimate primitives, never this method. */
   statusSize(agent: AgentContext): number;
-  /** The unfolded-request cost: `get(agent).size` plus what the registered
-   *  folds removed from the stored history (always >= the projected size).
-   *  Fold consumers (spine) need the raw caliber to reason about the
-   *  untruncated tree; a fold failure falls back to the raw estimate. */
   rawSize(agent: AgentContext): number;
   recordTruncation(agent: AgentContext, cutIndex: number): void;
   rebase(agent: AgentContext, input: TokenCountingRebaseInput): void;

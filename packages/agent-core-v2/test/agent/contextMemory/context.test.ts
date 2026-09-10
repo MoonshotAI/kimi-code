@@ -1,7 +1,8 @@
-import type { Message, ToolCall } from '#/kosong/contract/message';
+import type { Message } from '#/llm-adapter/contract/message';
+import type { ToolCall } from '#human/llm/message';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { estimateTokens, estimateTokensForMessages } from '#/kosong/contract/tokens';
+import { estimateTokens, estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
 import { buildImageCompressionCaption } from '#/agent/media/image-compress';
 import {
   buildContextCompactionShape,
@@ -787,8 +788,9 @@ describe('Agent context', () => {
       );
 
       expect(shape.tokensAfter).toBe(0);
-      expect(shape.messages.map((m) => m.role)).toEqual(['user', 'user']);
+      expect(shape.messages.map((m) => m.role)).toEqual(['user', 'user', 'user']);
       expect(shape.messages[1]?.origin?.kind).toBe('compaction_summary');
+      expect(shape.messages[2]?.origin).toEqual({ kind: 'injection', variant: 'compaction_continuation' });
     });
 
     it('prefers the measured summary output tokens over the text estimate', () => {

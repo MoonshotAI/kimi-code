@@ -98,7 +98,6 @@ async function handleProviderDelete(host: SlashCommandHost, providerId: string):
     // to the marker/default profile, not the logged-out region.
     refreshKimiRegion();
     await host.authFlow.refreshConfigAfterLogout();
-    await host.authFlow.clearActiveSessionAfterLogout();
     return;
   }
 
@@ -107,7 +106,6 @@ async function handleProviderDelete(host: SlashCommandHost, providerId: string):
   const config = await host.harness.removeProvider(providerId);
   if (activeProvider === providerId) {
     await host.authFlow.refreshConfigAfterLogout();
-    await host.authFlow.clearActiveSessionAfterLogout();
   } else {
     host.setAppState({
       availableProviders: providersView(config),
@@ -278,6 +276,7 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
     }
   }
 
+
   await host.authFlow.refreshConfigAfterLogin();
   host.track('connect', { provider: providerId, method: 'catalog' });
   host.showStatus(`Provider added: ${entry.name ?? providerId}`);
@@ -312,7 +311,7 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
   host.mountEditorReplacement(selector);
 }
 
-async function setDefaultModel(
+export async function setDefaultModel(
   host: SlashCommandHost,
   alias: string,
   effort: ThinkingEffort,
@@ -320,17 +319,41 @@ async function setDefaultModel(
   // Resolve efforts the same way the /model path does (effectiveModelForHost
   // applies overrides and the protocol-profile inference): catalog entries for
   // e.g. Anthropic models declare no support_efforts on the alias, and without
-  // the inference a top-tier pick would slip through as a persisted effort.
+  // the inference an above-default pick would slip through as a persisted effort.
   const model = host.state.appState.availableModels[alias];
+  const thinking = thinkingEffortToConfig(
+    effort,
+    model === undefined ? undefined : effectiveModelForHost(host, model),
+  );
+  if (host.session === undefined) {
+    // A first prompt may still be inside lazy creation: wait it out so the
+    // pick lands on the new session instead of racing its assembly (same
+    // coordination as the /model path).
+    await host.waitForLazyCreation();
+  }
   await host.harness.setConfig({
     defaultModel: alias,
-    thinking: thinkingEffortToConfig(
-      effort,
-      model === undefined ? undefined : effectiveModelForHost(host, model).supportEfforts,
-    ),
+    thinking,
   });
-  await host.authFlow.refreshConfigAfterLogin();
-  host.track('model_switch', { model: alias });
+  // Whether activation made the engine emit model_switch (it reached a live
+  // session AND changed the bound alias — both engines track only an actual
+  // change). Recorded at activation time rather than snapshotted at entry: a
+  // lazy session can come live while the config writes above are pending; a
+  // session created BY activation (v1) or a same-alias rebind does not count
+  // — both bind the model without an engine event.
+  let engineTrackedSwitch = await host.authFlow.refreshConfigAfterLogin();
+  // refreshConfigAfterLogin reactivates from the persisted config, so a pick
+  // the gate keeps session-only never reaches the runtime — apply it after
+  // the refresh, or the persisted value would clobber it.
+  if (thinking.effort === undefined && effort !== 'off' && effort !== 'on') {
+    engineTrackedSwitch =
+      (await host.authFlow.activateModelSelection(alias, effort)) || engineTrackedSwitch;
+  }
+  // When the engine never emitted (no live session, or the alias was already
+  // bound), the TUI stays the sole producer for the pick.
+  if (!engineTrackedSwitch) {
+    host.track('model_switch', { model: alias });
+  }
   host.showStatus(`Default model set to ${alias} with thinking ${effort}.`);
 }
 

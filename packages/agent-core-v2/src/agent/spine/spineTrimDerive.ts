@@ -3,10 +3,6 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { SPINE_TOOL_TRIM } from './spine';
 import { TRIM_ACCEPTED_OUTPUT } from './tools/controlResult';
 
-/**
- * Tool results larger than this (UTF-8 bytes of joined text) get a trim tag.
- * Matches the upstream `TOOL_RESPONSE_TRIM_THRESHOLD_BYTES`.
- */
 export const SPINE_TRIM_THRESHOLD_BYTES = 10 * 1024;
 
 export type SpineTrimSliceShape =
@@ -24,15 +20,10 @@ export type SpineTrimOp =
   | { readonly kind: 'slice'; readonly shape: SpineTrimSliceShape };
 
 export interface SpineTrimProjection {
-  /** Tool-message index → trim id, while the message survives the tree fold. */
   readonly labels: ReadonlyMap<number, string>;
-  /** Trim id → tool-message index. */
   readonly tagIndex: ReadonlyMap<string, number>;
-  /** Tool-message index → accepted trim (a mask wins over the label). */
   readonly masks: ReadonlyMap<number, SpineTrimOp>;
-  /** Ids trimmable right now: the last completed batch's unconsumed tags. */
   readonly eligible: ReadonlySet<string>;
-  /** Ids consumed by an accepted trim, however long ago. */
   readonly consumed: ReadonlySet<string>;
 }
 
@@ -97,12 +88,6 @@ export function deriveSpineTrimProjection(
   return { labels, tagIndex, masks, eligible, consumed };
 }
 
-/**
- * Normalizes the flat tool arguments into a trim op; returns undefined for a
- * malformed shape (a `slice` must name exactly one of head / tail / anchor).
- * Shared by the derivation (parsing stored calls) and the `spine_trim` tool
- * (validating fresh input), so a call the tool rejects can never parse here.
- */
 export function normalizeTrimOp(
   op: string,
   shape: {

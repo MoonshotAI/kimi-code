@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { AgentCron } from '#/features/cron/cronAgentRuntime';
+import { IAgentCronService } from '#/features/cron/cronService';
 import type { CronConfig } from '#/features/cron/configSection';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
@@ -54,7 +54,7 @@ describe('Agent + Cron — subagent suppression', () => {
       const sub = await agents.create({ agentId: 'sub-cron-test' });
 
       expect(process.listenerCount('SIGUSR1')).toBe(listenerCountBeforeCreate + 1);
-      expect(ctx.resolve(AgentCron).isEnabled).toBe(true);
+      expect(ctx.get(IAgentCronService).isDisabled()).toBe(false);
 
       const subHandle = agents.handleOf(sub.agentId);
       expect(subHandle).toBeDefined();

@@ -3,51 +3,16 @@ import { matchSingleMediaPathTag } from '@moonshot-ai/agent-core-v2/agent/media/
 export interface ExtractedWireMessage {
   readonly role: 'user' | 'assistant';
   readonly text: string;
-  /** Epoch ms; undefined when the record carries no usable time. */
   readonly time?: number;
-  /**
-   * Owning step of an assistant text (the `content.part` event's `stepUuid`);
-   * user messages carry no step.
-   */
   readonly stepUuid?: string;
 }
 
-/**
- * How one wire record moves the 0-based turn counter (transcript groupTurns
- * rules):
- *   - `open`   — a user message that starts a new turn; `anchor` marks undo
- *     anchors (`isUndoAnchor`: no origin / kind 'user' / user-slash skill or
- *     plugin command), needed to replay `context.undo` on the counter;
- *   - `ensure` — assistant content; attaches to the current turn, opening a
- *     fallback turn when none exists yet (groupTurns' `ensureTurn`). Limited
- *     to the loop events whose folded assistant message SURVIVES settling
- *     (`content.part` with non-vacuous text, or `tool.call` — a tool.result
- *     folds to a tool message, and a vacuous step is dropped, so neither of
- *     those opens a turn);
- *   - `undo`   — `context.undo`: drop the last `count` anchor-opened turns;
- *   - `none`   — anything else. In particular `context.apply_compaction` and
- *     `context.clear` do NOT renumber: the transcript's cold replay keeps the
- *     full history (compaction appends a `compaction_summary` marker message,
- *     `clear` only raises a floor) and groupTurns numbers it continuously,
- *     matching the live TurnModel whose turn ids are monotonic.
- */
 export type TurnEffect =
   | { readonly kind: 'open'; readonly anchor: boolean }
   | { readonly kind: 'ensure' }
   | { readonly kind: 'undo'; readonly count: number }
   | { readonly kind: 'none' };
 
-/**
- * How one wire record moves the per-turn step tracker:
- *   - `begin` — `step.begin`: map `uuid` to its step ordinal. `ordinal` is the
- *     wire record's own `step` field (the engine's live 1-based numbering,
- *     which the transcript's step ids `t<turn>.<step>` use); absent on records
- *     too old to carry it — the tracker then falls back to counting begins
- *     within the turn (v1 loops had no loop-level retries, so counting equals
- *     the surviving-step numbering);
- *   - `none` — anything else. In particular `step.end` does NOT unmap: the
- *     mapping is reset at turn boundaries, not per step.
- */
 export type StepEffect =
   | { readonly kind: 'begin'; readonly uuid: string; readonly ordinal?: number }
   | { readonly kind: 'none' };
@@ -173,7 +138,6 @@ function turnEffectOfAppendMessage(message: unknown): TurnEffect {
   return { kind: 'open', anchor };
 }
 
-/** Full reading of one wire.jsonl line; unparseable lines analyze to zero. */
 export function analyzeWireLine(line: string): WireLineAnalysis {
   const r = parseWireLine(line);
   if (r === undefined) return { messages: [], turn: NONE, step: STEP_NONE };
@@ -259,10 +223,6 @@ export function analyzeWireLine(line: string): WireLineAnalysis {
   return { messages: [], turn: NONE, step: STEP_NONE };
 }
 
-/**
- * Extract indexable messages from one wire.jsonl line. Unparseable lines and
- * record types outside the two indexed shapes yield an empty array.
- */
 export function extractFromWireLine(line: string): ExtractedWireMessage[] {
   return analyzeWireLine(line).messages;
 }

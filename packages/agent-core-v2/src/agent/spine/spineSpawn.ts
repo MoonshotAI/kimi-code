@@ -12,8 +12,8 @@ import {
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
-} from '#/kosong/contract/errors';
-import type { Message } from '#/kosong/contract/message';
+} from '#/llm-adapter/contract/errors';
+import type { Message } from '#/llm-adapter/contract/message';
 import {
   MAIN_AGENT_ID,
   type IAgentLifecycleService,
@@ -34,10 +34,6 @@ export interface SpawnBranchResult {
   readonly outcome: SpawnBranchOutcome;
   readonly memoryBody: string;
   readonly diagnostic?: string;
-  /**
-   * Forked child agent id — the upstream receipt's `execution_ref`. Absent
-   * when the branch never started (start failure or capacity rejection).
-   */
   readonly executionRef?: string;
 }
 
@@ -48,22 +44,8 @@ export interface SpawnExecutorDependencies {
 
 const EMPTY_MEMORY_DIAGNOSTIC = 'child completed without a non-empty final memory';
 
-/**
- * Minimum number of tasks a `spine_spawn` call must carry. Bounds are enforced
- * by host validation and stated in the tool description text; the JSON schema
- * carries no min/max items.
- */
 export const MIN_SPAWN_TASKS = 2;
 
-/**
- * Branch prompt contract, ported from the upstream "spawned execution branch"
- * envelope. Tool names use this engine's flat `spine_open` / `spine_close` /
- * `spine_next` spelling, and the `<spine_tran_status>` telemetry paragraph
- * matches the status line this engine persists after applied transitions.
- * Branch agents register only the three control tools (see `tools/gate.ts`) —
- * `spine_spawn` / `spine_trim` / `spine_tree` stay main-only, so nested spawn
- * is structurally disabled.
- */
 export function taskEnvelope(
   task: SpineSpawnTaskInput,
   tasks: readonly SpineSpawnTaskInput[],
@@ -88,10 +70,6 @@ export function taskEnvelope(
   );
 }
 
-/**
- * Returns the largest number of tasks a single spawn call may admit. The main
- * agent occupies one thread, leaving `maxThreads - 1` for children.
- */
 export function maxSpawnBranchCount(maxThreads: number): number {
   return Math.max(1, maxThreads - 1);
 }
@@ -301,13 +279,13 @@ async function settleBranch(
   try {
     const completion = await awaitBranch(branch, signal);
     return { type: 'completed', summary: completion.summary };
-  } catch (reason) {
-    const extracted = extractReason(reason);
+  } catch (error) {
+    const extracted = extractReason(error);
     if (extracted.kind === 'abort' || signal.aborted) {
       return { type: 'failed', reason: extracted };
     }
     const salvagedMemory =
-      !batchAborted && isSalvageableError(reason)
+      !batchAborted && isSalvageableError(error)
         ? await salvageBranchMemory(deps, branch, extracted.message, signal)
         : undefined;
     return { type: 'failed', reason: extracted, salvagedMemory };

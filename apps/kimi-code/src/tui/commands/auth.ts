@@ -3,12 +3,14 @@ import {
   fetchOpenPlatformModels,
   filterModelsByPrefix,
   getOpenPlatformById,
+  OAuthAccessDeniedError,
   OpenPlatformApiError,
   type KimiRegion,
   type ManagedKimiCodeModelInfo,
   type ManagedKimiConfigShape,
   type OpenPlatformDefinition,
 } from '@moonshot-ai/kimi-code-oauth';
+import { log } from '@moonshot-ai/kimi-code-sdk';
 
 import type { ChoiceOption } from '../components/dialogs/choice-picker';
 import { DEFAULT_OAUTH_PROVIDER_NAME, PRODUCT_NAME } from '../constant/kimi-tui';
@@ -95,13 +97,24 @@ async function handleKimiCodeOAuthLogin(
     }
   } catch (error) {
     const cancelled = controller.signal.aborted;
+    const denied = error instanceof OAuthAccessDeniedError;
     spinner?.stop({
       ok: false,
-      label: cancelled ? 'Login cancelled.' : 'Login failed.',
+      label: cancelled || denied ? 'Login cancelled.' : 'Login failed.',
     });
     spinner = undefined;
     if (cancelled) return;
     const message = formatErrorMessage(error);
+    if (denied) {
+      host.showError(`Login cancelled: ${message}`);
+      return;
+    }
+    log.warn('login failed', {
+      providerName: DEFAULT_OAUTH_PROVIDER_NAME,
+      alreadyLoggedIn,
+      sessionId: host.session?.id,
+      error,
+    });
     host.showError(`Login failed: ${message}`);
   } finally {
     if (host.cancelInFlight === cancelLogin) {
@@ -242,7 +255,6 @@ export async function handleLogoutCommand(host: SlashCommandHost): Promise<void>
 
   if (target === currentProvider) {
     await host.authFlow.refreshConfigAfterLogout();
-    await host.authFlow.clearActiveSessionAfterLogout();
   } else {
     const updated = await host.harness.getConfig({ reload: true });
     host.setAppState({

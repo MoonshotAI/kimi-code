@@ -1,8 +1,3 @@
-/**
- * `spine` domain (L4) — verbatim tool / parameter descriptions for the four
- * Spine control tools, transcribed from the upstream protocol so the model sees
- * an identical contract. Pure string constants; consumed by the tool classes.
- */
 
 export const SPINE_OPEN_DESCRIPTION =
   'Start a focused child node for one small concrete goal under the current Spine cursor.';
@@ -65,10 +60,6 @@ export const SPINE_SPAWN_DESCRIPTION =
   'Do not spawn paraphrased branches over the same tightly coupled question unless they are deliberately assigned as independent replication or falsification. ' +
   'Branch workspace and external effects are non-transactional, so production-file writes require disjoint ownership or one explicitly named integration owner.';
 
-/**
- * Task-count bounds sentence appended to the spawn tool description (the JSON
- * schema carries no min/max items; host validation is authoritative).
- */
 export function spawnTaskCountDescription(minTasks: number, maxTasks: number): string {
   return `The tasks array must contain at least ${String(minTasks)} and at most ${String(maxTasks)} task assignments.`;
 }

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const GUARDED_FILES = [
-  { dir: 'features/cron', file: 'cronAgentRuntime.ts' },
+  { dir: 'features/cron', file: 'cronService.ts' },
   { dir: 'features/cron/internal', file: 'jitter.ts' },
 ] as const;
 

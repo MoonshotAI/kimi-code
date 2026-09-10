@@ -17,10 +17,10 @@ import type { ISessionTokenCountingService } from '@moonshot-ai/agent-core-v2/se
 import type { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import type { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import type { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
-import type { IAgentSkillService } from '@moonshot-ai/agent-core-v2/agent/skill/skill';
+import type { IAgentSkillService } from '@moonshot-ai/agent-core-v2/features/skill/skillService';
 import type { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
 import type { ISessionUsageService } from '@moonshot-ai/agent-core-v2/session/usage/sessionUsage';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
 
 import type { ScopeRef } from '../channel.js';
@@ -48,7 +48,6 @@ export type McpServerEntry = ReturnType<IAgentMcpService['list']>[number];
 export interface AgentFacade {
   prompt(input: {
     input: readonly ContentPart[];
-    disabledTools?: readonly string[];
     promptId?: string;
   }): Promise<PromptLaunchResult>;
   /**

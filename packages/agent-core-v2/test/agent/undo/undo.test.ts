@@ -1,14 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
 import { ContextApplyCompaction } from '#/agent/contextMemory/contextEvents';
 import type { TaskOrigin } from '#/agent/contextMemory/types';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { MessageStepRequest } from '#/agent/loop/stepRequest';
 import { turnKey } from '#/agent/loop/turnOps';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { planKey } from '#/features/plan/planOps';
@@ -19,17 +16,17 @@ import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { ContextUndone } from '#/agent/undo/undoService';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IEventBus } from '#/app/event/eventBus';
-import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { ErrorCodes } from '#/errors';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ToolsUpdateStore } from '#/features/todo/todoOps';
-import { AgentTodo } from '#/features/todo/todoAgentRuntime';
+import { IAgentTodoService } from '#/features/todo/todoService';
 import { type ReplayableStateKey } from '#/state/state';
 import { IWireService } from '#/wire/wire';
 
 import { createTestAgent, execEnvServices, telemetryServices, type TestAgentContext } from '../../harness';
 import { createFakeHostFs } from '../../tools/fixtures/fake-exec';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 
 describe('AgentConversationUndoService', () => {
   let ctx: TestAgentContext;
@@ -116,19 +113,14 @@ describe('AgentConversationUndoService', () => {
       await next();
     });
     ctx.mockNextResponse({ type: 'text', text: 'system result' });
-    const turn = (
-      await loop.enqueue(
-        new MessageStepRequest(
-          {
-            role: 'user',
-            content: [{ type: 'text', text: 'system work' }],
-            toolCalls: [],
-            origin: { kind: 'system_trigger', name: 'test' },
-          },
-          { admission: 'newTurn' },
-        ),
-      ).assigned
-    ).turn;
+    const turn = loop.submit({
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'system work' }],
+        toolCalls: [],
+        origin: { kind: 'system_trigger', name: 'test' },
+      },
+    }).turn;
     await didStart;
     const history = ctx.context.get();
 
@@ -190,8 +182,9 @@ describe('AgentConversationUndoService', () => {
 
     await undo.undo(1);
     const history = ctx.context.get();
-    expect(history.map((m) => m.role)).toEqual(['user', 'user']);
+    expect(history.map((m) => m.role)).toEqual(['user', 'user', 'user']);
     expect(history[1]?.origin?.kind).toBe('compaction_summary');
+    expect(history[2]?.origin).toEqual({ kind: 'injection', variant: 'compaction_continuation' });
   });
 
   it('refuses loudly when a legacy compaction leaves anchors without checkpoints', async () => {
@@ -241,14 +234,7 @@ describe('AgentConversationUndoService', () => {
   it('restores todos to their pre-turn value', async () => {
     setup();
     const undo = ctx.get(IAgentConversationUndoService);
-    const manager = ctx.get(IAgentLifecycleService);
-    const agent = ctx.get(IAgentScopeContext).agentContext;
-    expect(manager.inspect(agent).contributions.find((entry) => entry.id === 'todo')).toMatchObject({
-      id: 'todo',
-      status: 'materialized',
-      state: [],
-      error: undefined,
-    });
+    expect(ctx.get(IAgentTodoService).get()).toEqual([]);
     ctx.appendTurnExchange('u1', 'a1');
     await ctx.dispatcher.dispatch(
       new ToolsUpdateStore({ agentId: 'main', key: 'todo', value: [{ title: 'kept', status: 'pending' }] }),
@@ -260,7 +246,7 @@ describe('AgentConversationUndoService', () => {
 
     await undo.undo(1);
 
-    expect(ctx.resolve(AgentTodo).get()).toEqual([{ title: 'kept', status: 'pending' }]);
+    expect(ctx.get(IAgentTodoService).get()).toEqual([{ title: 'kept', status: 'pending' }]);
   });
 
   it('restores plan mode and its telemetry mirror to their pre-turn value', async () => {
@@ -278,7 +264,7 @@ describe('AgentConversationUndoService', () => {
       await undo.undo(1);
 
       expect(ctx.agentState.get(planKey).active).toBe(false);
-      expect(ctx.get(IAgentTelemetryContextService).get().mode).toBe('agent');
+      expect(ctx.get(ITelemetryService).getContext().mode).toBe('agent');
       expect(restoredModes).toEqual([false]);
     } finally {
       subscription.dispose();
@@ -295,6 +281,83 @@ describe('AgentConversationUndoService', () => {
     await undo.undo(1);
 
     expect(ctx.agentState.get(turnKey).nextTurnId).toBe(2);
+  });
+
+  it('reports the earliest removed turn id when a trailing non-anchor turn follows the anchor', async () => {
+    setup();
+    const undo = ctx.get(IAgentConversationUndoService);
+    const loop = ctx.get(IAgentLoopService);
+
+    ctx.mockNextResponse({ type: 'text', text: 'a1' });
+    const userTurn = loop.submit({
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'u1' }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    }).turn;
+    await expect(userTurn.result).resolves.toMatchObject({ type: 'completed' });
+
+    ctx.mockNextResponse({ type: 'text', text: 'cron done' });
+    const cronTurn = loop.submit({
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'cron work' }],
+        toolCalls: [],
+        origin: {
+          kind: 'cron_job',
+          jobId: 'j1',
+          cron: '0 9 * * *',
+          recurring: true,
+          coalescedCount: 0,
+          stale: false,
+        },
+      },
+    }).turn;
+    await expect(cronTurn.result).resolves.toMatchObject({ type: 'completed' });
+
+    let fromTurnId: number | undefined;
+    const subscription = ctx.get(IEventBus).subscribe(ContextUndone, (event) => {
+      fromTurnId = event.fromTurnId;
+    });
+    try {
+      await undo.undo(1);
+      expect(fromTurnId).toBe(userTurn.id);
+      expect(ctx.agentState.get(turnKey).anchorTurnIds).toEqual([]);
+      expect(ctx.context.get()).toHaveLength(0);
+    } finally {
+      subscription.dispose();
+    }
+  });
+
+  it('omits the removed turn id when context anchors were not opened by engine turns', async () => {
+    setup();
+    const undo = ctx.get(IAgentConversationUndoService);
+    ctx.get(IAgentContextMemoryService).append(
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'u1' }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'a1' }],
+        toolCalls: [],
+      },
+    );
+
+    let fromTurnId: number | undefined = Number.NaN;
+    const subscription = ctx.get(IEventBus).subscribe(ContextUndone, (event) => {
+      fromTurnId = event.fromTurnId;
+    });
+    try {
+      await undo.undo(1);
+      expect(fromTurnId).toBeUndefined();
+    } finally {
+      subscription.dispose();
+    }
   });
 
   it('flushes state reconciliation before publishing undo', async () => {
@@ -426,7 +489,14 @@ describe('AgentConversationUndoService', () => {
 
     expect(records).toContainEqual({
       event: 'conversation_undo',
-      properties: { agent_id: 'main', count: 1 },
+      properties: {
+        agent_id: 'main',
+        count: 1,
+        mode: 'agent',
+        model: 'mock-model',
+        protocol: 'openai',
+        provider_type: 'kimi',
+      },
     });
     expect(ctx.context.get().map((m) => m.role)).toEqual(['user', 'assistant']);
   });
@@ -451,6 +521,7 @@ describe('AgentConversationUndoService', () => {
     ctx.appendTurnExchange('u2', 'a2');
     const list = vi.spyOn(ctx.get(IAgentPromptService), 'list').mockReturnValue({
       active: undefined,
+      launching: false,
       pending: [
         {
           id: 'queued',
@@ -494,7 +565,14 @@ describe('AgentConversationUndoService', () => {
       expect(undone).toEqual([1]);
       expect(records).toContainEqual({
         event: 'conversation_undo',
-        properties: { agent_id: 'main', count: 1 },
+        properties: {
+          agent_id: 'main',
+          count: 1,
+          mode: 'agent',
+          model: 'mock-model',
+          protocol: 'openai',
+          provider_type: 'kimi',
+        },
       });
     } finally {
       subscription.dispose();
@@ -548,8 +626,8 @@ describe('AgentConversationUndoService', () => {
     await undo.undo(1);
 
     const redelivered = ctx.context.get().filter((message) => message.origin?.kind === 'task');
-    expect(redelivered.map((message) => (message.origin as TaskOrigin).taskId).sort()).toEqual(
-      [taskA, taskB].sort(),
+    expect(redelivered.map((message) => (message.origin as TaskOrigin).taskId).toSorted()).toEqual(
+      [taskA, taskB].toSorted(),
     );
   });
 });

@@ -12,6 +12,7 @@ import {
 } from '#/core/index';
 
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
+
 import {
   PluginInstallTrustConfirmComponent,
   PluginMcpSelectorComponent,
@@ -36,8 +37,17 @@ import {
   isOfficialPluginInstall,
   isOfficialPluginSource,
 } from '../utils/plugin-source-label';
-import { KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV, QUOTA_CONSUMING_PLUGIN_IDS } from '#/constant/app';
-import { loadPluginMarketplace, type PluginMarketplaceEntry } from '#/utils/plugin-marketplace';
+import {
+  KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
+  QUOTA_CONSUMING_PLUGIN_IDS,
+} from '#/constant/app';
+import {
+  loadPluginMarketplace,
+  withBuiltInEntries,
+  withMarketplaceLatestVersions,
+  type PluginMarketplace,
+  type PluginMarketplaceEntry,
+} from '#/utils/plugin-marketplace';
 import { openUrl } from '#/utils/open-url';
 import type { SlashCommandHost } from './dispatch';
 
@@ -253,12 +263,10 @@ async function showPluginsPicker(
   }
 
   let capabilities: readonly CapabilityStatus[] = [];
-  if (host.engineV2) {
-    try {
-      capabilities = await (await resolveCapabilityApi(host)).listCapabilities();
-    } catch (error) {
-      log.warn('capability status unavailable', { error });
-    }
+  try {
+    capabilities = await (await resolveCapabilityApi(host)).listCapabilities();
+  } catch (error) {
+    log.warn('capability status unavailable', { error });
   }
 
   const installedIds = new Set(plugins.map((plugin) => plugin.id));
@@ -344,18 +352,48 @@ async function loadMarketplaceCatalog(
   source: string | undefined,
   capabilities: readonly CapabilityStatus[],
 ): Promise<void> {
+  const builtInEntries = isDefaultMarketplaceCatalog(source)
+    ? capabilities.map(capabilityMarketplaceEntry)
+    : undefined;
+  let marketplace: PluginMarketplace;
+  let catalog: PluginMarketplace;
   try {
-    const marketplace = await loadPluginMarketplace({
+    // Phase 1: render the catalog as soon as it arrives. Version lookups
+    // (GitHub releases/latest round trips) must not gate the first paint.
+    // Keep the raw parsed catalog for phase 2: injecting built-ins first
+    // would mask the matching catalog entries' GitHub sources behind
+    // `capability:<id>` rows, making their versions unresolvable.
+    catalog = await loadPluginMarketplace({
       workDir: host.state.appState.workDir,
       source,
-      builtInEntries:
-        host.engineV2 && isDefaultMarketplaceCatalog(source)
-          ? capabilities.map(capabilityMarketplaceEntry)
-          : undefined,
+      skipLatestVersions: true,
     });
+    marketplace =
+      builtInEntries !== undefined ? withBuiltInEntries(catalog, builtInEntries) : catalog;
     panel.setMarketplace(marketplace.plugins, marketplace.source);
+    host.state.ui.requestRender();
   } catch (error) {
+    // Any phase-1 failure (unreachable OR malformed catalog) surfaces as an
+    // error: the panel keeps built-in capability rows installable in the
+    // Official tab while the error is shown, and a broken catalog must not
+    // be masked as a successfully loaded, built-ins-only marketplace.
     panel.setMarketplaceError(formatErrorMessage(error));
+    host.state.ui.requestRender();
+    return;
+  }
+  try {
+    // Phase 2: resolve latest versions in the background (against the raw
+    // catalog), re-apply the built-in injection so resolved versions flow
+    // onto capability rows, then refresh so update badges appear. Failures
+    // degrade to badge-less rows and never clobber the rendered list.
+    const enrichedCatalog = await withMarketplaceLatestVersions(catalog);
+    const enriched =
+      builtInEntries !== undefined
+        ? withBuiltInEntries(enrichedCatalog, builtInEntries)
+        : enrichedCatalog;
+    panel.setMarketplace(enriched.plugins, enriched.source);
+  } catch (error) {
+    log.warn('marketplace version lookup failed', { error });
   }
   host.state.ui.requestRender();
 }
@@ -442,8 +480,8 @@ const CAPABILITY_POLL_ATTEMPTS = 260; // ~3 minutes of runtime setup budget
 /** Client-injected v2 entries install their runtime and plugin together.
  * Trust keys on the parser-proof `builtIn` flag — the `capability:<id>`
  * source string stays purely diagnostic. */
-function isCapabilityEntry(host: SlashCommandHost, entry: PluginMarketplaceEntry): boolean {
-  return host.engineV2 && entry.builtIn === true;
+function isCapabilityEntry(entry: PluginMarketplaceEntry): boolean {
+  return entry.builtIn === true;
 }
 
 /**
@@ -451,11 +489,8 @@ function isCapabilityEntry(host: SlashCommandHost, entry: PluginMarketplaceEntry
  * is answering membership by running `listCapabilities()`, which fires every
  * entry's detector (seconds of probes) just to print one hint line.
  */
-function isCapabilityPluginId(host: SlashCommandHost, id: string): boolean {
-  return (
-    host.engineV2 &&
-    (id === 'kimi-cu' || id === 'kimi-cu-win' || id === 'kimi-webbridge')
-  );
+function isCapabilityPluginId(id: string): boolean {
+  return id === 'kimi-cu' || id === 'kimi-cu-win' || id === 'kimi-webbridge';
 }
 
 /** Poll a background capability install until it settles (or we run out of budget). */
@@ -593,7 +628,7 @@ async function installFromPanel(
   if (official) {
     panel.setInstalling(truncateForStatus(label));
   } else {
-    host.showStatus(`Installing or updating ${label} from marketplace...`);
+    host.showStatus(`Installing or updating ${label} from marketplace…`);
   }
   host.state.ui.requestRender();
   try {
@@ -676,7 +711,7 @@ async function handlePluginsPanelSelection(
       await showPluginsPicker(host, { initialTab: 'installed' });
       return;
     case 'install':
-      if (isCapabilityEntry(host, selection.entry)) {
+      if (isCapabilityEntry(selection.entry)) {
         await installCapabilityFromPanel(host, panel, selection.entry);
         return;
       }
@@ -732,7 +767,7 @@ async function handlePluginMcpSelection(
 async function removePlugin(host: SlashCommandHost, id: string): Promise<void> {
   await (await resolvePluginApi(host)).removePlugin(id);
   host.showStatus(`Removed ${id}.`);
-  if (isCapabilityPluginId(host, id)) {
+  if (isCapabilityPluginId(id)) {
     host.showStatus(
       'Note: the runtime binaries were left untouched, but Kimi Code plugin wiring is disabled for new sessions. Restart Kimi Code before reinstalling from the Official tab.',
     );

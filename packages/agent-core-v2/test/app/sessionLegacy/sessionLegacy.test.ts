@@ -16,15 +16,17 @@ import { IAgentPlanService } from '#/features/plan/plan';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import { IAgentTowerService } from '#/features/tower/tower';
-import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
-import { IModelCatalog } from '#/kosong/model/catalog';
-import { IModelService } from '#/kosong/model/model';
+import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
+import { IModelCatalog } from '#/llm-adapter/model/catalog';
+import { IModelService } from '#/llm-adapter/model/model';
 import { ISessionLegacyService } from '#/app/sessionLegacy/sessionLegacy';
 import { SessionLegacyService } from '#/app/sessionLegacy/sessionLegacyService';
 import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
-import { IAgentActivityView } from '#/agent/activityView/activityView';
+import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 
@@ -139,10 +141,9 @@ describe('Session legacy status (best-effort runtime state)', () => {
         [IAgentPlanService, { status: () => Promise.resolve(null) }],
         [IAgentSwarmService, { isActive: false }],
         [IAgentTowerService, { isActive: false }],
-        [
-          IAgentActivityView,
-          { state: () => ({ lifecycle: 'ready', background: [] }) },
-        ],
+        [IAgentLoopService, { status: () => ({ state: 'idle' }) }],
+        [IAgentTaskService, { list: () => [] }],
+        [IAgentFullCompactionService, { compacting: null }],
       ]),
       dispose: () => {},
     };
@@ -202,10 +203,9 @@ describe('Session legacy status (best-effort runtime state)', () => {
         [IAgentSwarmService, { isActive: false }],
         [IAgentTowerService, { isActive: false }],
         [IModelService, { getDefaultModel: () => undefined }],
-        [
-          IAgentActivityView,
-          { state: () => ({ lifecycle: 'ready', background: [] }) },
-        ],
+        [IAgentLoopService, { status: () => ({ state: 'idle' }) }],
+        [IAgentTaskService, { list: () => [] }],
+        [IAgentFullCompactionService, { compacting: null }],
       ]),
       dispose: () => {},
     };
@@ -274,10 +274,9 @@ describe('Session legacy status (best-effort runtime state)', () => {
             },
           },
         ],
-        [
-          IAgentActivityView,
-          { state: () => ({ lifecycle: 'ready', background: [] }) },
-        ],
+        [IAgentLoopService, { status: () => ({ state: 'idle' }) }],
+        [IAgentTaskService, { list: () => [] }],
+        [IAgentFullCompactionService, { compacting: null }],
       ]),
       dispose: () => {},
     };
@@ -352,10 +351,9 @@ describe('Session legacy status (best-effort runtime state)', () => {
         [IAgentPlanService, { status: () => Promise.resolve(null) }],
         [IAgentSwarmService, { isActive: false }],
         [IAgentTowerService, { isActive: false }],
-        [
-          IAgentActivityView,
-          { state: () => ({ lifecycle: 'ready', background: [] }) },
-        ],
+        [IAgentLoopService, { status: () => ({ state: 'idle' }) }],
+        [IAgentTaskService, { list: () => [] }],
+        [IAgentFullCompactionService, { compacting: null }],
       ]),
       dispose: () => {},
     };

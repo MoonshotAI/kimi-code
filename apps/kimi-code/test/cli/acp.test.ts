@@ -1,23 +1,24 @@
 /**
  * `kimi acp`
  *
- * Verifies that the ACP sub-command is registered on the program and
- * that the action wires the harness into `@moonshot-ai/acp-adapter`'s
- * `runAcpServer` (the real server is stubbed so the test doesn't
- * actually take over stdio).
+ * Verifies that the ACP sub-command is registered on the program and that
+ * the action wires `@moonshot-ai/acp-server`'s `runAcpServer` (the real server
+ * is stubbed so the test doesn't actually take over stdio). The module is
+ * loaded via a lazy dynamic import in the action, so the mock intercepts that
+ * import.
  */
 
 import { Command } from 'commander';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@moonshot-ai/acp-adapter', () => ({
-  ACP_BUILTIN_SLASH_COMMANDS: [],
+vi.mock('@moonshot-ai/acp-server', () => ({
   runAcpServer: vi.fn(async () => undefined),
 }));
 
-import { runAcpServer } from '@moonshot-ai/acp-adapter';
+import { runAcpServer } from '@moonshot-ai/acp-server';
 
 import { registerAcpCommand } from '#/cli/sub/acp';
+import { getDataDir } from '#/utils/paths';
 
 class ExitCalled extends Error {
   constructor(public code: number | string | null | undefined) {
@@ -30,7 +31,6 @@ describe('kimi acp', () => {
   let stderrSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    vi.stubEnv('KIMI_CODE_LEGACY_FLAG', '1');
     vi.mocked(runAcpServer).mockClear();
     exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number | string | null) => {
       throw new ExitCalled(code);
@@ -53,25 +53,24 @@ describe('kimi acp', () => {
     expect(acp?.description()).toMatch(/Agent Client Protocol/);
   });
 
-  it('invokes runAcpServer with a constructed harness and exits 0 on success', async () => {
+  it('invokes runAcpServer with the host options and exits 0 on success', async () => {
     const program = new Command('kimi').exitOverride();
     registerAcpCommand(program);
 
     await expect(program.parseAsync(['node', 'kimi', 'acp'])).rejects.toThrow(ExitCalled);
 
     expect(runAcpServer).toHaveBeenCalledTimes(1);
-    const harnessArg = vi.mocked(runAcpServer).mock.calls[0]?.[0];
-    expect(harnessArg).toBeDefined();
-    const optsArg = vi.mocked(runAcpServer).mock.calls[0]?.[1];
+    const optsArg = vi.mocked(runAcpServer).mock.calls[0]?.[0];
     expect(optsArg).toEqual(
       expect.objectContaining({
+        homeDir: getDataDir(),
         agentInfo: { name: 'Kimi Code CLI', version: expect.any(String) },
       }),
     );
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 
-  it('forwards KIMI_CODE_HOME to terminalAuthEnv when set', async () => {
+  it('forwards KIMI_CODE_HOME to terminalAuthEnv and homeDir when set', async () => {
     const previous = process.env['KIMI_CODE_HOME'];
     process.env['KIMI_CODE_HOME'] = '/tmp/kimi-debug';
     try {
@@ -80,9 +79,10 @@ describe('kimi acp', () => {
 
       await expect(program.parseAsync(['node', 'kimi', 'acp'])).rejects.toThrow(ExitCalled);
 
-      const optsArg = vi.mocked(runAcpServer).mock.calls[0]?.[1];
+      const optsArg = vi.mocked(runAcpServer).mock.calls[0]?.[0];
       expect(optsArg).toEqual(
         expect.objectContaining({
+          homeDir: '/tmp/kimi-debug',
           terminalAuthEnv: { KIMI_CODE_HOME: '/tmp/kimi-debug' },
         }),
       );
@@ -104,7 +104,7 @@ describe('kimi acp', () => {
 
       await expect(program.parseAsync(['node', 'kimi', 'acp'])).rejects.toThrow(ExitCalled);
 
-      const optsArg = vi.mocked(runAcpServer).mock.calls[0]?.[1] as {
+      const optsArg = vi.mocked(runAcpServer).mock.calls[0]?.[0] as {
         terminalAuthEnv?: unknown;
       };
       expect(optsArg.terminalAuthEnv).toBeUndefined();
@@ -121,7 +121,7 @@ describe('kimi acp', () => {
 
     await expect(program.parseAsync(['node', 'kimi', 'acp'])).rejects.toThrow(ExitCalled);
 
-    const optsArg = vi.mocked(runAcpServer).mock.calls[0]?.[1] as {
+    const optsArg = vi.mocked(runAcpServer).mock.calls[0]?.[0] as {
       terminalAuthLegacyCommand?: string;
     };
     // process.argv[1] points at the test runner entry — non-empty
@@ -132,10 +132,8 @@ describe('kimi acp', () => {
   });
 
   it('exits without starting the ACP server when --login is passed', async () => {
-    // Stub the harness module so runLoginFlow doesn't hit a real OAuth
-    // endpoint: harness.auth.login resolves immediately and triggers exit 0.
-    // `importOriginal` preserves the other named exports (`ErrorCodes`, etc.)
-    // that constant/app.ts depends on at module load.
+    // Stub the SDK harness so runLoginFlow doesn't hit a real OAuth endpoint:
+    // harness.auth.login resolves immediately and triggers exit 0.
     const loginStub = vi.fn(async () => ({ providerName: 'kimi-code' }));
     vi.doMock(import('@moonshot-ai/kimi-code-sdk'), async (importOriginal) => {
       const actual = await importOriginal();

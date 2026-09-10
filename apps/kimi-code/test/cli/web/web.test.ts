@@ -15,6 +15,8 @@ import chalk, { Chalk } from 'chalk';
 import { Command } from 'commander';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { resetCapabilitiesCache, setCapabilities } from '@moonshot-ai/pi-tui';
+
 import { registerWebCommand } from '#/cli/sub/web';
 import type { LegacyKillDeps } from '#/cli/sub/web/legacy-kill';
 import type { WebCommandDeps } from '#/cli/sub/web/run';
@@ -50,7 +52,7 @@ function makeRunner(origin = 'http://127.0.0.1:58627'): {
   const calls: { options: ParsedServerOptions | undefined } = { options: undefined };
   const runner: ForegroundRunner = async (options, hooks) => {
     calls.options = options;
-    hooks?.onReady?.(origin);
+    await hooks?.onReady?.(origin);
     return undefined as never;
   };
   return { runner, calls };
@@ -99,11 +101,12 @@ describe('kimi web', () => {
     expect(longs).toContain('--allowed-host');
     expect(longs).toContain('--insecure-no-tls');
     expect(longs).toContain('--allow-remote-shutdown');
-    expect(longs).toContain('--allow-remote-terminals');
     expect(longs).toContain('--dangerous-bypass-auth');
     expect(longs).toContain('--log-level');
     expect(longs).toContain('--debug-endpoints');
     expect(longs).toContain('--web-title');
+    const remoteControl = web!.options.find((option) => option.long === '--remote-control');
+    expect(remoteControl?.short).toBe('--rc');
     // web opens the browser by default → the option is the negative --no-open.
     expect(longs).toContain('--no-open');
     // The background/daemon era flags are gone: the server always runs in the
@@ -112,6 +115,7 @@ describe('kimi web', () => {
     expect(longs).not.toContain('--keep-alive');
     expect(longs).not.toContain('--daemon');
     expect(longs).not.toContain('--idle-grace-ms');
+    expect(longs).not.toContain('--allow-remote-terminals');
   });
 
   it('routes `kimi server` and any legacy subcommand to a deprecation notice', async () => {
@@ -339,6 +343,11 @@ describe('ready banner reflects the bind class', () => {
 });
 
 describe('`kimi web` opens the browser', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    resetCapabilitiesCache();
+  });
+
   it('opens the Web UI URL with the #token= fragment by default', async () => {
     const { handleWebCommand } = await import('#/cli/sub/web/run');
     const { runner } = makeRunner();
@@ -379,6 +388,46 @@ describe('`kimi web` opens the browser', () => {
     expect(openUrl).toHaveBeenCalledWith('http://127.0.0.1:58627');
   });
 
+  it('opens localhost rather than the wildcard bind address', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const { runner } = makeRunner('http://0.0.0.0:58627');
+    const { stdout, stderr } = makeIo();
+    const openUrl = vi.fn();
+
+    await handleWebCommand(
+      { host: '0.0.0.0', open: true },
+      {
+        startServerForeground: runner,
+        resolveToken: () => 'tok-xyz',
+        openUrl,
+        stdout,
+        stderr,
+      },
+    );
+
+    expect(openUrl).toHaveBeenCalledWith('http://localhost:58627/#token=tok-xyz');
+  });
+
+  it('opens localhost for a wildcard IPv6 bind', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const { runner } = makeRunner('http://:::58627');
+    const { stdout, stderr } = makeIo();
+    const openUrl = vi.fn();
+
+    await handleWebCommand(
+      { host: '::', open: true },
+      {
+        startServerForeground: runner,
+        resolveToken: () => undefined,
+        openUrl,
+        stdout,
+        stderr,
+      },
+    );
+
+    expect(openUrl).toHaveBeenCalledWith('http://localhost:58627');
+  });
+
   it('does not open the browser when open is false', async () => {
     const { handleWebCommand } = await import('#/cli/sub/web/run');
     const { runner } = makeRunner('http://127.0.0.1:9000');
@@ -391,6 +440,79 @@ describe('`kimi web` opens the browser', () => {
     );
 
     expect(openUrl).not.toHaveBeenCalled();
+  });
+
+  it('maps --remote-control and --rc to the same option', () => {
+    for (const flag of ['--remote-control', '--rc']) {
+      const program = makeProgram();
+      const web = program.commands.find((command) => command.name() === 'web')!;
+      web.parseOptions([flag]);
+      expect(web.opts()).toMatchObject({ remoteControl: true });
+    }
+  });
+
+  it('rejects Remote Control on a non-loopback host', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const { runner } = makeRunner();
+    const { stdout, stderr } = makeIo();
+
+    await expect(
+      handleWebCommand(
+        { remoteControl: true, host: '0.0.0.0', open: false },
+        { startServerForeground: runner, openUrl: vi.fn(), stdout, stderr },
+      ),
+    ).rejects.toThrow('--remote-control requires a loopback host.');
+  });
+
+  it('shows --remote-control in help', () => {
+    const remoteControlOption = makeProgram()
+      .commands.find((command) => command.name() === 'web')!
+      .options.find((option) => option.long === '--remote-control');
+    expect(remoteControlOption?.hidden).toBeFalsy();
+  });
+});
+
+describe('kimi rc', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('registers `rc` with the `remote` alias and the web server options, without a --remote-control flag', () => {
+    const program = makeProgram();
+    const rc = program.commands.find((c) => c.name() === 'rc');
+    expect(rc).toBeDefined();
+    expect(rc!.alias()).toBe('remote');
+    const longs = rc!.options.map((o) => o.long).filter(Boolean);
+    expect(longs).toContain('--port');
+    expect(longs).toContain('--host');
+    expect(longs).toContain('--no-open');
+    expect(longs).not.toContain('--remote-control');
+  });
+
+  it('shows `rc` in help', () => {
+    expect(makeProgram().helpInformation()).toContain('rc|remote');
+  });
+
+  it('forces Remote Control for both `rc` and `remote`', async () => {
+    for (const name of ['rc', 'remote']) {
+      const program = makeProgram();
+      let stderr = '';
+      const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+        stderr += String(chunk);
+        return true;
+      });
+      const exitSpy = vi
+        .spyOn(process, 'exit')
+        .mockImplementation(() => undefined as never);
+      try {
+        await program.parseAsync(['node', 'kimi', name, '--host', '0.0.0.0']);
+      } finally {
+        errSpy.mockRestore();
+        exitSpy.mockRestore();
+      }
+      // The loopback check only runs when remoteControl was forced on.
+      expect(stderr).toContain('--remote-control requires a loopback host.');
+    }
   });
 });
 
@@ -409,7 +531,6 @@ describe('`kimi web` option threading', () => {
         dangerousBypassAuth: true,
         debugEndpoints: true,
         allowRemoteShutdown: true,
-        allowRemoteTerminals: true,
         open: false,
       },
       { startServerForeground: runner, openUrl: vi.fn(), stdout, stderr },
@@ -422,7 +543,6 @@ describe('`kimi web` option threading', () => {
       debugEndpoints: true,
       insecureNoTls: true,
       allowRemoteShutdown: true,
-      allowRemoteTerminals: true,
       dangerousBypassAuth: true,
       allowedHosts: ['.example.com'],
     });
@@ -918,6 +1038,21 @@ describe('accessUrlLines', () => {
     const { splitTokenFragment } = await import('#/cli/sub/web/access-urls');
     expect(splitTokenFragment('http://h:1/#token=abc')).toEqual(['http://h:1/', '#token=abc']);
     expect(splitTokenFragment('http://h:1/')).toEqual(['http://h:1/', '']);
+  });
+});
+
+describe('browserOpenOrigin', () => {
+  it('rewrites wildcard bind hosts to localhost on the same port', async () => {
+    const { browserOpenOrigin } = await import('#/cli/sub/web/access-urls');
+    expect(browserOpenOrigin('http://0.0.0.0:58627')).toBe('http://localhost:58627');
+    expect(browserOpenOrigin('http://:::58627')).toBe('http://localhost:58627');
+  });
+
+  it('keeps navigable origins unchanged', async () => {
+    const { browserOpenOrigin } = await import('#/cli/sub/web/access-urls');
+    expect(browserOpenOrigin('http://127.0.0.1:58627')).toBe('http://127.0.0.1:58627');
+    expect(browserOpenOrigin('http://192.168.1.5:58627')).toBe('http://192.168.1.5:58627');
+    expect(browserOpenOrigin('http://[::1]:58627')).toBe('http://[::1]:58627');
   });
 });
 

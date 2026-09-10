@@ -5,11 +5,11 @@ import { IAgentContextProjectorService } from '#/agent/contextProjector/contextP
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { TokenCountingMeasured } from '#/agent/tokenCounting/tokenCountingOps';
 import { IEventBus } from '#/app/event/eventBus';
-import type { Message } from '#/kosong/contract/message';
+import type { Message } from '#/llm-adapter/contract/message';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { TokenCountingAgentModelDefinition } from '#/session/tokenCounting/tokenCountingAgentModel';
-import { estimateTokensForMessages } from '#/kosong/contract/tokens';
-import type { TokenUsage } from '#/kosong/contract/usage';
+import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
+import type { TokenUsage } from '#human/llm/usage';
 import { IWireService } from '#/wire/wire';
 
 import { createTestAgent, InMemoryWireRecordPersistence, type TestAgentContext } from '../../harness';
@@ -135,7 +135,7 @@ describe('Agent token counting', () => {
     });
 
     const history = context.get();
-    const kept = estimateTokensForMessages(history.filter((m) => m.origin?.kind === 'user'));
+    const kept = estimateTokensForMessages(history.filter((m) => m.origin?.kind !== 'compaction_summary'));
     const expected = 500 + kept;
     expect(tokenCountingState(ctx).anchors).toEqual([
       { length: history.length, tokens: expected, measured: false },

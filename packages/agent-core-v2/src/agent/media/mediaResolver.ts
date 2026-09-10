@@ -1,6 +1,6 @@
 import { createDecorator } from '#/_base/di/instantiation';
-import type { Message } from '#/kosong/contract/message';
-import type { ModelRequester } from '#/kosong/model/modelRequester';
+import type { Message } from '#/llm-adapter/contract/message';
+import type { ModelRequester } from '#/llm-adapter/model/model-requester';
 
 export interface IAgentMediaResolverService {
   readonly _serviceBrand: undefined;

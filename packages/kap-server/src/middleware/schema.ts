@@ -1,32 +1,14 @@
 import { envelopeSchema } from '../protocol/envelope';
 import { z } from 'zod';
 
-/**
- * Convert a Zod schema to a plain JSON Schema object suitable for
- * Fastify's `schema` option.
- *
- * We drop the top-level `$schema` key because Fastify/OpenAPI inline
- * schemas don't need it.
- */
 export function jsonSchema(schema: z.ZodTypeAny): Record<string, unknown> {
   return jsonSchemaForTarget(schema, 'input', 'draft-7');
 }
 
-/**
- * Convert a Zod schema to a response-side Fastify JSON Schema object.
- */
 export function outputJsonSchema(schema: z.ZodTypeAny): Record<string, unknown> {
   return jsonSchemaForTarget(schema, 'output', 'draft-7');
 }
 
-/**
- * Convert a Zod schema directly to an OpenAPI 3 schema object.
- *
- * Fastify route schemas use draft-7 because Fastify validates/serializes with
- * AJV; `@fastify/swagger` converts those schemas to OpenAPI. Post-processing
- * hooks run after that conversion, so schemas inserted there must already use
- * OpenAPI 3 semantics.
- */
 export function openApiDocumentJsonSchema(
   schema: z.ZodTypeAny,
   io: 'input' | 'output' = 'input',
@@ -50,10 +32,6 @@ function jsonSchemaForTarget(
   return converted;
 }
 
-/**
- * Wrap a data Zod schema in the server's envelope shape and return its
- * JSON Schema representation.
- */
 export function envelopeJsonSchema(
   dataSchema: z.ZodTypeAny,
 ): Record<string, unknown> {
@@ -66,31 +44,11 @@ export function openApiDocumentEnvelopeJsonSchema(
   return openApiDocumentJsonSchema(envelopeSchema(dataSchema), 'output');
 }
 
-/**
- * Build a Fastify route-schema bag from Zod schemas + metadata.
- *
- * All Zod fields are automatically converted via `jsonSchema()`.
- * The `response` map values are also wrapped in envelopes unless you
- * pass an explicit `rawResponse` option.
- */
 export interface RouteSchemaOptions {
-  /** Request body Zod schema. */
   body?: z.ZodTypeAny;
-  /** Query-string Zod schema. */
   querystring?: z.ZodTypeAny;
-  /** Route params Zod schema. */
   params?: z.ZodTypeAny;
-  /**
-   * Response schema map: status code → Zod schema.
-   * Each schema is automatically wrapped in the envelope.
-   * Use `rawResponse` if you need an unwrapped schema (e.g. binary
-   * download success path).
-   */
   response?: Record<number, z.ZodTypeAny>;
-  /**
-   * Response schema map that is NOT envelope-wrapped.
-   * Useful for the `200` on binary-stream endpoints.
-   */
   rawResponse?: Record<number, Record<string, unknown>>;
   description?: string;
   summary?: string;

@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 // Read a local plugin directory's declared version from its manifest, mirroring
-// the plugin loader's precedence (packages/agent-core/src/plugin/manifest.ts):
+// the plugin loader's precedence (packages/agent-core-v2/src/app/plugin/manager.ts):
 // `kimi.plugin.json` is authoritative once it exists, and `.kimi-plugin/plugin.json`
 // is only consulted when the root manifest is absent. Returns undefined when no
 // manifest is present or the chosen manifest has no version — callers then leave

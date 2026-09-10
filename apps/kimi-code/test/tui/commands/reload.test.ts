@@ -73,15 +73,16 @@ auto_install = false
 
   it('reloads the active session, refreshes runtime config, and applies tui.toml', async () => {
     await writeTuiConfig('theme = "light"\n');
-    const session = { id: 'ses-1' };
+    const session = { id: 'ses-1', reloadSession: vi.fn(async () => ({})) };
     const host = makeHost({ session });
 
     await handleReloadCommand(host);
 
     expect(host.harness.reloadSession).toHaveBeenCalledWith({
-      id: 'ses-1',
+      id: session.id,
       forcePluginSessionStartReminder: true,
     });
+    expect(session.reloadSession).not.toHaveBeenCalled();
     expect(host.reloadCurrentSessionView).toHaveBeenCalledWith(
       session,
       'Session reloaded.',
@@ -149,7 +150,6 @@ auto_install = false
     const refreshPluginCommands = vi.fn(async () => {});
     const hydrateLazyConfigDefaults = vi.fn(async () => {});
     Object.assign(host, {
-      engineV2: true,
       refreshSkillCommands,
       refreshPluginCommands,
       hydrateLazyConfigDefaults,
@@ -206,6 +206,7 @@ function makeHost({
     state,
     session,
     harness: {
+      reloadSession: vi.fn(async () => session),
       getConfig: vi.fn(async () => ({
         models: {
           fresh: { provider: 'test', model: 'fresh-model', maxContextSize: 1000 },
@@ -215,7 +216,6 @@ function makeHost({
         },
       })),
       getExperimentalFeatures: vi.fn(async () => [{ id: 'micro_compaction', enabled: true }]),
-      reloadSession: vi.fn(async () => session),
     },
     setAppState: vi.fn((patch: Record<string, unknown>) => {
       Object.assign(state.appState, patch);
@@ -229,6 +229,7 @@ function makeHost({
     showStatus: vi.fn(),
   } as unknown as SlashCommandHost & {
     readonly harness: {
+      readonly reloadSession: ReturnType<typeof vi.fn>;
       readonly getConfig: ReturnType<typeof vi.fn>;
       readonly getExperimentalFeatures: ReturnType<typeof vi.fn>;
     };

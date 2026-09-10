@@ -3,9 +3,9 @@ import type {
   AgentProfileContext,
   EnvironmentDisclosureSnapshot,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import type { ModelCapability } from '#/kosong/contract/capability';
-import type { ThinkingEffort } from '#/kosong/contract/provider';
-import type { ModelRequestParams } from '#/kosong/model/modelRequester';
+import type { ModelCapability } from '#/llm-adapter/contract/capability';
+import type { ThinkingEffort } from '#human/llm/thinking';
+import type { ModelRequestParams } from '#/llm-adapter/model/model-requester';
 
 import { createDecorator } from "#/_base/di/instantiation";
 import type { ErrorCode } from '#/errors';
@@ -120,13 +120,6 @@ export interface IAgentProfileService {
   readonly _serviceBrand: undefined;
 
   readonly hooks: Hooks<{
-    /**
-     * Runs inside `setModel` after the target model resolved but before the
-     * alias (and thus the provider used for new requests) switches. Handlers
-     * that need the CURRENT model still active — e.g. pre-compacting an
-     * oversized context with the larger-window model — must finish before
-     * calling `next`.
-     */
     onWillSetModel: WillSetModelContext;
   }>;
 
@@ -140,29 +133,15 @@ export interface IAgentProfileService {
   getModel(): string;
   useProfile(profile: ResolvedAgentProfile, context: SystemPromptContext): void;
   applyProfile(profile: ResolvedAgentProfile, options?: ApplyProfileOptions): Promise<void>;
-  refreshSystemPrompt(): Promise<void>;
   getAgentsMdWarning(): string | undefined;
   data(): ProfileData;
   getEffectiveThinkingLevel(): ThinkingEffort;
   resolveModelContext(): ProfileModelContext;
   resolveRequestParams(): ModelRequestParams;
   getModelCapabilities(): ModelCapability;
-  /**
-   * Effective context window of the active model (`max_input_tokens` when the
-   * capability declares one, else `max_context_tokens`), clamped by the
-   * context ceiling learned from provider overflow rejections (see
-   * {@link observeMaxContextTokens}). The configured capability wins until an
-   * overflow proves the real window smaller; consumers that size budgets or
-   * triggers against the window must read this, not the raw capability.
-   */
   getEffectiveMaxContextTokens(): number;
-  /**
-   * Record a context-window ceiling learned from a provider overflow rejection
-   * for the active model alias. Ignored when the value is not below the
-   * current effective max, so a stale or misattributed observation can never
-   * loosen the clamp.
-   */
   observeMaxContextTokens(observed: number): void;
+  getModelProviderType(alias?: string): string | undefined;
   getMaxOutputSize(): number | undefined;
   hasModel(): boolean;
   isRunnable(): boolean;

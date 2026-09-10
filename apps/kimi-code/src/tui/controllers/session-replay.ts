@@ -30,6 +30,7 @@ import { formatBackgroundAgentTranscript } from '../utils/background-agent-statu
 import { formatBackgroundTaskTranscript } from '../utils/background-task-status';
 import { modelDisplayName } from '../components/dialogs/model-selector';
 import { buildGoalCompletionMessage } from '../utils/goal-completion';
+import { PERMISSION_MODE_DISPLAY_NAMES } from '../utils/permission-mode';
 import { formatBashOutputForDisplay } from '../utils/shell-output';
 import { markTranscriptComponent } from '../utils/transcript-component-metadata';
 import {
@@ -132,6 +133,7 @@ export class SessionReplayRenderer {
       this.hydrateSnapshot(main);
       this.renderRecords(main);
       this.applyTerminalBackgroundAgentStatuses(main);
+      this.host.sessionEventHandler.notifications.restore(session.getResumeState());
       this.host.mergeAllTurnSteps();
       return true;
     } catch (error) {
@@ -723,8 +725,8 @@ export class SessionReplayRenderer {
   private renderPermissionUpdate(context: ReplayRenderContext, mode: PermissionMode): void {
     if (mode === 'yolo') {
       this.host.appendTranscriptEntry(
-        replayEntry(context, 'status', 'YOLO mode: ON', 'notice', {
-          detail: 'Tool actions auto-approved; the agent may still ask you questions.',
+        replayEntry(context, 'status', 'Ask When Needed mode: ON', 'notice', {
+          detail: 'Routine edits and commands run automatically; risky actions, questions, and plans still ask.',
         }),
       );
       return;
@@ -733,7 +735,9 @@ export class SessionReplayRenderer {
       replayEntry(
         context,
         'status',
-        mode === 'manual' ? 'YOLO mode: OFF' : `Permission mode: ${mode}`,
+        mode === 'manual'
+          ? 'Ask When Needed mode: OFF'
+          : `Permission mode: ${PERMISSION_MODE_DISPLAY_NAMES[mode]}`,
         'notice',
       ),
     );

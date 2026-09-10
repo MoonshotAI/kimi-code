@@ -1,5 +1,5 @@
 import { Service } from '#/_base/di/service';
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import type { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IFlagService } from '#/app/flag/flag';
@@ -15,7 +15,7 @@ const TOWER_MODE_EXIT_DISCLOSURE = 'exit';
 
 export class TowerModeInjection extends Service {
   constructor(
-    @IAgentContextInjectorService injector: IAgentContextInjectorService,
+    injector: IAgentReminderService,
     @IAgentTowerService private readonly tower: IAgentTowerService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IFlagService private readonly flags: IFlagService,

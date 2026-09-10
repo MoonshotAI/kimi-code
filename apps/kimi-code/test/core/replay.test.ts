@@ -4,10 +4,8 @@
 // tokens it documents.
 import { describe, expect, it } from 'vitest';
 import {
-  AgentTodo,
   IAgentBlobService,
   IAgentContextMemoryService,
-  IAgentLifecycleService,
   IAgentPermissionModeService,
   IAgentPermissionRulesService,
   IAgentPlanService,
@@ -15,6 +13,7 @@ import {
   IAgentScopeContext,
   IAgentSwarmService,
   IAgentTaskService,
+  IAgentTodoService,
   IAgentToolPolicyService,
   IAgentToolRegistryService,
   IAppendLogStore,
@@ -156,6 +155,7 @@ function makeFixture(metaOverrides?: Record<string, unknown>) {
         },
       ],
       [IAgentBlobService, { loadParts: async (parts: readonly unknown[]) => parts }],
+      [IAgentTodoService, { get: () => todos }],
       [
         IAgentTaskService,
         {
@@ -171,15 +171,6 @@ function makeFixture(metaOverrides?: Record<string, unknown>) {
     id: 'sess-1',
     accessor: makeAccessor([
       [ISessionContext, { cwd: '/work/dir' }],
-      [
-        IAgentLifecycleService,
-        {
-          resolve: (_context: unknown, definition: unknown) => {
-            if (definition === AgentTodo) return { get: () => todos };
-            throw new Error('fake lifecycle: unexpected runtime definition');
-          },
-        },
-      ],
       [ISessionMetadata, { read: async () => meta }],
     ]),
   };

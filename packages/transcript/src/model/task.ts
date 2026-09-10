@@ -15,26 +15,16 @@ export interface TranscriptTask {
   readonly taskId: TaskId;
   readonly kind: TaskKind;
   readonly state: TaskState;
-  /** Foreground→background transition: `!shell` detach, task tool backgrounding. */
   readonly detached: boolean;
-  /** Human-readable one-liner (command line, agent description, …). */
   readonly description?: string;
-  /** For kind 'subagent' / swarm members: the spawned agent's transcript to subscribe. */
   readonly agentId?: AgentId;
-  /** Tail of captured output; appended via `append { target: 'task' }`. */
   readonly outputTail: string;
   readonly startedAt?: string;
   readonly endedAt?: string;
-  /** One-line result summary (`subagent.completed`). */
   readonly resultSummary?: string;
-  /** Failure message (`subagent.failed`). */
   readonly error?: string;
-  /** Why the task entered its current state (`subagent.suspended` reason). */
   readonly stateReason?: string;
-  /** Token usage of the finished run (`subagent.completed`). */
   readonly usage?: StepUsage;
-  /** Model the spawned subagent runs on (`subagent.spawned`). */
   readonly model?: string;
-  /** Thinking effort of the spawned subagent (`subagent.spawned`). */
   readonly thinkingEffort?: string;
 }

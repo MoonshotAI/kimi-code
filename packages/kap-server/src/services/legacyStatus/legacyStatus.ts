@@ -8,14 +8,8 @@ import {
   type IAgentScopeHandle,
   type UsageStatus,
 } from '@moonshot-ai/agent-core-v2';
-import type { AgentActivityState } from '@moonshot-ai/agent-core-v2';
 import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 
-/**
- * The v1 `phase` field of the combined `agent.status.updated` payload — a
- * v1-only concept with no producer on the v2 side (v2's native status events
- * never carry it), so it is defined here at the v1 edge that projects it.
- */
 export type AgentPhase =
   | { readonly kind: 'idle' }
   | {
@@ -23,16 +17,6 @@ export type AgentPhase =
       readonly turnId: number;
       readonly step: number;
       readonly stepId: string;
-      readonly since: number;
-    }
-  | {
-      readonly kind: 'streaming';
-      readonly turnId: number;
-      readonly step: number;
-      readonly stepId: string;
-      readonly stream: 'assistant' | 'thinking' | 'tool_call';
-      readonly toolCallId?: string;
-      readonly toolName?: string;
       readonly since: number;
     }
   | {
@@ -79,17 +63,59 @@ export type AgentPhase =
       readonly at: number;
     };
 
+export interface LegacyActivityApproval {
+  readonly approvalId: string;
+  readonly toolCallId: string;
+  readonly since: number;
+}
+
+export interface LegacyActivityToolCall {
+  readonly toolCallId: string;
+  readonly name: string;
+  readonly since: number;
+}
+
+export interface LegacyActivityRetry {
+  readonly failedAttempt: number;
+  readonly nextAttempt: number;
+  readonly maxAttempts: number;
+  readonly delayMs: number;
+  readonly errorName?: string;
+  readonly statusCode?: number;
+}
+
+export interface LegacyActivityTurn {
+  readonly turnId: number;
+  readonly phase: 'running' | 'tool_call' | 'retrying';
+  readonly step: number;
+  readonly ending: boolean;
+  readonly endingReason?: 'aborted' | 'max_steps' | 'error';
+  readonly retry?: LegacyActivityRetry;
+  readonly pendingApprovals: readonly LegacyActivityApproval[];
+  readonly activeToolCalls: readonly LegacyActivityToolCall[];
+  readonly since: number;
+}
+
+export interface LegacyActivityLastTurn {
+  readonly turnId: number;
+  readonly reason: TurnEndReason;
+  readonly durationMs?: number;
+  readonly at: number;
+}
+
+export interface LegacyActivitySnapshot {
+  readonly turn?: LegacyActivityTurn;
+  readonly lastTurn?: LegacyActivityLastTurn;
+}
+
 export interface LegacyStatusSnapshot {
   readonly usage?: UsageStatus;
   readonly contextTokens: number;
-  /** Unfolded-request cost (>= contextTokens): the projected reading plus whatever the folds removed. */
   readonly rawContextTokens: number;
-  /** Omitted when the context limit is unknown — 0 is never pushed (0 is the engine's "unknown" marker, not a real limit). */
   readonly maxContextTokens?: number;
   readonly model: string;
 }
 
-/** Read the current combined status when the handle exposes a complete agent. */
 export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot | undefined {
   const profile = agent.accessor.get(IAgentProfileService) as
     | IAgentProfileService
@@ -137,24 +163,11 @@ function defaultModelContextTokens(agent: IAgentScopeHandle): number | undefined
   }
 }
 
-/**
- * Map the native v2 `AgentActivityState` to the legacy v1 `AgentPhase`
- * (`agent.status.updated` payload). Pure function — kept at the kap-server
- * edge so the core engine stays free of v1 wire-compatibility concerns.
- *
- * Returns `undefined` for `disposing` / `disposed`, which have no v1
- * concept (emitting `idle` would mislead the UI).
- *
- * Three deliberate v1 divergences from the naive mapping (see status-refactor
- * plan 04 §3): a parallel approval resolve keeps `awaiting_approval` while any
- * approval is still pending (no premature `running`); `interrupted` carries the
- * `endingReason`; `disposing`/`disposed` emit nothing.
- */
-export function toLegacyPhase(state: AgentActivityState): AgentPhase | undefined {
-  const { lifecycle, turn, lastTurn } = state;
+export function toLegacyPhase(state: LegacyActivitySnapshot): AgentPhase | undefined {
+  const { turn, lastTurn } = state;
 
-  if (turn === undefined && lifecycle === 'ready') {
-    if (lastTurn !== undefined && lifecycle === 'ready') {
+  if (turn === undefined) {
+    if (lastTurn !== undefined) {
       return {
         kind: 'ended',
         turnId: lastTurn.turnId,
@@ -166,71 +179,58 @@ export function toLegacyPhase(state: AgentActivityState): AgentPhase | undefined
     return { kind: 'idle' };
   }
 
-  if (lifecycle === 'ready' && turn !== undefined) {
-    if (turn.pendingApprovals.length > 0) {
-      const latest = turn.pendingApprovals[turn.pendingApprovals.length - 1]!;
+  if (turn.pendingApprovals.length > 0) {
+    const latest = turn.pendingApprovals.at(-1)!;
+    return {
+      kind: 'awaiting_approval',
+      turnId: turn.turnId,
+      step: turn.step || undefined,
+      approval: { approvalId: latest.approvalId, toolCallId: latest.toolCallId },
+      since: latest.since,
+    };
+  }
+  if (turn.ending && turn.endingReason !== undefined) {
+    return {
+      kind: 'interrupted',
+      turnId: turn.turnId,
+      step: turn.step,
+      reason: turn.endingReason,
+      at: turn.since,
+    };
+  }
+  switch (turn.phase) {
+    case 'running':
       return {
-        kind: 'awaiting_approval',
-        turnId: turn.turnId,
-        step: turn.step || undefined,
-        approval: { approvalId: latest.approvalId, toolCallId: latest.toolCallId },
-        since: latest.since,
-      };
-    }
-    if (turn.ending && turn.endingReason !== undefined) {
-      return {
-        kind: 'interrupted',
+        kind: 'running',
         turnId: turn.turnId,
         step: turn.step,
-        reason: turn.endingReason,
-        at: turn.since,
+        stepId: '',
+        since: turn.since,
+      };
+    case 'retrying':
+      return {
+        kind: 'retrying',
+        turnId: turn.turnId,
+        step: turn.step,
+        stepId: '',
+        failedAttempt: turn.retry?.failedAttempt ?? 0,
+        nextAttempt: turn.retry?.nextAttempt ?? 0,
+        maxAttempts: turn.retry?.maxAttempts ?? 0,
+        delayMs: turn.retry?.delayMs ?? 0,
+        errorName: turn.retry?.errorName,
+        statusCode: turn.retry?.statusCode,
+        since: turn.since,
+      };
+    case 'tool_call': {
+      const latest = turn.activeToolCalls.at(-1);
+      return {
+        kind: 'tool_call',
+        turnId: turn.turnId,
+        step: turn.step,
+        toolCallId: latest?.toolCallId ?? '',
+        name: latest?.name ?? '',
+        since: latest?.since ?? turn.since,
       };
     }
-    switch (turn.phase) {
-      case 'running':
-        return {
-          kind: 'running',
-          turnId: turn.turnId,
-          step: turn.step,
-          stepId: '',
-          since: turn.since,
-        };
-      case 'streaming':
-        return {
-          kind: 'streaming',
-          turnId: turn.turnId,
-          step: turn.step,
-          stepId: '',
-          stream: turn.stream ?? 'assistant',
-          since: turn.since,
-        };
-      case 'retrying':
-        return {
-          kind: 'retrying',
-          turnId: turn.turnId,
-          step: turn.step,
-          stepId: '',
-          failedAttempt: turn.retry?.failedAttempt ?? 0,
-          nextAttempt: turn.retry?.nextAttempt ?? 0,
-          maxAttempts: turn.retry?.maxAttempts ?? 0,
-          delayMs: turn.retry?.delayMs ?? 0,
-          errorName: turn.retry?.errorName,
-          statusCode: turn.retry?.statusCode,
-          since: turn.since,
-        };
-      case 'tool_call': {
-        const latest = turn.activeToolCalls[turn.activeToolCalls.length - 1];
-        return {
-          kind: 'tool_call',
-          turnId: turn.turnId,
-          step: turn.step,
-          toolCallId: latest?.toolCallId ?? '',
-          name: latest?.name ?? '',
-          since: latest?.since ?? turn.since,
-        };
-      }
-    }
   }
-
-  return undefined;
 }

@@ -1,9 +1,18 @@
-import type { ContentPart, ToolCall } from '#/kosong/contract/message';
-import type { Tool } from '#/kosong/contract/tool';
-import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
-import type { ToolInputDisplay } from '@moonshot-ai/protocol';
+import type { ContentPart, ToolCall, ToolDescription as Tool } from '#human/llm/message';
+import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 export type ExecutableToolOutput = string | ContentPart[];
+
+export const DEFAULT_TOOL_RESULT_MAX_CHARS = 50_000;
+
+export const DEFAULT_TOOL_RESULT_MAX_RETAINED_CHARS = 10_000_000;
+
+export interface ToolResultSpill {
+  readonly outputPath?: string;
+  readonly totalChars?: number;
+  readonly suffix?: string;
+}
 
 export type ToolDeliveryKind = 'steer';
 
@@ -23,18 +32,24 @@ export interface ExecutableToolSuccessResult {
   readonly output: ExecutableToolOutput;
   readonly isError?: false | undefined;
   readonly stopTurn?: boolean | undefined;
+  readonly stopTurnReason?: string;
   readonly truncated?: boolean | undefined;
   readonly note?: string;
   readonly delivery?: ToolDelivery | undefined;
+  readonly spill?: ToolResultSpill;
+  readonly spillExempt?: true;
 }
 
 export interface ExecutableToolErrorResult {
   readonly output: ExecutableToolOutput;
   readonly isError: true;
   readonly stopTurn?: boolean | undefined;
+  readonly stopTurnReason?: string;
   readonly truncated?: boolean | undefined;
   readonly note?: string;
   readonly delivery?: ToolDelivery | undefined;
+  readonly spill?: ToolResultSpill;
+  readonly spillExempt?: true;
 }
 
 export type ExecutableToolResult = ExecutableToolSuccessResult | ExecutableToolErrorResult;
@@ -48,12 +63,15 @@ export interface ToolUpdate {
   replace?: boolean;
 }
 
+export const MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE = 'mcp.oauth.authorization_url';
+
 export interface ExecutableToolContext {
   readonly turnId: number;
   readonly toolCallId: string;
   readonly trace?: LLMRequestTrace;
   readonly metadata?: unknown;
   readonly signal: AbortSignal;
+  readonly steerSignal?: AbortSignal;
   readonly onUpdate?: ((update: ToolUpdate) => void) | undefined;
   readonly onForegroundTaskStart?: ((taskId: string) => void) | undefined;
 }

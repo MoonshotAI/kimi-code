@@ -8,11 +8,6 @@ export const SPINE_SPAWN_SECTION = 'spineSpawn';
 
 export const SPINE_SPAWN_MAX_THREADS_ENV = 'KIMI_CODE_SPINE_SPAWN_MAX_THREADS';
 
-/**
- * Default aggregate thread limit for spine_spawn fissions. The main agent plus
- * up to `DEFAULT_MAX_THREADS - 1` concurrent child agents may run; the number
- * of tasks in one spawn call therefore cannot exceed `DEFAULT_MAX_THREADS - 1`.
- */
 export const DEFAULT_MAX_THREADS = 4;
 
 export const SpineSpawnConfigSchema = z.object({
@@ -54,11 +49,6 @@ registerConfigSection(SPINE_SPAWN_SECTION, SpineSpawnConfigSchema, {
   stripEnv: stripSpineSpawnEnv,
 });
 
-/**
- * Resolves the aggregate thread limit. `IConfigService.get` already applies the
- * env binding (`env > config.toml`), so the only fallback left here is the
- * default when neither source carries a value.
- */
 export function resolveSpawnMaxThreads(section: SpineSpawnConfig | undefined): number {
   return section?.maxConcurrentThreadsPerSession ?? DEFAULT_MAX_THREADS;
 }

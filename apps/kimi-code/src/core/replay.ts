@@ -13,11 +13,9 @@
  */
 
 import {
-  AgentTodo,
   agentContextOf,
   IAgentBlobService,
   IAgentContextMemoryService,
-  IAgentLifecycleService,
   IAgentPermissionModeService,
   IAgentPermissionRulesService,
   IAgentPlanService,
@@ -26,6 +24,7 @@ import {
   IAgentScopeContext,
   IAgentSwarmService,
   IAgentTaskService,
+  IAgentTodoService,
   IAgentToolPolicyService,
   IAgentToolRegistryService,
   IAppendLogStore,
@@ -111,7 +110,7 @@ export async function buildResumedAgents(
     // The todo list is session-shared state, not per-agent; it lives on the
     // main agent's todo runtime.
     toolStore: {
-      todo: session.accessor.get(IAgentLifecycleService).resolve(context, AgentTodo).get(),
+      todo: accessor.get(IAgentTodoService).get(),
     },
     // Include finished tasks so the TUI can replay their terminal status.
     background: accessor.get(IAgentTaskService).list(false),

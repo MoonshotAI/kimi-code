@@ -6,8 +6,8 @@ import { OrderedHookSlot } from '#/hooks';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2, Event2Class } from '#/app/event/event2';
 import { IFlagService } from '#/app/flag/flag';
-import type { ModelCapability } from '#/kosong/contract/capability';
-import type { ToolCall } from '#/kosong/contract/message';
+import type { ModelCapability } from '#/llm-adapter/contract/capability';
+import type { ToolCall } from '#human/llm/message';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { UndoCut } from '#/agent/contextMemory/contextOps';
@@ -15,25 +15,21 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentContextProjectorService } from '#/agent/contextProjector/contextProjector';
 import { AgentContextProjectorService } from '#/agent/contextProjector/contextProjectorService';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
-import { AgentContextInjectorService } from '#/agent/contextInjector/contextInjectorService';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
+import { createReminderHarness } from '../../features/reminder/stubs';
 import { CompactionCompleted } from '#/agent/fullCompaction/compactionOps';
 import {
   IAgentLoopService,
   type AfterStepContext,
   type BeforeStepContext,
-  type EnqueueReceipt,
-  type LoopRunResult,
-  type StepEnqueueOptions,
+  type LoopNotifyHandle,
+  type LoopPromptSubmit,
   type Turn,
 } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
-import type { StepRequest } from '#/agent/loop/stepRequest';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
-import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
 import type {
   ExecutableTool,
   ToolDisclosure,
@@ -215,19 +211,31 @@ class FakeLoopService implements IAgentLoopService {
 
   cancelFromUser(): void {}
 
-  enqueue(_request: StepRequest, _options?: StepEnqueueOptions): EnqueueReceipt {
+  submit(_prompt: LoopPromptSubmit): { readonly turn: Turn } {
     throw new Error('unused in this suite');
   }
 
-  async run(): Promise<LoopRunResult> {
+  steer(): undefined {
+    return undefined;
+  }
+
+  notify(): LoopNotifyHandle {
     throw new Error('unused in this suite');
   }
 
   status() {
-    return { state: 'idle' as const, pendingTurnIds: [], hasPendingRequests: false };
+    return { state: 'idle' as const, pendingPromptIds: [], hasPendingRequests: false };
+  }
+
+  activitySnapshot() {
+    return {};
   }
 
   cancel(_turnId?: number, _reason?: unknown): boolean {
+    throw new Error('unused in this suite');
+  }
+
+  cancelQueued(_queueId: string, _reason?: unknown): boolean {
     throw new Error('unused in this suite');
   }
 
@@ -316,6 +324,10 @@ function registerSharedServices(
   reg.defineInstance(IAgentLoopService, loop);
   reg.defineInstance(IAgentContextMemoryService, contextMemory);
   reg.defineInstance(ITelemetryService, recordingTelemetry([]));
+  reg.defineInstance(
+    IAgentScopeContext,
+    makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main', generation: 1 }),
+  );
   reg.definePartialInstance(IAgentProfileService, {
     getModelCapabilities: () => capabilities,
   });
@@ -334,13 +346,15 @@ function registerSharedServices(
       eventBus.publish(event);
     },
   } as unknown as IEventDispatcher);
-  reg.define(IAgentContextInjectorService, AgentContextInjectorService);
+  reg.defineInstance(
+    IAgentReminderService,
+    createReminderHarness(loop, contextMemory, eventBus),
+  );
   reg.define(IAgentToolRegistryService, AgentToolRegistryService);
   reg.define(IAgentContextProjectorService, AgentContextProjectorService);
   reg.define(IAgentToolSelectService, AgentToolSelectService);
   reg.define(IAgentToolSelectAnnouncementsService, AgentToolSelectAnnouncementsService);
   reg.define(IAgentToolSelectSchemasService, AgentToolSelectSchemasService);
-  reg.define(IAgentSystemReminderService, AgentSystemReminderService);
   registerLogServices(reg);
 }
 

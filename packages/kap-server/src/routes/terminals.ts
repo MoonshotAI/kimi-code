@@ -6,7 +6,6 @@ import {
   Error2,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import { createTerminalRequestSchema } from '@moonshot-ai/agent-core-v2/os/interface/terminal';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -15,14 +14,11 @@ import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import {
   closeTerminalResponseSchema,
+  createTerminalRequestSchema,
   getTerminalResponseSchema,
   listTerminalsResponseSchema,
 } from '../protocol/rest-terminal';
 import { parseActionSuffix } from './action-suffix';
-
-const createTerminalCompatRequestSchema = createTerminalRequestSchema.extend({
-  runtime_id: z.string().min(1).optional(),
-});
 
 interface TerminalsRouteHost {
   get(
@@ -86,8 +82,8 @@ export function registerTerminalsRoutes(app: TerminalsRouteHost, core: Scope): v
         const { session_id } = req.params;
         const items = await (await resolveTerminal(core, session_id)).list();
         reply.send(okEnvelope({ items }, req.id));
-      } catch (err) {
-        sendMappedError(reply, req.id, err);
+      } catch (error) {
+        sendMappedError(reply, req.id, error);
       }
     },
   );
@@ -102,7 +98,7 @@ export function registerTerminalsRoutes(app: TerminalsRouteHost, core: Scope): v
       method: 'POST',
       path: '/sessions/{session_id}/terminals',
       params: sessionIdParamSchema,
-      body: createTerminalCompatRequestSchema,
+      body: createTerminalRequestSchema,
       success: { data: getTerminalResponseSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
@@ -120,8 +116,8 @@ export function registerTerminalsRoutes(app: TerminalsRouteHost, core: Scope): v
         const terminal = await session.accessor.get(ISessionTerminalService).create({ ...req.body, runtime_id: req.body.runtime_id ?? 'local' });
         requestLog(req)?.info({ session_id, terminal_id: terminal.id }, 'terminal created');
         reply.send(okEnvelope(terminal, req.id));
-      } catch (err) {
-        sendMappedError(reply, req.id, err);
+      } catch (error) {
+        sendMappedError(reply, req.id, error);
       }
     },
   );
@@ -150,8 +146,8 @@ export function registerTerminalsRoutes(app: TerminalsRouteHost, core: Scope): v
         const { session_id, terminal_id } = req.params;
         const terminal = await (await resolveTerminal(core, session_id)).get(terminal_id);
         reply.send(okEnvelope(terminal, req.id));
-      } catch (err) {
-        sendMappedError(reply, req.id, err);
+      } catch (error) {
+        sendMappedError(reply, req.id, error);
       }
     },
   );
@@ -193,8 +189,8 @@ export function registerTerminalsRoutes(app: TerminalsRouteHost, core: Scope): v
         const result = await (await resolveTerminal(core, session_id)).close(parsed.id);
         requestLog(req)?.info({ session_id, terminal_id: parsed.id }, 'terminal closed');
         reply.send(okEnvelope(result, req.id));
-      } catch (err) {
-        sendMappedError(reply, req.id, err);
+      } catch (error) {
+        sendMappedError(reply, req.id, error);
       }
     },
   );

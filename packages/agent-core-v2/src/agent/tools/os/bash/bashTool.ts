@@ -9,11 +9,16 @@ import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBindin
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { getShellPathBridge } from '#/_base/execEnv/shellPathBridge';
-import type { ExecutableToolResult, ToolExecution, ToolUpdate } from '#/tool/toolContract';
 import {
-  type ExecutableToolResultBuilderResult,
-  ToolResultBuilder,
-} from '#/tool/result-builder';
+  DEFAULT_TOOL_RESULT_MAX_CHARS,
+  type ExecutableToolResult,
+  type ToolExecution,
+  type ToolUpdate,
+} from '#/tool/toolContract';
+import {
+  type ToolOutputAccumulatorResult,
+  ToolOutputAccumulator,
+} from '#/tool/output-accumulator';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
@@ -64,12 +69,16 @@ function renderBashDescription(shellName: string): string {
 function withoutBackgroundDescription(description: string): string {
   return description
     .replace(
-      /\r?\n\r?\nIf `run_in_background=true`,[\s\S]*?point them to the `\/tasks` command, which opens an interactive panel; it has no subcommands\./,
+      /\r?\n\r?\nIf `run_in_background=true`,[\s\S]*?point them to the background-task panel\./,
       '\n\nBackground execution is disabled for this agent. Do not set `run_in_background=true`.',
     )
     .replace(
       ` For possibly long-running foreground commands, set the \`timeout\` argument in seconds. Foreground commands default to ${String(DEFAULT_TIMEOUT_S)}s and allow up to ${String(MAX_TIMEOUT_S)}s. When a foreground command hits its timeout it is moved to the background instead of being killed, and you will be automatically notified when it completes.`,
       ` For possibly long-running commands, set the \`timeout\` argument in seconds. The default is ${String(DEFAULT_TIMEOUT_S)}s; foreground commands allow up to ${String(MAX_TIMEOUT_S)}s; a foreground command that hits its timeout is killed.`,
+    )
+    .replace(
+      ' The user can also move a running foreground command to the background at any time.',
+      '',
     )
     .replace(
       /\r?\n- Prefer `run_in_background=true`[\s\S]*?conversation to continue before the command finishes\./,
@@ -140,8 +149,8 @@ export class BashTool implements IBashTool {
       },
       approvalRule: literalRulePattern(this.name, args.command),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.command),
-      execute: ({ signal, onUpdate, onForegroundTaskStart }) =>
-        this.execution(args, signal, onUpdate, onForegroundTaskStart),
+      execute: ({ signal, onUpdate, onForegroundTaskStart, toolCallId }) =>
+        this.execution(args, signal, toolCallId, onUpdate, onForegroundTaskStart),
     };
   }
 
@@ -166,6 +175,7 @@ export class BashTool implements IBashTool {
   private async execution(
     args: BashInput,
     signal: AbortSignal,
+    toolCallId: string,
     onUpdate?: (update: ToolUpdate) => void,
     onForegroundTaskStart?: (taskId: string) => void,
   ): Promise<ExecutableToolResult> {
@@ -186,7 +196,7 @@ export class BashTool implements IBashTool {
         : normalizeTimeoutMs(args.timeout, true)
       : foregroundTimeoutMs;
 
-    const builder = new ToolResultBuilder();
+    const builder = new ToolOutputAccumulator();
     let proc: IHostProcess;
     try {
       proc = lease.track(await this.spawn(lease.runtime.process!, env, effectiveCwd, command));
@@ -208,7 +218,11 @@ export class BashTool implements IBashTool {
           if (!collectForegroundOutput) return;
           onUpdate?.({ kind, text });
           builder.write(text);
-          if (!foregroundOutputPersisted && builder.truncated && foregroundTaskId !== undefined) {
+          if (
+            !foregroundOutputPersisted &&
+            builder.totalChars > DEFAULT_TOOL_RESULT_MAX_CHARS &&
+            foregroundTaskId !== undefined
+          ) {
             this.tasks.persistOutput(foregroundTaskId);
             foregroundOutputPersisted = true;
           }
@@ -217,7 +231,7 @@ export class BashTool implements IBashTool {
     let taskId: string;
     try {
       taskId = this.tasks.registerTask(
-        new ProcessTask(proc, command, description, onProcessOutput, () => lease.dispose()),
+        new ProcessTask(proc, command, description, onProcessOutput, () => lease.dispose(), toolCallId),
         {
           detached: startsInBackground,
           timeoutMs,
@@ -257,8 +271,8 @@ export class BashTool implements IBashTool {
                 brief: `Backgrounded ${taskId} after timeout`,
               }
             : {
-                title: 'Task moved to background',
-                brief: `Backgrounded ${taskId}`,
+                title: 'Task moved to background by the user',
+                brief: `Backgrounded ${taskId} by the user`,
               };
         return this.backgroundStartedResult(
           taskId,
@@ -266,7 +280,7 @@ export class BashTool implements IBashTool {
           description,
           labels,
           builder,
-          'foreground_detached',
+          release === 'timeout_detached' ? 'foreground_detached' : 'foreground_detached_by_user',
         );
       }
 
@@ -302,12 +316,12 @@ export class BashTool implements IBashTool {
   private async foregroundCompletionResult(
     taskId: string,
     proc: IHostProcess,
-    builder: ToolResultBuilder,
+    builder: ToolOutputAccumulator,
     foregroundTimeoutMs: number,
   ): Promise<ExecutableToolResult> {
     const current = this.tasks.getTask(taskId);
     const exitCode = current?.kind === 'process' ? current.exitCode : proc.exitCode;
-    let result: ExecutableToolResultBuilderResult;
+    let result: ToolOutputAccumulatorResult;
     if (current?.status === 'timed_out') {
       const timeoutLabel = formatTimeoutLabel(foregroundTimeoutMs);
       result = builder.error(`Command killed by timeout (${timeoutLabel})`, {
@@ -331,27 +345,33 @@ export class BashTool implements IBashTool {
         brief: `Failed with exit code: ${String(exitCode)}`,
       });
     }
-    return this.addForegroundOutputReference(taskId, result);
+    return this.addForegroundOutputReference(taskId, result, builder.totalChars);
   }
 
   private async addForegroundOutputReference(
     taskId: string,
-    result: ExecutableToolResultBuilderResult,
+    result: ToolOutputAccumulatorResult,
+    totalChars: number,
   ): Promise<ExecutableToolResult> {
-    if (!result.truncated) return result;
+    if (totalChars <= DEFAULT_TOOL_RESULT_MAX_CHARS) return result;
     const output = await this.tasks.getOutputSnapshot(taskId, 0);
-    if (!output.fullOutputAvailable || output.outputPath === undefined) return result;
+    if (!output.fullOutputAvailable || output.outputPath === undefined) {
+      return result;
+    }
 
     const taskOutputHint = this.allowBackground()
-      ? `, or TaskOutput(task_id="${taskId}")`
+      ? `\nnext_step: Use TaskOutput(task_id="${taskId}") to query the task output.`
       : '';
-    const reference =
-      `\n\n[Full output saved]\n` +
-      `task_id: ${taskId}\n` +
-      `output_path: ${output.outputPath}\n` +
-      `output_size_bytes: ${String(output.outputSizeBytes)}\n` +
-      `next_step: Use Read with output_path to page through the full log${taskOutputHint}.`;
-    return { ...result, output: `${result.output}${reference}` };
+    const taskInfo = `task_id: ${taskId}\noutput_size_bytes: ${String(output.outputSizeBytes)}${taskOutputHint}`;
+    const existingSuffix = result.spill?.suffix;
+    return {
+      ...result,
+      spill: {
+        outputPath: output.outputPath,
+        totalChars,
+        suffix: existingSuffix !== undefined ? `${existingSuffix}\n${taskInfo}` : taskInfo,
+      },
+    };
   }
 
   private backgroundStartedResult(
@@ -359,24 +379,25 @@ export class BashTool implements IBashTool {
     proc: IHostProcess,
     description: string,
     labels: { title: string; brief: string },
-    builder = new ToolResultBuilder(),
-    scenario: 'background_started' | 'foreground_detached' = 'background_started',
+    builder = new ToolOutputAccumulator(),
+    scenario: 'background_started' | 'foreground_detached' | 'foreground_detached_by_user' = 'background_started',
   ): ExecutableToolResult {
     const status = this.tasks.getTask(taskId)?.status ?? 'running';
+    const detachedByUser = scenario === 'foreground_detached_by_user' ? 'detached_by_user: true\n' : '';
     const metadata =
       `task_id: ${taskId}\n` +
       `pid: ${String(proc.pid)}\n` +
       `description: ${description}\n` +
       `status: ${status}\n` +
+      detachedByUser +
       `automatic_notification: true\n` +
       this.nextStepLines(scenario) +
-      'human_shell_hint: Tell the human to run /tasks to open the interactive background-task panel.';
+      'human_shell_hint: The task is visible in the background-task panel.';
 
     const foregroundResult = builder.ok('');
     const foregroundOutput = foregroundResult.output.length > 0 ? foregroundResult.output : '';
     const result: ExecutableToolResult & {
       readonly brief: string;
-      readonly truncated: boolean;
     } = {
       isError: false,
       output:
@@ -384,20 +405,23 @@ export class BashTool implements IBashTool {
           ? metadata
           : `${metadata}\n\nforeground_output:\n${foregroundOutput}`,
       brief: labels.brief,
-      truncated: foregroundResult.truncated,
     };
     return result;
   }
 
   private nextStepLines(
-    scenario: 'background_started' | 'foreground_detached',
+    scenario: 'background_started' | 'foreground_detached' | 'foreground_detached_by_user',
   ): string {
-    if (scenario === 'foreground_detached') {
+    if (scenario === 'foreground_detached' || scenario === 'foreground_detached_by_user') {
       const avoid = this.allowBackground()
         ? 'do NOT wait, poll, or call TaskOutput on it'
         : 'do NOT wait or poll';
+      const moved =
+        scenario === 'foreground_detached_by_user'
+          ? 'The user moved this task to the background.'
+          : 'The task now runs in the background.';
       return (
-        'next_step: The task now runs in the background. You will be automatically notified ' +
+        `next_step: ${moved} You will be automatically notified ` +
         `when it completes — ${avoid}; continue with your current work.\n`
       );
     }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { AgentCron } from '#/features/cron/cronAgentRuntime';
+import { IAgentCronService } from '#/features/cron/cronService';
 import { CronAdd } from '#/features/cron/cronOps';
 import type { CronTask } from '#/features/cron/cronTask';
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
@@ -66,7 +66,7 @@ describe('cron.add payload guards', () => {
       try {
         await ctx.restorePersisted();
 
-        const tasks = ctx.resolve(AgentCron).list();
+        const tasks = ctx.get(IAgentCronService).list();
         expect(tasks).toHaveLength(1);
         expect(tasks[0]).toEqual(validTask);
       } finally {

@@ -18,6 +18,7 @@ import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { IConfigService } from '#/app/config/config';
 import {
+  APIContextOverflowError,
   APIRequestTooLargeError,
   APIStatusError,
   classifyApiError,
@@ -25,27 +26,30 @@ import {
   isRecoverableRequestStructureError,
   isRetryableGenerateError,
   isTransportError,
-} from '#/kosong/contract/errors';
-import { isToolCall, type Message, type StreamedMessagePart } from '#/kosong/contract/message';
-import { type ThinkingEffort } from '#/kosong/contract/provider';
-import { type Tool } from '#/kosong/contract/tool';
-import { emptyUsage, inputTotal, type TokenUsage } from '#/kosong/contract/usage';
+} from '#/llm-adapter/contract/errors';
+import type { Message } from '#/llm-adapter/contract/message';
+import { type ThinkingEffort } from '#human/llm/thinking';
+import { isToolCall, type StreamedMessagePart, type ToolDescription as Tool } from '#human/llm/message';
+import { emptyUsage, inputTotal, type TokenUsage } from '#human/llm/usage';
 import { ILogService, type LogContext } from '#/_base/log/log';
-import { IModelCatalog, type Model } from '#/kosong/model/catalog';
+import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import {
   effectiveMaxCompletionTokens,
   type ModelRequestEvent,
   type ModelRequestParams,
   type ModelRequester,
   type ModelRequestTiming,
-} from '#/kosong/model/modelRequester';
-import type { ModelOverrides } from '#/kosong/model/model.types';
-import { IModelService } from '#/kosong/model/model';
-import { completionBudgetParams, resolveCompletionBudget } from '#/kosong/model/completionBudget';
-import { resolveThinkingKeep, type ThinkingConfig } from '#/kosong/model/thinking';
+} from '#/llm-adapter/model/model-requester';
+import type { ModelOverrides } from '#/llm-adapter/model/model.types';
+import { IModelService } from '#/llm-adapter/model/model';
+import { completionBudgetParams, resolveCompletionBudget } from '#/llm-adapter/model/completion-budget';
+import { resolveThinkingKeep, type ThinkingConfig } from '#/llm-adapter/model/thinking';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
-import type { Protocol } from '#/kosong/protocol/protocol';
-import type { ApiErrorEvent } from '#/app/telemetry/events';
+import type { Protocol } from '#/llm-adapter/protocol/protocol';
+import type {
+  ApiErrorEvent,
+  LlmRequestProjectionFallbackEvent,
+} from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -62,11 +66,11 @@ import {
   type PreparedTurnRequestConfig,
   type SystemPromptContribution,
 } from './llmRequester';
-import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
+import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import {
   ToolCallIdNormalizer,
   type ToolCallIdResponseNormalizer,
-} from './toolCallIdNormalizer';
+} from '#human/llm/toolCallIdNormalizer';
 import {
   LlmRequest,
   llmRequestTraceKey,
@@ -74,14 +78,17 @@ import {
   type LlmRequestPayload,
   type LlmRequestToolSchema,
 } from './llmRequestOps';
+import { isAbortError } from '#/_base/utils/abort';
+import { parseBooleanEnv } from '#/_base/utils/env';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import {
-  DEFAULT_MAX_RETRY_ATTEMPTS,
-  isAbortError,
-  retryBackoffDelays,
+  readRetryAfterMs,
+  retryBackoffDelay,
   retryErrorFields,
   sleepForRetry,
-} from './retry';
+} from '#/_base/utils/retry';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { DEFAULT_MAX_RETRY_ATTEMPTS, retryBackoffDelays } from './retry';
 
 const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
   type: 'object',
@@ -89,6 +96,8 @@ const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
 };
 
 const noopOnPart: AgentLLMRequestPartHandler = () => {};
+
+export const KIMI_CODE_INFINITE_RETRY_ENV = 'KIMI_CODE_INFINITE_RETRY';
 
 interface ResolvedLLMRequest {
   readonly requester: ModelRequester;
@@ -168,6 +177,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
   ) {
     this.states.contributeState(llmRequestTraceKey);
     this.states.contributeState(llmRequesterLastConfigLogSignatureKey);
@@ -244,8 +254,15 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     signal: AbortSignal | undefined,
   ): Promise<AgentLLMRequestFinish> {
     signal?.throwIfAborted();
-    trace.set(undefined);
-    return this.requestWithRetry(trace, overrides, onPart, signal);
+    const startedAt = Date.now();
+    const setTrace = (traceId: string | undefined): void => {
+      trace.set(traceId);
+      if (overrides.source?.type === 'turn') {
+        this.telemetry.setContext({ trace_id: traceId });
+      }
+    };
+    setTrace(undefined);
+    return this.requestWithRetry(trace, overrides, onPart, signal, startedAt, setTrace);
   }
 
   private async requestWithRetry(
@@ -253,24 +270,25 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     overrides: AgentLLMRequestOverrides,
     onPart: AgentLLMRequestPartHandler,
     signal: AbortSignal | undefined,
+    startedAt: number,
+    setTrace: (traceId: string | undefined) => void,
   ): Promise<AgentLLMRequestFinish> {
-    const startedAt = Date.now();
     const maxAttempts = Math.max(overrides.retry?.maxAttempts ?? DEFAULT_MAX_RETRY_ATTEMPTS, 1);
     const delays = retryBackoffDelays(maxAttempts);
     for (let attempt = 1; ; attempt += 1) {
       try {
         return await this.executeRequestAttempt(
-          trace,
           overrides,
           onPart,
           signal,
           attempt,
           maxAttempts,
+          setTrace,
         );
       } catch (error) {
         if (attempt >= maxAttempts || !isTransportError(unwrapErrorCause(error))) {
           this.logRequestFailure(error, overrides, signal, attempt, maxAttempts);
-          trace.set(this.trackApiError(error, startedAt, signal, overrides.source, trace.traceId));
+          setTrace(this.trackApiError(error, startedAt, signal, overrides.source, trace.traceId));
           throw error;
         }
 
@@ -289,21 +307,19 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
   }
 
   private async executeRequestAttempt(
-    trace: MutableLLMRequestTrace,
     overrides: AgentLLMRequestOverrides,
     onPart: AgentLLMRequestPartHandler,
     signal: AbortSignal | undefined,
     attempt: number,
     maxAttempts: number,
+    setTrace: (traceId: string | undefined) => void,
   ): Promise<AgentLLMRequestFinish> {
     signal?.throwIfAborted();
     const request = this.resolveRequest(
       overrides,
       attempt === 1 ? undefined : { attempt: `${String(attempt)}/${String(maxAttempts)}` },
     );
-    return this.runRequest(request, onPart, signal, (traceId) => {
-      trace.set(traceId);
-    });
+    return this.runRequest(request, onPart, signal, setTrace);
   }
 
   private logRequestFailure(
@@ -506,6 +522,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       };
     };
 
+    let infiniteRetryAttempt = 0;
     for (;;) {
       try {
         return await run(policy);
@@ -517,10 +534,37 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           signal,
           captureMediaStripPolicy,
         );
-        if (nextPolicy === undefined) throw error;
-        policy = nextPolicy;
+        if (nextPolicy !== undefined) {
+          policy = nextPolicy;
+          continue;
+        }
+        const raw = unwrapErrorCause(error);
+        if (
+          !this.infiniteRetryEnabled ||
+          isAbortError(error) ||
+          signal?.aborted === true ||
+          raw instanceof APIContextOverflowError
+        ) {
+          throw error;
+        }
+        infiniteRetryAttempt += 1;
+        const delayMs =
+          readRetryAfterMs(raw) ??
+          retryBackoffDelay(infiniteRetryAttempt - 1);
+        this.log.warn('llm request failed; retrying indefinitely (KIMI_CODE_INFINITE_RETRY)', {
+          model: request.model.name,
+          ...request.logFields,
+          attempt: infiniteRetryAttempt,
+          delayMs,
+          ...retryErrorFields(error),
+        });
+        await sleepForRetry(delayMs, signal);
       }
     }
+  }
+
+  private get infiniteRetryEnabled(): boolean {
+    return parseBooleanEnv(this.bootstrap.getEnv(KIMI_CODE_INFINITE_RETRY_ENV)) === true;
   }
 
   private nextProjectionPolicyForError(
@@ -533,6 +577,8 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     if (signal?.aborted === true) return undefined;
     const raw = unwrapErrorCause(error);
     const media = policy?.media;
+    let projection: LlmRequestProjectionFallbackEvent['projection'];
+    let nextPolicy: ProjectionPolicy;
     if (
       raw instanceof APIRequestTooLargeError &&
       (media === undefined || media === 'degraded')
@@ -544,18 +590,20 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           ...request.logFields,
         });
         this.markRecoveryTurn(this.mediaDegradedTurns, request.source);
-        return { ...policy, media: 'degraded' };
+        projection = 'media-degraded';
+        nextPolicy = { ...policy, media: 'degraded' };
+      } else {
+        this.log.warn(
+          'provider rejected degraded-media request as too large; resending with rejected media stripped',
+          {
+            model: request.model.name,
+            ...request.logFields,
+          },
+        );
+        projection = 'media-stripped';
+        nextPolicy = { ...policy, media: captureMediaStripPolicy() };
       }
-      this.log.warn(
-        'provider rejected degraded-media request as too large; resending with rejected media stripped',
-        {
-          model: request.model.name,
-          ...request.logFields,
-        },
-      );
-      return { ...policy, media: captureMediaStripPolicy() };
-    }
-    if (typeof media !== 'object' && isImageFormatError(raw)) {
+    } else if (typeof media !== 'object' && isImageFormatError(raw)) {
       signal?.throwIfAborted();
       this.log.warn(
         'provider rejected an image in the request; resending with rejected media stripped',
@@ -564,17 +612,27 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           ...request.logFields,
         },
       );
-      return { ...policy, media: captureMediaStripPolicy() };
-    }
-    if (policy?.structure === undefined && isRecoverableRequestStructureError(raw)) {
+      projection = 'media-stripped';
+      nextPolicy = { ...policy, media: captureMediaStripPolicy() };
+    } else if (policy?.structure === undefined && isRecoverableRequestStructureError(raw)) {
       signal?.throwIfAborted();
       this.log.warn('provider rejected request structure; resending with strict projection', {
         model: request.model.name,
         ...request.logFields,
       });
-      return { ...policy, structure: 'strict' };
+      projection = 'strict';
+      nextPolicy = { ...policy, structure: 'strict' };
+    } else {
+      return undefined;
     }
-    return undefined;
+    const properties: LlmRequestProjectionFallbackEvent = {
+      projection,
+      error_type: classifyApiError(raw).kind,
+      model: request.model.id,
+      turn_id: request.source?.turnId,
+    };
+    this.telemetry.track2('llm_request_projection_fallback', properties);
+    return nextPolicy;
   }
 
   private normalizeStreamPart(
@@ -583,7 +641,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
   ): StreamedMessagePart {
     if (!isToolCall(part)) return part;
     const assigned = toolCallIds.remapStreamedId(part.id, part._streamIndex);
-    return assigned === part.id ? part : { ...part, id: assigned };
+    return assigned === part.id ? part : { ...part, id: assigned, rawId: part.rawId ?? part.id };
   }
 
   private warnAboutAnthropicThinkingEffort(request: ResolvedLLMRequest): void {
@@ -824,6 +882,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     }
     if (timing.serverDecodeMs !== undefined) payload['serverDecodeMs'] = timing.serverDecodeMs;
     if (timing.clientConsumeMs !== undefined) payload['clientConsumeMs'] = timing.clientConsumeMs;
+    if (timing.clientBlockedMs !== undefined) payload['clientBlockedMs'] = timing.clientBlockedMs;
     this.log.info('llm response', payload);
   }
 

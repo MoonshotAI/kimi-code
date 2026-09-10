@@ -7,6 +7,7 @@ import { TaskOutputViewer } from '../components/dialogs/task-output-viewer';
 import { TasksBrowserApp, type TasksFilter } from '../components/dialogs/tasks-browser';
 import type { Theme } from '#/tui/theme';
 import type { CustomEditor } from '../components/editor/custom-editor';
+import type { AppState } from '../types';
 import {
   beginScreenTakeover,
   endScreenTakeover,
@@ -22,6 +23,7 @@ export interface TasksBrowserHost {
     readonly terminal: ProcessTerminal;
     readonly ui: TUI;
     readonly editor: CustomEditor;
+    readonly appState: Pick<AppState, 'availableModels'>;
   };
   readonly backgroundTasks: ReadonlyMap<string, AgentTaskInfo>;
   readonly sessionEventHandler: SessionEventHandler;
@@ -87,6 +89,7 @@ export class TasksBrowserController {
         tailOutput: undefined,
         tailLoading: false,
         flashMessage: undefined,
+        availableModels: state.appState.availableModels,
         ...this.buildCallbacks(),
       },
       state.terminal,
@@ -251,6 +254,7 @@ export class TasksBrowserController {
       tailOutput: browser.tailOutput,
       tailLoading: browser.tailLoading,
       flashMessage: browser.flashMessage,
+      availableModels: this.host.state.appState.availableModels,
       ...this.buildCallbacks(),
     });
     this.host.state.ui.requestRender();

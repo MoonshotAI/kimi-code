@@ -5,8 +5,8 @@ import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { estimateTokensForMessages } from '#/kosong/contract/tokens';
-import type { Message } from '#/kosong/contract/message';
+import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
+import type { Message } from '#/llm-adapter/contract/message';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
   CONTEXT_FOLD_ORDER,
@@ -110,7 +110,7 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
 
   private foldHistory(messages: readonly ContextMessage[]): readonly ContextMessage[] {
     let folded = messages;
-    const ordered = [...this.folds.values()].sort((a, b) => a.order - b.order);
+    const ordered = [...this.folds.values()].toSorted((a, b) => a.order - b.order);
     for (const { fold } of ordered) folded = fold(folded);
     return folded;
   }

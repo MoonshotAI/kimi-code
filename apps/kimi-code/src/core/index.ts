@@ -29,3 +29,4 @@ export {
   sessionMediaOriginalsDir,
 } from '@moonshot-ai/agent-core-v2';
 export type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
+export type { ITelemetryService } from '@moonshot-ai/agent-core-v2/app/telemetry/telemetry';

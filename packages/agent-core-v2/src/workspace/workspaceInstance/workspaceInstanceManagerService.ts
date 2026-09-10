@@ -16,16 +16,16 @@ import { IMcpConfigStore } from '#/app/mcpConfig/configStore';
 import { IPluginService } from '#/app/plugin/plugin';
 import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
-import { IBuiltinSkillSource } from '#/app/skillCatalog/builtinSkillSource';
+import { IBuiltinSkillSource } from '#/features/skill/catalog/builtinSkillSource';
 import { IAppStateService } from '#/app/state/appState';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { LifecycleScope } from '#/app/scopes';
 import { IWorkspaceService, type Workspace } from '#/app/workspace/workspace';
-import { IModelCatalog } from '#/kosong/model/catalog';
-import { IModelService } from '#/kosong/model/model';
-import { IProviderService } from '#/kosong/provider/provider';
+import { IModelService } from '#/llm-adapter/model/model';
+import { IProviderService } from '#/llm-adapter/provider/provider';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { Error2, ErrorCodes } from '#/errors';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { LocalRuntimeProviderFactory } from '#/runtime/localRuntime';
@@ -57,13 +57,11 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     @IAppStateService private readonly appState: IAppStateService,
     @IConfigService private readonly config: IConfigService,
     @IEventService private readonly event: IEventService,
-    @IFlagService private readonly flags: IFlagService,
     @ref(IGitService) private readonly git: LiveRef<IGitService>,
     @IAgentIdentity private readonly identity: IAgentIdentity,
     @ISessionIndex private readonly index: ISessionIndex,
     @ISessionIndexMirror private readonly indexMirror: ISessionIndexMirror,
     @ILogService private readonly log: ILogService,
-    @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IModelService private readonly models: IModelService,
     @IMcpOAuthService private readonly oauth: McpOAuthService,
     @IMcpConfigStore private readonly configStore: IMcpConfigStore,
@@ -74,8 +72,10 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     @IBuiltinAgentProfileLoader private readonly builtinAgentProfiles: IBuiltinAgentProfileLoader,
     @IBuiltinSkillSource private readonly builtinSkills: IBuiltinSkillSource,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IFlagService private readonly flags: IFlagService,
     @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
+    @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
     private readonly unitHostFactory: RuntimeUnitHostFactory = new SharedRuntimeUnitHostFactory(),
   ) {
     this.providers.set('local', new LocalRuntimeProviderFactory());
@@ -153,7 +153,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     this.instances.delete(workspaceId);
     const attachments = this.attachments.get(workspaceId);
     this.attachments.delete(workspaceId);
-    if (attachments !== undefined) for (const attachment of [...attachments.values()].reverse()) await attachment.dispose();
+    if (attachments !== undefined) for (const attachment of [...attachments.values()].toReversed()) await attachment.dispose();
     await instance.dispose();
     this.changeEmitter.fire({ workspaceId });
   }
@@ -169,18 +169,18 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
       }
     } catch (error) {
       this.providers.delete(factory.id);
-      for (const instance of attached.reverse()) await this.detach(instance.id, factory.id);
+      for (const instance of attached.toReversed()) await this.detach(instance.id, factory.id);
       throw error;
     }
     return { dispose: async () => {
       if (this.providers.get(factory.id) !== factory) return;
       this.providers.delete(factory.id);
-      for (const workspaceId of [...this.attachments.keys()].reverse()) await this.detach(workspaceId, factory.id);
+      for (const workspaceId of [...this.attachments.keys()].toReversed()) await this.detach(workspaceId, factory.id);
     } };
   }
 
   async dispose(): Promise<void> {
-    for (const workspaceId of [...this.instances.keys()].reverse()) await this.close(workspaceId);
+    for (const workspaceId of [...this.instances.keys()].toReversed()) await this.close(workspaceId);
     this.changeEmitter.dispose();
   }
 
@@ -225,9 +225,12 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
           this.indexMirror,
           this.appendLogStore,
           this.docs,
+          this.storage,
+          this.log,
           input.fs,
           this.event,
           this.telemetry,
+          this.flags,
           input.workspaceAgentProfiles,
           input.extraAgentProfiles,
           input.explicitAgentProfiles,
@@ -237,10 +240,8 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
           input.skills,
           input.instructions,
           input.mcp,
-          this.modelCatalog,
           this.models,
           this.modelProviders,
-          this.flags,
           input.onDispose,
         ),
       },
@@ -256,7 +257,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
       const attachments = this.attachments.get(instance.id);
       this.attachments.delete(instance.id);
       if (attachments !== undefined) {
-        for (const attachment of [...attachments.values()].reverse()) await attachment.dispose();
+        for (const attachment of [...attachments.values()].toReversed()) await attachment.dispose();
       }
       await instance.dispose();
       throw error;

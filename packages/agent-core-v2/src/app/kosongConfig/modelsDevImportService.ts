@@ -11,19 +11,14 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IConfigService } from '#/app/config/config';
-import { IModelCatalog } from '#/kosong/model/catalog';
-import { type ModelsSection } from '#/kosong/model/model';
-import { type ProviderConfig, type ProvidersSection } from '#/kosong/provider/provider';
+import { IModelCatalog } from '#/llm-adapter/model/catalog';
+import { type ModelsSection } from '#/llm-adapter/model/model';
+import { type ProviderConfig, type ProvidersSection } from '#/llm-adapter/provider/provider';
 import { modelsDevProviderModels, resolveModelsDevImport } from './modelsDev';
 
 import { DEFAULT_MODEL_SECTION, MODELS_SECTION, PROVIDERS_SECTION } from './configSection';
 import { ModelsDevImportErrors } from './errors';
 import { IKosongConfigService } from './kosongConfig';
-import {
-  SECONDARY_MODEL_SECTION,
-  cascadeSubagentModelPool,
-  type SecondaryModelConfig,
-} from '#/session/subagent/configSection';
 import {
   IModelsDevImportService,
   PROVIDER_ID_PATTERN,
@@ -104,19 +99,6 @@ export class ModelsDevImportService implements IModelsDevImportService {
     return this.config;
   }
 
-  private async cascadePool(
-    config: IConfigService,
-    nextModels: Record<string, unknown>,
-  ): Promise<void> {
-    const cascaded = cascadeSubagentModelPool(
-      config.inspect<SecondaryModelConfig>(SECONDARY_MODEL_SECTION).userValue,
-      nextModels,
-    );
-    if (cascaded !== undefined) {
-      await config.replace(SECONDARY_MODEL_SECTION, cascaded);
-    }
-  }
-
   private async doImportModelsDevProvider(
     options: ImportModelsDevProviderOptions,
   ): Promise<ImportModelsDevProviderResult> {
@@ -185,7 +167,6 @@ export class ModelsDevImportService implements IModelsDevImportService {
       nextModels[`${targetId}/${model.id}`] = modelsDevModelToRecord(targetId, model);
     }
     await config.replace(MODELS_SECTION, nextModels);
-    await this.cascadePool(config, nextModels);
 
     const firstModel = models[0];
     if (firstModel !== undefined) {
@@ -215,10 +196,10 @@ export class ModelsDevImportService implements IModelsDevImportService {
         userAgent: await this.outboundUserAgent(),
         signal: AbortSignal.timeout(UPSTREAM_FETCH_TIMEOUT_MS),
       });
-    } catch (err) {
+    } catch (error) {
       throw new Error2(
         codes.REGISTRY_IMPORT_INVALID,
-        `custom registry at ${url} cannot be imported: ${truncateUpstreamMessage(err)}`,
+        `custom registry at ${url} cannot be imported: ${truncateUpstreamMessage(error)}`,
       );
     }
     if (Object.keys(entries).length === 0) {
@@ -274,7 +255,6 @@ export class ModelsDevImportService implements IModelsDevImportService {
     }
     await config.replace(PROVIDERS_SECTION, applied.providers as ProvidersSection);
     await config.replace(MODELS_SECTION, (applied.models ?? {}) as ModelsSection);
-    await this.cascadePool(config, applied.models ?? {});
 
     const firstEntry = Object.values(entries)[0];
     const firstModelKey = firstEntry === undefined ? undefined : Object.keys(firstEntry.models)[0];

@@ -6,9 +6,9 @@ export const MESSAGE_INDENT = '  ';
 // transcript messages. The fullscreen renderer strips them at paint and uses
 // the A marker for previous/next-prompt navigation (Ctrl-Shift-Up/Down); in
 // regular mode they pass through to native scrollback invisibly.
-export const OSC133_ZONE_START = '\x1b]133;A\x07';
-export const OSC133_ZONE_END = '\x1b]133;B\x07';
-export const OSC133_ZONE_FINAL = '\x1b]133;C\x07';
+export const OSC133_ZONE_START = '\u001B]133;A\u0007';
+export const OSC133_ZONE_END = '\u001B]133;B\u0007';
+export const OSC133_ZONE_FINAL = '\u001B]133;C\u0007';
 
 // Outer left/right padding applied to the transcript, panels, and the
 // statusline so the chrome's left edge lines up with the input box's
@@ -22,6 +22,28 @@ export const RESULT_PREVIEW_LINES = 3;
 export const SHELL_OUTPUT_PREVIEW_LINES = 10;
 export const THINKING_PREVIEW_LINES = 2;
 export const COMMAND_PREVIEW_LINES = 10;
+export const NOTIFY_PANEL_PAGE_LINES = 8;
+
+// The ellipsis marking a single-row line (card header, outcome row) that was
+// cut to the terminal width or that stands in for hidden output lines.
+export const TRUNCATION_ELLIPSIS = '…';
+// ANSI escape sequences (CSI, OSC) — tool output can carry them — that a
+// width-aware cut must treat as zero-width atomic units: never counted toward
+// the budget, never split in half.
+export const ANSI_ESCAPE_PATTERN = /\u001B(?:\[[0-9;?]*[ -/]*[@-~]|\][^\u0007\u001B]*(?:\u0007|\u001B\\))/g;
+// Code units a single terminal cell may hold before a tail-preserving cut's
+// window can no longer see it: a ZWJ family emoji is about eleven per two
+// cells, and combining sequences run longer.
+export const TAIL_WINDOW_UNITS_PER_CELL = 16;
+// Left indent of a collapsed tool card's outcome rows, aligning them with
+// the message-body indent.
+export const OUTCOME_ROW_INDENT = '  ';
+// Non-empty output lines a collapsed tool card shows in full before it falls
+// back to one telling outcome row.
+export const OUTCOME_MAX_LINES = 3;
+// Path samples a collapsed Grep/Glob card lists in its glance row before
+// counting the rest as "+N more".
+export const OUTCOME_GLANCE_SAMPLES = 3;
 
 // Cap on the step-retry detail line under the waiting spinner, so huge
 // provider error bodies (occasionally whole HTML error pages) can't flood

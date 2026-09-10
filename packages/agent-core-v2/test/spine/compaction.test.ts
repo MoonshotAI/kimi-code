@@ -11,6 +11,7 @@ import { ACCEPTED_OUTPUT, IAgentSpineService } from '#/index';
 import {
   execEnvServices,
   logServices,
+  requesterFromGenerateFn,
   testAgent,
   type TestAgentContext,
   type TestAgentOptions,
@@ -162,7 +163,7 @@ describe('Spine / compaction interaction', () => {
 
   it('summarizes only the current epoch and chains the previous epoch summary', async () => {
     const summaryInputs: string[] = [];
-    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, history) => {
       const text = history.map((message) => textOf(message)).join('\n');
       if (text.includes('You are about to run out of context.')) summaryInputs.push(text);
       return {
@@ -172,7 +173,7 @@ describe('Spine / compaction interaction', () => {
         finishReason: 'completed',
         rawFinishReason: 'stop',
       };
-    };
+    });
     const ctx = testAgent({ generate });
     ctx.configure({ provider: CATALOGUED_PROVIDER, modelCapabilities: CATALOGUED_MODEL_CAPABILITIES });
 

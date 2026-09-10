@@ -13,9 +13,9 @@ import { IMcpConfigStore } from '#/app/mcpConfig/configStore';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
+import { watch } from '#human/utils/watch';
 
 import {
   IWorkspaceMcpConfigService,
@@ -43,7 +43,6 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     @IPluginService private readonly plugins: IPluginService,
     @ILogService private readonly log: ILogService,
     @IConfigService private readonly config: IConfigService,
-    @IHostFsWatchService private readonly fsWatch: IHostFsWatchService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IWorkspaceTrust private readonly trust: IWorkspaceTrust,
     @IMcpConfigStore mcpConfigStore: IMcpConfigStore,
@@ -127,7 +126,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     });
     this.watchPaths([paths.user]);
     const projectRoot = dirname(paths.projectRoot);
-    const handle = this.fsWatch.watch(projectRoot, {
+    const handle = watch(projectRoot, {
       ignored: subtreeWatchFilter(projectRoot, [paths.projectRoot, paths.project]),
     });
     this._register(handle);
@@ -140,7 +139,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
 
   private watchPaths(paths: readonly string[]): void {
     for (const path of paths) {
-      const handle = this.fsWatch.watch(path);
+      const handle = watch(path);
       this._register(handle);
       this._register(
         handle.onDidChange(() => {

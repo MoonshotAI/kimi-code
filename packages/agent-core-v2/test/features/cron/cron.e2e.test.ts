@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { AgentCron, type CronRuntime } from '#/features/cron/cronAgentRuntime';
+import { IAgentCronService } from '#/features/cron/cronService';
 import type { CronConfig } from '#/features/cron/configSection';
 import type { ExecutableToolOutput, ToolExecution } from '#/tool/toolContract';
 
@@ -27,7 +27,7 @@ function outputText(out: ExecutableToolOutput): string {
 
 describe('Cron — session E2E', () => {
   let ctx: TestAgentContext;
-  let cron: CronRuntime;
+  let cron: IAgentCronService;
   let prompt: IAgentPromptService;
   let clockFile: string;
 
@@ -47,7 +47,7 @@ describe('Cron — session E2E', () => {
     };
     ctx.kimiConfig = { ...ctx.kimiConfig, cron: cronConfig };
     await ctx.restorePersisted();
-    cron = ctx.resolve(AgentCron);
+    cron = ctx.get(IAgentCronService);
     prompt = ctx.get(IAgentPromptService);
   });
 

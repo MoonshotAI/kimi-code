@@ -1,5 +1,5 @@
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 
 import type { SpineNode, SpineSpawnEvidence, SpineState } from './spineOps';
 import type { SpineTrimProjection } from './spineTrimDerive';
@@ -12,21 +12,14 @@ export interface SpineFoldStatus {
   readonly parentSummary: string | null;
   readonly cursorContext: number;
   readonly contextLeft: number | undefined;
-  /** Per-message estimate of the whole stored history (pre-fold, messages only). */
   readonly rawContext: number;
-  /**
-   * Whole-context size the remaining-window clamp sees (measured request
-   * totals + estimated tail), i.e. what the projected view costs overall.
-   */
   readonly projectedContext: number;
-  /** Whether `projectedContext` is anchored on an LLM-reported usage record. */
   readonly projectedMeasured: boolean;
 }
 
 export interface SpineFoldInput {
   readonly state: SpineState;
   readonly epochSummaryMessage?: ContextMessage;
-  /** Derived trim projection applied to tool messages in live ranges. */
   readonly trim?: SpineTrimProjection;
 }
 
@@ -199,13 +192,6 @@ function prefixFirstText(content: readonly ContentPart[], anchor: string): Conte
   );
 }
 
-/**
- * Renders the `<spine_tran_status>` orientation item the service persists into
- * the history after a transition step (upstream `format_spine_transition_status`
- * shape). Field extras beyond the upstream six (`raw_context`,
- * `projected_context`) are a deliberate local extension: they cost nothing at
- * emission time and give the model the fold's saving in the same line.
- */
 export function buildSpineTranStatusMessage(status: SpineFoldStatus): ContextMessage {
   const parent = status.parentId === null ? '' : ` parent="${status.parentId}"`;
   const parentSummary =

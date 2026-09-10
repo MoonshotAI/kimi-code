@@ -1,21 +1,3 @@
-/**
- * `spine` domain (L4) — the `SpineState` / `SpineNode` types the whole
- * domain shares.
- *
- * The live tree is rebuilt from the `contextMemory` message stream by
- * `spineDerive.deriveSpineState`; the state shape below is the derivation's
- * output contract — a node map, the open-node stack (its top is the cursor),
- * and the current root-epoch boundary, with `openedAt`/`closedAt` indexing
- * the stored history. Consumed by the Agent-scope `spineService` and the
- * `spineFold` projection.
- *
- * Sessions persisted before the derivation rewrite carry legacy `spine.*` op
- * records; the dispatcher's restore skips unknown record types
- * (skip-and-count), so they replay without any registered reducer.
- *
- * `SpineNode.spawn` is an optional evidence field produced only by the
- * derivation for nodes synthesized from a `spine_spawn` receipt.
- */
 
 export interface SpineSpawnEvidence {
   readonly summary: string;

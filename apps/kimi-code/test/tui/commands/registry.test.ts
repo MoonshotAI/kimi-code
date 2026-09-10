@@ -195,6 +195,7 @@ describe('built-in slash command registry', () => {
         'usage',
         'version',
         'yolo',
+        'auto',
       ]),
     );
   });
@@ -209,21 +210,20 @@ describe('built-in slash command registry', () => {
     expect(resolveSlashCommandAvailability(reloadTui!, '')).toBe('always');
   });
 
-  it('gates secondary-model behind the secondary-model experiment, always available', () => {
+  it('exposes secondary-model unconditionally, always available', () => {
     const command = findBuiltInSlashCommand('secondary-model');
     expect(command).toBeDefined();
-    expect((command as KimiSlashCommand).experimentalFlag).toBe('secondary-model');
+    expect((command as KimiSlashCommand).experimentalFlag).toBeUndefined();
     expect(resolveSlashCommandAvailability(command!, '')).toBe('always');
   });
 
-  it('gates tower behind the tower experiment and the v2 engine', () => {
+  it('gates tower behind the tower experiment', () => {
     const command = findBuiltInSlashCommand('tower');
     expect(command).toBeDefined();
     expect((command as KimiSlashCommand).experimentalFlag).toBe('tower');
-    expect((command as KimiSlashCommand).requiresEngineV2).toBe(true);
   });
 
-  it('keeps tower reads and toggles always available but defers objectives to idle', () => {
+  it('keeps every tower subcommand always available, including objectives', () => {
     const command = findBuiltInSlashCommand('tower');
     expect(command).toBeDefined();
     expect(resolveSlashCommandAvailability(command!, '')).toBe('always');
@@ -231,6 +231,14 @@ describe('built-in slash command registry', () => {
     expect(resolveSlashCommandAvailability(command!, 'off')).toBe('always');
     expect(resolveSlashCommandAvailability(command!, 'status')).toBe('always');
     expect(resolveSlashCommandAvailability(command!, 'teardown')).toBe('always');
-    expect(resolveSlashCommandAvailability(command!, 'Ship feature X')).toBe('idle-only');
+    expect(resolveSlashCommandAvailability(command!, 'Ship feature X')).toBe('always');
   });
+
+  it('registers remote-control as always available', () => {
+    const command = findBuiltInSlashCommand('remote-control');
+    expect(command).toBeDefined();
+    expect((command as KimiSlashCommand).experimentalFlag).toBeUndefined();
+    expect(resolveSlashCommandAvailability(command!, '')).toBe('always');
+  });
+
 });

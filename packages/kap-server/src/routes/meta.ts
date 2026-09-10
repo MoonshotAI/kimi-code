@@ -18,29 +18,9 @@ export interface MetaRouteOptions {
   readonly serverVersion: string;
   readonly serverId: string;
   readonly startedAt: string;
-  /**
-   * Whether the server was started with `--dangerous-bypass-auth`. Surfaced so
-   * the web UI can skip the token prompt and connect without a credential.
-   */
   readonly dangerousBypassAuth: boolean;
-  /**
-   * Custom browser tab title for this instance (the CLI's `--web-title`).
-   * Surfaced as `web_title` in the `/meta` payload; instance-level and frozen
-   * at boot, so it joins the frozen static fields. Omitted when unset.
-   */
   readonly webTitle?: string;
-  /**
-   * Resolves the effective experimental-flag map (flag id → enabled) at
-   * request time. Backed by `IFlagService.snapshot()` in production; tests may
-   * stub it. May return a promise — the handler awaits it, so flag state
-   * always reflects the fully loaded config (never pre-load defaults).
-   */
   readonly getExperimentalFlags: () => Record<string, boolean> | Promise<Record<string, boolean>>;
-  /**
-   * Resolves the engine's current feature list at request time. Backed by
-   * `IFeatureManager.units()` in production, so runtime retraction or a failed
-   * assembly is reflected in the very next response.
-   */
   readonly getFeatures: () => MetaFeature[] | Promise<MetaFeature[]>;
 }
 

@@ -20,7 +20,7 @@ import {
   bootstrap,
   closeSessionById,
   ensureMainAgent,
-  IAgentActivityView,
+  ISessionActivityView,
   IAgentLifecycleService,
   IAgentPermissionModeService,
   IAgentProfileService,
@@ -49,6 +49,7 @@ import {
   summarizeSkill,
   type FileMeta,
   type GetPluginInfoInput,
+  type HostUiCapability,
   type InstallPluginInput,
   type ISessionScopeHandle,
   type PluginCommandDef,
@@ -129,8 +130,9 @@ export interface CoreHarnessOptions {
   readonly uiMode?: string;
   readonly telemetry?: TelemetryClient;
   readonly onOAuthRefresh?: OAuthRefreshHandler;
-  /** TODO(v2-gap): G-3 — v2 bootstrap has no skillDirs input; accepted and ignored. */
   readonly skillDirs?: readonly string[];
+  readonly uiCapabilities?: readonly HostUiCapability[];
+  readonly agentFiles?: readonly string[];
   readonly sessionStartedProperties?: TelemetryProperties;
 }
 
@@ -155,6 +157,7 @@ export interface CreateSessionOptions {
   readonly planMode?: boolean;
   readonly metadata?: Record<string, unknown>;
   readonly additionalDirs?: readonly string[];
+  readonly agentProfile?: string;
   readonly sessionStartedProperties?: TelemetryProperties;
 }
 
@@ -204,7 +207,19 @@ export function createCoreHarness(options: CoreHarnessOptions = {}): CoreHarness
   const configPath = resolveConfigPath({ homeDir, configPath: options.configPath });
   // TODO(v2-gap): G-3 — v2 bootstrap has no skillDirs input; options.skillDirs is dropped.
   const logging = resolveLoggingConfig({ homeDir, env: process.env });
-  const { app } = bootstrap({ homeDir, configPath, clientIdentity: identity }, logSeed(logging));
+  const { app } = bootstrap(
+    {
+      homeDir,
+      configPath,
+      clientIdentity: identity,
+      args: {
+        agentFiles: options.agentFiles,
+        skillDirs: options.skillDirs,
+        uiCapabilities: options.uiCapabilities,
+      },
+    },
+    logSeed(logging),
+  );
   const auth = new KimiAuthFacade({ homeDir, configPath, identity, onRefresh: options.onOAuthRefresh });
   return new CoreHarness({
     app,
@@ -293,6 +308,8 @@ export class CoreHarness {
       sessionId: id,
       workDir: options.workDir,
       additionalDirs: options.additionalDirs,
+      mainAgentBinding:
+        options.agentProfile === undefined ? undefined : { profile: options.agentProfile },
     });
     try {
       const mainContext = await ensureMainAgent(handle);
@@ -356,10 +373,8 @@ export class CoreHarness {
     // `input.forcePluginSessionStartReminder` is accepted and ignored.
     const active = this.activeSessions.get(id);
     if (active !== undefined) {
-      const mainContext = await ensureMainAgent(active.handle);
-      const main = active.handle.accessor.get(IAgentLifecycleService).handleOf(mainContext.agentId)!;
-      const activity = main.accessor.get(IAgentActivityView).state();
-      if (activity.turn !== undefined || activity.background.length > 0) {
+      const activity = active.handle.accessor.get(ISessionActivityView).state();
+      if (activity.busy) {
         throw new CoreError(
           CoreErrorCodes.TURN_AGENT_BUSY,
           `Session "${id}" is busy; wait for the current turn to finish before reloading.`,
@@ -521,6 +536,12 @@ export class CoreHarness {
 
   async closeSession(id: string): Promise<void> {
     await this.activeSessions.get(id)?.session.close();
+  }
+
+  async deleteSession(id: string): Promise<void> {
+    const sessionId = normalizeSessionId(id);
+    await this.activeSessions.get(sessionId)?.session.close();
+    await this.deps.app.accessor.get(ISessionManager).delete(sessionId);
   }
 
   // -- Config -------------------------------------------------------------------

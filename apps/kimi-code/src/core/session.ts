@@ -12,13 +12,12 @@
  */
 
 import {
-  AgentGoal,
-  AgentTodo,
   agentContextOf,
   ensureMainAgent,
   IAgentContextMemoryService,
   IAgentConversationUndoService,
   IAgentFullCompactionService,
+  IAgentGoalService,
   IAgentLifecycleService,
   IAgentLoopService,
   IAgentMcpService,
@@ -31,23 +30,22 @@ import {
   IAgentSkillService,
   IAgentSwarmService,
   IAgentTaskService,
+  IAgentTodoService,
   IAgentTowerService,
   IConfigService,
   IModelCatalog,
+  interactions,
+  INTERACTION_TAG_AGENT_ID,
+  INTERACTION_TAG_SESSION_ID,
   IPluginService,
-  ISessionApprovalService,
   ISessionBtwService,
   ISessionContext,
   ISessionMetadata,
-  ISessionQuestionService,
   ISessionSkillCatalog,
   ISessionTokenCountingService,
   ISessionUsageService,
   IWorkspaceDirs,
-  listSessionPendingInteractions,
   MAIN_AGENT_ID,
-  onSessionInteractionDidChangePending,
-  onSessionInteractionDidResolve,
   summarizeSkill,
   type ContentPart,
   type ContextMessage,
@@ -242,10 +240,7 @@ export class CoreSession {
   /** The session's todo list, read live from the main agent's todo runtime. */
   async getTodos(): Promise<readonly TodoItem[]> {
     const agent = await this.agent();
-    return this.init.handle.accessor
-      .get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentTodo)
-      .get();
+    return agent.accessor.get(IAgentTodoService).get();
   }
 
   async activatePluginCommand(input: {
@@ -381,10 +376,7 @@ export class CoreSession {
 
   async getGoal(): Promise<GoalToolResult> {
     const agent = await this.agent();
-    return agent.accessor
-      .get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentGoal)
-      .getGoal();
+    return agent.accessor.get(IAgentGoalService).getGoal();
   }
 
   async getSessionWarnings(): Promise<readonly SessionWarning[]> {
@@ -429,25 +421,25 @@ export class CoreSession {
 
   async createGoal(input: CreateGoalInput): Promise<GoalToolResult> {
     const agent = await this.agent();
-    const goal = agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentGoal);
+    const goal = agent.accessor.get(IAgentGoalService);
     return { goal: await goal.createGoal(input) };
   }
 
   async pauseGoal(): Promise<GoalToolResult> {
     const agent = await this.agent();
-    const goal = agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentGoal);
+    const goal = agent.accessor.get(IAgentGoalService);
     return { goal: await goal.pauseGoal() };
   }
 
   async resumeGoal(): Promise<GoalToolResult> {
     const agent = await this.agent();
-    const goal = agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentGoal);
+    const goal = agent.accessor.get(IAgentGoalService);
     return { goal: await goal.resumeGoal() };
   }
 
   async cancelGoal(): Promise<GoalToolResult> {
     const agent = await this.agent();
-    const goal = agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentGoal);
+    const goal = agent.accessor.get(IAgentGoalService);
     return { goal: await goal.cancelGoal() };
   }
 
@@ -604,52 +596,60 @@ export class CoreSession {
   }
 
   private buildApprovals(): CoreApprovals {
-    const manager = this.init.handle.accessor.get(IAgentLifecycleService);
-    const approvals = this.init.handle.accessor.get(ISessionApprovalService);
+    const sessionId = this.init.handle.accessor.get(ISessionContext).sessionId;
     const project = (i: Interaction): PendingApproval => {
       const payload = i.payload as CoreApprovalRequest;
+      const tagAgentId = i.tags[INTERACTION_TAG_AGENT_ID];
       return {
         id: i.id,
-        agentId: i.origin.agentId ?? payload.agentId ?? MAIN_AGENT_ID,
+        agentId: typeof tagAgentId === 'string' ? tagAgentId : payload.agentId ?? MAIN_AGENT_ID,
         request: payload,
       };
     };
     return {
-      list: () => listSessionPendingInteractions(manager, 'approval').map(project),
-      onDidChangePending: (listener) => {
-        const d = onSessionInteractionDidChangePending(manager, () => listener());
-        return () => d.dispose();
+      list: () =>
+        interactions
+          .findAll({
+            kind: 'approval',
+            resolved: false,
+            tags: { [INTERACTION_TAG_SESSION_ID]: sessionId },
+          })
+          .map(project),
+      onDidChangePending: (listener) => interactions.onDidChangePending(() => listener()),
+      onDidResolve: (listener) => interactions.onDidResolve(({ id }) => listener(id)),
+      decide: (id, response) => {
+        interactions.respond(id, response);
       },
-      onDidResolve: (listener) => {
-        const d = onSessionInteractionDidResolve(manager, ({ id }) => listener(id));
-        return () => d.dispose();
-      },
-      decide: (id, response) => approvals.decide(id, response),
     };
   }
 
   private buildQuestions(): CoreQuestions {
-    const manager = this.init.handle.accessor.get(IAgentLifecycleService);
-    const questions = this.init.handle.accessor.get(ISessionQuestionService);
-    const project = (i: Interaction): PendingQuestion => ({
-      id: i.id,
-      // TODO(v2-gap): G-20 — `QuestionRequest` carries no agentId; fall back to
-      // the interaction origin, then main.
-      agentId: i.origin.agentId ?? MAIN_AGENT_ID,
-      request: i.payload as CoreQuestionRequest,
-    });
+    const sessionId = this.init.handle.accessor.get(ISessionContext).sessionId;
+    const project = (i: Interaction): PendingQuestion => {
+      const tagAgentId = i.tags[INTERACTION_TAG_AGENT_ID];
+      return {
+        id: i.id,
+        agentId: typeof tagAgentId === 'string' ? tagAgentId : MAIN_AGENT_ID,
+        request: i.payload as CoreQuestionRequest,
+      };
+    };
     return {
-      list: () => listSessionPendingInteractions(manager, 'question').map(project),
-      onDidChangePending: (listener) => {
-        const d = onSessionInteractionDidChangePending(manager, () => listener());
-        return () => d.dispose();
+      list: () =>
+        interactions
+          .findAll({
+            kind: 'question',
+            resolved: false,
+            tags: { [INTERACTION_TAG_SESSION_ID]: sessionId },
+          })
+          .map(project),
+      onDidChangePending: (listener) => interactions.onDidChangePending(() => listener()),
+      onDidResolve: (listener) => interactions.onDidResolve(({ id }) => listener(id)),
+      answer: (id, result) => {
+        interactions.respond(id, result);
       },
-      onDidResolve: (listener) => {
-        const d = onSessionInteractionDidResolve(manager, ({ id }) => listener(id));
-        return () => d.dispose();
+      dismiss: (id) => {
+        interactions.respond(id, null);
       },
-      answer: (id, result) => questions.answer(id, result),
-      dismiss: (id) => questions.dismiss(id),
     };
   }
 }

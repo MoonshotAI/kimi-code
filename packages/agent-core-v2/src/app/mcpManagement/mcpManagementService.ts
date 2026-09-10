@@ -206,7 +206,6 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
             undefined,
             this.hostProcess,
             undefined,
-            undefined,
           ),
         );
         runtimeResolver = {
@@ -557,7 +556,6 @@ function requireOAuthMcpConfig(name: string, input: McpServerConfig): McpRemoteS
   return config;
 }
 
-/** Stable wire id of a locator: `global:<name>` / `plugin:<pluginId>:<serverName>`. */
 export function mcpServerId(locator: McpServerLocator): string {
   if (locator.source === 'global') return `global:${encodeURIComponent(locator.name)}`;
   return `plugin:${encodeURIComponent(locator.pluginId)}:${encodeURIComponent(locator.serverName)}`;

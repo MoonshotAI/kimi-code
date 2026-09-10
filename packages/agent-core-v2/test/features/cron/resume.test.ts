@@ -6,10 +6,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
-import { AgentCron, type CronRuntime } from '#/features/cron/cronAgentRuntime';
+import { IAgentCronService } from '#/features/cron/cronService';
 import type { CronConfig } from '#/features/cron/configSection';
 import { CronCursor } from '#/features/cron/cronOps';
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 import type { WireRecord } from '#/wire/record';
 
@@ -94,7 +94,7 @@ describe('AgentCron — persistence and resume', () => {
     it('addTask persists the task as a durable cron.add record', async () => {
       rig = makeRig();
       const ctx = await bootCtx(rig);
-      const cron = ctx.resolve(AgentCron);
+      const cron = ctx.get(IAgentCronService);
 
       const task = cron.addTask({ cron: '*/5 * * * *', prompt: 'ping' });
       await ctx.dispatcher.flush();
@@ -114,7 +114,7 @@ describe('AgentCron — persistence and resume', () => {
     it('removeTasks appends a durable cron.delete record', async () => {
       rig = makeRig();
       const ctx = await bootCtx(rig);
-      const cron = ctx.resolve(AgentCron);
+      const cron = ctx.get(IAgentCronService);
 
       const task = cron.addTask({ cron: '*/5 * * * *', prompt: 'a' });
       await ctx.dispatcher.flush();
@@ -132,14 +132,14 @@ describe('AgentCron — persistence and resume', () => {
     it('re-adopts tasks with original id and createdAt', async () => {
       rig = makeRig();
       const first = await bootCtx(rig);
-      const cron = first.resolve(AgentCron);
+      const cron = first.get(IAgentCronService);
       const t1 = cron.addTask({ cron: '*/5 * * * *', prompt: 'a' });
       const t2 = cron.addTask({ cron: '0 9 * * *', prompt: 'b', recurring: true });
       await first.dispatcher.flush();
 
       setClock(rig, WALL_ANCHOR + 60_000);
       const second = await bootCtx(rig);
-      const resumed = second.resolve(AgentCron);
+      const resumed = second.get(IAgentCronService);
 
       const loaded = resumed.list().slice().toSorted((a, b) => a.id.localeCompare(b.id));
       const expected = [t1, t2].toSorted((a, b) => a.id.localeCompare(b.id));
@@ -158,12 +158,12 @@ describe('AgentCron — persistence and resume', () => {
     it('recurring task missed during downtime fires once with coalescedCount > 1', async () => {
       rig = makeRig();
       const first = await bootCtx(rig);
-      first.resolve(AgentCron).addTask({ cron: '*/5 * * * *', prompt: 'check' });
+      first.get(IAgentCronService).addTask({ cron: '*/5 * * * *', prompt: 'check' });
       await first.dispatcher.flush();
 
       setClock(rig, WALL_ANCHOR + 23 * 60_000);
       const second = await bootCtx(rig);
-      const resumed = second.resolve(AgentCron);
+      const resumed = second.get(IAgentCronService);
 
       const steerCalls = captureSteer(second);
       await resumed.tick();
@@ -182,7 +182,7 @@ describe('AgentCron — persistence and resume', () => {
       rig = makeRig();
       const first = await bootCtx(rig);
       const oneShot = first
-        .resolve(AgentCron)
+        .get(IAgentCronService)
         .addTask({ cron: '*/5 * * * *', prompt: 'remind once', recurring: false });
       await first.dispatcher.flush();
       expect(recordsOfType(rig.persistence, 'cron.add')).toEqual([
@@ -191,7 +191,7 @@ describe('AgentCron — persistence and resume', () => {
 
       setClock(rig, WALL_ANCHOR + 10 * 60_000);
       const second = await bootCtx(rig);
-      const resumed = second.resolve(AgentCron);
+      const resumed = second.get(IAgentCronService);
 
       const steerCalls = captureSteer(second);
       await resumed.tick();
@@ -214,7 +214,7 @@ describe('AgentCron — persistence and resume', () => {
     it('does NOT replay the fired slot on resume', async () => {
       rig = makeRig();
       const first = await bootCtx(rig);
-      const cron = first.resolve(AgentCron);
+      const cron = first.get(IAgentCronService);
       const task = cron.addTask({ cron: '*/5 * * * *', prompt: 'check' });
       await first.dispatcher.flush();
 
@@ -233,7 +233,7 @@ describe('AgentCron — persistence and resume', () => {
 
       setClock(rig, WALL_ANCHOR + 23 * 60_000);
       const second = await bootCtx(rig);
-      const resumed = second.resolve(AgentCron);
+      const resumed = second.get(IAgentCronService);
 
       const steerCallsB = captureSteer(second);
       await resumed.tick();
@@ -250,7 +250,7 @@ describe('AgentCron — persistence and resume', () => {
     it('treats a future lastFiredAt as corrupt and falls back to createdAt', async () => {
       rig = makeRig();
       const first = await bootCtx(rig);
-      const cron = first.resolve(AgentCron);
+      const cron = first.get(IAgentCronService);
       const task = cron.addTask({ cron: '*/5 * * * *', prompt: 'check' });
       await first.dispatcher.dispatch(
         new CronCursor({ id: task.id, lastFiredAt: WALL_ANCHOR + 365 * 24 * 60 * 60 * 1000 }),
@@ -259,7 +259,7 @@ describe('AgentCron — persistence and resume', () => {
 
       setClock(rig, WALL_ANCHOR + 23 * 60_000);
       const second = await bootCtx(rig);
-      const resumed: CronRuntime = second.resolve(AgentCron);
+      const resumed: IAgentCronService = second.get(IAgentCronService);
 
       const steerCalls = captureSteer(second);
       await resumed.tick();

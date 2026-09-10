@@ -33,11 +33,15 @@ export interface FetchLatestResult {
   readonly manifest: UpdateManifest | null;
 }
 
-async function fetchWithTimeout(fetchImpl: typeof fetch, input: string): Promise<Response> {
+async function fetchWithTimeout(
+  fetchImpl: typeof fetch,
+  input: string,
+  timeoutMs: number,
+): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => {
     controller.abort();
-  }, CDN_FETCH_TIMEOUT_MS);
+  }, timeoutMs);
   try {
     return await fetchImpl(input, { signal: controller.signal });
   } finally {
@@ -57,8 +61,9 @@ async function fetchWithTimeout(fetchImpl: typeof fetch, input: string): Promise
  */
 export async function fetchLatestVersionFromCdn(
   fetchImpl: typeof fetch = fetch,
+  timeoutMs: number = CDN_FETCH_TIMEOUT_MS,
 ): Promise<string> {
-  const response = await fetchWithTimeout(fetchImpl, kimiCodeCdnLatestUrl());
+  const response = await fetchWithTimeout(fetchImpl, kimiCodeCdnLatestUrl(), timeoutMs);
   if (!response.ok) {
     throw new Error(`CDN /latest returned HTTP ${response.status}`);
   }
@@ -69,8 +74,11 @@ export async function fetchLatestVersionFromCdn(
   return raw;
 }
 
-async function fetchUpdateManifestFromCdn(fetchImpl: typeof fetch): Promise<UpdateManifest> {
-  const response = await fetchWithTimeout(fetchImpl, kimiCodeCdnLatestJsonUrl());
+async function fetchUpdateManifestFromCdn(
+  fetchImpl: typeof fetch,
+  timeoutMs: number,
+): Promise<UpdateManifest> {
+  const response = await fetchWithTimeout(fetchImpl, kimiCodeCdnLatestJsonUrl(), timeoutMs);
   if (!response.ok) {
     throw new Error(`CDN /latest.json returned HTTP ${response.status}`);
   }
@@ -87,11 +95,12 @@ async function fetchUpdateManifestFromCdn(fetchImpl: typeof fetch): Promise<Upda
  */
 export async function fetchLatestFromCdn(
   fetchImpl: typeof fetch = fetch,
+  timeoutMs: number = CDN_FETCH_TIMEOUT_MS,
 ): Promise<FetchLatestResult> {
-  const manifest = await fetchUpdateManifestFromCdn(fetchImpl).catch(() => null);
+  const manifest = await fetchUpdateManifestFromCdn(fetchImpl, timeoutMs).catch(() => null);
   if (manifest !== null) {
     return { latest: manifest.version, manifest };
   }
-  const latest = await fetchLatestVersionFromCdn(fetchImpl);
+  const latest = await fetchLatestVersionFromCdn(fetchImpl, timeoutMs);
   return { latest, manifest: null };
 }

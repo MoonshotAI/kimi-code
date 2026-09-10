@@ -4,7 +4,7 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { registerScopedService, ScopeActivation } from '#/_base/di/scope';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
-import { estimateTokensForMessages } from '#/kosong/contract/tokens';
+import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
 import { COMPACTION_SUMMARY_PREFIX } from '#/agent/contextMemory/compactionHandoff';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
@@ -114,45 +114,13 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
   private cachedState: SpineState | undefined;
   private cachedTrimMessages: readonly ContextMessage[] | undefined;
   private cachedTrimProjection: SpineTrimProjection | undefined;
-  /**
-   * Ephemeral per-node token gauges, recorded at accept time. Token baselines
-   * are not in the message stream, so pure derivation cannot recover them.
-   * Within a session these maps are complete and request-caliber; on restore
-   * they reset, so pre-restore nodes lose `tokenCost` and the cursor's
-   * `cursor_context` reads as the full size. That overstatement fails SAFE for
-   * a compaction-trigger gauge (premature close, never overflow). Rebuilding
-   * per-node baselines from the persisted `tokenCounting` anchors is follow-up
-   * work, out of spine's scope.
-   */
   private readonly baselines = new Map<string, number>();
   private readonly finals = new Map<string, number>();
-  /** Closed nodes whose trajectory archive is on disk (or rewritten already). */
   private readonly archivedIds = new Set<string>();
-  /**
-   * Nodes (or epochs) whose archive write failed. For a work node the failure
-   * note is patched into its memory; an epoch node carries no memory, so its id
-   * only suppresses the published archive path — the tree never points at a
-   * missing file, and the failure is reported through `onUnexpectedError`
-   * either way.
-   */
   private readonly failedArchiveIds = new Set<string>();
   private spineViewOverride: string | undefined;
   private spineViewReady: Promise<void> = Promise.resolve();
-  /**
-   * Number of child agents currently running as part of an in-flight
-   * `spine_spawn` fission. Ephemeral: reset at step bounds and on restore.
-   */
   private activeSpawnBranches = 0;
-  /**
-   * The cursor-position signature (root epoch + open stack) the last
-   * `<spine_tran_status>` was emitted for. Mirroring the upstream
-   * `on_sampling_complete` gate (`applied_transition.is_some()`), a status is
-   * appended only when a finished step CHANGED this signature — spawn joins,
-   * trims, and silent no-apply groups leave it untouched; undo / restore /
-   * splice re-baseline it without emitting, so the surviving history (whose
-   * persisted statuses truncate along with everything else) stays the correct
-   * orientation. Ephemeral by construction; initialized from the derivation.
-   */
   private statusSignature: string;
 
   constructor(
@@ -411,16 +379,6 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     return this.state();
   }
 
-  /**
-   * The upstream `<spine_tran_status>` emission contract: after a step whose
-   * derivation shows an applied transition (cursor-stack change), persist one
-   * status injection into the history. Everything else — ordinary steps,
-   * spawn joins, trims, silent no-apply groups — leaves the signature alone
-   * and appends nothing. The appended message is an ordinary history item: it
-   * renders in live ranges, folds away with the span that closes over it, and
-   * survives resume; undo / restore / splice re-baseline the signature in
-   * their own handlers instead of passing through here.
-   */
   private appendTransitionStatus(): void {
     if (!this.enabled) return;
     const signature = transitionSignature(this.derivedState());
@@ -461,25 +419,10 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     return null;
   }
 
-  /**
-   * Plan mode rejects every spine transition, trim included, mirroring the
-   * upstream handler gate (`Spine transitions are not allowed in Plan mode`).
-   * Read straight off the replayable plan state so the gate follows undo /
-   * restore like every other derived state.
-   */
   private get planModeActive(): boolean {
     return this.agentState.get(planKey).active;
   }
 
-  /**
-   * Loud spawn admission, mirroring the upstream `calls_in_response_group`
-   * contract: a `spine_spawn` batched with `spine_open` / `spine_close` /
-   * `spine_next` in the same response, or a second `spine_spawn` in it, is
-   * vetoed before execution (the before-execute event exposes the whole
-   * response's call list during the executor's sequential preparation pass).
-   * The sibling control calls still earn their accepted receipts; the
-   * derivation's carrier-group classification then applies none of them.
-   */
   private guardSpawnMixing(event: BeforeToolExecuteEvent): void {
     if (!this.enabled || !this.spawnEnabled) return;
     if (event.toolCall.name !== SPINE_TOOL_SPAWN) return;
@@ -505,11 +448,6 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     }
   }
 
-  /**
-   * The projection-facing state: the derivation plus the archive-failure note
-   * patched into the affected nodes' memory, so the model learns from the next
-   * projection on that the detailed trajectory was not persisted.
-   */
   private state(): SpineState {
     const derived = this.derivedState();
     if (this.failedArchiveIds.size === 0) return derived;
@@ -534,11 +472,6 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     return state;
   }
 
-  /**
-   * The trim projection over the same stream, cached with the same
-   * reference-equality guard. This is the single eligibility source: the fold
-   * renders it and `acceptTrim` validates against it.
-   */
   private trimProjection(): SpineTrimProjection {
     const messages = this.context.get();
     if (this.cachedTrimProjection !== undefined && this.cachedTrimMessages === messages) {
@@ -554,11 +487,6 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     return topOf(this.derivedState());
   }
 
-  /**
-   * The live gauges the pure tree projection prices nodes with: the ephemeral
-   * baselines/finals recorded at accept time, and the deterministic archive
-   * paths (suppressed for this session's failed writes).
-   */
   private treeViewInput(): SpineTreeViewInput {
     return {
       currentUsed: this.tokenCounting.get(agentContextOfScope(this.agentScope)).size,
@@ -574,13 +502,6 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     return closed ? this.archivePath(id) : undefined;
   }
 
-  /**
-   * Projection-delta archiving: every closed node the derivation reports and
-   * the ledger has not archived yet gets its trajectory written. Runs at step
-   * end (and effectively on the first step end after a restore, since the
-   * ledger starts empty), so a close and its archive are at most one step
-   * apart and a lost write self-heals on the next session.
-   */
   private async archiveNewlyClosed(): Promise<void> {
     if (!this.enabled) return;
     const state = this.derivedState();
@@ -602,18 +523,6 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     await this.archiveCurrentEpochBoundary(state, messages);
   }
 
-  /**
-   * The current epoch's boundary archive is written by the full-compaction
-   * flow when the epoch begins, but that write is a side effect the ledger
-   * does not retry: a transient failure (or a crash mid-write) leaves the file
-   * missing, and a later restore clears the failure ledger so the tree
-   * publishes the path again — pointing at a file that was never written.
-   * Reconstruct it here from the derived boundary (the summary message and the
-   * pre-boundary history are both in the surviving stream) so the published
-   * path always names a real file. Only the CURRENT epoch is reconstructible —
-   * the derived state carries its boundary, not older epochs', whose archives
-   * their own compactions already wrote.
-   */
   private async archiveCurrentEpochBoundary(
     state: SpineState,
     messages: readonly ContextMessage[],

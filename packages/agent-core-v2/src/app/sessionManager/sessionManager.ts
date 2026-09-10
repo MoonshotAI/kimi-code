@@ -2,6 +2,7 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 import type { ISessionScopeHandle } from '#/_base/di/scope';
 import type { Event, IWaitUntil } from '#/_base/event';
 import type { SessionSummary } from '#/app/sessionIndex/sessionIndex';
+import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import type {
   CreateChildSessionOptions,
   CreateSessionOptions,
@@ -30,6 +31,7 @@ export interface ISessionManager {
   readonly onDidCreateSession?: Event<SessionCreatedEvent & IWaitUntil>;
   readonly onWillCloseSession?: Event<SessionWillCloseEvent & IWaitUntil>;
   readonly onDidCloseSession?: Event<SessionClosedEvent>;
+  readonly onWillDeleteSession?: Event<{ readonly sessionId: string } & IWaitUntil>;
   readonly onDidArchiveSession?: Event<SessionArchivedEvent>;
   readonly onDidForkSession?: Event<SessionForkedEvent>;
   create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle>;
@@ -46,8 +48,8 @@ export interface ISessionManager {
   archive(sessionId: string): Promise<void>;
   restore(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined>;
   delete(sessionId: string): Promise<void>;
-  fork(options: ForkSessionOptions): Promise<ISessionScopeHandle>;
-  createChild(options: CreateChildSessionOptions): Promise<ISessionScopeHandle>;
+  fork(options: ForkSessionOptions): Promise<SessionMeta>;
+  createChild(options: CreateChildSessionOptions): Promise<SessionMeta>;
 }
 
 export const ISessionManager: ServiceIdentifier<ISessionManager> = createDecorator<ISessionManager>('sessionManager');

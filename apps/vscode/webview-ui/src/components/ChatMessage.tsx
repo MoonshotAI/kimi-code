@@ -30,7 +30,7 @@ function ThinkingIndicator() {
   return (
     <div className="flex items-center gap-2 mt-1 text-blue-500/80 py-1">
       <IconLoader3 className="size-3.5 animate-spin" />
-      <span className="text-[11px] font-medium tracking-wide">Processing...</span>
+      <span className="text-[11px] font-medium tracking-wide">Processing…</span>
     </div>
   );
 }
@@ -249,7 +249,7 @@ function AssistantMessage({ message, turnIndex, isStreaming }: { message: ChatMe
     if (!hasSteps) {
       return typeof message.content === "string" ? message.content : "";
     }
-    const lastStep = steps[steps.length - 1];
+    const lastStep = steps.at(-1);
     const textItems = lastStep.items.filter((item) => item.type === "text");
     if (textItems.length > 0) {
       return textItems.map((item) => (item as { type: "text"; content: string }).content).join("\n");

@@ -1,6 +1,7 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
 import { defineState } from '#/state/state';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
@@ -25,6 +26,7 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
     @IWorkspaceContext workspace: IWorkspaceContext,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     super();
     this.states.contributeState(workspaceTrustTrustedKey);
@@ -54,6 +56,7 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
     await writeWorkspaceTrust(this.docs, this.root, Date.now());
     this.trusted = true;
     this.changeEmitter.fire({ trusted: true });
+    this.telemetry.track2('workspace_trust_changed', { trusted: true });
   }
 
   async untrust(): Promise<void> {
@@ -61,9 +64,10 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
     await deleteWorkspaceTrust(this.docs, this.root);
     this.trusted = false;
     this.changeEmitter.fire({ trusted: false });
+    this.telemetry.track2('workspace_trust_changed', { trusted: false });
   }
 
   private async initialize(): Promise<void> {
-    this.trusted = await readWorkspaceTrust(this.docs, this.root);
+    this.trusted = await readWorkspaceTrust(this.docs, this.root, this.telemetry);
   }
 }

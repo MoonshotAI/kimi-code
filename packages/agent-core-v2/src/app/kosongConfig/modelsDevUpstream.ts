@@ -1,7 +1,7 @@
 import { CoreErrors } from '#/_base/errors/codes';
 import { BugIndicatingError, Error2 } from '#/_base/errors/errors';
-import type { ModelCapability } from '#/kosong/contract/capability';
-import type { ModelRecord } from '#/kosong/model/model';
+import type { ModelCapability } from '#/llm-adapter/contract/capability';
+import type { ModelRecord } from '#/llm-adapter/model/model';
 
 import { BUILT_IN_MODELS_DEV_JSON } from './builtInModelsDev';
 import { ModelsDevImportErrors } from './errors';
@@ -85,7 +85,7 @@ async function fetchAndCache(userAgent: string): Promise<ModelsDevCatalog> {
     }
     cache = { catalog: payload as ModelsDevCatalog, fetchedAt: now };
     return cache.catalog;
-  } catch (err) {
+  } catch (error) {
     if (cache !== undefined) return cache.catalog;
     const builtIn = builtInCatalog();
     if (builtIn !== undefined) {
@@ -94,7 +94,7 @@ async function fetchAndCache(userAgent: string): Promise<ModelsDevCatalog> {
     }
     throw new Error2(
       ModelsDevImportErrors.codes.CATALOG_UNAVAILABLE,
-      `models.dev catalog unavailable: ${err instanceof Error ? err.message : String(err)}`,
+      `models.dev catalog unavailable: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }

@@ -11,9 +11,6 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  AgentInteraction,
-  AgentTodo,
-  IAgentActivityView,
   IAgentBlobService,
   IAgentContextMemoryService,
   IAgentLifecycleService,
@@ -24,6 +21,7 @@ import {
   IAgentScopeContext,
   IAgentSwarmService,
   IAgentTaskService,
+  IAgentTodoService,
   IAgentToolPolicyService,
   IAgentToolRegistryService,
   IAppendLogStore,
@@ -35,13 +33,12 @@ import {
   IModelCatalog,
   IPluginService,
   IProviderService,
-  ISessionApprovalService,
+  ISessionActivityView,
   ISessionContext,
   ISessionExportService,
   ISessionIndex,
   ISessionManager,
   ISessionMetadata,
-  ISessionQuestionService,
   ISessionTokenCountingService,
   ISessionUsageService,
   ISessionWorkspaceContext,
@@ -70,14 +67,6 @@ function makeFakeBus() {
     subscribe: (h: (e: unknown) => void) => { listeners.add(h); return { dispose: () => listeners.delete(h) }; },
     publish: (e: unknown) => { for (const l of [...listeners]) l(e); },
     count: () => listeners.size,
-  };
-}
-
-function makeFakeInteractionKernel() {
-  return {
-    listPending: () => [],
-    onDidChangePending: () => ({ dispose: () => {} }),
-    onDidResolve: () => ({ dispose: () => {} }),
   };
 }
 
@@ -177,15 +166,7 @@ function makeFixture(options?: {
         [ISessionUsageService, { status: () => usage }],
         [IAgentToolRegistryService, { list: () => [] }],
         [IAgentTaskService, { list: () => [] }],
-        [
-          IAgentActivityView,
-          {
-            state: () =>
-              options?.activityStatus === 'running'
-                ? { lifecycle: 'ready', turn: { turnId: 1 }, background: [] }
-                : { lifecycle: 'ready', background: [] },
-          },
-        ],
+        [IAgentTodoService, { get: () => [] }],
         [IWireService, { flush: () => Promise.resolve() }],
         [IAgentScopeContext, { scope: () => 'agent-main', agentContext: context }],
         [IAppendLogStore, { read: async function* () {} }],
@@ -197,16 +178,10 @@ function makeFixture(options?: {
   const makeSessionHandle = (sid: string, workDir: string) => {
     const agent = makeAgentServices(sid);
     const main = { id: 'main', kind: 'agent', accessor: makeAccessor(agent.entries) };
-    const kernel = makeFakeInteractionKernel();
     const lifecycleAgents = {
       list: () => [agent.context],
       handleOf: (id: string) => (id === 'main' ? main : undefined),
       create: async () => agent.context,
-      resolve: (_context: unknown, definition: unknown) => {
-        if (definition === AgentTodo) return { get: () => [] };
-        if (definition === AgentInteraction) return kernel;
-        throw new Error('fake lifecycle: unexpected runtime definition');
-      },
       onDidCreate: () => ({ dispose: () => {} }),
       onDidClose: () => ({ dispose: () => {} }),
     };
@@ -227,8 +202,16 @@ function makeFixture(options?: {
       kind: 'session',
       accessor: makeAccessor([
         [IAgentLifecycleService, lifecycleAgents],
-        [ISessionApprovalService, { decide: () => {} }],
-        [ISessionQuestionService, { answer: () => {}, dismiss: () => {} }],
+        [
+          ISessionActivityView,
+          {
+            state: () => ({
+              busy: options?.activityStatus === 'running',
+              mainTurnActive: options?.activityStatus === 'running',
+              pendingInteraction: 'none',
+            }),
+          },
+        ],
         [ISessionContext, { sessionId: sid, workspaceId: 'ws-1', sessionDir: `/sessions/ws-1/${sid}`, cwd: workDir }],
         [
           ISessionMetadata,

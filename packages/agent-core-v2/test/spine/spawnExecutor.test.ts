@@ -15,8 +15,8 @@ import {
   taskEnvelope,
   type SpawnBranchResult,
 } from '#/agent/spine/spineSpawn';
-import { APIProviderRateLimitError, APIStatusError } from '#/kosong/contract/errors';
-import type { ToolCall } from '#/kosong/contract/message';
+import { APIProviderRateLimitError, APIStatusError } from '#/llm-adapter/contract/errors';
+import type { ToolCall } from '#human/llm/message';
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type {
   AgentRunHandle,
@@ -112,12 +112,6 @@ function buildFakes(tasks: readonly SpineSpawnTaskInput[]): {
     },
     get: (agentId) => contexts.get(agentId),
     list: () => [...contexts.values()],
-    resolve: () => {
-      throw new Error('not used');
-    },
-    inspect: () => {
-      throw new Error('not used');
-    },
     broadcastPermissionMode: () => undefined,
     remove: (agent) => {
       const target = agents.find((a) => a.id === agent.agentId);
@@ -128,7 +122,6 @@ function buildFakes(tasks: readonly SpineSpawnTaskInput[]): {
     adopt: () => {
       throw new Error('not used');
     },
-    attachRuntimes: () => undefined,
   };
 
   const subagentService: ISessionSubagentService = {

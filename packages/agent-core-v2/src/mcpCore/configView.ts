@@ -8,7 +8,6 @@ export type McpServerConfigView =
       readonly headerKeys?: readonly string[];
     });
 
-/** Project a full effective config into its wire-facing view. */
 export function toMcpServerConfigView(config: McpServerConfig): McpServerConfigView {
   if (config.transport === 'stdio') {
     const { env, ...safe } = config;

@@ -2,7 +2,6 @@ function collapseWs(s: string): string {
   return s.replaceAll(/\s+/g, ' ').trim();
 }
 
-/** Query terms for locating: whitespace-split words plus the whole query. */
 export function snippetTerms(query: string): string[] {
   const terms = query
     .split(/\s+/)
@@ -13,14 +12,6 @@ export function snippetTerms(query: string): string[] {
   return terms;
 }
 
-/**
- * `anchor` — a caller-known hit location (`at` = offset of the match in
- * `text`, `len` = match length in code units), e.g. the confirmation offset
- * from literal search. When given, the term-guessing pass is skipped. The
- * window math clamps out-of-range offsets, so an anchor taken from a
- * normalized copy of the text (NFKC can shift offsets) degrades to a
- * slightly shifted window, never an error.
- */
 export function makeSnippet(
   text: string,
   query: string,

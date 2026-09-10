@@ -5,7 +5,7 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark, oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { useRequest } from "ahooks";
+import { useQuery } from "@tanstack/react-query";
 import { IconVideo } from "@tabler/icons-react";
 import type { Components } from "react-markdown";
 import { parseSegments, parseColorSegments, extractPaths, checkFilesExist, hasColors, isLocalPath } from "@/lib/text-enrichment";
@@ -112,8 +112,9 @@ function enrichChildren(children: React.ReactNode, fileMap: Record<string, boole
 }
 
 function LocalImage({ src, alt, onPreview }: { src: string; alt?: string; onPreview: (uri: string) => void }) {
-  const { data } = useRequest(() => bridge.getImageDataUri(src), {
-    cacheKey: `local-image:${src}`,
+  const { data } = useQuery({
+    queryKey: ["localImage", src],
+    queryFn: () => bridge.getImageDataUri(src),
     staleTime: 10000,
   });
 
@@ -190,7 +191,7 @@ export const Markdown = memo(function Markdown({ content, className, enableEnric
       return;
     }
     const paths = extractPaths(content);
-    if (!paths.length) {
+    if (paths.length === 0) {
       setFileMap({});
       return;
     }

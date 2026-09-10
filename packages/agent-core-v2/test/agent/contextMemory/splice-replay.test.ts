@@ -15,11 +15,12 @@ import {
   ContextUndo,
 } from '#/agent/contextMemory/contextEvents';
 import { contextMemoryKey } from '#/agent/contextMemory/contextOps';
+import { buildCompactionContinuationText } from '#/agent/contextMemory/compactionHandoff';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -378,10 +379,18 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     );
 
     const model = replay.agentState.get(contextMemoryKey);
-    expect(model.map((message) => message.role)).toEqual(['user', 'user', 'user']);
-    expect(model.map(textOf)).toEqual(['old user', 'recent user', 'model-facing summary']);
+    expect(model.map((message) => message.role)).toEqual(['user', 'user', 'user', 'user']);
+    expect(model.map(textOf)).toEqual([
+      'old user',
+      'recent user',
+      'model-facing summary',
+      buildCompactionContinuationText(),
+    ]);
     expect(model[2]).toMatchObject({
       origin: { kind: 'compaction_summary' },
+    });
+    expect(model[3]).toMatchObject({
+      origin: { kind: 'injection', variant: 'compaction_continuation' },
     });
   });
 
@@ -408,7 +417,12 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     );
 
     const model = replay.agentState.get(contextMemoryKey);
-    expect(model.map(textOf)).toEqual(['old user', 'recent user', 'OLD SUMMARY']);
+    expect(model.map(textOf)).toEqual([
+      'old user',
+      'recent user',
+      'OLD SUMMARY',
+      buildCompactionContinuationText(),
+    ]);
     expect(model[2]).toMatchObject({
       role: 'user',
       origin: { kind: 'compaction_summary' },

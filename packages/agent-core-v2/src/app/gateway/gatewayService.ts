@@ -57,7 +57,9 @@ export class RestGateway implements IRestGateway {
       },
     });
     const turn = await handle.launched;
-    return turn === undefined ? undefined : { turn_id: turn.id };
+    if (turn === undefined) return undefined;
+    await turn.ready.catch(() => undefined);
+    return turn.id === undefined ? undefined : { turn_id: turn.id };
   }
   async steer(
     sessionId: string,
@@ -73,7 +75,9 @@ export class RestGateway implements IRestGateway {
     } });
     const [steered] = await service.steer([queued.id]);
     const turn = await steered?.launched;
-    return turn === undefined ? undefined : { turn_id: turn.id };
+    if (turn === undefined) return undefined;
+    await turn.ready.catch(() => undefined);
+    return turn.id === undefined ? undefined : { turn_id: turn.id };
   }
   cancel(sessionId: string, agentId: string, reason?: string): Promise<void> {
     this.agent(sessionId, agentId).accessor.get(IAgentLoopService).cancel(undefined, reason);

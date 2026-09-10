@@ -34,8 +34,7 @@ export async function handleReloadCommand(host: SlashCommandHost): Promise<void>
 
   const config = await host.harness.getConfig({ reload: true });
   setExperimentalFeatures(await host.harness.getExperimentalFeatures());
-  const sessionlessV2 = session === undefined && host.engineV2;
-  if (sessionlessV2) {
+  if (session === undefined) {
     // Session-less v2: rebuild the workspace-level dynamic commands too, so
     // skill/plugin changes apply before the first session exists.
     await host.refreshSkillCommands();
@@ -49,9 +48,7 @@ export async function handleReloadCommand(host: SlashCommandHost): Promise<void>
     // Still session-less on the v2 engine: refresh the lazy defaults too, so
     // defaults edited externally (config.toml, a newly added default model)
     // reach the first lazy-created session instead of staying stale.
-    if (sessionlessV2) {
-      await host.hydrateLazyConfigDefaults();
-    }
+    await host.hydrateLazyConfigDefaults();
     host.showStatus(
       'Runtime and TUI config reloaded; no active session.',
       'success',
@@ -77,6 +74,7 @@ export async function applyReloadedTuiConfig(
     disablePasteBurst: config.disablePasteBurst,
     renderLatex: config.renderLatex,
     cacheExpiryHint: config.cacheExpiryHint,
+    disableFeedbackSurvey: config.disableFeedbackSurvey,
     notifications: config.notifications,
     upgrade: config.upgrade,
     statusLine: config.statusLine,

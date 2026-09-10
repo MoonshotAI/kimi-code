@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
-import { AgentCron, type CronRuntime } from '#/features/cron/cronAgentRuntime';
+import { IAgentCronService } from '#/features/cron/cronService';
 import type { CronConfig } from '#/features/cron/configSection';
 
 import { createTestAgent, type TestAgentContext } from '../../harness';
@@ -15,7 +15,7 @@ const WALL_ANCHOR = 1_700_000_000_000;
 
 interface CronTestRig {
   readonly ctx: TestAgentContext;
-  readonly cron: CronRuntime;
+  readonly cron: IAgentCronService;
   readonly prompt: IAgentPromptService;
   readonly clockFile: string;
 }
@@ -38,7 +38,7 @@ async function bootCronRig(config: Partial<CronConfig> = {}): Promise<CronTestRi
   await ctx.restorePersisted();
   return {
     ctx,
-    cron: ctx.resolve(AgentCron),
+    cron: ctx.get(IAgentCronService),
     prompt: ctx.get(IAgentPromptService),
     clockFile,
   };

@@ -44,6 +44,7 @@ export interface ChoicePickerOptions {
   readonly noticeTone?: 'success' | 'warning';
   readonly options: readonly ChoiceOption[];
   readonly currentValue?: string;
+  readonly initialValue?: string;
   /** When true, typed characters filter the list (fuzzy) and a search line is shown. */
   readonly searchable?: boolean;
   /** Items per page. Lists longer than this paginate. */
@@ -86,12 +87,14 @@ export class ChoicePickerComponent extends Container implements Focusable {
   constructor(opts: ChoicePickerOptions) {
     super();
     this.opts = opts;
-    const currentIdx = opts.options.findIndex((o) => o.value === opts.currentValue);
+    const initialIdx = opts.options.findIndex(
+      (o) => o.value === (opts.initialValue ?? opts.currentValue),
+    );
     this.list = new SearchableList({
       items: opts.options,
       toSearchText: (o) => `${o.label} ${o.description ?? ''}`,
       pageSize: opts.pageSize,
-      initialIndex: Math.max(currentIdx, 0),
+      initialIndex: Math.max(initialIdx, 0),
       searchable: opts.searchable === true,
     });
   }

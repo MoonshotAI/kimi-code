@@ -4,16 +4,17 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { TestInstantiationService } from '#/_base/di/test';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import {
+  BTW_READONLY_TOOLS,
   ISessionBtwService,
   SIDE_QUESTION_SYSTEM_REMINDER,
   TOOL_CALL_DISABLED_MESSAGE,
 } from '#/features/btw/btw';
 import { SessionBtwService } from '#/features/btw/btwService';
-import type { ToolCall } from '#/kosong/contract/message';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
+import type { ToolCall } from '#human/llm/message';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
@@ -38,9 +39,9 @@ describe('SessionBtwService', () => {
       id: 'agent-btw-1',
       accessor: {
         get: (id: unknown) => {
-          if (id === IAgentSystemReminderService) return { appendSystemReminder: appendReminder };
           if (id === IAgentToolApprovalService) return { formatDenyMessage };
           if (id === IAgentToolExecutorService) return executorEvents.executor;
+          if (id === IAgentReminderService) return { notify: appendReminder };
           return undefined;
         },
       },
@@ -82,31 +83,51 @@ describe('SessionBtwService', () => {
     expect(id).toBe('agent-btw-1');
     expect(fork).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'main', generation: 1 }));
     expect(appendReminder).toHaveBeenCalledWith(SIDE_QUESTION_SYSTEM_REMINDER, {
-      kind: 'injection',
       variant: 'btw',
     });
   });
 
-  it('vetoes every tool call on the child through the btw deny listener', async () => {
+  it('vetoes non-read-only tool calls on the child through the btw deny listener', async () => {
     const svc = ix.get(ISessionBtwService);
     await svc.start();
 
-    const toolCall: ToolCall = { type: 'function', id: 'call_1', name: 'Bash', arguments: '{}' };
-    const decision = await executorEvents.fireBeforeExecute({
-      turnId: 0,
-      signal: new AbortController().signal,
-      toolCall,
-      toolCalls: [toolCall],
-      args: {},
-      execution: { approvalRule: 'Bash', execute: async () => ({ output: '' }) },
-    });
+    for (const name of ['Bash', 'Write', 'Edit']) {
+      const toolCall: ToolCall = { type: 'function', id: `call_${name}`, name, arguments: '{}' };
+      const decision = await executorEvents.fireBeforeExecute({
+        turnId: 0,
+        signal: new AbortController().signal,
+        toolCall,
+        toolCalls: [toolCall],
+        args: {},
+        execution: { approvalRule: name, execute: async () => ({ output: '' }) },
+      });
 
-    expect(decision).toEqual({
-      veto: {
-        output: `${TOOL_CALL_DISABLED_MESSAGE} [worker guidance]`,
-        isError: true,
-      },
-    });
+      expect(decision).toEqual({
+        veto: {
+          output: `${TOOL_CALL_DISABLED_MESSAGE} [worker guidance]`,
+          isError: true,
+        },
+      });
+    }
     expect(formatDenyMessage).toHaveBeenCalledWith(TOOL_CALL_DISABLED_MESSAGE);
+  });
+
+  it('allows read-only tool calls (Read, Grep, Glob) on the child', async () => {
+    const svc = ix.get(ISessionBtwService);
+    await svc.start();
+
+    for (const name of BTW_READONLY_TOOLS) {
+      const toolCall: ToolCall = { type: 'function', id: `call_${name}`, name, arguments: '{}' };
+      const decision = await executorEvents.fireBeforeExecute({
+        turnId: 0,
+        signal: new AbortController().signal,
+        toolCall,
+        toolCalls: [toolCall],
+        args: {},
+        execution: { approvalRule: name, execute: async () => ({ output: '' }) },
+      });
+
+      expect(decision).toBeUndefined();
+    }
   });
 });

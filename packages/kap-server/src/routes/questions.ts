@@ -1,24 +1,19 @@
 import {
-  type Interaction,
-  IAgentLifecycleService,
-  ISessionQuestionService,
-  isSessionInteractionRecentlyResolved,
-  listSessionPendingInteractions,
+  INTERACTION_TAG_SESSION_ID,
+  interactions,
   resumeSessionById,
+  type Interaction,
   type QuestionAnswers,
-  type QuestionItem,
-  type QuestionOption,
-  type QuestionRequest,
   type QuestionResult,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { ErrorCode } from '../protocol/error-codes';
 import {
   type QuestionItem as ProtocolQuestionItem,
-  type QuestionOption as ProtocolQuestionOption,
   type QuestionRequest as ProtocolQuestionRequest,
   type QuestionResponse as ProtocolQuestionResponse,
 } from '../protocol/question';
+import { toWireQuestion } from '../protocol/question-wire';
 import {
   listPendingQuestionsQuerySchema,
   listPendingQuestionsResponseSchema,
@@ -89,7 +84,11 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
         );
         return;
       }
-      const pending = listSessionPendingInteractions(handle.accessor.get(IAgentLifecycleService), 'question');
+      const pending = interactions.findAll({
+        kind: 'question',
+        resolved: false,
+        tags: { [INTERACTION_TAG_SESSION_ID]: session_id },
+      });
       const items = pending.map((i) => toWireQuestion(i, session_id));
       reply.send(okEnvelope({ items }, req.id));
     },
@@ -133,14 +132,22 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
         return;
       }
 
-      const agents = handle.accessor.get(IAgentLifecycleService);
-
       let questionId: string;
       let action: 'resolve' | 'dismiss';
       if (parsed.kind === 'invalid') {
         if (
-          listSessionPendingInteractions(agents, 'question').some((i) => i.id === tail) ||
-          isSessionInteractionRecentlyResolved(agents, tail)
+          interactions.findOne({
+            id: tail,
+            kind: 'question',
+            resolved: false,
+            tags: { [INTERACTION_TAG_SESSION_ID]: session_id },
+          }) !== undefined ||
+          interactions.findOne({
+            id: tail,
+            kind: 'question',
+            resolved: true,
+            tags: { [INTERACTION_TAG_SESSION_ID]: session_id },
+          }) !== undefined
         ) {
           questionId = tail;
           action = 'resolve';
@@ -153,11 +160,22 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
         action = parsed.kind === 'bare' ? 'resolve' : parsed.action;
       }
 
-      const pendingInteraction = listSessionPendingInteractions(agents, 'question')
-        .find((i) => i.id === questionId);
+      const pendingInteraction = interactions.findOne({
+        id: questionId,
+        kind: 'question',
+        resolved: false,
+        tags: { [INTERACTION_TAG_SESSION_ID]: session_id },
+      });
 
       if (pendingInteraction === undefined) {
-        if (isSessionInteractionRecentlyResolved(agents, questionId)) {
+        if (
+          interactions.findOne({
+            id: questionId,
+            kind: 'question',
+            resolved: true,
+            tags: { [INTERACTION_TAG_SESSION_ID]: session_id },
+          }) !== undefined
+        ) {
           reply.send({
             code: ErrorCode.APPROVAL_ALREADY_RESOLVED,
             msg: `question ${questionId} already resolved`,
@@ -172,13 +190,11 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
         return;
       }
 
-      const questions = handle.accessor.get(ISessionQuestionService);
-
       await runAction({
         action,
         id: questionId,
         actions: questionActions,
-        extra: { questions, pendingInteraction, session_id, req, reply },
+        extra: { pendingInteraction, session_id, req, reply },
       });
     },
   );
@@ -190,7 +206,6 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
 }
 
 type QuestionActionExtra = {
-  readonly questions: ISessionQuestionService;
   readonly pendingInteraction: Interaction;
   readonly session_id: string;
   readonly req: { readonly id: string; readonly body: unknown };
@@ -205,7 +220,7 @@ const questionActions: ActionTable<'resolve' | 'dismiss', QuestionActionExtra> =
 };
 
 async function resolveQuestionAction(ctx: QuestionActionCtx): Promise<void> {
-  const { questions, pendingInteraction, session_id, req, reply, id } = ctx;
+  const { pendingInteraction, session_id, req, reply, id } = ctx;
   const bodyParse = questionResolveRequestSchema.safeParse(req.body);
   if (!bodyParse.success) {
     const details = bodyParse.error.issues.map((issue) => ({
@@ -230,14 +245,14 @@ async function resolveQuestionAction(ctx: QuestionActionCtx): Promise<void> {
   }
 
   const result = toInProcessResponse(bodyParse.data, toWireQuestion(pendingInteraction, session_id));
-  questions.answer(id, result);
+  interactions.respond(id, result);
   requestLog(req)?.info({ session_id, question_id: id, action: 'answer' }, 'question answered');
   reply.send(okEnvelope({ resolved: true as const, resolved_at: new Date().toISOString() }, req.id));
 }
 
 async function dismissQuestionAction(ctx: QuestionActionCtx): Promise<void> {
-  const { questions, session_id, req, reply, id } = ctx;
-  questions.dismiss(id);
+  const { session_id, req, reply, id } = ctx;
+  interactions.respond(id, null);
   requestLog(req)?.info({ session_id, question_id: id, action: 'dismiss' }, 'question dismissed');
   reply.send({
     code: ErrorCode.QUESTION_DISMISSED,
@@ -245,44 +260,6 @@ async function dismissQuestionAction(ctx: QuestionActionCtx): Promise<void> {
     data: { dismissed: true as const, dismissed_at: new Date().toISOString() },
     request_id: req.id,
   });
-}
-
-function buildOption(opt: QuestionOption, itemIdx: number, optIdx: number): ProtocolQuestionOption {
-  const base: ProtocolQuestionOption = { id: `opt_${itemIdx}_${optIdx}`, label: opt.label };
-  return opt.description === undefined ? base : { ...base, description: opt.description };
-}
-
-function buildItem(item: QuestionItem, itemIdx: number): ProtocolQuestionItem {
-  const out: ProtocolQuestionItem = {
-    id: `q_${itemIdx}`,
-    question: item.question,
-    options: item.options.map((o, oi) => buildOption(o, itemIdx, oi)),
-  };
-  if (item.header !== undefined) out.header = item.header;
-  if (item.body !== undefined) out.body = item.body;
-  if (item.multiSelect !== undefined) out.multi_select = item.multiSelect;
-  out.allow_other = true;
-  if (item.otherLabel !== undefined) out.other_label = item.otherLabel;
-  if (item.otherDescription !== undefined) out.other_description = item.otherDescription;
-  return out;
-}
-
-/** In-process request + interaction metadata → protocol wire shape. */
-export function toWireQuestion(
-  interaction: Interaction,
-  sessionId: string,
-): ProtocolQuestionRequest {
-  const req = interaction.payload as QuestionRequest;
-  const createdAt = new Date(interaction.createdAt).toISOString();
-  const out: ProtocolQuestionRequest = {
-    question_id: interaction.id,
-    session_id: sessionId,
-    questions: req.questions.map((q, i) => buildItem(q, i)),
-    created_at: createdAt,
-  };
-  if (req.turnId !== undefined) out.turn_id = req.turnId;
-  if (req.toolCallId !== undefined) out.tool_call_id = req.toolCallId;
-  return out;
 }
 
 function toInProcessResponse(

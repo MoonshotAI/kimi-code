@@ -39,6 +39,7 @@ import { detectNativeInstall } from './cli/update/source';
 import { maybeRelaunchWithStagedNativeUpdate } from './cli/update/native-swap';
 import { createKimiCodeHostIdentity, getVersion } from './cli/version';
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE, PROCESS_NAME } from './constant/app';
+import { runHeadlessMigrate, type MigrateCommandOptions } from './migration/index';
 import { cleanupStaleNativeCacheForCurrent } from './native/native-assets';
 import { installMinidbTextBuildWorker } from './native/minidb-worker';
 import { installKapSearchWorker } from './native/search-worker';
@@ -93,12 +94,27 @@ export async function handleMainCommand(
   return { headlessCompleted: false };
 }
 
-/** `kimi migrate`: launch the migration screen only, then exit. */
-async function handleMigrateCommand(version: string): Promise<void> {
+/** `kimi migrate`: launch the migration screen only, then exit. `--run` runs the full migration headlessly with step logs instead. */
+async function handleMigrateCommand(
+  version: string,
+  options: MigrateCommandOptions,
+): Promise<void> {
+  if (options.configOnly && !options.run) {
+    process.stderr.write('error: --config-only requires --run\n');
+    process.exitCode = 2;
+    return;
+  }
+  if (options.run) {
+    // Set the exit code and return normally — an immediate process.exit here
+    // could terminate before buffered step/report output is flushed when the
+    // command is piped or redirected.
+    process.exitCode = await runHeadlessMigrate({ configOnly: options.configOnly });
+    return;
+  }
   await runShell(MIGRATE_CLI_OPTIONS, version, { migrateOnly: true });
 }
 
-export async function handleUpgradeCommand(version: string): Promise<void> {
+export async function handleUpgradeCommand(version: string, yes: boolean): Promise<void> {
   const telemetryBootstrap = createCliTelemetryBootstrap();
   const telemetryClient: TelemetryClient = {
     track,
@@ -121,7 +137,7 @@ export async function handleUpgradeCommand(version: string): Promise<void> {
       version,
       uiMode: CLI_UI_MODE,
     });
-    exitCode = await handleUpgrade(version, { track, logger: log });
+    exitCode = await handleUpgrade(version, { track, logger: log, yes });
   } finally {
     await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS }).catch(() => {});
     await harness.close().catch(() => {});
@@ -188,7 +204,7 @@ function bootstrap(): void {
   );
   // Same pattern for the global-search worker: extracted from the SEA blob so
   // the search index runs off the main thread; a failure leaves the search
-  // surface degraded (the `search_worker` flag restores the inline host).
+  // surface degraded ([database] search = false restores the inline host).
   const searchWorkerInstall = installKapSearchWorker();
   startupTrace(
     searchWorkerInstall.status === 'installed'
@@ -250,8 +266,8 @@ function bootstrap(): void {
           process.exit(1);
         });
     },
-    () => {
-      void handleMigrateCommand(version).catch(async (error: unknown) => {
+    (migrateOptions) => {
+      void handleMigrateCommand(version, migrateOptions).catch(async (error: unknown) => {
         await logStartupFailure('run migration', error);
         process.stderr.write(formatStartupError(error, { operation: 'run migration' }));
         process.stderr.write(`See log: ${resolveGlobalLogPath(resolveKimiHome())}\n`);
@@ -265,8 +281,8 @@ function bootstrap(): void {
         process.exit(1);
       });
     },
-    () => {
-      void handleUpgradeCommand(version).catch(async (error: unknown) => {
+    (yes) => {
+      void handleUpgradeCommand(version, yes).catch(async (error: unknown) => {
         await logStartupFailure('upgrade', error);
         process.stderr.write(formatStartupError(error, { operation: 'upgrade' }));
         process.stderr.write(`See log: ${resolveGlobalLogPath(resolveKimiHome())}\n`);

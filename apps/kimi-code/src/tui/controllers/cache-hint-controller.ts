@@ -199,7 +199,7 @@ export class CacheHintController {
   async maybeShowOnResume(): Promise<void> {
     const { host } = this;
     const session = host.session;
-    if (!host.engineV2 || session === undefined) return;
+    if (session === undefined) return;
     if (this.resumedSessions.has(session.id)) return;
     const main = session.getResumeState()?.agents[MAIN_AGENT_ID];
     let lastActiveAt = 0;
@@ -260,7 +260,7 @@ export class CacheHintController {
     inlineSkillActivations?: readonly InlineSkillActivation[],
   ): boolean {
     const { host } = this;
-    if (!host.engineV2 || host.session === undefined) return false;
+    if (host.session === undefined) return false;
     // A stashed message being released re-enters the send path here — never
     // re-intercept it (that would start a second fetch loop).
     if (this.releasingStashed) return false;

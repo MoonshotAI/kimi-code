@@ -13,7 +13,7 @@ import {
   type ServicesAccessor,
 } from '#/_base/di/instantiation';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
-import { AgentGoal } from '#/features/goal/goalAgentRuntime';
+import { IAgentGoalService } from '#/features/goal/goalService';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -24,12 +24,14 @@ import {
   getLiveSessionById,
   resumeSessionById,
 } from '#/app/sessionManager/sessionLookup';
-import { IModelCatalog } from '#/kosong/model/catalog';
-import { IModelService } from '#/kosong/model/model';
+import { IModelCatalog } from '#/llm-adapter/model/catalog';
+import { IModelService } from '#/llm-adapter/model/model';
 import { ErrorCodes, Error2 } from '#/errors';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { IAgentActivityView } from '#/agent/activityView/activityView';
+import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 
 import { ISessionLegacyService } from './sessionLegacy';
 
@@ -108,18 +110,17 @@ export class SessionLegacyService implements ISessionLegacyService {
     for (const agent of agents.list()) {
       const agentHandle = agents.handleOf(agent.agentId);
       if (agentHandle === undefined) continue;
-      const state = agentHandle.accessor.get(IAgentActivityView).state();
-      if (state.turn !== undefined || state.background.length > 0) return true;
+      if (agentHandle.accessor.get(IAgentLoopService).status().state === 'running') return true;
+      const tasks = agentHandle.accessor.get(IAgentTaskService);
+      if (tasks.list(true).length > 0) return true;
+      if (agentHandle.accessor.get(IAgentFullCompactionService).compacting !== null) return true;
     }
     return false;
   }
 
   async goal(sessionId: string): Promise<GoalSnapshot | null> {
     const agent = await this.resolveMainAgent(sessionId);
-    return agent.accessor
-      .get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentGoal)
-      .getGoal().goal;
+    return agent.accessor.get(IAgentGoalService).getGoal().goal;
   }
 }
 

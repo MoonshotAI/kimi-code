@@ -32,13 +32,6 @@ interface ModelWindow {
   replacement: unknown;
 }
 
-/**
- * Base class of an agent-granular domain Model — the container of one
- * domain's replayable state. Subclasses register appliers in the constructor
- * via `this.on(EventClass, applier)`; the host runs each applier inside an
- * infra-controlled immer window where `this.state` is the mutable draft.
- * Outside the window `this.state` is the last committed frozen snapshot.
- */
 export abstract class AgentModel<S> implements DomainResourceRuntime {
   private committedState: S;
   private window: ModelWindow | undefined;
@@ -150,12 +143,6 @@ export interface AgentModelDefinitionInput<S, M extends AgentModel<S>> {
 
 const AGENT_MODEL_DEFINITIONS = new Map<string, AgentModelDefinition<any, any>>();
 
-/**
- * Declares one domain's agent-granular Model: the Model class, its state
- * spec, and the static durable-event vocabulary its appliers cover. The
- * returned definition is the token used with `AgentContext.space.use(...)`
- * and `Feature.contributeAgentModel(...)`.
- */
 export function defineAgentModel<S, M extends AgentModel<S>>(
   input: AgentModelDefinitionInput<S, M>,
 ): AgentModelDefinition<S, M> {

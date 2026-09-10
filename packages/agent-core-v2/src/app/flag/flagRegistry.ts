@@ -1,6 +1,8 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 
+import type { IFlagService } from './flag';
+
 export type FlagSurface = 'core' | 'tui' | 'both';
 
 export type FlagId = string;
@@ -12,14 +14,8 @@ export interface FlagDefinitionInput {
   readonly env: string;
   readonly default: boolean;
   readonly surface: FlagSurface;
-  /**
-   * When true, the master switch (`KIMI_CODE_EXPERIMENTAL_FLAG`) does not
-   * force this flag on. Reserved for experiments whose rollout must stay
-   * independent of the master switch — the CLI force-enables that switch for
-   * every v2 user, so a flag that followed it would turn on for everyone.
-   * Per-flag env and `[experimental]` config overrides still apply.
-   */
   readonly ignoreMaster?: boolean;
+  readonly isExposed?: (flags: IFlagService) => boolean;
 }
 
 const contributedFlags: FlagDefinitionInput[] = [];

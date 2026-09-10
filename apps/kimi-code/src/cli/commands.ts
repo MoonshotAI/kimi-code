@@ -1,20 +1,22 @@
 import { CLI_COMMAND_NAME } from '#/constant/app';
-import { registerMigrateCommand } from '#/migration/index';
+import { registerMigrateCommand, type MigrateCommandOptions } from '#/migration/index';
 import { Command, InvalidArgumentError, Option } from 'commander';
 
 import type { CLIOptions } from './options';
 import { registerAcpCommand } from './sub/acp';
 import { registerDoctorCommand } from './sub/doctor';
 import { registerExportCommand } from './sub/export';
+import { registerForkCommand } from './sub/fork';
 import { registerLoginCommand } from './sub/login';
 import { registerProviderCommand } from './sub/provider';
+import { registerSessionCommand } from './sub/session';
 import { registerVisCommand } from './sub/vis';
 import { registerWebCommand } from './sub/web';
 
 export type MainCommandHandler = (opts: CLIOptions) => void;
-export type MigrateCommandHandler = () => void;
+export type MigrateCommandHandler = (options: MigrateCommandOptions) => void;
 export type PluginNodeRunnerHandler = (entry: string, args: readonly string[]) => void;
-export type UpgradeCommandHandler = () => void | Promise<void>;
+export type UpgradeCommandHandler = (yes: boolean) => void | Promise<void>;
 export type UpdateDownloadHandler = (version: string, manual: boolean) => void;
 
 export function createProgram(
@@ -29,6 +31,7 @@ export function createProgram(
     .description('The Starting Point for Next-Gen Agents')
     .version(version, '-V, --version')
     .allowUnknownOption(false)
+    .enablePositionalOptions()
     .configureHelp({ helpWidth: 100 })
     .helpOption('-h, --help', 'Show help.')
     .usage('[options] [command]')
@@ -48,8 +51,8 @@ export function createProgram(
     )
     .option('-c, --continue', 'Continue the previous session for the working directory.', false)
     .addOption(new Option('-C').hideHelp().default(false))
-    .option('-y, --yolo', 'Auto-approve regular tool calls; the agent may still ask questions.', false)
-    .option('--auto', 'Start in auto permission mode: fully autonomous, the agent will not ask questions.', false)
+    .option('-y, --yolo', 'Start in Ask When Needed mode: routine edits and commands run automatically; risky actions, questions, and plans still ask.', false)
+    .option('--auto', 'Start in Never Ask mode: never interrupts you; everything runs and is decided automatically.', false)
     .addOption(
       new Option(
         '-m, --model <model>',
@@ -116,7 +119,9 @@ export function createProgram(
     .option('--plan', 'Start in plan mode.', false);
 
   registerExportCommand(program);
+  registerForkCommand(program);
   registerProviderCommand(program);
+  registerSessionCommand(program);
   registerAcpCommand(program);
   registerWebCommand(program);
   registerLoginCommand(program);
@@ -127,8 +132,9 @@ export function createProgram(
     .command('upgrade')
     .alias('update')
     .description('Upgrade Kimi Code to the latest version.')
-    .action(async () => {
-      await onUpgrade();
+    .option('-y, --yes', 'Skip the confirmation prompt and install the update directly.', false)
+    .action(async (options: { yes?: boolean }) => {
+      await onUpgrade(options.yes === true);
     });
 
   program

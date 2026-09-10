@@ -1,7 +1,7 @@
 import { ErrorCodes, Error2 } from '#/errors';
 import type { McpServerConfig } from './config-schema';
 import type { ILogger as Logger } from '#/_base/log/log';
-import type { Tool } from '#/kosong/contract/tool';
+import type { ToolDescription as Tool } from '#human/llm/message';
 import { HostProcessError, HostProcessErrorCode } from '#/os/interface/hostProcess';
 
 import { abortable } from '#/_base/utils/abort';
@@ -37,12 +37,6 @@ interface InternalEntry {
 
 export type McpStatusListener = (entry: McpServerEntry) => void;
 
-/**
- * The consumer surface of a connection manager. `McpConnectionManager`
- * implements it directly; the session domain's `MergedMcpConnectionView`
- * implements it over a workspace manager plus a session overlay, so session
- * and agent consumers never care which manager owns a server.
- */
 export interface McpConnectionView {
   readonly oauthService: McpOAuthService | undefined;
   list(): readonly McpServerEntry[];
@@ -297,11 +291,6 @@ export class McpConnectionManager implements McpConnectionView {
     return work;
   }
 
-  /**
-   * {@link reconnectAndJoin} queued behind any in-flight reconnect: a
-   * credential that lands while a reconnect is already running triggers one
-   * more pass instead of being absorbed by the stale run.
-   */
   async reconnectAfterCurrent(name: string): Promise<void> {
     const existing = this.inFlightReconnects.get(name);
     if (existing !== undefined) await existing.catch(() => undefined);
@@ -572,11 +561,6 @@ function stderrTail(client: RuntimeMcpClient | undefined): string | undefined {
   return snapshot.trimEnd();
 }
 
-/**
- * Structural equality for effective configs, backing the idempotent-connect
- * guard (config reconcilers and explicit callers may issue the same upsert)
- * and the management plane's change detection.
- */
 export function mcpServerConfigsEqual(a: McpServerConfig, b: McpServerConfig): boolean {
   return stableConfigJson(a) === stableConfigJson(b);
 }

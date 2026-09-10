@@ -12,14 +12,6 @@ export const SPINE_TOOL_TREE = 'spine_tree';
 export const SPINE_TOOL_TRIM = 'spine_trim';
 export const SPINE_TOOL_SPAWN = 'spine_spawn';
 
-/**
- * All six spine tool names. Profiles whitelist these so the main agent's
- * active-tool filter lets the registered tools through; surfaces that merely
- * display a profile's tool list (e.g. the `Agent` tool description) filter
- * them out instead, since the tools register only for the main agent.
- * `spine_trim` and `spine_spawn` are NOT control tools: they carry no tree
- * transition and are gated on separate flags.
- */
 export const SPINE_TOOL_NAMES = [
   SPINE_TOOL_OPEN,
   SPINE_TOOL_CLOSE,
@@ -59,22 +51,8 @@ export interface IAgentSpineService {
   acceptClose(memory: string): SpineTransitionResult;
   acceptNext(summary: string, memory: string): SpineTransitionResult;
 
-  /**
-   * Validates a `spine_trim` call against the derived trim projection (the
-   * single eligibility source): unknown, consumed, out-of-window, or
-   * anchor-missing ids reject with a do-not-retry reason. Not a transition —
-   * no per-step budget; the accepted receipt in history IS the trim.
-   */
   acceptTrim(trimId: string, op: SpineTrimOp): SpineTransitionResult;
 
-  /**
-   * Executes a `spine_spawn` fission: forks one child agent per task, runs them
-   * in parallel, and returns a structured JSON receipt. The receipt landing in
-   * history IS the join; derive synthesizes the closed child nodes from it.
-   * Capacity-shortfall admission is reported inside the receipt as per-task
-   * errored results (no branches start); validation rejections surface their
-   * reasons as errors so the model can retry.
-   */
   executeSpawn(
     tasks: readonly SpineSpawnTaskInput[],
     signal: AbortSignal,
@@ -86,7 +64,6 @@ export interface IAgentSpineService {
 
   fold(messages: readonly ContextMessage[]): readonly ContextMessage[];
 
-  /** The current tree state, derived from the message stream on read. */
   currentState(): SpineState;
 }
 

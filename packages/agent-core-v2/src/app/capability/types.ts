@@ -26,7 +26,6 @@ export interface CapabilityDetectResult {
 
 export interface CapabilityStatus {
   readonly id: CapabilityId;
-  /** Plugin identifier used to provide this capability's agent wiring. */
   readonly pluginId?: string;
   readonly displayName: string;
   readonly description: string;

@@ -1,48 +1,43 @@
 /**
- * Serialize an `AgentState` into a plain, JSON-shaped object for the audit
+ * Serialize a `ChatState` into a plain, JSON-shaped object for the audit
  * panel's state tree and structural diff. Maps become key-sorted plain
- * objects (stable display order), Sets become sorted arrays; everything
- * else is passed through by reference (state is immutable, so sharing is
- * safe and keeps the reference-equality fast path in `diffValue` useful).
+ * objects (stable display order); everything else is passed through by
+ * reference (state is immutable, so sharing is safe and keeps the
+ * reference-equality fast path in `diffValue` useful).
  */
 
 import type {
-  AgentState,
-  TranscriptAttachment,
-  TranscriptInteraction,
-  TranscriptItem,
-  TranscriptMeta,
-  TranscriptTask,
-  TranscriptTodo,
-} from '@moonshot-ai/transcript';
+  InteractionMessage,
+  SessionStateMessage,
+  TaskMessage,
+  TodoMessage,
+} from '@moonshot-ai/kap-server/protocol';
 
-/** Plain-object view of an `AgentState` (Maps/Sets unwrapped). */
-export interface SerializedAgentState {
-  readonly items: readonly TranscriptItem[];
-  readonly tasks: Record<string, TranscriptTask>;
-  readonly interactions: Record<string, TranscriptInteraction>;
-  readonly attachments: Record<string, TranscriptAttachment>;
-  readonly todos: Record<string, TranscriptTodo>;
-  readonly meta: TranscriptMeta;
-  readonly pendingInteractions: readonly string[];
+import type { ChatState, TimelineMessage } from '../transcript/store';
+
+/** Plain-object view of a `ChatState` (Maps unwrapped). */
+export interface SerializedChatState {
+  readonly timeline: readonly TimelineMessage[];
+  readonly interactions: Record<string, InteractionMessage>;
+  readonly tasks: Record<string, TaskMessage>;
+  readonly todos: Record<string, TodoMessage>;
+  readonly sessionState: SessionStateMessage | undefined;
   readonly hasMoreOlder: boolean;
 }
 
 function mapToSortedObject<V>(map: ReadonlyMap<string, V>): Record<string, V> {
   const out: Record<string, V> = {};
-  for (const key of [...map.keys()].sort()) out[key] = map.get(key) as V;
+  for (const key of [...map.keys()].toSorted()) out[key] = map.get(key) as V;
   return out;
 }
 
-export function serializeState(state: AgentState): SerializedAgentState {
+export function serializeState(state: ChatState): SerializedChatState {
   return {
-    items: state.items,
-    tasks: mapToSortedObject(state.tasks),
+    timeline: state.entries.map((entry) => entry.message),
     interactions: mapToSortedObject(state.interactions),
-    attachments: mapToSortedObject(state.attachments),
+    tasks: mapToSortedObject(state.tasks),
     todos: mapToSortedObject(state.todos),
-    meta: state.meta,
-    pendingInteractions: [...state.pendingInteractions].sort(),
+    sessionState: state.sessionState,
     hasMoreOlder: state.hasMoreOlder,
   };
 }

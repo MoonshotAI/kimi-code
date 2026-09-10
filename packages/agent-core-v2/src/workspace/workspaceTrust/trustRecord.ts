@@ -1,5 +1,6 @@
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { canonicalWorkspaceRoot } from '#/_base/utils/paths';
+import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 
 const TRUST_SCOPE = 'workspace-trust';
@@ -12,6 +13,7 @@ interface TrustRecord {
 export async function readWorkspaceTrust(
   docs: IAtomicDocumentStore,
   root: string,
+  telemetry?: ITelemetryService,
 ): Promise<boolean> {
   try {
     const canonicalKey = trustKey(root);
@@ -26,7 +28,10 @@ export async function readWorkspaceTrust(
       await docs.delete(TRUST_SCOPE, legacyKey);
     } catch {}
     return true;
-  } catch {
+  } catch (error) {
+    telemetry?.track2('workspace_trust_read_failed', {
+      error_type: error instanceof Error ? error.name : 'Unknown',
+    });
     return false;
   }
 }

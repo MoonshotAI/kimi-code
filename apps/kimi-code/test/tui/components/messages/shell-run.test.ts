@@ -90,7 +90,7 @@ describe('ShellRunComponent finished collapse', () => {
     const c = create();
     c.finish(rows(30), '', false);
     const rendered = stripTheme(c.render(80).join('\n'));
-    expect(rendered).toContain('... (20 more lines, ctrl+o to expand)');
+    expect(rendered).toContain('… (20 more lines, ctrl+o to expand)');
     expect(rendered).toContain('row-01');
     expect(rendered).toContain('row-10');
     expect(rendered).not.toContain('row-11');
@@ -116,7 +116,7 @@ describe('ShellRunComponent finished collapse', () => {
 
     c.setExpanded(false);
     const collapsed = stripTheme(c.render(80).join('\n'));
-    expect(collapsed).toContain('... (20 more lines, ctrl+o to expand)');
+    expect(collapsed).toContain('… (20 more lines, ctrl+o to expand)');
     expect(collapsed).not.toContain('row-11');
   });
 
@@ -153,7 +153,7 @@ describe('ShellRunComponent finished collapse', () => {
     c.append('x'.repeat(300 * 1024));
     c.setExpanded(true);
     const rendered = stripTheme(c.render(80).join('\n'));
-    expect(rendered).toContain('... (output truncated)');
+    expect(rendered).toContain('… (output truncated)');
   });
 
   it('keeps the backgrounded view when toggled', () => {
@@ -168,10 +168,61 @@ describe('ShellRunComponent finished collapse', () => {
     const c = create();
     c.finish(rows(30), 'boom', true);
     const collapsed = stripTheme(c.render(80).join('\n'));
-    expect(collapsed).toContain('... (21 more lines, ctrl+o to expand)');
+    expect(collapsed).toContain('… (21 more lines, ctrl+o to expand)');
 
     c.setExpanded(true);
     const expanded = stripTheme(c.render(80).join('\n'));
     expect(expanded).toContain('boom');
+  });
+});
+
+describe('ShellRunComponent hasHiddenContent', () => {
+  let component: ShellRunComponent | undefined;
+
+  afterEach(() => {
+    component?.dispose();
+    component = undefined;
+  });
+
+  function create(): ShellRunComponent {
+    component = new ShellRunComponent(() => {});
+    return component;
+  }
+
+  it('reports hidden rows while the running tail leaves earlier output behind', () => {
+    const c = create();
+    c.append('one\ntwo\nthree\n');
+    expect(c.hasHiddenContent()).toBe(false);
+    c.append('four\nfive\nsix\nseven\n');
+    expect(c.hasHiddenContent()).toBe(true);
+  });
+
+  it('follows the finished preview cap after a collapsed render', () => {
+    const c = create();
+    c.finish(Array.from({ length: 20 }, (_, i) => `row ${String(i + 1)}`).join('\n'), '', false);
+    c.render(100);
+    expect(c.hasHiddenContent()).toBe(true);
+
+    const short = create();
+    short.finish('done', '', false);
+    short.render(100);
+    expect(short.hasHiddenContent()).toBe(false);
+  });
+});
+
+describe('ShellRunComponent hasHiddenContent when finished while expanded', () => {
+  let component: ShellRunComponent | undefined;
+
+  afterEach(() => {
+    component?.dispose();
+    component = undefined;
+  });
+
+  it('still reports the rows a collapse would hide, without a prior collapsed render', () => {
+    component = new ShellRunComponent(() => {});
+    component.setExpanded(true);
+    component.finish(Array.from({ length: 20 }, (_, i) => `row ${String(i + 1)}`).join('\n'), '', false);
+    component.render(100);
+    expect(component.hasHiddenContent()).toBe(true);
   });
 });

@@ -12,16 +12,15 @@
  *     `Turn.result` for authoritative completion,
  *   - applies the print-mode background policy (config-driven, v1-aligned:
  *     `exit` / `drain` / `steer`) before exiting.
- *
- * Selected by `runPrompt` unless `KIMI_CODE_LEGACY_FLAG` is truthy.
  */
 
 import { readFile } from 'node:fs/promises';
 
 import {
-  AgentCron,
-  AgentGoal,
+  IAgentCronService,
+  IAgentGoalService,
   IAgentLifecycleService,
+  IAgentLoopService,
   IAgentPermissionModeService,
   IAgentProfileService,
   IAgentPromptService,
@@ -30,13 +29,15 @@ import {
   IBootstrapService,
   IConfigService,
   IEventBus,
+  IEventDispatcher,
+  IHostFileSystem,
   IOAuthToolkit,
   ISessionIndex,
   ISessionManager,
   ITelemetryService,
+  IWorkspaceInstanceManager,
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
-  agentContextOf,
   applyPrintModeConfigDefaults,
   bootstrap,
   createCloudAppender,
@@ -54,10 +55,27 @@ import {
   type IAgentScopeHandle,
   type ISessionScopeHandle,
   type LoopRunResult,
+  type McpServerConfig,
   type PrintBackgroundMode,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import { createKimiDefaultHeaders, createKimiDeviceId } from '@moonshot-ai/kimi-code-oauth';
+import {
+  loadMcpServersDetailed,
+  resolveMcpJsonPaths,
+} from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
+import {
+  createKimiDefaultHeaders,
+  createKimiDeviceId,
+  KIMI_CODE_PROVIDER_NAME,
+} from '@moonshot-ai/kimi-code-oauth';
+import {
+  initializeTelemetry,
+  setCrashPhase,
+  setTelemetryContext,
+  setTelemetryModel,
+  shouldEnableTelemetry,
+  shutdownTelemetry,
+} from '@moonshot-ai/kimi-telemetry';
 import type { GoalUpdated } from '@moonshot-ai/agent-core-v2/features/goal/goalOps';
 import type { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import type {
@@ -65,7 +83,7 @@ import type {
   ThinkingDelta,
   ToolCallDelta,
 } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
-import type { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/agent/stepRetry/stepRetryService';
+import type { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { HookResult } from '@moonshot-ai/agent-core-v2/features/externalHooks/agent/agentExternalHooksService';
 import type {
   ToolCallStarted,
@@ -79,6 +97,7 @@ import {
   CLI_USER_AGENT_PRODUCT,
   PROMPT_CLEANUP_TIMEOUT_MS,
 } from '#/constant/app';
+import { currentKimiProfile } from '#/utils/region';
 
 import {
   formatGoalSummaryText,
@@ -110,6 +129,8 @@ import {
 const PROMPT_UI_MODE = 'print';
 /** Re-check `goalActive` at least this often while waiting for goal turns. */
 const GOAL_WAIT_POLL_MS = 250;
+/** Re-check each agent's prompt queue while waiting for it to drain at exit. */
+const PROMPT_QUIESCE_POLL_MS = 10;
 /**
  * Slack on top of a scheduled cron fire time while waiting for the steered
  * turn: covers the 1s tick poll interval plus fire → inject → turn-launch
@@ -148,6 +169,7 @@ export async function runV2Print(
       clientIdentity: identity,
       args: {
         requestHeaders: hostHeaders,
+        nonInteractive: true,
         // `--skillsDir` (v1 print parity): explicit skill dirs replace default
         // user / project discovery for this process.
         skillDirs: opts.skillsDirs,
@@ -169,12 +191,13 @@ export async function runV2Print(
   // user left unset are filled, in the memory layer.
   await applyPrintModeConfigDefaults(configService);
   const defaultModel = configService.get<string>('defaultModel') ?? undefined;
-  let telemetryEnabled = true;
+  let configTelemetryEnabled = true;
   try {
-    telemetryEnabled = configService.get('telemetry') !== false;
+    configTelemetryEnabled = configService.get('telemetry') !== false;
   } catch {
-    telemetryEnabled = true;
+    configTelemetryEnabled = true;
   }
+  const telemetryEnabled = shouldEnableTelemetry({ enabled: configTelemetryEnabled });
   for (const diagnostic of configService.diagnostics()) {
     if (diagnostic.severity === 'warning') {
       stderr.write(`Warning: ${diagnostic.message}\n`);
@@ -182,19 +205,37 @@ export async function runV2Print(
   }
 
   let restorePermission = async (): Promise<void> => {};
+  let quiesceAgents = async (): Promise<void> => {};
+  let releaseQuiescence: (() => void) | undefined;
+  let flushWires = async (): Promise<void> => {};
   let removeTerminationCleanup: (() => void) | undefined;
   let cleanupPromise: Promise<void> | undefined;
   let telemetryService: ITelemetryService | undefined;
   const cleanup = async (): Promise<void> => {
     const pending = (cleanupPromise ??= (async () => {
       removeTerminationCleanup?.();
+      setCrashPhase('shutdown');
       try {
         await restorePermission();
+        // A termination signal can arrive mid-turn: cancel turns and wait for idle agents first.
+        await raceWithTimeout(quiesceAgents(), CLI_SHUTDOWN_TIMEOUT_MS).catch(() => {});
       } finally {
-        if (telemetryService !== undefined) {
-          await raceWithTimeout(telemetryService.shutdown(), CLI_SHUTDOWN_TIMEOUT_MS);
+        try {
+          // Concurrent so the phases' allowances cannot sum past PROMPT_CLEANUP_TIMEOUT_MS.
+          await Promise.all([
+            // The turn's tail records reach the journal only via the wire's
+            // async persist queue; process.exit must not cut off that queue.
+            raceWithTimeout(flushWires(), CLI_SHUTDOWN_TIMEOUT_MS).catch(() => {}),
+            telemetryService !== undefined
+              ? raceWithTimeout(telemetryService.shutdown(), CLI_SHUTDOWN_TIMEOUT_MS)
+              : Promise.resolve(),
+            shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS }).catch(() => {}),
+          ]);
+          app.dispose();
+        } finally {
+          // Keep producers frozen until the journals are drained and disposed.
+          releaseQuiescence?.();
         }
-        app.dispose();
       }
     })());
     await raceWithTimeout(pending, PROMPT_CLEANUP_TIMEOUT_MS);
@@ -206,10 +247,13 @@ export async function runV2Print(
     // `session_load_failed` fire inside create()/resume(), so an appender wired
     // up only after resolveNativeSession() would drop them to the null appender.
     // The model below is the best known up front; a resumed session's real
-    // model is reconciled via setContext once resolved.
+    // model is reconciled once resolved (v2 via setContext, v1 via
+    // setTelemetryModel). The v1 pipeline is initialized here too: the
+    // process-wide crash handlers report through its default client, so its
+    // sink must be attached before the run can crash.
     telemetryService = app.accessor.get(ITelemetryService);
     if (telemetryEnabled) {
-      telemetryService.setAppender(
+      telemetryService.addAppender(
         createCloudAppender(app.accessor, {
           deviceId,
           appName: CLI_USER_AGENT_PRODUCT,
@@ -218,12 +262,42 @@ export async function runV2Print(
           getAccessToken: async () => (await auth.getCachedAccessToken()) ?? null,
         }),
       );
+      // No `first_launch` on the v1 client: the v2 side already tracks it via
+      // `telemetryService.track2` below, so tracking here would double-send.
+      initializeTelemetry({
+        homeDir,
+        deviceId,
+        appName: CLI_USER_AGENT_PRODUCT,
+        version,
+        uiMode: PROMPT_UI_MODE,
+        model: opts.model ?? defaultModel,
+        endpoint: () => currentKimiProfile().telemetryEndpoint,
+        getAccessToken: async () =>
+          (await auth.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME)) ?? null,
+        onUnexpectedError: (error) => console.error('[unexpected]', error),
+      });
+    }
+
+    // Print mode has no trust prompt, so the engine's workspace-trust gate
+    // would silently drop project-level MCP servers — say so on stderr.
+    try {
+      const gated = await listTrustGatedMcpServers(app, workDir, homeDir);
+      if (gated.length > 0) stderr.write(formatTrustGatedMcpWarning(gated));
+    } catch {
+      // Best-effort: a broken mcp.json or trust store must not fail the run.
     }
 
     const resolved = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);
     restorePermission = resolved.restorePermission;
+    quiesceAgents = async () => {
+      releaseQuiescence = await quiesceSessionAgents(resolved.session, resolved.agent);
+    };
+    flushWires = () => flushSessionWires(resolved.session, resolved.agent);
 
-    telemetryService.setContext({ sessionId: resolved.session.id, model: resolved.telemetryModel });
+    telemetryService.setContext({ session_id: resolved.session.id, model: resolved.telemetryModel });
+    setTelemetryContext({ sessionId: resolved.session.id });
+    setTelemetryModel(resolved.telemetryModel);
+    setCrashPhase('runtime');
     if (firstLaunch) {
       telemetryService.track2('first_launch');
     }
@@ -253,7 +327,7 @@ export async function runV2Print(
     }
     writeResumeHint(resolved.session.id, outputFormat, stdout, stderr);
 
-    telemetryService.withContext({ sessionId: resolved.session.id }).track2('exit', {
+    telemetryService.withContext({ session_id: resolved.session.id }).track2('exit', {
       duration_ms: Date.now() - startedAt,
     });
   } finally {
@@ -415,6 +489,55 @@ async function resolveNativeSession(
   };
 }
 
+export interface TrustGatedMcpServer {
+  readonly name: string;
+  readonly target: string;
+}
+
+/**
+ * Project-level MCP servers the workspace-trust gate leaves out in this
+ * folder, identified by the origin of each entry in the final merged config
+ * (mirrors the SDK's `getWorkspaceTrustInfo`). Empty when the folder is trusted
+ * or nothing project-level is declared.
+ */
+export async function listTrustGatedMcpServers(
+  app: Scope,
+  workDir: string,
+  homeDir: string,
+): Promise<readonly TrustGatedMcpServer[]> {
+  const workspace = await app.accessor
+    .get(IWorkspaceInstanceManager)
+    .getOrCreate({ root: workDir });
+  if (await workspace.program.trust.get()) return [];
+  const fs = app.accessor.get(IHostFileSystem);
+  const [paths, loaded] = await Promise.all([
+    resolveMcpJsonPaths({ fs, cwd: workDir, homeDir }),
+    loadMcpServersDetailed({ fs, cwd: workDir, homeDir, includeProject: true }),
+  ]);
+  const projectPaths = new Set([paths.projectRoot, paths.project]);
+  return Object.entries(loaded.servers)
+    .filter(([name]) => projectPaths.has(loaded.origins[name] ?? ''))
+    .map(([name, config]) => ({ name, target: describeMcpTarget(config) }))
+    .toSorted((a, b) => a.name.localeCompare(b.name));
+}
+
+export function formatTrustGatedMcpWarning(servers: readonly TrustGatedMcpServer[]): string {
+  const noun = servers.length === 1 ? 'server' : 'servers';
+  const list = servers.map((server) => `${server.name} (${server.target})`).join(', ');
+  return (
+    `Warning: this folder is not trusted; skipped ${servers.length} project-level MCP ${noun}: ${list}.\n` +
+    '  Run `kimi` here and choose "Trust this folder" to enable them.\n\n'
+  );
+}
+
+function describeMcpTarget(config: McpServerConfig): string {
+  if (config.transport === 'stdio') {
+    const args = config.args === undefined ? '' : ` ${config.args.join(' ')}`;
+    return `stdio: ${config.command}${args}`;
+  }
+  return `${config.transport}: ${config.url}`;
+}
+
 async function runNativeTurn(
   app: Scope,
   session: ISessionScopeHandle,
@@ -467,14 +590,14 @@ async function runNativeTurn(
     // final message.
     writer.flushAssistant();
     if (result.type === 'completed') {
+      const skipTurnId = turn.id;
+      if (skipTurnId === undefined) {
+        throw new Error('Prompt turn ended before it started');
+      }
       const configService = app.accessor.get(IConfigService);
       const taskConfig = resolveAgentTaskConfig(configService);
-      const goalService = session.accessor
-        .get(IAgentLifecycleService)
-        .resolve(agentContextOf(agent), AgentGoal);
-      const cronService = session.accessor
-        .get(IAgentLifecycleService)
-        .resolve(agentContextOf(agent), AgentCron);
+      const goalService = agent.accessor.get(IAgentGoalService);
+      const cronService = agent.accessor.get(IAgentCronService);
       try {
         await applyPrintBackgroundPolicy({
           mode: resolvePrintBackgroundMode(configService),
@@ -483,7 +606,7 @@ async function runNativeTurn(
           countPending: () => countPendingBackgroundTasks(session),
           drain: () => drainBackgroundTasks(session, taskConfig?.printWaitCeilingS),
           turnEndings,
-          skipTurnId: turn.id,
+          skipTurnId,
           warn: (message) => stderr.write(`Warning: ${message}\n`),
           now: () => Date.now(),
           goalActive: () => goalService.getGoal().goal?.status === 'active',
@@ -527,9 +650,7 @@ async function runNativeGoal(
   stderr: PromptOutput,
 ): Promise<void> {
   requireConfiguredModel(model);
-  const goalService = session.accessor
-    .get(IAgentLifecycleService)
-    .resolve(agentContextOf(agent), AgentGoal);
+  const goalService = agent.accessor.get(IAgentGoalService);
   await goalService.createGoal({
     objective: goal.objective,
     replace: goal.replace,
@@ -838,6 +959,117 @@ function countPendingBackgroundTasks(session: ISessionScopeHandle): number {
     count += handle.accessor.get(IAgentTaskService).list(true).length;
   }
   return count;
+}
+
+/** Every agent handle in the session; the main agent is included explicitly since the lifecycle list skips `closing` agents. */
+function collectSessionAgentHandles(
+  session: ISessionScopeHandle,
+  mainAgent: IAgentScopeHandle,
+): IAgentScopeHandle[] {
+  const agentManager = session.accessor.get(IAgentLifecycleService);
+  const handles = new Set<IAgentScopeHandle>([mainAgent]);
+  for (const agent of agentManager.list()) {
+    const handle = agentManager.handleOf(agent.agentId);
+    if (handle !== undefined) handles.add(handle);
+  }
+  return [...handles];
+}
+
+/**
+ * Stop producers, drain prompts, and cancel turns so closing records exist
+ * before the wire flush; returns a release holding a guard per loop.
+ */
+async function quiesceSessionAgents(
+  session: ISessionScopeHandle,
+  mainAgent: IAgentScopeHandle,
+): Promise<(() => void) | undefined> {
+  const handles = collectSessionAgentHandles(session, mainAgent);
+  const promptServices = handles.flatMap((handle) => {
+    try {
+      return [handle.accessor.get(IAgentPromptService)];
+    } catch {
+      // A torn-down agent scope has no prompt service to drain or observe.
+      return [];
+    }
+  });
+  const loops = handles.flatMap((handle) => {
+    try {
+      return [handle.accessor.get(IAgentLoopService)];
+    } catch {
+      // A torn-down agent scope has no loop to quiesce.
+      return [];
+    }
+  });
+  // Task producers bypass the prompt queue and dispatch termination records
+  // straight to the wire; stop them first so the flush can persist those.
+  await Promise.allSettled(
+    handles.flatMap((handle) => {
+      try {
+        return [handle.accessor.get(IAgentTaskService).stopAllOnExit('Session closed')];
+      } catch {
+        return [];
+      }
+    }),
+  );
+  // Repeat until every queue is empty and every loop freezable: a prompt can
+  // still surface from the launch window or a cancelled turn's settle chain.
+  for (;;) {
+    await Promise.allSettled(promptServices.map((service) => service.drain()));
+    for (const loop of loops) {
+      for (const queueId of loop.status().pendingPromptIds) loop.cancelQueued(queueId);
+      loop.cancel();
+    }
+    await Promise.allSettled(loops.map((loop) => loop.settled()));
+    const guards: { dispose(): void }[] = [];
+    let frozen = true;
+    for (const loop of loops) {
+      let guard: { dispose(): void } | undefined;
+      try {
+        guard = loop.tryAcquireQuiescence();
+      } catch {
+        // A disposed loop cannot accept new submissions; it needs no guard.
+        continue;
+      }
+      if (guard === undefined) {
+        frozen = false;
+        break;
+      }
+      guards.push(guard);
+    }
+    const busy = promptServices.some((service) => {
+      try {
+        const snapshot = service.list();
+        return (
+          snapshot.launching ||
+          snapshot.active !== undefined ||
+          snapshot.pending.length > 0
+        );
+      } catch {
+        return false;
+      }
+    });
+    if (frozen && !busy) {
+      return () => {
+        for (const guard of guards) guard.dispose();
+      };
+    }
+    for (const guard of guards) guard.dispose();
+    await new Promise((resolve) => {
+      setTimeout(resolve, PROMPT_QUIESCE_POLL_MS);
+    });
+  }
+}
+
+/** Flush every session agent's wire journal; each flush settles independently. */
+async function flushSessionWires(
+  session: ISessionScopeHandle,
+  mainAgent: IAgentScopeHandle,
+): Promise<void> {
+  await Promise.allSettled(
+    collectSessionAgentHandles(session, mainAgent).map((handle) =>
+      handle.accessor.get(IEventDispatcher).flush(),
+    ),
+  );
 }
 
 async function drainBackgroundTasks(

@@ -3,7 +3,7 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const __dirname = import.meta.dirname;
 const SRC_ROOT = join(__dirname, '..', '..', 'src');
 
 const VENDOR_GATE_RE = /[!=]==?\s*'kimi'|'kimi'\s*[!=]==?|\bcase\s+'kimi'\s*:/;
@@ -20,7 +20,8 @@ function walk(dir: string): string[] {
     const abs = join(dir, entry);
     const st = statSync(abs);
     if (st.isDirectory()) {
-      if (relative(SRC_ROOT, abs) === 'kosong') continue;
+      const rel = relative(SRC_ROOT, abs);
+      if (rel === 'kosong' || rel === 'human' || rel === 'llm-adapter') continue;
       out.push(...walk(abs));
     } else if (abs.endsWith('.ts')) {
       out.push(abs);

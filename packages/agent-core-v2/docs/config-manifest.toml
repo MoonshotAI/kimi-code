@@ -8,29 +8,32 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (26 sections · 2 overlay(s))
+# Index (29 sections · 2 overlay(s))
 #   background               src/agent/task/configSection.ts
-#   builtinProductSkills     src/app/skillCatalog/configSection.ts
+#   builtinProductSkills     src/features/skill/catalog/configSection.ts
 #   cron                     src/features/cron/configSection.ts
+#   database                 src/persistence/configSection.ts
 #   defaultPermissionMode    src/agent/permissionMode/configSection.ts
 #   defaultPlanMode          src/features/plan/configSection.ts
 #   experimental             src/app/flag/flag.ts
 #   extraAgentDirs           src/workspace/workspaceAgentProfileLoader/configSection.ts
-#   extraSkillDirs           src/app/skillCatalog/configSection.ts
+#   extraSkillDirs           src/features/skill/catalog/configSection.ts
 #   hooks                    src/features/externalHooks/configSection.ts
 #   identity                 src/app/agentIdentity/configSection.ts
 #   image                    src/agent/media/configSection.ts
 #   loopControl              src/agent/loop/configSection.ts
 #   mcp                      src/app/mcpConfig/configSection.ts
-#   mergeAllAvailableSkills  src/app/skillCatalog/configSection.ts
+#   mergeAllAvailableSkills  src/features/skill/catalog/configSection.ts
 #   modelCatalog             src/app/kosongConfig/configSection.ts
 #   models                   src/app/kosongConfig/configSection.ts
 #   permission               src/agent/permissionRules/configSection.ts
 #   providers                src/app/kosongConfig/configSection.ts
+#   read                     src/agent/tools/os/read/configSection.ts
 #   secondaryModel           src/session/subagent/configSection.ts
 #   services                 src/app/auth/configSection.ts
 #   spineSpawn               src/agent/spine/configSection.ts
 #   subagent                 src/session/subagent/configSection.ts
+#   swarm                    src/features/swarm/configSection.ts
 #   task                     src/agent/task/configSection.ts
 #   thinking                 src/app/kosongConfig/configSection.ts
 #   tokenCounting            src/agent/tokenCounting/configSection.ts
@@ -46,6 +49,10 @@
 #   env:
 #     keep_alive_on_exit <- KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT (custom parse)
 #     max_running_tasks <- KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS (custom parse)
+#     bash_task_timeout_s <- KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S (custom parse)
+#     print_wait_ceiling_s <- KIMI_CODE_BACKGROUND_PRINT_WAIT_CEILING_S (custom parse)
+#     print_background_mode <- KIMI_CODE_BACKGROUND_PRINT_BACKGROUND_MODE (custom parse)
+#     print_max_turns <- KIMI_CODE_BACKGROUND_PRINT_MAX_TURNS (custom parse)
 # ##########################################################################
 
 [background]
@@ -60,7 +67,7 @@
 
 # ##########################################################################
 # builtinProductSkills (config.toml: builtin_product_skills)
-#   owner: src/app/skillCatalog/configSection.ts
+#   owner: src/features/skill/catalog/configSection.ts
 #   scope: core
 #   hooks: stripEnv
 #   env:
@@ -91,6 +98,20 @@ no_jitter = false
 no_stale = false
 disabled = false
 manual_tick = false
+
+# ##########################################################################
+# database
+#   owner: src/persistence/configSection.ts
+#   scope: core
+#   hooks: stripEnv
+#   env:
+#     base <- KIMI_CODE_PERSISTENCE_MINIDB_READMODEL (custom parse)
+#     search <- KIMI_CODE_SEARCH_WORKER (custom parse)
+# ##########################################################################
+
+[database]
+# base: boolean
+# search: boolean
 
 # ##########################################################################
 # defaultPermissionMode (config.toml: default_permission_mode)
@@ -128,7 +149,7 @@ extra_agent_dirs = []
 
 # ##########################################################################
 # extraSkillDirs (config.toml: extra_skill_dirs)
-#   owner: src/app/skillCatalog/configSection.ts
+#   owner: src/features/skill/catalog/configSection.ts
 #   scope: core
 # ##########################################################################
 
@@ -212,7 +233,7 @@ extra_skill_dirs = []
 
 # ##########################################################################
 # mergeAllAvailableSkills (config.toml: merge_all_available_skills)
-#   owner: src/app/skillCatalog/configSection.ts
+#   owner: src/features/skill/catalog/configSection.ts
 #   scope: core
 # ##########################################################################
 
@@ -278,7 +299,9 @@ merge_all_available_skills = true
 # permission
 #   owner: src/agent/permissionRules/configSection.ts
 #   scope: core
-#   hooks: custom fromToml · custom toToml
+#   hooks: custom fromToml · custom toToml · stripEnv
+#   env:
+#     dangerous_command_guard <- KIMI_CODE_DANGEROUS_COMMAND_GUARD (custom parse)
 # ##########################################################################
 
 [permission]
@@ -287,6 +310,7 @@ merge_all_available_skills = true
   # scope: "turn-override" | "session-runtime" | "project" | "user" (default: "user")
   # pattern: string
   # reason: string
+# dangerous_command_guard: boolean
 
 # ##########################################################################
 # providers
@@ -315,6 +339,16 @@ merge_all_available_skills = true
     # oauth_host: string
   # env: record<string, string>
   # source: record<string, any>
+
+# ##########################################################################
+# read
+#   owner: src/agent/tools/os/read/configSection.ts
+#   scope: core
+# ##########################################################################
+
+[read]
+# default_max_chars: integer
+# max_chars: integer
 
 # ##########################################################################
 # secondaryModel (config.toml: secondary_model)
@@ -395,6 +429,18 @@ merge_all_available_skills = true
 timeout_ms = 7200000
 
 # ##########################################################################
+# swarm
+#   owner: src/features/swarm/configSection.ts
+#   scope: core
+#   hooks: stripEnv
+#   env:
+#     timeout_ms <- KIMI_CODE_SWARM_TIMEOUT_MS (custom parse)
+# ##########################################################################
+
+[swarm]
+timeout_ms = 7200000
+
+# ##########################################################################
 # task
 #   owner: src/agent/task/configSection.ts
 #   scope: core
@@ -402,6 +448,10 @@ timeout_ms = 7200000
 #   env:
 #     keep_alive_on_exit <- KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT (custom parse)
 #     max_running_tasks <- KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS (custom parse)
+#     bash_task_timeout_s <- KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S (custom parse)
+#     print_wait_ceiling_s <- KIMI_CODE_BACKGROUND_PRINT_WAIT_CEILING_S (custom parse)
+#     print_background_mode <- KIMI_CODE_BACKGROUND_PRINT_BACKGROUND_MODE (custom parse)
+#     print_max_turns <- KIMI_CODE_BACKGROUND_PRINT_MAX_TURNS (custom parse)
 # ##########################################################################
 
 [task]

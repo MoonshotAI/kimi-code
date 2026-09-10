@@ -75,15 +75,26 @@ export class AuthFlowController {
    * model; without one (session-less startup, or login completing before the
    * first message) it only records the choice in appState — the lazy session
    * creation on the first message picks it up.
+   *
+   * Returns whether the activation made the engine emit `model_switch` — it
+   * reached an already-live session AND changed the bound alias (the engine
+   * tracks the event only on an actual alias change). `false` when no live
+   * session existed (session creation is deferred to the first prompt) or
+   * the alias was already bound, so callers mirroring the engine's telemetry
+   * must stay the producer for exactly those paths. Thinking-effort changes
+   * are orthogonal: the engine's `thinking_toggle` fires from `setThinking`
+   * regardless of this flag.
    */
-  async activateModelSelection(model: string, effort?: string): Promise<void> {
+  async activateModelSelection(model: string, effort?: string): Promise<boolean> {
     const { host } = this;
     if (host.session !== undefined) {
-      await host.session.setModel(model);
+      const session = host.session;
+      const modelChanged = (await session.getStatus()).model !== model;
+      await session.setModel(model);
       if (effort !== undefined) {
-        await host.session.setThinking(effort);
+        await session.setThinking(effort);
       }
-      return;
+      return modelChanged;
     }
 
     const patch: Partial<AppState> = { model };
@@ -99,21 +110,15 @@ export class AuthFlowController {
       patch.maxContextTokens = selected.maxContextSize;
     }
     host.setAppState(patch);
+    return false;
   }
 
-  async clearActiveSessionAfterLogout(): Promise<void> {
-    await this.host.closeSession('logged out');
-    this.host.resetSessionRuntime();
-    this.host.setAppState({
-      sessionId: '',
-      model: '',
-      sessionTitle: null,
-    });
-    await this.host.refreshSkillCommands();
-    await this.host.refreshPluginCommands();
-  }
-
-  async refreshConfigAfterLogin(): Promise<void> {
+  /**
+   * Re-read config and reactivate the persisted model after login or a
+   * config-refreshing command. Returns whatever the activation reports (see
+   * {@link activateModelSelection}); `false` when no activation ran.
+   */
+  async refreshConfigAfterLogin(): Promise<boolean> {
     const { host } = this;
     const config = await host.harness.getConfig({ reload: true });
     const availableModels = modelsView(config);
@@ -128,16 +133,19 @@ export class AuthFlowController {
         await host.hydrateLazyConfigDefaults();
       }
       host.setAppState({ availableModels, availableProviders });
-      return;
+      return false;
     }
 
-    await this.activateModelSelection(defaultModel, thinkingEffortFromConfig(thinkingView(config)));
+    const activated = await this.activateModelSelection(
+      defaultModel,
+      thinkingEffortFromConfig(thinkingView(config)),
+    );
     if (host.session === undefined && host.engineV2) {
       // Session-less v2: also hydrate permission/plan defaults from the
       // refreshed config, same as startup.
       await host.hydrateLazyConfigDefaults();
       host.setAppState({ availableModels, availableProviders });
-      return;
+      return activated;
     }
     const appStatePatch: Partial<AppState> = {
       availableModels,
@@ -146,13 +154,22 @@ export class AuthFlowController {
       maxContextTokens: selected.maxContextSize,
     };
     host.setAppState(appStatePatch);
+    return activated;
   }
 
   async refreshConfigAfterLogout(): Promise<void> {
     const config = await this.host.harness.getConfig({ reload: true });
+    const availableModels = modelsView(config);
+    const availableProviders = providersView(config);
+
+    if (this.host.session !== undefined) {
+      this.host.setAppState({ availableModels, availableProviders });
+      return;
+    }
+
     this.host.setAppState({
-      availableModels: modelsView(config),
-      availableProviders: providersView(config),
+      availableModels,
+      availableProviders,
       model: '',
       thinkingEffort: 'off',
       maxContextTokens: 0,

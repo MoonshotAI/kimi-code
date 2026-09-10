@@ -595,3 +595,48 @@ program [0,18] "<<EOF cat\nbody\nEOF"
         heredoc_content [10,15] "body\n"
       heredoc_end [15,18] "EOF"
 ===
+@match: gh --body "$(cat <<'EOF'
+gh --body "$(cat <<'EOF'
+it's
+EOF
+)"
+===
+@match: echo $(cat <<'EOF'
+echo $(cat <<'EOF'
+it's
+EOF
+)
+===
+@match: echo $(cat <<'EOF'
+echo $(cat <<'EOF'
+) paren
+EOF
+)
+===
+@match: cat <(cat <<'EOF'
+cat <(cat <<'EOF'
+it's
+EOF
+)
+===
+@match: echo "$(cat <<'EOF'
+echo "$(cat <<'EOF'
+$(broken
+EOF
+)"
+===
+@match: echo "$(cat <<-'EOF'
+echo "$(cat <<-'EOF'
+	it's
+	EOF
+)"
+===
+@match: echo $(echo $((x << 2)))
+echo $(echo $((x << 2)))
+echo $(echo $[x << 2]
+)
+echo $(printf x # <<EOF
+)
+echo $( [[ x == @(<<EOF) ]]
+)
+===

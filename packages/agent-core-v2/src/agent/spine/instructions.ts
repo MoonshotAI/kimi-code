@@ -1,26 +1,3 @@
-/**
- * `spine` domain (L4) — the `<spine_view>` protocol block appended to the
- * system prompt when spine is enabled, plus the `appendSpineView` splicer and
- * the `~/spine_instruction.md` override loader.
- *
- * The text is transcribed from the upstream `SPINE_JIT_INSTRUCTIONS`
- * (codex-rs/core/src/spine/instructions.rs, context-ownership rewrite through
- * 97f4eb1a) so the model sees an identical contract, with three local
- * adaptations: the control tools keep their local `spine_open` / `spine_next`
- * / `spine_close` spellings (upstream writes bare `open` / `next` / `close`);
- * the code-mode `exec` batching clause is dropped (no code mode in this
- * repo); and no trim segment is appended because upstream's
- * `SPINE_TRIM_INSTRUCTIONS` is intentionally empty pending approved copy —
- * trim semantics live in the `spine_trim` tool description.
- * `loadSpineViewOverride` returns the
- * `<spine_view>` block extracted from `~/spine_instruction.md` (`undefined`
- * when the file is missing, unreadable, empty, or carries no block); the
- * caller owns the result — there is no module-level cache, so co-resident
- * agents never share an override by accident, and `spineService` can await
- * the load before its first turn request to keep every request's system
- * prompt byte-identical. Pure string handling apart from the single file
- * read. Consumed by `spineService` and the `llmRequester` request assembly.
- */
 
 export const SPINE_VIEW = `<spine_view>
 All work must be Spine-managed. Structure the tree around context ownership and

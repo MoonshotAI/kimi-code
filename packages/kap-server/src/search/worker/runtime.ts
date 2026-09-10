@@ -7,7 +7,6 @@ export type SearchWorkerRuntimeState =
 
 let configuredPath: string | null = null;
 
-/** Configure the packaged search worker entry once during process startup. */
 export function configureSearchWorkerRuntime(entry: string): SearchWorkerRuntimeState {
   if (!path.isAbsolute(entry)) {
     throw new TypeError('search worker entry must be an absolute path');
@@ -34,7 +33,6 @@ export function configureSearchWorkerRuntime(entry: string): SearchWorkerRuntime
   return { configured: true, path: configuredPath };
 }
 
-/** Reset process-wide configuration. Intended for tests and controlled hosts. */
 export function resetSearchWorkerRuntime(): void {
   configuredPath = null;
 }

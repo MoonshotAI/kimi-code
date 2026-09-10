@@ -7,12 +7,6 @@ export interface IAgentScopeContext {
   readonly _serviceBrand: undefined;
 
   readonly agentId: string;
-  /**
-   * Identity labels recorded for this agent at creation (the same value
-   * `ISessionMetadata.registerAgent` persists). Empty for agents created
-   * without labels. Lets Agent-scoped consumers recognize their own kind
-   * (e.g. a spawned spine branch) without re-reading session metadata.
-   */
   readonly labels: Readonly<Record<string, string>>;
   readonly forkedFrom?: string;
   readonly agentContext: AgentContext;

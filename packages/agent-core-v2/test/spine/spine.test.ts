@@ -30,15 +30,17 @@ import {
   PlanModeEnter,
   PlanModeExit,
 } from '#/index';
-import type { Message } from '#/kosong/contract/message';
+import type { Message } from '#/llm-adapter/contract/message';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionSubagentService, type AgentRunHandle } from '#/session/subagent/subagent';
 
 import {
   createCommandRunner,
   execEnvServices,
+  requesterFromGenerateFn,
   sessionService,
   testAgent,
+  type LegacyGenerateResult,
   type TestAgentContext,
   type TestAgentOptions,
 } from '../harness';
@@ -286,10 +288,10 @@ describe('Spine control tools', () => {
 
   it('reopens a closed span when an undo truncates its close evidence', async () => {
     let lastRequestText = '';
-    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, history) => {
       lastRequestText = historyText(history);
       return textResult('answer');
-    };
+    });
     const ctx = testAgent(execEnvServices({ hostFs: recordingHostFs().fs }), { generate });
     await configureLoop(ctx);
     ctx.appendExchange(1, 'u0', 'a0', 100);
@@ -313,10 +315,10 @@ describe('Spine control tools', () => {
 
   it('keeps the rebuilt history visible after /clear', async () => {
     let lastRequestText = '';
-    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, history) => {
       lastRequestText = historyText(history);
       return textResult('answer');
-    };
+    });
     const ctx = testAgent(execEnvServices({ hostFs: recordingHostFs().fs }), { generate });
     await configureLoop(ctx);
     for (let i = 0; i < 11; i++) ctx.appendExchange(i + 1, `u${String(i)}`, `a${String(i)}`, 100);
@@ -383,10 +385,10 @@ describe('Spine control tools', () => {
 
   it('keeps [U#] anchors stable when a span folds', async () => {
     let lastRequestText = '';
-    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, history) => {
       lastRequestText = historyText(history);
       return textResult('answer');
-    };
+    });
     const ctx = testAgent(execEnvServices({ hostFs: recordingHostFs().fs }), { generate });
     await configureLoop(ctx);
     ctx.appendExchange(1, 'seed-u0', 'seed-a0', 100);
@@ -992,7 +994,7 @@ function toolCallPart(
 
 type GenerateFn = NonNullable<TestAgentOptions['generate']>;
 
-function textResult(text: string): Awaited<ReturnType<GenerateFn>> {
+function textResult(text: string): LegacyGenerateResult {
   return {
     id: 'mock-spine-text',
     message: { role: 'assistant', content: [{ type: 'text', text }], toolCalls: [] },
