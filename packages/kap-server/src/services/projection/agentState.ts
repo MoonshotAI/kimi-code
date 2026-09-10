@@ -16,6 +16,7 @@ export class AgentStateTracker {
   private endedAt: string | undefined;
   private status: AgentStatus = 'idle';
   private turn: AgentStateTurn | undefined;
+  private compacting = false;
 
   constructor(
     readonly agentId: string,
@@ -94,6 +95,22 @@ export class AgentStateTracker {
     if (this.status !== 'running') return false;
     this.status = 'idle';
     this.turn = undefined;
+    this.compacting = false;
+    return true;
+  }
+
+  compactionStarted(): boolean {
+    if (this.compacting) return false;
+    this.compacting = true;
+    if (this.status !== 'running' || this.turn === undefined) return false;
+    if (this.turn.status === 'compacting') return false;
+    this.turn = { status: 'compacting' };
+    return true;
+  }
+
+  compactionEnded(): boolean {
+    if (!this.compacting) return false;
+    this.compacting = false;
     return true;
   }
 
@@ -105,6 +122,7 @@ export class AgentStateTracker {
     if (this.status === status) return false;
     this.status = status;
     this.turn = undefined;
+    this.compacting = false;
     this.endedAt = endedAt;
     return true;
   }
@@ -113,6 +131,7 @@ export class AgentStateTracker {
     if (this.endedAt !== undefined) return false;
     this.endedAt = endedAt;
     this.turn = undefined;
+    this.compacting = false;
     if (TERMINAL_STATUSES.has(this.status)) return true;
     this.status = 'interrupted';
     return true;
@@ -125,17 +144,20 @@ export class AgentStateTracker {
       const changed = this.status === 'running' || this.turn !== undefined;
       if (this.status === 'running') this.status = 'idle';
       this.turn = undefined;
+      this.compacting = false;
       return changed;
     }
     if (this.status === 'idle') this.status = 'running';
     const next: AgentStateTurn = {
-      status: turn.ending
-        ? 'aborting'
-        : turn.phase === 'retrying'
-          ? 'retrying'
-          : turn.phase === 'tool_call'
-            ? 'acting'
-            : 'thinking',
+      status: this.compacting
+        ? 'compacting'
+        : turn.ending
+          ? 'aborting'
+          : turn.phase === 'retrying'
+            ? 'retrying'
+            : turn.phase === 'tool_call'
+              ? 'acting'
+              : 'thinking',
     };
     if (this.turn?.status === next.status) return false;
     this.turn = next;

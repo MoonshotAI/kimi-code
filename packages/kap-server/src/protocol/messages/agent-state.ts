@@ -25,7 +25,7 @@ export const agentStateOriginSchema = z.discriminatedUnion('kind', [
 export type AgentStateOrigin = z.infer<typeof agentStateOriginSchema>;
 
 export const agentStateTurnSchema = z.object({
-  status: z.enum(['thinking', 'retrying', 'acting', 'aborting']),
+  status: z.enum(['thinking', 'retrying', 'acting', 'aborting', 'compacting']),
 });
 
 export type AgentStateTurn = z.infer<typeof agentStateTurnSchema>;
