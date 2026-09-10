@@ -6,7 +6,7 @@ import type { LlmErrorMessage } from '#/llm/errors';
 import type { ContentPart, Message, UserMessage } from '#/llm/message';
 import { createMediaDegradeRecovery } from '#/llm/media/degrade';
 import type { LlmModel } from '#/llm/model';
-import { createLlmMachine, type LlmEvent } from '#/llm/requester/machine';
+import { createRequestActor, type LlmEvent } from '#/llm/requester/actor';
 import type { LlmRecovery } from '#/llm/requester/recovery';
 import type { LlmCredentialProvider, LlmRequester } from '#/llm/requester/requester';
 import type { LlmRetryOptions } from '#/llm/requester/retry';
@@ -92,7 +92,7 @@ function startTurnActor(
       events: {} as TurnEvent,
       emitted: {} as TurnLlmEvent,
     },
-    actors: { turn: createTurnMachine(createLlmMachine({ requester }), options) },
+    actors: { turn: createTurnMachine(requester, options) },
   }).createMachine({
     id: 'harness',
     initial: 'running',
@@ -130,6 +130,44 @@ function startTurnActor(
   actor.on('llm.failed.remote', (event) => failed.push(event.error));
   actor.start();
   return { actor, retrying, recovering, sent, failed };
+}
+
+function startRequestActor(requester: LlmRequester, signal: AbortSignal) {
+  const harness = setup({
+    types: {
+      input: {} as { signal: AbortSignal },
+      context: {} as { signal: AbortSignal },
+      events: {} as LlmEvent,
+      emitted: {} as LlmEvent,
+    },
+    actors: { request: createRequestActor(requester) },
+  }).createMachine({
+    id: 'request-harness',
+    initial: 'running',
+    context: ({ input }) => input,
+    states: {
+      running: {
+        invoke: {
+          src: 'request',
+          input: ({ context }) => ({
+            config: { model },
+            content: { messages: [] },
+            signal: context.signal,
+          }),
+        },
+        on: {
+          '*': {
+            actions: emit(({ event }) => event),
+          },
+        },
+      },
+    },
+  });
+  const failed: unknown[] = [];
+  const actor = createActor(harness, { input: { signal } });
+  actor.on('llm.failed.remote', (event) => failed.push(event));
+  actor.start();
+  return { failed };
 }
 
 async function flush(): Promise<void> {
@@ -686,16 +724,7 @@ describe('turn machine credential recovery', () => {
     const requester: LlmRequester = {
       generate: () => Promise.reject(new DOMException('The operation was aborted.', 'AbortError')),
     };
-    const actor = createActor(createLlmMachine({ requester }), {
-      input: {
-        config: { model },
-        content: { messages: [] },
-        signal: new AbortController().signal,
-      },
-    });
-    const failed: unknown[] = [];
-    actor.on('llm.failed.remote', (event) => failed.push(event));
-    actor.start();
+    const { failed } = startRequestActor(requester, new AbortController().signal);
 
     await drain();
 
@@ -710,16 +739,7 @@ describe('turn machine credential recovery', () => {
         return Promise.reject(new Error('boom'));
       },
     };
-    const actor = createActor(createLlmMachine({ requester }), {
-      input: {
-        config: { model },
-        content: { messages: [] },
-        signal: controller.signal,
-      },
-    });
-    const failed: unknown[] = [];
-    actor.on('llm.failed.remote', (event) => failed.push(event));
-    actor.start();
+    const { failed } = startRequestActor(requester, controller.signal);
 
     await drain();
 

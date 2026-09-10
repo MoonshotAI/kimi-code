@@ -14,7 +14,6 @@ import type { LlmErrorMessage } from '#human/llm/errors';
 import type { FinishInfo } from '#human/llm/finish-reason';
 import type { StreamedMessagePart, UserMessage } from '#human/llm/message';
 import type { LlmModel } from '#human/llm/model';
-import { createLlmMachine } from '#human/llm/requester/machine';
 import type { LlmRecovery, LlmRecoveryRecord } from '#human/llm/requester/recovery';
 import type { LlmCredentialProvider } from '#human/llm/requester/requester';
 import { resolveMaxAttempts } from '#human/llm/requester/retry';
@@ -295,15 +294,10 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
   const actor = createActor(
     createAgentMachine({
       tools: tools.tools,
-      turnActor: createTurnMachine(
-        createLlmMachine({
-          requester: requester.requester,
-        }),
-        {
-          retry: { maxAttemptsPerStep: options.maxAttemptsPerStep },
-          recovery: options.recovery,
-        },
-      ),
+      turnActor: createTurnMachine(requester.requester, {
+        retry: { maxAttemptsPerStep: options.maxAttemptsPerStep },
+        recovery: options.recovery,
+      }),
       abortTimeoutMs: options.abortTimeoutMs,
     }),
     {
