@@ -10,6 +10,7 @@ import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import {
   IQueryStore,
+  QueryStoreRebuiltError,
   type Checkpoint,
   type ColumnBounds,
   type ColumnPageQuery,
@@ -50,6 +51,7 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
   private dbPromise: Promise<ClusterDb> | undefined;
   private rebuildPromise: Promise<void> | undefined;
   private transientFailures = 0;
+  private storeEpochCounter = 0;
   private readonly ensuredIndexes = new Set<string>();
 
   constructor(
@@ -107,6 +109,7 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
         lockAcquireTimeoutMs: LOCK_ACQUIRE_TIMEOUT_MS,
       });
       if (outcome === 'locked') throw cause;
+      this.storeEpochCounter += 1;
     })();
     const settled = this.rebuildPromise;
     return settled.then(
@@ -120,9 +123,16 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
     );
   }
 
-  private async withDb<T>(op: (db: ClusterDb) => Promise<T>): Promise<T> {
+  private async withDb<T>(
+    op: (db: ClusterDb) => Promise<T>,
+    expectedStoreEpoch?: number,
+  ): Promise<T> {
+    const db = await this.openDb();
+    if (expectedStoreEpoch !== undefined && expectedStoreEpoch !== this.storeEpochCounter) {
+      throw new QueryStoreRebuiltError();
+    }
     try {
-      const result = await op(await this.openDb());
+      const result = await op(db);
       this.transientFailures = 0;
       return result;
     } catch (error) {
@@ -132,7 +142,8 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
       }
       this.transientFailures = 0;
       await this.rebuild(error);
-      return op(await this.openDb());
+      if (expectedStoreEpoch !== undefined) throw new QueryStoreRebuiltError();
+      throw error;
     }
   }
 
@@ -246,8 +257,19 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
     return this.get<Checkpoint>(CHECKPOINT_COLLECTION, source);
   }
 
-  async setCheckpoint(source: string, checkpoint: Checkpoint): Promise<void> {
-    await this.put(CHECKPOINT_COLLECTION, source, checkpoint);
+  async setCheckpoint(
+    source: string,
+    checkpoint: Checkpoint,
+    expectedStoreEpoch?: number,
+  ): Promise<void> {
+    await this.withDb(
+      (db) => db.set(physicalKey(CHECKPOINT_COLLECTION, source), checkpoint),
+      expectedStoreEpoch,
+    );
+  }
+
+  storeEpoch(): number {
+    return this.storeEpochCounter;
   }
 
   async close(): Promise<void> {

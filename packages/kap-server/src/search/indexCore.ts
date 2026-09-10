@@ -63,6 +63,7 @@ const WIRE_BATCH_OPS = 1_000;
 const SYNC_ROUND_BYTE_BUDGET = 64 << 20;
 const SYNC_ROUND_TIME_BUDGET_MS = 30_000;
 const SYNC_FAILURE_ESCALATION_LIMIT = 5;
+const SESSION_SYNC_FAILURE_SKIP_LIMIT = 5;
 const EMPTY_BUFFER = Buffer.alloc(0);
 
 interface SyncRoundBudget {
@@ -160,6 +161,12 @@ export interface SyncSessionInput {
   readonly dir: string;
 }
 
+interface SessionSyncResult {
+  readonly truncated: boolean;
+  readonly failed: boolean;
+  readonly error?: string;
+}
+
 export interface CoreIndexView {
   readonly state: 'building' | 'ready' | 'readonly';
   readonly indexedSessions: number;
@@ -192,6 +199,7 @@ export interface CoreSyncOutcome {
   readonly sessions: number;
   readonly documents: number;
   readonly truncated: boolean;
+  readonly failures: number;
   readonly lockToken?: string;
   readonly lifecycle: CoreLifecycleReport;
 }
@@ -235,6 +243,7 @@ export class SearchIndexCore {
   private lockToken: string | undefined;
   private lastMaintenanceDetail: string | undefined;
   private consecutiveSyncFailures = 0;
+  private readonly sessionSyncFailures = new Map<string, number>();
 
   db: MiniDb<SearchDoc> | null = null;
   openPromise: Promise<void> | null = null;
@@ -440,7 +449,13 @@ export class SearchIndexCore {
   }
 
   async sync(sessions: readonly SyncSessionInput[]): Promise<CoreSyncOutcome> {
-    let outcome: CoreSyncPassOutcome = { noop: true, sessions: 0, documents: 0, truncated: false };
+    let outcome: CoreSyncPassOutcome = {
+      noop: true,
+      sessions: 0,
+      documents: 0,
+      truncated: false,
+      failures: 0,
+    };
     await this.tracked(async () => {
       try {
         outcome = await this.runSync(sessions);
@@ -452,7 +467,7 @@ export class SearchIndexCore {
         }
         this.consecutiveSyncFailures = 0;
         await this.recoverByRebuild(error);
-        outcome = { noop: false, sessions: 0, documents: 0, truncated: true };
+        outcome = { noop: false, sessions: 0, documents: 0, truncated: true, failures: 0 };
       }
     });
     return { ...outcome, lockToken: this.lockToken, lifecycle: this.lifecycleState() };
@@ -467,18 +482,25 @@ export class SearchIndexCore {
   }
 
   private async runSync(sessions: readonly SyncSessionInput[]): Promise<CoreSyncPassOutcome> {
-    if (this.disposed) return { noop: true, sessions: 0, documents: 0, truncated: false };
+    const noop: CoreSyncPassOutcome = {
+      noop: true,
+      sessions: 0,
+      documents: 0,
+      truncated: false,
+      failures: 0,
+    };
+    if (this.disposed) return noop;
     this.syncReplaced = false;
     await this.ensureOpen();
     const db = this.db;
-    if (!db || db.readOnly || this.disposed) return { noop: true, sessions: 0, documents: 0, truncated: false };
+    if (!db || db.readOnly || this.disposed) return noop;
 
     await this.migrateFileMetaKeys(db);
 
     const currentIds = new Set(sessions.map((s) => s.id));
 
     for (const row of db.query({ key: { prefix: SESSION_META_PREFIX }, project: [] })) {
-      if (this.disposed) return { noop: true, sessions: 0, documents: 0, truncated: false };
+      if (this.disposed) return noop;
       const sessionId = row.key.slice(SESSION_META_PREFIX.length);
       if (!currentIds.has(sessionId)) await this.deleteSessionDocs(db, sessionId);
     }
@@ -489,25 +511,40 @@ export class SearchIndexCore {
     };
     let indexed = 0;
     let truncated = false;
+    let failures = 0;
     for (const summary of sessions) {
-      if (this.disposed) return { noop: true, sessions: 0, documents: 0, truncated: false };
+      if (this.disposed) return noop;
+      if ((this.sessionSyncFailures.get(summary.id) ?? 0) >= SESSION_SYNC_FAILURE_SKIP_LIMIT) {
+        continue;
+      }
       if (syncBudgetExhausted(budget)) {
         truncated = true;
         break;
       }
-      try {
-        if (await this.syncSession(db, summary, budget)) truncated = true;
-        indexed++;
-      } catch (error) {
-        if (classifyStorageError(error) === 'rebuild') throw error;
-        this.log.warn('global search: failed to index session', {
-          sessionId: summary.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
+      const result = await this.syncSession(db, summary, budget);
+      if (result.truncated) truncated = true;
+      if (result.failed) {
+        const count = (this.sessionSyncFailures.get(summary.id) ?? 0) + 1;
+        this.sessionSyncFailures.set(summary.id, count);
+        if (count >= SESSION_SYNC_FAILURE_SKIP_LIMIT) {
+          this.log.warn(
+            'global search: giving up on a session whose wire transcript stays unreadable',
+            { sessionId: summary.id, error: result.error },
+          );
+        } else {
+          failures += 1;
+          this.log.warn('global search: failed to index session', {
+            sessionId: summary.id,
+            error: result.error,
+          });
+        }
+      } else {
+        this.sessionSyncFailures.delete(summary.id);
       }
+      indexed++;
     }
 
-    if (this.disposed) return { noop: true, sessions: 0, documents: 0, truncated: false };
+    if (this.disposed) return noop;
     const metaCount = db.query({ key: { prefix: '\0meta\\' }, project: [] }).length;
     const stats: StatsDoc = {
       kind: 'stats',
@@ -516,11 +553,11 @@ export class SearchIndexCore {
       lastIndexedAt: Date.now(),
     };
     await db.set(STATS_KEY, stats);
-    if (!truncated) this.fullSyncDone = true;
+    if (!truncated && failures === 0) this.fullSyncDone = true;
     if (this.syncReplaced) {
       this.generation++;
     }
-    return { noop: false, sessions: indexed, documents: stats.documents, truncated };
+    return { noop: false, sessions: indexed, documents: stats.documents, truncated, failures };
   }
 
   private async migrateFileMetaKeys(db: MiniDb<SearchDoc>): Promise<void> {
@@ -552,7 +589,7 @@ export class SearchIndexCore {
     db: MiniDb<SearchDoc>,
     summary: SyncSessionInput,
     budget: SyncRoundBudget,
-  ): Promise<boolean> {
+  ): Promise<SessionSyncResult> {
     const wireFiles = await collectWireFiles(summary.dir);
     const seenPaths = new Set(wireFiles.map((file) => file.path));
 
@@ -565,8 +602,15 @@ export class SearchIndexCore {
     }
 
     let truncated = false;
+    let failed = false;
+    let error: string | undefined;
     for (const file of wireFiles) {
-      if (await this.syncWireFile(db, summary, file, budget)) truncated = true;
+      const result = await this.syncWireFile(db, summary, file, budget);
+      if (result.truncated) truncated = true;
+      if (result.failed) {
+        failed = true;
+        error ??= result.error;
+      }
     }
 
     const title = summary.title ?? '';
@@ -594,7 +638,7 @@ export class SearchIndexCore {
       const sessionMeta: SessionMetaDoc = { kind: 'sessionMeta' };
       await db.set(SESSION_META_PREFIX + summary.id, sessionMeta);
     }
-    return truncated;
+    return { truncated, failed, error };
   }
 
   private async deleteFileDocs(db: MiniDb<SearchDoc>, meta: FileMetaDoc): Promise<void> {
@@ -609,12 +653,12 @@ export class SearchIndexCore {
     summary: SyncSessionInput,
     file: WireFileRef,
     budget: SyncRoundBudget,
-  ): Promise<boolean> {
+  ): Promise<SessionSyncResult> {
     let st: { size: number; mtimeMs: number; ino: number };
     try {
       st = await stat(file.path);
     } catch {
-      return false;
+      return { truncated: false, failed: false };
     }
     const size = st.size;
     const metaKey = fileMetaKey(summary.id, file.path);
@@ -675,29 +719,41 @@ export class SearchIndexCore {
         if (legacyKey !== null) ops.push({ op: 'del', key: legacyKey });
         await db.batch(ops);
       }
-      return false;
+      return { truncated: false, failed: false };
     }
 
-    const handle = await open(file.path, 'r');
+    let handle: Awaited<ReturnType<typeof open>>;
+    try {
+      handle = await open(file.path, 'r');
+    } catch (error) {
+      return { truncated: false, failed: true, error: errorMessage(error) };
+    }
     const ops: BatchInputOp<SearchDoc>[] = [];
     let byteCursor = offset;
     let position = offset;
+    let wireError: unknown;
     try {
       let pending: Buffer = EMPTY_BUFFER;
       let finishing = false;
       const chunk = Buffer.allocUnsafe(WIRE_READ_CHUNK_BYTES);
       while (position < size) {
-        if (this.disposed) return false;
+        if (this.disposed) return { truncated: false, failed: false };
         if (syncBudgetExhausted(budget)) {
           if (pending.length === 0) break;
           finishing = true;
         }
-        const { bytesRead } = await handle.read(
-          chunk,
-          0,
-          Math.min(chunk.length, size - position),
-          position,
-        );
+        let bytesRead: number;
+        try {
+          ({ bytesRead } = await handle.read(
+            chunk,
+            0,
+            Math.min(chunk.length, size - position),
+            position,
+          ));
+        } catch (error) {
+          wireError = error;
+          break;
+        }
         if (bytesRead === 0) break;
         budget.bytesLeft -= bytesRead;
         const slice = chunk.subarray(0, bytesRead);
@@ -750,7 +806,11 @@ export class SearchIndexCore {
       if (legacyKey !== null) ops.push({ op: 'del', key: legacyKey });
       await db.batch(ops);
     }
-    return truncated;
+    return {
+      truncated,
+      failed: wireError !== undefined,
+      error: wireError !== undefined ? errorMessage(wireError) : undefined,
+    };
   }
 
   private collectWireLine(
@@ -954,6 +1014,7 @@ export class SearchIndexCore {
     }
     this.openPromise = null;
     this.fullSyncDone = false;
+    this.sessionSyncFailures.clear();
     this.lockToken = undefined;
     const outcome = await wipeStoreDir({ dir: this.indexDir });
     if (outcome === 'locked') {

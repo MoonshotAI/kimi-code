@@ -1,6 +1,8 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { LockFile } from './lockfile.js';
+import { withWindowsEpermRetry } from './rename-replace.js';
 
 export type WipeOutcome = 'wiped' | 'locked';
 
@@ -38,7 +40,14 @@ export async function wipeStoreDir(opts: WipeStoreDirOptions): Promise<WipeOutco
     return 'locked';
   }
   try {
-    await fs.rm(opts.dir, { recursive: true, force: true });
+    const isolated = `${opts.dir}.wiping-${process.pid}-${randomUUID()}`;
+    try {
+      await withWindowsEpermRetry(() => fs.rename(opts.dir, isolated));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'wiped';
+      throw error;
+    }
+    await fs.rm(isolated, { recursive: true, force: true });
   } finally {
     await releaseAll();
   }

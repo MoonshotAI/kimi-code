@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { appendFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
@@ -494,35 +494,76 @@ describe('GlobalSearchService', () => {
     expect(page.items[0]?.role).toBe('user');
   });
 
-  it('marks a mid-file budget stop as truncated and still completes an oversized record', async () => {
+  it('sync rounds account truncation, session-local wire failures, and escalating storage failures', async () => {
     const s1 = summary('s1', 'budget', T1);
     const lines = [
       userLine('苹果 head', T1),
       userLine(`苹果 giant ${'x'.repeat(1_700_000)}`, T2),
       userLine(`苹果 tail ${'y'.repeat(400_000)}`, T3),
     ];
-    await writeWire(home!, 's1', 'main', lines);
+    const s1Wire = await writeWire(home!, 's1', 'main', lines);
+    const s2 = summary('s2', 'wirefail', T1);
+    const s2Wire = await writeWire(home!, 's2', 'main', [userLine('苹果 unreachable', T1)]);
     const core = new SearchIndexCore({
       indexDir: join(home!, 'search-index'),
       log: noopLog,
       bootSalt: 'budget-test',
     });
     core.syncRoundBytes = 1 << 20;
-    const input = [syncInput(home!, s1)];
-    const messageCount = (): number =>
-      core.db?.query({ key: { prefix: 's1/' }, project: ['kind'] }).filter((row) => row.value.kind === 'message')
+    const input = [syncInput(home!, s1), syncInput(home!, s2)];
+    const messageCount = (id: string): number =>
+      core.db?.query({ key: { prefix: `${id}/` }, project: ['kind'] }).filter((row) => row.value.kind === 'message')
         .length ?? 0;
     try {
       const first = await core.sync(input);
       expect(first.truncated).toBe(true);
+      expect(first.failures).toBe(0);
       expect(core.fullSyncDone).toBe(false);
-      expect(messageCount()).toBe(2);
+      expect(messageCount('s1')).toBe(2);
+      expect(messageCount('s2')).toBe(0);
 
       const second = await core.sync(input);
       expect(second.truncated).toBe(false);
+      expect(second.failures).toBe(0);
       expect(core.fullSyncDone).toBe(true);
-      expect(messageCount()).toBe(3);
+      expect(messageCount('s1')).toBe(3);
+      expect(messageCount('s2')).toBe(1);
+
+      core.syncRoundBytes = 64 << 20;
+      if (process.platform !== 'win32') {
+        await core.reindex();
+        await chmod(s2Wire, 0o000);
+        for (let round = 0; round < 4; round++) {
+          const outcome = await core.sync(input);
+          expect(outcome.failures).toBe(1);
+          expect(outcome.truncated).toBe(false);
+          expect(core.fullSyncDone).toBe(false);
+        }
+        const skipped = await core.sync(input);
+        expect(skipped.failures).toBe(0);
+        expect(core.fullSyncDone).toBe(true);
+        expect(messageCount('s2')).toBe(0);
+        expect(messageCount('s1')).toBe(3);
+        await chmod(s2Wire, 0o644);
+      }
+
+      await appendFile(s1Wire, `${userLine('苹果 extra', T3 + 1)}\n`, 'utf8');
+      (core.db as unknown as { batch: unknown }).batch = () =>
+        Promise.reject(new Error('injected io'));
+      for (let round = 0; round < 4; round++) {
+        await expect(core.sync(input)).rejects.toThrow('injected io');
+      }
+      const rebuilt = await core.sync(input);
+      expect(rebuilt.truncated).toBe(true);
+      expect(rebuilt.failures).toBe(0);
+      const converged = await core.sync(input);
+      expect(converged.truncated).toBe(false);
+      expect(converged.failures).toBe(0);
+      expect(core.fullSyncDone).toBe(true);
+      expect(messageCount('s1')).toBe(4);
+      expect(messageCount('s2')).toBe(1);
     } finally {
+      await chmod(s2Wire, 0o644).catch(() => {});
       core.beginClose();
       await core.close();
     }

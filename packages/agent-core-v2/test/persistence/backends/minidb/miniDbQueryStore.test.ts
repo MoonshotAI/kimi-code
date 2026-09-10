@@ -10,7 +10,7 @@ import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ClusterDb } from '@moonshot-ai/minidb/cluster';
 import { drainQueryStoreDisposals, MiniDbQueryStore } from '#/persistence/backends/minidb/miniDbQueryStore';
-import { IQueryStore } from '#/persistence/interface/queryStore';
+import { IQueryStore, QueryStoreRebuiltError } from '#/persistence/interface/queryStore';
 import { stubBootstrap } from '../../../app/bootstrap/stubs';
 import { stubLog } from '../../../_base/log/stubs';
 
@@ -166,8 +166,11 @@ describe('MiniDbQueryStore', () => {
     await fsp.writeFile(registryFile, '{ definitely not valid json');
 
     const second = build();
-    await second.ensureIndex(COLLECTION, { kind: 'value', name: 'byV', field: 'v' });
+    await expect(
+      second.ensureIndex(COLLECTION, { kind: 'value', name: 'byV', field: 'v' }),
+    ).rejects.toThrow(SyntaxError);
     expect(await second.get(COLLECTION, 'a')).toBeUndefined();
+    await second.ensureIndex(COLLECTION, { kind: 'value', name: 'byV', field: 'v' });
     await second.put(COLLECTION, 'b', { id: 'b', v: 2 });
     const page = await second.query<{ id: string; v: number }>(COLLECTION).where({ v: 2 }).execute();
     expect(page.items).toEqual([{ id: 'b', v: 2 }]);
@@ -180,8 +183,9 @@ describe('MiniDbQueryStore', () => {
     const db = await internal.dbPromise;
     const poisoned = Object.assign(new Error('poisoned'), { code: 'WAL_POISONED' });
     (db as unknown as { set: unknown }).set = () => Promise.reject(poisoned);
-    await store.put(COLLECTION, 'b', { id: 'b', v: 2 });
+    await expect(store.put(COLLECTION, 'b', { id: 'b', v: 2 })).rejects.toThrow('poisoned');
     expect(await store.get(COLLECTION, 'a')).toBeUndefined();
+    await store.put(COLLECTION, 'b', { id: 'b', v: 2 });
     expect(await store.get(COLLECTION, 'b')).toEqual({ id: 'b', v: 2 });
 
     const db2 = await internal.dbPromise;
@@ -190,8 +194,9 @@ describe('MiniDbQueryStore', () => {
     for (let i = 0; i < 4; i++) {
       await expect(store.put(COLLECTION, `t${i}`, { v: i })).rejects.toThrow('locked');
     }
-    await store.put(COLLECTION, 'c', { id: 'c', v: 3 });
+    await expect(store.put(COLLECTION, 'c', { id: 'c', v: 3 })).rejects.toThrow('locked');
     expect(await store.get(COLLECTION, 'b')).toBeUndefined();
+    await store.put(COLLECTION, 'c', { id: 'c', v: 3 });
     expect(await store.get(COLLECTION, 'c')).toEqual({ id: 'c', v: 3 });
 
     const storeDir = join(homeDir, 'cache', 'query-store');
@@ -206,9 +211,22 @@ describe('MiniDbQueryStore', () => {
     const db4 = await internal.dbPromise;
     (db4 as unknown as { set: unknown }).set = () => Promise.reject(poisoned);
     await peer.close();
-    await store.put(COLLECTION, 'd', { v: 4 });
+    await expect(store.put(COLLECTION, 'd', { v: 4 })).rejects.toThrow('poisoned');
     expect(await store.get(COLLECTION, 'c')).toBeUndefined();
+    await store.put(COLLECTION, 'd', { v: 4 });
     expect(await store.get(COLLECTION, 'd')).toEqual({ v: 4 });
+
+    const epoch = store.storeEpoch();
+    const db5 = await internal.dbPromise;
+    (db5 as unknown as { set: unknown }).set = () => Promise.reject(poisoned);
+    await expect(store.put(COLLECTION, 'e', { v: 5 })).rejects.toThrow('poisoned');
+    expect(store.storeEpoch()).toBe(epoch + 1);
+    await expect(store.setCheckpoint('projection', { seq: 7 }, epoch)).rejects.toThrow(
+      QueryStoreRebuiltError,
+    );
+    expect(await store.getCheckpoint('projection')).toBeUndefined();
+    await store.setCheckpoint('projection', { seq: 7 }, store.storeEpoch());
+    expect(await store.getCheckpoint('projection')).toEqual({ seq: 7 });
   });
 
   it('getMany returns present values and skips missing keys', async () => {

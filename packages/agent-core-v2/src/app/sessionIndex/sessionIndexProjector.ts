@@ -51,6 +51,7 @@ export interface AuthoritativeScan {
   readonly summaries: SessionSummary[];
   readonly counts: Map<string, { active: number; archived: number }>;
   readonly sourceMaxMtimeMs: number;
+  readonly sourceSessionCount: number;
 }
 
 interface ScanSlot {
@@ -106,6 +107,7 @@ export class SessionIndexProjector {
     scan: Promise<AuthoritativeScan>,
   ): Promise<ProjectionResult> {
     const { queryStore, log } = this.deps;
+    const epoch = queryStore.storeEpoch();
     const collection = sessionCollection(generation);
     const counters = sessionCountersCollection(generation);
     await queryStore.dropCollection(collection);
@@ -116,7 +118,7 @@ export class SessionIndexProjector {
       field: `custom.${PARENT_SESSION_ID_KEY}`,
     });
 
-    const { summaries, counts, sourceMaxMtimeMs } = await scan;
+    const { summaries, counts, sourceMaxMtimeMs, sourceSessionCount } = await scan;
     await this.batchChunks(
       summaries.map((summary) => ({
         kind: 'put' as const,
@@ -127,12 +129,16 @@ export class SessionIndexProjector {
       })),
     );
     await this.writeCounters(counters, counts);
-    await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, {
-      seq: generation,
-      sourceMaxMtimeMs,
-      sourceSessionCount: summaries.length,
-      schemaVersion: SESSION_INDEX_SCHEMA_VERSION,
-    });
+    await queryStore.setCheckpoint(
+      SESSION_INDEX_MANIFEST,
+      {
+        seq: generation,
+        sourceMaxMtimeMs,
+        sourceSessionCount,
+        schemaVersion: SESSION_INDEX_SCHEMA_VERSION,
+      },
+      epoch,
+    );
     log.info('session index generation published', {
       generation,
       sessions: summaries.length,
@@ -156,9 +162,11 @@ export class SessionIndexProjector {
 
   async reconcile(generation: number): Promise<ReconcileResult> {
     const { queryStore, log } = this.deps;
+    const epoch = queryStore.storeEpoch();
     const collection = sessionCollection(generation);
     const counters = sessionCountersCollection(generation);
-    const { summaries, counts, sourceMaxMtimeMs } = await this.scanAuthoritative();
+    const { summaries, counts, sourceMaxMtimeMs, sourceSessionCount } =
+      await this.scanAuthoritative();
     const authoritativeIds = new Set(summaries.map((s) => s.id));
 
     const storedKeys = await queryStore.listKeys(collection);
@@ -188,11 +196,15 @@ export class SessionIndexProjector {
     await this.writeCounters(counters, counts);
     const manifest = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
     if (manifest?.seq === generation) {
-      await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, {
-        ...manifest,
-        sourceMaxMtimeMs: Math.max(manifest.sourceMaxMtimeMs ?? 0, sourceMaxMtimeMs),
-        sourceSessionCount: summaries.length,
-      });
+      await queryStore.setCheckpoint(
+        SESSION_INDEX_MANIFEST,
+        {
+          ...manifest,
+          sourceMaxMtimeMs: Math.max(manifest.sourceMaxMtimeMs ?? 0, sourceMaxMtimeMs),
+          sourceSessionCount,
+        },
+        epoch,
+      );
     }
     const result = { sessions: summaries.length, upserted: upserts.length, removed: removals.length };
     if (result.upserted > 0 || result.removed > 0) {
@@ -206,8 +218,10 @@ export class SessionIndexProjector {
     const summaries: SessionSummary[] = [];
     const counts = new Map<string, { active: number; archived: number }>();
     let sourceMaxMtimeMs = (await storage.mtime(SESSION_INDEX_SCOPE, SESSION_INDEX_KEY)) ?? 0;
+    let sourceSessionCount = 0;
     for (const workspaceId of await listWorkspaceIds(storage, sessionsScope)) {
       const sessionIds = await listSessionIds(storage, sessionsScope, workspaceId);
+      sourceSessionCount += sessionIds.length;
       const found = await mapBounded(sessionIds, SCAN_CONCURRENCY, async (sessionId) => {
         const mtime = await sessionStateMaxMtime(storage, sessionsScope, workspaceId, sessionId, log);
         if (mtime > sourceMaxMtimeMs) sourceMaxMtimeMs = mtime;
@@ -221,7 +235,7 @@ export class SessionIndexProjector {
       }
       counts.set(workspaceId, entry);
     }
-    return { summaries, counts, sourceMaxMtimeMs };
+    return { summaries, counts, sourceMaxMtimeMs, sourceSessionCount };
   }
 
   private async writeCounters(

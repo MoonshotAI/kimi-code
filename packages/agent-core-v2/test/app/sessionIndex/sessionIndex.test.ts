@@ -797,16 +797,17 @@ describe('FileSessionIndex (read model)', () => {
     expect(await store.count({ workspaceIds: [workspaceId], includeArchived: true })).toBe(3);
   });
 
-  it('a crashed initial projection falls back to disk and recovers on retry', async () => {
+  it('a crashed or rebuilt mid-flight projection falls back to disk and recovers on retry', async () => {
     await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
     await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
 
     class FlakyQueryStore extends MiniDbQueryStore {
       failNextBatch = false;
+      failure: Error = new Error('injected projection crash');
       override async batch(ops: readonly WriteOp[]): Promise<void> {
         if (this.failNextBatch) {
           this.failNextBatch = false;
-          throw new Error('injected projection crash');
+          throw this.failure;
         }
         return super.batch(ops);
       }
@@ -851,6 +852,20 @@ describe('FileSessionIndex (read model)', () => {
     expect(recovered).toEqual({ state: 'ready', generation: 1, degradedCount: 1 });
     const warm = await store.listRecent({ workspaceIds: [workspaceId] });
     expect(warm.items.map((s) => s.id)).toEqual(['b', 'a']);
+
+    const internal = queryStore as unknown as { dbPromise: Promise<{ batch: unknown }> };
+    const db = await internal.dbPromise;
+    db.batch = () =>
+      Promise.reject(Object.assign(new Error('poisoned'), { code: 'WAL_POISONED' }));
+    await store.reprojectNow();
+    expect(store.status().state).toBe('degraded');
+    expect(await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST)).toBeUndefined();
+
+    const rebuilt = await store.prepare();
+    expect(rebuilt.state).toBe('ready');
+    const after = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(after.items.map((s) => s.id)).toEqual(['b', 'a']);
+    expect(await store.count({ workspaceIds: [workspaceId] })).toBe(2);
   });
 
   it('a crashed re-projection keeps readers on the previous generation', async () => {
@@ -1386,6 +1401,14 @@ describe('FileSessionIndex (read model)', () => {
 
     await internals.tick();
     expect(reconciles).toBe(2);
+
+    await fsp.mkdir(join(sessionsDir, workspaceId, 'ghost'), { recursive: true });
+    await internals.tick();
+    expect(reconciles).toBe(3);
+    const withoutGhost = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(withoutGhost.items.map((s) => s.id)).toEqual(['a']);
+    await internals.tick();
+    expect(reconciles).toBe(3);
   });
 
   it('treats a published checkpoint without sourceMaxMtimeMs as stale and re-projects', async () => {
