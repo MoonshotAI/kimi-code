@@ -11,7 +11,7 @@ import {
   type ToolCall,
 } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
-import { createLlmMachine, type LlmEvent } from '#/llm/requester/machine';
+import type { LlmEvent } from '#/llm/requester/actor';
 import type { LlmRequester, LlmRequestEvent } from '#/llm/requester/requester';
 import type { LlmRetryOptions } from '#/llm/requester/retry';
 import { emptyUsage, type TokenUsage } from '#/llm/usage';
@@ -79,7 +79,7 @@ function createTestAgentMachine(
 ) {
   return createAgentMachine({
     tools,
-    turnActor: createTurnMachine(createLlmMachine({ requester }), { retry }),
+    turnActor: createTurnMachine(requester, { retry }),
     abortTimeoutMs,
   });
 }
@@ -1377,7 +1377,7 @@ describe('agent machine max steps', () => {
     const actor = createActor(
       createAgentMachine({
         tools,
-        turnActor: createTurnMachine(createLlmMachine({ requester })),
+        turnActor: createTurnMachine(requester),
         maxStepsPerTurn: 2,
       }),
       { input: { request: { model }, store } },

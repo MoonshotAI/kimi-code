@@ -17,7 +17,7 @@ export * from './llm/protocol/patterns';
 export * from './llm/media';
 export * from './llm/requester/requester';
 export * from './llm/empty-response';
-export * from './llm/requester/machine';
+export * from './llm/requester/actor';
 export * from './llm/requester/recovery';
 export * from './llm/requester/retry';
 export * from './llm/requester/bases/openai/capability';

@@ -16,14 +16,14 @@ import {
   type UserMessage,
 } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
-import type { createLlmMachine, LlmEvent } from '#/llm/requester/machine';
+import { createRequestActor, type LlmEvent, type MessageResolver } from '#/llm/requester/actor';
 import type {
   LlmRecovery,
   LlmRecoveryContext,
   LlmRecoveryProposal,
   LlmRecoveryRecord,
 } from '#/llm/requester/recovery';
-import type { LlmRequestConfig } from '#/llm/requester/requester';
+import type { LlmRequestConfig, LlmRequester } from '#/llm/requester/requester';
 import {
   readRetryAfterMs,
   resolveMaxAttempts,
@@ -347,10 +347,11 @@ export interface CreateTurnMachineOptions {
   readonly recovery?: LlmRecovery;
   readonly retry?: LlmRetryOptions;
   readonly abortGraceMs?: number;
+  readonly messageResolvers?: readonly MessageResolver[];
 }
 
 export function createTurnMachine(
-  llmActor: ReturnType<typeof createLlmMachine>,
+  requester: LlmRequester,
   options?: CreateTurnMachineOptions,
 ) {
   const recovery = options?.recovery;
@@ -364,7 +365,7 @@ export function createTurnMachine(
       output: {} as TurnOutput,
     },
     actors: {
-      llmActor,
+      llmActor: createRequestActor(requester, options?.messageResolvers),
     },
     actions: {
       forwardToParent: ({ self, event }) => {

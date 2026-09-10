@@ -11,7 +11,6 @@ import {
   type UserMessage,
 } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
-import { createLlmMachine } from '#/llm/requester/machine';
 import type { LlmRequestConfig, LlmRequester, LlmRequestEvent } from '#/llm/requester/requester';
 import { connectPlugins, type AgentPluginTarget } from '#/plugin';
 import { createAgentMachine, type AgentEmitted } from '#/agent/machine';
@@ -305,7 +304,7 @@ describe('tool select agent flow', () => {
     const actor = createActor(
       createAgentMachine({
         tools: [createSelectToolsTool(state), deferred],
-        turnActor: createTurnMachine(createLlmMachine({ requester })),
+        turnActor: createTurnMachine(requester),
       }),
       { input: { request: { model }, store } },
     );

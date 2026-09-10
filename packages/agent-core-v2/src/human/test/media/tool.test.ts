@@ -27,7 +27,6 @@ import { createMediaRefResolver } from '#/llm/media/resolver';
 import { createMemoryMediaStore } from '#/llm/media/store';
 import type { LlmModel } from '#/llm/model';
 import { createProvider } from '#/llm/provider/definition';
-import { createLlmMachine } from '#/llm/requester/machine';
 import type { LlmRequester } from '#/llm/requester/requester';
 import { openAIFormat } from '#/llm/requester/bases/openai/format';
 import { openAIBase } from '#/llm/requester/bases/openai/requester';
@@ -180,18 +179,15 @@ describe('media stack wiring', () => {
     const actor = createActor(
       createAgentMachine({
         tools,
-        turnActor: createTurnMachine(
-          createLlmMachine({
-            requester,
-            messageResolvers: [
-              createMediaRefResolver({
-                providers: [provider],
-                source: store,
-                cache: createMemoryMediaUploadCache(),
-              }),
-            ],
-          }),
-        ),
+        turnActor: createTurnMachine(requester, {
+          messageResolvers: [
+            createMediaRefResolver({
+              providers: [provider],
+              source: store,
+              cache: createMemoryMediaUploadCache(),
+            }),
+          ],
+        }),
       }),
       { input: { request: { model }, store: agentStore } },
     );
