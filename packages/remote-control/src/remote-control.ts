@@ -2,6 +2,7 @@ import { hostname, platform } from 'node:os';
 import { join } from 'node:path';
 import { request as httpRequest, validateHeaderName, validateHeaderValue } from 'node:http';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { gzipSync } from 'node:zlib';
 
 import {
   createKimiDeviceId,
@@ -58,6 +59,13 @@ const BLOCKED_RESPONSE_HEADERS = new Set([
   'trailer',
   'transfer-encoding',
   'upgrade',
+]);
+const GZIP_MIN_BODY_BYTES = 1024;
+const GZIP_COMPRESSIBLE_TYPES = new Set([
+  'application/javascript',
+  'application/json',
+  'application/xml',
+  'image/svg+xml',
 ]);
 
 interface RelayMessage {
@@ -215,6 +223,24 @@ export function rewriteRemoteControlResponse(
     return Buffer.from(text);
   }
   return body;
+}
+
+function acceptsGzipEncoding(headers: readonly [string, string][]): boolean {
+  for (const [name, value] of headers) {
+    if (name.toLowerCase() !== 'accept-encoding') continue;
+    for (const token of value.split(',')) {
+      const [encoding, ...params] = token.trim().toLowerCase().split(';');
+      if (encoding !== 'gzip' && encoding !== '*') continue;
+      const quality = params.map((param) => param.trim()).find((param) => param.startsWith('q='));
+      if (quality === undefined || Number(quality.slice(2)) > 0) return true;
+    }
+  }
+  return false;
+}
+
+function isGzipCompressibleType(contentType: string): boolean {
+  const mime = contentType.split(';', 1)[0]!.trim().toLowerCase();
+  return mime.startsWith('text/') || GZIP_COMPRESSIBLE_TYPES.has(mime);
 }
 
 export async function startRemoteControl(
@@ -818,13 +844,22 @@ function requestLocalHttp(
         response.once('end', () => {
           const contentType = response.headers['content-type'] ?? '';
           const receivedBody = Buffer.concat(chunks);
-          const body =
+          let body =
             response.headers['content-encoding'] === undefined
               ? rewriteRemoteControlResponse(contentType, receivedBody, publicPrefix)
               : receivedBody;
           const rewritten = body !== receivedBody;
           const headers = filterResponseHeaders(response.rawHeaders, rewritten);
           if (rewritten) headers.push('Cache-Control', 'no-cache');
+          if (
+            response.headers['content-encoding'] === undefined &&
+            body.length >= GZIP_MIN_BODY_BYTES &&
+            isGzipCompressibleType(contentType) &&
+            acceptsGzipEncoding(parsed.headers)
+          ) {
+            body = gzipSync(body);
+            headers.push('Content-Encoding', 'gzip');
+          }
           headers.push('Content-Length', String(body.length));
           const statusCode = response.statusCode ?? 502;
           const statusMessage = response.statusMessage ?? 'Bad Gateway';

@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { gunzipSync } from 'node:zlib';
 
 import {
   FileTokenStorage,
@@ -274,8 +275,20 @@ describe('Remote Control tunnel', () => {
     let localHttpRequest: IncomingMessage | undefined;
     let localWsRequest: IncomingMessage | undefined;
     const localWsServer = new WebSocketServer({ noServer: true });
+    const assetJs = `const boot = "/assets/boot.js";\n${'const chunk = "/assets/chunk.js";\n'.repeat(120)}`;
+    const assetPng = Buffer.alloc(4096, 7);
     const localServer = createServer((request, response) => {
       localHttpRequest = request;
+      if (request.url === '/assets/index.js') {
+        response.writeHead(200, { 'Content-Type': 'text/javascript' });
+        response.end(assetJs);
+        return;
+      }
+      if (request.url === '/assets/logo.png') {
+        response.writeHead(200, { 'Content-Type': 'image/png' });
+        response.end(assetPng);
+        return;
+      }
       response.writeHead(200, {
         'Content-Type': 'text/html',
         'Cache-Control': 'public, max-age=31536000, immutable',
@@ -352,7 +365,7 @@ describe('Remote Control tunnel', () => {
     expect(handle.url).toContain('?rc=1&from=kimi_code_cli');
 
     const rawRequest = Buffer.from(
-      'GET / HTTP/1.1\r\nHost: relay.test\r\nAuthorization: Bearer relay-token\r\nCookie: sid=1\r\nOrigin: https://relay.test\r\nConnection: X-Hop\r\nX-Hop: remove\r\nX-Keep: yes\r\n\r\n',
+      'GET / HTTP/1.1\r\nHost: relay.test\r\nAuthorization: Bearer relay-token\r\nCookie: sid=1\r\nOrigin: https://relay.test\r\nAccept-Encoding: gzip\r\nConnection: X-Hop\r\nX-Hop: remove\r\nX-Keep: yes\r\n\r\n',
     );
     const splitAt = Math.floor(rawRequest.length / 2);
     httpConnections[0]!.send(
@@ -384,6 +397,8 @@ describe('Remote Control tunnel', () => {
     expect(localHttpRequest?.headers['x-keep']).toBe('yes');
     expect(response).not.toContain('X-Remove');
     expect(response).not.toContain('immutable');
+    expect(response).not.toContain('Content-Encoding');
+    expect(localHttpRequest?.headers['accept-encoding']).toBeUndefined();
     expect(response).toContain('Cache-Control: no-cache');
     expect(response).toContain(`/coding-relay/devices/${handle.deviceId}/boot.js`);
 
@@ -399,6 +414,52 @@ describe('Remote Control tunnel', () => {
     );
     await rotatedResponsePromise;
     await waitFor(() => localHttpRequest?.headers.authorization === 'Bearer rotated-server-token');
+
+    const gzipResponsePromise = nextJsonMessage(httpConnections[0]!);
+    httpConnections[0]!.send(
+      JSON.stringify({
+        request_id: 'request-3',
+        type: 'request',
+        is_last: true,
+        body_base64: Buffer.from(
+          'GET /assets/index.js HTTP/1.1\r\nHost: relay.test\r\nAccept-Encoding: br, gzip\r\n\r\n',
+        ).toString('base64'),
+      }),
+    );
+    const gzipResponse = Buffer.from(
+      (await gzipResponsePromise)['body_base64'] as string,
+      'base64',
+    );
+    const gzipSeparator = gzipResponse.indexOf('\r\n\r\n');
+    const gzipHead = gzipResponse.subarray(0, gzipSeparator).toString('latin1');
+    const gzipBody = gzipResponse.subarray(gzipSeparator + 4);
+    expect(gzipHead).toContain('HTTP/1.1 200 OK');
+    expect(gzipHead).toContain('Content-Encoding: gzip');
+    expect(gzipHead).toContain(`Content-Length: ${gzipBody.length}`);
+    expect(gunzipSync(gzipBody).toString()).toBe(
+      assetJs.replaceAll('"/assets/', `"/coding-relay/devices/${handle.deviceId}/assets/`),
+    );
+
+    const binaryResponsePromise = nextJsonMessage(httpConnections[0]!);
+    httpConnections[0]!.send(
+      JSON.stringify({
+        request_id: 'request-4',
+        type: 'request',
+        is_last: true,
+        body_base64: Buffer.from(
+          'GET /assets/logo.png HTTP/1.1\r\nHost: relay.test\r\nAccept-Encoding: gzip\r\n\r\n',
+        ).toString('base64'),
+      }),
+    );
+    const binaryResponse = Buffer.from(
+      (await binaryResponsePromise)['body_base64'] as string,
+      'base64',
+    );
+    const binarySeparator = binaryResponse.indexOf('\r\n\r\n');
+    expect(binaryResponse.subarray(0, binarySeparator).toString('latin1')).not.toContain(
+      'Content-Encoding',
+    );
+    expect(binaryResponse.subarray(binarySeparator + 4).equals(assetPng)).toBe(true);
 
     managementConnections[0]!.send(
       JSON.stringify({
