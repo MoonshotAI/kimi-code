@@ -482,7 +482,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     broadcaster,
     logger,
   });
-  const wssDebug = debugEndpoints ? registerWsDebug() : undefined;
+  const wssDebug = registerWsDebug();
 
   const { wss: wssV3, hub: wsV3Hub } = registerWsV3(core, {
     registry: connectionRegistry,
@@ -574,7 +574,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   app.addHook('onClose', async () => {
     connectionRegistry.closeAll('server shutting down');
     wssV1.close();
-    wssDebug?.close();
+    wssDebug.close();
     wssV3.close();
     wsV3Hub.dispose();
     await broadcaster.close();
