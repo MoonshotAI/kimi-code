@@ -15,7 +15,8 @@ import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentTaskService } from '#/agent/task/task';
-import { TowerStore } from '#/features/tower/protocol/index';
+import { STATE_FILE, TowerStore } from '#/features/tower/protocol/index';
+import type { TowerState } from '#/features/tower/protocol/index';
 import { IAgentTowerService } from '#/features/tower/tower';
 import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
 import { SubagentTask } from '#/agent/tools/agent/subagent-task';
@@ -306,6 +307,7 @@ describe('TowerSpawnTool', () => {
     expect(result.output).toContain('task_id: task-1');
     expect(result.output).toContain('status: running');
     expect(result.output).toContain(`worktree: ${worktreeAbs}`);
+    expect(result.output).toContain('Agent(resume="agent-7", run_in_background=true');
 
     expect(createAgent).toHaveBeenCalledWith({
       binding: { profile: 'tower-worker', model: 'kimi-code', thinking: 'off' },
@@ -527,11 +529,12 @@ describe('TowerSpawnTool', () => {
       agentId: 'agent-7',
       kind: 'reviewer',
       reviewTarget: 'feat/build-gemm',
+      reviewMissionId: 'M1',
     });
     expect(entry?.worktree).toBeUndefined();
   });
 
-  it('refuses a duplicate name and points at resume', async () => {
+  it('refuses a duplicate name and points at a background resume', async () => {
     await store.registerAgent({
       name: 'agent-build',
       agentId: 'agent-old',
@@ -546,8 +549,47 @@ describe('TowerSpawnTool', () => {
 
     expect(result.isError).toBe(true);
     expect(result.output).toContain('already registered');
-    expect(result.output).toContain('Agent(resume="agent-old"');
+    expect(result.output).toContain('Agent(resume="agent-old", run_in_background=true');
     expect(createAgent).not.toHaveBeenCalled();
+  });
+
+  it('refuses a reserved protocol name before any side effects', async () => {
+    const result = await execute({ ...WORKER_ARGS, name: 'tower' });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('reserved');
+    expect(createAgent).not.toHaveBeenCalled();
+    expect(registerTask).not.toHaveBeenCalled();
+    expect((await store.load()).roster.agents).toEqual([]);
+    const { stdout } = await execFileAsync('git', ['branch', '--list', 'feat/build-gemm'], {
+      cwd: repo,
+    });
+    expect(stdout.trim()).toBe('');
+  });
+
+  it('refuses a whitespace-padded name before any side effects', async () => {
+    const result = await execute({ ...WORKER_ARGS, name: ' tower ' });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('whitespace');
+    expect(createAgent).not.toHaveBeenCalled();
+    expect(registerTask).not.toHaveBeenCalled();
+    expect((await store.load()).roster.agents).toEqual([]);
+  });
+
+  it('aborts the spawn when the mission branch appeared in git after planning', async () => {
+    await execFileAsync('git', ['branch', 'feat/build-gemm'], { cwd: repo });
+
+    const result = await execute(WORKER_ARGS);
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('not owned by any tower mission');
+    expect(result.output).not.toContain('worktree setup warning');
+    expect(createAgent).not.toHaveBeenCalled();
+    expect(registerTask).not.toHaveBeenCalled();
+    const state = await store.load();
+    expect(state.roster.agents).toEqual([]);
+    expect(state.missions.find((m) => m.id === 'M1')?.owner).toBeUndefined();
   });
 
   it('snapshots base WIP into the worker branch and records the spawn base', async () => {
@@ -671,5 +713,38 @@ describe('TowerSpawnTool', () => {
     const prompt = (runAgent.mock.calls.at(-1)?.[1] as { prompt: string }).prompt;
     expect(prompt).not.toContain('# Mission under review');
     expect(prompt).toContain('1. Security\n2. Data integrity');
+  });
+
+  it('briefs the reviewer with the live mission when a closed mission shares the branch', async () => {
+    const stale = (await store.load()).missions.find((m) => m.id === 'M1')!;
+    await store.updateMission('tower', 'M1', { status: 'abandoned' });
+    const file = store.abs(STATE_FILE);
+    const state = JSON.parse(await readFile(file, 'utf8')) as TowerState;
+    state.missions.push({
+      ...stale,
+      id: 'M2',
+      title: 'Build gemm respin',
+      slug: 'build-gemm-respin',
+      worktree: 'wt-2',
+      status: 'completed',
+      owner: 'agent-build',
+      tasks: [{ text: 'redo the kernel', done: false }],
+      notes: [],
+      blockers: [],
+    });
+    await writeFile(file, `${JSON.stringify(state, null, 2)}\n`);
+    await store.updateMission('tower', 'M2', { note: 'replanned after M1 was abandoned' });
+
+    const result = await execute({
+      name: 'reviewer-a',
+      kind: 'reviewer',
+      review_target: stale.branch,
+    });
+
+    expect(result.isError).toBeUndefined();
+    const prompt = (runAgent.mock.calls.at(-1)?.[1] as { prompt: string }).prompt;
+    expect(prompt).toContain('# Mission M2: Build gemm respin');
+    expect(prompt).toContain('- [ ] redo the kernel');
+    expect(prompt).not.toContain('# Mission M1: Build gemm');
   });
 });

@@ -16,8 +16,9 @@ import { createReminderStub } from '../reminder/stubs';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { runWillBeginStepHooks, type StubLoop } from '../../agent/loop/stubs';
+import { runWillBeginStepHooks, stubLoopWithHooks, type StubLoop } from '../../agent/loop/stubs';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -26,6 +27,7 @@ import type {
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
 import { TowerStore } from '#/features/tower/protocol/index';
+import { TowerSendTool } from '#/features/tower/tools/send/sendTool';
 import {
   IAgentTowerService,
   TOWER_FLAG_ID,
@@ -33,9 +35,10 @@ import {
   type TowerEnterFailure,
 } from '#/features/tower/tower';
 import { _setTowerFeatureAssembledForTests } from '#/features/tower/towerFeature';
-import { AgentTowerService, TOWER_MODE_TOOLS } from '#/features/tower/towerService';
-import { towerKey } from '#/features/tower/towerOps';
+import { AgentTowerService, TOWER_INBOX_WAKE_VARIANT, TOWER_MODE_TOOLS } from '#/features/tower/towerService';
+import { towerKey, TowerInboxSent } from '#/features/tower/towerOps';
 import { TaskTerminatedNotice } from '#/agent/task/taskOps';
+import { IAgentTaskService } from '#/agent/task/task';
 import { SubagentStarted } from '#/session/subagent/mirrorAgentRun';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
@@ -61,6 +64,7 @@ import { ToolAccesses } from '#/tool/toolContract';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
+import { executeTool } from '../../tools/fixtures/execute-tool';
 import { stubFlag } from '../../app/flag/stubs';
 import { stubLog } from '../../_base/log/stubs';
 import {
@@ -146,6 +150,7 @@ describe('AgentTowerService', () => {
   let addedTools: string[];
   let removedTools: string[];
   let activeTools: string[] | undefined;
+  let policyInactiveTools: string[];
   let liveSessions: Map<string, { busy: boolean; pendingInteraction: SessionPendingInteraction; exit: Mock<() => void>; title?: string; metadataReadFails?: boolean }>;
   let fireUnitsChanged: () => void = () => {};
 
@@ -214,6 +219,10 @@ describe('AgentTowerService', () => {
     addedTools = [];
     removedTools = [];
     activeTools = undefined;
+    policyInactiveTools = [];
+    ix.stub(IAgentToolPolicyService, {
+      isToolActive: (name: string) => !policyInactiveTools.includes(name),
+    } as unknown as IAgentToolPolicyService);
     ix.stub(IAgentProfileService, {
       data: () => ({ profileName: undefined }),
       getActiveToolNames: () => activeTools,
@@ -2106,6 +2115,398 @@ describe('AgentTowerService', () => {
       ix.get(IAgentTowerService);
 
       const decision = await fire(writeHookContext('Write', [`${repo}/src/gemm.cpp`]));
+
+      expect(decision).toBeUndefined();
+      expect(permissionGateRan).toBe(true);
+      expect(formatDenyMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('TowerSendTool inbox wake signal', () => {
+    let repo: string;
+    let bus: EventBusService;
+    let sent: { from: string; to: string; subject: string }[];
+
+    beforeEach(async () => {
+      repo = await mkdtemp(join(tmpdir(), 'tower-send-signal-'));
+      await initGitRepo(repo);
+      await writeFile(join(repo, 'README.md'), '# fixture\n');
+      await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
+      await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
+      const store = new TowerStore(repo);
+      await store.init('session-main');
+      await store.registerAgent({
+        name: 'w1',
+        kind: 'worker',
+        agentId: 'agent-w1',
+        sessionId: 'session-main',
+        spawnedAt: new Date().toISOString(),
+      });
+      await store.registerAgent({
+        name: 'w2',
+        kind: 'worker',
+        agentId: 'agent-w2',
+        sessionId: 'session-main',
+        spawnedAt: new Date().toISOString(),
+      });
+      bus = new EventBusService();
+      disposables.add(bus);
+      sent = [];
+      disposables.add(
+        bus.subscribe(TowerInboxSent, (event) => {
+          sent.push({ from: event.from, to: event.to, subject: event.subject });
+        }),
+      );
+    });
+
+    afterEach(async () => {
+      await rm(repo, { recursive: true, force: true });
+    });
+
+    async function sendAs(
+      agentId: string,
+      input: { to: string; subject: string; body: string },
+    ): Promise<void> {
+      const tool = new TowerSendTool(
+        { cwd: repo } as unknown as ISessionContext,
+        makeAgentScopeContext({ agentId, agentScope: testWireScope('wire', 'tower-test'), generation: 0 }),
+        bus,
+        { list: () => [] } as unknown as IAgentTaskService,
+      );
+      const result = await executeTool(tool, { turnId: 0, toolCallId: 'call_send', args: input, signal });
+      expect(result.isError).toBeFalsy();
+    }
+
+    it('publishes an inbox event when a worker messages the tower', async () => {
+      await sendAs('agent-w1', { to: 'tower', subject: 'need wider scope', body: 'x' });
+
+      expect(sent).toEqual([{ from: 'w1', to: 'tower', subject: 'need wider scope' }]);
+    });
+
+    it('publishes an inbox event when a worker broadcasts', async () => {
+      await sendAs('agent-w1', { to: 'all', subject: 'fyi fleet', body: 'x' });
+
+      expect(sent).toEqual([{ from: 'w1', to: 'all', subject: 'fyi fleet' }]);
+    });
+
+    it('stays silent for a direct agent-to-agent message', async () => {
+      await sendAs('agent-w1', { to: 'w2', subject: 'side channel', body: 'x' });
+
+      expect(sent).toEqual([]);
+    });
+
+    it('stays silent when the tower itself broadcasts', async () => {
+      await sendAs('main', { to: 'all', subject: 'tower broadcast', body: 'x' });
+
+      expect(sent).toEqual([]);
+    });
+  });
+
+  describe('inbox wake', () => {
+    let loop: StubLoop;
+
+    beforeEach(() => {
+      loop = stubLoopWithHooks();
+      ix.stub(IAgentLoopService, loop);
+      ix.stub(ISessionEventBus, ix.get(IEventBus) as ISessionEventBus);
+    });
+
+    function publishInbox(input: { from: string; to: string; subject: string }): void {
+      ix.get(IEventBus).publish(new TowerInboxSent(input));
+    }
+
+    async function flushWake(): Promise<void> {
+      await new Promise((resolve) => {
+        setImmediate(resolve);
+      });
+    }
+
+    function drainWakeMessages(): ContextMessage[] {
+      const appended: ContextMessage[] = [];
+      loop.drainNextBatch({
+        append: (...messages: ContextMessage[]) => {
+          appended.push(...messages);
+        },
+      });
+      return appended;
+    }
+
+    function wakeText(message: ContextMessage): string {
+      return message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+    }
+
+    it('wakes the main agent once when a worker messages the tower', async () => {
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      publishInbox({ from: 'w1', to: 'tower', subject: 'need wider scope' });
+      await flushWake();
+      const messages = drainWakeMessages();
+
+      expect(messages).toHaveLength(1);
+      const message = messages[0]!;
+      expect(message.role).toBe('user');
+      expect(message.origin).toEqual({ kind: 'injection', variant: TOWER_INBOX_WAKE_VARIANT });
+      const text = wakeText(message);
+      expect(text).toContain('1 new tower inbox message');
+      expect(text).toContain('w1');
+      expect(text).toContain('need wider scope');
+      expect(text).toContain('TowerInbox');
+    });
+
+    it('coalesces a burst of inbox messages into a single wake naming the latest', async () => {
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      publishInbox({ from: 'w1', to: 'tower', subject: 'one' });
+      publishInbox({ from: 'w2', to: 'all', subject: 'two' });
+      publishInbox({ from: 'w1', to: 'tower', subject: 'three' });
+      await flushWake();
+      const messages = drainWakeMessages();
+
+      expect(messages).toHaveLength(1);
+      const text = wakeText(messages[0]!);
+      expect(text).toContain('3 new tower inbox messages');
+      expect(text).toContain('w1');
+      expect(text).toContain('three');
+
+      await flushWake();
+      expect(drainWakeMessages()).toEqual([]);
+    });
+
+    it('schedules exactly one follow-up wake for messages arriving while a wake is pending', async () => {
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      publishInbox({ from: 'w1', to: 'tower', subject: 'first' });
+      await flushWake();
+      publishInbox({ from: 'w2', to: 'tower', subject: 'second' });
+      publishInbox({ from: 'w2', to: 'all', subject: 'third' });
+
+      const first = drainWakeMessages();
+      expect(first).toHaveLength(1);
+      expect(wakeText(first[0]!)).toContain('1 new tower inbox message');
+
+      await flushWake();
+      const second = drainWakeMessages();
+      expect(second).toHaveLength(1);
+      expect(wakeText(second[0]!)).toContain('2 new tower inbox messages');
+      expect(wakeText(second[0]!)).toContain('third');
+    });
+
+    it('ignores messages addressed to a specific agent and messages from the tower itself', async () => {
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      publishInbox({ from: 'w1', to: 'w2', subject: 'direct' });
+      publishInbox({ from: 'tower', to: 'all', subject: 'self broadcast' });
+      await flushWake();
+
+      expect(drainWakeMessages()).toEqual([]);
+      expect(loop.hasPendingRequests()).toBe(false);
+    });
+
+    it('does not wake while tower mode is inactive', async () => {
+      ix.get(IAgentTowerService);
+
+      publishInbox({ from: 'w1', to: 'tower', subject: 'hello' });
+      await flushWake();
+
+      expect(drainWakeMessages()).toEqual([]);
+      expect(loop.hasPendingRequests()).toBe(false);
+    });
+
+    it('drops a queued wake when tower mode exits before it is consumed', async () => {
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      publishInbox({ from: 'w1', to: 'tower', subject: 'need wider scope' });
+      await flushWake();
+      expect(loop.hasPendingRequests()).toBe(true);
+
+      tower.exit();
+
+      expect(loop.hasPendingRequests()).toBe(false);
+      expect(drainWakeMessages()).toEqual([]);
+    });
+
+    it('drops a queued wake when the tower becomes unavailable at runtime', async () => {
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      publishInbox({ from: 'w1', to: 'tower', subject: 'need wider scope' });
+      await flushWake();
+      expect(loop.hasPendingRequests()).toBe(true);
+
+      _setTowerFeatureAssembledForTests(false);
+      try {
+        fireUnitsChanged();
+
+        expect(loop.hasPendingRequests()).toBe(false);
+        expect(drainWakeMessages()).toEqual([]);
+      } finally {
+        _setTowerFeatureAssembledForTests(true);
+      }
+    });
+
+    it('truncates a very long subject in the wake preview', async () => {
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      publishInbox({ from: 'w1', to: 'tower', subject: 'x'.repeat(500) });
+      await flushWake();
+      const messages = drainWakeMessages();
+
+      expect(messages).toHaveLength(1);
+      const text = wakeText(messages[0]!);
+      expect(text).not.toContain('x'.repeat(500));
+      expect(text).toContain(`${'x'.repeat(120)}…`);
+    });
+
+    it('does not respond on a non-main agent', async () => {
+      ix.stub(
+        IAgentScopeContext,
+        makeAgentScopeContext({ agentId: 'agent-w1', agentScope: testWireScope('wire', 'tower-test'), generation: 0 }),
+      );
+      ix.get(IAgentTowerService);
+
+      publishInbox({ from: 'w2', to: 'tower', subject: 'hello' });
+      await flushWake();
+
+      expect(drainWakeMessages()).toEqual([]);
+      expect(loop.hasPendingRequests()).toBe(false);
+    });
+  });
+
+  describe('roster resume veto', () => {
+    let repo: string;
+
+    beforeEach(async () => {
+      repo = await mkdtemp(join(tmpdir(), 'tower-resume-veto-'));
+      await initGitRepo(repo);
+      await writeFile(join(repo, 'README.md'), '# fixture\n');
+      await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
+      await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
+      const store = new TowerStore(repo);
+      await store.init('session-main');
+      await store.registerAgent({
+        name: 'w1',
+        kind: 'worker',
+        agentId: 'agent-w1',
+        sessionId: 'session-main',
+        missionId: 'M1',
+        spawnedAt: new Date().toISOString(),
+      });
+      ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-main' } as unknown as ISessionContext);
+    });
+
+    afterEach(async () => {
+      await rm(repo, { recursive: true, force: true });
+    });
+
+    function agentHookContext(args: Record<string, unknown>): ResolvedToolExecutionHookContext {
+      const call = toolCall('Agent', 'call_agent');
+      return {
+        turnId: 0,
+        signal,
+        toolCall: call,
+        toolCalls: [call],
+        args,
+        execution: { approvalRule: 'Agent', execute: async () => ({ output: '' }) },
+      };
+    }
+
+    it('vetoes a foreground resume of a roster agent', async () => {
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      const decision = await fire(
+        agentHookContext({ resume: 'agent-w1', prompt: 'keep going', description: 'resume w1' }),
+      );
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain('run_in_background');
+      expect(permissionGateRan).toBe(false);
+      expect(formatDenyMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('vetoes a foreground resume whose id carries surrounding whitespace', async () => {
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      const decision = await fire(
+        agentHookContext({ resume: '  agent-w1\n', prompt: 'keep going', description: 'resume w1' }),
+      );
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain('run_in_background');
+      expect(permissionGateRan).toBe(false);
+    });
+
+    it('allows resuming a roster agent with run_in_background=true', async () => {
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      const decision = await fire(
+        agentHookContext({
+          resume: 'agent-w1',
+          run_in_background: true,
+          prompt: 'keep going',
+          description: 'resume w1',
+        }),
+      );
+
+      expect(decision).toBeUndefined();
+      expect(permissionGateRan).toBe(true);
+      expect(formatDenyMessage).not.toHaveBeenCalled();
+    });
+
+    it('allows a foreground resume of an agent outside the roster', async () => {
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      const decision = await fire(
+        agentHookContext({ resume: 'agent-stranger', prompt: 'keep going', description: 'resume stranger' }),
+      );
+
+      expect(decision).toBeUndefined();
+      expect(permissionGateRan).toBe(true);
+      expect(formatDenyMessage).not.toHaveBeenCalled();
+    });
+
+    it('allows a fresh foreground subagent without a resume id', async () => {
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      const decision = await fire(
+        agentHookContext({ prompt: 'build a thing', description: 'fresh subagent' }),
+      );
+
+      expect(decision).toBeUndefined();
+      expect(permissionGateRan).toBe(true);
+      expect(formatDenyMessage).not.toHaveBeenCalled();
+    });
+
+    it('abstains on a foreground roster resume when background task tools are unavailable', async () => {
+      policyInactiveTools = ['TaskStop'];
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      const decision = await fire(
+        agentHookContext({ resume: 'agent-w1', prompt: 'keep going', description: 'resume w1' }),
+      );
+
+      expect(decision).toBeUndefined();
+      expect(permissionGateRan).toBe(true);
+      expect(formatDenyMessage).not.toHaveBeenCalled();
+    });
+
+    it('abstains on a foreground roster resume while tower mode is inactive', async () => {
+      ix.get(IAgentTowerService);
+
+      const decision = await fire(
+        agentHookContext({ resume: 'agent-w1', prompt: 'keep going', description: 'resume w1' }),
+      );
 
       expect(decision).toBeUndefined();
       expect(permissionGateRan).toBe(true);

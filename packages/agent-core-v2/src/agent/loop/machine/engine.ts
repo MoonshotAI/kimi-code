@@ -6,6 +6,10 @@ import type { ToolInfo, ToolResult as AgentToolResult, ToolUpdate as AgentToolUp
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { createAgentMachine } from '#human/agent/machine';
 import { createTurnMachine, type AssistantEntry, type HistoryMessage } from '#human/agent/turn';
+import { messageAppended, turnEnded } from '#human/agent/events';
+import { agentSlices, type AgentEventStore } from '#human/agent/slices';
+import { createEventStoreSync } from '#human/eventStore/eventStore';
+import { memoryJournal } from '#human/eventStore/journal';
 import type { LlmErrorMessage } from '#human/llm/errors';
 import type { FinishInfo } from '#human/llm/finish-reason';
 import type { StreamedMessagePart, UserMessage } from '#human/llm/message';
@@ -111,6 +115,7 @@ export interface CreateMachineEngineOptions {
   readonly trace?: () => LLMRequestTrace | undefined;
   readonly source?: () => AgentLLMRequestSource | undefined;
   readonly toolTurnId?: () => number | undefined;
+  readonly steerSignal?: () => AbortSignal | undefined;
   readonly gate?: (signal: AbortSignal) => Promise<MachineRequesterGateDecision>;
   readonly onTrace?: (trace: LLMRequestTrace) => void;
   readonly onEvent?: (event: MachineEngineEvent) => void;
@@ -158,7 +163,7 @@ export interface MachineEngine {
   remind(key: string, message: UserMessage): void;
   cancelQueueItem(id: string): void;
   abort(): void;
-  resetHistory(history: readonly HistoryMessage[]): void;
+  resetHistory(history: readonly HistoryMessage[]): Promise<void>;
   stop(): void;
   snapshot(): MachineEngineSnapshot;
   currentStep(): number;
@@ -250,6 +255,7 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
     toolExecutor: options.toolExecutor,
     toolInfos: options.toolInfos,
     turnId: () => options.toolTurnId?.() ?? 0,
+    steerSignal: options.steerSignal,
     trace: options.trace,
     onToolCall: (payload) => {
       publish({
@@ -276,6 +282,16 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
     canRecover: (error) => current()?.canRecover?.(error) === true,
     invalidate: () => current()?.invalidate?.(),
   };
+  const journal = memoryJournal();
+  const initialTurnId = options.initialTurnId ?? 0;
+  if (initialTurnId > 0) {
+    void journal.append({
+      type: turnEnded.type,
+      kind: 'event',
+      data: turnEnded({ turnId: initialTurnId - 1, outcome: 'done' }),
+    });
+  }
+  const store: AgentEventStore = createEventStoreSync({ journal, slices: agentSlices });
   const actor = createActor(
     createAgentMachine({
       tools: tools.tools,
@@ -293,7 +309,7 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
     {
       input: {
         request: { model: options.model, systemPrompt: options.systemPrompt, credentials },
-        turnId: options.initialTurnId,
+        store,
       },
     },
   );
@@ -450,7 +466,19 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
       actor.send({ type: 'input.abort' });
     },
     resetHistory: (history) => {
-      actor.send({ type: 'context.reset', history });
+      const journal = memoryJournal();
+      for (const message of history) {
+        void journal.append({ type: messageAppended.type, kind: 'event', data: messageAppended({ message }) });
+      }
+      const nextTurnId = (actor.getSnapshot() as unknown as MachineSnapshotLike).context.turnId;
+      if (nextTurnId > 0) {
+        void journal.append({
+          type: turnEnded.type,
+          kind: 'event',
+          data: turnEnded({ turnId: nextTurnId - 1, outcome: 'done' }),
+        });
+      }
+      return store.reset(journal);
     },
     stop: () => {
       for (const subscription of subscriptions) subscription.unsubscribe();

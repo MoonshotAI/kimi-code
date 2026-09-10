@@ -126,6 +126,8 @@ The input box remains usable while the agent is thinking or calling tools, and s
 - **`Esc` / `Ctrl-C`**: interrupt the current turn
 - **`Ctrl-O`**: globally toggle the collapsed/expanded state of tool output and compaction summaries
 
+When the agent is waiting for background tasks through `WaitFor`, pressing `Ctrl-S` ends that wait early. Background tasks keep running and existing tool results are preserved. If other foreground tools remain in the same batch, the agent processes your message after they return.
+
 ## External editor
 
 Press `Ctrl-G` to send the current input content to an external editor. When you save and close, the text is written back into the input box; if you close without saving, the original content is preserved. This is handy when you need to enter large blocks of text or content with complex formatting.
