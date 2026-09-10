@@ -148,7 +148,7 @@ describe('WS upgrade auth', () => {
         });
         expect(envelope['type']).toBe('@xstate.event');
         expect(envelope['logicId']).toBe('debugWsProbe');
-        expect(typeof envelope['actorSessionId']).toBe('string');
+        expect(typeof envelope['actorId']).toBe('string');
         expect(typeof envelope['timestamp']).toBe('number');
       } finally {
         await server.close();

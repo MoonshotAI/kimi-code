@@ -61,7 +61,7 @@ describe('xstate inspection collector', () => {
     const delivered = envelopes.filter((envelope) => envelope.eventType === 'usage.record');
     expect(delivered.length).toBeGreaterThan(0);
     for (const envelope of delivered) {
-      expect(typeof envelope.actorSessionId).toBe('string');
+      expect(typeof envelope.actorId).toBe('string');
       expect(typeof envelope.timestamp).toBe('number');
     }
     expect(delivered.find((envelope) => envelope.type === '@xstate.microstep')?.stateValue).toBeDefined();
