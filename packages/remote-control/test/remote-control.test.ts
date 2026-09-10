@@ -537,7 +537,14 @@ describe('Remote Control tunnel', () => {
         payload: {
           stream_id: 'stream-1',
           path: '/api/v1/ws',
-          headers: { Cookie: 'relay-cookie', Origin: 'https://relay.test', 'X-Keep': 'yes' },
+          headers: {
+            Cookie: 'relay-cookie',
+            Origin: 'https://relay.test',
+            'X-Keep': 'yes',
+            'Sec-WebSocket-Extensions': 'permessage-deflate; client_max_window_bits',
+            'Sec-WebSocket-Key': 'browser-key',
+            'Sec-WebSocket-Version': '13',
+          },
         },
       }),
     );
@@ -549,6 +556,8 @@ describe('Remote Control tunnel', () => {
     expect(localWsRequest?.headers.cookie).toBeUndefined();
     expect(localWsRequest?.headers.origin).toBeUndefined();
     expect(localWsRequest?.headers['x-keep']).toBe('yes');
+    expect(localWsRequest?.headers['sec-websocket-extensions']).toBeUndefined();
+    expect(localWsRequest?.headers['sec-websocket-key']).not.toBe('browser-key');
     await waitFor(() =>
       managementMessages.some(
         (value) =>

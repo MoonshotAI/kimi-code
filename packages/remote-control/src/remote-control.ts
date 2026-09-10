@@ -61,6 +61,15 @@ const BLOCKED_REQUEST_HEADERS = new Set([
   'transfer-encoding',
   'upgrade',
 ]);
+// The local `ws` client negotiates its own handshake fields; forwarding the
+// browser's copies would make it request an extension it has no handler for
+// (permessage-deflate is disabled on the loopback hop) and fail the upgrade.
+const BLOCKED_WS_UPGRADE_HEADERS = new Set([
+  'sec-websocket-extensions',
+  'sec-websocket-key',
+  'sec-websocket-version',
+  'sec-websocket-accept',
+]);
 const BLOCKED_RESPONSE_HEADERS = new Set([
   'connection',
   'content-length',
@@ -974,7 +983,7 @@ function relayHeaders(value: unknown): Record<string, string> {
   for (const [name, raw] of Object.entries(value)) {
     if (typeof raw !== 'string') continue;
     const lower = name.toLowerCase();
-    if (BLOCKED_REQUEST_HEADERS.has(lower)) continue;
+    if (BLOCKED_REQUEST_HEADERS.has(lower) || BLOCKED_WS_UPGRADE_HEADERS.has(lower)) continue;
     try {
       validateHeaderName(name);
       validateHeaderValue(name, raw);
