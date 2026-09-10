@@ -490,16 +490,6 @@ export const agentPhaseSchema = z.discriminatedUnion('kind', [
     since: z.number(),
   }),
   z.object({
-    kind: z.literal('streaming'),
-    turnId: z.number(),
-    step: z.number(),
-    stepId: z.string(),
-    stream: z.enum(['assistant', 'thinking', 'tool_call']),
-    toolCallId: z.string().optional(),
-    toolName: z.string().optional(),
-    since: z.number(),
-  }),
-  z.object({
     kind: z.literal('tool_call'),
     turnId: z.number(),
     step: z.number(),

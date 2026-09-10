@@ -1,9 +1,11 @@
 import { readdir, readFile, rename, rm, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
-import { SESSION_AGENT_OPEN_ENTRY_TYPE, SESSION_LOG_BRANCH, SESSION_META_ENTRY_TYPE } from '#/persist/session';
+import { messageAppended, stateUpdated, turnEnded } from '#/agent/events';
+import { agentOpened, SESSION_LOG_BRANCH, sessionMetaUpdated } from '#/session/events';
 import { NodeBackend } from '#/store/backend/node';
 import { TreeStore } from '#/store/store';
+import type { Branch } from '#/store/branch';
 
 import { convertV2Message, type V2BlobResolver } from './convert';
 import { foldV2WireRecords } from './fold';
@@ -142,12 +144,14 @@ export async function migrateV2Session(dir: string): Promise<V2MigrationResult> 
   const agentIds = await listV2AgentIds(dir);
   const tmp = join(
     dir,
-    `.v3-migrate-${process.pid.toString(36)}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    `.migrate-${process.pid.toString(36)}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
   );
+  const branches: Branch[] = [];
   try {
     const store = await TreeStore.open(new NodeBackend(tmp));
     const tree = await store.tree(V2_SESSION_TREE_NAME);
     const log = tree.createBranch(SESSION_LOG_BRANCH);
+    branches.push(log);
     for (const agentId of agentIds) {
       const agentDir = join(dir, 'agents', agentId);
       const records: V2WireRecord[] = [];
@@ -156,6 +160,7 @@ export async function migrateV2Session(dir: string): Promise<V2MigrationResult> 
       }
       const folded = foldV2WireRecords(records);
       const branch = tree.createBranch(agentId);
+      branches.push(branch);
       const resolveBlob: V2BlobResolver = async (hash) => {
         try {
           return (await readFile(join(agentDir, 'blobs', hash))).toString('base64');
@@ -170,33 +175,37 @@ export async function migrateV2Session(dir: string): Promise<V2MigrationResult> 
           resolveBlob,
         );
         if (converted === null) continue;
-        await branch.append({ type: 'message', kind: 'agent', data: converted });
+        await branch.append({
+          type: messageAppended.type,
+          kind: 'event',
+          data: messageAppended({ message: converted }),
+        });
       }
       const lastTurnId = folded.nextTurnId - 1;
       if (folded.todos.length > 0) {
         await branch.append({
-          type: 'state',
-          kind: 'agent',
-          data: {
+          type: stateUpdated.type,
+          kind: 'event',
+          data: stateUpdated({
             name: 'todo',
             value: { todos: folded.todos, lastWriteTurn: Math.max(0, lastTurnId) },
-          },
+          }),
         });
       }
       if (folded.nextTurnId > 0) {
         await branch.append({
-          type: 'turn',
-          kind: 'agent',
-          data: { phase: 'start', turnId: lastTurnId },
+          type: turnEnded.type,
+          kind: 'event',
+          data: turnEnded({ turnId: lastTurnId, outcome: 'done' }),
         });
       }
       await log.append({
-        type: SESSION_AGENT_OPEN_ENTRY_TYPE,
-        kind: 'session',
-        data: { agentId, branch: agentId },
+        type: agentOpened.type,
+        kind: 'event',
+        data: agentOpened({ agentId, branch: agentId }),
       });
     }
-    await log.append({ type: SESSION_META_ENTRY_TYPE, kind: 'session', data: meta });
+    await log.append({ type: sessionMetaUpdated.type, kind: 'event', data: sessionMetaUpdated({ meta }) });
     for (const branchName of tree.branches()) {
       await tree.openBranch(branchName).settled();
     }
@@ -205,6 +214,7 @@ export async function migrateV2Session(dir: string): Promise<V2MigrationResult> 
     }
     await rename(join(tmp, 'trees'), join(dir, 'trees'));
   } finally {
+    await Promise.allSettled(branches.map((branch) => branch.settled()));
     await rm(tmp, { recursive: true, force: true });
   }
   return { treeName: V2_SESSION_TREE_NAME, agents: agentIds };

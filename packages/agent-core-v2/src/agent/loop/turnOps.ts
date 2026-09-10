@@ -14,7 +14,7 @@ import { AgentEvent2, type SerializedEvent2 } from '#/app/event/event2';
 import type { ContentPart } from '#human/llm/message';
 import { defineState } from '#/state/state';
 
-import type { TurnInterruptReason } from './turnEvents';
+import type { TurnEndReason, TurnInterruptReason } from './turnEvents';
 
 export interface TurnModelState {
   readonly nextTurnId: number;
@@ -38,6 +38,7 @@ const turnPromptSchema = z.object({
   input: z.custom<readonly ContentPart[]>(),
   origin: z.custom<PromptOrigin>(),
   promptId: z.string().optional(),
+  turnId: z.number().optional(),
 });
 
 export class TurnPrompt extends AgentEvent2<z.infer<typeof turnPromptSchema>> {
@@ -50,6 +51,7 @@ export interface TurnPrompt {
   readonly input: readonly ContentPart[];
   readonly origin: PromptOrigin;
   readonly promptId?: string;
+  readonly turnId?: number;
 }
 
 const turnSteerSchema = z.object(turnInputShape);
@@ -143,9 +145,10 @@ export const turnKey = defineState(
     if (next !== s) return next;
   })
   .on(TurnPrompt, (s, e) => {
-    const next = advanceTurnClock(s, s.nextTurnId + 1);
+    const assigned = e.turnId ?? s.nextTurnId;
+    const next = advanceTurnClock(s, assigned + 1);
     if (!isUndoAnchorOrigin(e.origin)) return next;
-    return { ...next, anchorTurnIds: [...s.anchorTurnIds, s.nextTurnId] };
+    return { ...next, anchorTurnIds: [...s.anchorTurnIds, assigned] };
   })
   .on(TurnSteer, () => {})
   .on(ContextUndo, (s, e) => {
@@ -172,6 +175,16 @@ export const turnKey = defineState(
     ...s,
     lastEnded: { turnId: e.turnId, reason: e.reason, durationMs: e.durationMs },
   }));
+
+export interface TurnEndedEvent {
+  readonly type: 'turn.ended';
+  readonly time?: number;
+  readonly turnId: number;
+  readonly reason: TurnEndReason;
+  readonly error?: KimiErrorPayload;
+  readonly durationMs?: number;
+  readonly interruptReason?: TurnInterruptReason;
+}
 
 function advanceTurnClock(
   state: TurnModelState,

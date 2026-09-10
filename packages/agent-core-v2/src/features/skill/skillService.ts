@@ -105,6 +105,10 @@ export class AgentSkillService implements IAgentSkillService {
         'Cannot activate skill while another turn is active',
       );
     }
+    await turn.ready.catch(() => undefined);
+    if (turn.id === undefined) {
+      throw new Error2(ErrorCodes.INTERNAL, 'Skill activation turn ended before it started');
+    }
     if (this.scopeContext.agentContext.agentId === MAIN_AGENT_ID) {
       await applyPromptMetadataUpdate(
         {
@@ -163,6 +167,7 @@ export class AgentSkillService implements IAgentSkillService {
       if (turn === undefined && handle.state !== 'blocked') {
         throw new Error2(ErrorCodes.INTERNAL, 'promptWithSkills failed to launch a turn');
       }
+      if (turn !== undefined) await turn.ready.catch(() => undefined);
       return {
         turn_id: turn?.id,
         prompt_id: handle.id,

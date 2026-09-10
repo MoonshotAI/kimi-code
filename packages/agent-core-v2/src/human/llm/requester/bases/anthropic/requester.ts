@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { assign, shake } from 'radashi';
 
 import { headersToRecord } from '#/llm/errors';
+import { providerImagePolicy } from '#/llm/media/image-formats';
 import type { LlmModel } from '#/llm/model';
 import { toLlmSyntaxErrorMessage } from '#/llm/syntax-errors';
 import type { ProtocolBase, ProtocolRequesterOptions, TraitContext } from '#/llm/protocol/base';
@@ -125,7 +126,9 @@ export function planAnthropicRequest(
   }
   kwargs = shake(kwargs);
 
-  const lowered = lowerAnthropicRequest(input);
+  const acceptedMimes =
+    trait?.acceptedImageMimes?.(ctx) ?? providerImagePolicy().acceptedMimes;
+  const lowered = lowerAnthropicRequest(input, acceptedMimes);
   const converted = lowered
     .flatMap(({ source, message }) => {
       if (trait?.convertMessage === undefined) {

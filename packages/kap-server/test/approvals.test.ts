@@ -2,7 +2,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { ISessionApprovalService, ensureMainAgent, getLiveSessionById } from '@moonshot-ai/agent-core-v2';
+import { randomUUID } from 'node:crypto';
+
+import { ensureMainAgent, getLiveSessionById, interactions } from '@moonshot-ai/agent-core-v2';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -103,11 +105,16 @@ describe('server-v2 /api/v1/sessions/{sid}/approvals', () => {
   function enqueueApproval(sessionId: string, toolCallId: string): string {
     const handle = getLiveSessionById(server!.core.accessor, sessionId);
     expect(handle).toBeDefined();
-    const parked = handle!.accessor.get(ISessionApprovalService).enqueue({
-      toolCallId,
-      toolName: 'Bash',
-      action: 'run',
-      display: { kind: 'command', command: 'echo hi' },
+    const parked = interactions.enqueue({
+      id: `approval_${randomUUID()}`,
+      kind: 'approval',
+      payload: {
+        toolCallId,
+        toolName: 'Bash',
+        action: 'run',
+        display: { kind: 'command', command: 'echo hi' },
+      },
+      tags: { agentId: 'main', sessionId, toolCallId },
     });
     return parked.id;
   }

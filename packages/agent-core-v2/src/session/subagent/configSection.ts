@@ -265,27 +265,36 @@ export function buildSubagentModelDescriptions(
   const pool = resolveSubagentModelPool(config)!;
   const lines = ['Available models (pass via model):'];
   const defaultModel = pool.defaultModel;
-  const markersFor = (alias: string): string => {
-    const markers: string[] = [];
-    if (alias === defaultModel) markers.push('[default]');
-    if (alias === callerModelAlias) markers.push('[main model]');
-    return markers.length === 0 ? '' : ` ${markers.join(' ')}`;
-  };
-  if (defaultModel !== undefined && Object.hasOwn(pool.models, defaultModel)) {
-    lines.push(
-      formatPoolLine(`${defaultModel}${markersFor(defaultModel)}`, pool.models[defaultModel]!),
-    );
+  for (const alias of orderedPoolAliases(pool)) {
+    const marker = alias === defaultModel ? ' [default]' : '';
+    lines.push(formatPoolLine(`${alias}${marker}`, pool.models[alias]!));
   }
-  for (const [alias, description] of Object.entries(pool.models)) {
-    if (alias === defaultModel) continue;
-    lines.push(formatPoolLine(`${alias}${markersFor(alias)}`, description));
-  }
-  const callerInPool =
-    callerModelAlias !== undefined && Object.hasOwn(pool.models, callerModelAlias);
+  const primaryLabel =
+    callerModelAlias === undefined
+      ? PRIMARY_SUBAGENT_MODEL_CHOICE
+      : `${PRIMARY_SUBAGENT_MODEL_CHOICE} (= ${callerModelAlias})`;
   lines.push(
-    `- ${PRIMARY_SUBAGENT_MODEL_CHOICE}${callerInPool ? ` (${callerModelAlias})` : ''}: the main model you are running on, bound with your current thinking level; use it for hard, quality-sensitive subagent tasks`,
+    `- ${primaryLabel}: your current model and thinking level`,
   );
+  lines.push("Pool entries don't inherit your thinking level.");
   return lines.join('\n');
+}
+
+export function buildSubagentModelSummary(config: IConfigService): string | undefined {
+  if (!exposesSubagentModelChoice(config)) return undefined;
+  const pool = resolveSubagentModelPool(config)!;
+  const labels = orderedPoolAliases(pool).map((alias) =>
+    alias === pool.defaultModel ? `${alias} [default]` : alias,
+  );
+  labels.push(`${PRIMARY_SUBAGENT_MODEL_CHOICE} (your current model and thinking level)`);
+  return `Available models (pass via model): ${labels.join(', ')}.`;
+}
+
+function orderedPoolAliases(pool: SubagentModelPool): string[] {
+  const aliases = Object.keys(pool.models);
+  const defaultModel = pool.defaultModel;
+  if (defaultModel === undefined || !Object.hasOwn(pool.models, defaultModel)) return aliases;
+  return [defaultModel, ...aliases.filter((alias) => alias !== defaultModel)];
 }
 
 function formatPoolLine(label: string, description: string): string {

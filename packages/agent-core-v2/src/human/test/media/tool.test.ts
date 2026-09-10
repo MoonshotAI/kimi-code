@@ -7,7 +7,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createActor, waitFor } from '#/xstate2';
 
 import { createAgentMachine } from '#/agent/machine';
+import { agentSlices, type AgentEventStore } from '#/agent/slices';
 import { createTurnMachine } from '#/agent/turn';
+import { createEventStore } from '#/eventStore/eventStore';
+import { journalFromBranch } from '#/eventStore/journal';
+import { MemoryBackend } from '#/store/backend/memory';
+import { TreeStore } from '#/store/store';
 import type { ModelCapability } from '#/llm/capability';
 import {
   createAssistantMessage,
@@ -38,13 +43,21 @@ const CAPABILITY: ModelCapability = {
 const tmpDirs: string[] = [];
 
 function tmpWorkspace(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-core-v3-media-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'media-tool-'));
   tmpDirs.push(dir);
   return dir;
 }
 
 function toolCall(id: string, name: string, args: string): ToolCall {
   return { type: 'function', id, name, arguments: args };
+}
+
+async function testStore(): Promise<AgentEventStore> {
+  const backend = new MemoryBackend();
+  const store = await TreeStore.open(backend, {});
+  const tree = await store.tree('test');
+  tree.createBranch('main');
+  return createEventStore({ journal: journalFromBranch(tree.openBranch('main'), tree), slices: agentSlices });
 }
 
 afterEach(() => {
@@ -162,6 +175,7 @@ describe('media stack wiring', () => {
       },
     };
 
+    const agentStore = await testStore();
     const actor = createActor(
       createAgentMachine({
         tools,
@@ -178,11 +192,11 @@ describe('media stack wiring', () => {
           }),
         ),
       }),
-      { input: { request: { model } } },
+      { input: { request: { model }, store: agentStore } },
     );
     actor.start();
     actor.send({ type: 'input.submit', message: createUserMessage('watch this') });
-    await waitFor(actor, (s) => s.matches('idle') && s.context.messages.length > 1, {
+    await waitFor(actor, (s) => s.matches('idle') && agentStore.getState().history.length > 1, {
       timeout: 5000,
     });
 

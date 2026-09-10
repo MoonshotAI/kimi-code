@@ -1,5 +1,6 @@
 import type { ProtocolEndpoint, ProviderConnection } from '#/llm/protocol/connection';
 import type { ContentPart, ToolDescription } from '#/llm/message';
+import { providerImagePolicy } from '#/llm/media/image-formats';
 import { CONTEXT_MANAGEMENT_BETA } from '#/llm/requester/bases/anthropic/contract';
 import type { AnthropicTrait } from '#/llm/requester/bases/anthropic/trait';
 import type {
@@ -60,6 +61,8 @@ function convertKimiTool(tool: ToolDescription): Record<string, unknown> {
     },
   };
 }
+
+const kimiAcceptedImageMimes = (): ReadonlySet<string> => providerImagePolicy('kimi').acceptedMimes;
 
 export const kimiOpenAITrait: OpenAITrait = {
   strictThinkingValidation: true,
@@ -143,6 +146,8 @@ export const kimiOpenAITrait: OpenAITrait = {
 };
 
 export const kimiAnthropicTrait: AnthropicTrait = {
+  acceptedImageMimes: kimiAcceptedImageMimes,
+
   thinking: (thinking) => {
     if (thinking.effort === 'off') {
       return { kwargs: { thinking: { type: 'disabled' }, betaFeatures: [CONTEXT_MANAGEMENT_BETA] } };

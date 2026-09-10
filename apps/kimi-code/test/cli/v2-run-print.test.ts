@@ -211,7 +211,7 @@ function makeFakeHarness() {
     [
       IAgentLoopService,
       {
-        status: vi.fn(() => ({ state: 'idle', pendingTurnIds: [] })),
+        status: vi.fn(() => ({ state: 'idle', pendingPromptIds: [] })),
         cancel: vi.fn(() => false),
         settled: vi.fn(async () => {}),
         tryAcquireQuiescence: vi.fn(() => ({ dispose: vi.fn() })),
@@ -615,6 +615,7 @@ describe('runV2Print', () => {
       model: 'k2',
       endpoint: expect.any(Function),
       getAccessToken: expect.any(Function),
+      onUnexpectedError: expect.any(Function),
     });
     // The resolved session id is synced onto the v1 client so crash events and
     // system metrics carry it; the sink model is reconciled too (same value
@@ -756,7 +757,7 @@ describe('runV2Print', () => {
       settled: ReturnType<typeof vi.fn>;
       tryAcquireQuiescence: ReturnType<typeof vi.fn>;
     };
-    loop.status.mockReturnValue({ state: 'running', pendingTurnIds: [] });
+    loop.status.mockReturnValue({ state: 'running', pendingPromptIds: [] });
     loop.cancel.mockImplementation(() => {
       if (!order.includes('cancel')) order.push('cancel');
       return true;

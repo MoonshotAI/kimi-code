@@ -9,12 +9,21 @@ import { createLlmMachine } from '#/llm/requester/machine';
 import type { LlmRequester } from '#/llm/requester/requester';
 import type { TokenUsage } from '#/llm/usage';
 import { createAgentMachine } from '#/agent/machine';
+import { agentSlices, type AgentEventStore } from '#/agent/slices';
 import { createTurnMachine } from '#/agent/turn';
+import { createEventStore } from '#/eventStore/eventStore';
+import { journalFromBranch } from '#/eventStore/journal';
+import { MemoryBackend } from '#/store/backend/memory';
+import { TreeStore } from '#/store/store';
 import { createUsageMachine } from '#/usage/machine';
 import type { UsageEmitted } from '#/usage/machine';
 import { createUsagePlugin } from '#/usage/plugin';
 import type { UsageRecord } from '#/usage/usage';
 import { createTimingPlugin } from '#/timing/plugin';
+import {
+  xstateInspectionCollector,
+  type XstateInspectionEnvelope,
+} from '#/xstateInspection';
 
 const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
 
@@ -30,32 +39,39 @@ function record(
   return { usage: usage(inputOther, output), model: extra?.model, turnId: extra?.turnId, at: 0 };
 }
 
-describe('usage machine', () => {
-  it('accumulates total, byModel and byTurn across usage.record events', () => {
-    const actor = createActor(createUsageMachine());
-    actor.start();
+async function testStore(): Promise<AgentEventStore> {
+  const backend = new MemoryBackend();
+  const store = await TreeStore.open(backend, {});
+  const tree = await store.tree('test');
+  tree.createBranch('main');
+  return createEventStore({ journal: journalFromBranch(tree.openBranch('main'), tree), slices: agentSlices });
+}
 
-    actor.send({ type: 'usage.record', record: record(10, 2, { model, turnId: 1 }) });
-    actor.send({ type: 'usage.record', record: record(5, 3, { model, turnId: 2 }) });
-    actor.send({ type: 'usage.record', record: record(100, 0) });
-
-    const { records, summary } = actor.getSnapshot().context;
-    expect(records).toHaveLength(3);
-    expect(summary.total).toEqual({
-      inputOther: 115,
-      output: 5,
-      inputCacheRead: 0,
-      inputCacheCreation: 0,
-    });
-    expect(summary.byModel).toEqual({
-      'test-model': { inputOther: 15, output: 5, inputCacheRead: 0, inputCacheCreation: 0 },
-    });
-    expect(summary.byTurn).toEqual({
-      1: { inputOther: 10, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
-      2: { inputOther: 5, output: 3, inputCacheRead: 0, inputCacheCreation: 0 },
-    });
+describe('xstate inspection collector', () => {
+  it('publishes JSON-safe scalar envelopes with no machine context', () => {
+    const envelopes: XstateInspectionEnvelope[] = [];
+    const unsubscribe = xstateInspectionCollector.subscribe((envelope) => envelopes.push(envelope));
+    try {
+      const actor = createActor(createUsageMachine());
+      actor.start();
+      actor.send({ type: 'usage.record', record: record(10, 2, { model, turnId: 1 }) });
+    } finally {
+      unsubscribe();
+    }
+    const delivered = envelopes.filter((envelope) => envelope.eventType === 'usage.record');
+    expect(delivered.length).toBeGreaterThan(0);
+    for (const envelope of delivered) {
+      expect(typeof envelope.actorSessionId).toBe('string');
+      expect(typeof envelope.timestamp).toBe('number');
+    }
+    expect(delivered.find((envelope) => envelope.type === '@xstate.microstep')?.stateValue).toBeDefined();
+    const serialized = JSON.stringify(envelopes);
+    expect(serialized).not.toContain('inputOther');
+    expect(JSON.parse(serialized)).toEqual(envelopes);
   });
+});
 
+describe('usage machine', () => {
   it('groups byModel by baseUrl + model, ignoring provider', () => {
     const actor = createActor(createUsageMachine());
     actor.start();
@@ -114,11 +130,12 @@ describe('usage plugin', () => {
     };
     const plugin = createUsagePlugin({ model });
     const timingPlugin = createTimingPlugin({ now: () => ticks.shift() ?? Number.NaN });
+    const store = await testStore();
     const actor = createActor(
       createAgentMachine({
         turnActor: createTurnMachine(createLlmMachine({ requester })),
       }),
-      { input: { request: { model } } },
+      { input: { request: { model }, store } },
     );
     connectPlugins(actor, [plugin, timingPlugin]);
     actor.start();
@@ -126,13 +143,13 @@ describe('usage plugin', () => {
     actor.send({ type: 'input.submit', message: createUserMessage('again') });
     await waitFor(
       actor,
-      (s) => s.matches('idle') && s.context.messages.length === 4,
+      (s) => s.matches('idle') && store.getState().history.length === 4,
       { timeout: 5000 },
     );
 
     const { records, summary } = plugin.actor.getSnapshot().context;
     expect(records).toHaveLength(2);
-    expect(records.map((r) => r.turnId)).toEqual([1, 2]);
+    expect(records.map((r) => r.turnId)).toEqual([0, 1]);
     expect(records.map((r) => r.model)).toEqual([model, model]);
     expect(summary.total).toEqual({
       inputOther: 20,
@@ -141,13 +158,13 @@ describe('usage plugin', () => {
       inputCacheCreation: 0,
     });
     expect(summary.byModel['test-model']).toEqual(summary.total);
-    expect(summary.byTurn[1]).toEqual({
+    expect(summary.byTurn[0]).toEqual({
       inputOther: 10,
       output: 2,
       inputCacheRead: 0,
       inputCacheCreation: 0,
     });
-    expect(summary.byTurn[2]).toEqual(summary.byTurn[1]);
+    expect(summary.byTurn[1]).toEqual(summary.byTurn[0]);
 
     expect(timingPlugin.timing()).toEqual({
       requestBuildMs: 100,

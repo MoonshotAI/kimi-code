@@ -14,8 +14,8 @@
  *   - `installReverseRpcHandler` — uniform helper for approval/question
  *   - `waitForFrame` / `waitForSessionBusy` — standalone wait helpers
  *
- * Re-exports `@moonshot-ai/protocol` types are NOT bundled here — scenarios
- * that want them import from `@moonshot-ai/protocol` directly.
+ * Wire DTO types are NOT re-exported here — scenarios import them from
+ * `@moonshot-ai/kap-server/protocol/*` or agent-core-v2 directly.
  */
 export { DaemonClient } from './client.js';
 export type {

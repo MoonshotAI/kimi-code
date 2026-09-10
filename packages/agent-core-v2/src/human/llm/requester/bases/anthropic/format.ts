@@ -186,13 +186,16 @@ export interface AnthropicLoweredMessage {
   readonly message: AnthropicWireMessage;
 }
 
-export function lowerAnthropicRequest(input: FormatRequestInput): AnthropicLoweredMessage[] {
+export function lowerAnthropicRequest(
+  input: FormatRequestInput,
+  acceptedMimes: ReadonlySet<string>,
+): AnthropicLoweredMessage[] {
   const normalized = applyPatterns(input.messages, [
     stripUnsignedThinking({ preserve: shouldPreserveUnsignedThinking(input.model.model) }),
     audioToPlaceholder,
   ]);
   return normalized.flatMap((message) =>
-    lowerMessage(message).map((wire) => ({ source: message, message: wire })),
+    lowerMessage(message, acceptedMimes).map((wire) => ({ source: message, message: wire })),
   );
 }
 

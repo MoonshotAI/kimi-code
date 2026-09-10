@@ -1,7 +1,8 @@
 import { visibleWidth, type TUI } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
+import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { darkColors } from '#/tui/theme/colors';
@@ -27,6 +28,7 @@ function stubTui(rows: number): TUI {
 describe('ToolCallComponent', () => {
   afterEach(() => {
     vi.useRealTimers();
+    setExperimentalFeatures([]);
   });
 
   it('uses the shared non-emoji tool status bullet', () => {
@@ -320,6 +322,99 @@ describe('ToolCallComponent', () => {
     });
   });
 
+  describe('NotifyUser card', () => {
+    beforeEach(() => {
+      setExperimentalFeatures([{ id: 'notify_user', enabled: true }]);
+    });
+    const message = 'Login module is clean.\n\nThe bug must be in **session expiry**.';
+
+    it('collapses to a header with the first line and expands to the full message', () => {
+      const component = new ToolCallComponent(
+        { id: 'call_notify', name: 'NotifyUser', args: { message } },
+        { tool_call_id: 'call_notify', output: 'Update shown to the user.', is_error: false },
+      );
+
+      const collapsed = component.render(100).map(strip).filter((line) => line.trim().length > 0);
+      expect(collapsed).toHaveLength(1);
+      expect(collapsed[0]).toContain('Sent you an update');
+      expect(collapsed[0]).toContain('Login module is clean.');
+      expect(collapsed[0]).not.toContain('session expiry');
+      expect(collapsed[0]).not.toContain('Update shown');
+      expect(component.hasHiddenContent()).toBe(true);
+
+      component.setExpanded(true);
+      const expanded = strip(component.render(100).join('\n'));
+      expect(expanded).toContain('session expiry');
+      expect(expanded).not.toContain('Update shown');
+      expect(component.hasHiddenContent()).toBe(true);
+    });
+
+    it('renders historical calls as ordinary tool records when disabled', () => {
+      setExperimentalFeatures([]);
+      const component = new ToolCallComponent(
+        { id: 'notify-old', name: 'NotifyUser', args: { message: 'Past progress' } },
+        { tool_call_id: 'notify-old', output: 'Update shown to the user.', is_error: false },
+      );
+      const output = strip(component.render(100).join('\n'));
+      expect(output).toContain('Used NotifyUser');
+      expect(output).not.toContain('Sent you an update');
+      expect(output).toContain('Update shown to the user.');
+    });
+
+    it('labels the in-flight call as sending', () => {
+      const component = new ToolCallComponent(
+        { id: 'call_notify_live', name: 'NotifyUser', args: {}, streamingArguments: '{"mess' },
+        undefined,
+      );
+      expect(strip(component.render(100).join('\n'))).toContain('Sending you an update');
+      expect(component.hasHiddenContent()).toBe(false);
+    });
+
+    it.each([true, false])('preserves a suppressed result when rendering history, enabled: %s', (enabled) => {
+      setExperimentalFeatures([{ id: 'notify_user', enabled }]);
+      const output = 'Notifications are disabled; the update was not displayed.';
+      const component = new ToolCallComponent(
+        { id: 'suppressed', name: 'NotifyUser', args: { message } },
+        { tool_call_id: 'suppressed', output, is_error: false },
+      );
+      for (const expanded of [false, true]) {
+        component.setExpanded(expanded);
+        const rendered = strip(component.render(150).join('\n'));
+        expect(rendered).not.toContain('Sent you an update');
+        expect(rendered).toContain(output);
+        if (enabled) expect(rendered).toContain('Update not displayed');
+      }
+    });
+
+    it('does not claim an unknown successful result was displayed', () => {
+      const component = new ToolCallComponent(
+        { id: 'unknown-result', name: 'NotifyUser', args: { message } },
+        { tool_call_id: 'unknown-result', output: 'An unrecognized result.', is_error: false },
+      );
+      const rendered = strip(component.render(150).join('\n'));
+      expect(rendered).not.toContain('Sent you an update');
+      expect(rendered).toContain('An unrecognized result.');
+    });
+
+    it('marks a call whose arguments were cut off by max_tokens', () => {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_notify_cut',
+          name: 'NotifyUser',
+          args: {},
+          streamingArguments: '{"message": "half an upd',
+          truncated: true,
+        },
+        undefined,
+      );
+      const out = strip(component.render(100).join('\n'));
+      expect(out).toContain('Update cut off');
+      expect(out).not.toContain('Sending you an update');
+      expect(out).toContain('call never executed');
+      expect(component.hasHiddenContent()).toBe(false);
+    });
+  });
+
   describe('collapsed header width', () => {
     it('truncates a long Bash header to the terminal width instead of wrapping', () => {
       const command = `pnpm exec vitest run ${'test/very/long/path/'.repeat(6)}spec.test.ts --reporter=verbose`;
@@ -335,6 +430,23 @@ describe('ToolCallComponent', () => {
         expect(rows[0]).toContain('Ran a command');
         expect(rows[0]).toContain('…');
       }
+    });
+
+    it('truncates a long NotifyUser preview the same way', () => {
+      setExperimentalFeatures([{ id: 'notify_user', enabled: true }]);
+      const component = new ToolCallComponent(
+        {
+          id: 'call_notify_narrow',
+          name: 'NotifyUser',
+          args: { message: `Plan: ${'inspect the parser, '.repeat(8)}then run the suite.` },
+        },
+        { tool_call_id: 'call_notify_narrow', output: 'Update shown to the user.', is_error: false },
+      );
+      const rows = component.render(50).map(strip).filter((line) => line.trim().length > 0);
+      expect(rows).toHaveLength(1);
+      expect(visibleWidth(rows[0]!)).toBeLessThanOrEqual(50);
+      expect(rows[0]).toContain('Sent you an update');
+      expect(component.hasHiddenContent()).toBe(true);
     });
 
     it('hands back the same header array while the header is unchanged', () => {

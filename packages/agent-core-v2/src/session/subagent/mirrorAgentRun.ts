@@ -71,6 +71,22 @@ export class SubagentFailed extends Event2<SubagentFailedPayload> {
 }
 export interface SubagentFailed extends SubagentFailedPayload {}
 
+export interface SubagentSpawnedEvent extends SubagentSpawnedPayload {
+  readonly type: 'subagent.spawned';
+}
+
+export interface SubagentStartedEvent extends SubagentStartedPayload {
+  readonly type: 'subagent.started';
+}
+
+export interface SubagentCompletedEvent extends SubagentCompletedPayload {
+  readonly type: 'subagent.completed';
+}
+
+export interface SubagentFailedEvent extends SubagentFailedPayload {
+  readonly type: 'subagent.failed';
+}
+
 export interface AgentRunSpawnedMeta {
   readonly profileName: string;
   readonly parentToolCallId?: string;

@@ -73,7 +73,6 @@
         ./packages/node-sdk
         ./packages/oauth
         ./packages/pi-tui
-        ./packages/protocol
         ./packages/remote-control
         ./packages/telemetry
         ./packages/transcript
@@ -99,7 +98,6 @@
         "@moonshot-ai/kimi-code-oauth"
         "@moonshot-ai/klient"
         "@moonshot-ai/pi-tui"
-        "@moonshot-ai/protocol"
         "@moonshot-ai/remote-control"
         "@moonshot-ai/kimi-telemetry"
         "@moonshot-ai/transcript"

@@ -47,10 +47,15 @@ const HUMAN_VOCABULARY = new Set([
   'llm/finish-reason',
   'llm/response-format',
   'llm/media/upload',
+  'llm/media/image-formats',
   'llm/requester/requester',
   'llm/toolCallIdNormalizer',
   'llm-kimi/trait',
+  'interaction/interaction',
+  'interaction/machine',
+  'interaction/facade',
   'utils/watch',
+  'xstate2',
 ]);
 
 const V2_ONLY_FIRST_SEGMENTS = new Set([

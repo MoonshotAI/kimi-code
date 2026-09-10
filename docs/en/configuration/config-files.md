@@ -431,6 +431,23 @@ disabled = ["EnterPlanMode", "ExitPlanMode", "mcp__github__*"]
 Like the `tools` / `disallowedTools` fields of an agent file, this section shapes the tools shown to the model and is enforced again before execution. [Permission rules](#permission) remain a separate control for operations that require approval.
 :::
 
+## `read`
+
+`read` controls the character limits for the [`Read` tool](../reference/tools.md). The limit includes file content, line numbers, and the status block; it does not impose a separate line-count or UTF-8 byte limit.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `default_max_chars` | `integer` | `100000` | Character budget when the tool call omits `max_chars` |
+| `max_chars` | `integer` | `500000` | Maximum character budget a tool call may request |
+
+```toml
+[read]
+default_max_chars = 100000
+max_chars = 500000
+```
+
+Both values must be positive integers. A call's `max_chars` overrides the default, but is capped at the configured maximum; the result reports the effective budget. If the configured default exceeds the maximum, the maximum also limits default reads. Raise `default_max_chars` when you want larger documents to be returned in one call without the agent requesting a larger budget.
+
 ## `image`
 
 `image` controls how images are compressed before being sent to the model, across every ingestion point (pasted images, `ReadMediaFile` reads, images in MCP tool results, and so on).

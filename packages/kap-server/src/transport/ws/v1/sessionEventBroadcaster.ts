@@ -1,7 +1,6 @@
 import { rm } from 'node:fs/promises';
 
 import type {
-  AgentActivityState,
   ApprovalResponse,
   Event2,
   IAgentScopeHandle,
@@ -15,16 +14,18 @@ import type {
 } from '@moonshot-ai/agent-core-v2';
 import {
   IAgentLifecycleService,
+  IAgentLoopService,
   IEventBus,
   IEventService,
+  INTERACTION_TAG_AGENT_ID,
+  INTERACTION_TAG_SESSION_ID,
   ISessionActivityView,
   ISessionIndex,
   ISessionManager,
   MAIN_AGENT_ID,
   getLiveSessionById,
-  listSessionPendingInteractions,
-  onSessionInteractionDidChangePending,
-  onSessionInteractionDidResolve,
+  interactions,
+  toDisposable,
 } from '@moonshot-ai/agent-core-v2';
 import type {
   ConfigWarningItem,
@@ -61,7 +62,12 @@ import { toWireApproval } from '../../../routes/approvals';
 import { toWireQuestion } from '../../../protocol/question-wire';
 import { toWireWorkspace } from '../../../routes/workspaces';
 import { projectPromptContentParts } from '../../../services/messages/messageProjection';
-import { readLegacyStatus, toLegacyPhase } from '../../../services/legacyStatus/legacyStatus';
+import { readLegacyStatus } from '../../../services/legacyStatus/legacyStatus';
+import {
+  legacyApprovalsOf,
+  LegacyActivityTracker,
+  phaseFromDomainEvent,
+} from '../../../services/legacyStatus/legacyActivity';
 import type { TranscriptService } from '../../../services/transcript/transcriptService';
 import { InFlightTurnTracker } from './inFlightTurnTracker';
 import { SubagentRosterTracker } from './subagentRosterTracker';
@@ -141,6 +147,7 @@ export class SessionEventBroadcaster {
   private readonly globalTargets = new Set<BroadcastTarget>();
   private readonly diEventTargets = new Set<BroadcastTarget>();
   private readonly pendingStates = new Map<string, Promise<SessionState | undefined>>();
+  private readonly activityTrackers = new Map<string, LegacyActivityTracker>();
   private readonly maxBufferSize: number;
   private readonly coreEventSubscription: IDisposable;
   private readonly deletionSubscription: IDisposable | undefined;
@@ -525,9 +532,16 @@ export class SessionEventBroadcaster {
     );
     for (const [sessionId, state] of this.sessions) {
       await disposeSessionState(state);
+      this.dropActivityTrackers(sessionId);
       this.opts.transcriptService?.dropSession(sessionId);
     }
     this.sessions.clear();
+  }
+
+  private dropActivityTrackers(sessionId: string): void {
+    for (const key of this.activityTrackers.keys()) {
+      if (key.startsWith(`${sessionId}:`)) this.activityTrackers.delete(key);
+    }
   }
 
   private async purgeSession(sessionId: string): Promise<void> {
@@ -537,6 +551,7 @@ export class SessionEventBroadcaster {
       this.sessions.delete(sessionId);
       state.targets.clear();
       await disposeSessionState(state);
+      this.dropActivityTrackers(sessionId);
     }
     this.opts.transcriptService?.dropSession(sessionId);
     await rm(sessionJournalPath(this.opts.eventsDir, sessionId), { force: true });
@@ -590,10 +605,11 @@ export class SessionEventBroadcaster {
     try {
       this.attachWorkView(session, state);
       this.attachAgents(sessionId, session, state);
-      this.attachInteractions(sessionId, session, state);
+      this.attachInteractions(sessionId, state);
     } catch (error) {
       this.sessions.delete(sessionId);
       await disposeSessionState(state);
+      this.dropActivityTrackers(sessionId);
       if (error instanceof Error && error.message === 'InstantiationService has been disposed') return undefined;
       throw error;
     }
@@ -884,6 +900,7 @@ export class SessionEventBroadcaster {
         if (d !== undefined) {
           d.dispose();
           state.agentDisposables.delete(agentId);
+          this.activityTrackers.delete(`${sessionId}:${agentId}`);
           this.enqueueDurable(state, {
             type: 'agent.disposed',
             agentId,
@@ -896,6 +913,13 @@ export class SessionEventBroadcaster {
 
   private attachAgent(sessionId: string, handle: IAgentScopeHandle): IDisposable {
     const eventBus = handle.accessor.get(IEventBus);
+    this.activityTrackers.set(
+      `${sessionId}:${handle.id}`,
+      new LegacyActivityTracker(
+        () => handle.accessor.get(IAgentLoopService).activitySnapshot(),
+        () => legacyApprovalsOf(handle),
+      ),
+    );
     let lastLegacyStatus: string | undefined;
     const emitLegacyStatus = (): void => {
       const snapshot = readLegacyStatus(handle);
@@ -934,22 +958,6 @@ export class SessionEventBroadcaster {
 
     if (event.type === 'prompt.accepted') return;
 
-    if (event.type === 'agent.activity.updated') {
-      const snapshot = event as unknown as AgentActivityState;
-      const phase = toLegacyPhase(snapshot);
-      if (phase !== undefined) {
-        const wireEvent = {
-          type: 'agent.status.updated',
-          phase,
-          agentId,
-          sessionId,
-        } as unknown as Event;
-        state.queue = state.queue
-          .then(() => this.dispatch(state, wireEvent, true))
-          .catch((error: unknown) => this.logDispatchDropped(state.sessionId, wireEvent.type, error));
-      }
-      return;
-    }
     if (
       event.type === 'agent.status.updated' &&
       (event as { phase?: unknown }).phase !== undefined
@@ -983,40 +991,62 @@ export class SessionEventBroadcaster {
         .then(() => this.dispatch(state, legacy, volatile))
         .catch((error: unknown) => this.logDispatchDropped(state.sessionId, legacy.type, error));
     }
+    const tracker = this.activityTrackers.get(`${sessionId}:${agentId}`);
+    if (tracker !== undefined) {
+      const phase = phaseFromDomainEvent(tracker, event);
+      if (phase !== undefined) {
+        const phaseEvent = {
+          type: 'agent.status.updated',
+          phase,
+          agentId,
+          sessionId,
+        } as unknown as Event;
+        state.queue = state.queue
+          .then(() => this.dispatch(state, phaseEvent, true))
+          .catch((error: unknown) => this.logDispatchDropped(state.sessionId, phaseEvent.type, error));
+      }
+    }
   }
 
   private attachInteractions(
     sessionId: string,
-    session: ISessionScopeHandle,
     state: SessionState,
   ): void {
-    const agents = session.accessor.get(IAgentLifecycleService);
-    for (const i of listSessionPendingInteractions(agents)) {
-      state.knownInteractions.set(i.id, { kind: i.kind, agentId: i.origin.agentId ?? 'main' });
+    const pendingOfSession = (): readonly Interaction[] =>
+      interactions.findAll({
+        resolved: false,
+        tags: { [INTERACTION_TAG_SESSION_ID]: sessionId },
+      });
+    for (const i of pendingOfSession()) {
+      state.knownInteractions.set(i.id, { kind: i.kind, agentId: interactionAgentId(i) });
     }
     state.lifecycleDisposables.push(
-      onSessionInteractionDidChangePending(agents, () => {
-        for (const i of listSessionPendingInteractions(agents)) {
-          if (state.knownInteractions.has(i.id)) continue;
-          state.knownInteractions.set(i.id, {
-            kind: i.kind,
-            agentId: i.origin.agentId ?? 'main',
-          });
-          const event = interactionRequestedEvent(i, sessionId);
+      toDisposable(
+        interactions.onDidChangePending(() => {
+          for (const i of pendingOfSession()) {
+            if (state.knownInteractions.has(i.id)) continue;
+            state.knownInteractions.set(i.id, {
+              kind: i.kind,
+              agentId: interactionAgentId(i),
+            });
+            const event = interactionRequestedEvent(i, sessionId);
+            if (event !== undefined) {
+              this.enqueueDurable(state, event);
+            }
+          }
+        }),
+      ),
+      toDisposable(
+        interactions.onDidResolve(({ id, response }) => {
+          const known = state.knownInteractions.get(id);
+          if (known === undefined) return;
+          state.knownInteractions.delete(id);
+          const event = interactionResolvedEvent(known.kind, id, response, sessionId, known.agentId);
           if (event !== undefined) {
             this.enqueueDurable(state, event);
           }
-        }
-      }),
-      onSessionInteractionDidResolve(agents, ({ id, response }) => {
-        const known = state.knownInteractions.get(id);
-        if (known === undefined) return;
-        state.knownInteractions.delete(id);
-        const event = interactionResolvedEvent(known.kind, id, response, sessionId, known.agentId);
-        if (event !== undefined) {
-          this.enqueueDurable(state, event);
-        }
-      }),
+        }),
+      ),
     );
   }
 
@@ -1258,8 +1288,13 @@ function suppressedByTranscript(
   return TRANSCRIPT_PROJECTED_EVENT_TYPES.has(envelope.type);
 }
 
+function interactionAgentId(interaction: Interaction): string {
+  const tag = interaction.tags[INTERACTION_TAG_AGENT_ID];
+  return typeof tag === 'string' ? tag : MAIN_AGENT_ID;
+}
+
 function interactionRequestedEvent(interaction: Interaction, sessionId: string): Event | undefined {
-  const agentId = interaction.origin.agentId ?? 'main';
+  const agentId = interactionAgentId(interaction);
   switch (interaction.kind) {
     case 'question':
       return {

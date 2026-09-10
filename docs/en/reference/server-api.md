@@ -751,7 +751,7 @@ On success, `data` is `{ aborted: true }`.
 
 #### `POST /api/v1/sessions/{session_id}:btw`
 
-Starts a "by the way" side conversation: forks the main agent into a child agent whose tool calls are disabled, so quick side questions run in isolation without touching the working context. Requires a usable model configuration.
+Starts a "by the way" side conversation: forks the main agent into a child agent whose tool calls are limited to the read-only tools `Read`, `Grep`, and `Glob`, so quick side questions run in isolation without touching the working context. Requires a usable model configuration.
 
 On success, `data` is `{ agent_id }` — the id of the new child agent.
 

@@ -226,6 +226,21 @@ describe('tool-result registry', () => {
     expect(out).toContain('+1 more');
   });
 
+  it('keeps Glob pagination notices out of the collapsed path samples', () => {
+    const output = 'Showing matches 1–2 of 4.\nCharacter limit reached; only complete paths are returned.\nContinue with the same search arguments and offset=2.\na.ts\nb.ts';
+    const renderer = pickResultRenderer('Glob');
+    expect(strip(joinRender(renderer(call('Glob'), result(output), ctx)))).toBe('  a.ts, b.ts');
+    expect(strip(joinRender(renderer(call('Glob'), result(output), expandedCtx)))).toContain('Character limit reached');
+  });
+
+  it.each([
+    'No more matches at offset=347 in the current result set (347 matches).',
+    'No matches collected; search incomplete.',
+  ])('shows a Glob empty-page notice as the outcome: %s', (output) => {
+    const renderer = pickResultRenderer('Glob');
+    expect(strip(joinRender(renderer(call('Glob'), result(output), ctx), 160))).toBe(`  ${output}`);
+  });
+
   it('FetchURL renders no body when collapsed', () => {
     const renderer = pickResultRenderer('FetchURL');
     const out = joinRender(

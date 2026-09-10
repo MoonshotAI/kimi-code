@@ -2,7 +2,8 @@ import type { SessionSummary as V2SessionSummary } from '@moonshot-ai/agent-core
 import type { GoalChange, GoalSnapshot } from '@moonshot-ai/agent-core-v2/features/goal/types';
 import type { PlanData } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import type { ModelCapability, ProviderConfig } from '@moonshot-ai/kosong';
-import type { CompactionResult, UsageStatus } from '@moonshot-ai/protocol';
+import type { CompactionResult } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/types';
+import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 
 import type { AgentContextData, ContextMessage } from '#/context';
 import type { PermissionApprovalResultRecord, PermissionData, PermissionMode } from '#/permission';

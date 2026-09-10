@@ -112,8 +112,7 @@
  *   driven by the same session wiring: v1's push callbacks
  *   (`requestApproval` / `requestQuestion` / `toolCall`) are fed from the v2
  *   interaction kernel's pending set (`onDidChangePending`), and the outcome
- *   is written back through `ISessionApprovalService.decide` /
- *   `ISessionQuestionService.answer|dismiss` / the kernel's `respond`.
+ *   is written back through the kernel's `respond`.
  * - `exportSession` → `ISessionExportService` (app scope, the v2 port of v1's
  *   export) through {@link engineAccessor}; `listSkills` → the session
  *   scope's `ISessionSkillCatalog`; `startBtw` → the session scope's
@@ -150,7 +149,6 @@ import {
   ensureKimiHome,
   ensureMainAgent,
   agentContextOf,
-  IAgentActivityView,
   IAgentContextMemoryService,
   IAgentConversationUndoService,
   IAgentCronService,
@@ -170,6 +168,7 @@ import {
   ISessionTokenCountingService,
   IAgentToolPolicyService,
   IAgentToolRegistryService,
+  type HostUiCapability,
   IAgentTowerService,
   IBootstrapService,
   IConfigService,
@@ -354,6 +353,8 @@ export interface SDKRpcClientV2Options {
   readonly telemetry?: TelemetryClient;
   readonly onOAuthRefresh?: (outcome: OAuthRefreshOutcome) => void;
   readonly uiMode?: string;
+  /** UI surfaces this host renders; forwarded as `BootstrapInput.args.uiCapabilities`. */
+  readonly uiCapabilities?: readonly HostUiCapability[];
 }
 
 /**
@@ -453,6 +454,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
           // `--skills-dir` (v1 parity): explicit skill dirs replace default
           // user / project discovery for every session this client hosts.
           skillDirs: options.skillDirs,
+          uiCapabilities: options.uiCapabilities,
         },
       },
       [...logSeed(resolveLoggingConfig({ homeDir: this.homeDir, env: process.env }))],
@@ -1504,7 +1506,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   /**
    * v1's reload: refuse while a turn runs, re-read config + plugins, close
    * the live session, resume from disk. The v2 busy check reads each live
-   * agent's activity view (turn lane only — background tasks do not block,
+   * agent's loop status (turn lane only — background tasks do not block,
    * matching v1's `hasActiveTurn`). `forcePluginSessionStartReminder` has no
    * v2 channel (the engine owns plugin session-start injection), so reload
    * refreshes the durable guidance snapshot through the Agent service.
@@ -1518,7 +1520,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         for (const agent of agentLifecycle.list()) {
           const agentHandle = agentLifecycle.handleOf(agent.agentId);
           if (agentHandle === undefined) continue;
-          if (agentHandle.accessor.get(IAgentActivityView).state().turn !== undefined) {
+          if (agentHandle.accessor.get(IAgentLoopService).status().state === 'running') {
             throw new KimiError(
               ErrorCodes.TURN_AGENT_BUSY,
               `Session "${sessionId}" cannot be reloaded while a turn is running`,
@@ -1967,7 +1969,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const agent = await this.agentFacade(input.sessionId);
     await agent.prompt({
       input: input.input,
-      disabledTools: input.disabledTools,
       promptId: input.promptId,
     });
   }

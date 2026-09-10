@@ -1,6 +1,8 @@
 import { createActor as createXStateActor } from 'xstate';
 import type { Actor, ActorOptions, AnyActorLogic, InspectionEvent } from 'xstate';
 
+import { xstateInspectionCollector } from '#/xstateInspection';
+
 export * from 'xstate';
 
 function reportUnhandled(event: InspectionEvent): void {
@@ -11,7 +13,7 @@ function reportUnhandled(event: InspectionEvent): void {
     return;
   }
   console.warn(
-    `[agent-core-v3] unhandled event "${event.event.type}" in actor "${event.actorRef.sessionId}"`,
+    `[agent-core] unhandled event "${event.event.type}" in actor "${event.actorRef.sessionId}"`,
   );
 }
 
@@ -24,6 +26,7 @@ function createActorWithInspect<TLogic extends AnyActorLogic>(
     ...options,
     inspect: (event) => {
       reportUnhandled(event);
+      xstateInspectionCollector.publish(event);
       if (typeof inspect === 'function') {
         inspect(event);
       } else {

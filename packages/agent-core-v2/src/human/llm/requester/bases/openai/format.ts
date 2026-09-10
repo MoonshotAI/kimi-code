@@ -19,6 +19,7 @@ import { NO_FINISH, type FinishInfo, type FinishReason } from '#/llm/finish-reas
 import type {
   FormatRequestInput,
   ProtocolFormat,
+  StreamParser,
   StreamParserOptions,
 } from '#/llm/protocol/format';
 import { type Message, type StreamedMessagePart, type ToolDescription } from '#/llm/message';
@@ -36,7 +37,11 @@ import type {
 } from './contract';
 import { lowerMessage } from './lower';
 import { extractToolMedia } from './patterns';
-import { extractReasoning } from './reasoning-key';
+import {
+  convertReasoningDetails,
+  extractReasoning,
+  extractReasoningDetails,
+} from './reasoning-key';
 
 export function responseFormatToOpenAI(format: ResponseFormat): Record<string, unknown> {
   if (format.type === 'json_object') {
@@ -194,9 +199,17 @@ export function encodeOpenAIRequest(params: Record<string, unknown>): OpenAIRequ
   return { params: params as unknown as OpenAI.Chat.ChatCompletionCreateParamsStreaming };
 }
 
-export function createOpenAIFormat(): ProtocolFormat<OpenAIRawChunk> {
+export interface OpenAIStreamParserOptions extends StreamParserOptions<OpenAIRawChunk> {
+  readonly reasoningKey?: string;
+}
+
+export interface OpenAIProtocolFormat extends ProtocolFormat<OpenAIRawChunk> {
+  createStreamParser(options?: OpenAIStreamParserOptions): StreamParser<OpenAIRawChunk>;
+}
+
+export function createOpenAIFormat(): OpenAIProtocolFormat {
   return {
-    createStreamParser(options?: StreamParserOptions<OpenAIRawChunk>) {
+    createStreamParser(options?: OpenAIStreamParserOptions) {
       const bufferedToolCalls = new Map<number | string, BufferedStreamToolCall>();
 
       function convertStreamToolCall(
@@ -283,9 +296,17 @@ export function createOpenAIFormat(): ProtocolFormat<OpenAIRawChunk> {
         if (!delta) {
           return;
         }
-        const reasoning = extractReasoning(delta);
-        if (reasoning !== undefined) {
-          sink.onDelta({ type: 'think', think: reasoning.value });
+        const reasoningDetails =
+          options?.reasoningKey === undefined ? extractReasoningDetails(delta) : undefined;
+        if (reasoningDetails !== undefined) {
+          for (const part of convertReasoningDetails(reasoningDetails)) {
+            sink.onDelta(part);
+          }
+        } else {
+          const reasoning = extractReasoning(delta);
+          if (reasoning !== undefined) {
+            sink.onDelta({ type: 'think', think: reasoning.value });
+          }
         }
         if (typeof delta.content === 'string' && delta.content.length > 0) {
           sink.onDelta({ type: 'text', text: delta.content });

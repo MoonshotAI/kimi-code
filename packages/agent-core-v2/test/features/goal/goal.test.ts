@@ -22,7 +22,6 @@ import {
   createMaxStepsExceededError,
   IAgentLoopService,
   type AfterStepContext,
-  type Turn,
 } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
@@ -64,7 +63,7 @@ import { stubFlag } from '../../app/flag/stubs';
 import { IFlagService } from '#/app/flag/flag';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
-import { stubLoopWithHooks, type StubLoop } from '../../agent/loop/stubs';
+import { stubLoopWithHooks, type StubLoop, type StubTurn } from '../../agent/loop/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
 import { stubAgentSwarm } from './stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
@@ -201,7 +200,7 @@ async function restoreGoalRecords(
   await ctx.restore(records as readonly WireRecord[]);
 }
 
-function makeTurn(id: number): Turn {
+function makeTurn(id: number): StubTurn {
   return {
     id,
     signal: new AbortController().signal,
@@ -211,7 +210,7 @@ function makeTurn(id: number): Turn {
   };
 }
 
-async function runGoalStep(loopService: StubLoop, turn: Turn): Promise<boolean> {
+async function runGoalStep(loopService: StubLoop, turn: StubTurn): Promise<boolean> {
   const step = {
     turnId: turn.id,
     step: 1,
@@ -235,7 +234,7 @@ async function runGoalStep(loopService: StubLoop, turn: Turn): Promise<boolean> 
 async function recordStepUsage(
   usageService: TestAgentContext['usage'],
   goals: IAgentGoalService,
-  turn: Turn,
+  turn: StubTurn,
   usage: TokenUsage,
 ): Promise<boolean> {
   await usageService.record('mock-model', usage, { type: 'turn', turnId: turn.id, step: 1 });
@@ -244,7 +243,7 @@ async function recordStepUsage(
 
 async function runTerminalUpdateGoalResult(
   toolExecutor: IAgentToolExecutorService,
-  turn: Turn,
+  turn: StubTurn,
   status: 'complete' | 'blocked',
   output: string,
 ): Promise<void> {
@@ -267,7 +266,7 @@ async function runTerminalUpdateGoalResult(
 
 async function executeToolCall(
   toolExecutor: IAgentToolExecutorService,
-  turn: Turn,
+  turn: StubTurn,
   toolCall: ToolCall,
 ): Promise<ToolExecutionResult[]> {
   const results: ToolExecutionResult[] = [];
@@ -282,7 +281,7 @@ async function executeToolCall(
 
 function endTurn(
   eventBus: IEventBus,
-  turn: Turn,
+  turn: StubTurn,
   result: TurnEndedInput = { reason: 'completed' },
 ): void {
   const error = result.error !== undefined ? toKimiErrorPayload(result.error) : undefined;
@@ -876,7 +875,7 @@ describe('AgentGoalService core workflow hooks', () => {
     abortResult = true,
   ): Promise<ReturnType<typeof vi.fn<() => boolean>>> {
     const abort = vi.fn<() => boolean>(() => abortResult);
-    const turn: Turn = { ...makeTurn(41), result: new Promise<never>(() => {}), cancel: () => abort() };
+    const turn: StubTurn = { ...makeTurn(41), result: new Promise<never>(() => {}), cancel: () => abort() };
     vi.spyOn(loopService, 'submit').mockReturnValue({ turn });
 
     await goals.createGoal({ objective: 'finish the task' });

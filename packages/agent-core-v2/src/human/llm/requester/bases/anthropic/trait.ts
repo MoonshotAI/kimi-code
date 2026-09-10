@@ -17,6 +17,8 @@ export interface AnthropicTrait {
 
   convertTool?(tool: ToolDescription, ctx: TraitContext): Record<string, unknown> | undefined;
 
+  acceptedImageMimes?(ctx: TraitContext): ReadonlySet<string> | undefined;
+
   convertMessage?(
     message: Message,
     converted: AnthropicWireMessage,

@@ -18,6 +18,7 @@ import { extendWorkspaceWithSkillRoots } from '#/tool/path-access';
 
 import { IAgentMediaToolsRegistrar } from './mediaTools';
 import { createVideoUploader, registerMediaTools } from './registerMediaTools';
+import { ISessionMediaStore } from './sessionMediaStore';
 
 export const mediaRegisteredKeyKey = defineState<string | undefined>(
   'media.registeredKey',
@@ -39,6 +40,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly states: IAgentStateService,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
+    @ISessionMediaStore private readonly attachmentStore?: ISessionMediaStore,
   ) {
     super();
     this.states.contributeState(mediaRegisteredKeyKey);
@@ -56,10 +58,20 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     this.states.set(mediaRegisteredKeyKey, value);
   }
 
+  private tryResolveModel(alias: string): Model | undefined {
+    if (alias === '') return undefined;
+    try {
+      return this.modelCatalog.get(alias);
+    } catch {
+      return undefined;
+    }
+  }
+
   private refresh(): void {
     const capabilities = this.profile.getModelCapabilities();
     const modelAlias = this.profile.getModel();
-    if (!this.runtime.isAvailable(['fs'])) {
+    const hasRuntimeFs = this.runtime.isAvailable(['fs']);
+    if (!hasRuntimeFs && this.attachmentStore === undefined) {
       const key = [
         modelAlias,
         String(capabilities.image_in),
@@ -72,20 +84,23 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
       this.registration = undefined;
       return;
     }
-    const inspected = this.runtime.inspect();
-    const identityKey = [
+    const inspected = hasRuntimeFs ? this.runtime.inspect() : undefined;
+    const identityKey = inspected === undefined ? 'session-attachments' : [
       inspected.identity.workspaceId,
       inspected.identity.runtimeId,
       inspected.identity.generation,
     ].join('|');
+    const model = this.tryResolveModel(modelAlias);
     const key = [
       modelAlias,
+      model?.providerType ?? '',
+      model?.protocol ?? '',
       String(capabilities.image_in),
       String(capabilities.video_in),
       identityKey,
-      inspected.status,
-      inspected.environment.pathClass,
-      String(inspected.capabilities.has('fs')),
+      inspected?.status,
+      inspected?.environment.pathClass,
+      String(hasRuntimeFs),
     ].join('|');
     if (key === this.registeredKey) return;
     this.registeredKey = key;
@@ -93,19 +108,17 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     const workspaceCtx = this.workspaceCtx;
     const skillCatalog = this.skillCatalog;
     const runtime = this.runtime;
-    const pathClass = inspected.environment.pathClass;
+    const pathClass = inspected?.environment.pathClass;
     let requester: ModelRequester | undefined;
-    let model: Model | undefined;
-    if (modelAlias !== '') {
+    if (model !== undefined) {
       try {
         requester = this.modelCatalog.getRequester(modelAlias);
-        model = requester.model;
       } catch {
         requester = undefined;
-        model = undefined;
       }
     }
     this.registration = registerMediaTools(this.toolRegistry, {
+      attachmentStore: this.attachmentStore,
       runtime,
       workspace: {
         get workspaceDir() {
@@ -129,6 +142,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
         },
       }),
       inlineVideoSupported: model?.protocol !== 'openai' && model?.protocol !== 'openai_responses',
+      providerType: model?.providerType,
       telemetry: this.telemetry,
     });
   }

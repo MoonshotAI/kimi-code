@@ -30,7 +30,7 @@ import {
   vertexConnection,
 } from '../provider/provider-definition';
 
-import { IProtocolAdapterRegistry, type ExplainedCapability, type Protocol } from './protocol';
+import { IProtocolAdapterRegistry, type Protocol } from './protocol';
 import { getProtocolBase, listProtocolBases, type ProtocolBaseId } from './protocol-base';
 
 const vertexGenAIBase = createGoogleGenAIBase({ vertexai: true });
@@ -152,39 +152,18 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
   }
 
   resolveCapability(protocol: Protocol, modelName: string, providerType?: string): ModelCapability {
-    return this.explainCapability(protocol, modelName, providerType).capability;
-  }
-
-  explainCapability(
-    protocol: Protocol,
-    modelName: string,
-    providerType?: string,
-  ): ExplainedCapability {
     const identity = this.resolveAdapterIdentity(protocol, providerType);
     const definition =
       providerType === undefined ? undefined : getProviderDefinition(providerType, protocol);
     const hooked = definition?.capability?.(modelName);
     if (hooked !== undefined) {
-      return {
-        capability: toV2Capability(hooked),
-        source: {
-          kind: 'builtin',
-          detail: `trait capability hook (provider '${providerType ?? 'unregistered'}')`,
-        },
-      };
+      return toV2Capability(hooked);
     }
-
     const baseCapability = getProtocolBase(identity.baseId)?.base.capability?.(modelName);
     if (baseCapability !== undefined) {
-      return {
-        capability: toV2Capability(baseCapability),
-        source: { kind: 'builtin', detail: `protocol base '${identity.baseId}' catalog` },
-      };
+      return toV2Capability(baseCapability);
     }
-    return {
-      capability: UNKNOWN_CAPABILITY,
-      source: { kind: 'none', detail: 'no capability source knew this model' },
-    };
+    return UNKNOWN_CAPABILITY;
   }
 
   resolve(model: Model): ResolvedLlmModel {

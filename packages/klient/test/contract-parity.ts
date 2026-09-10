@@ -3,28 +3,17 @@
  * types they mirror. Plain `.ts` (not `.test.ts`) — vitest must not pick it
  * up; `tsc -p tsconfig.json --noEmit` is the check.
  *
- * Wire shapes the engine imports from `@moonshot-ai/protocol` are reached
- * through indexed access on the engine service interfaces, since klient does
- * not depend on the protocol package directly.
+ * Wire shapes are reached through indexed access on the engine service
+ * interfaces, so klient needs no direct dependency for most of them.
  */
 
 import type { z } from 'zod';
 
-import type {
-  ActivityLastTurnState,
-  ActivityRetryState,
-  ActivityTurnState,
-  ActivityViewLifecycle,
-  AgentActivityState,
-  ApprovalRef,
-  BackgroundRef,
-  ToolCallRef,
-  TurnPhase,
-} from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
 import type { AgentContextData } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import type { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
 import type { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/agent/runtimeBinding/runtimeBinding';
 import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
+import type { SessionActivityState } from '@moonshot-ai/agent-core-v2/session/sessionActivity/sessionActivity';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
 import type { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import type { IAgentPromptService } from '@moonshot-ai/agent-core-v2/agent/prompt/prompt';
@@ -66,11 +55,11 @@ import type {
 import type {
   ApprovalRequest,
   ApprovalResponse,
-} from '@moonshot-ai/agent-core-v2/session/approval/approval';
+} from '@moonshot-ai/agent-core-v2/agent/interaction/approval';
 import type {
   Interaction,
   InteractionResolution,
-} from '@moonshot-ai/agent-core-v2/features/interaction/interaction';
+} from '@moonshot-ai/agent-core-v2/human/interaction/interaction';
 import type {
   QuestionAnswers,
   QuestionItem,
@@ -78,7 +67,7 @@ import type {
   QuestionRequest,
   QuestionResponse,
   QuestionResult,
-} from '@moonshot-ai/agent-core-v2/session/question/question';
+} from '@moonshot-ai/agent-core-v2/agent/interaction/question';
 import type {
   AgentMeta,
   SessionMeta,
@@ -140,39 +129,34 @@ import type {
   Workspace,
   WorkspaceUpdate,
 } from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
-// Test-only: `@moonshot-ai/protocol` is a devDependency; importing its types
-// here (never in `src/`) strengthens parity for the agent event stream.
+// Test-only: the v1 wire event types now live in agent-core-v2; importing
+// them here (never in `src/`) strengthens parity for the agent event stream.
+import type { ToolResultEvent } from '@moonshot-ai/agent-core-v2/events';
 import type {
-  AssistantDeltaEvent,
   CompactionBlockedEvent,
   CompactionCancelledEvent,
   CompactionCompletedEvent,
   CompactionStartedEvent,
+} from '@moonshot-ai/agent-core-v2/agent/fullCompaction/compactionOps';
+import type {
+  AssistantDeltaEvent,
+  ThinkingDeltaEvent,
+  TurnStartedEvent,
+} from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
+import type { TurnEndedEvent } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import type {
   PromptAbortedEvent,
   PromptCompletedEvent,
-  TaskInfo,
-  ThinkingDeltaEvent,
+} from '@moonshot-ai/agent-core-v2/agent/prompt/promptService';
+import type { TaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/types';
+import type {
   ToolCallDeltaEvent,
   ToolCallStartedEvent,
   ToolProgressEvent,
-  ToolResultEvent,
-  TurnEndedEvent,
-  TurnStartedEvent,
-  WarningEvent,
-} from '@moonshot-ai/protocol';
+} from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
+import type { WarningEvent } from '@moonshot-ai/agent-core-v2/errors';
 
-import {
-  activityLastTurnStateSchema,
-  activityRetryStateSchema,
-  activityTurnStateSchema,
-  activityViewLifecycleSchema,
-  agentActivityStateSchema,
-  approvalRefSchema,
-  backgroundRefSchema,
-  toolCallRefSchema,
-  turnEndReasonSchema,
-  turnPhaseSchema,
-} from '../src/contract/agent/activity.js';
+import { sessionActivityStateSchema } from '../src/contract/session/activity.js';
 import {
   agentCommandInfoSchema,
   agentContextDataSchema,
@@ -353,8 +337,7 @@ type AssertWireToEngine<TSchema extends z.ZodType, TEngine> = [z.infer<TSchema>]
   ? true
   : never;
 
-// Protocol wire shapes, derived from the engine interfaces (no direct
-// `@moonshot-ai/protocol` dependency in klient).
+// Wire shapes, derived from the engine interfaces.
 type OAuthFlowStart = Awaited<ReturnType<IOAuthService['startLogin']>>;
 type OAuthFlowSnapshot = NonNullable<ReturnType<IOAuthService['getFlow']>>;
 type OAuthLoginCancelResponse = Awaited<ReturnType<IOAuthService['cancelLogin']>>;
@@ -601,24 +584,8 @@ const _generateTitleOutput: AssertWire<
   Awaited<ReturnType<ISessionTitleService['generateTitle']>>
 > = true;
 
-// agent/activity.ts
-const _turnPhase: AssertWire<typeof turnPhaseSchema, TurnPhase> = true;
-const _approvalRef: AssertWire<typeof approvalRefSchema, ApprovalRef> = true;
-const _toolCallRef: AssertWire<typeof toolCallRefSchema, ToolCallRef> = true;
-const _activityRetryState: AssertWire<typeof activityRetryStateSchema, ActivityRetryState> = true;
-// One-directional: `origin` is the deep `PromptOrigin` union mirrored as
-// `unknown`; the wire schema cannot be assignable back to the engine type.
-const _activityTurnState: AssertEngineToWire<typeof activityTurnStateSchema, ActivityTurnState> =
-  true;
-const _turnEndReason: AssertWire<typeof turnEndReasonSchema, TurnEndReason> = true;
-const _activityLastTurnState: AssertWire<
-  typeof activityLastTurnStateSchema,
-  ActivityLastTurnState
-> = true;
-const _backgroundRef: AssertWire<typeof backgroundRefSchema, BackgroundRef> = true;
-const _activityViewLifecycle: AssertWire<typeof activityViewLifecycleSchema, ActivityViewLifecycle> =
-  true;
-const _agentActivityState: AssertEngineToWire<typeof agentActivityStateSchema, AgentActivityState> =
+// session/activity.ts
+const _sessionActivityState: AssertWire<typeof sessionActivityStateSchema, SessionActivityState> =
   true;
 
 // ── agent scope (services.ts / schemas.ts) ──────────────────────────────────

@@ -48,7 +48,6 @@ export type McpServerEntry = ReturnType<IAgentMcpService['list']>[number];
 export interface AgentFacade {
   prompt(input: {
     input: readonly ContentPart[];
-    disabledTools?: readonly string[];
     promptId?: string;
   }): Promise<PromptLaunchResult>;
   /**

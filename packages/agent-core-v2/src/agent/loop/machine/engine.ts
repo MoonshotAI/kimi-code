@@ -6,12 +6,17 @@ import type { ToolInfo, ToolResult as AgentToolResult, ToolUpdate as AgentToolUp
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { createAgentMachine } from '#human/agent/machine';
 import { createTurnMachine, type AssistantEntry, type HistoryMessage } from '#human/agent/turn';
+import { messageAppended, turnEnded } from '#human/agent/events';
+import { agentSlices, type AgentEventStore } from '#human/agent/slices';
+import { createEventStoreSync } from '#human/eventStore/eventStore';
+import { memoryJournal } from '#human/eventStore/journal';
 import type { LlmErrorMessage } from '#human/llm/errors';
 import type { FinishInfo } from '#human/llm/finish-reason';
 import type { StreamedMessagePart, UserMessage } from '#human/llm/message';
 import type { LlmModel } from '#human/llm/model';
 import { createLlmMachine } from '#human/llm/requester/machine';
 import type { LlmRecovery, LlmRecoveryRecord } from '#human/llm/requester/recovery';
+import { resolveMaxAttempts } from '#human/llm/requester/retry';
 import type { ToolResult as MachineToolResult, ToolUpdate } from '#human/tool/executor';
 import type { TokenUsage } from '#human/llm/usage';
 import { createActor, type Subscription } from '#human/xstate2';
@@ -21,7 +26,12 @@ import { createMachineTools, type ToolResultExtras } from './tools';
 
 export type MachineEngineDelta =
   | { readonly kind: 'assistant'; readonly delta: string }
-  | { readonly kind: 'thinking'; readonly delta: string }
+  | {
+      readonly kind: 'thinking';
+      readonly delta: string;
+      readonly encrypted?: string;
+      readonly detailsIndex?: number;
+    }
   | {
       readonly kind: 'toolCall';
       readonly toolCallId: string;
@@ -33,7 +43,7 @@ export type MachineEngineDelta =
 export type MachineTurnOutcome = 'done' | 'failed' | 'aborted';
 
 export type MachineEngineEvent =
-  | { readonly type: 'turnStarted'; readonly machineTurnId: number }
+  | { readonly type: 'turnStarted'; readonly machineTurnId: number; readonly queueItemId?: string }
   | {
       readonly type: 'turnSettled';
       readonly outcome: MachineTurnOutcome;
@@ -100,13 +110,37 @@ export interface CreateMachineEngineOptions {
   readonly maxAttemptsPerStep?: number;
   readonly recovery?: LlmRecovery;
   readonly abortTimeoutMs?: number;
+  readonly initialTurnId?: number;
   readonly trace?: () => LLMRequestTrace | undefined;
   readonly source?: () => AgentLLMRequestSource | undefined;
   readonly toolTurnId?: () => number | undefined;
+  readonly steerSignal?: () => AbortSignal | undefined;
   readonly gate?: (signal: AbortSignal) => Promise<MachineRequesterGateDecision>;
   readonly onTrace?: (trace: LLMRequestTrace) => void;
   readonly onEvent?: (event: MachineEngineEvent) => void;
   readonly onToolResult?: (toolCallId: string, result: AgentToolResult) => void;
+}
+
+export interface MachineEngineRetrySnapshot {
+  readonly failedAttempt: number;
+  readonly nextAttempt: number;
+  readonly maxAttempts: number;
+  readonly delayMs: number;
+  readonly errorName?: string;
+  readonly statusCode?: number;
+}
+
+export interface MachineEngineToolCallSnapshot {
+  readonly toolCallId: string;
+  readonly name: string;
+}
+
+export interface MachineEngineTurnSnapshot {
+  readonly turnId: number;
+  readonly phase: 'running' | 'tool_call' | 'retrying';
+  readonly step: number;
+  readonly retry?: MachineEngineRetrySnapshot;
+  readonly activeToolCalls: readonly MachineEngineToolCallSnapshot[];
 }
 
 export interface MachineEngineSnapshot {
@@ -118,6 +152,7 @@ export interface MachineEngineSnapshot {
   readonly notificationCount: number;
   readonly reminderCount: number;
   readonly backgroundCount: number;
+  readonly turn?: MachineEngineTurnSnapshot;
 }
 
 export interface MachineEngine {
@@ -125,18 +160,33 @@ export interface MachineEngine {
   steer(id: string): void;
   notify(message: UserMessage): void;
   remind(key: string, message: UserMessage): void;
+  cancelQueueItem(id: string): void;
   abort(): void;
-  resetHistory(history: readonly HistoryMessage[], turnId: number): void;
+  resetHistory(history: readonly HistoryMessage[]): Promise<void>;
   stop(): void;
   snapshot(): MachineEngineSnapshot;
+  currentStep(): number;
   lastFinish(): AgentLLMRequestFinish | undefined;
   readonly toolExtras: ReadonlyMap<string, ToolResultExtras>;
   handleToolProgress(toolCallId: string, update: AgentToolUpdate): void;
 }
 
-interface MachineSnapshotLike {
+interface TurnSnapshotLike {
   readonly value: unknown;
   readonly context: {
+    readonly steps: number;
+    readonly attempt: number;
+    readonly delayMs: number;
+    readonly pendingToolCalls: readonly { readonly id: string; readonly name: string }[];
+    readonly outcomes: Record<string, unknown>;
+  };
+}
+
+interface MachineSnapshotLike {
+  readonly value: unknown;
+  readonly children: Record<string, { getSnapshot(): TurnSnapshotLike } | undefined>;
+  readonly context: {
+    readonly turnId: number;
     readonly queue: readonly { readonly id?: string }[];
     readonly notifications: readonly unknown[];
     readonly reminders: readonly unknown[];
@@ -151,7 +201,12 @@ function createDeltaSplitter(): (part: StreamedMessagePart) => MachineEngineDelt
       case 'text':
         return { kind: 'assistant', delta: part.text };
       case 'think':
-        return { kind: 'thinking', delta: part.think };
+        return {
+          kind: 'thinking',
+          delta: part.think,
+          encrypted: part.encrypted,
+          detailsIndex: part.detailsIndex,
+        };
       case 'image_url':
       case 'audio_url':
       case 'video_url':
@@ -185,6 +240,7 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
   let currentStep = 0;
   let split = createDeltaSplitter();
   let pendingFailure: { step: number; error: LlmErrorMessage } | undefined;
+  let lastRetry: MachineEngineRetrySnapshot | undefined;
 
   const publish = (event: MachineEngineEvent): void => {
     options.onEvent?.(event);
@@ -198,6 +254,7 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
     toolExecutor: options.toolExecutor,
     toolInfos: options.toolInfos,
     turnId: () => options.toolTurnId?.() ?? 0,
+    steerSignal: options.steerSignal,
     trace: options.trace,
     onToolCall: (payload) => {
       publish({
@@ -213,6 +270,16 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
       publish({ type: 'toolBatchFailed', error });
     },
   });
+  const journal = memoryJournal();
+  const initialTurnId = options.initialTurnId ?? 0;
+  if (initialTurnId > 0) {
+    void journal.append({
+      type: turnEnded.type,
+      kind: 'event',
+      data: turnEnded({ turnId: initialTurnId - 1, outcome: 'done' }),
+    });
+  }
+  const store: AgentEventStore = createEventStoreSync({ journal, slices: agentSlices });
   const actor = createActor(
     createAgentMachine({
       tools: tools.tools,
@@ -227,18 +294,22 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
       ),
       abortTimeoutMs: options.abortTimeoutMs,
     }),
-    { input: { request: { model: options.model, systemPrompt: options.systemPrompt } } },
+    { input: { request: { model: options.model, systemPrompt: options.systemPrompt }, store } },
   );
   const subscriptions: Subscription[] = [
     actor.on('turn.started', (event) => {
       currentStep = 0;
       split = createDeltaSplitter();
       pendingFailure = undefined;
-      publish({ type: 'turnStarted', machineTurnId: event.turnId });
+      lastRetry = undefined;
+      publish({ type: 'turnStarted', machineTurnId: event.turnId, queueItemId: event.queueItemId });
+    }),
+    actor.on('step.started', (event) => {
+      currentStep = event.step;
     }),
     actor.on('llm.sent', (event) => {
-      currentStep += 1;
       split = createDeltaSplitter();
+      lastRetry = undefined;
       tools.beginBatch();
       publish({ type: 'stepStarted', step: currentStep, recovery: event.recovery });
     }),
@@ -248,6 +319,14 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
     }),
     actor.on('llm.retrying', (event) => {
       pendingFailure = undefined;
+      lastRetry = {
+        failedAttempt: event.failedAttempt,
+        nextAttempt: event.nextAttempt,
+        maxAttempts: event.maxAttempts,
+        delayMs: event.delayMs,
+        errorName: event.errorName,
+        statusCode: event.statusCode,
+      };
       publish({
         type: 'retrying',
         step: currentStep,
@@ -275,6 +354,7 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
     }),
     actor.on('llm.done', (event) => {
       pendingFailure = undefined;
+      lastRetry = undefined;
       tools.beginBatch(event.entry.message.toolCalls);
       const finish = requester.lastFinish();
       const meta = event.entry.meta;
@@ -362,11 +442,26 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
     remind: (key, message) => {
       actor.send({ type: 'input.remind', key, message });
     },
+    cancelQueueItem: (id) => {
+      actor.send({ type: 'input.cancel', id });
+    },
     abort: () => {
       actor.send({ type: 'input.abort' });
     },
-    resetHistory: (history, turnId) => {
-      actor.send({ type: 'context.reset', history, turnId });
+    resetHistory: (history) => {
+      const journal = memoryJournal();
+      for (const message of history) {
+        void journal.append({ type: messageAppended.type, kind: 'event', data: messageAppended({ message }) });
+      }
+      const nextTurnId = (actor.getSnapshot() as unknown as MachineSnapshotLike).context.turnId;
+      if (nextTurnId > 0) {
+        void journal.append({
+          type: turnEnded.type,
+          kind: 'event',
+          data: turnEnded({ turnId: nextTurnId - 1, outcome: 'done' }),
+        });
+      }
+      return store.reset(journal);
     },
     stop: () => {
       for (const subscription of subscriptions) subscription.unsubscribe();
@@ -375,6 +470,36 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
     snapshot: () => {
       const snapshot = actor.getSnapshot() as unknown as MachineSnapshotLike;
       const value = snapshot.value;
+      const turnRef = snapshot.children['turn'];
+      let turn: MachineEngineTurnSnapshot | undefined;
+      if (turnRef !== undefined) {
+        const turnSnapshot = turnRef.getSnapshot();
+        const turnValue = turnSnapshot.value;
+        const phase =
+          turnValue === 'retrying'
+            ? ('retrying' as const)
+            : typeof turnValue === 'object' && turnValue !== null && 'acting' in turnValue
+              ? ('tool_call' as const)
+              : ('running' as const);
+        const context = turnSnapshot.context;
+        turn = {
+          turnId: snapshot.context.turnId,
+          phase,
+          step: context.steps,
+          retry:
+            phase === 'retrying'
+              ? (lastRetry ?? {
+                  failedAttempt: context.attempt - 1,
+                  nextAttempt: context.attempt,
+                  maxAttempts: resolveMaxAttempts({ maxAttemptsPerStep: options.maxAttemptsPerStep }),
+                  delayMs: context.delayMs,
+                })
+              : undefined,
+          activeToolCalls: context.pendingToolCalls
+            .filter((toolCall) => context.outcomes[toolCall.id] === undefined)
+            .map((toolCall) => ({ toolCallId: toolCall.id, name: toolCall.name })),
+        };
+      }
       return {
         running: value === 'running' || (typeof value === 'object' && value !== null && 'running' in value),
         aborting: typeof value === 'object' && value !== null && 'running' in value &&
@@ -387,9 +512,11 @@ export function createMachineEngine(options: CreateMachineEngineOptions): Machin
         notificationCount: snapshot.context.notifications.length,
         reminderCount: snapshot.context.reminders.length,
         backgroundCount: Object.keys(snapshot.context.background).length,
+        turn,
       };
     },
     lastFinish: () => requester.lastFinish(),
+    currentStep: () => currentStep,
     toolExtras: tools.extras,
     handleToolProgress: (toolCallId, update) => {
       tools.handleProgress(toolCallId, update);

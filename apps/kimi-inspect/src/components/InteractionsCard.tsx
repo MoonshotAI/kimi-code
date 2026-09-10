@@ -1,14 +1,24 @@
 /**
  * Pending interactions card (approvals / questions) of one session — fetched
- * on demand: the session `interactions` push stream went away with
- * `/api/v2/ws`, so the card refreshes only when Load is clicked.
+ * on demand over the public REST surface (`/api/v1/sessions/{id}/approvals`
+ * and `.../questions`): the engine's interaction kernel is a process-global
+ * singleton with no debug channel, and the session `interactions` push
+ * stream went away with `/api/v2/ws`, so the card refreshes only when Load
+ * is clicked.
  */
 
-import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
-import { ISessionQuestionService } from '@moonshot-ai/agent-core-v2/session/question/question';
 import { useState } from 'react';
 
 import { useConnection } from '../connection';
+import {
+  answerQuestion,
+  decideApproval,
+  dismissQuestion,
+  listPendingApprovals,
+  listPendingQuestions,
+  type QuestionAnswerWire,
+  type QuestionWire,
+} from '../interactions/api';
 import { ActionButton, Badge, ErrorLine, JsonView } from '../ui';
 
 interface PendingInteraction {
@@ -19,27 +29,30 @@ interface PendingInteraction {
 }
 
 export function InteractionsCard({ sessionId }: { sessionId: string }) {
-  const { klient } = useConnection();
+  const { config, baseUrl } = useConnection();
   const [pending, setPending] = useState<readonly PendingInteraction[]>([]);
   const [error, setError] = useState<unknown>(null);
-  const approval = klient.session(sessionId).service(ISessionApprovalService);
-  const question = klient.session(sessionId).service(ISessionQuestionService);
+  const api = { baseUrl, token: config.token, sessionId };
 
   const reload = async () => {
     try {
       setError(null);
       const [approvals, questions] = await Promise.all([
-        approval.listPending() as Promise<readonly { id: string }[]>,
-        question.listPending() as Promise<readonly { id: string }[]>,
+        listPendingApprovals(api),
+        listPendingQuestions(api),
       ]);
       setPending([
         ...approvals.map((p) => ({
-          id: p.id,
+          id: p.approval_id,
           kind: 'approval',
-          payload: p as unknown as Record<string, unknown>,
+          payload: {
+            toolName: p.tool_name,
+            action: p.action,
+            display: p.tool_input_display,
+          },
         })),
         ...questions.map((p) => ({
-          id: p.id,
+          id: p.question_id,
           kind: 'question',
           payload: p as unknown as Record<string, unknown>,
         })),
@@ -51,15 +64,15 @@ export function InteractionsCard({ sessionId }: { sessionId: string }) {
 
   const decide = async (id: string, decision: 'approved' | 'rejected') => {
     try {
-      await approval.decide(id, { decision });
+      await decideApproval(api, id, decision);
       await reload();
     } catch (error) {
       setError(error);
     }
   };
-  const answer = async (id: string, q: string, value: string) => {
+  const answer = async (id: string, answers: Readonly<Record<string, QuestionAnswerWire>>) => {
     try {
-      await question.answer(id, { answers: { [q]: value } });
+      await answerQuestion(api, id, answers, 'click');
       await reload();
     } catch (error) {
       setError(error);
@@ -67,7 +80,7 @@ export function InteractionsCard({ sessionId }: { sessionId: string }) {
   };
   const dismiss = async (id: string) => {
     try {
-      await question.dismiss(id);
+      await dismissQuestion(api, id);
       await reload();
     } catch (error) {
       setError(error);
@@ -122,8 +135,8 @@ export function InteractionsCard({ sessionId }: { sessionId: string }) {
                 </>
               ) : item.kind === 'question' ? (
                 <QuestionView
-                  payload={item.payload}
-                  onAnswer={(q, v) => void answer(item.id, q, v)}
+                  wire={item.payload as unknown as QuestionWire}
+                  onAnswer={(answers) => void answer(item.id, answers)}
                   onDismiss={() => void dismiss(item.id)}
                 />
               ) : (
@@ -138,41 +151,42 @@ export function InteractionsCard({ sessionId }: { sessionId: string }) {
 }
 
 function QuestionView({
-  payload,
+  wire,
   onAnswer,
   onDismiss,
 }: {
-  payload: Record<string, unknown>;
-  onAnswer: (question: string, value: string) => void;
+  wire: QuestionWire;
+  onAnswer: (answers: Readonly<Record<string, QuestionAnswerWire>>) => void;
   onDismiss: () => void;
 }) {
-  const questions = (payload['questions'] ?? []) as readonly {
-    question: string;
-    options?: readonly { label: string }[];
-  }[];
   return (
     <>
-      {questions.map((q) => (
-        <div key={q.question} className="mb-1.5">
+      {wire.questions.map((q) => (
+        <div key={q.id} className="mb-1.5">
           <div className="mb-1 text-[11px] text-neutral-300">{q.question}</div>
           <div className="flex flex-wrap gap-1.5">
-            {(q.options ?? []).map((opt) => (
-              <ActionButton key={opt.label} onClick={() => onAnswer(q.question, opt.label)}>
+            {q.options.map((opt) => (
+              <ActionButton
+                key={opt.id}
+                onClick={() => onAnswer({ [q.id]: { kind: 'single', option_id: opt.id } })}
+              >
                 {opt.label}
               </ActionButton>
             ))}
-            <ActionButton
-              onClick={() => {
-                const raw = window.prompt(q.question);
-                if (raw !== null) onAnswer(q.question, raw);
-              }}
-            >
-              Other…
-            </ActionButton>
+            {q.allow_other === false ? null : (
+              <ActionButton
+                onClick={() => {
+                  const raw = window.prompt(q.question);
+                  if (raw !== null) onAnswer({ [q.id]: { kind: 'other', text: raw } });
+                }}
+              >
+                Other…
+              </ActionButton>
+            )}
           </div>
         </div>
       ))}
-      {questions.length === 0 ? <JsonView data={payload} /> : null}
+      {wire.questions.length === 0 ? <JsonView data={wire} /> : null}
       <div className="mt-1.5">
         <ActionButton danger onClick={onDismiss}>
           Dismiss

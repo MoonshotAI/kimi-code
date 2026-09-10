@@ -133,15 +133,15 @@ export type {
 export type {
   ApprovalRequest,
   ApprovalResponse,
-} from '@moonshot-ai/agent-core-v2/session/approval/approval';
+} from '@moonshot-ai/agent-core-v2/agent/interaction/approval';
 export type {
   QuestionRequest,
   QuestionResult,
-} from '@moonshot-ai/agent-core-v2/session/question/question';
+} from '@moonshot-ai/agent-core-v2/agent/interaction/question';
 export type {
   Interaction,
   InteractionKind,
-} from '@moonshot-ai/agent-core-v2/features/interaction/interaction';
+} from '@moonshot-ai/agent-core-v2/human/interaction/interaction';
 export type { SkillSummary } from '@moonshot-ai/agent-core-v2/features/skill/catalog/types';
 export type {
   GlobalMcpServerConfig,

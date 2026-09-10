@@ -34,6 +34,7 @@ const FILE_ID = 'file_abc';
 const VIDEO_BYTES = Buffer.from('tiny fake mp4 bytes');
 const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00]);
 const BMP_BYTES = Buffer.from([0x42, 0x4d, 0x46, 0x00, 0x00, 0x00, 0x00, 0x00]);
+const TIFF_BYTES = Buffer.from([0x49, 0x49, 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00]);
 const MP4_MAGIC_BYTES = Buffer.from([
   0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d, 0x00, 0x00, 0x00, 0x00,
 ]);
@@ -510,7 +511,7 @@ describe('AgentMediaResolverService image strategy', () => {
     },
     {
       name: 'the bytes sniff as an unaccepted image mime',
-      files: new Map([[FILE_ID, { name: 'pic.bmp', bytes: BMP_BYTES }]]),
+      files: new Map([[FILE_ID, { name: 'scan.tiff', bytes: TIFF_BYTES }]]),
       fileId: FILE_ID,
       imageIn: true,
     },
@@ -528,6 +529,43 @@ describe('AgentMediaResolverService image strategy', () => {
           canonical === undefined ? IMAGE_UNAVAILABLE_TEXT : `<image path="${canonical}"></image>`,
       },
     ]);
+  });
+
+  it('delivers a format inline only when the current model provider accepts it', async () => {
+    const files = new Map([[FILE_ID, { name: 'pic.bmp', bytes: BMP_BYTES }]]);
+    const canonical = await plantCanonical(FILE_ID, '.bmp', BMP_BYTES);
+    const message = imageMessage(buildKimiFileUrl(FILE_ID));
+
+    const kimi = await resolver(files, sessionDir).resolve([message], requester({}));
+    const other = await resolver(files, sessionDir).resolve(
+      [message],
+      requester({ providerType: 'anthropic', protocol: 'anthropic' }),
+    );
+
+    expect(firstPart(kimi)).toEqual({
+      type: 'image_url',
+      imageUrl: { url: `data:image/bmp;base64,${BMP_BYTES.toString('base64')}` },
+    });
+    expect(firstPart(other)).toEqual({ type: 'text', text: `<image path="${canonical}"></image>` });
+  });
+
+  it('never serves a memoized image to a provider that rejects its format', async () => {
+    const files = new Map([[FILE_ID, { name: 'pic.bmp', bytes: BMP_BYTES }]]);
+    const canonical = await plantCanonical(FILE_ID, '.bmp', BMP_BYTES);
+    const res = resolver(files, sessionDir);
+    const message = imageMessage(buildKimiFileUrl(FILE_ID));
+    const inline = {
+      type: 'image_url',
+      imageUrl: { url: `data:image/bmp;base64,${BMP_BYTES.toString('base64')}` },
+    };
+
+    expect(firstPart(await res.resolve([message], requester({})))).toEqual(inline);
+    const other = requester({ providerType: 'anthropic', protocol: 'anthropic' });
+    expect(firstPart(await res.resolve([message], other))).toEqual({
+      type: 'text',
+      text: `<image path="${canonical}"></image>`,
+    });
+    expect(firstPart(await res.resolve([message], requester({})))).toEqual(inline);
   });
 
   it.each([

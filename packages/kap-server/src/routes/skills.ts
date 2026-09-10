@@ -34,6 +34,7 @@ import {
   type SkillDefinition,
   type ExtraSkillDirsConfig,
   type MergeAllAvailableSkillsConfig,
+  IAgentProfileService,
 } from '@moonshot-ai/agent-core-v2';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -260,6 +261,9 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
             core.accessor.get(IBootstrapService).cacheDir,
             {
               telemetry,
+              providerType: (await ensureMainAgentHandle(resolved.handle)).accessor
+                .get(IAgentProfileService)
+                .getModelProviderType(),
               resolveOriginalsDir: async () => sessionMediaOriginalsDir(sessionDir),
               resolveAttachmentsDir: async () => join(sessionDir, 'attachments'),
             },

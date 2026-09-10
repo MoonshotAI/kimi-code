@@ -1,7 +1,7 @@
 /**
  * Diff-aware state tree for the audit panel.
  *
- * Renders a serialized `AgentState` (see `audit/serialize.ts`) as a
+ * Renders a serialized `ChatState` (see `audit/serialize.ts`) as a
  * collapsible tree, colored by the structural diff against the previous
  * trail entry: added = green, removed = red + strikethrough, modified =
  * amber (`old → new` on leaves). Every field is rendered — long strings

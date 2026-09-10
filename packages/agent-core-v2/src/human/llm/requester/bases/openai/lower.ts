@@ -3,6 +3,7 @@ import type { ToolMessageConversion } from '#/llm/requester/requester';
 
 import type { OpenAIContentPart, OpenAIWireMessage } from './contract';
 import { TOOL_RESULT_MEDIA_PLACEHOLDER } from './patterns';
+import { DEFAULT_REASONING_KEY, REASONING_DETAILS_KEY } from './reasoning-key';
 
 const OMITTED_AUDIO_PLACEHOLDER = '(audio omitted: not supported by this provider)';
 const OMITTED_VIDEO_PLACEHOLDER = '(video omitted: not supported by this provider)';
@@ -117,7 +118,20 @@ export function lowerMessage(message: Message, lower: OpenAILowerContext): OpenA
   } else {
     converted = { role: message.role, content: content ?? '' };
   }
-  if (hasReasoningPart || (preserveThinking && message.role === 'assistant')) {
+  const reasoningDetails: Record<string, unknown>[] = [];
+  for (const part of message.content) {
+    if (part.type !== 'think' || part.detailsIndex === undefined) continue;
+    if (part.think.length > 0) {
+      reasoningDetails.push({ type: 'summary', summary: part.think });
+    }
+    if (part.encrypted !== undefined) {
+      reasoningDetails.push({ type: 'encrypted', encrypted: part.encrypted });
+    }
+  }
+  if (reasoningDetails.length > 0) {
+    (converted as Record<string, unknown>)[REASONING_DETAILS_KEY] = reasoningDetails;
+    (converted as Record<string, unknown>)[DEFAULT_REASONING_KEY] = reasoningContent;
+  } else if (hasReasoningPart || (preserveThinking && message.role === 'assistant')) {
     (converted as Record<string, unknown>)[reasoningKey] = reasoningContent;
   }
   return [converted];

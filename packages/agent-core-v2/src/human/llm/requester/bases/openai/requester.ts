@@ -159,6 +159,7 @@ async function internalGenerate(
     .withResponse();
   onEvent?.({ type: 'llm.streaming.headers', headers: headersToRecord(response.headers) ?? {} });
   const parse = format.createStreamParser({
+    reasoningKey: trait?.reasoningKey,
     resolveUsage:
       trait?.extractUsage === undefined
         ? undefined

@@ -1,16 +1,16 @@
 import {
   IAgentLifecycleService,
-  IAgentActivityView,
   IAgentLoopService,
   IAgentPromptService,
   IAgentScopeContext,
   IAgentTaskService,
   IEventBus,
+  INTERACTION_TAG_AGENT_ID,
+  INTERACTION_TAG_SESSION_ID,
   ISessionMetadata,
   MAIN_AGENT_ID,
-  listSessionPendingInteractions,
-  onSessionInteractionDidChangePending,
-  onSessionInteractionDidResolve,
+  interactions,
+  toDisposable,
   type AgentMeta,
   type IDisposable,
   type IAgentScopeHandle,
@@ -19,6 +19,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import type { AgentDescriptor, TranscriptChangeEvent, TranscriptStore } from '@moonshot-ai/transcript';
 
+import { legacyApprovalsOf } from '../legacyStatus/legacyActivity';
 import {
   AgentTranscriptProjector,
   type ProjectorBusEvent,
@@ -40,6 +41,11 @@ export function bindSessionTranscript(
   onOps?: (event: TranscriptChangeEvent) => void,
 ): TranscriptBinding {
   const agents = session.accessor.get(IAgentLifecycleService);
+  const pendingInteractions = (): readonly Interaction[] =>
+    interactions.findAll({
+      resolved: false,
+      tags: { [INTERACTION_TAG_SESSION_ID]: session.id },
+    });
   const disposables: IDisposable[] = [];
   const agentDisposables = new Map<string, IDisposable[]>();
   const subscribedAgents = new Set<string>();
@@ -89,9 +95,14 @@ export function bindSessionTranscript(
         stepOrdinal: (turnId) => {
           const agentHandle = agents.handleOf(agentId);
           if (agentHandle === undefined) return undefined;
-          const view: IAgentActivityView | undefined = agentHandle.accessor.get(IAgentActivityView);
-          const turn = view?.state().turn;
+          const turn = agentHandle.accessor.get(IAgentLoopService)?.activitySnapshot().turn;
           return turn === undefined || `t${turn.turnId}` !== turnId ? undefined : turn.step;
+        },
+        activitySnapshot: () =>
+          agents.handleOf(agentId)?.accessor.get(IAgentLoopService)?.activitySnapshot() ?? {},
+        pendingApprovals: () => {
+          const agentHandle = agents.handleOf(agentId);
+          return agentHandle === undefined ? [] : legacyApprovalsOf(agentHandle);
         },
         turn: (turnId) => store.getAgent(agentId)?.getTurn(turnId),
         items: () => store.getAgent(agentId)?.getItems(),
@@ -143,8 +154,9 @@ export function bindSessionTranscript(
 
   const interactionAgentId = (interaction: Interaction): string => {
     const payloadAgent = (interaction.payload as { agentId?: unknown }).agentId;
+    const tag = interaction.tags[INTERACTION_TAG_AGENT_ID];
     return (
-      interaction.origin.agentId ??
+      (typeof tag === 'string' ? tag : undefined) ??
       (typeof payloadAgent === 'string' ? payloadAgent : undefined) ??
       MAIN_AGENT_ID
     );
@@ -158,7 +170,6 @@ export function bindSessionTranscript(
       id: interaction.id,
       kind: interaction.kind,
       payload: interaction.payload,
-      origin: interaction.origin,
       createdAt: interaction.createdAt,
     };
     applyOps(agentId, projectorFor(agentId).mapInteractionRequested(request));
@@ -198,7 +209,7 @@ export function bindSessionTranscript(
     }),
   );
 
-  for (const pending of listSessionPendingInteractions(agents)) {
+  for (const pending of pendingInteractions()) {
     if (pending.kind !== 'approval' && pending.kind !== 'question') continue;
     if (knownInteractions.has(pending.id)) continue;
     knownInteractions.add(pending.id);
@@ -221,7 +232,7 @@ export function bindSessionTranscript(
         applyOps(early.agentId, projector.mapInteractionResolved(id, early.response));
       }
     }
-    for (const pending of listSessionPendingInteractions(agents)) {
+    for (const pending of pendingInteractions()) {
       if (knownInteractions.has(pending.id)) continue;
       if (agentId !== undefined && interactionAgentId(pending) !== agentId) continue;
       knownInteractions.add(pending.id);
@@ -229,32 +240,36 @@ export function bindSessionTranscript(
     }
   };
   disposables.push(
-    onSessionInteractionDidChangePending(agents, () => {
-      for (const pending of listSessionPendingInteractions(agents)) {
-        if (knownInteractions.has(pending.id)) continue;
-        const agentId = interactionAgentId(pending);
-        knownInteractions.add(pending.id);
-        if (!isSeeded(agentId)) {
-          interactionAgents.set(pending.id, agentId);
-          unseeded.set(pending.id, pending);
-          continue;
+    toDisposable(
+      interactions.onDidChangePending(() => {
+        for (const pending of pendingInteractions()) {
+          if (knownInteractions.has(pending.id)) continue;
+          const agentId = interactionAgentId(pending);
+          knownInteractions.add(pending.id);
+          if (!isSeeded(agentId)) {
+            interactionAgents.set(pending.id, agentId);
+            unseeded.set(pending.id, pending);
+            continue;
+          }
+          announceInteraction(pending);
         }
-        announceInteraction(pending);
-      }
-    }),
-    onSessionInteractionDidResolve(agents, ({ id, response }) => {
-      knownInteractions.delete(id);
-      const agentId = interactionAgents.get(id);
-      if (agentId === undefined) return;
-      interactionAgents.delete(id);
-      if (unseeded.has(id)) {
-        earlyResolves.set(id, { agentId, response });
-        return;
-      }
-      const projector = projectors.get(agentId);
-      if (projector === undefined) return;
-      applyOps(agentId, projector.mapInteractionResolved(id, response));
-    }),
+      }),
+    ),
+    toDisposable(
+      interactions.onDidResolve(({ id, response }) => {
+        knownInteractions.delete(id);
+        const agentId = interactionAgents.get(id);
+        if (agentId === undefined) return;
+        interactionAgents.delete(id);
+        if (unseeded.has(id)) {
+          earlyResolves.set(id, { agentId, response });
+          return;
+        }
+        const projector = projectors.get(agentId);
+        if (projector === undefined) return;
+        applyOps(agentId, projector.mapInteractionResolved(id, response));
+      }),
+    ),
   );
 
   refreshDescriptors();

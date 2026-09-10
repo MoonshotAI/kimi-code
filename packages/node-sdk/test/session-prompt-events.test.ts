@@ -95,6 +95,94 @@ async function removeTempDir(dir: string): Promise<void> {
 }
 
 describe('Session.prompt events', () => {
+  it('continues notifying sessions after disabling and restarting with identical prompt and tools', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_NOTIFY_USER', '');
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const requests: Array<{ tools: unknown; messages: Array<{ role: string; content: unknown }> }> =
+      [];
+    fetchStub!.mockImplementation(
+      async (input: Parameters<typeof fetch>[0], init: Parameters<typeof fetch>[1]) => {
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (url !== MODEL_URL) throw new Error(`Unexpected fetch: ${url}`);
+        if (typeof init?.body !== 'string') throw new Error('Expected a JSON request body');
+        requests.push(JSON.parse(init.body));
+        const body =
+          requests.length % 2 === 1
+            ? [
+                sseChunk({
+                  role: 'assistant',
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: `notify-${requests.length}`,
+                      type: 'function',
+                      function: {
+                        name: 'NotifyUser',
+                        arguments: JSON.stringify({ message: 'Checking the work.' }),
+                      },
+                    },
+                  ],
+                }),
+                sseChunk({}, 'tool_calls'),
+                'data: [DONE]',
+              ]
+                .map((line) => `${line}\n\n`)
+                .join('')
+            : sseBody('Work completed.');
+        return new Response(body, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      },
+    );
+    let harness = createKimiHarness({
+      identity: TEST_IDENTITY,
+      homeDir,
+      uiCapabilities: ['update_panel'],
+    });
+    try {
+      await configureFakeProvider(harness);
+      await harness.setConfig({ experimental: { notify_user: true } });
+      let session = await harness.createSession({ id: 'ses_notify_continue', workDir });
+      const events: Event[] = [];
+      let unsubscribe = session.onEvent((event) => events.push(event));
+      for (let turn = 0; turn < 3; turn++) {
+        if (turn === 1) await harness.setConfig({ experimental: { notify_user: false } });
+        if (turn === 2) {
+          unsubscribe();
+          await harness.close();
+          harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir, uiCapabilities: [] });
+          session = await harness.resumeSession({ id: 'ses_notify_continue' });
+          unsubscribe = session.onEvent((event) => events.push(event));
+        }
+        const done = waitForEvent(session, (event) => event.type === 'turn.ended');
+        await session.prompt(`Continue the work, turn ${turn + 1}.`);
+        expect(await done).toMatchObject({ reason: 'completed' });
+      }
+      unsubscribe();
+      expect(requests).toHaveLength(6);
+      const system = (request: (typeof requests)[number]) =>
+        request.messages.filter((message) => message.role === 'system');
+      for (const request of requests) {
+        expect(request.tools).toEqual(requests[0]!.tools);
+        expect(system(request)).toEqual(system(requests[0]!));
+      }
+      const results = events.filter((event) => event.type === 'tool.result');
+      expect(results).toHaveLength(3);
+      expect(results.every((event) => event.isError !== true)).toBe(true);
+      expect(JSON.stringify(results[0])).toContain('Update shown to the user.');
+      expect(JSON.stringify(results.slice(1))).toContain(
+        'Notifications are disabled; the update was not displayed.',
+      );
+    } finally {
+      await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('preserves existing custom metadata when an SDK metadata patch is resumed', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
