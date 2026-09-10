@@ -77,8 +77,8 @@ function stripTrailingLf(line: string): string {
 }
 
 function splitsSurrogatePair(text: string, offset: number): boolean {
-  const previous = text.codePointAt(offset - 1);
-  const next = text.codePointAt(offset);
+  const previous = text.charCodeAt(offset - 1);
+  const next = text.charCodeAt(offset);
   return previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff;
 }
 

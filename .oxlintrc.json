@@ -52,6 +52,7 @@
     "unicorn/error-message": "warn",
     "unicorn/throw-new-error": "warn",
     "unicorn/catch-error-name": "warn",
+    "unicorn/prefer-code-point": "off",
     "unicorn/prefer-add-event-listener": "off",
     "node/no-new-require": "warn",
     "node/no-path-concat": "warn",
