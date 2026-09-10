@@ -14,13 +14,13 @@ describe('tasks route', () => {
   // NOT the session root — seed there so the test mirrors real on-disk layout.
   async function seed(sessionDir: string): Promise<void> {
     const dir = join(sessionDir, 'agents', 'main', 'tasks');
-    await mkdir(join(dir, 'bash-12345678'), { recursive: true });
-    await writeFile(join(dir, 'bash-12345678.json'), JSON.stringify({
-      taskId: 'bash-12345678', kind: 'process', description: 'build',
+    await mkdir(join(dir, 'call_abc123'), { recursive: true });
+    await writeFile(join(dir, 'call_abc123.json'), JSON.stringify({
+      taskId: 'call_abc123', kind: 'process', description: 'build',
       command: 'pnpm build', pid: 7, exitCode: 0, status: 'completed',
       detached: true, startedAt: 100, endedAt: 200,
     }));
-    await writeFile(join(dir, 'bash-12345678', 'output.log'), 'line one\nline two\n');
+    await writeFile(join(dir, 'call_abc123', 'output.log'), 'line one\nline two\n');
   }
 
   it('GET /:id/tasks returns entries with output metadata', async () => {
@@ -37,7 +37,7 @@ describe('tasks route', () => {
     };
     expect(body.sessionId).toBe('session_fixture');
     expect(body.tasks).toHaveLength(1);
-    expect(body.tasks[0]!.task.taskId).toBe('bash-12345678');
+    expect(body.tasks[0]!.task.taskId).toBe('call_abc123');
     expect(body.tasks[0]!.agentId).toBe('main');
     expect(body.tasks[0]!.outputExists).toBe(true);
     expect(body.tasks[0]!.outputSizeBytes).toBe('line one\nline two\n'.length);
@@ -52,16 +52,17 @@ describe('tasks route', () => {
     expect(((await res.json()) as { tasks: unknown[] }).tasks).toEqual([]);
   });
 
-  it('GET /:id/tasks includes legacy main tasks and reports an empty output file as existing', async () => {
+  it('GET /:id/tasks includes session-root main tasks and reports an empty output file as existing', async () => {
     const { home, sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
     cleanup = c;
     const dir = join(sessionDir, 'tasks');
-    await mkdir(join(dir, 'bash-87654321'), { recursive: true });
-    await writeFile(join(dir, 'bash-87654321.json'), JSON.stringify({
-      task_id: 'bash-87654321', command: 'legacy', description: 'legacy main task',
-      pid: 8, started_at: 100, ended_at: 200, exit_code: 0, status: 'completed',
+    await mkdir(join(dir, 'call_root1'), { recursive: true });
+    await writeFile(join(dir, 'call_root1.json'), JSON.stringify({
+      taskId: 'call_root1', kind: 'process', description: 'root main task',
+      command: 'legacy', pid: 8, exitCode: 0, status: 'completed',
+      detached: true, startedAt: 100, endedAt: 200,
     }));
-    await writeFile(join(dir, 'bash-87654321', 'output.log'), '');
+    await writeFile(join(dir, 'call_root1', 'output.log'), '');
 
     const res = await tasksRoute(home).request('/session_fixture/tasks');
     expect(res.status).toBe(200);
@@ -70,7 +71,7 @@ describe('tasks route', () => {
     };
     expect(body.tasks).toEqual([
       expect.objectContaining({
-        task: expect.objectContaining({ taskId: 'bash-87654321' }),
+        task: expect.objectContaining({ taskId: 'call_root1' }),
         agentId: 'main',
         outputSizeBytes: 0,
         outputExists: true,
@@ -84,7 +85,7 @@ describe('tasks route', () => {
     await seed(sessionDir);
     const app = tasksRoute(home);
 
-    const res = await app.request('/session_fixture/tasks/bash-12345678/output?offset=0&limit=8');
+    const res = await app.request('/session_fixture/tasks/call_abc123/output?offset=0&limit=8');
     expect(res.status).toBe(200);
     const body = (await res.json()) as { content: string; size: number; eof: boolean; offset: number; nextOffset: number };
     expect(body.content).toBe('line one');
@@ -94,15 +95,15 @@ describe('tasks route', () => {
     expect(body.nextOffset).toBe(8);
   });
 
-  it('GET output falls back to the legacy session-root task log', async () => {
+  it('GET output falls back to the session-root task log', async () => {
     const { home, sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
     cleanup = c;
-    const dir = join(sessionDir, 'tasks', 'bash-87654321');
+    const dir = join(sessionDir, 'tasks', 'call_root1');
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, 'output.log'), 'legacy output');
 
     const res = await tasksRoute(home).request(
-      '/session_fixture/tasks/bash-87654321/output?offset=0&limit=100',
+      '/session_fixture/tasks/call_root1/output?offset=0&limit=100',
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
@@ -116,7 +117,7 @@ describe('tasks route', () => {
     const { home, cleanup: c } = await buildSessionFixture('sample-main');
     cleanup = c;
     const app = tasksRoute(home);
-    const res = await app.request('/session_fixture/tasks/bash-00000000/output');
+    const res = await app.request('/session_fixture/tasks/call_missing/output');
     expect(res.status).toBe(200);
     expect((await res.json())).toMatchObject({ size: 0, content: '', eof: true });
   });

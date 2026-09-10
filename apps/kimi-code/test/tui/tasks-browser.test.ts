@@ -192,23 +192,20 @@ describe('TasksBrowserApp — full-screen rendering', () => {
       makeApp({
         tasks: [
           task({
-            taskId: 'question-aaaaaaaa',
+            taskId: 'call_question',
             kind: 'question',
             description: 'Which database?',
             questionCount: 1,
-            toolCallId: 'call_question',
           }),
         ],
-        selectedTaskId: 'question-aaaaaaaa',
+        selectedTaskId: 'call_question',
       })
         .render(120)
         .join('\n'),
     );
-    expect(out).toContain('question-aaaaaaaa');
+    expect(out).toContain('call_question');
     expect(out).toContain('Questions:');
     expect(out).toContain('1');
-    expect(out).toContain('Tool call:');
-    expect(out).toContain('call_question');
   });
 
   it('shows the bound model and effort for agent tasks in the Detail pane', () => {

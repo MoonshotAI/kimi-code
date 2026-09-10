@@ -600,8 +600,9 @@ describe('AgentConversationUndoService', () => {
     const tasks = ctx.get(IAgentTaskService);
     ctx.appendTurnExchange('u1', 'a1');
 
+    let completingTaskSeq = 0;
     const completingTask = (output: string): AgentTask => ({
-      idPrefix: 'test',
+      taskId: `call_completing_${++completingTaskSeq}`,
       kind: 'process',
       description: 'fake process task',
       start: async (sink) => {

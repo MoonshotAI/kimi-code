@@ -31,22 +31,26 @@ function createTaskService(homedir: string): TaskServiceFixture {
   };
 }
 
+let processTaskSeq = 0;
+
 function registerProcess(
   manager: IAgentTaskService,
   proc: IHostProcess,
   command: string,
   description: string,
 ): string {
-  return manager.registerTask(new ProcessTask(proc, command, description));
+  return manager.registerTask(
+    new ProcessTask(proc, command, description, undefined, undefined, `call_process_${++processTaskSeq}`),
+  );
 }
 
 function toolContext<Input>(
-  toolCallId: string,
+  taskId: string,
   args: Input,
 ): TestExecutableToolContext<Input> {
   return {
     turnId: 0,
-    toolCallId,
+    toolCallId: taskId,
     args,
     signal: new AbortController().signal,
   };

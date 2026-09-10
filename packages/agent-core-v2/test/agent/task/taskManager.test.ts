@@ -66,13 +66,18 @@ function createAgentTaskService(options: {
   };
 }
 
+let processTaskSeq = 0;
+let agentTaskSeq = 0;
+
 function registerProcess(
   manager: IAgentTaskService,
   proc: IHostProcess,
   command: string,
   description: string,
 ): string {
-  return manager.registerTask(new ProcessTask(proc, command, description));
+  return manager.registerTask(
+    new ProcessTask(proc, command, description, undefined, undefined, `call_process_${++processTaskSeq}`),
+  );
 }
 
 function agentTask(
@@ -89,7 +94,7 @@ function agentTask(
   const handle: SubagentHandle = {
     agentId: options.agentId ?? 'agent-child',
     profileName: options.subagentType ?? 'coder',
-    parentToolCallId: options.parentToolCallId,
+    parentToolCallId: options.parentToolCallId ?? `call_agent_${++agentTaskSeq}`,
     completion,
   };
   const task = new SubagentTask(
@@ -398,7 +403,7 @@ describe('AgentTaskService', () => {
 
     const taskId = registerProcess(manager, proc, 'echo hello', 'test echo');
 
-    expect(taskId).toMatch(/^bash-[0-9a-z]{8}$/);
+    expect(taskId).toBe('call_process_1');
     expect(manager.getTask(taskId)).toMatchObject({
       taskId,
       kind: 'process',
@@ -420,14 +425,13 @@ describe('AgentTaskService', () => {
       }),
     );
 
-    expect(taskId).toMatch(/^agent-[0-9a-z]{8}$/);
+    expect(taskId).toBe('call-parent-1');
     expect(manager.getTask(taskId)).toMatchObject({
       taskId,
       kind: 'agent',
       description: 'investigate bug',
       agentId: 'agent-child',
       subagentType: 'coder',
-      parentToolCallId: 'call-parent-1',
       status: 'running',
     });
   });
@@ -472,7 +476,7 @@ describe('AgentTaskService', () => {
     const { proc, killSpy } = pendingProcess();
     const controller = new AbortController();
     const taskId = manager.registerTask(
-      new ProcessTask(proc, 'sleep 10', 'foreground process'),
+      new ProcessTask(proc, 'sleep 10', 'foreground process', undefined, undefined, 'call_fg'),
       {
         detached: false,
         signal: controller.signal,
@@ -495,7 +499,7 @@ describe('AgentTaskService', () => {
     const { proc, killSpy } = pendingProcess();
     const controller = new AbortController();
     const taskId = manager.registerTask(
-      new ProcessTask(proc, 'sleep 10', 'foreground process'),
+      new ProcessTask(proc, 'sleep 10', 'foreground process', undefined, undefined, 'call_fg'),
       {
         detached: false,
         signal: controller.signal,
@@ -694,6 +698,8 @@ describe('AgentTaskService', () => {
         'b3sum --length 18446744073709551615',
         'hash',
         onOutput,
+        undefined,
+        'call_hash',
       ),
       {
         detached: false,
@@ -715,7 +721,7 @@ describe('AgentTaskService', () => {
     const chunks = Array.from({ length: 20 }, () => 'x'.repeat(MiB));
     const { proc, killSpy } = streamingProcess(chunks);
 
-    const taskId = manager.registerTask(new ProcessTask(proc, 'producer', 'bg'), {
+    const taskId = manager.registerTask(new ProcessTask(proc, 'producer', 'bg', undefined, undefined, 'call_bg'), {
       detached: true,
       timeoutMs: 60_000,
     });
@@ -735,7 +741,7 @@ describe('AgentTaskService', () => {
       const { proc } = sigtermIgnoringProcess(chunks);
 
       const taskId = manager.registerTask(
-        new ProcessTask(proc, 'runaway', 'hash', () => {}),
+        new ProcessTask(proc, 'runaway', 'hash', () => {}, undefined, 'call_runaway_hash'),
         {
           detached: false,
           signal: new AbortController().signal,
@@ -761,7 +767,7 @@ describe('AgentTaskService', () => {
       const { proc } = sigtermIgnoringProcess(chunks);
 
       const taskId = manager.registerTask(
-        new ProcessTask(proc, 'runaway', 'background runaway', () => {}),
+        new ProcessTask(proc, 'runaway', 'background runaway', () => {}, undefined, 'call_runaway_bg'),
         {
           detached: true,
           timeoutMs: 60_000,
@@ -1031,7 +1037,7 @@ describe('AgentTaskService', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const { manager } = createAgentTaskService();
     const { proc, killSpy } = sigtermOnlyKillProcess(54327);
-    const taskId = manager.registerTask(new ProcessTask(proc, 'runaway', 'timeout sigkill'), {
+    const taskId = manager.registerTask(new ProcessTask(proc, 'runaway', 'timeout sigkill', undefined, undefined, 'call_sigkill'), {
       timeoutMs: 1,
     });
 
@@ -1051,7 +1057,7 @@ describe('AgentTaskService', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const { manager } = createAgentTaskService();
     const { proc, killSpy } = pendingProcess();
-    const taskId = manager.registerTask(new ProcessTask(proc, 'sleep 60', 'timeout graceful'), {
+    const taskId = manager.registerTask(new ProcessTask(proc, 'sleep 60', 'timeout graceful', undefined, undefined, 'call_graceful'), {
       timeoutMs: 1,
     });
 
@@ -1068,7 +1074,7 @@ describe('AgentTaskService', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const { manager } = createAgentTaskService();
     const { proc, killSpy } = sigtermOnlyKillProcess(54328);
-    const taskId = manager.registerTask(new ProcessTask(proc, 'runaway', 'detach timeout'), {
+    const taskId = manager.registerTask(new ProcessTask(proc, 'runaway', 'detach timeout', undefined, undefined, 'call_detach_timeout'), {
       detached: false,
       detachTimeoutMs: 1,
     });
@@ -1088,7 +1094,7 @@ describe('AgentTaskService', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const { manager } = createAgentTaskService();
     const { proc, killSpy } = pendingProcess();
-    const taskId = manager.registerTask(new ProcessTask(proc, 'sleep 60', 'auto background'), {
+    const taskId = manager.registerTask(new ProcessTask(proc, 'sleep 60', 'auto background', undefined, undefined, 'call_auto_bg'), {
       detached: false,
       timeoutMs: 1_000,
       detachTimeoutMs: 5_000,
@@ -1112,7 +1118,7 @@ describe('AgentTaskService', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const { manager } = createAgentTaskService();
     const { proc, killSpy } = pendingProcess();
-    const taskId = manager.registerTask(new ProcessTask(proc, 'sleep 60', 'plain timeout'), {
+    const taskId = manager.registerTask(new ProcessTask(proc, 'sleep 60', 'plain timeout', undefined, undefined, 'call_plain_timeout'), {
       detached: false,
       timeoutMs: 1_000,
       detachTimeoutMs: 5_000,

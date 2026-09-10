@@ -1101,7 +1101,6 @@ export interface AgentStateSnapshot {
   'task': /* TaskModelState — packages/agent-core-v2/src/agent/task/taskOps.ts */ Map<string, /* AgentTaskInfo — packages/agent-core-v2/src/agent/task/types.ts */ /* QuestionTaskInfo — packages/agent-core-v2/src/agent/tools/ask-user-question/question-background-task.ts */ {
     readonly kind: 'question';
     readonly questionCount: number;
-    readonly toolCallId?: string;
     readonly taskId: string;
     readonly description: string;
     readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
@@ -1116,10 +1115,10 @@ export interface AgentStateSnapshot {
     readonly kind: 'agent';
     readonly agentId?: string;
     readonly subagentType?: string;
-    readonly parentToolCallId?: string;
     readonly model?: string;
     readonly thinkingEffort?: string;
     readonly stopCode?: string;
+    readonly parentToolCallId?: string;
     readonly taskId: string;
     readonly description: string;
     readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
@@ -1153,7 +1152,6 @@ export interface AgentStateSnapshot {
   'task.ghosts': Map<string, /* AgentTaskInfo — packages/agent-core-v2/src/agent/task/types.ts */ /* QuestionTaskInfo — packages/agent-core-v2/src/agent/tools/ask-user-question/question-background-task.ts */ {
     readonly kind: 'question';
     readonly questionCount: number;
-    readonly toolCallId?: string;
     readonly taskId: string;
     readonly description: string;
     readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
@@ -1168,10 +1166,10 @@ export interface AgentStateSnapshot {
     readonly kind: 'agent';
     readonly agentId?: string;
     readonly subagentType?: string;
-    readonly parentToolCallId?: string;
     readonly model?: string;
     readonly thinkingEffort?: string;
     readonly stopCode?: string;
+    readonly parentToolCallId?: string;
     readonly taskId: string;
     readonly description: string;
     readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';

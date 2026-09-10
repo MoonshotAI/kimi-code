@@ -4,9 +4,7 @@ import { BugIndicatingError } from '#/errors';
 import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import type { IFileSystemStorageService } from '#/persistence/interface/storage';
 
-import type { AgentTaskInfo, AgentTaskStatus } from './types';
-
-const VALID_TASK_ID: RegExp = /^[a-z0-9]+(?:-[a-z0-9]+)*-[0-9a-z]{8}$/;
+import type { AgentTaskInfo } from './types';
 
 const TASKS_SCOPE = 'tasks';
 const OUTPUT_LOG_KEY = 'output.log';
@@ -16,8 +14,6 @@ const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
 type PersistedTask = AgentTaskInfo;
-
-type DiskPersistedTask = PersistedTask | LegacyPersistedTask;
 
 export interface AgentTaskPersistenceRoot {
   readonly dir: string;
@@ -42,8 +38,14 @@ interface TaskOutputData {
   readonly data: Uint8Array;
 }
 
+function isPathSafeTaskId(taskId: string): boolean {
+  if (taskId.length === 0) return false;
+  if (taskId === '.' || taskId === '..') return false;
+  return !/[/\\\0]/.test(taskId);
+}
+
 function validateTaskId(taskId: string): void {
-  if (!VALID_TASK_ID.test(taskId)) {
+  if (!isPathSafeTaskId(taskId)) {
     throw new BugIndicatingError(`Invalid task id: "${taskId}"`);
   }
 }
@@ -90,13 +92,13 @@ export class AgentTaskPersistence {
   async readTask(taskId: string): Promise<PersistedTask | undefined> {
     validateTaskId(taskId);
     const key = `${taskId}${JSON_SUFFIX}`;
-    const task = await this.docs.get<DiskPersistedTask>(this.tasksScope(), key);
+    const task = await this.docs.get<PersistedTask>(this.tasksScope(), key);
     if (task !== undefined) {
       return isReadablePersistedTask(task) ? normalizePersistedTask(task) : undefined;
     }
     const fallbackRoot = this.fallbackRoot;
     if (fallbackRoot === undefined) return undefined;
-    const fallback = await this.docs.get<DiskPersistedTask>(this.tasksScope(fallbackRoot), key);
+    const fallback = await this.docs.get<PersistedTask>(this.tasksScope(fallbackRoot), key);
     if (fallback === undefined || !isReadablePersistedTask(fallback)) return undefined;
     return normalizePersistedTask(fallback);
   }
@@ -166,11 +168,11 @@ export class AgentTaskPersistence {
     for (const key of keys) {
       if (!key.endsWith(JSON_SUFFIX)) continue;
       const id = key.slice(0, -JSON_SUFFIX.length);
-      if (!VALID_TASK_ID.test(id)) continue;
+      if (!isPathSafeTaskId(id)) continue;
       reservedIds.add(id);
-      let task: DiskPersistedTask | undefined;
+      let task: PersistedTask | undefined;
       try {
-        task = await this.docs.get<DiskPersistedTask>(this.tasksScope(root), key);
+        task = await this.docs.get<PersistedTask>(this.tasksScope(root), key);
       } catch {
         continue;
       }
@@ -194,94 +196,17 @@ export class AgentTaskPersistence {
   }
 }
 
-function normalizePersistedTask(task: DiskPersistedTask): PersistedTask {
-  if (isLegacyPersistedTask(task)) return legacyPersistedTaskToInfo(task);
+function normalizePersistedTask(task: PersistedTask): PersistedTask {
   return {
     ...task,
     detached: task.detached ?? true,
   };
 }
 
-type LegacyAgentTaskStatus =
-  | 'running'
-  | 'awaiting_approval'
-  | 'completed'
-  | 'failed'
-  | 'killed'
-  | 'lost';
-
-interface LegacyPersistedTask {
-  readonly task_id: string;
-  readonly command: string;
-  readonly description: string;
-  readonly pid: number;
-  readonly started_at: number;
-  readonly ended_at: number | null;
-  readonly exit_code: number | null;
-  readonly status: LegacyAgentTaskStatus;
-  readonly timed_out?: boolean;
-  readonly stop_reason?: string;
-  readonly timeout_ms?: number;
-  readonly agent_id?: string;
-  readonly subagent_type?: string;
-}
-
-function legacyPersistedTaskToInfo(task: LegacyPersistedTask): PersistedTask {
-  const status = legacyStatusToCurrent(task);
-  const stopReason = optionalNonEmptyString(task.stop_reason);
-  const timeoutMs = typeof task.timeout_ms === 'number' ? task.timeout_ms : undefined;
-  const base = {
-    taskId: task.task_id,
-    description: task.description,
-    status,
-    detached: true,
-    startedAt: task.started_at,
-    endedAt: task.ended_at,
-    stopReason,
-    timeoutMs,
-  };
-
-  if (task.task_id.startsWith('agent-')) {
-    return {
-      ...base,
-      kind: 'agent',
-      agentId: optionalNonEmptyString(task.agent_id),
-      subagentType: optionalNonEmptyString(task.subagent_type),
-    };
-  }
-
-  return {
-    ...base,
-    kind: 'process',
-    command: task.command,
-    pid: task.pid,
-    exitCode: task.exit_code,
-  };
-}
-
-function legacyStatusToCurrent(task: LegacyPersistedTask): AgentTaskStatus {
-  if (task.status === 'awaiting_approval') return 'running';
-  if (task.status === 'failed' && task.timed_out === true) return 'timed_out';
-  return task.status;
-}
-
-function isReadablePersistedTask(obj: unknown): obj is DiskPersistedTask {
-  return (
-    isRecord(obj) &&
-    (typeof obj['taskId'] === 'string' || typeof obj['task_id'] === 'string')
-  );
-}
-
-function isLegacyPersistedTask(task: DiskPersistedTask): task is LegacyPersistedTask {
-  return 'task_id' in task;
+function isReadablePersistedTask(obj: unknown): obj is PersistedTask {
+  return isRecord(obj) && typeof obj['taskId'] === 'string';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
-}
-
-function optionalNonEmptyString(value: string | undefined): string | undefined {
-  if (value === undefined) return undefined;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
 }

@@ -57,9 +57,12 @@ import { stubFlag } from '../../app/flag/stubs';
 import { executeTool } from '../../tools/fixtures/execute-tool';
 import type { TaskServiceTestManager } from './stubs';
 
+let fakeProcessTaskSeq = 0;
+let subagentTaskSeq = 0;
+
 function fakeProcessTask(): AgentTask {
   return {
-    idPrefix: 'test',
+    taskId: `call_fake_${++fakeProcessTaskSeq}`,
     kind: 'process',
     description: 'fake process task',
     start: () => {},
@@ -392,8 +395,8 @@ describe('AgentTaskService', () => {
     expect(delivered.map((message) => (message.origin as TaskOrigin).taskId)).toEqual([taskB]);
   });
 
-  function waitContext(toolCallId: string, args: WaitForInput) {
-    return { turnId: 0, toolCallId, args, signal: new AbortController().signal };
+  function waitContext(taskId: string, args: WaitForInput) {
+    return { turnId: 0, toolCallId: taskId, args, signal: new AbortController().signal };
   }
 
   function waitResultString(result: { readonly output: string | readonly unknown[] }): string {
@@ -411,7 +414,7 @@ describe('AgentTaskService', () => {
     });
     return {
       task: new SubagentTask(
-        { agentId, profileName: 'coder', completion },
+        { agentId, profileName: 'coder', parentToolCallId: `call_subagent_${++subagentTaskSeq}`, completion },
         description,
         new AbortController(),
       ),
@@ -445,7 +448,7 @@ describe('AgentTaskService', () => {
     });
     const taskM = mainSvc.registerTask(
       new SubagentTask(
-        { agentId: 'agent-parent', profileName: 'coder', completion: completionM },
+        { agentId: 'agent-parent', profileName: 'coder', parentToolCallId: 'call_parent', completion: completionM },
         'parent work',
         new AbortController(),
       ),
@@ -650,7 +653,7 @@ describe('AgentTaskService', () => {
       dispose: vi.fn().mockResolvedValue(undefined),
     } as unknown as IHostProcess;
     const svc = ix.get(IAgentTaskService);
-    svc.registerTask(new ProcessTask(proc, 'ignore-term', 'long-running process'));
+    svc.registerTask(new ProcessTask(proc, 'ignore-term', 'long-running process', undefined, undefined, 'call_ignore_term'));
     await Promise.resolve();
 
     disposables.dispose();
@@ -699,7 +702,7 @@ describe('AgentTaskService', () => {
       dispose: vi.fn().mockResolvedValue(undefined),
     } as unknown as IHostProcess;
     const svc = ix.get(IAgentTaskService);
-    const taskId = svc.registerTask(new ProcessTask(proc, 'keep-running', 'long-running process'));
+    const taskId = svc.registerTask(new ProcessTask(proc, 'keep-running', 'long-running process', undefined, undefined, 'call_keep_running'));
     const agentContext = ix.get(IAgentScopeContext).agentContext;
     await Promise.resolve();
 
@@ -1141,7 +1144,7 @@ describe('AgentTaskService', () => {
 
   function agentLikeTask(result: string, description: string): AgentTask {
     return {
-      idPrefix: 'agent',
+      taskId: 'call_fake_agent',
       kind: 'agent',
       description,
       start: async (sink) => {
@@ -1206,7 +1209,7 @@ describe('AgentTaskService', () => {
     });
 
     const taskId = svc.registerTask(
-      new ProcessTask(proc, 'b3sum --length 18446744073709551615', 'hash', onOutput),
+      new ProcessTask(proc, 'b3sum --length 18446744073709551615', 'hash', onOutput, undefined, 'call_hash'),
       { detached: false, signal: new AbortController().signal, timeoutMs: 60_000 },
     );
 
@@ -1223,7 +1226,7 @@ describe('AgentTaskService', () => {
     const chunks = Array.from({ length: 20 }, () => 'x'.repeat(MiB));
     const { proc, kill } = streamingProcess(chunks);
 
-    const taskId = svc.registerTask(new ProcessTask(proc, 'producer', 'bg'), {
+    const taskId = svc.registerTask(new ProcessTask(proc, 'producer', 'bg', undefined, undefined, 'call_bg'), {
       detached: true,
       timeoutMs: 60_000,
     });
@@ -1241,7 +1244,7 @@ describe('AgentTaskService', () => {
     const chunks = Array.from({ length: 20 }, () => 'x'.repeat(MiB));
     const { proc } = sigtermIgnoringProcess(chunks);
 
-    const taskId = svc.registerTask(new ProcessTask(proc, 'runaway', 'hash', () => {}), {
+    const taskId = svc.registerTask(new ProcessTask(proc, 'runaway', 'hash', () => {}, undefined, 'call_runaway_hash'), {
       detached: false,
       signal: new AbortController().signal,
       timeoutMs: 60_000,
@@ -1259,7 +1262,7 @@ describe('AgentTaskService', () => {
     const chunks = Array.from({ length: 20 }, () => 'x'.repeat(MiB));
     const { proc } = sigtermIgnoringProcess(chunks);
 
-    const taskId = svc.registerTask(new ProcessTask(proc, 'runaway', 'bg', () => {}), {
+    const taskId = svc.registerTask(new ProcessTask(proc, 'runaway', 'bg', () => {}, undefined, 'call_runaway_bg'), {
       detached: true,
       timeoutMs: 60_000,
     });

@@ -1,4 +1,6 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+import { randomBytes } from 'node:crypto';
+
 import { LifecycleScope } from '#/app/scopes';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -67,6 +69,10 @@ export const shellCommandTasksKey = defineState<Map<string, string>>(
   () => new Map(),
 );
 
+function syntheticShellCommandToolCallId(): string {
+  return `shell-command-${randomBytes(6).toString('hex')}`;
+}
+
 export class AgentShellCommandService implements IAgentShellCommandService {
   declare readonly _serviceBrand: undefined;
   private readonly shellCommandControllers = new Map<string, AbortController>();
@@ -115,7 +121,7 @@ export class AgentShellCommandService implements IAgentShellCommandService {
 
       const result = await execution.execute({
         turnId: -1,
-        toolCallId: 'shell-command',
+        toolCallId: syntheticShellCommandToolCallId(),
         signal: controller.signal,
         onUpdate: (update: ToolUpdate) => {
           if (update.kind === 'stdout') stdout += update.text ?? '';

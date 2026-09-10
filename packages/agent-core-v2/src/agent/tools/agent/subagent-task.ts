@@ -22,7 +22,7 @@ type SubagentCompletion = {
 export type SubagentHandle = {
   readonly agentId: string;
   readonly profileName: string;
-  readonly parentToolCallId?: string;
+  readonly parentToolCallId: string;
   readonly model?: string;
   readonly modelSource?: SubagentModelSource;
   readonly thinkingEffort?: string;
@@ -33,10 +33,10 @@ export interface SubagentTaskInfo extends AgentTaskInfoBase {
   readonly kind: 'agent';
   readonly agentId?: string;
   readonly subagentType?: string;
-  readonly parentToolCallId?: string;
   readonly model?: string;
   readonly thinkingEffort?: string;
   readonly stopCode?: string;
+  readonly parentToolCallId?: string;
 }
 
 declare module '#/agent/task/types' {
@@ -93,10 +93,9 @@ export function createSubagentExecutor(
 
 export class SubagentTask implements AgentTask {
   readonly kind = 'agent' as const;
-  readonly idPrefix: string = 'agent';
+  readonly taskId: string;
   readonly agentId: string;
   readonly subagentType: string;
-  readonly parentToolCallId?: string;
   readonly model?: string;
   readonly thinkingEffort?: string;
   private stopCode: string | undefined;
@@ -106,9 +105,9 @@ export class SubagentTask implements AgentTask {
     readonly description: string,
     private readonly abortController: AbortController,
   ) {
+    this.taskId = handle.parentToolCallId;
     this.agentId = handle.agentId;
     this.subagentType = handle.profileName;
-    this.parentToolCallId = handle.parentToolCallId;
     this.model = handle.model;
     this.thinkingEffort = handle.thinkingEffort;
   }
@@ -149,7 +148,6 @@ export class SubagentTask implements AgentTask {
       kind: 'agent',
       agentId: this.agentId,
       subagentType: this.subagentType,
-      parentToolCallId: this.parentToolCallId,
       model: this.model,
       thinkingEffort: this.thinkingEffort,
       stopCode: this.stopCode,

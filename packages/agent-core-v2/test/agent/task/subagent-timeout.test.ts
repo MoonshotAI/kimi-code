@@ -9,7 +9,7 @@ function agentTask(
   description: string,
 ): SubagentTask {
   return new SubagentTask(
-    { agentId: 'agent-child', profileName: 'coder', completion },
+    { agentId: 'agent-child', profileName: 'coder', parentToolCallId: 'call_agent', completion },
     description,
     new AbortController(),
   );

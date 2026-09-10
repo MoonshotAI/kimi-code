@@ -36,16 +36,15 @@ const STREAM_DRAIN_GRACE_MS = 250;
 
 export class ProcessTask implements AgentTask {
   readonly kind = 'process' as const;
-  readonly idPrefix = 'bash';
   private exitCode: number | null = null;
 
   constructor(
     readonly proc: ProcessHandle,
     readonly command: string,
     readonly description: string,
-    private readonly onOutput?: ProcessTaskOutputCallback,
-    private release?: () => void,
-    readonly parentToolCallId?: string,
+    private readonly onOutput: ProcessTaskOutputCallback | undefined,
+    private release: (() => void) | undefined,
+    readonly taskId: string,
   ) {}
 
   async start(sink: AgentTaskSink): Promise<void> {
@@ -103,7 +102,6 @@ export class ProcessTask implements AgentTask {
       command: this.command,
       pid: this.proc.pid,
       exitCode: this.exitCode,
-      parentToolCallId: this.parentToolCallId,
     };
   }
 
